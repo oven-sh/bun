@@ -1,25 +1,29 @@
 use crate::helpers;
 use crate::inlines::EmphDelim;
 
-pub fn is_list_bullet(c: u8) -> bool {
+pub(crate) fn is_list_bullet(c: u8) -> bool {
     c == b'-' || c == b'+' || c == b'*'
 }
 
-pub fn is_list_item_mark(c: u8) -> bool {
+pub(crate) fn is_list_item_mark(c: u8) -> bool {
     c == b'-' || c == b'+' || c == b'*' || c == b'.' || c == b')'
 }
 
 #[derive(Copy, Clone)]
 pub struct Autolink {
-    pub beg: usize,
-    pub end: usize,
+    pub(crate) beg: usize,
+    pub(crate) end: usize,
 }
 
-pub type AutolinkResult = Option<Autolink>;
+pub(crate) type AutolinkResult = Option<Autolink>;
 
 /// Check that emphasis chars at autolink boundaries are actually resolved delimiters.
 /// Called when the relaxed (allow_emph) pass found an autolink but the strict pass didn't.
-pub fn is_emph_boundary_resolved(content: &[u8], al: Autolink, resolved: &[EmphDelim]) -> bool {
+pub(crate) fn is_emph_boundary_resolved(
+    content: &[u8],
+    al: Autolink,
+    resolved: &[EmphDelim],
+) -> bool {
     // Check left boundary: if it's an emphasis char, it must be a resolved delimiter
     if al.beg > 0 {
         let prev = content[al.beg - 1];
@@ -68,13 +72,13 @@ pub fn is_emph_boundary_resolved(content: &[u8], al: Autolink, resolved: &[EmphD
 }
 
 #[derive(Copy, Clone)]
-pub struct ScanResult {
+pub(crate) struct ScanResult {
     pub end: usize,
     pub ok: bool,
 }
 
 /// Scan a URL component (host, path, query, or fragment) following md4c's URL_MAP.
-pub fn scan_url_component(
+fn scan_url_component(
     content: &[u8],
     start: usize,
     start_char: u8,
@@ -145,7 +149,7 @@ pub fn scan_url_component(
     ScanResult { end: pos, ok: true }
 }
 
-pub fn is_in_set(c: u8, set: &[u8]) -> bool {
+fn is_in_set(c: u8, set: &[u8]) -> bool {
     for &s in set {
         if c == s {
             return true;
@@ -154,33 +158,49 @@ pub fn is_in_set(c: u8, set: &[u8]) -> bool {
     false
 }
 
+/// 256-bit membership set over bytes; keeps the boundary checks below to a
+/// couple of loads instead of per-call-site `match` jump tables.
+struct ByteSet([u64; 4]);
+
+impl ByteSet {
+    const fn of(bytes: &[u8]) -> ByteSet {
+        let mut words = [0u64; 4];
+        let mut i = 0;
+        while i < bytes.len() {
+            words[(bytes[i] >> 6) as usize] |= 1 << (bytes[i] & 63);
+            i += 1;
+        }
+        ByteSet(words)
+    }
+
+    #[inline]
+    fn contains(&self, c: u8) -> bool {
+        self.0[(c >> 6) as usize] & (1 << (c & 63)) != 0
+    }
+}
+
+const EMPH_DELIMS: ByteSet = ByteSet::of(b"*_~");
+const LEFT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C({[");
+const RIGHT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C)}]<.!?,;&");
+
 /// Check left boundary for permissive autolinks.
 /// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-pub fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
     if pos == 0 {
         return true;
     }
-    match content[pos - 1] {
-        b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => true,
-        b'(' | b'{' | b'[' => true,
-        b'*' | b'_' | b'~' => allow_emph,
-        _ => false,
-    }
+    let c = content[pos - 1];
+    LEFT_BOUNDARY.contains(c) || (allow_emph && EMPH_DELIMS.contains(c))
 }
 
 /// Check right boundary for permissive autolinks.
 /// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-pub fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
     if pos >= content.len() {
         return true;
     }
-    match content[pos] {
-        b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => true,
-        b')' | b'}' | b']' | b'<' => true,
-        b'.' | b'!' | b'?' | b',' | b';' | b'&' => true,
-        b'*' | b'_' | b'~' => allow_emph,
-        _ => false,
-    }
+    let c = content[pos];
+    RIGHT_BOUNDARY.contains(c) || (allow_emph && EMPH_DELIMS.contains(c))
 }
 
 struct Scheme {
@@ -190,7 +210,11 @@ struct Scheme {
 
 /// Detect permissive autolinks at the given position in content.
 /// `pos` is the position of the trigger character ('@', ':', or '.').
-pub fn find_permissive_autolink(content: &[u8], pos: usize, allow_emph: bool) -> AutolinkResult {
+pub(crate) fn find_permissive_autolink(
+    content: &[u8],
+    pos: usize,
+    allow_emph: bool,
+) -> AutolinkResult {
     if pos >= content.len() {
         return None;
     }
@@ -370,25 +394,20 @@ fn post_process_autolink_end(content: &[u8], beg: usize, end_in: usize) -> usize
 
     // Trim trailing unbalanced `)`: count all ( and ) in the URL.
     // If closing > opening, remove trailing ) until balanced.
-    while end > beg && content[end - 1] == b')' {
-        let mut open: i32 = 0;
-        let mut close: i32 = 0;
-        for &ch in &content[beg..end] {
-            if ch == b'(' {
-                open += 1;
-            }
-            if ch == b')' {
-                close += 1;
-            }
+    let mut open: i32 = 0;
+    let mut close: i32 = 0;
+    for &ch in &content[beg..end] {
+        if ch == b'(' {
+            open += 1;
         }
-        if close > open {
-            end -= 1;
-        } else {
-            break;
+        if ch == b')' {
+            close += 1;
         }
+    }
+    while end > beg && content[end - 1] == b')' && close > open {
+        end -= 1;
+        close -= 1;
     }
 
     end
 }
-
-// ported from: src/md/autolinks.zig

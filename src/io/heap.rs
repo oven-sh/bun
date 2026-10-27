@@ -4,8 +4,8 @@ use core::ptr;
 ///
 /// Why? Intrusive data structures require the element type to hold the metadata
 /// required for the structure, rather than an additional container structure.
-/// There are numerous pros/cons that are documented well by Boost[2]. For Zig,
-/// I think the primary benefits are making data structures allocation free
+/// There are numerous pros/cons that are documented well by Boost[2]. Here
+/// the primary benefits are making data structures allocation free
 /// (rather, shifting allocation up to the consumer which can choose how they
 /// want the memory to be available). There are various costs to this such as
 /// the costs of pointer chasing, larger memory overhead, requiring the element
@@ -21,12 +21,10 @@ use core::ptr;
 /// [1]: https://en.wikipedia.org/wiki/Pairing_heap
 /// [2]: https://www.boost.org/doc/libs/1_64_0/doc/html/intrusive/intrusive_vs_nontrusive.html
 //
-// PORT NOTE: Zig's `Intrusive(T, Context, less)` takes `less` as a comptime fn-pointer
-// parameter. Rust cannot use fn pointers as const generics on stable, so the comparator
-// is folded into a trait on `Context` (`HeapContext<T>::less`). This preserves
-// monomorphization (no indirect call) at the cost of requiring the caller to impl the
-// trait instead of passing a free fn.
-// PERF(port): was comptime fn-pointer monomorphization — profile if hot.
+// The comparator is a trait on `Context` (`HeapContext<T>::less`) rather than
+// a fn-pointer parameter (fn pointers can't be const generics on stable).
+// This preserves monomorphization (no indirect call) at the cost of requiring
+// the caller to impl the trait instead of passing a free fn.
 pub struct Intrusive<T: HeapNode, Context: HeapContext<T>> {
     pub root: *mut T,
     pub context: Context,
@@ -42,7 +40,6 @@ pub trait HeapContext<T> {
 }
 
 /// Trait giving generic access to the embedded `IntrusiveField` on `T`.
-/// In Zig this is duck-typed via `v.heap`; Rust needs an explicit bound.
 pub trait HeapNode: Sized {
     fn heap(&mut self) -> &mut IntrusiveField<Self>;
 }
@@ -81,59 +78,64 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
 
     /// Count the number of elements in the heap. This is an O(N) operation.
     pub unsafe fn count(&self) -> usize {
+        let mut result: usize = 0;
         // SAFETY: all reachable nodes from `self.root` are valid for the heap's lifetime.
-        Self::count_internal(self.root)
-    }
-
-    unsafe fn count_internal(node: *mut T) -> usize {
-        if node.is_null() {
-            return 0;
-        }
-        let current = node;
-        let mut result: usize = 1;
-
-        // Count children
-        // SAFETY: `current` is non-null and valid (checked above / invariant).
-        result += Self::count_internal((*current).heap().child);
-
-        // Count siblings
-        result += Self::count_internal((*current).heap().next);
-
+        self.for_each(|_| result += 1);
         result
     }
 
     /// Look at the next maximum value but do not remove it. This is an O(N) operation.
     pub unsafe fn find_max(&self) -> *mut T {
-        if self.root.is_null() {
-            return ptr::null_mut();
-        }
-        let root = self.root;
-        // SAFETY: `root` is non-null and valid.
-        Self::find_max_internal(&self.context, root, root)
+        let mut max_so_far = self.root;
+        // SAFETY: all reachable nodes from `self.root` are valid for the heap's lifetime.
+        self.for_each(|node| {
+            if self.context.less(max_so_far, node) {
+                max_so_far = node;
+            }
+        });
+        max_so_far
     }
 
-    unsafe fn find_max_internal(ctx: &Context, node: *mut T, current_max: *mut T) -> *mut T {
-        let mut max_so_far = current_max;
-
-        // Update max if current node is greater
-        if ctx.less(max_so_far, node) {
-            max_so_far = node;
+    /// Visits every node depth-first without recursion. A heap can degenerate
+    /// into a single chain, so recursing could overflow the stack.
+    ///
+    /// # Safety
+    /// All nodes reachable from `self.root` must be valid.
+    unsafe fn for_each(&self, mut f: impl FnMut(*mut T)) {
+        let mut node = self.root;
+        if node.is_null() {
+            return;
         }
+        'walk: loop {
+            f(node);
 
-        // Traverse children
-        // SAFETY: `node` is a valid heap node (caller invariant).
-        let child = (*node).heap().child;
-        if !child.is_null() {
-            max_so_far = Self::find_max_internal(ctx, child, max_so_far);
+            // SAFETY: `node` is non-null and valid (invariant).
+            let child = (*node).heap().child;
+            if !child.is_null() {
+                node = child;
+                continue;
+            }
+
+            loop {
+                let next = (*node).heap().next;
+                if !next.is_null() {
+                    node = next;
+                    continue 'walk;
+                }
+
+                // `prev` is the left sibling, or the parent for the leftmost child.
+                // Climb to the parent and try its `next`.
+                let mut prev = (*node).heap().prev;
+                while !prev.is_null() && (*prev).heap().child != node {
+                    node = prev;
+                    prev = (*node).heap().prev;
+                }
+                if prev.is_null() {
+                    return;
+                }
+                node = prev;
+            }
         }
-
-        // Traverse siblings
-        let next_sibling = (*node).heap().next;
-        if !next_sibling.is_null() {
-            max_so_far = Self::find_max_internal(ctx, next_sibling, max_so_far);
-        }
-
-        max_so_far
     }
 
     /// Delete the minimum value from the heap and return it.
@@ -304,5 +306,3 @@ impl<T> Default for IntrusiveField<T> {
         }
     }
 }
-
-// ported from: src/io/heap.zig

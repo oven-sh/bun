@@ -3,10 +3,8 @@ resolver = "2"
 members = [
   "src/opaque",
   "src/analytics",
-  "src/api",
   "src/base64",
   "src/bundler",
-  "src/codegen",
   "src/collections",
   "src/css",
   "src/errno",
@@ -16,20 +14,37 @@ members = [
   "src/install/windows-shim",
   "src/parsers",
   "src/io",
-  "src/js",
   "src/libarchive",
   "src/md",
-  "src/meta",
-  "src/node-fallbacks",
   "src/paths",
   "src/resolver",
   "src/safety",
+  "src/sema",
+  "src/sema/baselines",
+  "src/sema/driver",
+  "src/sema/parser",
+  "src/sema/standalone",
+  "src/lint",
+  "src/lint/eslint",
+  "src/lint/typescript",
+  "src/lint/plugins",
+  "src/lint/oxlint",
+  "src/lint/unicorn",
+  "src/lint/react",
+  "src/lint/jest",
+  "src/lint/json",
+  "src/lint/markdown",
+  "src/lint/graph",
+  "src/lint/react_compiler",
+  "src/lint/driver",
+  "src/lint/conformance",
+  "src/format",
+  "src/format/conformance",
   "src/semver",
   "src/sourcemap",
   "src/sql",
   "src/sys",
   "src/threading",
-  "src/unicode",
   "src/valkey",
   "src/watcher",
   "src/cares_sys",
@@ -51,12 +66,10 @@ members = [
   "src/js_parser",
   "src/js_parser_jsc",
   "src/js_printer",
-  "src/libarchive_sys",
   "src/libdeflate_sys",
   "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
-  "src/lolhtml_sys",
   "src/picohttp",
   "src/s3_signing",
   "src/sql_jsc",
@@ -65,7 +78,6 @@ members = [
   "src/platform",
   "src/sha_hmac",
   "src/sys_jsc",
-  "src/url_jsc",
   "src/zlib_sys",
   "src/dispatch",
   "src/brotli",
@@ -82,11 +94,13 @@ members = [
   "src/brotli_sys",
   "src/bun_alloc",
   "src/mimalloc_sys",
-  "src/picohttp_sys",
   "src/semver_jsc",
   "src/standalone_graph",
   "src/uws",
   "src/wyhash",
+  "src/yarr",
+  "src/node_path",
+  "src/text_diff",
   "src/hash",
   "src/boringssl_sys",
   "src/bun_core",
@@ -97,6 +111,7 @@ members = [
   "src/shell_parser",
   "src/tcc_sys",
   "src/uws_sys",
+  "src/lsquic_sys",
   "src/zstd",
   "src/options_types",
   "src/output",
@@ -104,18 +119,15 @@ members = [
   "src/simdutf_sys",
   "src/which",
   "src/transpiler",
+  "src/react_compiler",
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
-  "src/bun_bin",
 ]
-# `vendor/lolhtml/c-api` is consumed as a path dependency of
-# `bun_lolhtml_sys` so its `#[no_mangle]` C API ends up inside
-# `libbun_rust.a` (one Rust staticlib → one copy of std on the link line).
-# It is deliberately NOT a workspace member: keeping it excluded means its
-# `[profile]` section is ignored and its heavy dev-dependencies (criterion,
-# html5ever) never enter `Cargo.lock`. The source is fetched into `vendor/`
-# by the build system (`scripts/build/deps/lolhtml.ts`) before cargo runs.
+# `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
+# fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
+# Keeping it out of `members` means its `[profile]` section is ignored and its
+# heavy dev-dependencies (criterion, html5ever) never enter `Cargo.lock`.
 exclude = ["vendor"]
 
 [workspace.package]
@@ -126,25 +138,19 @@ edition = "2024"
 # Zig's release build is one compilation unit with whole-program optimization.
 # Cargo's defaults (lto=false, codegen-units=16) leave us at ~105 crates × 16
 # CGUs ≈ 1680 separately-optimized units with NO cross-crate inlining beyond
-# `#[inline]`-annotated leaf fns. `lto = "fat"` + `codegen-units = 1` collapses
-# the whole Rust crate graph into one LLVM module, matching Zig's shape.
+# `#[inline]`-annotated leaf fns. Here each crate is one unit
+# (`codegen-units = 1`) of ThinLTO bitcode, and bun's link runs the LTO over
+# all of them (`scripts/build/rust.ts` adds `-C linker-plugin-lto`), together
+# with the C/C++ where that is LTO too. rustc runs no LTO of its own: it links
+# nothing of bun, so `lto = "off"`, which also leaves each crate's bitcode
+# with the summary a ThinLTO link imports through.
 #
 # `panic = "abort"` — the `std::panic` hook in `bun_crash_handler` aborts,
 # so `catch_unwind` is unreachable for Rust panics regardless, and no landing
-# pads means smaller `.pdata`/`.xdata`. Re-enabled to root-cause a latent
-# Windows-only `Strong<Impl>* corrupted (0x1)` in the fs/promises writeFile
-# async-iterable path (#53265+) that this codegen exposes: the corruption is
-# not an over-deref (the `raw_ref_count` underflow assert does not fire). The
-# Windows release link is temporarily `/OPT:NOICF` (flags.ts:778) so the PDB
-# symbolicates to the real owning struct instead of an ICF-folded body; once
-# root-caused, restore `/OPT:SAFEICF` there.
+# pads means smaller `.pdata`/`.xdata`.
 #
-# Cross-language LTO (`-C linker-plugin-lto`, so Rust bitcode joins the C++
-# `-flto=full` link) is wired in `scripts/build/rust.ts` behind `cfg.lto`; it
-# requires the *linker's* LLVM to be ≥ rustc's bundled LLVM, so the build
-# points `-fuse-ld` at rustc's `rust-lld` rather than clang's when enabled.
 [profile.release]
-lto = "fat"
+lto = "off"
 codegen-units = 1
 debug = "line-tables-only"
 strip = "none"
@@ -152,13 +158,13 @@ panic = "abort"
 
 [profile.dev]
 panic = "abort"
-
-# Fast-iteration release build for local benching when fat LTO's link time
-# (minutes) is in the way. `bun run build:release --cargo-profile=release-dev`.
-[profile.release-dev]
-inherits = "release"
-lto = "thin"
-codegen-units = 16
+# Split DWARF: debuginfo goes into `.dwo` files alongside each `.o` instead of
+# being packed into the rlibs. Per-crate codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
+# the skeleton CUs (`DW_AT_dwo_name`) pointing into `<target>/deps/*.dwo`.
+# No effect on the compiled code. Windows uses PDB so this is a no-op there
+# (rustc ignores it); Darwin's `"unpacked"` is the `.o`-is-the-debuginfo mode
+# `dsymutil` already expects.
+split-debuginfo = "unpacked"
 
 # Release with debuginfo retained for `perf record` / flamegraphs. Same opt
 # level as release; binary is large but profilable.
@@ -167,7 +173,7 @@ inherits = "release"
 debug = "line-tables-only"
 strip = "none"
 
-# `bun_shim_impl.exe` — the Windows .bin/ launcher PE that gets
+# `bun-shim-impl.exe` — the Windows .bin/ launcher PE that gets
 # `include_bytes!`'d into bun.exe and copied next to every package binary by
 # `bun install`. Zig built it freestanding ReleaseFast (no libc,
 # single-threaded, ~13 KiB). The Rust port matches that with
@@ -186,13 +192,35 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = "symbols"
+# Pin these so the shim PE is byte-identical across bun's own profiles.
+# rust.ts sets CARGO_PROFILE_RELEASE_{LTO,DEBUG_ASSERTIONS} for the main
+# bun_runtime build and the shim build shares that env; without explicit values
+# here the env overrides on `release` would be inherited.
+debug-assertions = false
+overflow-checks = false
 
 [workspace.lints.rust]
-# `bun_asan` is set via RUSTFLAGS (`--cfg=bun_asan` + `--check-cfg=cfg(bun_asan)`)
-# by scripts/build/rust.ts for asan builds; register it here so a plain
-# `cargo build` / `cargo check` (without those flags) doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)'] }
+# Every rustc warning is an error. Individual lints below can override this
+# back to "warn" (their priority 0 beats the group's -1) where a warning level
+# is intentional.
+warnings = { level = "deny", priority = -1 }
+# `bun_asan` / `bun_debug` / `socket_fault_injection` are set via RUSTFLAGS
+# (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
+# them here so a plain `cargo build` / `cargo check` (without those flags)
+# doesn't warn.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)'] }
+# link.exe unconditionally prints "Creating library X.dll.lib and object
+# X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
+# there is no linker flag to suppress it. The lint already exempts itself
+# from `-D warnings`, so this only silences the noise.
+linker_messages = "allow"
 dead_code = "deny"
+# Every crate in this workspace is an internal implementation detail of one
+# binary, so `pub` is a claim that *another crate* imports the item. If it
+# doesn't, write `pub(crate)` — that keeps the item under `dead_code` analysis
+# instead of being exempted as an external API root. Macro-generated items that
+# must stay `pub` carry `#[allow(unreachable_pub)]` at the expansion site.
+unreachable_pub = "deny"
 unused_imports = "deny"
 unused_variables = "deny"
 unused_mut = "deny"
@@ -253,7 +281,7 @@ clone_on_copy = "deny"
 useless_conversion = "deny"
 # vec_box / boxed_local: legit patterns are `#[expect]`-suppressed at the site
 # with a one-line "why the box is load-bearing" comment (intrusive-list address
-# stability, JsClass finalizer thunk contract). Anything new must justify itself.
+# stability, a task's reclaim point). Anything new must justify itself.
 vec_box = "deny"
 boxed_local = "deny"
 arc_with_non_send_sync = "deny"
@@ -314,11 +342,10 @@ new_ret_no_self = "allow"
 map_identity = "allow"
 
 [workspace.dependencies]
-rust-argon2 = "3.0"
+rust-argon2 = { path = "vendor/rust-argon2" }
 bcrypt = "0.19"
 getrandom = "0.4"
 strum = { version = "0.26", features = ["derive"] }
-phf = { version = "0.11", features = ["macros"] }
 # `allocator-api2` feature gives `hashbrown::HashMap<K, V, S, A>` an externally-
 # implementable `A` bound. We can't use hashbrown's own `nightly` feature (which
 # would bind `A` to `core::alloc::Allocator` directly) because it also enables
@@ -335,21 +362,18 @@ const_format = "0.2"
 enum-map = "2"
 enumset = "1"
 libc = "0.2"
-memchr = "2"
 rustix = { version = "0.38", default-features = false, features = ["std", "fs", "event", "process", "net"] }
 bitflags = "2"
 thiserror = "2"
-crossbeam = "0.8"
 smallvec = "1"
-bumpalo = { version = "3", features = ["collections", "boxed"] }
-typed-arena = "2"
 itoa = "1"
+encoding_rs = "0.8.35"
+# Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
+lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
 bun_analytics = { path = "src/analytics" }
-bun_api = { path = "src/api" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
-bun_codegen = { path = "src/codegen" }
 bun_collections = { path = "src/collections" }
 bun_css = { path = "src/css" }
 bun_errno = { path = "src/errno" }
@@ -358,20 +382,36 @@ bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
-bun_js = { path = "src/js" }
 bun_libarchive = { path = "src/libarchive" }
 bun_md = { path = "src/md" }
-bun_meta = { path = "src/meta" }
-bun_node-fallbacks = { path = "src/node-fallbacks" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
+bun_sema = { path = "src/sema" }
+bun_sema_baselines = { path = "src/sema/baselines" }
+bun_sema_driver = { path = "src/sema/driver" }
+bun_sema_parser = { path = "src/sema/parser" }
+bun_lint = { path = "src/lint" }
+bun_lint_eslint = { path = "src/lint/eslint" }
+bun_lint_typescript = { path = "src/lint/typescript" }
+bun_lint_plugins = { path = "src/lint/plugins" }
+bun_lint_oxlint = { path = "src/lint/oxlint" }
+bun_lint_unicorn = { path = "src/lint/unicorn" }
+bun_lint_react = { path = "src/lint/react" }
+bun_lint_jest = { path = "src/lint/jest" }
+bun_lint_json = { path = "src/lint/json" }
+bun_lint_markdown = { path = "src/lint/markdown" }
+bun_lint_graph = { path = "src/lint/graph" }
+bun_lint_react_compiler = { path = "src/lint/react_compiler" }
+bun_format = { path = "src/format" }
+bun_format_conformance = { path = "src/format/conformance" }
+bun_lint_driver = { path = "src/lint/driver" }
+bun_lint_conformance = { path = "src/lint/conformance" }
 bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }
 bun_threading = { path = "src/threading" }
-bun_unicode = { path = "src/unicode" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
 bun_cares_sys = { path = "src/cares_sys" }
@@ -393,12 +433,10 @@ bun_install_types = { path = "src/install_types" }
 bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
-bun_libarchive_sys = { path = "src/libarchive_sys" }
 bun_libdeflate_sys = { path = "src/libdeflate_sys" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
-bun_lolhtml_sys = { path = "src/lolhtml_sys" }
 bun_picohttp = { path = "src/picohttp" }
 bun_s3_signing = { path = "src/s3_signing" }
 bun_sql_jsc = { path = "src/sql_jsc" }
@@ -407,7 +445,6 @@ bun_patch = { path = "src/patch" }
 bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
-bun_url_jsc = { path = "src/url_jsc" }
 bun_zlib_sys = { path = "src/zlib_sys" }
 bun_dispatch = { path = "src/dispatch" }
 bun_brotli = { path = "src/brotli" }
@@ -424,11 +461,13 @@ bun_boringssl = { path = "src/boringssl" }
 bun_brotli_sys = { path = "src/brotli_sys" }
 bun_alloc = { path = "src/bun_alloc" }
 bun_mimalloc_sys = { path = "src/mimalloc_sys" }
-bun_picohttp_sys = { path = "src/picohttp_sys" }
 bun_semver_jsc = { path = "src/semver_jsc" }
 bun_standalone_graph = { path = "src/standalone_graph" }
 bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
+bun_yarr = { path = "src/yarr" }
+bun_node_path = { path = "src/node_path" }
+bun_text_diff = { path = "src/text_diff" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
 bun_core = { path = "src/bun_core" }
@@ -441,11 +480,25 @@ bun_spawn = { path = "src/spawn" }
 bun_spawn_sys = { path = "src/spawn_sys" }
 bun_tcc_sys = { path = "src/tcc_sys" }
 bun_uws_sys = { path = "src/uws_sys" }
+bun_lsquic_sys = { path = "src/lsquic_sys" }
 bun_zstd = { path = "src/zstd" }
 bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
-bun_runtime = { path = "src/runtime", default-features = false }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
+
+[profile.release.package.bun_react_compiler]
+opt-level = "s"
+
+# The runners behind `--run-typescript-tests`, `--run-prettier-tests` and `--run-eslint-tests`. Only canary and debug
+# builds have them, and the time goes into what they test, which keeps its own level.
+[profile.release.package.bun_sema_baselines]
+opt-level = "z"
+
+[profile.release.package.bun_format_conformance]
+opt-level = "z"
+
+[profile.release.package.bun_lint_conformance]
+opt-level = "z"

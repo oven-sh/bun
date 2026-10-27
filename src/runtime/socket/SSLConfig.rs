@@ -1,7 +1,7 @@
 //! DEDUP(D202): the `SSLConfig` struct, its `Clone`/`Drop`/`Default`/hash/
 //! equality/registry impls, and `as_usockets*`/`for_client_verification` were
-//! double-ported (here and in `bun_http::ssl_config`). The lower-tier
-//! `bun_http` copy is canonical (JSC-free, matches the Zig `?[*:0]const u8`
+//! duplicated (here and in `bun_http::ssl_config`). The lower-tier
+//! `bun_http` copy is canonical (JSC-free, nullable NUL-terminated C-string
 //! field layout); this module now re-exports it and keeps ONLY the
 //! JSC-dependent constructors (`from_js` / `from_generated` / blob+path
 //! readers) plus the WebSocket C-ABI exports, which need `bun_jsc` /
@@ -16,6 +16,7 @@ use core::ffi::c_char;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
 
+use crate::generated_bindgen::ssl_config as generated;
 use crate::node::fs as node_fs;
 use crate::webcore::Blob;
 use crate::webcore::blob::store::Data as StoreData;
@@ -24,18 +25,16 @@ use crate::webcore::blob::store::Data as StoreData;
 // Canonical re-exports (struct + registry live in bun_http now)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_http::ssl_config::{
-    GlobalRegistry, SSLConfig, SharedPtr, SslConfig, WeakPtr, global_registry,
-};
+pub(crate) use bun_http::ssl_config::SSLConfig;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ReadFromBlobError
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: cannot derive `thiserror::Error` because `JsError` is not
+// Cannot derive `thiserror::Error` because `JsError` is not
 // `std::error::Error`/`Display`. Manual `From<JsError>` instead.
 #[derive(Debug)]
-pub enum ReadFromBlobError {
+pub(crate) enum ReadFromBlobError {
     Js(JsError),
     NullStore,
     NotAFile,
@@ -122,17 +121,20 @@ fn read_from_blob(
 
 /// JSC-dependent constructors for the canonical `bun_http::SSLConfig`.
 /// Import this trait to call `SSLConfig::from_js(..)` / `::from_generated(..)`.
-pub trait SSLConfigFromJs: Sized {
+/// An unset `rejectUnauthorized` is `true` for a server and `NODE_TLS_REJECT_UNAUTHORIZED` for a client, as in Node.js.
+pub(crate) trait SSLConfigFromJs: Sized {
     fn from_js(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         value: JSValue,
+        is_server: bool,
     ) -> JsResult<Option<Self>>;
 
     fn from_generated(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
-        generated: &jsc::generated::SSLConfig,
+        generated: &generated::TLSOptions,
+        is_server: bool,
     ) -> JsResult<Option<Self>>;
 }
 
@@ -141,76 +143,112 @@ impl SSLConfigFromJs for SSLConfig {
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         value: JSValue,
+        is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
-        let generated = jsc::generated::SSLConfig::from_js(global, value)?;
-        // `generated` dropped at scope exit
-        Self::from_generated(vm, global, &generated)
+        let generated = generated::TLSOptions::from_js(global, value)?;
+        Self::from_generated(vm, global, &generated, is_server)
     }
 
     fn from_generated(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
-        generated: &jsc::generated::SSLConfig,
+        generated: &generated::TLSOptions,
+        is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
         let mut result = SSLConfig::zero();
-        // errdefer result.deinit() — handled by Drop on error-path `?`
+        // `result` cleanup handled by Drop on error-path `?`
         let mut any = false;
 
-        if let Some(passphrase) = generated.passphrase.get() {
+        if let Some(passphrase) = generated.passphrase.as_ref() {
             result.passphrase = zbox_into_raw(&passphrase.to_owned_slice_z());
             any = true;
         }
-        if let Some(dh_params_file) = generated.dh_params_file.get() {
-            result.dh_params_file_name = handle_path(global, "dhParamsFile", &dh_params_file)?;
+        if let Some(dh_params_file) = generated.dh_params_file.as_ref() {
+            result.dh_params_file_name = handle_path(global, "dhParamsFile", dh_params_file)?;
             any = true;
         }
-        if let Some(server_name) = generated.server_name.get() {
-            result.server_name = zbox_into_raw(&server_name.to_owned_slice_z());
+        if let Some(server_name) = generated.server_name.as_ref() {
+            let server_name = server_name.to_owned_slice_z();
+            // `server_name` is a C string: SNI and the certificate check would see the name up to the NUL.
+            if bun_core::strings::contains_char(server_name.as_bytes(), 0) {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "\"serverName\" must not contain null bytes"
+                )));
+            }
+            result.server_name = zbox_into_raw(&server_name);
             result.requires_custom_request_ctx = true;
         }
 
         result.low_memory_mode = generated.low_memory_mode;
         result.reject_unauthorized = generated
             .reject_unauthorized
-            .unwrap_or_else(|| vm.get_tls_reject_unauthorized())
+            .unwrap_or_else(|| is_server || vm.get_tls_reject_unauthorized())
             as i32;
         result.request_cert = generated.request_cert as i32;
         result.secure_options = generated.secure_options;
+        result.ssl_min_version = generated.ssl_min_version;
+        result.ssl_max_version = generated.ssl_max_version;
+        result.session_timeout = generated.session_timeout;
+        result.allow_partial_trust_chain = generated.allow_partial_trust_chain;
+        if let Some(sigalgs) = generated.sigalgs.as_ref() {
+            result.sigalgs = zbox_into_raw(&sigalgs.to_owned_slice_z());
+            any = true;
+        }
+        if let Some(ecdh_curve) = generated.ecdh_curve.as_ref() {
+            let bytes = ecdh_curve.to_owned_slice_z();
+            // Node treats `ecdhCurve: 'auto'` (the documented default) as
+            // "use the library's default group list", i.e. skip the
+            // SSL_CTX_set1_groups_list call entirely.
+            if bytes.as_bytes() != b"auto" {
+                result.ecdh_curve = zbox_into_raw(&bytes);
+                any = true;
+            }
+        }
         any = any
             || result.low_memory_mode
             || generated.reject_unauthorized.is_some()
             || generated.request_cert
-            || result.secure_options != 0;
+            || result.secure_options != 0
+            || result.ssl_min_version != 0
+            || result.ssl_max_version != 0
+            || result.session_timeout != 0
+            || result.allow_partial_trust_chain;
 
         result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
         result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
         result.key = handle_file_for_field(global, "key", &generated.key)?;
+        result.crl = handle_file_for_field(global, "crl", &generated.crl)?;
         result.requires_custom_request_ctx = result.requires_custom_request_ctx
             || result.ca.is_some()
             || result.cert.is_some()
-            || result.key.is_some();
+            || result.key.is_some()
+            || result.crl.is_some()
+            || result.secure_options != 0
+            || result.ssl_min_version != 0
+            || result.ssl_max_version != 0
+            || !result.sigalgs.is_null()
+            || !result.ecdh_curve.is_null()
+            || result.session_timeout != 0
+            || result.allow_partial_trust_chain;
 
-        if let Some(key_file) = generated.key_file.get() {
-            result.key_file_name = handle_path(global, "keyFile", &key_file)?;
+        if let Some(key_file) = generated.key_file.as_ref() {
+            result.key_file_name = handle_path(global, "keyFile", key_file)?;
             result.requires_custom_request_ctx = true;
         }
-        if let Some(cert_file) = generated.cert_file.get() {
-            result.cert_file_name = handle_path(global, "certFile", &cert_file)?;
+        if let Some(cert_file) = generated.cert_file.as_ref() {
+            result.cert_file_name = handle_path(global, "certFile", cert_file)?;
             result.requires_custom_request_ctx = true;
         }
-        if let Some(ca_file) = generated.ca_file.get() {
-            result.ca_file_name = handle_path(global, "caFile", &ca_file)?;
+        if let Some(ca_file) = generated.ca_file.as_ref() {
+            result.ca_file_name = handle_path(global, "caFile", ca_file)?;
             result.requires_custom_request_ctx = true;
         }
 
         let protocols: *const c_char = match &generated.alpn_protocols {
-            jsc::generated::SSLConfigAlpnProtocols::None => core::ptr::null(),
-            jsc::generated::SSLConfigAlpnProtocols::String(val) => {
-                zbox_into_raw(&val.get().to_owned_slice_z())
-            }
-            jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
-                // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
-                // owned by the GenVal for the duration of `generated`.
+            generated::ALPNProtocols::None => core::ptr::null(),
+            generated::ALPNProtocols::String(val) => zbox_into_raw(&val.to_owned_slice_z()),
+            generated::ALPNProtocols::Buffer(val) => {
+                // SAFETY: `generated` holds a ref on the buffer, and nothing else borrows it here.
                 let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
                 dupe_z(buffer.byte_slice())
             }
@@ -219,7 +257,7 @@ impl SSLConfigFromJs for SSLConfig {
             result.protos = protocols;
             result.requires_custom_request_ctx = true;
         }
-        if let Some(ciphers) = generated.ciphers.get() {
+        if let Some(ciphers) = generated.ciphers.as_ref() {
             result.ssl_ciphers = zbox_into_raw(&ciphers.to_owned_slice_z());
             result.is_using_default_ciphers = false;
             result.requires_custom_request_ctx = true;
@@ -232,58 +270,104 @@ impl SSLConfigFromJs for SSLConfig {
             || result.client_renegotiation_limit != 0
             || generated.client_renegotiation_window != 0;
 
-        // We don't need to deinit `result` if `any` is false.
-        if any { Ok(Some(result)) } else { Ok(None) }
+        if !any {
+            return Ok(None);
+        }
+        // After `any`: the fallback does not make `tls: {}` a TLS configuration.
+        if generated.ciphers.is_none() {
+            apply_default_ciphers(vm, &mut result);
+        }
+        Ok(Some(result))
     }
 }
 
-/// Free-function aliases for callers that prefer module-path syntax.
-#[inline]
-pub fn from_js(
-    vm: &VirtualMachine,
-    global: &JSGlobalObject,
-    value: JSValue,
-) -> JsResult<Option<SSLConfig>> {
-    <SSLConfig as SSLConfigFromJs>::from_js(vm, global, value)
+/// The `SSLConfig` for the `tls: true` shorthand: every option at its
+/// documented default, unlike `SSLConfig::zero()`.
+pub(crate) fn tls_true_defaults(vm: &VirtualMachine, is_server: bool) -> SSLConfig {
+    let mut cfg = SSLConfig::zero();
+    cfg.reject_unauthorized = (is_server || vm.get_tls_reject_unauthorized()) as i32;
+    apply_default_ciphers(vm, &mut cfg);
+    cfg
 }
 
-#[inline]
-pub fn from_generated(
+/// For a request without TLS options: its default context is built on the HTTP thread, which does not see `tls.DEFAULT_CIPHERS`.
+pub(crate) fn http_client_defaults(vm: &VirtualMachine) -> Option<bun_http::ssl_config::SharedPtr> {
+    vm.tls_default_ciphers()?;
+    Some(bun_http::ssl_config::global_registry::intern(
+        tls_true_defaults(vm, false),
+    ))
+}
+
+/// No `ciphers` option means `tls.DEFAULT_CIPHERS`, as in Node's `configSecureContext`.
+fn apply_default_ciphers(vm: &VirtualMachine, cfg: &mut SSLConfig) {
+    if let Some(ciphers) = vm.tls_default_ciphers() {
+        cfg.set_default_ciphers(ciphers);
+    }
+}
+
+/// Whether a new TLS socket must enforce `rejectUnauthorized`: close the
+/// connection when the peer certificate fails verification.
+pub(crate) fn resolve_reject_unauthorized(
     vm: &VirtualMachine,
-    global: &JSGlobalObject,
-    generated: &jsc::generated::SSLConfig,
-) -> JsResult<Option<SSLConfig>> {
-    <SSLConfig as SSLConfigFromJs>::from_generated(vm, global, generated)
+    cfg: Option<&SSLConfig>,
+    is_server: bool,
+) -> bool {
+    match cfg {
+        Some(cfg) => (!is_server || cfg.request_cert != 0) && cfg.reject_unauthorized != 0,
+        None => !is_server && vm.get_tls_reject_unauthorized(),
+    }
 }
 
 // ── handlePath / handleFile helpers ──────────────────────────────────
 
-// PERF(port): was comptime monomorphization (comptime field: []const u8) —
-// demoted to runtime &'static str since only used in cold error message.
+// `field` is a runtime &'static str (not monomorphized) since it is only
+// used in a cold error message.
 fn handle_path(
     global: &JSGlobalObject,
     field: &'static str,
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
-    let name = string.to_owned_slice_z();
-    // Zig: `std.posix.system.access(name, F_OK) != 0`. `bun_sys::access`
-    // routes to `access(2)` on POSIX and `GetFileAttributesW` on Windows
-    // (via `sys_uv`), so this is the cross-platform existence probe.
-    if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
-        // errdefer: free_sensitive(name) — zero before drop. Route through
-        // the canonical helper so the secure-zero core stays single-sourced.
-        // SAFETY: `zbox_into_raw` yields a `default_alloc::malloc`-backed,
-        // NUL-terminated buffer whose ownership we now hold exclusively.
-        unsafe { bun_core::free_sensitive(zbox_into_raw(&name)) };
-        return Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)));
+    let name = string.to_utf8();
+    let name = name.slice();
+    if bun_core::strings::contains_char(name, 0) {
+        return Err(global
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!("TLSOptions.{field} must be a path without null bytes"),
+            )
+            .throw());
     }
-    Ok(zbox_into_raw(&name))
+    // Opened later (for fetch, on the HTTP thread), and the SSL_CTX caches key on this string.
+    let mut path = if cfg!(windows) || !bun_paths::is_absolute_posix(name) {
+        bun_paths::AutoAbsPathChecked::init_top_level_dir()
+    } else {
+        bun_paths::AutoAbsPathChecked::init()
+    };
+    // The kernel resolves `..` through symlinks, so it is left in. Win32 resolves it as `join` does, which also knows `C:foo` and `\foo`.
+    let pinned = if cfg!(windows) {
+        path.join(&[name])
+    } else {
+        path.append(name)
+    };
+    // `append` drops a trailing slash, with which no file opens.
+    if name.is_empty()
+        || (cfg!(not(windows)) && name.ends_with(b"/"))
+        || pinned.is_err()
+        || bun_sys::access(path.slice_z(), bun_sys::posix::F_OK).is_err()
+    {
+        return Err(global.throw_invalid_arguments(format_args!("Unable to access {field} path")));
+    }
+    // BoringSSL's fopen is narrow on Windows: a non-ASCII cwd must not be baked into the path.
+    if cfg!(windows) && !bun_core::strings::is_all_ascii(path.slice()) {
+        return Ok(dupe_z(name));
+    }
+    Ok(dupe_z(path.slice()))
 }
 
 fn handle_file_for_field(
     global: &JSGlobalObject,
     field: &'static str,
-    file: &jsc::generated::SSLConfigFile,
+    file: &generated::TLSOptionsFile,
 ) -> JsResult<CStrSlice> {
     match handle_file(global, file) {
         Ok(v) => Ok(v),
@@ -302,42 +386,40 @@ fn handle_file_for_field(
 
 fn handle_file(
     global: &JSGlobalObject,
-    file: &jsc::generated::SSLConfigFile,
+    file: &generated::TLSOptionsFile,
 ) -> Result<CStrSlice, ReadFromBlobError> {
     let single = handle_single_file(
         global,
         match file {
-            jsc::generated::SSLConfigFile::None => return Ok(None),
-            jsc::generated::SSLConfigFile::String(val) => SingleFile::String(val.get()),
-            jsc::generated::SSLConfigFile::Buffer(val) => {
-                // SAFETY: GenVal::get() yields a non-null pointer valid for the
-                // lifetime of `generated`; we narrow it to `&mut` for the call.
+            generated::TLSOptionsFile::None => return Ok(None),
+            generated::TLSOptionsFile::String(val) => SingleFile::String(val),
+            generated::TLSOptionsFile::Buffer(val) => {
+                // SAFETY: `file` holds a ref on the buffer, and nothing else borrows it here.
                 SingleFile::Buffer(unsafe { &mut *val.get() })
             }
-            jsc::generated::SSLConfigFile::File(val) => {
-                // SAFETY: opaque `GenBlob` (`*mut c_void`) is the JS class `m_ctx`
-                // pointer, layout-identical to `crate::webcore::Blob`.
-                SingleFile::File(unsafe { &mut *val.get().cast::<crate::webcore::Blob>() })
+            generated::TLSOptionsFile::File(val) => {
+                // SAFETY: as above, for the `Blob`.
+                SingleFile::File(unsafe { &mut *val.get() })
             }
-            jsc::generated::SSLConfigFile::Array(list) => {
-                return handle_file_array(global, list.items());
+            generated::TLSOptionsFile::Array(list) => {
+                return handle_file_array(global, list);
             }
         },
     )?;
-    // errdefer free_sensitive(single) — on the only fallible op below (alloc),
-    // Rust aborts on OOM, so no errdefer needed.
+    // The only fallible op below is alloc, and Rust aborts on OOM, so no
+    // error-path zeroing is needed.
     Ok(Some(vec![single].into_boxed_slice()))
 }
 
 fn handle_file_array(
     global: &JSGlobalObject,
-    elements: &[jsc::generated::SSLConfigSingleFile],
+    elements: &[generated::TLSOptionsSingleFile],
 ) -> Result<CStrSlice, ReadFromBlobError> {
     if elements.is_empty() {
         return Ok(None);
     }
     let mut result: Vec<*const c_char> = Vec::with_capacity(elements.len());
-    // errdefer { free_sensitive each; drop result } — need zeroing on error:
+    // Error path: free_sensitive each, then drop result — need zeroing on error:
     let mut guard = scopeguard::guard(&mut result, |r| {
         for p in r.drain(..) {
             // SAFETY: every pushed `p` came from `handle_single_file` →
@@ -346,20 +428,17 @@ fn handle_file_array(
         }
     });
     for elem in elements {
-        // PERF(port): was appendAssumeCapacity
         guard.push(handle_single_file(
             global,
             match elem {
-                jsc::generated::SSLConfigSingleFile::String(val) => SingleFile::String(val.get()),
-                jsc::generated::SSLConfigSingleFile::Buffer(val) => {
-                    // SAFETY: see `handle_file` above — non-null GenVal pointers
-                    // valid for the lifetime of `generated`.
+                generated::TLSOptionsSingleFile::String(val) => SingleFile::String(val),
+                generated::TLSOptionsSingleFile::Buffer(val) => {
+                    // SAFETY: see `handle_file`.
                     SingleFile::Buffer(unsafe { &mut *val.get() })
                 }
-                jsc::generated::SSLConfigSingleFile::File(val) => {
-                    // SAFETY: opaque `GenBlob` (`*mut c_void`) is layout-identical
-                    // to `crate::webcore::Blob`.
-                    SingleFile::File(unsafe { &mut *val.get().cast::<crate::webcore::Blob>() })
+                generated::TLSOptionsSingleFile::File(val) => {
+                    // SAFETY: see `handle_file`.
+                    SingleFile::File(unsafe { &mut *val.get() })
                 }
             },
         )?);
@@ -368,9 +447,8 @@ fn handle_file_array(
     Ok(Some(core::mem::take(result).into_boxed_slice()))
 }
 
-// PORT NOTE: Zig used an anonymous `union(enum)` param; named here.
 enum SingleFile<'a> {
-    String(bun_core::String),
+    String(&'a bun_core::String),
     Buffer(&'a mut jsc::JSCArrayBuffer),
     File(&'a mut crate::webcore::Blob),
 }
@@ -392,8 +470,8 @@ fn handle_single_file(
 // ──────────────────────────────────────────────────────────────────────────
 // WebSocket C-ABI exports (parseSSLConfig / freeSSLConfig)
 //
-// LAYERING: ground truth is `src/http_jsc/websocket_client/
-// WebSocketUpgradeClient.zig::parseSSLConfig`, but `SSLConfig::from_js`
+// LAYERING: the consumer is `src/http_jsc/websocket_client/
+// WebSocketUpgradeClient.rs`, but `SSLConfig::from_js`
 // dereferences Blob / JSCArrayBuffer / node_fs values (tier-6) and lives in
 // this crate. `bun_runtime → bun_http_jsc`, so hosting the export here breaks
 // the cycle without an opaque stub. The boxed payload is the canonical
@@ -406,7 +484,7 @@ fn handle_single_file(
 /// Returns null if parsing fails (an exception will be set on globalThis).
 /// The returned SSLConfig is heap-allocated and ownership is transferred to the caller.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebSocket__parseSSLConfig(
+extern "C" fn Bun__WebSocket__parseSSLConfig(
     global_this: &JSGlobalObject,
     tls_value: JSValue,
 ) -> Option<Box<bun_http::ssl_config::SSLConfig>> {
@@ -414,7 +492,7 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
     // constructor only runs on the JS thread with an initialized VM.
     let vm = global_this.bun_vm();
     // Use SSLConfig::from_js for clean and safe parsing
-    let config_opt = match SSLConfig::from_js(vm, global_this, tls_value) {
+    let config_opt = match SSLConfig::from_js(vm, global_this, tls_value, false) {
         Ok(c) => c,
         // Exception is already set on globalThis
         Err(_) => return None,
@@ -429,20 +507,16 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
 /// Exported for C++ so error/early-return paths in JSWebSocket.cpp and
 /// WebSocket.cpp can release ownership without leaking the heap allocation
 /// (and all duped cert/key/CA strings inside it) when `connect()` never
-/// hands the pointer off to a Zig upgrade client.
+/// hands the pointer off to an upgrade client.
 ///
 /// # Safety
 /// `config` must be null or a pointer previously returned by
 /// `Bun__WebSocket__parseSSLConfig` whose ownership the caller is transferring
 /// back (i.e. not already freed or handed to an upgrade client).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(
-    config: *mut bun_http::ssl_config::SSLConfig,
-) {
+unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut bun_http::ssl_config::SSLConfig) {
     // SAFETY: caller upholds the `# Safety` contract above — `config` is null
     // or a live pointer from `Bun__WebSocket__parseSSLConfig` whose ownership
     // is being transferred back. `heap::take` handles the null case.
     drop(unsafe { bun_core::heap::take(config) });
 }
-
-// ported from: src/runtime/socket/SSLConfig.zig

@@ -9,13 +9,13 @@ use crate::{PrintErr, Printer};
 /// }
 pub struct ScopeRule<R> {
     /// A selector list used to identify the scoping root(s).
-    pub scope_start: Option<SelectorList>,
+    pub(crate) scope_start: Option<SelectorList>,
     /// A selector list used to identify any scoping limits.
-    pub scope_end: Option<SelectorList>,
+    pub(crate) scope_end: Option<SelectorList>,
     /// Nested rules within the `@scope` rule.
-    pub rules: CssRuleList<R>,
+    pub(crate) rules: CssRuleList<R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<R> ScopeRule<R> {
@@ -26,10 +26,14 @@ impl<R> ScopeRule<R> {
 
         dest.write_str("@scope")?;
         dest.whitespace()?;
+        // The scope preludes get their own budget for `&` substitutions when
+        // compiling nesting, like style rule preludes do (see
+        // `serialize::serialize_nesting`).
+        dest.nesting_expansions = 0;
         if let Some(scope_start) = &self.scope_start {
             dest.write_char(b'(')?;
             // scope_start.to_css(dest)?;
-            // PORT NOTE: read `dest.ctx` directly (Copy) — `Printer::context()`
+            // Read `dest.ctx` directly (Copy) — `Printer::context()`
             // ties the borrow to `&self`, which conflicts with `&mut dest`.
             let ctx = dest.ctx;
             serialize_selector_list(scope_start.v.slice(), dest, ctx, false)?;
@@ -44,7 +48,6 @@ impl<R> ScopeRule<R> {
             // <scope-start> is treated as an ancestor of scope end.
             // https://drafts.csswg.org/css-nesting/#nesting-at-scope
             if let Some(scope_start) = &self.scope_start {
-                // PORT NOTE: Zig passed an anon-struct fn pointer; the Rust
                 // `Printer::with_context` carries the captured state as the
                 // first closure arg (no `&self` capture across `&mut dest`).
                 dest.with_context(
@@ -77,13 +80,13 @@ impl<R> ScopeRule<R> {
 }
 
 impl<R> ScopeRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `SelectorList::
-        // deep_clone()` intentionally drops the `&Arena` (selectors/parser.rs
-        // — every payload is arena-static); routed via `dc::selector_list`.
+        // `SelectorList::deep_clone()` intentionally drops the `&Arena`
+        // (selectors/parser.rs — every payload is arena-static); routed via
+        // `dc::selector_list`.
         Self {
             scope_start: self
                 .scope_start
@@ -98,5 +101,3 @@ impl<R> ScopeRule<R> {
         }
     }
 }
-
-// ported from: src/css/rules/scope.zig

@@ -67,19 +67,19 @@ void HkdfJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     m_result = ByteSource::allocated(dp.release());
 }
 
-extern "C" void Bun__HkdfJobCtx__runFromJS(HkdfJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, EncodedJSValue callback)
+extern "C" void Bun__HkdfJobCtx__runFromJS(HkdfJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(lexicalGlobalObject, JSValue::decode(callback));
+    *out = ctx->runFromJS(lexicalGlobalObject);
 }
-void HkdfJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
+JSCallbackArgs HkdfJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_result) {
-        JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "hkdf operation failed"_s);
-        Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-        return;
+        JSObject* err = createError(lexicalGlobalObject, "HKDF derivation failed"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        return { err };
     }
 
     auto& result = m_result.value();
@@ -88,17 +88,15 @@ void HkdfJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
     RefPtr<ArrayBuffer> buf = ArrayBuffer::tryCreateUninitialized(result.size(), 1);
     if (!buf) {
         JSObject* err = createOutOfMemoryError(lexicalGlobalObject);
-        Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-        return;
+        RETURN_IF_EXCEPTION(scope, {});
+        return { err };
     }
 
     memcpy(buf->data(), result.data(), result.size());
 
-    Bun__EventLoop__runCallback2(lexicalGlobalObject,
-        JSValue::encode(callback),
-        JSValue::encode(jsUndefined()),
-        JSValue::encode(jsNull()),
-        JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), buf.releaseNonNull())));
+    JSValue resultBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), buf.releaseNonNull());
+    RETURN_IF_EXCEPTION(scope, {});
+    return { jsNull(), resultBuffer };
 }
 
 extern "C" void Bun__HkdfJobCtx__deinit(HkdfJobCtx* ctx)
@@ -108,19 +106,6 @@ extern "C" void Bun__HkdfJobCtx__deinit(HkdfJobCtx* ctx)
 void HkdfJobCtx::deinit()
 {
     delete this;
-}
-
-extern "C" HkdfJob* Bun__HkdfJob__create(JSGlobalObject* globalObject, HkdfJobCtx* ctx, EncodedJSValue callback);
-HkdfJob* HkdfJob::create(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, JSValue callback)
-{
-    HkdfJobCtx* ctxCopy = new HkdfJobCtx(WTF::move(ctx));
-    return Bun__HkdfJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__HkdfJob__schedule(HkdfJob* job);
-void HkdfJob::schedule()
-{
-    Bun__HkdfJob__schedule(this);
 }
 
 extern "C" void Bun__HkdfJob__createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx* ctx, EncodedJSValue callback);
@@ -134,8 +119,12 @@ void HkdfJob::createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, 
 KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue key)
 {
     if (JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(key)) {
-        // Node doesn't check for CryptoKeyType::Secret, so we don't either
-        return keyObject->handle();
+        auto& handle = keyObject->handle();
+        if (handle.type() != CryptoKeyType::Secret) {
+            ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.type(), "secret"_s);
+            return {};
+        }
+        return handle;
     }
 
     // Handle string or buffer
@@ -147,47 +136,48 @@ KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue ke
 
         BufferEncodingType encoding = BufferEncodingType::utf8;
         JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, encoding));
+        RETURN_IF_EXCEPTION(scope, {});
         auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
 
-        Vector<uint8_t> copy;
-        copy.append(view->span());
-        return KeyObject::create(WTF::move(copy));
+        auto copy = copyArgumentBytes(globalObject, scope, view->span(), "key"_s);
+        if (!copy) return {};
+        return KeyObject::create(WTF::move(*copy));
     }
 
     // Handle ArrayBuffer types
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(key)) {
-        Vector<uint8_t> copy;
-        copy.append(view->span());
-        return KeyObject::create(WTF::move(copy));
+        auto copy = copyArgumentBytes(globalObject, scope, view->span(), "key"_s);
+        if (!copy) return {};
+        return KeyObject::create(WTF::move(*copy));
     }
 
     if (auto* buf = dynamicDowncast<JSC::JSArrayBuffer>(key)) {
-        auto* impl = buf->impl();
-        Vector<uint8_t> copy;
-        copy.append(impl->span());
-        return KeyObject::create(WTF::move(copy));
+        auto copy = copyArgumentBytes(globalObject, scope, buf->impl()->span(), "key"_s);
+        if (!copy) return {};
+        return KeyObject::create(WTF::move(*copy));
     }
 
     ERR::INVALID_ARG_TYPE(scope, globalObject, "ikm"_s, "string or an instance of SecretKeyObject, ArrayBuffer, TypedArray, DataView, or Buffer"_s, key);
     return {};
 }
 
-void copyBufferOrString(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSValue value, const WTF::ASCIILiteral& name, WTF::Vector<uint8_t>& buffer)
+std::optional<Vector<uint8_t>> copyBufferOrString(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSValue value, ASCIILiteral name)
 {
     if (value.isString()) {
         JSString* str = value.toString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
         GCOwnedDataScope<WTF::StringView> view = str->view(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, );
-        UTF8View utf8(view);
-        buffer.append(utf8.span());
-    } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        buffer.append(view->span());
-    } else if (auto* buf = dynamicDowncast<JSArrayBuffer>(value)) {
-        buffer.append(buf->impl()->span());
-    } else {
-        ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "string, ArrayBuffer, TypedArray, Buffer"_s, value);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        auto utf8 = UTF8View::tryCreate(lexicalGlobalObject, scope, view);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        return copyArgumentBytes(lexicalGlobalObject, scope, utf8->bytes(), name);
     }
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+        return copyArgumentBytes(lexicalGlobalObject, scope, view->span(), name);
+    if (auto* buf = dynamicDowncast<JSArrayBuffer>(value))
+        return copyArgumentBytes(lexicalGlobalObject, scope, buf->impl()->span(), name);
+    ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "string, ArrayBuffer, TypedArray, Buffer"_s, value);
+    return std::nullopt;
 }
 
 std::optional<HkdfJobCtx> HkdfJobCtx::fromJS(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, ThrowScope& scope, Mode mode)
@@ -206,20 +196,18 @@ std::optional<HkdfJobCtx> HkdfJobCtx::fromJS(JSGlobalObject* lexicalGlobalObject
     KeyObject keyObject = prepareKey(lexicalGlobalObject, scope, keyValue);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-    WTF::Vector<uint8_t> salt;
-    copyBufferOrString(lexicalGlobalObject, scope, saltValue, "salt"_s, salt);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    auto salt = copyBufferOrString(lexicalGlobalObject, scope, saltValue, "salt"_s);
+    if (!salt) return std::nullopt;
 
-    WTF::Vector<uint8_t> info;
-    copyBufferOrString(lexicalGlobalObject, scope, infoValue, "info"_s, info);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    auto info = copyBufferOrString(lexicalGlobalObject, scope, infoValue, "info"_s);
+    if (!info) return std::nullopt;
 
     int32_t length = 0;
     V::validateInteger(scope, lexicalGlobalObject, lengthValue, "length"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &length);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-    if (info.size() > 1024) {
-        ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "info"_s, "must not contain more than 1024 bytes"_s, jsNumber(info.size()));
+    if (info->size() > 1024) {
+        ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "info"_s, "must not contain more than 1024 bytes"_s, jsNumber(info->size()));
         return std::nullopt;
     }
 
@@ -236,7 +224,7 @@ std::optional<HkdfJobCtx> HkdfJobCtx::fromJS(JSGlobalObject* lexicalGlobalObject
         return std::nullopt;
     }
 
-    return HkdfJobCtx(hash, length, WTF::move(keyObject), WTF::move(info), WTF::move(salt));
+    return HkdfJobCtx(hash, length, WTF::move(keyObject), WTF::move(*info), WTF::move(*salt));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHkdf, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -267,7 +255,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHkdfSync, (JSGlobalObject * lexicalGlobalObject, JSC:
     ctx->runTask(lexicalGlobalObject);
 
     if (!ctx->m_result.has_value()) {
-        return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "hkdf operation failed"_s);
+        return throwVMError(lexicalGlobalObject, scope, "HKDF derivation failed"_s);
     }
 
     auto& result = ctx->m_result.value();

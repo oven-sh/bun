@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "3167a44fb92c268c83f09b232b38a9f3e7f9655a";
+export const WEBKIT_VERSION = "680ef47cec2ce646fc109de005882a17542c700d";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -11,7 +11,8 @@ export const WEBKIT_VERSION = "3167a44fb92c268c83f09b232b38a9f3e7f9655a";
  * Two modes via `cfg.webkit`:
  *
  * **prebuilt**: Download tarball from oven-sh/WebKit releases. Tarball name
- *   encodes {os, arch, musl, debug|lto, asan} — each is a separate ABI.
+ *   encodes {os, arch, musl, debug|lto, asan, assertions} — each is a separate
+ *   ABI — and coverage and hardened.
  *   ASAN MUST match bun's setting: WTF::Vector layout changes with ASAN
  *   (see WTF/Vector.h:682), so mixing → silent memory corruption.
  *
@@ -42,7 +43,7 @@ export const WEBKIT_VERSION = "3167a44fb92c268c83f09b232b38a9f3e7f9655a";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
-import { computeCpuTargetFlags } from "../flags.ts";
+import { computeCpuTargetFlags, hardeningFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
 import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
 
@@ -52,20 +53,24 @@ import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSo
 
 /**
  * Tarball suffix encoding ABI-affecting flags. MUST match the WebKit
- * release workflow naming in oven-sh/WebKit's CI.
+ * release workflow naming in oven-sh/WebKit's CI. There is no -baseline
+ * variant: every x64 WebKit is built at the nehalem floor.
  */
 function prebuiltSuffix(cfg: Config): string {
   let s = "";
   if (cfg.linux && cfg.abi === "musl") s += "-musl";
   if (cfg.linux && cfg.abi === "android") s += "-android";
-  // Baseline WebKit artifacts (-march=nehalem, /arch:SSE2 ICU) exist for
-  // Linux amd64 (glibc + musl) and Windows amd64. No baseline variant for
-  // arm64 or macOS. Suffix order matches the release asset names:
-  // bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
-  if (cfg.baseline && cfg.x64) s += "-baseline";
   if (cfg.debug) s += "-debug";
   else if (cfg.lto) s += "-lto";
   if (cfg.asan) s += "-asan";
+  // Built for fuzzing, for this target only (`FUZZING` in oven-sh/WebKit's
+  // .github/scripts/lanes.mjs). Every other combination gets a JSC without
+  // assertions (unless debug or asan) and without coverage.
+  if (cfg.linux && cfg.x64 && cfg.abi === "gnu" && cfg.release && !cfg.lto && !cfg.asan) {
+    if (cfg.assertions) s += "-assertions";
+    if (cfg.fuzzilli) s += "-coverage";
+  }
+  if (cfg.hardened) s += "-hardened";
   return s;
 }
 
@@ -83,11 +88,25 @@ function prebuiltUrl(cfg: Config): string {
  * doesn't reuse a wrong-ABI extraction.
  */
 function prebuiltDestDir(cfg: Config): string {
-  const version16 = cfg.webkitVersion.slice(0, 16);
+  // For 40-hex shas, 16 chars is plenty. For autobuild-preview-* tags, the
+  // meaningful sha is at the end, so use the whole thing.
+  const v = cfg.webkitVersion;
+  const version16 = v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v.slice(0, 16);
   // Cross-compiled targets share a host (and cache dir) with native builds,
-  // so include os+arch in the key — otherwise a FreeBSD/arm64 extraction
-  // collides with a Linux/x64 one at the same WebKit version.
-  const osKey = cfg.freebsd ? "-freebsd" : cfg.abi === "android" ? "-android" : "";
+  // so include os+arch in the key — otherwise a FreeBSD/arm64, macOS/x64, or
+  // Windows-cross extraction collides with a Linux/x64 one at the same WebKit
+  // version. Windows is keyed only when cross-compiling so native Windows
+  // dev machines keep their existing cache dirs.
+  const osKey =
+    cfg.windows && cfg.host.os !== "windows"
+      ? "-windows"
+      : cfg.freebsd
+        ? "-freebsd"
+        : cfg.darwin
+          ? "-macos"
+          : cfg.abi === "android"
+            ? "-android"
+            : "";
   const archKey = cfg.arm64 ? "-arm64" : "";
   return resolve(cfg.cacheDir, `webkit-${version16}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
 }
@@ -95,6 +114,11 @@ function prebuiltDestDir(cfg: Config): string {
 // ───────────────────────────────────────────────────────────────────────────
 // Lib paths — relative to destDir (prebuilt) or buildDir (local)
 // ───────────────────────────────────────────────────────────────────────────
+
+export function webkitTestFFIPath(cfg: Config): string {
+  const root = cfg.webkit === "prebuilt" ? prebuiltDestDir(cfg) : depBuildDir(cfg, "WebKit");
+  return resolve(root, "bin", cfg.windows ? "testFFI.exe" : "testFFI");
+}
 
 /** Build a lib path under the WebKit install's lib/ dir. */
 function wkLib(cfg: Config, name: string): string {
@@ -219,7 +243,7 @@ export const webkit: Dependency = {
     // forward:
     //   - CPU target (-march/-mcpu): WebKit never sets this — without it,
     //     local builds target generic x86-64 while bun + prebuilt WebKit
-    //     target haswell/nehalem.
+    //     target nehalem.
     //   - LTO/PGO: WebKit's cmake doesn't set those itself.
     //
     // Windows: ICU built from source via preBuild before cmake configure.
@@ -236,7 +260,8 @@ export const webkit: Dependency = {
     // PIE-default distros — without it the driver still passes -pie and the
     // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
     if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
-    if (cfg.lto) optFlags.push("-flto=full");
+    if (cfg.hardened) optFlags.push(...hardeningFlags);
+    if (cfg.lto) optFlags.push("-flto=thin");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
       optFlags.push(
@@ -316,6 +341,8 @@ export const webkit: Dependency = {
       CMAKE_EXPORT_COMPILE_COMMANDS: "ON",
       USE_BUN_JSC_ADDITIONS: "ON",
       USE_BUN_EVENT_LOOP: "ON",
+      // Match the prebuilt: JSC allocates through Bun's mimalloc, not libpas.
+      ...(cfg.asan ? {} : { USE_MIMALLOC: "ON", USE_EXTERNAL_MIMALLOC: "ON" }),
       ENABLE_BUN_SKIP_FAILING_ASSERTIONS: "ON",
       ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS: "ON",
       ENABLE_REMOTE_INSPECTOR: "ON",
@@ -323,6 +350,11 @@ export const webkit: Dependency = {
       ENABLE_MEDIA_STREAM: "OFF",
       ENABLE_WEB_RTC: "OFF",
       ...(cfg.asan ? { ENABLE_SANITIZERS: "address" } : {}),
+      // Bun's C++ is compiled with ASSERT_ENABLED=1 when cfg.assertions (release-asan,
+      // release-assertions); WebKit must match or ASSERT-only symbols fail to link.
+      ...(cfg.assertions && cfg.release ? { ENABLE_ASSERTS: "ON" } : {}),
+      // JSC compiled with the coverage flag bun's own C++ gets (flags.ts); FuzzilliREPRL.cpp has the callbacks.
+      ...(cfg.fuzzilli ? { ENABLE_FUZZILLI: "ON" } : {}),
     };
 
     const spec: NestedCmakeBuild = {

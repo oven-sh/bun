@@ -1,5 +1,5 @@
 /// https://developer.mozilla.org/en-US/docs/Web/API/Request/cache
-#[repr(u8)] // Zig: enum(u3) — Rust has no u3, u8 is the smallest repr
+#[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr)]
 pub enum FetchCacheMode {
     #[strum(serialize = "default")]
@@ -16,8 +16,8 @@ pub enum FetchCacheMode {
     OnlyIfCached,
 }
 
-impl FetchCacheMode {
-    pub const MAP: phf::Map<&'static [u8], FetchCacheMode> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub static MAP: FetchCacheMode = {
         b"default" => FetchCacheMode::Default,
         b"no-store" => FetchCacheMode::NoStore,
         b"reload" => FetchCacheMode::Reload,
@@ -25,8 +25,11 @@ impl FetchCacheMode {
         b"force-cache" => FetchCacheMode::ForceCache,
         b"only-if-cached" => FetchCacheMode::OnlyIfCached,
     };
-    // Zig `pub const toJS = @import("../http_jsc/fetch_enums_jsc.zig").fetchCacheModeToJS;`
-    // deleted — to_js lives as an extension-trait method in bun_http_jsc (see PORTING.md §Idiom map).
 }
 
-// ported from: src/http_types/FetchCacheMode.zig
+impl FetchCacheMode {
+    /// The map type is a zero-sized handle, so this is the same map as the
+    /// module-level `MAP` static.
+    pub const MAP: __ComptimeStringMap_MAP = __ComptimeStringMap_MAP(());
+    // to_js lives as an extension-trait method in bun_http_jsc (see PORTING.md §Idiom map).
+}

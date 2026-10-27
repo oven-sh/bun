@@ -1,0 +1,77 @@
+const clusterRawBind = $bindgen("node_cluster_binding.bind.ts", "clusterRawBind");
+const closeRawHandle = $bindgen("node_cluster_binding.bind.ts", "clusterCloseHandle");
+const validateFd = $bindgen("node_cluster_binding.bind.ts", "clusterValidateFd");
+
+export default class SharedHandle {
+  key;
+  workers;
+  handle;
+  errno;
+  data;
+  sharedOnly;
+
+  constructor(key, address, { port, addressType, fd, flags, sharedOnly }) {
+    this.key = key;
+    this.workers = new Map();
+    this.handle = null;
+    this.errno = 0;
+    this.data = undefined;
+    this.sharedOnly = sharedOnly === true;
+
+    if (typeof fd === "number" && fd >= 0) {
+      const err = validateFd(fd, addressType === "udp4" || addressType === "udp6");
+      if (err !== 0) {
+        this.errno = err;
+      } else {
+        this.handle = { fd, port };
+      }
+      return;
+    }
+    const rval = clusterRawBind(addressType, address, typeof port === "number" ? port : 0, flags | 0);
+    if (typeof rval === "number") this.errno = rval;
+    else {
+      this.handle = rval;
+      if (addressType === -1 && (typeof address !== "string" || address.charCodeAt(0) !== 0)) {
+        this.handle.path = address;
+      }
+    }
+  }
+
+  add(worker, send) {
+    $assert(!this.workers.has(worker.id));
+    this.workers.set(worker.id, worker);
+    send(this.errno, null, this.handle);
+  }
+
+  has(worker) {
+    return this.workers.has(worker.id);
+  }
+
+  // Returns the file descriptor that remove() closes, or -1.
+  get fd() {
+    const handle = this.handle;
+    return handle ? handle.fd : -1;
+  }
+
+  remove(worker) {
+    const workers = this.workers;
+    if (!workers.has(worker.id)) return false;
+
+    workers.delete(worker.id);
+
+    if (workers.size !== 0) return false;
+
+    const handle = this.handle;
+    if (handle) {
+      const { fd, path } = handle;
+      closeRawHandle(fd);
+      if (path) {
+        try {
+          require("node:fs").unlinkSync(path);
+        } catch {}
+      }
+      this.handle = null;
+    }
+    return true;
+  }
+}

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import assert from "node:assert";
+import fs from "node:fs";
 // import child from "node:child_process";
 import path from "node:path";
 // import fixtures from "./common/fixtures.js";
@@ -111,6 +112,68 @@ describe("path.resolve", () => {
     expect(path.win32.resolve("//a/b", "//c/d", "C:foo")).toBe(path.win32.resolve("C:foo"));
   });
 
+  // Drive-relative paths ("C:foo") resolve against the per-drive cwd in `=C:`.
+  // Spawn a child with a known `=C:` so the expected output is deterministic.
+  test.skipIf(!isWindows)("win32 drive-relative input resolves against the per-drive cwd (=X: env var)", async () => {
+    const script = `const p = require("path");
+      console.log(JSON.stringify([
+        p.resolve("C:foo"),
+        p.resolve("C:"),
+        p.resolve("C:", "foo"),
+        p.resolve("C:foo/bar"),
+        p.resolve("c:foo"),
+        p.win32.resolve("C:foo"),
+        p.toNamespacedPath("C:foo"),
+      ]));`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, "=C:": "C:\\known\\dir" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      stdout: [
+        "C:\\known\\dir\\foo",
+        "C:\\known\\dir",
+        "C:\\known\\dir\\foo",
+        "C:\\known\\dir\\foo\\bar",
+        "c:\\known\\dir\\foo",
+        "C:\\known\\dir\\foo",
+        "\\\\?\\C:\\known\\dir\\foo",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.skipIf(isWindows)(
+    "win32 drive-relative input resolves when the working directory is the filesystem root",
+    async () => {
+      const script = `const p = require("path");
+      console.log(JSON.stringify([
+        p.win32.resolve("C:foo"),
+        p.win32.resolve("C:"),
+      ]));`;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        cwd: "/",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(JSON.stringify(["C:\\foo", "C:\\"]));
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.skipIf(!isWindows)("win32 drive-relative input on another drive resolves against that drive's root", () => {
+    const drive = process.cwd()[0].toUpperCase() === "Z" ? "Y:" : "Z:";
+    expect(path.resolve(drive + "foo")).toBe(drive + "\\foo");
+    expect(path.resolve(drive + "a", "b")).toBe(drive + "\\a\\b");
+  });
+
   test("undefined argument are ignored if absolute path comes first (reverse loop through args)", () => {
     expect(() => {
       return path.posix.resolve(undefined, "hi");
@@ -143,5 +206,28 @@ describe("path.resolve", () => {
     // On Windows, paths use backslash; on POSIX, forward slash
     const expectedEnding = isWindows ? "\\c" : "/c";
     assert.ok(result.endsWith(expectedEnding));
+  });
+
+  test.skipIf(isWindows)("a backslash at the end of the cwd is part of its name", async () => {
+    using dir = tempDir("resolve-backslash-cwd", { "e\\/z": "" });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const path = require("node:path");
+         console.log(JSON.stringify([path.resolve("z"), path.resolve("."), path.relative("..", "z")]));`,
+      ],
+      env: bunEnv,
+      cwd: path.join(String(dir), "e\\"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const cwd = fs.realpathSync(String(dir)) + "/e\\";
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([cwd + "/z", cwd, "e\\/z"]);
+    expect(exitCode).toBe(0);
   });
 });

@@ -27,7 +27,7 @@ describe("next-auth", () => {
       await runBunInstall(bunEnv, testDir, { savesLockfile: false });
 
       console.log("starting server");
-      const result = bunRun(join(testDir, "server.js"), {
+      const result = await bunRun(join(testDir, "server.js"), {
         AUTH_SECRET: "I7Jiq12TSMlPlAzyVAT+HxYX7OQb/TTqIbfTTpr1rg8=",
       });
 
@@ -37,6 +37,7 @@ describe("next-auth", () => {
       expect(result.stdout).toBeDefined();
       const lines = result.stdout?.split("\n") ?? [];
       expect(lines[lines.length - 1]).toMatch(/request sent/);
+      expect(result.exitCode).toBe(0);
     },
     90_000,
   );

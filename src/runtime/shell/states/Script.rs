@@ -9,18 +9,18 @@ use crate::shell::states::base::Base;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
-pub struct Script {
-    pub base: Base,
+pub(crate) struct Script {
+    pub(crate) base: Base,
     /// Back-reference into the bumpalo-allocated AST (`ShellArgs::__arena`).
     /// The arena outlives every state node (it's dropped only when the
     /// interpreter is finalized), so the BackRef invariant holds. Stored
     /// lifetime-erased to keep `Node` lifetime-free.
     pub node: bun_ptr::BackRef<ast::Script>,
-    pub io: IO,
-    pub state: ScriptState,
+    pub(crate) io: IO,
+    pub(crate) state: ScriptState,
 }
 
-pub enum ScriptState {
+pub(crate) enum ScriptState {
     Normal { idx: usize },
 }
 
@@ -31,7 +31,7 @@ impl Default for ScriptState {
 }
 
 impl Script {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: *const ast::Script,
@@ -39,7 +39,7 @@ impl Script {
         io: IO,
     ) -> NodeId {
         let id = interp.alloc_node(Node::Script(Script {
-            base: Base::new(StateKind::Script, parent, shell),
+            base: Base::new(parent, shell),
             // SAFETY: `node` is non-null and points into the AST arena
             // (`ShellArgs::__arena`), which the interpreter holds for its
             // entire lifetime — strictly outliving every state node (the
@@ -53,14 +53,14 @@ impl Script {
         id
     }
 
-    pub fn start(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, this: NodeId) -> Yield {
         if Self::stmt_count(interp, this) == 0 {
             return Self::finish(interp, this, 0);
         }
         Yield::Next(this)
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let (idx, shell) = {
             let me = interp.as_script_mut(this);
             let len = Self::stmt_count_of(me);
@@ -72,8 +72,6 @@ impl Script {
             *idx += 1;
             (i, me.base.shell)
         };
-        // PORT NOTE: reshaped for borrowck — captured idx/shell into locals
-        // before re-borrowing interp for Stmt::init.
         let stmt_node = Self::stmt_at(interp, this, idx);
         let io = interp.as_script(this).io.clone();
         let stmt = Stmt::init(interp, shell, stmt_node, this, io);
@@ -85,7 +83,7 @@ impl Script {
         interp.child_done(parent, this, exit_code)
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -97,13 +95,13 @@ impl Script {
             let ScriptState::Normal { idx } = me.state;
             (idx, Self::stmt_count_of(me))
         };
-        if idx >= len {
+        if idx >= len || interp.interrupted(this) {
             return Self::finish(interp, this, exit_code);
         }
         Self::next(interp, this)
     }
 
-    pub fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Script {} deinit", this);
         let parent = interp.as_script(this).base.parent;
         let parent_kind = if parent == NodeId::INTERPRETER {
@@ -118,7 +116,7 @@ impl Script {
             // The shell env is owned by the parent when the parent is the
             // Interpreter or a Subshell; otherwise this Script represents a
             // command substitution which duped from the parent and must
-            // deinitialize it (Zig: `this.base.shell.deinit()`).
+            // deinitialize it.
             if !me.base.shell.is_null() {
                 // SAFETY: `me.base.shell` is the duped env this Script owned;
                 // null-checked and exclusively held here.
@@ -126,16 +124,7 @@ impl Script {
                 me.base.shell = core::ptr::null_mut();
             }
         }
-        me.base.end_scope();
         // free_node is done by the caller (Interpreter::deinit_node).
-    }
-
-    pub fn deinit_from_interpreter(interp: &Interpreter, this: NodeId) {
-        log!("Script {} deinitFromInterpreter", this);
-        let me = interp.as_script_mut(this);
-        // io.deinit() — IO Drop handles it.
-        // Let the interpreter deinitialize the root shell state.
-        me.base.end_scope();
     }
 
     // ── AST helpers ────────────────────────────────────────────────────────
@@ -156,5 +145,3 @@ impl Script {
         &raw const me.node.stmts[idx]
     }
 }
-
-// ported from: src/shell/states/Script.zig

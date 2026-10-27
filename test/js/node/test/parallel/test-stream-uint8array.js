@@ -80,9 +80,11 @@ const GHI = new Uint8Array([0x47, 0x48, 0x49]);
   readable.push(DEF);
   readable.unshift(ABC);
 
+  // read() with no size returns one buffered chunk at a time.
   const buf = readable.read();
   assert(buf instanceof Buffer);
-  assert.deepStrictEqual([...buf], [...ABC, ...DEF]);
+  assert.deepStrictEqual([...buf], [...ABC]);
+  assert.deepStrictEqual([...readable.read()], [...DEF]);
 }
 
 {

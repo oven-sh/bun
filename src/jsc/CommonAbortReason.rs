@@ -16,8 +16,6 @@ impl CommonAbortReasonExt for CommonAbortReason {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; C++ allocating
 // the JS error value through it is interior mutation invisible to Rust.
 unsafe extern "C" {
@@ -26,5 +24,3 @@ unsafe extern "C" {
         reason: CommonAbortReason,
     ) -> JSValue;
 }
-
-// ported from: src/jsc/CommonAbortReason.zig

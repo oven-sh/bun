@@ -37,8 +37,8 @@ static const JSC::HashTableValue JSECDHPrototypeTableValues[] = {
 void JSECDHPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSECDHPrototype::info(), JSECDHPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSECDHPrototype::info(), JSECDHPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGenerateKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -127,7 +127,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     }
 
     // Compute the shared secret
-    if (!ECDH_compute_key(secret.begin(), secret.size(), pubPoint, ecdh->m_key.get(), nullptr)) {
+    int written = ECDH_compute_key(secret.begin(), secret.size(), pubPoint, ecdh->m_key.get(), nullptr);
+    if (written != static_cast<int>(secret.size())) {
         return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to compute ECDH key"_s);
     }
 

@@ -25,11 +25,10 @@ pub enum BoxSizing {
     /// Include the padding and border (but not the margin) in the width and height.
     BorderBox,
 }
-// PORT NOTE: css::DefineEnumProperty(@This()) — provided eql/hash/parse/toCss/deepClone via
-// comptime reflection over @tagName. Hand-written here (only two variants) so the inherent
-// `parse`/`to_css` participate in `impl_parse_tocss_via_inherent!` without a derive-coherence clash.
+// Hand-written (only two variants) so the inherent `parse`/`to_css` participate in
+// `impl_parse_tocss_via_inherent!` without a derive-coherence clash.
 impl BoxSizing {
-    pub fn parse(input: &mut css::Parser) -> css::Result<BoxSizing> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<BoxSizing> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
         if bun_core::eql_case_insensitive_ascii(ident, b"content-box", true) {
@@ -41,16 +40,11 @@ impl BoxSizing {
         }
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_str(match self {
             BoxSizing::ContentBox => "content-box",
             BoxSizing::BorderBox => "border-box",
         })
-    }
-
-    #[inline]
-    pub fn deep_clone(self, _bump: &Bump) -> Self {
-        self
     }
 }
 
@@ -75,9 +69,8 @@ pub enum Size {
 }
 
 /// Case-insensitive keyword dispatch for `Size`/`MaxSize` parse bodies.
-/// PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive` —
-/// expanded as an `if`-chain over `eql_case_insensitive_ascii::<true>` (≤14 keys;
-/// per PORTING.md a phf table is overkill at this size).
+/// An `if`-chain over `eql_case_insensitive_ascii::<true>` (≤14 keys;
+/// a phf table is overkill at this size).
 macro_rules! size_ident_match {
     ($ident:expr, { $($lit:literal => $val:expr,)+ } else $err:expr) => {{
         let __ident: &[u8] = $ident;
@@ -88,7 +81,7 @@ macro_rules! size_ident_match {
 }
 
 impl Size {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Size> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Size> {
         let res = input.try_parse(|i: &mut css::Parser| -> css::Result<Size> {
             let ident = i.expect_ident()?;
             size_ident_match!(ident, {
@@ -121,7 +114,7 @@ impl Size {
         Ok(Size::LengthPercentage(lp))
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Size::Auto => dest.write_str("auto"),
             Size::Contain => dest.write_str("contain"),
@@ -158,10 +151,10 @@ impl Size {
     }
 }
 
-// PORT NOTE: split out of `impl Size` above — these don't depend on
+// Split out of `impl Size` above — these don't depend on
 // `parse`/`to_css` surface and are needed by `SizeHandler`.
 impl Size {
-    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
             Size::LengthPercentage(l) => l.is_compatible(browsers),
@@ -188,14 +181,12 @@ impl Size {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone — comptime field-walk; `Size` carries
-        // only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
+        // `Size` carries only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
         self.clone()
     }
 
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // TODO(port): css.implementEql — comptime field-walk; #[derive(PartialEq)] above covers it.
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
         lhs == rhs
     }
 }
@@ -224,7 +215,7 @@ pub enum MaxSize {
 }
 
 impl MaxSize {
-    pub fn parse(input: &mut css::Parser) -> css::Result<MaxSize> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<MaxSize> {
         let res = input.try_parse(|i: &mut css::Parser| -> css::Result<MaxSize> {
             let ident = i.expect_ident()?;
             size_ident_match!(ident, {
@@ -259,7 +250,7 @@ impl MaxSize {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             MaxSize::None => dest.write_str("none"),
             MaxSize::Contain => dest.write_str("contain"),
@@ -296,10 +287,10 @@ impl MaxSize {
     }
 }
 
-// PORT NOTE: split out of `impl MaxSize` above — these don't depend on
+// Split out of `impl MaxSize` above — these don't depend on
 // `parse`/`to_css` surface and are needed by `SizeHandler`.
 impl MaxSize {
-    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
             MaxSize::LengthPercentage(l) => l.is_compatible(browsers),
@@ -326,13 +317,12 @@ impl MaxSize {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone — comptime field-walk; `MaxSize` carries
-        // only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
+        // `MaxSize` carries only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
         self.clone()
     }
 
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
         lhs == rhs
     }
 }
@@ -341,13 +331,13 @@ impl MaxSize {
 #[derive(Copy, Clone, PartialEq)]
 pub struct AspectRatio {
     /// The `auto` keyword.
-    pub auto: bool,
+    pub(crate) auto: bool,
     /// A preferred aspect ratio for the box, specified as width / height.
-    pub ratio: Option<Ratio>,
+    pub(crate) ratio: Option<Ratio>,
 }
 
 impl AspectRatio {
-    pub fn parse(input: &mut css::Parser) -> css::Result<AspectRatio> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<AspectRatio> {
         let location = input.current_source_location();
         let mut auto = input.try_parse(|i| i.expect_ident_matching(b"auto"));
 
@@ -365,7 +355,7 @@ impl AspectRatio {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.auto {
             dest.write_str("auto")?;
         }
@@ -379,12 +369,12 @@ impl AspectRatio {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        // PORT NOTE: css.implementDeepClone — `Ratio` is two `f32`s; #[derive(Clone)] is exact.
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
+        // `Ratio` is two `f32`s; #[derive(Clone)] is exact.
         *self
     }
 
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
         lhs == rhs
     }
 }
@@ -414,9 +404,7 @@ bitflags::bitflags! {
 }
 
 impl SizeProperty {
-    pub fn try_from_property_id_tag(property_id: PropertyIdTag) -> Option<SizeProperty> {
-        // TODO(port): Zig used `inline for (std.meta.fields(@This()))` to compare each
-        // bitfield name against PropertyIdTag's @tagName. Expanded explicitly here.
+    fn try_from_property_id_tag(property_id: PropertyIdTag) -> Option<SizeProperty> {
         match property_id {
             PropertyIdTag::Width => Some(SizeProperty::WIDTH),
             PropertyIdTag::Height => Some(SizeProperty::HEIGHT),
@@ -437,34 +425,28 @@ impl SizeProperty {
 
 #[derive(Default)]
 pub struct SizeHandler {
-    pub width: Option<Size>,
-    pub height: Option<Size>,
-    pub min_width: Option<Size>,
-    pub min_height: Option<Size>,
-    pub max_width: Option<MaxSize>,
-    pub max_height: Option<MaxSize>,
-    pub block_size: Option<Size>,
-    pub inline_size: Option<Size>,
-    pub min_block_size: Option<Size>,
-    pub min_inline_size: Option<Size>,
-    pub max_block_size: Option<MaxSize>,
-    pub max_inline_size: Option<MaxSize>,
-    pub has_any: bool,
-    pub flushed_properties: SizeProperty,
-    pub category: PropertyCategory,
+    pub(crate) width: Option<Size>,
+    pub(crate) height: Option<Size>,
+    pub(crate) min_width: Option<Size>,
+    pub(crate) min_height: Option<Size>,
+    pub(crate) max_width: Option<MaxSize>,
+    pub(crate) max_height: Option<MaxSize>,
+    pub(crate) block_size: Option<Size>,
+    pub(crate) inline_size: Option<Size>,
+    pub(crate) min_block_size: Option<Size>,
+    pub(crate) min_inline_size: Option<Size>,
+    pub(crate) max_block_size: Option<MaxSize>,
+    pub(crate) max_inline_size: Option<MaxSize>,
+    pub(crate) has_any: bool,
+    pub(crate) flushed_properties: SizeProperty,
+    pub(crate) category: PropertyCategory,
 }
 
-// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext; the
+// `context.arena` was dropped from PropertyHandlerContext; the
 // arena is recovered via `dest.bump()`.
 use css::compat::Feature;
 
-// ─── helper macros (Zig used `inline fn` + `comptime []const u8` field names + @field/@unionInit) ───
-//
-// TODO(port): the following four macros replace Zig's `propertyHelper`, `logicalUnparsedHelper`,
-// `flushPrefixHelper`, `flushPropertyHelper`, `flushLogicalHelper`. The Zig code passes field
-// names as comptime strings and uses @field/@unionInit/@tagName to splice them into struct/enum
-// accesses. Rust has no equivalent reflection — macro_rules! is the closest 1:1 mapping.
-// PERF(port): was comptime monomorphization.
+// ─── helper macros ───
 
 macro_rules! property_helper {
     ($this:expr, $field:ident, $ty:ty, $value:expr, $category:expr, $dest:expr, $context:expr) => {{
@@ -492,8 +474,7 @@ macro_rules! logical_unparsed_helper {
             $this.flushed_properties.insert(
                 SizeProperty::try_from_property_id_tag($unparsed.property_id.tag()).unwrap(),
             );
-            // PORT NOTE: Zig pushed `property.deepClone(arena)`; the matched
-            // payload is `Unparsed`, so reconstruct directly.
+            // The matched payload is `Unparsed`, so reconstruct directly.
             $dest.push(Property::Unparsed($unparsed.deep_clone(bump)));
         } else {
             $dest.push(Property::Unparsed(
@@ -504,117 +485,71 @@ macro_rules! logical_unparsed_helper {
     }};
 }
 
-macro_rules! flush_prefix_helper {
-    ($this:expr, $prop_flag:expr, $prop_variant:ident, $size_ty:ident, $feature:ident, $size_variant:ident, $dest:expr, $context:expr) => {{
-        if !$this.flushed_properties.contains($prop_flag) {
-            let prefixes = $context
+/// The keyword sizes that may need vendor-prefixed fallbacks (`stretch`,
+/// `min-content`, ...), shared by `Size` and `MaxSize` so `flush` is one
+/// out-of-line helper per value type instead of one expansion per property.
+trait PrefixedKeyword: Sized {
+    fn unprefixed_keyword(&self) -> Option<(css::prefixes::Feature, fn(VendorPrefix) -> Self)>;
+}
+
+macro_rules! impl_prefixed_keyword {
+    ($ty:ident) => {
+        impl PrefixedKeyword for $ty {
+            fn unprefixed_keyword(
+                &self,
+            ) -> Option<(css::prefixes::Feature, fn(VendorPrefix) -> Self)> {
+                use css::prefixes::Feature;
+                match self {
+                    $ty::Stretch(vp) if *vp == VendorPrefix::NONE => {
+                        Some((Feature::Stretch, $ty::Stretch))
+                    }
+                    $ty::MinContent(vp) if *vp == VendorPrefix::NONE => {
+                        Some((Feature::MinContent, $ty::MinContent))
+                    }
+                    $ty::MaxContent(vp) if *vp == VendorPrefix::NONE => {
+                        Some((Feature::MaxContent, $ty::MaxContent))
+                    }
+                    $ty::FitContent(vp) if *vp == VendorPrefix::NONE => {
+                        Some((Feature::FitContent, $ty::FitContent))
+                    }
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+impl_prefixed_keyword!(Size);
+impl_prefixed_keyword!(MaxSize);
+
+#[inline(never)]
+fn flush_size_property<T: PrefixedKeyword>(
+    flushed_properties: &mut SizeProperty,
+    val: Option<T>,
+    flag: SizeProperty,
+    property: fn(T) -> Property,
+    dest: &mut DeclarationList,
+    context: &PropertyHandlerContext,
+) {
+    let Some(val) = val else {
+        return;
+    };
+    if let Some((feature, keyword)) = val.unprefixed_keyword() {
+        if !flushed_properties.contains(flag) {
+            let prefixes = context
                 .targets
-                .prefixes(VendorPrefix::NONE, css::prefixes::Feature::$feature)
+                .prefixes(VendorPrefix::NONE, feature)
                 .difference(VendorPrefix::NONE);
-            // TODO(port): `inline for (css.VendorPrefix.FIELDS)` — iterate set bits.
             for prefix in prefixes.iter() {
-                $dest.push(Property::$prop_variant($size_ty::$size_variant(prefix)));
+                dest.push(property(keyword(prefix)));
             }
         }
-    }};
-}
-
-macro_rules! flush_property_helper {
-    ($this:expr, $prop_flag:expr, $prop_variant:ident, $field:ident, $size_ty:ident, $dest:expr, $context:expr) => {{
-        if let Some(val) = $this.$field.take() {
-            match &val {
-                $size_ty::Stretch(vp) if *vp == VendorPrefix::NONE => {
-                    flush_prefix_helper!(
-                        $this,
-                        $prop_flag,
-                        $prop_variant,
-                        $size_ty,
-                        Stretch,
-                        Stretch,
-                        $dest,
-                        $context
-                    );
-                }
-                $size_ty::MinContent(vp) if *vp == VendorPrefix::NONE => {
-                    flush_prefix_helper!(
-                        $this,
-                        $prop_flag,
-                        $prop_variant,
-                        $size_ty,
-                        MinContent,
-                        MinContent,
-                        $dest,
-                        $context
-                    );
-                }
-                $size_ty::MaxContent(vp) if *vp == VendorPrefix::NONE => {
-                    flush_prefix_helper!(
-                        $this,
-                        $prop_flag,
-                        $prop_variant,
-                        $size_ty,
-                        MaxContent,
-                        MaxContent,
-                        $dest,
-                        $context
-                    );
-                }
-                $size_ty::FitContent(vp) if *vp == VendorPrefix::NONE => {
-                    flush_prefix_helper!(
-                        $this,
-                        $prop_flag,
-                        $prop_variant,
-                        $size_ty,
-                        FitContent,
-                        FitContent,
-                        $dest,
-                        $context
-                    );
-                }
-                _ => {}
-            }
-            $dest.push(Property::$prop_variant(val));
-            $this.flushed_properties.insert($prop_flag);
-        }
-    }};
-}
-
-macro_rules! flush_logical_helper {
-    (
-        $this:expr,
-        $prop_flag:expr, $prop_variant:ident,
-        $field:ident,
-        $phys_flag:expr, $phys_variant:ident,
-        $size_ty:ident,
-        $logical_supported:expr,
-        $dest:expr, $context:expr
-    ) => {{
-        if $logical_supported {
-            flush_property_helper!(
-                $this,
-                $prop_flag,
-                $prop_variant,
-                $field,
-                $size_ty,
-                $dest,
-                $context
-            );
-        } else {
-            flush_property_helper!(
-                $this,
-                $phys_flag,
-                $phys_variant,
-                $field,
-                $size_ty,
-                $dest,
-                $context
-            );
-        }
-    }};
+    }
+    dest.push(property(val));
+    flushed_properties.insert(flag);
 }
 
 impl SizeHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut DeclarationList,
@@ -830,138 +765,81 @@ impl SizeHandler {
         true
     }
 
-    pub fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
             return;
         }
 
         self.has_any = false;
         let logical_supported = !context.should_compile_logical(Feature::LogicalSize);
+        let flushed = &mut self.flushed_properties;
 
-        flush_property_helper!(self, SizeProperty::WIDTH, Width, width, Size, dest, context);
-        flush_property_helper!(
-            self,
-            SizeProperty::MIN_WIDTH,
-            MinWidth,
-            min_width,
-            Size,
-            dest,
-            context
-        );
-        flush_property_helper!(
-            self,
-            SizeProperty::MAX_WIDTH,
-            MaxWidth,
-            max_width,
-            MaxSize,
-            dest,
-            context
-        );
-        flush_property_helper!(
-            self,
-            SizeProperty::HEIGHT,
-            Height,
-            height,
-            Size,
-            dest,
-            context
-        );
-        flush_property_helper!(
-            self,
-            SizeProperty::MIN_HEIGHT,
-            MinHeight,
-            min_height,
-            Size,
-            dest,
-            context
-        );
-        flush_property_helper!(
-            self,
-            SizeProperty::MAX_HEIGHT,
-            MaxHeight,
-            max_height,
-            MaxSize,
-            dest,
-            context
-        );
-        flush_logical_helper!(
-            self,
-            SizeProperty::BLOCK_SIZE,
-            BlockSize,
-            block_size,
-            SizeProperty::HEIGHT,
-            Height,
-            Size,
-            logical_supported,
-            dest,
-            context
-        );
-        flush_logical_helper!(
-            self,
-            SizeProperty::MIN_BLOCK_SIZE,
+        macro_rules! physical {
+            ($flag:ident, $variant:ident, $field:ident) => {
+                flush_size_property(
+                    flushed,
+                    self.$field.take(),
+                    SizeProperty::$flag,
+                    Property::$variant,
+                    dest,
+                    context,
+                )
+            };
+        }
+        macro_rules! logical {
+            ($flag:ident, $variant:ident, $field:ident, $phys_flag:ident, $phys_variant:ident) => {
+                if logical_supported {
+                    physical!($flag, $variant, $field)
+                } else {
+                    physical!($phys_flag, $phys_variant, $field)
+                }
+            };
+        }
+
+        physical!(WIDTH, Width, width);
+        physical!(MIN_WIDTH, MinWidth, min_width);
+        physical!(MAX_WIDTH, MaxWidth, max_width);
+        physical!(HEIGHT, Height, height);
+        physical!(MIN_HEIGHT, MinHeight, min_height);
+        physical!(MAX_HEIGHT, MaxHeight, max_height);
+        logical!(BLOCK_SIZE, BlockSize, block_size, HEIGHT, Height);
+        logical!(
+            MIN_BLOCK_SIZE,
             MinBlockSize,
             min_block_size,
-            SizeProperty::MIN_HEIGHT,
-            MinHeight,
-            Size,
-            logical_supported,
-            dest,
-            context
+            MIN_HEIGHT,
+            MinHeight
         );
-        flush_logical_helper!(
-            self,
-            SizeProperty::MAX_BLOCK_SIZE,
+        logical!(
+            MAX_BLOCK_SIZE,
             MaxBlockSize,
             max_block_size,
-            SizeProperty::MAX_HEIGHT,
-            MaxHeight,
-            MaxSize,
-            logical_supported,
-            dest,
-            context
+            MAX_HEIGHT,
+            MaxHeight
         );
-        flush_logical_helper!(
-            self,
-            SizeProperty::INLINE_SIZE,
-            InlineSize,
-            inline_size,
-            SizeProperty::WIDTH,
-            Width,
-            Size,
-            logical_supported,
-            dest,
-            context
-        );
-        flush_logical_helper!(
-            self,
-            SizeProperty::MIN_INLINE_SIZE,
+        logical!(INLINE_SIZE, InlineSize, inline_size, WIDTH, Width);
+        logical!(
+            MIN_INLINE_SIZE,
             MinInlineSize,
             min_inline_size,
-            SizeProperty::MIN_WIDTH,
-            MinWidth,
-            Size,
-            logical_supported,
-            dest,
-            context
+            MIN_WIDTH,
+            MinWidth
         );
-        flush_logical_helper!(
-            self,
-            SizeProperty::MAX_INLINE_SIZE,
+        logical!(
+            MAX_INLINE_SIZE,
             MaxInlineSize,
             max_inline_size,
-            SizeProperty::MAX_WIDTH,
-            MaxWidth,
-            MaxSize,
-            logical_supported,
-            dest,
-            context
+            MAX_WIDTH,
+            MaxWidth
         );
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
         self.flushed_properties = SizeProperty::empty();
     }
 }
-
-// ported from: src/css/properties/size.zig

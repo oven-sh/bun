@@ -44,8 +44,8 @@ static const HashTableValue JSHTTPParserPrototypeTableValues[] = {
 void JSHTTPParserPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, info(), JSHTTPParserPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, info(), JSHTTPParserPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_close, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -129,7 +129,33 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
             return {};
         }
 
-        JSValue result = parser->impl()->execute(globalObject, reinterpret_cast<const char*>(buffer->vector()), buffer->byteLength());
+        RefPtr<ArrayBuffer> backingBuffer = buffer->possiblySharedBuffer();
+        if (!backingBuffer) {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+
+        std::span<const uint8_t> input = buffer->span();
+
+        // A pin stops transfer(), not resize() or a WebAssembly.Memory grow(), which a callback can call.
+        WTF::Vector<uint8_t> owned;
+        bool copied = !input.empty() && (backingBuffer->isResizableNonShared() || backingBuffer->isWasmMemory());
+        if (copied) {
+            if (!owned.tryAppend(input)) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            input = owned.span();
+        }
+
+        bool pinned = !copied && !backingBuffer->isShared();
+        if (pinned)
+            backingBuffer->pin();
+
+        JSValue result = parser->impl()->execute(globalObject, reinterpret_cast<const char*>(input.data()), input.size());
+
+        if (pinned)
+            backingBuffer->unpin();
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!result.isEmpty()) {

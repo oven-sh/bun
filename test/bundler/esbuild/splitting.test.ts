@@ -512,9 +512,10 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js", "/c.js"],
     splitting: true,
     minifyIdentifiers: true,
+    // `foo` crosses chunks, so it carries one bundle-wide minified name.
     run: [
-      { file: "/out/a.js", stdout: "[Function: f]" },
-      { file: "/out/b.js", stdout: "[Function: f]" },
+      { file: "/out/a.js", stdout: "[Function: o]" },
+      { file: "/out/b.js", stdout: "[Function: o]" },
     ],
   });
   itBundled("splitting/HybridESMAndCJSESBuildIssue617", {
@@ -632,4 +633,33 @@ describe("bundler", () => {
       stdout: "success",
     },
   });
+  // https://github.com/oven-sh/bun/issues/32395
+  for (const format of ["cjs", "iife"] as const) {
+    for (const backend of ["cli", "api"] as const) {
+      itBundled(`splitting/ErrorWithNonEsmFormat_${format}_${backend}`, {
+        files: {
+          "/shared.js": /* js */ `
+            export function sharedFn() { return "shared"; }
+            export const sharedConst = 42;
+          `,
+          "/a.js": /* js */ `
+            import { sharedFn, sharedConst } from "./shared";
+            export const a = sharedFn() + sharedConst;
+          `,
+          "/b.js": /* js */ `
+            import { sharedFn, sharedConst } from "./shared";
+            export const b = sharedFn() + sharedConst;
+          `,
+        },
+        entryPoints: ["/a.js", "/b.js"],
+        outdir: "/out",
+        splitting: true,
+        format,
+        backend,
+        bundleErrors: {
+          "<bun>": ['Code splitting is currently only supported when format is set to "esm"'],
+        },
+      });
+    }
+  }
 });

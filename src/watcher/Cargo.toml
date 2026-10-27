@@ -10,13 +10,10 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+thiserror.workspace = true
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
-const_format.workspace = true
-enum-map.workspace = true
-enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_core.workspace = true
@@ -26,3 +23,4 @@ bun_paths.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
 bun_wyhash.workspace = true
+bun_errno.workspace = true

@@ -1,25 +1,22 @@
 //! `createPostgresError` / `postgresErrorToJS` bridges.
 
-use crate::jsc::{JSGlobalObject, JSValue, JsError, JsResult, bun_string_jsc};
+use crate::jsc::{
+    JSGlobalObject, JSValue, JsError, JsResult, SQLErrorClass, bun_string_jsc, create_sql_error,
+};
 use bun_sql::postgres::any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
 
-pub fn create_postgres_error(
+pub(crate) fn create_postgres_error(
     global: &JSGlobalObject,
     message: &[u8],
     options: &PostgresErrorOptions,
 ) -> JsResult<JSValue> {
-    let opts_obj = JSValue::create_empty_object(global, 0);
-    opts_obj.ensure_still_alive();
-    opts_obj.put(
+    // The fields and their order are those of the `PostgresError` constructor (src/js/internal/sql/errors.ts).
+    let error = create_sql_error(global, SQLErrorClass::Postgres, message)?;
+    error.put(
         global,
         b"code",
         bun_string_jsc::create_utf8_for_js(global, options.code)?,
     );
-    // PORT NOTE: Zig used `inline for (std.meta.fields(PostgresErrorOptions))` + `@typeInfo`
-    // to reflect over every optional field and `put` it by name when `Some`. Rust has no
-    // field reflection; expand by hand. Property names must match the Zig struct field
-    // names verbatim (camelCase: `internalPosition`, `internalQuery`, `dataType`) since
-    // the JS consumer reads `options.internalPosition` etc.
     let optional_fields: [(&'static [u8], Option<&[u8]>); 16] = [
         (b"errno", options.errno),
         (b"detail", options.detail),
@@ -39,46 +36,46 @@ pub fn create_postgres_error(
         (b"routine", options.routine),
     ];
     for (name, value) in optional_fields {
-        opts_obj.put_optional_utf8(global, name, value)?;
+        error.put_optional_utf8(global, name, value)?;
     }
-    opts_obj.put(
-        global,
-        b"message",
-        bun_string_jsc::create_utf8_for_js(global, message)?,
-    );
 
-    Ok(opts_obj)
+    Ok(error)
 }
 
-pub fn postgres_error_to_js(
+pub(crate) fn postgres_error_to_js(
     global: &JSGlobalObject,
     message: Option<&[u8]>,
+    err: AnyPostgresError,
+) -> JSValue {
+    postgres_error_to_js_with_hint(global, message, None, err)
+}
+
+pub(crate) fn postgres_error_to_js_with_hint(
+    global: &JSGlobalObject,
+    message: Option<&[u8]>,
+    hint: Option<&[u8]>,
     err: AnyPostgresError,
 ) -> JSValue {
     use AnyPostgresError::*;
     let code: &'static [u8] = match err {
         ConnectionClosed => b"ERR_POSTGRES_CONNECTION_CLOSED",
+        ConnectionFailed => b"ERR_POSTGRES_CONNECTION_FAILED",
+        ConnectionRefused => b"ERR_POSTGRES_CONNECTION_REFUSED",
+        CopyNotSupported => b"ERR_POSTGRES_COPY_NOT_SUPPORTED",
         ExpectedRequest => b"ERR_POSTGRES_EXPECTED_REQUEST",
         ExpectedStatement => b"ERR_POSTGRES_EXPECTED_STATEMENT",
         InvalidBackendKeyData => b"ERR_POSTGRES_INVALID_BACKEND_KEY_DATA",
         InvalidBinaryData => b"ERR_POSTGRES_INVALID_BINARY_DATA",
         InvalidByteSequence => b"ERR_POSTGRES_INVALID_BYTE_SEQUENCE",
-        InvalidByteSequenceForEncoding => b"ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING",
         InvalidCharacter => b"ERR_POSTGRES_INVALID_CHARACTER",
         InvalidMessage => b"ERR_POSTGRES_INVALID_MESSAGE",
         InvalidMessageLength => b"ERR_POSTGRES_INVALID_MESSAGE_LENGTH",
-        InvalidQueryBinding => b"ERR_POSTGRES_INVALID_QUERY_BINDING",
         InvalidServerKey => b"ERR_POSTGRES_INVALID_SERVER_KEY",
         InvalidServerSignature => b"ERR_POSTGRES_INVALID_SERVER_SIGNATURE",
-        InvalidTimeFormat => b"ERR_POSTGRES_INVALID_TIME_FORMAT",
-        MultidimensionalArrayNotSupportedYet => {
-            b"ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET"
-        }
-        NullsInArrayNotSupportedYet => b"ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET",
-        Overflow => b"ERR_POSTGRES_OVERFLOW",
         PBKDFD2 => b"ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2",
         SASL_SIGNATURE_MISMATCH => b"ERR_POSTGRES_SASL_SIGNATURE_MISMATCH",
         SASL_SIGNATURE_INVALID_BASE64 => b"ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64",
+        SASLIterationCountOutOfRange => b"ERR_POSTGRES_SASL_ITERATION_COUNT_OUT_OF_RANGE",
         TLSNotAvailable => b"ERR_POSTGRES_TLS_NOT_AVAILABLE",
         TLSUpgradeFailed => b"ERR_POSTGRES_TLS_UPGRADE_FAILED",
         TooManyParameters => {
@@ -102,13 +99,9 @@ pub fn postgres_error_to_js(
         UnsupportedByteaFormat => b"ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT",
         UnsupportedArrayFormat => b"ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT",
         UnsupportedIntegerSize => b"ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE",
-        UnsupportedNumericFormat => b"ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT",
         UnknownFormatCode => b"ERR_POSTGRES_UNKNOWN_FORMAT_CODE",
         JSError => {
             return global.take_exception(JsError::Thrown);
-        }
-        JSTerminated => {
-            return global.take_exception(JsError::Terminated);
         }
         OutOfMemory => {
             return global.create_out_of_memory_error();
@@ -122,7 +115,6 @@ pub fn postgres_error_to_js(
     let msg: &[u8] = if let Some(m) = message {
         m
     } else {
-        // PORT NOTE: reshaped for borrowck — capture remaining len before re-borrowing buffer.
         use std::io::Write;
         let name: &'static str = <&'static str>::from(err);
         let mut cursor = &mut buffer_message[..];
@@ -140,6 +132,7 @@ pub fn postgres_error_to_js(
         msg,
         &PostgresErrorOptions {
             code,
+            hint,
             ..Default::default()
         },
     ) {
@@ -147,5 +140,3 @@ pub fn postgres_error_to_js(
         Err(e) => global.take_error(e),
     }
 }
-
-// ported from: src/sql_jsc/postgres/error_jsc.zig

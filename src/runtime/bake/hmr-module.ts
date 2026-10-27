@@ -8,9 +8,11 @@
 // This was done to make incremental updates as isolated as possible.
 import {
   __callDispose,
+  __EARLY_RETURN_SENTINEL,
   __legacyDecorateClassTS,
   __legacyDecorateParamTS,
   __legacyMetadataTS,
+  __MEMO_CACHE_SENTINEL,
   __name,
   __using,
 } from "../../runtime.bun";
@@ -26,7 +28,7 @@ export const serverManifest = {};
 /** Server */
 export const ssrManifest = {};
 /** Client */
-export let onServerSideReload: (() => Promise<void>) | null = null;
+export let onServerSideReload: ((update: { clientCodeChanged: boolean }) => Promise<void>) | null = null;
 const eventHandlers: Record<HMREvent | string, HotEventHandler[] | undefined> = {};
 let refreshRuntime: any;
 /** The expression `import(a,b)` is not supported in all browsers, most notably
@@ -56,6 +58,26 @@ export async function loadExports<T>(id: Id): Promise<T> {
   return m.esm ? m.exports : m.cjs.exports;
 }
 
+/**
+ * Returns a module's export names without evaluating it, or `null` if that requires evaluation.
+ * `export * from` is lowered to a spread, so it forwards `default` too.
+ */
+export function staticExportNames(id: Id): string[] | null {
+  const names = new Set<string>();
+  const queue: Id[] = [id];
+  const visited = new Set<Id>();
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const unloaded = unloadedModuleRegistry[current];
+    if (!Array.isArray(unloaded)) return null;
+    for (const name of unloaded[ESMProps.exports]) names.add(name);
+    queue.push(...unloaded[ESMProps.stars]);
+  }
+  return [...names];
+}
+
 interface HotAccept {
   modules: string[];
   cb: HotAcceptFunction;
@@ -68,7 +90,7 @@ interface CJSModule {
   require: (id: Id) => unknown;
 }
 
-/** Implementation details must remain in sync with js_parser.zig and bundle_v2.zig */
+/** Implementation details must remain in sync with the parser (src/js_parser) and bundler (src/bundler/bundle_v2.rs) */
 export class HMRModule {
   /** Key in `registry` */
   id: Id;
@@ -250,13 +272,16 @@ export class HMRModule {
 
   declare indirectHot: any;
 
-  /** Server-only */
+  /** Server-only. Lowered from an `import` of a built-in module: the ESM namespace. */
   declare builtin: (id: string) => any;
+  /** Server-only. Lowered from a `require()` of a built-in module: what Bun's `require()` returns. */
+  declare requireBuiltin: (id: string) => any;
 }
 if (side === "server") {
   HMRModule.prototype.builtin = (id: string) =>
     // @ts-expect-error
     import.meta.bakeBuiltin(import.meta.resolve(id));
+  HMRModule.prototype.requireBuiltin = (id: string) => import.meta.require(id);
 }
 // prettier-ignore
 HMRModule.prototype.indirectHot = new Proxy({}, {
@@ -298,7 +323,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs = {
         id,
         exports: {},
-        require: mod.require.bind(this),
+        require: mod.require.bind(mod),
       };
       mod.exports = null;
     }
@@ -344,10 +369,23 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.importers.add(importer);
     }
 
-    const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
+    let depsList: HMRModule[];
+    try {
+      depsList = parseEsmDependencies(mod, deps, loadModuleSync).list;
+    } catch (e) {
+      // A dependency threw before this module's body ran, so the next load evaluates it again.
+      mod.state = State.Stale;
+      throw e;
+    }
     const exportsBefore = mod.exports;
     mod.imports = depsList.map(getEsmExports);
-    load(mod);
+    try {
+      load(mod);
+    } catch (e) {
+      mod.state = State.Error;
+      mod.failure = e;
+      throw e;
+    }
     mod.imports = depsList;
     if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
@@ -398,7 +436,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.cjs = {
         id,
         exports: {},
-        require: mod.require.bind(this),
+        require: mod.require.bind(mod),
       };
       mod.exports = null;
     }
@@ -443,7 +481,14 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.importers.add(importer);
     }
 
-    const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
+    let list: (HMRModule | Promise<HMRModule>)[], isAsync: boolean;
+    try {
+      ({ list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
+    } catch (e) {
+      // A dependency threw before this module's body ran, so the next load evaluates it again.
+      mod.state = State.Stale;
+      throw e;
+    }
     DEBUG.ASSERT(
       isAsync //
         ? list.some(x => x instanceof Promise)
@@ -456,8 +501,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       ? Promise.all(list).then(
           list => finishLoadModuleAsync(mod, load, list),
           e => {
-            mod.state = State.Error;
-            mod.failure = e;
+            mod.state = State.Stale;
             throw e;
           },
         )
@@ -477,13 +521,20 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
     const p = load(mod);
     mod.imports = modules;
     if (p) {
-      return p.then(() => {
-        mod.state = State.Loaded;
-        if (mod.exports === exportsBefore) mod.exports = {};
-        mod.cjs = null;
-        if (shouldPatchImporters) patchImporters(mod);
-        return mod;
-      });
+      return p.then(
+        () => {
+          mod.state = State.Loaded;
+          if (mod.exports === exportsBefore) mod.exports = {};
+          mod.cjs = null;
+          if (shouldPatchImporters) patchImporters(mod);
+          return mod;
+        },
+        e => {
+          mod.state = State.Error;
+          mod.failure = e;
+          throw e;
+        },
+      );
     }
     if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
@@ -521,21 +572,10 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       throwNotFound(dep, false);
     }
     if (typeof unloadedModule !== "function") {
-      const availableExportKeys = unloadedModule[ESMProps.exports];
       i += 2;
       while (i < expectedExportKeyEnd) {
         const key = deps[i] as string;
         DEBUG.ASSERT(typeof key === "string");
-        // TODO: there is a bug in the way exports are verified. Additionally a
-        // possible performance issue. For the meantime, this is disabled since
-        // it was not shipped in the initial 1.2.3 HMR, and real issues will
-        // just throw 'undefined is not a function' or so on.
-
-        // if (!availableExportKeys.includes(key)) {
-        //   if (!hasExportStar(unloadedModule[ESMProps.stars], key)) {
-        //     throw new SyntaxError(`Module "${dep}" does not export key "${key}"`);
-        //   }
-        // }
         i++;
       }
       isAsync ||= promiseOrModule instanceof Promise;
@@ -549,34 +589,6 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
     }
   }
   return { list, isAsync };
-}
-
-function hasExportStar(starImports: Id[], key: string) {
-  if (starImports.length === 0) return false;
-  const queue: Id[] = [...starImports];
-  const visited = new Set<Id>();
-  while (queue.length > 0) {
-    const starImport = queue.shift()!;
-    if (visited.has(starImport)) continue;
-    visited.add(starImport);
-    const mod = unloadedModuleRegistry[starImport];
-    DEBUG.ASSERT(mod, `Module "${starImport}" not found`);
-    if (typeof mod === "function") {
-      return true;
-    }
-    const availableExportKeys = mod[ESMProps.exports];
-    if (availableExportKeys.includes(key)) {
-      return true; // Found
-    }
-    const nestedStarImports = mod[ESMProps.stars];
-    for (const nestedImport of nestedStarImports) {
-      if (!visited.has(nestedImport)) {
-        queue.push(nestedImport);
-      }
-    }
-  }
-
-  return false;
 }
 
 function getEsmExports(m: HMRModule) {
@@ -756,7 +768,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     mod.selfAccept = null;
     mod.depAccepts = null;
 
-    const modOrPromise = loadModuleAsync(mod.id, false, null);
+    let modOrPromise: HMRModule | Promise<HMRModule>;
+    try {
+      modOrPromise = loadModuleAsync(mod.id, false, null);
+    } catch (e) {
+      // The rest of the update still loads, or those modules would keep their old code.
+      promises.push(Promise.reject(e));
+      continue;
+    }
     if (modOrPromise === mod) {
       if (selfAccept) {
         selfAccept(getEsmExports(mod));
@@ -875,12 +894,13 @@ function toCommonJS(from: any) {
 
 function toESM(mod: any) {
   const to = Object.defineProperty(Object.create(null), "default", { value: mod, enumerable: true });
-  for (let key of Object.getOwnPropertyNames(mod))
-    if (!Object.prototype.hasOwnProperty.call(to, key))
-      Object.defineProperty(to, key, {
-        get: () => mod[key],
-        enumerable: true,
-      });
+  if ((mod && typeof mod === "object") || typeof mod === "function")
+    for (let key of Object.getOwnPropertyNames(mod))
+      if (!Object.prototype.hasOwnProperty.call(to, key))
+        Object.defineProperty(to, key, {
+          get: () => mod[key],
+          enumerable: true,
+        });
   return to;
 }
 
@@ -950,6 +970,8 @@ registerSynthetic("bun:wrap", {
   __legacyMetadataTS,
   __using,
   __callDispose,
+  __MEMO_CACHE_SENTINEL,
+  __EARLY_RETURN_SENTINEL,
 });
 
 if (side === "server") {
@@ -961,7 +983,15 @@ if (side === "server") {
 }
 
 if (side === "client") {
+  const { route } = config;
   registerSynthetic("bun:bake/client", {
     onServerSideReload: cb => (onServerSideReload = cb),
+    // For a router whose pages also run in the browser: the modules of the current route.
+    route: route
+      ? {
+          page: () => (route.page ? loadExports(route.page) : Promise.resolve(null)),
+          layouts: () => Promise.all(route.layouts.map(id => loadExports(id))),
+        }
+      : null,
   });
 }

@@ -2,55 +2,57 @@ use crate::postgres::AnyPostgresError;
 use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
 
-// Zig: `context: anytype` + `comptime forEach: fn(@TypeOf(context), u32, ?*Data) AnyPostgresError!bool`
-// Opaque-context pattern (PORTING.md §anytype): unbounded `<C>`; context is forwarded by value
-// to the callback each iteration, so require `C: Copy`.
-// `comptime ContextType: type, reader: NewReader(ContextType)` is the paired-param spelling of a
-// generic reader → `reader: &mut NewReader<R>`.
-// `comptime forEach: fn(...)` → `impl FnMut` (monomorphized, matches Zig comptime).
+// The opaque context is forwarded by value to the callback each iteration,
+// so require `C: Copy`.
 pub fn decode<C: Copy, R: ReaderContext>(
     context: C,
     reader: &mut NewReader<R>,
     mut for_each: impl FnMut(C, u32, Option<&mut Data>) -> Result<bool, AnyPostgresError>,
 ) -> Result<(), AnyPostgresError> {
-    let mut _remaining_bytes = reader.length()?;
-    _remaining_bytes = _remaining_bytes.saturating_sub(4);
+    // The Int32 message length bounds every read below; a field count or cell
+    // length that overruns it is a malformed DataRow (libpq: "insufficient
+    // data left in message"), not a ShortRead to wait on.
+    let mut remaining_bytes = reader.length()?.saturating_sub(4);
 
+    if remaining_bytes < 2 {
+        return Err(AnyPostgresError::InvalidMessage);
+    }
     let remaining_fields: usize = usize::from(reader.short()?);
+    remaining_bytes -= 2;
 
     for index in 0..remaining_fields {
+        if remaining_bytes < 4 {
+            return Err(AnyPostgresError::InvalidMessage);
+        }
         let byte_length = reader.int4()?;
-        match byte_length {
+        remaining_bytes -= 4;
+        let index = u32::try_from(index).expect("int cast");
+        let more = match byte_length {
             0 => {
                 let mut empty = Data::EMPTY;
-                if !for_each(
-                    context,
-                    u32::try_from(index).expect("int cast"),
-                    Some(&mut empty),
-                )? {
-                    break;
-                }
+                for_each(context, index, Some(&mut empty))
             }
-            NULL_INT4 => {
-                if !for_each(context, u32::try_from(index).expect("int cast"), None)? {
-                    break;
-                }
-            }
+            NULL_INT4 => for_each(context, index, None),
             _ => {
-                let mut bytes = reader.bytes(usize::try_from(byte_length).expect("int cast"))?;
-                if !for_each(
-                    context,
-                    u32::try_from(index).expect("int cast"),
-                    Some(&mut bytes),
-                )? {
-                    break;
+                if byte_length > remaining_bytes {
+                    return Err(AnyPostgresError::InvalidMessage);
                 }
+                remaining_bytes -= byte_length;
+                let mut bytes = reader.bytes(usize::try_from(byte_length).expect("int cast"))?;
+                for_each(context, index, Some(&mut bytes))
+            }
+        };
+        match more {
+            Ok(true) => {}
+            Ok(false) => break,
+            // The rest of the row is skipped first, so the caller can fail this row alone.
+            Err(err) => {
+                reader.skip(usize::try_from(remaining_bytes).expect("int cast"))?;
+                return Err(err);
             }
         }
     }
     Ok(())
 }
 
-pub const NULL_INT4: u32 = 4294967295;
-
-// ported from: src/sql/postgres/protocol/DataRow.zig
+const NULL_INT4: u32 = 4294967295;

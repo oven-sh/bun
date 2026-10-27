@@ -97,7 +97,11 @@ describe("when importing `.svelte.ts` files with CJS", () => {
     expect(ts).toBeDefined();
     const code = await ts!.text();
     expect(code).toContain("require_todo_cjs_svelte");
-    expect(code).toContain("var require_todo_cjs_svelte = __commonJS((exports, module) => {\n");
+    // The bundler wraps the module exactly once, with its own __commonJS((exports, module))
+    // helper. Packages CI runs against a released bun, so don't pin the callback's exact
+    // syntax (arrow vs. function expression): it has changed across bun versions.
+    expect(code).toMatch(/var require_todo_cjs_svelte = __commonJS\((?:function\s*)?\(exports, module\)/);
+    expect(code).not.toContain("__filename, __dirname");
   });
 });
 

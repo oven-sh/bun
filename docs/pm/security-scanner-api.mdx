@@ -3,7 +3,7 @@ title: Security Scanner API
 description:
 ---
 
-Bun's package manager can scan packages for security vulnerabilities before installation, helping protect your applications from supply chain attacks and known vulnerabilities.
+Bun's package manager can scan packages before installing them, to catch supply chain attacks and known vulnerabilities.
 
 ---
 
@@ -13,26 +13,26 @@ Configure a security scanner in your `bunfig.toml`:
 
 ```toml bunfig.toml icon="settings"
 [install.security]
-scanner = "@acme/bun-security-scanner"
+scanner = "@oven/bun-security-scanner" # example name, replace with your scanner's package
 ```
 
-When configured, Bun will:
+With a scanner configured, Bun:
 
-- Scan all packages before installation
-- Display security warnings and advisories
-- Cancel installation if critical vulnerabilities are found
-- Automatically disable auto-install for security
+- Scans all packages before installation
+- Displays security warnings and advisories
+- Cancels installation if the scanner finds fatal advisories
 
 ---
 
 ## How It Works
 
-Security scanners analyze packages during `bun install`, `bun add`, and other package operations. They can detect:
+Security scanners analyze packages during `bun install`, `bun add`, and every other command that installs packages, such as `bun patch`, `bun link` and `bun dedupe`. They can detect:
 
 - Known security vulnerabilities (CVEs)
 - Malicious packages
 - License compliance issues
-- ...and more!
+
+Every command sends the scanner all packages of the project, with one exception. `bun add <package>`, `bun install <package>`, and `bun update <package>` in a project that has a lockfile and a `node_modules` directory send only the packages they name, the dependencies of those packages, and the packages whose version the command changes. Run `bun install` to send everything.
 
 ### Security Levels
 
@@ -45,19 +45,20 @@ Scanners report issues at two severity levels:
 
 ## Using Pre-built Scanners
 
-Many security companies publish Bun security scanners as npm packages that you can install and use immediately.
+Security companies publish Bun security scanners as npm packages.
 
 ### Installing a Scanner
 
 Install a security scanner from npm:
 
 ```bash terminal icon="terminal"
-bun add -d @acme/bun-security-scanner
+bun add -d @oven/bun-security-scanner
 ```
 
 <Note>
-  Consult your security scanner's documentation for their specific package name and installation instructions. Most
-  scanners will be installed with `bun add`.
+  `@oven/bun-security-scanner` is an example package name, not a real package. Replace it with the scanner you want to
+  use, and consult that scanner's documentation for the exact package name and installation instructions. You install
+  most scanners with `bun add`.
 </Note>
 
 ### Configuring the Scanner
@@ -66,12 +67,12 @@ After installation, configure it in your `bunfig.toml`:
 
 ```toml bunfig.toml icon="settings"
 [install.security]
-scanner = "@acme/bun-security-scanner"
+scanner = "@oven/bun-security-scanner" # example name, replace with your scanner's package
 ```
 
 ### Enterprise Configuration
 
-Some enterprise scanners might support authentication and/or configuration through environment variables:
+Some enterprise scanners take authentication and other configuration from environment variables:
 
 ```bash terminal icon="terminal"
 # This might go in ~/.bashrc, for example
@@ -81,15 +82,52 @@ export SECURITY_API_KEY="your-api-key"
 bun install
 ```
 
-Consult your security scanner's documentation to learn which environment variables to set and if any additional configuration is required.
+Consult your scanner's documentation for which environment variables to set and any other required configuration.
 
 ### Authoring your own scanner
 
 For a complete example with tests and CI setup, see the official template:
 [github.com/oven-sh/security-scanner-template](https://github.com/oven-sh/security-scanner-template)
 
+A scanner is a module that exports a `scanner` object implementing `Bun.Security.Scanner`. Bun calls `scan()` with every package it is about to install, including transitive dependencies, and cancels the install if any returned advisory is `fatal`:
+
+```ts scanner.ts icon="/icons/typescript.svg"
+export const scanner: Bun.Security.Scanner = {
+  version: "1",
+  async scan({ packages }) {
+    const advisories: Bun.Security.Advisory[] = [];
+
+    for (const pkg of packages) {
+      if (pkg.name === "event-stream" && Bun.semver.satisfies(pkg.version, ">=3.3.6 <4.0.0")) {
+        advisories.push({
+          level: "fatal",
+          package: pkg.name,
+          url: "https://blog.npmjs.org/post/180565383195/details-about-the-event-stream-incident",
+          description: "event-stream 3.3.6 shipped a compromised dependency",
+        });
+      }
+    }
+
+    return advisories;
+  },
+};
+```
+
+Each entry in `packages` describes one resolved package:
+
+| Field            | Description                                                                                                                                                                                                     |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`           | The package name.                                                                                                                                                                                               |
+| `version`        | The exact version (`4.1.2`) of a registry package. For other sources, the resolved specifier as in `bun.lock`: `github:user/repo#<commit>`, `https://example.com/pkg.tgz`, `./pkg.tgz`, `file:pkg`, `link:pkg`. |
+| `requestedRange` | What `package.json` or the command line asked for: `^4.0.0`, `latest`, `github:user/repo`, `file:./pkg`.                                                                                                        |
+| `tarball`        | The URL (or local path) of the tarball. For `github:` dependencies, the GitHub API tarball URL of the resolved commit. Empty for `git+` dependencies and local directories.                                     |
+
+Packages from every source are included: registry, git, GitHub, remote and local tarballs, local directories. Workspace packages are part of the project and are not included. Outside a registry `version` is not semver; `Bun.semver.satisfies()` returns `false` for it.
+
+The `user:password@` part and the query string of a URL are removed from all three fields. The `tarball` of a registry package keeps its query string, because some registries sign their tarball URLs.
+
 ## Related
 
 - [Configuration (bunfig.toml)](/runtime/bunfig#install-security-scanner)
-- [Package Manager](/installation)
+- [Package Manager](/pm/cli/install)
 - [Security Scanner Template](https://github.com/oven-sh/security-scanner-template)

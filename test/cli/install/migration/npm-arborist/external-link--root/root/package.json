@@ -1,0 +1,10 @@
+{
+  "name": "root",
+  "version": "1.0.0",
+  "dependencies": {
+    "x": "",
+    "j": "file:../i/j",
+    "o": "file:../m/node_modules/n/o",
+    "o2": "file:../m/node_modules/n/o2"
+  }
+}

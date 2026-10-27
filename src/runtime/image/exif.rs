@@ -23,7 +23,7 @@
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Orientation {
+pub(crate) enum Orientation {
     Normal = 1,
     Flop = 2, // mirror horizontal
     Rotate180 = 3,
@@ -34,15 +34,15 @@ pub enum Orientation {
     Rotate270 = 8,
 }
 
-pub struct Transform {
-    pub flop: bool,
-    pub flip: bool,
-    pub rotate: u16,
+pub(crate) struct Transform {
+    pub(crate) flop: bool,
+    pub(crate) flip: bool,
+    pub(crate) rotate: u16,
 }
 
 impl Orientation {
     /// The (mirror?, cw-degrees) pair that turns the stored pixels upright.
-    pub fn transform(self) -> Transform {
+    pub(crate) fn transform(self) -> Transform {
         match self {
             Orientation::Normal => Transform {
                 flop: false,
@@ -95,14 +95,19 @@ impl Orientation {
 /// IFD0 tag 0x0112. JPEG-only because phone cameras are the source of rotated
 /// images; PNG eXIf and WebP EXIF chunks exist but are rare enough to leave
 /// for a follow-up.
-pub fn read_jpeg(bytes: &[u8]) -> Orientation {
+pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
     if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
         return Orientation::Normal;
     }
     let mut i: usize = 2;
     while i + 4 <= bytes.len() {
         if bytes[i] != 0xFF {
-            return Orientation::Normal;
+            // libjpeg's next_marker() skips to the next 0xFF with a warning, so the decoder accepts this junk too.
+            let Some(skip) = bun_core::strings::index_of_char_usize(&bytes[i..], 0xFF) else {
+                return Orientation::Normal;
+            };
+            i += skip;
+            continue;
         }
         let marker = bytes[i + 1];
         match marker {
@@ -111,7 +116,8 @@ pub fn read_jpeg(bytes: &[u8]) -> Orientation {
                 i += 1;
                 continue;
             }
-            0xD0..=0xD8 => {
+            // 0xFF00 is a stuffed zero, which next_marker() skips the same way.
+            0x00 | 0xD0..=0xD8 => {
                 i += 2;
                 continue;
             }
@@ -205,5 +211,3 @@ fn rd32(b: &[u8], off: usize, big: bool) -> Option<u32> {
         u32::from_le_bytes(bytes)
     })
 }
-
-// ported from: src/runtime/image/exif.zig

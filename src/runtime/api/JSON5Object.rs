@@ -1,27 +1,19 @@
-use bun_ast::{E, Expr, expr::Data as ExprData};
 use bun_collections::HashMap;
-use bun_collections::VecExt;
 use bun_core::StackCheck;
-use bun_core::{String as BunString, ZigString};
+use bun_core::String as BunString;
 use bun_js_parser::lexer;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::json5;
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
-    jsc::create_host_function_object(
-        global,
-        &[
-            ("parse", __jsc_host_parse, 1),
-            ("stringify", __jsc_host_stringify, 3),
-        ],
-    )
-}
-
-#[bun_jsc::host_fn]
-pub fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [value, replacer, space_value] = frame.arguments_as_array::<3>();
-
-    value.ensure_still_alive();
+pub(crate) fn stringify<'a>(
+    cx: &mut JsScope<'a>,
+    value: JsLocal<'a>,
+    replacer: JsLocal<'a>,
+    space: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    let (value, replacer, space_value) = (value.to_js(), replacer.to_js(), space.to_js());
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(JSValue::UNDEFINED);
@@ -45,16 +37,13 @@ pub fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     stringifier.builder.to_string(global)
 }
 
-#[bun_jsc::host_fn]
-pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    super::with_text_format_source(
-        global,
-        frame,
-        b"input.json5",
-        true,
-        true,
-        |bump, log, source| {
-            let root = match json5::JSON5Parser::parse(source, log, bump) {
+pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
+    // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
+    // defined and not set. What throws returns without reading `input` again.
+    let global = unsafe { heap.global() };
+    super::with_text_format_source(global, input, b"input.json5", |bump, log, source| {
+        let root =
+            match json5::JSON5Parser::parse(source, log, bump) {
                 Ok(r) => r,
                 Err(json5::ExternalError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(json5::ExternalError::StackOverflow) => {
@@ -76,9 +65,8 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 }
             };
 
-            expr_to_js(root, global)
-        },
-    )
+        super::expr_to_js(root, global)
+    })
 }
 
 struct Stringifier {
@@ -86,9 +74,9 @@ struct Stringifier {
     builder: wtf::StringBuilder,
     indent: usize,
     space: Space,
-    // PORT NOTE: `JSValue` keys live on the heap here, but every entry is also
+    // NOTE: `JSValue` keys live on the heap here, but every entry is also
     // live on the native stack via the `stringify_value` recursion chain, so the
-    // conservative GC scan keeps them alive. Matches the Zig.
+    // conservative GC scan keeps them alive.
     visiting: HashMap<JSValue, ()>,
 }
 
@@ -109,11 +97,12 @@ type StringifyResult<T> = Result<T, StringifyError>;
 enum Space {
     Minified,
     Number(u32),
-    Str(BunString),
+    /// +1 WTF ref owned for the lifetime of the `Stringifier`.
+    Str(bun_core::String),
 }
 
 impl Space {
-    pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
@@ -128,7 +117,6 @@ impl Space {
         if space.is_string() {
             let str = space.to_bun_string(global)?;
             if str.length() == 0 {
-                // `str` drops here (deref)
                 return Ok(Space::Minified);
             }
             return Ok(Space::Str(str));
@@ -137,10 +125,8 @@ impl Space {
     }
 }
 
-// PORT NOTE: `Space::deinit` deleted — `BunString` field derefs via `Drop`.
-
 impl Stringifier {
-    pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         Ok(Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
@@ -150,14 +136,7 @@ impl Stringifier {
         })
     }
 
-    // PORT NOTE: `deinit` deleted — all fields (`builder`, `space`, `visiting`)
-    // free via `Drop`.
-
-    pub fn stringify_value(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> StringifyResult<()> {
+    fn stringify_value(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
@@ -203,21 +182,27 @@ impl Stringifier {
         }
 
         if unwrapped.is_string() {
-            let str = bun_core::OwnedString::new(unwrapped.to_bun_string(global)?);
+            let str = unwrapped.to_bun_string(global)?;
             self.append_quoted_string(&str);
             return Ok(());
         }
 
-        // Object or array — check for circular references
-        // TODO(port): narrow error set — `try_insert`/`get_or_put` OOM maps to JsError::OutOfMemory
-        let was_present = self.visiting.insert(unwrapped, ()).is_some();
+        // Object or array — check for circular references.
+        // The call site is wired for fallible
+        // allocation (Err → OutOfMemory), but `zig_hash_map`'s grow path currently
+        // allocates infallibly and aborts on OOM, so the Err arm only becomes live
+        // once the collections-side grow is made fallible.
+        let was_present = self
+            .visiting
+            .get_or_put(unwrapped)
+            .map_err(|_| StringifyError::Js(JsError::OutOfMemory))?
+            .found_existing;
         if was_present {
             return Err(global
                 .throw(format_args!("Converting circular structure to JSON5"))
                 .into());
         }
-        // PORT NOTE: reshaped for borrowck — Zig used `defer visiting.remove`;
-        // a scopeguard here would hold `&mut self.visiting` across the recursive
+        // NOTE: a scopeguard here would hold `&mut self.visiting` across the recursive
         // `&mut self` calls below, so remove manually after the call instead.
         let result = if unwrapped.is_array() {
             self.stringify_array(global, unwrapped)
@@ -281,7 +266,7 @@ impl Stringifier {
     }
 
     fn stringify_object(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
-        let mut iter = jsc::JSPropertyIterator::init(
+        let iter = jsc::JSPropertyIterator::init(
             global,
             value.to_object(global)?,
             jsc::JSPropertyIteratorOptions {
@@ -301,11 +286,8 @@ impl Stringifier {
         match self.space {
             Space::Minified => {
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = iter.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
                     if !first {
@@ -314,17 +296,14 @@ impl Stringifier {
                     first = false;
                     self.append_key(&prop_name);
                     self.builder.append_lchar(b':');
-                    self.stringify_value(global, iter.value)?;
+                    self.stringify_value(global, value)?;
                 }
             }
             Space::Number(_) | Space::Str(_) => {
                 self.indent += 1;
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = iter.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
                     if !first {
@@ -334,7 +313,7 @@ impl Stringifier {
                     self.newline();
                     self.append_key(&prop_name);
                     self.builder.append_latin1(b": ");
-                    self.stringify_value(global, iter.value)?;
+                    self.stringify_value(global, value)?;
                 }
                 self.indent -= 1;
                 if !first {
@@ -366,7 +345,7 @@ impl Stringifier {
         };
 
         if is_identifier {
-            self.builder.append_string(name.clone());
+            self.builder.append_string(name);
         } else {
             self.append_quoted_string(name);
         }
@@ -413,56 +392,11 @@ impl Stringifier {
             }
             Space::Str(space_str) => {
                 self.builder.append_lchar(b'\n');
-                let clamped = if space_str.length() > 10 {
-                    space_str.substring_with_len(0, 10)
-                } else {
-                    space_str.clone()
-                };
+                let clamped = space_str.trunc(10);
                 for _ in 0..self.indent {
-                    self.builder.append_string(clamped.clone());
+                    self.builder.append_string(&clamped);
                 }
             }
         }
     }
 }
-
-fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue> {
-    // PORT NOTE: shim for `EString::to_js(allocator, global)` (lives in
-    // `bun_ast::e::String` Zig-side). The JSON5 parser never builds
-    // ropes, so the simple slice → JS path is sufficient.
-    if str.is_utf16 {
-        let zig = ZigString::init_utf16(str.slice16());
-        let bun_s = BunString::init(zig);
-        bun_s.to_js(global)
-    } else {
-        jsc::bun_string_jsc::create_utf8_for_js(global, str.slice8())
-    }
-}
-
-fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
-    match expr.data {
-        ExprData::ENull(_) => Ok(JSValue::NULL),
-        ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
-        ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
-        ExprData::EString(str) => estring_to_js(str.get(), global),
-        ExprData::EArray(arr) => {
-            JSValue::create_array_from_iter(global, arr.slice().iter(), |item| {
-                expr_to_js(*item, global)
-            })
-        }
-        ExprData::EObject(obj) => {
-            let js_obj = JSValue::create_empty_object(global, obj.properties.len_u32() as usize);
-            for prop in obj.properties.slice() {
-                let key_expr = prop.key.expect("infallible: prop has key");
-                let value = expr_to_js(prop.value.expect("infallible: prop has value"), global)?;
-                let key_js = expr_to_js(key_expr, global)?;
-                let key_str = bun_core::OwnedString::new(key_js.to_bun_string(global)?);
-                js_obj.put_may_be_index(global, &key_str, value)?;
-            }
-            Ok(js_obj)
-        }
-        _ => Ok(JSValue::UNDEFINED),
-    }
-}
-
-// ported from: src/runtime/api/JSON5Object.zig

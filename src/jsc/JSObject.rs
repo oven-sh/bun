@@ -1,10 +1,9 @@
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_uint;
 use core::mem::ManuallyDrop;
 
-use crate::{JSCell, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_core::{String as BunString, ZigString};
+use crate::{JSCell, JSGlobalObject, JSValue, JsResult};
+use bun_core::String as BunString;
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     // safe: read-only `const unsigned` exported by C++ (link-time constant).
     safe static JSC__JSObject__maxInlineCapacity: c_uint;
@@ -20,15 +19,6 @@ unsafe extern "C" {
         owner: *mut JSCell,
         length: u32,
         names: *mut ExternColumnIdentifier,
-    ) -> JSValue;
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `ctx` is an opaque round-trip pointer
-    // C++ only forwards to `initializer` (never dereferenced as Rust data).
-    safe fn JSC__JSObject__create(
-        global_object: &JSGlobalObject,
-        length: usize,
-        ctx: *mut c_void,
-        initializer: InitializeCallback,
     ) -> JSValue;
 }
 
@@ -92,9 +82,8 @@ impl JSObject {
         pojo: &T,
         global: &JSGlobalObject,
     ) -> JsResult<&'static mut JSObject> {
-        // TODO(port): Zig used `@typeInfo(T).@"struct"` to enumerate fields at
-        // comptime. Rust has no field reflection; `PojoFields` is expected to be
-        // provided by a `#[derive(PojoFields)]` proc-macro that emits an inline
+        // Rust has no field reflection; `PojoFields` impls are hand-written
+        // (see trait docs) and emit an inline
         // `put(b"name", JSValue::from_any(global, &self.name)?)?;` per field.
 
         let val = if NULL_PROTOTYPE {
@@ -111,55 +100,15 @@ impl JSObject {
         let obj = JSObject::opaque_mut(val.0 as *mut JSObject);
 
         let cell = obj.to_js();
-        // PORT NOTE: Zig used `inline for` — each `fromAny` result is `put()` immediately
-        // before the next field is encoded. The callback shape preserves that ordering and
-        // keeps every intermediate JSValue on the stack (never collected into a Vec).
+        // Each `fromAny` result is `put()` immediately before the next field
+        // is encoded. The callback shape preserves that ordering and keeps
+        // every intermediate JSValue on the stack (never collected into a Vec).
         pojo.put_fields(global, |name, value| {
             cell.put(global, name, value);
             Ok(())
         })?;
 
         Ok(obj)
-    }
-
-    pub fn get(
-        &self,
-        global: &JSGlobalObject,
-        prop: impl AsRef<[u8]>,
-    ) -> JsResult<Option<JSValue>> {
-        self.to_js().get(global, prop.as_ref())
-    }
-
-    #[inline]
-    pub fn put(
-        &self,
-        global: &JSGlobalObject,
-        key: impl AsRef<[u8]>,
-        value: JSValue,
-    ) -> JsResult<()> {
-        self.to_js().put(global, key.as_ref(), value);
-        Ok(())
-    }
-
-    #[inline]
-    pub fn put_all_from_struct<T: JSValueFields>(
-        &self,
-        global: &JSGlobalObject,
-        properties: &T,
-    ) -> JsResult<()> {
-        // TODO(port): Zig used `std.meta.fieldNames(@TypeOf(properties))` +
-        // `@field(properties, field)`. Relies on the `JSValueFields` derive.
-        // PORT NOTE: Zig's `put` signature forces each field to already be a JSValue —
-        // there is NO `fromAny` encoding here (unlike `create`). Hence a separate trait
-        // from `PojoFields` that yields raw JSValues without conversion.
-        properties.put_fields(|name, value| self.put(global, name, value))
-    }
-
-    /// When the GC sees a JSValue referenced in the stack, it knows not to free it.
-    /// This mimics the implementation in JavaScriptCore's C++.
-    #[inline]
-    pub fn ensure_still_alive(&self) {
-        core::hint::black_box(std::ptr::from_ref::<Self>(self));
     }
 
     /// # Safety
@@ -175,7 +124,7 @@ impl JSObject {
     ) -> JSValue {
         crate::mark_binding!();
         debug_assert!(owner.is_cell());
-        // JSObject.zig:118 — passes `owner.asCell()`. A cell-tagged JSValue's
+        // A cell-tagged JSValue's
         // payload IS the JSCell* (NotCellMask bits are zero), so the raw usize
         // is the pointer. SAFETY: caller guarantees `owner.is_cell()`.
         let owner_cell = owner.0 as *mut JSCell;
@@ -184,21 +133,6 @@ impl JSObject {
         // opaque JSC cell with interior mutability on the C++ side; Rust holds
         // no `&`-derived view of any field C++ mutates.
         unsafe { JSC__createStructure(global.as_ptr(), owner_cell, length, names) }
-    }
-
-    pub fn create_with_initializer<Ctx: ObjectInitializer>(
-        creator: &mut Ctx,
-        global: &JSGlobalObject,
-        length: usize,
-    ) -> JSValue {
-        // `ctx` is the `&mut Ctx` round-tripped through `*mut c_void`;
-        // `initializer_call::<Ctx>` casts it back. C++ only forwards it.
-        JSC__JSObject__create(
-            global,
-            length,
-            std::ptr::from_mut::<Ctx>(creator).cast::<c_void>(),
-            initializer_call::<Ctx>,
-        )
     }
 
     #[track_caller]
@@ -214,29 +148,11 @@ impl JSObject {
         Ok(value)
     }
 
-    #[track_caller]
-    pub fn put_record(
+    /// This will not call getters or be observable from JavaScript.
+    pub(crate) fn get_code_property_vm_inquiry(
         &mut self,
         global: &JSGlobalObject,
-        key: &mut ZigString,
-        values: &mut [ZigString],
-    ) -> JsResult<()> {
-        // Zig calls `bun.cpp.JSC__JSObject__putRecord` (`[[ZIG_EXPORT(check_slow)]]`).
-        // SAFETY: pointers are valid for the duration of the call; C++ does not
-        // retain them.
-        unsafe {
-            crate::cpp::JSC__JSObject__putRecord(
-                self,
-                global,
-                key,
-                values.as_mut_ptr(),
-                values.len(),
-            )
-        }
-    }
-
-    /// This will not call getters or be observable from JavaScript.
-    pub fn get_code_property_vm_inquiry(&mut self, global: &JSGlobalObject) -> Option<JSValue> {
+    ) -> Option<JSValue> {
         let v = Bun__JSObject__getCodePropertyVMInquiry(global, self);
         if v.is_empty() {
             return None;
@@ -266,74 +182,26 @@ impl Default for ExternColumnIdentifier {
     }
 }
 
-impl ExternColumnIdentifier {
-    pub fn string(&mut self) -> Option<&mut BunString> {
-        match self.tag {
-            // SAFETY: tag == 2 means `value.name` is the active union field.
-            2 => Some(unsafe { &mut *self.value.name }),
-            _ => None,
-        }
-    }
-}
-
 impl Drop for ExternColumnIdentifier {
     fn drop(&mut self) {
-        if let Some(str) = self.string() {
-            str.deref();
-        }
-    }
-}
-
-pub type InitializeCallback =
-    extern "C" fn(ctx: *mut c_void, obj: *mut JSObject, global: &JSGlobalObject);
-
-/// Zig's `Initializer(comptime Ctx, comptime func)` returned a type with a
-/// single `extern "C" fn call`. In Rust the contract is a trait: implement
-/// `create` on your context type and pass it to `JSObject::create_with_initializer`.
-pub trait ObjectInitializer {
-    fn create(&mut self, obj: &mut JSObject, global: &JSGlobalObject) -> JsResult<()>;
-}
-
-extern "C" fn initializer_call<Ctx: ObjectInitializer>(
-    this: *mut c_void,
-    obj: *mut JSObject,
-    global: &JSGlobalObject,
-) {
-    // SAFETY: `this` was produced from `&mut Ctx` in `create_with_initializer`;
-    // `obj` is a live JSC pointer for the duration of the callback. `global` is
-    // taken by reference at the C ABI (`&T` ≡ non-null `*const T`).
-    let result = unsafe { Ctx::create(&mut *this.cast::<Ctx>(), &mut *obj, global) };
-    if let Err(err) = result {
-        // Mirrors `host_fn::void_from_js_error` (host_fn.zig) — OOM throws,
-        // anything else asserts an exception is already pending.
-        match err {
-            JsError::OutOfMemory => {
-                global.throw_out_of_memory_value();
-            }
-            _ => {
-                debug_assert!(
-                    global.has_exception(),
-                    "ObjectInitializer: JsError without pending exception"
-                );
-            }
+        if self.tag == 2 {
+            // SAFETY: tag == 2 means `value.name` is the active union field.
+            unsafe { core::mem::ManuallyDrop::drop(&mut self.value.name) };
         }
     }
 }
 
 /// Compile-time field enumeration for POJO marshalling.
 ///
-/// Zig used `@typeInfo(T)` to iterate struct fields and called
-/// `JSValue.fromAny(global, @TypeOf(property), property)` per field.
-/// Rust has no built-in reflection, so types opt in via
-/// `#[derive(bun_jsc::PojoFields)]`.
+/// Rust has no built-in reflection, so types opt in by hand-implementing
+/// this trait (no derive macro exists today).
 ///
-/// The derive must emit a sequence of
+/// Implementations must emit a sequence of
 /// `put(b"name", JSValue::from_any(global, &self.name)?)?;` calls — one per
 /// field, in declaration order — so each encoded JSValue lives only on the
-/// stack between `from_any` and `put` (matching Zig's `inline for`; never
+/// stack between `from_any` and `put` (never
 /// collected into a `Vec<JSValue>`, which would sit on the Rust heap and be
 /// invisible to JSC's conservative stack scan).
-// TODO(port): proc-macro — implement `#[derive(PojoFields)]` in bun_jsc.
 pub trait PojoFields {
     const FIELD_COUNT: usize;
     /// Invoke `put(field_name, encoded_value)` once per struct field, encoding
@@ -345,17 +213,3 @@ pub trait PojoFields {
         put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>,
     ) -> JsResult<()>;
 }
-
-/// Compile-time field enumeration for structs whose fields are **already**
-/// `JSValue` (Zig's `putAllFromStruct` — `@field(properties, field)` is passed
-/// straight to `put()` with no `fromAny` encoding).
-///
-/// Separate from [`PojoFields`] because that trait encodes; this one does not.
-// TODO(port): proc-macro — implement `#[derive(JSValueFields)]` in bun_jsc.
-pub trait JSValueFields {
-    /// Invoke `put(field_name, self.<field>)` once per struct field. Fields are
-    /// `JSValue` and forwarded as-is.
-    fn put_fields(&self, put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>) -> JsResult<()>;
-}
-
-// ported from: src/jsc/JSObject.zig

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 
 // Debug/ASAN builds are much slower at spawning workers.
 const timeout = isDebug || isASAN ? 60_000 : 10_000;
@@ -172,6 +172,108 @@ test(
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
       env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(filterStderr(stderr)).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// SEGV in TypeCastTraits<JSVMClientData>::isType reached from
+// Zig::GlobalObject::visitChildrenImpl on a concurrent GC helper thread. The
+// visit used `clientData(thisObject->vm())` (raw JSGlobalObject::m_vm deref)
+// and `httpHeaderIdentifiers()` did an unsynchronized std::optional::emplace()
+// that both the mutator and parallel marker threads could enter. Observed in
+// production crash reports almost exclusively on Windows x64, strongly
+// correlated with worker spawn+terminate.
+//
+// This stress maximises the race surface:
+//   - extra ShadowRealm globals so multiple parallel marker helpers each visit
+//     a distinct Zig::GlobalObject and all dereference vm.clientData
+//   - continuous allocation so the concurrent collector is always active
+//   - worker spawn/terminate churn for the reported correlation
+//
+// The race window is too narrow to trip deterministically on Linux even under
+// ASAN + Malloc=1 + collectContinuously, so this test is a guard rather than
+// a fail-before proof; it is the Windows CI lane that intermittently crashed
+// with this signature on the unfixed build.
+test(
+  "GlobalObject::visitChildren does not dereference stale vm.clientData under parallel marking",
+  async () => {
+    const script = /* js */ `
+    const workerCode = \`
+      // Extra Zig::GlobalObject cells in this VM so parallel GC helper
+      // threads each get one to visit and all call clientData(vm).
+      const realms = [];
+      for (let i = 0; i < 6; i++) { try { realms.push(new ShadowRealm()); } catch {} }
+
+      const bc = new BroadcastChannel("clientdata-visit");
+      bc.onmessage = () => {};
+
+      // Keep the concurrent marker busy so visitChildrenImpl fires
+      // repeatedly on helper threads while the mutator runs.
+      const junk = [];
+      for (let i = 0; i < 2000; i++) junk.push({ i, a: [i, i] });
+      Bun.gc(true);
+      postMessage("ready");
+      for (let i = 0; i < 2000; i++) junk.push({ i });
+    \`;
+    const blobUrl = URL.createObjectURL(new Blob([workerCode], { type: "application/javascript" }));
+
+    const mainChannel = new BroadcastChannel("clientdata-visit");
+    mainChannel.onmessage = () => {};
+
+    // Extra globals on the main VM too.
+    const realms = [];
+    for (let i = 0; i < 6; i++) { try { realms.push(new ShadowRealm()); } catch {} }
+
+    for (let round = 0; round < 6; round++) {
+      const workers = [];
+      const ready = [];
+      for (let i = 0; i < 4; i++) {
+        const w = new Worker(blobUrl);
+        const { promise, resolve, reject } = Promise.withResolvers();
+        w.onmessage = () => resolve();
+        w.onerror = (e) => reject(e.message ?? String(e));
+        workers.push(w);
+        ready.push(promise);
+      }
+      await Promise.all(ready);
+
+      // Allocation pressure on main so its parallel markers are live while
+      // worker VMs tear down.
+      const junk = [];
+      for (let i = 0; i < 3000; i++) junk.push({ a: i, b: [i] });
+
+      for (const w of workers) {
+        mainChannel.postMessage("x");
+        w.terminate();
+      }
+      for (let i = 0; i < 3; i++) Bun.gc(true);
+      junk.length = 0;
+    }
+
+    mainChannel.close();
+    console.log("OK");
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        BUN_JSC_numberOfGCMarkers: "8",
+        // Route bmalloc/libpas to the system allocator so ASAN can see a UAF
+        // on JSVMClientData instead of it being masked by the pool. Not set
+        // on Windows: bmalloc's SystemHeap is unimplemented there and would
+        // RELEASE_BASSERT, and Windows builds have no ASAN lane anyway.
+        ...(isWindows ? {} : { Malloc: "1" }),
+      },
       stderr: "pipe",
       stdout: "pipe",
     });

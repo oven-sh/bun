@@ -3,24 +3,28 @@ title: "bunfig.toml"
 description: "Configure Bun's behavior using its configuration file bunfig.toml"
 ---
 
-Bun's behavior can be configured using its configuration file, `bunfig.toml`.
+`bunfig.toml` is Bun's configuration file.
 
-In general, Bun relies on pre-existing configuration files like `package.json` and `tsconfig.json` to configure its behavior. `bunfig.toml` is only necessary for configuring Bun-specific things. This file is optional, and Bun will work out of the box without it.
+Bun relies on pre-existing configuration files like `package.json` and `tsconfig.json` where it can; `bunfig.toml` is only for Bun-specific settings. The file is optional, and Bun works without it.
 
 ## Global vs. local
 
-In general, it's recommended to add a `bunfig.toml` file to your project root, alongside your `package.json`.
+Put `bunfig.toml` in your project root, alongside your `package.json`.
 
-To configure Bun globally, you can also create a `.bunfig.toml` file at one of the following paths:
+To configure Bun's package manager globally, you can also create a `.bunfig.toml` file at one of the following paths:
 
 - `$HOME/.bunfig.toml`
 - `$XDG_CONFIG_HOME/.bunfig.toml`
 
-If both a global and local `bunfig` are detected, the results are shallow-merged, with local overriding global. CLI flags will override `bunfig` setting where applicable.
+When `XDG_CONFIG_HOME` is set to an absolute path, Bun reads the file there and not the one in `$HOME`.
+
+Only package manager commands (`bun install`, `bun add`, `bun remove`, `bun update`, `bun pm`, `bunx`, and so on) read the global file. If Bun finds both a global and a local `bunfig`, it loads both; keys set in the local file override the same keys in the global file. CLI flags override `bunfig` settings where applicable.
+
+Like npm, Bun skips any of these files that it can't read.
 
 ## Runtime
 
-Bun's runtime behavior is configured using top-level fields in the `bunfig.toml` file.
+Top-level fields in `bunfig.toml` configure Bun's runtime behavior.
 
 ### `preload`
 
@@ -34,7 +38,7 @@ preload = ["./preload.ts"]
 
 ### `jsx`
 
-Configure how Bun handles JSX. You can also set these fields in the `compilerOptions` of your `tsconfig.json`, but they are supported here as well for non-TypeScript projects.
+Configure how Bun handles JSX. You can also set these fields in the `compilerOptions` of your `tsconfig.json`, but `bunfig.toml` supports them for non-TypeScript projects.
 
 ```toml title="bunfig.toml" icon="settings"
 jsx = "react"
@@ -61,7 +65,7 @@ smol = true
 
 ### `logLevel`
 
-Set the log level. This can be one of `"debug"`, `"warn"`, or `"error"`.
+Set the log level: `"debug"`, `"warn"`, or `"error"`.
 
 ```toml title="bunfig.toml" icon="settings"
 logLevel = "debug" # "debug" | "warn" | "error"
@@ -69,7 +73,7 @@ logLevel = "debug" # "debug" | "warn" | "error"
 
 ### `define`
 
-The `define` field allows you to replace certain global identifiers with constant expressions. Bun will replace any usage of the identifier with the expression. The expression should be a JSON string.
+The `define` field replaces global identifiers with constant expressions wherever they appear. The expression should be a JSON string.
 
 ```toml title="bunfig.toml" icon="settings"
 [define]
@@ -81,7 +85,7 @@ The `define` field allows you to replace certain global identifiers with constan
 
 ### `loader`
 
-Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun.
+Configure how Bun maps file extensions to [loaders](/bundler/loaders). Use this to load file types Bun doesn't support natively.
 
 ```toml title="bunfig.toml" icon="settings"
 [loader]
@@ -107,9 +111,9 @@ Bun supports the following loaders:
 
 ### `telemetry`
 
-The `telemetry` field is used to enable/disable analytics. By default, telemetry is enabled. This is equivalent to the `DO_NOT_TRACK` environment variable.
+The `telemetry` field enables or disables analytics. By default, telemetry is enabled. This setting is equivalent to the `DO_NOT_TRACK` environment variable.
 
-Currently we do not collect telemetry and this setting is only used for enabling/disabling anonymous crash reports, but in the future we plan to collect information like which Bun APIs are used most or how long `bun build` takes.
+We do not currently collect telemetry; this setting only controls anonymous crash reports. We plan to collect information like which Bun APIs are used most or how long `bun build` takes.
 
 ```toml title="bunfig.toml" icon="settings"
 telemetry = false
@@ -117,7 +121,7 @@ telemetry = false
 
 ### `env`
 
-Configure automatic `.env` file loading. By default, Bun automatically loads `.env` files. To disable this behavior:
+Configure automatic `.env` file loading. Bun loads `.env` files by default. To disable this behavior:
 
 ```toml title="bunfig.toml" icon="settings"
 # Disable automatic .env file loading
@@ -131,9 +135,9 @@ You can also use object syntax with the `file` property:
 file = false
 ```
 
-This is useful in production environments or CI/CD pipelines where you want to rely solely on system environment variables.
+Use this in production or CI/CD pipelines where you want to rely solely on system environment variables.
 
-Note: Explicitly provided environment files via `--env-file` will still be loaded even when default loading is disabled.
+Bun still loads files passed explicitly with `--env-file` even when default loading is disabled.
 
 ### `console`
 
@@ -148,15 +152,15 @@ Set the default depth for `console.log()` object inspection. Default `2`.
 depth = 3
 ```
 
-This controls how deeply nested objects are displayed in console output. Higher values show more nested properties but may produce verbose output for complex objects. This setting can be overridden by the `--console-depth` CLI flag.
+Higher values show more nested properties but may produce verbose output for complex objects. The `--console-depth` CLI flag overrides this setting.
 
 ## Serve
 
-Options for `Bun.serve` and `bun run` when serving HTTP are configured under the `[serve]` section.
+The `[serve]` section configures `Bun.serve` and `bun run` when serving HTTP.
 
 ### `serve.port`
 
-The default port for `Bun.serve` to listen on. Default `3000`. Can also be set via the `BUN_PORT` or `PORT` environment variables, or the `--port` flag.
+The default port for `Bun.serve` to listen on. Default `3000`. You can also set it with the `BUN_PORT` or `PORT` environment variables, or the `--port` flag.
 
 ```toml title="bunfig.toml" icon="settings"
 [serve]
@@ -165,7 +169,7 @@ port = 3000
 
 ## Test runner
 
-The test runner is configured under the `[test]` section of your bunfig.toml.
+The `[test]` section of `bunfig.toml` configures the test runner.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -192,7 +196,7 @@ preload = ["./setup.ts"]
 
 ### `test.pathIgnorePatterns`
 
-Exclude files and directories from test discovery using glob patterns. Matched directories are pruned during scanning, so their contents are never traversed. This is useful when your project contains submodules or vendored code with `*.test.ts` files that you don't want `bun test` to pick up.
+Exclude files and directories from test discovery using glob patterns. The test runner prunes matched directories during scanning, so it never traverses their contents. Use this when your project contains submodules or vendored code with `*.test.ts` files that you don't want `bun test` to pick up.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -221,7 +225,7 @@ coverage = false
 
 ### `test.coverageThreshold`
 
-To specify a coverage threshold. By default, no threshold is set. If your test suite does not meet or exceed this threshold, `bun test` will exit with a non-zero exit code to indicate the failure.
+The coverage threshold. By default, no threshold is set. If your test suite does not meet it, `bun test` exits with a non-zero exit code.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -230,11 +234,11 @@ To specify a coverage threshold. By default, no threshold is set. If your test s
 coverageThreshold = 0.9
 ```
 
-Different thresholds can be specified for line-wise, function-wise, and statement-wise coverage.
+You can set separate thresholds for line and function coverage. Bun accepts a `statements` key but does not currently enforce it.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-coverageThreshold = { line = 0.7, function = 0.8, statement = 0.9 }
+coverageThreshold = { lines = 0.7, functions = 0.8 }
 ```
 
 ### `test.coverageSkipTestFiles`
@@ -257,7 +261,7 @@ coverageIgnoreSourcemaps = false
 
 ### `test.coveragePathIgnorePatterns`
 
-Exclude specific files or file patterns from coverage reports using glob patterns. Can be a single string pattern or an array of patterns.
+Exclude files from coverage reports using glob patterns. Accepts a single pattern or an array of patterns.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -275,7 +279,7 @@ coveragePathIgnorePatterns = [
 
 ### `test.coverageReporter`
 
-By default, coverage reports will be printed to the console. For persistent code coverage reports in CI environments and for other tools use `lcov`.
+By default, the test runner prints coverage reports to the console. For persistent reports that CI and other tools can read, use `lcov`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -284,7 +288,7 @@ coverageReporter  = ["text", "lcov"]  # default ["text"]
 
 ### `test.coverageDir`
 
-Set path where coverage reports will be saved. Please notice, that it works only for persistent `coverageReporter` like `lcov`.
+Set the path where coverage reports are saved. This only applies to persistent reporters like `lcov`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -300,9 +304,9 @@ Run tests in random order. Default `false`.
 randomize = true
 ```
 
-This helps catch bugs related to test interdependencies by running tests in a different order each time. When combined with `seed`, the random order becomes reproducible.
+Running tests in a different order each time helps catch bugs related to test interdependencies. When combined with `seed`, the random order becomes reproducible.
 
-The `--randomize` CLI flag will override this setting when specified.
+The `--randomize` CLI flag overrides this setting.
 
 ### `test.seed`
 
@@ -314,9 +318,9 @@ randomize = true
 seed = 2444615283
 ```
 
-Using a seed makes the randomized test order reproducible across runs, which is useful for debugging flaky tests. When you encounter a test failure with randomization enabled, you can use the same seed to reproduce the exact test order.
+A seed makes the randomized test order reproducible across runs, which helps when debugging flaky tests.
 
-The `--seed` CLI flag will override this setting when specified.
+The `--seed` CLI flag overrides this setting.
 
 ### `test.rerunEach`
 
@@ -327,48 +331,44 @@ Re-run each test file a specified number of times. Default `0` (run once).
 rerunEach = 3
 ```
 
-This is useful for catching flaky tests or non-deterministic behavior. Each test file will be executed the specified number of times.
+Use this to catch flaky tests or non-deterministic behavior.
 
-The `--rerun-each` CLI flag will override this setting when specified.
+The `--rerun-each` CLI flag overrides this setting.
 
 ### `test.retry`
 
-Default retry count for all tests. Failed tests will be retried up to this many times. Per-test `{ retry: N }` overrides this value. Default `0` (no retries).
+Default retry count for all tests. The test runner retries failed tests up to this many times. Per-test `{ retry: N }` overrides this value. Default `0` (no retries).
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
 retry = 3
 ```
 
-The `--retry` CLI flag will override this setting when specified.
+The `--retry` CLI flag overrides this setting.
 
 ### `test.concurrentTestGlob`
 
-Specify a glob pattern to automatically run matching test files with concurrent test execution enabled. Test files matching this pattern will behave as if the `--concurrent` flag was passed, running all tests within those files concurrently.
+Test files matching this glob pattern run all of their tests concurrently, as if you passed the `--concurrent` flag.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
 concurrentTestGlob = "**/concurrent-*.test.ts"
 ```
 
-This is useful for:
+Use this to migrate a test suite to concurrent execution gradually, or to run integration tests concurrently while keeping unit tests sequential.
 
-- Gradually migrating test suites to concurrent execution
-- Running integration tests concurrently while keeping unit tests sequential
-- Separating fast concurrent tests from tests that require sequential execution
-
-The `--concurrent` CLI flag will override this setting when specified.
+The `--concurrent` CLI flag overrides this setting.
 
 ### `test.onlyFailures`
 
-When enabled, only failed tests are displayed in the output. This helps reduce noise in large test suites by hiding passing tests. Default `false`.
+When enabled, the output shows only failed tests, which reduces noise in large test suites. Default `false`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
 onlyFailures = true
 ```
 
-This is equivalent to using the `--only-failures` flag when running `bun test`.
+Equivalent to the `--only-failures` flag.
 
 ### `test.reporter`
 
@@ -376,7 +376,7 @@ Configure the test reporter settings.
 
 #### `test.reporter.dots`
 
-Enable the dots reporter, which displays a compact output showing a dot for each test. Default `false`.
+Enable the dots reporter, which prints one dot per test. Default `false`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test.reporter]
@@ -392,16 +392,443 @@ Enable JUnit XML reporting and specify the output file path.
 junit = "test-results.xml"
 ```
 
-This generates a JUnit XML report that can be consumed by CI systems and other tools.
+CI systems and other tools can consume the report.
+
+## Linter
+
+The `[lint]` section configures [`bun lint`](/lint). Run `bun lint --init` to add it.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+typeAware = true
+ignorePatterns = ["vendor/", "**/*.gen.ts"]
+
+[lint.rules]
+"no-console" = "warn"
+eqeqeq = ["error", "smart"]
+
+[[lint.overrides]]
+files = ["scripts/**"]
+rules = { "no-console" = "off" }
+```
+
+`bun lint` uses the nearest `bunfig.toml` that has a `[lint]` section, from the working directory up, so it finds the same problems from any directory of the project. Next to an ESLint or oxlint config, what those tools read from the working directory is still read from there.
+
+Paths and patterns in the section are relative to the file, including the ones in the options of the `import` rules. So are the patterns in a config file that `config` names and the file names in the file that `suppressionsLocation` names.
+
+With `bun --config=<path> lint`, everything but `plugins` is relative to the working directory.
+
+A typo is an error. `bun lint` exits with code `2` on an unknown key or an unknown rule.
+
+```txt
+2 | "no-vra" = "error"
+    ^
+error: Unknown rule "no-vra"
+  Did you mean "no-var"?
+    at bunfig.toml:2:1
+```
+
+### `lint.rules`
+
+Set a rule to `"off"`, `"warn"`, or `"error"`. To pass options, use an array. Every rule in `bun lint --rules` works, with nothing to install.
+
+```toml title="bunfig.toml" icon="settings"
+[lint.rules]
+"no-console" = "warn"
+"@typescript-eslint/no-explicit-any" = "off"
+"unicorn/prefer-node-protocol" = "error"
+"no-restricted-imports" = ["error", { paths = ["lodash"] }]
+```
+
+Use `*` as the rule name to turn off every rule of a plugin. In the same table, a setting for a single rule overrides the wildcard, in either order.
+
+```toml title="bunfig.toml" icon="settings"
+[lint.rules]
+"jsx-a11y/*" = "off"
+"unicorn/*" = "off"
+"unicorn/no-null" = "warn"
+```
+
+- A wildcard can only be `"off"`. To turn rules on, name them or use [`lint.categories`](#lint-categories).
+- [`lint.overrides`](#lint-overrides) and flags apply after `[lint.rules]`. A wildcard there also turns off a rule that `[lint.rules]` sets by name.
+- `"react/*"` leaves `react/jsx-uses-react` on. That rule reports nothing. It keeps `no-unused-vars` quiet about `React`.
+- A wildcard works with Bun's own lint config. If the working directory has an ESLint or oxlint config, `bun lint` rejects the wildcard. Files under a config file in a nested directory follow that file, and the wildcard doesn't apply to them.
+
+Some ESLint rules have a typescript-eslint version, such as `no-unused-vars` and `@typescript-eslint/no-unused-vars`. Setting either name sets both. The ESLint rule runs on JavaScript files and the typescript-eslint rule on TypeScript files, so a problem is never reported twice. If you set both names, each one applies to its own kind of file.
+
+A wildcard is about one plugin, so it turns such a rule off in one language. `"@typescript-eslint/*" = "off"` turns `no-unused-vars` off in TypeScript files and leaves it on in JavaScript files. `"eslint/*" = "off"` does the opposite.
+
+A few typescript-eslint versions need type information, such as `@typescript-eslint/require-await`. Setting that name type checks your TypeScript files, like any other [type-aware rule](/lint#type-aware-rules). Setting only `require-await` doesn't start a type check. It uses the typescript-eslint version if the run has types anyway, and the ESLint rule otherwise.
+
+### `lint.plugins`
+
+Load [ESLint plugins](/lint/plugins): paths, relative to `bunfig.toml`, or package names. Their rules are added to the built-in ones.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+plugins = ["./lint/plugin.js", "eslint-plugin-perfectionist"]
+
+[lint.rules]
+"local/no-todo" = "warn"
+"perfectionist/sort-imports" = "error"
+```
+
+### `lint.categories`
+
+Set a whole category of rules at once. `[lint.rules]` wins over a category.
+
+```toml title="bunfig.toml" icon="settings"
+[lint.categories]
+suspicious = "warn"
+perf = "warn"
+```
+
+| Category      | What its rules report                          |
+| ------------- | ---------------------------------------------- |
+| `correctness` | Code that is wrong or useless                  |
+| `suspicious`  | Code that is probably wrong or useless         |
+| `pedantic`    | Strict checks, with some false positives       |
+| `perf`        | Code that could run faster                     |
+| `style`       | Code that could be more idiomatic              |
+| `restriction` | Language features and patterns you want to ban |
+| `nursery`     | New rules that are still changing              |
+| `all`         | Every category at once                         |
+
+A category sets the rules of every built-in plugin. The plugins for a framework or a test runner are the exception. A category sets their rules only if `package.json` lists the package in `dependencies`, `devDependencies`, or `peerDependencies`.
+
+| Package  | Plugins                                          |
+| -------- | ------------------------------------------------ |
+| `react`  | `react`, `react-hooks`, `react-perf`, `jsx-a11y` |
+| `next`   | `@next/next`                                     |
+| `jest`   | `jest`                                           |
+| `vitest` | `vitest`                                         |
+
+For each file, Bun reads the closest `package.json` that lists dependencies. Monorepos often list the test runner only in the root `package.json`. If the closest `package.json` lists neither `jest` nor `vitest`, Bun also looks in the ones above it, up to the root of the Git repository.
+
+`[lint.rules]` doesn't depend on `package.json`. To turn off a plugin that a category turns on, set `"unicorn/*" = "off"`. To use a plugin without its package, set `"jsx-a11y/*" = "warn"`.
+
+### `lint.overrides`
+
+Use different rules for some files. `files` is required. `excludeFiles`, `rules`, `globals`, and `settings` are optional.
+
+```toml title="bunfig.toml" icon="settings"
+[[lint.overrides]]
+files = ["*.test.ts", "scripts/**"]
+excludeFiles = ["scripts/vendor/**"]
+rules = { "no-console" = "off" }
+```
+
+Patterns use the same syntax as [`Bun.Glob`](/runtime/glob) and are relative to `bunfig.toml`. A pattern without a slash matches the file name in any directory. Later overrides win over earlier ones, and all of them win over `[lint.rules]`.
+
+### `lint.ignorePatterns`
+
+Skip the files that match. `bun lint` already skips `node_modules` and everything in `.gitignore`.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+ignorePatterns = ["vendor/", "**/*.gen.ts"]
+```
+
+Each pattern is a line of a `.gitignore` next to `bunfig.toml`, like [`format.ignorePatterns`](#format-ignorepatterns): `vendor/` skips every directory with that name, `/vendor/` only the one next to `bunfig.toml`, and `!` keeps what an earlier pattern skips. The exception is a project with an `eslint.config.*` file, where they're added to its [`ignores`](https://eslint.org/docs/latest/use/configure/ignore), which are globs: there `vendor/` only matches next to `bunfig.toml`, and a pattern that starts with `/` matches nothing.
+
+### `lint.settings`
+
+Settings that rules share, such as the React version. The same as `settings` in an ESLint or oxlint config.
+
+```toml title="bunfig.toml" icon="settings"
+[lint.settings.react]
+version = "18.2"
+
+[lint.settings."jsx-a11y".components]
+Picture = "img"
+```
+
+### `lint.typeAware`
+
+Turn on typescript-eslint's recommended [type-aware rules](/lint#type-aware-rules), such as `@typescript-eslint/no-floating-promises`. Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+typeAware = true
+tsconfig = "./tsconfig.lint.json" # default: the nearest tsconfig.json
+```
+
+You don't need it for a single rule. A type-aware rule runs as soon as you turn it on in `[lint.rules]`. `typeAware = false` skips every type-aware rule.
+
+### `lint.typeCheck`
+
+Also report type errors, like [`bun check`](/runtime/check). It turns on no rules. Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+typeCheck = true
+```
+
+### `lint.globals`
+
+Declare global variables, so that `no-undef` accepts them. A global is `"readonly"`, `"writable"`, or `"off"`.
+
+```toml title="bunfig.toml" icon="settings"
+[lint.globals]
+MY_GLOBAL = "readonly"
+```
+
+### `lint.maxWarnings`
+
+Exit with code `1` if there are more warnings than this. By default, warnings never fail a run.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+maxWarnings = 0
+```
+
+### All keys
+
+Every flag that makes sense as a default is also a key, in camelCase: `--max-warnings 0` is `maxWarnings = 0`, and `--no-inline-config` is `inlineConfig = false`. The command line wins over `bunfig.toml`.
+
+| Key                             | Value                                 | Flag                                                |
+| ------------------------------- | ------------------------------------- | --------------------------------------------------- |
+| `rules`                         | table                                 | `--rule`                                            |
+| `plugins`                       | array                                 | `--plugin`                                          |
+| `categories`                    | table                                 | `-A`, `-W`, `-D`                                    |
+| `overrides`                     | array of tables                       |                                                     |
+| `globals`                       | table                                 | `--global`                                          |
+| `settings`                      | table                                 |                                                     |
+| `ignorePatterns`                | array                                 | `--ignore-pattern`                                  |
+| `typeAware`                     | boolean                               | `--type-aware`, `--no-type-aware`                   |
+| `typeCheck`                     | boolean                               | `--type-check`                                      |
+| `tsconfig`                      | path                                  | `--tsconfig`                                        |
+| `inferGlobals`                  | boolean                               | `--infer-globals`, `--no-infer-globals`             |
+| `maxWarnings`                   | number                                | `--max-warnings`                                    |
+| `denyWarnings`                  | boolean                               | `--deny-warnings`                                   |
+| `quiet`                         | boolean                               | `--quiet`                                           |
+| `silent`                        | boolean                               | `--silent`                                          |
+| `format`                        | name                                  | `-f`, `--format`                                    |
+| `all`                           | boolean                               | `--all`                                             |
+| `threads`                       | number                                | `--threads`                                         |
+| `inlineConfig`                  | boolean                               | `--no-inline-config`                                |
+| `reportUnusedDisableDirectives` | boolean, `"off"`, `"warn"`, `"error"` | `--report-unused-disable-directives`                |
+| `reportUnusedInlineConfigs`     | `"off"`, `"warn"`, `"error"`          | `--report-unused-inline-configs`                    |
+| `fixType`                       | array                                 | `--fix-type`                                        |
+| `config`                        | path                                  | `-c`, `--config`                                    |
+| `configLookup`                  | boolean                               | `--no-config-lookup`                                |
+| `disableNestedConfig`           | boolean                               | `--disable-nested-config`                           |
+| `allowUnsupported`              | boolean                               | `--allow-unsupported`                               |
+| `nativePluginRules`             | boolean, or an array of plugin names  | `--native-plugin-rules`, `--no-native-plugin-rules` |
+| `parserOptions`                 | table                                 | `--parser-options`                                  |
+| `ext`                           | array                                 | `--ext`                                             |
+| `ignore`                        | boolean                               | `--no-ignore`                                       |
+| `ignorePath`                    | path                                  | `--ignore-path`                                     |
+| `warnIgnored`                   | boolean                               | `--no-warn-ignored`                                 |
+| `errorOnUnmatchedPattern`       | boolean                               | `--no-error-on-unmatched-pattern`                   |
+| `passOnNoPatterns`              | boolean                               | `--pass-on-no-patterns`                             |
+| `exitOnFatalError`              | boolean                               | `--exit-on-fatal-error`                             |
+| `suppressionsLocation`          | path                                  | `--suppressions-location`                           |
+| `passOnUnprunedSuppressions`    | boolean                               | `--pass-on-unpruned-suppressions`                   |
+
+`bun lint --help --all` says what each flag does.
+
+`[lint]` also applies next to an `eslint.config.js` or an `.oxlintrc.json`. There, a key overrides the config file the way its flag does.
+
+## Formatter
+
+The `[fmt]` section configures [`bun fmt`](/format). Run `bun fmt --init` to add it.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt]
+printWidth = 100
+semi = false
+sortImports = true
+ignorePatterns = ["vendor/", "**/*.gen.ts"]
+```
+
+`bun fmt` uses the nearest `bunfig.toml` that has a `[fmt]` section, from the working directory up, so it prints the same from any directory of the project.
+
+Paths and patterns in the section are relative to the file. With `bun --config=<path> fmt` they are relative to the working directory.
+
+A typo doesn't go unnoticed. An unknown key or a bad value is an error, and `bun fmt` exits with code `2`.
+
+### Style options
+
+Same names, defaults, and meaning as [Prettier's options](https://prettier.io/docs/options). Each one is also a flag, like `--print-width 100` or `--no-semi`, and the flag wins.
+
+| Key                            | Default       | What it does                                                          |
+| ------------------------------ | ------------- | --------------------------------------------------------------------- |
+| `printWidth`                   | `80`          | Wrap lines at this column                                             |
+| `tabWidth`                     | `2`           | Spaces per indentation level                                          |
+| `useTabs`                      | `false`       | Indent with tabs                                                      |
+| `semi`                         | `true`        | Print semicolons                                                      |
+| `singleQuote`                  | `false`       | Use single quotes                                                     |
+| `jsxSingleQuote`               | `false`       | Use single quotes in JSX                                              |
+| `quoteProps`                   | `"as-needed"` | Quote object keys: `"as-needed"`, `"consistent"`, or `"preserve"`     |
+| `trailingComma`                | `"all"`       | `"all"`, `"es5"`, or `"none"`                                         |
+| `bracketSpacing`               | `true`        | `{ a }` or `{a}`                                                      |
+| `bracketSameLine`              | `false`       | Put the `>` of a multi-line element at the end of the last line       |
+| `arrowParens`                  | `"always"`    | `(x) => x` or, with `"avoid"`, `x => x`                               |
+| `objectWrap`                   | `"preserve"`  | `"collapse"` puts an object on one line whenever it fits              |
+| `singleAttributePerLine`       | `false`       | One attribute per line in HTML, Vue, and JSX                          |
+| `proseWrap`                    | `"preserve"`  | Wrap Markdown text: `"always"`, `"never"`, or `"preserve"`            |
+| `endOfLine`                    | `"lf"`        | `"lf"`, `"crlf"`, `"cr"`, or `"auto"`                                 |
+| `htmlWhitespaceSensitivity`    | `"css"`       | How whitespace in HTML is treated: `"css"`, `"strict"`, or `"ignore"` |
+| `vueIndentScriptAndStyle`      | `false`       | Indent the code in `<script>` and `<style>` of Vue files              |
+| `embeddedLanguageFormatting`   | `"auto"`      | `"off"` leaves embedded code alone, like CSS in a template literal    |
+| `experimentalTernaries`        | `false`       | Prettier's new style for nested ternaries                             |
+| `experimentalOperatorPosition` | `"end"`       | `"start"` puts a binary operator at the start of the next line        |
+
+### `format.sortImports`
+
+[Sort, group, and merge imports](/format#sort-imports). Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt]
+sortImports = true
+```
+
+To change the groups, use a table. These are the defaults:
+
+```toml title="bunfig.toml" icon="settings"
+[fmt.sortImports]
+groups = ["builtin", "external", ["internal", "subpath"], ["parent", "sibling", "index"], "style", "unknown"]
+internalPattern = ["~/", "@/", "#"]
+newlinesBetween = true
+```
+
+| Key                  | Default | What it does                                                                  |
+| -------------------- | ------- | ----------------------------------------------------------------------------- |
+| `groups`             | above   | The order of the groups. A nested array merges several groups into one        |
+| `customGroups`       | `[]`    | Your own groups: `{ groupName = "ui", elementNamePattern = ["@acme/ui/**"] }` |
+| `internalPattern`    | above   | The prefixes that count as `internal`                                         |
+| `newlinesBetween`    | `true`  | A blank line between groups                                                   |
+| `order`              | `"asc"` | `"asc"` or `"desc"`                                                           |
+| `ignoreCase`         | `true`  | `a` and `A` sort together                                                     |
+| `sortSideEffects`    | `false` | Also move side-effect imports, like `import "./setup"`                        |
+| `partitionByComment` | `false` | Sort the imports before and after a comment line separately                   |
+| `partitionByNewline` | `false` | The same for a blank line. Needs `newlinesBetween = false`                    |
+
+To give type imports a group of their own, prefix a group with `type-`, like `"type-external"`, or use `"type"` for all of them.
+
+### `format.sortTailwindcss`
+
+[Sort Tailwind CSS classes](/format#sort-tailwind-css-classes). Default `false`. Classes are sorted with your project's `tailwindcss`, version 3 or 4, and are left as they are if it isn't installed.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt.sortTailwindcss]
+stylesheet = "./src/app.css"
+functions = ["clsx", "tw"]
+```
+
+| Key                  | What it does                                                          |
+| -------------------- | --------------------------------------------------------------------- |
+| `stylesheet`         | Tailwind 4: the CSS file that imports Tailwind                        |
+| `config`             | Tailwind 3: the path of `tailwind.config.js`                          |
+| `functions`          | Sort the strings passed to these functions. Replaces the default list |
+| `attributes`         | Sort these attributes too, besides `class` and `className`            |
+| `preserveWhitespace` | Keep the whitespace between classes                                   |
+| `preserveDuplicates` | Keep duplicate classes                                                |
+
+By default, `functions` is `clsx`, `cn`, `cva`, `cx`, `classNames`, `classnames`, `twMerge`, `twJoin`, and `tv`.
+
+### `format.sortPackageJson`
+
+[Sort the keys of `package.json`](/format#sort-package-json). Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt]
+sortPackageJson = true
+```
+
+`sortPackageJson = { sortScripts = true }` sorts `scripts` by name too.
+
+If a `.prettierrc` lists `prettier-plugin-packagejson`, the keys are sorted in that plugin's order. Setting `sortPackageJson` overrides that: `true` sorts in Bun's order, and `false` doesn't sort.
+
+### `format.jsdoc`
+
+[Format JSDoc comments](/format#format-jsdoc-comments). Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt]
+jsdoc = true
+```
+
+| Key                           | Default        | What it does                                                                |
+| ----------------------------- | -------------- | --------------------------------------------------------------------------- |
+| `capitalizeDescriptions`      | `true`         | Start descriptions with a capital letter                                    |
+| `descriptionWithDot`          | `false`        | End descriptions with a period                                              |
+| `descriptionTag`              | `false`        | Put `@description` before the description                                   |
+| `addDefaultToDescription`     | `true`         | Add ``Default is `1` `` to the description of `@param {number} [a=1]`       |
+| `commentLineStrategy`         | `"singleLine"` | Put a short comment on one line: `"singleLine"`, `"multiline"`, or `"keep"` |
+| `separateTagGroups`           | `false`        | A blank line between different tags                                         |
+| `separateReturnsFromParam`    | `false`        | A blank line between `@param` and `@returns`                                |
+| `bracketSpacing`              | `false`        | `{ number }` instead of `{number}`                                          |
+| `preferCodeFences`            | `false`        | Turn indented code into a fenced code block                                 |
+| `lineWrappingStyle`           | `"greedy"`     | `"balance"` makes wrapped lines about the same length                       |
+| `keepUnparsableExampleIndent` | `false`        | Keep the indentation of an `@example` that doesn't parse                    |
+
+### `format.svelte`
+
+[Format Svelte components](/format#svelte). Default `true`. `svelte = false` leaves `.svelte` files alone, and the Svelte code blocks in Markdown.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt.svelte]
+sortOrder = "scripts-markup-styles-options"
+```
+
+| Key                    | Default                           | What it does                                                                                |
+| ---------------------- | --------------------------------- | ------------------------------------------------------------------------------------------- |
+| `sortOrder`            | `"options-scripts-markup-styles"` | The order of `<svelte:options>`, the scripts, the markup, and the styles. `"none"` keeps it |
+| `allowShorthand`       | `true`                            | Print `a={a}` as `{a}`                                                                      |
+| `indentScriptAndStyle` | `true`                            | Indent the code in `<script>` and `<style>`                                                 |
+
+Next to a `.prettierrc` or an `.oxfmtrc.json`, the default is what that file says: Prettier formats `.svelte` files if it lists `prettier-plugin-svelte`, and oxfmt if it has `svelte`. The key overrides the file either way.
+
+### `format.ignorePatterns`
+
+Skip the files that match. `bun fmt` already skips `node_modules` and everything in `.gitignore`.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt]
+ignorePatterns = ["vendor/", "**/*.gen.ts"]
+```
+
+### `format.overrides`
+
+Different options for some files. Later entries win over earlier ones, and a flag wins over all of them.
+
+```toml title="bunfig.toml" icon="settings"
+[[fmt.overrides]]
+files = ["*.test.ts", "scripts/**"]
+excludeFiles = ["scripts/vendor/**"]
+options = { printWidth = 120, sortImports = false }
+```
+
+- `files` and `excludeFiles` take a glob or an array of globs, relative to `bunfig.toml`. They use the same syntax as [`Bun.Glob`](/runtime/glob). A glob without a slash matches the file name in any directory.
+- `options` takes the style options, `sortImports`, `sortTailwindcss`, `sortPackageJson`, `jsdoc`, `svelte`, and `parser`.
+
+### Every other flag
+
+Any flag that makes sense as a default has a key: its name in camelCase. `bun fmt --help --all` lists the flags. The command line wins over `bunfig.toml`.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt]
+editorconfig = false # --no-editorconfig
+ignorePath = [".gitignore", ".formatignore"] # --ignore-path .gitignore --ignore-path .formatignore
+insertFinalNewline = false # --no-insert-final-newline
+logLevel = "warn" # --log-level warn
+threads = 4 # --threads 4
+```
+
+`[fmt]` also applies in a project with a `.prettierrc` or an `.oxfmtrc.json`, where a key overrides the config file as its flag does. `plugins` belong in that config file.
 
 ## Package manager
 
-Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured under the `[install]` section.
+The `[install]` section configures the behavior of `bun install`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
 # configuration here
 ```
+
+A relative path in `cafile`, `cache`, `globalDir` or `globalBinDir` is relative to the file it is written in. A relative path in a flag (`--config`, `--cafile`, `--cache-dir`) is relative to the directory you run `bun` in. A relative `BUN_INSTALL_CACHE_DIR` is relative to the project's root. In all of these, a leading `~/` is your home directory.
 
 ### `install.optional`
 
@@ -432,9 +859,9 @@ peer = true
 
 ### `install.production`
 
-Whether `bun install` will run in "production mode". Default `false`.
+Whether `bun install` runs in "production mode". Default `false`.
 
-In production mode, `"devDependencies"` are not installed. You can use `--production` in the CLI to override this setting.
+In production mode, Bun does not install `"devDependencies"` and freezes the lockfile (same as [`install.frozenLockfile`](#install-frozenlockfile)). Use the `--production` CLI flag to enable it for a single install. Since production mode freezes the lockfile, `bun add`, `bun remove`, and `bun update` fail while it is set.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -445,7 +872,7 @@ production = false
 
 Whether to set an exact version in `package.json`. Default `false`.
 
-By default Bun uses caret ranges; if the `latest` version of a package is `2.4.1`, the version range in your `package.json` will be `^2.4.1`. This indicates that any version from `2.4.1` up to (but not including) `3.0.0` is acceptable.
+By default Bun uses caret ranges. If the `latest` version of a package is `2.4.1`, Bun writes `^2.4.1` to your `package.json`. That range accepts any version from `2.4.1` up to (but not including) `3.0.0`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -454,9 +881,9 @@ exact = false
 
 ### `install.ignoreScripts`
 
-Whether to skip lifecycle scripts during install. Default `false`. Equivalent to the `--ignore-scripts` flag.
+Whether to skip lifecycle scripts during install. Default `false`. Equivalent to the `--ignore-scripts` flag and to `NPM_CONFIG_IGNORE_SCRIPTS=true` in the environment.
 
-When `true`, Bun will not run any `preinstall` / `install` / `postinstall` / `prepare` scripts — both for your project and for packages in `trustedDependencies`. See [Lifecycle scripts](/pm/lifecycle) for more details.
+When `true`, Bun does not run any `preinstall` / `install` / `postinstall` / `prepare` scripts, both for your project and for packages in `trustedDependencies`. See [Lifecycle scripts](/pm/lifecycle).
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -474,7 +901,7 @@ concurrentScripts = 5
 
 ### `install.saveTextLockfile`
 
-If false, generate a binary `bun.lockb` instead of a text-based `bun.lock` file when running `bun install` and no lockfile is present.
+If `false`, `bun install` generates a binary `bun.lockb` instead of a text-based `bun.lock` file when no lockfile is present.
 
 Default `true` (since Bun v1.2).
 
@@ -485,7 +912,7 @@ saveTextLockfile = false
 
 ### `install.auto`
 
-To configure Bun's package auto-install behavior. Default `"auto"` — when no `node_modules` folder is found, Bun will automatically install dependencies on the fly during execution.
+Configure Bun's [auto-install](/runtime/auto-install) behavior. Default `"auto"` — when no `node_modules` folder is found, Bun installs dependencies on the fly during execution.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -512,15 +939,24 @@ prefer = "online"
 
 Valid values are:
 
-| Value       | Description                                                                                        |
-| ----------- | -------------------------------------------------------------------------------------------------- |
-| `"online"`  | Default. Check the registry for stale packages as needed.                                          |
-| `"offline"` | Skip staleness checks and resolve packages from the local cache. Equivalent to `--prefer-offline`. |
-| `"latest"`  | Always check npm for the latest matching versions. Equivalent to `--prefer-latest`.                |
+| Value       | Description                                                                                                                         |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `"online"`  | Default. Check the registry for stale packages as needed.                                                                           |
+| `"offline"` | Skip staleness checks and resolve packages from the local cache. Equivalent to `--prefer-offline` (also honoured by `bun install`). |
+| `"latest"`  | Always check npm for the latest matching versions. Equivalent to `--prefer-latest`.                                                 |
+
+### `install.offline`
+
+When `true`, `bun install` never touches the network: package metadata and tarballs must already be in the cache, and anything missing is an error. Default `false`. Equivalent to `bun install --offline`. For the softer "use the cache when possible" behaviour see `install.prefer = "offline"` / `--prefer-offline`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+offline = true
+```
 
 ### `install.frozenLockfile`
 
-When true, `bun install` will not update `bun.lock`. Default `false`. If `package.json` and the existing `bun.lock` are not in agreement, this will error.
+When `true`, `bun install` does not update `bun.lock`. Default `false`. If `package.json` and the existing `bun.lock` disagree, the install errors.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -529,7 +965,7 @@ frozenLockfile = false
 
 ### `install.dryRun`
 
-Whether `bun install` will actually install dependencies. Default `false`. When true, it's equivalent to setting `--dry-run` on all `bun install` commands.
+Whether `bun install` resolves dependencies without installing them. Default `false`. When `true`, it's equivalent to passing `--dry-run` to every package manager command, including `bun publish`, `bun pm pack`, `bun prune`, `bun dedupe` and `bun audit fix`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -538,11 +974,13 @@ dryRun = false
 
 ### `install.globalDir`
 
-To configure the directory where Bun puts globally installed packages.
+The directory where Bun puts globally installed packages.
+
+Set it in the global `.bunfig.toml` (see [Global vs. local](#global-vs-local)) or in a file passed with `--config`. Bun ignores it in a project's `bunfig.toml`.
 
 Environment variable: `BUN_INSTALL_GLOBAL_DIR`
 
-```toml title="bunfig.toml" icon="settings"
+```toml title="~/.bunfig.toml" icon="settings"
 [install]
 # where `bun install --global` installs packages
 globalDir = "~/.bun/install/global"
@@ -550,11 +988,13 @@ globalDir = "~/.bun/install/global"
 
 ### `install.globalBinDir`
 
-To configure the directory where Bun installs globally installed binaries and CLIs.
+The directory where Bun links the binaries of globally installed packages.
+
+Like `globalDir`, Bun ignores it in a project's `bunfig.toml`.
 
 Environment variable: `BUN_INSTALL_BIN`
 
-```toml title="bunfig.toml" icon="settings"
+```toml title="~/.bunfig.toml" icon="settings"
 [install]
 # where globally-installed package bins are linked
 globalBinDir = "~/.bun/bin"
@@ -562,7 +1002,7 @@ globalBinDir = "~/.bun/bin"
 
 ### `install.registry`
 
-The default registry is `https://registry.npmjs.org/`. This can be globally configured in `bunfig.toml`:
+The default registry is `https://registry.npmjs.org/`. To change it:
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -576,8 +1016,6 @@ registry = "https://username:password@registry.npmjs.org"
 
 ### `install.linkWorkspacePackages`
 
-To configure how workspace packages are linked, use the `install.linkWorkspacePackages` option.
-
 Whether to link workspace packages from the monorepo root to their respective `node_modules` directories. Default `true`.
 
 ```toml title="bunfig.toml" icon="settings"
@@ -587,7 +1025,7 @@ linkWorkspacePackages = true
 
 ### `install.scopes`
 
-To configure a registry for a particular scope (e.g. `@myorg/<package>`) use `install.scopes`. You can reference environment variables with `$variable` notation.
+To configure a registry for a particular scope (for example, `@myorg/<package>`), use `install.scopes`. You can reference environment variables with `$variable` notation.
 
 ```toml title="bunfig.toml" icon="settings"
 [install.scopes]
@@ -604,7 +1042,7 @@ myorg = { token = "$npm_token", url = "https://registry.myorg.com/" }
 
 ### `install.ca` and `install.cafile`
 
-To configure a CA certificate, use `install.ca` or `install.cafile` to specify a path to a CA certificate file.
+To configure a CA certificate, set `install.ca` to the certificate string or `install.cafile` to the path of a certificate file.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -614,6 +1052,8 @@ ca = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 # A path to a CA certificate file. The file can contain multiple certificates.
 cafile = "path/to/cafile"
 ```
+
+Set one of the two. If both are set, only `cafile` is used. `--ca` or `--cafile` on the command line replaces both.
 
 ### `install.cache`
 
@@ -625,8 +1065,8 @@ To configure the cache behavior:
 # the directory to use for the cache
 dir = "~/.bun/install/cache"
 
-# when true, don't load from the global cache.
-# Bun may still write to node_modules/.cache
+# when true, don't use the global cache or cached registry metadata (same as `cache = false`).
+# Bun extracts packages to node_modules/.cache instead
 disable = false
 
 # when true, always resolve the latest versions from the registry
@@ -635,8 +1075,6 @@ disableManifest = false
 
 ### `install.lockfile`
 
-To configure lockfile behavior, use the `install.lockfile` section.
-
 Whether to generate a lockfile on `bun install`. Default `true`.
 
 ```toml title="bunfig.toml" icon="settings"
@@ -644,7 +1082,7 @@ Whether to generate a lockfile on `bun install`. Default `true`.
 save = true
 ```
 
-Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will always be created.) Currently `"yarn"` is the only supported value.
+Whether to generate a non-Bun lockfile alongside `bun.lock`. (Bun always creates a `bun.lock`.) `"yarn"` is the only supported value.
 
 ```toml title="bunfig.toml" icon="settings"
 [install.lockfile]
@@ -653,9 +1091,9 @@ print = "yarn"
 
 ### `install.linker`
 
-Configure the linker strategy for installing dependencies. Defaults to `"isolated"` for new workspaces, `"hoisted"` for new single-package projects and existing projects (made pre-v1.3.2).
+Configure the linker strategy: how `bun install` lays out dependencies in `node_modules`. Defaults to `"isolated"` for new workspaces, `"hoisted"` for new single-package projects and existing projects (made pre-v1.3.2).
 
-For complete documentation refer to [Package manager > Isolated installs](/pm/isolated-installs).
+See [Isolated installs](/pm/isolated-installs).
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -671,9 +1109,9 @@ Valid values are:
 
 ### `install.globalStore`
 
-When using the `"isolated"` linker, share package installations across projects in a global virtual store at `<cache>/links/` and link `node_modules/.bun/<pkg>@<ver>` into it instead of materializing each package into the project. Makes warm installs after `rm -rf node_modules` an order of magnitude faster. Default `false`. Can also be set with the `BUN_INSTALL_GLOBAL_STORE` environment variable.
+When using the `"isolated"` linker, share package installations across projects in a global virtual store at `<cache>/links/`. Bun links `node_modules/.bun/<pkg>@<ver>` into the store instead of materializing each package into the project. Makes warm installs after `rm -rf node_modules` an order of magnitude faster. Default `false`. You can also set it with the `BUN_INSTALL_GLOBAL_STORE` environment variable.
 
-For complete documentation refer to [Package manager > Global virtual store](/pm/global-store).
+See [Global virtual store](/pm/global-store).
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -682,7 +1120,7 @@ globalStore = true
 
 ### `install.publicHoistPattern`
 
-When using the `"isolated"` linker, packages matching these glob patterns are hoisted to the root `node_modules` directory so they can be resolved by any package in the project. Default `[]`. Similar to pnpm's `public-hoist-pattern`.
+When using the `"isolated"` linker, Bun hoists packages matching these glob patterns to the root `node_modules` directory so any package in the project can resolve them. Default `[]`. Similar to pnpm's `public-hoist-pattern`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -691,11 +1129,22 @@ publicHoistPattern = ["*eslint*", "*prettier*"]
 
 ### `install.hoistPattern`
 
-When using the `"isolated"` linker, packages matching these glob patterns are hoisted to the virtual store root (`node_modules/.bun`) so they can be resolved by other packages in the virtual store. Default `[]`. Similar to pnpm's `hoist-pattern`.
+When using the `"isolated"` linker, Bun hoists packages matching these glob patterns to a fallback directory inside the virtual store (`node_modules/.bun/node_modules`) so other packages in the virtual store can resolve them. By default Bun hoists every package there, equivalent to `["*"]`. A pattern is matched against the dependency name, which for an `npm:` alias is the alias, and the link in the fallback directory has that name. Similar to pnpm's `hoist-pattern`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
 hoistPattern = ["*"]
+```
+
+### `install.hoist`
+
+When using the `"isolated"` linker, Bun creates `node_modules/.bun/node_modules`. This fallback directory contains a symlink for every dependency name, or only for the names matching `install.hoistPattern` when one is set. The directory sits on the upward resolution path of every package in the store, so a package can still resolve dependencies it never declared ("phantom dependencies"). Set `hoist = false` to skip creating this directory entirely. An undeclared import from a store package then fails unless the imported package is linked at the project root `node_modules` (a direct dependency, a `publicHoistPattern` match, or a workspace package). The root `node_modules` stays on the resolution path because `.bun` lives inside it. The project's own `node_modules` symlinks are unchanged. Default `true`. Equivalent to pnpm's `hoist` setting, including this root-`node_modules` caveat; takes precedence over `install.hoistPattern`.
+
+This setting only applies to the `"isolated"` linker. Hoisted installs are unaffected: there the flat `node_modules` tree is the layout itself, not something this switch controls.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+hoist = false
 ```
 
 ### `install.logLevel`
@@ -714,19 +1163,27 @@ Configure a security scanner to scan packages for vulnerabilities before install
 First, install a security scanner from npm:
 
 ```bash terminal icon="terminal"
-bun add -d @acme/bun-security-scanner
+bun add -d @oven/bun-security-scanner
 ```
+
+<Note>
+  `@oven/bun-security-scanner` is an example package name, not a real package. Replace it with the scanner you want to
+  use, and consult that scanner's documentation for the exact package name and installation instructions. Most scanners
+  are installed with `bun add`.
+</Note>
 
 Then configure it in your `bunfig.toml`:
 
 ```toml bunfig.toml icon="settings"
 [install.security]
-scanner = "@acme/bun-security-scanner"
+scanner = "@oven/bun-security-scanner" # example name, replace with your scanner's package
 ```
+
+The value is a package of the project, or the path of a file. A relative path such as `./scanner.ts` is relative to the file it is written in.
 
 When a security scanner is configured:
 
-- Auto-install is automatically disabled for security
+- [Auto-install](/runtime/auto-install) is off, also with `-i` or `--install`. Run `bun install` first
 - Packages are scanned before installation
 - Installation is cancelled if fatal issues are found
 - Security warnings are displayed during installation
@@ -735,7 +1192,7 @@ Learn more about [using and writing security scanners](/pm/security-scanner-api)
 
 ### `install.minimumReleaseAge`
 
-Configure a minimum age (in seconds) for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
+Configure a minimum age (in seconds) for npm package versions. During installation, Bun filters out package versions published more recently than this threshold. Default `null` (disabled).
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -743,30 +1200,32 @@ Configure a minimum age (in seconds) for npm package versions. Package versions 
 minimumReleaseAge = 259200
 ```
 
-For more details see [Minimum release age](/pm/cli/install#minimum-release-age) in the install documentation.
+See [Minimum release age](/pm/cli/install#minimum-release-age).
 
 ### `install.minimumReleaseAgeExcludes`
 
-An array of package names that are exempt from the `minimumReleaseAge` check. Default `[]`.
+An array of packages that are exempt from the `minimumReleaseAge` check. A package name exempts every version of the package; `name@version` (or `name@1.0.0 || 1.0.1`) exempts only the listed exact versions. Default `[]`. The `--minimum-release-age-excludes` flag replaces this list.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
 minimumReleaseAge = 259200
-# These packages will bypass the 3-day minimum age requirement
-minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
+# Every version of @types/bun, and only typescript 5.4.5, bypass the 3-day minimum age requirement
+minimumReleaseAgeExcludes = ["@types/bun", "typescript@5.4.5"]
 ```
+
+See [Minimum release age](/pm/cli/install#minimum-release-age).
 
 ## `bun run`
 
-The `bun run` command can be configured under the `[run]` section. These apply to the `bun run` command and the `bun` command when running a file or executable or script.
+The `[run]` section configures the `bun run` command. These settings also apply to the `bun` command when running a file, script, or executable.
 
-Currently, `bunfig.toml` is only automatically loaded for `bun run` in a local project (it doesn't check for a global `.bunfig.toml`).
+For `bun run`, Bun only loads the local project's `bunfig.toml` automatically (it doesn't check for a global `.bunfig.toml`).
 
 ### `run.shell` - use the system shell or Bun's shell
 
-The shell to use when running package.json scripts via `bun run` or `bun`. On Windows, this defaults to `"bun"` and on other platforms it defaults to `"system"`.
+The shell used to run `package.json` scripts with `bun run` or `bun`. Defaults to `"bun"` on Windows and `"system"` on other platforms.
 
-To always use the system shell instead of Bun's shell (default behavior unless Windows):
+To always use the system shell instead of Bun's shell (the default everywhere except Windows):
 
 ```toml title="bunfig.toml" icon="settings"
 [run]
@@ -784,9 +1243,9 @@ shell = "bun"
 
 ### `run.bun` - auto alias `node` to `bun`
 
-When `true`, this prepends `$PATH` with a `node` symlink that points to the `bun` binary for all scripts or executables invoked by `bun run` or `bun`.
+When `true`, Bun prepends `$PATH` with a `node` symlink that points to the `bun` binary for all scripts or executables invoked by `bun run` or `bun`.
 
-This means that if you have a script that runs `node`, it will actually run `bun` instead, without needing to change your script. This works recursively, so if your script runs another script that runs `node`, it will also run `bun` instead. This applies to shebangs as well, so if you have a script with a shebang that points to `node`, it will actually run `bun` instead.
+A script that runs `node` runs `bun` instead, with no changes to the script. This works recursively, so a script that runs another script that runs `node` also runs `bun`. The alias also applies to shebangs that point to `node`.
 
 By default, this is enabled if `node` is not already in your `$PATH`.
 
@@ -811,18 +1270,18 @@ bun --bun dev
 bun run --bun dev
 ```
 
-If set to `false`, this will disable the `node` symlink.
+Set to `false` to disable the `node` symlink.
 
 ### `run.silent` - suppress reporting the command being run
 
-When `true`, suppresses the output of the command being run by `bun run` or `bun`.
+When `true`, `bun run` and `bun` don't print the command being run.
 
 ```toml title="bunfig.toml" icon="settings"
 [run]
 silent = true
 ```
 
-Without this option, the command being run will be printed to the console:
+Without this option, Bun prints the command being run to the console:
 
 ```sh terminal icon="terminal"
 bun run dev
@@ -833,7 +1292,7 @@ echo "Running \"dev\"..."
 Running "dev"...
 ```
 
-With this option, the command being run will not be printed to the console:
+With this option, Bun does not print the command being run:
 
 ```sh
 bun run dev
@@ -853,7 +1312,7 @@ bun run --silent dev
 
 ### `run.elide-lines` - truncate filtered output
 
-The number of lines of script output shown per script when using `--filter`. Default `10`. Set to `0` to show all lines. Equivalent to the `--elide-lines` flag.
+Truncate each script's output to its last N lines when using `--filter` in a terminal. Default `0` (show all lines). Equivalent to the `--elide-lines` flag.
 
 ```toml title="bunfig.toml" icon="settings"
 [run]
@@ -862,9 +1321,11 @@ elide-lines = 10
 
 ### `run.noOrphans` - don't leave orphan processes behind
 
-When `true`, Bun watches the process that spawned it and exits as soon as that parent goes away — even if the parent was `SIGKILL`ed and never got a chance to forward a signal. On its own exit, Bun also recursively `SIGKILL`s every descendant process so nothing it spawned outlives it. Useful when Bun is launched by a supervisor (Electron, a CI runner, a thin shim) that may be force-killed.
+When `true`, Bun watches the process that spawned it and exits as soon as that parent goes away, even if the parent was force-killed and never got a chance to forward a signal. On its own exit, Bun also terminates every descendant process so nothing it spawned outlives it. Useful when Bun is launched by a supervisor (Electron, a CI runner, a thin shim) that may be force-killed.
 
-Linux and macOS only (no-op on Windows and other platforms). Equivalent to the `--no-orphans` CLI flag or the `BUN_FEATURE_FLAG_NO_ORPHANS=1` environment variable.
+On Linux, Bun uses `prctl(PR_SET_PDEATHSIG)` and a `/proc` descendant walk. On macOS, it uses `EVFILT_PROC`/`NOTE_EXIT` on the event loop's kqueue and a libproc descendant walk. On Windows, it uses a thread-pool wait on the parent's process handle and a kill-on-close Job Object.
+
+Equivalent to the `--no-orphans` CLI flag or the `BUN_FEATURE_FLAG_NO_ORPHANS=1` environment variable.
 
 ```toml title="bunfig.toml" icon="settings"
 [run]

@@ -6,13 +6,13 @@ use crate::Printer;
 use crate::PropertyHandlerContext;
 use crate::Result as CssResult;
 use crate::SmallList;
-use crate::properties::PropertyIdTag;
 use bun_alloc::ArenaVecExt as _;
 
 use crate::css_properties::Property;
 use crate::css_properties::PropertyId;
 use crate::css_properties::masking;
 use crate::css_values::easing::EasingFunction;
+use crate::css_values::ident::CustomIdent;
 use crate::css_values::time::Time;
 
 use crate::VendorPrefix;
@@ -23,39 +23,28 @@ use crate::prefixes::Feature;
 #[derive(Clone, PartialEq)]
 pub struct Transition {
     /// The property to transition.
-    pub property: PropertyId,
+    pub(crate) property: PropertyId,
     /// The duration of the transition.
-    pub duration: Time,
+    pub(crate) duration: Time,
     /// The delay before the transition starts.
-    pub delay: Time,
+    pub(crate) delay: Time,
     /// The easing function for the transition.
-    pub timing_function: EasingFunction,
+    pub(crate) timing_function: EasingFunction,
 }
 
 impl Transition {
-    // TODO(port): PropertyFieldMap was a Zig comptime anonymous struct mapping
-    // field names → PropertyIdTag, consumed by reflection-based shorthand helpers.
-    // Replace with a trait impl or const table once the shorthand machinery is ported.
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("property", PropertyIdTag::TransitionProperty),
-        ("duration", PropertyIdTag::TransitionDuration),
-        ("delay", PropertyIdTag::TransitionDelay),
-        ("timing_function", PropertyIdTag::TransitionTimingFunction),
-    ];
-
-    pub fn eql(&self, rhs: &Self) -> bool {
-        // Zig: css.implementEql(@This(), lhs, rhs) — field-by-field reflection.
+    pub(crate) fn eql(&self, rhs: &Self) -> bool {
         self == rhs
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // Zig: css.implementDeepClone(@This(), this, arena) — field-by-field
-        // reflection. All four fields are POD/Copy or `Clone`-via-derive with no
-        // arena indirections; #[derive(Clone)] is exact.
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // All four fields deep-clone via `#[derive(Clone)]` with no
+        // arena indirections (any heap-carrying variants of `PropertyId`/
+        // `EasingFunction` clone deeply onto the global heap), so Clone is exact.
         self.clone()
     }
 
-    pub fn parse(parser: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(parser: &mut Parser) -> CssResult<Self> {
         let mut property: Option<PropertyId> = None;
         let mut duration: Option<Time> = None;
         let mut delay: Option<Time> = None;
@@ -101,7 +90,7 @@ impl Transition {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.property.to_css(dest)?;
         if !self.duration.is_zero() || !self.delay.is_zero() {
             dest.write_char(b' ')?;
@@ -121,20 +110,48 @@ impl Transition {
     }
 }
 
-#[derive(Default)]
-pub struct TransitionHandler {
-    pub properties: Option<(SmallList<PropertyId, 1>, VendorPrefix)>,
-    pub durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
-    pub delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
-    pub timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
-    pub has_any: bool,
+/// A value for the [view-transition-name](https://drafts.csswg.org/css-view-transitions-1/#view-transition-name-prop) property.
+///
+/// Under CSS modules the `<custom-ident>` is scoped with the same hash as the
+/// `::view-transition-*(<name>)` pseudo-element selectors, so the two keep
+/// matching after renaming.
+#[derive(Clone, Copy, crate::Parse, crate::ToCss, crate::CssEql, crate::DeepClone)]
+pub enum ViewTransitionName {
+    /// The `none` keyword.
+    None,
+    /// The `auto` keyword.
+    Auto,
+    /// The `match-element` keyword.
+    MatchElement,
+    /// A custom name.
+    Custom(CustomIdent),
 }
 
-// PORT NOTE: Zig's `property`/`maybeFlush` took `comptime prop: []const u8` and used
-// `@field(this, prop)` + `val: anytype` for comptime field dispatch. Rust has no
-// `@field`, and passing both `&mut self` and `&mut self.<field>` to a generic fn
-// trips borrowck (because `flush` needs `&mut self`). Macros expand at the call
-// site exactly like the Zig comptime dispatch did.
+/// A value for the [view-transition-group](https://drafts.csswg.org/css-view-transitions-2/#view-transition-group-prop) property.
+#[derive(Clone, Copy, crate::Parse, crate::ToCss, crate::CssEql, crate::DeepClone)]
+pub enum ViewTransitionGroup {
+    /// The `normal` keyword.
+    Normal,
+    /// The `contain` keyword.
+    Contain,
+    /// The `nearest` keyword.
+    Nearest,
+    /// A custom group, the `view-transition-name` of an ancestor.
+    Custom(CustomIdent),
+}
+
+#[derive(Default)]
+pub struct TransitionHandler {
+    pub(crate) properties: Option<(SmallList<PropertyId, 1>, VendorPrefix)>,
+    pub(crate) durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
+    pub(crate) delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
+    pub(crate) timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
+    pub(crate) has_any: bool,
+}
+
+// Passing both `&mut self` and `&mut self.<field>` to a generic fn trips
+// borrowck (because `flush` needs `&mut self`), so macros expand the field
+// dispatch at the call site instead.
 macro_rules! handler_maybe_flush {
     ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr) => {{
         // If two vendor prefixes for the same property have different
@@ -171,14 +188,14 @@ mod transition_handler_body {
     use crate::generics::CssEql as _;
     use crate::generics::DeepClone;
     impl TransitionHandler {
-        pub fn handle_property(
+        pub(crate) fn handle_property(
             &mut self,
             prop: &Property,
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
         ) -> bool {
-            // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
-            // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
+            // PropertyHandlerContext carries no arena; it is recovered via
+            // `dest.bump()` (DeclarationList = bumpalo::Vec).
             let arena = dest.bump();
             match prop {
                 Property::TransitionProperty(x) => {
@@ -325,7 +342,7 @@ mod transition_handler_body {
             true
         }
 
-        pub fn finalize(
+        pub(crate) fn finalize(
             &mut self,
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
@@ -438,7 +455,7 @@ mod transition_handler_body {
             self.reset();
         }
 
-        pub fn reset(&mut self) {
+        fn reset(&mut self) {
             self.properties = None;
             self.durations = None;
             self.delays = None;
@@ -491,29 +508,17 @@ mod transition_handler_body {
                 delay,
                 timing_function,
             };
-            let mut cloned = false;
-
             let prefix_to_iter = property_id.prefix().or_none();
             // Expand vendor prefixes into multiple transitions.
-            // PORT NOTE: Zig used `inline for (VendorPrefix.FIELDS)` over packed-struct
-            // bool fields. With bitflags, iterate the individual flag bits.
-            // PERF(port): was comptime-unrolled inline-for — profile if it shows up on a hot path.
+            // Cloning for every iteration costs at most one extra clone of a
+            // small value.
             for &prefix_flag in VendorPrefix::FIELDS {
                 if prefix_to_iter.contains(prefix_flag) {
-                    let mut t = if cloned {
-                        transition.deep_clone(arena)
-                    } else {
-                        // TODO(port): Zig moved `transition` here on first iteration; Rust
-                        // can't move out of a value that may be reused next iteration.
-                        // Clone unconditionally for now.
-                        transition.deep_clone(arena)
-                    };
-                    cloned = true;
+                    let mut t = transition.deep_clone(arena);
                     t.property = property_id.with_prefix(prefix_flag);
                     transitions.append(t);
                 }
             }
-            let _ = cloned;
         }
         transitions
     }
@@ -841,6 +846,4 @@ mod transition_handler_body {
                 | PropertyId::Transition(..)
         )
     }
-
-    // ported from: src/css/properties/transition.zig
 } // mod transition_handler_body

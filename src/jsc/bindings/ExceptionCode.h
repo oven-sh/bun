@@ -24,7 +24,7 @@
 
 namespace WebCore {
 
-// keep in sync with DOMExceptionCode in src/jsc/bindings/JSErrorCode.Zig
+// keep in sync with DOMExceptionCode in src/jsc/JSErrorCode.rs
 enum ExceptionCode : uint8_t {
     // DOMException error names (https://webidl.spec.whatwg.org/#idl-DOMException-error-names).
     // Those need to be kept in sync with the array in DOMException.cpp.
@@ -78,6 +78,7 @@ enum ExceptionCode : uint8_t {
     InvalidURLError,
     CryptoOperationFailedError,
     EVENT_RECURSION,
+    WORKER_INVALID_EXEC_ARGV,
 };
 
 } // namespace WebCore

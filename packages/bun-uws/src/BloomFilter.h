@@ -38,12 +38,20 @@ private:
         uint32_t val;
     };
 
+    /* Header names keep their wire casing, so hash on the lowercased bytes
+     * to stay consistent between add() (raw-cased) and mightHave() (callers
+     * pass lowercase names). */
+    static inline unsigned char lowered(char c) {
+        unsigned char u = reinterpret_cast<const unsigned char&>(c);
+        return (u >= 'A' && u <= 'Z') ? (u | 32) : u;
+    }
+
     ScrambleArea getFeatures(std::string_view key) {
         ScrambleArea s;
-        s.p[0] = reinterpret_cast<const unsigned char&>(key[0]);
-        s.p[1] = reinterpret_cast<const unsigned char&>(key[key.length() - 1]);
-        s.p[2] = reinterpret_cast<const unsigned char&>(key[key.length() - 2]);
-        s.p[3] = reinterpret_cast<const unsigned char&>(key[key.length() >> 1]);
+        s.p[0] = lowered(key[0]);
+        s.p[1] = lowered(key[key.length() - 1]);
+        s.p[2] = lowered(key[key.length() - 2]);
+        s.p[3] = lowered(key[key.length() >> 1]);
         return s;
     }
 

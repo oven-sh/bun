@@ -1,22 +1,14 @@
-//! Port of `src/js_parser/js_parser.zig`.
-//!
-//! NOTE on arena slices: this is the AST crate. Nearly every `[]const u8` /
-//! `[]T` struct field in the Zig points into either the source text or the
+//! NOTE on arena slices: this is the AST crate. Nearly every slice-typed
+//! struct field points into either the source text or the
 //! parser arena and is bulk-freed at end-of-parse. Per PORTING.md, lifetime
 //! params are not added to AST structs; arena-owned slices are typed as
-//! `StoreSlice<T>` / `StoreStr` here. TODO(refactor): thread a crate-wide
-//! `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
+//! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
+//! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
-// `lexer::NewLexer<J: JsonOptionsT>` projects trait associated consts into
-// eight `const bool` slots (Zig: `NewLexer(comptime json_options)`). Field
-// access on a `const J: JSONOptions` param is rejected by nightly-2025-12-10
-// ("overly complex generic constant"); assoc-const projection on a *type*
-// param works under `generic_const_exprs`. `adt_const_params` keeps
-// `JSONOptions: ConstParamTy` for value-level reification.
-#![feature(adt_const_params, generic_const_exprs)]
-#![allow(incomplete_features)]
-
-pub use bun_collections::VecExt as _VecExtReexport;
+pub mod error;
+pub mod function_identities;
+pub use error::Error;
+pub use error::Result as CrateResult;
 
 // ─── module layout (see docs/REFACTOR_BUN_AST.md) ───────────────────────────
 pub mod parser;
@@ -24,11 +16,12 @@ pub mod parser;
 pub use parser::*;
 pub mod lexer;
 
-pub mod fold;
+pub(crate) mod fold;
 pub mod lower;
 pub mod p;
 pub mod parse;
-pub mod repl_transforms;
+pub mod react_compiler_host;
+pub(crate) mod repl_transforms;
 pub mod scan;
 pub mod typescript;
 pub mod visit;
@@ -36,15 +29,12 @@ pub mod visit;
 pub use p::P;
 pub use parse::parse_entry::{Options as ParserOptions, Parser};
 
-// `pub const Macro = @import("../js_parser_jsc/Macro.zig");`
 // Full impl lives in *_jsc; this stub re-exposes the JSC-free constants and a
 // placeholder `MacroContext` so lower-tier crates (bundler, transpiler) that
 // only need the namespace strings / a context handle stay unblocked.
 #[allow(non_snake_case)]
 pub mod Macro {
-    /// Zig: `pub const namespace: string = "macro";`
     pub const NAMESPACE: &[u8] = b"macro";
-    /// Zig: `pub const namespaceWithColon: string = namespace ++ ":";`
     pub const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
 
     #[inline]
@@ -52,8 +42,6 @@ pub mod Macro {
         str_.starts_with(NAMESPACE_WITH_COLON)
     }
 
-    /// Spec `bundler_jsc/PluginRunner.zig:MacroJSCtx` (= `JSC.JSValue`).
-    ///
     /// `JSValue` is `#[repr(transparent)] i64` (PORTING.md §JSC types). This
     /// newtype carries the encoded bits at the lowest tier that needs them so
     /// `Transpiler::ParseOptions.macro_js_ctx` and `MacroContext.javascript_object`
@@ -79,19 +67,17 @@ pub mod Macro {
     /// `Transpiler` and JSC types that live in crates which depend on
     /// `bun_js_parser`. To break the dep cycle the higher-tier `_jsc` crate
     /// owns that state behind `data`; the visit pass reaches it via
-    /// link-time-resolved `extern "Rust"` fns so `visitExpr.rs` stays a
-    /// faithful port of `visitExpr.zig:415` / `:1443` without an upward
-    /// import. `javascript_object` is surfaced here so `Transpiler::parse` can
-    /// thread `this_parse.macro_js_ctx` through (spec transpiler.zig:938-940)
+    /// link-time-resolved `extern "Rust"` fns so `visitExpr.rs` avoids an
+    /// upward import. `javascript_object` is surfaced here so
+    /// `Transpiler::parse` can thread `this_parse.macro_js_ctx` through
     /// without this crate depending on `bun_jsc::JSValue`.
     pub struct MacroContext {
         /// Encoded `JSC.JSValue` (the caller-supplied macro JS context).
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
         /// Opaque pointer to the higher-tier macro-runner state
-        /// (resolver/env/macros/remap/bump). Allocated by `init` and leaked
-        /// (matches Zig's process-lifetime `default_allocator`);
-        /// `bun_js_parser` never dereferences it.
+        /// (resolver/env/macros/remap/bump). Allocated by `init`, freed by
+        /// `deinit`; `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
     }
     impl Default for MacroContext {
@@ -128,7 +114,7 @@ pub mod Macro {
             import_range: bun_ast::Range,
             caller: bun_ast::Expr,
             function_name: &[u8],
-        ) -> Result<bun_ast::Expr, bun_core::Error>;
+        ) -> Result<bun_ast::Expr, crate::Error>;
         // NOT `safe fn`: callee derefs `data` unconditionally as
         // `&MacroContext` — caller must guarantee non-null + produced by
         // `__bun_macro_context_init` + the backing `Transpiler.options` table
@@ -155,10 +141,8 @@ pub mod Macro {
         __bun_macro_collect_vm_garbage();
     }
     impl MacroContext {
-        /// Zig: `pub fn call(self: *MacroContext, import_record_path, source_dir,
-        /// log, source, import_range, caller, function_name) !Expr`.
         #[inline]
-        pub fn call(
+        pub(crate) fn call(
             &mut self,
             import_record_path: &[u8],
             source_dir: &[u8],
@@ -167,7 +151,7 @@ pub mod Macro {
             import_range: bun_ast::Range,
             caller: bun_ast::Expr,
             function_name: &[u8],
-        ) -> Result<bun_ast::Expr, bun_core::Error> {
+        ) -> Result<bun_ast::Expr, crate::Error> {
             __bun_macro_context_call(
                 self,
                 import_record_path,
@@ -179,8 +163,6 @@ pub mod Macro {
                 function_name,
             )
         }
-        /// Zig: `pub fn init(transpiler: *Transpiler) MacroContext`.
-        ///
         /// `T` is always `bun_bundler::Transpiler<'_>`; generic so callers in
         /// `bun_bundler`/`bun_runtime` compile without `bun_js_parser` taking
         /// an upward dep on the bundler. The `_jsc` crate reads the concrete
@@ -198,10 +180,9 @@ pub mod Macro {
                 )
             }
         }
-        /// Free the boxed higher-tier state behind `data`. Only call when the
-        /// owning `Transpiler` is a short-lived bytewise clone (e.g. the
-        /// off-thread `RuntimeTranspilerStore` worker) — the long-lived
-        /// `vm.transpiler` instance leaks it intentionally (process-lifetime).
+        /// Free the boxed higher-tier state behind `data`. Its arena backs the
+        /// strings of every `Expr` its macros returned, so only call once the
+        /// ASTs that hold them are printed.
         #[inline]
         pub fn deinit(self) {
             // SAFETY: `self.data` is either null (callee no-ops) or the exact
@@ -210,12 +191,11 @@ pub mod Macro {
             // possible.
             unsafe { __bun_macro_context_deinit(self.data) }
         }
-        /// Zig: `pub fn getRemap(self: *MacroContext, path: []const u8) ?MacroRemapEntry`.
         /// Returns `'static` so callers can keep the result across `&mut self`
         /// parser calls without a borrowck conflict; the table lives in
         /// `Transpiler.options` which outlives every parse.
         #[inline]
-        pub fn get_remap(&self, path: &[u8]) -> Option<&'static MacroRemapEntry> {
+        pub(crate) fn get_remap(&self, path: &[u8]) -> Option<&'static MacroRemapEntry> {
             if self.data.is_null() {
                 return None;
             }
@@ -228,7 +208,6 @@ pub mod Macro {
         }
     }
 
-    /// Zig: `MacroImportReplacementMap` — `bun.StringArrayHashMap([]const u8)`.
     /// Values are owned (`Box<[u8]>`) so callers can populate without `unsafe`
     /// lifetime-extension casts; matches `bun_resolver::package_json::MacroImportReplacementMap`.
     pub type MacroRemapEntry = bun_collections::StringArrayHashMap<Box<[u8]>>;
@@ -241,8 +220,8 @@ use bun_ast::{Ast, Ref};
 // PERF NOTE: `bun_ast::Ast` is ~1 KB (40+ fields incl. Scope, NamedImports,
 // NamedExports, CharFreq, several HashMaps). Storing it inline made this enum
 // ~1 KB and forced a ~1 KB memmove at every layer of the return chain
-// `P::to_ast → _parse → parse → cache::JavaScript::parse → Transpiler::parse_*`
-// (Zig sidesteps this via result-location semantics; Rust does not). Boxing the
+// `P::to_ast → _parse → parse → cache::JavaScript::parse → Transpiler::parse_*`.
+// Boxing the
 // `Ast` variant collapses `Result` to 16 B so only a thin pointer is moved up
 // the stack — one mimalloc-arena alloc per parsed module is far cheaper than
 // 4+ kilobyte memmoves. The other variants are already tiny.
@@ -260,8 +239,6 @@ pub enum AlreadyBundled {
     BytecodeCjs,
 }
 
-pub type BindingList = Vec<Binding>;
-
 /// `impl EqlParser for P` — moved out of `bun_ast::expr` (next to `P`).
 impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
     for crate::p::P<'a, IS_TS, SCAN>
@@ -278,7 +255,7 @@ impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
 
 pub mod defines_table;
 
-// ─── from bun_bundler::defines (src/bundler/defines.zig) ────────────────────
+// ─── from bun_bundler::defines ───────────────────────────────────────────────
 // B-3 UNIFIED: canonical `Define` / `DefineData` / `DotDefine` live here so the
 // parser (`P.define: &'a Define`) and the bundler (`BundleOptions.define:
 // Box<Define>`) share one nominal type. `bun_bundler::defines` re-exports these
@@ -293,7 +270,6 @@ pub mod defines {
     use bun_ast::StoreRef;
     use bun_ast::expr::Data as ExprData;
 
-    // Zig: `bun.StringArrayHashMap(string)` / `bun.StringArrayHashMap(DefineData)`.
     pub type RawDefines = StringArrayHashMap<Box<[u8]>>;
     pub type UserDefines = StringHashMap<DefineData>;
     pub type UserDefinesArray = StringArrayHashMap<DefineData>;
@@ -302,17 +278,14 @@ pub mod defines {
 
     #[derive(Clone)]
     pub struct DotDefine {
-        // Zig stored borrowed `[][]const u8` into static tables / user-define
-        // key strings; the Rust port owns the part strings (small, allocated
-        // once at startup). PERF(port): tiny copies.
+        // Owned part strings (small, allocated once at startup).
         pub parts: Vec<Box<[u8]>>,
         pub data: DefineData,
     }
 
-    /// Zig: `packed struct(u8)` — `_padding: u3, valueless: bool,
-    /// can_be_removed_if_unused: bool, call_can_be_unwrapped_if_unused:
-    /// E.CallUnwrap (u2), method_call_must_be_replaced_with_undefined: bool`.
-    /// Packed LSB-first → bit positions below match the Zig layout exactly.
+    /// Bit-packed flags (LSB-first): 3 padding bits, `valueless`,
+    /// `can_be_removed_if_unused`, `call_can_be_unwrapped_if_unused`
+    /// (`E.CallUnwrap`, 2 bits), `method_call_must_be_replaced_with_undefined`.
     #[repr(transparent)]
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct Flags(u8);
@@ -325,25 +298,25 @@ pub mod defines {
         const METHOD_CALL_UNDEF_SHIFT: u8 = 7;
 
         #[inline]
-        pub const fn valueless(self) -> bool {
+        pub(crate) const fn valueless(self) -> bool {
             (self.0 >> Self::VALUELESS_SHIFT) & 1 != 0
         }
         #[inline]
-        pub fn set_valueless(&mut self, v: bool) {
+        pub(crate) fn set_valueless(&mut self, v: bool) {
             self.0 =
                 (self.0 & !(1 << Self::VALUELESS_SHIFT)) | ((v as u8) << Self::VALUELESS_SHIFT);
         }
         #[inline]
-        pub const fn can_be_removed_if_unused(self) -> bool {
+        pub(crate) const fn can_be_removed_if_unused(self) -> bool {
             (self.0 >> Self::CAN_BE_REMOVED_SHIFT) & 1 != 0
         }
         #[inline]
-        pub fn set_can_be_removed_if_unused(&mut self, v: bool) {
+        pub(crate) fn set_can_be_removed_if_unused(&mut self, v: bool) {
             self.0 = (self.0 & !(1 << Self::CAN_BE_REMOVED_SHIFT))
                 | ((v as u8) << Self::CAN_BE_REMOVED_SHIFT);
         }
         #[inline]
-        pub fn call_can_be_unwrapped_if_unused(self) -> E::CallUnwrap {
+        pub(crate) fn call_can_be_unwrapped_if_unused(self) -> E::CallUnwrap {
             // 2-bit field; `E::CallUnwrap` only has discriminants 0/1/2, so
             // an explicit match keeps bit-pattern 3 sound.
             match (self.0 & Self::CALL_UNWRAP_MASK) >> Self::CALL_UNWRAP_SHIFT {
@@ -353,16 +326,16 @@ pub mod defines {
             }
         }
         #[inline]
-        pub fn set_call_can_be_unwrapped_if_unused(&mut self, v: E::CallUnwrap) {
+        pub(crate) fn set_call_can_be_unwrapped_if_unused(&mut self, v: E::CallUnwrap) {
             self.0 = (self.0 & !Self::CALL_UNWRAP_MASK)
                 | (((v as u8) & 0b11) << Self::CALL_UNWRAP_SHIFT);
         }
         #[inline]
-        pub const fn method_call_must_be_replaced_with_undefined(self) -> bool {
+        pub(crate) const fn method_call_must_be_replaced_with_undefined(self) -> bool {
             (self.0 >> Self::METHOD_CALL_UNDEF_SHIFT) & 1 != 0
         }
         #[inline]
-        pub fn set_method_call_must_be_replaced_with_undefined(&mut self, v: bool) {
+        pub(crate) fn set_method_call_must_be_replaced_with_undefined(&mut self, v: bool) {
             self.0 = (self.0 & !(1 << Self::METHOD_CALL_UNDEF_SHIFT))
                 | ((v as u8) << Self::METHOD_CALL_UNDEF_SHIFT);
         }
@@ -386,12 +359,10 @@ pub mod defines {
     #[derive(Clone)]
     pub struct DefineData {
         pub value: ExprData,
-        // Zig stored `original_name_ptr: ?[*]const u8` + `original_name_len: u32`
-        // borrowing into caller-owned strings (defines.zig:24-25 — the 48→40-byte
-        // packing trick). The Rust port owns the `RawDefines` value bytes
-        // (`Box<[u8]>`), so borrowing would be a use-after-free once the
-        // `RawDefines` map is dropped after `Define::init`. Own the bytes here
-        // instead — these are tiny startup-time copies.
+        // The `RawDefines` value bytes are owned (`Box<[u8]>`), so borrowing
+        // would be a use-after-free once the `RawDefines` map is dropped after
+        // `Define::init`. Own the bytes here instead — these are tiny
+        // startup-time copies.
         // Kept `pub` so the bundler-side `parse`/`from_input` (which live a
         // tier up for json-parser access) can construct directly.
         pub original_name: Option<Box<[u8]>>,
@@ -409,7 +380,6 @@ pub mod defines {
     impl Default for DefineData {
         fn default() -> Self {
             Self {
-                // Zig: `.e_missing = .{}`
                 value: ExprData::EMissing(E::Missing),
                 original_name: None,
                 flags: Flags::default(),
@@ -417,7 +387,7 @@ pub mod defines {
         }
     }
 
-    /// Named-init shim (mirrors Zig anonymous-struct init).
+    /// Named-init shim.
     #[derive(Clone, Copy)]
     pub struct Options<'a> {
         pub original_name: Option<&'a [u8]>,
@@ -455,7 +425,7 @@ pub mod defines {
         }
 
         #[inline]
-        pub fn original_name(&self) -> Option<&[u8]> {
+        pub(crate) fn original_name(&self) -> Option<&[u8]> {
             match &self.original_name {
                 Some(name) if !name.is_empty() => Some(name.as_ref()),
                 _ => None,
@@ -464,20 +434,20 @@ pub mod defines {
 
         /// True if accessing this value is known to not have any side effects.
         #[inline]
-        pub fn can_be_removed_if_unused(&self) -> bool {
+        pub(crate) fn can_be_removed_if_unused(&self) -> bool {
             self.flags.can_be_removed_if_unused()
         }
         /// True if a call to this value is known to not have any side effects.
         #[inline]
-        pub fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
+        pub(crate) fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
             self.flags.call_can_be_unwrapped_if_unused()
         }
         #[inline]
-        pub fn method_call_must_be_replaced_with_undefined(&self) -> bool {
+        pub(crate) fn method_call_must_be_replaced_with_undefined(&self) -> bool {
             self.flags.method_call_must_be_replaced_with_undefined()
         }
         #[inline]
-        pub fn valueless(&self) -> bool {
+        pub(crate) fn valueless(&self) -> bool {
             self.flags.valueless()
         }
 
@@ -495,14 +465,13 @@ pub mod defines {
             let mut flags = Flags::default();
             flags.set_can_be_removed_if_unused(true);
             DefineData {
-                // Zig: @constCast(str) — Expr.Data.e_string stores *E.String.
                 value: ExprData::EString(StoreRef::from_static(str)),
                 flags,
                 ..Default::default()
             }
         }
 
-        pub fn merge(a: &DefineData, b: DefineData) -> DefineData {
+        pub(crate) fn merge(a: &DefineData, b: DefineData) -> DefineData {
             DefineData {
                 value: b.value,
                 flags: Flags::new(
@@ -523,18 +492,102 @@ pub mod defines {
     pub struct Define {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
+        /// Which `DotFilter::bit`s the keys of `dots` set. The visitor asks
+        /// about every property access; nearly all miss, and this says so
+        /// without hashing the name.
+        pub dots_filter: DotFilter,
         pub drop_debugger: bool,
+        /// `hash_user_inputs` of this table's inputs, for the runtime transpiler cache key.
+        pub user_hash: Option<u64>,
+    }
+
+    #[derive(Clone)]
+    pub struct DotFilter([u64; 64]);
+
+    impl Default for DotFilter {
+        fn default() -> Self {
+            DotFilter([0; 64])
+        }
+    }
+
+    impl DotFilter {
+        #[inline]
+        fn bit(name: &[u8]) -> usize {
+            let (first, last) = match name {
+                [] => (0, 0),
+                [first, .., last] | [first @ last] => (*first as usize, *last as usize),
+            };
+            (name.len().wrapping_mul(131) ^ first.wrapping_mul(31) ^ last.wrapping_mul(7)) & 4095
+        }
+
+        #[inline]
+        pub fn insert(&mut self, name: &[u8]) {
+            let bit = Self::bit(name);
+            self.0[bit / 64] |= 1 << (bit % 64);
+        }
+
+        #[inline]
+        pub fn may_contain(&self, name: &[u8]) -> bool {
+            let bit = Self::bit(name);
+            self.0[bit / 64] & (1 << (bit % 64)) != 0
+        }
     }
 
     impl Define {
-        pub fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
+        /// The dot defines whose last part is `name` (`NODE_ENV` for
+        /// `process.env.NODE_ENV`).
+        #[inline]
+        pub fn dots_for(&self, name: &[u8]) -> Option<&Vec<DotDefine>> {
+            if !self.dots_filter.may_contain(name) {
+                return None;
+            }
+            self.dots.get(name)
+        }
+
+        /// Order-independent, length-prefixed hash of the three inputs. `None` when all are empty.
+        pub fn hash_user_inputs<'i>(
+            defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
+            env_defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
+            drop: impl IntoIterator<Item = &'i [u8]>,
+        ) -> Option<u64> {
+            let mut defines: Vec<(&[u8], &[u8])> = defines.into_iter().collect();
+            let mut env_defines: Vec<(&[u8], &[u8])> = env_defines.into_iter().collect();
+            let mut drop: Vec<&[u8]> = drop.into_iter().filter(|item| !item.is_empty()).collect();
+            if defines.is_empty() && env_defines.is_empty() && drop.is_empty() {
+                return None;
+            }
+            defines.sort_unstable();
+            env_defines.sort_unstable();
+            drop.sort_unstable();
+            drop.dedup();
+
+            let mut hasher = bun_wyhash::Wyhash::init(0);
+            let mut update = |bytes: &[u8]| {
+                hasher.update(&(bytes.len() as u64).to_le_bytes());
+                hasher.update(bytes);
+            };
+            // Separate sections: `init` lets a later env pair override a user pair.
+            for pairs in [defines, env_defines] {
+                update(&(pairs.len() as u64).to_le_bytes());
+                for (key, value) in pairs {
+                    update(key);
+                    update(value);
+                }
+            }
+            update(&(drop.len() as u64).to_le_bytes());
+            for item in drop {
+                update(item);
+            }
+            Some(hasher.final_())
+        }
+
+        pub(crate) fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);
             }
             crate::defines_table::lookup_pure_global_identifier(name).map(|v| v.value())
         }
 
-        // Zig: `comptime Iterator: type, iter: Iterator` — type param dropped.
         pub fn insert_from_iterator<'a, I>(&mut self, iter: I) -> Result<(), bun_alloc::AllocError>
         where
             I: Iterator<Item = (&'a [u8], &'a DefineData)>,
@@ -554,15 +607,14 @@ pub mod defines {
             if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
                 let tail = &key[last_dot + 1..key.len()];
                 let remainder = &key[0..last_dot];
-                let count = remainder.iter().filter(|&&b| b == b'.').count() + 1;
+                let count = strings::count_char(remainder, b'.') + 1;
                 let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(count + 1);
-                for split in remainder.split(|b| *b == b'.') {
+                for split in strings::split(remainder, b".") {
                     parts.push(Box::from(split));
                 }
                 parts.push(Box::from(tail));
 
-                let mut initial_values: &[DotDefine] = &[];
-                // PORT NOTE: reshaped for borrowck — getOrPut split into get/insert.
+                self.dots_filter.insert(tail);
                 if let Some(existing) = self.dots.get_mut(tail) {
                     for part in existing.iter_mut() {
                         if are_parts_equal(&part.parts, &parts) {
@@ -570,15 +622,12 @@ pub mod defines {
                             return Ok(());
                         }
                     }
-                    initial_values = existing.as_slice();
+                    existing.push(DotDefine { data: value, parts });
+                    return Ok(());
                 }
 
-                let mut list: Vec<DotDefine> = Vec::with_capacity(initial_values.len() + 1);
-                if !initial_values.is_empty() {
-                    list.extend_from_slice(initial_values);
-                }
-                list.push(DotDefine { data: value, parts });
-                self.dots.put_assume_capacity(tail, list);
+                self.dots
+                    .put_assume_capacity(tail, vec![DotDefine { data: value, parts }]);
             } else {
                 // e.g. IS_BROWSER
                 self.identifiers.put_assume_capacity(key, value);
@@ -601,386 +650,17 @@ pub mod defines {
 }
 pub use defines::{Define, DefineData};
 
-pub mod defines_full_draft {
-    use bstr::BStr;
-    use bun_collections::{ArrayHashMap, StringHashMap};
-    use bun_core::strings;
-
-    use bun_ast::base::Ref;
-    use bun_ast::e as E;
-    use bun_ast::expr;
-
-    use crate::lexer as js_lexer;
-    use bun_ast::StoreRef;
-
-    // Zig: `bun.StringArrayHashMap(string)` / `bun.StringHashMap(DefineData)`
-    pub type RawDefines = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
-    pub type UserDefines = StringHashMap<DefineData>;
-    pub type UserDefinesArray = ArrayHashMap<Box<[u8]>, DefineData>;
-
-    pub type IdentifierDefine = DefineData;
-
-    #[derive(Clone)]
-    pub struct DotDefine {
-        // Zig stored borrowed `[][]const u8` into the user-define key strings;
-        // the Rust port owns the part bytes (small, allocated once at startup)
-        // so the `RawDefines` map can be dropped after `Define::init`.
-        pub parts: Vec<Box<[u8]>>,
-        pub data: DefineData,
-    }
-
-    bitflags::bitflags! {
-        // Zig: `packed struct(u8) { _padding: u3, valueless, can_be_removed_if_unused,
-        //        call_can_be_unwrapped_if_unused: E.CallUnwrap (u2), method_call_must_be_replaced_with_undefined }`
-        // Packed LSB-first → bit positions below match the Zig layout exactly.
-        #[derive(Copy, Clone, Default)]
-        pub struct DefineDataFlags: u8 {
-            const VALUELESS                                  = 1 << 3;
-            const CAN_BE_REMOVED_IF_UNUSED                   = 1 << 4;
-            // bits 5..7 hold `E::CallUnwrap` (2 bits) — read via accessor below.
-            const METHOD_CALL_MUST_BE_REPLACED_WITH_UNDEFINED = 1 << 7;
-        }
-    }
-    const CALL_UNWRAP_SHIFT: u8 = 5;
-    const CALL_UNWRAP_MASK: u8 = 0b11 << CALL_UNWRAP_SHIFT;
-
-    #[derive(Clone)]
-    pub struct DefineData {
-        pub value: expr::Data,
-        // Zig stored `original_name_ptr: ?[*]const u8` + `original_name_len: u32`
-        // borrowing into caller-owned strings (defines.zig:24-25 — the 48→40-byte
-        // packing trick). The Rust port owns the `RawDefines` value bytes
-        // (`Box<[u8]>`), so borrowing would be a use-after-free once the
-        // `RawDefines` map is dropped after `Define::init`. Own the bytes here
-        // instead — these are tiny startup-time copies.
-        pub original_name: Option<Box<[u8]>>,
-        pub flags: DefineDataFlags,
-    }
-
-    impl Default for DefineData {
-        fn default() -> Self {
-            Self {
-                value: expr::Data::EUndefined(E::Undefined {}),
-                original_name: None,
-                flags: DefineDataFlags::empty(),
-            }
-        }
-    }
-
-    impl DefineData {
-        #[inline]
-        pub fn original_name(&self) -> Option<&[u8]> {
-            match &self.original_name {
-                Some(name) if !name.is_empty() => Some(name.as_ref()),
-                _ => None,
-            }
-        }
-
-        /// True if accessing this value is known to not have any side effects. For
-        /// example, a bare reference to "Object.create" can be removed because it
-        /// does not have any observable side effects.
-        #[inline]
-        pub fn can_be_removed_if_unused(&self) -> bool {
-            self.flags
-                .contains(DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED)
-        }
-
-        /// True if a call to this value is known to not have any side effects. For
-        /// example, a bare call to "Object()" can be removed because it does not
-        /// have any observable side effects.
-        #[inline]
-        pub fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
-            // 2-bit field; explicit match keeps bit-pattern 3 sound.
-            match (self.flags.bits() & CALL_UNWRAP_MASK) >> CALL_UNWRAP_SHIFT {
-                0 => E::CallUnwrap::Never,
-                1 => E::CallUnwrap::IfUnused,
-                2 => E::CallUnwrap::IfUnusedAndToStringSafe,
-                _ => E::CallUnwrap::Never,
-            }
-        }
-
-        #[inline]
-        pub fn method_call_must_be_replaced_with_undefined(&self) -> bool {
-            self.flags
-                .contains(DefineDataFlags::METHOD_CALL_MUST_BE_REPLACED_WITH_UNDEFINED)
-        }
-
-        #[inline]
-        pub fn valueless(&self) -> bool {
-            self.flags.contains(DefineDataFlags::VALUELESS)
-        }
-
-        pub fn init_boolean(value: bool) -> DefineData {
-            DefineData {
-                value: expr::Data::EBoolean(E::Boolean { value }),
-                flags: DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED,
-                ..Default::default()
-            }
-        }
-
-        pub fn init_static_string(str_: &'static E::String) -> DefineData {
-            DefineData {
-                // Zig `@constCast` — Expr.Data stores StoreRef (NonNull); the static is never mutated.
-                value: expr::Data::EString(StoreRef::from_static(str_)),
-                flags: DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED,
-                ..Default::default()
-            }
-        }
-
-        pub fn merge(a: &DefineData, b: &DefineData) -> DefineData {
-            let mut flags = DefineDataFlags::empty();
-            if a.can_be_removed_if_unused() {
-                flags |= DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED;
-            }
-            flags = DefineDataFlags::from_bits_retain(
-                flags.bits() | ((a.call_can_be_unwrapped_if_unused() as u8) << CALL_UNWRAP_SHIFT),
-            );
-            // TODO: investigate if this is correct. This is what it was before. But that looks strange.
-            if a.method_call_must_be_replaced_with_undefined()
-                || b.method_call_must_be_replaced_with_undefined()
-            {
-                flags |= DefineDataFlags::VALUELESS;
-                flags |= DefineDataFlags::METHOD_CALL_MUST_BE_REPLACED_WITH_UNDEFINED;
-            }
-            DefineData {
-                value: b.value,
-                flags,
-                original_name: b.original_name.clone(),
-            }
-        }
-
-        // REFACTOR_BUN_AST: `bun_js_parser` is a sibling of `bun_parsers`, so the
-        // JSON-value branch takes a parser callback (the bundler passes
-        // `bun_parsers::json::parse_env_json`). With the unified `Expr` type,
-        // the result is the same `bun_ast::Expr` the rest of the parser uses —
-        // the former `json_data_to_expr_data` lift is gone.
-        pub fn parse(
-            key: &[u8],
-            value_str: &[u8],
-            value_is_undefined: bool,
-            method_call_must_be_replaced_with_undefined: bool,
-            log: &mut bun_ast::Log,
-            bump: &bun_alloc::Arena,
-            parse_json: &dyn Fn(
-                &bun_ast::Source,
-                &mut bun_ast::Log,
-                &bun_alloc::Arena,
-            )
-                -> core::result::Result<bun_ast::Expr, bun_core::Error>,
-        ) -> core::result::Result<DefineData, bun_core::Error> {
-            for part in key.split(|&c| c == b'.') {
-                if !js_lexer::is_identifier(part) {
-                    if strings::eql(part, key) {
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::default(),
-                            format_args!(
-                                "define key \"{}\" must be a valid identifier",
-                                BStr::new(key)
-                            ),
-                        );
-                    } else {
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::default(),
-                            format_args!(
-                                "define key \"{}\" contains invalid identifier \"{}\"",
-                                BStr::new(part),
-                                BStr::new(value_str)
-                            ),
-                        );
-                    }
-                    break;
-                }
-            }
-
-            // check for nested identifiers
-            let mut is_ident = true;
-            for part in value_str.split(|&c| c == b'.') {
-                if !js_lexer::is_identifier(part) || js_lexer::keyword(part).is_some() {
-                    is_ident = false;
-                    break;
-                }
-            }
-
-            let mut flags = DefineDataFlags::empty();
-            if value_is_undefined {
-                flags |= DefineDataFlags::VALUELESS;
-            }
-            if method_call_must_be_replaced_with_undefined {
-                flags |= DefineDataFlags::METHOD_CALL_MUST_BE_REPLACED_WITH_UNDEFINED;
-            }
-
-            if is_ident {
-                // Special-case undefined. it's not an identifier here
-                // https://github.com/evanw/esbuild/issues/1407
-                let value = if value_is_undefined || value_str == b"undefined" {
-                    expr::Data::EUndefined(E::Undefined {})
-                } else {
-                    expr::Data::EIdentifier(
-                        E::Identifier::init(Ref::NONE).with_can_be_removed_if_unused(true),
-                    )
-                };
-                flags |= DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED;
-                return Ok(DefineData {
-                    value,
-                    original_name: if value_str.is_empty() {
-                        None
-                    } else {
-                        Some(Box::<[u8]>::from(value_str))
-                    },
-                    flags,
-                });
-            }
-
-            // Value is JSON — round-trip through the env-JSON parser.
-            let source = bun_ast::Source {
-                contents: std::borrow::Cow::Owned(value_str.to_vec()),
-                path: bun_paths::fs::Path::init_with_namespace(b"defines.json", b"internal"),
-                ..Default::default()
-            };
-            let expr = parse_json(&source, log, bump)?;
-            // Zig: `expr.data.deepClone(arena)` followed by `expr.isPrimitiveLiteral()`.
-            // With one `Expr` type the parser result is already in the target
-            // shape; `deep_clone` re-roots payloads in `bump`.
-            let cloned = expr.data.deep_clone(bump)?;
-            if expr.is_primitive_literal() {
-                flags |= DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED;
-            }
-            Ok(DefineData {
-                value: cloned,
-                original_name: if value_str.is_empty() {
-                    None
-                } else {
-                    Some(Box::<[u8]>::from(value_str))
-                },
-                flags,
-            })
-        }
-    }
-
-    pub struct Define {
-        pub identifiers: StringHashMap<IdentifierDefine>,
-        pub dots: StringHashMap<Vec<DotDefine>>,
-        pub drop_debugger: bool,
-    }
-
-    impl Define {
-        // Zig: `pub const Data = DefineData;` — Rust callers import `DefineData` directly.
-
-        pub fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
-            if let Some(data) = self.identifiers.get(name) {
-                return Some(data);
-            }
-            // Draft module — pure-global table is wired into the canonical
-            // `crate::defines::Define` (this draft type is unused).
-            None
-        }
-
-        pub fn insert(
-            &mut self,
-            bump: &bun_alloc::Arena,
-            key: &[u8],
-            value: DefineData,
-        ) -> core::result::Result<(), bun_alloc::AllocError> {
-            let _ = bump;
-            // If it has a dot, then it's a DotDefine.
-            // e.g. process.env.NODE_ENV
-            if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
-                let tail = &key[last_dot + 1..];
-                let remainder = &key[..last_dot];
-                let count = remainder.iter().filter(|&&c| c == b'.').count() + 1;
-                // Zig allocated `[][]const u8` borrowing the input key; the Rust
-                // port owns the part bytes (tiny startup-time copies) so the
-                // caller can drop `key` after `Define::init`.
-                let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(count + 1);
-                for split in remainder.split(|&c| c == b'.') {
-                    parts.push(Box::from(split));
-                }
-                parts.push(Box::from(tail));
-
-                // "NODE_ENV"
-                let entry = self.dots.get_or_put(tail).unwrap().value_ptr;
-                for part in entry.iter_mut() {
-                    // ["process", "env"] === ["process", "env"]
-                    if are_parts_equal(&part.parts, &parts) {
-                        part.data = DefineData::merge(&part.data, &value);
-                        return Ok(());
-                    }
-                }
-                entry.push(DotDefine { data: value, parts });
-            } else {
-                // e.g. IS_BROWSER
-                self.identifiers.put_assume_capacity(key, value);
-            }
-            Ok(())
-        }
-
-        pub fn init(
-            user_defines: Option<UserDefines>,
-            string_defines: Option<UserDefinesArray>,
-            drop_debugger: bool,
-            omit_unused_global_calls: bool,
-            bump: &bun_alloc::Arena,
-        ) -> core::result::Result<Box<Define>, bun_alloc::AllocError> {
-            let _ = omit_unused_global_calls;
-            let mut define = Box::new(Define {
-                identifiers: StringHashMap::default(),
-                dots: StringHashMap::default(),
-                drop_debugger,
-            });
-            // TODO(port): Step 1/2 — load global_no_side_effect_* tables from
-            // bun_bundler::defines_table once that table moves down. Omitting
-            // here is safe-ish: only affects pure-annotation tree shaking.
-
-            // Step 3. Load user data into hash tables
-            // (Zig: `iter.next()` over `StringHashMap` — consume the inner map.)
-            if let Some(mut user_defines) = user_defines {
-                for (k, v) in core::mem::take(&mut *user_defines).into_iter() {
-                    define.insert(bump, &k, v)?;
-                }
-            }
-            // Step 4. Load environment data into hash tables.
-            // (Zig: `it.next()` over `StringArrayHashMap` — `ArrayHashMap` has
-            // no `IntoIterator`; walk insertion-order entries.)
-            if let Some(mut string_defines) = string_defines {
-                let mut it = string_defines.iterator();
-                while let Some(entry) = it.next() {
-                    define.insert(bump, &**entry.key_ptr, entry.value_ptr.clone())?;
-                }
-            }
-            Ok(define)
-        }
-    }
-
-    fn are_parts_equal(a: &[Box<[u8]>], b: &[Box<[u8]>]) -> bool {
-        if a.len() != b.len() {
-            return false;
-        }
-        for i in 0..a.len() {
-            if !strings::eql(&a[i], &b[i]) {
-                return false;
-            }
-        }
-        true
-    }
-}
-
-// ─── from bun_js_printer::renamer (src/js_printer/renamer.zig) ──────────────
+// ─── from bun_js_printer::renamer ────────────────────────────────────────────
 // Only the slot-assignment helpers the parser calls (`P.rs:6658`) live here;
 // the full `NumberRenamer`/`MinifyRenamer` machinery stays in `bun_js_printer`
 // (it depends on the printer's name-buffer and reserved-names tables).
 pub mod renamer {
     use bun_ast::SlotCounts;
-    use bun_ast::base::Ref;
     use bun_ast::scope::Scope;
     use bun_ast::symbol::{INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
     use bun_collections::VecExt;
 
-    // Round-C alias kept for P.rs/Parser.rs callers.
-    pub type SymbolMap = bun_ast::symbol::Map;
-
-    pub fn assign_nested_scope_slots(
+    pub(crate) fn assign_nested_scope_slots(
         _arena: &bun_alloc::Arena,
         module_scope: &Scope,
         symbols: &mut [Symbol],
@@ -1024,7 +704,7 @@ pub mod renamer {
         slot_counts
     }
 
-    pub fn assign_nested_scope_slots_helper(
+    fn assign_nested_scope_slots_helper(
         sorted_members: &mut Vec<u32>,
         scope: &Scope,
         symbols: &mut [Symbol],
@@ -1064,7 +744,7 @@ pub mod renamer {
         }
 
         // Labels are always declared in a nested scope, so we don't need to check.
-        if let Some(ref_) = scope.label_ref {
+        if let Some(ref_) = scope.label_ref.to_nullable() {
             let symbol = &mut symbols[ref_.inner_index() as usize];
             let ns = SlotNamespace::Label;
             symbol.nested_scope_slot = slot.slots[ns];
@@ -1086,35 +766,6 @@ pub mod renamer {
         slot_counts
     }
 
-    #[derive(Copy, Clone)]
-    pub struct StableSymbolCount {
-        pub stable_source_index: u32,
-        pub ref_: Ref,
-        pub count: u32,
-    }
-
-    pub type StableSymbolCountArray = Vec<StableSymbolCount>;
-
-    impl StableSymbolCount {
-        pub fn less_than(i: &StableSymbolCount, j: &StableSymbolCount) -> bool {
-            if i.count > j.count {
-                return true;
-            }
-            if i.count < j.count {
-                return false;
-            }
-            if i.stable_source_index < j.stable_source_index {
-                return true;
-            }
-            if i.stable_source_index > j.stable_source_index {
-                return false;
-            }
-            i.ref_.inner_index() < j.ref_.inner_index()
-        }
-    }
-
     // The remaining renamer types are only consumed by the printer and bundler
     // — they live in `bun_js_printer`.
 }
-
-// ported from: src/js_parser/js_parser.zig

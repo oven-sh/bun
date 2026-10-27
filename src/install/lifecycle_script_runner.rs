@@ -7,9 +7,7 @@ use crate::isolated_install::store::{EntryColumns, entry};
 use crate::lockfile_real::Scripts as LockfileScripts;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::ProgressStrings;
-use crate::package_manager_real::package_manager_lifecycle::LifecycleScriptTimeLogEntry;
 use bun_core::{Global, Output};
-use bun_event_loop::AnyEventLoop;
 use bun_io::BufferedReader;
 use bun_io::heap as io_heap;
 #[cfg(unix)]
@@ -18,10 +16,12 @@ use bun_io::{FilePollFlag, PosixFlags};
 use bun_core::ZStr;
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status};
+use bun_spawn::{
+    Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions, Status,
+};
 #[cfg(unix)]
 use bun_sys::Fd;
-// PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
+// `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. `AnyEventLoop::native_loop()` projects through the uws wrapper
 // (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
@@ -35,7 +35,7 @@ bun_output::declare_scope!(Script, visible);
 // `RunCommand::replace_package_manager_run` is a thin re-export.
 // ──────────────────────────────────────────────────────────────────────────
 
-const BUN_BIN_NAME: &[u8] = if cfg!(debug_assertions) {
+const BUN_BIN_NAME: &[u8] = if bun_core::env::IS_DEBUG {
     b"bun-debug"
 } else {
     b"bun"
@@ -43,10 +43,8 @@ const BUN_BIN_NAME: &[u8] = if cfg!(debug_assertions) {
 // `BUN_BIN_NAME ++ " run"` / `" x "` — kept as separate writes below since
 // const byte concat is awkward in Rust.
 
-/// Yarn built-in subcommands (union of v1 + v2.3 sets).
-/// Port of `src/cli/list-of-yarn-commands.zig::all_yarn_commands` (deduped).
-// PERF(port): Zig used `bun.ComptimeStringMap(void, .{...})` (length-bucketed,
-// comptime-sorted). The Rust `comptime_string_map!` macro currently returns a
+/// Yarn built-in subcommands (union of v1 + v2.3 sets, deduped).
+// PERF: the `comptime_string_map!` macro currently returns a
 // Lazy with inferred const generics that can't be named in a `static` item, so
 // use a sorted slice + binary_search for now. ~50 entries → <7 comparisons.
 struct YarnCommands;
@@ -119,8 +117,6 @@ impl YarnCommands {
 /// / `bun x` so that lifecycle scripts re-enter Bun instead of spawning
 /// another package manager.
 ///
-/// Port of `RunCommand.replacePackageManagerRun` (src/cli/run_command.zig).
-///
 /// `#[cold]`: only reached when actually executing a package.json script /
 /// lifecycle script — never on plain `bun foo.js` startup. Forcing it into
 /// `.text.unlikely.*` keeps the byte-scanning loop out of the hot
@@ -130,7 +126,7 @@ impl YarnCommands {
 pub fn replace_package_manager_run(
     copy_script: &mut Vec<u8>,
     script: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     use bun_core::strings;
 
     #[inline]
@@ -204,8 +200,13 @@ pub fn replace_package_manager_run(
                 if delimiter > 0 {
                     if strings::has_prefix_comptime(&script[start..], b"npm run ") {
                         append_bun_run(copy_script);
-                        copy_script.push(b' ');
                         entry_i += b"npm run ".len();
+                        let rewritten =
+                            append_npm_run_in_workspaces(copy_script, &script[entry_i..]);
+                        if rewritten == 0 {
+                            copy_script.push(b' ');
+                        }
+                        entry_i += rewritten;
                         delimiter = 0;
                         continue;
                     }
@@ -253,52 +254,158 @@ pub fn replace_package_manager_run(
     Ok(())
 }
 
+/// npm takes `-w` / `--workspaces` anywhere, `bun run` only in front. Returns the `args` consumed.
+fn append_npm_run_in_workspaces(out: &mut Vec<u8>, args: &[u8]) -> usize {
+    use bun_core::strings;
+
+    let end = strings::index_of_any(args, b";&|\r\n").unwrap_or(args.len());
+    let command = args[..end].trim_ascii_end();
+    if strings::index_of_any(command, b"'\"()$`\\#").is_some() {
+        return 0;
+    }
+
+    let mut flags: Vec<u8> = Vec::new();
+    let mut rest: Vec<u8> = Vec::new();
+    let mut selects_workspaces = false;
+    let mut tokens = strings::tokenize_any(command, b" \t");
+    while let Some(token) = tokens.next() {
+        let workspace = match token {
+            b"-w" | b"--workspace" => tokens.next(),
+            b"--workspaces" | b"--ws" => {
+                selects_workspaces = true;
+                flags.extend_from_slice(b" --workspaces");
+                continue;
+            }
+            b"--if-present" => {
+                flags.extend_from_slice(b" --if-present");
+                continue;
+            }
+            b"--" => {
+                for passed_on in core::iter::once(token).chain(tokens) {
+                    rest.push(b' ');
+                    rest.extend_from_slice(passed_on);
+                }
+                break;
+            }
+            _ => match token
+                .strip_prefix(b"--workspace=")
+                .or_else(|| token.strip_prefix(b"-w="))
+            {
+                Some(workspace) => Some(workspace),
+                None => {
+                    rest.push(b' ');
+                    rest.extend_from_slice(token);
+                    continue;
+                }
+            },
+        };
+        // It must not be the next flag, or a word with a redirect attached to it.
+        let Some(workspace) = workspace.filter(|workspace| {
+            !workspace.is_empty()
+                && workspace[0] != b'-'
+                && strings::index_of_any(workspace, b"<>").is_none()
+        }) else {
+            return 0;
+        };
+        selects_workspaces = true;
+        flags.extend_from_slice(b" --filter=");
+        // npm also accepts the workspace's folder. `--filter` tells a path from a name by the
+        // leading dot.
+        if strings::contains_char(workspace, b'/') && !matches!(workspace[0], b'@' | b'.' | b'/') {
+            flags.extend_from_slice(b"./");
+        }
+        flags.extend_from_slice(workspace);
+    }
+
+    if !selects_workspaces {
+        return 0;
+    }
+    out.extend_from_slice(&flags);
+    out.extend_from_slice(&rest);
+    command.len()
+}
+
+/// Without a POSIX shell, this runs `bun exec --no-env-file`. Like `sh`, it doesn't add any `.env*`
+/// file to the environment.
+pub struct ScriptArgv<'a>([*const c_char; 5], core::marker::PhantomData<&'a ZStr>);
+
+impl<'a> ScriptArgv<'a> {
+    pub fn new(shell: Option<&'a ZStr>, script: &'a ZStr) -> Result<Self, crate::Error> {
+        let (null, script) = (core::ptr::null(), script.as_ptr());
+        let (exec, no_env_file) = (c"exec".as_ptr(), c"--no-env-file".as_ptr());
+        let argv = match shell {
+            Some(sh) if cfg!(unix) => [sh.as_ptr(), c"-c".as_ptr(), script, null, null],
+            _ => [
+                bun_core::self_exe_path()?.as_ptr(),
+                exec,
+                no_env_file,
+                script,
+                null,
+            ],
+        };
+        Ok(Self(argv, core::marker::PhantomData))
+    }
+
+    /// The null-terminated array `spawn_process` takes.
+    pub fn as_ptr(&self) -> *const *const c_char {
+        self.0.as_ptr()
+    }
+}
+
 pub struct LifecycleScriptSubprocess<'a> {
-    pub package_name: Box<[u8]>,
+    pub(crate) package_name: Box<[u8]>,
 
-    pub scripts: ScriptsList,
-    pub current_script_index: u8,
+    pub(crate) scripts: ScriptsList,
+    pub(crate) current_script_index: u8,
 
-    pub remaining_fds: i8,
-    /// Zig: `?*Process`. `Process` is intrusively ref-counted (`bun_ptr::ThreadSafeRefCount`),
-    /// so it lives behind a raw pointer and is dropped via `process.close(); process.deref()`
-    /// in `reset_polls` (mirrors Zig `process.close(); process.deref();`). Null = none.
-    pub process: *mut Process,
-    pub stdout: OutputReader,
-    pub stderr: OutputReader,
-    pub has_called_process_exit: bool,
-    /// Zig: `manager: *PackageManager`. Stored as `BackRef` (not `&'a`) so
+    pub(crate) remaining_fds: i8,
+    /// `None` between scripts (`reset_polls`).
+    pub(crate) process: Option<ProcessHandle>,
+    pub(crate) stdout: OutputReader,
+    pub(crate) stderr: OutputReader,
+    pub(crate) has_called_process_exit: bool,
+    /// Stored as `BackRef` (not `&'a`) so
     /// callbacks may mutate manager state (`active_lifecycle_scripts`,
     /// `progress`, `scripts_node`) through the long-lived backref without
     /// asserting unique-borrow over the whole `PackageManager`.
-    pub manager: bun_ptr::BackRef<PackageManager>,
-    /// Zig: `envp: [:null]?[*:0]const u8` — allocated with `manager.allocator`
-    /// (manager-lifetime) and never freed there. Ownership is moved into this
+    pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
+    /// Owned by this
     /// struct so the `K=V\0` buffers stay alive across every async
     /// `spawn_next_script` for the script chain; freed by `Drop`/`destroy`.
-    pub envp: bun_dotenv::NullDelimitedEnvMap,
-    pub shell_bin: Option<&'a ZStr>,
+    pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
+    pub(crate) shell_bin: Option<&'a ZStr>,
 
-    pub timer: Option<Timer>,
+    pub(crate) has_incremented_alive_count: bool,
 
-    pub has_incremented_alive_count: bool,
+    pub(crate) foreground: bool,
+    pub(crate) optional: bool,
+    pub(crate) started_at: u64,
 
-    pub foreground: bool,
-    pub optional: bool,
-    pub started_at: u64,
+    pub(crate) ctx: Option<InstallCtx<'a>>,
 
-    pub ctx: Option<InstallCtx<'a>>,
-
-    pub heap: io_heap::IntrusiveField<LifecycleScriptSubprocess<'a>>,
+    pub(crate) heap: io_heap::IntrusiveField<LifecycleScriptSubprocess<'a>>,
 }
 
-pub struct InstallCtx<'a> {
-    pub entry_id: entry::Id,
-    /// Zig: `installer: *Installer`. Raw `*mut` for the same reason as
-    /// `LifecycleScriptSubprocess::manager` — `on_task_complete`/`start_task`
-    /// mutate Installer state from inside an exit-handler callback.
-    pub installer: *mut Installer<'a>,
+/// The linker, not the script's cwd, determines what gets removed when an optional dependency's
+/// script fails.
+pub enum InstallCtx<'a> {
+    Isolated {
+        entry_id: entry::Id,
+        /// A raw `*mut`, because `on_task_complete` and `start_task` mutate it from an exit-handler
+        /// callback.
+        installer: *mut Installer<'a>,
+    },
+    /// The package is `node_modules/<package_name>` of this tree.
+    Hoisted {
+        tree_id: crate::lockfile_real::tree::Id,
+        unfinished: UnfinishedScripts,
+    },
 }
+
+/// The packages that the hoisted linker placed and whose scripts haven't all run yet. Main thread
+/// only.
+pub(crate) type UnfinishedScripts =
+    std::rc::Rc<core::cell::RefCell<Vec<(crate::lockfile_real::tree::Id, Box<[u8]>)>>>;
 
 impl<'a> InstallCtx<'a> {
     /// BACKREF accessor — single `unsafe` deref for the set-once `installer`
@@ -310,16 +417,22 @@ impl<'a> InstallCtx<'a> {
     /// loop, so no other `&`/`&mut Installer` overlaps the returned borrow.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn installer_mut(&self) -> &mut Installer<'a> {
+    fn isolated(&self) -> Option<(entry::Id, &mut Installer<'a>)> {
+        let Self::Isolated {
+            entry_id,
+            installer,
+        } = *self
+        else {
+            return None;
+        };
         // SAFETY: see fn doc.
-        unsafe { &mut *self.installer }
+        Some((entry_id, unsafe { &mut *installer }))
     }
 }
 
-// PORT NOTE: Zig's `Intrusive(T, Context, less)` takes the comparator as a comptime
-// fn-pointer. The Rust `io_heap::Intrusive` folds it into `HeapContext::less` on the
-// `Context` type instead, so `sort_by_started_at` is provided via a trait impl on a
-// ZST `StartedAtCtx` (the Zig context arg `*PackageManager` is unused by `less`).
+// `io_heap::Intrusive` takes the comparator via `HeapContext::less` on the
+// `Context` type, so `sort_by_started_at` is provided via a trait impl on a
+// ZST `StartedAtCtx`.
 #[derive(Default, Clone, Copy)]
 pub struct StartedAtCtx;
 pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>, StartedAtCtx>;
@@ -344,12 +457,10 @@ impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     }
 }
 
-pub const MIN_MILLISECONDS_TO_LOG: u64 = 500;
-
-pub static ALIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static ALIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 impl<'a> LifecycleScriptSubprocess<'a> {
-    /// Zig: `LifecycleScriptSubprocess.alive_count` static decl. Returns the
+    /// Returns the
     /// global atomic so callers can write
     /// `LifecycleScriptSubprocess::alive_count().load(..)`.
     #[inline]
@@ -363,60 +474,43 @@ use bun_sys::windows::libuv as uv;
 
 pub type OutputReader = BufferedReader;
 
-// TODO(port): `std.time.Timer` — replace with bun_core monotonic timer wrapper.
-pub type Timer = bun_core::time::Timer;
-
 impl<'a> LifecycleScriptSubprocess<'a> {
-    /// `bun.TrivialNew(@This())` — heap-allocate and return a raw pointer; this type is
-    /// intrusive (heap field, OutputReader parent backrefs), so it lives behind `*mut Self`.
-    pub fn new(init: Self) -> *mut Self {
+    /// Heap-allocate and return a raw pointer; this type is intrusive (heap field,
+    /// OutputReader parent backrefs), so it lives behind `*mut Self`.
+    pub(crate) fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
     }
 
     #[inline]
     fn manager(&self) -> &PackageManager {
-        // `manager` is non-null and outlives every subprocess (Zig
-        // `*PackageManager` is the singleton install-loop owner).
+        // `manager` is non-null and outlives every subprocess (the
+        // `PackageManager` is the singleton install-loop owner).
         self.manager.get()
     }
 
-    /// # Safety
-    /// See [`Self::manager`]. Mutable access is sound because Zig's
-    /// `*PackageManager` is a non-exclusive pointer; no `&PackageManager`
-    /// outlives the brief field accesses below on the install thread.
-    #[inline]
-    unsafe fn manager_mut(&mut self) -> &mut PackageManager {
-        // SAFETY: see fn doc.
-        unsafe { self.manager.get_mut() }
-    }
-
-    pub fn event_loop(&self) -> &AnyEventLoop<'static> {
-        &self.manager().event_loop
-    }
-
-    pub fn script_name(&self) -> &'static [u8] {
+    pub(crate) fn script_name(&self) -> &'static [u8] {
         debug_assert!((self.current_script_index as usize) < LockfileScripts::NAMES.len());
         LockfileScripts::NAMES[self.current_script_index as usize].as_bytes()
     }
 
-    pub fn on_reader_done(&mut self) {
+    pub(crate) fn on_reader_done(&mut self) {
         debug_assert!(self.remaining_fds > 0);
         self.remaining_fds -= 1;
 
         self.maybe_finished();
     }
 
-    pub fn on_reader_error(&mut self, err: &bun_sys::Error) {
+    pub(crate) fn on_reader_error(&mut self, err: &bun_sys::Error) {
         debug_assert!(self.remaining_fds > 0);
         self.remaining_fds -= 1;
 
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "<r><red>error<r>: Failed to read <b>{}<r> script output from \"<b>{}<r>\" due to error <b>{} {}<r>",
             bstr::BStr::new(self.script_name()),
             bstr::BStr::new(&self.package_name),
             err.errno,
-            <&'static str>::from(err.get_errno()),
-        ));
+            bstr::BStr::new(err.name()),
+        );
         Output::flush();
         self.maybe_finished();
     }
@@ -426,13 +520,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             return;
         }
 
-        let process = self.process;
-        if process.is_null() {
+        let Some(process) = &self.process else {
             return;
-        }
-        // SAFETY: `process` is the live intrusive-refcounted `*mut Process` set in
-        // `spawn_next_script`; we hold a strong ref until `reset_polls`.
-        let status = unsafe { (*process).status.clone() };
+        };
+        let status = process.status.clone();
         self.handle_exit(status);
     }
 
@@ -453,8 +544,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let flags = bun_sys::get_fcntl_flags(fd).expect("Failed to get fcntl flags");
             debug_assert!(flags & bun_sys::O::NONBLOCK as isize != 0);
 
-            let _stat = bun_sys::fstat(fd).expect("Failed to fstat");
-            // TODO(port): `bun.S.ISSOCK(stat.mode)` once bun_sys exposes `S::ISSOCK`.
+            let stat = bun_sys::fstat(fd).expect("Failed to fstat");
+            debug_assert!(bun_sys::S::ISSOCK(stat.st_mode as _));
         }
         let _ = fd;
     }
@@ -495,28 +586,24 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// so it must carry allocation-rooted provenance — passing a `*mut Self` coerced
     /// from a transient `&mut Self` reborrow would leave dead Stacked Borrows tags once
     /// the caller resumes using that borrow.
-    pub unsafe fn spawn_next_script(
+    pub(crate) unsafe fn spawn_next_script(
         this: *mut Self,
         next_script_index: u8,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), crate::Error> {
         bun_core::analytics::Features::LIFECYCLE_SCRIPTS.fetch_add(1, Ordering::Relaxed);
 
         // SAFETY: `this` is non-null and uniquely accessed (caller contract).
         unsafe {
             if !(*this).has_incremented_alive_count {
                 (*this).has_incremented_alive_count = true;
-                // .monotonic is okay because because this value is only used by hoisted installs, which
-                // only use this type on the main thread.
+                // Relaxed is enough, because it's only read and written on the main thread.
                 let _ = ALIVE_COUNT.fetch_add(1, Ordering::Relaxed);
             }
         }
 
-        // errdefer { decrement alive_count; ensure_not_in_heap }
-        // PORT NOTE: Zig's `errdefer` is modeled by splitting the fallible body into
-        // `spawn_next_script_inner` and running the cleanup on the error branch. Both
-        // functions take the allocation-rooted `*mut Self` (mirroring Zig's
-        // `*LifecycleScriptSubprocess` receiver) so that backrefs stored into the
+        // The fallible body is split into
+        // `spawn_next_script_inner` with the cleanup running on the error branch. Both
+        // functions take the allocation-rooted `*mut Self` so that backrefs stored into the
         // readers / intrusive heap / process exit handler retain valid Stacked Borrows
         // provenance after we return — deriving them from a `&mut self` reborrow would
         // leave dead tags once that borrow is popped by subsequent `self` uses, and the
@@ -528,7 +615,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             unsafe {
                 if (*this).has_incremented_alive_count {
                     (*this).has_incremented_alive_count = false;
-                    // .monotonic is okay because because this value is only used by hoisted installs.
+                    // Relaxed is enough, because it's only read and written on the main thread.
                     let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
                 }
                 Self::ensure_not_in_heap(this);
@@ -544,7 +631,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     unsafe fn spawn_next_script_inner(
         this: *mut Self,
         next_script_index: u8,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // SAFETY: `this` is non-null and uniquely accessed (caller contract).
         // Body wrapped in one block; per-field accesses do not materialize a
         // whole-struct `&mut Self` across reentrant calls.
@@ -568,9 +655,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             replace_package_manager_run(&mut copy_script, original_script)?;
             copy_script.push(0);
 
-            // SAFETY: we just pushed a NUL byte at copy_script[len-1]; slice [..len-1] is the body.
-            let combined_script: &mut ZStr =
-                ZStr::from_raw_mut(copy_script.as_mut_ptr(), copy_script.len() - 1);
+            let combined_script: &ZStr = ZStr::from_slice_with_nul(&copy_script);
+            let argv = ScriptArgv::new((*this).shell_bin, combined_script)?;
 
             if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
                 Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
@@ -596,34 +682,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 bstr::BStr::new(combined_script.as_bytes())
             );
 
-            // `[_]?[*:0]const u8` argv array with trailing null. Element type MUST be
-            // bare `*const c_char` (null sentinel), never `Option<*const c_char>` —
-            // raw pointers are already nullable, and `Option<*const T>` is a 2-word
-            // (tag, ptr) pair, not niche-optimized. Casting a `[Option<*const c_char>; N]`
-            // to `Argv` would interleave discriminant words and EFAULT in the kernel.
-            let mut argv: [*const c_char; 4] = if (*this).shell_bin.is_some() && !cfg!(windows) {
-                [
-                    (*this).shell_bin.unwrap().as_ptr().cast::<c_char>(),
-                    c"-c".as_ptr(),
-                    combined_script.as_ptr().cast::<c_char>(),
-                    core::ptr::null(),
-                ]
-            } else {
-                [
-                    bun_core::self_exe_path()?.as_ptr().cast::<c_char>(),
-                    c"exec".as_ptr(),
-                    combined_script.as_ptr().cast::<c_char>(),
-                    core::ptr::null(),
-                ]
-            };
-            const _: () = assert!(
-                core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>()
-            );
-
-            // PORT NOTE / OWNERSHIP: Zig allocates the libuv pipes
-            // (`bun.new(uv.Pipe, zeroes)`), stashes the *non-owning* `*uv.Pipe`
-            // in `this.stdout.source.?.pipe`, and reuses the same heap pointer for
-            // `SpawnOptions.{stdout,stderr} = .{ .buffer = pipe }`. In Rust,
+            // OWNERSHIP:
             // `bun_io::Source::Pipe` owns a `Box<uv::Pipe>` AND
             // `spawn_process_windows` does `heap::take(ptr)` on the
             // `Stdio::Buffer` pointer to produce a SECOND `Box<uv::Pipe>` in
@@ -634,16 +693,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // passed to libuv) and take SOLE ownership from
             // `spawned.stdout/stderr` after spawn — see the `#[cfg(windows)]`
             // block below and `filter_run.rs` for the canonical pattern.
-            let spawn_options = SpawnOptions {
-                stdin: if (*this).foreground {
-                    bun_spawn::Stdio::Inherit
-                } else {
+            let (log_level, foreground) = ((*manager).options.log_level, (*this).foreground);
+            let output = || {
+                if log_level == crate::LogLevel::Silent {
                     bun_spawn::Stdio::Ignore
-                },
-
-                stdout: if (*manager).options.log_level == crate::LogLevel::Silent {
-                    bun_spawn::Stdio::Ignore
-                } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
+                } else if log_level.is_verbose() || foreground {
                     bun_spawn::Stdio::Inherit
                 } else {
                     #[cfg(unix)]
@@ -654,31 +708,22 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     {
                         // Ownership of this raw heap allocation transfers to
                         // `spawn_process_windows`, which `heap::take`s it into
-                        // `spawned.stdout`.
+                        // `spawned.{stdout,stderr}`.
                         bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
                             bun_core::ffi::zeroed::<uv::Pipe>(),
                         ))
                             as bun_spawn::windows::UvPipePtr)
                     }
-                },
-                stderr: if (*manager).options.log_level == crate::LogLevel::Silent {
-                    bun_spawn::Stdio::Ignore
-                } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
+                }
+            };
+            let spawn_options = SpawnOptions {
+                stdin: if foreground {
                     bun_spawn::Stdio::Inherit
                 } else {
-                    #[cfg(unix)]
-                    {
-                        bun_spawn::Stdio::Buffer
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        // Ownership transfers to `spawned.stderr`.
-                        bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                            bun_core::ffi::zeroed::<uv::Pipe>(),
-                        ))
-                            as bun_spawn::windows::UvPipePtr)
-                    }
+                    bun_spawn::Stdio::Ignore
                 },
+                stdout: output(),
+                stderr: output(),
                 cwd: Box::<[u8]>::from(cwd),
 
                 #[cfg(windows)]
@@ -688,6 +733,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 },
 
                 stream: false,
+                // The kernel kills the child when bun dies, so no script outlives the install.
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                linux_pdeathsig: Some(bun_sys::SignalCode::SIGKILL.0),
                 ..Default::default()
             };
 
@@ -699,38 +747,42 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*manager)
                 .active_lifecycle_scripts
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
-            let spawned = match bun_spawn::spawn_process(
-                &spawn_options,
-                // argv is `[*const c_char; 4]` with trailing null — exactly the
-                // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
-                argv.as_mut_ptr().cast(),
-                (*this).envp.as_ptr().cast::<*const c_char>(),
-            ) {
-                Ok(Ok(s)) => s,
-                res => {
-                    // TODO(port): Zig was `try (try spawnProcess(...)).unwrap()` — outer
-                    // `!Maybe(Spawned)`. Modeled here as `Result<bun_sys::Result<Spawned>, _>`.
-                    #[cfg(windows)]
-                    {
-                        // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-                        // raw `*mut uv::Pipe` allocations on the SUCCESS path; on every
-                        // error return (uv_pipe_init failure, uv_spawn failure) ownership
-                        // stays with the caller. `WindowsStdio` has no `Drop`, so reclaim
-                        // and `uv_close`+free them explicitly here — otherwise the heap
-                        // `uv::Pipe`s leak (and, if already `uv_pipe_init`'d, remain
-                        // linked in the libuv loop's handle queue forever). Zig avoided
-                        // this by stashing the pipes in `this.{stdout,stderr}.source`
-                        // BEFORE building `SpawnOptions` (lifecycle_script_runner.zig:190);
-                        // the Rust ordering moved allocation inline (see PORT NOTE above)
-                        // and must therefore handle the error path explicitly.
-                        let mut spawn_options = spawn_options;
-                        spawn_options.stdout.deinit();
-                        spawn_options.stderr.deinit();
+            // `envp` is shared by the whole chain. These two variables differ per script.
+            let lifecycle_event = [
+                b"npm_lifecycle_event=".as_slice(),
+                (*this).script_name(),
+                b"\0",
+            ]
+            .concat();
+            let lifecycle_script = [
+                b"npm_lifecycle_script=".as_slice(),
+                &original_script[..],
+                b"\0",
+            ]
+            .concat();
+            let chain_envp = (*this).envp.as_slice();
+            let mut envp: Vec<*const c_char> = chain_envp[..chain_envp.len() - 1].to_vec();
+            envp.extend([
+                lifecycle_event.as_ptr().cast::<c_char>(),
+                lifecycle_script.as_ptr().cast::<c_char>(),
+                core::ptr::null(),
+            ]);
+            let spawned =
+                match bun_spawn::spawn_process(&spawn_options, argv.as_ptr(), envp.as_ptr()) {
+                    Ok(Ok(s)) => s,
+                    res => {
+                        #[cfg(windows)]
+                        {
+                            // On error, this function still owns the `uv::Pipe`s, because
+                            // `WindowsStdio` has no `Drop`.
+                            let mut spawn_options = spawn_options;
+                            spawn_options.stdout.deinit();
+                            spawn_options.stderr.deinit();
+                        }
+                        res??;
+                        unreachable!();
                     }
-                    res??;
-                    unreachable!();
-                }
-            };
+                };
             #[cfg(windows)]
             let mut spawned = spawned;
 
@@ -780,13 +832,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 // while libuv still has the handle queued (UAF) and the later
                 // `close_impl`→`on_pipe_close`→`heap::take` double-frees.
                 if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
-                    (*this).stdout.source = Some(bun_io::Source::Pipe(pipe));
+                    (*this).stdout.set_source(bun_io::Source::Pipe(pipe));
                     (*this).stdout.set_parent(this.cast::<c_void>());
                     (*this).remaining_fds += 1;
                     (*this).stdout.start_with_current_pipe()?;
                 }
                 if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stderr.take() {
-                    (*this).stderr.source = Some(bun_io::Source::Pipe(pipe));
+                    (*this).stderr.set_source(bun_io::Source::Pipe(pipe));
                     (*this).stderr.set_parent(this.cast::<c_void>());
                     (*this).remaining_fds += 1;
                     (*this).stderr.start_with_current_pipe()?;
@@ -794,13 +846,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
 
             let event_loop = bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop);
-            // `to_process` returns an intrusively-refcounted `*mut Process` (heap::alloc,
-            // refcount = 1); the strong ref transfers to `(*this).process` and is released
-            // in `reset_polls` via `process.deref()`.
-            let process: *mut Process = spawned.to_process(event_loop, false);
-
-            debug_assert!((*this).process.is_null(), "forgot to call `resetPolls`");
-            (*this).process = process;
+            debug_assert!((*this).process.is_none(), "forgot to call `reset_polls`");
+            let process: *mut Process = (*this)
+                .process
+                .insert(spawned.to_process_handle(event_loop))
+                .as_ptr();
             // SAFETY: `this` is the allocation-rooted `LifecycleScriptSubprocess`;
             // we hold no live `&mut Self` here, so the synchronous `on_exit`
             // dispatch below may reenter `on_process_exit` through it without
@@ -818,15 +868,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         } // unsafe
     }
 
-    pub fn print_output(&mut self) {
+    pub(crate) fn print_output(&mut self) {
         if !self.manager().options.log_level.is_verbose() {
             // Reuse the memory
-            // PORT NOTE: reshaped for borrowck — Zig evaluated all three clauses
-            // (`stdout.len==0 && stdout.cap>0 && stderr.buffer().cap==0`) before
-            // the swap, holding two `*ArrayList(u8)` simultaneously. Evaluate
+            // Reshaped for borrowck — evaluate
             // the stderr-capacity check first (immutable), then take the
             // disjoint `stdout` mutable borrow, so `core::mem::take` only fires
-            // when the full Zig guard would — otherwise stdout's buffer is left
+            // when all three clauses
+            // (`stdout.len==0 && stdout.cap>0 && stderr.buffer().cap==0`)
+            // hold — otherwise stdout's buffer is left
             // in place for the `stdout.items.len +| stderr.items.len` check.
             if self.stderr.buffer().capacity() == 0 {
                 let stdout = self.stdout.final_buffer();
@@ -848,16 +898,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             if stdout_len > 0 {
                 let stdout = self.stdout.final_buffer();
-                let _ = Output::error_writer()
-                    .write_fmt(format_args!("{}\n", bstr::BStr::new(stdout.as_slice())));
+                // Write the raw bytes. Formatting them would replace invalid UTF-8 with U+FFFD.
+                let _ = Output::error_writer().write_all(stdout.as_slice());
+                let _ = Output::error_writer().write_all(b"\n");
                 stdout.clear();
                 stdout.shrink_to_fit();
             }
 
             if stderr_len > 0 {
                 let stderr = self.stderr.final_buffer();
-                let _ = Output::error_writer()
-                    .write_fmt(format_args!("{}\n", bstr::BStr::new(stderr.as_slice())));
+                let _ = Output::error_writer().write_all(stderr.as_slice());
+                let _ = Output::error_writer().write_all(b"\n");
                 stderr.clear();
                 stderr.shrink_to_fit();
             }
@@ -877,8 +928,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         if self.has_incremented_alive_count {
             self.has_incremented_alive_count = false;
-            // .monotonic is okay because because this value is only used by hoisted installs, which
-            // only use this type on the main thread.
+            // Relaxed is enough, because it's only read and written on the main thread.
             let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         }
 
@@ -888,27 +938,25 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         match status {
             Status::Exited(exit) => {
-                let maybe_duration = self.timer.as_mut().map(|t| t.read());
-
                 if exit.code > 0 {
                     if self.optional {
-                        if let Some(ctx) = &self.ctx {
-                            let installer = ctx.installer_mut();
-                            installer.store.entries.items_step()[ctx.entry_id.get() as usize]
-                                .store(Step::Done as u32, Ordering::Release);
-                            installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                        }
-                        self.decrement_pending_script_tasks();
-                        self.deinit_and_delete_package();
+                        self.discard_failed_optional_package();
                         return;
                     }
                     self.print_output();
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" exited with {}<r>",
                         bstr::BStr::new(self.script_name()),
                         bstr::BStr::new(&self.package_name),
                         exit.code,
-                    ));
+                    );
+                    // Git dependencies are the only dependencies whose `prepare` scripts run.
+                    if self.scripts.is_dependency && self.script_name().ends_with(b"prepare") {
+                        bun_core::note!(
+                            "devDependencies of a git dependency are not installed before its prepare scripts"
+                        );
+                    }
+                    self.discard_packages_with_unfinished_scripts();
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                     unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                     Output::flush();
@@ -925,48 +973,26 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     } else {
                         // .monotonic because this is what `completeOne` does. This is the same
                         // as `completeOne` but doesn't update the parent.
-                        // TODO(port): Zig used `@atomicRmw(usize, &node.unprotected_completed_items, .Add, 1, .monotonic)`;
-                        // the stub `bun_progress::Node` is non-atomic & has no parent, so the
-                        // detached-parent path collapses to `complete_one()` until the real
-                        // `std.Progress` port lands.
-                        scripts_node.complete_one();
+                        scripts_node
+                            .unprotected_completed_items
+                            .fetch_add(1, Ordering::Relaxed);
                     }
                 }
 
-                if let Some(nanos) = maybe_duration {
-                    if nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS {
-                        // PORT NOTE: Zig passed `manager.lockfile.allocator`; allocator param
-                        // dropped per §Allocators (non-AST crate). Zig borrowed the lockfile
-                        // string buffer for `package_name`; we own a `Box<[u8]>` that drops on
-                        // `destroy`, so the log entry takes its own owned copy.
-                        let entry = LifecycleScriptTimeLogEntry {
-                            package_name: self.package_name.clone(),
-                            script_id: self.current_script_index,
-                            duration: nanos,
-                        };
-                        // SAFETY: see [`Self::manager_mut`].
-                        unsafe { self.manager_mut() }
-                            .lifecycle_script_time_log
-                            .append_concurrent(entry);
-                    }
-                }
-
-                if let Some(ctx) = &self.ctx {
-                    match self.current_script_index {
-                        // preinstall
-                        0 => {
-                            let installer = ctx.installer_mut();
-                            let previous_step = installer.store.entries.items_step()
-                                [ctx.entry_id.get() as usize]
-                                .swap(Step::Binaries as u32, Ordering::Release);
-                            debug_assert!(previous_step == Step::RunPreinstall as u32);
-                            installer.start_task(ctx.entry_id);
-                            self.decrement_pending_script_tasks();
-                            // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-                            return;
-                        }
-                        _ => {}
+                if let Some((entry_id, installer)) =
+                    self.ctx.as_ref().and_then(InstallCtx::isolated)
+                {
+                    // preinstall
+                    if self.current_script_index == 0 {
+                        let previous_step = installer.store.entries.items_step()
+                            [entry_id.get() as usize]
+                            .swap(Step::Binaries as u32, Ordering::Release);
+                        debug_assert!(previous_step == Step::RunPreinstall as u32);
+                        installer.start_task(entry_id);
+                        self.decrement_pending_script_tasks();
+                        // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
+                        unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+                        return;
                     }
                 }
 
@@ -992,6 +1018,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                                     err.name(),
                                 ),
                             );
+                            self.discard_packages_with_unfinished_scripts();
                             Global::exit(1);
                         }
                         return;
@@ -999,16 +1026,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
 
                 if PackageManager::verbose_install() {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><d>[Scripts]<r> Finished scripts for <b>{}<r>",
                         bun_core::fmt::quote(&self.package_name),
-                    ));
+                    );
                 }
 
-                if let Some(ctx) = &self.ctx {
-                    let installer = ctx.installer_mut();
+                if let Some((entry_id, installer)) =
+                    self.ctx.as_ref().and_then(InstallCtx::isolated)
+                {
                     let previous_step = installer.store.entries.items_step()
-                        [ctx.entry_id.get() as usize]
+                        [entry_id.get() as usize]
                         .swap(Step::Done as u32, Ordering::Release);
                     if bun_core::Environment::CI_ASSERT {
                         debug_assert!(self.current_script_index != 0);
@@ -1016,11 +1044,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             previous_step == Step::RunPostInstallAndPrePostPrepare as u32
                         );
                     }
-                    let _ = previous_step;
-                    installer.on_task_complete(ctx.entry_id, CompleteState::Success);
+                    installer.on_task_complete(entry_id, CompleteState::Success);
                 }
 
                 // the last script finished
+                self.forget_unfinished_scripts();
                 self.decrement_pending_script_tasks();
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
@@ -1029,42 +1057,29 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 self.print_output();
                 let signal_code = bun_sys::SignalCode::from(signal);
 
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",
                     bstr::BStr::new(self.script_name()),
                     bstr::BStr::new(&self.package_name),
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
-                ));
-
-                // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
-                // exhaustive); RT signals (>31) fall back to SIGTERM so the diverging
-                // `raise_ignoring_panic_handler` path is preserved. Zig's `SignalCode` is a
-                // non-exhaustive `enum(u8)` so it had no such constraint.
-                Global::raise_ignoring_panic_handler(
-                    Status::Signaled(signal)
-                        .signal_code()
-                        .unwrap_or(bun_core::SignalCode::SIGTERM),
                 );
+                self.discard_packages_with_unfinished_scripts();
+
+                Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(signal));
             }
             Status::Err(err) => {
                 if self.optional {
-                    if let Some(ctx) = &self.ctx {
-                        let installer = ctx.installer_mut();
-                        installer.store.entries.items_step()[ctx.entry_id.get() as usize]
-                            .store(Step::Done as u32, Ordering::Release);
-                        installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                    }
-                    self.decrement_pending_script_tasks();
-                    self.deinit_and_delete_package();
+                    self.discard_failed_optional_package();
                     return;
                 }
 
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: Failed to run <b>{}<r> script from \"<b>{}<r>\" due to\n{}",
                     bstr::BStr::new(self.script_name()),
                     bstr::BStr::new(&self.package_name),
                     err,
-                ));
+                );
+                self.discard_packages_with_unfinished_scripts();
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 Output::flush();
@@ -1072,7 +1087,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             _ => {
                 Output::panic(format_args!(
-                    "<r><red>error<r>: Failed to run <b>{}<r> script from \"<b>{}<r>\" due to unexpected status\n{}",
+                    "error: Failed to run {} script from \"{}\" due to unexpected status\n{}",
                     bstr::BStr::new(self.script_name()),
                     bstr::BStr::new(&self.package_name),
                     status,
@@ -1082,31 +1097,21 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     /// This function may free the *LifecycleScriptSubprocess
-    pub fn on_process_exit(&mut self, proc: *mut Process, _: Status, _: &Rusage) {
-        if self.process != proc {
-            Output::debug_warn(format_args!(
+    pub(crate) fn on_process_exit(&mut self, proc: *mut Process, _: Status, _: &Rusage) {
+        if self.process.as_ref().map(ProcessHandle::as_ptr) != Some(proc) {
+            bun_core::debug_warn!(
                 "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
-            ));
+            );
             return;
         }
         self.has_called_process_exit = true;
         self.maybe_finished();
     }
 
-    pub fn reset_polls(&mut self) {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.remaining_fds == 0);
-        }
+    pub(crate) fn reset_polls(&mut self) {
+        debug_assert!(self.remaining_fds == 0);
 
-        let process = core::mem::replace(&mut self.process, core::ptr::null_mut());
-        if !process.is_null() {
-            // SAFETY: `process` is the live intrusive-refcounted pointer set in
-            // `spawn_next_script`; we held the only strong ref. `deref()` may free.
-            unsafe {
-                (*process).close();
-                Process::deref(process);
-            }
-        }
+        self.process = None;
 
         self.stdout.deinit();
         self.stderr.deinit();
@@ -1120,41 +1125,75 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// # Safety
     /// `this` must have been produced by `Self::new` (`heap::alloc`) and not yet destroyed;
     /// the caller must not use any outstanding `&`/`&mut` to `*this` after this returns.
-    pub unsafe fn destroy(this: *mut Self) {
+    pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract — `this` came from `heap::alloc` in `Self::new` and is
         // uniquely owned here. Dropping the Box runs `Drop` (reset_polls + ensure_not_in_heap)
-        // then frees the allocation (Zig: `this.* = undefined; bun.destroy(this);`).
+        // then frees the allocation.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub fn deinit_and_delete_package(&mut self) {
+    fn forget_unfinished_scripts(&self) {
+        if let Some(InstallCtx::Hoisted {
+            tree_id,
+            unfinished,
+        }) = &self.ctx
+        {
+            unfinished.borrow_mut().retain(|(tree, folder_name)| {
+                tree != tree_id || **folder_name != *self.package_name
+            });
+        }
+    }
+
+    /// Both linkers treat a package that's at its final path as installed. Removing these packages
+    /// makes the next install run their scripts.
+    fn discard_packages_with_unfinished_scripts(&self) {
+        Output::flush();
+        if let Some(InstallCtx::Hoisted { unfinished, .. }) = &self.ctx {
+            for (tree_id, folder_name) in unfinished.borrow().iter() {
+                crate::package_installer::remove_placed_package(
+                    &self.manager().lockfile,
+                    *tree_id,
+                    folder_name,
+                );
+            }
+        } else if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated)
+        {
+            installer.discard_entries_with_unfinished_scripts(entry_id);
+        }
+    }
+
+    /// Frees `self`.
+    fn discard_failed_optional_package(&mut self) {
+        self.forget_unfinished_scripts();
+        self.decrement_pending_script_tasks();
+        let deleted = match self.ctx.take() {
+            Some(InstallCtx::Hoisted { tree_id, .. }) => {
+                crate::package_installer::remove_placed_package(
+                    &self.manager().lockfile,
+                    tree_id,
+                    &self.package_name,
+                );
+                true
+            }
+            Some(ctx) => ctx
+                .isolated()
+                .is_some_and(|(entry_id, installer)| installer.leave_out_entry(entry_id)),
+            None => false,
+        };
         if self.manager().options.log_level.is_verbose() {
-            Output::warn(format_args!(
-                "deleting optional dependency '{}' due to failed '{}' script",
+            bun_core::warn!(
+                "{} optional dependency '{}' due to failed '{}' script",
+                if deleted { "deleting" } else { "skipping" },
                 bstr::BStr::new(&self.package_name),
                 bstr::BStr::new(self.script_name()),
-            ));
-        }
-        'try_delete_dir: {
-            let Some(dirname) = bun_core::dirname(self.scripts.cwd.as_bytes()) else {
-                break 'try_delete_dir;
-            };
-            let basename = bun_paths::basename(self.scripts.cwd.as_bytes());
-            // PORT NOTE: Zig (lifecycle_script_runner.zig:533-534) leaks this fd
-            // too — fixed here since this path returns to the install loop without
-            // exiting, so the HANDLE/fd would otherwise persist for the rest of
-            // the install on every failed optional-dependency lifecycle script.
-            let Ok(dir) = bun_sys::Dir::open(dirname) else {
-                break 'try_delete_dir;
-            };
-            let _ = dir.delete_tree(basename);
+            );
         }
 
         // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
         unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
     }
 
-    pub fn spawn_package_scripts(
+    pub(crate) fn spawn_package_scripts(
         manager: &mut PackageManager,
         list: ScriptsList,
         envp: bun_dotenv::NullDelimitedEnvMap,
@@ -1163,8 +1202,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         log_level: crate::LogLevel,
         foreground: bool,
         ctx: Option<InstallCtx<'a>>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), crate::Error> {
         let package_name = list.package_name.clone();
         let lifecycle_subprocess = Self::new(LifecycleScriptSubprocess {
             manager: bun_ptr::BackRef::new_mut(manager),
@@ -1178,11 +1216,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // defaults:
             current_script_index: 0,
             remaining_fds: 0,
-            process: core::ptr::null_mut(),
+            process: None,
             stdout: OutputReader::init::<Self>(),
             stderr: OutputReader::init::<Self>(),
             has_called_process_exit: false,
-            timer: None,
             has_incremented_alive_count: false,
             started_at: 0,
             heap: io_heap::IntrusiveField::default(),
@@ -1199,10 +1236,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         );
 
         if log_level.is_verbose() {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<d>[Scripts]<r> Starting scripts for <b>\"{}\"<r>",
                 bstr::BStr::new(&lss.scripts.package_name),
-            ));
+            );
         }
 
         lss.increment_pending_script_tasks();
@@ -1211,11 +1248,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // SAFETY: `lifecycle_subprocess` is the allocation-rooted `heap::alloc` pointer
         // from `Self::new`; passing it gives the stored backrefs stable provenance.
         if let Err(err) = unsafe { Self::spawn_next_script(lifecycle_subprocess, first_index) } {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
                 bstr::BStr::new(LockfileScripts::NAMES[first_index as usize]),
                 err.name(),
-            ));
+            );
+            lss.discard_packages_with_unfinished_scripts();
             Global::exit(1);
         }
 
@@ -1254,7 +1292,7 @@ bun_spawn::link_impl_ProcessExit! {
 // `on_reader_done`/`on_reader_error` via the type-erased vtable.
 // ──────────────────────────────────────────────────────────────────────────
 
-// Zig: no `onReadChunk` decl — output is consumed only in `final_buffer`.
+// No `on_read_chunk` — output is consumed only in `final_buffer`.
 // `manager.event_loop` is an `AnyEventLoop`; convert through
 // `EventLoopHandle::from_any` so the by-value `EventLoopCtx` carries the right
 // `kind`.
@@ -1277,5 +1315,3 @@ impl Drop for LifecycleScriptSubprocess<'_> {
         unsafe { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
     }
 }
-
-// ported from: src/install/lifecycle_script_runner.zig

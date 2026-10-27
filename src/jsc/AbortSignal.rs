@@ -2,10 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::{
-    CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSValue,
-    VirtualMachineRef as VirtualMachine,
-};
+use crate::{CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
     Timespec as ElTimespec,
@@ -23,8 +20,6 @@ bun_opaque::opaque_ffi! {
     pub struct AbortSignal;
 }
 
-// TODO(port): move to jsc_sys
-//
 // `AbortSignal` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST
 // handles, so `&AbortSignal` is ABI-identical to a non-null `AbortSignal*`
 // and C++ mutating through it (refcount, listener list, abort flag) is
@@ -33,7 +28,6 @@ bun_opaque::opaque_ffi! {
 // or out-param keep raw pointers and stay `unsafe fn`.
 unsafe extern "C" {
     safe fn WebCore__AbortSignal__aborted(arg0: &AbortSignal) -> bool;
-    safe fn WebCore__AbortSignal__abortReason(arg0: &AbortSignal) -> JSValue;
     // safe: `arg1` is an opaque round-trip pointer C++ stores into the listener
     // entry and forwards to `arg_fn2` on abort (never dereferenced as Rust
     // data) — same contract as `cleanNativeBindings` / `queueMicrotaskCallback`.
@@ -56,6 +50,7 @@ unsafe extern "C" {
     // the non-`repr(C)` interior of `EventLoopTimer` is irrelevant to FFI.
     #[allow(improper_ctypes)]
     safe fn WebCore__AbortSignal__getTimeout(arg0: &AbortSignal) -> *mut Timeout;
+    safe fn WebCore__AbortSignal__cancelTimer(arg0: &AbortSignal);
     safe fn WebCore__AbortSignal__signal(
         arg0: &AbortSignal,
         arg1: &JSGlobalObject,
@@ -69,28 +64,13 @@ unsafe extern "C" {
         arg2: &mut u8,
     ) -> JSValue;
     safe fn WebCore__AbortSignal__new(arg0: &JSGlobalObject) -> *mut AbortSignal;
-}
-
-/// Trait expressing the Zig `comptime cb: *const fn (*Context, JSValue) void`
-/// monomorphization for `listen`. Implement on your context type.
-// TODO(port): Zig used a comptime fn-pointer param; Rust has no const fn-ptr
-// generics, so callers implement this trait instead.
-pub trait AbortListener {
-    fn on_abort(&mut self, reason: JSValue);
+    safe fn WebCore__AbortSignal__jsReason(arg0: &AbortSignal, arg1: &JSGlobalObject) -> JSValue;
+    safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
 }
 
 impl AbortSignal {
-    pub fn listen<C: AbortListener>(&self, ctx: *mut C) -> &AbortSignal {
-        extern "C" fn callback<C: AbortListener>(ptr: *mut c_void, reason: JSValue) {
-            // SAFETY: ptr was registered below as `*mut C`; C++ calls back on
-            // the same thread before `cleanNativeBindings` removes it.
-            let val = unsafe { bun_ptr::callback_ctx::<C>(ptr) };
-            C::on_abort(val, reason);
-        }
-        self.add_listener(ctx.cast::<c_void>(), callback::<C>)
-    }
-
-    pub fn add_listener(
+    /// For [`AbortHandle`](crate::AbortHandle), which removes `ctx` before it moves or drops.
+    pub(crate) fn add_listener(
         &self,
         ctx: *mut c_void,
         callback: unsafe extern "C" fn(*mut c_void, JSValue),
@@ -102,7 +82,7 @@ impl AbortSignal {
         self
     }
 
-    pub fn clean_native_bindings(&self, ctx: *mut c_void) {
+    pub(crate) fn clean_native_bindings(&self, ctx: *mut c_void) {
         WebCore__AbortSignal__cleanNativeBindings(self, ctx)
     }
 
@@ -124,9 +104,9 @@ impl AbortSignal {
         WebCore__AbortSignal__aborted(self)
     }
 
-    /// This function is not threadsafe. JSValue cannot safely be passed between threads.
-    pub fn abort_reason(&self) -> JSValue {
-        WebCore__AbortSignal__abortReason(self)
+    /// Same value the JS `signal.reason` getter returns.
+    pub fn js_reason(&self, global: &JSGlobalObject) -> JSValue {
+        WebCore__AbortSignal__jsReason(self, global)
     }
 
     pub fn reason_if_aborted(&self, global: &JSGlobalObject) -> Option<AbortReason> {
@@ -147,24 +127,39 @@ impl AbortSignal {
         Some(AbortReason::Js(js_reason))
     }
 
-    pub fn ref_(&self) -> *mut AbortSignal {
-        WebCore__AbortSignal__ref(self)
+    /// Node.js APIs reject aborted operations with an `AbortError` (`Error`
+    /// subclass, `code === "ABORT_ERR"`) whose `cause` is `signal.reason`,
+    /// rather than the Web `DOMException` held in `signal.reason` itself.
+    /// Returns `None` if the signal is not aborted. JS thread only.
+    pub fn node_abort_error_if_aborted(&self, global: &JSGlobalObject) -> Option<JSValue> {
+        if !self.aborted() {
+            return None;
+        }
+        // `jsReason` returns the same (cached) object the JS `.reason` getter
+        // does, so `err.cause === signal.reason` holds, matching Node.
+        Some(Bun__wrapAbortError(
+            global,
+            WebCore__AbortSignal__jsReason(self, global),
+        ))
+    }
+
+    /// Take a ref on the signal.
+    pub fn ref_(&self) -> AbortSignalRef {
+        // SAFETY: `WebCore__AbortSignal__ref` bumps the intrusive refcount and
+        // returns `self` with that +1.
+        unsafe { AbortSignalRef::adopt(WebCore__AbortSignal__ref(self)) }
     }
 
     pub fn unref(&self) {
         WebCore__AbortSignal__unref(self)
     }
 
-    pub fn detach(&self, ctx: *mut c_void) {
-        self.clean_native_bindings(ctx);
-        self.unref();
-    }
-
+    /// Lifetime: the returned pointer is borrowed from the JS wrapper and is
+    /// valid only while `value` remains reachable. Use [`AbortSignal::ref_from_js`]
+    /// to take refcounted ownership instead.
     pub fn from_js(value: JSValue) -> Option<*mut AbortSignal> {
         let ptr = WebCore__AbortSignal__fromJS(value);
         if ptr.is_null() { None } else { Some(ptr) }
-        // TODO(port): lifetime — returned ptr is borrowed from the JS wrapper;
-        // valid only while the JSValue is reachable.
     }
 
     pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
@@ -187,11 +182,9 @@ impl AbortSignal {
     /// Thread-safety: not thread-safe; call only on the owning thread/loop.
     ///
     /// Usage: if you need to operate on the Timeout (run/cancel/deinit), hold a ref
-    /// to `this` for the duration (e.g., `this.ref_(); defer this.unref();`) and avoid
-    /// caching the pointer across turns.
+    /// to `this` for the duration (`let _ref = this.ref_();`) and avoid caching the
+    /// pointer across turns.
     pub fn get_timeout(&self) -> Option<&Timeout> {
-        // TODO(port): lifetime — callers that run/cancel/deinit need `*mut`; revisit
-        // whether `&mut Timeout` (or raw ptr) is the right shape once call sites port.
         let ptr = WebCore__AbortSignal__getTimeout(self);
         // SAFETY: returned Timeout is owned by `self` and valid while `self` is held
         // (see doc comment).
@@ -225,7 +218,7 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for AbortSignal {
 /// `Clone` bumps the C++ refcount via `ref()`; `Drop` decrements via `unref()`.
 /// Replaces the broken `Arc<AbortSignal>` pattern (an `Arc` of an opaque ZST
 /// cannot own a C++-allocated object — its payload address is not the C++
-/// object address). Mirrors Zig `?*AbortSignal` + manual `ref()`/`unref()`.
+/// object address).
 pub type AbortSignalRef = bun_ptr::ExternalShared<AbortSignal>;
 
 impl AbortSignal {
@@ -236,12 +229,8 @@ impl AbortSignal {
     /// moved here because inherent impls cannot be added to a type alias.)
     #[inline]
     pub fn ref_from_js(value: JSValue) -> Option<AbortSignalRef> {
-        AbortSignal::from_js(value).map(|p| {
-            // SAFETY: `from_js` returned a live borrow of the JS wrapper's
-            // payload; `ref_()` bumps the intrusive refcount and returns the
-            // same non-null pointer with +1 ownership.
-            unsafe { AbortSignalRef::adopt((*p).ref_()) }
-        })
+        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
+        AbortSignal::from_js(value).map(|p| bun_opaque::opaque_deref(p).ref_())
     }
 }
 
@@ -250,22 +239,8 @@ pub enum AbortReason {
     Js(JSValue),
 }
 
-impl AbortReason {
-    pub fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        match self {
-            AbortReason::Common(reason) => reason.to_js(global),
-            AbortReason::Js(value) => value,
-        }
-    }
-
-    // PORT NOTE (phase-d): `to_body_value_error` reaches into
-    // `bun_runtime::webcore::body::value::ValueError` (forward dep on
-    // `bun_runtime`). The conversion is trivial and is reconstructed at the
-    // call-site in `bun_runtime` once that tier un-gates.
-}
-
 // ──────────────────────────────────────────────────────────────────────────
-// `AbortSignal.Timeout` — port of `src/jsc/AbortSignal.zig:Timeout`.
+// `AbortSignal.Timeout`.
 //
 // LAYERING: `EventLoopTimer` + `TimerFlags` live in `bun_event_loop` (lower
 // tier). The per-VM timer heap (`Timer::All`) lives in `bun_runtime` (higher
@@ -283,31 +258,36 @@ pub struct Timeout {
     /// this field, so it must stay at a fixed offset (hence `#[repr(C)]`).
     pub event_loop_timer: EventLoopTimer,
 
-    /// The `Timeout`'s lifetime is owned by the AbortSignal.
-    /// But this does have a ref count increment.
-    // PORT NOTE: AbortSignal is an opaque C++ type with intrusive WebCore
-    // refcounting (ref/unref) that crosses FFI — PORTING.md §Pointers: never
-    // Arc here. Kept as raw `*mut` with manual unref (matches Zig).
+    /// Raw back-pointer to the owning `AbortSignal`; no refcount held. The
+    /// `Timeout` is owned by the signal (`m_timeout`, freed via
+    /// `~AbortSignal` → `cancelTimer` → [`AbortSignal__Timeout__deinit`]),
+    /// so while this box is live the signal is too.
     pub signal: *mut AbortSignal,
 
     /// "epoch" is reused.
     pub flags: TimerFlags,
 
-    /// See `swapGlobalForTestIsolation`: timers from a prior isolated test
-    /// file must not fire abort handlers in the new global.
-    pub generation: u32,
+    /// The context whose script armed the timeout; it does not fire once that
+    /// context is gone (`bun test --isolate`: a prior file's).
+    pub(crate) context: crate::ContextId,
+    /// `VirtualMachine::test_isolation_generation` when it did.
+    generation: u32,
+    /// `VirtualMachine::hot_reload_counter` when it did.
+    pub hot_reload_counter: u32,
 }
 
 bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 
 impl Timeout {
     fn init(vm: *mut VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {
-        // Zig: `bun.timespec.now(.allow_mocked_time).addMs(@intCast(milliseconds))`.
+        let milliseconds = milliseconds.max(u64::from(VirtualMachine::timer_min_delay_ms()));
         let deadline = bun_core::Timespec::now_allow_mocked_time()
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 
-        // PORT NOTE: `bun.TrivialNew` → `heap::alloc(Box::new(...))` (mimalloc
-        // is the global allocator per PORTING.md §Prereq).
+        let jsc_vm = VirtualMachine::get();
+        // `AbortSignal.timeout()`, a C++ host function, calls this.
+        let context = jsc_vm.context_of_caller();
+        let graph_context = jsc_vm.as_graph_context(context);
         let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
             event_loop_timer: EventLoopTimer {
                 next: ElTimespec {
@@ -321,10 +301,14 @@ impl Timeout {
             },
             signal: signal_,
             flags: TimerFlags::default(),
+            context: context.id(),
             generation: VirtualMachine::get().test_isolation_generation,
+            hot_reload_counter: jsc_vm.hot_reload_counter,
         }));
+        if let Some(context) = graph_context {
+            context.track_timer(this.cast(), crate::ContextTimer::AbortSignal);
+        }
 
-        // Zig: gated on `bun.Environment.ci_assert`.
         #[cfg(debug_assertions)]
         // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
         // centralised non-null deref proof (caller contract: non-null).
@@ -354,6 +338,35 @@ impl Timeout {
         }
     }
 
+    /// The timer heap is dropping this timeout without firing it
+    /// (`useRealTimers()` / `clearAllTimers()` draining the fake heap, the
+    /// `--isolate` file swap, VM teardown).
+    ///
+    /// Routed through the owning signal's `cancelTimer()`, the same path firing
+    /// takes via `markAborted()`: it clears `m_timeout` and frees `this` through
+    /// [`AbortSignal__Timeout__deinit`] (which unlinks the node if it is still in
+    /// a heap). Unlinking the node alone is not enough: while `m_timeout` is set,
+    /// `JSAbortSignalOwner::isReachableFromOpaqueRoots` keeps an observed signal's
+    /// wrapper, and everything its abort listeners close over, alive for a timer
+    /// that can no longer fire.
+    ///
+    /// # Safety
+    /// `this` is a live boxed `Timeout` still owned by its signal; JS thread;
+    /// no borrow of the timer heap may be live (the deinit re-enters
+    /// `timer_remove`). `this` is freed when this returns.
+    pub unsafe fn discard(this: *mut Timeout) {
+        // SAFETY: `this` is live per the fn contract, and a live box implies a
+        // live owning signal (see the `signal` field doc).
+        let signal = AbortSignal::opaque_ref(unsafe { (*this).signal });
+        debug_assert!(
+            signal
+                .get_timeout()
+                .is_some_and(|owned| core::ptr::eq(owned, this)),
+            "AbortSignal.timeout timer is not the one its signal owns"
+        );
+        WebCore__AbortSignal__cancelTimer(signal);
+    }
+
     /// Fire the timeout. May free `this` (re-entrantly via `signal` →
     /// `~AbortSignal` → `AbortSignal__Timeout__deinit`).
     ///
@@ -368,15 +381,19 @@ impl Timeout {
 
             // The signal and its handlers belong to a previous isolated test
             // file's global; firing now would run them against the new global.
-            // Drop the extra ref that signalAbort() would have released.
-            if (*this).generation != (*vm).test_isolation_generation {
-                (*(*this).signal).unref();
+            // (The file swap's `cancel_all_timeout_objects` normally discards
+            // such timers before they can come due.)
+            if (*vm).has_outlived_its_script((*this).context, (*this).generation) {
+                Self::discard(this);
                 return;
             }
 
-            // Dispatching the signal may cause the Timeout to get freed.
-            // PORT NOTE: capture raw ptr before `this` may dangle.
+            // `signal` is a raw back-pointer with no refcount of its own;
+            // see the field doc for why it is valid here. `dispatch` may free
+            // `this` re-entrantly (markAborted → cancelTimer → deinit), so
+            // capture the pointer first.
             let signal_ptr: *mut AbortSignal = (*this).signal;
+            debug_assert!(!signal_ptr.is_null());
             Self::dispatch(vm, signal_ptr);
         }
     }
@@ -384,32 +401,36 @@ impl Timeout {
     fn dispatch(vm: *mut VirtualMachine, signal_ptr: *mut AbortSignal) {
         let _ = vm;
         let vm = VirtualMachine::get();
-        // PORT NOTE: `loop.enter(); defer loop.exit();` — RAII guard `exit`s on
+        // RAII guard `exit`s on
         // drop even if `signal` unwinds, and holds the raw VM-owned pointer so
         // borrowck doesn't see two live `&mut EventLoop` across re-entrant JS.
         let _guard = vm.enter_event_loop_scope();
-        // signalAbort() releases the extra ref from timeout() after all
-        // abort work completes, so we must not unref here.
         // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-        // centralised non-null deref proof (held alive by the extra ref above).
+        // centralised non-null deref proof. `signalAbort()` takes
+        // `Ref protectedThis` internally so `signal_ptr` stays valid for the
+        // whole dispatch even though abort listeners can trigger GC.
         AbortSignal::opaque_ref(signal_ptr).signal(vm.global(), CommonAbortReason::Timeout);
     }
 
     // This may run inside the "signal" call.
-    // PORT NOTE: not `impl Drop` — Timeout is constructed/destroyed across FFI
+    // Deliberately not `impl Drop` — Timeout is constructed/destroyed across FFI
     // (see export fns below) and `deinit` needs a `vm` parameter.
     unsafe fn deinit(this: *mut Timeout, vm: *mut VirtualMachine) {
         // SAFETY: caller guarantees `this` came from `heap::alloc` in `init`.
         unsafe {
             Self::cancel(&mut *this, vm);
+            if let Some(context) = (*vm).timer_context((*this).context) {
+                context.untrack_timer(this.cast());
+            }
             drop(bun_core::heap::take(this));
         }
     }
 }
 
-/// Caller is expected to have already ref'd the AbortSignal.
+/// The returned `Timeout` is owned by `signal_` (stored in `m_timeout`) and
+/// holds a raw back-pointer to it; caller retains its own ref on `signal_`.
 #[unsafe(no_mangle)]
-pub extern "C" fn AbortSignal__Timeout__create(
+extern "C" fn AbortSignal__Timeout__create(
     vm: *mut VirtualMachine,
     signal_: *mut AbortSignal,
     milliseconds: u64,
@@ -421,7 +442,7 @@ pub extern "C" fn AbortSignal__Timeout__create(
 /// `this` must be a live boxed `Timeout` returned from `AbortSignal__Timeout__create`;
 /// `vm` must be the live per-thread `VirtualMachine`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn AbortSignal__Timeout__run(this: *mut Timeout, vm: *mut VirtualMachine) {
+unsafe extern "C" fn AbortSignal__Timeout__run(this: *mut Timeout, vm: *mut VirtualMachine) {
     // SAFETY: C++ caller passes a live boxed Timeout and the live per-thread VM.
     unsafe { Timeout::run(this, vm) }
 }
@@ -431,7 +452,7 @@ pub unsafe extern "C" fn AbortSignal__Timeout__run(this: *mut Timeout, vm: *mut 
 /// Must be called on the owning JS thread — `deinit` resolves the VM via the
 /// thread-local `VirtualMachine::get_mut_ptr()` and `Timeout::cancel` requires it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
+unsafe extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
     // Called from ~AbortSignal() / cancelTimer(). The AbortSignal's
     // ScriptExecutionContext may be a dead global under --isolate, so
     // we resolve the VM via the threadlocal instead of taking it as a
@@ -441,5 +462,3 @@ pub unsafe extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
     // VM singleton is process-lifetime.
     unsafe { Timeout::deinit(this, VirtualMachine::get_mut_ptr()) }
 }
-
-// ported from: src/jsc/AbortSignal.zig

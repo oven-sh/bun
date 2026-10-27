@@ -47,7 +47,7 @@ assert.strictEqual(typeof ChildProcess, 'function');
     }, {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
-      message: 'The "options.envPairs" property must be of type Array.' +
+      message: 'The "options.envPairs" property must be an instance of Array.' +
               common.invalidArgTypeHelper(envPairs)
     });
   });
@@ -63,7 +63,7 @@ assert.strictEqual(typeof ChildProcess, 'function');
     }, {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
-      message: 'The "options.args" property must be of type Array.' +
+      message: 'The "options.args" property must be an instance of Array.' +
                common.invalidArgTypeHelper(args)
     });
   });

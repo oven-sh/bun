@@ -46,12 +46,10 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
     }
 }
 
-// Zig: `pub fn AstMaybe(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block.
+// File-split mixin pattern: a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub fn maybe_relocate_vars_to_top_level(
+    pub(crate) fn maybe_relocate_vars_to_top_level(
         &mut self,
         decls: &[G::Decl],
         mode: RelocateVarsMode,
@@ -117,7 +115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // EDot nodes represent a property access. This function may return an
     // expression to replace the property access with. It assumes that the
     // target of the EDot expression has already been visited.
-    pub fn maybe_rewrite_property_access(
+    pub(crate) fn maybe_rewrite_property_access(
         &mut self,
         loc: bun_ast::Loc,
         target: js_ast::Expr,
@@ -128,19 +126,89 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let name_static = E::Str::new(name);
 
-        // Zig labeled switch with `continue :sw` → loop + match with mutable scrutinee.
+        let can_track_dynamic_import_member = identifier_opts.assign_target()
+            == js_ast::AssignTarget::None
+            && !identifier_opts.is_delete_target();
+
+        // Loop + match with mutable scrutinee (a restartable switch).
         let mut sw_data = target.data;
         'sw: loop {
             match sw_data {
+                js_ast::ExprData::EAwait(aw) => {
+                    // `(await import("str")).foo` — record the alias; the
+                    // expression is left as written.
+                    if let js_ast::ExprData::EImport(im) = aw.value.data {
+                        if im.namespace_ref.is_valid() && can_track_dynamic_import_member {
+                            p.import_items_for_namespace
+                                .get_mut(&im.namespace_ref)
+                                .unwrap()
+                                .put(
+                                    name,
+                                    LocRef {
+                                        loc: name_loc,
+                                        ref_: bun_ast::Ref::NONE,
+                                    },
+                                )
+                                .expect("oom");
+                            p.note_tracked_namespace_use(im.namespace_ref);
+                        }
+                    }
+                }
+                js_ast::ExprData::ERequireString(req) => {
+                    // `require("str").foo` — record the alias; the expression is left as-is.
+                    if can_track_dynamic_import_member {
+                        if let Some(ns) = p.require_namespace_ref(req) {
+                            p.import_items_for_namespace
+                                .get_mut(&ns)
+                                .unwrap()
+                                .put(
+                                    name,
+                                    LocRef {
+                                        loc: name_loc,
+                                        ref_: bun_ast::Ref::NONE,
+                                    },
+                                )
+                                .expect("oom");
+                        }
+                    }
+                }
                 js_ast::ExprData::EIdentifier(id) => {
+                    // A local holding one module's namespace (`const ns = await
+                    // import(…)`) reads its exports as `import * as ns` does:
+                    // `ns.a` becomes an import item of that record, below.
+                    let mut dynamic_record = None;
+                    if p.dynamic_import_namespace_locals.contains_key(&id.ref_) {
+                        if can_track_dynamic_import_member {
+                            dynamic_record = p.dynamic_import_item_record(id.ref_, name);
+                        }
+                        // Otherwise record the alias so the importee can drop
+                        // unreferenced exports, and leave the access intact. An
+                        // assign/delete target leaves the use counted (namespace
+                        // escapes).
+                        if dynamic_record.is_none() {
+                            if can_track_dynamic_import_member {
+                                if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
+                                    map.put(
+                                        name,
+                                        LocRef {
+                                            loc: name_loc,
+                                            ref_: bun_ast::Ref::NONE,
+                                        },
+                                    )
+                                    .expect("oom");
+                                    p.note_tracked_namespace_use(id.ref_);
+                                }
+                            }
+                            break 'sw;
+                        }
+                    }
                     // Rewrite property accesses on explicit namespace imports as an identifier.
                     // This lets us replace them easily in the printer to rebind them to
                     // something else without paying the cost of a whole-tree traversal during
                     // module linking just to rewrite these EDot expressions.
                     if p.options.bundle {
                         if p.import_items_for_namespace.contains_key(&id.ref_) {
-                            // PORT NOTE: reshaped for borrowck — Zig held `*ImportItemForNamespaceMap`
-                            // across `p.newSymbol`; split into lookup → (maybe new_symbol) → re-borrow.
+                            // Note: split into lookup → (maybe new_symbol) → re-borrow for borrowck.
                             let existing = p
                                 .import_items_for_namespace
                                 .get(&id.ref_)
@@ -148,15 +216,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .get(name)
                                 .copied();
                             let ref_ = match existing {
-                                Some(loc_ref) => loc_ref.ref_.expect("infallible: ref bound"),
+                                Some(loc_ref) => loc_ref.ref_,
                                 None => {
                                     // Generate a new import item symbol in the module scope
-                                    let new_ref = p
-                                        .new_symbol(js_ast::symbol::Kind::Import, name)
-                                        .expect("unreachable");
+                                    let new_ref = p.new_symbol(js_ast::symbol::Kind::Import, name);
                                     let new_item = LocRef {
                                         loc: name_loc,
-                                        ref_: Some(new_ref),
+                                        ref_: new_ref,
                                     };
                                     // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
                                     VecExt::append(&mut p.module_scope_mut().generated, new_ref);
@@ -175,6 +241,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     // generated.
                                     symbol.import_item_status =
                                         bun_ast::ImportItemStatus::Generated;
+                                    // Not bound to an export, it reads `ns.a`.
+                                    if let Some(import_record_index) = dynamic_record {
+                                        symbol.namespace_alias =
+                                            Some(bun_alloc::ast_box(G::NamespaceAlias {
+                                                namespace_ref: id.ref_,
+                                                alias: js_ast::StoreStr::new(name),
+                                                import_record_index,
+                                                was_originally_property_access: true,
+                                            }));
+                                    }
 
                                     new_ref
                                 }
@@ -188,10 +264,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // imported module end up in the same module group and the namespace
                             // symbol has never been captured, then we don't need to generate
                             // any code for the namespace at all.
-                            p.ignore_usage(id.ref_);
+                            //
+                            // A local holding an `import()` / `require()` namespace is a
+                            // declaration, and an item the linker does not bind prints
+                            // `ns.a`. Its use stays counted, as an accounted-for read, so
+                            // single-use substitution never drops the declaration from
+                            // under it.
+                            if dynamic_record.is_some() {
+                                p.note_tracked_namespace_use(id.ref_);
+                            } else {
+                                p.ignore_usage(id.ref_);
+                            }
 
                             // Track how many times we've referenced this symbol
                             p.record_usage(ref_);
+                            if identifier_opts.is_call_target() || identifier_opts.is_template_tag()
+                            {
+                                p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
+                            }
 
                             return Some(
                                 p.handle_identifier(
@@ -205,6 +295,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         .with_assign_target(identifier_opts.assign_target())
                                         .with_is_call_target(identifier_opts.is_call_target())
                                         .with_is_delete_target(identifier_opts.is_delete_target())
+                                        .with_is_property_access_target(
+                                            identifier_opts.is_property_access_target(),
+                                        )
                                         // If this expression is used as the target of a call expression, make
                                         // sure the value of "this" is preserved.
                                         .with_was_originally_identifier(false),
@@ -325,12 +418,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         return None;
                                     }
                                 }
-                                // Zig: `for (props) |prop| { ... } else { deopt; return null }`
-                                // — the loop body has no `break`, so the `else` arm runs on
-                                // every normal completion (including empty `props`). The
-                                // entire stmts/decls/clause_items rewriting block that follows
-                                // in the Zig source is therefore unreachable there too and is
-                                // dropped from the port.
+                                // The loop above always runs to completion (no `break`), so
+                                // this block runs on every normal completion (including empty
+                                // `props`).
                                 {
                                     // empty object de-opts because otherwise the statement becomes
                                     // <empty space> = {};
@@ -351,6 +441,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
 
                             // rewrite `module.exports` to `exports`
+                            p.module_exports_rewrite_count += 1;
                             return Some(Expr {
                                 data: js_ast::ExprData::ESpecial(E::Special::ModuleExports),
                                 loc: name_loc,
@@ -389,20 +480,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     return None;
                                 }
 
-                                // PORT NOTE: reshaped for borrowck — Zig held the
-                                // `getOrPut` entry across `p.newSymbol`.
+                                // Note: lookup is split from insertion for borrowck.
                                 let ref_ = if let Some(existing) =
                                     p.commonjs_named_exports.get(name)
                                 {
-                                    existing.loc_ref.ref_.expect("infallible: ref bound")
+                                    existing.loc_ref.ref_
                                 } else {
                                     let sym_name: &'a [u8] = p.arena.alloc_slice_copy(
                                         format!("${}", bun_core::fmt::fmt_identifier(name))
                                             .as_bytes(),
                                     );
-                                    let new_ref = p
-                                        .new_symbol(js_ast::symbol::Kind::Other, sym_name)
-                                        .expect("unreachable");
+                                    let new_ref =
+                                        p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
                                     // SAFETY: module_scope is arena-owned and valid for 'a.
                                     VecExt::append(&mut p.module_scope_mut().generated, new_ref);
                                     p.commonjs_named_exports
@@ -411,9 +500,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             CommonJSNamedExport {
                                                 loc_ref: LocRef {
                                                     loc: name_loc,
-                                                    ref_: Some(new_ref),
+                                                    ref_: new_ref,
                                                 },
                                                 needs_decl: true,
+                                                assign_count: 0,
+                                                decl_value: Default::default(),
                                             },
                                         )
                                         .expect("unreachable");
@@ -423,6 +514,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     }
                                     new_ref
                                 };
+                                p.note_commonjs_export_use(name, ref_, identifier_opts);
 
                                 p.ignore_usage(id.ref_);
                                 p.record_usage(ref_);
@@ -457,7 +549,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // minify "long-string".length to 11
                         if name == b"length" {
                             if let Some(len) = e_string_javascript_length(&str_) {
-                                return Some(p.new_expr(E::Number { value: len as f64 }, loc));
+                                return Some(p.new_expr(E::Number::new(len as f64), loc));
                             }
                         }
                     }
@@ -493,6 +585,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             name,
                                         )
                                         && name != b"__proto__"
+                                        && value.can_be_inlined_from_property_access()
                                     {
                                         return Some(value);
                                     }
@@ -539,11 +632,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Some(p.new_expr(e_string_init(p.source.path.text), name_loc));
                         } else if name == b"url" {
                             // Inline import.meta.url as file:// URL
-                            let bunstr = bun_core::String::from_bytes(p.source.path.text);
+                            let bunstr = bun_core::StringView::from_bytes(p.source.path.text);
                             let url = p.arena.alloc_slice_copy(
                                 format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
                             );
-                            bunstr.deref();
                             return Some(p.new_expr(e_string_init(url), name_loc));
                         }
                     }
@@ -568,27 +660,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         });
                     }
                 }
-                js_ast::ExprData::EImportIdentifier(id) => {
-                    // Symbol uses due to a property access off of an imported symbol are tracked
-                    // specially. This lets us do tree shaking for cross-file TypeScript enums.
-                    if p.options.bundle && !p.is_control_flow_dead {
-                        let use_ = p.symbol_uses.get_mut(&id.ref_).unwrap();
-                        use_.count_estimate = use_.count_estimate.saturating_sub(1);
-                        // note: this use is not removed as we assume it exists later
-
-                        // Add a special symbol use instead
-                        let gop = p
-                            .import_symbol_property_uses
-                            .get_or_put_value(id.ref_, Default::default())
-                            .expect("unreachable");
-                        let inner_use = gop
-                            .value_ptr
-                            .get_or_put_value(name, Default::default())
-                            .expect("unreachable");
-                        inner_use.count_estimate += 1;
-                    }
-                }
-                // Zig: `inline .e_dot, .e_index => |data, tag|` — expanded per arm
+                // EDot and EIndex are handled with structurally identical arms.
                 js_ast::ExprData::EDot(data) => {
                     if matches!(p.ts_namespace.expr, js_ast::ExprData::EDot(ns_data) if data.as_ptr() == ns_data.as_ptr())
                         && identifier_opts.assign_target() == js_ast::AssignTarget::None
@@ -619,19 +691,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         return None;
                                     }
 
-                                    // PORT NOTE: reshaped for borrowck — see exports_ref arm above.
+                                    // Note: reshaped for borrowck — see exports_ref arm above.
                                     let ref_ = if let Some(existing) =
                                         p.commonjs_named_exports.get(name)
                                     {
-                                        existing.loc_ref.ref_.expect("infallible: ref bound")
+                                        existing.loc_ref.ref_
                                     } else {
                                         let sym_name: &'a [u8] = p.arena.alloc_slice_copy(
                                             format!("${}", bun_core::fmt::fmt_identifier(name))
                                                 .as_bytes(),
                                         );
-                                        let new_ref = p
-                                            .new_symbol(js_ast::symbol::Kind::Other, sym_name)
-                                            .expect("unreachable");
+                                        let new_ref =
+                                            p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
                                         // SAFETY: module_scope is arena-owned and valid for 'a.
                                         VecExt::append(
                                             &mut p.module_scope_mut().generated,
@@ -643,9 +714,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 CommonJSNamedExport {
                                                     loc_ref: LocRef {
                                                         loc: name_loc,
-                                                        ref_: Some(new_ref),
+                                                        ref_: new_ref,
                                                     },
                                                     needs_decl: true,
+                                                    assign_count: 0,
+                                                    decl_value: Default::default(),
                                                 },
                                             )
                                             .expect("unreachable");
@@ -655,6 +728,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                         new_ref
                                     };
+                                    p.note_commonjs_export_use(name, ref_, identifier_opts);
 
                                     p.record_usage(ref_);
 
@@ -699,7 +773,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 loc,
                             });
                         }
-                        // Zig: `bun.ComptimeStringMap(void, ...)` over 7 fixed keys.
+                        // Membership check over 7 fixed keys.
                         let in_lookup_table = matches!(
                             name,
                             b"decline"
@@ -774,7 +848,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Some(p.wrap_inlined_enum(
                         Expr {
                             loc,
-                            data: js_ast::ExprData::ENumber(E::Number { value: num }),
+                            data: js_ast::ExprData::ENumber(E::Number::new(num)),
                         },
                         name,
                     ));
@@ -816,9 +890,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, bun_core::Error> {
+    pub(crate) fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, crate::Error> {
         let p = self;
-        // TODO(port): narrow error set
         let flags = if matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
             E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
         } else {
@@ -843,10 +916,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, bun_core::Error> {
+    pub(crate) fn maybe_defined_helper(
+        &mut self,
+        identifier_expr: Expr,
+    ) -> Result<Expr, crate::Error> {
         let p = self;
-        // TODO(port): narrow error set
-        let test_ = Self::check_if_defined_helper(p, identifier_expr)?;
+        let test = Self::check_if_defined_helper(p, identifier_expr)?;
         let object_ref = p
             .find_symbol(bun_ast::Loc::EMPTY, b"Object")
             .expect("unreachable")
@@ -854,7 +929,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let yes = p.new_expr(E::Identifier::init(object_ref), bun_ast::Loc::EMPTY);
         Ok(p.new_expr(
             E::If {
-                test_,
+                test,
                 yes,
                 no: identifier_expr,
             },
@@ -862,12 +937,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn maybe_comma_spread_error(&mut self, comma_after_spread: Option<bun_ast::Loc>) {
+    pub(crate) fn maybe_comma_spread_error(&mut self, comma_after_spread: bun_ast::Loc) {
         let p = self;
-        let Some(comma_after_spread) = comma_after_spread else {
-            return;
-        };
-        if comma_after_spread.start == -1 {
+        if comma_after_spread.is_empty() {
             return;
         }
 
@@ -881,5 +953,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
     }
 }
-
-// ported from: src/js_parser/ast/maybe.zig

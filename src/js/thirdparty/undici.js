@@ -1,6 +1,6 @@
 const EventEmitter = require("node:events");
-const StreamModule = require("node:stream");
-const { Readable } = StreamModule;
+const dc = require("node:diagnostics_channel");
+const { isArrayBuffer } = require("node:util/types");
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
@@ -16,7 +16,7 @@ const File = bindings[4];
 const URL = bindings[5];
 const AbortSignal = bindings[6];
 const URLSearchParams = bindings[7];
-const WebSocket = bindings[8];
+const BunWebSocket = bindings[8];
 const CloseEvent = bindings[9];
 const ErrorEvent = bindings[10];
 const MessageEvent = bindings[11];
@@ -54,14 +54,18 @@ function notImplemented() {
  * @typedef {import('events').EventEmitter} EventEmitter
  */
 
+function closeEmptyBody(controller) {
+  controller.close();
+}
+
 class BodyReadable extends ReadableFromWeb {
   #response;
   #bodyUsed;
 
   constructor(response, options = {}) {
-    var { body } = response;
-    if (!body) throw new Error("Response body is null");
-    super(options, body);
+    // A response with no body (204, HEAD) still gets a body, as in undici:
+    // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L118-L126
+    super({ ...options, responseBody: true }, response.body ?? new ReadableStream({ start: closeEmptyBody }));
 
     this.#response = response;
     this.#bodyUsed = response.bodyUsed;
@@ -192,18 +196,8 @@ async function request(
     throw new Error("Body not allowed for GET or HEAD requests");
   }
 
-  if (inputBody && inputBody.read && inputBody instanceof Readable) {
-    // TODO: Streaming via ReadableStream?
-    let data = "";
-    inputBody.setEncoding("utf8");
-    for await (const chunk of stream) {
-      data += chunk;
-    }
-    inputBody = new TextEncoder().encode(data);
-  }
-
-  if (maxRedirections !== undefined && Number.isNaN(maxRedirections)) {
-    throw new Error("maxRedirections must be a number if defined");
+  if (maxRedirections != null && (!Number.isInteger(maxRedirections) || maxRedirections < 0)) {
+    throw new Error("maxRedirections must be a positive number");
   }
 
   if (signal && !(signal instanceof AbortSignal)) {
@@ -211,28 +205,28 @@ async function request(
     throw new Error("signal must be an instance of AbortSignal");
   }
 
-  let resp;
+  const followRedirects = maxRedirections != null && maxRedirections > 0;
+
   /** @type {Response} */
-  const {
-    status: statusCode,
-    headers,
-    trailers,
-  } = (resp = await fetch(url, {
+  const resp = await fetch(url, {
     signal,
     mode: "cors",
     method,
     headers: inputHeaders || kEmptyObject,
     body: inputBody,
-    redirect: maxRedirections === "undefined" || maxRedirections > 0 ? "follow" : "manual",
+    redirect: followRedirects ? "follow" : "manual",
+    maxRedirects: followRedirects ? maxRedirections : undefined,
     keepalive: !reset,
-  }));
+  });
+
+  const { status: statusCode, headers, trailers } = resp;
 
   // Throw if received 4xx or 5xx response indicating HTTP error
   if (throwOnError && statusCode >= 400 && statusCode < 600) {
     throw new Error(`Request failed with status code ${statusCode}`);
   }
 
-  const body = resp.body ? new BodyReadable(resp) : null;
+  const body = new BodyReadable(resp);
 
   return { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }
@@ -372,6 +366,41 @@ const util = {
   },
 };
 
+const pingChannel = dc.channel("undici:websocket:ping");
+const pongChannel = dc.channel("undici:websocket:pong");
+
+function toBuffer(data) {
+  if ($isTypedArrayView(data)) return data;
+  // A received frame's Blob is in memory, so arrayBuffer() returns an already-fulfilled promise.
+  return Buffer.from(isArrayBuffer(data) ? data : $peekPromiseSettledValue(data.arrayBuffer()));
+}
+
+function onPing(event) {
+  if (pingChannel.hasSubscribers) pingChannel.publish({ payload: toBuffer(event.data), websocket: event.target });
+}
+
+function onPong(event) {
+  if (pongChannel.hasSubscribers) pongChannel.publish({ payload: toBuffer(event.data), websocket: event.target });
+}
+
+class WebSocket extends BunWebSocket {
+  constructor(url, protocols) {
+    super(url, protocols);
+    this.addEventListener("ping", onPing);
+    this.addEventListener("pong", onPong);
+  }
+}
+
+function ping(ws, body) {
+  if (Buffer.isBuffer(body)) {
+    if (body.length > 125) throw new TypeError("A PING frame cannot have a body larger than 125 bytes.");
+  } else if (body !== undefined) {
+    throw new TypeError("Expected buffer payload");
+  }
+  if (!(ws instanceof BunWebSocket)) throw new TypeError("Expected a WebSocket");
+  if (ws.readyState === BunWebSocket.OPEN) ws.ping(body);
+}
+
 class EventSource extends EventTarget {
   static CONNECTING = 0;
   static OPEN = 1;
@@ -444,7 +473,7 @@ function buildConnector(_options = {}) {
    * @param {string} [options.servername]
    * @param {AbortSignal} [options.signal]
    */
-  return function connect(_) {
+  return function connect(_options) {
     notImplemented();
   };
 }
@@ -482,6 +511,7 @@ const moduleExports = {
   mockErrors,
   MockPool,
   parseMIMEType,
+  ping,
   pipeline,
   Pool,
   ProxyAgent,

@@ -59,9 +59,9 @@ const vm = require('vm');
   const result = vm.runInThisContext(
     'vmResult = "foo"; Object.prototype.toString.call(process);'
   );
-  assert.strictEqual(global.vmResult, 'foo');
+  assert.strictEqual(globalThis.vmResult, 'foo');
   assert.strictEqual(result, '[object process]');
-  delete global.vmResult;
+  delete globalThis.vmResult;
 }
 
 // vm.runInNewContext
@@ -69,7 +69,7 @@ const vm = require('vm');
   const result = vm.runInNewContext(
     'vmResult = "foo"; typeof process;'
   );
-  assert.strictEqual(global.vmResult, undefined);
+  assert.strictEqual(globalThis.vmResult, undefined);
   assert.strictEqual(result, 'undefined');
 }
 
@@ -172,7 +172,30 @@ const vm = require('vm');
       'Received null'
   });
 
-  // vm.compileFunction('', undefined, null);
+  // Test for invalid options type
+  assert.throws(() => {
+    vm.compileFunction('', [], null);
+  }, {
+    name: 'TypeError',
+    code: 'ERR_INVALID_ARG_TYPE',
+    message: 'The "options" argument must be of type object. Received null'
+  });
+
+  assert.throws(() => {
+    vm.compileFunction('', [], 'string');
+  }, {
+    name: 'TypeError',
+    code: 'ERR_INVALID_ARG_TYPE',
+    message: 'The "options" argument must be of type object. Received type string (\'string\')'
+  });
+
+  assert.throws(() => {
+    vm.compileFunction('', [], 123);
+  }, {
+    name: 'TypeError',
+    code: 'ERR_INVALID_ARG_TYPE',
+    message: 'The "options" argument must be of type object. Received type number (123)'
+  });
 
   const optionTypes = {
     'filename': 'string',
@@ -254,11 +277,17 @@ const vm = require('vm');
   // Setting value to run the last three tests
   Error.stackTraceLimit = 1;
 
+  // Bun's compileFunction stack frames differ from Node's: JSC attributes
+  // the throw to a different column (and columnOffset is not applied), the
+  // wrapper costs one line when lineOffset is 0, and the anonymous source is
+  // labeled differently.
   assert.throws(() => {
     vm.compileFunction('throw new Error("Sample Error")')();
   }, {
     message: 'Sample Error',
-    stack: 'Error: Sample Error\n    at <anonymous> (file:///:2:16)' // from <anonymous>:1:7 to match Bun's stack trace formatting
+    stack: typeof Bun === 'undefined'
+      ? 'Error: Sample Error\n    at <anonymous>:1:7'
+      : 'Error: Sample Error\n    at <anonymous> (file:///:2:16)'
   });
 
   assert.throws(() => {
@@ -269,7 +298,9 @@ const vm = require('vm');
     )();
   }, {
     message: 'Sample Error',
-    stack: 'Error: Sample Error\n    at <anonymous> (evalmachine.<anonymous>:5:16)' // modified from <anonymous>:4:7 to match Bun's stack trace formatting
+    stack: typeof Bun === 'undefined'
+      ? 'Error: Sample Error\n    at <anonymous>:4:7'
+      : 'Error: Sample Error\n    at <anonymous> (file:///:4:16)'
   });
 
   assert.throws(() => {
@@ -280,7 +311,9 @@ const vm = require('vm');
     )();
   }, {
     message: 'Sample Error',
-    stack: 'Error: Sample Error\n    at <anonymous> (evalmachine.<anonymous>:2:16)' // modified from <anonymous>:1:10 to match Bun's stack trace formatting
+    stack: typeof Bun === 'undefined'
+      ? 'Error: Sample Error\n    at <anonymous>:1:10'
+      : 'Error: Sample Error\n    at <anonymous> (file:///:2:16)'
   });
 
   assert.strictEqual(
@@ -301,7 +334,10 @@ const vm = require('vm');
     )();
   }, {
     message: 'varInContext is not defined',
-    stack: 'ReferenceError: varInContext is not defined\n    at <anonymous> (file:///:2:20)' // modified from <anonymous>:1:1 to match Bun's stack trace formatting
+    // Bun's compileFunction stack frames differ from Node's (see above).
+    stack: typeof Bun === 'undefined'
+      ? 'ReferenceError: varInContext is not defined\n    at <anonymous>:1:1'
+      : 'ReferenceError: varInContext is not defined\n    at <anonymous> (file:///:2:20)'
   });
 
   assert.notDeepStrictEqual(

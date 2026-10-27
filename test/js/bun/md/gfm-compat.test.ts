@@ -421,8 +421,22 @@ describe("disallowed raw HTML (tagfilter)", () => {
 
   test("tagfilter in inline context", () => {
     const md = `hello <script>alert("xss")</script> world`;
-    const expected = `<p>hello &lt;script>alert("xss")&lt;/script> world</p>`;
+    const expected = `<p>hello &lt;script>alert(&quot;xss&quot;)&lt;/script> world</p>`;
     expect(renderGFM(md).trim()).toBe(expected);
+  });
+
+  test("backslash-escaped angle brackets cannot rebuild a filtered tag", () => {
+    const md = `a <script>\\<script>alert(document.cookie)\\</script></script>`;
+    const out = renderGFM(md);
+    expect(out).not.toContain("<script>");
+    expect(out).toContain("&lt;script>");
+  });
+
+  test("text after a single-line disallowed HTML block stays escaped", () => {
+    const md = `<script>x</script>\n\nafter <b>\\<img src=x onerror=alert(1)></b>`;
+    const out = renderGFM(md);
+    expect(out).not.toContain("<img");
+    expect(out).toContain("&lt;img");
   });
 
   test("self-closing filtered tag", () => {
@@ -749,5 +763,146 @@ bar | baz`;
 </table>`);
 
     expect(normalize(renderGFM(md))).toBe(expected);
+  });
+});
+
+// ============================================================================
+// Tag filter: normal text must always be entity-escaped, even after the
+// renderer has seen an inline or single-line disallowed HTML tag. A
+// backslash-escaped `\<` in normal text must never come out as a literal `<`.
+// ============================================================================
+test("escaped angle brackets after an inline disallowed tag remain entity-escaped", () => {
+  // The leading inline `<script>` is filtered to `&lt;script>`, but it must not
+  // switch the renderer into a raw mode where the following backslash-escaped
+  // `\<` characters (emitted as normal text) are written unescaped.
+  const md = `a <script>\\<script>alert(document.cookie)\\</script></script>`;
+  const out = renderGFM(md);
+  expect(out).not.toContain("<script>");
+  expect(out).toContain("&lt;script>");
+
+  // Normal text later in the document must also stay escaped after a
+  // single-line disallowed HTML block.
+  const md2 = `<script>x</script>\n\nafter <b>\\<img src=x onerror=alert(1)></b>`;
+  const out2 = renderGFM(md2);
+  expect(out2).not.toContain("<img");
+  expect(out2).toContain("&lt;img");
+
+  // Allowed tags are unaffected by the tag filter.
+  expect(renderGFM(`<strong>bold</strong> and <em>italic</em>`).trim()).toBe(
+    `<p><strong>bold</strong> and <em>italic</em></p>`,
+  );
+});
+
+// ============================================================================
+// Tag filter: the filter must accept every byte the inline HTML scanner
+// treats as whitespace after a tag name (including form feed and vertical
+// tab), or a tag like `<script\fsrc=...>` slips through unfiltered while
+// browsers still parse it as a script tag.
+// ============================================================================
+test("disallowed tag followed by form-feed or vertical-tab whitespace is still filtered", () => {
+  for (const ws of ["\f", "\v"]) {
+    const md = `a <script${ws}src=https://example.com/x.js></script${ws}> b`;
+    const out = renderGFM(md);
+    expect(out).not.toContain(`<script${ws}`);
+    expect(out).not.toContain(`</script${ws}`);
+    expect(out).toContain(`&lt;script${ws}`);
+  }
+
+  // A regular space delimiter is still filtered the same way.
+  const out = renderGFM(`a <script src=https://example.com/x.js></script> b`);
+  expect(out).not.toContain("<script ");
+  expect(out).toContain("&lt;script ");
+});
+
+// ============================================================================
+// Column alignment belongs to the table
+// ============================================================================
+describe("table alignment", () => {
+  test("each table has the alignment of its own delimiter row", () => {
+    expect(markdown.html("| a | b |\n|:--|--:|\n| c | d |\n\n| e | f |\n|:-:|---|\n| g | h |\n")).toBe(
+      '<table>\n<thead>\n<tr><th align="left">a</th><th align="right">b</th></tr>\n</thead>\n<tbody>\n<tr><td align="left">c</td><td align="right">d</td></tr>\n</tbody>\n</table>\n' +
+        '<table>\n<thead>\n<tr><th align="center">e</th><th>f</th></tr>\n</thead>\n<tbody>\n<tr><td align="center">g</td><td>h</td></tr>\n</tbody>\n</table>\n',
+    );
+  });
+
+  test("a line that only looks like a delimiter row does not change the table before it", () => {
+    expect(markdown.html("| a | b |\n|:--|--:|\n| c | d |\n\nx | y | z\n:-:|:-:\n")).toBe(
+      '<table>\n<thead>\n<tr><th align="left">a</th><th align="right">b</th></tr>\n</thead>\n<tbody>\n<tr><td align="left">c</td><td align="right">d</td></tr>\n</tbody>\n</table>\n<p>x | y | z\n:-:|:-:</p>\n',
+    );
+  });
+});
+
+describe("blanks at the end of table rows", () => {
+  test("blanks behind the last pipe of the header row are not a cell", () => {
+    expect(markdown.html("| a | b |  \n| --- | --- |  \n| c | d |  \n")).toBe(
+      "<table>\n<thead>\n<tr><th>a</th><th>b</th></tr>\n</thead>\n<tbody>\n<tr><td>c</td><td>d</td></tr>\n</tbody>\n</table>\n",
+    );
+  });
+});
+
+// GFM: "The table is broken at the first empty line, or beginning of another block-level structure"
+describe("what ends a table", () => {
+  const table = "<table>\n<thead>\n<tr><th>a</th></tr>\n</thead>\n<tbody>\n<tr><td>b</td></tr>\n</tbody>\n</table>\n";
+  test.each([
+    ["HTML", "<!-- c -->\n", "<!-- c -->\n"],
+    ["a heading", "# c\n", "<h1>c</h1>\n"],
+    ["fenced code", "```\nc\n```\n", "<pre><code>c\n</code></pre>\n"],
+  ])("%s", (_, block, html) => {
+    expect(markdown.html("| a |\n| --- |\n| b |\n" + block)).toBe(table + html);
+  });
+});
+
+describe("indented delimiter row", () => {
+  test("a delimiter row that is indented by four columns is a line of the paragraph", () => {
+    expect(markdown.html("| a | b |\n    | --- | --- |\n")).toBe("<p>| a | b |\n| --- | --- |</p>\n");
+  });
+});
+
+describe("strikethrough in a word", () => {
+  test("tildes open and close like asterisks, not like underscores", () => {
+    expect(markdown.html("a~~b~~c\n")).toBe("<p>a<del>b</del>c</p>\n");
+  });
+});
+
+describe("task list items with nothing behind the marker", () => {
+  test("what follows the item is not in it", () => {
+    expect(markdown.html("- [x] \n\nfoo\n")).toBe(
+      '<ul>\n<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked></li>\n</ul>\n<p>foo</p>\n',
+    );
+  });
+
+  const item = (checked: string, inside: string) =>
+    `<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled${checked}>${inside}</li>\n`;
+
+  test.each([
+    ["- [ ]", `<ul>\n${item("", "")}</ul>\n`],
+    ["- [ ] ", `<ul>\n${item("", "")}</ul>\n`],
+    ["1. [x]", `<ol>\n${item(" checked", "")}</ol>\n`],
+    // The text on the next line is in the item, indented or not.
+    ["- [ ]\ntext", `<ul>\n${item("", "text")}</ul>\n`],
+    ["- [ ] \ntext", `<ul>\n${item("", "text")}</ul>\n`],
+    ["- [ ]\n  text", `<ul>\n${item("", "text")}</ul>\n`],
+    ["- [x]  \n  a", `<ul>\n${item(" checked", "a")}</ul>\n`],
+    // So is what is indented, behind an empty line too.
+    ["- [ ]\n\n  text", `<ul>\n${item("", "\n<p>text</p>\n")}</ul>\n`],
+    ["- [ ] \n  # h", `<ul>\n${item("", "\n<h1>h</h1>\n")}</ul>\n`],
+    ["- [x]\n  - [ ] sub", `<ul>\n${item(" checked", `\n<ul>\n${item("", "sub")}</ul>\n`)}</ul>\n`],
+    // The next item is not, nor what is not indented behind an empty line.
+    ["- [ ]\n- [x]", `<ul>\n${item("", "")}${item(" checked", "")}</ul>\n`],
+    ["- [x] \n\nfoo", `<ul>\n${item(" checked", "")}</ul>\n<p>foo</p>\n`],
+    // White space is behind the marker.
+    ["- [ ]a", "<ul>\n<li>[ ]a</li>\n</ul>\n"],
+    ["- [ ]\ta", `<ul>\n${item("", "a")}</ul>\n`],
+    ["- [ ]  a", `<ul>\n${item("", "a")}</ul>\n`],
+  ])("%j", (text, html) => {
+    expect(markdown.html(text)).toBe(html);
+  });
+});
+
+describe("a table of one column", () => {
+  test("the row under its head needs no pipe if it has a colon", () => {
+    expect(markdown.html("a\n:-\nb\n")).toBe(
+      '<table>\n<thead>\n<tr><th align="left">a</th></tr>\n</thead>\n<tbody>\n<tr><td align="left">b</td></tr>\n</tbody>\n</table>\n',
+    );
   });
 });

@@ -1,10 +1,12 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use super::mock;
+use super::throw;
 use super::Expect;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
-enum Mode {
+pub(crate) enum Mode {
     ToHaveReturned,
     ToHaveReturnedTimes,
 }
@@ -19,21 +21,19 @@ impl Mode {
     }
 }
 
-// PERF(port): Zig used a `comptime mode` parameter (anonymous enum) so the two callers were
-// monomorphized; stable Rust forbids enum const-generic params (`adt_const_params`). Passed as a
-// runtime value here — the body branches on it only on cold/error paths.
+// `mode` is a runtime parameter — the body branches on it only on cold/error paths.
 #[inline]
 fn to_have_returned_times_fn(
     this: &Expect,
     global: &JSGlobalObject,
-    callframe: &CallFrame,
+    this_value: JSValue,
+    expected: JSValue,
     mode: Mode,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-    let arguments = callframe.arguments();
-    let (this, returns_arr, _value) = this.mock_prologue(
+    let (this, returns_arr, _) = this.mock_prologue(
         global,
-        callframe.this(),
+        this_value,
         mode.tag_name(),
         "<green>expected<r>",
         mock::MockKind::Returns,
@@ -41,8 +41,7 @@ fn to_have_returned_times_fn(
     let mut returns = returns_arr.array_iterator(global)?;
 
     let expected_success_count: i32 = if mode == Mode::ToHaveReturned {
-        if arguments.len() > 0 && !arguments[0].is_undefined() {
-            // PERF(port): Zig used comptime `@tagName(mode) ++ "..."`; runtime fmt on error path.
+        if !expected.is_undefined() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "{}() must not have an argument",
                 mode.tag_name()
@@ -50,14 +49,14 @@ fn to_have_returned_times_fn(
         }
         1
     } else {
-        if arguments.len() < 1 || !arguments[0].is_uint32_as_any_int() {
+        if !expected.is_uint32_as_any_int() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "{}() requires 1 non-negative integer argument",
                 mode.tag_name()
             )));
         }
 
-        arguments[0].coerce::<i32>(global)?
+        expected.coerce::<i32>(global)?
     };
 
     let mut pass;
@@ -85,52 +84,45 @@ fn to_have_returned_times_fn(
         return Ok(JSValue::UNDEFINED);
     }
 
-    // Zig: `switch (not) { inline else => |is_not| ... }` — runtime bool → comptime dispatch.
-    // PERF(port): Zig computed `getSignature` at comptime; runtime here (error path, cold).
     let signature = Expect::get_signature(mode.tag_name(), "<green>expected<r>", not);
-    // `throw` runs pretty_fmt over the *rendered* string, so `<`/`>` in these
-    // operands must be backslash-escaped to survive the tag pass.
     let (str_, spc): (&'static str, &'static str) = match mode {
         Mode::ToHaveReturned => match not {
-            false => ("\\>= ", "   "),
-            true => ("\\< ", "  "),
+            false => (">= ", "   "),
+            true => ("< ", "  "),
         },
         Mode::ToHaveReturnedTimes => match not {
             false => ("== ", "   "),
             true => ("!= ", "   "),
         },
     };
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            "\n\n\
-             Expected number of succesful returns: {}<green>{}<r>\n\
-             Received number of succesful returns: {}<red>{}<r>\n\
-             Received number of calls:             {}<red>{}<r>\n",
-            str_, expected_success_count, spc, actual_success_count, spc, total_call_count,
-        ),
+        "\n\n\
+         Expected number of succesful returns: {}<green>{}<r>\n\
+         Received number of succesful returns: {}<red>{}<r>\n\
+         Received number of calls:             {}<red>{}<r>\n",
+        str_, expected_success_count, spc, actual_success_count, spc, total_call_count,
     )
 }
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
-    pub fn to_have_returned(
+    pub(crate) fn to_have_returned(
         &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        to_have_returned_times_fn(self, global, callframe, Mode::ToHaveReturned)
+        to_have_returned_times_fn(self, cx.global(), this_value.to_js(), expected.to_js(), Mode::ToHaveReturned)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn to_have_returned_times(
+    pub(crate) fn to_have_returned_times(
         &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        to_have_returned_times_fn(self, global, callframe, Mode::ToHaveReturnedTimes)
+        to_have_returned_times_fn(self, cx.global(), this_value.to_js(), expected.to_js(), Mode::ToHaveReturnedTimes)
     }
 }
-
-// ported from: src/test_runner/expect/toHaveReturned.zig

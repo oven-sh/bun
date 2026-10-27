@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import { isASAN } from "harness";
 import { devTest } from "../bake-harness";
 
 devTest("server-side source maps show correct error lines", {
@@ -147,3 +148,89 @@ function helperFunction() {
     expect(hasPageCallLine).toBe(true);
   },
 });
+
+// Each round re-registers the file's source provider over the previous one
+// and re-materializes the parsed map from it, so stack remapping must stay
+// correct through repeated provider replacement, not just the first install.
+// `filler` comment lines shift the throwing function down one line per round,
+// so a stale map from an earlier round would remap the frame to the wrong
+// line and fail that round's assertion.
+function churnPage(name: string, filler: number) {
+  const fillerLines = Array.from({ length: filler }, (_, n) => `// filler ${n}\n`).join("");
+  return `export default function ChurnPage() {
+  churn${name}();
+  return <div>churn ${name}</div>;
+}
+
+${fillerLines}function churn${name}() {
+  throw new Error("Churn error ${name}");
+}
+
+export async function getStaticPaths() {
+  return {
+    paths: [{ params: {} }],
+  };
+}`;
+}
+
+devTest("server-side source maps stay correct across repeated reloads", {
+  files: {
+    "pages/churn.tsx": churnPage("Alpha", 0),
+  },
+  framework: "react",
+  async test(dev) {
+    const rounds = ["Alpha", "Bravo", "Charlie", "Delta"];
+    for (let i = 0; i < rounds.length; i++) {
+      const name = rounds[i];
+      if (i > 0) {
+        await dev.write("pages/churn.tsx", churnPage(name, i));
+      }
+      await Promise.all([
+        dev.fetch("/churn").catch(() => {}),
+        dev.output.waitForLine(new RegExp(`Churn error ${name}`)),
+      ]);
+
+      // Strip ANSI codes; they interleave within stack-frame lines.
+      const cleanLines = dev.output.lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+      // The throwing function is declared on line 6 + i of round i's version
+      // of the source file; frames remap to the declaration position (see the
+      // `helperFunction`/`5:1` expectation above). `\w*` tolerates bundler
+      // symbol renaming (see `doSomething2` above).
+      expect(cleanLines).toMatch(new RegExp(`at churn${name}\\w* \\(.*pages[/\\\\]churn\\.tsx:${6 + i}:1\\)`));
+    }
+  },
+  timeoutMultiplier: 2,
+});
+
+// ~DevServerSourceProvider ran after the Zig::GlobalObject cell was swept.
+// BUN_DESTRUCT_VM_ON_EXIT=1 triggers that teardown; Malloc=1 puts JSC cells
+// under system malloc so ASAN poisons the freed cell and the UAF is deterministic.
+if (isASAN) {
+  devTest("DevServerSourceProvider destructor does not touch the swept global object on process exit", {
+    framework: "react",
+    files: {
+      "pages/index.tsx": `
+        export const mode = "ssr";
+        export const streaming = false;
+        export default function IndexPage() {
+          return <div>alive</div>;
+        }
+      `,
+    },
+    env: {
+      Malloc: "1",
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      // The test is about the use-after-free, not LSan; keep it hermetic
+      // against whatever ASAN_OPTIONS the outer runner chose.
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+    },
+    async test(dev) {
+      const response = await dev.fetch("/");
+      const html = await response.text();
+      expect(html).toContain("alive");
+      // The harness calls gracefulExit() after this, which sends the dev
+      // server through server.stop(true) + Bun.gc(true) + process.exit(0).
+      // The teardown that follows is what this test is about.
+    },
+  });
+}

@@ -6,7 +6,7 @@ pub struct DecodedLengthInt {
 }
 
 // Length-encoded integer encoding/decoding
-pub fn encode_length_int(value: u64) -> BoundedArray<u8, 9> {
+pub(crate) fn encode_length_int(value: u64) -> BoundedArray<u8, 9> {
     // BoundedArray's storage is private; build into a stack buffer then copy in.
     let mut buf = [0u8; 9];
     let len: usize = if value < 0xfb {
@@ -88,5 +88,3 @@ pub fn decode_length_int(bytes: &[u8]) -> Option<DecodedLengthInt> {
         }),
     }
 }
-
-// ported from: src/sql/mysql/protocol/EncodeInt.zig

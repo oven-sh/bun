@@ -10,6 +10,7 @@ use bun_core::output::ansi_b;
 use bun_core::strings;
 
 use crate::helpers;
+use crate::output::{OutputBuffer, try_extend, try_push};
 use crate::root;
 use crate::types::{
     self, Align, BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType,
@@ -36,8 +37,7 @@ pub struct Theme<'a> {
     /// `collectImageUrls` + the CLI entry point) so `emitImage` can
     /// send remote images through Kitty's `t=f` path. When null, http
     /// and https URLs fall through to the alt-text fallback.
-    // LIFETIMES.tsv: BORROW_PARAM. Zig type is
-    // `bun.StringHashMapUnmanaged([]const u8)` — keys are URL bytes,
+    // LIFETIMES.tsv: BORROW_PARAM. Keys are URL bytes,
     // values are file-path bytes.
     pub remote_image_paths: Option<&'a StringHashMap<Box<[u8]>>>,
     /// Base directory used to resolve relative image `src` paths. When
@@ -45,20 +45,6 @@ pub struct Theme<'a> {
     /// this to the markdown file's directory so `![](./img.png)` works
     /// regardless of where `bun ./some/dir/file.md` is invoked from.
     pub image_base_dir: Option<&'a [u8]>,
-}
-
-impl<'a> Default for Theme<'a> {
-    fn default() -> Self {
-        Self {
-            light: false,
-            columns: 80,
-            colors: true,
-            hyperlinks: false,
-            kitty_graphics: false,
-            remote_image_paths: None,
-            image_base_dir: None,
-        }
-    }
 }
 
 /// Renderer that only collects image URLs — no output. Used by the CLI
@@ -78,7 +64,6 @@ impl ImageUrlCollector {
     }
 }
 
-// PORT NOTE: Zig manual VTable collapsed into RendererImpl trait.
 impl RendererImpl for ImageUrlCollector {
     fn enter_block(&mut self, _: BlockType, _: u32, _: u32) -> JsResult<()> {
         Ok(())
@@ -102,7 +87,8 @@ impl RendererImpl for ImageUrlCollector {
         // detail.href is a slice into the parser's reusable buffer, which
         // is freed when renderWithRenderer returns (p.deinit). Dupe it so
         // callers can safely read collector.urls after rendering finishes.
-        let owned = Box::<[u8]>::from(detail.href);
+        let mut scratch: Vec<u8> = Vec::new();
+        let owned = Box::<[u8]>::from(sanitize_source_text(detail.href, &mut scratch));
         self.urls.push(owned);
         Ok(())
     }
@@ -110,19 +96,21 @@ impl RendererImpl for ImageUrlCollector {
 
 // Drop is automatic for `Vec<Box<[u8]>>`.
 
-pub struct AnsiRenderer<'a> {
-    pub out: OutputBuffer,
+struct AnsiRenderer<'a> {
+    pub(crate) out: OutputBuffer,
     src_text: &'a [u8],
     theme: Theme<'a>,
     /// Stack of active block contexts (li/quote) for indentation.
     block_stack: Vec<BlockContext>,
+    /// Number of Quote entries currently in block_stack. Kept in sync with
+    /// push/pop so per-line indentation doesn't rescan the whole stack.
+    quote_depth: u32,
+    /// Sum of `indent` over the non-Quote entries currently in block_stack.
+    list_indent_cols: u32,
     /// Currently open span styles (bit flags).
     span_flags: u32,
-    /// Non-null when we're inside a link span; the href to emit in OSC 8.
-    /// Always allocator-owned when non-null (freed in leaveSpan).
-    link_href: Option<Box<[u8]>>,
-    /// Depth of enclosing link spans (brackets can nest in markdown parsers).
-    link_depth: u32,
+    /// The outermost open link span, if we're inside one.
+    link: Option<OpenLink>,
     /// Depth of enclosing image spans — text inside images becomes alt text
     /// rather than normal output.
     image_depth: u32,
@@ -136,6 +124,9 @@ pub struct AnsiRenderer<'a> {
     /// written on the current line so word wrapping works inside headings
     /// and paragraphs.
     col: u32,
+    /// The last space that paragraph flow wrote, if the line can still be
+    /// broken there.
+    soft_break: Option<SoftBreak>,
     /// True when we're collecting a code block body (fenced or indented).
     in_code_block: bool,
     /// Language extracted from the fenced code block info string.
@@ -166,6 +157,23 @@ pub struct AnsiRenderer<'a> {
     /// no content has been written since. Used to dedup back-to-back
     /// ensureBlankLine() calls (e.g. enter-quote followed by enter-para).
     blank_emitted: bool,
+}
+
+struct SoftBreak {
+    /// Index of the space in `out`.
+    at: usize,
+    /// `col` after the space.
+    col: u32,
+    /// The styles that were open at the space.
+    span_flags: u32,
+    in_link: bool,
+}
+
+struct OpenLink {
+    /// Enclosing link spans including this one (brackets can nest in markdown parsers).
+    depth: u32,
+    /// The href to emit in OSC 8.
+    href: Box<[u8]>,
 }
 
 struct BlockContext {
@@ -213,6 +221,14 @@ const SPAN_DEL: u32 = 1 << 2;
 const SPAN_U: u32 = 1 << 3;
 const SPAN_CODE: u32 = 1 << 4;
 
+/// Upper bound on the visible indentation (blockquote bars + list indent)
+/// emitted at the start of each rendered line. Nesting deeper than this is
+/// unreadable on any terminal, and without a cap every line's prefix grows
+/// with the nesting depth — a document of pathologically nested lists or
+/// quotes (e.g. `- - - - …` repeated thousands of times) would otherwise
+/// produce output quadratic in the input size.
+const MAX_INDENT_COLS: u32 = 128;
+
 struct InlineStyle {
     flag: u32,
     on: &'static [u8],
@@ -247,31 +263,8 @@ impl InlineStyle {
     }
 }
 
-pub struct OutputBuffer {
-    pub list: Vec<u8>,
-    pub oom: bool,
-}
-
-impl OutputBuffer {
-    fn write(&mut self, data: &[u8]) {
-        if self.oom {
-            return;
-        }
-        // PERF(port): was appendSlice with latched OOM — Vec::extend aborts
-        // on OOM under the global mimalloc allocator.
-        self.list.extend_from_slice(data);
-    }
-
-    fn write_byte(&mut self, b: u8) {
-        if self.oom {
-            return;
-        }
-        self.list.push(b);
-    }
-}
-
 impl<'a> AnsiRenderer<'a> {
-    pub fn init(src_text: &'a [u8], theme: Theme<'a>) -> AnsiRenderer<'a> {
+    pub(crate) fn init(src_text: &'a [u8], theme: Theme<'a>) -> AnsiRenderer<'a> {
         let mut r = AnsiRenderer {
             out: OutputBuffer {
                 list: Vec::new(),
@@ -280,14 +273,16 @@ impl<'a> AnsiRenderer<'a> {
             src_text,
             theme,
             block_stack: Vec::new(),
+            quote_depth: 0,
+            list_indent_cols: 0,
             span_flags: 0,
-            link_href: None,
-            link_depth: 0,
+            link: None,
             image_depth: 0,
             image_alt: Vec::new(),
             image_src: None,
             image_title: None,
             col: 0,
+            soft_break: None,
             in_code_block: false,
             code_lang: b"",
             code_fenced: false,
@@ -303,18 +298,14 @@ impl<'a> AnsiRenderer<'a> {
             last_was_newline: true,
             blank_emitted: false,
         };
-        r.out.list.reserve(src_text.len() + src_text.len() / 2);
+        // The output is usually ~1.5x the input; this is only a throughput
+        // hint, so on failure fall back to the incremental `try_reserve`s in
+        // `write` instead of aborting.
+        let _ = r.out.list.try_reserve(src_text.len() + src_text.len() / 2);
         r
     }
 
-    pub fn to_owned_slice(&mut self) -> Result<Box<[u8]>, bun_alloc::AllocError> {
-        if self.out.oom {
-            return Err(bun_alloc::AllocError);
-        }
-        Ok(core::mem::take(&mut self.out.list).into_boxed_slice())
-    }
-
-    pub fn renderer(&mut self) -> Renderer<'_> {
+    pub(crate) fn renderer(&mut self) -> Renderer<'_> {
         Renderer { ptr: self }
     }
 
@@ -322,12 +313,12 @@ impl<'a> AnsiRenderer<'a> {
     // Block rendering
     // ========================================
 
-    pub fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
+    pub(crate) fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote => {
                 self.ensure_blank_line();
-                self.block_stack.push(BlockContext {
+                self.push_block(BlockContext {
                     kind: BlockKind::Quote,
                     indent: 2,
                     ..Default::default()
@@ -335,7 +326,7 @@ impl<'a> AnsiRenderer<'a> {
             }
             BlockType::Ul => {
                 self.ensure_newline();
-                self.block_stack.push(BlockContext {
+                self.push_block(BlockContext {
                     kind: BlockKind::Ul,
                     data,
                     indent: 2,
@@ -344,7 +335,7 @@ impl<'a> AnsiRenderer<'a> {
             }
             BlockType::Ol => {
                 self.ensure_newline();
-                self.block_stack.push(BlockContext {
+                self.push_block(BlockContext {
                     kind: BlockKind::Ol,
                     data,
                     indent: 3,
@@ -358,9 +349,9 @@ impl<'a> AnsiRenderer<'a> {
                     kind: BlockKind::Li,
                     ..Default::default()
                 };
-                // PORT NOTE: reshaped for borrowck — find_parent_list returns
-                // an index instead of `&mut BlockContext` so we can call
-                // self.write_styled() afterwards without an aliasing borrow.
+                // find_parent_list returns an index instead of
+                // `&mut BlockContext` so we can call self.write_styled()
+                // afterwards without an aliasing borrow.
                 let parent_list = self.find_parent_list();
                 let task_mark = types::task_mark_from_data(data);
                 if let Some(idx) = parent_list {
@@ -405,7 +396,7 @@ impl<'a> AnsiRenderer<'a> {
                 // Wrapped continuation lines need to land under the item's
                 // content (past the marker), so record the marker width.
                 entry.indent = u32::try_from(visible_width(glyph)).expect("int cast");
-                self.block_stack.push(entry);
+                self.push_block(entry);
             }
             BlockType::Hr => {
                 self.ensure_blank_line();
@@ -499,11 +490,11 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
-    pub fn leave_block(&mut self, block_type: BlockType, _data: u32) {
+    pub(crate) fn leave_block(&mut self, block_type: BlockType, _data: u32) {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote | BlockType::Ul | BlockType::Ol | BlockType::Li => {
-                let _ = self.block_stack.pop();
+                self.pop_block();
                 self.ensure_newline();
             }
             BlockType::Hr => {}
@@ -534,19 +525,27 @@ impl<'a> AnsiRenderer<'a> {
                 // normalized once the table finishes.
                 let cells: Box<[TableCell]> =
                     core::mem::take(&mut self.table_cells).into_boxed_slice();
-                self.table_rows.push(TableRow {
-                    cells,
-                    is_header: self.in_thead,
-                });
+                try_push(
+                    &mut self.out.oom,
+                    &mut self.table_rows,
+                    TableRow {
+                        cells,
+                        is_header: self.in_thead,
+                    },
+                );
                 self.table_cells.clear();
             }
             BlockType::Th | BlockType::Td => {
                 self.in_cell = false;
                 let owned = Box::<[u8]>::from(self.table_cell_buf.as_slice());
-                self.table_cells.push(TableCell {
-                    content: owned,
-                    alignment: self.cell_align,
-                });
+                try_push(
+                    &mut self.out.oom,
+                    &mut self.table_cells,
+                    TableCell {
+                        content: owned,
+                        alignment: self.cell_align,
+                    },
+                );
             }
         }
     }
@@ -555,7 +554,7 @@ impl<'a> AnsiRenderer<'a> {
     // Span rendering
     // ========================================
 
-    pub fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail) {
+    pub(crate) fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail) {
         match span_type {
             SpanType::Em | SpanType::Strong | SpanType::U | SpanType::Del => {
                 let s = InlineStyle::of(span_type).unwrap();
@@ -568,23 +567,21 @@ impl<'a> AnsiRenderer<'a> {
                 self.write_styled(code_span_open(self.theme.light), b"");
             }
             SpanType::A => {
-                self.link_depth += 1;
-                if self.link_depth == 1 {
-                    // Resolve final href (prefixes for autolinks). On OOM
-                    // we leave link_href null so leaveSpan doesn't try to
-                    // free a literal.
-                    self.link_href = resolve_href(&detail).ok();
-                    if self.theme.colors && self.theme.hyperlinks {
-                        if let Some(href) = &self.link_href {
-                            // OSC 8 hyperlink start
-                            // PORT NOTE: reshaped for borrowck — clone the
-                            // bytes so write_raw_no_color(&mut self) doesn't
-                            // alias `&self.link_href`.
-                            let href = href.clone();
-                            self.write_raw_no_color(b"\x1b]8;;");
-                            self.write_raw_no_color(&href);
-                            self.write_raw_no_color(b"\x1b\\");
-                        }
+                if let Some(link) = &mut self.link {
+                    link.depth += 1;
+                } else {
+                    // Resolve final href (prefixes for autolinks).
+                    let href = resolve_href(&detail);
+                    // Clone the bytes so write_raw_no_color(&mut self)
+                    // doesn't alias `&self.link`.
+                    let osc8_href =
+                        (self.theme.colors && self.theme.hyperlinks).then(|| href.clone());
+                    self.link = Some(OpenLink { depth: 1, href });
+                    if let Some(href) = osc8_href {
+                        // OSC 8 hyperlink start
+                        self.write_raw_no_color(b"\x1b]8;;");
+                        self.write_raw_no_color(&href);
+                        self.write_raw_no_color(b"\x1b\\");
                     }
                     self.write_styled(ansi_b::BLUE, b"");
                     self.write_styled(ansi_b::UNDERLINE, b"");
@@ -593,8 +590,16 @@ impl<'a> AnsiRenderer<'a> {
             SpanType::Img => {
                 self.image_depth += 1;
                 if self.image_depth == 1 {
-                    self.image_src = Some(Box::<[u8]>::from(detail.href));
-                    self.image_title = Some(Box::<[u8]>::from(detail.title));
+                    let mut src_scratch: Vec<u8> = Vec::new();
+                    self.image_src = Some(Box::<[u8]>::from(sanitize_source_text(
+                        detail.href,
+                        &mut src_scratch,
+                    )));
+                    let mut title_scratch: Vec<u8> = Vec::new();
+                    self.image_title = Some(Box::<[u8]>::from(sanitize_source_text(
+                        detail.title,
+                        &mut title_scratch,
+                    )));
                     self.image_alt.clear();
                 }
             }
@@ -606,7 +611,7 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
-    pub fn leave_span(&mut self, span_type: SpanType) {
+    pub(crate) fn leave_span(&mut self, span_type: SpanType) {
         match span_type {
             SpanType::Em | SpanType::Strong | SpanType::U | SpanType::Del => {
                 let s = InlineStyle::of(span_type).unwrap();
@@ -624,39 +629,34 @@ impl<'a> AnsiRenderer<'a> {
                 self.write_styled(b"\x1b[39m\x1b[49m", b"");
                 self.reapply_styles();
             }
-            SpanType::A => {
-                if self.link_depth == 1 {
-                    // Decrement BEFORE reapplyStyles so it doesn't re-emit
-                    // blue+underline for text after the link.
-                    self.link_depth = 0;
-                    let had_href = self.link_href.is_some();
+            // Taken BEFORE reapplyStyles so it doesn't re-emit
+            // blue+underline for text after the link.
+            SpanType::A => match self.link.take() {
+                Some(OpenLink { depth: 1, href }) => {
                     // Underline off, default fg; reapply outer styles so a
                     // link inside **bold** doesn't drop the bold.
                     self.write_styled(b"\x1b[24m\x1b[39m", b"");
                     self.reapply_styles();
                     if self.theme.colors && self.theme.hyperlinks {
-                        // Only emit the OSC 8 terminator if we emitted the
-                        // opening sequence (which required link_href).
-                        if had_href {
-                            self.write_raw_no_color(b"\x1b]8;;\x1b\\");
-                        }
-                    } else if let Some(href) = self.link_href.take() {
-                        if !href.is_empty() && self.image_depth == 0 {
-                            // Show URL in parens for non-hyperlink terminals.
-                            // image_depth==0 keeps " (url)" out of image alt
-                            // text when a link sits inside an image span.
-                            self.write_styled(ansi_b::DIM, b" (");
-                            self.write_styled(b"", &href);
-                            self.write_styled(ansi_b::DIM, b")");
-                            self.write_styled(b"\x1b[39m\x1b[22m", b"");
-                            self.reapply_styles();
-                        }
+                        // OSC 8 terminator
+                        self.write_raw_no_color(b"\x1b]8;;\x1b\\");
+                    } else if !href.is_empty() && self.image_depth == 0 {
+                        // Show URL in parens for non-hyperlink terminals.
+                        // image_depth==0 keeps " (url)" out of image alt
+                        // text when a link sits inside an image span.
+                        self.write_styled(ansi_b::DIM, b" (");
+                        self.write_styled(b"", &href);
+                        self.write_styled(ansi_b::DIM, b")");
+                        self.write_styled(b"\x1b[39m\x1b[22m", b"");
+                        self.reapply_styles();
                     }
-                    self.link_href = None;
-                } else if self.link_depth > 0 {
-                    self.link_depth -= 1;
                 }
-            }
+                Some(mut link) => {
+                    link.depth -= 1;
+                    self.link = Some(link);
+                }
+                None => {}
+            },
             SpanType::Img => {
                 if self.image_depth == 1 {
                     self.emit_image();
@@ -685,7 +685,9 @@ impl<'a> AnsiRenderer<'a> {
     // Text rendering
     // ========================================
 
-    pub fn text(&mut self, text_type: TextType, content: &[u8]) {
+    pub(crate) fn text(&mut self, text_type: TextType, content: &[u8]) {
+        let mut sanitized: Vec<u8> = Vec::new();
+        let content = sanitize_source_text(content, &mut sanitized);
         match text_type {
             TextType::NullChar => self.write_content(b"\xEF\xBF\xBD"),
             TextType::Br => self.write_content(b"\n"),
@@ -702,6 +704,8 @@ impl<'a> AnsiRenderer<'a> {
             TextType::Entity => {
                 let mut buf = [0u8; 8];
                 let decoded = helpers::decode_entity_to_utf8(content, &mut buf).unwrap_or(content);
+                let mut decoded_sanitized: Vec<u8> = Vec::new();
+                let decoded = sanitize_source_text(decoded, &mut decoded_sanitized);
                 self.write_content(decoded);
             }
             // Inline code spans are atomic — don't let writeWrapped split
@@ -724,19 +728,19 @@ impl<'a> AnsiRenderer<'a> {
     /// heading buffer, table cell, image alt, or directly to output).
     fn write_content(&mut self, data: &[u8]) {
         if self.image_depth > 0 {
-            self.image_alt.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.image_alt, data);
             return;
         }
         if self.in_code_block {
-            self.code_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.code_buf, data);
             return;
         }
         if self.heading_level > 0 {
-            self.heading_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.heading_buf, data);
             return;
         }
         if self.in_cell {
-            self.table_cell_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.table_cell_buf, data);
             return;
         }
         // Normal paragraph flow: respect wrapping + indent.
@@ -833,7 +837,7 @@ impl<'a> AnsiRenderer<'a> {
                     && self.col as usize + word_width > max as usize
                     && self.col > indent
                 {
-                    self.wrap_break();
+                    self.break_before(word_width);
                 }
                 self.write_raw(word);
                 self.col += u32::try_from(word_width).expect("int cast");
@@ -867,6 +871,12 @@ impl<'a> AnsiRenderer<'a> {
                     self.col = 0;
                     self.write_indent();
                 } else {
+                    self.soft_break = Some(SoftBreak {
+                        at: self.out.list.len(),
+                        col: self.col + 1,
+                        span_flags: self.span_flags,
+                        in_link: self.link.is_some(),
+                    });
                     self.write_raw(b" ");
                     self.col += 1;
                 }
@@ -918,16 +928,16 @@ impl<'a> AnsiRenderer<'a> {
                 while i < bytes.len() && bytes[i] != 0x1b {
                     i += 1;
                 }
-                self.image_alt.extend_from_slice(&bytes[start..i]);
+                try_extend(&mut self.out.oom, &mut self.image_alt, &bytes[start..i]);
             }
             return;
         }
         if self.in_cell {
-            self.table_cell_buf.extend_from_slice(bytes);
+            try_extend(&mut self.out.oom, &mut self.table_cell_buf, bytes);
             return;
         }
         if self.heading_level > 0 {
-            self.heading_buf.extend_from_slice(bytes);
+            try_extend(&mut self.out.oom, &mut self.heading_buf, bytes);
             return;
         }
         self.out.write(bytes);
@@ -952,7 +962,7 @@ impl<'a> AnsiRenderer<'a> {
                 let max = u32::from(self.theme.columns);
                 let indent = self.current_indent();
                 if self.col > indent && self.col as usize + tw > max as usize {
-                    self.wrap_break();
+                    self.break_before(tw);
                 }
             }
         }
@@ -1034,11 +1044,45 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
+    /// Soft-wrap before a word of `width` columns that does not fit on the
+    /// line. A word can arrive in pieces (`code` followed by `.`, `(`
+    /// followed by a link), so the break goes to the last space of the
+    /// line, and what was written after it moves down with the word.
+    fn break_before(&mut self, width: usize) {
+        let room = u32::from(self.theme.columns).saturating_sub(self.current_indent());
+        let found = self.soft_break.take().and_then(|it| {
+            let since = self.out.list.get(it.at..)?;
+            let moved_cols = self.col.checked_sub(it.col)?;
+            let fits = moved_cols == 0 || moved_cols as usize + width <= room as usize;
+            (since.first() == Some(&b' ') && !strings::contains_char(since, b'\n') && fits)
+                .then_some((it, since.len() - 1, moved_cols))
+        });
+        let Some((space, moved_bytes, moved_cols)) = found else {
+            self.wrap_break();
+            return;
+        };
+        self.out.list.remove(space.at);
+        // Write the break at the end, using the styles that were open at the
+        // space, then rotate it in front of the moved text.
+        let span_flags = core::mem::replace(&mut self.span_flags, space.span_flags);
+        let link = self.link.take();
+        self.link = space.in_link.then(|| OpenLink {
+            depth: 1,
+            href: Box::default(),
+        });
+        self.wrap_break();
+        self.span_flags = span_flags;
+        self.link = link;
+        self.out.list[space.at..].rotate_left(moved_bytes);
+        self.col += moved_cols;
+        self.last_was_newline = moved_cols == 0;
+    }
+
     /// Soft-wrap inside a styled span: clear bg/fg so the line tail and
     /// indent stay clean, newline, re-emit indent, then reapply the
     /// active span styles so the continuation keeps its color.
     fn wrap_break(&mut self) {
-        let has_style = self.span_flags != 0 || self.link_depth > 0;
+        let has_style = self.span_flags != 0 || self.link.is_some();
         if self.theme.colors && has_style {
             self.out.write(b"\x1b[39m\x1b[49m");
         }
@@ -1092,11 +1136,11 @@ impl<'a> AnsiRenderer<'a> {
             return;
         }
         if self.in_cell {
-            self.table_cell_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.table_cell_buf, data);
             return;
         }
         if self.heading_level > 0 {
-            self.heading_buf.extend_from_slice(data);
+            try_extend(&mut self.out.oom, &mut self.heading_buf, data);
             return;
         }
         self.out.write(data);
@@ -1131,10 +1175,44 @@ impl<'a> AnsiRenderer<'a> {
         if self.span_flags & SPAN_CODE != 0 {
             self.emit_inline(code_span_open(self.theme.light));
         }
-        if self.link_depth > 0 {
+        if self.link.is_some() {
             self.emit_inline(ansi_b::BLUE);
             self.emit_inline(ansi_b::UNDERLINE);
         }
+    }
+
+    /// Track a block push so indentation stays O(1) per line instead of
+    /// rescanning the whole block_stack.
+    fn push_block(&mut self, entry: BlockContext) {
+        match entry.kind {
+            BlockKind::Quote => self.quote_depth = self.quote_depth.saturating_add(1),
+            _ => {
+                self.list_indent_cols = self.list_indent_cols.saturating_add(entry.indent);
+            }
+        }
+        self.block_stack.push(entry);
+    }
+
+    fn pop_block(&mut self) {
+        let Some(entry) = self.block_stack.pop() else {
+            return;
+        };
+        match entry.kind {
+            BlockKind::Quote => self.quote_depth = self.quote_depth.saturating_sub(1),
+            _ => {
+                self.list_indent_cols = self.list_indent_cols.saturating_sub(entry.indent);
+            }
+        }
+    }
+
+    /// Quote bars and indent spaces to draw for the current block stack,
+    /// capped at MAX_INDENT_COLS visible columns total. writeIndent and
+    /// currentIndent must agree on these numbers so the wrap math matches
+    /// what was actually emitted.
+    fn indent_counts(&self) -> (u32, u32) {
+        let quote_bars = self.quote_depth.min(MAX_INDENT_COLS / 2);
+        let other_indent = self.list_indent_cols.min(MAX_INDENT_COLS - quote_bars * 2);
+        (quote_bars, other_indent)
     }
 
     fn write_indent(&mut self) {
@@ -1142,14 +1220,7 @@ impl<'a> AnsiRenderer<'a> {
         // this is the right place to clear the "blank line just emitted"
         // flag ensureBlankLine uses for dedup.
         self.blank_emitted = false;
-        let mut quote_bars: u32 = 0;
-        let mut other_indent: u32 = 0;
-        for entry in &self.block_stack {
-            match entry.kind {
-                BlockKind::Quote => quote_bars += 1,
-                _ => other_indent += entry.indent,
-            }
-        }
+        let (quote_bars, other_indent) = self.indent_counts();
         let bar: &[u8] = if self.theme.colors {
             "│ ".as_bytes()
         } else {
@@ -1179,15 +1250,8 @@ impl<'a> AnsiRenderer<'a> {
     }
 
     fn current_indent(&self) -> u32 {
-        let mut total: u32 = 0;
-        for entry in &self.block_stack {
-            total += if entry.kind == BlockKind::Quote {
-                2
-            } else {
-                entry.indent
-            };
-        }
-        total
+        let (quote_bars, other_indent) = self.indent_counts();
+        quote_bars * 2 + other_indent
     }
 
     fn update_col_from_text(&mut self, data: &[u8]) {
@@ -1214,12 +1278,7 @@ impl<'a> AnsiRenderer<'a> {
     /// current block_stack. Used by ensureBlankLine so the inter-block
     /// gap inside a blockquote keeps its visual border.
     fn write_quote_bars(&mut self) {
-        let mut quote_bars: u32 = 0;
-        for entry in &self.block_stack {
-            if entry.kind == BlockKind::Quote {
-                quote_bars += 1;
-            }
-        }
+        let (quote_bars, _) = self.indent_counts();
         if quote_bars == 0 {
             return;
         }
@@ -1281,9 +1340,8 @@ impl<'a> AnsiRenderer<'a> {
 
     /// Find the nearest enclosing ul/ol in the block stack (walking
     /// from innermost outward, skipping the current li at the top).
-    // PORT NOTE: reshaped for borrowck — returns an index into
-    // block_stack instead of `&mut BlockContext` so callers can call
-    // other &mut self methods between accesses.
+    // Returns an index into block_stack instead of `&mut BlockContext`
+    // so callers can call other &mut self methods between accesses.
     fn find_parent_list(&self) -> Option<usize> {
         let len = self.block_stack.len();
         if len == 0 {
@@ -1311,8 +1369,8 @@ impl<'a> AnsiRenderer<'a> {
         // inside a blockquote the bold+color writes reach heading_buf and
         // may realloc its backing array, dangling the `content` slice below.
         self.heading_level = 0;
-        // PORT NOTE: reshaped for borrowck — take ownership of heading_buf
-        // so write_indent(&mut self) doesn't alias `content`.
+        // Take ownership of heading_buf so write_indent(&mut self)
+        // doesn't alias `content`.
         let content = core::mem::take(&mut self.heading_buf);
         self.write_indent();
         if self.theme.colors {
@@ -1374,8 +1432,8 @@ impl<'a> AnsiRenderer<'a> {
     // ========================================
 
     fn flush_code_block(&mut self) {
-        // PORT NOTE: reshaped for borrowck — take ownership of code_buf so
-        // self.write_indent() etc. don't alias it.
+        // Take ownership of code_buf so self.write_indent() etc.
+        // don't alias it.
         let src = core::mem::take(&mut self.code_buf);
         // Strip exactly one trailing newline (parser adds one).
         let body: &[u8] = if !src.is_empty() && src[src.len() - 1] == b'\n' {
@@ -1410,8 +1468,9 @@ impl<'a> AnsiRenderer<'a> {
             self.out.write(ansi_b::DIM);
         }
         self.write_indent();
+        let mut badge_scratch: Vec<u8> = Vec::new();
         let badge: &[u8] = if !self.code_lang.is_empty() {
-            self.code_lang
+            sanitize_source_text(self.code_lang, &mut badge_scratch)
         } else {
             b""
         };
@@ -1578,8 +1637,8 @@ impl<'a> AnsiRenderer<'a> {
         self.last_was_newline = true;
 
         let mut has_separated_header = false;
-        // PORT NOTE: reshaped for borrowck — take ownership of table_rows so
-        // self.write_row_cells(&mut self) doesn't alias it.
+        // Take ownership of table_rows so self.write_row_cells(&mut self)
+        // doesn't alias it.
         let rows = core::mem::take(&mut self.table_rows);
         for row in &rows {
             self.write_row_cells(row, &widths, &aligns);
@@ -1833,8 +1892,8 @@ impl<'a> AnsiRenderer<'a> {
         // Snapshot alt + link fields now — emitImage drops out of the
         // image context before writing, so image_alt / image_depth checks
         // in emitInline would otherwise still divert output.
-        // PORT NOTE: reshaped for borrowck — take ownership of buffered
-        // fields so &mut self methods below don't alias.
+        // Take ownership of the buffered fields so &mut self methods
+        // below don't alias.
         let alt = core::mem::take(&mut self.image_alt);
         let src = self.image_src.take();
         let title = self.image_title.take();
@@ -1913,7 +1972,7 @@ impl<'a> AnsiRenderer<'a> {
         let link_ok = self.theme.colors
             && self.theme.hyperlinks
             && has_src
-            && self.link_depth == 0
+            && self.link.is_none()
             && !src.as_deref().unwrap().starts_with(b"data:");
         if link_ok {
             self.write_raw_no_color(b"\x1b]8;;");
@@ -2150,7 +2209,7 @@ impl<'s> CellAnsiState<'s> {
         // Stateful parse: 38/48 consume 2 extra params for `5;N` or
         // 4 extra for `2;R;G;B`. Snapshot the whole seq for fg/bg
         // since we don't need to recompute it — just replay it.
-        let mut iter = params.split(|b| *b == b';');
+        let mut iter = strings::split(params, b";");
         while let Some(p) = iter.next() {
             let n = match bun_core::fmt::parse_int::<u32>(p, 10).ok() {
                 Some(n) => n,
@@ -2301,6 +2360,66 @@ fn visible_index_at(s: &[u8], max_cols: usize) -> usize {
     strings::visible::width::exclude_ansi_colors::utf8_index_at_width(s, max_cols)
 }
 
+fn sanitize_source_text<'b>(bytes: &'b [u8], scratch: &'b mut Vec<u8>) -> &'b [u8] {
+    fn is_disallowed(c: u8) -> bool {
+        (c < 0x20 && c != b'\n' && c != b'\t') || c == 0x7f
+    }
+    fn is_utf8_c1(bytes: &[u8], i: usize) -> bool {
+        bytes[i] == 0xC2 && i + 1 < bytes.len() && (0x80..=0x9F).contains(&bytes[i + 1])
+    }
+    fn needs_strip(bytes: &[u8], i: usize) -> bool {
+        is_disallowed(bytes[i]) || is_utf8_c1(bytes, i)
+    }
+    if !(0..bytes.len()).any(|i| needs_strip(bytes, i)) {
+        return bytes;
+    }
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b {
+            i += 1;
+            if i < bytes.len() && bytes[i] == b'[' {
+                i += 1;
+                while i < bytes.len() && (bytes[i] < 0x40 || bytes[i] > 0x7e) {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1;
+                }
+            } else if i < bytes.len() && bytes[i] == b']' {
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == 0x07 {
+                        i += 1;
+                        break;
+                    }
+                    if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+            } else if i < bytes.len() {
+                i += 1;
+            }
+            continue;
+        }
+        if is_utf8_c1(bytes, i) {
+            i += 2;
+            continue;
+        }
+        if is_disallowed(bytes[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && !needs_strip(bytes, i) {
+            i += 1;
+        }
+        scratch.extend_from_slice(&bytes[start..i]);
+    }
+    scratch
+}
+
 fn is_js_lang(lang: &[u8]) -> bool {
     const NAMES: [&[u8]; 10] = [
         b"js",
@@ -2339,7 +2458,7 @@ fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
 
 /// Build the final href string with autolink prefixes (mailto:, http://).
 /// Caller owns the returned memory.
-fn resolve_href(detail: &SpanDetail) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+fn resolve_href(detail: &SpanDetail) -> Box<[u8]> {
     let mut buf: Vec<u8> = Vec::new();
     if detail.autolink_email {
         buf.extend_from_slice(b"mailto:");
@@ -2347,35 +2466,126 @@ fn resolve_href(detail: &SpanDetail) -> Result<Box<[u8]>, bun_alloc::AllocError>
     if detail.autolink_www {
         buf.extend_from_slice(b"http://");
     }
-    buf.extend_from_slice(detail.href);
-    Ok(buf.into_boxed_slice())
+    let mut scratch: Vec<u8> = Vec::new();
+    buf.extend_from_slice(sanitize_source_text(detail.href, &mut scratch));
+    buf.into_boxed_slice()
 }
 
 // ========================================
 // Theme detection helpers (callable from the runner)
 // ========================================
 
-/// Detect whether the terminal background is light. Preference order:
-/// 1. `COLORFGBG` env var (set by rxvt, xterm, Konsole, iTerm2 in some modes)
-/// 2. Dark mode (default)
+/// Detect whether the terminal background is light from the environment alone (`COLORFGBG`, set by rxvt, xterm,
+/// Konsole, iTerm2 in some modes); dark otherwise. Never touches the tty, so it is safe from any context.
 pub fn detect_light_background() -> bool {
+    colorfgbg_light().unwrap_or(false)
+}
+
+/// Like `detect_light_background`, but when the environment says nothing and we own the tty, asks the terminal
+/// (OSC 11). Reads a reply from stdin, so only for commands that are the interactive foreground, never from a
+/// JS-visible API. The answer is cached.
+pub fn detect_light_background_probing() -> bool {
+    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(|| {
+        colorfgbg_light().unwrap_or_else(|| probe_background_luminance().is_some_and(|l| l > 0.5))
+    })
+}
+
+fn colorfgbg_light() -> Option<bool> {
     if let Some(value) = bun_core::getenv_z(bun_core::zstr!("COLORFGBG")) {
         // Format: "fg;bg" or "fg;default;bg" — only 7 (white) and 15
         // (bright white) are light terminal backgrounds. Bright colors
         // 9-14 are high-intensity foreground codes, not light backgrounds.
         let mut last: &[u8] = b"";
-        for part in value.split(|b| *b == b';') {
+        for part in strings::split(value, b";") {
             last = part;
         }
         if !last.is_empty() {
-            let bg = match bun_core::fmt::parse_int::<u8>(last, 10).ok() {
-                Some(n) => n,
-                None => return false,
-            };
-            return bg == 7 || bg == 15;
+            let bg = bun_core::fmt::parse_int::<u8>(last, 10).ok()?;
+            return Some(bg == 7 || bg == 15);
         }
     }
-    false
+    None
+}
+
+/// OSC 11 (`ESC ] 11 ; ? BEL`): the terminal answers with its background as `rgb:RRRR/GGGG/BBBB`. xterm, iTerm2,
+/// Terminal.app, GNOME/VTE, Konsole, kitty, WezTerm, Alacritty, Ghostty, Windows Terminal and tmux (3.4+) all
+/// answer; anything else stays silent and we give up after a short wait. Returns relative luminance in 0..=1.
+fn probe_background_luminance() -> Option<f32> {
+    #[cfg(not(unix))]
+    {
+        None
+    }
+    #[cfg(unix)]
+    {
+        if !bun_core::Output::is_stdin_tty() {
+            return None;
+        }
+        // The reply comes back on the tty regardless of where stdout points, so `| less` still gets a theme.
+        let out = if bun_core::Output::is_stdout_tty() {
+            bun_sys::Fd::stdout()
+        } else if bun_core::Output::is_stderr_tty() {
+            bun_sys::Fd::stderr()
+        } else {
+            return None;
+        };
+        if let Some(term) = bun_core::getenv_z(bun_core::zstr!("TERM")) {
+            if strings::eql_case_insensitive_ascii(term, b"dumb", true) {
+                return None;
+            }
+        }
+        let saved_termios = bun_sys::posix::tcgetattr(0).ok()?;
+        let mut tty_state = bun_core::tty::State::new();
+        let _ = tty_state.set_mode(
+            0,
+            bun_core::tty::Mode::Raw,
+            bun_core::tty::SetAttrWhen::Drain,
+        );
+        let _restore = scopeguard::guard((saved_termios, tty_state), |(saved, mut state)| {
+            if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved).is_err() {
+                let _ = state.set_mode(
+                    0,
+                    bun_core::tty::Mode::Normal,
+                    bun_core::tty::SetAttrWhen::Drain,
+                );
+            }
+        });
+        bun_sys::write(out, b"\x1b]11;?\x07").ok()?;
+        let mut buf = [0u8; 64];
+        let mut len = 0usize;
+        // Replies arrive within a frame; allow a couple of short reads for terminals that dribble bytes.
+        for _ in 0..4 {
+            let mut pfd = [bun_sys::posix::PollFd {
+                fd: 0,
+                events: bun_sys::posix::POLL_IN,
+                revents: 0,
+            }];
+            if bun_sys::posix::poll(&mut pfd, 60).ok()? <= 0 {
+                break;
+            }
+            len += bun_sys::read(bun_sys::Fd::stdin(), &mut buf[len..]).ok()?;
+            if strings::contains_char(&buf[..len], 0x07)
+                || strings::index_of(&buf[..len], b"\x1b\\").is_some()
+                || len == buf.len()
+            {
+                break;
+            }
+        }
+        let reply = &buf[..len];
+        let at = strings::index_of(reply, b"rgb:")? + 4;
+        let mut channels = [0f32; 3];
+        let mut parts = strings::split(&reply[at..], b"/");
+        for c in &mut channels {
+            let part = parts.next()?;
+            let hex: &[u8] = &part[..part.iter().take_while(|b| b.is_ascii_hexdigit()).count()];
+            if hex.is_empty() || hex.len() > 4 {
+                return None;
+            }
+            let v = u32::from_str_radix(core::str::from_utf8(hex).ok()?, 16).ok()?;
+            *c = v as f32 / ((1u32 << (4 * hex.len())) - 1) as f32;
+        }
+        Some(0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2])
+    }
 }
 
 /// Detect whether the current terminal likely supports the Kitty
@@ -2430,7 +2640,6 @@ pub fn detect_kitty_graphics() -> bool {
 /// the reply with a short timeout. Raw mode is applied + restored
 /// around the read so the bytes don't echo to the user's terminal.
 fn probe_kitty_graphics() -> bool {
-    // Zig: `if (comptime !bun.Environment.isPosix) return false;`
     #[cfg(not(unix))]
     {
         return false;
@@ -2454,10 +2663,19 @@ fn probe_kitty_graphics() -> bool {
             Ok(t) => t,
             Err(_) => return false,
         };
-        let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Raw);
-        let _restore = scopeguard::guard(saved_termios, |saved| {
+        let mut tty_state = bun_core::tty::State::new();
+        let _ = tty_state.set_mode(
+            0,
+            bun_core::tty::Mode::Raw,
+            bun_core::tty::SetAttrWhen::Drain,
+        );
+        let _restore = scopeguard::guard((saved_termios, tty_state), |(saved, mut state)| {
             if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved).is_err() {
-                let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Normal);
+                let _ = state.set_mode(
+                    0,
+                    bun_core::tty::Mode::Normal,
+                    bun_core::tty::SetAttrWhen::Drain,
+                );
             }
         });
 
@@ -2477,7 +2695,6 @@ fn probe_kitty_graphics() -> bool {
             events: bun_sys::posix::POLL_IN,
             revents: 0,
         }];
-        // bun.sys.poll has a Maybe variant Zig flags as incomplete — keep std.posix.poll.
         let ready = match bun_sys::posix::poll(&mut pfd, 80) {
             Ok(r) => r,
             Err(_) => return false,
@@ -2534,12 +2751,8 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // Percent-decode the path so file:///foo/bar%20baz works.
     let decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
 
-    // Resolve to an absolute path. bun.path.joinAbsString returns a
-    // slice in a threadlocal buffer — dupe it before leaving this fn.
-    // Prefer the markdown file's directory when provided; otherwise fall
-    // back to cwd so `Bun.markdown.ansi()` callers without a source path
-    // still work.
-    let mut cwd_buf = bun_paths::PathBuffer::uninit();
+    // Resolve against the markdown file's directory, or cwd when the caller gave no source path.
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let base: &[u8] = if let Some(d) = base_dir {
         d
     } else {
@@ -2548,16 +2761,18 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
             Err(_) => return None,
         }
     };
-    let joined =
-        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(base, &[&decoded]);
-    let abs = Box::<[u8]>::from(joined);
+    // If the path is too long, the caller falls back to alt text.
+    let mut abs_buf = bun_paths::path_buffer_pool::get();
+    let abs_z = bun_paths::resolve_path::join_abs_string_buf_z_checked::<bun_paths::platform::Auto>(
+        base,
+        &mut abs_buf[..],
+        &[&decoded],
+    )?;
     // Stat instead of plain exists() so a directory like `./assets/` gets
     // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
     // for any entry, including directories — and emitKittyImageFile sets
     // q=2 so the terminal silently drops directory paths without falling
     // through to alt text.
-    let mut zbuf = bun_paths::PathBuffer::uninit();
-    let abs_z = bun_paths::resolve_path::z(&abs, &mut zbuf);
     match bun_sys::stat(abs_z) {
         Ok(s) => {
             if !bun_sys::S::ISREG(s.st_mode as _) {
@@ -2566,7 +2781,7 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
         }
         Err(_) => return None,
     }
-    Some(abs)
+    Some(Box::<[u8]>::from(abs_z.as_bytes()))
 }
 
 // ========================================
@@ -2593,7 +2808,6 @@ fn extract_png_data_url_base64(src: &[u8]) -> Option<&[u8]> {
     Some(payload)
 }
 
-// PORT NOTE: Zig manual VTable collapsed into RendererImpl trait.
 impl RendererImpl for AnsiRenderer<'_> {
     fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
         AnsiRenderer::enter_block(self, block_type, data, flags);
@@ -2624,10 +2838,14 @@ pub fn render_to_ansi<'a>(
     theme: Theme<'a>,
 ) -> Result<Option<Box<[u8]>>, crate::parser::ParserError> {
     use crate::parser::ParserError;
+    // `AnsiRenderer::init` reserves output space proportional to the input, so
+    // an input the parser cannot address has to be rejected before it is
+    // allocated for, not only when `Parser::init` sees it.
+    crate::parser::input_size(text)?;
     let mut renderer = AnsiRenderer::init(text, theme);
     match root::render_with_renderer(text, options, renderer.renderer()) {
         Ok(()) => {}
-        Err(ParserError::JSError) | Err(ParserError::JSTerminated) => return Ok(None),
+        Err(ParserError::JSError) => return Ok(None),
         Err(e) => return Err(e),
     }
     if renderer.out.oom {
@@ -2637,5 +2855,3 @@ pub fn render_to_ansi<'a>(
         core::mem::take(&mut renderer.out.list).into_boxed_slice(),
     ))
 }
-
-// ported from: src/md/ansi_renderer.zig

@@ -4,7 +4,7 @@
 
 #[inline]
 #[allow(clippy::all)]
-pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierValue> {
+pub(crate) fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierValue> {
     match key.len() {
         3 => {
             let key: &[u8; 3] = key.try_into().unwrap();

@@ -26,24 +26,27 @@ export interface PostgresErrorOptions {
 }
 
 // oxlint-disable-next-line typescript-eslint/no-unsafe-declaration-merging
-interface PostgresError {
-  detail?: string | undefined;
-  hint?: string | undefined;
-  severity?: string | undefined;
-  errno?: string | undefined;
-  position?: string | undefined;
-  internalPosition?: string | undefined;
-  internalQuery?: string | undefined;
-  where?: string | undefined;
-  schema?: string | undefined;
-  table?: string | undefined;
-  column?: string | undefined;
-  dataType?: string | undefined;
-  constraint?: string | undefined;
-  file?: string | undefined;
-  line?: string | undefined;
-  routine?: string | undefined;
-}
+interface PostgresError extends Omit<PostgresErrorOptions, "code"> {}
+
+// in the order they become own properties
+const postgresErrorFields = [
+  "errno",
+  "detail",
+  "hint",
+  "severity",
+  "position",
+  "internalPosition",
+  "internalQuery",
+  "where",
+  "schema",
+  "table",
+  "column",
+  "dataType",
+  "constraint",
+  "file",
+  "line",
+  "routine",
+] as const;
 
 class PostgresError extends SQLError implements Bun.SQL.PostgresError {
   public readonly code: string;
@@ -51,25 +54,16 @@ class PostgresError extends SQLError implements Bun.SQL.PostgresError {
   constructor(message: string, options: PostgresErrorOptions) {
     super(message);
 
+    // JSC's own source position, not PostgreSQL's fields of the same name
+    delete this.line;
+    delete this.column;
+
     this.name = "PostgresError";
     this.code = options.code;
-
-    if (options.errno !== undefined) this.errno = options.errno;
-    if (options.detail !== undefined) this.detail = options.detail;
-    if (options.hint !== undefined) this.hint = options.hint;
-    if (options.severity !== undefined) this.severity = options.severity;
-    if (options.position !== undefined) this.position = options.position;
-    if (options.internalPosition !== undefined) this.internalPosition = options.internalPosition;
-    if (options.internalQuery !== undefined) this.internalQuery = options.internalQuery;
-    if (options.where !== undefined) this.where = options.where;
-    if (options.schema !== undefined) this.schema = options.schema;
-    if (options.table !== undefined) this.table = options.table;
-    if (options.column !== undefined) this.column = options.column;
-    if (options.dataType !== undefined) this.dataType = options.dataType;
-    if (options.constraint !== undefined) this.constraint = options.constraint;
-    if (options.file !== undefined) this.file = options.file;
-    if (options.line !== undefined) this.line = options.line;
-    if (options.routine !== undefined) this.routine = options.routine;
+    for (let i = 0; i < postgresErrorFields.length; i++) {
+      const value = options[postgresErrorFields[i]];
+      if (value !== undefined) this[postgresErrorFields[i]] = value;
+    }
   }
 }
 
@@ -80,9 +74,7 @@ export interface SQLiteErrorOptions {
 }
 
 // oxlint-disable-next-line typescript-eslint/no-unsafe-declaration-merging
-interface SQLiteError {
-  byteOffset?: number | undefined;
-}
+interface SQLiteError extends Pick<SQLiteErrorOptions, "byteOffset"> {}
 
 class SQLiteError extends SQLError implements Bun.SQL.SQLiteError {
   public readonly code: string;
@@ -93,10 +85,11 @@ class SQLiteError extends SQLError implements Bun.SQL.SQLiteError {
 
     this.name = "SQLiteError";
 
-    this.code = options.code;
-    this.errno = options.errno;
+    const { code, errno, byteOffset } = options;
+    this.code = code;
+    this.errno = errno;
 
-    if (options.byteOffset !== undefined) this.byteOffset = options.byteOffset;
+    if (byteOffset !== undefined) this.byteOffset = byteOffset;
   }
 }
 
@@ -107,10 +100,7 @@ export interface MySQLErrorOptions {
 }
 
 // oxlint-disable-next-line typescript-eslint/no-unsafe-declaration-merging
-interface MySQLError {
-  errno?: number | undefined;
-  sqlState?: string | undefined;
-}
+interface MySQLError extends Omit<MySQLErrorOptions, "code"> {}
 
 class MySQLError extends SQLError implements Bun.SQL.MySQLError {
   public readonly code: string;
@@ -119,10 +109,11 @@ class MySQLError extends SQLError implements Bun.SQL.MySQLError {
     super(message);
 
     this.name = "MySQLError";
-    this.code = options.code;
+    const { code, errno, sqlState } = options;
+    this.code = code;
 
-    if (options.errno !== undefined) this.errno = options.errno;
-    if (options.sqlState !== undefined) this.sqlState = options.sqlState;
+    if (errno !== undefined) this.errno = errno;
+    if (sqlState !== undefined) this.sqlState = sqlState;
   }
 }
 

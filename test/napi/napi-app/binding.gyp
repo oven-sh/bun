@@ -90,16 +90,6 @@
             ],
         },
         {
-            "target_name": "isolate_finalizer_addon",
-            "sources": ["isolate_finalizer_addon.c"],
-            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
-            "libraries": [],
-            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
-            "defines": [
-                "NAPI_DISABLE_CPP_EXCEPTIONS",
-            ],
-        },
-        {
             "target_name": "ffi_addon_1",
             "sources": ["ffi_addon_1.c"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
@@ -166,6 +156,17 @@
         {
             "target_name": "test_async_cleanup_hook_remove_nonexistent",
             "sources": ["test_async_cleanup_hook_remove_nonexistent.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+        },
+        {
+            "target_name": "test_async_cleanup_hook_tsfn_release",
+            "sources": ["test_async_cleanup_hook_tsfn_release.c"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
             "libraries": [],
             "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
@@ -262,6 +263,163 @@
                 "NAPI_DISABLE_CPP_EXCEPTIONS",
                 "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
             ],
+        },
+        {
+            "target_name": "test_last_error_cannot_run_js",
+            "sources": ["test_last_error_cannot_run_js.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+        },
+        {
+            "target_name": "test_delete_ref_in_finalizer_experimental",
+            "sources": ["test_delete_ref_in_finalizer_experimental.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+        },
+        {
+            "target_name": "test_queue_async_work_in_finalizer_experimental",
+            "sources": ["test_queue_async_work_in_finalizer_experimental.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+            ],
+        },
+        {
+            "target_name": "test_delete_ref_cancels_finalizer",
+            "sources": ["test_delete_ref_cancels_finalizer.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+        },
+        {
+            "target_name": "test_finalizer_create_error",
+            "sources": ["test_finalizer_create_error.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+        },
+        {
+            "target_name": "test_create_reference_primitive_v10",
+            "sources": ["test_create_reference_primitive.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NAPI_VERSION=10",
+            ],
+        },
+        {
+            "target_name": "test_create_reference_primitive_v8",
+            "sources": ["test_create_reference_primitive.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NAPI_VERSION=8",
+            ],
+        },
+        {
+            "target_name": "external_buffer_finalizer_thread",
+            "sources": ["external_buffer_finalizer_thread.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NAPI_VERSION=8",
+            ],
+        },
+        {
+            "target_name": "test_env_teardown_cannot_call_js_v10",
+            "sources": ["test_env_teardown_cannot_call_js.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NAPI_VERSION=10",
+            ],
+        },
+        {
+            "target_name": "test_env_teardown_cannot_call_js_v8",
+            "sources": ["test_env_teardown_cannot_call_js.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NAPI_VERSION=8",
+            ],
+        },
+        # The Windows link shapes of an addon that names node.exe in its import tables without
+        # node-gyp's win_delay_load_hook. On other platforms they are ordinary addons.
+        {
+            "target_name": "no_delay_load_hook_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "win_delay_load_hook": "false",
+            "conditions": [
+                ["OS=='win'", {
+                    "msvs_settings": {
+                        "VCLinkerTool": {
+                            "DelayLoadDLLs": ["node.exe"],
+                        },
+                    },
+                }],
+            ],
+        },
+        {
+            "target_name": "regular_node_exe_import_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "win_delay_load_hook": "false",
+        },
+        {
+            "target_name": "no_delay_load_hook_ctor_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "defines": ["REGISTER_VIA_CONSTRUCTOR"],
+            "win_delay_load_hook": "false",
+            "conditions": [
+                ["OS=='win'", {
+                    "msvs_settings": {
+                        "VCLinkerTool": {
+                            "DelayLoadDLLs": ["node.exe"],
+                        },
+                    },
+                }],
+            ],
+        },
+        {
+            "target_name": "regular_node_exe_import_ctor_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "defines": ["REGISTER_VIA_CONSTRUCTOR"],
+            "win_delay_load_hook": "false",
+        },
+        {
+            "target_name": "regular_node_exe_import_missing_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "defines": ["IMPORT_MISSING_FROM_HOST"],
+            "win_delay_load_hook": "false",
         },
     ]
 }

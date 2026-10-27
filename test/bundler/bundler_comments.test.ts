@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { SourceMap } from "node:module";
+import { SourceMap, type SourceMapping } from "node:module";
 import { itBundled } from "./expectBundled";
 
 describe("single-line comments", () => {
@@ -259,12 +259,51 @@ describe("single-line comments", () => {
     },
   });
 
+  // A marker that is not the first word of a `//` comment is prose, not an
+  // annotation. An unused pure call is removed even without minification, so a
+  // false match deletes code.
   itBundled("__PURE__ comment in single-line comment with text before", {
     files: {
       "/entry.js": `// some text #__PURE__\nconsole.log("hello");`,
     },
     onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("__PURE__ comment in single-line comment with tab before", {
+    files: {
+      "/entry.js": `//\t@__PURE__\nconsole.log("hello");`,
+    },
+    onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("hello");
+    },
+  });
+
+  itBundled("quoted /*#__PURE__*/ inside a single-line comment", {
+    files: {
+      "/entry.js": `function repro() {\n  // \`/*#__PURE__*/\`\n  console.log("hello");\n}\nrepro();`,
+    },
+    run: {
+      stdout: "hello",
+    },
+  });
+
+  itBundled("quoted /*#__PURE__*/ after text inside a single-line comment", {
+    files: {
+      "/entry.js": `// Wrap class inside init: \`/*#__PURE__*/ (() => { let C = class C {}; return C; })()\`\nconsole.log("hello");`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("many markers after leading whitespace in a single-line comment", {
+    files: {
+      "/entry.js": `//${Buffer.alloc(4096, " ").toString()}${Buffer.alloc(4096, "@").toString()}__PURE__\nconsole.log("hello");`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("hello");
     },
   });
 
@@ -282,6 +321,15 @@ describe("single-line comments", () => {
       "/entry.js": `// 你好 #__PURE__ 世界\nconsole.log("hello");`,
     },
     onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("hello");
+    },
+  });
+
+  itBundled("__PURE__ comment in single-line comment with unicode characters after", {
+    files: {
+      "/entry.js": `// #__PURE__ 世界\nconsole.log("hello");`,
+    },
+    onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("hello");
     },
   });
@@ -291,7 +339,7 @@ describe("single-line comments", () => {
       "/entry.js": `// 🚀 #__PURE__ 🔥\nconsole.log("hello");`,
     },
     onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("hello");
+      api.expectFile("/out.js").toContain("hello");
     },
   });
 
@@ -300,7 +348,7 @@ describe("single-line comments", () => {
       "/entry.js": `// \uD800 #__PURE__ \uDC00\nconsole.log("hello");`,
     },
     onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("hello");
+      api.expectFile("/out.js").toContain("hello");
     },
   });
 
@@ -378,7 +426,7 @@ describe("multi-line comments", () => {
       expect(commentLineIndex).toBeGreaterThanOrEqual(0);
 
       // The multi-line legal comment should have a sourcemap entry
-      const entry = sm.findEntry(commentLineIndex, 0);
+      const entry = sm.findEntry(commentLineIndex, 0) as SourceMapping;
 
       // Verify we found a mapping for the comment
       expect(entry).toBeTruthy();
@@ -388,6 +436,45 @@ describe("multi-line comments", () => {
       expect(entry!.originalSource!).toContain("entry.js");
       expect(typeof entry.originalLine).toBe("number");
       expect(entry.originalLine).toBeGreaterThanOrEqual(0);
+    },
+  });
+
+  // The lexer skips >=512-byte block comment bodies with SIMD; these verify
+  // large comments end-to-end (legal comment preservation, ASI, output code).
+  itBundled("large legal comment is preserved and does not corrupt the code after it", {
+    files: {
+      "/entry.js":
+        "/*!\r\n" +
+        " * Legal header line with some padding text to make the comment large enough.\r\n".repeat(20) +
+        " * Licensed under the ünïcödé license 🦊\r\n" +
+        " */\r\n" +
+        'console.log("hello");',
+    },
+    run: {
+      stdout: "hello",
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output).toContain("Legal header line with some padding text");
+      expect(output).toContain("Licensed under the ünïcödé license 🦊");
+    },
+  });
+
+  itBundled("newline inside a large block comment triggers ASI", {
+    files: {
+      "/entry.js": `function f() { return /*${Buffer.alloc(600, "x").toString()}\n${Buffer.alloc(600, "y").toString()}*/ "value" }\nconsole.log(String(f()));`,
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
+
+  itBundled("no ASI when a large block comment contains no newline", {
+    files: {
+      "/entry.js": `function f() { return /*${Buffer.alloc(1200, "x").toString()}*/ "value" }\nconsole.log(String(f()));`,
+    },
+    run: {
+      stdout: "value",
     },
   });
 });

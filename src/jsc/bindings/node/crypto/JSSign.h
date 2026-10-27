@@ -31,8 +31,10 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     ncrypto::EVPMDCtxPointer m_mdCtx;
+    size_t m_sizeForGC { 0 };
 
 private:
     JSSign(JSC::VM& vm, JSC::Structure* structure);

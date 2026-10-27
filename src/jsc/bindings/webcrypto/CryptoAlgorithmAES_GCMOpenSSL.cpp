@@ -31,6 +31,7 @@
 #include "CryptoAlgorithmAesGcmParams.h"
 #include "CryptoKeyAES.h"
 #include "OpenSSLCryptoUniquePtr.h"
+#include "OpenSSLUtilities.h"
 #include <openssl/evp.h>
 
 namespace WebCore {
@@ -58,7 +59,14 @@ static std::optional<Vector<uint8_t>> cryptEncrypt(const Vector<uint8_t>& key, c
     EvpCipherCtxPtr ctx;
     int len = 0;
 
-    Vector<uint8_t> cipherText(plainText.size() + tagLength);
+    if (plainText.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return std::nullopt;
+    if (additionalData.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return std::nullopt;
+
+    Vector<uint8_t> cipherText;
+    if (!tryAllocateOutputBuffer(cipherText, plainText.size() + tagLength)) [[unlikely]]
+        return std::nullopt;
     size_t tagOffset = plainText.size();
 
     // Create and initialize the context
@@ -115,9 +123,17 @@ static std::optional<Vector<uint8_t>> cryptDecrypt(const Vector<uint8_t>& key, c
     EvpCipherCtxPtr ctx;
     int len;
     int plainTextLen;
+
+    if (cipherText.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return std::nullopt;
+    if (additionalData.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return std::nullopt;
+
     int cipherTextLen = cipherText.size() - tagLength;
 
-    Vector<uint8_t> plainText(cipherText.size());
+    Vector<uint8_t> plainText;
+    if (!tryAllocateOutputBuffer(plainText, cipherText.size())) [[unlikely]]
+        return std::nullopt;
     Vector<uint8_t> tag { std::span { cipherText.begin() + cipherTextLen, tagLength } };
 
     // Create and initialize the context

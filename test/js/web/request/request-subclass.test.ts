@@ -5,7 +5,7 @@ import { RequestInit } from "undici-types";
 test("fetch() calls request.method & request.url getters on subclass", async () => {
   class MyRequest extends Request {
     constructor(input: string, init?: RequestInit, actual_url?: string) {
-      super(input, init);
+      super(input, init as globalThis.RequestInit);
 
       Object.defineProperty(this, "url", {
         get() {
@@ -46,7 +46,7 @@ test("fetch() calls request.method & request.url getters on subclass", async () 
 test("fetch() with subclass containing invalid HTTP headers throws without crashing", async () => {
   class MyRequest extends Request {
     constructor(input: string, init?: RequestInit, actual_url?: string) {
-      super(input, init);
+      super(input, init as globalThis.RequestInit);
 
       Object.defineProperty(this, "url", {
         get() {
@@ -71,14 +71,13 @@ test("fetch() with subclass containing invalid HTTP headers throws without crash
 
   const request = new MyRequest("https://example.com", {}, "https://example.com");
   expect(request.method).toBe("POST");
-  expect(() => fetch(request)).toThrow("Invalid header name");
+  await expect(fetch(request)).rejects.toThrow("Invalid header name");
 
-  // quick gc test
-  for (let i = 0; i < 1e4; i++) {
-    try {
-      fetch(request);
-    } catch (e) {}
+  // quick gc test; 1e3 iterations since each now allocates a rejected Promise
+  // (previously 1e4 sync throws, which allocated nothing).
+  for (let i = 0; i < 1e3; i++) {
+    fetch(request).catch(() => {});
   }
 
-  expect(() => fetch(request)).toThrow("Invalid header name");
+  await expect(fetch(request)).rejects.toThrow("Invalid header name");
 });

@@ -21,7 +21,15 @@ test("static routes should handle unicode correctly", async () => {
 
     const staticText = await staticResp.text();
     expect(staticText).toBe("▲");
-    expect(staticResp.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(staticResp.headers.get("content-type")).toBe("text/plain;charset=utf-8");
+  }
+
+  // A static route and a dynamic one must describe the same body the same way.
+  {
+    const dynamicResp = await fetch(`${baseUrl}/dynamic`);
+
+    expect(await dynamicResp.text()).toBe("▲");
+    expect(dynamicResp.headers.get("content-type")).toBe("text/plain;charset=utf-8");
   }
 
   // Test Japanese characters
@@ -30,7 +38,7 @@ test("static routes should handle unicode correctly", async () => {
     const text = await resp.text();
 
     expect(text).toBe("こんにちは世界");
-    expect(resp.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(resp.headers.get("content-type")).toBe("text/plain;charset=utf-8");
   }
 
   // Test emoji
@@ -39,7 +47,7 @@ test("static routes should handle unicode correctly", async () => {
     const text = await resp.text();
 
     expect(text).toBe("🎉🚀✨");
-    expect(resp.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(resp.headers.get("content-type")).toBe("text/plain;charset=utf-8");
   }
 });
 

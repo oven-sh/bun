@@ -3,49 +3,57 @@ use super::types::{OFF, TextType};
 
 /// Check if a byte is ASCII whitespace (space, tab, LF, CR, FF, VT).
 #[inline]
-pub fn is_whitespace(c: u8) -> bool {
+pub(crate) fn is_whitespace(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0C | 0x0B)
+}
+
+/// `line` without the spaces and tabs at its end.
+pub(crate) fn trim_blank_end(mut line: &[u8]) -> &[u8] {
+    while let [rest @ .., b' ' | b'\t'] = line {
+        line = rest;
+    }
+    line
 }
 
 /// Check if a byte is a blank character (space or tab).
 #[inline]
-pub fn is_blank(c: u8) -> bool {
+pub(crate) fn is_blank(c: u8) -> bool {
     c == b' ' || c == b'\t'
+}
+
+/// Check if a byte can separate the parts of an HTML tag (space, tab or line break).
+#[inline]
+pub(crate) fn is_blank_or_newline(c: u8) -> bool {
+    matches!(c, b' ' | b'\t' | b'\n' | b'\r')
 }
 
 /// Check if a byte is a newline (CR or LF).
 #[inline]
-pub fn is_newline(c: u8) -> bool {
+pub(crate) fn is_newline(c: u8) -> bool {
     c == b'\n' || c == b'\r'
-}
-
-/// Check if a byte is a newline or NUL (used for end-of-line detection).
-#[inline]
-pub fn is_newline_or_nul(c: u8) -> bool {
-    c == b'\n' || c == b'\r' || c == 0
 }
 
 /// Check if byte is ASCII alphanumeric.
 #[inline]
-pub fn is_alpha_num(c: u8) -> bool {
+pub(crate) fn is_alpha_num(c: u8) -> bool {
     c.is_ascii_alphanumeric()
 }
 
 /// Check if byte is ASCII alpha.
 #[inline]
-pub fn is_alpha(c: u8) -> bool {
+pub(crate) fn is_alpha(c: u8) -> bool {
     c.is_ascii_alphabetic()
 }
 
 /// Check if byte is ASCII digit.
 #[inline]
-pub fn is_digit(c: u8) -> bool {
+pub(crate) fn is_digit(c: u8) -> bool {
     c.is_ascii_digit()
 }
 
 /// Check if a Unicode codepoint is whitespace per CommonMark spec.
 /// This includes ASCII whitespace + Unicode Zs category.
-pub fn is_unicode_whitespace(codepoint: u32) -> bool {
+pub(crate) fn is_unicode_whitespace(codepoint: u32) -> bool {
     if codepoint < 128 {
         return is_whitespace(codepoint as u8);
     }
@@ -63,7 +71,7 @@ pub fn is_unicode_punctuation(codepoint: u32) -> bool {
 
 /// Check if byte is ASCII punctuation per CommonMark spec.
 #[inline]
-pub fn is_ascii_punctuation(c: u8) -> bool {
+pub(crate) fn is_ascii_punctuation(c: u8) -> bool {
     matches!(
         c,
         b'!' | b'"'
@@ -114,29 +122,14 @@ fn is_unicode_punctuation_extended(codepoint: u32) -> bool {
     false
 }
 
-/// Check if a character at a given offset matches any character in the set.
-#[inline]
-pub fn is_any_of(text: &[u8], off: OFF, chars: &[u8]) -> bool {
-    if (off as usize) >= text.len() {
-        return false;
-    }
-    let c = text[off as usize];
-    for &ch in chars {
-        if c == ch {
-            return true;
-        }
-    }
-    false
-}
-
-pub struct LineIndentation {
+pub(crate) struct LineIndentation {
     pub indent: u32,
     pub off: OFF,
 }
 
 /// Get the indentation of a line starting from `off`, counting spaces and tabs.
 /// Returns the indent width and advances `off` past the whitespace.
-pub fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -> LineIndentation {
+pub(crate) fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -> LineIndentation {
     let mut off = off_start;
     let mut indent: u32 = 0;
     while (off as usize) < text.len() && is_blank(text[off as usize]) {
@@ -150,14 +143,14 @@ pub fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -> LineI
     LineIndentation { indent, off }
 }
 
-pub struct Utf8DecodeResult {
-    pub codepoint: u32,
-    pub len: u8,
+pub(crate) struct Utf8DecodeResult {
+    pub(crate) codepoint: u32,
+    pub(crate) len: u8,
 }
 
 /// Decode a UTF-8 codepoint from the text at the given offset.
 /// Returns the codepoint and the number of bytes consumed.
-pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
+pub(crate) fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
     if off >= text.len() {
         return Utf8DecodeResult {
             codepoint: 0,
@@ -201,7 +194,7 @@ pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
 /// Decode the UTF-8 codepoint ending just before position `off` (i.e. the
 /// codepoint whose last byte is at `text[off - 1]`).
 /// Returns the codepoint and the number of bytes it occupies.
-pub fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
+pub(crate) fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
     if off == 0 || off > text.len() {
         return Utf8DecodeResult {
             codepoint: 0,
@@ -228,12 +221,12 @@ pub fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
 }
 
 /// Encode a Unicode codepoint as UTF-8.
-pub fn encode_utf8(codepoint: u32, buf: &mut [u8; 4]) -> u8 {
+pub(crate) fn encode_utf8(codepoint: u32, buf: &mut [u8; 4]) -> u8 {
     bun_core::strings::encode_wtf8_rune(buf, codepoint) as u8
 }
 
 /// Skip UTF-8 BOM if present at the start of the text.
-pub fn skip_utf8_bom(text: &[u8]) -> &[u8] {
+pub(crate) fn skip_utf8_bom(text: &[u8]) -> &[u8] {
     if text.len() >= 3 && text[0] == 0xEF && text[1] == 0xBB && text[2] == 0xBF {
         return &text[3..];
     }
@@ -245,7 +238,7 @@ pub use bun_core::strings::eql_case_insensitive_ascii_check_length as ascii_case
 
 /// Find an HTML entity starting at `start` (which must point to '&').
 /// Returns the end position (one past the ';') or null if no valid entity found.
-pub fn find_entity(content: &[u8], start: usize) -> Option<usize> {
+pub(crate) fn find_entity(content: &[u8], start: usize) -> Option<usize> {
     if start + 2 >= content.len() {
         return None;
     }
@@ -317,22 +310,22 @@ static UNICODE_PUNCTUATION_RANGES: &[[u32; 2]] = &[
     [0x166D, 0x166E], [0x169B, 0x169C], [0x16EB, 0x16ED], [0x1735, 0x1736],
     [0x17D4, 0x17D6], [0x17D8, 0x17DB], [0x1800, 0x180A], [0x1940, 0x1940],
     [0x1944, 0x1945], [0x19DE, 0x19FF], [0x1A1E, 0x1A1F], [0x1AA0, 0x1AA6],
-    [0x1AA8, 0x1AAD], [0x1B5A, 0x1B6A], [0x1B74, 0x1B7E], [0x1BFC, 0x1BFF],
-    [0x1C3B, 0x1C3F], [0x1C7E, 0x1C7F], [0x1CC0, 0x1CC7], [0x1CD3, 0x1CD3],
-    [0x1FBD, 0x1FBD], [0x1FBF, 0x1FC1], [0x1FCD, 0x1FCF], [0x1FDD, 0x1FDF],
-    [0x1FED, 0x1FEF], [0x1FFD, 0x1FFE], [0x2010, 0x2027], [0x2030, 0x205E],
-    [0x207A, 0x207E], [0x208A, 0x208E], [0x20A0, 0x20C0], [0x2100, 0x2101],
-    [0x2103, 0x2106], [0x2108, 0x2109], [0x2114, 0x2114], [0x2116, 0x2118],
-    [0x211E, 0x2123], [0x2125, 0x2125], [0x2127, 0x2127], [0x2129, 0x2129],
-    [0x212E, 0x212E], [0x213A, 0x213B], [0x2140, 0x2144], [0x214A, 0x214D],
-    [0x214F, 0x214F], [0x218A, 0x218B], [0x2190, 0x2426], [0x2440, 0x244A],
-    [0x249C, 0x24E9], [0x2500, 0x2775], [0x2794, 0x2B73], [0x2B76, 0x2B95],
-    [0x2B97, 0x2BFF], [0x2CE5, 0x2CEA], [0x2CF9, 0x2CFC], [0x2CFE, 0x2CFF],
+    [0x1AA8, 0x1AAD], [0x1B4E, 0x1B4F], [0x1B5A, 0x1B6A], [0x1B74, 0x1B7F],
+    [0x1BFC, 0x1BFF], [0x1C3B, 0x1C3F], [0x1C7E, 0x1C7F], [0x1CC0, 0x1CC7],
+    [0x1CD3, 0x1CD3], [0x1FBD, 0x1FBD], [0x1FBF, 0x1FC1], [0x1FCD, 0x1FCF],
+    [0x1FDD, 0x1FDF], [0x1FED, 0x1FEF], [0x1FFD, 0x1FFE], [0x2010, 0x2027],
+    [0x2030, 0x205E], [0x207A, 0x207E], [0x208A, 0x208E], [0x20A0, 0x20C1],
+    [0x2100, 0x2101], [0x2103, 0x2106], [0x2108, 0x2109], [0x2114, 0x2114],
+    [0x2116, 0x2118], [0x211E, 0x2123], [0x2125, 0x2125], [0x2127, 0x2127],
+    [0x2129, 0x2129], [0x212E, 0x212E], [0x213A, 0x213B], [0x2140, 0x2144],
+    [0x214A, 0x214D], [0x214F, 0x214F], [0x218A, 0x218B], [0x2190, 0x2429],
+    [0x2440, 0x244A], [0x249C, 0x24E9], [0x2500, 0x2775], [0x2794, 0x2B73],
+    [0x2B76, 0x2BFF], [0x2CE5, 0x2CEA], [0x2CF9, 0x2CFC], [0x2CFE, 0x2CFF],
     [0x2D70, 0x2D70], [0x2E00, 0x2E2E], [0x2E30, 0x2E5D], [0x2E80, 0x2E99],
     [0x2E9B, 0x2EF3], [0x2F00, 0x2FD5], [0x2FF0, 0x2FFF], [0x3001, 0x3004],
     [0x3008, 0x3020], [0x3030, 0x3030], [0x3036, 0x3037], [0x303D, 0x303F],
     [0x309B, 0x309C], [0x30A0, 0x30A0], [0x30FB, 0x30FB], [0x3190, 0x3191],
-    [0x3196, 0x319F], [0x31C0, 0x31E3], [0x31EF, 0x31EF], [0x3200, 0x321E],
+    [0x3196, 0x319F], [0x31C0, 0x31E5], [0x31EF, 0x31EF], [0x3200, 0x321E],
     [0x322A, 0x3247], [0x3250, 0x3250], [0x3260, 0x327F], [0x328A, 0x32B0],
     [0x32C0, 0x33FF], [0x4DC0, 0x4DFF], [0xA490, 0xA4C6], [0xA4FE, 0xA4FF],
     [0xA60D, 0xA60F], [0xA673, 0xA673], [0xA67E, 0xA67E], [0xA6F2, 0xA6F7],
@@ -341,48 +334,52 @@ static UNICODE_PUNCTUATION_RANGES: &[[u32; 2]] = &[
     [0xA8FC, 0xA8FC], [0xA92E, 0xA92F], [0xA95F, 0xA95F], [0xA9C1, 0xA9CD],
     [0xA9DE, 0xA9DF], [0xAA5C, 0xAA5F], [0xAA77, 0xAA79], [0xAADE, 0xAADF],
     [0xAAF0, 0xAAF1], [0xAB5B, 0xAB5B], [0xAB6A, 0xAB6B], [0xABEB, 0xABEB],
-    [0xFB29, 0xFB29], [0xFBB2, 0xFBC2], [0xFD3E, 0xFD4F], [0xFDCF, 0xFDCF],
-    [0xFDFC, 0xFDFF], [0xFE10, 0xFE19], [0xFE30, 0xFE52], [0xFE54, 0xFE66],
-    [0xFE68, 0xFE6B], [0xFF01, 0xFF0F], [0xFF1A, 0xFF20], [0xFF3B, 0xFF40],
-    [0xFF5B, 0xFF65], [0xFFE0, 0xFFE6], [0xFFE8, 0xFFEE], [0xFFFC, 0xFFFD],
-    [0x10100, 0x10102], [0x10137, 0x1013F], [0x10179, 0x10189], [0x1018C, 0x1018E],
-    [0x10190, 0x1019C], [0x101A0, 0x101A0], [0x101D0, 0x101FC], [0x1039F, 0x1039F],
-    [0x103D0, 0x103D0], [0x1056F, 0x1056F], [0x10857, 0x10857], [0x10877, 0x10878],
-    [0x1091F, 0x1091F], [0x1093F, 0x1093F], [0x10A50, 0x10A58], [0x10A7F, 0x10A7F],
-    [0x10AC8, 0x10AC8], [0x10AF0, 0x10AF6], [0x10B39, 0x10B3F], [0x10B99, 0x10B9C],
-    [0x10EAD, 0x10EAD], [0x10F55, 0x10F59], [0x10F86, 0x10F89], [0x11047, 0x1104D],
+    [0xFB29, 0xFB29], [0xFBB2, 0xFBD2], [0xFD3E, 0xFD4F], [0xFD90, 0xFD91],
+    [0xFDC8, 0xFDCF], [0xFDFC, 0xFDFF], [0xFE10, 0xFE19], [0xFE30, 0xFE52],
+    [0xFE54, 0xFE66], [0xFE68, 0xFE6B], [0xFF01, 0xFF0F], [0xFF1A, 0xFF20],
+    [0xFF3B, 0xFF40], [0xFF5B, 0xFF65], [0xFFE0, 0xFFE6], [0xFFE8, 0xFFEE],
+    [0xFFFC, 0xFFFD], [0x10100, 0x10102], [0x10137, 0x1013F], [0x10179, 0x10189],
+    [0x1018C, 0x1018E], [0x10190, 0x1019C], [0x101A0, 0x101A0], [0x101D0, 0x101FC],
+    [0x1039F, 0x1039F], [0x103D0, 0x103D0], [0x1056F, 0x1056F], [0x10857, 0x10857],
+    [0x10877, 0x10878], [0x1091F, 0x1091F], [0x1093F, 0x1093F], [0x10A50, 0x10A58],
+    [0x10A7F, 0x10A7F], [0x10AC8, 0x10AC8], [0x10AF0, 0x10AF6], [0x10B39, 0x10B3F],
+    [0x10B99, 0x10B9C], [0x10D6E, 0x10D6E], [0x10D8E, 0x10D8F], [0x10EAD, 0x10EAD],
+    [0x10ED0, 0x10ED8], [0x10F55, 0x10F59], [0x10F86, 0x10F89], [0x11047, 0x1104D],
     [0x110BB, 0x110BC], [0x110BE, 0x110C1], [0x11140, 0x11143], [0x11174, 0x11175],
     [0x111C5, 0x111C8], [0x111CD, 0x111CD], [0x111DB, 0x111DB], [0x111DD, 0x111DF],
-    [0x11238, 0x1123D], [0x112A9, 0x112A9], [0x1144B, 0x1144F], [0x1145A, 0x1145B],
-    [0x1145D, 0x1145D], [0x114C6, 0x114C6], [0x115C1, 0x115D7], [0x11641, 0x11643],
-    [0x11660, 0x1166C], [0x116B9, 0x116B9], [0x1173C, 0x1173F], [0x1183B, 0x1183B],
-    [0x11944, 0x11946], [0x119E2, 0x119E2], [0x11A3F, 0x11A46], [0x11A9A, 0x11A9C],
-    [0x11A9E, 0x11AA2], [0x11B00, 0x11B09], [0x11C41, 0x11C45], [0x11C70, 0x11C71],
-    [0x11EF7, 0x11EF8], [0x11F43, 0x11F4F], [0x11FD5, 0x11FF1], [0x11FFF, 0x11FFF],
-    [0x12470, 0x12474], [0x12FF1, 0x12FF2], [0x16A6E, 0x16A6F], [0x16AF5, 0x16AF5],
-    [0x16B37, 0x16B3F], [0x16B44, 0x16B45], [0x16E97, 0x16E9A], [0x16FE2, 0x16FE2],
-    [0x1BC9C, 0x1BC9C], [0x1BC9F, 0x1BC9F], [0x1CF50, 0x1CFC3], [0x1D000, 0x1D0F5],
-    [0x1D100, 0x1D126], [0x1D129, 0x1D164], [0x1D16A, 0x1D16C], [0x1D183, 0x1D184],
-    [0x1D18C, 0x1D1A9], [0x1D1AE, 0x1D1EA], [0x1D200, 0x1D241], [0x1D245, 0x1D245],
-    [0x1D300, 0x1D356], [0x1D6C1, 0x1D6C1], [0x1D6DB, 0x1D6DB], [0x1D6FB, 0x1D6FB],
-    [0x1D715, 0x1D715], [0x1D735, 0x1D735], [0x1D74F, 0x1D74F], [0x1D76F, 0x1D76F],
-    [0x1D789, 0x1D789], [0x1D7A9, 0x1D7A9], [0x1D7C3, 0x1D7C3], [0x1D800, 0x1D9FF],
-    [0x1DA37, 0x1DA3A], [0x1DA6D, 0x1DA74], [0x1DA76, 0x1DA83], [0x1DA85, 0x1DA8B],
-    [0x1E14F, 0x1E14F], [0x1E2FF, 0x1E2FF], [0x1E95E, 0x1E95F], [0x1ECAC, 0x1ECAC],
-    [0x1ECB0, 0x1ECB0], [0x1ED2E, 0x1ED2E], [0x1EEF0, 0x1EEF1],
-    [0x1F000, 0x1F02B], [0x1F030, 0x1F093], [0x1F0A0, 0x1F0AE], [0x1F0B1, 0x1F0BF],
-    [0x1F0C1, 0x1F0CF], [0x1F0D1, 0x1F0F5], [0x1F10D, 0x1F1AD], [0x1F1E6, 0x1F202],
-    [0x1F210, 0x1F23B], [0x1F240, 0x1F248], [0x1F250, 0x1F251], [0x1F260, 0x1F265],
-    [0x1F300, 0x1F6D7], [0x1F6DC, 0x1F6EC], [0x1F6F0, 0x1F6FC], [0x1F700, 0x1F776],
-    [0x1F77B, 0x1F7D9], [0x1F7E0, 0x1F7EB], [0x1F7F0, 0x1F7F0], [0x1F800, 0x1F80B],
+    [0x11238, 0x1123D], [0x112A9, 0x112A9], [0x113D4, 0x113D5], [0x113D7, 0x113D8],
+    [0x1144B, 0x1144F], [0x1145A, 0x1145B], [0x1145D, 0x1145D], [0x114C6, 0x114C6],
+    [0x115C1, 0x115D7], [0x11641, 0x11643], [0x11660, 0x1166C], [0x116B9, 0x116B9],
+    [0x1173C, 0x1173F], [0x1183B, 0x1183B], [0x11944, 0x11946], [0x119E2, 0x119E2],
+    [0x11A3F, 0x11A46], [0x11A9A, 0x11A9C], [0x11A9E, 0x11AA2], [0x11B00, 0x11B09],
+    [0x11BE1, 0x11BE1], [0x11C41, 0x11C45], [0x11C70, 0x11C71], [0x11EF7, 0x11EF8],
+    [0x11F43, 0x11F4F], [0x11FD5, 0x11FF1], [0x11FFF, 0x11FFF], [0x12470, 0x12474],
+    [0x12FF1, 0x12FF2], [0x16A6E, 0x16A6F], [0x16AF5, 0x16AF5], [0x16B37, 0x16B3F],
+    [0x16B44, 0x16B45], [0x16D6D, 0x16D6F], [0x16E97, 0x16E9A], [0x16FE2, 0x16FE2],
+    [0x1BC9C, 0x1BC9C], [0x1BC9F, 0x1BC9F], [0x1CC00, 0x1CCEF], [0x1CCFA, 0x1CCFC],
+    [0x1CD00, 0x1CEB3], [0x1CEBA, 0x1CED0], [0x1CEE0, 0x1CEF0], [0x1CF50, 0x1CFC3],
+    [0x1D000, 0x1D0F5], [0x1D100, 0x1D126], [0x1D129, 0x1D164], [0x1D16A, 0x1D16C],
+    [0x1D183, 0x1D184], [0x1D18C, 0x1D1A9], [0x1D1AE, 0x1D1EA], [0x1D200, 0x1D241],
+    [0x1D245, 0x1D245], [0x1D300, 0x1D356], [0x1D6C1, 0x1D6C1], [0x1D6DB, 0x1D6DB],
+    [0x1D6FB, 0x1D6FB], [0x1D715, 0x1D715], [0x1D735, 0x1D735], [0x1D74F, 0x1D74F],
+    [0x1D76F, 0x1D76F], [0x1D789, 0x1D789], [0x1D7A9, 0x1D7A9], [0x1D7C3, 0x1D7C3],
+    [0x1D800, 0x1D9FF], [0x1DA37, 0x1DA3A], [0x1DA6D, 0x1DA74], [0x1DA76, 0x1DA83],
+    [0x1DA85, 0x1DA8B], [0x1E14F, 0x1E14F], [0x1E2FF, 0x1E2FF], [0x1E5FF, 0x1E5FF],
+    [0x1E95E, 0x1E95F], [0x1ECAC, 0x1ECAC], [0x1ECB0, 0x1ECB0], [0x1ED2E, 0x1ED2E],
+    [0x1EEF0, 0x1EEF1], [0x1F000, 0x1F02B], [0x1F030, 0x1F093], [0x1F0A0, 0x1F0AE],
+    [0x1F0B1, 0x1F0BF], [0x1F0C1, 0x1F0CF], [0x1F0D1, 0x1F0F5], [0x1F10D, 0x1F1AD],
+    [0x1F1E6, 0x1F202], [0x1F210, 0x1F23B], [0x1F240, 0x1F248], [0x1F250, 0x1F251],
+    [0x1F260, 0x1F265], [0x1F300, 0x1F6D8], [0x1F6DC, 0x1F6EC], [0x1F6F0, 0x1F6FC],
+    [0x1F700, 0x1F7D9], [0x1F7E0, 0x1F7EB], [0x1F7F0, 0x1F7F0], [0x1F800, 0x1F80B],
     [0x1F810, 0x1F847], [0x1F850, 0x1F859], [0x1F860, 0x1F887], [0x1F890, 0x1F8AD],
-    [0x1F8B0, 0x1F8B1], [0x1F900, 0x1FA53], [0x1FA60, 0x1FA6D], [0x1FA70, 0x1FA7C],
-    [0x1FA80, 0x1FA88], [0x1FA90, 0x1FABD], [0x1FABF, 0x1FAC5], [0x1FACE, 0x1FADB],
-    [0x1FAE0, 0x1FAE8], [0x1FAF0, 0x1FAF8], [0x1FB00, 0x1FB92], [0x1FB94, 0x1FBCA],
+    [0x1F8B0, 0x1F8BB], [0x1F8C0, 0x1F8C1], [0x1F8D0, 0x1F8D8], [0x1F900, 0x1FA57],
+    [0x1FA60, 0x1FA6D], [0x1FA70, 0x1FA7C], [0x1FA80, 0x1FA8A], [0x1FA8E, 0x1FAC6],
+    [0x1FAC8, 0x1FAC8], [0x1FACD, 0x1FADC], [0x1FADF, 0x1FAEA], [0x1FAEF, 0x1FAF8],
+    [0x1FB00, 0x1FB92], [0x1FB94, 0x1FBEF], [0x1FBFA, 0x1FBFA],
 ];
 
 /// Parse a numeric character reference (&#DDD; or &#xHHH;) and return the codepoint.
-pub fn parse_entity_codepoint(entity_text: &[u8]) -> Option<u32> {
+pub(crate) fn parse_entity_codepoint(entity_text: &[u8]) -> Option<u32> {
     if entity_text.len() < 4 || entity_text[0] != b'&' || entity_text[1] != b'#' {
         return None;
     }
@@ -443,7 +440,7 @@ pub fn decode_entity_to_utf8<'a>(entity_text: &[u8], out: &'a mut [u8; 8]) -> Op
 
 /// Generate a GitHub-compatible slug from text content.
 /// Modifies text_buf in-place. Uses slug_counts for -N deduplication.
-pub fn generate_slug<'a>(
+pub(crate) fn generate_slug<'a>(
     text_buf: &'a mut Vec<u8>,
     slug_counts: &mut bun_collections::StringHashMap<u32>,
 ) -> &'a [u8] {
@@ -451,7 +448,7 @@ pub fn generate_slug<'a>(
     let mut out_len: usize = 0;
     let mut prev_hyphen: bool = true; // true to trim leading hyphens
 
-    // PORT NOTE: reshaped for borrowck — index instead of `for &c in text_items`
+    // reshaped for borrowck — index instead of `for &c in text_items`
     for idx in 0..text_len {
         let c = text_buf[idx];
         if c >= b'A' && c <= b'Z' {
@@ -477,25 +474,25 @@ pub fn generate_slug<'a>(
         out_len -= 1;
     }
 
-    // Deduplicate via slug_counts
-    // TODO(port): exact bun_collections::StringHashMap entry/get_or_put API — Zig used getOrPut
-    // with a borrowed key then duped it on first insert. Here we look up first, then insert an
-    // owned key on miss; map is assumed to own its keys (so Drop frees them).
-    if let Some(value) = slug_counts.get_mut(&text_buf[..out_len]) {
-        // Already seen — append -N suffix
-        let count = *value + 1;
-        *value = count;
-        text_buf.truncate(out_len);
-        text_buf.push(b'-');
-
-        let mut dec_buf = bun_core::fmt::ItoaBuf::new();
-        text_buf.extend_from_slice(bun_core::fmt::itoa(&mut dec_buf, count));
-        return text_buf.as_slice();
+    // Deduplicate via slug_counts. `StringHashMap::get_or_put` probes
+    // once (the map owns its keys, value starts at 0 on miss).
+    let Ok(gop) = slug_counts.get_or_put(&text_buf[..out_len]) else {
+        return &text_buf[..out_len];
+    };
+    if !gop.found_existing {
+        // First occurrence — value initialised to 0 by `get_or_put`.
+        return &text_buf[..out_len];
     }
 
-    // First occurrence — store an owned key so the map owns it
-    slug_counts.put_assume_capacity(&text_buf[..out_len], 0);
-    &text_buf[..out_len]
+    // Already seen — append -N suffix
+    let count = *gop.value_ptr + 1;
+    *gop.value_ptr = count;
+    text_buf.truncate(out_len);
+    text_buf.push(b'-');
+
+    let mut dec_buf = bun_core::fmt::ItoaBuf::new();
+    text_buf.extend_from_slice(bun_core::fmt::itoa(&mut dec_buf, count));
+    text_buf.as_slice()
 }
 
 /// Shared heading-ID state used by all renderers (HTML, React AST, JS callbacks).
@@ -503,10 +500,10 @@ pub fn generate_slug<'a>(
 /// and deduplicates slugs via a count map.
 #[derive(Default)]
 pub struct HeadingIdTracker {
-    pub enabled: bool,
-    pub in_heading: bool,
-    pub text_buf: Vec<u8>,
-    pub slug_counts: bun_collections::StringHashMap<u32>,
+    pub(crate) enabled: bool,
+    pub(crate) in_heading: bool,
+    pub(crate) text_buf: Vec<u8>,
+    pub(crate) slug_counts: bun_collections::StringHashMap<u32>,
 }
 
 impl HeadingIdTracker {
@@ -561,5 +558,3 @@ impl HeadingIdTracker {
         self.text_buf.clear();
     }
 }
-
-// ported from: src/md/helpers.zig

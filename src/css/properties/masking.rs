@@ -5,14 +5,8 @@ use crate::Printer;
 
 use crate::css_values::image::Image;
 use crate::css_values::length::LengthOrNumber;
-use crate::css_values::length::LengthPercentage;
 use crate::css_values::position::Position;
 use crate::css_values::rect::Rect;
-
-use crate::css_properties::border_radius::BorderRadius;
-// `shape` is still gated; FillRule referenced only by the (gated) BasicShape::Polygon body.
-
-use crate::css_properties::shape::FillRule;
 
 use crate::css_properties::background::BackgroundRepeat;
 use crate::css_properties::background::BackgroundSize;
@@ -24,12 +18,9 @@ use crate::css_properties::border_image::BorderImageSlice;
 use crate::VendorPrefix;
 use crate::generics::{CssEql, DeepClone};
 use crate::properties::PropertyId;
-use crate::properties::PropertyIdTag;
 
 /// A [`<geometry-box>`](https://www.w3.org/TR/css-masking-1/#typedef-geometry-box) value
 /// as used in the `mask-clip` and `clip-path` properties.
-// TODO(port): css.DefineEnumProperty(@This()) — comptime-generated eql/hash/parse/toCss/deepClone.
-// In Rust this becomes #[derive] of the css enum-property protocol (kebab-case serialization).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum GeometryBox {
     /// The painted content is clipped to the content box.
@@ -57,86 +48,12 @@ pub enum GeometryBox {
 }
 
 impl GeometryBox {
-    pub fn into_mask_clip(self) -> MaskClip {
+    pub(crate) fn into_mask_clip(self) -> MaskClip {
         MaskClip::GeometryBox(self)
     }
 }
 
-/// A CSS [`<basic-shape>`](https://www.w3.org/TR/css-shapes-1/#basic-shape-functions) value.
-pub enum BasicShape {
-    /// An inset rectangle.
-    Inset(InsetRect),
-    /// A circle.
-    Circle(Circle),
-    /// An ellipse.
-    Ellipse(Ellipse),
-    /// A polygon.
-    Polygon(Polygon),
-}
-
-/// An [`inset()`](https://www.w3.org/TR/css-shapes-1/#funcdef-inset) rectangle shape.
-// Zig declares this `const` (file-private) but it's reachable via `pub enum BasicShape::Inset`,
-// so Rust requires `pub` here — Zig has no private-in-public lint.
-pub struct InsetRect {
-    /// The rectangle.
-    pub rect: Rect<LengthPercentage>,
-    /// A corner radius for the rectangle.
-    pub radius: BorderRadius,
-}
-
-/// A [`circle()`](https://www.w3.org/TR/css-shapes-1/#funcdef-circle) shape.
-pub struct Circle {
-    /// The radius of the circle.
-    pub radius: ShapeRadius,
-    /// The position of the center of the circle.
-    pub position: Position,
-}
-
-/// An [`ellipse()`](https://www.w3.org/TR/css-shapes-1/#funcdef-ellipse) shape.
-pub struct Ellipse {
-    /// The x-radius of the ellipse.
-    pub radius_x: ShapeRadius,
-    /// The y-radius of the ellipse.
-    pub radius_y: ShapeRadius,
-    /// The position of the center of the ellipse.
-    pub position: Position,
-}
-
-/// A [`polygon()`](https://www.w3.org/TR/css-shapes-1/#funcdef-polygon) shape.
-pub struct Polygon {
-    /// The fill rule used to determine the interior of the polygon.
-    pub fill_rule: FillRule,
-    /// The points of each vertex of the polygon.
-    // TODO(port): css is an AST crate (§Allocators) — if Polygon is arena-fed this must become
-    // `bun_alloc::ArenaVec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
-    // No construction site exists in src/css/*.zig today, so provenance is unconfirmed; keeping
-    // plain Vec<Point> until the arena story is verified.
-    pub points: Vec<Point>,
-}
-
-/// A [`<shape-radius>`](https://www.w3.org/TR/css-shapes-1/#typedef-shape-radius) value
-/// that defines the radius of a `circle()` or `ellipse()` shape.
-pub enum ShapeRadius {
-    /// An explicit length or percentage.
-    LengthPercentage(LengthPercentage),
-    /// The length from the center to the closest side of the box.
-    ClosestSide,
-    /// The length from the center to the farthest side of the box.
-    FarthestSide,
-}
-
-/// A point within a `polygon()` shape.
-///
-/// See [Polygon](Polygon).
-pub struct Point {
-    /// The x position of the point.
-    pub x: LengthPercentage,
-    /// The y position of the point.
-    pub y: LengthPercentage,
-}
-
 /// A value for the [mask-mode](https://www.w3.org/TR/css-masking-1/#the-mask-mode) property.
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskMode {
     /// The luminance values of the mask image is used.
@@ -152,11 +69,9 @@ pub enum MaskMode {
 }
 
 /// A value for the [mask-clip](https://www.w3.org/TR/css-masking-1/#the-mask-clip) property.
-// TODO(port): css.DeriveParse / css.DeriveToCss → derive css union-property protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, css::Parse, css::ToCss)]
 pub enum MaskClip {
     /// A geometry box.
-    // Zig: @"geometry-box"
     GeometryBox(GeometryBox),
     /// The painted content is not clipped.
     #[css(name = "no-clip")]
@@ -164,7 +79,6 @@ pub enum MaskClip {
 }
 
 /// A value for the [mask-composite](https://www.w3.org/TR/css-masking-1/#the-mask-composite) property.
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskComposite {
     /// The source is placed over the destination.
@@ -183,7 +97,6 @@ pub enum MaskComposite {
 }
 
 /// A value for the [mask-type](https://www.w3.org/TR/css-masking-1/#the-mask-type) property.
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskType {
     /// The luminance values of the mask is used.
@@ -195,49 +108,30 @@ pub enum MaskType {
 }
 
 /// A value for the [mask](https://www.w3.org/TR/css-masking-1/#the-mask) shorthand property.
-// PORT NOTE: Debug/Clone/PartialEq derives gated on `Image`/`Position`/
+// Debug/Clone/PartialEq derives gated on `Image`/`Position`/
 // `BackgroundSize`/`BackgroundRepeat` gaining those derives upstream.
 #[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
 #[derive(DeepClone, CssEql)]
 pub struct Mask {
     /// The mask image.
-    pub image: Image,
+    pub(crate) image: Image,
     /// The position of the mask.
-    pub position: Position,
+    pub(crate) position: Position,
     /// The size of the mask image.
-    pub size: BackgroundSize,
+    pub(crate) size: BackgroundSize,
     /// How the mask repeats.
-    pub repeat: BackgroundRepeat,
+    pub(crate) repeat: BackgroundRepeat,
     /// The box in which the mask is clipped.
-    pub clip: MaskClip,
+    pub(crate) clip: MaskClip,
     /// The origin of the mask.
-    pub origin: GeometryBox,
+    pub(crate) origin: GeometryBox,
     /// How the mask is composited with the element.
-    pub composite: MaskComposite,
+    pub(crate) composite: MaskComposite,
     /// How the mask image is interpreted.
-    pub mode: MaskMode,
+    pub(crate) mode: MaskMode,
 }
 
 impl Mask {
-    // TODO(port): PropertyFieldMap was a Zig anon-struct const consumed by comptime
-    // reflection in shorthand handlers. Represented as an assoc const slice; could
-    // be replaced with a trait/derive.
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("image", PropertyIdTag::MaskImage),
-        ("position", PropertyIdTag::MaskPosition),
-        ("size", PropertyIdTag::MaskSize),
-        ("repeat", PropertyIdTag::MaskRepeat),
-        ("clip", PropertyIdTag::MaskClip),
-        ("origin", PropertyIdTag::MaskOrigin),
-        ("composite", PropertyIdTag::MaskComposite),
-        ("mode", PropertyIdTag::MaskMode),
-    ];
-
-    // TODO(port): VendorPrefixMap was a Zig anon-struct const of bools consumed by
-    // comptime reflection. Represented as a field-name slice; could be replaced with trait/derive.
-    pub const VENDOR_PREFIX_MAP: &'static [&'static str] =
-        &["image", "position", "size", "repeat", "clip", "origin"];
-
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut image: Option<Image> = None;
         let mut position: Option<Position> = None;
@@ -373,7 +267,6 @@ impl Mask {
 }
 
 /// A value for the [mask-border-mode](https://www.w3.org/TR/css-masking-1/#the-mask-border-mode) property.
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskBorderMode {
     /// The luminance values of the mask image is used.
@@ -386,37 +279,27 @@ pub enum MaskBorderMode {
 }
 
 /// A value for the [mask-border](https://www.w3.org/TR/css-masking-1/#the-mask-border) shorthand property.
-// PORT NOTE: Debug/Clone/PartialEq derives gated on `Image`/`Rect<_>` gaining
+// Debug/Clone/PartialEq derives gated on `Image`/`Rect<_>` gaining
 // those derives upstream.
 #[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
 #[derive(DeepClone, CssEql)]
 pub struct MaskBorder {
     /// The mask image.
-    pub source: Image,
+    pub(crate) source: Image,
     /// The offsets that define where the image is sliced.
-    pub slice: BorderImageSlice,
+    pub(crate) slice: BorderImageSlice,
     /// The width of the mask image.
-    pub width: Rect<BorderImageSideWidth>,
+    pub(crate) width: Rect<BorderImageSideWidth>,
     /// The amount that the image extends beyond the border box.
-    pub outset: Rect<LengthOrNumber>,
+    pub(crate) outset: Rect<LengthOrNumber>,
     /// How the mask image is scaled and tiled.
-    pub repeat: BorderImageRepeat,
+    pub(crate) repeat: BorderImageRepeat,
     /// How the mask image is interpreted.
-    pub mode: MaskBorderMode,
+    pub(crate) mode: MaskBorderMode,
 }
 
 impl MaskBorder {
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border", PropertyFieldMap);
-
-    // TODO(port): PropertyFieldMap — see note on Mask::PROPERTY_FIELD_MAP
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("source", PropertyIdTag::MaskBorderSource),
-        ("slice", PropertyIdTag::MaskBorderSlice),
-        ("width", PropertyIdTag::MaskBorderWidth),
-        ("outset", PropertyIdTag::MaskBorderOutset),
-        ("repeat", PropertyIdTag::MaskBorderRepeat),
-        ("mode", PropertyIdTag::MaskBorderMode),
-    ];
 
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut mode: Option<MaskBorderMode> = None;
@@ -431,7 +314,7 @@ impl MaskBorder {
         });
 
         if border_image.is_ok() || mode.is_some() {
-            // PERF(port): Zig used `comptime BorderImage.default()` — could const-eval the default
+            // PERF: could const-eval the default
             let bi = border_image.unwrap_or_else(|_| BorderImage::default());
             Ok(MaskBorder {
                 source: bi.source,
@@ -474,7 +357,6 @@ impl MaskBorder {
 /// property.
 ///
 /// See also [MaskComposite](MaskComposite).
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum WebKitMaskComposite {
     #[css(name = "clear")]
@@ -513,7 +395,6 @@ pub enum WebKitMaskComposite {
 /// property.
 ///
 /// See also [MaskMode](MaskMode).
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum WebKitMaskSourceType {
     /// Equivalent to `match-source` in the standard `mask-mode` syntax.
@@ -527,10 +408,7 @@ pub enum WebKitMaskSourceType {
     Alpha,
 }
 
-// blocked_on: PropertyId::WebKitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
-pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
-    // TODO(port): PropertyId variant naming — Zig uses kebab-case @"mask-border-source" etc.
-    // Mapping to PascalCase variants here; verify exact PropertyId enum shape.
+pub(crate) fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
     match property_id {
         PropertyId::MaskBorderSource => Some(PropertyId::MaskBoxImageSource(VendorPrefix::WEBKIT)),
         PropertyId::MaskBorderSlice => Some(PropertyId::MaskBoxImageSlice(VendorPrefix::WEBKIT)),
@@ -543,5 +421,3 @@ pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> 
         _ => None,
     }
 }
-
-// ported from: src/css/properties/masking.zig

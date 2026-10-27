@@ -7,19 +7,19 @@ use bun_jsc::JsResult;
 use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Only, TestScheduleEntry};
 use super::execution::{ConcurrentGroup, ExecutionSequence};
 
-pub struct Order {
-    pub groups: Vec<ConcurrentGroup>,
-    pub sequences: Vec<ExecutionSequence>,
-    // TODO(port): Zig stored `arena: std.mem.Allocator` here. test_runner is not an
-    // AST/arena crate per PORTING.md, so the field is dropped and `bun.create(arena, ...)`
-    // calls below become `heap::alloc(Box::new(...))`. In Zig these ExecutionEntry
-    // clones were bulk-freed by the arena; revisit ownership.
-    pub previous_group_was_concurrent: bool,
-    pub cfg: Config,
+pub(crate) struct Order {
+    pub(crate) groups: Vec<ConcurrentGroup>,
+    pub(crate) sequences: Vec<ExecutionSequence>,
+    // The ExecutionEntry clones below are allocated via `heap::into_raw(Box::new(...))`;
+    // `BunTest` collects them into
+    // `cloned_hook_entries` after `generate_order_describe` and reclaims the Box
+    // headers (without running `Drop`) in `Drop for BunTest`.
+    pub(crate) previous_group_was_concurrent: bool,
+    pub(crate) cfg: Config,
 }
 
 impl Order {
-    pub fn init(cfg: Config) -> Order {
+    pub(crate) fn init(cfg: Config) -> Order {
         Order {
             groups: Vec::new(),
             sequences: Vec::new(),
@@ -29,32 +29,21 @@ impl Order {
     }
     // `deinit` only freed `groups` / `sequences` — handled by Drop on Vec; no impl Drop needed.
 
-    pub fn generate_order_sub(&mut self, current: &mut TestScheduleEntry) -> JsResult<()> {
-        match current {
-            TestScheduleEntry::Describe(describe) => self.generate_order_describe(describe)?,
-            TestScheduleEntry::TestCallback(test_callback) => {
-                self.generate_order_test(NonNull::from(&mut **test_callback))?
-            }
-        }
-        Ok(())
-    }
-
-    pub fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
+    pub(crate) fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
-            // Zig signature is `[]const *ExecutionEntry` (immutable slice of *mutable* pointers).
             // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
-            // `&[Box<_>]` and recover each Box's heap pointer as *mut — the Zig code mutates
-            // through the pointer, not the slice. SAFETY: each Box<ExecutionEntry> is live and
-            // uniquely owned by the DescribeScope tree; writing through *mut matches the Zig
-            // `*ExecutionEntry` mutation contract. The pointer is obtained via `box_inner_mut`
+            // `&[Box<_>]` and recover each Box's heap pointer as *mut to mutate through the
+            // pointer, not the slice. SAFETY: each Box<ExecutionEntry> is live and
+            // uniquely owned by the DescribeScope tree, and no other reference into it is live
+            // while we write, so the raw-pointer writes are sound. The pointer is obtained via `box_inner_mut`
             // (see below) so rustc's `invalid_reference_casting` lint does not see a local
             // `&T as *const T as *mut T` chain; field writes use raw deref to avoid materializing
             // a long-lived `&mut`.
             let entry: *mut ExecutionEntry = box_inner_mut(&**entry_box);
             // SAFETY: `entry` is the heap address of a live `Box<ExecutionEntry>` uniquely owned by
-            // the DescribeScope tree (see paragraph above); raw-ptr field writes uphold the Zig
-            // `*ExecutionEntry` mutation contract without materializing a long-lived `&mut`.
+            // the DescribeScope tree (see paragraph above); raw-ptr field writes avoid
+            // materializing a long-lived `&mut`.
             unsafe {
                 if bun_core::Environment::CI_ASSERT && (*entry).added_in_phase != AddedInPhase::Preload {
                     debug_assert!((*entry).next.is_none());
@@ -79,9 +68,42 @@ impl Order {
         Ok(AllOrderResult { start, end })
     }
 
-    pub fn generate_order_describe(&mut self, current: &mut DescribeScope) -> JsResult<()> {
+    /// Uses an explicit stack instead of recursion, because `describe()` can nest arbitrarily deep.
+    pub(crate) fn generate_order_describe(&mut self, root: &mut DescribeScope) -> JsResult<()> {
+        let mut open: Vec<OpenDescribe<'_>> = Vec::new();
+        if let Some(frame) = self.enter_describe(root)? {
+            open.push(frame);
+        }
+        while let Some(frame) = open.last_mut() {
+            let scope_only = frame.only;
+            let Some(entry) = frame.children.next() else {
+                let frame = open.pop().expect("non-empty");
+                self.exit_describe(&frame)?;
+                continue;
+            };
+            if scope_only == Only::Contains && entry.base().only == Only::No {
+                continue;
+            }
+            match entry {
+                TestScheduleEntry::Describe(describe) => {
+                    if let Some(child) = self.enter_describe(describe)? {
+                        open.push(child);
+                    }
+                }
+                TestScheduleEntry::TestCallback(test_callback) => {
+                    self.generate_order_test(NonNull::from(&mut **test_callback))?
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn enter_describe<'a>(
+        &mut self,
+        current: &'a mut DescribeScope,
+    ) -> JsResult<Option<OpenDescribe<'a>>> {
         if current.failed {
-            return Ok(()); // do not schedule any tests in a failed describe scope
+            return Ok(None); // do not schedule any tests in a failed describe scope
         }
         let use_hooks = self.cfg.always_use_hooks || current.base.has_callback;
 
@@ -97,22 +119,22 @@ impl Order {
             shuffle_with_index(random, &mut current.entries);
         }
 
-        // gather children
-        // PORT NOTE: reshaped for borrowck — iterate by index since generate_order_sub borrows &mut self.
-        let scope_only = current.base.only;
-        for i in 0..current.entries.len() {
-            if scope_only == Only::Contains && current.entries[i].base().only == Only::No {
-                continue;
-            }
-            self.generate_order_sub(&mut current.entries[i])?;
-        }
+        Ok(Some(OpenDescribe {
+            children: current.entries.iter_mut(),
+            only: current.base.only,
+            use_hooks,
+            beforeall_order,
+            after_all: &current.after_all,
+        }))
+    }
 
+    fn exit_describe(&mut self, frame: &OpenDescribe<'_>) -> JsResult<()> {
         // update skip_to values for beforeAll to skip to the first afterAll
-        beforeall_order.set_failure_skip_to(self);
+        frame.beforeall_order.set_failure_skip_to(self);
 
         // gather afterAll
-        let afterall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.after_all)?
+        let afterall_order: AllOrderResult = if frame.use_hooks {
+            self.generate_all_order(frame.after_all)?
         } else {
             AllOrderResult::EMPTY
         };
@@ -127,7 +149,7 @@ impl Order {
     /// `current` must point to a live, uniquely-owned `ExecutionEntry` (Box-owned in
     /// `DescribeScope.entries`) with mutable provenance for the duration of this call. The
     /// `base.parent` chain reachable from `*current` must consist of live `DescribeScope` nodes.
-    pub fn generate_order_test(&mut self, current: NonNull<ExecutionEntry>) -> JsResult<()> {
+    pub(crate) fn generate_order_test(&mut self, current: NonNull<ExecutionEntry>) -> JsResult<()> {
         // Stacked Borrows: `current` is reborrowed as `&mut` inside `list.append` and the skip-past
         // loop below, so we never hold a long-lived `&mut` to it across those calls — each access
         // dereferences the pointer locally.
@@ -150,11 +172,12 @@ impl Order {
                 let mut i: usize = p.before_each.len();
                 while i > 0 {
                     let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
-                    // PERF(port): was arena bulk-free — Zig allocated this clone in `this.arena`.
-                    // TODO(port): ownership — heap::alloc leaks without the arena; decide whether
-                    // test_runner keeps an arena or tracks these for cleanup.
-                    // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
-                    // The clone is leaked (heap::alloc) so its Strong/Box fields are never dropped twice.
+                    // Ownership: `BunTest` collects these clones into `cloned_hook_entries`
+                    // (the post-`generate_order_describe` walk) and frees only the Box
+                    // headers in `Drop for BunTest` — `Drop` must not run on the bitwise
+                    // copy or the originals' Strong/Box fields would be freed twice.
+                    // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy
+                    // (see ownership note above), so duplicated owning fields are not double-freed.
                     let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.prepend(cloned);
                     i -= 1;
@@ -174,8 +197,8 @@ impl Order {
                 let p = unsafe { &*p_ptr };
                 for entry in p.after_each.iter() {
                     let src: *const ExecutionEntry = &raw const **entry;
-                    // PERF(port): was arena bulk-free — see note above.
-                    // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
+                    // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy
+                    // (see ownership note above), so duplicated owning fields are not double-freed.
                     let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.append(cloned);
                 }
@@ -216,13 +239,12 @@ impl Order {
         Ok(())
     }
 
-    pub fn append_or_extend_concurrent_group(
+    pub(crate) fn append_or_extend_concurrent_group(
         &mut self,
         concurrent: bool,
         sequences_start: usize,
         sequences_end: usize,
     ) -> JsResult<()> {
-        // PORT NOTE: reshaped for borrowck — Zig used `defer this.previous_group_was_concurrent = concurrent;`.
         // We capture the old value first, then assign immediately so it applies on every exit path.
         let prev_was_concurrent = self.previous_group_was_concurrent;
         self.previous_group_was_concurrent = concurrent;
@@ -243,15 +265,24 @@ impl Order {
     }
 }
 
-pub struct AllOrderResult {
-    pub start: usize,
-    pub end: usize,
+/// Tracks a describe scope whose children `generate_order_describe` is still scheduling.
+struct OpenDescribe<'a> {
+    children: core::slice::IterMut<'a, TestScheduleEntry>,
+    only: Only,
+    use_hooks: bool,
+    beforeall_order: AllOrderResult,
+    after_all: &'a [Box<ExecutionEntry>],
+}
+
+pub(crate) struct AllOrderResult {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 impl AllOrderResult {
-    pub const EMPTY: AllOrderResult = AllOrderResult { start: 0, end: 0 };
+    pub(crate) const EMPTY: AllOrderResult = AllOrderResult { start: 0, end: 0 };
 
-    pub fn set_failure_skip_to(&self, this: &mut Order) {
+    pub(crate) fn set_failure_skip_to(&self, this: &mut Order) {
         if self.start == 0 && self.end == 0 {
             return;
         }
@@ -262,17 +293,16 @@ impl AllOrderResult {
     }
 }
 
-pub struct Config {
-    pub always_use_hooks: bool,
-    // TODO(port): `std.Random` interface mapped to the concrete `DefaultPrng` (xoshiro256++);
-    // bun_core has no type-erased Random vtable yet and the only call site seeds a DefaultPrng.
-    pub randomize: Option<bun_core::rand::DefaultPrng>,
+pub(crate) struct Config {
+    pub(crate) always_use_hooks: bool,
+    // The only call site seeds a concrete `DefaultPrng` (xoshiro256++), so
+    // no type-erased Random vtable is needed.
+    pub(crate) randomize: Option<bun_core::rand::DefaultPrng>,
 }
 
-/// Exact port of `std.Random.shuffleWithIndex(T, buf, usize)` (vendor/zig/lib/std/Random.zig).
 /// Forward Fisher-Yates: `i` from 0 to len-2, `j = intRangeLessThan(usize, i, len)`.
-/// Must produce the identical permutation to Zig for the same xoshiro256++ state so that
-/// `bun test --randomize --seed=N` is reproducible across the Zig and Rust ports.
+/// Must produce the identical permutation for the same xoshiro256++ state across Bun
+/// versions so that `bun test --randomize --seed=N` stays reproducible.
 fn shuffle_with_index<T>(r: &mut bun_core::rand::DefaultPrng, buf: &mut [T]) {
     if buf.len() < 2 {
         return;
@@ -310,14 +340,12 @@ fn uint_less_than(r: &mut bun_core::rand::DefaultPrng, less_than: u64) -> u64 {
             l = m as u64;
         }
     }
-    let _ = x;
     (m >> 64) as u64
 }
 
 /// Recover the heap pointer behind a `Box<T>` as `*mut T` given the inner `&T`.
 ///
-/// Zig's `[]const *T` is an immutable slice of *mutable* pointers; the closest Rust shape we
-/// can accept from callers is `&[Box<T>]`, but we still need to mutate through each element.
+/// Callers hand us `&[Box<T>]`, but we still need to mutate through each element.
 /// Going through this helper breaks the intraprocedural dataflow that the
 /// `invalid_reference_casting` deny-by-default lint tracks (it would otherwise flag the
 /// `&T -> *const T -> *mut T -> &mut T` chain at the call site). The provenance caveat is
@@ -334,7 +362,7 @@ struct EntryList {
 }
 
 impl EntryList {
-    pub fn prepend(&mut self, current: *mut ExecutionEntry) {
+    fn prepend(&mut self, current: *mut ExecutionEntry) {
         // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
         unsafe { (*current).next = self.first };
         self.first = Some(current);
@@ -343,7 +371,7 @@ impl EntryList {
         }
     }
 
-    pub fn append(&mut self, current: *mut ExecutionEntry) {
+    fn append(&mut self, current: *mut ExecutionEntry) {
         // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
         let cur = unsafe { &mut *current };
         if bun_core::Environment::CI_ASSERT && cur.added_in_phase != AddedInPhase::Preload {
@@ -364,5 +392,3 @@ impl EntryList {
         }
     }
 }
-
-// ported from: src/test_runner/Order.zig

@@ -18,8 +18,9 @@ function test(arrayBuffer, offset, length) {
 const acceptableOOMErrors = [
   'Array buffer allocation failed',
   'Invalid array buffer length',
+  // JSC's equivalent allocation-failure messages.
   'length too large: 4294968296',
-  'Out of memory'
+  'Out of memory',
 ];
 
 const length = 1000;
@@ -35,5 +36,4 @@ try {
   throw e;
 }
 
-test(200, 50, 100);
 test(arrayBuffer, offset, length);

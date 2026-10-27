@@ -5,12 +5,13 @@ use crate::{JSGlobalObject, JSValue};
 /// All getters return a `JSC::JSString`.
 #[derive(Copy, Clone)]
 pub struct CommonStrings<'a> {
-    pub global_object: &'a JSGlobalObject,
+    pub(crate) global_object: &'a JSGlobalObject,
 }
 
+/// Must be kept in sync with `CommonStringsForRust` in `BunCommonStrings.cpp`.
 #[repr(u8)]
 #[derive(Copy, Clone)]
-enum CommonStringsForZig {
+pub enum CommonStringsForRust {
     IPv4 = 0,
     IPv6 = 1,
     IN4Loopback = 2,
@@ -22,88 +23,152 @@ enum CommonStringsForZig {
     FetchInclude = 8,
     Buffer = 9,
     BinaryTypeArrayBuffer = 10,
-    BinaryTypeNodeBuffer = 11,
-    BinaryTypeUint8Array = 12,
+    BinaryTypeUint8Array = 11,
+    Unknown = 12,
+    AlpnH2 = 13,
+    AlpnHttp11 = 14,
+    Utf8WithDash = 15,
+    QuicDatagramAbandoned = 16,
+    QuicDatagramAcknowledged = 17,
+    QuicDatagramLost = 18,
+    Base64 = 19,
+    Write = 20,
+    FetchOptionCompress = 21,
+    FetchOptionDecompress = 22,
+    FetchOptionKeepalive = 23,
+    FetchOptionMaxRedirects = 24,
+    FetchOptionProtocol = 25,
+    FetchOptionProxy = 26,
+    FetchOptionS3 = 27,
+    FetchOptionSession = 28,
+    FetchOptionTimeout = 29,
+    FetchOptionTls = 30,
+    FetchOptionUnix = 31,
+    FetchOptionVerbose = 32,
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     // `JSGlobalObject` is an opaque `UnsafeCell`-backed FFI handle; `&T` is
     // ABI-identical to non-null `*const T` and the C++ side's lazy init of its
     // common-strings table (interior mutation) is invisible to Rust.
-    safe fn Bun__CommonStringsForZig__toJS(
-        common_string: CommonStringsForZig,
+    safe fn Bun__CommonStringsForRust__toJS(
+        common_string: CommonStringsForRust,
         global_object: &JSGlobalObject,
+    ) -> JSValue;
+    safe fn Bun__CommonStringsForRust__getProperty(
+        object: JSValue,
+        global_object: &JSGlobalObject,
+        common_string: CommonStringsForRust,
     ) -> JSValue;
 }
 
-impl CommonStringsForZig {
+impl CommonStringsForRust {
     #[inline]
-    fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        Bun__CommonStringsForZig__toJS(self, global_object)
+    pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
+        Bun__CommonStringsForRust__toJS(self, global_object)
+    }
+
+    /// `object[self]`; see `JSValue::get_common_string`.
+    #[inline]
+    pub(crate) fn get_property(self, object: JSValue, global_object: &JSGlobalObject) -> JSValue {
+        Bun__CommonStringsForRust__getProperty(object, global_object, self)
     }
 }
 
 impl<'a> CommonStrings<'a> {
-    // PORT NOTE: Zig had both `IPv4`/`IPv6` and `ipv4`/`ipv6` methods, which
-    // collide under snake_case. The lowercase Zig methods are renamed to
-    // `ipv4_lower`/`ipv6_lower` here (matching their enum variants).
+    /// `"IPv4"`
     #[inline]
     pub fn ipv4(self) -> JSValue {
-        CommonStringsForZig::IPv4.to_js(self.global_object)
+        CommonStringsForRust::IPv4.to_js(self.global_object)
     }
+    /// `"IPv6"`
     #[inline]
     pub fn ipv6(self) -> JSValue {
-        CommonStringsForZig::IPv6.to_js(self.global_object)
+        CommonStringsForRust::IPv6.to_js(self.global_object)
     }
-    // PORT NOTE: Zig `@"127.0.0.1"` — not a valid Rust identifier; renamed to
-    // match the enum variant.
+    /// `"127.0.0.1"`
     #[inline]
     pub fn in4_loopback(self) -> JSValue {
-        CommonStringsForZig::IN4Loopback.to_js(self.global_object)
+        CommonStringsForRust::IN4Loopback.to_js(self.global_object)
     }
-    // PORT NOTE: Zig `@"::"` — not a valid Rust identifier; renamed to match
-    // the enum variant.
+    /// `"::"`
     #[inline]
     pub fn in6_any(self) -> JSValue {
-        CommonStringsForZig::IN6Any.to_js(self.global_object)
+        CommonStringsForRust::IN6Any.to_js(self.global_object)
     }
+    /// `"ipv4"`
     #[inline]
     pub fn ipv4_lower(self) -> JSValue {
-        CommonStringsForZig::Ipv4Lower.to_js(self.global_object)
+        CommonStringsForRust::Ipv4Lower.to_js(self.global_object)
     }
-    #[inline]
-    pub fn ipv6_lower(self) -> JSValue {
-        CommonStringsForZig::Ipv6Lower.to_js(self.global_object)
-    }
+    /// `"default"`
     #[inline]
     pub fn default(self) -> JSValue {
-        CommonStringsForZig::FetchDefault.to_js(self.global_object)
+        CommonStringsForRust::FetchDefault.to_js(self.global_object)
     }
+    /// `"error"`
     #[inline]
     pub fn error(self) -> JSValue {
-        CommonStringsForZig::FetchError.to_js(self.global_object)
+        CommonStringsForRust::FetchError.to_js(self.global_object)
     }
+    /// `"include"`
     #[inline]
     pub fn include(self) -> JSValue {
-        CommonStringsForZig::FetchInclude.to_js(self.global_object)
+        CommonStringsForRust::FetchInclude.to_js(self.global_object)
     }
+    /// `"buffer"`
     #[inline]
     pub fn buffer(self) -> JSValue {
-        CommonStringsForZig::Buffer.to_js(self.global_object)
+        CommonStringsForRust::Buffer.to_js(self.global_object)
     }
+    /// `"arraybuffer"`
     #[inline]
     pub fn arraybuffer(self) -> JSValue {
-        CommonStringsForZig::BinaryTypeArrayBuffer.to_js(self.global_object)
+        CommonStringsForRust::BinaryTypeArrayBuffer.to_js(self.global_object)
     }
-    #[inline]
-    pub fn nodebuffer(self) -> JSValue {
-        CommonStringsForZig::BinaryTypeNodeBuffer.to_js(self.global_object)
-    }
+    /// `"uint8array"`
     #[inline]
     pub fn uint8array(self) -> JSValue {
-        CommonStringsForZig::BinaryTypeUint8Array.to_js(self.global_object)
+        CommonStringsForRust::BinaryTypeUint8Array.to_js(self.global_object)
+    }
+    /// `"unknown"`
+    #[inline]
+    pub fn unknown(self) -> JSValue {
+        CommonStringsForRust::Unknown.to_js(self.global_object)
+    }
+    /// `"h2"`
+    #[inline]
+    pub fn alpn_h2(self) -> JSValue {
+        CommonStringsForRust::AlpnH2.to_js(self.global_object)
+    }
+    /// `"http/1.1"`
+    #[inline]
+    pub fn alpn_http11(self) -> JSValue {
+        CommonStringsForRust::AlpnHttp11.to_js(self.global_object)
+    }
+    /// `"abandoned"`
+    #[inline]
+    pub fn quic_datagram_abandoned(self) -> JSValue {
+        CommonStringsForRust::QuicDatagramAbandoned.to_js(self.global_object)
+    }
+    /// `"acknowledged"`
+    #[inline]
+    pub fn quic_datagram_acknowledged(self) -> JSValue {
+        CommonStringsForRust::QuicDatagramAcknowledged.to_js(self.global_object)
+    }
+    /// `"lost"`
+    #[inline]
+    pub fn quic_datagram_lost(self) -> JSValue {
+        CommonStringsForRust::QuicDatagramLost.to_js(self.global_object)
+    }
+    /// `"base64"`
+    #[inline]
+    pub fn base64(self) -> JSValue {
+        CommonStringsForRust::Base64.to_js(self.global_object)
+    }
+    /// `"write"`
+    #[inline]
+    pub fn write(self) -> JSValue {
+        CommonStringsForRust::Write.to_js(self.global_object)
     }
 }
-
-// ported from: src/jsc/CommonStrings.zig

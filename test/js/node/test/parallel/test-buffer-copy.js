@@ -133,8 +133,7 @@ b.copy(c, 0, 100, 10);
 assert.throws(
   () => Buffer.prototype.copy.call(0),
   {
-    // code: 'ERR_INVALID_ARG_TYPE',
-    code: 'ERR_INVALID_THIS',
+    code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
   }
 );
@@ -146,7 +145,7 @@ assert.throws(
     code: 'ERR_OUT_OF_RANGE',
     name: 'RangeError',
     message: 'The value of "targetStart" is out of range. ' +
-             'It must be >= 0 and <= 5. Received -1'
+             'It must be >= 0. Received -1'
   }
 );
 
@@ -185,7 +184,7 @@ assert.throws(
     code: 'ERR_OUT_OF_RANGE',
     name: 'RangeError',
     message: 'The value of "sourceEnd" is out of range. ' +
-             'It must be >= 0 and <= 1024. Received -1'
+             'It must be >= 0. Received -1'
   }
 );
 
@@ -226,6 +225,23 @@ c.fill('c');
 b.copy(c, 'not a valid offset');
 // Make sure this acted like a regular copy with `0` offset.
 assert.deepStrictEqual(c, b.slice(0, c.length));
+
+// Copy into a Uint16Array target; bytes are packed into 16-bit elements.
+{
+  const x = new Uint16Array(4);
+  const buf = Buffer.of(1, 2, 3, 4);
+  const copied = buf.copy(x);
+  assert.strictEqual(copied, 4);
+  assert.ok(x instanceof Uint16Array);
+  const bytes = new Uint8Array(x.buffer, x.byteOffset, 4);
+  assert.deepStrictEqual(Array.from(bytes), [1, 2, 3, 4]);
+  const remaining = new Uint8Array(
+    x.buffer,
+    x.byteOffset + 4,
+    x.byteLength - 4
+  );
+  assert.ok(remaining.every((b) => b === 0));
+}
 
 {
   c.fill('C');

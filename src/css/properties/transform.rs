@@ -13,27 +13,28 @@ use crate::{
 };
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
-// PORT NOTE: was `BumpVec<'bump, Transform>`; downgraded to `Vec` so the
-// `Property` enum (properties_generated.rs) stays lifetime-free. Re-thread
-// `'bump` through `Property<'a>` crate-wide in a later pass (see line :1096).
+// Was `BumpVec<'bump, Transform>` in an earlier port iteration; uses `Vec` so
+// the `Property` enum (properties_generated.rs) stays lifetime-free.
+// Re-threading `'bump` through `Property<'a>` crate-wide is deferred work
+// (see /tmp/todo-fix/complex/mk04-repair.md; also TransformHandler below).
 #[derive(Clone, PartialEq, Default)]
 pub struct TransformList {
-    pub v: Vec<Transform>,
+    pub(crate) v: Vec<Transform>,
 }
 
-// PORT NOTE: split out of the parse/to_css `impl TransformList` below —
+// Split out of the parse/to_css `impl TransformList` below —
 // `TransformHandler` only needs deep_clone/eql.
 impl TransformList {
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone reflection — `Transform`/`TransformList`
-        // are `Clone`-via-derive (Vec + POD payloads); an arena-aware DeepClone
-        // trait should land crate-wide.
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
+        // `Transform`/`TransformList` deep-clone via `#[derive(Clone)]`: payloads
+        // with heap variants (`LengthPercentage`/`Length` `Calc(Box<..>)`) clone
+        // deeply onto the global heap.
         self.clone()
     }
 }
 
 impl TransformList {
-    pub fn parse(input: &mut Parser<'_>) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser<'_>) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -56,17 +57,14 @@ impl TransformList {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if self.v.is_empty() {
             return dest.write_str("none");
         }
 
         // TODO: Re-enable with a better solution
         //       See: https://github.com/parcel-bundler/lightningcss/issues/288
-        // PORT NOTE: Zig's minify branch built a sub-`Printer` writing into a temp
-        // buffer then `dest.writeStr(base)` — observably identical to writing
-        // directly into `dest` while `dest.minify` is set (the original
-        // lightningcss size-comparison was already disabled upstream). Collapsed.
+        // (The original lightningcss size-comparison was already disabled upstream.)
         self.to_css_base(dest)
     }
 
@@ -145,11 +143,9 @@ pub enum Transform {
 }
 
 impl Transform {
-    pub fn parse(input: &mut Parser) -> Result<Transform> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Transform> {
         let function = input.expect_function_cloned()?;
 
-        // PORT NOTE: Zig used a Closure struct + nested anon-struct fn passed to
-        // parseNestedBlock; Rust closures capture `function` directly.
         input.parse_nested_block(|i| -> Result<Transform> {
             let location = i.current_source_location();
             crate::match_ignore_ascii_case! { function, {
@@ -241,8 +237,7 @@ impl Transform {
                         let y = NumberOrPercentage::parse(i)?;
                         Ok(Transform::Scale { x, y })
                     } else {
-                        // PORT NOTE: Zig `x.deepClone(arena)` — `NumberOrPercentage`
-                        // is POD; `clone()` is exact.
+                        // `NumberOrPercentage` is POD.
                         let y = x.clone();
                         Ok(Transform::Scale { x, y })
                     }
@@ -319,7 +314,7 @@ impl Transform {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             Transform::Translate { x, y } => {
                 if dest.minify && x.is_zero() && !y.is_zero() {
@@ -573,8 +568,10 @@ impl Transform {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone reflection — payload types may need bump-aware clone
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
+        // All payload types deep-clone via `#[derive(Clone)]` — `Calc` variants
+        // of `LengthPercentage`/`Length` are `Box`ed and clone deeply onto the
+        // global heap.
         self.clone()
     }
 }
@@ -582,57 +579,36 @@ impl Transform {
 /// A 2D matrix.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Matrix<T> {
-    pub a: T,
-    pub b: T,
-    pub c: T,
-    pub d: T,
-    pub e: T,
-    pub f: T,
-}
-
-impl<T: Clone> Matrix<T> {
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        self.clone()
-    }
-
-    pub fn eql(&self, rhs: &Self) -> bool
-    where
-        T: PartialEq,
-    {
-        self == rhs
-    }
+    pub(crate) a: T,
+    pub(crate) b: T,
+    pub(crate) c: T,
+    pub(crate) d: T,
+    pub(crate) e: T,
+    pub(crate) f: T,
 }
 
 /// A 3D matrix.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Matrix3d<T> {
-    pub m11: T,
-    pub m12: T,
-    pub m13: T,
-    pub m14: T,
-    pub m21: T,
-    pub m22: T,
-    pub m23: T,
-    pub m24: T,
-    pub m31: T,
-    pub m32: T,
-    pub m33: T,
-    pub m34: T,
-    pub m41: T,
-    pub m42: T,
-    pub m43: T,
-    pub m44: T,
-}
-
-impl<T: PartialEq> Matrix3d<T> {
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
+    pub(crate) m11: T,
+    pub(crate) m12: T,
+    pub(crate) m13: T,
+    pub(crate) m14: T,
+    pub(crate) m21: T,
+    pub(crate) m22: T,
+    pub(crate) m23: T,
+    pub(crate) m24: T,
+    pub(crate) m31: T,
+    pub(crate) m32: T,
+    pub(crate) m33: T,
+    pub(crate) m34: T,
+    pub(crate) m41: T,
+    pub(crate) m42: T,
+    pub(crate) m43: T,
+    pub(crate) m44: T,
 }
 
 /// A value for the [transform-style](https://drafts.csswg.org/css-transforms-2/#transform-style-property) property.
-// TODO(port): css.DefineEnumProperty reflection → crate-wide #[derive(EnumProperty)] providing
-// parse/to_css/eql/hash/deep_clone from kebab-case variant names.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum TransformStyle {
     #[css("flat")]
@@ -680,7 +656,7 @@ pub enum Perspective {
 }
 
 impl Perspective {
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         self.clone()
     }
 }
@@ -703,7 +679,7 @@ pub enum Translate {
 }
 
 impl Translate {
-    pub fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -726,7 +702,7 @@ impl Translate {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             Translate::None => dest.write_str("none")?,
             Translate::Xyz { x, y, z } => {
@@ -745,26 +721,11 @@ impl Translate {
     }
 }
 
-// PORT NOTE: split out of the parse/to_css `impl Translate` above — these
-// don't depend on Parser/Printer surface and are needed by `TransformHandler`.
+// Split out of the parse/to_css `impl Translate` above — these don't depend
+// on Parser/Printer surface and are needed by `TransformHandler`.
 impl Translate {
-    pub fn to_transform(&self, _bump: &Bump) -> Transform {
-        match self {
-            Translate::None => Transform::Translate3d {
-                x: LengthPercentage::zero(),
-                y: LengthPercentage::zero(),
-                z: Length::zero(),
-            },
-            Translate::Xyz { x, y, z } => Transform::Translate3d {
-                x: x.clone(),
-                y: y.clone(),
-                z: *z,
-            },
-        }
-    }
-
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone — arena-aware clone for LengthPercentage
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
+        // `LengthPercentage` is `Clone`-via-derive; a plain clone suffices.
         self.clone()
     }
 }
@@ -773,17 +734,17 @@ impl Translate {
 #[derive(Copy, Clone, PartialEq)]
 pub struct Rotate {
     /// Rotation around the x axis.
-    pub x: f32,
+    pub(crate) x: f32,
     /// Rotation around the y axis.
-    pub y: f32,
+    pub(crate) y: f32,
     /// Rotation around the z axis.
-    pub z: f32,
+    pub(crate) z: f32,
     /// The angle of rotation.
-    pub angle: Angle,
+    pub(crate) angle: Angle,
 }
 
 impl Rotate {
-    pub fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -842,7 +803,7 @@ impl Rotate {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if self.x == 0.0 && self.y == 0.0 && self.z == 1.0 && self.angle.is_zero() {
             dest.write_str("none")?;
             return Ok(());
@@ -865,20 +826,10 @@ impl Rotate {
     }
 }
 
-// PORT NOTE: split out of the parse/to_css `impl Rotate` above — needed by
+// Split out of the parse/to_css `impl Rotate` above — needed by
 // `TransformHandler`.
 impl Rotate {
-    /// Converts the rotation to a transform function.
-    pub fn to_transform(&self, _bump: &Bump) -> Transform {
-        Transform::Rotate3d {
-            x: self.x,
-            y: self.y,
-            z: self.z,
-            angle: self.angle,
-        }
-    }
-
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         *self
     }
 }
@@ -901,7 +852,7 @@ pub enum Scale {
 }
 
 impl Scale {
-    pub fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -929,7 +880,7 @@ impl Scale {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             Scale::None => dest.write_str("none")?,
             Scale::Xyz { x, y, z } => {
@@ -949,25 +900,10 @@ impl Scale {
     }
 }
 
-// PORT NOTE: split out of the parse/to_css `impl Scale` above — needed by
+// Split out of the parse/to_css `impl Scale` above — needed by
 // `TransformHandler`.
 impl Scale {
-    pub fn to_transform(&self, _bump: &Bump) -> Transform {
-        match self {
-            Scale::None => Transform::Scale3d {
-                x: NumberOrPercentage::Number(1.0),
-                y: NumberOrPercentage::Number(1.0),
-                z: NumberOrPercentage::Number(1.0),
-            },
-            Scale::Xyz { x, y, z } => Transform::Scale3d {
-                x: x.clone(),
-                y: y.clone(),
-                z: z.clone(),
-            },
-        }
-    }
-
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         self.clone()
     }
 }
@@ -981,38 +917,36 @@ crate::css_eql_partialeq!(
     Scale
 );
 
-// PORT NOTE: was `TransformHandler<'bump>` holding `TransformList<'bump>`; the
-// `Property` enum is lifetime-free (see TransformList above), so the handler
-// is too. Re-thread `'bump` crate-wide in a later pass.
+// Was `TransformHandler<'bump>` holding `TransformList<'bump>` in an earlier
+// port iteration; the `Property` enum is lifetime-free (see TransformList
+// above), so the handler is too. Re-threading `'bump` crate-wide is deferred
+// work (see /tmp/todo-fix/complex/mk04-repair.md).
 #[derive(Default)]
 pub struct TransformHandler {
-    pub transform: Option<(TransformList, VendorPrefix)>,
-    pub translate: Option<Translate>,
-    pub rotate: Option<Rotate>,
-    pub scale: Option<Scale>,
-    pub has_any: bool,
+    pub(crate) transform: Option<(TransformList, VendorPrefix)>,
+    pub(crate) translate: Option<Translate>,
+    pub(crate) rotate: Option<Rotate>,
+    pub(crate) scale: Option<Scale>,
+    pub(crate) has_any: bool,
 }
 
-// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext, so the
-// arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
+// `context.arena` does not exist on PropertyHandlerContext; the arena is
+// recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl TransformHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
         let bump = dest.bump();
-        // PORT NOTE: Zig used a local fn with `comptime field: []const u8` + `@field(self, field)`.
         // Rust cannot index struct fields by string at runtime; use a macro to paste the ident.
         macro_rules! individual_property {
             ($field:ident, $val:expr) => {{
-                if let Some(transform) = &mut self.transform {
-                    transform.0.v.push($val.to_transform(bump));
-                } else {
-                    self.$field = Some($val.deep_clone(bump));
-                    self.has_any = true;
-                }
+                // Individual transforms cascade independently of `transform`. Keep them
+                // separate so declaration order cannot change their composition or resets.
+                self.$field = Some($val.deep_clone(bump));
+                self.has_any = true;
             }};
         }
 
@@ -1023,8 +957,8 @@ impl TransformHandler {
 
                 // If two vendor prefixes for the same property have different
                 // values, we need to flush what we have immediately to preserve order.
-                // PORT NOTE: reshaped for borrowck — Zig held &self.transform across
-                // self.flush(); compute the predicate first, then act.
+                // Compute the predicate first, then act, so no borrow of
+                // self.transform is held across self.flush().
                 let needs_flush = if let Some(current) = &self.transform {
                     current.0 != *transform_val && !current.1.contains(vp)
                 } else {
@@ -1041,10 +975,6 @@ impl TransformHandler {
                     self.transform = Some((transform_val.deep_clone(bump), vp));
                     self.has_any = true;
                 }
-
-                self.translate = None;
-                self.rotate = None;
-                self.scale = None;
             }
             Property::Translate(val) => individual_property!(translate, val),
             Property::Rotate(val) => individual_property!(rotate, val),
@@ -1065,8 +995,7 @@ impl TransformHandler {
                             prefixes::Feature::Transform,
                         ))
                     } else {
-                        // PORT NOTE: Zig pushed `property.deepClone(arena)`; the
-                        // matched payload is `Unparsed`, so reconstruct directly.
+                        // The matched payload is `Unparsed`, so reconstruct directly.
                         Property::Unparsed(unparsed.deep_clone(bump))
                     };
                     dest.push(prop);
@@ -1080,7 +1009,11 @@ impl TransformHandler {
         true
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
     }
 
@@ -1114,5 +1047,3 @@ impl TransformHandler {
         }
     }
 }
-
-// ported from: src/css/properties/transform.zig

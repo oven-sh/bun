@@ -18,7 +18,7 @@ pub struct Composes {
     pub from: Option<Specifier>,
     /// The source location of the `composes` property.
     pub loc: bun_ast::Loc,
-    pub cssparser_loc: Location,
+    pub(crate) cssparser_loc: Location,
 }
 
 impl Composes {
@@ -78,8 +78,7 @@ impl Composes {
         Ok(name)
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
-        // PORT NOTE: Zig `css.implementDeepClone` is comptime field reflection.
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         // `CustomIdent` is `Copy` (arena-ptr payload), so an element-wise copy
         // into a fresh `SmallList` is the deep clone.
         let mut names = CustomIdentList::default();
@@ -95,7 +94,6 @@ impl Composes {
     }
 
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // PORT NOTE: Zig `css.implementEql` is comptime field reflection.
         if lhs.names.len() != rhs.names.len() {
             return false;
         }
@@ -128,8 +126,7 @@ pub enum Specifier {
 
 // `generics::CssEql` so the `Option<Specifier>` blanket (used by
 // `DashedIdentReference::eql` in values/ident.rs) resolves. Forwards to the
-// inherent `eql` below — same shape the old data-only stub in `values/mod.rs`
-// carried before this leaf un-gated.
+// inherent `eql` below.
 impl crate::generics::CssEql for Specifier {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
@@ -139,7 +136,6 @@ impl crate::generics::CssEql for Specifier {
 
 impl Specifier {
     pub fn eql(lhs: Self, rhs: Self) -> bool {
-        // PORT NOTE: Zig `css.implementEql` (variant-wise reflection) → hand-match.
         match (lhs, rhs) {
             (Specifier::Global, Specifier::Global) => true,
             (Specifier::ImportRecordIndex(a), Specifier::ImportRecordIndex(b)) => a == b,
@@ -148,6 +144,7 @@ impl Specifier {
     }
 
     pub fn parse(input: &mut Parser) -> css::Result<Specifier> {
+        input.skip_whitespace();
         let start_position = input.position();
         if let Ok(file) = input.try_parse(|i| {
             let s = i.expect_url_or_string()?;
@@ -156,8 +153,13 @@ impl Specifier {
             // (same trick as `css_parser::src_str` — Token payloads are arena-static).
             Ok::<&'static [u8], _>(unsafe { &*std::ptr::from_ref::<[u8]>(s) })
         }) {
-            let import_record_index =
-                input.add_import_record(file, start_position, bun_ast::ImportKind::Composes)?;
+            let end_position = input.position();
+            let import_record_index = input.add_import_record(
+                file,
+                start_position,
+                end_position,
+                bun_ast::ImportKind::Composes,
+            )?;
             return Ok(Specifier::ImportRecordIndex(import_record_index));
         }
         input.expect_ident_matching(b"global")?;
@@ -178,13 +180,12 @@ impl Specifier {
         }
     }
 
-    pub fn deep_clone(self, _bump: &Arena) -> Self {
-        // PORT NOTE: Zig `css.implementDeepClone` — variants are `Copy`.
+    pub(crate) fn deep_clone(self, _bump: &Arena) -> Self {
+        // Variants are `Copy`; the deep clone is the value itself.
         self
     }
 
-    pub fn hash(self, hasher: &mut Wyhash) {
-        // PORT NOTE: Zig `css.implementHash` (variant-wise reflection) → hand-match.
+    pub(crate) fn hash(self, hasher: &mut Wyhash) {
         match self {
             Specifier::Global => hasher.update(&0u32.to_ne_bytes()),
             Specifier::ImportRecordIndex(i) => {
@@ -194,5 +195,3 @@ impl Specifier {
         }
     }
 }
-
-// ported from: src/css/properties/css_modules.zig

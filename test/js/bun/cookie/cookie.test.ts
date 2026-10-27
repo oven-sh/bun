@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Bun.Cookie validation tests", () => {
   describe("expires validation", () => {
@@ -99,6 +100,30 @@ describe("Bun.Cookie validation tests", () => {
   });
 });
 
+describe("Expires serialization", () => {
+  // RFC 6265 expects an IMF-fixdate: "Wdy, DD Mon YYYY HH:MM:SS GMT".
+  // Date.prototype.toUTCString() produces exactly that, so the two must agree.
+  test("Expires is an IMF-fixdate matching Date.toUTCString() for every weekday", () => {
+    // 7 consecutive UTC days covers every weekday; the 9th keeps the day zero-padded.
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(Date.UTC(2031, 5, 9 + i, 4, 5, 6));
+      const cookie = new Bun.Cookie("a", "b", { expires: date });
+      expect(cookie.toString()).toBe(`a=b; Path=/; Expires=${date.toUTCString()}; SameSite=Lax`);
+    }
+  });
+
+  test("Expires=0 serializes the epoch, not the day after", () => {
+    const cookie = new Bun.Cookie("a", "b", { expires: new Date(0) });
+    expect(cookie.toString()).toBe("a=b; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax");
+  });
+
+  test("CookieMap.delete emits an IMF-fixdate epoch", () => {
+    const map = new Bun.CookieMap();
+    map.delete("gone");
+    expect(map.toSetCookieHeaders()).toEqual(["gone=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax"]);
+  });
+});
+
 console.log("describe Bun.serve() cookies");
 describe("Bun.serve() cookies", () => {
   const server = Bun.serve({
@@ -106,7 +131,7 @@ describe("Bun.serve() cookies", () => {
     routes: {
       "/tester": {
         POST: async req => {
-          const body: [string, string | null, { domain?: string; path?: string } | undefined][] = await req.json();
+          const body = (await req.json()) as [string, string | null, { domain?: string; path?: string } | undefined][];
           for (const [key, value, options] of body) {
             if (value == null) {
               req.cookies.delete({
@@ -181,7 +206,7 @@ describe("Bun.serve() cookies", () => {
     expect(body).toMatchInlineSnapshot(`{}`);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "test=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "test=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
       ]
     `);
   });
@@ -238,7 +263,7 @@ describe("Bun.serve() cookies", () => {
     map.set("do_modify", "FIVE");
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "do_delete=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "do_delete=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
         "do_modify=FIVE; Path=/; SameSite=Lax",
       ]
     `);
@@ -352,10 +377,10 @@ test("delete cookie path option", () => {
   map.delete("d", { path: "/" });
   expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
     [
-      "a=; Path=/b; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
-      "b=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
-      "c=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
-      "d=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "a=; Path=/b; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+      "b=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+      "c=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+      "d=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
     ]
   `);
 });
@@ -412,4 +437,82 @@ describe("Bun.CookieMap constructor", () => {
     expect(map.get("cookiekey")).toBe("%E8%AF%BB%E5%86%99%E6%B1%89%E5%AD%97%E5%AD%A6%E4%B8%AD%E6%96%87");
     expect(map2.get("cookiekey")).toBe("%E8%AF%BB%E5%86%99%E6%B1%89%E5%AD%97%E5%AD%A6%E4%B8%AD%E6%96%87");
   });
+});
+
+describe("cookie name parsing from Cookie header", () => {
+  test("does not percent-decode cookie names when parsing a Cookie header string", () => {
+    // A cookie literally named "__%48ost-session" must not alias "__Host-session":
+    // browsers enforce __Host-/__Secure- prefix rules on the literal, un-decoded name,
+    // so decoding the name would let an unprotected cookie shadow a protected one.
+    const map = new Bun.CookieMap("__%48ost-session=attacker; __Host-session=legit");
+    expect(map.get("__Host-session")).toBe("legit");
+    expect(map.get("__%48ost-session")).toBe("attacker");
+
+    // A lone encoded name must not surface under the decoded name at all.
+    const only = new Bun.CookieMap("__%48ost-session=attacker");
+    expect(only.get("__Host-session")).toBeNull();
+    expect(only.get("__%48ost-session")).toBe("attacker");
+
+    // Values are still percent-decoded.
+    expect(new Bun.CookieMap("plain=%E8%AF%BB").get("plain")).toBe("读");
+  });
+
+  test("request cookie lookup matches names literally", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/": req =>
+          Response.json({
+            host: req.cookies.get("__Host-session"),
+            raw: req.cookies.get("__%48ost-session"),
+          }),
+      },
+    });
+    const res = await fetch(server.url, {
+      headers: { "Cookie": "__%48ost-session=attacker" },
+    });
+    expect(await res.json()).toEqual({ host: null, raw: "attacker" });
+    expect(res.status).toBe(200);
+  });
+});
+
+test("throws when a cookie is too long to serialize, and Bun.serve responds without it", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // Each quote becomes %22.
+        const cookie = new Bun.Cookie("a", '"'.repeat(32 * 1024));
+        const map = new Bun.CookieMap();
+        map.set(cookie);
+        for (const serialize of [() => cookie.toString(), () => map.toSetCookieHeaders()]) {
+          try {
+            console.log("length", serialize().length);
+          } catch (e) {
+            console.log(e.name, e.message);
+          }
+        }
+        using server = Bun.serve({
+          port: 0,
+          development: false,
+          routes: {
+            "/": req => {
+              req.cookies.set(cookie);
+              return new Response("hello");
+            },
+          },
+        });
+        const res = await fetch(server.url);
+        console.log(res.status, res.headers.get("set-cookie"), await res.text());
+      `,
+    ],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("RangeError Out of memory\nRangeError Out of memory\n200 null hello\n");
+  expect(stderr).toContain("RangeError: Out of memory");
+  expect(exitCode).toBe(0);
 });

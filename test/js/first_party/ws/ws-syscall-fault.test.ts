@@ -1,0 +1,110 @@
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows } from "harness";
+import type { AddressInfo } from "node:net";
+import { WebSocketServer } from "ws";
+
+const skip = !fault.available() || isWindows;
+
+// Bun's 'ws' module runs on the native WebSocket client and server sockets.
+// These tests check its events ('message', 'error', 'close') under transport
+// faults. One subprocess per test, because fault rules are process-global.
+
+async function runWsFixture(body: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", body],
+    env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { ...JSON.parse(stdout.trim() || "{}"), stderr, exitCode, signal: proc.signalCode };
+}
+
+describe.concurrent.skipIf(skip)("ws (thirdparty) under injected syscall faults", () => {
+  test("recv → short reads (1 byte) deliver complete echoed message", async () => {
+    const r = await runWsFixture(/* js */ `
+      const { WebSocketServer, WebSocket } = require("ws");
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+      wss.on("connection", ws => ws.on("message", m => ws.send(m)));
+      wss.on("listening", () => {
+        fault.set({ syscall: "recv", action: "short", bytes: 1, repeat: -1 });
+        const c = new WebSocket("ws://127.0.0.1:" + wss.address().port);
+        c.on("open", () => c.send("hello-ws"));
+        c.on("message", m => {
+          console.log(JSON.stringify({ ok: true, data: m.toString() }));
+          c.close();
+        });
+        c.on("close", () => { fault.clear(); wss.close(() => process.exit(0)); });
+        c.on("error", () => console.log(JSON.stringify({ ok: false })));
+      });
+    `);
+    expect(r).toMatchObject({ ok: true, data: "hello-ws", stderr: "", signal: null, exitCode: 0 });
+  });
+
+  test("send → short writes (1 byte) deliver complete message and ping/pong round-trips", async () => {
+    const r = await runWsFixture(/* js */ `
+      const { WebSocketServer, WebSocket } = require("ws");
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+      wss.on("connection", ws => {
+        ws.on("message", m => ws.send(m));
+        ws.on("ping", () => {});
+      });
+      wss.on("listening", () => {
+        fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+        const c = new WebSocket("ws://127.0.0.1:" + wss.address().port);
+        // Report only once BOTH the echo and the pong have arrived: 'pong' is
+        // a separate event with no ordering guarantee relative to 'message'.
+        let pong = false, echoed = null;
+        const report = () => {
+          if (!pong || !echoed) return;
+          console.log(JSON.stringify({ ok: true, len: echoed.length, intact: echoed.every(b => b === 0x77), pong }));
+          c.close();
+        };
+        c.on("open", () => { c.ping(); c.send(Buffer.alloc(1024, 0x77)); });
+        c.on("pong", () => { pong = true; report(); });
+        c.on("message", m => { echoed = m; report(); });
+        c.on("close", () => { fault.clear(); wss.close(() => process.exit(0)); });
+        c.on("error", () => console.log(JSON.stringify({ ok: false })));
+      });
+    `);
+    expect(r).toMatchObject({ ok: true, len: 1024, intact: true, pong: true, stderr: "", signal: null, exitCode: 0 });
+  });
+
+  test("recv → ECONNRESET fires 'error' then 'close' with abnormal code (split-process)", async () => {
+    // Server runs in this process (no fault); client runs in a subprocess so
+    // the process-global recv rule only affects the client side.
+    const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    wss.on("connection", ws => {
+      ws.on("error", () => {});
+      ws.send("x");
+    });
+    await new Promise<void>(r => wss.on("listening", () => r()));
+    const port = (wss.address() as AddressInfo).port;
+    try {
+      const r = await runWsFixture(/* js */ `
+        const { WebSocket } = require("ws");
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        // Arm before connecting so the upgrade-response recv fails — that
+        // exercises the same close(1006) path without depending on the
+        // server to send a frame after 'open' (which races the arm).
+        fault.set({ syscall: "recv", action: "errno", errno: "ECONNRESET", repeat: -1 });
+        const c = new WebSocket("ws://127.0.0.1:${port}");
+        const events = [];
+        c.on("open", () => events.push("open"));
+        c.on("error", () => events.push("error"));
+        c.on("close", code => {
+          events.push("close");
+          console.log(JSON.stringify({ events, code }));
+          fault.clear();
+          process.exit(0);
+        });
+      `);
+      expect(r).toMatchObject({ events: ["error", "close"], code: 1006, stderr: "", signal: null, exitCode: 0 });
+    } finally {
+      await new Promise<void>(r => wss.close(() => r()));
+    }
+  });
+});

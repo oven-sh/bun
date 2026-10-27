@@ -1,22 +1,23 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
+use crate::generated_bindgen::markdown_object::{
+    AnsiTheme, Autolinks, ComponentOverrides, Headings, MarkdownOptions, ReactOptions,
+    RenderCallbacks,
+};
 use bun_core::StackCheck;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
-// PORT NOTE: Zig's `bun.md` is `src/md/root.zig`; the Rust crate's lib.rs is a
+use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
+use bun_jsc::bun_string_jsc;
+use bun_jsc::{
+    JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer, RangeErrorOptions,
+    StringJsc as _,
+};
+// Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
 use crate::node::StringOrBuffer;
-use bun_md::parser::ParserError;
+use bun_md::parser::{MAX_INPUT_LEN, ParserError};
 use bun_md::root as md;
 
-// `bun_core::String::create_utf8_for_js` lives in `bun_jsc::bun_string_jsc`
-// (tier-6), not on `bun_core::String` itself.
-#[inline]
-fn create_utf8_for_js(global: &JSGlobalObject, utf8: &[u8]) -> JsResult<JSValue> {
-    bun_jsc::bun_string_jsc::create_utf8_for_js(global, utf8)
-}
-
-/// `JSValue.push` (JSValue.zig:404).
 #[inline]
 fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResult<()> {
     arr.push(global, item)
@@ -27,222 +28,202 @@ fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResu
 #[inline]
 fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
     match e {
-        bun_jsc::JsError::Thrown => ParserError::JSError,
+        bun_jsc::JsError::Thrown | bun_jsc::JsError::Terminated => ParserError::JSError,
         bun_jsc::JsError::OutOfMemory => ParserError::OutOfMemory,
-        bun_jsc::JsError::Terminated => ParserError::JSTerminated,
     }
 }
 
-pub fn create(global_this: &JSGlobalObject) -> JSValue {
-    bun_jsc::create_host_function_object(
-        global_this,
-        &[
-            ("html", __jsc_host_render_to_html, 1),
-            ("ansi", __jsc_host_render_to_ansi, 2),
-            ("render", __jsc_host_render, 3),
-            ("react", __jsc_host_render_react, 3),
-        ],
-    )
+/// Throw the JS exception for a `ParserError` returned by `bun_md`.
+/// `input_len` is the byte length of the rendered input, reported back by the
+/// `InputTooLarge` range error.
+#[cold]
+fn parser_err_to_js(
+    global_this: &JSGlobalObject,
+    err: ParserError,
+    input_len: usize,
+) -> bun_jsc::JsError {
+    match err {
+        // A renderer callback threw (or the VM is terminating); the exception
+        // is already pending on the VM.
+        ParserError::JSError => bun_jsc::JsError::Thrown,
+        ParserError::OutOfMemory => global_this.throw_out_of_memory(),
+        ParserError::StackOverflow => global_this.throw_stack_overflow(),
+        ParserError::InputTooLarge => global_this.throw_range_error(
+            input_len as i64,
+            RangeErrorOptions {
+                max: MAX_INPUT_LEN as i64,
+                field_name: b"input.byteLength",
+                ..Default::default()
+            },
+        ),
+        // The document, not the input length, overflowed the parser's u32
+        // block offsets, so an `input.byteLength` bound would be misleading.
+        ParserError::TooManyBlocks => global_this
+            .err(
+                bun_jsc::ErrCode::OUT_OF_RANGE,
+                format_args!(
+                    "markdown input requires more block metadata than the parser can address (4 GiB)"
+                ),
+            )
+            .throw(),
+    }
+}
+
+/// `md::Options` of an `Option<&MarkdownOptions>` or an `Option<&ReactOptions>`, which have these members in common.
+macro_rules! parser_options {
+    ($given:expr) => {
+        parser_options!(
+            $given;
+            tables,
+            strikethrough,
+            tasklists,
+            hard_soft_breaks,
+            wiki_links,
+            underline,
+            latex_math,
+            collapse_whitespace,
+            permissive_atx_headers,
+            no_indented_code_blocks,
+            no_html_blocks,
+            no_html_spans,
+            tag_filter
+        )
+    };
+    ($given:expr; $($flag:ident),*) => {{
+        let mut options = md::Options::default();
+        if let Some(given) = $given {
+            match &given.autolinks {
+                Some(Autolinks::All(all)) => options.permissive_autolinks |= *all,
+                Some(Autolinks::Each(each)) => {
+                    if let Some(url) = each.url {
+                        options.permissive_url_autolinks = url;
+                    }
+                    if let Some(www) = each.www {
+                        options.permissive_www_autolinks = www;
+                    }
+                    if let Some(email) = each.email {
+                        options.permissive_email_autolinks = email;
+                    }
+                }
+                None => {}
+            }
+            match &given.headings {
+                Some(Headings::All(all)) => {
+                    options.heading_ids |= *all;
+                    options.autolink_headings |= *all;
+                }
+                Some(Headings::Each(each)) => {
+                    if let Some(ids) = each.ids {
+                        options.heading_ids = ids;
+                    }
+                    if let Some(autolink) = each.autolink {
+                        options.autolink_headings = autolink;
+                    }
+                }
+                None => {}
+            }
+            $(
+                if let Some(value) = given.$flag {
+                    options.$flag = value;
+                }
+            )*
+        }
+        options
+    }};
+}
+
+/// Pins a buffer input for the render, which can re-enter JS; `None` for a string.
+fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<PinnedArrayBuffer>> {
+    let StringOrBuffer::Buffer(buffer) = input else {
+        return Ok(None);
+    };
+    match PinnedArrayBuffer::pin(global, buffer.buffer.value) {
+        Some(pinned) => Ok(Some(pinned)),
+        None => Err(global.throw_out_of_memory()),
+    }
+}
+
+/// `bun:internal-for-testing`'s `setMaxMarkdownBlockBytesForTesting(limit)`:
+/// shrink the parser's block-metadata cap so its `TooManyBlocks` error is
+/// testable without 4 GiB of input. Returns the previous limit.
+pub(crate) fn set_max_markdown_block_bytes_for_testing(limit: f64) -> usize {
+    bun_md::parser::set_max_block_bytes_for_testing(limit as usize)
 }
 
 /// `Bun.markdown.ansi(text, theme?)` — render markdown to an ANSI-colored
-/// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
-/// light?, columns? }`. By default colors are enabled, hyperlinks are
+/// terminal string. By default colors are enabled, hyperlinks are
 /// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
-#[bun_jsc::host_fn]
-pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let [input_value, theme_value] = callframe.arguments_as_array::<2>();
-
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    }
-
-    // PERF(port): was arena bulk-free — profile if hot
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    };
-
-    let input = buffer.slice();
-
-    let mut theme = md::AnsiTheme {
-        colors: true,
-        hyperlinks: false,
-        kitty_graphics: false,
-        light: md::detect_light_background(),
-        columns: 80,
+pub(crate) fn ansi<'a>(
+    cx: &mut JsScope<'a>,
+    input: JsBytes<'a>,
+    theme: &AnsiTheme,
+) -> JsResult<Box<[u8]>> {
+    let theme = md::AnsiTheme {
+        colors: theme.colors.unwrap_or(true),
+        hyperlinks: theme.hyperlinks.unwrap_or(false),
+        kitty_graphics: theme.kitty_graphics.unwrap_or(false),
+        light: theme.light.unwrap_or_else(md::detect_light_background),
+        columns: theme.columns.map_or(80, |columns| columns as u16),
         remote_image_paths: None,
         image_base_dir: None,
     };
-    if theme_value.is_object() {
-        if let Some(v) = theme_value.get_boolean_loose(global_this, "colors")? {
-            theme.colors = v;
-        }
-        if let Some(v) = theme_value.get_boolean_loose(global_this, "hyperlinks")? {
-            theme.hyperlinks = v;
-        }
-        if let Some(v) = theme_value.get_boolean_loose(global_this, "kittyGraphics")? {
-            theme.kitty_graphics = v;
-        }
-        if let Some(v) = theme_value.get_boolean_loose(global_this, "light")? {
-            theme.light = v;
-        }
-        if let Some(cols) = theme_value.get(global_this, "columns")? {
-            if cols.is_number() {
-                let n = cols.to_int32();
-                theme.columns = if n <= 0 {
-                    0
-                } else {
-                    u16::try_from(n.min(u16::MAX as i32)).expect("int cast")
-                };
-            }
-        }
-    }
 
-    let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
-        Ok(Some(r)) => r,
+    let input = input.get(&cx.heap);
+    let input_len = input.len();
+    match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
+        Ok(Some(r)) => Ok(r),
         Ok(None) => {
-            // The parser can only return null via JSError / JSTerminated
+            // The parser can only return null via JSError
             // from a renderer callback; the ANSI renderer has none, so this
             // path is unreachable but handle it safely.
-            return Err(global_this.throw_out_of_memory());
+            Err(cx.global().throw_out_of_memory())
         }
-        Err(ParserError::OutOfMemory) => return Err(global_this.throw_out_of_memory()),
-        Err(ParserError::StackOverflow) => return Err(global_this.throw_stack_overflow()),
-        Err(_) => return Err(global_this.throw_out_of_memory()),
-    };
-
-    create_utf8_for_js(global_this, &result)
-}
-
-#[bun_jsc::host_fn]
-pub fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let [input_value, opts_value] = callframe.arguments_as_array::<2>();
-
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+        Err(err) => Err(parser_err_to_js(cx.global(), err, input_len)),
     }
-
-    // PERF(port): was arena bulk-free — profile if hot
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    };
-
-    let input = buffer.slice();
-
-    let options = parse_options(global_this, opts_value)?;
-
-    let result = match md::render_to_html_with_options(input, options) {
-        Ok(r) => r,
-        Err(_) => return Err(global_this.throw_out_of_memory()),
-    };
-
-    create_utf8_for_js(global_this, &result)
 }
 
-fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<md::Options> {
-    let mut options = md::Options::default();
-    if opts_value.is_object() {
-        // Handle compound autolinks: true | { url, www, email }
-        if let Some(autolinks_val) = opts_value.get(global_this, "autolinks")? {
-            if autolinks_val.is_boolean() {
-                if autolinks_val.to_boolean() {
-                    options.permissive_autolinks = true;
-                }
-            } else if autolinks_val.is_object() {
-                if let Some(v) = autolinks_val.get_boolean_loose(global_this, "url")? {
-                    options.permissive_url_autolinks = v;
-                }
-                if let Some(v) = autolinks_val.get_boolean_loose(global_this, "www")? {
-                    options.permissive_www_autolinks = v;
-                }
-                if let Some(v) = autolinks_val.get_boolean_loose(global_this, "email")? {
-                    options.permissive_email_autolinks = v;
-                }
-            }
-        }
-
-        // Handle compound headings: true | { ids, autolink }
-        if let Some(headings_val) = opts_value.get(global_this, "headings")? {
-            if headings_val.is_boolean() {
-                if headings_val.to_boolean() {
-                    options.heading_ids = true;
-                    options.autolink_headings = true;
-                }
-            } else if headings_val.is_object() {
-                if let Some(v) = headings_val.get_boolean_loose(global_this, "ids")? {
-                    options.heading_ids = v;
-                }
-                if let Some(v) = headings_val.get_boolean_loose(global_this, "autolink")? {
-                    options.autolink_headings = v;
-                }
-            }
-        }
-
-        // Handle remaining boolean options (autolinks/headings are only settable via compound options above)
-        // TODO(port): comptime reflection over md::Options bool fields — Zig used
-        // `inline for (@typeInfo(md.Options).@"struct".fields)` to iterate every bool
-        // field (excluding the six handled above), checking both camelCase and
-        // snake_case keys. This list could be generated from md::Options
-        // (proc-macro or hand-maintained const slice in bun_md).
-        for (snake, camel, set) in md::Options::BOOL_FIELD_SETTERS {
-            // skip the compound-only fields
-            if matches!(
-                *snake,
-                "permissive_autolinks"
-                    | "permissive_url_autolinks"
-                    | "permissive_www_autolinks"
-                    | "permissive_email_autolinks"
-                    | "heading_ids"
-                    | "autolink_headings"
-            ) {
-                continue;
-            }
-            if let Some(val) = opts_value.get_boolean_loose(global_this, camel)? {
-                set(&mut options, val);
-            } else if *camel != *snake {
-                if let Some(val) = opts_value.get_boolean_loose(global_this, snake)? {
-                    set(&mut options, val);
-                }
-            }
-        }
-    }
-    Ok(options)
+pub(crate) fn html<'a>(
+    cx: &mut JsScope<'a>,
+    input: JsBytes<'a>,
+    options: Option<&MarkdownOptions>,
+) -> JsResult<Box<[u8]>> {
+    let input = input.get(&cx.heap);
+    let input_len = input.len();
+    md::render_to_html_with_options(input, parser_options!(options))
+        .map_err(|err| parser_err_to_js(cx.global(), err, input_len))
 }
-
-// TODO(port): `camelCaseOf` was a comptime fn producing `&'static [u8]` from a
-// snake_case literal. In Rust this should be `const_format::map_ascii_case!` or
-// a `macro_rules!` mapper. The only caller is the reflection loop above, which
-// is itself TODO'd to use a precomputed table that already carries the camelCase
-// form, so this helper is intentionally omitted.
 
 /// `Bun.markdown.render(text, callbacks, options?)` — render markdown with custom callbacks.
 ///
 /// Each callback receives the accumulated children as a string plus an optional
 /// metadata object, and returns a string. The final result is the concatenation
 /// of all callback outputs.
-#[bun_jsc::host_fn]
-pub fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let [input_value, callbacks_value, opts_value] = callframe.arguments_as_array::<3>();
+pub(crate) fn render<'a>(
+    cx: &mut JsScope<'a>,
+    input: JsLocal<'a>,
+    callbacks: Option<&RenderCallbacks<'a>>,
+    options: Option<&MarkdownOptions>,
+) -> JsResult<Vec<u8>> {
+    let global_this = cx.global();
+    let input_value = input.to_js();
 
     if input_value.is_empty_or_undefined_or_null() {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    // PERF(port): was arena bulk-free — profile if hot
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
+    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let input = buffer.slice();
+    let pinned = pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
+    };
 
-    // Parse parser options from 3rd argument
-    let options = parse_options(global_this, opts_value)?;
+    let options = parser_options!(options);
 
     // Create JS callback renderer
     let mut js_renderer = match JsCallbackRenderer::init(global_this, input, options.heading_ids) {
@@ -250,39 +231,50 @@ pub fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
-    // Extract callbacks from 2nd argument
-    js_renderer.extract_callbacks(if callbacks_value.is_object() {
-        callbacks_value
-    } else {
-        JSValue::UNDEFINED
-    })?;
+    if let Some(callbacks) = callbacks {
+        js_renderer.extract_callbacks(callbacks);
+    }
 
     // Run parser with the JS callback renderer
     if let Err(err) = md::render_with_renderer(input, options, js_renderer.renderer()) {
-        return match err {
-            ParserError::JSError => Err(bun_jsc::JsError::Thrown),
-            ParserError::JSTerminated => Err(bun_jsc::JsError::Terminated),
-            ParserError::OutOfMemory => Err(global_this.throw_out_of_memory()),
-            ParserError::StackOverflow => Err(global_this.throw_stack_overflow()),
-        };
+        return Err(parser_err_to_js(global_this, err, input.len()));
     }
 
-    // Return accumulated result
-    let result = js_renderer.get_result();
-    create_utf8_for_js(global_this, result)
+    Ok(js_renderer.into_result())
 }
 
 /// `Bun.markdown.react(text, components?, options?)` — returns a React Fragment element
 /// containing the parsed markdown as children.
-// TODO(port): Zig used `jsc.MarkedArgumentBuffer.wrap(renderReactImpl)` to generate
-// the host-fn shim that allocates a MarkedArgumentBuffer. Here we hand-roll the
-// equivalent until bun_jsc provides a `#[marked_args]` attribute.
-#[bun_jsc::host_fn]
-pub fn render_react(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    MarkedArgumentBuffer::new(|marked_args| render_react_impl(global_this, callframe, marked_args))
+// The closure scopes a MarkedArgumentBuffer around the impl so every JSValue it
+// accumulates stays GC-visible for the duration of the call.
+pub(crate) fn react<'a>(
+    cx: &mut JsScope<'a>,
+    input: JsLocal<'a>,
+    components: Option<&ComponentOverrides<'a>>,
+    options: Option<&ReactOptions>,
+) -> JsResult<JSValue> {
+    let global_this = cx.global();
+    let react_version: u8 = match options.and_then(|options| options.react_version) {
+        // react.element (React 18 and older)
+        Some(version) if version as i32 <= 18 => 0,
+        // react.transitional.element (React 19+)
+        _ => 1,
+    };
+    MarkedArgumentBuffer::new(|marked_args| {
+        let children = render_ast(
+            global_this,
+            input.to_js(),
+            components,
+            parser_options!(options),
+            marked_args,
+            Some(react_version),
+        )?;
+        let fragment = JSReactElement__createFragment(global_this, react_version, children);
+        marked_args.append(fragment);
+        Ok(fragment)
+    })
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn JSReactElement__createFragment(
         global_object: &JSGlobalObject,
@@ -291,55 +283,29 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-fn render_react_impl(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-    marked_args: &mut MarkedArgumentBuffer,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments_as_array::<3>();
-    let opts_value = args[2]; // options are the 3rd argument
-
-    let mut react_version: u8 = 1; // default: react.transitional.element (React 19+)
-    if opts_value.is_object() {
-        if let Some(rv) = opts_value.get(global_this, "reactVersion")? {
-            if rv.is_number() {
-                let num = rv.to_int32();
-                if num <= 18 {
-                    react_version = 0; // react.element (React 18 and older)
-                }
-            }
-        }
-    }
-
-    let children = render_ast(global_this, callframe, marked_args, Some(react_version))?;
-    let fragment = JSReactElement__createFragment(global_this, react_version, children);
-    marked_args.append(fragment);
-    Ok(fragment)
-}
-
 fn render_ast(
     global_this: &JSGlobalObject,
-    callframe: &CallFrame,
+    input_value: JSValue,
+    components: Option<&ComponentOverrides<'_>>,
+    options: md::Options,
     marked_args: &mut MarkedArgumentBuffer,
     react_version: Option<u8>,
 ) -> JsResult<JSValue> {
-    let [input_value, components_value, opts_value] = callframe.arguments_as_array::<3>();
-
     if input_value.is_empty_or_undefined_or_null() {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    // PERF(port): was arena bulk-free — profile if hot
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
+    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let input = buffer.slice();
-
-    // Parse parser options from 3rd argument
-    let options = parse_options(global_this, opts_value)?;
+    let pinned = pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
+    };
 
     let mut renderer = match ParseRenderer::init(
         global_this,
@@ -352,20 +318,12 @@ fn render_ast(
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
-    // Extract component overrides from 2nd argument
-    renderer.extract_components(if components_value.is_object() {
-        components_value
-    } else {
-        JSValue::UNDEFINED
-    })?;
+    if let Some(components) = components {
+        renderer.extract_components(components);
+    }
 
     if let Err(err) = md::render_with_renderer(input, options, renderer.renderer()) {
-        return match err {
-            ParserError::JSError => Err(bun_jsc::JsError::Thrown),
-            ParserError::JSTerminated => Err(bun_jsc::JsError::Terminated),
-            ParserError::OutOfMemory => Err(global_this.throw_out_of_memory()),
-            ParserError::StackOverflow => Err(global_this.throw_stack_overflow()),
-        };
+        return Err(parser_err_to_js(global_this, err, input.len()));
     }
 
     Ok(renderer.get_result())
@@ -385,7 +343,7 @@ fn render_ast(
 struct ParseRenderer<'a> {
     global_object: &'a JSGlobalObject,
     marked_args: &'a mut MarkedArgumentBuffer,
-    // PORT NOTE: JSValue in Vec is safe here — every entry.children is also appended to self.marked_args (GC root).
+    // Note: JSValue in Vec is safe here — every entry.children is also appended to self.marked_args (GC root).
     stack: Vec<ParseStackEntry>,
     stack_check: StackCheck,
     src_text: &'a [u8],
@@ -394,7 +352,6 @@ struct ParseRenderer<'a> {
     react_version: Option<u8>,
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn JSReactElement__create(
         global_object: &JSGlobalObject,
@@ -438,17 +395,16 @@ struct Components {
     u: JSValue,
     br: JSValue,
 }
-// PORT NOTE: `Default` for JSValue must be `JSValue::ZERO` (encoded 0), matching Zig's `.zero` initializers.
+// Note: `Default` for JSValue must be `JSValue::ZERO` (encoded 0).
 
 struct ParseStackEntry {
     children: JSValue,
     data: u32,
     flags: u32,
-    // PORT NOTE: `SpanDetail` borrows from `src_text`; the `RendererImpl`
-    // trait erases that lifetime, so we extend it to `'static` at the
-    // `enter_span` boundary (see SAFETY note there). Entries are popped
-    // and consumed strictly before `src_text` is dropped.
-    detail: md::SpanDetail<'static>,
+    // Owned copies of the span detail: reference-style links hand us
+    // slices into temporaries that drop before `leave_span` runs.
+    href: Box<[u8]>,
+    title: Box<[u8]>,
 }
 
 impl Default for ParseStackEntry {
@@ -457,15 +413,15 @@ impl Default for ParseStackEntry {
             children: JSValue::ZERO,
             data: 0,
             flags: 0,
-            detail: md::SpanDetail::default(),
+            href: Box::default(),
+            title: Box::default(),
         }
     }
 }
 
-// PORT NOTE: Zig used a hand-rolled `*anyopaque + VTable`; the Rust `bun_md`
-// `Renderer` is `&mut dyn RendererImpl`, so the trait already gives us
-// `&mut self` — the `*_impl` bodies below are plain methods, no pointer
-// round-trip needed.
+// Note: the `bun_md` `Renderer` is `&mut dyn RendererImpl`, so the trait
+// already gives us `&mut self` — the `*_impl` bodies below are plain methods,
+// no pointer round-trip needed.
 impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
     fn enter_block(
         &mut self,
@@ -525,18 +481,14 @@ impl<'a> ParseRenderer<'a> {
         Ok(self_)
     }
 
-    // PORT NOTE: deinit() dropped — Vec<ParseStackEntry> and HeadingIdTracker free via Drop.
+    // Note: deinit() dropped — Vec<ParseStackEntry> and HeadingIdTracker free via Drop.
 
-    /// Extract component overrides from options. Any non-boolean truthy value
-    /// (function, class, string, etc.) keyed by an HTML tag name is stored
+    /// Any non-boolean value (function, class, string, etc.) keyed by an HTML tag name is stored
     /// and used as the `type` field instead of the default string tag name.
-    fn extract_components(&mut self, opts: JSValue) -> JsResult<()> {
-        if opts.is_undefined_or_null() || !opts.is_object() {
-            return Ok(());
-        }
+    fn extract_components(&mut self, components: &ComponentOverrides<'_>) {
         macro_rules! extract {
             ($($name:ident),* $(,)?) => {$(
-                if let Some(val) = opts.get_truthy(self.global_object, stringify!($name))? {
+                if let Some(val) = components.$name.map(JsLocal::to_js) {
                     if !val.is_boolean() {
                         self.components.$name = val;
                         self.marked_args.append(val);
@@ -548,7 +500,6 @@ impl<'a> ParseRenderer<'a> {
             h1, h2, h3, h4, h5, h6, p, blockquote, ul, ol, li, pre, hr, html, table, thead, tbody,
             tr, th, td, em, strong, a, img, code, del, math, u, br,
         );
-        Ok(())
     }
 
     fn get_block_component(&self, block_type: md::BlockType, data: u32) -> JSValue {
@@ -671,9 +622,8 @@ impl<'a> ParseRenderer<'a> {
         let tag_index = get_block_type_tag(block_type, entry.data);
 
         // For headings, compute slug before counting props
-        // PORT NOTE: own the slug bytes — leave_heading() borrows the tracker mutably,
-        // and we need self again below for get_block_component(). Mirrors the Zig
-        // path which allocator-allocated the slug.
+        // Note: own the slug bytes — leave_heading() borrows the tracker mutably,
+        // and we need self again below for get_block_component().
         let slug: Option<Vec<u8>> = if block_type == md::BlockType::H {
             self.heading_tracker.leave_heading().map(|s| s.to_vec())
         } else {
@@ -731,7 +681,7 @@ impl<'a> ParseRenderer<'a> {
         match block_type {
             md::BlockType::H => {
                 if let Some(s) = slug {
-                    props.put(g, b"id", create_utf8_for_js(g, &s)?);
+                    props.put(g, b"id", bun_string_jsc::create_utf8_for_js(g, &s)?);
                 }
             }
             md::BlockType::Ol => {
@@ -751,14 +701,14 @@ impl<'a> ParseRenderer<'a> {
                 if entry.flags & md::BLOCK_FENCED_CODE != 0 {
                     let lang = extract_language(self.src_text, entry.data);
                     if !lang.is_empty() {
-                        props.put(g, b"language", create_utf8_for_js(g, lang)?);
+                        props.put(g, b"language", bun_string_jsc::create_utf8_for_js(g, lang)?);
                     }
                 }
             }
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(entry.data);
                 if let Some(align_str) = md::types::alignment_name(alignment) {
-                    props.put(g, b"align", create_utf8_for_js(g, align_str)?);
+                    props.put(g, b"align", bun_core::String::static_(align_str).to_js(g)?);
                 }
             }
             _ => {}
@@ -791,17 +741,12 @@ impl<'a> ParseRenderer<'a> {
             return Err(self.global_object.throw_stack_overflow());
         }
 
-        // SAFETY: `detail.href`/`.title` borrow from `self.src_text`, which
-        // outlives this renderer; the `RendererImpl` trait erases that
-        // lifetime so we extend it here. The entry is popped (and the slices
-        // consumed) in `leave_span_impl` before `src_text` is dropped.
-        let detail: md::SpanDetail<'static> = unsafe { detail.detach_lifetime() };
-
         let array = JSValue::create_empty_array(self.global_object, 0)?;
         self.marked_args.append(array);
         self.stack.push(ParseStackEntry {
             children: array,
-            detail,
+            href: Box::from(detail.href),
+            title: Box::from(detail.title),
             ..Default::default()
         });
         Ok(())
@@ -825,13 +770,13 @@ impl<'a> ParseRenderer<'a> {
         match span_type {
             md::SpanType::A => {
                 props_count += 1; // href
-                if !entry.detail.title.is_empty() {
+                if !entry.title.is_empty() {
                     props_count += 1;
                 }
             }
             md::SpanType::Img => {
                 props_count += 1; // src
-                if !entry.detail.title.is_empty() {
+                if !entry.title.is_empty() {
                     props_count += 1;
                 }
             }
@@ -854,19 +799,39 @@ impl<'a> ParseRenderer<'a> {
         // Set metadata props
         match span_type {
             md::SpanType::A => {
-                props.put(g, b"href", create_utf8_for_js(g, entry.detail.href)?);
-                if !entry.detail.title.is_empty() {
-                    props.put(g, b"title", create_utf8_for_js(g, entry.detail.title)?);
+                props.put(
+                    g,
+                    b"href",
+                    bun_string_jsc::create_utf8_for_js(g, &entry.href)?,
+                );
+                if !entry.title.is_empty() {
+                    props.put(
+                        g,
+                        b"title",
+                        bun_string_jsc::create_utf8_for_js(g, &entry.title)?,
+                    );
                 }
             }
             md::SpanType::Img => {
-                props.put(g, b"src", create_utf8_for_js(g, entry.detail.href)?);
-                if !entry.detail.title.is_empty() {
-                    props.put(g, b"title", create_utf8_for_js(g, entry.detail.title)?);
+                props.put(
+                    g,
+                    b"src",
+                    bun_string_jsc::create_utf8_for_js(g, &entry.href)?,
+                );
+                if !entry.title.is_empty() {
+                    props.put(
+                        g,
+                        b"title",
+                        bun_string_jsc::create_utf8_for_js(g, &entry.title)?,
+                    );
                 }
             }
             md::SpanType::Wikilink => {
-                props.put(g, b"target", create_utf8_for_js(g, entry.detail.href)?);
+                props.put(
+                    g,
+                    b"target",
+                    bun_string_jsc::create_utf8_for_js(g, &entry.href)?,
+                );
             }
             md::SpanType::LatexmathDisplay => {
                 props.put(g, b"display", JSValue::TRUE);
@@ -888,12 +853,12 @@ impl<'a> ParseRenderer<'a> {
                 for i in 0..len {
                     let child = entry.children.get_index(g, i as u32)?;
                     if child.is_string() {
-                        let str = child.to_slice(g)?;
+                        let str = child.to_utf8(g)?;
                         let _ = alt_buf.extend_from_slice(str.slice());
                     }
                 }
                 if !alt_buf.is_empty() {
-                    props.put(g, b"alt", create_utf8_for_js(g, &alt_buf)?);
+                    props.put(g, b"alt", bun_string_jsc::create_utf8_for_js(g, &alt_buf)?);
                 }
             }
         } else {
@@ -926,7 +891,7 @@ impl<'a> ParseRenderer<'a> {
         if self.stack.is_empty() {
             return Ok(());
         }
-        // PORT NOTE: reshaped for borrowck — capture parent.children (Copy JSValue) instead of holding &mut into self.stack.
+        // Note: reshaped for borrowck — capture parent.children (Copy JSValue) instead of holding &mut into self.stack.
         let parent_children = self.stack.last().unwrap().children;
 
         match text_type {
@@ -943,12 +908,12 @@ impl<'a> ParseRenderer<'a> {
                 js_array_push(parent_children, g, obj)?;
             }
             md::TextType::Softbr => {
-                let str = create_utf8_for_js(g, b"\n")?;
+                let str = bun_core::String::static_("\n").to_js(g)?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
             md::TextType::NullChar => {
-                let str = create_utf8_for_js(g, b"\xEF\xBF\xBD")?;
+                let str = bun_string_jsc::create_utf8_for_js(g, b"\xEF\xBF\xBD")?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
@@ -956,12 +921,12 @@ impl<'a> ParseRenderer<'a> {
                 let mut buf = [0u8; 8];
                 let decoded =
                     md::helpers::decode_entity_to_utf8(content, &mut buf).unwrap_or(content);
-                let str = create_utf8_for_js(g, decoded)?;
+                let str = bun_string_jsc::create_utf8_for_js(g, decoded)?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
             _ => {
-                let str = create_utf8_for_js(g, content)?;
+                let str = bun_string_jsc::create_utf8_for_js(g, content)?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
@@ -971,15 +936,16 @@ impl<'a> ParseRenderer<'a> {
 }
 
 /// Renderer that calls JavaScript callbacks for each markdown element.
-/// Uses a content-stack pattern: each enter pushes a new buffer, text
-/// appends to the top buffer, and each leave pops the buffer, calls
-/// the JS callback with the accumulated children, and appends the
-/// callback's return value to the parent buffer.
+/// Only an element with a callback buffers its children; the rest write to the enclosing buffer.
 struct JsCallbackRenderer<'a> {
     global_object: &'a JSGlobalObject,
-    // PORT NOTE: #allocator field dropped — global mimalloc.
+    // Note: #allocator field dropped — global mimalloc.
     src_text: &'a [u8],
     stack: Vec<CallbackStackEntry>,
+    /// Indices into `stack` of the entries that collect output, innermost last.
+    collecting: Vec<usize>,
+    /// Number of ul/ol entries on `stack`.
+    list_depth: u32,
     callbacks: Callbacks,
     heading_tracker: md::helpers::HeadingIdTracker,
     stack_check: StackCheck,
@@ -1009,7 +975,7 @@ struct Callbacks {
     strikethrough: JSValue,
     text: JSValue,
 }
-// PORT NOTE: `Default` for JSValue must be `JSValue::ZERO`.
+// Note: `Default` for JSValue must be `JSValue::ZERO`.
 
 struct CallbackStackEntry {
     buffer: Vec<u8>,
@@ -1019,11 +985,10 @@ struct CallbackStackEntry {
     /// For ul/ol: number of li children seen so far (next li's index).
     /// For li: this item's 0-based index within its parent list.
     child_index: u32,
-    // PORT NOTE: `SpanDetail` borrows from `src_text`; the `RendererImpl`
-    // trait erases that lifetime, so we extend it to `'static` at the
-    // `enter_span` boundary (see SAFETY note there). Entries are popped
-    // and consumed strictly before `src_text` is dropped.
-    detail: md::SpanDetail<'static>,
+    // Owned copies of the span detail: reference-style links hand us
+    // slices into temporaries that drop before `leave_span` runs.
+    href: Box<[u8]>,
+    title: Box<[u8]>,
 }
 
 impl Default for CallbackStackEntry {
@@ -1034,7 +999,8 @@ impl Default for CallbackStackEntry {
             data: 0,
             flags: 0,
             child_index: 0,
-            detail: md::SpanDetail::default(),
+            href: Box::default(),
+            title: Box::default(),
         }
     }
 }
@@ -1079,54 +1045,50 @@ impl<'a> JsCallbackRenderer<'a> {
             global_object,
             src_text,
             stack: Vec::new(),
+            collecting: Vec::new(),
+            list_depth: 0,
             callbacks: Callbacks::default(),
             heading_tracker: md::helpers::HeadingIdTracker::init(heading_ids),
             stack_check: StackCheck::init(),
         };
-        self_.stack.push(CallbackStackEntry::default());
+        self_.push_entry(CallbackStackEntry::default(), true);
         Ok(self_)
     }
 
-    fn extract_callbacks(&mut self, opts: JSValue) -> JsResult<()> {
-        if opts.is_undefined_or_null() || !opts.is_object() {
-            return Ok(());
-        }
+    fn extract_callbacks(&mut self, callbacks: &RenderCallbacks<'_>) {
         macro_rules! extract {
-            ($($field:ident => $key:literal),* $(,)?) => {$(
-                if let Some(val) = opts.get_truthy(self.global_object, $key)? {
-                    if val.is_callable() {
-                        self.callbacks.$field = val;
-                    }
+            ($($field:ident),* $(,)?) => {$(
+                if let Some(callback) = callbacks.$field {
+                    self.callbacks.$field = callback.to_js();
                 }
             )*};
         }
         extract!(
-            heading => "heading",
-            paragraph => "paragraph",
-            blockquote => "blockquote",
-            code => "code",
-            list => "list",
-            list_item => "listItem",
-            hr => "hr",
-            table => "table",
-            thead => "thead",
-            tbody => "tbody",
-            tr => "tr",
-            th => "th",
-            td => "td",
-            html => "html",
-            strong => "strong",
-            emphasis => "emphasis",
-            link => "link",
-            image => "image",
-            codespan => "codespan",
-            strikethrough => "strikethrough",
-            text => "text",
+            heading,
+            paragraph,
+            blockquote,
+            code,
+            list,
+            list_item,
+            hr,
+            table,
+            thead,
+            tbody,
+            tr,
+            th,
+            td,
+            html,
+            strong,
+            emphasis,
+            link,
+            image,
+            codespan,
+            strikethrough,
+            text,
         );
-        Ok(())
     }
 
-    // PORT NOTE: deinit() dropped — Vec<CallbackStackEntry> (with Vec<u8> buffers) and HeadingIdTracker free via Drop.
+    // Note: deinit() dropped — Vec<CallbackStackEntry> (with Vec<u8> buffers) and HeadingIdTracker free via Drop.
 
     fn renderer(&mut self) -> md::Renderer<'_> {
         md::Renderer { ptr: self }
@@ -1136,26 +1098,45 @@ impl<'a> JsCallbackRenderer<'a> {
     // Content stack operations
     // ========================================
 
-    fn append_to_top(&mut self, data: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        if let Some(top) = self.stack.last_mut() {
-            top.buffer.extend_from_slice(data);
+    fn push_entry(&mut self, entry: CallbackStackEntry, collects: bool) {
+        if collects {
+            self.collecting.push(self.stack.len());
+        }
+        if matches!(entry.block_type, md::BlockType::Ul | md::BlockType::Ol) {
+            self.list_depth += 1;
+        }
+        self.stack.push(entry);
+    }
+
+    /// Never pops the root.
+    fn pop_entry(&mut self) -> Option<CallbackStackEntry> {
+        if self.stack.len() <= 1 {
+            return None;
+        }
+        let entry = self.stack.pop()?;
+        if self.collecting.last() == Some(&self.stack.len()) {
+            self.collecting.pop();
+        }
+        if matches!(entry.block_type, md::BlockType::Ul | md::BlockType::Ol) {
+            self.list_depth -= 1;
+        }
+        Some(entry)
+    }
+
+    fn append_output(&mut self, data: &[u8]) -> Result<(), bun_alloc::AllocError> {
+        if let Some(&i) = self.collecting.last() {
+            self.stack[i].buffer.extend_from_slice(data);
         }
         Ok(())
     }
 
     fn pop_and_callback(&mut self, callback: JSValue, meta: Option<JSValue>) -> JsResult<()> {
-        if self.stack.len() <= 1 {
-            return Ok(()); // don't pop root
-        }
-        let Some(entry) = self.stack.pop() else {
+        let Some(entry) = self.pop_entry() else {
             return Ok(());
         };
-
-        let children = entry.buffer.as_slice();
-
         if callback.is_empty() {
-            // No callback registered - pass children through to parent
-            self.append_to_top(children)?;
+            // Empty unless the parser's enter/leave events were unbalanced (#39496).
+            self.append_output(&entry.buffer)?;
             return Ok(());
         }
 
@@ -1164,7 +1145,8 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         // Convert children to JS string
-        let children_js = create_utf8_for_js(self.global_object, children)?;
+        let children_js =
+            bun_string_jsc::create_utf8_for_js(self.global_object, entry.buffer.as_slice())?;
 
         // Call the JS callback
         let result = if let Some(m) = meta {
@@ -1176,16 +1158,17 @@ impl<'a> JsCallbackRenderer<'a> {
         if result.is_undefined_or_null() {
             return Ok(()); // callback returned null/undefined → omit element
         }
-        let slice = result.to_slice(self.global_object)?;
-        self.append_to_top(slice.slice())?;
+        let slice = result.to_utf8(self.global_object)?;
+        self.append_output(slice.slice())?;
         Ok(())
     }
 
-    fn get_result(&self) -> &[u8] {
-        if self.stack.is_empty() {
-            return b"";
-        }
-        self.stack[0].buffer.as_slice()
+    fn into_result(self) -> Vec<u8> {
+        self.stack
+            .into_iter()
+            .next()
+            .map(|root| root.buffer)
+            .unwrap_or_default()
     }
 
     // ========================================
@@ -1217,13 +1200,17 @@ impl<'a> JsCallbackRenderer<'a> {
             parent.child_index += 1;
         }
 
-        self.stack.push(CallbackStackEntry {
-            block_type,
-            data,
-            flags,
-            child_index,
-            ..Default::default()
-        });
+        let collects = !self.get_block_callback(block_type).is_empty();
+        self.push_entry(
+            CallbackStackEntry {
+                block_type,
+                data,
+                flags,
+                child_index,
+                ..Default::default()
+            },
+            collects,
+        );
         Ok(())
     }
 
@@ -1236,20 +1223,18 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         let callback = self.get_block_callback(block_type);
-        // PORT NOTE: reshaped for borrowck — clone the saved entry (cheap; buffer not used) instead of holding a borrow across method calls.
-        let saved = if self.stack.len() > 1 {
-            CallbackStackEntry {
-                buffer: Vec::new(),
-                block_type: self.stack.last().unwrap().block_type,
-                data: self.stack.last().unwrap().data,
-                flags: self.stack.last().unwrap().flags,
-                child_index: self.stack.last().unwrap().child_index,
-                detail: self.stack.last().unwrap().detail,
+        let meta = if callback.is_empty() {
+            if block_type == md::BlockType::H {
+                let _ = self.heading_tracker.leave_heading();
             }
+            None
         } else {
-            CallbackStackEntry::default()
+            let (data, flags) = self
+                .stack
+                .last()
+                .map_or((0, 0), |top| (top.data, top.flags));
+            self.create_block_meta(block_type, data, flags)?
         };
-        let meta = self.create_block_meta(block_type, saved.data, saved.flags)?;
         self.pop_and_callback(callback, meta)?;
 
         if block_type == md::BlockType::H {
@@ -1258,20 +1243,25 @@ impl<'a> JsCallbackRenderer<'a> {
         Ok(())
     }
 
-    fn enter_span_impl(&mut self, _: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
+    fn enter_span_impl(
+        &mut self,
+        span_type: md::SpanType,
+        detail: md::SpanDetail<'_>,
+    ) -> JsResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.global_object.throw_stack_overflow());
         }
-        // SAFETY: `detail` borrows from `src_text`, which outlives every
-        // `CallbackStackEntry` (the stack is fully drained before `src_text`
-        // is dropped). The `RendererImpl` trait erases the concrete lifetime,
-        // so we widen it to `'static` for storage on the stack — same pattern
-        // as `ParseStackEntry` above.
-        let detail: md::SpanDetail<'static> = unsafe { detail.detach_lifetime() };
-        self.stack.push(CallbackStackEntry {
-            detail,
-            ..Default::default()
-        });
+        let collects = !self.get_span_callback(span_type).is_empty();
+        let entry = if collects {
+            CallbackStackEntry {
+                href: Box::from(detail.href),
+                title: Box::from(detail.title),
+                ..Default::default()
+            }
+        } else {
+            CallbackStackEntry::default()
+        };
+        self.push_entry(entry, collects);
         Ok(())
     }
 
@@ -1281,12 +1271,12 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         let callback = self.get_span_callback(span_type);
-        let detail = if self.stack.len() > 1 {
-            self.stack.last().unwrap().detail
-        } else {
-            md::SpanDetail::default()
+        let meta = match self.stack.last() {
+            Some(top) if !callback.is_empty() => {
+                self.create_span_meta(span_type, &top.href, &top.title)?
+            }
+            _ => None,
         };
-        let meta = self.create_span_meta(span_type, &detail)?;
         self.pop_and_callback(callback, meta)?;
         Ok(())
     }
@@ -1300,15 +1290,15 @@ impl<'a> JsCallbackRenderer<'a> {
         self.heading_tracker.track_text(text_type, content);
 
         match text_type {
-            md::TextType::NullChar => self.append_to_top(b"\xEF\xBF\xBD")?,
-            md::TextType::Br => self.append_to_top(b"\n")?,
-            md::TextType::Softbr => self.append_to_top(b"\n")?,
+            md::TextType::NullChar => self.append_output(b"\xEF\xBF\xBD")?,
+            md::TextType::Br => self.append_output(b"\n")?,
+            md::TextType::Softbr => self.append_output(b"\n")?,
             md::TextType::Entity => self.decode_and_append_entity(content)?,
             _ => {
                 if !self.callbacks.text.is_empty() {
                     self.call_text_callback(content)?;
                 } else {
-                    self.append_to_top(content)?;
+                    self.append_output(content)?;
                 }
             }
         }
@@ -1323,14 +1313,14 @@ impl<'a> JsCallbackRenderer<'a> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.global_object.throw_stack_overflow());
         }
-        let text_js = create_utf8_for_js(self.global_object, content)?;
+        let text_js = bun_string_jsc::create_utf8_for_js(self.global_object, content)?;
         let result =
             self.callbacks
                 .text
                 .call(self.global_object, JSValue::UNDEFINED, &[text_js])?;
         if !result.is_undefined_or_null() {
-            let slice = result.to_slice(self.global_object)?;
-            self.append_to_top(slice.slice())?;
+            let slice = result.to_utf8(self.global_object)?;
+            self.append_output(slice.slice())?;
         }
         Ok(())
     }
@@ -1339,7 +1329,7 @@ impl<'a> JsCallbackRenderer<'a> {
         let mut buf = [0u8; 8];
         let decoded =
             md::helpers::decode_entity_to_utf8(entity_text, &mut buf).unwrap_or(entity_text);
-        // PORT NOTE: reshaped for borrowck — copy the (≤8-byte) decoded slice out of `buf`
+        // Note: reshaped for borrowck — copy the (≤8-byte) decoded slice out of `buf`
         // before calling &mut self method, to avoid overlapping borrows when the
         // borrow checker tracks `buf` as borrowed by `decoded`.
         self.append_text_or_raw(decoded)
@@ -1350,7 +1340,7 @@ impl<'a> JsCallbackRenderer<'a> {
         if !self.callbacks.text.is_empty() {
             self.call_text_callback(content)
         } else {
-            self.append_to_top(content)?;
+            self.append_output(content)?;
             Ok(())
         }
     }
@@ -1395,24 +1385,6 @@ impl<'a> JsCallbackRenderer<'a> {
     // Metadata object creation
     // ========================================
 
-    /// Walks the stack to count enclosing ul/ol blocks. Called during leave,
-    /// so the top entry is the block itself (skip it for li, count it for ul/ol's
-    /// own depth which excludes self).
-    fn count_list_depth(&self) -> u32 {
-        let mut depth: u32 = 0;
-        // Skip the top entry (self) — we want enclosing lists only.
-        let len = self.stack.len();
-        if len < 2 {
-            return 0;
-        }
-        for entry in &self.stack[0..len - 1] {
-            if entry.block_type == md::BlockType::Ul || entry.block_type == md::BlockType::Ol {
-                depth += 1;
-            }
-        }
-        depth
-    }
-
     /// Returns the parent ul/ol entry for the current li (top of stack).
     /// Returns None if the stack shape is unexpected.
     fn parent_list(&self) -> Option<&CallbackStackEntry> {
@@ -1441,7 +1413,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 let obj = JSValue::create_empty_object(g, field_count);
                 obj.put(g, b"level", JSValue::js_number(data as f64));
                 if let Some(s) = slug {
-                    obj.put(g, b"id", create_utf8_for_js(g, s)?);
+                    obj.put(g, b"id", bun_string_jsc::create_utf8_for_js(g, s)?);
                 }
                 Ok(Some(obj))
             }
@@ -1451,7 +1423,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     g,
                     true,
                     JSValue::js_number(data as f64),
-                    self.count_list_depth(),
+                    self.list_depth.saturating_sub(1),
                 )))
             }
             md::BlockType::Ul => {
@@ -1460,7 +1432,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     g,
                     false,
                     JSValue::UNDEFINED,
-                    self.count_list_depth(),
+                    self.list_depth.saturating_sub(1),
                 )))
             }
             md::BlockType::Code => {
@@ -1468,7 +1440,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     let lang = extract_language(self.src_text, data);
                     if !lang.is_empty() {
                         let obj = JSValue::create_empty_object(g, 1);
-                        obj.put(g, b"language", create_utf8_for_js(g, lang)?);
+                        obj.put(g, b"language", bun_string_jsc::create_utf8_for_js(g, lang)?);
                         return Ok(Some(obj));
                     }
                 }
@@ -1477,7 +1449,7 @@ impl<'a> JsCallbackRenderer<'a> {
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(data);
                 let align_js = if let Some(align_str) = md::types::alignment_name(alignment) {
-                    create_utf8_for_js(g, align_str)?
+                    bun_core::String::static_(align_str).to_js(g)?
                 } else {
                     JSValue::UNDEFINED
                 };
@@ -1495,10 +1467,9 @@ impl<'a> JsCallbackRenderer<'a> {
                 let parent = self.parent_list();
                 let is_ordered =
                     parent.is_some() && parent.unwrap().block_type == md::BlockType::Ol;
-                // count_list_depth() includes the immediate parent list; subtract it
+                // `list_depth` includes the immediate parent list; subtract it
                 // so that items in a top-level list report depth 0.
-                let enclosing = self.count_list_depth();
-                let depth: u32 = if enclosing > 0 { enclosing - 1 } else { 0 };
+                let depth = self.list_depth.saturating_sub(1);
                 let task_mark = md::types::task_mark_from_data(data);
 
                 let start_js = if is_ordered {
@@ -1524,14 +1495,15 @@ impl<'a> JsCallbackRenderer<'a> {
     fn create_span_meta(
         &self,
         span_type: md::SpanType,
-        detail: &md::SpanDetail<'_>,
+        href: &[u8],
+        title: &[u8],
     ) -> JsResult<Option<JSValue>> {
         let g = self.global_object;
         match span_type {
             md::SpanType::A => {
-                let href = create_utf8_for_js(g, detail.href)?;
-                let title = if !detail.title.is_empty() {
-                    create_utf8_for_js(g, detail.title)?
+                let href = bun_string_jsc::create_utf8_for_js(g, href)?;
+                let title = if !title.is_empty() {
+                    bun_string_jsc::create_utf8_for_js(g, title)?
                 } else {
                     JSValue::UNDEFINED
                 };
@@ -1544,9 +1516,9 @@ impl<'a> JsCallbackRenderer<'a> {
                 // second slot, so just fall back to the generic path here —
                 // images are rare enough that it doesn't matter.
                 let obj = JSValue::create_empty_object(g, 2);
-                obj.put(g, b"src", create_utf8_for_js(g, detail.href)?);
-                if !detail.title.is_empty() {
-                    obj.put(g, b"title", create_utf8_for_js(g, detail.title)?);
+                obj.put(g, b"src", bun_string_jsc::create_utf8_for_js(g, href)?);
+                if !title.is_empty() {
+                    obj.put(g, b"title", bun_string_jsc::create_utf8_for_js(g, title)?);
                 }
                 Ok(Some(obj))
             }
@@ -1556,7 +1528,7 @@ impl<'a> JsCallbackRenderer<'a> {
 }
 
 /// Slice the language token out of a fenced-code info string.
-pub fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
+fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
     let mut lang_end = info_beg;
     while (lang_end as usize) < src_text.len() {
         let c = src_text[lang_end as usize];
@@ -1574,7 +1546,7 @@ pub fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
 /// Cached tag string indices — must match `BunMarkdownTagStrings.h`.
 #[repr(u8)]
 #[derive(Copy, Clone)]
-pub enum TagIndex {
+pub(crate) enum TagIndex {
     H1 = 0,
     H2 = 1,
     H3 = 2,
@@ -1607,7 +1579,6 @@ pub enum TagIndex {
     Br = 29,
 }
 
-// TODO(port): move to <area>_sys
 // `JSGlobalObject` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&JSGlobalObject`
 // is ABI-identical to a non-null pointer; all other params are value types.
 unsafe extern "C" {

@@ -1,11 +1,19 @@
 // posix types live in `crate::posix` (moved from bun_sys).
 pub use crate::posix::E;
 pub use crate::posix::S;
-pub use crate::posix::mode_t as Mode;
 
 #[repr(u16)]
 #[derive(
-    Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Hash,
+    Debug,
+    strum::IntoStaticStr,
+    strum::EnumString,
+    strum::FromRepr,
+    enum_map::Enum,
 )]
 pub enum SystemErrno {
     SUCCESS = 0,
@@ -115,13 +123,14 @@ pub enum SystemErrno {
     ENOTRECOVERABLE = 104,
     EOWNERDEAD = 105,
     EQFULL = 106,
+    /// Not a kernel errno: the `from_raw` result for an undeclared code.
+    EUNKNOWN = 107,
 }
 
 impl SystemErrno {
-    pub const MAX: u16 = 107;
+    pub const MAX: u16 = 108;
 }
 
-#[allow(non_upper_case_globals)]
 pub mod uv_e {
     // Native `SystemErrno::$e as i32`; libuv-synthetic fallback for codes
     // Darwin lacks (ECHARSET / ENONET / EREMOTEIO / EUNATCH).
@@ -149,5 +158,3 @@ pub mod uv_e {
 // kernel entry goes through libc, so all widths — including `usize` — route to
 // the thread-local `__error()` slot via the shared macro.
 impl_get_errno_libc!(i32, u32, isize, usize, i64);
-
-// ported from: src/errno/darwin_errno.zig

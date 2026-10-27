@@ -1,26 +1,24 @@
 //! Byte-oriented `Write` trait + helpers.
 //!
-//! Port of Zig's `std.Io.Writer` surface that the rest of the codebase actually
+//! The byte-writer surface the rest of the codebase actually
 //! touches (`writeAll`, `writeByte`, `print`, `splatByteAll`, `writeInt`,
-//! `flush`). The Zig writer is a fat-pointer vtable; here it is a normal trait
+//! `flush`). It is a normal trait
 //! whose only required method is [`Write::write_all`]. Everything else is
 //! provided in terms of that, so a sink only needs to spell out how to push a
 //! byte slice.
 //!
 //! This module also provides:
-//!   * [`BufWriter`] — `std.fs.File.writerStreaming`-style buffered wrapper
-//!     over a borrowed `&mut [u8]` scratch buffer (no heap allocation).
 //!   * [`FmtAdapter`] — bridge a `core::fmt::Write` sink (e.g. a
 //!     `core::fmt::Formatter`) into a byte-level [`Write`], so byte-producing
 //!     `print()`/`format()` impls can drive `Display`.
 //!
-//! Error type is `bun_core::Error` so `?` composes with the rest of the
+//! Error type is `crate::Error` so `?` composes with the rest of the
 //! codebase. [`Result`] is exported as `bun_io::Result` for downstream sigs.
 
 use core::fmt;
 
-/// `bun_io::Result<T>` — alias over `bun_core::Error` so byte-writer fallible
-/// paths compose with the rest of the codebase via `?`.
+/// `bun_io::Result<T>` — alias over `bun_core::Error` (the `Write` trait's
+/// error type) so byte-writer fallible paths compose with the trait via `?`.
 pub type Result<T = ()> = core::result::Result<T, bun_core::Error>;
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -29,14 +27,13 @@ pub type Result<T = ()> = core::result::Result<T, bun_core::Error>;
 // upward dep on this crate. Re-exported here so downstream keeps spelling it
 // `bun_io::Write` / `bun_io::IntLe`.
 // ════════════════════════════════════════════════════════════════════════════
-pub use bun_core::write::{IntBe, IntLe, Write};
+pub use bun_core::write::{IntLe, Write};
 
 // ════════════════════════════════════════════════════════════════════════════
 // DiscardingWriter — counting null sink
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Discards all bytes written to it but tracks how many were written.
-/// Port of Zig `std.Io.Writer.Discarding` / `std.io.countingWriter(null_writer)`.
 #[derive(Default)]
 pub struct DiscardingWriter {
     /// Total bytes "written" (discarded) so far.
@@ -71,10 +68,9 @@ impl Write for DiscardingWriter {
 // FixedBufferStream — cursor over an in-memory buffer
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Port of Zig `std.io.FixedBufferStream(B)` — a seekable cursor over a byte
+/// A seekable cursor over a byte
 /// buffer that can act as both a reader (when `B: AsRef<[u8]>`) and a writer
-/// (when `B: AsMut<[u8]>`). `pos` and `buffer` are public to mirror the Zig
-/// struct fields.
+/// (when `B: AsMut<[u8]>`). `pos` and `buffer` are public.
 pub struct FixedBufferStream<B> {
     pub buffer: B,
     pub pos: usize,
@@ -87,13 +83,13 @@ impl<B> FixedBufferStream<B> {
         Self { buffer, pos: 0 }
     }
 
-    /// Seek to absolute position `p`. Zig: `seekTo`.
+    /// Seek to absolute position `p`.
     #[inline]
     pub fn seek_to(&mut self, p: usize) {
         self.pos = p;
     }
 
-    /// Rewind to position 0. Zig: `reset`.
+    /// Rewind to position 0.
     #[inline]
     pub fn reset(&mut self) {
         self.pos = 0;
@@ -109,21 +105,15 @@ impl<'a> FixedBufferStream<&'a mut [u8]> {
 }
 
 impl<B: AsRef<[u8]>> FixedBufferStream<B> {
-    /// Bytes written so far (the slice `[0..pos]`). Zig: `getWritten()`.
+    /// Bytes written so far (the slice `[0..pos]`).
     #[inline]
     pub fn get_written(&self) -> &[u8] {
         &self.buffer.as_ref()[..self.pos]
     }
 
-    /// Current cursor position. Zig: `getPos()`.
-    #[inline]
-    pub fn get_pos(&self) -> Result<usize> {
-        Ok(self.pos)
-    }
-
-    /// Zig `reader()` returns a `Reader` view over the same buffer; the read
-    /// methods here live directly on `FixedBufferStream`, so this just returns
-    /// `self` to keep call-site shape (`stream.reader().read_int_le::<T>()`).
+    /// The read methods live directly on `FixedBufferStream`, so this just
+    /// returns `self` to keep call-site shape
+    /// (`stream.reader().read_int_le::<T>()`).
     #[inline]
     pub fn reader(&mut self) -> &mut Self {
         self
@@ -131,7 +121,6 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
 
     /// Read up to `out.len()` bytes from the current position, advancing it.
     /// Returns the number of bytes read (may be `< out.len()` at EOF).
-    /// Zig: `reader().readAll(buf)`.
     pub fn read_all(&mut self, out: &mut [u8]) -> Result<usize> {
         let buf = self.buffer.as_ref();
         let avail = buf.len().saturating_sub(self.pos);
@@ -148,16 +137,16 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         let end = self
             .pos
             .checked_add(out.len())
-            .ok_or_else(|| bun_core::err!("EndOfStream"))?;
+            .ok_or(bun_core::Error::EndOfStream)?;
         if end > buf.len() {
-            return Err(bun_core::err!("EndOfStream"));
+            return Err(bun_core::Error::EndOfStream);
         }
         out.copy_from_slice(&buf[self.pos..end]);
         self.pos = end;
         Ok(())
     }
 
-    /// Read a little-endian integer. Zig: `reader().readInt(T, .little)`.
+    /// Read a little-endian integer.
     #[inline]
     pub fn read_int_le<I: IntLe>(&mut self) -> Result<I> {
         let mut bytes = I::Bytes::default();
@@ -165,32 +154,24 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         Ok(I::from_le_bytes(bytes))
     }
 
-    /// Read a big-endian (network-order) integer. Zig: `reader().readInt(T, .big)`.
-    #[inline]
-    pub fn read_int_be<I: IntBe>(&mut self) -> Result<I> {
-        let mut bytes = I::Bytes::default();
-        self.read_exact(bytes.as_mut())?;
-        Ok(I::from_be_bytes(bytes))
-    }
-
-    /// Read a POD struct. Zig: `reader().readStruct(T)`.
+    /// Read a POD struct.
     ///
     /// SAFETY: caller is responsible for `T` being `#[repr(C)]` POD with no
-    /// padding-sensitive invariants — same contract as Zig's `readStruct`.
+    /// padding-sensitive invariants.
     pub fn read_struct<T: Copy>(&mut self) -> Result<T> {
         let buf = self.buffer.as_ref();
         let n = core::mem::size_of::<T>();
         let end = self
             .pos
             .checked_add(n)
-            .ok_or_else(|| bun_core::err!("EndOfStream"))?;
+            .ok_or(bun_core::Error::EndOfStream)?;
         if end > buf.len() {
-            return Err(bun_core::err!("EndOfStream"));
+            return Err(bun_core::Error::EndOfStream);
         }
         // SAFETY: `buf[pos..end]` is exactly `size_of::<T>()` initialized
         // bytes from the safe slice borrow; caller contract guarantees `T` is
-        // `#[repr(C)]` POD where every byte pattern is valid (same as Zig
-        // `readStruct`). `read_unaligned` tolerates any source alignment.
+        // `#[repr(C)]` POD where every byte pattern is valid.
+        // `read_unaligned` tolerates any source alignment.
         let out = unsafe { core::ptr::read_unaligned(buf[self.pos..end].as_ptr().cast::<T>()) };
         self.pos = end;
         Ok(out)
@@ -203,9 +184,9 @@ impl<B: AsMut<[u8]>> Write for FixedBufferStream<B> {
         let end = self
             .pos
             .checked_add(src.len())
-            .ok_or_else(|| bun_core::err!("NoSpaceLeft"))?;
+            .ok_or(bun_core::Error::NoSpaceLeft)?;
         if end > buf.len() {
-            return Err(bun_core::err!("NoSpaceLeft"));
+            return Err(bun_core::Error::NoSpaceLeft);
         }
         buf[self.pos..end].copy_from_slice(src);
         self.pos = end;
@@ -218,93 +199,6 @@ impl<B: AsMut<[u8]>> Write for FixedBufferStream<B> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// BufWriter — borrowed-buffer buffered writer
-// ════════════════════════════════════════════════════════════════════════════
-
-/// Buffered writer over a caller-provided scratch slice.
-///
-/// Port of Zig `std.fs.File.writerStreaming(&buf)` / `std.io.BufferedWriter`:
-/// the caller owns the byte buffer (typically a stack `[0u8; 4096]`), so this
-/// type performs **no heap allocation**. Writes accumulate into `buf` and are
-/// flushed to `inner` when full or on explicit [`flush`](Write::flush).
-///
-/// `Drop` does **not** flush — matching Zig semantics, where forgetting to
-/// `flush()` is a bug the caller owns (and flushing in `Drop` would swallow the
-/// error). Callers must `writer.flush()?` before the buffer goes out of scope.
-pub struct BufWriter<'a, W: Write> {
-    buf: &'a mut [u8],
-    pos: usize,
-    inner: W,
-}
-
-impl<'a, W: Write> BufWriter<'a, W> {
-    /// Wrap `inner` with `buf` as the staging buffer.
-    #[inline]
-    pub fn with_buffer(buf: &'a mut [u8], inner: W) -> Self {
-        Self { buf, pos: 0, inner }
-    }
-
-    /// Bytes currently buffered (not yet flushed).
-    #[inline]
-    pub fn buffered(&self) -> &[u8] {
-        &self.buf[..self.pos]
-    }
-
-    /// Recover the inner writer. Buffered bytes are **discarded**; call
-    /// `flush()` first if they matter.
-    #[inline]
-    pub fn into_inner(self) -> W {
-        self.inner
-    }
-
-    /// Borrow the inner writer.
-    #[inline]
-    pub fn inner(&mut self) -> &mut W {
-        &mut self.inner
-    }
-
-    #[inline]
-    fn flush_buf(&mut self) -> Result<()> {
-        if self.pos > 0 {
-            self.inner.write_all(&self.buf[..self.pos])?;
-            self.pos = 0;
-        }
-        Ok(())
-    }
-}
-
-impl<'a, W: Write> Write for BufWriter<'a, W> {
-    fn write_all(&mut self, mut src: &[u8]) -> Result<()> {
-        // Degenerate zero-capacity buffer: pass straight through.
-        if self.buf.is_empty() {
-            return self.inner.write_all(src);
-        }
-        // Large write that won't fit even after a flush: drain then bypass.
-        if src.len() >= self.buf.len() {
-            self.flush_buf()?;
-            return self.inner.write_all(src);
-        }
-        // Fill remaining capacity; flush on overflow; copy the tail.
-        let avail = self.buf.len() - self.pos;
-        if src.len() > avail {
-            self.buf[self.pos..].copy_from_slice(&src[..avail]);
-            self.pos = self.buf.len();
-            self.flush_buf()?;
-            src = &src[avail..];
-        }
-        self.buf[self.pos..self.pos + src.len()].copy_from_slice(src);
-        self.pos += src.len();
-        Ok(())
-    }
-
-    #[inline]
-    fn flush(&mut self) -> Result<()> {
-        self.flush_buf()?;
-        self.inner.flush()
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 // FmtAdapter — core::fmt::Write → bun_io::Write bridge
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -312,8 +206,7 @@ impl<'a, W: Write> Write for BufWriter<'a, W> {
 /// can be passed where a byte-level [`Write`] is expected.
 ///
 /// Bytes are routed through `write_str` after a UTF-8 check; non-UTF-8 input is
-/// lossily decoded (same behaviour as Zig's `{s}` formatter on arbitrary
-/// bytes — it never fails on encoding, only on the underlying writer).
+/// lossily decoded — it never fails on encoding, only on the underlying writer.
 pub struct FmtAdapter<'a, W: ?Sized = fmt::Formatter<'a>> {
     inner: &'a mut W,
 }
@@ -322,12 +215,6 @@ impl<'a, W: fmt::Write + ?Sized> FmtAdapter<'a, W> {
     #[inline]
     pub fn new(inner: &'a mut W) -> Self {
         Self { inner }
-    }
-
-    /// Borrow the wrapped `fmt::Write` sink.
-    #[inline]
-    pub fn inner(&mut self) -> &mut W {
-        self.inner
     }
 }
 
@@ -348,11 +235,19 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
         // Fast path: valid UTF-8 (overwhelmingly the case for our printers).
         let r = match bun_core::str_utf8(buf) {
             Some(s) => self.inner.write_str(s),
-            // PERF(port): lossy alloc only on invalid UTF-8; Zig had no
-            // text/bytes split so this branch is the price of bridging.
-            None => self.inner.write_str(&String::from_utf8_lossy(buf)),
+            // Invalid UTF-8 cannot enter a `fmt::Write` sink losslessly;
+            // replacement chars are the price of bridging (same output as
+            // from_utf8_lossy, without the allocation).
+            None => buf.utf8_chunks().try_for_each(|chunk| {
+                self.inner.write_str(chunk.valid())?;
+                if chunk.invalid().is_empty() {
+                    Ok(())
+                } else {
+                    self.inner.write_str("\u{FFFD}")
+                }
+            }),
         };
-        r.map_err(|_| bun_core::err!("FmtError"))
+        r.map_err(|_| bun_core::Error::FmtError)
     }
 
     #[inline]
@@ -360,7 +255,7 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
         // Skip the byte round-trip entirely when we already have a fmt sink.
         self.inner
             .write_fmt(args)
-            .map_err(|_| bun_core::err!("FmtError"))
+            .map_err(|_| bun_core::Error::FmtError)
     }
 }
 
@@ -375,18 +270,13 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
 /// `Msg::write_format`) but you hold a `bun_io::Write` byte sink — `Vec<u8>`,
 /// `bun_core::io::Writer`, `&mut dyn Write`, etc.
 ///
-/// `write_str` routes through `write_all(s.as_bytes())`; the underlying I/O
-/// error is stashed in [`err`](AsFmt::err) so callers that care can recover it
-/// instead of seeing only the unit `fmt::Error`. Callers that don't care just
-/// drop the wrapper.
+/// `write_str` routes through `write_all(s.as_bytes())`.
 ///
 /// Erased to `dyn Write` (not generic over `W`) so this type does not pair
 /// with [`FmtAdapter`]'s `impl Write` to form an infinite
 /// `FmtAdapter<AsFmt<…>>` tower (E0275) — see the note on that impl.
 pub struct AsFmt<'a> {
     sink: &'a mut dyn Write,
-    /// Last I/O error from the underlying sink, if `write_str` failed.
-    pub err: Option<bun_core::Error>,
 }
 
 impl<'a> AsFmt<'a> {
@@ -396,20 +286,14 @@ impl<'a> AsFmt<'a> {
     /// (auto-coerced) and an existing `&mut dyn Write` pass with one signature.
     #[inline]
     pub fn new(sink: &'a mut dyn Write) -> Self {
-        Self { sink, err: None }
+        Self { sink }
     }
 }
 
 impl fmt::Write for AsFmt<'_> {
     #[inline]
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        match self.sink.write_all(s.as_bytes()) {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                self.err = Some(e);
-                Err(fmt::Error)
-            }
-        }
+        self.sink.write_all(s.as_bytes()).map_err(|_| fmt::Error)
     }
 }
 
@@ -427,31 +311,6 @@ mod tests {
         v.splat_byte_all(b'!', 3).unwrap();
         v.write_int_le::<u16>(0x0201).unwrap();
         assert_eq!(v, b"hello !!!\x01\x02");
-    }
-
-    #[test]
-    fn buf_writer_basic() {
-        let mut sink = Vec::new();
-        let mut scratch = [0u8; 4];
-        {
-            let mut w = BufWriter::with_buffer(&mut scratch, &mut sink);
-            w.write_all(b"ab").unwrap();
-            w.write_all(b"cd").unwrap(); // exactly fills
-            w.write_all(b"e").unwrap(); // forces flush of "abcd"
-            w.flush().unwrap();
-        }
-        assert_eq!(sink, b"abcde");
-    }
-
-    #[test]
-    fn buf_writer_large_bypass() {
-        let mut sink = Vec::new();
-        let mut scratch = [0u8; 4];
-        let mut w = BufWriter::with_buffer(&mut scratch, &mut sink);
-        w.write_all(b"x").unwrap();
-        w.write_all(b"0123456789").unwrap(); // > capacity → flush + bypass
-        w.flush().unwrap();
-        assert_eq!(sink, b"x0123456789");
     }
 
     #[test]

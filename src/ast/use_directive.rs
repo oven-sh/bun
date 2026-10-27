@@ -1,6 +1,7 @@
+use crate::{Loc, Range};
 use bun_core::strings;
 
-#[repr(u8)] // Zig: enum(u2)
+#[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UseDirective {
     // TODO: Remove this, and provide `UseDirective.Optional` instead
@@ -11,42 +12,14 @@ pub enum UseDirective {
     Server = 2,
 }
 
-#[repr(u8)] // Zig: enum(u2)
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Boundering {
-    Client = UseDirective::Client as u8,
-    Server = UseDirective::Server as u8,
-}
-
-#[derive(Copy, Clone, Default, Debug)]
-pub struct Flags {
-    pub has_any_client: bool,
-}
+const SKIPPED_PREFIX: &[u8] = b" \t\n\r;";
+const QUOTED_LEN: usize = b"'use client'".len();
 
 impl UseDirective {
-    pub fn is_boundary(self, other: UseDirective) -> bool {
-        if self == other || other == UseDirective::None {
-            return false;
-        }
-
-        true
-    }
-
-    pub fn boundering(self, other: UseDirective) -> Option<Boundering> {
-        if self == other {
-            return None;
-        }
-        match other {
-            UseDirective::None => None,
-            UseDirective::Client => Some(Boundering::Client),
-            UseDirective::Server => Some(Boundering::Server),
-        }
-    }
-
     pub fn parse(contents: &[u8]) -> Option<UseDirective> {
-        let truncated = strings::trim_left(contents, b" \t\n\r;");
+        let truncated = strings::trim_left(contents, SKIPPED_PREFIX);
 
-        const DIRECTIVE_LEN: usize = b"'use client';".len();
+        const DIRECTIVE_LEN: usize = QUOTED_LEN + b";".len();
 
         if truncated.len() < DIRECTIVE_LEN {
             return Some(UseDirective::None);
@@ -74,6 +47,15 @@ impl UseDirective {
 
         None
     }
-}
 
-// ported from: src/js_parser/ast/UseDirective.zig
+    /// Where the quoted directive that [`parse`](Self::parse) matched sits in `contents`.
+    pub fn range(contents: &[u8]) -> Range {
+        let start = contents.len() - strings::trim_left(contents, SKIPPED_PREFIX).len();
+        Range {
+            loc: Loc {
+                start: i32::try_from(start).unwrap_or(i32::MAX),
+            },
+            len: QUOTED_LEN as i32,
+        }
+    }
+}

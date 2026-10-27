@@ -1,4 +1,4 @@
-//! `bun.jsc.RuntimeTranspilerCache` (src/jsc/RuntimeTranspilerCache.zig).
+//! Runtime transpiler cache.
 //!
 //! Single canonical struct, lowered to `bun_ast` so both the parser
 //! (`Features.runtime_transpiler_cache`) and the printer
@@ -19,8 +19,8 @@ pub struct RuntimeTranspilerCache {
     pub features_hash: Option<u64>,
     pub exports_kind: ExportsKind,
     /// Set by `put()` / `get()` when a cache hit returns transpiled output.
-    /// Zig: `?bun.String` — bundler/parser only store/read the bytes; T6 owns
-    /// the `bun.String` wrapper when surfacing to JS.
+    /// Bundler/parser only store/read the bytes; T6 owns the string wrapper
+    /// when surfacing to JS.
     pub output_code: Option<Box<[u8]>>,
     /// Opaque storage for `bun_bundler::cache::RuntimeTranspilerCacheEntry` —
     /// the concrete type lives a tier up and is round-tripped via cast.
@@ -51,7 +51,7 @@ impl Default for RuntimeTranspilerCache {
 // edge here; the jsc impl casts it back.
 bun_dispatch::link_interface! {
     pub TranspilerCacheImpl[Jsc] {
-        fn get(source: &Source, parser_options: NonNull<()>, used_jsx: bool) -> bool;
+        fn get(source: &Source<'_>, parser_options: NonNull<()>, used_jsx: bool) -> bool;
         fn put(output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]);
         fn is_disabled() -> bool;
     }
@@ -94,14 +94,6 @@ impl RuntimeTranspilerCache {
                 debug_assert!(self.entry.is_none());
                 self.output_code = Some(Box::<[u8]>::from(output_code));
             }
-        }
-    }
-
-    #[inline]
-    pub fn is_disabled(&self) -> bool {
-        match self.r#impl {
-            Some(k) => Self::handle(k, core::ptr::from_ref(self).cast_mut()).is_disabled(),
-            None => true,
         }
     }
 }

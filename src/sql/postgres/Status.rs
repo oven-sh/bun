@@ -9,4 +9,8 @@ pub enum Status {
     Failed,
 }
 
-// ported from: src/sql/postgres/Status.zig
+impl Status {
+    pub fn is_closed(self) -> bool {
+        matches!(self, Status::Disconnected | Status::Failed)
+    }
+}

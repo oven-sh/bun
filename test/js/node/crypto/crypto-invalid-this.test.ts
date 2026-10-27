@@ -18,6 +18,16 @@ test("Hmac native digest() throws ERR_INVALID_THIS instead of segfaulting on bad
   expect(() => nativeDigest.call(42)).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
 });
 
+test("Hmac native update() throws ERR_INVALID_THIS instead of segfaulting on bad this", () => {
+  const hmac = createHmac("sha256", "key");
+  const native = getNativeHandle(hmac);
+  const nativeUpdate = native.update;
+
+  expect(() => nativeUpdate.call({}, hmac, "x")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+  expect(() => nativeUpdate.call(null, hmac, "x")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+  expect(() => nativeUpdate.call(42, hmac, "x")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+});
+
 test("DiffieHellmanGroup verifyError getter throws ERR_INVALID_THIS instead of segfaulting on bad this", () => {
   const dhg = getDiffieHellman("modp14");
   const desc =

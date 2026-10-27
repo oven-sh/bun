@@ -17,47 +17,43 @@ use bun_ast::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
 use bun_ast::{ImportKind, ImportRecordFlags};
 
 use crate::AstBuilder::AstBuilder;
+use crate::JSAst;
 use crate::Worker;
 use crate::bundle_v2::BundleV2;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
 use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
-use crate::ungate_support::JSAst;
 
-pub use crate::ThreadPool;
-
-pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::parse_task::ParseTask;
-
-pub struct ServerComponentParseTask {
+/// `'a` is the bundle's, as for [`parse_task::ParseTask`].
+pub(crate) struct ServerComponentParseTask<'a> {
     pub task: ThreadPoolTask,
-    pub data: Data,
-    // BACKREF (LIFETIMES.tsv) — Zig `*BundleV2` is mutable; written through in `on_complete`.
+    pub data: Data<'a>,
+    // BACKREF (LIFETIMES.tsv) — written through in `on_complete`.
     // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
     // so deref sites are safe; `None` only for the FRU `Default` placeholder.
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
-    pub source: Source,
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
+    pub source: Source<'a>,
 }
 
 // `ServerComponentParseTask` is bump-arena-allocated; boxing the large arm
 // would leak. The size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
-pub enum Data {
+pub enum Data<'a> {
     /// Generate server-side code for a "use client" module. Given the
     /// client ast, a "reference proxy" is created with identical exports.
-    ClientReferenceProxy(ReferenceProxy),
+    ClientReferenceProxy(ReferenceProxy<'a>),
 
     ClientEntryWrapper(ClientEntryWrapper),
 }
 
-pub struct ReferenceProxy {
-    pub other_source: Source,
-    pub named_exports: NamedExports,
+pub struct ReferenceProxy<'a> {
+    pub(crate) other_source: Source<'a>,
+    pub(crate) named_exports: NamedExports,
 }
 
 pub struct ClientEntryWrapper {
-    // TODO(port): lifetime — Zig `[]const u8` borrowed from caller; never freed in this file.
-    pub path: Box<[u8]>,
+    // Owned copy.
+    pub(crate) path: Box<[u8]>,
 }
 
 /// Raw thread-pool callback. Recovers `&mut ServerComponentParseTask` from the
@@ -73,8 +69,9 @@ pub struct ClientEntryWrapper {
 fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // SAFETY: `thread_pool_task` points to the `task` field of a heap-allocated
     // `ServerComponentParseTask` enqueued by BundleV2; offset_of recovers the parent.
-    let task: &mut ServerComponentParseTask = unsafe {
-        &mut *(bun_core::from_field_ptr!(ServerComponentParseTask, task, thread_pool_task))
+    // The bundle's `'a` is erased to `'static`: see `parse_task::task_callback`.
+    let task: &mut ServerComponentParseTask<'static> = unsafe {
+        &mut *(bun_core::from_field_ptr!(ServerComponentParseTask<'static>, task, thread_pool_task))
     };
 
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2 (set at enqueue).
@@ -82,7 +79,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         .ctx
         .expect("ServerComponentParseTask.ctx set at enqueue");
     let worker = Worker::get(ctx.get());
-    // PORT NOTE: `defer worker.unget()` — handled at end of fn (no early returns).
+    // `defer worker.unget()` — handled at end of fn (no early returns).
     let mut log = Log::new();
 
     // SAFETY: `worker.arena` is set in `Worker::create` to point at the
@@ -99,7 +96,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         // `ctx` already a `ParentRef<BundleV2>` with write provenance
         // (constructed from `NonNull::from(&mut self)` in `bundle_v2.rs`).
         ctx,
-        // SAFETY: Zig leaves `.task = undefined`; consumer overwrites before read.
+        // Placeholder; consumer overwrites before read.
         task: Default::default(),
         value,
         external: ExternalFreeFunction::NONE,
@@ -107,11 +104,10 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     });
     let result = bun_core::heap::into_raw(result);
 
-    // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
     // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
     // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
     //
-    // Zig `worker.ctx.loop().*` is non-optional (.zig:52) — `BundleV2::init`
+    // The loop is effectively non-optional — `BundleV2::init`
     // always sets `linker.r#loop` before scheduling any ServerComponentParseTask.
     // Running `on_complete` inline on the worker thread would violate
     // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
@@ -122,15 +118,21 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         .any_loop_mut()
         .expect("BundleV2.linker.loop must be set before scheduling ServerComponentParseTask")
     {
-        bun_event_loop::AnyEventLoop::Js { owner } => {
-            owner.enqueue_task_concurrent(
-                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                    // SAFETY: `p` is the `result` Box leaked above; ownership
-                    // transfers to `on_complete`, which deallocates it.
-                    unsafe { on_complete(p) };
-                    Ok(())
-                }),
-            );
+        bun_event_loop::AnyEventLoop::Js { .. } => {
+            let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
+            let poster = worker
+                .ctx
+                .js_poster
+                .as_ref()
+                .expect("JS-owned bundle has a poster");
+            if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                // Owning JS VM torn down mid-bundle: free the hop and the result.
+                // SAFETY: refused ⇒ we own the task box and the leaked result.
+                unsafe {
+                    bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
+                    <parse_task::Result as bun_event_loop::Taskable>::release_unrun(result);
+                }
+            }
         }
         bun_event_loop::AnyEventLoop::Mini(mini) => {
             // SAFETY: `result` is a freshly Box-leaked `parse_task::Result` (above) and
@@ -144,11 +146,11 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
             }
         }
     }
-    // Zig: `defer worker.unget()` — runs at function exit, i.e. after enqueue.
+    // Runs at function exit, i.e. after enqueue.
     worker.unget();
 }
 
-fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static>) {
+fn on_complete_mini(result: *mut parse_task::Result<'static>, _ctx: *mut BundleV2<'static>) {
     // `on_complete` already recovers `ctx` from `result.ctx`.
     // SAFETY: callback contract — `result` is the uniquely-owned Box leaked in
     // `run_from_thread_pool`; ownership transfers to `on_complete`.
@@ -156,17 +158,17 @@ fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static
 }
 
 fn task_callback(
-    task: &mut ServerComponentParseTask,
+    task: &mut ServerComponentParseTask<'static>,
     log: &mut Log,
     bump: &'static Arena,
-) -> Result<Success, OOM> {
+) -> Result<Success<'static>, OOM> {
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2; safe `Deref`.
     let ctx: &BundleV2 = task
         .ctx
         .as_deref()
         .expect("ServerComponentParseTask.ctx set at enqueue");
-    // PORT NOTE: `Source` is not `Clone`; the original is consumed here
-    // (Zig copied by value). Take it up-front so `ab`'s borrow of it ends
+    // `Source` is not `Clone`; the original is consumed here.
+    // Take it up-front so `ab`'s borrow of it ends
     // (via NLL) before we move it into `Success`.
     let source = core::mem::take(&mut task.source);
     let mut ab = AstBuilder::init(bump, &source, ctx.transpiler().options.hot_module_reloading)?;
@@ -185,8 +187,7 @@ fn task_callback(
     let hmr_api_ref = ab.hmr_api_ref;
     let mut bundled_ast: JSAst = ab.to_bundled_ast(target)?;
 
-    // `wrapper_ref` is used to hold the HMR api ref (see comment in
-    // `src/ast/Ast.zig`)
+    // `wrapper_ref` is used to hold the HMR api ref.
     bundled_ast.wrapper_ref = hmr_api_ref;
 
     Ok(Success {
@@ -202,15 +203,8 @@ fn task_callback(
     })
 }
 
-impl ServerComponentParseTask {
-    /// Expose the thread-pool callback so callers can construct
-    /// `ThreadPoolLib::Task { callback: Self::TASK_CALLBACK }`.
-    pub const TASK_CALLBACK: fn(*mut ThreadPoolTask) = task_callback_wrap;
-}
-
-impl Default for ServerComponentParseTask {
-    /// Mirrors Zig's `task: ThreadPoolLib.Task = .{ .callback = &taskCallbackWrap }`
-    /// default-field-value. Callers (`bundle_v2.rs`) supply `data`/`ctx`/`source`
+impl Default for ServerComponentParseTask<'_> {
+    /// Callers (`bundle_v2.rs`) supply `data`/`ctx`/`source`
     /// via FRU and rely on this for the intrusive `task` link.
     fn default() -> Self {
         Self {
@@ -280,7 +274,6 @@ fn generate_client_reference_proxy(
         if ctx.transpiler().options.has_dev_server() {
             b.bump.alloc_slice_copy(data.other_source.path.pretty)
         } else {
-            // PERF(port): was arena allocPrint — profile if it shows up on a hot path
             let mut buf = bun_alloc::ArenaString::new_in(b.bump);
             write!(
                 &mut buf,
@@ -303,7 +296,6 @@ fn generate_client_reference_proxy(
         // This error message is taken from
         // https://github.com/facebook/react/blob/c5b9375767e2c4102d7e5559d383523736f1c902/packages/react-server-dom-webpack/src/ReactFlightWebpackNodeLoader.js#L323-L354
         let err_msg_string: &[u8] = {
-            // PERF(port): was arena allocPrint — profile if it shows up on a hot path
             let mut buf = bun_alloc::ArenaString::new_in(b.bump);
             if is_default {
                 write!(
@@ -376,7 +368,7 @@ fn generate_client_reference_proxy(
                 value: StmtOrExpr::Expr(value),
                 default_name: LocRef {
                     loc: Loc::EMPTY,
-                    ref_: Some(ref_),
+                    ref_,
                 },
             })?;
         } else {
@@ -400,5 +392,3 @@ fn generate_client_reference_proxy(
 
     Ok(())
 }
-
-// ported from: src/bundler/ServerComponentParseTask.zig

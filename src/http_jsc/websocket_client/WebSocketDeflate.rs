@@ -1,20 +1,18 @@
 //! Manages the DEFLATE compression and decompression streams for a WebSocket connection.
 
-use core::cell::Cell;
 use core::ffi::c_int;
 
-use bun_core::feature_flag;
-use bun_jsc::rare_data::RareData as JscRareData;
+use bun_core::{feature_flag, handle_oom};
 use bun_libdeflate_sys::libdeflate as libdeflate_sys;
 use bun_zlib as zlib;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Params {
-    pub server_max_window_bits: u8,
-    pub client_max_window_bits: u8,
-    pub server_no_context_takeover: u8,
-    pub client_no_context_takeover: u8,
+    pub(crate) server_max_window_bits: u8,
+    pub(crate) client_max_window_bits: u8,
+    pub(crate) server_no_context_takeover: u8,
+    pub(crate) client_no_context_takeover: u8,
 }
 
 impl Default for Params {
@@ -29,110 +27,48 @@ impl Default for Params {
 }
 
 impl Params {
-    pub const MAX_WINDOW_BITS: u8 = 15;
-    pub const MIN_WINDOW_BITS: u8 = 8;
-}
-
-pub struct RareData {
-    libdeflate_compressor: Cell<Option<*mut libdeflate_sys::Compressor>>,
-    libdeflate_decompressor: Cell<Option<*mut libdeflate_sys::Decompressor>>,
-    // PERF(port): was StackFallbackAllocator(128 * 1024) — profile if hot.
-    // Zig kept a 128KB inline buffer reused as scratch for (de)compression output.
-}
-
-impl Default for RareData {
-    fn default() -> Self {
-        Self {
-            libdeflate_compressor: Cell::new(None),
-            libdeflate_decompressor: Cell::new(None),
-        }
-    }
-}
-
-impl RareData {
-    pub const STACK_BUFFER_SIZE: usize = 128 * 1024;
-
-    pub fn array_list(&self) -> Vec<u8> {
-        // PERF(port): Zig handed back an ArrayList aliasing the 128KB stack_fallback
-        // buffer (zero-alloc). Allocates a fresh heap Vec per call — profile if hot.
-        Vec::with_capacity(Self::STACK_BUFFER_SIZE)
-    }
-
-    // Zig `allocator()` returned the stack-fallback allocator. Allocator params are
-    // dropped in non-AST crates; callers use the global allocator.
-    // PERF(port): was stack-fallback
-
-    pub fn decompressor(&self) -> *mut libdeflate_sys::Decompressor {
-        match self.libdeflate_decompressor.get() {
-            Some(d) => d,
-            None => {
-                let d = libdeflate_sys::Decompressor::alloc();
-                self.libdeflate_decompressor.set(Some(d));
-                d
-            }
-        }
-    }
-
-    pub fn compressor(&self) -> *mut libdeflate_sys::Compressor {
-        match self.libdeflate_compressor.get() {
-            Some(c) => c,
-            None => {
-                let c = libdeflate_sys::Compressor::alloc(Z_DEFAULT_COMPRESSION);
-                self.libdeflate_compressor.set(Some(c));
-                c
-            }
-        }
-    }
-}
-
-impl Drop for RareData {
-    fn drop(&mut self) {
-        if let Some(c) = self.libdeflate_compressor.get() {
-            // SAFETY: allocated by libdeflate_alloc_compressor, freed exactly once here.
-            unsafe { libdeflate_sys::Compressor::destroy(c) };
-        }
-        if let Some(d) = self.libdeflate_decompressor.get() {
-            // SAFETY: allocated by libdeflate_alloc_decompressor, freed exactly once here.
-            unsafe { libdeflate_sys::Decompressor::destroy(d) };
-        }
-        // Zig: bun.destroy(this) — handled by Box<RareData> drop at the owner.
-    }
+    pub(crate) const MAX_WINDOW_BITS: u8 = 15;
+    pub(crate) const MIN_WINDOW_BITS: u8 = 8;
 }
 
 /// Parent module references this type as `WebSocketDeflate`.
 pub type WebSocketDeflate = PerMessageDeflate;
 /// Parent module matches `websocket_deflate::Error::*` against `decompress()`'s
 /// error type.
-pub type Error = DecompressError;
+pub(crate) type Error = DecompressError;
 
+/// The zlib streams are per connection: with context takeover (the default)
+/// each message's back-references reach into the previous message's window.
+/// The libdeflate fast path is stateless and lives in the VM's
+/// `bun_jsc::RareData`, shared by every client on the thread.
 pub struct PerMessageDeflate {
-    pub compress_stream: zlib::z_stream,
-    pub decompress_stream: zlib::z_stream,
-    pub params: Params,
-    // PORT NOTE: Zig borrowed `&RareData` from VM `bun_jsc::RareData` (pooled
-    // libdeflate handles, shared across connections). `bun_jsc::RareData::
-    // websocket_deflate()` currently returns an opaque placeholder (the real
-    // type is *this* `RareData`, which would be a dep cycle), so own a
-    // per-connection instance instead.
-    // PERF(port): per-connection libdeflate alloc — restore VM-pooled instance
-    // once `bun_jsc::rare_data::WebSocketDeflateRareData` is wired to this type.
-    pub rare_data: RareData,
+    pub(crate) compress_stream: zlib::DeflateEncoder,
+    pub(crate) decompress_stream: zlib::InflateDecoder,
+    compress_no_context_takeover: bool,
+    decompress_no_context_takeover: bool,
 }
 
 // Constants from zlib.h
 const Z_DEFAULT_COMPRESSION: c_int = 6;
-const Z_DEFLATED: c_int = 8;
 const Z_DEFAULT_STRATEGY: c_int = 0;
 const Z_DEFAULT_MEM_LEVEL: c_int = 8;
+
+/// zlib rejects an 8-bit window for raw deflate. A peer that negotiated 8 bits can still decode
+/// 9-bit output, because match distances stay <= 512 - MIN_LOOKAHEAD = 250.
+const ZLIB_MIN_RAW_DEFLATE_WINDOW_BITS: u8 = 9;
 
 // Buffer size for compression/decompression operations
 const COMPRESSION_BUFFER_SIZE: usize = 4096;
 
-// Maximum decompressed message size (128 MB)
-const MAX_DECOMPRESSED_SIZE: usize = 128 * 1024 * 1024;
+/// Output space reserved up front for one message. The one-shot libdeflate
+/// path gets exactly that space, so it is skipped for compressed inputs at
+/// least this large: their output would not fit either.
+const INFLATE_BUFFER_SIZE: usize = 128 * 1024;
 
 // DEFLATE trailer bytes added by Z_SYNC_FLUSH
 const DEFLATE_TRAILER: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
+/// An empty stored block with BFINAL set.
+const FINAL_EMPTY_BLOCK: [u8; 5] = [0x01, 0x00, 0x00, 0xff, 0xff];
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 pub enum DecompressError {
@@ -152,170 +88,172 @@ pub enum CompressError {
     OutOfMemory,
 }
 
-bun_core::named_error_set!(DecompressError, CompressError);
-
 impl PerMessageDeflate {
-    pub fn init(params: Params, rare_data: &mut JscRareData) -> Result<Box<Self>, bun_core::Error> {
-        // TODO(port): narrow error set
-        let mut self_ = Box::new(Self {
-            params,
-            compress_stream: bun_core::ffi::zeroed::<zlib::z_stream>(),
-            decompress_stream: bun_core::ffi::zeroed::<zlib::z_stream>(),
-            // TODO(port): bun_jsc::rare_data::WebSocketDeflateRareData —
-            // `rare_data.websocket_deflate()` returns an opaque `{ _opaque: () }`
-            // placeholder in bun_jsc; the real type is `self::RareData` (this
-            // module), which bun_jsc cannot import without a dep cycle. Until a
-            // re-export shim lands, fall back to a fresh per-connection instance.
-            rare_data: {
-                let _ = rare_data;
-                RareData::default()
-            },
-        });
-
-        // Initialize compressor (deflate)
-        // We use negative window bits for raw DEFLATE, as required by RFC 7692.
-        // SAFETY: compress_stream is a zeroed #[repr(C)] z_stream; &mut points to a valid
-        // z_stream for the duration of the call; zlibVersion() returns a valid C string.
-        let compress_err = unsafe {
-            zlib::deflateInit2_(
-                &raw mut self_.compress_stream,
-                Z_DEFAULT_COMPRESSION,                           // level
-                Z_DEFLATED,                                      // method
-                -(self_.params.client_max_window_bits as c_int), // windowBits
-                Z_DEFAULT_MEM_LEVEL,                             // memLevel
-                Z_DEFAULT_STRATEGY,                              // strategy
-                zlib::zlibVersion().cast::<u8>(),
-                c_int::try_from(core::mem::size_of::<zlib::z_stream>()).expect("int cast"),
-            )
+    /// RFC 7692 names each parameter after the side whose compressor it limits: `server_*`
+    /// configures the server's compressor and the client's decompressor.
+    pub(crate) fn init(params: Params, is_server: bool) -> Box<Self> {
+        let server = (
+            params.server_max_window_bits,
+            params.server_no_context_takeover == 1,
+        );
+        let client = (
+            params.client_max_window_bits,
+            params.client_no_context_takeover == 1,
+        );
+        let (ours, theirs) = if is_server {
+            (server, client)
+        } else {
+            (client, server)
         };
-        if compress_err != zlib::ReturnCode::Ok {
-            // Drop will call deflateEnd/inflateEnd on zeroed/failed streams; zlib defines
-            // those as no-ops returning Z_STREAM_ERROR, so it is safe to let the Box drop.
-            return Err(bun_core::err!("DeflateInitFailed"));
-        }
 
-        // Initialize decompressor (inflate)
-        // SAFETY: decompress_stream is a zeroed #[repr(C)] z_stream; &mut points to a valid
-        // z_stream for the duration of the call; zlibVersion() returns a valid C string.
-        let decompress_err = unsafe {
-            zlib::inflateInit2_(
-                &raw mut self_.decompress_stream,
-                -(self_.params.server_max_window_bits as c_int), // windowBits
-                zlib::zlibVersion().cast::<u8>(),
-                c_int::try_from(core::mem::size_of::<zlib::z_stream>()).expect("int cast"),
-            )
-        };
-        if decompress_err != zlib::ReturnCode::Ok {
-            // Drop handles deflateEnd on the initialized compress_stream and inflateEnd
-            // on the failed decompress_stream (no-op, returns Z_STREAM_ERROR).
-            return Err(bun_core::err!("InflateInitFailed"));
-        }
+        // Negative window bits select raw DEFLATE, as required by RFC 7692.
+        let compress_window_bits = ours
+            .0
+            .clamp(ZLIB_MIN_RAW_DEFLATE_WINDOW_BITS, Params::MAX_WINDOW_BITS);
+        let decompress_window_bits = theirs
+            .0
+            .clamp(Params::MIN_WINDOW_BITS, Params::MAX_WINDOW_BITS);
+        let compress_stream = handle_oom(zlib::DeflateEncoder::new(
+            Z_DEFAULT_COMPRESSION,
+            -(compress_window_bits as c_int),
+            Z_DEFAULT_MEM_LEVEL,
+            Z_DEFAULT_STRATEGY,
+        ));
+        let decompress_stream = handle_oom(zlib::InflateDecoder::new(
+            -(decompress_window_bits as c_int),
+        ));
 
-        Ok(self_)
+        Box::new(Self {
+            compress_stream,
+            decompress_stream,
+            compress_no_context_takeover: ours.1,
+            decompress_no_context_takeover: theirs.1,
+        })
     }
 
     fn can_use_libdeflate(len: usize) -> bool {
-        if feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE.get() {
+        if feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE.get() == Some(true) {
             return false;
         }
 
-        len < RareData::STACK_BUFFER_SIZE
+        len < INFLATE_BUFFER_SIZE
     }
 
-    pub fn decompress(&mut self, in_buf: &[u8], out: &mut Vec<u8>) -> Result<(), DecompressError> {
+    /// Inflate one message onto `out`, failing if it exceeds `max_len` bytes. `decompressor`
+    /// is the thread's shared libdeflate handle (`None` when it could not be allocated).
+    pub(crate) fn decompress(
+        &mut self,
+        decompressor: Option<&mut libdeflate_sys::Decompressor>,
+        in_buf: &[u8],
+        out: &mut Vec<u8>,
+        max_len: usize,
+    ) -> Result<(), DecompressError> {
         let initial_len = out.len();
+        out.try_reserve_exact(INFLATE_BUFFER_SIZE)
+            .map_err(|_| DecompressError::OutOfMemory)?;
 
-        // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
-        if Self::can_use_libdeflate(in_buf.len()) {
-            // SAFETY: `decompressor()` returns a live *mut Decompressor allocated
-            // on first use and freed in Drop.
-            let result = unsafe { &mut *self.rare_data.decompressor() }.decompress_to_vec(
-                in_buf,
-                out,
-                libdeflate_sys::Encoding::Deflate,
-            );
-            if result.status == libdeflate_sys::Status::Success {
-                if out.len() - initial_len > MAX_DECOMPRESSED_SIZE {
-                    return Err(DecompressError::TooLarge);
-                }
-                return Ok(());
-            }
-        }
-
-        let mut in_with_trailer: Vec<u8> = Vec::with_capacity(in_buf.len() + DEFLATE_TRAILER.len());
+        let mut in_with_trailer: Vec<u8> = Vec::new();
+        in_with_trailer
+            .try_reserve_exact(in_buf.len() + DEFLATE_TRAILER.len() + FINAL_EMPTY_BLOCK.len())
+            .map_err(|_| DecompressError::OutOfMemory)?;
         in_with_trailer.extend_from_slice(in_buf);
         in_with_trailer.extend_from_slice(&DEFLATE_TRAILER);
 
-        self.decompress_stream.next_in = in_with_trailer.as_ptr();
-        self.decompress_stream.avail_in =
-            u32::try_from(in_with_trailer.len()).expect("unreachable");
+        // libdeflate is faster than zlib, but it only inflates a finished stream, so it needs a final
+        // block. It also can't see earlier messages, so it only works without context takeover.
+        if self.decompress_no_context_takeover && Self::can_use_libdeflate(in_buf.len()) {
+            if let Some(decompressor) = decompressor {
+                in_with_trailer.extend_from_slice(&FINAL_EMPTY_BLOCK);
+                let result = decompressor.decompress_to_vec(
+                    &in_with_trailer,
+                    out,
+                    libdeflate_sys::Encoding::Deflate,
+                );
+                if result.status == libdeflate_sys::Status::Success {
+                    // Stopping before the appended block means the peer sent a final block of its own.
+                    // Leave that case to zlib.
+                    if result.read == in_with_trailer.len() {
+                        if out.len() - initial_len > max_len {
+                            return Err(DecompressError::TooLarge);
+                        }
+                        return Ok(());
+                    }
+                    out.truncate(initial_len);
+                }
+                in_with_trailer.truncate(in_buf.len() + DEFLATE_TRAILER.len());
+            }
+        }
 
+        let mut remaining = in_with_trailer.as_slice();
+        let mut saw_stream_end = false;
         loop {
-            let stream = &mut self.decompress_stream;
-            // SAFETY: `stream` was initialized by inflateInit2_ in init();
-            // next_in is valid for avail_in bytes (in_with_trailer kept alive on
-            // stack); next_out is valid for spare.len() bytes (spare capacity of `out`).
-            let res = unsafe {
-                bun_core::vec::fill_spare(out, COMPRESSION_BUFFER_SIZE, |spare| {
-                    stream.next_out = spare.as_mut_ptr();
-                    stream.avail_out = spare.len() as u32;
-                    let res = zlib::inflate(&raw mut *stream, zlib::FlushValue::NoFlush);
-                    (spare.len() - stream.avail_out as usize, res)
-                })
-            };
+            let (consumed, rc) = self.decompress_stream.step(
+                remaining,
+                out,
+                COMPRESSION_BUFFER_SIZE,
+                zlib::FlushValue::NoFlush,
+            );
+            remaining = &remaining[consumed..];
 
             // Check for decompression bomb
-            if out.len() - initial_len > MAX_DECOMPRESSED_SIZE {
+            if out.len() - initial_len > max_len {
                 return Err(DecompressError::TooLarge);
             }
 
-            if res == zlib::ReturnCode::StreamEnd {
+            if rc == zlib::ReturnCode::StreamEnd {
+                saw_stream_end = true;
                 break;
             }
-            if res != zlib::ReturnCode::Ok {
+            if rc == zlib::ReturnCode::MemError {
+                return Err(DecompressError::OutOfMemory);
+            }
+            if rc != zlib::ReturnCode::Ok {
                 return Err(DecompressError::InflateFailed);
             }
-            if self.decompress_stream.avail_out == 0 && self.decompress_stream.avail_in != 0 {
+            if self.decompress_stream.avail_out() == 0 && !remaining.is_empty() {
                 // Need more output buffer space, continue loop
                 continue;
             }
-            if self.decompress_stream.avail_in == 0 {
+            if remaining.is_empty() {
                 // This shouldn't happen with the trailer, but as a safeguard.
                 break;
             }
         }
 
-        if self.params.server_no_context_takeover == 1 {
-            // SAFETY: decompress_stream was initialized by inflateInit2_ in init().
-            unsafe { zlib::inflateReset(&raw mut self.decompress_stream) };
+        // RFC 7692 §7.2.3: a sender may end a DEFLATE stream with BFINAL=1 and
+        // begin a fresh one for the next message. Without a reset here the
+        // finished inflater returns Z_STREAM_END with 0 bytes on every later
+        // message, silently delivering empty payloads.
+        if saw_stream_end || self.decompress_no_context_takeover {
+            self.decompress_stream.reset();
         }
 
         Ok(())
     }
 
-    pub fn compress(&mut self, in_buf: &[u8], out: &mut Vec<u8>) -> Result<(), CompressError> {
-        self.compress_stream.next_in = in_buf.as_ptr();
-        self.compress_stream.avail_in = u32::try_from(in_buf.len()).expect("unreachable");
-
+    pub(crate) fn compress(
+        &mut self,
+        in_buf: &[u8],
+        out: &mut Vec<u8>,
+    ) -> Result<(), CompressError> {
+        let mut remaining = in_buf;
         loop {
-            let stream = &mut self.compress_stream;
-            // SAFETY: `stream` was initialized by deflateInit2_ in init();
-            // next_in is valid for avail_in bytes (in_buf borrowed for this call);
-            // next_out is valid for spare.len() bytes (spare capacity of `out`).
-            let res = unsafe {
-                bun_core::vec::fill_spare(out, COMPRESSION_BUFFER_SIZE, |spare| {
-                    stream.next_out = spare.as_mut_ptr();
-                    stream.avail_out = spare.len() as u32;
-                    let res = zlib::deflate(&raw mut *stream, zlib::FlushValue::SyncFlush);
-                    (spare.len() - stream.avail_out as usize, res)
-                })
-            };
-            if res != zlib::ReturnCode::Ok {
+            let (consumed, rc) = self.compress_stream.step(
+                remaining,
+                out,
+                COMPRESSION_BUFFER_SIZE,
+                zlib::FlushValue::SyncFlush,
+            );
+            remaining = &remaining[consumed..];
+            if rc == zlib::ReturnCode::MemError {
+                return Err(CompressError::OutOfMemory);
+            }
+            if rc != zlib::ReturnCode::Ok {
                 return Err(CompressError::DeflateFailed);
             }
 
             // exit only when zlib is truly finished
-            if self.compress_stream.avail_in == 0 && self.compress_stream.avail_out != 0 {
+            if remaining.is_empty() && self.compress_stream.avail_out() != 0 {
                 break;
             }
         }
@@ -325,26 +263,10 @@ impl PerMessageDeflate {
             out.truncate(out.len() - 4);
         }
 
-        if self.params.client_no_context_takeover == 1 {
-            // SAFETY: compress_stream was initialized by deflateInit2_ in init().
-            unsafe { zlib::deflateReset(&raw mut self.compress_stream) };
+        if self.compress_no_context_takeover {
+            self.compress_stream.reset();
         }
 
         Ok(())
     }
 }
-
-impl Drop for PerMessageDeflate {
-    fn drop(&mut self) {
-        // SAFETY: streams were initialized by deflateInit2_/inflateInit2_ in init()
-        // (or are zeroed on the init() error path, in which case *End is a defined
-        // no-op returning Z_STREAM_ERROR). Called exactly once via Drop.
-        unsafe {
-            zlib::deflateEnd(&raw mut self.compress_stream);
-            zlib::inflateEnd(&raw mut self.decompress_stream);
-        }
-        // Zig: self.allocator.destroy(self) — handled by Box drop at the owner.
-    }
-}
-
-// ported from: src/http_jsc/websocket_client/WebSocketDeflate.zig

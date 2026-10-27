@@ -1,4 +1,5 @@
 // HTML tests are tests relating to HTML files themselves.
+import { expect } from "bun:test";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
@@ -77,6 +78,9 @@ devTest("image tag", {
       });
       await dev.fetch("/").expect.toInclude('alt="modified image"');
     });
+    // The image did not change, so the reloaded page keeps its URL and the asset is still served.
+    expect(await c.js`document.querySelector("img").src`).toBe(url);
+    await dev.fetch(url).expect.toBe("FIRST");
 
     // Editing image content causes a hard reload because the html must reflect the new image content
     await c.expectReload(async () => {
@@ -125,6 +129,37 @@ devTest("image import in JS", {
     // await dev.fetch(img1).expect404();
   },
 });
+devTest("html references a json file that is cached as a module", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <script type="module" src="script.ts"></script>
+      </body></html>
+    `,
+    "script.ts": `
+      import manifest from "./manifest.json";
+      console.log(manifest.name);
+    `,
+    "manifest.json": `{ "name": "app" }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("app");
+
+    await c.expectReload(async () => {
+      await dev.patch("index.html", {
+        find: "<head></head>",
+        replace: '<head><link rel="manifest" href="./manifest.json"></head>',
+      });
+    });
+    await c.expectMessage("app");
+
+    // The dev server can only treat a file as one kind of module, so it serves the page without the link.
+    const html = await (await dev.fetch("/")).text();
+    expect(html).toInclude("<script");
+    expect(html).not.toInclude('rel="manifest"');
+  },
+});
 devTest("import then create", {
   files: {
     "index.html": `
@@ -149,6 +184,64 @@ devTest("import then create", {
       await dev.write("data.ts", "export default 'data';");
     });
     await c.expectMessage("data");
+  },
+});
+devTest("a file whose import failed to resolve is imported by a second file", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/entry.ts"],
+    }),
+    "entry.ts": `
+      import "./broken";
+      import "./first";
+    `,
+    "broken.ts": `
+      import "not-installed-pkg";
+      export const value = "value";
+    `,
+    // broken.ts has failed by the time the bundler gets to its second importer.
+    "first.ts": `
+      import "./second";
+    `,
+    "second.ts": `
+      import "./third";
+    `,
+    "third.ts": `
+      import { value } from "./broken";
+      console.log(value);
+    `,
+  },
+  async test(dev) {
+    const c = await dev.client("/", {
+      errors: ['broken.ts:1:8: error: Could not resolve: "not-installed-pkg". Maybe you need to "bun install"?'],
+    });
+    await c.expectReload(async () => {
+      await dev.write("broken.ts", `export const value = "value";`);
+    });
+    await c.expectMessage("value");
+  },
+});
+devTest("reports a bunBakeGraph import in a client script, then runs the script once it's fixed", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import value from "./other.ts" with { bunBakeGraph: "ssr" };
+      console.log(value);
+    `,
+    "other.ts": `
+      export default "other";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["index.ts:1:19: error: Framework does not have a separate SSR graph to put this import into"],
+    });
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log("repaired");`);
+    });
+    await c.expectMessage("repaired");
   },
 });
 devTest("external links", {
@@ -220,5 +313,206 @@ devTest("chrome devtools automatic workspace folders", {
         uuid: expect.any(String),
       },
     });
+  },
+});
+
+devTest("error report endpoint handles stack frames with very long absolute paths", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Error Report</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    // Wire format of POST /_bun/report_error (length-prefixed binary):
+    //   string32 error name, string32 message, string32 browser url,
+    //   u32 frame count, then per frame: i32 line, i32 column,
+    //   string32 function name, string32 file name.
+    function u32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeUInt32LE(n >>> 0, 0);
+      return b;
+    }
+    function i32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeInt32LE(n, 0);
+      return b;
+    }
+    function str32(s: string) {
+      const bytes = Buffer.from(s, "utf8");
+      return Buffer.concat([u32(bytes.length), bytes]);
+    }
+    function frame(line: number, column: number, functionName: string, fileName: string) {
+      return Buffer.concat([i32(line), i32(column), str32(functionName), str32(fileName)]);
+    }
+
+    // One ordinary frame pointing at a real project file, plus one frame whose
+    // absolute path is far larger than any platform path buffer (16 KiB).
+    const normalPath = dev.join("script.ts");
+    const oversizedPath = "/" + "A/".repeat(8192);
+    const body = Buffer.concat([
+      str32("Error"), // error name
+      str32("test message"), // error message
+      str32(dev.baseUrl + "/"), // browser url
+      u32(2), // stack frame count
+      frame(1, 1, "first", normalPath),
+      frame(1, 1, "second", oversizedPath),
+    ]);
+
+    const res = await dev.fetch("/_bun/report_error", { method: "POST", body });
+    expect(res.status).toBe(200);
+    // The reply still references the legitimate frame's file.
+    const text = await res.text();
+    expect(text).toContain("script.ts");
+
+    // The dev server must still be serving requests afterwards.
+    await dev.fetch("/").expect.toInclude("<h1>Error Report</h1>");
+  },
+});
+
+devTest("error report endpoint rejects requests whose origin header does not match the dev server", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Origin Check</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    function u32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeUInt32LE(n >>> 0, 0);
+      return b;
+    }
+    function str32(s: string) {
+      const bytes = Buffer.from(s, "utf8");
+      return Buffer.concat([u32(bytes.length), bytes]);
+    }
+    const body = Buffer.concat([str32("Error"), str32("origin-check-message"), str32(dev.baseUrl + "/"), u32(0)]);
+
+    const crossOrigin = await dev.fetch("/_bun/report_error", {
+      method: "POST",
+      headers: { Origin: "http://other-page.example" },
+      body,
+    });
+    expect(await crossOrigin.text()).toBe("Blocked: Origin header does not match the dev server");
+    expect(crossOrigin.status).toBe(403);
+
+    const sameOrigin = await dev.fetch("/_bun/report_error", {
+      method: "POST",
+      headers: { Origin: dev.baseUrl },
+      body,
+    });
+    expect(sameOrigin.status).toBe(200);
+
+    await dev.fetch("/").expect.toInclude("<h1>Origin Check</h1>");
+  },
+});
+
+devTest("error report endpoint blanks stray non-text bytes in reported frames", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Frame Bytes</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    function u32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeUInt32LE(n >>> 0, 0);
+      return b;
+    }
+    function i32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeInt32LE(n, 0);
+      return b;
+    }
+    function bytes32(bytes: Buffer) {
+      return Buffer.concat([u32(bytes.length), bytes]);
+    }
+    function str32(s: string) {
+      return bytes32(Buffer.from(s, "utf8"));
+    }
+
+    const functionName = Buffer.concat([Buffer.from("fnstart"), Buffer.from([0x9b]), Buffer.from("fnend")]);
+    const body = Buffer.concat([
+      str32("Error"),
+      str32("frame-bytes-message"),
+      str32(dev.baseUrl + "/"),
+      u32(1),
+      i32(1),
+      i32(1),
+      bytes32(functionName),
+      str32("foo.ts"),
+    ]);
+
+    const res = await dev.fetch("/_bun/report_error", { method: "POST", body });
+    const reply = Buffer.from(await res.arrayBuffer());
+    expect(reply.includes(Buffer.from("fnstart fnend", "latin1"))).toBe(true);
+    expect(reply.includes(0x9b)).toBe(false);
+    expect(res.status).toBe(200);
+
+    await dev.fetch("/").expect.toInclude("<h1>Frame Bytes</h1>");
+  },
+});
+devTest("client script route returns 404 when the route bundle index is out of range", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["/script.ts"] }),
+    "script.ts": `console.log("client-script-marker");`,
+  },
+  async test(dev) {
+    // `/_bun/client/{name}-{index}{generation}.js`, where each hex group encodes a u32's four bytes.
+    const page = await dev.fetch("/").text();
+    const [script, generation] = page.match(/\/_bun\/client\/index-[0-9a-f]{8}([0-9a-f]{8})\.js/) ?? [];
+    await dev.fetch(script).expect.toInclude("client-script-marker");
+
+    await dev.fetch(`/_bun/client/index-ffffffff${generation}.js`).expect404();
+    await dev.fetch(`/_bun/client/index-feffffff${generation}.js`).expect404();
+    await dev.fetch(script).expect.toInclude("client-script-marker");
+  },
+});
+
+devTest("editing a file imported from outside the project root hot-reloads", {
+  // The Windows watcher does not watch files outside the project directory.
+  skip: ["win32"],
+  files: {
+    "web/index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "web/index.ts": `
+      import { value } from "../outside/dep";
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    "outside/dep.ts": `
+      export const value = "one";
+    `,
+  },
+  cwd: "web",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+    await dev.write(
+      "outside/dep.ts",
+      `
+        export const value = "two";
+      `,
+    );
+    await c.expectMessage("two");
+    await dev.write(
+      "outside/dep.ts",
+      `
+        export const value = "three";
+      `,
+    );
+    await c.expectMessage("three");
   },
 });

@@ -11,26 +11,25 @@ use crate::test_runner::bun_test::{
     RefDataValue, StepResult,
 };
 use crate::test_runner::bun_test::debug::group;
-// TODO(port): jsc.Jest.Jest.runner / jsc.ConsoleObject live under bun_jsc::jest / bun_jsc::console_object — verify module paths.
 use crate::test_runner::jest::Jest;
 
-pub struct Collection {
+pub(crate) struct Collection {
     /// set to true after collection phase ends
-    pub locked: bool,
-    pub describe_callback_queue: Vec<QueuedDescribe>,
-    pub current_scope_callback_queue: Vec<QueuedDescribe>,
+    pub(crate) locked: bool,
+    pub(crate) describe_callback_queue: Vec<QueuedDescribe>,
+    pub(crate) current_scope_callback_queue: Vec<QueuedDescribe>,
     // The two queues above are self-referential — their `NonNull<DescribeScope>` fields point
     // into the tree rooted at `root_scope`. They are stored as raw `NonNull` (not `&`) so that
     // `active_scope_mut()` may hand out `&mut DescribeScope` to the same nodes without
     // invalidating any live shared-reference tags under Stacked Borrows.
 
-    pub root_scope: Box<DescribeScope>,
-    pub active_scope: NonNull<DescribeScope>,
+    pub(crate) root_scope: Box<DescribeScope>,
+    pub(crate) active_scope: NonNull<DescribeScope>,
 
-    pub filter_buffer: Vec<u8>,
+    pub(crate) filter_buffer: Vec<u8>,
 }
 
-pub struct QueuedDescribe {
+pub(crate) struct QueuedDescribe {
     callback: DeprecatedStrong, // jsc.Strong.Deprecated
     /// Raw cursor into `Collection.root_scope`'s tree. Stored as `NonNull` (not `&DescribeScope`)
     /// because `Collection::active_scope_mut()` hands out `&mut` to the same node while these
@@ -43,18 +42,14 @@ pub struct QueuedDescribe {
     /// `Collection.active_scope` and mutated through).
     new_scope: NonNull<DescribeScope>,
 }
-// Zig `deinit` only called `callback.deinit()`; `Strong: Drop` covers it — no explicit Drop needed.
+// `Strong: Drop` covers cleanup — no explicit Drop needed.
 
 impl Collection {
     /// # Safety
     /// `bun_test_root` must be a valid, exclusive pointer to a live `BunTestRoot` for the
     /// duration of this call. The caller (`BunTest::init`) passes a pointer to its own
     /// `bun_test_root` field.
-    // The `# Safety` contract above documents the deref precondition; the only caller is
-    // `BunTest::init`, which passes a pointer to its own field. Changing the signature to
-    // `&mut BunTestRoot` would require editing the caller in `bun_test.rs`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn init(bun_test_root: *mut BunTestRoot) -> Collection {
+    pub(crate) fn init(bun_test_root: *mut BunTestRoot) -> Collection {
         let _g = group::begin();
         // SAFETY: see fn-level Safety doc.
         let bun_test_root = unsafe { &mut *bun_test_root };
@@ -88,8 +83,7 @@ impl Collection {
         }
     }
 
-    // Zig `deinit` freed root_scope, drained both queues calling item.deinit(), and freed
-    // filter_buffer. All of that is covered by field Drop (Box, Vec<QueuedDescribe>, Vec<u8>).
+    // Cleanup is covered by field Drop (Box, Vec<QueuedDescribe>, Vec<u8>).
     // No explicit `impl Drop for Collection` needed.
 
     /// Immutable view of the currently-active describe scope.
@@ -100,7 +94,7 @@ impl Collection {
     /// `self.root_scope: Box<_>` and nodes are never freed for the lifetime of `Collection`,
     /// so the pointer is always valid while `self` is.
     #[inline]
-    pub fn active_scope(&self) -> &DescribeScope {
+    pub(crate) fn active_scope(&self) -> &DescribeScope {
         // SAFETY: `active_scope` always points into `self.root_scope`'s owned tree; see doc comment above.
         unsafe { self.active_scope.as_ref() }
     }
@@ -115,12 +109,12 @@ impl Collection {
     /// always assigned from a `&mut`-derived `NonNull` (root in `init()`, `new_scope` in
     /// `step()`), so it carries write-capable provenance.
     #[inline]
-    pub fn active_scope_mut(&mut self) -> &mut DescribeScope {
+    pub(crate) fn active_scope_mut(&mut self) -> &mut DescribeScope {
         // SAFETY: `active_scope` always points into `self.root_scope`'s owned tree with write provenance; see doc comment above.
         unsafe { self.active_scope.as_mut() }
     }
 
-    pub fn enqueue_describe_callback(
+    pub(crate) fn enqueue_describe_callback(
         &mut self,
         new_scope: &mut DescribeScope,
         callback: Option<JSValue>,
@@ -128,7 +122,6 @@ impl Collection {
         let _g = group::begin();
 
         debug_assert!(!self.locked);
-        // PORT NOTE: Zig used `bunTest().gpa` for Strong.init; allocator param dropped.
 
         if let Some(cb) = callback {
             group::log(format_args!(
@@ -151,7 +144,7 @@ impl Collection {
         Ok(())
     }
 
-    pub fn run_one_completed(
+    pub(crate) fn run_one_completed(
         &mut self,
         global_this: &JSGlobalObject,
         _: Option<JSValue>,
@@ -181,7 +174,7 @@ impl Collection {
         Ok(())
     }
 
-    pub fn step(
+    pub(crate) fn step(
         buntest_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
         data: &RefDataValue,
@@ -197,24 +190,23 @@ impl Collection {
         let _formatter = make_formatter(global_this);
 
         // append queued callbacks, in reverse order because items will be pop()ed from the end
-        // PORT NOTE: reshaped for borrowck — Zig indexed `items[i]` then clearRetainingCapacity;
         // drain(..).rev() moves each item out exactly once and leaves capacity intact.
         for item in this.current_scope_callback_queue.drain(..).rev() {
             // SAFETY: `new_scope` points into `root_scope`'s Box-allocated tree, which outlives
             // every queued item; short-lived read, no aliasing `&mut` is live here.
             if unsafe { item.new_scope.as_ref() }.failed {
                 // if there was an error in the describe callback, don't run any describe callbacks in this scope
-                drop(item); // Zig: item.deinit() — Strong released here
+                drop(item); // Strong released here
             } else {
                 this.describe_callback_queue.push(item);
             }
         }
-        // PERF(port): was clearRetainingCapacity — drain(..) retains capacity.
+        // `drain(..)` retains the queue's capacity.
 
         while !this.describe_callback_queue.is_empty() {
             group::log(format_args!("runOne -> call next"));
             let first = this.describe_callback_queue.pop().unwrap();
-            // `defer first.deinit()` — handled by Drop at end of loop body / continue.
+            // `first` cleanup handled by Drop at end of loop body / continue.
 
             // SAFETY: `active_scope` points into `root_scope`'s Box-allocated tree, which outlives
             // every queued item; short-lived read, no aliasing `&mut` is live here.
@@ -256,7 +248,7 @@ impl Collection {
         Ok(StepResult::Complete)
     }
 
-    pub fn handle_uncaught_exception(
+    pub(crate) fn handle_uncaught_exception(
         &mut self,
         _: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
@@ -267,5 +259,3 @@ impl Collection {
         HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe // unhandled because it needs to exit with code 1
     }
 }
-
-// ported from: src/test_runner/Collection.zig

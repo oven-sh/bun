@@ -2,6 +2,8 @@
 // Expected values verified against json5@2.2.3 reference implementation.
 import { JSON5 } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 describe("escape sequences", () => {
   test("\\v vertical tab", () => {
@@ -95,6 +97,51 @@ describe("escape sequences", () => {
     expect(() => JSON5.parse('"\\u041"')).toThrow("Invalid unicode escape: expected 4 hex digits");
     expect(() => JSON5.parse('"\\u41"')).toThrow("Invalid unicode escape: expected 4 hex digits");
     expect(() => JSON5.parse('"\\u"')).toThrow("Invalid unicode escape: expected 4 hex digits");
+  });
+
+  test("hex and unicode escape errors point at the first byte that is not a hex digit", async () => {
+    // Columns are 1-based. The caret must land on the marked character, not on
+    // the first digit of the escape.
+    const unicode = "Invalid unicode escape: expected 4 hex digits";
+    const hex = "Invalid hex escape";
+    const cases = [
+      { file: "string-u.json5", source: '{ a: "\\u12G4" }', message: unicode, column: 11 }, // G
+      { file: "string-x.json5", source: '{ a: "\\x1G" }', message: hex, column: 10 }, // G
+      { file: "string-u-short.json5", source: '{ a: "\\u41" }', message: unicode, column: 11 }, // closing quote
+      { file: "string-x-short.json5", source: '{ a: "\\x" }', message: hex, column: 9 }, // closing quote
+      { file: "string-u-low.json5", source: '{ a: "\\uD83D\\uDE0Z" }', message: unicode, column: 18 }, // Z
+      { file: "key-u.json5", source: "{ \\u00G1: 1 }", message: unicode, column: 7 }, // G
+    ];
+    using dir = tempDir("json5-escape-loc", {
+      ...Object.fromEntries(cases.map(c => [c.file, c.source])),
+      "index.js": `
+        const out = [];
+        for (const file of ${JSON.stringify(cases.map(c => c.file))}) {
+          try {
+            await import("./" + file);
+            out.push({ file, message: "parsed without error" });
+          } catch (e) {
+            out.push({ file, message: e.message, line: e.position.line, column: e.position.column });
+          }
+        }
+        console.log(JSON.stringify(out));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(
+      cases.map(c => ({ file: c.file, message: c.message, line: 1, column: c.column })),
+    );
+    expect(exitCode).toBe(0);
   });
 
   test("surrogate pairs", () => {
@@ -474,6 +521,13 @@ describe("error messages", () => {
     expect(() => JSON5.parse("{a: hello}")).toThrow("Unexpected token");
   });
 
+  test("a NUL character doesn't end the input", () => {
+    const nul = String.fromCharCode(0);
+    expect(() => JSON5.parse(`1${nul}`)).toThrow("Unexpected character");
+    expect(() => JSON5.parse(`[1${nul}, @`)).toThrow("Unexpected character");
+    expect(JSON5.parse(`"a${nul}b"`)).toBe(`a${nul}b`);
+  });
+
   // -- Unterminated multi-line comment --
   test("unterminated multi-line comment", () => {
     expect(() => JSON5.parse("/* unterminated")).toThrow("Unterminated multi-line comment");
@@ -576,6 +630,11 @@ describe("error messages", () => {
   test("invalid identifier start character in key", () => {
     expect(() => JSON5.parse("{: 1}")).toThrow("Invalid identifier start character");
     expect(() => JSON5.parse("{@key: 1}")).toThrow("Unexpected character");
+  });
+
+  test("escape in a key that isn't an identifier character", () => {
+    expect(() => JSON5.parse("{a\\u002d: 1}")).toThrow("Invalid identifier start character");
+    expect(JSON5.parse("{a\\u0062: 1}")).toEqual({ ab: 1 });
   });
 
   // -- Expected 'u' after '\\' in identifier --
@@ -736,12 +795,14 @@ describe("stringify", () => {
   });
 
   test("replacer function throws", () => {
+    // @ts-expect-error
     expect(() => JSON5.stringify({ a: 1 }, (key: string, value: any) => value)).toThrow(
       "JSON5.stringify does not support the replacer argument",
     );
   });
 
   test("replacer array throws", () => {
+    // @ts-expect-error
     expect(() => JSON5.stringify({ a: 1, b: 2 }, ["a"])).toThrow(
       "JSON5.stringify does not support the replacer argument",
     );
@@ -1045,12 +1106,12 @@ describe("reserved words as keys", () => {
   });
 
   test("NaN and Infinity as values still work", () => {
-    expect(Number.isNaN(JSON5.parse("{a: NaN}").a)).toBe(true);
-    expect(JSON5.parse("{a: Infinity}").a).toBe(Infinity);
-    expect(JSON5.parse("{a: -Infinity}").a).toBe(-Infinity);
-    expect(Number.isNaN(JSON5.parse("{a: +NaN}").a)).toBe(true);
-    expect(Number.isNaN(JSON5.parse("{a: -NaN}").a)).toBe(true);
-    expect(JSON5.parse("{a: +Infinity}").a).toBe(Infinity);
+    expect(Number.isNaN((JSON5.parse("{a: NaN}") as any).a)).toBe(true);
+    expect((JSON5.parse("{a: Infinity}") as any).a).toBe(Infinity);
+    expect((JSON5.parse("{a: -Infinity}") as any).a).toBe(-Infinity);
+    expect(Number.isNaN((JSON5.parse("{a: +NaN}") as any).a)).toBe(true);
+    expect(Number.isNaN((JSON5.parse("{a: -NaN}") as any).a)).toBe(true);
+    expect((JSON5.parse("{a: +Infinity}") as any).a).toBe(Infinity);
   });
 
   test("keyword-like identifiers as values should error", () => {
@@ -1306,6 +1367,18 @@ describe("input types", () => {
     expect(parsed).toEqual(expected);
   });
 
+  test("an asset of Bun.build() parses as its bytes, and one written to outdir is refused", async () => {
+    using dir = tempDir("json5-build-output", {
+      "entry.js": `import doc from "./doc.json5" with { type: "file" };\nconsole.log(doc);`,
+      "doc.json5": "{a: 1, b: [1, 2,],}",
+    });
+    const entrypoints = [join(String(dir), "entry.js")];
+    const assetOf = (build: Bun.BuildOutput) => build.outputs.find(output => output.kind === "asset")!;
+    expect(JSON5.parse(assetOf(await Bun.build({ entrypoints })) as any)).toEqual({ a: 1, b: [1, 2] });
+    const written = assetOf(await Bun.build({ entrypoints, outdir: join(String(dir), "out") }));
+    expect(() => JSON5.parse(written as any)).toThrow("File blob cannot be used here");
+  });
+
   test("throws on no arguments", () => {
     expect(() => (JSON5.parse as any)()).toThrow();
   });
@@ -1346,7 +1419,7 @@ describe("round-trip: parse → stringify → parse", () => {
   function psp(input: string) {
     const first = JSON5.parse(input);
     const stringified = JSON5.stringify(first);
-    const second = JSON5.parse(stringified);
+    const second = JSON5.parse(stringified!);
     expect(deepEqual(first, second)).toBe(true);
   }
 
@@ -1443,7 +1516,7 @@ describe("round-trip: stringify → parse → stringify", () => {
   // Stringify a JS value, parse the result, stringify again — strings must match
   function sps(value: any) {
     const first = JSON5.stringify(value);
-    const parsed = JSON5.parse(first);
+    const parsed = JSON5.parse(first!);
     const second = JSON5.stringify(parsed);
     expect(second).toBe(first);
   }
@@ -1451,7 +1524,7 @@ describe("round-trip: stringify → parse → stringify", () => {
   // With a space argument for pretty printing
   function spsPretty(value: any, space: number | string = 2) {
     const first = JSON5.stringify(value, null, space);
-    const parsed = JSON5.parse(first);
+    const parsed = JSON5.parse(first!);
     const second = JSON5.stringify(parsed, null, space);
     expect(second).toBe(first);
   }
@@ -1555,7 +1628,7 @@ describe("round-trip: stringify → parse → stringify", () => {
     test("undefined in object is omitted", () => {
       const obj = { a: 1, b: undefined, c: 3 };
       const s1 = JSON5.stringify(obj);
-      const parsed = JSON5.parse(s1);
+      const parsed = JSON5.parse(s1!);
       const s2 = JSON5.stringify(parsed);
       expect(s2).toBe(s1);
       expect(parsed).toEqual({ a: 1, c: 3 });
@@ -1564,10 +1637,166 @@ describe("round-trip: stringify → parse → stringify", () => {
     test("undefined in array becomes null", () => {
       const arr = [1, undefined, 3];
       const s1 = JSON5.stringify(arr);
-      const parsed = JSON5.parse(s1);
+      const parsed = JSON5.parse(s1!);
       const s2 = JSON5.stringify(parsed);
       expect(s2).toBe(s1);
       expect(parsed).toEqual([1, null, 3]);
     });
   });
+});
+
+describe("deeply nested parse results", () => {
+  test("JSON5.parse and JSONC.parse near the nesting depth limit either return the value or throw a catchable error", async () => {
+    // Probes array nesting depths right at the boundary the parser still accepts.
+    // The deepest accepted AST must convert back to JS values either successfully
+    // or by throwing a catchable error, and shallow inputs must keep working.
+    // The sweep runs in a child process so the parent test can observe whether it
+    // ran to completion.
+    const script = `
+      function makeInput(depth) {
+        return Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
+      }
+      function isExpectedNestedArray(value, depth) {
+        let d = 0;
+        let cur = value;
+        while (Array.isArray(cur)) {
+          if (cur.length !== 1) return false;
+          cur = cur[0];
+          d++;
+        }
+        return d === depth && cur === 1;
+      }
+      function probe(parse, depth) {
+        const input = makeInput(depth);
+        let value;
+        try {
+          value = parse(input);
+        } catch (err) {
+          if (!(err instanceof Error)) {
+            console.log("non-Error thrown at depth " + depth);
+            process.exit(1);
+          }
+          return "error";
+        }
+        if (!isExpectedNestedArray(value, depth)) {
+          console.log("wrong shape at depth " + depth);
+          process.exit(1);
+        }
+        return "ok";
+      }
+      const parsers = [
+        ["JSON5", input => Bun.JSON5.parse(input)],
+        ["JSONC", input => Bun.JSONC.parse(input)],
+      ];
+      for (const [name, parse] of parsers) {
+        // Legitimate shallow input must still parse to the right shape.
+        if (probe(parse, 64) !== "ok") {
+          console.log(name + " rejected shallow input");
+          process.exit(1);
+        }
+        // Find a depth the parser refuses, then binary-search the deepest depth it
+        // still accepts. Every accepted probe converts the full AST to JS values,
+        // so the probes converge on (and repeatedly exercise) the deepest AST the
+        // parser will ever hand to the converter.
+        let hi = 1024;
+        while (hi <= 4000000 && probe(parse, hi) === "ok") {
+          hi *= 2;
+        }
+        if (hi <= 4000000) {
+          let lo = hi >> 1;
+          while (lo + 1 < hi) {
+            const mid = (lo + hi) >> 1;
+            if (probe(parse, mid) === "ok") lo = mid;
+            else hi = mid;
+          }
+          for (let d = Math.max(64, lo - 2); d <= lo + 2; d++) {
+            probe(parse, d);
+          }
+        }
+        console.log(name + " probed");
+      }
+      console.log("done");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.replaceAll("\r\n", "\n").trim()).toBe("JSON5 probed\nJSONC probed\ndone");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("stringify memory", () => {
+  test("does not leak with a string space argument", async () => {
+    // Unique >10-char space string per call so each iteration allocates a
+    // fresh WTFStringImpl for the stored space and hits the clamp branch in
+    // newline(). Nested object/array so indent > 0.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--smol",
+        "-e",
+        /* js */ `
+          const rss = process.memoryUsage.rss;
+          const obj = { a: [1, 2, 3], b: { c: 4 }, d: 5 };
+          const pad = Buffer.alloc(1024 * 1024, " ").toString();
+          for (let i = 0; i < 20; i++) Bun.JSON5.stringify(obj, null, pad + i);
+          Bun.gc(true);
+          const before = rss();
+          for (let i = 0; i < 200; i++) Bun.JSON5.stringify(obj, null, pad + i);
+          Bun.gc(true);
+          const growthMB = (rss() - before) / 1024 / 1024;
+          if (growthMB > 64) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        // Under ASAN every freed allocation parks in the allocator quarantine
+        // (default quarantine_size_mb=256) instead of being returned, so the
+        // RSS-delta heuristic over-reports even when nothing leaks. Disable
+        // the quarantine for this measurement process so the 64 MB threshold
+        // keeps separating "fixed" from "leaking ~200 MB". Harmless when the
+        // binary is not ASAN-built.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});
+
+// The JSON5 lexer records every source position as an i32, so an input of
+// 2**31 bytes or more used to abort the process with
+// `panic: int cast: TryFromIntError(PosOverflow)` instead of throwing. It is
+// rejected before parsing, so the Uint8Array below is virtual pages that are
+// never read. The runtime accepts a TypedArray here (the binding takes a
+// Blob, Buffer or string); the declared `string` type is narrower.
+test("parse rejects an input of 2**31 bytes or more instead of panicking", () => {
+  let input: Uint8Array;
+  try {
+    input = new Uint8Array(2 ** 31 + 2);
+  } catch {
+    // The 2 GiB reservation itself can fail on a memory-pressured runner;
+    // there is nothing to test then.
+    return;
+  }
+  let err: any;
+  try {
+    JSON5.parse(input as unknown as string);
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.constructor?.name).toBe("RangeError");
+  expect(err?.code).toBe("ERR_OUT_OF_RANGE");
+  expect(err?.message).toBe(
+    'The value of "input.byteLength" is out of range. It must be <= 2147483647. Received 2147483650',
+  );
 });

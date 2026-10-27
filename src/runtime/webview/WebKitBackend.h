@@ -38,7 +38,7 @@ enum class VirtualKey : uint8_t;
 namespace WK {
 
 // One per process. Lazy-spawned on first WebView construction via
-// Bun__WebViewHost__ensure (Zig side, reuses bun.spawn.Process).
+// Bun__WebViewHost__ensure (implemented in HostProcess.rs).
 struct HostClient {
     us_socket_t* sock = nullptr;
     Zig::GlobalObject* global = nullptr;
@@ -59,6 +59,8 @@ struct HostClient {
     void onData(const char* data, int length);
     void onWritable();
     void onClose();
+    // `bun test --isolate` is retiring `global`. See CDP::Transport::retireGlobal.
+    void retireGlobal(Zig::GlobalObject* global);
 };
 
 HostClient& client();

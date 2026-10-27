@@ -10,13 +10,11 @@
 
 use bun_core::{Timespec, TimespecMockMode};
 
+use crate::generated_bindgen::timer::{js_Immediate as JSImmediate, js_Timeout as JSTimeout};
 use crate::jsc::JsCell;
-use crate::jsc::{
-    Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus,
-    generated::{JSImmediate, JSTimeout},
-};
+use crate::jsc::{Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus};
 use core::cell::Cell;
-// PORT NOTE: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
+// Note: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
 // `virtual_machine::VirtualMachine`.
 use crate::jsc::virtual_machine::VirtualMachine;
 
@@ -27,15 +25,20 @@ use super::{
 
 /// Data that TimerObject and ImmediateObject have in common.
 #[repr(C)]
-pub struct TimerObjectInternals {
+pub(crate) struct TimerObjectInternals {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`).
-    pub id: i32,
-    pub interval: Cell<u32>, // Zig: u31
+    pub(crate) id: u64,
     pub this_value: JsCell<JsRef>,
-    pub flags: Cell<Flags>,
-    /// `bun test --isolate` generation this timer was created in.
-    pub generation: u32,
+    pub(crate) interval: Cell<u32>,
+    pub(crate) flags: Cell<Flags>,
+    /// The context whose script created the timer.
+    pub(crate) context: bun_jsc::ContextId,
+    /// `VirtualMachine::test_isolation_generation` when it did.
+    pub(crate) generation: u32,
 }
+
+// Putting `interval` between `id` and `this_value` would pad this to 48 bytes.
+const _: () = assert!(core::mem::size_of::<TimerObjectInternals>() == 40);
 
 impl TimerObjectInternals {
     /// Read-modify-write `self.flags` through the `Cell` (R-2: `flags` is
@@ -52,10 +55,11 @@ impl TimerObjectInternals {
 impl Default for TimerObjectInternals {
     fn default() -> Self {
         Self {
-            id: -1,
-            interval: Cell::new(0),
+            id: 0,
             this_value: JsCell::new(JsRef::empty()),
+            interval: Cell::new(0),
             flags: Cell::new(Flags::default()),
+            context: bun_jsc::ContextId::default(),
             generation: 0,
         }
     }
@@ -65,10 +69,10 @@ impl Default for TimerObjectInternals {
 // `bun_event_loop::EventLoopTimer::TimerFlags` so `bun_jsc::abort_signal::Timeout`
 // can name it without a forward dep on this crate. Re-exported here so existing
 // `TimerObjectInternals`/`All::update` callers see the same nominal type.
-pub use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
+pub(crate) use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `runImmediateTask` path — un-gated for `__bun_run_immediate_task` (dispatch.rs).
+// `runImmediateTask` path for `__bun_run_immediate_task` (dispatch.rs).
 // ──────────────────────────────────────────────────────────────────────────
 
 // C++ symbol emitted from ImmediateList.cpp / setTimeout.cpp; already linked.
@@ -100,6 +104,7 @@ impl TimerObjectInternals {
     /// lives in exactly one place.
     #[inline]
     fn parent_ptr(&self) -> TimerParent {
+        bun_core::assert_not_freeze!(TimerObjectInternals, TimerParent);
         let this = std::ptr::from_ref::<Self>(self).cast_mut();
         match self.flags.get().kind() {
             // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field
@@ -147,8 +152,9 @@ impl TimerObjectInternals {
     /// `cancel()` skips its own `remove`/`deref` because `state` is already
     /// `CANCELLED`, which is why the explicit `deref` follows.
     ///
-    /// `vm` is the live per-thread VM; `All.lock` must NOT be held (the
-    /// `set_enable_keeping_event_loop_alive` write reaches `&mut All`).
+    /// `vm` is the live per-thread VM; no borrow of `All` may be live across
+    /// this call (`cancel()` reaches `All::remove`, which forms its own
+    /// `&mut All`).
     pub(crate) fn release_heap_pin(this: core::ptr::NonNull<Self>, vm: *mut VirtualMachine) {
         // SAFETY: caller guarantees the parent box is live (refcount ≥ 1).
         let internals = unsafe { this.as_ref() };
@@ -168,7 +174,7 @@ impl TimerObjectInternals {
     }
 
     #[inline]
-    pub fn async_id(&self) -> u64 {
+    pub(crate) fn async_id(&self) -> u64 {
         ID {
             id: self.id,
             kind: self.flags.get().kind().into(),
@@ -176,10 +182,8 @@ impl TimerObjectInternals {
         .async_id()
     }
 
-    /// Spec TimerObjectInternals.zig `setEnableKeepingEventLoopAlive`.
-    ///
-    /// PORT NOTE (jsc/runtime crate cycle): Zig reaches `vm.timer` (a value field of
-    /// `VirtualMachine`); the low-tier `bun_jsc::VirtualMachine.timer` is `()`,
+    /// Note (jsc/runtime crate cycle): the low-tier
+    /// `bun_jsc::VirtualMachine.timer` is `()`,
     /// so resolve `Timer::All` via the per-thread `RuntimeState` instead.
     fn set_enable_keeping_event_loop_alive(&self, vm: *mut VirtualMachine, enable: bool) {
         if self.flags.get().is_keeping_event_loop_alive() == enable {
@@ -206,18 +210,18 @@ impl TimerObjectInternals {
         }
     }
 
-    /// Spec TimerObjectInternals.zig `run` — invoke the JS callback via the
+    /// Invoke the JS callback via the
     /// C++ `Bun__JSTimeout__call` thunk (which handles exceptions internally).
     /// Returns `true` if an exception was thrown.
     ///
-    /// PORT NOTE (noalias re-entrancy): takes `*mut Self`, NOT `&mut self`.
+    /// Note (noalias re-entrancy): takes `*mut Self`, NOT `&mut self`.
     /// The JS callback can re-enter `cancel()`/`do_refresh()` on this same
     /// object via a fresh `&mut Self` derived from the JS wrapper's `m_ptr`.
     /// With `&mut self` here, LLVM's `noalias` lets it keep `self.flags` in a
     /// register across the FFI call, so `set_in_callback(false)`'s RMW
     /// clobbers the `has_cleared_timer` bit that `cancel()` set — the interval
-    /// re-fires forever. Zig's `*TimerObjectInternals` has no aliasing
-    /// guarantee; mirror that with a raw pointer.
+    /// re-fires forever. A raw pointer carries no aliasing guarantee, so use
+    /// one here.
     ///
     /// # Safety
     /// `this` points at a live `TimerObjectInternals` embedded in its parent
@@ -251,15 +255,12 @@ impl TimerObjectInternals {
         // runs (re-entrant `_destroyed` getter reads it via a different pointer).
         s.update_flags(|f| f.set_in_callback(true));
         let result = Bun__JSTimeout__call(global, timer, callback, arguments);
-        // PORT NOTE: reshaped for borrowck — Zig `defer this.flags.in_callback = false`
-        // moved to tail; no early returns between set and clear.
+        // No early returns between the `in_callback` set and this clear.
         // `Cell<Flags>` RMW: must reload `flags` from memory — re-entrant
         // `cancel()` may have set `has_cleared_timer` / cleared
         // `is_keeping_event_loop_alive`.
         s.update_flags(|f| f.set_in_callback(false));
 
-        // PORT NOTE: Zig `defer { if isInspectorEnabled() didDispatch }` —
-        // moved to tail (no early returns above).
         // SAFETY: as above.
         if unsafe { (*vm).is_inspector_enabled() } {
             Debugger::did_dispatch_async_call(global, Debugger::AsyncCallType::DOMTimer, async_id);
@@ -268,22 +269,21 @@ impl TimerObjectInternals {
         result
     }
 
-    /// Spec TimerObjectInternals.zig `init` — out-param constructor; `self` is
+    /// Out-param constructor; `self` is
     /// the embedded `internals` field of a freshly `heap::alloc`'d
     /// `ImmediateObject`/`TimeoutObject`. Cannot be
     /// reshaped to `-> Self` because the body needs the parent pointer to
     /// enqueue/reschedule before returning.
     ///
-    /// PORT NOTE (jsc/runtime crate cycle): `vm.timer.epoch` resolved via `runtime_state()`
+    /// Note (jsc/runtime crate cycle): `vm.timer.epoch` resolved via `runtime_state()`
     /// (low-tier `VirtualMachine.timer` is `()`).
-    // TODO(port): in-place init — see ImmediateObject::init / TimeoutObject::init.
-    pub fn init(
+    pub(crate) fn init(
         &mut self,
         timer: JSValue,
-        global: &JSGlobalObject,
-        id: i32,
+        cx: &bun_jsc::JsThread<'_>,
+        id: u64,
         kind: Kind,
-        interval: u32, // Zig: u31
+        interval: u32,
         callback: JSValue,
         arguments: JSValue,
     ) {
@@ -291,47 +291,56 @@ impl TimerObjectInternals {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
+        // Only a graph's context keeps a list of its timers.
+        // SAFETY: `vm` is the live per-thread VM.
+        let graph_context = unsafe { (*vm).as_graph_context(cx.context()) };
         *self = Self {
             id,
             flags: {
                 let mut f = Flags::default();
                 f.set_kind(kind);
-                // SAFETY: `state` is the boxed per-thread `RuntimeState`;
-                // single-threaded JS heap so no concurrent `&mut` to `.timer`.
+                // SAFETY: `state` is the boxed per-thread `RuntimeState`.
                 f.set_epoch(unsafe { (*state).timer.epoch });
                 Cell::new(f)
             },
             interval: Cell::new(interval),
-            // SAFETY: `vm` is the live per-thread VM; field read only.
-            generation: unsafe { (*vm).test_isolation_generation },
+            context: cx.context().id(),
+            generation: cx.vm().test_isolation_generation,
             this_value: JsCell::new(JsRef::empty()),
         };
+        // `self` is at its final address (embedded in its heap-allocated parent).
+        if let Some(context) = graph_context {
+            context.track_timer(
+                core::ptr::from_mut(self).cast(),
+                bun_jsc::ContextTimer::Object,
+            );
+        }
 
         if kind == Kind::SetImmediate {
-            JSImmediate::arguments_set_cached(timer, global, arguments);
-            JSImmediate::callback_set_cached(timer, global, callback);
+            JSImmediate::arguments_set_cached(timer, cx.global(), arguments);
+            JSImmediate::callback_set_cached(timer, cx.global(), callback);
             // `flags.kind` was just set to `SetImmediate` above.
             let TimerParent::Immediate(parent) = self.parent_ptr() else {
                 unreachable!()
             };
             // SAFETY: `vm` is the live per-thread VM. Low tier stores `*mut ()`
-            // (PORTING.md §Dispatch); `run_immediate_task_hook` casts it back
+            // (PORTING.md §Dispatch); `__bun_run_immediate_task` casts it back
             // to `*mut ImmediateObject`.
             unsafe { (*vm).enqueue_immediate_task(parent.cast()) };
             self.set_enable_keeping_event_loop_alive(vm, true);
             // ref'd by event loop
             self.ref_();
         } else {
-            JSTimeout::arguments_set_cached(timer, global, arguments);
-            JSTimeout::callback_set_cached(timer, global, callback);
+            JSTimeout::arguments_set_cached(timer, cx.global(), arguments);
+            JSTimeout::callback_set_cached(timer, cx.global(), callback);
             JSTimeout::idle_timeout_set_cached(
                 timer,
-                global,
+                cx.global(),
                 JSValue::js_number(f64::from(interval)),
             );
             JSTimeout::repeat_set_cached(
                 timer,
-                global,
+                cx.global(),
                 if kind == Kind::SetInterval {
                     JSValue::js_number(f64::from(interval))
                 } else {
@@ -340,20 +349,21 @@ impl TimerObjectInternals {
             );
 
             // this increments the refcount and sets _idleStart
-            self.reschedule(timer, vm, global.as_ptr());
+            self.reschedule(timer, vm, cx.global().as_ptr());
         }
 
-        self.this_value.with_mut(|r| r.set_strong(timer, global));
+        self.this_value
+            .with_mut(|r| r.set_strong(timer, cx.global()));
     }
 
-    /// Spec TimerObjectInternals.zig `runImmediateTask`. Returns `true` if an
+    /// Returns `true` if an
     /// exception was thrown.
     ///
-    /// PORT NOTE (noalias re-entrancy): takes `*mut Self`, NOT `&mut self`.
+    /// Note (noalias re-entrancy): takes `*mut Self`, NOT `&mut self`.
     /// `Self::run` re-enters JS which can `cancel()`/`do_refresh()` this same
     /// object via the JS wrapper's `m_ptr`. With `&mut self` LLVM may cache
     /// `self.flags`/`event_loop_timer().state` across the call and clobber the
-    /// re-entrant write (see `run()` doc). Mirror Zig's `*Self` with a raw
+    /// re-entrant write (see `run()` doc). Use a raw
     /// pointer; helper calls `(*this).foo()` materialise short-lived `&mut`
     /// scoped to each statement only — none span the JS call.
     ///
@@ -365,15 +375,18 @@ impl TimerObjectInternals {
     /// `this` points at a live `TimerObjectInternals` embedded in its
     /// `ImmediateObject` parent (FIRE_TIMER hook contract); `vm` is the live
     /// per-thread VM.
-    pub unsafe fn run_immediate_task(this: *mut Self, vm: *mut VirtualMachine) -> bool {
+    pub(crate) unsafe fn run_immediate_task(this: *mut Self, vm: *mut VirtualMachine) -> bool {
         // SAFETY: per fn contract — `this` live. `&Self` (NOT `&mut`) — fields
         // are `Cell`/`JsCell` so re-entrant JS touching this object via another
         // `&Self` is sound (no `noalias`). Last use of `s` is the final
         // `s.deref()` below; `*this` may be freed only after that point.
         let s = unsafe { &*this };
         let cleared = s.flags.get().has_cleared_timer()
+            // The VM's stop was requested: nothing more enters script (as `fire`).
             // SAFETY: `vm` is the live per-thread VM (hook contract).
-            || s.generation != unsafe { (*vm).test_isolation_generation }
+            || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
+            // SAFETY: as above.
+            || unsafe { (*vm).has_outlived_its_script(s.context, s.generation) }
             // unref'd setImmediate callbacks should only run if there are things
             // keeping the event loop alive other than setImmediates
             || (!s.flags.get().is_keeping_event_loop_alive()
@@ -418,9 +431,8 @@ impl TimerObjectInternals {
             // above pins the parent across re-entrancy.
             let result =
                 unsafe { Self::run(this, global_this, timer, callback, arguments, async_id, vm) };
-            // PORT NOTE: Zig `defer { if state == .FIRED deref(); deref(); }` —
-            // moved to tail of this block; `Self::run` has no early return so
-            // ordering is preserved. After the second `deref()` `*this` may be
+            // `Self::run` has no early return so the deref ordering below is
+            // preserved. After the second `deref()` `*this` may be
             // freed; do not touch it past this block.
             // Fresh read: re-entrant `cancel()`/`refresh()` may have changed
             // `state` (`ref_()` above pins the parent).
@@ -443,7 +455,7 @@ impl TimerObjectInternals {
 
     /// # Safety
     /// `this` must be the live `internals` of a queued `ImmediateObject`.
-    pub unsafe fn cancel_pending_immediate(this: *mut Self, vm: *mut VirtualMachine) {
+    pub(crate) unsafe fn cancel_pending_immediate(this: *mut Self, vm: *mut VirtualMachine) {
         // SAFETY: per fn contract.
         let s = unsafe { &*this };
         s.set_enable_keeping_event_loop_alive(vm, false);
@@ -451,27 +463,26 @@ impl TimerObjectInternals {
         s.deref();
     }
 
-    /// Spec TimerObjectInternals.zig `fire` — `EventLoopTimer.fire` dispatch
+    /// `EventLoopTimer.fire` dispatch
     /// arm body for `Tag::TimeoutObject`/`Tag::ImmediateObject`. Pops the JS
     /// timer, invokes its callback via `run()`, then either reschedules
     /// (setInterval / `t._repeat`) or releases the heap ref.
     ///
-    /// PORT NOTE: takes `*mut VirtualMachine` (NOT `&mut`) — the body calls
+    /// Note: takes `*mut VirtualMachine` (NOT `&mut`) — the body calls
     /// `vm.event_loop().enter()` then re-enters JS which may itself touch the
     /// VM/EventLoop (and `(*runtime_state()).timer` via `cancel()`/`refresh()`);
     /// aliased `&mut` would be UB. Dereference per-use under `// SAFETY:`.
-    /// Spec Timer.zig:346 takes `*All`/`*VirtualMachine` for the same reason.
     ///
-    /// PORT NOTE (noalias re-entrancy): takes `*mut Self`, NOT `&mut self`.
+    /// Note (noalias re-entrancy): takes `*mut Self`, NOT `&mut self`.
     /// `Self::run` re-enters JS which can `cancel()`/`do_refresh()` this same
     /// object via the JS wrapper's `m_ptr`. With `&mut self` LLVM may cache
     /// `self.flags`/`event_loop_timer().state` across the call and dead-store
     /// the post-call reloads in `should_reschedule_timer`/`is_timer_done` —
-    /// the interval re-fires forever. Mirror Zig's `*Self` with a raw pointer;
+    /// the interval re-fires forever. Use a raw pointer;
     /// helper calls `(*this).foo()` materialise short-lived `&mut` scoped to
     /// each statement only — none span the JS call.
     ///
-    /// PORT NOTE (jsc/runtime crate cycle): `vm.timer` resolved via
+    /// Note (jsc/runtime crate cycle): `vm.timer` resolved via
     /// `crate::jsc_hooks::runtime_state()` — low-tier `VirtualMachine.timer`
     /// is `()` (see `set_enable_keeping_event_loop_alive`).
     ///
@@ -479,7 +490,7 @@ impl TimerObjectInternals {
     /// `this` points at a live `TimerObjectInternals` embedded in its
     /// `TimeoutObject`/`ImmediateObject` parent (FIRE_TIMER hook contract);
     /// `vm` is the live per-thread VM.
-    pub unsafe fn fire(this: *mut Self, _now: &ElTimespec, vm: *mut VirtualMachine) {
+    pub(crate) unsafe fn fire(this: *mut Self, _now: &ElTimespec, vm: *mut VirtualMachine) {
         // SAFETY: per fn contract — `this` live. `&Self` (NOT `&mut`) — fields
         // are `Cell`/`JsCell` so re-entrant JS touching this object via another
         // `&Self` is sound (no `noalias`; LLVM cannot cache `Cell` reads across
@@ -494,7 +505,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` is the live per-thread VM (hook contract).
             || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
             // SAFETY: `vm` live per hook contract.
-            || s.generation != unsafe { (*vm).test_isolation_generation };
+            || unsafe { (*vm).has_outlived_its_script(s.context, s.generation) };
 
         s.set_event_loop_timer_state(EventLoopTimerState::FIRED);
 
@@ -570,7 +581,7 @@ impl TimerObjectInternals {
         {
             // Ensure it stays alive for this scope.
             s.ref_();
-            // PORT NOTE: Zig `defer this.deref()` — moved to the end of this
+            // The matching `deref()` is at the end of this
             // block. Every path through the labelled-block + `is_timer_done`
             // tail reaches it (no `return` between here and the deref).
 
@@ -686,7 +697,7 @@ impl TimerObjectInternals {
                 s.deref();
             }
 
-            // PORT NOTE: Zig `defer this.deref()` — end of pinned scope. After
+            // End of pinned scope. After
             // this `*this` may be freed; do not touch past this block.
             s.deref();
         }
@@ -696,11 +707,11 @@ impl TimerObjectInternals {
         unsafe { (*(*vm).event_loop()).exit() };
     }
 
-    /// Spec TimerObjectInternals.zig `convertToInterval` — a `setTimeout` whose
+    /// A `setTimeout` whose
     /// `t._repeat` was assigned promotes itself to a `setInterval` after its
     /// first fire (Node `lib/internal/timers.js:613`).
     ///
-    /// PORT NOTE: takes `vm` explicitly instead of `global.bun_vm()` so the
+    /// Note: takes `vm` explicitly instead of `global.bun_vm()` so the
     /// raw-ptr contract from `fire()` is preserved (no fresh `&mut VM`).
     /// `&self` (not `&mut`) — all writes go through `Cell`/`JsCell`; the sole
     /// caller (`fire()`) holds only a `&Self`.
@@ -714,7 +725,6 @@ impl TimerObjectInternals {
         debug_assert!(self.flags.get().kind() == Kind::SetTimeout);
 
         let new_interval: u32 = if let Some(num) = repeat.get_number() {
-            // Zig: `if (num < 1 or num > maxInt(u31)) 1 else @intFromFloat(num)`
             if num < 1.0 || num > f64::from(u32::MAX >> 1) {
                 1
             } else {
@@ -735,7 +745,6 @@ impl TimerObjectInternals {
         self.reschedule(timer, vm, global);
     }
 
-    /// Spec TimerObjectInternals.zig `shouldRescheduleTimer`.
     fn should_reschedule_timer(&self, repeat: JSValue, idle_timeout: JSValue) -> bool {
         if self.flags.get().kind() == Kind::SetInterval && repeat.is_null() {
             return false;
@@ -748,12 +757,12 @@ impl TimerObjectInternals {
         true
     }
 
-    /// Spec TimerObjectInternals.zig `reschedule` — re-insert the parent's
+    /// Re-insert the parent's
     /// `EventLoopTimer` into the heap at `now + interval`. Called from
     /// `init()`, `do_refresh()`, and `convert_to_interval()` above.
     ///
-    /// PORT NOTE (jsc/runtime crate cycle): `vm.timer` resolved via `runtime_state()`.
-    pub fn reschedule(
+    /// Note (jsc/runtime crate cycle): `vm.timer` resolved via `runtime_state()`.
+    pub(crate) fn reschedule(
         &self,
         timer: JSValue,
         vm: *mut VirtualMachine,
@@ -776,7 +785,10 @@ impl TimerObjectInternals {
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
         let now = Timespec::now(TimespecMockMode::AllowMockedTime);
-        let scheduled_time = now.add_ms(i64::from(self.interval.get()));
+        // Only `Bun.sleep()` has an `interval` below 1.
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
+        let min_delay = unsafe { (*state).timer.fake_timers.min_delay_ms() };
+        let scheduled_time = now.add_ms(i64::from(self.interval.get().max(min_delay)));
         let was_active = self.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
         if was_active {
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh
@@ -809,25 +821,18 @@ impl TimerObjectInternals {
         }
     }
 
-    /// Spec TimerObjectInternals.zig `deinit` — final teardown invoked by the
-    /// parent container's intrusive-refcount destructor (`{Timeout,Immediate}
-    /// Object::deref` when the count hits zero). Unlinks the parent from every
-    /// `Timer::All` data structure it may still be reachable from so the
-    /// imminent `heap::take` free cannot leave a dangling
+    /// Final teardown, invoked from the parent container's `Drop` (count hit
+    /// zero). Unlinks the parent from every `Timer::All` data structure it may
+    /// still be reachable from so the free cannot leave a dangling
     /// `*mut EventLoopTimer` in the heap or a leaked keep-alive count.
-    ///
-    /// PORT NOTE: `this_value.deinit()` (Zig line 499) is intentionally NOT
-    /// called here — `JsRef: Drop` runs when the parent `Box` is reclaimed
-    /// immediately after this returns, performing the same release.
-    /// `ref_count.assertNoRefs()` is likewise omitted: the only caller is the
-    /// `n == 1` branch of `deref`, so the count is provably zero.
+    /// `this_value` is released by `JsRef: Drop` right after.
     ///
     /// # Safety
     /// `self` is the `internals` field of a live heap-allocated
     /// `TimeoutObject`/`ImmediateObject` whose refcount has just reached zero.
     /// The per-thread `RuntimeState` and `VirtualMachine` are installed (always
     /// true on the JS thread by the time a timer can be dropped).
-    pub unsafe fn deinit(&mut self) {
+    pub(crate) unsafe fn deinit(&mut self) {
         let vm = VirtualMachine::get_mut_ptr();
         let kind = self.flags.get().kind();
 
@@ -843,19 +848,40 @@ impl TimerObjectInternals {
             unsafe { (*state).timer.remove(self.event_loop_timer()) };
         }
 
-        // (c) `vm.timer.maps.get(kind).orderedRemove(id)` if
-        //     `has_accessed_primitive` — drops the i32→*mut EventLoopTimer
-        //     entry minted by `toPrimitive`.
+        // (c) `vm.timer.maps.get(kind).swapRemove(id)` if
+        //     `has_accessed_primitive` — drops the id→*mut EventLoopTimer
+        //     entry minted by `to_primitive`. Swap-remove: the id map is only
+        //     ever keyed into, never iterated in order, and `deinit` runs for
+        //     every id-accessed timer a GC sweep collects, so the ordered
+        //     remove's O(n) shift + index rebuild here was O(n²) across a
+        //     sweep.
         if self.flags.get().has_accessed_primitive() {
             // SAFETY: as above — fresh `&mut` to `.timer.maps` for this call.
             let map = unsafe { (*state).timer.maps.get(kind) };
-            // PORT NOTE: Zig follows up with a shrink-and-free heuristic
-            // (>256 KiB slack ⇒ `shrinkAndFree`); `bun_collections::ArrayHashMap`
-            // exposes neither `capacity()` nor `shrink_and_free()`, so the
-            // reclamation is omitted. Correctness is unaffected — the entry is
-            // gone — only the high-watermark capacity lingers.
-            // TODO(port): plumb a `shrink_to_fit` once `ArrayHashMap` grows one.
-            let _ = map.remove(&self.id);
+            if map.swap_remove(&self.id) {
+                // If this map got
+                // large, shrink it back down: reclaim once the slack exceeds 256 KiB.
+                const ENTRY_SIZE: usize =
+                    core::mem::size_of::<u64>() + core::mem::size_of::<*mut EventLoopTimer>();
+                let allocated_bytes = map.capacity() * ENTRY_SIZE;
+                let used_bytes = map.count() * ENTRY_SIZE;
+                if allocated_bytes - used_bytes > 256 * 1024 {
+                    map.shrink_and_free(map.count() + 8);
+                }
+            } else if kind == Kind::SetInterval {
+                // A `setTimeout` promoted to a `setInterval` by
+                // `convert_to_interval()` keeps the entry minted by
+                // `to_primitive` in `maps.set_timeout`. Remove it from there
+                // too, or `remove_timer_by_id` would hand out a dangling
+                // `*mut EventLoopTimer` after the parent is freed.
+                // SAFETY: as above.
+                unsafe { (*state).timer.maps.set_timeout.swap_remove(&self.id) };
+            }
+        }
+
+        // SAFETY: `vm` is the live per-thread VM.
+        if let Some(context) = unsafe { (*vm).timer_context(self.context) } {
+            context.untrack_timer(core::ptr::from_mut(self).cast());
         }
 
         // (d) `setEnableKeepingEventLoopAlive(vm, false)` — without this a
@@ -867,7 +893,7 @@ impl TimerObjectInternals {
 
 // ──────────────────────────────────────────────────────────────────────────
 // JS-host-method facade — `do_ref`/`do_unref`/`do_refresh`/`has_ref`/
-// `to_primitive`/`get_destroyed`/`finalize`/`cancel`. Un-gated for
+// `to_primitive`/`get_destroyed`/`finalize`/`cancel`, called from
 // `TimeoutObject.rs` / `ImmediateObject.rs` host-fn shims.
 // ──────────────────────────────────────────────────────────────────────────
 impl TimerObjectInternals {
@@ -891,8 +917,7 @@ impl TimerObjectInternals {
         unsafe { (*self.event_loop_timer()).state = state };
     }
 
-    /// Spec TimerObjectInternals.zig `doRef`.
-    pub fn do_ref(&self, _global: &JSGlobalObject, this_value: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn do_ref(&self, this_value: JSValue) -> JSValue {
         this_value.ensure_still_alive();
 
         let did_have_js_ref = self.flags.get().has_js_ref();
@@ -909,11 +934,10 @@ impl TimerObjectInternals {
             self.set_enable_keeping_event_loop_alive(VirtualMachine::get_mut_ptr(), true);
         }
 
-        Ok(this_value)
+        this_value
     }
 
-    /// Spec TimerObjectInternals.zig `doUnref`.
-    pub fn do_unref(&self, _global: &JSGlobalObject, this_value: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn do_unref(&self, this_value: JSValue) -> JSValue {
         this_value.ensure_still_alive();
 
         let did_have_js_ref = self.flags.get().has_js_ref();
@@ -923,26 +947,50 @@ impl TimerObjectInternals {
             self.set_enable_keeping_event_loop_alive(VirtualMachine::get_mut_ptr(), false);
         }
 
-        Ok(this_value)
+        this_value
     }
 
-    /// Spec TimerObjectInternals.zig `doRefresh`.
-    pub fn do_refresh(
+    /// Node's deadline is `_idleStart + _idleTimeout`; writing `_idleStart`
+    /// must move the heap entry so `t2._idleStart = t1._idleStart` works.
+    pub(crate) fn set_idle_start(&self, idle_start_ms: f64) {
+        if self.flags.get().kind() == Kind::SetImmediate
+            || self.flags.get().has_cleared_timer()
+            || self.event_loop_timer_state() != EventLoopTimerState::ACTIVE
+            || !idle_start_ms.is_finite()
+        {
+            return;
+        }
+
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+
+        let ms = (idle_start_ms as i64)
+            .saturating_add(i64::from(self.interval.get()))
+            .max(0);
+        let scheduled_time = Timespec::EPOCH.add_ms(ms);
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh
+        // `&mut` to `.timer` for this call only. The timer is ACTIVE so
+        // `update()` removes then re-inserts with no refcount change.
+        unsafe {
+            (*state)
+                .timer
+                .update(self.event_loop_timer(), &scheduled_time)
+        };
+    }
+
+    pub(crate) fn do_refresh(
         &self,
         global_object: &JSGlobalObject,
         this_value: JSValue,
-    ) -> JsResult<JSValue> {
+    ) -> JSValue {
         // Immediates do not have a refresh function, and our binding generator should not let this
         // function be reached even if you override the `this` value calling a Timeout object's
         // `refresh` method
         debug_assert!(self.flags.get().kind() != Kind::SetImmediate);
 
         // setImmediate does not support refreshing and we do not support refreshing after cleanup
-        if self.id == -1
-            || self.flags.get().kind() == Kind::SetImmediate
-            || self.flags.get().has_cleared_timer()
-        {
-            return Ok(this_value);
+        if self.flags.get().kind() == Kind::SetImmediate || self.flags.get().has_cleared_timer() {
+            return this_value;
         }
 
         self.this_value
@@ -953,27 +1001,24 @@ impl TimerObjectInternals {
             global_object.as_ptr(),
         );
 
-        Ok(this_value)
+        this_value
     }
 
-    /// Spec TimerObjectInternals.zig `hasRef`.
-    pub fn has_ref(&self) -> JsResult<JSValue> {
-        Ok(JSValue::from(
-            self.flags.get().is_keeping_event_loop_alive(),
-        ))
+    pub(crate) fn has_ref(&self) -> bool {
+        self.flags.get().is_keeping_event_loop_alive()
     }
 
-    /// Spec TimerObjectInternals.zig `toPrimitive` — first access mints an
+    /// First access mints an
     /// `id → *mut EventLoopTimer` entry in `All.maps` so `clearTimeout(+t)` /
     /// `clearImmediate(+t)` (numeric-id form) can resolve it.
     ///
-    /// PORT NOTE (jsc/runtime crate cycle): `vm.timer.maps` resolved via `runtime_state()`.
-    pub fn to_primitive(&self) -> JsResult<JSValue> {
+    /// Note (jsc/runtime crate cycle): `vm.timer.maps` resolved via `runtime_state()`.
+    pub(crate) fn to_primitive(&self) -> JsResult<u64> {
         if !self.flags.get().has_accessed_primitive() {
             self.update_flags(|f| f.set_has_accessed_primitive(true));
             let state = crate::jsc_hooks::runtime_state();
             debug_assert!(!state.is_null(), "RuntimeState not installed");
-            // PORT NOTE: reshaped for borrowck — capture `event_loop_timer` ptr
+            // Note: reshaped for borrowck — capture `event_loop_timer` ptr
             // before borrowing `(*state).timer.maps`.
             let elt = self.event_loop_timer();
             // SAFETY: `state` is the boxed per-thread `RuntimeState`;
@@ -983,15 +1028,15 @@ impl TimerObjectInternals {
                     .timer
                     .maps
                     .get(self.flags.get().kind())
-                    .put(self.id, elt)
+                    .put_no_clobber(self.id, elt)
             }?;
         }
-        Ok(JSValue::js_number(f64::from(self.id)))
+        Ok(self.id)
     }
 
-    /// Spec TimerObjectInternals.zig `getDestroyed` — getter for `_destroyed`
+    /// Getter for `_destroyed`
     /// on JS Timeout and Immediate objects.
-    pub fn get_destroyed(&self) -> bool {
+    pub(crate) fn get_destroyed(&self) -> bool {
         if self.flags.get().has_cleared_timer() {
             return true;
         }
@@ -1004,22 +1049,20 @@ impl TimerObjectInternals {
         }
     }
 
-    /// Spec TimerObjectInternals.zig `finalize` — `.classes.ts` finalizer hook.
     /// Runs on the mutator thread during lazy sweep; do not touch any
     /// `JSValue`/`Strong` content here.
-    pub fn finalize(&self) {
+    pub(crate) fn finalize(&self) {
         self.this_value.with_mut(|r| r.finalize());
-        self.deref();
     }
 
-    /// Spec TimerObjectInternals.zig `cancel` — `clearTimeout`/`clearInterval`
+    /// `clearTimeout`/`clearInterval`
     /// / `clearImmediate` / `Timeout#[Symbol.dispose]` body.
     ///
-    /// PORT NOTE: takes `*mut VirtualMachine` (NOT `&mut`) — callers hand over
+    /// Note: takes `*mut VirtualMachine` (NOT `&mut`) — callers hand over
     /// `global.bun_vm()` (raw ptr) and the body forwards to
     /// `set_enable_keeping_event_loop_alive` which already uses the raw-ptr
     /// contract. `vm.timer` resolved via `runtime_state()` (jsc/runtime crate cycle).
-    pub fn cancel(&self, vm: *mut VirtualMachine) {
+    pub(crate) fn cancel(&self, vm: *mut VirtualMachine) {
         self.set_enable_keeping_event_loop_alive(vm, false);
         self.update_flags(|f| f.set_has_cleared_timer(true));
 
@@ -1045,5 +1088,3 @@ impl TimerObjectInternals {
         }
     }
 }
-
-// ported from: src/runtime/timer/TimerObjectInternals.zig

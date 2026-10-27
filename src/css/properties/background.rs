@@ -5,9 +5,8 @@ use crate::css_values::color::CssColor;
 use crate::css_values::image::Image;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::css_values::position::{HorizontalPosition, Position, VerticalPosition};
-use crate::css_values::ratio::Ratio;
 use crate::generics::{CssEql, DeepClone};
-use crate::properties::{Property, PropertyId, PropertyIdTag};
+use crate::properties::{Property, PropertyId};
 use crate::{
     DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, SmallList, VendorPrefix,
 };
@@ -15,31 +14,29 @@ use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
-// PORT NOTE: Clone derive gated on `Image` gaining `Clone` upstream.
+// Clone derive gated on `Image` gaining `Clone` upstream.
 #[cfg_attr(any(), derive(Clone))]
 pub struct Background {
     /// The background image.
-    pub image: Image,
+    pub(crate) image: Image,
     /// The background color.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
     /// The background position.
-    pub position: BackgroundPosition,
+    pub(crate) position: BackgroundPosition,
     /// How the background image should repeat.
-    pub repeat: BackgroundRepeat,
+    pub(crate) repeat: BackgroundRepeat,
     /// The size of the background image.
-    pub size: BackgroundSize,
+    pub(crate) size: BackgroundSize,
     /// The background attachment.
-    pub attachment: BackgroundAttachment,
+    pub(crate) attachment: BackgroundAttachment,
     /// The background origin.
-    pub origin: BackgroundOrigin,
+    pub(crate) origin: BackgroundOrigin,
     /// How the background should be clipped.
-    pub clip: BackgroundClip,
+    pub(crate) clip: BackgroundClip,
 }
 
 impl Background {
-    // Zig `deinit` was a no-op (all allocations in CSS parser are in arena) — Drop handles it.
-
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut color: Option<CssColor> = None;
         let mut position: Option<BackgroundPosition> = None;
         let mut size: Option<BackgroundSize> = None;
@@ -135,7 +132,7 @@ impl Background {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let mut has_output = false;
 
         if self.color != CssColor::default() {
@@ -194,7 +191,7 @@ impl Background {
             has_output = true;
         }
 
-        if (output_padding_box && !self.clip.eql_origin(BackgroundOrigin::BorderBox))
+        if (output_padding_box && !self.clip.eql_origin(self.origin))
             || !self.clip.eql_origin(BackgroundOrigin::BorderBox)
         {
             if has_output {
@@ -218,31 +215,30 @@ impl Background {
         Ok(())
     }
 
-    pub fn get_image(&self) -> &Image {
+    fn get_image(&self) -> &Image {
         &self.image
     }
 
-    pub fn with_image(&self, arena: &Bump, image: Image) -> Self {
+    fn with_image(&self, arena: &Bump, image: Image) -> Self {
         let mut ret = self.deep_clone(arena);
         ret.image = image;
         ret
     }
 
-    pub fn get_fallback(&self, arena: &Bump, kind: ColorFallbackKind) -> Background {
+    fn get_fallback(&self, arena: &Bump, kind: ColorFallbackKind) -> Background {
         let mut ret = self.deep_clone(arena);
         ret.color = self.color.get_fallback(arena, kind);
         ret.image = self.image.get_fallback(arena, kind);
         ret
     }
 
-    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
+    fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         self.color.get_necessary_fallbacks(targets)
             | self.get_image().get_necessary_fallbacks(targets)
     }
 
     #[inline]
-    pub fn deep_clone(&self, arena: &Bump) -> Self {
-        // PORT NOTE: `css.implementDeepClone` reflection — expanded field-wise.
+    pub(crate) fn deep_clone(&self, arena: &Bump) -> Self {
         // `Image` is the only non-`Clone` field; it provides its own `deep_clone`.
         Self {
             image: self.image.deep_clone(arena),
@@ -256,7 +252,7 @@ impl Background {
         }
     }
 
-    pub fn eql(&self, rhs: &Self) -> bool {
+    pub(crate) fn eql(&self, rhs: &Self) -> bool {
         self.image.eql(&rhs.image)
             && self.color == rhs.color
             && self.position == rhs.position
@@ -282,20 +278,13 @@ pub enum BackgroundSize {
 #[derive(Clone, PartialEq)]
 pub struct ExplicitBackgroundSize {
     /// The width of the background.
-    pub width: LengthPercentageOrAuto,
+    pub(crate) width: LengthPercentageOrAuto,
     /// The height of the background.
-    pub height: LengthPercentageOrAuto,
-}
-
-impl ExplicitBackgroundSize {
-    #[inline]
-    pub fn deep_clone(&self, _arena: &Bump) -> Self {
-        self.clone()
-    }
+    pub(crate) height: LengthPercentageOrAuto,
 }
 
 impl BackgroundSize {
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         if let Ok(width) = input.try_parse(LengthPercentageOrAuto::parse) {
             let height = input
                 .try_parse(LengthPercentageOrAuto::parse)
@@ -316,7 +305,7 @@ impl BackgroundSize {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             BackgroundSize::Cover => dest.write_str("cover"),
             BackgroundSize::Contain => dest.write_str("contain"),
@@ -331,7 +320,7 @@ impl BackgroundSize {
         }
     }
 
-    pub fn default() -> Self {
+    pub(crate) fn default() -> Self {
         BackgroundSize::Explicit(ExplicitBackgroundSize {
             width: LengthPercentageOrAuto::Auto,
             height: LengthPercentageOrAuto::Auto,
@@ -339,7 +328,7 @@ impl BackgroundSize {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _arena: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _arena: &Bump) -> Self {
         self.clone()
     }
 }
@@ -348,36 +337,31 @@ impl BackgroundSize {
 #[derive(Clone, PartialEq)]
 pub struct BackgroundPosition {
     /// The x-position.
-    pub x: HorizontalPosition,
+    pub(crate) x: HorizontalPosition,
     /// The y-position.
-    pub y: VerticalPosition,
+    pub(crate) y: VerticalPosition,
 }
 
 impl BackgroundPosition {
-    // PORT NOTE: PropertyFieldMap — Zig comptime struct mapping fields → PropertyIdTag.
-    // Encoded here as associated consts.
-    pub const PROPERTY_FIELD_MAP_X: PropertyIdTag = PropertyIdTag::BackgroundPositionX;
-    pub const PROPERTY_FIELD_MAP_Y: PropertyIdTag = PropertyIdTag::BackgroundPositionY;
-
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         let pos = Position::parse(input)?;
         Ok(BackgroundPosition::from_position(pos))
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let pos = self.into_position();
         pos.to_css(dest)
     }
 
-    pub fn default() -> Self {
+    fn default() -> Self {
         BackgroundPosition::from_position(Position::default())
     }
 
-    pub fn from_position(pos: Position) -> BackgroundPosition {
+    fn from_position(pos: Position) -> BackgroundPosition {
         BackgroundPosition { x: pos.x, y: pos.y }
     }
 
-    pub fn into_position(&self) -> Position {
+    fn into_position(&self) -> Position {
         Position {
             x: self.x.clone(),
             y: self.y.clone(),
@@ -385,7 +369,7 @@ impl BackgroundPosition {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _arena: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _arena: &Bump) -> Self {
         self.clone()
     }
 }
@@ -394,20 +378,20 @@ impl BackgroundPosition {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct BackgroundRepeat {
     /// A repeat style for the x direction.
-    pub x: BackgroundRepeatKeyword,
+    pub(crate) x: BackgroundRepeatKeyword,
     /// A repeat style for the y direction.
-    pub y: BackgroundRepeatKeyword,
+    pub(crate) y: BackgroundRepeatKeyword,
 }
 
 impl BackgroundRepeat {
-    pub fn default() -> Self {
+    pub(crate) fn default() -> Self {
         BackgroundRepeat {
             x: BackgroundRepeatKeyword::Repeat,
             y: BackgroundRepeatKeyword::Repeat,
         }
     }
 
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         let state = input.state();
         let ident = input.expect_ident_cloned()?;
 
@@ -429,7 +413,7 @@ impl BackgroundRepeat {
         Ok(BackgroundRepeat { x, y })
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         use BackgroundRepeatKeyword::{NoRepeat, Repeat};
 
         if self.x == Repeat && self.y == NoRepeat {
@@ -444,10 +428,6 @@ impl BackgroundRepeat {
             }
             Ok(())
         }
-    }
-
-    pub fn deep_clone(self, _arena: &Bump) -> Self {
-        self
     }
 }
 
@@ -488,7 +468,7 @@ pub enum BackgroundAttachment {
 }
 
 impl BackgroundAttachment {
-    pub fn default() -> Self {
+    fn default() -> Self {
         BackgroundAttachment::Scroll
     }
 }
@@ -522,11 +502,11 @@ pub enum BackgroundClip {
 }
 
 impl BackgroundClip {
-    pub fn default() -> BackgroundClip {
+    fn default() -> BackgroundClip {
         BackgroundClip::BorderBox
     }
 
-    pub fn eql_origin(self, other: BackgroundOrigin) -> bool {
+    fn eql_origin(self, other: BackgroundOrigin) -> bool {
         match self {
             BackgroundClip::BorderBox => other == BackgroundOrigin::BorderBox,
             BackgroundClip::PaddingBox => other == BackgroundOrigin::PaddingBox,
@@ -535,21 +515,12 @@ impl BackgroundClip {
         }
     }
 
-    pub fn is_background_box(self) -> bool {
+    fn is_background_box(self) -> bool {
         matches!(
             self,
             BackgroundClip::BorderBox | BackgroundClip::PaddingBox | BackgroundClip::ContentBox
         )
     }
-}
-
-/// A value for the [aspect-ratio](https://drafts.csswg.org/css-sizing-4/#aspect-ratio) property.
-#[derive(Copy, Clone)]
-pub struct AspectRatio {
-    /// The `auto` keyword.
-    pub auto: bool,
-    /// A preferred aspect ratio for the box, specified as width / height.
-    pub ratio: Option<Ratio>,
 }
 
 bitflags::bitflags! {
@@ -568,19 +539,18 @@ bitflags::bitflags! {
 }
 
 impl BackgroundProperty {
-    pub const BACKGROUND_COLOR: Self = Self::COLOR;
-    pub const BACKGROUND_IMAGE: Self = Self::IMAGE;
-    pub const BACKGROUND_POSITION_X: Self = Self::POSITION_X;
-    pub const BACKGROUND_POSITION_Y: Self = Self::POSITION_Y;
-    pub const BACKGROUND_POSITION: Self =
+    const BACKGROUND_COLOR: Self = Self::COLOR;
+    const BACKGROUND_IMAGE: Self = Self::IMAGE;
+    const BACKGROUND_POSITION_X: Self = Self::POSITION_X;
+    const BACKGROUND_POSITION_Y: Self = Self::POSITION_Y;
+    const BACKGROUND_POSITION: Self =
         Self::from_bits_truncate(Self::POSITION_X.bits() | Self::POSITION_Y.bits());
-    pub const BACKGROUND_REPEAT: Self = Self::REPEAT;
-    pub const BACKGROUND_SIZE: Self = Self::SIZE;
-    pub const BACKGROUND_ATTACHMENT: Self = Self::ATTACHMENT;
-    pub const BACKGROUND_ORIGIN: Self = Self::ORIGIN;
-    pub const BACKGROUND_CLIP: Self = Self::CLIP;
+    const BACKGROUND_REPEAT: Self = Self::REPEAT;
+    const BACKGROUND_SIZE: Self = Self::SIZE;
+    const BACKGROUND_ATTACHMENT: Self = Self::ATTACHMENT;
+    const BACKGROUND_ORIGIN: Self = Self::ORIGIN;
 
-    pub const BACKGROUND: Self = Self::from_bits_truncate(
+    const BACKGROUND: Self = Self::from_bits_truncate(
         Self::COLOR.bits()
             | Self::IMAGE.bits()
             | Self::POSITION_X.bits()
@@ -592,8 +562,7 @@ impl BackgroundProperty {
             | Self::CLIP.bits(),
     );
 
-    // blocked_on: PropertyId variant arity (BackgroundClip carries VendorPrefix payload)
-    pub fn try_from_property_id(property_id: PropertyId) -> Option<BackgroundProperty> {
+    fn try_from_property_id(property_id: PropertyId) -> Option<BackgroundProperty> {
         match property_id {
             PropertyId::BackgroundColor => Some(Self::BACKGROUND_COLOR),
             PropertyId::BackgroundImage => Some(Self::BACKGROUND_IMAGE),
@@ -612,28 +581,26 @@ impl BackgroundProperty {
 
 #[derive(Default)]
 pub struct BackgroundHandler {
-    pub color: Option<CssColor>,
-    pub images: Option<SmallList<Image, 1>>,
-    pub has_prefix: bool,
-    pub x_positions: Option<SmallList<HorizontalPosition, 1>>,
-    pub y_positions: Option<SmallList<VerticalPosition, 1>>,
-    pub repeats: Option<SmallList<BackgroundRepeat, 1>>,
-    pub sizes: Option<SmallList<BackgroundSize, 1>>,
-    pub attachments: Option<SmallList<BackgroundAttachment, 1>>,
-    pub origins: Option<SmallList<BackgroundOrigin, 1>>,
-    pub clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
-    // TODO(perf): arena Vec — Zig is `ArrayListUnmanaged(Property)` fed `context.arena`
-    // (CSS arena). Should be `bun_alloc::ArenaVec<'bump, Property>`; threading `'bump`
-    // through BackgroundHandler would avoid the heap alloc.
-    pub decls: Vec<Property>,
-    pub flushed_properties: BackgroundProperty,
-    pub has_any: bool,
+    pub(crate) color: Option<CssColor>,
+    pub(crate) images: Option<SmallList<Image, 1>>,
+    pub(crate) has_prefix: bool,
+    pub(crate) x_positions: Option<SmallList<HorizontalPosition, 1>>,
+    pub(crate) y_positions: Option<SmallList<VerticalPosition, 1>>,
+    pub(crate) repeats: Option<SmallList<BackgroundRepeat, 1>>,
+    pub(crate) sizes: Option<SmallList<BackgroundSize, 1>>,
+    pub(crate) attachments: Option<SmallList<BackgroundAttachment, 1>>,
+    pub(crate) origins: Option<SmallList<BackgroundOrigin, 1>>,
+    pub(crate) clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
+    // TODO(perf): should be `bun_alloc::ArenaVec<'bump, Property>`; threading
+    // `'bump` through BackgroundHandler would avoid the heap alloc.
+    pub(crate) decls: Vec<Property>,
+    pub(crate) flushed_properties: BackgroundProperty,
+    pub(crate) has_any: bool,
 }
 
-// PORT NOTE: the Zig uses comptime field-name strings + @field for `flushHelper` /
-// `initSmallListHelper` / `push`. Rust cannot index struct fields by string at runtime;
-// these helpers are expanded into small per-field macros below. A derive macro
-// could replace them.
+// Struct fields cannot be indexed by string at runtime; the `flushHelper` /
+// `initSmallListHelper` / `push` helpers are expanded into small per-field
+// macros below. A derive macro could replace them.
 
 macro_rules! init_small_list_helper {
     ($this:expr, $field:ident, $length:expr) => {{
@@ -670,7 +637,7 @@ macro_rules! push_property {
 }
 
 impl BackgroundHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut DeclarationList,
@@ -723,8 +690,8 @@ impl BackgroundHandler {
             Property::BackgroundClip(x) => {
                 let val: &SmallList<BackgroundClip, 1> = &x.0;
                 let vendor_prefix: VendorPrefix = x.1;
-                // PORT NOTE: reshaped for borrowck — Zig held &mut into self.clips
-                // across self.flush(). Compute the predicate first, then dispatch.
+                // Compute the predicate first, then dispatch (avoids holding
+                // &mut self.clips across self.flush()).
                 let needs_flush = if let Some((clips, vp)) = &self.clips {
                     vendor_prefix != *vp && !SmallList::eql(val, clips)
                 } else {
@@ -761,7 +728,7 @@ impl BackgroundHandler {
                     clips.append_assume_capacity(b.clip);
                 }
                 let mut clips_vp = VendorPrefix::NONE;
-                // PORT NOTE: reshaped for borrowck — drop borrow before calling flush().
+                // Drop the `self.clips` borrow before calling flush().
                 let needs_flush = if let Some((existing_clips, existing_vp)) = &self.clips {
                     clips_vp != *existing_vp && !SmallList::eql(&clips, existing_clips)
                 } else {
@@ -876,7 +843,6 @@ impl BackgroundHandler {
         let mut maybe_origins: Option<SmallList<BackgroundOrigin, 1>> = self.origins.take();
         let mut maybe_clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)> =
             self.clips.take();
-        // Zig had `defer { ... deinit }` here — Drop handles cleanup at scope exit.
 
         if let (
             Some(color),
@@ -929,8 +895,7 @@ impl BackgroundHandler {
                 };
 
                 let mut backgrounds: SmallList<Background, 1> = SmallList::init_capacity(len);
-                // PORT NOTE: reshaped for borrowck — Zig zipped 8 slices by value; here we
-                // index by `i` and clone each element to avoid 8 simultaneous borrows.
+                // Index by `i` and clone each element to avoid 8 simultaneous borrows.
                 for i in 0..(len as usize) {
                     backgrounds.append_assume_capacity(Background {
                         color: if i == (len as usize) - 1 {
@@ -954,17 +919,17 @@ impl BackgroundHandler {
                         },
                     });
                 }
-                // Zig: defer { clearRetainingCapacity on each list } — values were moved
-                // by-value into `backgrounds` above, so clearing prevents double-free.
-                // In Rust we cloned, so the originals will Drop normally; no explicit clear
-                // needed for correctness. Leaving as-is.
-                // PERF(port): was arena bulk-free / move-then-clear — profile if hot.
+                // The elements were cloned into `backgrounds` above, so the
+                // originals Drop normally; no explicit clear needed.
+                // PERF: profile the clones if hot.
 
                 if self.flushed_properties.is_empty() {
                     let mut fallbacks =
                         crate::small_list::get_fallbacks(&mut backgrounds, arena, &context.targets);
-                    // PORT NOTE: Vec has no owning iterator; pop in reverse then
-                    // re-reverse via a temp Vec to preserve order.
+                    // Pop in reverse then re-reverse via a temp Vec to
+                    // preserve order while consuming the list. `fallbacks` is
+                    // a plain Vec, so a direct `for fb in fallbacks` would
+                    // also work.
                     let mut tmp: Vec<SmallList<Background, 1>> =
                         Vec::with_capacity(fallbacks.len());
                     while let Some(fb) = fallbacks.pop() {
@@ -1025,8 +990,9 @@ impl BackgroundHandler {
             if !self.flushed_properties.contains(BackgroundProperty::IMAGE) {
                 let mut fallbacks =
                     crate::small_list::get_fallbacks(&mut images, arena, &context.targets);
-                // PORT NOTE: Vec has no owning iterator; pop in reverse then
-                // re-reverse via a temp Vec to preserve order.
+                // Pop in reverse then re-reverse via a temp Vec to preserve
+                // order while consuming the list. `fallbacks` is a plain Vec,
+                // so a direct `for fb in fallbacks` would also work.
                 let mut tmp: Vec<SmallList<Image, 1>> = Vec::with_capacity(fallbacks.len());
                 while let Some(fb) = fallbacks.pop() {
                     tmp.push(fb);
@@ -1066,7 +1032,6 @@ impl BackgroundHandler {
                     y: y.clone(),
                 });
             }
-            // Zig: clearRetainingCapacity on xs/ys after moving values out — Drop handles it.
             push_property!(
                 self,
                 dest,
@@ -1154,7 +1119,7 @@ impl BackgroundHandler {
     }
 
     fn reset(&mut self) {
-        // Zig deinit'd each field then set to null — Drop on assignment handles both.
+        // Drop on assignment frees each field's old value.
         self.color = None;
         self.images = None;
         self.x_positions = None;
@@ -1166,7 +1131,11 @@ impl BackgroundHandler {
         self.clips = None;
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         // If the last declaration is prefixed, pop the last value
         // so it isn't duplicated when we flush.
         if self.has_prefix {
@@ -1176,8 +1145,7 @@ impl BackgroundHandler {
 
         let arena = dest.bump();
         for decl in self.decls.drain(..) {
-            // PORT NOTE: Zig was `appendSlice` (bitwise copy of arena-backed
-            // values). `Property` is not `Clone` here, so move out via drain.
+            // `Property` is not `Clone` here, so move out via drain.
             let _ = arena;
             dest.push(decl);
         }
@@ -1187,8 +1155,8 @@ impl BackgroundHandler {
     }
 }
 
-// `Background` participates in `SmallList::get_fallbacks` via the duck-typed
-// `ImageFallback` protocol (Zig dispatched on `@hasDecl(T, "getImage")`).
+// `Background` participates in `SmallList::get_fallbacks` via the
+// `ImageFallback` trait.
 impl crate::small_list::ImageFallback for Background {
     #[inline]
     fn get_image(&self) -> &Image {
@@ -1224,5 +1192,3 @@ fn is_background_property(property_id: PropertyId) -> bool {
             | PropertyId::Background
     )
 }
-
-// ported from: src/css/properties/background.zig

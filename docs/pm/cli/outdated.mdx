@@ -5,7 +5,7 @@ description: "Check for outdated dependencies"
 
 import Outdated from "/snippets/cli/outdated.mdx";
 
-Use `bun outdated` to check for outdated dependencies in your project. This command displays a table of dependencies that have newer versions available.
+`bun outdated` displays a table of the dependencies in your project that have newer versions available.
 
 ```sh terminal icon="terminal"
 bun outdated
@@ -32,27 +32,26 @@ The output table shows three version columns:
 
 - **Current**: The version currently installed
 - **Update**: The latest version that satisfies your package.json version range
-- **Latest**: The latest version published to the registry
+- **Latest**: The version that the `latest` tag in the registry points to
+
+A dependency that is ahead of `latest`, such as a prerelease, is listed when `bun update` would change its version.
 
 ### Dependency Filters
 
-`bun outdated` supports searching for outdated dependencies by package names and glob patterns.
-
-To check if specific dependencies are outdated, pass the package names as positional arguments:
+To check a specific dependency, pass its name as a positional argument:
 
 ```sh terminal icon="terminal"
-bun outdated eslint-plugin-security eslint-plugin-sonarjs
+bun outdated eslint-plugin-security
 ```
 
 ```txt
 | Package                        | Current | Update | Latest    |
 | ------------------------------ | ------- | ------ | --------- |
 | eslint-plugin-security (dev)   | 2.1.1   | 2.1.1  | 3.0.1     |
-| eslint-plugin-sonarjs (dev)    | 0.23.0  | 0.23.0 | 3.0.1     |
 
 ```
 
-You can also pass glob patterns to check for outdated packages:
+Glob patterns work too:
 
 ```sh terminal icon="terminal"
 bun outdated 'eslint*'
@@ -97,6 +96,32 @@ bun outdated '!@types/*'
 | typescript (dev)               | 5.7.2   | 5.7.3     | 5.7.3      |
 ```
 
+With several patterns, a dependency is listed when at least one of them matches it. A pattern that starts with `!` removes the dependencies it matches:
+
+```sh terminal icon="terminal"
+bun outdated typescript 'eslint*' '!eslint-plugin-sonarjs'
+```
+
+```txt
+| Package                        | Current | Update | Latest     |
+| ------------------------------ | ------- | ------ | ---------- |
+| eslint (dev)                   | 8.57.1  | 8.57.1 | 9.20.0     |
+| eslint-plugin-security (dev)   | 2.1.1   | 2.1.1  | 3.0.1      |
+| typescript (dev)               | 5.7.2   | 5.7.3  | 5.7.3      |
+```
+
+An aliased dependency such as `"lodash3": "npm:lodash@^3.0.0"` is listed with both of its names, and a pattern selects it by either name:
+
+```sh terminal icon="terminal"
+bun outdated lodash
+```
+
+```txt
+| Package              | Current | Update | Latest  |
+| -------------------- | ------- | ------ | ------- |
+| lodash3@npm:lodash   | 3.10.1  | 3.10.1 | 4.17.21 |
+```
+
 ### Workspace Filters
 
 Use the `--filter` flag to check for outdated dependencies in a different workspace package:
@@ -112,24 +137,7 @@ bun outdated --filter='@monorepo/types'
 | typescript (dev)   | 5.7.2   | 5.7.3  | 5.7.3  |
 ```
 
-You can pass multiple `--filter` flags to check multiple workspaces:
-
-```sh terminal icon="terminal"
-bun outdated --filter @monorepo/types --filter @monorepo/cli
-```
-
-```txt
-| Package                        | Current | Update | Latest     |
-| ------------------------------ | ------- | ------ | ---------- |
-| eslint (dev)                 	 | 8.57.1  | 8.57.1 | 9.20.0     |
-| eslint-plugin-security (dev)   | 2.1.1   | 2.1.1  | 3.0.1      |
-| eslint-plugin-sonarjs (dev)    | 0.23.0  | 0.23.0 | 3.0.1      |
-| expect-type (dev)              | 0.16.0  | 0.16.0 | 1.1.0      |
-| tsup (dev)                     | 8.3.5   | 8.3.6  | 8.3.6      |
-| typescript (dev)               | 5.7.2   | 5.7.3  | 5.7.3      |
-```
-
-You can also pass glob patterns to filter by workspace names:
+`--filter` accepts glob patterns to match multiple workspaces:
 
 ```sh terminal icon="terminal"
 bun outdated --filter='@monorepo/{types,cli}'
@@ -148,7 +156,7 @@ bun outdated --filter='@monorepo/{types,cli}'
 
 ### Catalog Dependencies
 
-`bun outdated` supports checking catalog dependencies defined in`package.json`:
+`bun outdated` also checks [catalog](/pm/catalogs) dependencies defined in `package.json`:
 
 ```sh terminal icon="terminal"
 bun outdated -r
@@ -168,7 +176,7 @@ bun outdated -r
 ├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
 │ axios              │ 0.21.0  │ 0.21.0  │ 1.12.2  │ catalog (@test/app)            │
 ├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
-│ lodash             │ 4.17.15 │ 4.17.15 │ 4.17.21 │ catalog (@test/app, @test/app) │
+│ lodash             │ 4.17.15 │ 4.17.15 │ 4.17.21 │ catalog (@test/app)            │
 ├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
 │ react              │ 17.0.0  │ 17.0.0  │ 19.1.1  │ catalog (@test/app)            │
 ├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤

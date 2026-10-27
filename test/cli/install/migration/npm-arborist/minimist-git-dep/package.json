@@ -1,0 +1,8 @@
+{
+  "name": "@isaacs/minimist-git-dep",
+  "description": "depends on a vulnerable version of minimist, via a git reference",
+  "version": "1.0.2",
+  "peerDependencies": {
+    "minimist": "github:substack/minimist#3754568bfd43a841d2d72d7fb54598635aea8fa4"
+  }
+}

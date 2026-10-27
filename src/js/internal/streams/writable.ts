@@ -22,18 +22,6 @@ const {
   kCloseEmitted,
   kErrored,
   kConstructed,
-}: {
-  readonly kState: unique symbol;
-  readonly kOnConstructed: unique symbol;
-  kObjectMode: number;
-  kErrorEmitted: number;
-  kAutoDestroy: number;
-  kEmitClose: number;
-  kDestroyed: number;
-  kClosed: number;
-  kCloseEmitted: number;
-  kErrored: number;
-  kConstructed: number;
 } = require("internal/streams/utils");
 
 const ObjectDefineProperties = Object.defineProperties;
@@ -372,17 +360,18 @@ function Writable(options): void {
   this._writableState = new WritableState(options, this, false);
 
   if (options) {
-    if (typeof options.write === "function") this._write = options.write;
+    const { write, writev, destroy, final, construct, signal } = options;
+    if (typeof write === "function") this._write = write;
 
-    if (typeof options.writev === "function") this._writev = options.writev;
+    if (typeof writev === "function") this._writev = writev;
 
-    if (typeof options.destroy === "function") this._destroy = options.destroy;
+    if (typeof destroy === "function") this._destroy = destroy;
 
-    if (typeof options.final === "function") this._final = options.final;
+    if (typeof final === "function") this._final = final;
 
-    if (typeof options.construct === "function") this._construct = options.construct;
+    if (typeof construct === "function") this._construct = construct;
 
-    if (options.signal) addAbortSignal(options.signal, this);
+    if (signal) addAbortSignal(signal, this);
   }
 
   Stream.$call(this, options);
@@ -431,6 +420,9 @@ function _write(stream, chunk, encoding, cb?) {
     }
 
     if (typeof chunk === "string") {
+      if (encoding === "buffer") {
+        throw $ERR_UNKNOWN_ENCODING(encoding);
+      }
       if ((state[kState] & kDecodeStrings) !== 0) {
         chunk = Buffer.from(chunk, encoding);
         encoding = "buffer";
@@ -594,8 +586,9 @@ function onwrite(stream, er) {
 
     // In case of duplex streams we need to notify the readable side of the
     // error.
-    if (stream._readableState && !stream._readableState.errored) {
-      stream._readableState.errored = er;
+    const readableState = stream._readableState;
+    if (readableState && !readableState.errored) {
+      readableState.errored = er;
     }
 
     if (sync) {
@@ -979,8 +972,9 @@ ObjectDefineProperties(Writable.prototype, {
     },
     set(val) {
       // Backwards compatible.
-      if (this._writableState) {
-        this._writableState.writable = !!val;
+      const state = this._writableState;
+      if (state) {
+        state.writable = !!val;
       }
     },
   },
@@ -1119,4 +1113,6 @@ Writable.prototype[SymbolAsyncDispose] = function () {
   );
 };
 
-export default Writable as unknown as typeof import("node:stream").Writable;
+export default Writable as unknown as typeof import("node:stream").Writable & {
+  WritableState: typeof WritableState;
+};

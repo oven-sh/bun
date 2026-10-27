@@ -4,6 +4,7 @@ import bodyParser from "body-parser";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const CONCURRENCY = 100;
+const REQUESTS = Number(process.env.REQUESTS ?? 10000);
 
 const app = express();
 app.use(bodyParser.json());
@@ -11,9 +12,9 @@ app.use(bodyParser.json());
 app.post("/error", (req, res) => {
   try {
     // This specific pattern causes the segfault in Bun v1.2.6
-    const headers = { location: undefined };
+    const headers: any = { location: undefined };
     headers.location.split("*/")["2"].split(")")["0"];
-  } catch (err) {
+  } catch (err: any) {
     setTimeout(() => res.status(500).json({ error: err.message }), 1);
   }
 });
@@ -45,8 +46,8 @@ var server = app.listen(0, async () => {
     active.delete(id);
   }
 
-  console.log(`Starting concurrent requests...`);
-  for (let i = 0; i < 10000; i++) {
+  console.log(`Starting ${REQUESTS} concurrent requests...`);
+  for (let i = 0; i < REQUESTS; i++) {
     while (active.size >= CONCURRENCY) {
       await sleep(1);
     }
@@ -58,6 +59,7 @@ var server = app.listen(0, async () => {
     }
   }
 
-  console.log("Done");
   server.close();
+  while (active.size > 0) await sleep(1);
+  console.log("Done");
 });

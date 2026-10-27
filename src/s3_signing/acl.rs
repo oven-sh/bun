@@ -1,5 +1,3 @@
-use phf::phf_map;
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ACL {
     /// Owner gets FULL_CONTROL. No one else has access rights (default).
@@ -33,7 +31,11 @@ impl ACL {
         }
     }
 
-    pub const MAP: phf::Map<&'static [u8], ACL> = phf_map! {
+    pub const MAP: __ComptimeStringMap_ACL_MAP = __ComptimeStringMap_ACL_MAP(());
+}
+
+bun_core::comptime_string_map! {
+    pub static ACL_MAP: ACL = {
         b"private" => ACL::Private,
         b"public-read" => ACL::PublicRead,
         b"public-read-write" => ACL::PublicReadWrite,
@@ -44,5 +46,3 @@ impl ACL {
         b"log-delivery-write" => ACL::LogDeliveryWrite,
     };
 }
-
-// ported from: src/s3_signing/acl.zig

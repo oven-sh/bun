@@ -3,16 +3,17 @@ use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump;
 use bun_ast::ImportRecordFlags;
 use bun_ast::Loc;
-use bun_ast::{self as js_ast, Binding, Expr, ExprNodeList, Stmt};
+use bun_ast::{self as js_ast, Binding, ExportsKind, Expr, ExprNodeList, Stmt};
 use bun_ast::{B, E, G, S};
 use bun_collections::VecExt;
 use bun_core::FeatureFlags;
 
 use crate::EntryPoint;
+use crate::WrapKind;
+use crate::bundled_ast::Flags as AstFlags;
 use crate::chunk::Chunk;
 use crate::linker_context_mod::{LinkerContext, LinkerOptionsMode, StmtList, StmtListWhich};
 use crate::options::Format;
-use crate::ungate_support::WrapKind;
 
 /// Code we ultimately include in the bundle is potentially wrapped
 ///
@@ -21,25 +22,30 @@ use crate::ungate_support::WrapKind;
 /// format ESM import and export statements to always be top-level, so they
 /// can never be inside the wrapper.
 ///
-///      prefix - outer
-///      ...
-///      var init_foo = __esm(() => {
-///          prefix - inner
-///          ...
-///          suffix - inenr
-///      });
-///      ...
-///      suffix - outer
+/// ```text
+/// prefix - outer
+/// ...
+/// var init_foo = __esm(() => {
+///     prefix - inner
+///     ...
+///     suffix - inenr
+/// });
+/// ...
+/// suffix - outer
+/// ```
 ///
 /// Keep in mind that we may need to wrap ES modules in some cases too
 /// Consider:
-///   import * as foo from 'bar';
-///   foo[computedProperty]
+///
+/// ```text
+/// import * as foo from 'bar';
+/// foo[computedProperty]
+/// ```
 ///
 /// In that case, when bundling, we still need to preserve that module
 /// namespace object (foo) because we cannot know what they are going to
 /// attempt to access statically
-pub fn convert_stmts_for_chunk(
+pub(crate) fn convert_stmts_for_chunk(
     c: &mut LinkerContext<'_>,
     source_index: u32,
     stmts: &mut StmtList,
@@ -48,23 +54,22 @@ pub fn convert_stmts_for_chunk(
     bump: &Bump,
     wrap: WrapKind,
     ast: &JSAst<'_>,
-) -> Result<(), bun_core::Error> {
-    let _ = bump;
+) -> Result<(), crate::Error> {
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
     let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough
         || c.graph.files.items_entry_point_kind()[source_index as usize] != EntryPoint::Kind::None;
 
     let output_format = c.options.output_format;
 
-    // If this file is a CommonJS entry point, double-write re-exports to the
-    // external CommonJS "module.exports" object in addition to our internal ESM
+    // If this file is the CommonJS entry point of this chunk, double-write re-exports
+    // to the external CommonJS "module.exports" object in addition to our internal ESM
     // export namespace object. The difference between these two objects is that
     // our internal one must not have the "__esModule" marker while the external
     // one must have the "__esModule" marker. This is done because an ES module
     // importing itself should not see the "__esModule" marker but a CommonJS module
     // importing us should see the "__esModule" marker.
     let mut module_exports_for_export: Option<Expr> = None;
-    if output_format == Format::Cjs && chunk.is_entry_point() {
+    if output_format == Format::Cjs && chunk.is_entry_point_file(source_index) {
         module_exports_for_export = Some(Expr::allocate(
             bump,
             E::Dot {
@@ -128,7 +133,7 @@ pub fn convert_stmts_for_chunk(
                                 S::Import {
                                     namespace_ref: s.namespace_ref,
                                     import_record_index: s.import_record_index,
-                                    star_name_loc: Some(alias.loc),
+                                    star_name_loc: alias.loc,
                                     ..Default::default()
                                 },
                                 stmt.loc,
@@ -156,10 +161,39 @@ pub fn convert_stmts_for_chunk(
                         break 'process_stmt;
                     }
 
+                    // A lifted CommonJS file's export star was `module.exports = require("path")`
+                    // (see `parse_entry.rs`): inside a `__commonJS` wrapper, print that again.
+                    let is_module_exports_of_wrapped_file = wrap == WrapKind::Cjs
+                        && ast.flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                        && !(record.source_index.is_valid()
+                            && record.source_index.get() == source_index);
+
                     // Is this export star evaluated at run time?
                     if !record.source_index.is_valid()
                         && c.options.output_format.keep_es6_import_export_syntax()
                     {
+                        if is_module_exports_of_wrapped_file {
+                            stmts.append(
+                                StmtListWhich::OutsideWrapperPrefix,
+                                Stmt::alloc(
+                                    S::Import {
+                                        namespace_ref: s.namespace_ref,
+                                        import_record_index: s.import_record_index,
+                                        star_name_loc: stmt.loc,
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                ),
+                            );
+                            stmt = assign_module_exports(
+                                bump,
+                                ast.module_ref,
+                                Expr::init_identifier(s.namespace_ref, stmt.loc),
+                                stmt.loc,
+                            );
+                            break 'process_stmt;
+                        }
+
                         if record
                             .flags
                             .contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN)
@@ -169,7 +203,7 @@ pub fn convert_stmts_for_chunk(
                                 S::Import {
                                     namespace_ref: s.namespace_ref,
                                     import_record_index: s.import_record_index,
-                                    star_name_loc: Some(stmt.loc),
+                                    star_name_loc: stmt.loc,
                                     ..Default::default()
                                 },
                                 stmt.loc,
@@ -178,7 +212,6 @@ pub fn convert_stmts_for_chunk(
                             // Prefix this module with "__reExport(exports, ns, module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
-                            // PERF(port): was arena alloc of [Expr; N] — using Vec→Box
                             let mut args: Vec<Expr> = Vec::with_capacity(args_len);
                             args.push(Expr::init(
                                 E::Identifier {
@@ -196,7 +229,9 @@ pub fn convert_stmts_for_chunk(
                             ));
 
                             if let Some(mod_) = module_exports_for_export {
-                                // TODO(port): Zig writes args[3] which is out-of-bounds (len is 3); preserved as args[2] — verify intent.
+                                // Per the "__reExport(exports, ns, module.exports)"
+                                // call shape above, this is the third argument,
+                                // so append at index 2.
                                 args.push(mod_);
                             }
 
@@ -235,10 +270,9 @@ pub fn convert_stmts_for_chunk(
                         }
                     } else {
                         if record.source_index.is_valid() {
-                            let flag =
-                                c.graph.meta.items_flags()[record.source_index.get() as usize];
-                            let wrapper_ref =
-                                c.graph.ast.items_wrapper_ref()[record.source_index.get() as usize];
+                            let other_source_index = record.source_index.get() as usize;
+                            let flag = c.graph.meta.items_flags()[other_source_index];
+                            let wrapper_ref = c.graph.ast.items_wrapper_ref()[other_source_index];
                             if flag.wrap == WrapKind::Esm && wrapper_ref.is_valid() {
                                 stmts
                                     .inside_wrapper_prefix
@@ -262,6 +296,30 @@ pub fn convert_stmts_for_chunk(
                                         stmt.loc,
                                     ))?;
                             }
+                        }
+
+                        if is_module_exports_of_wrapped_file {
+                            let value = if record.source_index.is_valid()
+                                && c.graph.ast.items_exports_kind()
+                                    [record.source_index.get() as usize]
+                                    != ExportsKind::Cjs
+                            {
+                                Expr::init_identifier(
+                                    c.graph.ast.items_exports_ref()
+                                        [record.source_index.get() as usize],
+                                    stmt.loc,
+                                )
+                            } else {
+                                Expr::init(
+                                    E::RequireString {
+                                        import_record_index: s.import_record_index,
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                )
+                            };
+                            stmt = assign_module_exports(bump, ast.module_ref, value, stmt.loc);
+                            break 'process_stmt;
                         }
 
                         if record
@@ -294,7 +352,6 @@ pub fn convert_stmts_for_chunk(
                             // Prefix this module with "__reExport(exports, require(path), module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
-                            // PERF(port): was arena alloc of [Expr; N] — using Vec→Box
                             let mut args: Vec<Expr> = Vec::with_capacity(args_len);
                             args.push(Expr::init(
                                 E::Identifier {
@@ -408,7 +465,7 @@ pub fn convert_stmts_for_chunk(
                         // Be c areful to not modify the original statement
                         stmt = Stmt::alloc(
                             S::Function {
-                                // SAFETY: shallow bitwise copy of arena-backed G::Fn (matches Zig `s.func`).
+                                // SAFETY: shallow bitwise copy of arena-backed G::Fn.
                                 func: unsafe { core::ptr::read(&raw const s.func) },
                             },
                             stmt.loc,
@@ -428,7 +485,7 @@ pub fn convert_stmts_for_chunk(
                         // Be careful to not modify the original statement
                         stmt = Stmt::alloc(
                             S::Class {
-                                // SAFETY: shallow bitwise copy of arena-backed E::Class (matches Zig `s.class`).
+                                // SAFETY: shallow bitwise copy of arena-backed E::Class.
                                 class: unsafe { core::ptr::read(&raw const s.class) },
                                 is_export: false,
                             },
@@ -441,12 +498,12 @@ pub fn convert_stmts_for_chunk(
                     // Strip the "export" keyword while bundling
                     if should_strip_exports && s.is_export {
                         // Be careful to not modify the original statement
-                        // SAFETY: shallow bitwise copy of arena-backed S::Local (matches Zig `s.*`).
+                        // SAFETY: shallow bitwise copy of arena-backed S::Local.
                         let copied: S::Local = unsafe { core::ptr::read(s.as_ptr()) };
                         stmt = Stmt::alloc(copied, stmt.loc);
                         stmt.data.s_local_mut().unwrap().is_export = false;
                     } else if FeatureFlags::UNWRAP_COMMONJS_TO_ESM
-                        && s.was_commonjs_export
+                        && s.origin.is_commonjs_export()
                         && wrap == WrapKind::Cjs
                     {
                         debug_assert!(s.decls.len() == 1);
@@ -497,10 +554,7 @@ pub fn convert_stmts_for_chunk(
                                                     binding: Binding::alloc(
                                                         bump,
                                                         B::Identifier {
-                                                            r#ref: s
-                                                                .default_name
-                                                                .ref_
-                                                                .expect("infallible: ref bound"),
+                                                            r#ref: s.default_name.ref_,
                                                         },
                                                         s2.value.loc,
                                                     ),
@@ -518,12 +572,12 @@ pub fn convert_stmts_for_chunk(
                                         // Be careful to not modify the original statement
                                         stmt = Stmt::alloc(
                                             S::Function {
-                                                // SAFETY: shallow bitwise copy of arena-backed G::Fn (matches Zig `s2.func`).
+                                                // SAFETY: shallow bitwise copy of arena-backed G::Fn.
                                                 func: unsafe {
                                                     core::ptr::read(&raw const s2.func)
                                                 },
                                             },
-                                            stmt.loc,
+                                            stmt2.loc,
                                         );
                                         stmt.data.s_function_mut().unwrap().func.name =
                                             Some(s.default_name);
@@ -536,13 +590,13 @@ pub fn convert_stmts_for_chunk(
                                         // Be careful to not modify the original statement
                                         stmt = Stmt::alloc(
                                             S::Class {
-                                                // SAFETY: shallow bitwise copy of arena-backed E::Class (matches Zig `s2.class`).
+                                                // SAFETY: shallow bitwise copy of arena-backed E::Class.
                                                 class: unsafe {
                                                     core::ptr::read(&raw const s2.class)
                                                 },
                                                 is_export: false,
                                             },
-                                            stmt.loc,
+                                            stmt2.loc,
                                         );
                                         stmt.data.s_class_mut().unwrap().class.class_name =
                                             Some(s.default_name);
@@ -575,10 +629,7 @@ pub fn convert_stmts_for_chunk(
                                             binding: Binding::alloc(
                                                 bump,
                                                 B::Identifier {
-                                                    r#ref: s
-                                                        .default_name
-                                                        .ref_
-                                                        .expect("infallible: ref bound"),
+                                                    r#ref: s.default_name.ref_,
                                                 },
                                                 e.loc,
                                             ),
@@ -603,8 +654,36 @@ pub fn convert_stmts_for_chunk(
     Ok(())
 }
 
-pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/convertStmtsForChunk.zig
+/// `module.exports = value;`
+fn assign_module_exports(bump: &Bump, module_ref: bun_ast::Ref, value: Expr, loc: Loc) -> Stmt {
+    Stmt::alloc(
+        S::SExpr {
+            value: Expr::init(
+                E::Binary {
+                    op: js_ast::OpCode::BinAssign,
+                    left: Expr::allocate(
+                        bump,
+                        E::Dot {
+                            target: Expr::allocate(
+                                bump,
+                                E::Identifier {
+                                    ref_: module_ref,
+                                    ..Default::default()
+                                },
+                                loc,
+                            ),
+                            name: b"exports".into(),
+                            name_loc: loc,
+                            ..Default::default()
+                        },
+                        loc,
+                    ),
+                    right: value,
+                },
+                loc,
+            ),
+            ..Default::default()
+        },
+        loc,
+    )
+}

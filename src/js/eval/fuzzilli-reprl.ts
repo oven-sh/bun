@@ -1,4 +1,6 @@
 // Comprehensive REPRL wrapper for Bun fuzzing with all runtime APIs exposed
+// test/js/bun/util/fuzzilli-reprl-execve.fixture.ts evaluates this file as it is, so it has to stay plain
+// JavaScript: no type syntax.
 // Based on workerd's approach to maximize fuzzing coverage
 // https://bun.com/docs/runtime
 
@@ -13,12 +15,16 @@ globalThis.require = require;
 globalThis.__dirname = "/";
 globalThis.__filename = "/fuzzilli.js";
 
+// process.execve replaces the process image on success, which kills the REPRL
+// child, so fuzzed scripts must not be able to reach the real implementation.
+Object.assign(process, { execve() {} });
+
 // ============================================================================
 // REPRL Protocol Loop
 // ============================================================================
 
 // Verify we're running under Fuzzilli before starting REPRL loop
-// The Zig code should have already checked, but double-check here
+// The native side should have already checked, but double-check here
 try {
   // Try to stat fd 100 to see if it exists
   fs.fstatSync(REPRL_CRFD);
@@ -73,6 +79,7 @@ while (true) {
   let exit_code = 0;
   try {
     // Use indirect eval to execute in global scope
+    // oxlint-disable-next-line no-eval
     (0, eval)(script);
   } catch (_e) {
     // Print uncaught exception like workerd does

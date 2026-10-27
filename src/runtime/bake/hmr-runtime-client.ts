@@ -18,6 +18,7 @@ import {
   emitEvent,
   fullReload,
   loadModuleAsync,
+  onEvent,
   onServerSideReload,
   replaceModules,
   setRefreshRuntime,
@@ -34,8 +35,12 @@ let isPerformingRouteReload = false;
 let shouldPerformAnotherRouteReload = false;
 let currentRouteIndex: number = -1;
 
-async function performRouteReload() {
+/** False when an update since the last `onServerSideReload` call had no code for the browser. */
+let everyUpdateHadClientCode = true;
+
+async function performRouteReload(hasClientCode = false) {
   console.info("[Bun] Server-side code changed, reloading!");
+  if (!hasClientCode) everyUpdateHadClientCode = false;
   if (isPerformingRouteReload) {
     shouldPerformAnotherRouteReload = true;
     return;
@@ -46,7 +51,9 @@ async function performRouteReload() {
       isPerformingRouteReload = true;
       do {
         shouldPerformAnotherRouteReload = false;
-        await onServerSideReload();
+        const clientCodeChanged = everyUpdateHadClientCode;
+        everyUpdateHadClientCode = true;
+        await onServerSideReload({ clientCodeChanged });
       } while (shouldPerformAnotherRouteReload);
       isPerformingRouteReload = false;
       return;
@@ -135,8 +142,8 @@ const handlers = {
   [MessageId.hot_update](view) {
     const reader = new DataViewReader(view, 1);
 
-    // The code genearting each list is annotated with equivalent "List n"
-    // comments in DevServer.zig's finalizeBundle function.
+    // The code generating each list is annotated with equivalent "List n"
+    // comments in dev_server/finalize.rs's finalize_bundle function.
 
     // List 1
     const serverSideRoutesUpdated = new Set();
@@ -189,8 +196,10 @@ const handlers = {
       return;
     }
     if (isServerSideRouteUpdate) {
-      performRouteReload();
-      return;
+      performRouteReload(config.route !== undefined && reader.hasMoreData());
+      // When the pages also run here (`config.route`), the same edit comes as JavaScript too:
+      // apply it, so Fast Refresh updates the page in place.
+      if (!config.route) return;
     }
     // JavaScript modules
     if (reader.hasMoreData()) {
@@ -349,6 +358,7 @@ testingHook?.({
   configureSourceMapGCSize,
   clearDisconnectedSourceMaps,
   getKnownSourceMaps,
+  onEvent,
 });
 
 try {

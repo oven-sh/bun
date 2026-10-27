@@ -1,7 +1,8 @@
 import { FileSystemRouter } from "bun";
+import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -231,6 +232,15 @@ it("should support catch-all routes", () => {
   }
 });
 
+it.each([
+  [["[team]/settings.tsx", "[team]/[section]/[item].tsx"], { team: "bob", section: "settings", item: "profile" }],
+  [["[a]/settings.tsx", "[z]/[b]/[c].tsx"], { z: "bob", b: "settings", c: "profile" }],
+])("params from a route that didn't match aren't included in the result: %j", (files, params) => {
+  const { dir } = make(files);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(router.match("/bob/settings/profile")!.params).toEqual(params);
+});
+
 it("should support index routes", () => {
   // set up the test
   const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx", "posts/hey.tsx"]);
@@ -314,6 +324,42 @@ it("assetPrefix, src, and origin", async () => {
   }
 });
 
+it("src keeps a protocol-relative origin and a one-character host", () => {
+  using dir = tempDir("fsr-origin", {
+    "pages/index.tsx": "export default 1;",
+    "pages/posts/[id].tsx": "export default 1;",
+  });
+
+  const srcFor = (origin: string) =>
+    new Bun.FileSystemRouter({
+      dir: path.join(String(dir), "pages"),
+      style: "nextjs",
+      assetPrefix: "/_next/static/",
+      origin,
+    }).match("/posts/hello-world")!.src;
+
+  // `//host` used to parse with an empty host, and so did `a/` (any second byte
+  // of `/` was taken as the start of a protocol-relative URL). Both silently
+  // dropped the origin and the assetPrefix from `src`.
+  expect({
+    "//nextjs.org": srcFor("//nextjs.org"),
+    "//nextjs.org:8080": srcFor("//nextjs.org:8080"),
+    "//nextjs.org/ignored": srcFor("//nextjs.org/ignored"),
+    "a/": srcFor("a/"),
+    "https://nextjs.org/ignored": srcFor("https://nextjs.org/ignored"),
+    "nextjs.org:8080": srcFor("nextjs.org:8080"),
+    "ab/": srcFor("ab/"),
+  }).toEqual({
+    "//nextjs.org": "//nextjs.org/_next/static/posts/[id].tsx",
+    "//nextjs.org:8080": "//nextjs.org:8080/_next/static/posts/[id].tsx",
+    "//nextjs.org/ignored": "//nextjs.org/_next/static/posts/[id].tsx",
+    "a/": "a/_next/static/posts/[id].tsx",
+    "https://nextjs.org/ignored": "https://nextjs.org/_next/static/posts/[id].tsx",
+    "nextjs.org:8080": "nextjs.org:8080/_next/static/posts/[id].tsx",
+    "ab/": "ab/_next/static/posts/[id].tsx",
+  });
+});
+
 it(".query works", () => {
   // set up the test
   const { dir } = make(["posts.tsx"]);
@@ -349,6 +395,56 @@ it(".query works", () => {
 
     expect(JSON.stringify(query)).toBe(JSON.stringify(object));
     expect(filePath).toBe(`${dir}/posts.tsx`);
+  }
+});
+
+it(".query skips empty-key pairs instead of terminating the parse", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  // An empty-key pair ("=value") should be skipped, not treated as end-of-query.
+  // Previously "?=v&x=1&y=2" yielded {} and "?x=1&=v&y=2" dropped y.
+  for (const [current, expected] of [
+    ["/posts?x=1&y=2", { x: "1", y: "2" }],
+    ["/posts?=v&x=1&y=2", { x: "1", y: "2" }],
+    ["/posts?x=1&=v&y=2", { x: "1", y: "2" }],
+    ["/posts?x=1&y=2&=v", { x: "1", y: "2" }],
+    ["/posts?=v", {}],
+    ["/posts?=&x=1", { x: "1" }],
+    ["/posts?==&x=1", { x: "1" }],
+    ["/posts?=v&=w&x=1", { x: "1" }],
+    ["/posts?&&&x=1", { x: "1" }],
+    ["/posts?a=%20&=v&b=2", { a: " ", b: "2" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+
+  // Same scanner is used when path params are present (init_with_scanner path).
+  for (const [current, expected] of [
+    ["/posts/123?=v&x=1&y=2", { id: "123", x: "1", y: "2" }],
+    ["/posts/123?x=1&=v&y=2", { id: "123", x: "1", y: "2" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+});
+
+it(".query and .params hold a name that is an index once", () => {
+  const { dir } = make(["posts.tsx", "[0].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  for (const read of [() => router.match("/posts?0=a&x=y")!.query, () => router.match("/a")!.params]) {
+    expect(Object.values(read()).filter(value => value === "a")).toHaveLength(1);
+    expect(Object.isFrozen(Object.freeze(read()))).toBe(true);
+    const written = read();
+    written[0] = "b";
+    expect(Object.entries(written)[0]).toEqual(["0", "b"]);
+    const deleted = read();
+    expect(delete deleted[0]).toBe(true);
+    expect(Object.keys(deleted)).not.toContain("0");
   }
 });
 
@@ -391,6 +487,27 @@ it("reload() works with new dirs/files", () => {
   createTree(dir, ["test/test2/index.ts"]);
   router.reload();
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
+});
+
+it("the constructor and reload() don't create allocator heaps", () => {
+  const { dir } = make(["index.tsx", "posts/[id].tsx"]);
+  const heapsCreatedBy = (fn: () => void) => {
+    const before = heapStats().mimalloc.heaps.total;
+    for (let i = 0; i < 50; i++) fn();
+    return heapStats().mimalloc.heaps.total - before;
+  };
+
+  for (const fileExtensions of [undefined, [".tsx", ".ts"]]) {
+    const create = () => new FileSystemRouter({ dir, style: "nextjs", fileExtensions });
+    // The first router warms the resolver's directory cache.
+    const router = create();
+    router.reload();
+
+    // The allocator counts another thread's heaps late, so a few can show up here.
+    expect(heapsCreatedBy(create)).toBeLessThan(10);
+    expect(heapsCreatedBy(() => router.reload())).toBeLessThan(10);
+    expect(Object.keys(router.routes).sort()).toEqual(["/", "/posts/[id]"]);
+  }
 });
 
 it(".query works with dynamic routes, including params", () => {
@@ -437,7 +554,7 @@ it("dir should be validated", async () => {
     new Bun.FileSystemRouter({
       style: "nextjs",
     });
-  }).toThrow("Expected dir to be a string");
+  }).toThrow("FileSystemRouterOptions.dir is required");
 
   expect(() => {
     new Bun.FileSystemRouter({
@@ -445,7 +562,7 @@ it("dir should be validated", async () => {
       dir: undefined,
       style: "nextjs",
     });
-  }).toThrow("Expected dir to be a string");
+  }).toThrow("FileSystemRouterOptions.dir is required");
 
   expect(() => {
     new Bun.FileSystemRouter({
@@ -453,7 +570,14 @@ it("dir should be validated", async () => {
       dir: 123,
       style: "nextjs",
     });
-  }).toThrow("Expected dir to be a string");
+  }).toThrow("FileSystemRouterOptions.dir must be a string");
+});
+
+it("rejects a dir with a null byte", () => {
+  const { dir } = make(["index.tsx"]);
+  expect(() => new FileSystemRouter({ style: "nextjs", dir: `${dir}\0suffix` })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+  );
 });
 
 it("origin should be validated", async () => {
@@ -466,7 +590,76 @@ it("origin should be validated", async () => {
       origin: 123,
       style: "nextjs",
     });
-  }).toThrow("Expected origin to be a string");
+  }).toThrow("FileSystemRouterOptions.origin must be a string");
+});
+
+function routesWithExtension(extension: String) {
+  using dir = tempDir("fsr-string-object", { "posts.tsx": "", "about.mdx": "" });
+  const router = new Bun.FileSystemRouter({
+    dir: String(dir),
+    style: "nextjs",
+    // @ts-expect-error
+    fileExtensions: [extension],
+  });
+  return Object.keys(router.routes);
+}
+
+it("reads an extension that is a String object with its toString()", () => {
+  expect(routesWithExtension(Object.assign(new String(""), { toString: () => ".mdx" }))).toEqual(["/about"]);
+});
+
+it("skips an extension that is a String object whose toString() is empty", () => {
+  // None is left, so the default ones are used.
+  expect(routesWithExtension(Object.assign(new String(".mdx"), { toString: () => "" }))).toEqual(["/posts"]);
+});
+
+it("takes options that are an array", () => {
+  using dir = tempDir("fsr-array-options", { "posts.tsx": "" });
+  const router = new Bun.FileSystemRouter(Object.assign([], { dir: String(dir), style: "nextjs" as const }));
+  expect(Object.keys(router.routes)).toEqual(["/posts"]);
+});
+
+it("names a directory that is absent as it was joined", () => {
+  using dir = tempDir("fsr-absent", {});
+  for (const absent of [`${dir}${path.sep}absent`, `${dir}${path.sep}absent${path.sep}`]) {
+    expect(() => new Bun.FileSystemRouter({ dir: absent, style: "nextjs" })).toThrow(
+      expect.objectContaining({ name: "Error", message: `Unable to find directory: ${absent}` }),
+    );
+  }
+});
+
+it("refuses options that are not an object, and a route that is not a string, Request or Response", () => {
+  using dir = tempDir("fsr-wrong-arguments", { "posts.tsx": "" });
+  const router = new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs" });
+  const refusal = (message: string) =>
+    expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+  for (const wrong of [undefined, null, 1, "posts"]) {
+    // @ts-expect-error
+    expect(() => new Bun.FileSystemRouter(wrong)).toThrow(refusal("Expected object"));
+  }
+  for (const wrong of [undefined, null, 1, {}]) {
+    // @ts-expect-error
+    expect(() => router.match(wrong)).toThrow(refusal("Expected string, Request or Response"));
+  }
+});
+
+it("assetPrefix and origin are what the router was given, or null", () => {
+  using tmp = tempDir("fsr-asset-prefix", { "posts.tsx": "" });
+  const dir = String(tmp);
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+    assetPrefix: "_next/static/",
+    origin: "https://a.test",
+  });
+  expect(router.assetPrefix).toBe("_next/static/");
+  expect(router.origin).toBe("https://a.test");
+  const bare = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(bare.assetPrefix).toBeNull();
+  expect(bare.origin).toBeNull();
+  const empty = new Bun.FileSystemRouter({ dir, style: "nextjs", assetPrefix: "", origin: "" });
+  expect(empty.assetPrefix).toBeNull();
+  expect(empty.origin).toBeNull();
 });
 
 // POSIX allows arbitrary bytes (except '/' and NUL) in filenames, including 0xFF.
@@ -494,6 +687,47 @@ it.skipIf(isWindows || isMacOS)("handles filenames containing byte 0xFF", () => 
   expect(routes).toContain("/ab");
 });
 
+it("src is relative to dir when no origin is given", () => {
+  const { dir } = make(["index.tsx", "posts/[id].tsx"]);
+
+  for (const opts of [{}, { assetPrefix: "/_next/static/" }]) {
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs", ...opts });
+    expect({
+      index: router.match("/")!.src,
+      post: router.match("/posts/hello-world")!.src,
+    }).toEqual({
+      index: "index.tsx",
+      post: "posts/[id].tsx",
+    });
+  }
+});
+
+// The 0xFF byte is not valid UTF-8, so the JS string gets U+FFFD in its place.
+it.skipIf(isWindows || isMacOS)("src replaces invalid UTF-8 in the route path with U+FFFD", () => {
+  using dir = tempDir("fsr-src-byte-ff", {});
+  fs.writeFileSync(
+    Buffer.concat([Buffer.from(String(dir) + "/a"), Buffer.from([0xff]), Buffer.from(".tsx")]),
+    "export default 1;\n",
+  );
+
+  const relative = new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs", fileExtensions: [".tsx"] });
+  const absolute = new Bun.FileSystemRouter({
+    dir: String(dir),
+    style: "nextjs",
+    fileExtensions: [".tsx"],
+    assetPrefix: "/_next/static/",
+    origin: "https://example.com",
+  });
+
+  expect({
+    relative: relative.match("/a%FF")!.src,
+    absolute: absolute.match("/a%FF")!.src,
+  }).toEqual({
+    relative: "a\uFFFD.tsx",
+    absolute: "https://example.com/_next/static/a\uFFFD.tsx",
+  });
+});
+
 it("MatchedRoute.params does not leak", async () => {
   using dir = tempDir("fsr-params-leak", {
     "pages/[a]/[b]/[c]/[d].tsx": "export default 1;",
@@ -504,6 +738,7 @@ it("MatchedRoute.params does not leak", async () => {
   // garbage-collected. Use long segment values so any leak is large enough to
   // dominate RSS noise.
   const code = /* ts */ `
+    const rss = process.memoryUsage.rss;
     const router = new Bun.FileSystemRouter({
       dir: ${JSON.stringify(path.join(String(dir), "pages"))},
       style: "nextjs",
@@ -515,11 +750,11 @@ it("MatchedRoute.params does not leak", async () => {
     // warm up
     for (let i = 0; i < 1000; i++) router.match(url).params;
     Bun.gc(true);
-    const before = process.memoryUsage.rss();
+    const before = rss();
 
     for (let i = 0; i < 30000; i++) router.match(url).params;
     Bun.gc(true);
-    const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+    const growthMB = (rss() - before) / 1024 / 1024;
     console.error("RSS growth: " + growthMB.toFixed(2) + "MB");
     // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
     // deltas run far higher under bun-asan; widen the threshold there.
@@ -570,4 +805,517 @@ it("throws a clean error for invalid route filenames (no use-after-free)", async
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("caught:Route is missing a closing bracket]");
   expect(exitCode).toBe(0);
+});
+
+it("decodes percent-encoded path segments and keeps params and pathname stable after later matches", async () => {
+  // The buffer that backs a MatchedRoute's decoded pathname, query string and
+  // param values must stay alive (and unshared) for as long as the MatchedRoute
+  // object does. Two back-to-back matches with equal-length encoded segments
+  // are used so that, if the first match's decode buffer were released or
+  // shared, the second match would immediately reuse and overwrite it.
+  // Run in a subprocess so a memory error in the child cannot take down the
+  // test runner.
+  using dir = tempDir("fsr-percent-decode", {
+    "pages/posts/[id].tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+    const enc = s => [...s].map(c => "%" + c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+
+    const a = "alpha-" + "a".repeat(58);
+    const b = "bravo-" + "b".repeat(58);
+    const ma = router.match("/posts/" + enc(a));
+    const mb = router.match("/posts/" + enc(b));
+    if (!ma || !mb) throw new Error("expected both URLs to match");
+    if (ma.name !== "/posts/[id]") throw new Error("bad name: " + ma.name);
+    if (ma.params.id !== a) throw new Error("first param corrupted: " + JSON.stringify(ma.params.id));
+    if (ma.pathname !== "/posts/" + a) throw new Error("first pathname corrupted: " + JSON.stringify(ma.pathname));
+    if (mb.params.id !== b) throw new Error("second param corrupted: " + JSON.stringify(mb.params.id));
+    if (mb.pathname !== "/posts/" + b) throw new Error("second pathname corrupted: " + JSON.stringify(mb.pathname));
+
+    // Un-encoded URLs must keep working.
+    const plain = router.match("/posts/hello-world");
+    if (!plain || plain.params.id !== "hello-world") throw new Error("plain param: " + JSON.stringify(plain && plain.params.id));
+    console.log("ok");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
+});
+
+it(".params decodes percent escapes in a route segment exactly once", () => {
+  const { dir } = make(["index.tsx", "posts/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  const spaced = router.match("/posts/a%20b")!;
+  expect(spaced.name).toBe("/posts/[id]");
+  expect(spaced.pathname).toBe("/posts/a b");
+  expect(spaced.params.id).toBe("a b");
+
+  const escaped = router.match("/posts/%252e%252e%252fetc")!;
+  expect(escaped.name).toBe("/posts/[id]");
+  expect(escaped.pathname).toBe("/posts/%2e%2e%2fetc");
+  expect(escaped.params.id).toBe("%2e%2e%2fetc");
+
+  const percent = router.match("/posts/100%2525")!;
+  expect(percent.pathname).toBe("/posts/100%25");
+  expect(percent.params.id).toBe("100%25");
+});
+
+it("caps the number of parsed query string parameters instead of crashing", async () => {
+  // A query string with more parameters than the iterator's fixed-size visited
+  // bitset (2048 entries) must not be able to take down the process when
+  // `.query` is read. Run in a subprocess so an abort is observable as output
+  // on stderr / a nonzero exit code instead of killing the test runner.
+  using dir = tempDir("fsr-many-query-params", {
+    "pages/posts.tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+    const qs = Array.from({ length: 3000 }, (_, i) => "k" + i + "=v" + i).join("&");
+    const match = router.match("/posts?" + qs);
+    if (!match) throw new Error("expected /posts to match");
+    const query = match.query;
+    const keys = Object.keys(query);
+    if (keys.length < 1 || keys.length > 3000) throw new Error("unexpected key count: " + keys.length);
+    if (query.k0 !== "v0") throw new Error("first param wrong: " + JSON.stringify(query.k0));
+    console.log("ok " + keys.length);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toMatch(/^ok \d+$/);
+  expect(exitCode).toBe(0);
+});
+
+it("does not match a dynamic route whose static segment merely collides on length and 32-bit hash", () => {
+  const low32 = (input: string) => Number(BigInt.asUintN(32, BigInt(Bun.hash.wyhash(input))));
+  const seen = new Map<number, string>();
+  let pair: [string, string] | null = null;
+  for (let i = 0; i < 600_000; i++) {
+    const candidate = "s" + i.toString(36).padStart(9, "0");
+    const h = low32(candidate);
+    const prev = seen.get(h);
+    if (prev !== undefined) {
+      pair = [prev, candidate];
+      break;
+    }
+    seen.set(h, candidate);
+  }
+  expect(pair).not.toBeNull();
+  const [routeSegment, collidingSegment] = pair!;
+  expect(collidingSegment).not.toBe(routeSegment);
+  expect(collidingSegment.length).toBe(routeSegment.length);
+
+  const { dir } = make([`${routeSegment}/[id].tsx`]);
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  expect(router.match(`/${routeSegment}/42`)?.name).toBe(`/${routeSegment}/[id]`);
+  expect(router.match(`/${collidingSegment}/42`)).toBeNull();
+}, 60_000);
+
+it("match() does not panic on a leading '?' or a path that percent-decodes to empty", async () => {
+  // URLPath::parse assumed the decoded pathname was non-empty and had a leading
+  // byte to skip. A bare query string ("?", "?foo") makes the path slice end at 0
+  // while the start is hardcoded to 1, and "%PUBLIC_URL%" (which the fault-tolerant
+  // decoder consumes entirely) yields an empty decoded pathname; either case used
+  // to trigger a slice bounds panic. Run in a subprocess so a panic is observable
+  // as a nonzero exit / missing stdout instead of killing the test runner.
+  using dir = tempDir("fsr-degenerate-path", {
+    "pages/index.tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+    const out = {};
+    for (const input of ["?", "?foo=bar", "%PUBLIC_URL%", "%PUBLIC_URL%?x=1"]) {
+      const m = router.match(input);
+      out[input] = m ? { name: m.name, query: m.query } : null;
+    }
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // These inputs do not start with '/', so they are not valid path strings and
+  // must not match any route (including the index route). The subprocess still
+  // proves the original invariant: no panic on degenerate input.
+  expect(JSON.parse(stdout.trim())).toEqual({
+    "?": null,
+    "?foo=bar": null,
+    "%PUBLIC_URL%": null,
+    "%PUBLIC_URL%?x=1": null,
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("match() returns null when the path string does not start with '/'", () => {
+  const { dir } = make(["index.tsx", "top.tsx", "op.tsx", "sub/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  // Control: '/'-prefixed inputs resolve.
+  expect(router.match("/top")?.name).toBe("/top");
+  expect(router.match("/op")?.name).toBe("/op");
+  expect(router.match("/sub/x")).toMatchObject({ name: "/sub/[id]", params: { id: "x" } });
+  expect(router.match("/")?.name).toBe("/");
+  expect(router.match("/?q=1")).toMatchObject({ name: "/", query: { q: "1" } });
+  expect(router.match("")?.name).toBe("/");
+
+  // URLPath::parse used to strip byte 0 unconditionally, so any single junk byte
+  // in the '/' position produced a match against the rest of the string.
+  for (const input of ["Xtop", " top", "\ttop", "\\top", ".top", "%58top", "%2Ftop"]) {
+    expect({ input, match: router.match(input) }).toEqual({ input, match: null });
+  }
+  // The bare name (no prefix at all) must not match either: previously "top"
+  // became "op" and matched the /op route.
+  expect(router.match("top")).toBeNull();
+  expect(router.match("ttop")).toBeNull();
+  // Dynamic routes were affected the same way.
+  expect(router.match("Xsub/x")).toBeNull();
+  expect(router.match("sub/x")).toBeNull();
+  // A leading '?' has no path component and must not fall through to index.
+  expect(router.match("?anything")).toBeNull();
+});
+
+it("reload() while Bun.build() resolves the same directory", async () => {
+  // The router's route-load loop and Bun.build's entry-point resolution (which
+  // runs on the bundler thread) share the process-global directory-entry cache.
+  // Run in a subprocess so a crash is observable as a signal instead of taking
+  // down the test runner.
+  const files: Record<string, string> = {
+    "fixture.ts": /* ts */ `
+      import path from "path";
+      const pagesDir = path.join(import.meta.dir, "pages");
+      const entrypoints: string[] = [];
+      for (let i = 1; i <= 40; i++) {
+        entrypoints.push(path.join(pagesDir, "p" + i + ".tsx"));
+        entrypoints.push(path.join(pagesDir, "sub", "s" + i + ".tsx"));
+      }
+      const router = new Bun.FileSystemRouter({
+        dir: pagesDir,
+        style: "nextjs",
+        fileExtensions: [".tsx"],
+      });
+      // The first build completes with generation 0 and the bundle thread then
+      // bumps its generation, so every later build's resolver re-reads the
+      // directory listing in place. reload() iterates the same listing on the
+      // main thread, and that in-place re-read is what the reload loop races.
+      await Bun.build({ entrypoints, target: "bun", throw: false });
+      let matches = 0;
+      let buildsOk = true;
+      for (let round = 0; round < 40; round++) {
+        const builds = Array.from({ length: 4 }, () =>
+          Bun.build({ entrypoints, target: "bun", throw: false }),
+        );
+        for (let i = 0; i < 50; i++) {
+          router.reload();
+          const m = router.match("/p7");
+          if (m && m.filePath.endsWith("p7.tsx")) matches++;
+        }
+        const results = await Promise.all(builds);
+        buildsOk &&= results.every(r => r.success);
+      }
+      console.log("matches", matches, "builds-ok", buildsOk);
+    `,
+  };
+  for (let i = 1; i <= 40; i++) {
+    files[`pages/p${i}.tsx`] = `export default ${i};\n`;
+    files[`pages/sub/s${i}.tsx`] = `export default ${i};\n`;
+  }
+  using dir = tempDir("fsr-reload-build-race", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "matches 2000 builds-ok true", stderr: "", exitCode: 0, signalCode: null });
+}, 60_000);
+
+it("loads routes from a directory already cached by Bun.build()", async () => {
+  // The resolver caches the directory name without a trailing slash while the
+  // router spells it with one; loading routes out of the already-populated
+  // entry cache must accept either spelling. Run in a subprocess so a crash is
+  // observable as a nonzero exit instead of taking down the test runner.
+  using dir = tempDir("fsr-prewarmed-entry-cache", {
+    "fixture.ts": /* ts */ `
+      import path from "path";
+      const pagesDir = path.join(import.meta.dir, "pages");
+      await Bun.build({ entrypoints: [path.join(pagesDir, "a.tsx")], target: "bun", throw: false });
+      const router = new Bun.FileSystemRouter({
+        dir: pagesDir,
+        style: "nextjs",
+        fileExtensions: [".tsx"],
+      });
+      console.log(Object.keys(router.routes).sort().join(" "), router.match("/b")?.name);
+    `,
+    "pages/a.tsx": "export default 1;\n",
+    "pages/b.tsx": "export default 2;\n",
+    "pages/sub/c.tsx": "export default 3;\n",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "/a /b /sub/c /b", stderr: "", exitCode: 0, signalCode: null });
+});
+
+it(".query drops a pair with a malformed percent escape without shifting later parameters", () => {
+  const { dir } = make(["posts.tsx", "shows/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  for (const [current, expected] of [
+    ["/posts?a=x%25zz&b=hello", { b: "hello" }],
+    ["/posts?a=xy%25zz&b=hello&c=3", { b: "hello", c: "3" }],
+    ["/posts?a=%25zz&b=hello", { b: "hello" }],
+    ["/shows/123?a=x%25zz&b=ok", { id: "123", b: "ok" }],
+    ["/shows/123?a=xy%25zz&b=ok&c=3", { id: "123", b: "ok", c: "3" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+});
+
+it(".query keeps the route parameter when a percent-encoded query name decodes to the same name", () => {
+  const { dir } = make(["posts/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  for (const [current, expected] of [
+    ["/posts/123?id=999", { id: "123" }],
+    ["/posts/123?%2569d=999", { id: "123" }],
+    ["/posts/123?%2569d=999&other=1", { id: "123", other: "1" }],
+    ["/posts/123?other=1&%2569d=999", { id: "123", other: "1" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+});
+
+it("match() returns null when the URL has fewer segments than a dynamic route requires", () => {
+  {
+    const { dir } = make(["[org]/settings/[id].tsx"]);
+    const router = new Bun.FileSystemRouter({
+      dir,
+      style: "nextjs",
+    });
+
+    expect(router.match("/acme/settings/x")).toMatchObject({
+      name: "/[org]/settings/[id]",
+      params: { org: "acme", id: "x" },
+    });
+    expect(router.match("/acme")).toBeNull();
+  }
+
+  {
+    const { dir } = make(["[team]/[...rest].tsx"]);
+    const router = new Bun.FileSystemRouter({
+      dir,
+      style: "nextjs",
+    });
+
+    expect(router.match("/acme/a/b")).toMatchObject({
+      name: "/[team]/[...rest]",
+      params: { team: "acme", rest: "a/b" },
+    });
+    expect(router.match("/acme")).toBeNull();
+  }
+});
+
+it.skipIf(isWindows || isMacOS)(
+  "src is computed for a route whose path is longer than the fast-path buffer",
+  async () => {
+    using dir = tempDir("fsr-long-route-src", {
+      "pages/keep.tsx": "export default 1;\n",
+    });
+
+    const code = /* ts */ `
+    const fs = require("fs");
+    const path = require("path");
+    const pagesDir = ${JSON.stringify(path.join(String(dir), "pages"))};
+    const seg = Buffer.alloc(200, "a").toString();
+    const relDir = Array.from({ length: 11 }, (_, i) => seg + i).join("/");
+    fs.mkdirSync(path.join(pagesDir, relDir), { recursive: true });
+    fs.writeFileSync(path.join(pagesDir, relDir, "leaf.tsx"), "export default 1;\\n");
+    const router = new Bun.FileSystemRouter({
+      dir: pagesDir,
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+      assetPrefix: "/_next/static/",
+      origin: "https://example.com",
+    });
+    const m = router.match("/" + relDir + "/leaf");
+    if (!m) throw new Error("expected the deep route to match");
+    const expected = "https://example.com/_next/static/" + relDir + "/leaf.tsx";
+    if (m.src !== expected) throw new Error("unexpected src: " + JSON.stringify(m.src));
+    console.log("ok " + m.src.length);
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok 2264");
+    expect(exitCode).toBe(0);
+  },
+);
+
+it("an absolute dir with '..' in it names routes like its normalized spelling", async () => {
+  const { dir } = make([
+    `pages/index.tsx`,
+    `pages/api/x.tsx`,
+    `pages/a-long-directory-name/deeper/page.tsx`,
+    `other/keep.tsx`,
+  ]);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const routes = dir => Object.keys(new Bun.FileSystemRouter({ dir, style: "nextjs" }).routes).sort();
+      console.log(JSON.stringify([routes(process.argv[1] + "/pages"), routes(process.argv[1] + "/other/../pages")]));
+      `,
+      dir,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const routes = ["/", "/a-long-directory-name/deeper/page", "/api/x"];
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify([routes, routes]) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("throws ERR_STRING_TOO_LONG for an origin or assetPrefix over the string limit", async () => {
+  using dir = tempDir("fsr-string-limit", { "index.tsx": "export default 1;" });
+  const code = /* js */ `
+    const dir = process.argv[1];
+    const LIMIT = 64 * 1024;
+    const pad = (prefix, len) => prefix + Buffer.alloc(len - prefix.length, "x").toString();
+    const attempt = (key, value) => {
+      try {
+        new Bun.FileSystemRouter({ dir, style: "nextjs", [key]: value });
+        return "ok";
+      } catch (e) {
+        return e?.code ?? e?.name;
+      }
+    };
+    console.log(
+      JSON.stringify({
+        originAtLimit: attempt("origin", pad("https://a.example/", LIMIT)),
+        originPastLimit: attempt("origin", pad("https://b.example/", LIMIT + 1)),
+        originPastLimitAgain: attempt("origin", pad("https://b.example/", LIMIT + 1)),
+        assetPrefixPastLimit: attempt("assetPrefix", pad("/static/", LIMIT + 1)),
+      }),
+    );
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code, String(dir)],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    stdout: {
+      originAtLimit: "ok",
+      originPastLimit: "ERR_STRING_TOO_LONG",
+      originPastLimitAgain: "ERR_STRING_TOO_LONG",
+      assetPrefixPastLimit: "ERR_STRING_TOO_LONG",
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("Array.prototype as fileExtensions is an empty array", () => {
+  const { dir } = make(["index.tsx"]);
+  const routes = (fileExtensions: string[]) =>
+    Object.keys(new Bun.FileSystemRouter({ dir, style: "nextjs", fileExtensions }).routes);
+  expect(routes(Array.prototype)).toEqual(routes([]));
+});
+
+it(".query and .params support names that look like array indices", () => {
+  const { dir } = make(["posts.tsx", "[0].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  const query = router.match("/posts?0=a&0=b&1=c&x=y")!.query;
+  expect(query).toEqual({ 0: ["a", "b"], 1: "c", x: "y" });
+  expect(query[0]).toEqual(["a", "b"]);
+
+  const params = router.match("/hello")!.params;
+  expect(params).toEqual({ 0: "hello" });
+  expect(params[0]).toBe("hello");
 });

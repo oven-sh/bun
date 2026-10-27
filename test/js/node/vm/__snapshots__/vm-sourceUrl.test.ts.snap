@@ -2,6 +2,9 @@
 
 exports[`can get sourceURL from eval inside node:vm 1`] = `
 "evalmachine.<anonymous>:2
+throw new Error("hello");
+                        ^
+
 Error: hello
     at hellohello.js:2:16
     at runInNewContext (unknown)

@@ -102,16 +102,29 @@ function bound(binding) {
         : $bundleError("TODO: endianness");
     },
     freemem: binding.freemem,
-    getPriority: binding.getPriority,
-    homedir: binding.homedir,
-    hostname: binding.hostname,
-    loadavg: binding.loadavg,
-    networkInterfaces: binding.networkInterfaces,
+    // Plain functions where Node's are, so that `new os.homedir()` does what it does there. The other four are not constructors in Node either.
+    getPriority: function (pid) {
+      return binding.getPriority(pid);
+    },
+    homedir: function () {
+      return binding.homedir();
+    },
+    hostname: function () {
+      return binding.hostname();
+    },
+    loadavg: function () {
+      return binding.loadavg();
+    },
+    networkInterfaces: function () {
+      return binding.networkInterfaces();
+    },
     platform: function () {
       return process.platform;
     },
     release: binding.release,
-    setPriority: binding.setPriority,
+    setPriority: function (pid, priority) {
+      return binding.setPriority(pid, priority);
+    },
     get tmpdir() {
       return tmpdir;
     },
@@ -127,8 +140,12 @@ function bound(binding) {
               ? "FreeBSD"
               : $bundleError("TODO: type");
     },
-    uptime: binding.uptime,
-    userInfo: binding.userInfo,
+    uptime: function () {
+      return binding.uptime();
+    },
+    userInfo: function (options) {
+      return binding.userInfo(options);
+    },
     version: binding.version,
     machine: function () {
       // TODO: linux arm64 should also return "aarch64" (Node/uname compat) —
@@ -152,7 +169,22 @@ function bound(binding) {
   };
 }
 
-const out = bound($zig("node_os.zig", "createNodeOsBinding"));
+const out = bound({
+  hostCpuCount: $bindgen("node_os.bind.ts", "hostCpuCount"),
+  cpus: $bindgen("node_os.bind.ts", "cpus"),
+  freemem: $bindgen("node_os.bind.ts", "freemem"),
+  getPriority: $bindgen("node_os.bind.ts", "getPriority"),
+  homedir: $bindgen("node_os.bind.ts", "homedir"),
+  hostname: $bindgen("node_os.bind.ts", "hostname"),
+  loadavg: $bindgen("node_os.bind.ts", "loadavg"),
+  networkInterfaces: $bindgen("node_os.bind.ts", "networkInterfaces"),
+  release: $bindgen("node_os.bind.ts", "release"),
+  totalmem: $bindgen("node_os.bind.ts", "totalmem"),
+  uptime: $bindgen("node_os.bind.ts", "uptime"),
+  userInfo: $bindgen("node_os.bind.ts", "userInfo"),
+  version: $bindgen("node_os.bind.ts", "version"),
+  setPriority: $bindgen("node_os.bind.ts", "setPriority"),
+});
 
 symbolToStringify(out, "arch");
 symbolToStringify(out, "availableParallelism");

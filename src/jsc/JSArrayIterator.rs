@@ -3,14 +3,20 @@ use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
 pub struct JSArrayIterator<'a> {
     pub i: u32,
     pub len: u32,
-    pub array: JSValue,
+    array: JSValue,
     pub global: &'a JSGlobalObject,
     /// Direct pointer into the JSArray butterfly when the array has Int32 or
     /// Contiguous storage and a sane prototype chain. Holes are encoded as 0.
-    pub fast: Option<*const JSValue>,
+    fast: Option<*const JSValue>,
 }
 
 impl<'a> JSArrayIterator<'a> {
+    /// Iterating straight out of the butterfly (see `fast`), so `next()`
+    /// cannot run user JS.
+    pub fn is_fast(&self) -> bool {
+        self.fast.is_some()
+    }
+
     pub fn init(value: JSValue, global: &'a JSGlobalObject) -> JsResult<JSArrayIterator<'a>> {
         let mut length: u32 = 0;
         let elements = Bun__JSArray__getContiguousVector(value, &mut length);
@@ -55,7 +61,6 @@ impl<'a> JSArrayIterator<'a> {
     }
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     safe fn Bun__JSArray__getContiguousVector(value: JSValue, out_len: &mut u32) -> *const JSValue;
     // safe: by-value `JSValue`/`u32`; `elements` is only pointer-compared against
@@ -67,5 +72,3 @@ unsafe extern "C" {
         len: u32,
     ) -> bool;
 }
-
-// ported from: src/jsc/JSArrayIterator.zig

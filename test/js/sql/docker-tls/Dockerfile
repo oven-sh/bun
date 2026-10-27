@@ -26,13 +26,11 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     DROP USER IF EXISTS bun_sql_test;\n\
     CREATE USER bun_sql_test;\n\
     \n\
-    ALTER SYSTEM SET password_encryption = '"'"'md5'"'"';\n\
-    SELECT pg_reload_conf();\n\
+    SET password_encryption = '"'"'md5'"'"';\n\
     DROP USER IF EXISTS bun_sql_test_md5;\n\
     CREATE USER bun_sql_test_md5 WITH PASSWORD '"'"'bun_sql_test_md5'"'"';\n\
     \n\
-    ALTER SYSTEM SET password_encryption = '"'"'scram-sha-256'"'"';\n\
-    SELECT pg_reload_conf();\n\
+    SET password_encryption = '"'"'scram-sha-256'"'"';\n\
     DROP USER IF EXISTS bun_sql_test_scram;\n\
     CREATE USER bun_sql_test_scram WITH PASSWORD '"'"'bun_sql_test_scram'"'"';\n\
 EOSQL\n\
@@ -75,8 +73,24 @@ RUN mkdir -p /docker-entrypoint-initdb.d && \
     echo "ALTER SYSTEM SET ssl_key_file = '/etc/postgresql/ssl/server.key';" >> /docker-entrypoint-initdb.d/configure-postgres.sql
 
 # Set environment variables
-ENV POSTGRES_HOST_AUTH_METHOD=trust
-ENV POSTGRES_USER=postgres
+ENV POSTGRES_HOST_AUTH_METHOD=trust \
+    POSTGRES_USER=postgres \
+    PGDATA=/var/lib/postgresql/pgdata-init
+
+# Bake a fully initialized data directory into the image so cold container
+# start is just `exec postgres` (~1-2s). See test/docker/Dockerfile.postgres-plain
+# for the rationale. Runs with the default (trust) hba so the init scripts can
+# connect on the local socket; the compose `command:` points postgres at the
+# hostssl-only /etc/postgresql/pg_hba.conf at runtime.
+RUN set -e; \
+    docker-entrypoint.sh postgres & pid=$!; \
+    for i in $(seq 180); do \
+        pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1 && break; \
+        sleep 1; \
+    done; \
+    pg_isready -h 127.0.0.1 -U postgres; \
+    gosu postgres pg_ctl -D "$PGDATA" -m fast -w stop; \
+    wait "$pid"
 
 # Expose PostgreSQL port
 EXPOSE 5432

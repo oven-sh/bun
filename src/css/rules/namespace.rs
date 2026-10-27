@@ -6,11 +6,11 @@ use crate::{PrintErr, Printer};
 /// A [@namespace](https://drafts.csswg.org/css-namespaces/#declaration) rule.
 pub struct NamespaceRule {
     /// An optional namespace prefix to declare, or `None` to declare the default namespace.
-    pub prefix: Option<Ident>,
+    pub(crate) prefix: Option<Ident>,
     /// The url of the namespace.
-    pub url: CssString,
+    pub(crate) url: CssString,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl NamespaceRule {
@@ -28,10 +28,9 @@ impl NamespaceRule {
         dest.write_char(b';')
     }
 
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `CssString` is
-        // `*const [u8]` (arena-owned slice → identity copy per generics.zig
-        // "const strings" rule); `Ident::deep_clone` is the same identity copy.
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // `CssString` is `*const [u8]` (arena-owned slice → identity copy);
+        // `Ident::deep_clone` is the same identity copy.
         Self {
             prefix: self.prefix.as_ref().map(|p| p.deep_clone(bump)),
             url: self.url,
@@ -39,5 +38,3 @@ impl NamespaceRule {
         }
     }
 }
-
-// ported from: src/css/rules/namespace.zig

@@ -41,6 +41,16 @@ export const zstd: Dependency = {
     commit: ZSTD_COMMIT,
   }),
 
+  patches: [
+    // x64 targets nehalem, so zstd picks its BMI2 kernels at run time and
+    // probes CPUID in every CCtx/DCtx init. CPUID is a VM exit under a
+    // hypervisor (about 2 us each, two per init). Probe once instead.
+    "patches/zstd/bmi2-probe-once.patch",
+    // ZSTD_freeCCtx frees a context's dictionaries before joining the worker
+    // threads, so a job that's still running can read freed memory.
+    "patches/zstd/free-workers-before-dictionaries.patch",
+  ],
+
   build: cfg => {
     const sources = [...SOURCES];
     const defines: Record<string, number | true> = {
@@ -50,7 +60,7 @@ export const zstd: Dependency = {
 
     // Upstream's if(MSVC) block sets these for the static target.
     // ZSTD_HEAPMODE=0 makes the one-shot ZSTD_decompress() (used by
-    // src/zstd/zstd.zig) stack-allocate its DCtx instead of malloc/free
+    // src/zstd/lib.rs) stack-allocate its DCtx instead of malloc/free
     // per call; the source default is 1.
     if (cfg.windows) {
       defines.ZSTD_HEAPMODE = 0;

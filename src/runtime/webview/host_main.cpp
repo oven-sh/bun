@@ -1,7 +1,7 @@
-// WebView host subprocess entry point. Reached via cli.zig when
+// WebView host subprocess entry point. Reached from CLI startup when
 // BUN_INTERNAL_WEBVIEW_HOST is set. Runs CFRunLoopRun() as the real main
 // loop — CF manages ignoreWakeUps correctly when it owns the loop. No
-// JSC, no VM, no Zig runtime past the env check.
+// JSC, no VM, no runtime past the env check.
 //
 // Parent death → socket read() returns 0 → CFRunLoopStop → process exits.
 
@@ -143,6 +143,8 @@ struct Host {
     FrameWriter writer;
 
     std::unordered_map<uint32_t, Ref<WebViewHost>> views;
+    // Views whose Create failed, with the reason. Every later op on one fails with that reason.
+    std::unordered_map<uint32_t, WTF::String> failedViews;
 
     // CFFileDescriptor delivers one callback then disarms; read until EAGAIN,
     // then re-enable. Incomplete frame at buffer tail stays until more bytes.
@@ -172,11 +174,16 @@ struct Host {
     WebViewHost* view(uint32_t viewId, Op op)
     {
         auto it = views.find(viewId);
-        if (it == views.end()) {
+        if (it != views.end()) return it->second.ptr();
+        auto failed = failedViews.find(viewId);
+        if (failed == failedViews.end()) {
             writer.sendReplyStr(viewId, failureFor(op), "invalid viewId"_s);
             return nullptr;
         }
-        return it->second.ptr();
+        // Send NavFailEvent first, like navigateIPC does, because a constructor url's promise is marked handled.
+        if (op == Op::Navigate) writer.sendReplyStr(viewId, Reply::NavFailEvent, failed->second);
+        writer.sendReplyStr(viewId, failureFor(op), failed->second);
+        return nullptr;
     }
 };
 
@@ -243,6 +250,11 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         WTF::String persistDir;
         if (static_cast<DataStoreKind>(p.dataStoreKind) == DataStoreKind::Persistent)
             persistDir = r.str();
+        // An older WebKit raises an exception for initWithDirectory:, and nothing here catches it.
+        if (!persistDir.isEmpty() && !objc::WKWebViewConfiguration::s_hasInitWithDirectory) {
+            failedViews.emplace(viewId, "dataStore.directory needs a newer WebKit (macOS 15.2 or later); use dataStore: \"ephemeral\" or backend: \"chrome\""_s);
+            return;
+        }
         views.emplace(viewId, WebViewHost::createForIPC(viewId, p.width, p.height, persistDir));
         // No Ack for Create — parent doesn't await it (fire-and-forget).
         return;
@@ -263,6 +275,7 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
     }
     case Op::Close:
         views.erase(viewId);
+        failedViews.erase(viewId);
         writer.sendReply(viewId, Reply::Ack);
         return;
     case Op::Resize: {
@@ -348,7 +361,7 @@ static void cfCallback(CFFileDescriptorRef, CFOptionFlags flags, void*)
 } // namespace Bun
 
 // ---------------------------------------------------------------------------
-// Entry. cli.zig calls this before anything else when BUN_INTERNAL_WEBVIEW_HOST
+// Entry. CLI startup calls this before anything else when BUN_INTERNAL_WEBVIEW_HOST
 // is set. Never returns.
 // ---------------------------------------------------------------------------
 extern "C" [[noreturn]] void Bun__WebView__hostMain(int fd)
@@ -369,7 +382,7 @@ extern "C" [[noreturn]] void Bun__WebView__hostMain(int fd)
     // ActivationPolicyAccessory so no dock tile for the host.
     auto* rt = ObjCRuntime::tryLoad();
     if (!rt->m_loaded) {
-        fprintf(stderr, "webview-host: %s\n", rt->m_loadError.utf8().data());
+        fprintf(stderr, "webview-host: %s\n", rt->m_loadError.utf8().legacyCStringPointer());
         _exit(70);
     }
 

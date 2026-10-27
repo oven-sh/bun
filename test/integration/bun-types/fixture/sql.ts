@@ -92,7 +92,7 @@ expectType(
     return [await txn<[9]>`SELECT 9`, await txn<[10]>`SELECT 10`];
   });
 
-  expectType(tx).is<readonly [[9], [10]]>();
+  expectType(tx).is<readonly [[9] & Bun.SQL.ResultMetadata, [10] & Bun.SQL.ResultMetadata]>();
 }
 
 {
@@ -100,7 +100,7 @@ expectType(
     return [await txn<[9]>`SELECT 9`, await txn<[10]>`SELECT 10`];
   });
 
-  expectType(tx).is<readonly [[9], [10]]>();
+  expectType(tx).is<readonly [[9] & Bun.SQL.ResultMetadata, [10] & Bun.SQL.ResultMetadata]>();
 }
 
 {
@@ -108,7 +108,7 @@ expectType(
     return [await txn<[9]>`SELECT 9`, await txn<[10]>`SELECT 10`];
   });
 
-  expectType(tx).is<readonly [[9], [10]]>();
+  expectType(tx).is<readonly [[9] & Bun.SQL.ResultMetadata, [10] & Bun.SQL.ResultMetadata]>();
 }
 
 expectType(sql1.unsafe("SELECT * FROM users")).is<Bun.SQL.Query<any>>();
@@ -116,7 +116,7 @@ expectType(sql1.unsafe<{ id: string }[]>("SELECT * FROM users")).is<Bun.SQL.Quer
 expectType(sql1.file("query.sql", [1, 2, 3])).is<Bun.SQL.Query<any>>();
 
 sql1.reserve().then(reserved => {
-  reserved.release();
+  expectType(reserved.release()).is<Promise<void>>();
 
   expectType(reserved<[8]>`SELECT 8`).is<Bun.SQL.Query<[8]>>();
 });
@@ -132,6 +132,67 @@ sql1.begin(async txn => {
     sp`SELECT 10`;
   });
 });
+
+sql1.begin(async txn => {
+  await txn.savepoint(async sp => {
+    expectType(sp).is<Bun.SavepointSQL>();
+    expectType(sp.savepoint("nested", async () => 11 as const)).is<Promise<11>>();
+  });
+});
+
+{
+  const rows = await sql1<{ id: number }[]>`SELECT id FROM users`;
+  expectType(rows[0]!.id).is<number>();
+  expectType(rows.count).is<number>();
+  expectType(rows.affectedRows).is<number>();
+  expectType(rows.lastInsertRowid).is<number | bigint | string | null>();
+  expectType(rows.command).is<string | null>();
+  expectType(rows.columns).is<Bun.SQL.ResultColumn[] | null>();
+  expectType(rows.statement).is<Bun.SQL.ResultStatement | null>();
+  expectType(rows.columns![0]!.table).is<number | string>();
+  expectType(rows.statement!.types).is<number[]>();
+  const plain: { id: number }[] = rows;
+}
+
+expectType(sql1`COPY users TO STDOUT`.readable()).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+expectType(sql1`COPY users TO STDOUT`.readable().pipeTo(sql2`COPY users FROM STDIN`.writable())).is<Promise<void>>();
+sql1`COPY users FROM STDIN`.writable().getWriter().write("1\tAlice\n");
+
+expectType(sql1.json({ a: 1 })).is<Bun.SQLJSONParameter | string | undefined>();
+expectType(sql1.array([1, 2, 3])).is<Bun.SQLArrayParameter>();
+expectType(sql1.array(["a"], "TEXT").arrayType).is<Bun.ArrayType | undefined>();
+expectType(sql1.array(new Int32Array(2), "UUID")).is<Bun.SQLArrayParameter>();
+expectType(sql1.file("query.sql").values()).is<Bun.SQL.Query<any>>();
+expectType(sql1 instanceof Bun.SQL).is<boolean>();
+
+new Bun.SQL({ filename: "./dev.db" });
+new Bun.SQL({ adapter: "sqlite", url: "file:dev.db", bigint: true });
+new Bun.SQL({ adapter: "mariadb", socket: "/run/mysqld/mysqld.sock", foundRows: false });
+new Bun.SQL("postgres://localhost", { onconnect: err => expectType(err).is<Error | null>() });
+
+new Bun.SQL({ channelBinding: "require", transform: Bun.SQL.camel });
+new Bun.SQL({ filename: ":memory:", transform: Bun.SQL.toCamel });
+new Bun.SQL({ transform: { undefined: null, column: { from: name => name.toLowerCase(), to: Bun.SQL.fromKebab } } });
+new Bun.SQL({ transform: { column: name => name.toUpperCase() } });
+expectType(Bun.SQL.toPascal("user_id")).is<string>();
+new Bun.SQL({
+  tls: {
+    serverName: "db.example.com",
+    checkServerIdentity(hostname, cert) {
+      expectType(hostname).is<string>();
+      return cert.fingerprint256 === "AA" ? undefined : new Error("certificate pin mismatch");
+    },
+  },
+});
+
+// @ts-expect-error - a plain function is not a transform: the runtime throws
+new Bun.SQL({ transform: (name: string) => name });
+
+// @ts-expect-error
+new Bun.SQL({ channelBinding: "always" });
+
+// @ts-expect-error - the callbacks get the error only, not the connection
+new Bun.SQL({ onclose: (client: unknown, err: Error | null) => {} });
 
 // @ts-expect-error
 sql1.commitDistributed();
@@ -178,8 +239,8 @@ expectType(opts2).extends<Bun.SQL.Options>();
 const txCb = (async sql => [sql<[1]>`SELECT 1`]) satisfies Bun.SQL.TransactionContextCallback<unknown>;
 const spCb = (async sql => [sql<[2]>`SELECT 2`]) satisfies Bun.SQL.SavepointContextCallback<unknown>;
 
-expectType(await sql.begin(txCb)).is<[1][]>();
-expectType(await sql.begin(spCb)).is<[2][]>();
+expectType(await sql.begin(txCb)).is<([1] & Bun.SQL.ResultMetadata)[]>();
+expectType(await sql.begin(spCb)).is<([2] & Bun.SQL.ResultMetadata)[]>();
 
 expectType(queryA.cancel()).is<Bun.SQL.Query<any>>();
 expectType(queryA.simple()).is<Bun.SQL.Query<any>>();
@@ -194,11 +255,11 @@ expectType(queryNum.execute()).is<Bun.SQL.Query<number>>();
 expectType(queryNum.raw()).is<Bun.SQL.Query<number>>();
 expectType(queryNum.values()).is<Bun.SQL.Query<number>>();
 
-expectType(await queryNum.cancel()).is<number>();
-expectType(await queryNum.simple()).is<number>();
-expectType(await queryNum.execute()).is<number>();
-expectType(await queryNum.raw()).is<number>();
-expectType(await queryNum.values()).is<number>();
+expectType(await queryNum.cancel()).is<number & Bun.SQL.ResultMetadata>();
+expectType(await queryNum.simple()).is<number & Bun.SQL.ResultMetadata>();
+expectType(await queryNum.execute()).is<number & Bun.SQL.ResultMetadata>();
+expectType(await queryNum.raw()).is<number & Bun.SQL.ResultMetadata>();
+expectType(await queryNum.values()).is<number & Bun.SQL.ResultMetadata>();
 
 expectType<Bun.SQL.Options>({
   password: () => "hey",
@@ -262,6 +323,28 @@ sql(users, "notAKey");
 
 // @ts-expect-error - array of numbers, extra key argument
 sql([1, 2, 3], "notAKey");
+
+// Degenerate helper inputs that throw at runtime are rejected at the type
+// level too. See https://github.com/oven-sh/bun/issues/32155.
+
+// @ts-expect-error - bare null is not a valid helper value
+sql(null);
+
+// @ts-expect-error - bare undefined is not a valid helper value
+sql(undefined);
+
+// @ts-expect-error - null item in a keyed WHERE IN helper
+sql([null], "id");
+
+// @ts-expect-error - null single object in an UPDATE helper with a column
+sql(null, "name");
+
+// @ts-expect-error - undefined item in an UPDATE/keyed helper
+sql([undefined], "name");
+
+// Still allowed: a null/primitive array binds NULL for WHERE IN.
+sql([null]);
+sql([1, null, 2]);
 
 // check the deprecated stuff still exists
 expectType<Bun.SQLQuery<"hey">>();

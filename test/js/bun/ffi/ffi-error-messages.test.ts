@@ -1,11 +1,91 @@
-import { dlopen, linkSymbols } from "bun:ffi";
+import { CString, dlopen, linkSymbols, ptr, toArrayBuffer, toBuffer } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isArm64, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, isMusl } from "harness";
 
-// TinyCC (and all of bun:ffi) is disabled on Windows ARM64
-const isFFIUnavailable = isWindows && isArm64;
+// Not `toThrow()`: it also accepts an Error that the function returns, which is
+// what `toBuffer()` and `toArrayBuffer()` did with their TypeError before they
+// threw it.
+function thrownBy(fn: () => unknown): any {
+  try {
+    fn();
+  } catch (e) {
+    return e;
+  }
+  return undefined;
+}
 
-describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
+describe.each([
+  ["toBuffer", toBuffer],
+  ["toArrayBuffer", toArrayBuffer],
+] as const)("%s argument errors", (name, view) => {
+  const bytes = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+  const address = ptr(bytes);
+  const asArray = (result: Buffer | ArrayBuffer) => Array.from(new Uint8Array(result));
+
+  test.each([
+    ["a string ptr", () => view("x" as any), "ptr must be a number."],
+    ["a negative ptr", () => view(-1 as any), "ptr must be a number."],
+    ["a zero ptr", () => view(0 as any), "ptr cannot be zero, that would segfault Bun :("],
+    ["a BigInt ptr past usize", () => view((2n ** 64n) as any), "ptr is out of range."],
+    ["a sentinel ptr", () => view(0xdeadbeef as any), "ptr to invalid memory, that would segfault Bun :("],
+    ["a string byteOffset", () => view(address, "garbage" as any, 8), "Expected number for byteOffset"],
+    ["an object byteOffset", () => view(address, {} as any, 8), "Expected number for byteOffset"],
+    ["an infinite byteOffset", () => view(address, Infinity, 8), "ptr must be a finite number."],
+    ["a string byteLength", () => view(address, 0, "x" as any), "length must be a number."],
+    ["a zero byteLength", () => view(address, 0, 0), "length must be > 0. This usually means a bug in your code."],
+    ["a negative byteLength", () => view(address, 0, -1), "length must be > 0. This usually means a bug in your code."],
+    ["a NaN byteLength", () => view(address, 0, NaN), "length must be > 0. This usually means a bug in your code."],
+    [
+      "a byteLength that truncates to zero",
+      () => view(address, 0, 0.5),
+      "length must be > 0. This usually means a bug in your code.",
+    ],
+    [
+      "a string finalization callback",
+      () => (view as any)(address, 0, 8, "x"),
+      "Expected callback to be a C pointer (number or BigInt)",
+    ],
+    [
+      "a string finalization callback after user data",
+      () => (view as any)(address, 0, 8, 1, "x"),
+      "Expected callback to be a C pointer (number or BigInt)",
+    ],
+    [
+      "string user data",
+      () => (view as any)(address, 0, 8, "x", 1),
+      "Expected user data to be a C pointer (number or BigInt)",
+    ],
+  ])(`${name} throws a TypeError for %s`, (_, call, message) => {
+    const err = thrownBy(call);
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(err.message).toBe(message);
+  });
+
+  test(`${name} accepts an undefined or null byteOffset`, () => {
+    // `bytes` stays referenced here so its storage outlives every test above.
+    expect(asArray(view(address, undefined, 8))).toEqual(Array.from(bytes));
+    expect(asArray(view(address, null as any, 8))).toEqual(Array.from(bytes));
+    expect(asArray(view(address, 2, 4))).toEqual(Array.from(bytes.subarray(2, 6)));
+  });
+});
+
+describe("CString argument errors", () => {
+  test("CString throws a TypeError for a negative ptr", () => {
+    const err = thrownBy(() => new CString(-1 as any));
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(err.message).toBe("ptr must be a number.");
+  });
+
+  test("CString reads the bytes at ptr + byteOffset", () => {
+    const bytes = new TextEncoder().encode("hello\0");
+    expect(`${new CString(ptr(bytes), 1, 4)}`).toBe("ello");
+    expect(`${new CString(ptr(bytes))}`).toBe("hello");
+  });
+});
+
+describe("FFI error messages", () => {
   test("dlopen shows library name when library cannot be opened", () => {
     // Try to open a non-existent library
     try {
@@ -21,6 +101,33 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
       expect(err.message).toContain("libnonexistent12345.so");
       expect(err.message).toMatch(/Failed to open library/i);
     }
+  });
+
+  // When opening the name directly fails, dlopen falls back to the name joined to the working directory.
+  test.concurrent.each([
+    ["absolute", 5000],
+    ["relative", 4090],
+    ["relative", 100_000],
+  ] as const)("dlopen with a %s %d-byte library path reports an error", async (kind, length) => {
+    const prefix = kind === "relative" ? "" : process.platform === "win32" ? "C:\\" : "/";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { dlopen } from "bun:ffi";
+        const name = ${JSON.stringify(prefix)} + Buffer.alloc(${length}, "a").toString() + ".so";
+        try {
+          dlopen(name, { f: { args: [], returns: "void" } });
+        } catch (e) {
+          console.log(e.code, e.message.slice(0, 22));
+        }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "ERR_DLOPEN_FAILED Failed to open library\n", stderr: "" });
+    expect(exitCode).toBe(0);
   });
 
   test("dlopen shows which symbol is missing when symbol not found", () => {
@@ -68,11 +175,11 @@ describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
 
   test("linkSymbols with non-object property values throws TypeError", () => {
     expect(() => {
-      linkSymbols({ foo: 42 });
+      linkSymbols({ foo: 42 as any });
     }).toThrow("Expected an object");
 
     expect(() => {
-      linkSymbols({ a: "hello", b: 123, c: true });
+      linkSymbols({ a: "hello", b: 123, c: true } as any);
     }).toThrow("Expected an object");
   });
 

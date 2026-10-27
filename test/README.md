@@ -10,6 +10,7 @@ Tests are located in the [`test/`](test/) directory and are organized using the 
   * `bundler/` - tests for the transpiler/bundler.
   * `regression/` - tests that reproduce a specific issue.
   * `harness.ts` - utility functions that can be imported from any test.
+  * `packages/` - servers and tools that tests start, like `s3-server`, an Amazon S3 compatible server.
 
 The tests in [`test/js/`](js/) directory are further categorized by the type of API.
 
@@ -65,12 +66,6 @@ it("regex literal should work with non-latin1", () => {
 ```
 
 In the future, a bot will automatically close or re-open issues when a regression is detected or resolved.
-
-## Zig tests
-
-These tests live in various `.zig` files throughout Bun's codebase, leveraging Zig's builtin `test` keyword.
-
-Currently, they're not run automatically nor is there a simple way to run all of them. We will make this better soon.
 
 ## TypeScript
 

@@ -1,7 +1,7 @@
 import { CryptoHasher, MD4, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc } from "bun";
 import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import path from "path";
 import { hashesFixture } from "./fixtures/sign.fixture.ts";
 const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
@@ -153,6 +153,74 @@ describe("CryptoHasher", () => {
   }
 });
 
+describe("createHash outputLength", () => {
+  it("shake128 digest matches Node.js for small and zero outputLength", () => {
+    expect(crypto.createHash("shake128", { outputLength: 8 }).update("abc").digest("hex")).toBe("5881092dd818bf5c");
+    expect(crypto.createHash("shake128", { outputLength: 32 }).update("abc").digest("hex")).toBe(
+      "5881092dd818bf5cf8a3ddb793fbcba74097d5c526a6d35f97b83351940f2cc8",
+    );
+    expect(crypto.createHash("shake128", { outputLength: 0 }).update("abc").digest("hex")).toBe("");
+    expect(crypto.createHash("shake128", { outputLength: 0 }).update("abc").digest()).toEqual(Buffer.alloc(0));
+    expect(
+      crypto.createHash("shake128", { outputLength: 8 }).update("abc").copy({ outputLength: 4 }).digest("hex"),
+    ).toBe("5881092d");
+  });
+
+  it.skipIf(isWindows)("shake128 outputLength >= 2**31 does not abort the process", async () => {
+    // options.outputLength is validated against the full uint32 range, so 2**31
+    // must either produce a digest or throw a catchable error, never terminate
+    // the process.
+    const messages: string[] = [];
+    const entering = Promise.withResolvers<void>();
+    const done = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const crypto = require("node:crypto");
+         const known = "5881092dd818bf5cf8a3ddb793fbcba7";
+         const h = crypto.createHash("shake128", { outputLength: 2 ** 31 }).update("abc");
+         process.send("entering");
+         try {
+           const d = h.digest();
+           if (d.length !== 2 ** 31) throw new Error("wrong length " + d.length);
+           if (d.subarray(0, 16).toString("hex") !== known) throw new Error("wrong prefix");
+           process.send("ok");
+         } catch (e) {
+           process.send("caught:" + (e.code || e.name));
+         }`,
+      ],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+      ipc(message) {
+        messages.push(String(message));
+        if (message === "entering") entering.resolve();
+        else done.resolve();
+      },
+      serialization: "json",
+    });
+
+    // The abort is a synchronous capacity check that fires instantly; past it
+    // the child squeezes 2 GiB of output, which is too slow in debug to await.
+    // Give it a short window after reaching the call site, then stop it.
+    await Promise.race([entering.promise, proc.exited]);
+    await Promise.race([done.promise, proc.exited, Bun.sleep(2000)]);
+    proc.kill("SIGKILL");
+
+    const exitCode = await proc.exited;
+
+    expect(messages[0]).toBe("entering");
+    expect(proc.signalCode).not.toBe("SIGABRT");
+    if (proc.signalCode === null) {
+      expect(messages[1]).toMatch(/^(ok|caught:\S+)$/);
+      expect(exitCode).toBe(0);
+    } else {
+      expect(proc.signalCode).toBe("SIGKILL");
+    }
+  });
+});
+
 describe("crypto.getCurves", () => {
   it("should return an array of strings", () => {
     expect(Array.isArray(crypto.getCurves())).toBe(true);
@@ -212,6 +280,19 @@ describe("crypto", () => {
           expect(Hash.hash(input, buf) instanceof Uint8Array).toBe(true);
           gc(true);
         });
+
+        it(`${Hash.name} hash matches the streaming digest and node:crypto`, () => {
+          const nodeName = Hash.name.toLowerCase().replace("_", "-");
+          const expected = crypto.createHash(nodeName).update(input).digest();
+
+          expect(Hash.hash(input, "hex")).toBe(expected.toString("hex"));
+          expect(Hash.hash(input, "base64")).toBe(new Hash().update(input).digest("base64"));
+
+          const buf = new Uint8Array(256).fill(0xa5);
+          expect(Hash.hash(input, buf)).toBe(buf);
+          expect(Buffer.from(buf.subarray(0, expected.byteLength))).toEqual(expected);
+          expect(buf.subarray(expected.byteLength).every(byte => byte === 0xa5)).toBe(true);
+        });
       });
     }
   }
@@ -258,16 +339,24 @@ it("should send cipher events in the right order", async () => {
     const key = Buffer.from("3fad401bb178066f201b55368712530229d6329a5e2c05f48ff36ca65792d21d", "hex");
     const iv = Buffer.from("22371787d3e04a6589d8a1de50c81208", "hex");
 
+    // Since Node 26, read() with no size returns one buffered chunk at a time,
+    // so drain the stream instead of assuming a single read returns everything.
+    function readAll(stream) {
+      const chunks = [];
+      for (let chunk; (chunk = stream.read()) !== null; ) chunks.push(chunk);
+      return Buffer.concat(chunks);
+    }
+
     const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
     patchEmitter(cipher, "cipher");
     cipher.end(plaintext);
-    let ciph = cipher.read();
+    let ciph = readAll(cipher);
     console.log([1, ciph.toString("hex")]);
 
     const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
     patchEmitter(decipher, "decipher");
     decipher.end(ciph);
-    let dciph = decipher.read();
+    let dciph = readAll(decipher);
     console.log([2, dciph.toString("hex")]);
     let txt = dciph.toString("utf8");
 
@@ -286,11 +375,12 @@ it("should send cipher events in the right order", async () => {
   const err = await stderr.text();
   expect(err).toBeEmpty();
   const out = await stdout.text();
-  // TODO: prefinish and readable (on both cipher and decipher) should be flipped
-  // This seems like a bug in our crypto code, which
+  // Matches Node 26 output for the same fixture (verified byte-for-byte
+  // modulo quote style).
   expect(out.split("\n")).toEqual([
     `[ "cipher", "readable" ]`,
     `[ "cipher", "prefinish" ]`,
+    `[ "cipher", "data" ]`,
     `[ "cipher", "data" ]`,
     `[ 1, "dfb6b7e029be3ad6b090349ed75931f28f991b52ca9a89f5bf6f82fa1c87aa2d624bd77701dcddfcceaf3add7d66ce06ced17aebca4cb35feffc4b8b9008b3c4" ]`,
     `[ "decipher", "readable" ]`,

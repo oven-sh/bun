@@ -1,11 +1,19 @@
 // posix types live in `crate::posix` (moved from bun_sys).
 pub use crate::posix::E;
 pub use crate::posix::S;
-pub use crate::posix::mode_t as Mode;
 
 #[repr(u16)]
 #[derive(
-    Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Hash,
+    Debug,
+    strum::IntoStaticStr,
+    strum::EnumString,
+    strum::FromRepr,
+    enum_map::Enum,
 )]
 pub enum SystemErrno {
     SUCCESS = 0,
@@ -145,18 +153,19 @@ pub enum SystemErrno {
     ENOTRECOVERABLE = 131,
     ERFKILL = 132,
     EHWPOISON = 133,
+    /// Not a kernel errno: the `from_raw` result for an undeclared code.
+    EUNKNOWN = 134,
 }
 
 impl SystemErrno {
-    pub const MAX: u16 = 134;
+    pub const MAX: u16 = 135;
 
     /// On Linux `EOPNOTSUPP` and `ENOTSUP` share value 95; the enum defines
-    /// only `ENOTSUP`. Provide this alias so cross-platform call sites that
-    /// match Zig's `.OPNOTSUPP` (npm.zig, copy_file) compile against one name.
+    /// only `ENOTSUP`. Provide this alias so cross-platform call sites
+    /// compile against one name.
     pub const EOPNOTSUPP: SystemErrno = SystemErrno::ENOTSUP;
 }
 
-#[allow(non_upper_case_globals)]
 pub mod uv_e {
     // Native `SystemErrno::$e as i32`; libuv-synthetic fallback for codes
     // Linux lacks (no kernel ECHARSET / EFTYPE).
@@ -176,20 +185,19 @@ pub mod uv_e {
 
 use super::GetErrno;
 
-// raw system calls from std.os.linux.* will return usize
+// raw Linux syscalls return usize
 // the errno is stored in this value
 impl GetErrno for usize {
     #[inline]
     fn get_errno(self) -> E {
-        // `as` between same-width usize/isize is a bit-reinterpretation (Zig: @bitCast)
+        // `as` between same-width usize/isize is a bit-reinterpretation
         let signed = self as isize;
         let int = if signed > -4096 && signed < 0 {
             -signed
         } else {
             0
         };
-        // SAFETY: int is in [0, 4096); E is #[repr] over the kernel errno range
-        unsafe { core::mem::transmute::<u16, E>(int as u16) }
+        E::from_raw(int as u16)
     }
 }
 
@@ -198,7 +206,4 @@ impl GetErrno for usize {
 //
 // TODO: the inclusion of  'u32' and 'isize' seems suspicious
 impl_get_errno_libc!(i32, u32, isize, i64);
-// c_int == i32 on all our targets; Zig listed both explicitly but Rust impl coherence forbids the duplicate.
-// may need to drop one or cfg-gate it. Zig listed both explicitly.
-
-// ported from: src/errno/linux_errno.zig
+// c_int == i32 on all our targets; impl coherence forbids listing the duplicate.

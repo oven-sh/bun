@@ -3,9 +3,10 @@ use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
+use bun_collections::index_sort;
 
 #[derive(Default)]
-pub struct Export {
+pub(crate) struct Export {
     state: State,
 }
 
@@ -18,7 +19,7 @@ enum State {
 }
 
 impl Export {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             // No args: print all exported vars.
@@ -29,11 +30,11 @@ impl Export {
             if s.is_empty() {
                 continue;
             }
-            let (name, value) = match s.iter().position(|&b| b == b'=') {
+            let (name, value) = match bun_core::strings::index_of_char_usize(s, b'=') {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),
                 None => (s, &b""[..]),
             };
-            // Spec (export.zig): argv backing is freed when the Cmd retires,
+            // The argv backing is freed when the Cmd retires,
             // so the key/value MUST be duplicated into ref-counted storage —
             // `init_slice` here would leave dangling EnvStr in `export_env`.
             let label = EnvStr::dupe_ref_counted(name);
@@ -53,7 +54,7 @@ impl Export {
             .iter()
             .map(|(k, v)| (*k, *v))
             .collect();
-        entries.sort_by(|a, b| a.0.slice().cmp(b.0.slice()));
+        index_sort::sort_slice_by(&mut entries, |a, b| a.0.slice().cmp(b.0.slice()));
 
         let mut buf = Vec::new();
         for (k, v) in &entries {
@@ -74,7 +75,7 @@ impl Export {
         Builtin::done(interp, cmd, 0)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
@@ -84,5 +85,3 @@ impl Export {
         Builtin::done(interp, cmd, err.map_or(0, |_| 1))
     }
 }
-
-// ported from: src/shell/builtin/export.zig

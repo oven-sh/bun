@@ -27,23 +27,18 @@ JS_EXPORT_PRIVATE JSWrappingFunction* JSWrappingFunction::create(
     JSC::JSObject* wrappedFn = wrappedFnValue.getObject();
     ASSERT(wrappedFn != nullptr);
 
-    auto nameStr = symbolName->tag == BunStringTag::Empty ? WTF::emptyString() : symbolName->toWTFString();
-    auto name = Identifier::fromString(vm, nameStr);
-    NativeExecutable* executable = vm.getHostFunction(functionPointer, ImplementationVisibility::Public, nullptr, nameStr);
+    auto name = Bun::toIdentifier(vm, *symbolName);
+    // Pass callHostFunctionAsConstructor so `new` on the wrapper throws a
+    // TypeError instead of jumping to a null native constructor.
+    NativeExecutable* executable = vm.getHostFunction(functionPointer, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, name.string());
 
     // Structure* structure = globalObject->FFIFunctionStructure();
     Structure* structure = JSWrappingFunction::createStructure(vm, globalObject, globalObject->objectPrototype());
     JSWrappingFunction* function = new (NotNull, allocateCell<JSWrappingFunction>(vm)) JSWrappingFunction(vm, executable, globalObject, structure, wrappedFn);
     ASSERT(function->structure()->globalObject());
-    function->finishCreation(vm, executable, 0, nameStr);
+    function->finishCreation(vm);
 
     return function;
-}
-
-void JSWrappingFunction::finishCreation(VM& vm, NativeExecutable* executable, unsigned length, const String& name)
-{
-    Base::finishCreation(vm, executable, length, name);
-    ASSERT(inherits(info()));
 }
 
 template<typename Visitor>

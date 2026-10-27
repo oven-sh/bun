@@ -1,25 +1,20 @@
 #![allow(non_camel_case_types)]
 
+use crate::postgres::AnyPostgresError;
+
 pub type int4 = u32;
 pub type Int4 = int4;
-pub type PostgresInt32 = int4;
+pub(crate) type PostgresInt32 = int4;
 pub type int8 = i64;
-pub type Int8 = int8;
-pub type PostgresInt64 = int8;
+pub(crate) type PostgresInt64 = int8;
 pub type short = u16;
-pub type Short = short;
-pub type PostgresShort = u16;
-// `Int32` is the encoding helper (`fn int32`), re-exported under both casings
-// since draft sites used either.
-pub use int32 as Int32;
+pub(crate) type PostgresShort = u16;
 
-pub fn int32<T>(value: T) -> [u8; 4]
-where
-    int4: TryFrom<T>,
-{
-    // @intCast → checked narrowing; @byteSwap → .swap_bytes(); @bitCast to [4]u8 → .to_ne_bytes()
-    let v: int4 = int4::try_from(value).ok().expect("@intCast");
-    v.swap_bytes().to_ne_bytes()
+/// The length of a message or of a parameter, as the Int32 that goes on the wire.
+pub(crate) fn int32(length: usize) -> Result<[u8; 4], AnyPostgresError> {
+    if length > i32::MAX as usize {
+        bun_core::hint::cold();
+        return Err(AnyPostgresError::InvalidMessageLength);
+    }
+    Ok((length as int4).to_be_bytes())
 }
-
-// ported from: src/sql/postgres/types/int_types.zig

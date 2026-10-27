@@ -1,11 +1,11 @@
-const PublicArray = globalThis.Array;
+import type { QueryStrings, Query as QueryType } from "./query";
 
-declare global {
-  interface NumberConstructor {
-    isSafeInteger(number: unknown): number is number;
-    isNaN(number: number): boolean;
-  }
-}
+const PublicArray = Array;
+const {
+  Query,
+  SQLQueryFlags,
+  symbols: { _strings, _values, _flags },
+} = require("internal/sql/query");
 
 type ArrayType =
   | "BOOLEAN"
@@ -32,6 +32,7 @@ type ArrayType =
   | "JSONB"
   | "JSONPATH"
   | "XML"
+  | "UUID"
   | "POINT"
   | "LSEG"
   | "PATH"
@@ -57,8 +58,9 @@ type ArrayType =
 export type { ArrayType, SQLArrayParameter, SQLResultArray };
 class SQLArrayParameter {
   serializedValues: string;
-  arrayType: ArrayType;
-  constructor(serializedValues: string, arrayType: ArrayType) {
+  /** `undefined`: no cast, the server infers the type. */
+  arrayType: ArrayType | undefined;
+  constructor(serializedValues: string, arrayType: ArrayType | undefined) {
     this.serializedValues = serializedValues;
     this.arrayType = arrayType;
   }
@@ -70,835 +72,518 @@ class SQLArrayParameter {
   }
 }
 
+export interface SQLStatementDescription {
+  string: string;
+  types: number[];
+  columns: object[];
+}
+/** The native query. */
+interface ResultDescriber {
+  describeResult(number: number): SQLStatementDescription | null;
+}
+
 class SQLResultArray<T> extends PublicArray<T> {
-  public count!: number | null;
-  public command!: string | null;
-  public lastInsertRowid!: number | bigint | null;
-  public affectedRows!: number | bigint | null;
+  count: number | null = null;
+  command: string | null = null;
+  lastInsertRowid: number | bigint | string | null = null;
+  affectedRows: number | bigint | null = null;
+  /** The native query while `#undescribed` is a number that it makes the description for. */
+  #statement: SQLStatementDescription | ResultDescriber | null = null;
+  #undescribed = -1;
 
   static [Symbol.toStringTag] = "SQLResults";
 
-  constructor(values: T[] = []) {
-    super(...values);
+  constructor(values?: T[]) {
+    super();
+    if (values !== undefined) {
+      for (let i = 0, length = values.length; i < length; i++) $putByValDirect(this, i, values[i]);
+    }
+  }
 
-    // match postgres's result array, in this way for in will not list the
-    // properties and .map will not return undefined command and count
-    Object.defineProperties(this, {
-      count: { value: null, writable: true },
-      command: { value: null, writable: true },
-      lastInsertRowid: { value: null, writable: true },
-      affectedRows: { value: null, writable: true },
-    });
+  get statement() {
+    const number = this.#undescribed;
+    if (number !== -1) {
+      this.#statement = (this.#statement as ResultDescriber).describeResult(number);
+      this.#undescribed = -1;
+    }
+    return this.#statement as SQLStatementDescription | null;
+  }
+  set statement(value) {
+    this.#statement = value;
+    this.#undescribed = -1;
+  }
+  get columns() {
+    return this.statement?.columns ?? null;
+  }
+  /** `statement`: the description, or the number that `handle` makes it for once somebody reads it. */
+  static describe(
+    result: SQLResultArray<unknown>,
+    handle: ResultDescriber,
+    statement: SQLStatementDescription | number | null,
+  ) {
+    if (typeof statement === "number") {
+      result.#statement = handle;
+      result.#undescribed = statement;
+    } else {
+      result.#statement = statement;
+    }
+  }
+
+  /** `instanceof` asks `Array[Symbol.hasInstance]`, which a program can define. */
+  static isResult(array: unknown[]): boolean {
+    return #undescribed in array;
   }
 
   static get [Symbol.species]() {
     return Array;
   }
 }
-
-function decodeIfValid(value: string | null): string | null {
-  if (value) {
-    return decodeURIComponent(value);
-  }
-  return null;
-}
-
-const enum SSLMode {
-  disable = 0,
-  prefer = 1,
-  require = 2,
-  verify_ca = 3,
-  verify_full = 4,
-}
-export type { SSLMode };
-
-function normalizeSSLMode(value: string): SSLMode {
-  if (!value) {
-    return SSLMode.disable;
-  }
-
-  value = (value + "").toLowerCase();
-  switch (value) {
-    case "disable":
-      return SSLMode.disable;
-    case "prefer":
-      return SSLMode.prefer;
-    case "require":
-    case "required":
-      return SSLMode.require;
-    case "verify-ca":
-    case "verify_ca":
-      return SSLMode.verify_ca;
-    case "verify-full":
-    case "verify_full":
-      return SSLMode.verify_full;
-    default: {
-      break;
-    }
-  }
-
-  throw $ERR_INVALID_ARG_VALUE("sslmode", value, "must be one of: disable, prefer, require, verify-ca, verify-full");
-}
-
 export type { SQLHelper };
 class SQLHelper<T> {
-  public readonly value: T;
+  public readonly value: T[];
   public readonly columns: (keyof T)[];
 
-  constructor(value: T, keys?: (keyof T)[]) {
-    if (keys !== undefined && keys.length === 0 && ($isObject(value[0]) || $isArray(value[0]))) {
+  constructor(value: T[], keys: (keyof T)[]) {
+    if (keys.length === 0 && $isObject(value[0])) {
       keys = Object.keys(value[0]) as (keyof T)[];
-    }
-
-    if (keys !== undefined) {
-      for (let key of keys) {
-        if (typeof key === "string") {
-          const asNumber = Number(key);
-          if (Number.isNaN(asNumber)) {
-            continue;
-          }
-          key = asNumber as keyof T;
-        }
-
-        if (typeof key !== "string") {
-          if (Number.isSafeInteger(key)) {
-            if (key >= 0 && key <= 64 * 1024) {
-              continue;
-            }
-          }
-
+    } else {
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        if (typeof key !== "string" && typeof key !== "number") {
           throw new Error(`Keys must be strings or numbers: ${String(key)}`);
         }
       }
     }
 
     this.value = value;
-    this.columns = keys ?? [];
+    this.columns = keys;
   }
 }
 
-/**
- * Build the column list for INSERT statements while determining which columns have defined values.
- * This combines column name generation with defined column detection in a single pass.
- * Returns the defined columns array and the SQL fragment for the column names.
- */
-function buildDefinedColumnsAndQuery<T>(
-  columns: (keyof T)[],
-  items: T | T[],
-  escapeIdentifier: (name: string) => string,
-): { definedColumns: (keyof T)[]; columnsSql: string } {
-  const definedColumns: (keyof T)[] = [];
-  let columnsSql = "(";
-  const columnCount = columns.length;
+const enum SQLCommand {
+  insert = 0,
+  update = 1,
+  updateSet = 2,
+  where = 3,
+  in = 4,
+  none = -1,
+}
 
-  for (let k = 0; k < columnCount; k++) {
-    const column = columns[k];
+// Both are anchored and skip leading comments. Every character has one way to match, so a miss costs one pass.
+const transactionStart = /^\s*(?:(?:--[^\n]*\n|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)\s*)*(?:begin|start\s+transaction)\b/i;
+function isUnsafeTransactionStart(sql: string): boolean {
+  return transactionStart.test(sql);
+}
 
-    // Check if any item has this column defined
-    let hasDefinedValue = false;
-    if ($isArray(items)) {
-      for (let j = 0; j < items.length; j++) {
-        if (typeof items[j][column] !== "undefined") {
-          hasDefinedValue = true;
-          break;
+// A ";" is an empty statement. SQLite steps over it when it compiles the first one.
+const leadingKeyword = /^[\s(;]*(?:(?:--[^\n]*\n|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)[\s(;]*)*([a-z]+)/i;
+function firstKeyword(sql: string): string {
+  const match = leadingKeyword.exec(sql);
+  return match === null ? "" : match[1].toUpperCase();
+}
+
+function isWordChar(c: number) {
+  return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c === 95 || c === 36 || c >= 128;
+}
+
+/** Where the `--` comment of the line from `start` to `end` begins, or `end`. Dashes in quotes begin none. */
+function lineCommentStart(text: string, start: number, end: number): number {
+  for (let i = start; i < end; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 39 || c === 34 || c === 96) {
+      i = text.indexOf(text[i], i + 1);
+      if (i === -1 || i >= end) break;
+    } else if (c === 45 && text.charCodeAt(i + 1) === 45) {
+      return i;
+    }
+  }
+  return end;
+}
+
+/** Start of the last word that ends at or before `end`, or -1. Steps over quoted text and comments. */
+function lastWordStart(text: string, end: number): number {
+  let i = end - 1;
+  for (; i >= 0; i--) {
+    const c = text.charCodeAt(i);
+    if (c === 39 || c === 34 || c === 96) {
+      i = text.lastIndexOf(text[i], i - 1);
+    } else if (c === 47 && text.charCodeAt(i - 1) === 42) {
+      i = text.lastIndexOf("/*", i - 2);
+    } else if (c === 10) {
+      const lineStart = text.lastIndexOf("\n", i - 1) + 1;
+      const dashes = text.indexOf("--", lineStart);
+      if (dashes !== -1 && dashes < i) i = lineCommentStart(text, lineStart, i);
+    } else if (isWordChar(c)) {
+      break;
+    }
+  }
+  if (i < 0) return -1;
+  while (i > 0 && isWordChar(text.charCodeAt(i - 1))) i--;
+  return i;
+}
+
+const longestKeyword = "duplicate".length;
+function wordAt(text: string, start: number): string {
+  let end = start + 1;
+  while (end - start <= longestKeyword && isWordChar(text.charCodeAt(end))) end++;
+  return end - start > longestKeyword ? "" : text.slice(start, end).toLowerCase();
+}
+
+/** The keyword nearest to the end of `text` that says what a helper placed there expands to. */
+function helperCommand(text: string): SQLCommand {
+  for (let at = lastWordStart(text, text.length); at !== -1; at = lastWordStart(text, at)) {
+    switch (wordAt(text, at)) {
+      case "insert":
+        return SQLCommand.insert;
+      case "set":
+        return SQLCommand.updateSet;
+      case "where":
+        return SQLCommand.where;
+      case "in":
+        return SQLCommand.in;
+      case "update": {
+        // ON DUPLICATE KEY UPDATE takes assignments without SET
+        let word = lastWordStart(text, at);
+        if (word === -1 || wordAt(text, word) !== "key") return SQLCommand.update;
+        word = lastWordStart(text, word);
+        return word !== -1 && wordAt(text, word) === "duplicate" ? SQLCommand.updateSet : SQLCommand.update;
+      }
+    }
+  }
+  return SQLCommand.none;
+}
+
+type RenameColumn = (name: string) => string;
+
+/** `options.transform` as `parseOptions` stores it. */
+export interface Transform {
+  /** What `undefined` stands for. Not given: NULL, and a helper leaves out a column that is nothing else. */
+  undefined: unknown;
+  column: {
+    /** From the database: the names of the result columns. */
+    from: RenameColumn | undefined;
+    /** To the database: the keys of `sql({...})`, the columns of `sql(rows, "a")`, `sql("name")`. */
+    to: RenameColumn | undefined;
+  };
+}
+
+function upperCaseAfterUnderscores(name: string, first: string): string {
+  for (let i = 1; i < name.length; i++) {
+    const char = name[i];
+    first += char === "_" && i + 1 < name.length ? name[++i].toUpperCase() : char;
+  }
+  return first;
+}
+function toCamel(name: string): string {
+  return upperCaseAfterUnderscores(name, name.slice(0, 1));
+}
+function toPascal(name: string): string {
+  return upperCaseAfterUnderscores(name, name.slice(0, 1).toUpperCase());
+}
+function toKebab(name: string): string {
+  return name.replaceAll("_", "-");
+}
+function fromCamel(name: string): string {
+  return name.replace(/[A-Z]/g, "_$&").toLowerCase();
+}
+function fromPascal(name: string): string {
+  return (name.slice(0, 1) + name.slice(1).replace(/[A-Z]/g, "_$&")).toLowerCase();
+}
+function fromKebab(name: string): string {
+  return name.replaceAll("-", "_");
+}
+// `transform: SQL.toCamel` renames in one direction only.
+toCamel.column = { from: toCamel };
+toPascal.column = { from: toPascal };
+toKebab.column = { from: toKebab };
+fromCamel.column = { to: fromCamel };
+fromPascal.column = { to: fromPascal };
+fromKebab.column = { to: fromKebab };
+
+/// What the three adapters say in the same words.
+abstract class SQLDialect {
+  abstract readonly connectionInfo: { transform?: Transform };
+  /// around an identifier
+  readonly quote: string = '"';
+  readonly begin: string = "BEGIN";
+  /// `in ()` is a syntax error on the servers
+  readonly emptyList: string = "(NULL)";
+  /// the values of sql.unsafe() may be an object
+  readonly namedParameters: boolean = false;
+
+  /// `code`: what follows ERR_POSTGRES_, ERR_MYSQL_ or ERR_SQLITE_
+  abstract error(code: string, message: string): Error;
+
+  connectionClosedError() {
+    return this.error("CONNECTION_CLOSED", "Connection closed");
+  }
+  notTaggedCallError() {
+    return this.error("NOT_TAGGED_CALL", "Query not called as a tagged template literal");
+  }
+  queryCancelledError() {
+    return this.error("QUERY_CANCELLED", "Query cancelled");
+  }
+  invalidTransactionStateError(message: string) {
+    return this.error("INVALID_TRANSACTION_STATE", message);
+  }
+
+  /** For the 1-based `index`. */
+  placeholder(_index: number): string {
+    return "?";
+  }
+
+  normalizeQuery(strings: QueryStrings, values: unknown[]): [string, unknown[]] {
+    return normalizeQuery(this, strings, values);
+  }
+
+  getTransactionCommands(options?: string): TransactionCommands {
+    // They become a part of the statement, so nothing that could end it or start another.
+    if (options && !/^[A-Za-z ,]*$/.test(options)) {
+      throw new Error("Transaction options can only contain letters, spaces, and commas.");
+    }
+    return { BEGIN: options ? `${this.begin} ${options}` : this.begin, COMMIT: "COMMIT", ROLLBACK: "ROLLBACK" };
+  }
+}
+
+class QueryBuilder {
+  text = "";
+  values: unknown[] = [];
+  readonly adapter: SQLDialect;
+
+  constructor(adapter: SQLDialect) {
+    this.adapter = adapter;
+  }
+
+  template(strings: readonly string[], values: unknown[]) {
+    for (let i = 0; i < strings.length; i++) {
+      const string = strings[i];
+      if (typeof string !== "string") {
+        throw new SyntaxError("Invalid query: SQL Fragment cannot be executed or was misused");
+      }
+      this.text += string;
+      // the space: `${id}and` and `${sql(row)}returning *` keep working
+      if (i < values.length) this.value(values[i], " ");
+    }
+  }
+
+  /** `after` follows a parameter or a helper; a fragment is only its own text. */
+  value(value: unknown, after: string) {
+    if (value === undefined) value = this.undefinedValue() ?? null;
+    if ($isObject(value)) {
+      if (value instanceof Query) return this.fragment(value);
+      if (value instanceof SQLHelper) {
+        this.helper(value);
+        this.text += after;
+        return;
+      }
+      if (value instanceof SQLArrayParameter) {
+        const { arrayType } = value;
+        if (arrayType !== undefined) after = "::" + arrayType + "[]" + after;
+        value = value.serializedValues;
+      } else if ($isArray(value) && value[0] instanceof Query) {
+        for (let i = 0; i < value.length; i++) {
+          this.text += " ";
+          this.value(value[i], "");
+        }
+        this.text += after;
+        return;
+      }
+    }
+    this.text += this.adapter.placeholder(this.values.push(value)) + after;
+  }
+
+  undefinedValue(): unknown {
+    return $getByIdDirect(this.adapter.connectionInfo, "transform")?.undefined;
+  }
+
+  identifier(name: string | number): string {
+    const { quote, connectionInfo } = this.adapter;
+    const to = $getByIdDirect(connectionInfo, "transform")?.column.to;
+    name = String(to === undefined ? name : to(String(name)));
+    if (name.includes("\0")) {
+      throw $ERR_INVALID_ARG_VALUE("name", name, "must not contain null bytes");
+    }
+    return quote + name.replaceAll(quote, quote + quote).replaceAll(".", quote + "." + quote) + quote;
+  }
+
+  fragment(query: QueryType<any, any>) {
+    const strings = query[_strings];
+    const values = query[_values];
+    if (typeof strings !== "string") {
+      if (!$isArray(strings)) {
+        throw new SyntaxError("Invalid query: SQL Fragment cannot be executed or was misused");
+      }
+      return this.template(strings, values);
+    }
+    const flags = query[_flags];
+    if (flags & SQLQueryFlags.notTagged) {
+      this.text += this.identifier(strings);
+      return;
+    }
+    if (flags & SQLQueryFlags.deferredText) {
+      // `strings` is still the path
+      throw new SyntaxError("sql.file() cannot be used as a fragment of another query");
+    }
+    this.text += strings;
+    if (values == null) return;
+    const count = values.length;
+    if (count === undefined && this.adapter.namedParameters && Object.keys(values).length > 0) {
+      throw new SyntaxError("Nested sql.unsafe() cannot have named parameters: the query around it binds by position");
+    }
+    // parts.map(sql.unsafe) passes the index
+    if (!(count > 0)) return;
+    if (this.values.length > 0 && this.adapter.placeholder(1) !== "?") {
+      throw new SyntaxError(
+        "Nested sql.unsafe() cannot have values when it follows other parameters: its $1 is the first parameter of the whole query. Use a sql`` fragment for the values",
+      );
+    }
+    for (let i = 0; i < count; i++) this.values.push(values[i]);
+  }
+
+  helper(helper: SQLHelper<any>) {
+    const command = helperCommand(this.text);
+    switch (command) {
+      case SQLCommand.insert:
+        return this.insert(helper.value, helper.columns);
+      case SQLCommand.in:
+        return this.list(helper.value, helper.columns);
+      case SQLCommand.update:
+      case SQLCommand.updateSet:
+        if (command === SQLCommand.update) this.text += " SET ";
+        return this.assignments(helper.value, helper.columns);
+      default:
+        throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and IN commands");
+    }
+  }
+
+  insert(rows: any[], columns: PropertyKey[]) {
+    const rowCount = rows.length;
+    const columnCount = columns.length;
+    if (columnCount === 0) {
+      throw new SyntaxError("Cannot INSERT with no columns");
+    }
+    const cells = $newArrayWithSize<unknown>(rowCount * columnCount);
+    const defined = $newArrayWithSize<boolean>(columnCount);
+    // `cells` is the list of the query's parameters as it is
+    let plain = this.values.length === 0;
+    for (let r = 0, at = 0; r < rowCount; r++) {
+      const row = rows[r];
+      if (row == null) {
+        throw new SyntaxError("Cannot use null or undefined as an item in INSERT helper");
+      }
+      for (let c = 0; c < columnCount; c++, at++) {
+        let cell = row[columns[c]];
+        if (cell === undefined) cell = this.undefinedValue();
+        $putByValDirect(cells, at, cell);
+        if (cell === undefined) {
+          plain = false;
+          continue;
+        }
+        $putByValDirect(defined, c, true);
+        if (
+          $isObject(cell) &&
+          (cell instanceof Query || cell instanceof SQLHelper || cell instanceof SQLArrayParameter || $isArray(cell))
+        ) {
+          plain = false;
         }
       }
-    } else {
-      hasDefinedValue = typeof items[column] !== "undefined";
     }
 
-    if (hasDefinedValue) {
-      if (definedColumns.length > 0) columnsSql += ", ";
-      columnsSql += escapeIdentifier(column as string);
-      definedColumns.push(column);
+    let separator = "(";
+    for (let c = 0; c < columnCount; c++) {
+      if (!defined[c]) continue;
+      this.text += separator + this.identifier(columns[c] as string);
+      separator = ", ";
     }
-  }
+    if (separator === "(") {
+      throw new SyntaxError("Insert needs to have at least one column with a defined value");
+    }
+    this.text += ") VALUES";
 
-  columnsSql += ") VALUES";
-  return { definedColumns, columnsSql };
-}
-
-const SQLITE_MEMORY = ":memory:";
-const SQLITE_MEMORY_VARIANTS: string[] = [":memory:", "sqlite://:memory:", "sqlite:memory"];
-
-const sqliteProtocols = [
-  { prefix: "sqlite://", stripLength: 9 },
-  { prefix: "sqlite:", stripLength: 7 },
-  { prefix: "file://", stripLength: -1 }, // Special case we can use Bun.fileURLToPath
-  { prefix: "file:", stripLength: 5 },
-];
-
-function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
-  if (value === null) return null;
-  const str = value instanceof URL ? value.toString() : value;
-
-  if (SQLITE_MEMORY_VARIANTS.includes(str)) {
-    return SQLITE_MEMORY;
-  }
-
-  for (const { prefix, stripLength } of sqliteProtocols) {
-    if (!str.startsWith(prefix)) continue;
-
-    if (stripLength === -1) {
-      try {
-        return Bun.fileURLToPath(str);
-      } catch {
-        // if it cant pass it's probably query string, we can just strip it
-        // slicing off the file:// at the beginning
-        return str.slice(7);
+    if (plain) {
+      this.values = cells;
+      if (this.adapter.placeholder(1) === "?") {
+        const row = "(?" + ", ?".repeat(columnCount - 1) + ")";
+        this.text += row + ("," + row).repeat(rowCount - 1);
+        return;
       }
-    }
-
-    return str.slice(stripLength);
-  }
-
-  // couldn't reliably determine this was definitely a sqlite url
-  // it still *could* be, but not unambigously.
-  return null;
-}
-
-function parseSQLiteOptions(
-  filenameOrUrl: string | URL | null | undefined,
-  options: Bun.SQL.__internal.OptionsWithDefinedAdapter,
-): Bun.SQL.__internal.DefinedSQLiteOptions {
-  // Start with base options
-  const sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions = {
-    ...options,
-    adapter: "sqlite" as const,
-    filename: ":memory:",
-  };
-
-  let filename = filenameOrUrl || ":memory:";
-  let originalUrl = filename; // Keep the original URL for query parsing
-
-  if (filename instanceof URL) {
-    originalUrl = filename.toString();
-    filename = filename.toString();
-  }
-
-  let queryString: string | null = null;
-  // Parse query string from the original URL before processing
-  if (typeof originalUrl === "string") {
-    const queryIndex = originalUrl.indexOf("?");
-    if (queryIndex !== -1) {
-      queryString = originalUrl.slice(queryIndex + 1);
-      // Strip query from filename for processing
-      if (typeof filename === "string") {
-        filename = filename.slice(0, queryIndex);
+      const numbers = $newArrayWithSize<number>(columnCount);
+      let text = this.text;
+      for (let r = 0, number = 0; r < rowCount; r++) {
+        for (let c = 0; c < columnCount; c++) $putByValDirect(numbers, c, ++number);
+        text = `${text}${r === 0 ? "($" : ",($"}${numbers.join(", $")})`;
       }
+      this.text = text;
+      return;
+    }
+
+    for (let r = 0, at = 0; r < rowCount; r++) {
+      separator = r === 0 ? "(" : ",(";
+      for (let c = 0; c < columnCount; c++, at++) {
+        if (!defined[c]) continue;
+        this.text += separator;
+        this.value(cells[at], "");
+        separator = ", ";
+      }
+      this.text += ")";
     }
   }
 
-  // Now parse the filename (this handles file:// URLs and other protocols)
-  const parsedFilename = parseDefinitelySqliteUrl(filename);
-  if (parsedFilename !== null) {
-    filename = parsedFilename;
-  }
-
-  // Empty filename defaults to :memory:
-  sqliteOptions.filename = filename || ":memory:";
-
-  // Parse query parameters if present
-  if (queryString) {
-    const params = new URLSearchParams(queryString);
-    const mode = params.get("mode");
-
-    if (mode === "ro") {
-      sqliteOptions.readonly = true;
-    } else if (mode === "rw") {
-      sqliteOptions.readonly = false;
-    } else if (mode === "rwc") {
-      sqliteOptions.readonly = false;
-      sqliteOptions.create = true;
+  list(items: any[], columns: PropertyKey[]) {
+    if (columns.length > 1) {
+      throw new SyntaxError("Cannot use WHERE IN helper with multiple columns");
     }
-  }
-
-  // Apply other SQLite-specific options
-  if ("readonly" in options) {
-    sqliteOptions.readonly = options.readonly;
-  }
-  if ("create" in options) {
-    sqliteOptions.create = options.create;
-  }
-  if ("safeIntegers" in options) {
-    sqliteOptions.safeIntegers = options.safeIntegers;
-  }
-
-  return sqliteOptions;
-}
-
-function isOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
-  options: Bun.SQL.Options,
-  adapter: A,
-): options is Extract<Bun.SQL.Options, { adapter?: A }> {
-  return options.adapter === adapter;
-}
-
-function assertIsOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
-  options: Bun.SQL.Options,
-  adapter: A,
-): asserts options is Extract<Bun.SQL.Options, { adapter?: A }> {
-  if (!isOptionsOfAdapter(options, adapter)) {
-    throw new Error(`Expected adapter to be ${adapter}, but got '${options.adapter}'`);
-  }
-}
-
-const DEFAULT_PROTOCOL: Bun.SQL.__internal.Adapter = "postgres";
-
-const env = Bun.env;
-
-/**
- * Reads environment variables to try and find a connnection string
- * @param adapter If an adapter is specified in the options, pass it here and
- * this function will only resolve from environment variables that are specific
- * to that adapter. Otherwise it will try them all.
- */
-function getConnectionDetailsFromEnvironment(
-  adapter: Bun.SQL.__internal.Adapter | undefined,
-): [url: string | null, sslMode: SSLMode | null, adapter: Bun.SQL.__internal.Adapter | null] {
-  let url: string | null = null;
-  let sslMode: SSLMode.require | null = null;
-
-  url ||= env.DATABASE_URL || env.DATABASEURL || null;
-  if (!url) {
-    url = env.TLS_DATABASE_URL || null;
-    if (url) sslMode = SSLMode.require;
-  }
-  if (url) return [url, sslMode, adapter || null];
-
-  if (!adapter || adapter === "postgres") {
-    url ||= env.POSTGRES_URL || env.PGURL || env.PG_URL || env.PGURL || null;
-    if (!url) {
-      url = env.TLS_POSTGRES_DATABASE_URL || null;
-      if (url) sslMode = SSLMode.require;
+    if (items.length === 0) {
+      this.text += this.adapter.emptyList;
+      return;
     }
-    if (url) return [url, sslMode, "postgres"];
-  }
-
-  if (!adapter || adapter === "mysql") {
-    url ||= env.MYSQL_URL || env.MYSQLURL || null;
-    if (!url) {
-      url = env.TLS_MYSQL_DATABASE_URL || null;
-      if (url) sslMode = SSLMode.require;
-    }
-    if (url) return [url, sslMode, "mysql"];
-  }
-
-  if (!adapter || adapter === "mariadb") {
-    url ||= env.MARIADB_URL || env.MARIADBURL || null;
-    if (!url) {
-      url = env.TLS_MARIADB_DATABASE_URL || null;
-      if (url) sslMode = SSLMode.require;
-    }
-    if (url) return [url, sslMode, "mariadb"];
-  }
-
-  if (!adapter || adapter === "sqlite") {
-    url ||= env.SQLITE_URL || env.SQLITEURL || null;
-    // No TLS_ check because SQLite has no applicable sslMode
-    if (url) return [url, sslMode, "sqlite"];
-  }
-
-  return [url, sslMode, adapter || null];
-}
-
-function ensureUrlHasProtocol<T extends string | URL>(
-  url: T | null,
-  protocol: string,
-): (T extends string ? string : T extends URL ? URL : never) | null {
-  if (url === null) return null;
-  if (url instanceof URL) {
-    url.protocol = protocol;
-    return url as never;
-  }
-  return `${protocol}://${url}` as never;
-}
-
-function hasProtocol(url: string | URL): boolean {
-  if (url instanceof URL) {
-    return true;
-  }
-
-  return url.includes("://");
-}
-
-/**
- * @returns A tuple containing the parsed adapter (this is always correct) and a
- * url string, that you should continue to use for further options. In some
- * cases the it will be a parsed URL instance, and in others a string. This is
- * to save unnecessary parses in some cases. The third value is the SSL mode The last value is the options object
- * resolved from the possible overloads of the Bun.SQL constructor, it may have modifications
- */
-function parseConnectionDetailsFromOptionsOrEnvironment(
-  stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
-  definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
-): [url: string | URL | null, sslMode: SSLMode | null, options: Bun.SQL.__internal.OptionsWithDefinedAdapter] {
-  // Step 1: Determine the options object and initial URL
-  let options: Bun.SQL.Options;
-  let stringOrUrl: string | URL | null = null;
-  let sslMode: SSLMode | null = null;
-  let adapter: Bun.SQL.__internal.Adapter | null = null;
-
-  if (typeof stringOrUrlOrOptions === "string" || stringOrUrlOrOptions instanceof URL) {
-    stringOrUrl = stringOrUrlOrOptions;
-    options = definitelyOptionsButMaybeEmpty;
-  } else {
-    options = stringOrUrlOrOptions
-      ? { ...stringOrUrlOrOptions, ...definitelyOptionsButMaybeEmpty }
-      : definitelyOptionsButMaybeEmpty;
-    [stringOrUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
-  }
-
-  // Resolve URL based on adapter type
-  let resolvedUrl: string | URL | null = stringOrUrl;
-
-  if (options.adapter === "sqlite") {
-    // SQLite adapter - only check filename (not url)
-    if ("filename" in options && options.filename) {
-      resolvedUrl = options.filename;
-    }
-  } else if (!options.adapter) {
-    // Unknown adapter - check both, filename first (more specific)
-    if ("filename" in options && options.filename) {
-      resolvedUrl = options.filename;
-    } else if ("url" in options && options.url) {
-      resolvedUrl = options.url;
-    }
-  } else {
-    // Known non-SQLite adapter - only check url (not filename)
-    if ("url" in options && options.url) {
-      resolvedUrl = options.url;
-    }
-  }
-
-  if (options.adapter === "sqlite") {
-    return [resolvedUrl, null, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
-  }
-
-  if (!options.adapter && resolvedUrl !== null) {
-    const parsedPath = parseDefinitelySqliteUrl(resolvedUrl);
-
-    if (parsedPath !== null) {
-      // Return the original URL (with query params) for SQLite parsing
-      return [resolvedUrl, null, { ...options, adapter: "sqlite" }];
-    }
-  }
-
-  // Step 3: Parse protocol and ensure URL format for non-SQLite databases
-  let protocol: Bun.SQL.__internal.Adapter | (string & {}) = options.adapter || DEFAULT_PROTOCOL;
-
-  let urlToProcess = resolvedUrl || stringOrUrl;
-
-  if (urlToProcess instanceof URL) {
-    protocol = urlToProcess.protocol.replace(/:$/, "");
-  } else if (urlToProcess !== null) {
-    if (hasProtocol(urlToProcess)) {
-      try {
-        urlToProcess = new URL(urlToProcess);
-        protocol = urlToProcess.protocol.replace(/:$/, "");
-      } catch (e) {
-        // options.adpater won't be sqlite here, we already did the special case check for it
-        if (options.adapter && typeof urlToProcess === "string" && urlToProcess.includes("sqlite")) {
-          throw new Error(
-            `Invalid URL '${urlToProcess}' for ${options.adapter}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
-            { cause: e },
-          );
+    for (let i = 0; i < items.length; i++) {
+      this.text += i === 0 ? "(" : ", ";
+      let item = items[i];
+      if (columns.length === 1 && item !== undefined) {
+        if (item === null) {
+          throw new SyntaxError("Cannot use null as an item in WHERE IN helper with a column");
         }
-
-        // unrelated error to do with url parsing, we should re-throw. This is a real user error
-        throw e;
+        item = item[columns[0]];
       }
-    } else {
-      // Add protocol if missing
-      urlToProcess = ensureUrlHasProtocol(urlToProcess, protocol);
+      this.value(item, "");
     }
+    this.text += ")";
   }
 
-  // Step 4: Set adapter from environment if not already set, but ONLY if not
-  // already set (options object is highest priority)
-  if (options.adapter === undefined && adapter !== null) {
-    options.adapter = adapter;
-  }
-
-  // Step 5: Return early if adapter is explicitly specified
-  if (options.adapter) {
-    // Validate that the adapter is supported
-    const supportedAdapters = ["postgres", "sqlite", "mysql", "mariadb"];
-    if (!supportedAdapters.includes(options.adapter)) {
-      throw new Error(
-        `Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`,
-      );
+  assignments(rows: any[], columns: PropertyKey[]) {
+    if (rows.length > 1) {
+      throw new SyntaxError("Cannot use array of objects for UPDATE");
     }
-    return [urlToProcess, sslMode, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
-  }
-
-  // Step 6: Infer adapter from protocol
-  const parsedAdapterFromProtocol = parseAdapterFromProtocol(protocol);
-
-  if (!parsedAdapterFromProtocol) {
-    throw new Error(`Unsupported protocol: ${protocol}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`);
-  }
-
-  return [urlToProcess, sslMode, { ...options, adapter: parsedAdapterFromProtocol }];
-}
-
-function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter | null {
-  switch (protocol) {
-    case "http":
-    case "https":
-    case "ftp":
-    case "postgres":
-    case "postgresql":
-      return "postgres";
-
-    case "mysql":
-    case "mysql2":
-      return "mysql";
-
-    case "mariadb":
-      return "mariadb";
-
-    case "file":
-    case "sqlite":
-      return "sqlite";
-
-    default:
-      return null;
+    const row = rows[0];
+    if (row == null) {
+      throw new SyntaxError("Cannot use null or undefined as an item in UPDATE helper");
+    }
+    let separator = "";
+    for (let c = 0; c < columns.length; c++) {
+      let cell = row[columns[c]];
+      if (cell === undefined) cell = this.undefinedValue();
+      if (cell === undefined) continue;
+      this.text += separator + this.identifier(columns[c] as string) + " = ";
+      this.value(cell, "");
+      separator = ", ";
+    }
+    if (separator === "") {
+      throw new SyntaxError("Update needs to have at least one column");
+    }
   }
 }
 
-function parseOptions(
-  stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
-  definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
-): Bun.SQL.__internal.DefinedOptions {
-  const [_url, sslModeFromConnectionDetails, options] = parseConnectionDetailsFromOptionsOrEnvironment(
-    stringOrUrlOrOptions,
-    definitelyOptionsButMaybeEmpty,
-  );
-
-  const adapter = options.adapter;
-
-  if (adapter === "sqlite") {
-    return parseSQLiteOptions(_url, options);
+function normalizeQuery(adapter: SQLDialect, strings: QueryStrings, values: unknown[]): [string, unknown[]] {
+  if (typeof strings === "string") {
+    return [strings, values ?? []];
   }
-
-  // The rest of this function is logic specific to postgres/mysql/mariadb (they have the same options object)
-
-  let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.disable;
-
-  let url = _url;
-
-  let hostname: string | undefined;
-  let port: number | string | undefined;
-  let username: string | null | undefined;
-  let password: string | (() => Bun.MaybePromise<string>) | undefined | null;
-  let database: string | undefined;
-  let tls: Bun.TLSOptions | boolean | undefined;
-  let query: string = "";
-  let idleTimeout: number | null | undefined;
-  let connectionTimeout: number | null | undefined;
-  let maxLifetime: number | null | undefined;
-  let onconnect: ((error?: Error | undefined) => void) | undefined;
-  let onclose: ((error?: Error | undefined) => void) | undefined;
-  let max: number | null | undefined;
-  let bigint: boolean | undefined;
-  let path: string;
-  let prepare: boolean = true;
-
-  if (url !== null) {
-    url = url instanceof URL ? url : new URL(url);
+  if (!$isArray(strings)) {
+    throw new SyntaxError("Invalid query: SQL Fragment cannot be executed or was misused");
   }
-
-  if (url) {
-    // TODO(@alii): Move this logic into the switch statements below
-    // options object is always higher priority
-    hostname ||= options.host || options.hostname || url.hostname;
-    port ||= options.port || url.port;
-    username ||= options.user || options.username || decodeIfValid(url.username);
-    password ||= options.pass || options.password || decodeIfValid(url.password);
-
-    path ||= options.path || url.pathname;
-
-    const queryObject = url.searchParams.toJSON();
-    for (const key in queryObject) {
-      if (key.toLowerCase() === "sslmode") {
-        sslMode = normalizeSSLMode(queryObject[key]);
-      } else if (key.toLowerCase() === "path") {
-        path = queryObject[key];
-      } else {
-        // this is valid for postgres for other databases it might not be valid
-        // check adapter then implement for other databases
-        // encode string with \0 as finalizer
-        // must be key\0value\0
-        query += `${key}\0${queryObject[key]}\0`;
-      }
-    }
-    query = query.trim();
-  }
-
-  switch (adapter) {
-    case "postgres": {
-      hostname ||= options.hostname || options.host || env.PG_HOST || env.PGHOST || "localhost";
-      break;
-    }
-    case "mysql": {
-      hostname ||= options.hostname || options.host || env.MYSQL_HOST || env.MYSQLHOST || "localhost";
-      break;
-    }
-    case "mariadb": {
-      hostname ||= options.hostname || options.host || env.MARIADB_HOST || env.MARIADBHOST || "localhost";
-      break;
-    }
-  }
-
-  switch (adapter) {
-    case "postgres": {
-      port ||= Number(options.port || env.PG_PORT || env.PGPORT || "5432");
-      break;
-    }
-    case "mysql": {
-      port ||= Number(options.port || env.MYSQL_PORT || env.MYSQLPORT || "3306");
-      break;
-    }
-    case "mariadb": {
-      port ||= Number(options.port || env.MARIADB_PORT || env.MARIADBPORT || "3306");
-      break;
-    }
-  }
-
-  path ||= options.path || "";
-
-  if (adapter === "postgres") {
-    // add /.s.PGSQL.${port} if the unix domain socket is listening on that path
-    if (path && Number.isSafeInteger(port) && path?.indexOf("/.s.PGSQL.") === -1) {
-      const pathWithSocket = `${path}/.s.PGSQL.${port}`;
-
-      // Only add the path if it actually exists. It would be better to just
-      // always respect whatever the user passes in, but that would technically
-      // be a breakpoint change at this point.
-      if (require("node:fs").existsSync(pathWithSocket)) {
-        path = pathWithSocket;
-      }
-    }
-  }
-
-  switch (adapter) {
-    case "mysql": {
-      username ||= options.username || options.user || env.MYSQL_USER || env.MYSQLUSER || env.USER || "root";
-      break;
-    }
-    case "mariadb": {
-      username ||= options.username || options.user || env.MARIADB_USER || env.MARIADBUSER || env.USER || "root";
-      break;
-    }
-    case "postgres": {
-      username ||= options.username || options.user || env.PG_USER || env.PGUSER || env.USER || "postgres";
-      break;
-    }
-  }
-
-  switch (adapter) {
-    case "mysql": {
-      password ||= options.password || options.pass || env.MYSQL_PASSWORD || env.MYSQLPASSWORD || env.PASSWORD || "";
-      break;
-    }
-
-    case "mariadb": {
-      password ||=
-        options.password || options.pass || env.MARIADB_PASSWORD || env.MARIADBPASSWORD || env.PASSWORD || "";
-      break;
-    }
-
-    case "postgres": {
-      password ||= options.password || options.pass || env.PG_PASSWORD || env.PGPASSWORD || env.PASSWORD || "";
-      break;
-    }
-  }
-
-  switch (adapter) {
-    case "postgres": {
-      database ||=
-        options.database ||
-        options.db ||
-        env.PG_DATABASE ||
-        env.PGDATABASE ||
-        decodeIfValid((url?.pathname ?? "").slice(1)) ||
-        username;
-      break;
-    }
-
-    case "mysql": {
-      database ||=
-        options.database ||
-        options.db ||
-        env.MYSQL_DATABASE ||
-        env.MYSQLDATABASE ||
-        decodeIfValid((url?.pathname ?? "").slice(1)) ||
-        "mysql";
-      break;
-    }
-
-    case "mariadb": {
-      database ||=
-        options.database ||
-        options.db ||
-        env.MARIADB_DATABASE ||
-        env.MARIADBDATABASE ||
-        decodeIfValid((url?.pathname ?? "").slice(1)) ||
-        "mariadb";
-      break;
-    }
-  }
-
-  const connection = options.connection;
-  if (connection && $isObject(connection)) {
-    for (const key in connection) {
-      if (connection[key] !== undefined) {
-        query += `${key}\0${connection[key]}\0`;
-      }
-    }
-  }
-
-  tls ||= options.tls || options.ssl;
-  max = options.max;
-
-  idleTimeout ??= options.idleTimeout;
-  idleTimeout ??= options.idle_timeout;
-  connectionTimeout ??= options.connectionTimeout;
-  connectionTimeout ??= options.connection_timeout;
-  connectionTimeout ??= options.connectTimeout;
-  connectionTimeout ??= options.connect_timeout;
-  maxLifetime ??= options.maxLifetime;
-  maxLifetime ??= options.max_lifetime;
-  bigint ??= options.bigint;
-
-  // we need to explicitly set prepare to false if it is false
-  if (options.prepare === false) {
-    if (adapter === "mysql") {
-      throw $ERR_INVALID_ARG_VALUE("options.prepare", false, "prepared: false is not supported in MySQL");
-    }
-    prepare = false;
-  }
-
-  onconnect ??= options.onconnect;
-  onclose ??= options.onclose;
-
-  if (onconnect !== undefined) {
-    if (!$isCallable(onconnect)) {
-      throw $ERR_INVALID_ARG_TYPE("onconnect", "function", onconnect);
-    }
-  }
-
-  if (onclose !== undefined) {
-    if (!$isCallable(onclose)) {
-      throw $ERR_INVALID_ARG_TYPE("onclose", "function", onclose);
-    }
-  }
-
-  if (idleTimeout != null) {
-    idleTimeout = Number(idleTimeout);
-    if (idleTimeout > 2 ** 31 || idleTimeout < 0 || idleTimeout !== idleTimeout) {
-      throw $ERR_INVALID_ARG_VALUE(
-        "options.idle_timeout",
-        idleTimeout,
-        "must be a non-negative integer less than 2^31",
-      );
-    }
-    idleTimeout *= 1000;
-  }
-
-  if (connectionTimeout != null) {
-    connectionTimeout = Number(connectionTimeout);
-    if (connectionTimeout > 2 ** 31 || connectionTimeout < 0 || connectionTimeout !== connectionTimeout) {
-      throw $ERR_INVALID_ARG_VALUE(
-        "options.connection_timeout",
-        connectionTimeout,
-        "must be a non-negative integer less than 2^31",
-      );
-    }
-    connectionTimeout *= 1000;
-  }
-
-  if (maxLifetime != null) {
-    maxLifetime = Number(maxLifetime);
-    if (maxLifetime > 2 ** 31 || maxLifetime < 0 || maxLifetime !== maxLifetime) {
-      throw $ERR_INVALID_ARG_VALUE(
-        "options.max_lifetime",
-        maxLifetime,
-        "must be a non-negative integer less than 2^31",
-      );
-    }
-    maxLifetime *= 1000;
-  }
-
-  if (max != null) {
-    max = Number(max);
-    if (max > 2 ** 31 || max < 1 || max !== max) {
-      throw $ERR_INVALID_ARG_VALUE("options.max", max, "must be a non-negative integer between 1 and 2^31");
-    }
-  }
-
-  if (sslMode !== SSLMode.disable && !tls?.serverName) {
-    if (hostname) {
-      tls = { ...tls, serverName: hostname };
-    } else if (tls) {
-      tls = true;
-    }
-  }
-
-  if (tls && sslMode === SSLMode.disable) {
-    sslMode = SSLMode.prefer;
-  }
-
-  port = Number(port);
-
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
-    throw $ERR_INVALID_ARG_VALUE("port", port, "must be a non-negative integer between 1 and 65535");
-  }
-
-  const ret: Bun.SQL.__internal.DefinedOptions = {
-    adapter,
-    hostname,
-    port,
-    username,
-    password,
-    database,
-    tls,
-    prepare,
-    allowPublicKeyRetrieval: options.allowPublicKeyRetrieval === true,
-    bigint,
-    sslMode,
-    query,
-    max: max || 10,
-  };
-
-  if (idleTimeout != null) {
-    ret.idleTimeout = idleTimeout;
-  }
-
-  if (connectionTimeout != null) {
-    ret.connectionTimeout = connectionTimeout;
-  }
-
-  if (maxLifetime != null) {
-    ret.maxLifetime = maxLifetime;
-  }
-
-  if (onconnect !== undefined) {
-    ret.onconnect = onconnect;
-  }
-
-  if (onclose !== undefined) {
-    ret.onclose = onclose;
-  }
-
-  if (path) {
-    if (require("node:fs").existsSync(path)) {
-      ret.path = path;
-    }
-  }
-
-  return ret;
+  const builder = new QueryBuilder(adapter);
+  builder.template(strings, values);
+  return [builder.text, builder.values];
 }
 
 export type OnConnected<Connection> = (
@@ -907,57 +592,58 @@ export type OnConnected<Connection> = (
 
 export interface TransactionCommands {
   BEGIN: string;
+  /// XA END
+  BEFORE_COMMIT_OR_ROLLBACK?: string;
   COMMIT: string;
   ROLLBACK: string;
-  SAVEPOINT: string;
-  RELEASE_SAVEPOINT: string | null;
-  ROLLBACK_TO_SAVEPOINT: string;
-  BEFORE_COMMIT_OR_ROLLBACK?: string | null;
 }
 
-export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
-  normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [sql: string, values: unknown[]];
+export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> extends SQLDialect {
   createQueryHandle(sql: string, values: unknown[], flags: number): QueryHandle;
   connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
-  release(connection: Connection, connectingEvent?: boolean): void;
+  release(connection: Connection, prepared?: boolean): void;
   close(options?: { timeout?: number }): Promise<void>;
   flush(): void;
 
   isConnected(): boolean;
   get closed(): boolean;
+  /** close({ timeout: 0 }) was called: the caller gave up on what is queued. */
+  readonly closedAtOnce?: boolean;
 
-  supportsReservedConnections?(): boolean;
-  getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
-  attachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
-  detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
+  readonly supportsReservedConnections: boolean;
+  /** `true`: `onConnected` was still queued and will never run. */
+  cancelConnect(onConnected: OnConnected<Connection>): boolean;
+  /** Throws `connectionClosedError()` unless the connection is open. */
+  getConnectionForQuery(pooledConnection: Connection): ConnectionHandle;
+  /** `handler(err)` runs once, after the connection is closed and before the user's `onclose`. */
+  attachConnectionCloseHandler(connection: Connection, handler: (err: Error) => void): void;
+  detachConnectionCloseHandler(connection: Connection, handler: (err: Error) => void): void;
+  isInTransaction?(connection: Connection): boolean;
+  copyStream?(query: QueryType<any, any>, writable: boolean): ReadableStream<Uint8Array> | WritableStream<unknown>;
 
-  getTransactionCommands(options?: string): TransactionCommands;
   array(values: any[], typeNameOrID?: number | string): SQLArrayParameter;
-  getDistributedTransactionCommands?(name: string): TransactionCommands | null;
-
-  validateTransactionOptions?(options: string): { valid: boolean; error?: string };
-  validateDistributedTransactionName?(name: string): { valid: boolean; error?: string };
-
-  getCommitDistributedSQL?(name: string): string;
-  getRollbackDistributedSQL?(name: string): string;
-  escapeIdentifier(name: string): string;
-  notTaggedCallError(): Error;
-  connectionClosedError(): Error;
-  queryCancelledError(): Error;
-  invalidTransactionStateError(message: string): Error;
+  /** The parameter that stores `value` as JSON, where that is not its JSON text. */
+  json?(value: unknown): object;
+  getDistributedTransactionCommands(name: string): TransactionCommands | null;
+  /** COMMIT PREPARED or ROLLBACK PREPARED */
+  getFinishDistributedSQL(commit: boolean, name: string): string;
 }
-
 export default {
-  parseDefinitelySqliteUrl,
-  isOptionsOfAdapter,
-  assertIsOptionsOfAdapter,
-  parseOptions,
   SQLHelper,
-  buildDefinedColumnsAndQuery,
-  normalizeSSLMode,
   SQLResultArray,
   SQLArrayParameter,
-  // @ts-expect-error we're exporting a const enum which works in our builtins
-  // generator but not in typescript officially
-  SSLMode,
+  SQLDialect,
+  isUnsafeTransactionStart,
+  firstKeyword,
+  transforms: {
+    camel: { column: { from: toCamel, to: fromCamel } },
+    pascal: { column: { from: toPascal, to: fromPascal } },
+    kebab: { column: { from: toKebab, to: fromKebab } },
+    toCamel,
+    toPascal,
+    toKebab,
+    fromCamel,
+    fromPascal,
+    fromKebab,
+  },
 };

@@ -5,7 +5,7 @@ const assert = require('assert');
 const vm = require('vm');
 
 const {
-  SlowBuffer,
+  Buffer,
   kMaxLength,
 } = require('buffer');
 
@@ -13,6 +13,7 @@ const {
 // internal limits should be updated if this fails.
 assert.throws(
   () => new Uint8Array(kMaxLength + 1),
+  // JSC throws "Out of memory" here instead of V8's "Invalid typed array length: ...".
   { name: 'RangeError', message: `Out of memory` },
 );
 
@@ -1086,25 +1087,24 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "target" argument must be of type Buffer or ' +
+    message: 'The "target" argument must be an instance of Buffer or ' +
              'Uint8Array. Received undefined'
   });
 
 assert.throws(() => Buffer.from(), {
   name: 'TypeError',
-  message: 'The first argument must be of type string, Buffer, ArrayBuffer, Array, or Array-like Object. Received undefined'
+  message: 'The first argument must be of type string or an instance of ' +
+  'Buffer, ArrayBuffer, or Array or an Array-like Object. Received undefined'
 });
 assert.throws(() => Buffer.from(null), {
   name: 'TypeError',
-  message: 'The first argument must be of type string, Buffer, ArrayBuffer, Array, or Array-like Object. Received null'
+  message: 'The first argument must be of type string or an instance of ' +
+  'Buffer, ArrayBuffer, or Array or an Array-like Object. Received null'
 });
 
 // Test prototype getters don't throw
 assert.strictEqual(Buffer.prototype.parent, undefined);
 assert.strictEqual(Buffer.prototype.offset, undefined);
-assert.strictEqual(SlowBuffer.prototype.parent, undefined);
-assert.strictEqual(SlowBuffer.prototype.offset, undefined);
-
 
 {
   // Test that large negative Buffer length inputs don't affect the pool offset.
@@ -1137,7 +1137,7 @@ assert.throws(() => {
   a.copy(b, 0, 0x100000000, 0x100000001);
 }, outOfRangeError);
 
-// Unpooled buffer (replaces SlowBuffer)
+// Unpooled buffer
 {
   const ubuf = Buffer.allocUnsafeSlow(10);
   assert(ubuf);

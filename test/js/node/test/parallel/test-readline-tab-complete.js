@@ -95,7 +95,7 @@ common.skipIfDumbTerminal();
   rli.on('line', common.mustNotCall());
   fi.emit('data', '\t');
   queueMicrotask(() => {
-    assert.match(output, /^Tab completion error:[^]+error: message/); // modified to match bun's error message
+    assert.match(output, /^Tab completion error: Error: message/);
     output = '';
   });
   rli.close();

@@ -17,16 +17,12 @@ use bun_ast as js_ast;
 use bun_ast::flags as Flags;
 use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G, Stmt, Symbol};
 
-// Local short-hands so the visitor bodies read close to the Zig
-// (`expr.data.e_dot`, `Expr.Data.e_binary`, `Op.Code.un_typeof`) without a
-// bulk find-replace at every call-site.
+// Local short-hands used heavily in the visitor bodies.
 use js_ast::ExprData as Data;
 use js_ast::ExprTag as Tag;
 use js_ast::OpCode as Op;
 
-// Zig: `pub fn VisitExpr(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
+// The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -35,9 +31,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
     // and only writes back when the visitor produces a *different* node.
     #[inline]
-    pub fn visit_expr(&mut self, e: &mut Expr) {
-        // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)` — SCAN_ONLY
-        // monomorphizations must never reach the visit pass.
+    pub(crate) fn visit_expr(&mut self, e: &mut Expr) {
+        // SCAN_ONLY monomorphizations must never reach the visit pass.
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run visit_expr",
@@ -45,15 +40,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_expr_in_out(e, ExprIn::default())
     }
 
-    pub fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+    pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            // The caller assumes `e` was visited, so replace it. Don't mutate it on a revisit
+            // because it can be part of a shared `define` value.
+            if !self.is_revisit_for_substitution {
+                e.data = Data::EMissing(E::Missing {});
+            }
+            self.report_stack_overflow(e.loc);
+            return;
+        }
+
         if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(e) {
             self.log()
                 .add_error(Some(self.source), e.loc, b"Invalid assignment target");
         }
 
-        // Zig dispatches via `inline else => |tag| if (comptime @hasDecl(visitors, @tagName(tag)))`.
-        // Rust has no struct-decl reflection; expand to an explicit match over the tags that have
-        // a visitor defined below. Any tag without a visitor leaves `*e` unchanged.
+        // Explicit match over the tags that have a visitor defined below.
+        // Any tag without a visitor leaves `*e` unchanged.
         use js_ast::ExprTag as Tag;
         match e.data.tag() {
             Tag::ENewTarget => Self::e_new_target(self, e, in_),
@@ -65,7 +69,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EIdentifier => Self::e_identifier(self, e, in_),
             Tag::EJsxElement => Self::e_jsx_element(self, e, in_),
             Tag::ETemplate => Self::e_template(self, e, in_),
-            Tag::EBinary => Self::e_binary(self, e, in_),
+            Tag::EBinary => Self::e_binary(self, e),
             Tag::EIndex => Self::e_index(self, e, in_),
             Tag::EUnary => Self::e_unary(self, e, in_),
             Tag::EDot => Self::e_dot(self, e, in_),
@@ -85,14 +89,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // ─── visitors ───────────────────────────────────────────────────────────
-    // In Zig these live on a nested `const visitors = struct { ... }`; in Rust they are private
-    // associated fns on this impl so they can see the const-generic feature params.
+    // Private associated fns on this impl so they can see the const-generic
+    // feature params.
 
     fn e_new_target(_: &mut Self, _e: &mut Expr, _: ExprIn) {
-        // this error is not necessary and it is causing breakages
-        // if (!p.fn_only_data_visit.is_new_target_allowed) {
-        //     p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
-        // }
+        // The "Cannot use \"new.target\" here" range error is intentionally
+        // not emitted: it is not necessary and it was causing breakages.
     }
 
     fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
@@ -105,16 +107,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        p.this_expr_count = p.this_expr_count.wrapping_add(1);
         if let Some(exp) = p.value_for_this(e.loc) {
             *e = exp;
             return;
         }
-
-        //                 // Capture "this" inside arrow functions that will be lowered into normal
-        // // function expressions for older language environments
-        // if p.fnOrArrowDataVisit.isArrow && p.options.unsupportedJSFeatures.Has(compat.Arrow) && p.fnOnlyDataVisit.isThisNested {
-        //     return js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: p.captureThis()}}, exprOut{}
-        // }
     }
 
     fn e_spread(p: &mut Self, e: &mut Expr, _: ExprIn) {
@@ -164,6 +161,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        // The substitution revisit re-enters with an already-resolved `Ref`.
+        // `find_symbol` below only looks in `scope.members`, so a symbol that
+        // lives only in `scope.generated` (e.g. a React Compiler outlined
+        // function) would be re-bound to a fresh `Unbound` and the renamer
+        // would lose the link to its declaration.
+        if p.is_revisit_for_substitution {
+            return;
+        }
         let expr = *e;
         let mut e_ = expr
             .data
@@ -197,6 +202,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Handle assigning to a constant
         if in_.assign_target != js_ast::AssignTarget::None {
+            // A write to the name of a class with lowered class decorators goes to
+            // the class's own immutable binding, not to `inner_class_ref`.
+            if let Some(&(inner_ref, name_ref)) = p
+                .decorated_class_names
+                .iter()
+                .find(|(inner, _)| *inner == result.r#ref)
+            {
+                p.ignore_usage(inner_ref);
+                p.record_usage(name_ref);
+                e_.ref_ = name_ref;
+            }
+
             if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
             {
                 // TODO: silence this for runtime transpiler
@@ -247,7 +264,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.commonjs_module_exports_assigned_deoptimized = true;
             }
 
-            p.symbols[result.r#ref.inner_index() as usize].has_been_assigned_to = true;
+            p.record_assignment(result.r#ref);
         }
 
         let mut original_name: Option<&[u8]> = None;
@@ -334,7 +351,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .ref_,
                         ),
                 )
-                .with_was_originally_identifier(true),
+                .with_was_originally_identifier(true)
+                .with_is_property_access_target(in_.is_property_access_target),
         );
     }
     // PERF(port:frame): keep these large, infrequently-taken arms out of the
@@ -342,7 +360,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // big match arms into the recursive dispatcher, inflating its stack frame to
     // ~968B; deep ASTs then thrash L1d on the spill/reload (the spill into that
     // frame is the #2 hottest bun-native instruction under `bun --bun lint`).
-    // Mirrors Zig's switch-with-helper-fns layout.
     #[inline(never)]
     fn e_jsx_element(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
@@ -352,8 +369,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .data
             .e_jsx_element()
             .expect("infallible: variant checked");
-        // Zig: `switch (comptime jsx_transform_type)`; JSX is no longer a
-        // type parameter — dispatch on the runtime `P::jsx_transform` field.
+        // JSX is not a type parameter — dispatch on the runtime
+        // `P::jsx_transform` field.
         match p.jsx_transform {
             JSXTransformType::React => {
                 let tag: Expr = 'tagger: {
@@ -362,27 +379,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         break 'tagger _tag;
                     }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
-                        // PORT NOTE: `jsx_strings_to_member_expression` wants `&[&'a [u8]]`.
-                        // In Zig, `options.jsx.fragment: []const string` borrows from the
-                        // long-lived `transpiler.options.jsx`, so the strings outlive the
-                        // AST. Here, `options.jsx.fragment: Box<[Box<[u8]>]>` is OWNED by
-                        // `P` and dropped when `Parser::parse` returns — but the parts are
-                        // stored in symbols / `E::Dot.name` and read later by the printer.
-                        // Dupe each part into the arena (which backs the AST) to restore
-                        // the spec's lifetime invariant. Build the `&[&'a [u8]]` slice
-                        // directly in the AST arena instead of a throwaway global-heap
-                        // `Vec` — keeps the visitor off the `#[global_allocator]`.
-                        let arena = p.arena;
-                        let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
-                            p.options
-                                .jsx
-                                .fragment
-                                .iter()
-                                .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
-                        );
                         break 'tagger p
-                            .jsx_strings_to_member_expression(expr.loc, parts)
-                            .expect("unreachable");
+                            .jsx_classic_member_expression(expr.loc, |jsx| &jsx.fragment);
                     }
                     break 'tagger p.jsx_import(JSXImport::Fragment, expr.loc);
                 };
@@ -414,15 +412,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if runtime == options::JSX::Runtime::Classic || is_key_after_spread {
                     // Arguments to createElement()
                     let mut args = ExprNodeList::init_capacity(2 + children_count as usize);
-                    // PERF(port): was assume_capacity
                     VecExt::append(&mut args, tag);
 
                     let num_props = e_.properties.len_u32();
                     if num_props > 0 {
-                        // PORT NOTE: Zig duped the property slice into a fresh arena allocation
-                        // before wrapping in E.Object. PropertyList = Vec<Property> here is
-                        // already arena-backed and the JSX node is consumed; reuse in place.
-                        // PERF(port): was arena alloc + bun.copy — profile if it shows up on a hot path
+                        // PropertyList = Vec<Property> is already arena-backed and the
+                        // JSX node is consumed; reuse in place.
                         VecExt::append(
                             &mut args,
                             p.new_expr(
@@ -442,29 +437,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let mut arg = *child;
                         p.visit_expr(&mut arg);
                         if !matches!(arg.data, Data::EMissing(..)) {
-                            // PERF(port): was assume_capacity
                             VecExt::append(&mut args, arg);
                         }
                     }
 
                     let target: Expr = if runtime == options::JSX::Runtime::Classic {
-                        // PORT NOTE: see fragment note above — `options.jsx.factory` is
-                        // owned by `P` and freed when the parser drops; dupe each part
-                        // into the arena so the symbol/E::Dot names outlive the printer.
-                        // Build the parts slice in the AST arena (no global-heap `Vec`).
-                        let arena = p.arena;
-                        let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
-                            p.options
-                                .jsx
-                                .factory
-                                .iter()
-                                .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
-                        );
-                        p.jsx_strings_to_member_expression(expr.loc, parts)
-                            .expect("unreachable")
+                        p.jsx_classic_member_expression(expr.loc, |jsx| &jsx.factory)
                     } else {
-                        // Spec (visitExpr.zig:257) calls jsxStringsToMemberExpression(factory)
-                        // unconditionally before the runtime check; that has the side-effect of
+                        // jsxStringsToMemberExpression(factory) must run
+                        // unconditionally before the runtime check; it has the side-effect of
                         // findSymbol(loc, factory[0]) which records usage of the factory ident.
                         // The full helper is Pragma-shape-blocked, so replicate the side-effect
                         // for the Automatic + key-after-spread path and discard the result.
@@ -488,6 +469,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             } else {
                                 E::CallUnwrap::Never
                             },
+                            was_jsx_element: true,
                             close_paren_loc: e_.close_tag_loc,
                             ..Default::default()
                         },
@@ -505,12 +487,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         None
                     };
 
-                    // PORT NOTE: Zig reassigns `props` (a `*Vec(G.Property)`) to point inside
-                    // a spread object's properties via raw arena pointer. Track as a
-                    // `StoreRef` (safe `Deref`/`DerefMut`) so the spread-collapse walk
-                    // and the `push`/`take` calls below stay in safe code.
-                    let mut props_handle = js_ast::StoreRef::from_bump(&mut e_.properties);
-
                     // arguments needs to be like
                     // {
                     //    ...props,
@@ -519,9 +495,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     {
                         let mut last_child: u32 = 0;
-                        // PORT NOTE: Zig wrote `e_.children.ptr[last_child] = p.visitExpr(child)`
-                        // while iterating a slice over the same buffer. Iterate by index to avoid
-                        // borrowck on `e_.children`.
+                        // Iterate by index to avoid a borrowck conflict on
+                        // `e_.children` (writes alias the buffer being iterated).
                         for i in 0..children_count {
                             let mut visited = e_.children.slice()[i as usize];
                             p.visit_expr(&mut visited);
@@ -535,12 +510,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         e_.children.truncate(last_child as usize);
                     }
 
-                    // TODO(port): jsxChildrenKeyData in Zig is a mutable `var` of `Expr.Data`
-                    // pointing at `Prefill.String.Children`. ExprData::EString wants a
-                    // `StoreRef<EString>` (arena-backed) so a process-static won't compile (see
-                    // P.rs `` ~7552). Allocate via `p.new_expr` from the const
-                    // `prefill::string::CHILDREN` instead — small extra alloc.
-                    // PERF(port): was process-static — profile if it shows up on a hot path
                     let children_key = p.new_expr(prefill::string::CHILDREN, expr.loc);
 
                     // Optimization: if the only non-child prop is a spread object
@@ -550,36 +519,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // ->
                     // <div {{...foo}} />
                     // jsx("div", {...foo})
+                    let mut spread_object: Option<js_ast::StoreRef<E::Object>> = None;
                     loop {
-                        // `StoreRef<PropertyList>: Deref` — safe arena-backed read.
-                        if !(props_handle.len_u32() == 1
-                            && props_handle.slice()[0].kind == G::PropertyKind::Spread
-                            && matches!(
-                                props_handle.slice()[0].value.unwrap().data,
-                                Data::EObject(..)
-                            ))
-                        {
-                            break;
-                        }
-                        // PORT NOTE: reshaped for borrowck — Zig reassigns `props` to point
-                        // inside the spread object's properties. Compute the next handle in
-                        // a block so the `DerefMut` borrow of `props_handle` ends before
-                        // reassignment.
-                        let next = {
-                            let inner = props_handle.slice_mut()[0]
-                                .value
-                                .as_mut()
-                                .unwrap()
-                                .data
-                                .e_object_mut()
-                                .unwrap();
-                            js_ast::StoreRef::from_bump(&mut inner.properties)
+                        let properties = match &spread_object {
+                            Some(object) => &object.properties,
+                            None => &e_.properties,
                         };
-                        props_handle = next;
+                        let [
+                            G::Property {
+                                kind: G::PropertyKind::Spread,
+                                value:
+                                    Some(Expr {
+                                        data: Data::EObject(inner),
+                                        ..
+                                    }),
+                                ..
+                            },
+                        ] = properties.slice()
+                        else {
+                            break;
+                        };
+                        spread_object = Some(*inner);
                     }
-                    // `StoreRef: DerefMut` — safe arena-backed handle; no aliasing
-                    // `&mut` outstanding for the remainder of this arm.
-                    let props = &mut *props_handle;
+                    let mut props: G::PropertyList = match spread_object {
+                        // Another expression can reference the same spread object (e.g. a macro result), so copy its list.
+                        Some(object) => {
+                            let mut props = G::PropertyList::init_capacity(
+                                object.properties.len() + usize::from(!e_.children.is_empty()),
+                            );
+                            props.extend(object.properties.iter().map(G::Property::shallow_clone));
+                            props
+                        }
+                        None => bun_alloc::AstAlloc::take(&mut e_.properties),
+                    };
 
                     // Typescript defines static jsx as children.len > 1 or single spread
                     // https://github.com/microsoft/TypeScript/blob/d4fbc9b57d9aa7d02faac9b1e9bb7b37c687f6e9/src/compiler/transformers/jsx.ts#L340
@@ -626,7 +598,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         &mut args,
                         p.new_expr(
                             E::Object {
-                                properties: bun_alloc::AstAlloc::take(props),
+                                properties: props,
                                 ..Default::default()
                             },
                             expr.loc,
@@ -702,9 +674,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
-        if let Some(tag) = e_.tag {
-            p.visit_expr(e_.tag.as_mut().unwrap());
+        if let Some(tag) = e_.tag.as_mut() {
+            p.template_tag = tag.data;
+            p.visit_expr(tag);
+        }
 
+        // Visit the interpolation values before the macro dispatch below: its
+        // early-return paths (dead code, macros disabled, node_modules, macro
+        // failure) replace the whole expression without visiting the parts,
+        // which would leave the scopes recorded during the parse pass for any
+        // arrows/functions inside them unconsumed and trip "Scope mismatch
+        // while visiting" on the next scope push. Mirrors e_call, which visits
+        // its arguments before macro handling.
+        // `Template.parts` is arena-owned.
+        for part in e_.parts_mut().iter_mut() {
+            p.visit_expr(&mut part.value);
+        }
+
+        if let Some(tag) = e_.tag {
             if Self::ALLOW_MACROS {
                 let ref_ = match &e_.tag.unwrap().data {
                     Data::EImportIdentifier(ident) => Some(ident.ref_),
@@ -718,7 +705,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(ref_) = ref_
                     && !p.options.features.is_macro_runtime
                 {
-                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied() {
+                    // After a stack overflow, part of the template wasn't visited, so don't run the macro.
+                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied()
+                        && !p.reported_stack_overflow.get()
+                    {
                         p.ignore_usage(ref_);
                         if p.is_control_flow_dead {
                             *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
@@ -761,7 +751,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // We must visit it to convert inline_identifiers and record usage
                         // Reborrow via the field-disjoint `Lexer::log()` accessor
                         // so `&p.lexer` and `&mut p.options` split cleanly under
-                        // borrowck — Zig held two raw `*Log`.
+                        // borrowck.
                         let log = p.lexer.log();
                         let source = p.source;
                         let Ok(macro_result) = p
@@ -792,11 +782,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `Template.parts` is arena-owned (Zig: `[]E.TemplatePart`).
-        for part in e_.parts_mut().iter_mut() {
-            p.visit_expr(&mut part.value);
-        }
-
         // When mangling, inline string values into the template literal. Note that
         // it may no longer be a template literal after this point (it may turn into
         // a plain string literal instead).
@@ -805,7 +790,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
     }
-    fn e_binary(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_binary(p: &mut Self, e: &mut Expr) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
         let e_ = expr.data.e_binary().expect("infallible: variant checked");
@@ -814,15 +799,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // iteration on the heap instead of recursion on the call stack to avoid
         // stack overflow for deeply-nested ASTs.
         //
-        // PORT NOTE: Zig stores `*E.Binary` (arena ptr). `BinaryExpressionVisitor.e`
-        // is the `StoreRef<E::Binary>` arena handle directly — `Copy` + safe
-        // `Deref`/`DerefMut`, so no raw-pointer detach is needed here.
+        // `BinaryExpressionVisitor.e` is the `StoreRef<E::Binary>` arena
+        // handle — `Copy` + safe `Deref`/`DerefMut`, so no raw-pointer detach
+        // is needed here.
         let mut v: BinaryExpressionVisitor = BinaryExpressionVisitor {
             e: e_,
             loc: expr.loc,
-            in_,
             left_in: ExprIn::default(),
-            is_stmt_expr: false,
         };
 
         // Everything uses a single stack to reduce allocation overhead. This stack
@@ -831,8 +814,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let stack_bottom = p.binary_expression_stack.len();
 
         // Assigned on every `break` arm of the loop below; the initial input
-        // `expr` is never read directly (Zig's `var current = expr` was a
-        // pre-init habit, not load-bearing).
+        // `expr` is never read directly.
         let mut current;
 
         // Iterate down into the AST along the left node of the binary operation.
@@ -870,9 +852,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             v = BinaryExpressionVisitor {
                 e: left_binary.unwrap(),
                 loc: left.loc,
-                in_: left_in,
                 left_in: ExprIn::default(),
-                is_stmt_expr: false,
             };
         }
 
@@ -891,6 +871,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let mut e_ = expr.data.e_index().expect("infallible: variant checked");
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_template_tag = matches!(p.template_tag, Data::EIndex(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
         // "a['b']" => "a.b"
@@ -911,6 +892,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if is_call_target {
                         p.call_target = dot.data;
                     }
+                    if is_template_tag {
+                        p.template_tag = dot.data;
+                    }
                     if is_delete_target {
                         p.delete_target = dot.data;
                     }
@@ -922,11 +906,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let has_chain_parent = e_.optional_chain == Some(js_ast::OptionalChain::Continuation);
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                has_chain_parent,
+                is_property_access_target: !is_delete_target,
                 ..Default::default()
             },
         );
@@ -1016,6 +999,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {
                     if !s.is_utf16 {
+                        // A folded `"a" + "b"` is a rope whose `data` is only "a".
+                        s.resolve_rope_if_needed(p.arena);
+
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
                         if p.options.features.minify_syntax && s.is_identifier(p.arena) {
@@ -1046,19 +1032,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // like .e_import_identifier tracking works
                         // Reminder that this can only be done after
                         // `target` is visited.
-                        if let Some(rewrite) = p.maybe_rewrite_property_access(
-                            expr.loc,
-                            e_.target,
-                            s.data.slice(),
-                            unwrapped.loc,
-                            IdentifierOpts::default()
+                        if e_.optional_chain.is_none() {
+                            let opts = IdentifierOpts::default()
                                 .with_is_call_target(is_call_target)
-                                // .is_template_tag = is_template_tag,
+                                .with_is_template_tag(is_template_tag)
                                 .with_is_delete_target(is_delete_target)
-                                .with_assign_target(in_.assign_target),
-                        ) {
-                            *e = rewrite;
-                            return;
+                                .with_assign_target(in_.assign_target)
+                                .with_is_property_access_target(in_.is_property_access_target);
+                            if let Some(rewrite) = p.maybe_rewrite_property_access(
+                                expr.loc,
+                                e_.target,
+                                s.data.slice(),
+                                unwrapped.loc,
+                                opts,
+                            ) {
+                                *e = rewrite;
+                                return;
+                            }
+                            e_.is_import_property_use =
+                                p.record_import_property_use(&e_.target, s.data.slice(), opts);
                         }
                     }
                 }
@@ -1068,11 +1060,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        if p.options.features.minify_syntax {
+        // `[x][0] = v` writes into the temporary, not `x`.
+        if p.options.features.minify_syntax && in_.assign_target == js_ast::AssignTarget::None {
             if let Some(number) = index.data.as_e_number() {
-                if number.value >= 0.0
-                    && number.value < (usize::MAX as f64)
-                    && number.value % 1.0 == 0.0
+                if number.value() >= 0.0
+                    && number.value() < (usize::MAX as f64)
+                    && number.value() % 1.0 == 0.0
                 {
                     // "foo"[2] -> "o"
                     if let Some(str_) = target.data.as_e_string() {
@@ -1083,9 +1076,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .e_number()
                                 .expect("infallible: variant checked")
                                 .to_usize();
-                            if cfg!(debug_assertions) {
-                                debug_assert!(strings::is_all_ascii(&literal));
-                            }
+                            debug_assert!(strings::is_all_ascii(&literal));
                             if num < literal.len() {
                                 *e = p.new_expr(
                                     E::String {
@@ -1098,31 +1089,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
                     } else if let Some(array) = target.data.as_e_array() {
+                        let int: usize = number.value() as usize;
                         // [x][0] -> x
-                        if array.items.len_u32() == 1 && number.value == 0.0 {
-                            let inlined = *array.items.at(0);
-                            if inlined.can_be_inlined_from_property_access() {
-                                *e = inlined;
-                                return;
-                            }
-                        }
-
                         // ['a', 'b', 'c'][1] -> 'b'
-                        let int: usize = number.value as usize;
-                        if int < array.items.len_u32() as usize
+                        let inlined = if array.items.len_u32() == 1 && int == 0 {
+                            Some(*array.items.at(0))
+                        } else if int < array.items.len_u32() as usize
                             && p.expr_can_be_removed_if_unused(&target)
                         {
-                            let inlined = *array.items.at(int);
+                            Some(*array.items.at(int))
+                        } else {
+                            None
+                        };
+                        if let Some(inlined) = inlined {
                             // ['a', , 'c'][1] -> undefined
                             if matches!(inlined.data, Data::EMissing(..)) {
                                 *e = p.new_expr(E::Undefined {}, inlined.loc);
                                 return;
                             }
-                            if cfg!(debug_assertions) {
-                                debug_assert!(inlined.can_be_inlined_from_property_access());
+                            if inlined.can_be_inlined_from_property_access() {
+                                // "[obj.m][0]()" => "(0, obj.m)()"
+                                *e = if is_call_target && inlined.has_value_for_this_in_call() {
+                                    p.new_expr(E::Number::new(0.0), expr.loc)
+                                        .join_with_comma(inlined)
+                                } else {
+                                    inlined
+                                };
+                                return;
                             }
-                            *e = inlined;
-                            return;
                         }
                     }
                 }
@@ -1133,7 +1127,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // though this is a run-time error, we make it a compile-time error when
         // bundling because scope hoisting means these will no longer be run-time
         // errors.
-        if (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
+        if p.options.bundle
+            && (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
             && matches!(e_.target.data.tag(), Tag::EIdentifier)
             && p.symbols[e_
                 .target
@@ -1166,9 +1161,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
 
-        // PORT NOTE: `e_` is `StoreRef<E::Index>` — mutations above wrote through
-        // DerefMut into the same arena slot `expr.data` already points at. Zig's
-        // `p.newExpr(e_, loc)` re-wraps the same pointer; here `*e` is already that.
+        // `e_` is `StoreRef<E::Index>` — mutations above wrote through
+        // DerefMut into the same arena slot `expr.data` already points at,
+        // so `*e` is already up to date.
     }
 
     fn e_unary(p: &mut Self, e: &mut Expr, _: ExprIn) {
@@ -1186,6 +1181,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                 );
                 let id_after = matches!(e_.value.data, Data::EIdentifier(..));
+                p.ignore_namespace_local_test_use(&e_.value);
 
                 // The expression "typeof (0, x)" must not become "typeof x" if "x"
                 // is unbound because that could suppress a ReferenceError from "x"
@@ -1232,13 +1228,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
-                p.visit_expr_in_out(
-                    &mut e_.value,
-                    ExprIn {
-                        has_chain_parent: true,
-                        ..Default::default()
-                    },
-                );
+                p.delete_target = e_.value.data;
+                p.visit_expr_in_out(&mut e_.value, ExprIn::default());
             }
             _ => {
                 let assign_target = Op::unary_assign_target(e_.op);
@@ -1253,19 +1244,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Post-process the unary expression
                 match e_.op {
                     Op::UnNot => {
+                        p.ignore_namespace_local_test_use(&e_.value);
                         if p.options.features.minify_syntax {
                             e_.value = SideEffects::simplify_boolean(p, e_.value);
                         }
 
-                        let side_effects = SideEffects::to_boolean(p, &e_.value.data);
-                        if side_effects.ok {
-                            *e = p.new_expr(
-                                E::Boolean {
-                                    value: !side_effects.value,
-                                },
-                                expr.loc,
-                            );
-                            return;
+                        if let Some(side_effects) = SideEffects::to_boolean(p, &e_.value.data) {
+                            if side_effects.side_effects == SideEffects::NoSideEffects
+                                || p.expr_can_be_removed_if_unused(&e_.value)
+                            {
+                                *e = p.new_expr(
+                                    E::Boolean {
+                                        value: !side_effects.value,
+                                    },
+                                    expr.loc,
+                                );
+                                return;
+                            }
                         }
 
                         if p.options.features.minify_syntax {
@@ -1284,9 +1279,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.should_fold_typescript_constant_expressions {
                             if let Some(value) = SideEffects::to_number(&e_.value.data) {
                                 *e = p.new_expr(
-                                    E::Number {
-                                        value: f64::from(!float_to_int32(value)),
-                                    },
+                                    E::Number::new(f64::from(!float_to_int32(value))),
                                     expr.loc,
                                 );
                                 return;
@@ -1301,13 +1294,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     Op::UnPos => {
                         if let Some(num) = SideEffects::to_number(&e_.value.data) {
-                            *e = p.new_expr(E::Number { value: num }, expr.loc);
+                            *e = p.new_expr(E::Number::new(num), expr.loc);
                             return;
                         }
                     }
                     Op::UnNeg => {
                         if let Some(num) = SideEffects::to_number(&e_.value.data) {
-                            *e = p.new_expr(E::Number { value: -num }, expr.loc);
+                            *e = p.new_expr(E::Number::new(-num), expr.loc);
                             return;
                         }
                     }
@@ -1354,12 +1347,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_dot().expect("infallible: variant checked");
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_template_tag = matches!(p.template_tag, Data::EDot(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
 
         // `p.define: &'a Define` is `Copy`; hoist so the `dots.get` borrow is
         // tied to `'a`, not `&*p`, and `&mut self` helpers below can be called
         // while iterating without laundering.
         let defines = p.define;
-        if let Some(parts) = defines.dots.get(e_.name.slice()) {
+        if let Some(parts) = defines.dots_for(e_.name.slice()) {
             for define in parts.as_slice() {
                 if p.is_dot_define_match(expr, &define.parts) {
                     if in_.assign_target == js_ast::AssignTarget::None {
@@ -1415,6 +1409,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     has_catch: p.then_catch_chain.has_catch || p.then_catch_chain.has_multiple_args,
                     has_multiple_args: false,
                 };
+            } else if e_.name == b"finally" {
+                p.then_catch_chain = ThenCatchChain {
+                    next_target: e_.target.data,
+                    has_catch: p.then_catch_chain.has_catch,
+                    has_multiple_args: false,
+                };
             }
         }
 
@@ -1423,6 +1423,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ExprIn {
                 property_access_for_method_call_maybe_should_replace_with_undefined: in_
                     .property_access_for_method_call_maybe_should_replace_with_undefined,
+                is_property_access_target: !is_delete_target,
                 ..Default::default()
             },
         );
@@ -1438,21 +1439,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
+        // `ns?.foo` on an import()/require() namespace local reads `foo`.
+        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+            && let Data::EIdentifier(id) = e_.target.data
+            && p.dynamic_import_namespace_locals.contains_key(&id.ref_)
+            && in_.assign_target == js_ast::AssignTarget::None
+            && !is_delete_target
+        {
+            if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
+                map.put(
+                    e_.name.slice(),
+                    js_ast::LocRef {
+                        loc: e_.name_loc,
+                        ref_: js_ast::Ref::NONE,
+                    },
+                )
+                .expect("oom");
+                p.note_tracked_namespace_use(id.ref_);
+            }
+        }
+
         if e_.optional_chain.is_none() {
+            let opts = IdentifierOpts::default()
+                .with_is_call_target(is_call_target)
+                .with_is_template_tag(is_template_tag)
+                .with_assign_target(in_.assign_target)
+                .with_is_delete_target(is_delete_target)
+                .with_is_property_access_target(in_.is_property_access_target);
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,
                 e_.name.slice(),
                 e_.name_loc,
-                IdentifierOpts::default()
-                    .with_is_call_target(is_call_target)
-                    .with_assign_target(in_.assign_target)
-                    .with_is_delete_target(is_delete_target),
-                // .is_template_tag = p.template_tag != null,
+                opts,
             ) {
                 *e = _expr;
                 return;
             }
+            e_.is_import_property_use =
+                p.record_import_property_use(&e_.target, e_.name.slice(), opts);
 
             if Self::ALLOW_MACROS {
                 if !p.options.features.is_macro_runtime {
@@ -1482,73 +1507,71 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
-        p.visit_expr(&mut e_.test_);
+        p.visit_expr(&mut e_.test);
         p.in_branch_condition = prev_in_branch;
+        p.ignore_namespace_local_test_use(&e_.test);
 
-        e_.test_ = SideEffects::simplify_boolean(p, e_.test_);
+        e_.test = SideEffects::simplify_boolean(p, e_.test);
 
-        let side_effects = SideEffects::to_boolean(p, &e_.test_.data);
-
-        if !side_effects.ok {
+        let Some(side_effects) = SideEffects::to_boolean(p, &e_.test.data) else {
             p.visit_expr(&mut e_.yes);
             p.visit_expr(&mut e_.no);
-        } else {
-            // Mark the control flow as dead if the branch is never taken
-            if side_effects.value {
-                // "true ? live : dead"
-                p.visit_expr(&mut e_.yes);
-                let old = p.is_control_flow_dead;
-                p.is_control_flow_dead = true;
-                p.visit_expr(&mut e_.no);
-                p.is_control_flow_dead = old;
+            return;
+        };
 
-                if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    *e = SideEffects::simplify_unused_expr(p, e_.test_)
-                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
-                        .join_with_comma(e_.yes);
-                    return;
-                }
+        // Mark the control flow as dead if the branch is never taken
+        if side_effects.value {
+            // "true ? live : dead"
+            p.visit_expr(&mut e_.yes);
+            let old = p.is_control_flow_dead;
+            p.is_control_flow_dead = true;
+            p.visit_expr(&mut e_.no);
+            p.is_control_flow_dead = old;
 
-                // "(1 ? fn : 2)()" => "fn()"
-                // "(1 ? this.fn : 2)" => "this.fn"
-                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                if is_call_target && e_.yes.has_value_for_this_in_call() {
-                    *e = p
-                        .new_expr(E::Number { value: 0.0 }, e_.test_.loc)
-                        .join_with_comma(e_.yes);
-                    return;
-                }
-
-                *e = e_.yes;
-                return;
-            } else {
-                // "false ? dead : live"
-                let old = p.is_control_flow_dead;
-                p.is_control_flow_dead = true;
-                p.visit_expr(&mut e_.yes);
-                p.is_control_flow_dead = old;
-                p.visit_expr(&mut e_.no);
-
-                // "(a, false) ? b : c" => "a, c"
-                if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    *e = SideEffects::simplify_unused_expr(p, e_.test_)
-                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
-                        .join_with_comma(e_.no);
-                    return;
-                }
-
-                // "(1 ? fn : 2)()" => "fn()"
-                // "(1 ? this.fn : 2)" => "this.fn"
-                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                if is_call_target && e_.no.has_value_for_this_in_call() {
-                    *e = p
-                        .new_expr(E::Number { value: 0.0 }, e_.test_.loc)
-                        .join_with_comma(e_.no);
-                    return;
-                }
-                *e = e_.no;
+            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+                *e = SideEffects::simplify_unused_expr(p, e_.test)
+                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
+                    .join_with_comma(e_.yes);
                 return;
             }
+
+            // "(1 ? fn : 2)()" => "fn()"
+            // "(1 ? this.fn : 2)" => "this.fn"
+            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+            if is_call_target && e_.yes.has_value_for_this_in_call() {
+                *e = p
+                    .new_expr(E::Number::new(0.0), e_.test.loc)
+                    .join_with_comma(e_.yes);
+                return;
+            }
+
+            *e = e_.yes;
+        } else {
+            // "false ? dead : live"
+            let old = p.is_control_flow_dead;
+            p.is_control_flow_dead = true;
+            p.visit_expr(&mut e_.yes);
+            p.is_control_flow_dead = old;
+            p.visit_expr(&mut e_.no);
+
+            // "(a, false) ? b : c" => "a, c"
+            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+                *e = SideEffects::simplify_unused_expr(p, e_.test)
+                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
+                    .join_with_comma(e_.no);
+                return;
+            }
+
+            // "(1 ? fn : 2)()" => "fn()"
+            // "(1 ? this.fn : 2)" => "this.fn"
+            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+            if is_call_target && e_.no.has_value_for_this_in_call() {
+                *e = p
+                    .new_expr(E::Number::new(0.0), e_.test.loc)
+                    .join_with_comma(e_.no);
+                return;
+            }
+            *e = e_.no;
         }
     }
 
@@ -1689,9 +1712,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .data
                         .e_string()
                         .expect("infallible: variant checked")
-                        .data
-                        == b"__proto__"
-                // __proto__ is utf8, assume it lives in refs
+                        .eql_comptime(b"__proto__")
                 {
                     if has_proto {
                         let r = js_lexer::range_of_identifier(p.source, key.loc);
@@ -1742,8 +1763,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && matches!(key.data, Data::EString(..))
                 {
                     let key_str = key.data.e_string().expect("infallible: variant checked");
-                    // PORT NOTE: Zig `string(arena)` transcodes UTF-16; while
-                    // E.rs has duplicate impls (E0034), reach the bytes directly
+                    // While E.rs has duplicate impls (E0034), reach the bytes directly
                     // — class-name keys are parser-produced (UTF-8, no rope).
                     p.decorator_class_name = if !key_str.is_utf16 {
                         Some(key_str.data.slice())
@@ -1821,12 +1841,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //
         // const binding = await import(`./${process.platform}-${process.arch}.node`);
         //
-        // PORT NOTE: Zig `defer` restores at scope exit; restored manually before each return.
+        // Restored manually before each return.
         let prev_should_fold_typescript_constant_expressions = true;
         p.should_fold_typescript_constant_expressions = true;
 
         p.visit_expr(&mut e_.expr);
         p.visit_expr(&mut e_.options);
+
+        // Already transposed (this is a re-visit, e.g. after the minifier
+        // substituted the expression into a later use): the import record and
+        // its namespace tracking stand; transposing again would mint a second
+        // record for the same call.
+        if e_.import_record_index != u32::MAX {
+            p.should_fold_typescript_constant_expressions =
+                prev_should_fold_typescript_constant_expressions;
+            return;
+        }
 
         // Import transposition is able to duplicate the options structure, so
         // only perform it if the expression is side effect free.
@@ -1845,14 +1875,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         Data::EImport(nt) if core::ptr::eq(&raw const *e_, &raw const *nt)
                     ),
                 import_options: e_.options,
-                loc: e_.expr.loc,
+                loc: e.loc,
                 import_loader: e_.import_record_loader(),
                 ..Default::default()
             };
 
             p.should_fold_typescript_constant_expressions =
                 prev_should_fold_typescript_constant_expressions;
-            *e = p.maybe_transpose_if_import(e_.expr, &state);
+            if let Some(transposed) = p.maybe_transpose_if_import(e_.expr, &state) {
+                *e = transposed;
+            }
             return;
         }
         p.should_fold_typescript_constant_expressions =
@@ -1873,18 +1905,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
-        let has_chain_parent = e_.optional_chain == Some(js_ast::OptionalChain::Continuation);
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                has_chain_parent,
                 property_access_for_method_call_maybe_should_replace_with_undefined: true,
                 ..Default::default()
             },
         );
 
         // Copy the call side effect flag over if this is a known target
-        // PORT NOTE: copy the small inline payloads out first so the `match &e_.target.data`
+        // copy the small inline payloads out first so the `match &e_.target.data`
         // borrow doesn't overlap the `e_.can_be_unwrapped_if_unused = …` write below.
         match e_.target.data {
             Data::EIdentifier(ident) => {
@@ -1919,8 +1949,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.record_usage(p.exports_ref);
                     }
 
-                    // PORT NOTE: `Scope.parent: ?*Scope` in Zig is `Option<StoreRef<Scope>>` here;
-                    // walk via the safe arena back-pointer.
+                    // Walk `Scope.parent` (`Option<StoreRef<Scope>>`) via the safe
+                    // arena back-pointer.
                     let mut scope_iter: Option<js_ast::StoreRef<js_ast::Scope>> =
                         Some(p.current_scope);
                     while let Some(mut scope) = scope_iter {
@@ -1939,6 +1969,126 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             _ => {}
+        }
+
+        // `Promise.all([import("a"), …]).then(([{x}, ns]) => …)`
+        'promise_all_then: {
+            if !p.options.bundle {
+                break 'promise_all_then;
+            }
+            let Data::EDot(dot) = e_.target.data else {
+                break 'promise_all_then;
+            };
+            if dot.name.slice() != b"then" || dot.optional_chain.is_some() {
+                break 'promise_all_then;
+            }
+            let Data::ECall(inner) = dot.target.data else {
+                break 'promise_all_then;
+            };
+            let Some(items) = p.promise_all_import_items(&inner) else {
+                break 'promise_all_then;
+            };
+            let args = e_.args.slice();
+            if args.is_empty() || args.len() > 2 {
+                break 'promise_all_then;
+            }
+            let Data::EArrow(arrow) = args[0].data else {
+                break 'promise_all_then;
+            };
+            if arrow.has_rest_arg {
+                break 'promise_all_then;
+            }
+            let fn_args = arrow.args.slice();
+            match fn_args.first() {
+                None => {
+                    for item in items.items.slice() {
+                        if let Data::EImport(im) = item.data {
+                            if im.namespace_ref.is_valid() {
+                                p.note_tracked_namespace_use(im.namespace_ref);
+                            }
+                        }
+                    }
+                }
+                Some(first) => {
+                    if first.default.is_some() {
+                        break 'promise_all_then;
+                    }
+                    let js_ast::binding::Data::BArray(pattern) = first.binding.data else {
+                        break 'promise_all_then;
+                    };
+                    p.track_promise_all_destructure(items, &pattern);
+                }
+            }
+        }
+
+        // `import("str").then(<fn>)` — record which exports the callback
+        // observes so the linker can drop the rest. The call is left as written.
+        'dyn_import_then: {
+            if !p.options.bundle {
+                break 'dyn_import_then;
+            }
+            let Data::EDot(dot) = e_.target.data else {
+                break 'dyn_import_then;
+            };
+            if dot.name.slice() != b"then" {
+                break 'dyn_import_then;
+            }
+            let Data::EImport(im) = dot.target.data else {
+                break 'dyn_import_then;
+            };
+            if !im.namespace_ref.is_valid() {
+                break 'dyn_import_then;
+            }
+            let args = e_.args.slice();
+            if args.is_empty() || args.len() > 2 {
+                break 'dyn_import_then;
+            }
+            // Only arrows are safe: a `function(m){…}` body can reach the
+            // namespace via `arguments[0]` without ever referencing `m`.
+            let Data::EArrow(arrow) = args[0].data else {
+                break 'dyn_import_then;
+            };
+            // `(...ns) => …` binds `ns` to `[namespace]`, not the namespace.
+            if arrow.has_rest_arg {
+                break 'dyn_import_then;
+            }
+            match arrow.args.slice().first() {
+                None => {
+                    // `.then(() => …)` — no exports observed.
+                    p.note_tracked_namespace_use(im.namespace_ref);
+                }
+                Some(first_param) => {
+                    if first_param.default.is_some() {
+                        break 'dyn_import_then;
+                    }
+                    match first_param.binding.data {
+                        js_ast::binding::Data::BObject(obj) => {
+                            if p.try_track_dynamic_import_destructure(
+                                im.namespace_ref,
+                                &[im.import_record_index],
+                                obj.properties(),
+                                false,
+                            )
+                            .is_some()
+                            {
+                                p.note_tracked_namespace_use(im.namespace_ref);
+                                p.note_destructured_locals(obj.properties());
+                            }
+                        }
+                        js_ast::binding::Data::BIdentifier(id) => {
+                            // The body is visited *after* this block so the
+                            // registration is observed there.
+                            p.register_dynamic_import_namespace_local(
+                                id.r#ref,
+                                first_param.binding.loc,
+                                im.import_record_index,
+                            );
+                            p.note_tracked_namespace_use(im.namespace_ref);
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
 
         let is_macro_ref: bool = if Self::ALLOW_MACROS {
@@ -1961,7 +2111,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         {
             let old_ce = p.options.ignore_dce_annotations;
-            // PORT NOTE: Zig `defer` restores at scope exit; do it manually below.
+            // Restored manually below.
             let old_should_fold_typescript_constant_expressions =
                 p.should_fold_typescript_constant_expressions;
             let old_is_control_flow_dead = p.is_control_flow_dead;
@@ -2006,7 +2156,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_expr(arg);
             }
 
-            // Restore deferred state (Zig `defer`).
+            // Restore saved state.
             p.options.ignore_dce_annotations = old_ce;
             p.should_fold_typescript_constant_expressions =
                 old_should_fold_typescript_constant_expressions;
@@ -2042,6 +2192,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let state = TransposeState {
                     is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
                         && matches!(first.data, Data::EString(..)),
+                    loc: expr.loc,
                     ..Default::default()
                 };
                 match &first.data {
@@ -2053,7 +2204,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     Data::EIf(..) => {
                         // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                         // This makes static analysis later easier
-                        *e = p.transpose_known_to_be_if_require(first, &state);
+                        if let Some(transposed) = p.maybe_transpose_if_require(first, &state) {
+                            *e = transposed;
+                        }
                         return;
                     }
                     _ => {}
@@ -2103,7 +2256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     Data::EString(..) => {
                         // require.resolve(FOO) => require.resolve(FOO)
                         // (this will register dependencies)
-                        *e = p.transpose_require_resolve_known_string(first);
+                        *e = p.transpose_require_resolve_known_string(first, expr.loc);
                         return;
                     }
                     Data::EIf(..) => {
@@ -2111,7 +2264,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         //  =>
                         // FOO ? require.resolve('123') : require.resolve('456')
                         // This makes static analysis later easier
-                        *e = p.transpose_known_to_be_if_require_resolve(first, e_.target);
+                        if let Some(transposed) =
+                            p.maybe_transpose_if_require_resolve(first, e_.target)
+                        {
+                            *e = transposed;
+                        }
                         return;
                     }
                     _ => {}
@@ -2144,7 +2301,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if Self::ALLOW_MACROS {
-            if is_macro_ref && !p.options.features.is_macro_runtime {
+            // After a stack overflow, some arguments weren't visited, so don't run the macro.
+            if is_macro_ref
+                && !p.options.features.is_macro_runtime
+                && !p.reported_stack_overflow.get()
+            {
                 let ref_ = match &e_.target.data {
                     Data::EImportIdentifier(ident) => ident.ref_,
                     Data::EDot(dot) => {
@@ -2202,7 +2363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.macro_call_count += 1;
                 // Reborrow via the field-disjoint `Lexer::log()` accessor
                 // so `&p.lexer` and `&mut p.options` split cleanly under
-                // borrowck — Zig held two raw `*Log`.
+                // borrowck.
                 let log = p.lexer.log();
                 let source = p.source;
                 let macro_result = match p
@@ -2220,21 +2381,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         name,
                     ) {
                     Ok(r) => r,
-                    Err(err) => {
-                        if err == bun_core::err!("MacroFailed") {
-                            if p.log().msgs.len() == start_error_count {
-                                p.log().add_error(
-                                    Some(p.source),
-                                    expr.loc,
-                                    b"macro threw exception",
-                                );
-                            }
-                        } else {
-                            p.log().add_error_fmt(
-                                Some(p.source),
-                                expr.loc,
-                                format_args!("\"{}\" error in macro", err.name()),
-                            );
+                    Err(_) => {
+                        if p.log().msgs.len() == start_error_count {
+                            p.log()
+                                .add_error(Some(p.source), expr.loc, b"macro threw exception");
                         }
                         return;
                     }
@@ -2255,10 +2405,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //
         // When we see a hook call, we need to hash it, and then mark a flag so that if
         // it is assigned to a variable, that variable also get's hashed.
-        //
-        // PORT NOTE: `Runtime::Features.server_components` is a `bool` stub; the
-        // full Zig type is `enum { off, client, server }` with `.isServerSide()`. Treat
-        // `true` as server-side until the enum lands.
         if p.options.features.react_fast_refresh
             || p.options.features.server_components.is_server_side()
         {
@@ -2331,16 +2477,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let str_ = target_str.data;
                         let arg1 = e_.args.at(0).unwrap_inlined();
                         if let Data::ENumber(n) = &arg1.data {
-                            let float = n.value;
+                            let float = n.value();
                             if float % 1.0 == 0.0 && float < (str_.len() as f64) && float >= 0.0 {
                                 let char_ = str_[float as usize];
                                 if char_ < 0x80 {
-                                    *e = p.new_expr(
-                                        E::Number {
-                                            value: f64::from(char_),
-                                        },
-                                        expr.loc,
-                                    );
+                                    *e = p.new_expr(E::Number::new(f64::from(char_)), expr.loc);
                                     return;
                                 }
                             }
@@ -2464,28 +2605,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        // Zig: `std.mem.toBytes(...)` then `bytesToValue(...)` to save/restore. In Rust the struct
-        // is `Copy`/`Clone`, so just copy it.
-        // PORT NOTE: reshaped — toBytes/bytesToValue → plain copy.
+        // The struct is `Copy`, so save/restore is a plain copy.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
         p.fn_or_arrow_data_visit = FnOrArrowDataVisit {
-            is_arrow: true,
-            is_async: e_.is_async,
             ..Default::default()
         };
 
-        // Mark if we're inside an async arrow function. This value should be true
-        // even if we're inside multiple arrow functions and the closest inclosing
-        // arrow function isn't async, as long as at least one enclosing arrow
-        // function within the current enclosing function is async.
-        let old_inside_async_arrow_fn = p.fn_only_data_visit.is_inside_async_arrow_fn;
-        p.fn_only_data_visit.is_inside_async_arrow_fn =
-            e_.is_async || p.fn_only_data_visit.is_inside_async_arrow_fn;
-
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
-        // PERF(port): was arena dupe — profile if it shows up on a hot path
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
+        let prev_may_replace_body =
+            p.enter_react_compiler_candidate(None, e_.has_react_hooks_suppression, dupe);
 
         let args_mut: &mut [G::Arg] = e_.args.slice_mut();
         p.visit_args(
@@ -2499,33 +2629,60 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionBody, e_.body.loc)
             .expect("unreachable");
 
-        // Zig: `const prev = p.react_refresh.hook_ctx_storage; defer ... = prev; ... = &react_hook_data;`
-        // hook_ctx_storage is a raw NonNull so a stack local is fine; we manually restore `prev`
-        // on every exit path below (Zig used `defer`).
+        // hook_ctx_storage is a raw NonNull so a stack local is fine; we manually
+        // restore `prev` on every exit path below.
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
-        // TODO(port): Zig `ListManaged(Stmt).fromOwnedSlice(p.arena, dupe)` takes ownership of
-        // the arena slice without copying. bumpalo Vec cannot adopt an existing slice; a custom
-        // arena Vec that can would avoid this copy. Left as a copy with PERF note.
-        // PERF(port): was fromOwnedSlice (no copy) — profile if it shows up on a hot path
+        // bumpalo Vec cannot adopt an existing slice, so this copies.
+        // PERF: profile if it shows up on a hot path (react-refresh only).
         let mut stmts_list = bun_alloc::vec_from_iter_in(dupe.iter().copied(), p.arena);
         let mut temp_opts = PrependTempRefsOpts {
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
+        let rc_binding = p.react_compiler_candidate_name.take();
+        if rc_binding.is_some() {
+            let mut flags = bun_ast::flags::FUNCTION_NONE;
+            if e_.is_async {
+                flags |= bun_ast::flags::Function::IsAsync;
+            }
+            if e_.has_rest_arg {
+                flags |= bun_ast::flags::Function::HasRestArg;
+            }
+            if e_.has_react_hooks_suppression {
+                flags |= bun_ast::flags::Function::HasReactHooksSuppression;
+            }
+            p.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
+                args: e_.args,
+                flags,
+                body_loc: e_.body.loc,
+                args_loc: e_.body.loc,
+                binding: rc_binding,
+                in_react_hoc: core::mem::take(&mut p.react_compiler_in_react_hoc),
+            });
+        }
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
             .expect("unreachable");
-        // Zig: `p.arena.free(e_.body.stmts)` — arena-backed, no individual free in Rust.
+        p.react_compiler_pending = None;
+        if let Some(result) = p.react_compiler_result.take() {
+            e_.args = result.args;
+            e_.is_async = result.flags.contains(bun_ast::flags::Function::IsAsync);
+            e_.has_rest_arg = result.flags.contains(bun_ast::flags::Function::HasRestArg);
+            e_.prefer_expr = false;
+            if let Some(b) = rc_binding.filter(|r| *r != js_ast::Ref::NONE) {
+                p.record_usage(b);
+            }
+        }
         p.pop_scope();
         p.pop_scope();
 
-        p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
+        p.react_compiler_may_replace_body = prev_may_replace_body;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
-        // Zig: defer p.react_refresh.hook_ctx_storage = prev — restore before any further `p.*`
-        // call so the stack-local pointer never escapes this frame.
+        // Restore before any further `p.*` call so the stack-local pointer
+        // never escapes this frame.
         p.react_refresh.hook_ctx_storage = prev_hook_ctx;
 
         if let Some(hook) = react_hook_data.as_mut() {
@@ -2543,6 +2700,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
         }
+
+        // Collapse a single-`return` body to a shorthand expression body when
+        // minifying syntax while bundling: `(a) => { return a; }` becomes
+        // `(a) => a`. The printer (see js_printer EArrow) emits the shorthand
+        // when `prefer_expr` is set and the lone statement is a `return` with a
+        // value. A bare `return;` (no value) keeps the block body.
+        //
+        // Gated on `bundle` like the `e_function` name-drop below: the runtime
+        // transpiler forces `minify_syntax` on for `target.is_bun()`
+        // (see bundler/options.rs), so without this guard the collapse would
+        // also run for `bun run`/`bun test` and change an arrow's
+        // `Function.prototype.toString()` output.
+        if p.options.features.minify_syntax
+            && p.options.bundle
+            && stmts_list.len() == 1
+            && matches!(
+                stmts_list[0].data,
+                js_ast::StmtData::SReturn(ret) if ret.value.is_some(),
+            )
+        {
+            e_.prefer_expr = true;
+        }
+
         e_.body.stmts = bun_ast::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
@@ -2554,18 +2734,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        // Zig: `const prev = p.react_refresh.hook_ctx_storage; defer ... = prev; ... = &react_hook_data;`
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
-        p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
+        // A method cannot be wrapped in a call. Like react-refresh/babel, ignore its hook calls.
+        let is_method = e_
+            .func
+            .flags
+            .contains(Flags::Function::IsUniqueFormalParameters);
+        p.react_refresh.hook_ctx_storage = if is_method {
+            None
+        } else {
+            Some(core::ptr::NonNull::from(&mut react_hook_data))
+        };
 
-        // Spec (visitExpr.zig e_function): visitFunc(e_.func, expr.loc) — for function
-        // *expressions* the .function_args scope is pushed at the `function` keyword loc
-        // (parseFn.zig:364), not at open_parens_loc. (s_function correctly uses open_parens_loc.)
-        e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc);
+        // For function *expressions* the .function_args scope is pushed at the
+        // `function` keyword loc, not at open_parens_loc. (s_function correctly
+        // uses open_parens_loc.)
+        e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc, true);
 
-        // Zig: defer p.react_refresh.hook_ctx_storage = prev — restore now so the stack-local
-        // pointer never escapes this frame.
+        // Restore now so the stack-local pointer never escapes this frame.
         p.react_refresh.hook_ctx_storage = prev_hook_ctx;
 
         // Remove unused function names when minifying (only when bundling is enabled)
@@ -2576,8 +2763,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval
             && e_.func.name.is_some()
-            && e_.func.name.unwrap().ref_.is_some()
-            && p.symbols[e_.func.name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]
+            && !e_.func.name.unwrap().ref_.is_empty()
+            && p.symbols[e_.func.name.unwrap().ref_.inner_index() as usize]
                 .use_count_estimate
                 == 0
         {
@@ -2603,7 +2790,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             final_expr = p.keep_expr_symbol_name(
                 final_expr,
                 // SAFETY: original_name is arena-owned, valid for 'a.
-                p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
+                p.symbols[name.ref_.inner_index() as usize]
                     .original_name
                     .slice(),
             );
@@ -2629,13 +2816,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let decorator_name_from_context = p.decorator_class_name;
         p.decorator_class_name = None;
 
-        // Zig: `p.visitClass(expr.loc, e_, Ref.None)`
-        let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE);
+        let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE, true);
 
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {
-            *e = p.lower_standard_decorators_expr(&mut e_, expr.loc, decorator_name_from_context);
+            *e = p.lower_standard_decorators_expr(expr, &mut e_, decorator_name_from_context);
             return;
+        }
+
+        // Only `lower_class` removes decorated `declare` and `abstract` fields, and it only runs for
+        // class statements. Remove them here because the printer can't print them.
+        if TYPESCRIPT && e_.has_decorators {
+            let properties = e_.properties.slice_mut();
+            let mut end: usize = 0;
+            for i in 0..properties.len() {
+                if matches!(
+                    properties[i].kind,
+                    G::PropertyKind::Declare | G::PropertyKind::Abstract
+                ) {
+                    continue;
+                }
+                properties.swap(end, i);
+                end += 1;
+            }
+            e_.properties.truncate(end);
         }
 
         // Remove unused class names when minifying (only when bundling is enabled)
@@ -2646,8 +2850,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval
             && e_.class_name.is_some()
-            && e_.class_name.unwrap().ref_.is_some()
-            && p.symbols[e_.class_name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]
+            && !e_.class_name.unwrap().ref_.is_empty()
+            && p.symbols[e_.class_name.unwrap().ref_.inner_index() as usize]
                 .use_count_estimate
                 == 0
         {

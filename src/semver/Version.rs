@@ -9,17 +9,16 @@ use crate::String as SemverString;
 use crate::query::token::Wildcard;
 
 pub type Version = VersionType<u64>;
-pub type OldV2Version = VersionType<u32>;
 
 // ──────────────────────────────────────────────────────────────────────────
-// VersionInt — trait capturing the operations the Zig generic needed on
-// `comptime IntType: type`. Only u32 and u64 are instantiated.
+// VersionInt — trait capturing the operations the generic version type needs
+// from its integer parameter. Only u32 and u64 are instantiated.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait VersionInt: Copy + Default + Eq + Ord + fmt::Display + 'static {
     const ZERO: Self;
     const MAX: Self;
-    /// Zig: `_tag_padding: [if (IntType == u32) 4 else 0]u8` — explicit zeroed
+    /// Explicit zeroed
     /// padding so lockfile byte-serialization is deterministic.
     type TagPadding: Copy + Default + 'static;
     fn parse_ascii(s: &[u8]) -> Option<Self>;
@@ -31,7 +30,6 @@ impl VersionInt for u64 {
     type TagPadding = [u8; 0];
     #[inline]
     fn parse_ascii(s: &[u8]) -> Option<Self> {
-        // Semantics match Zig `std.fmt.parseUnsigned(u64, s, 10) catch null`:
         // None for empty, any non-[0-9] byte, or overflow. Callers rely on
         // the non-digit None case for pre-release identifier ordering
         // (semver identifiers are `[0-9A-Za-z-]+`, so `_` never appears).
@@ -59,15 +57,14 @@ pub struct VersionType<T: VersionInt> {
     pub major: T,
     pub minor: T,
     pub patch: T,
-    // Zig: `_tag_padding: [if (IntType == u32) 4 else 0]u8 = .{0} ** ...` —
-    // explicit zeroed bytes so the alignment gap before `tag` is deterministic
-    // for lockfile serialization (see padding_checker.zig).
+    // Explicit zeroed bytes so the alignment gap before `tag` is deterministic
+    // for lockfile serialization.
     #[doc(hidden)]
     pub _tag_padding: T::TagPadding,
     pub tag: Tag,
 }
 
-// Layout must match Zig `extern struct` exactly (lockfile binary format).
+// Layout is load-bearing (lockfile binary format).
 const _: () = {
     assert!(core::mem::size_of::<Tag>() == 32);
     assert!(core::mem::align_of::<Tag>() == 8);
@@ -104,17 +101,61 @@ impl VersionType<u32> {
     }
 }
 
+impl VersionType<u64> {
+    /// node-semver's `semver.coerce(text)`: returns the first thing in `text` that looks like a
+    /// version, up to its third number. Returns `None` where node-semver returns `null`: nothing
+    /// looks like a version, or one of the numbers has a leading zero or is above
+    /// `Number.MAX_SAFE_INTEGER`.
+    pub fn coerce(text: &[u8]) -> Option<Self> {
+        /// `MAX_SAFE_COMPONENT_LENGTH`
+        const LONGEST: usize = 16;
+        const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+        fn digits(text: &[u8]) -> usize {
+            text.iter().take_while(|it| it.is_ascii_digit()).count()
+        }
+        /// Matches `(?:\.(\d{1,16}))?` followed by a non-digit. Returns the digits and the text
+        /// after them.
+        fn part(text: &[u8]) -> Option<(&[u8], &[u8])> {
+            let text = text.strip_prefix(b".")?;
+            let length = digits(text);
+            (1..=LONGEST)
+                .contains(&length)
+                .then(|| text.split_at(length))
+        }
+        fn number(digits: &[u8]) -> Option<u64> {
+            if matches!(digits, [b'0', _, ..]) {
+                return None;
+            }
+            u64::parse_ascii(digits).filter(|it| *it <= MAX_SAFE_INTEGER)
+        }
+        let mut rest = text;
+        loop {
+            // A number starts where the previous character isn't a digit. A number that's too long
+            // is skipped.
+            let start = rest.iter().take_while(|it| !it.is_ascii_digit()).count();
+            let (_, from) = rest.split_at(start);
+            let (major, after) = from.split_at(digits(from));
+            if major.is_empty() {
+                return None;
+            }
+            if major.len() > LONGEST {
+                rest = after;
+                continue;
+            }
+            let minor = part(after);
+            let patch = minor.and_then(|it| part(it.1));
+            return Some(Self {
+                major: number(major)?,
+                minor: minor.map_or(Some(0), |it| number(it.0))?,
+                patch: patch.map_or(Some(0), |it| number(it.0))?,
+                ..Default::default()
+            });
+        }
+    }
+}
+
 impl<T: VersionInt> VersionType<T> {
-    /// Assumes that there is only one buffer for all the strings
-    pub fn sort_gt(ctx: &[u8], lhs: Self, rhs: Self) -> bool {
-        Self::order_fn(ctx, lhs, rhs) == Ordering::Greater
-    }
-
-    pub fn order_fn(ctx: &[u8], lhs: Self, rhs: Self) -> Ordering {
-        lhs.order(rhs, ctx, ctx)
-    }
-
-    pub fn is_zero(self) -> bool {
+    pub(crate) fn is_zero(self) -> bool {
         self.patch == T::ZERO && self.minor == T::ZERO && self.major == T::ZERO
     }
 
@@ -122,19 +163,25 @@ impl<T: VersionInt> VersionType<T> {
         Self::parse(SlicedString { buf: slice, slice })
     }
 
-    pub fn clone_into(self, slice: &[u8], buf: &mut &mut [u8]) -> Self {
+    /// Parses one complete version and nothing else, apart from surrounding whitespace. Rejects
+    /// ranges, wildcards, missing parts and trailing bytes.
+    pub fn parse_exact(sliced_string: SlicedString) -> Option<Self> {
+        let trimmed = strings::trim(sliced_string.slice, &strings::WHITESPACE_CHARS);
+        let parsed = Self::parse(sliced_string.sub(trimmed));
+        (parsed.valid && parsed.wildcard == Wildcard::None && parsed.len as usize == trimmed.len())
+            .then(|| parsed.version.min())
+    }
+
+    /// Copies the tag strings into `buf` at `*offset` (advancing it); the
+    /// returned version's strings are offsets into the whole of `buf`.
+    pub fn clone_into(self, slice: &[u8], buf: &mut [u8], offset: &mut usize) -> Self {
         Self {
             major: self.major,
             minor: self.minor,
             patch: self.patch,
             _tag_padding: Default::default(),
-            tag: self.tag.clone_into(slice, buf),
+            tag: self.tag.clone_into(slice, buf, offset),
         }
-    }
-
-    #[inline]
-    pub fn len(&self) -> u32 {
-        (self.tag.build.len() + self.tag.pre.len()) as u32
     }
 
     pub fn fmt<'a>(self, input: &'a [u8]) -> Formatter<'a, T> {
@@ -255,8 +302,8 @@ impl<T: VersionInt> VersionType<T> {
                     | b'\t'
                     | b'\n'
                     | b'\r'
-                    | 0x0B // std.ascii.control_code.vt
-                    | 0x0C // std.ascii.control_code.ff
+                    | 0x0B // vertical tab
+                    | 0x0C // form feed
 
                     // version separators
                     | b'v'
@@ -419,7 +466,7 @@ impl<T: VersionInt> VersionType<T> {
         true
     }
 
-    pub fn order_without_tag(lhs: Self, rhs: Self) -> Ordering {
+    pub(crate) fn order_without_tag(lhs: Self, rhs: Self) -> Ordering {
         if lhs.major < rhs.major {
             return Ordering::Less;
         }
@@ -484,7 +531,7 @@ impl<T: VersionInt> VersionType<T> {
         }
         let mut is_done = false;
 
-        let mut i: usize = 0;
+        let mut i: usize = input.len();
 
         for c in 0..input.len() {
             match input[c] {
@@ -493,8 +540,8 @@ impl<T: VersionInt> VersionType<T> {
                 | b'\t'
                 | b'\n'
                 | b'\r'
-                | 0x0B // std.ascii.control_code.vt
-                | 0x0C // std.ascii.control_code.ff
+                | 0x0B // vertical tab
+                | 0x0C // form feed
 
                 // version separators
                 | b'v'
@@ -508,6 +555,8 @@ impl<T: VersionInt> VersionType<T> {
 
         if i == input.len() {
             result.valid = false;
+            result.wildcard = Wildcard::Major;
+            result.len = u32::try_from(i).expect("int cast");
             return result;
         }
 
@@ -537,23 +586,23 @@ impl<T: VersionInt> VersionType<T> {
 
                     last_char_i = i;
 
-                    match part_i {
-                        0 => {
-                            result.version.major =
-                                Self::parse_version_number(&input[part_start_i..last_char_i]);
-                            part_i = 1;
+                    if part_i < 3 {
+                        let number = Self::parse_version_number(&input[part_start_i..last_char_i]);
+                        if number.is_none() {
+                            result.valid = false;
+                            // A range ignores a number after a wildcard, so keep reading the token.
+                            if result.wildcard == Wildcard::None {
+                                result.overflow = true;
+                                is_done = true;
+                                break;
+                            }
                         }
-                        1 => {
-                            result.version.minor =
-                                Self::parse_version_number(&input[part_start_i..last_char_i]);
-                            part_i = 2;
+                        match part_i {
+                            0 => result.version.major = number,
+                            1 => result.version.minor = number,
+                            _ => result.version.patch = number,
                         }
-                        2 => {
-                            result.version.patch =
-                                Self::parse_version_number(&input[part_start_i..last_char_i]);
-                            part_i = 3;
-                        }
-                        _ => {}
+                        part_i += 1;
                     }
 
                     if i < input.len()
@@ -571,24 +620,27 @@ impl<T: VersionInt> VersionType<T> {
                     is_done = true;
                     break;
                 }
-                b'-' | b'+' => {
-                    // Just a plain tag with no version is invalid.
-                    if part_i < 2 && result.wildcard == Wildcard::None {
+                c @ (b'-' | b'+') => {
+                    // A tag must follow a version number. A `-` needs two numbers before it, so
+                    // that `1-2` is left to the range parser, which reads it as `1 - 2`.
+                    let fewest_parts = if c == b'+' { 1 } else { 2 };
+                    if part_i < fewest_parts && result.wildcard == Wildcard::None {
                         result.valid = false;
                         is_done = true;
                         break;
                     }
 
                     part_start_i = i;
-                    while i < input.len() && matches!(input[i], b' ') {
-                        i += 1;
-                    }
                     let tag_result = Tag::parse(sliced_string.sub(&input[part_start_i..]));
                     result.version.tag = tag_result.tag;
                     i += tag_result.len as usize;
                     break;
                 }
                 b'x' | b'*' | b'X' => {
+                    // `2x` and `1.2x` are not `2.x` and `1.2.x`.
+                    if i > 0 && input[i - 1].is_ascii_digit() {
+                        result.valid = false;
+                    }
                     i += 1;
 
                     while i < input.len() && matches!(input[i], b'x' | b'*' | b'X') {
@@ -647,6 +699,8 @@ impl<T: VersionInt> VersionType<T> {
         if result.wildcard == Wildcard::None {
             match part_i {
                 0 => {
+                    // Nothing was read, so a valid `Wildcard::Major` is always a written `x`, `X` or `*`.
+                    result.valid = false;
                     result.wildcard = Wildcard::Major;
                 }
                 1 => {
@@ -664,52 +718,12 @@ impl<T: VersionInt> VersionType<T> {
         result
     }
 
+    /// `None` when the number is above `T::MAX`.
     fn parse_version_number(input: &[u8]) -> Option<T> {
-        // max decimal u64 is 18446744073709551615
-        let mut bytes = [0u8; 20];
-        let mut byte_i: u8 = 0;
-
-        debug_assert!(input[0] != b'.');
-
-        for &char in input {
-            match char {
-                b'X' | b'x' | b'*' => return None,
-                b'0'..=b'9' => {
-                    // out of bounds
-                    if (byte_i as usize) + 1 > bytes.len() {
-                        return None;
-                    }
-                    bytes[byte_i as usize] = char;
-                    byte_i += 1;
-                }
-                b' ' | b'.' => break,
-                // ignore invalid characters
-                _ => {}
-            }
-        }
-
-        // If there are no numbers
-        if byte_i == 0 {
-            return None;
-        }
-
-        if cfg!(debug_assertions) {
-            return match T::parse_ascii(&bytes[0..byte_i as usize]) {
-                Some(v) => Some(v),
-                None => {
-                    // TODO(port): Output.prettyErrorln with @errorName — Rust parse
-                    // error doesn't carry a Zig-style tag name.
-                    bun_core::pretty_errorln!(
-                        "ERROR parsing version: \"{}\", bytes: {}",
-                        bstr::BStr::new(input),
-                        bstr::BStr::new(&bytes[0..byte_i as usize]),
-                    );
-                    Some(T::ZERO)
-                }
-            };
-        }
-
-        Some(T::parse_ascii(&bytes[0..byte_i as usize]).unwrap_or(T::ZERO))
+        // Callers slice `input` from the first digit to the first non-digit,
+        // so every byte is already `b'0'..=b'9'` and the slice is non-empty.
+        debug_assert!(!input.is_empty() && input.iter().all(u8::is_ascii_digit));
+        T::parse_ascii(input)
     }
 }
 
@@ -722,8 +736,8 @@ fn valid_pre_or_build_tag_character(c: u8) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct Formatter<'a, T: VersionInt> {
-    pub version: VersionType<T>,
-    pub input: &'a [u8],
+    pub(crate) version: VersionType<T>,
+    pub(crate) input: &'a [u8],
 }
 
 impl<'a, T: VersionInt> fmt::Display for Formatter<'a, T> {
@@ -750,10 +764,10 @@ impl<'a, T: VersionInt> fmt::Display for Formatter<'a, T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct DiffFormatter<'a, T: VersionInt> {
-    pub version: VersionType<T>,
-    pub buf: &'a [u8],
-    pub other: VersionType<T>,
-    pub other_buf: &'a [u8],
+    pub(crate) version: VersionType<T>,
+    pub(crate) buf: &'a [u8],
+    pub(crate) other: VersionType<T>,
+    pub(crate) other_buf: &'a [u8],
 }
 
 impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
@@ -778,8 +792,6 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
         )
         .unwrap_or(ChangedVersion::None);
 
-        // TODO(port): Output.prettyFmt is a comptime ANSI-tag expander. `pretty_fmt!`
-        // currently passes the literal through; the proc-macro substitution lands later.
         match diff {
             ChangedVersion::Major => write!(
                 writer,
@@ -854,7 +866,7 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
 
                 let mut first = true;
                 for (i, &c) in pre.iter().enumerate() {
-                    if !set_color && i < other_pre.len() && c != other_pre[i] {
+                    if !set_color && other_pre.get(i) != Some(&c) {
                         set_color = true;
                         writer.write_str(bun_core::pretty_fmt!("<r><b><red>", true))?;
                     }
@@ -881,7 +893,7 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
 
                 let mut first = true;
                 for (i, &c) in build.iter().enumerate() {
-                    if !set_color && i < other_build.len() && c != other_build[i] {
+                    if !set_color && other_build.get(i) != Some(&c) {
                         set_color = true;
                         writer.write_str(bun_core::pretty_fmt!("<r><b><red>", true))?;
                     }
@@ -893,14 +905,9 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
                 }
             } else {
                 if !set_color {
-                    write!(
-                        writer,
-                        concat!(bun_core::pretty_fmt!("<r><b><red>", true), "+{}"),
-                        self.version.tag.build.fmt(self.buf),
-                    )?;
-                } else {
-                    write!(writer, "+{}", self.version.tag.build.fmt(self.other_buf))?;
+                    writer.write_str(bun_core::pretty_fmt!("<r><b><red>", true))?;
                 }
+                write!(writer, "+{}", self.version.tag.build.fmt(self.buf))?;
             }
         }
 
@@ -989,10 +996,22 @@ pub struct Tag {
 // TODO: support multiple tags
 
 impl Tag {
-    pub fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
-        // TODO(port): Zig parameterized this on IntType (u32 vs u64). Only the
-        // u64 instantiation is used at runtime (OldV2Version is migration-only),
-        // so we hardcode u64 here.
+    /// `-0`, the lowest prerelease. For example, node-semver's `^1.2.3` is `>=1.2.3 <2.0.0-0`.
+    pub(crate) const ZERO_PRE: Tag = Tag {
+        pre: ExternalString {
+            value: SemverString {
+                bytes: [b'0', 0, 0, 0, 0, 0, 0, 0],
+            },
+            // Wyhash11::hash(0, b"0"), what `SlicedString::external` computes.
+            hash: 0xb8f8_325b_21a8_a1e5,
+        },
+        build: ExternalString {
+            value: SemverString::EMPTY,
+            hash: 0,
+        },
+    };
+
+    pub(crate) fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         let lhs_str = self.pre.slice(lhs_buf);
         let rhs_str = rhs.pre.slice(rhs_buf);
 
@@ -1055,7 +1074,7 @@ impl Tag {
         }
     }
 
-    pub fn order(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         if !self.pre.is_empty() && !rhs.pre.is_empty() {
             return self.order_pre(rhs, lhs_buf, rhs_buf);
         }
@@ -1068,7 +1087,7 @@ impl Tag {
         self.build.order(&rhs.build, lhs_buf, rhs_buf)
     }
 
-    pub fn order_without_build(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order_without_build(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         if !self.pre.is_empty() && !rhs.pre.is_empty() {
             return self.order_pre(rhs, lhs_buf, rhs_buf);
         }
@@ -1076,30 +1095,21 @@ impl Tag {
         self.pre.order(&rhs.pre, lhs_buf, rhs_buf)
     }
 
-    pub fn clone_into(self, slice: &[u8], buf: &mut &mut [u8]) -> Tag {
-        let pre: SemverString;
-        let build: SemverString;
-
-        if self.pre.is_inline() {
-            pre = self.pre.value;
-        } else {
-            let pre_slice = self.pre.slice(slice);
-            buf[..pre_slice.len()].copy_from_slice(pre_slice);
-            // PORT NOTE: reshaped for borrowck — Zig does
-            // `String.init(buf.*, buf.*[0..pre_slice.len])` then advances buf.
-            // We capture the init args before advancing.
-            pre = SemverString::init(buf, &buf[0..pre_slice.len()]);
-            *buf = &mut core::mem::take(buf)[pre_slice.len()..];
-        }
-
-        if self.build.is_inline() {
-            build = self.build.value;
-        } else {
-            let build_slice = self.build.slice(slice);
-            buf[..build_slice.len()].copy_from_slice(build_slice);
-            build = SemverString::init(buf, &buf[0..build_slice.len()]);
-            *buf = &mut core::mem::take(buf)[build_slice.len()..];
-        }
+    /// Copies `pre`/`build` into `buf` at `*offset` (advancing it); the
+    /// returned strings are offsets into the whole of `buf`.
+    pub fn clone_into(self, slice: &[u8], buf: &mut [u8], offset: &mut usize) -> Tag {
+        let mut copy = |s: ExternalString| -> SemverString {
+            if s.is_inline() {
+                return s.value;
+            }
+            let bytes = s.slice(slice);
+            let start = *offset;
+            *offset += bytes.len();
+            buf[start..*offset].copy_from_slice(bytes);
+            SemverString::init(buf, &buf[start..*offset])
+        };
+        let pre = copy(self.pre);
+        let build = copy(self.build);
 
         Tag {
             pre: ExternalString {
@@ -1127,11 +1137,14 @@ impl Tag {
         self.pre.hash == rhs.pre.hash
     }
 
-    pub fn parse(sliced_string: SlicedString) -> TagResult {
+    pub(crate) fn parse(sliced_string: SlicedString) -> TagResult {
         Self::parse_with_pre_count(sliced_string, 0)
     }
 
-    pub fn parse_with_pre_count(sliced_string: SlicedString, initial_pre_count: u32) -> TagResult {
+    pub(crate) fn parse_with_pre_count(
+        sliced_string: SlicedString,
+        initial_pre_count: u32,
+    ) -> TagResult {
         let input = sliced_string.slice;
         let mut build_count: u32 = 0;
         let mut pre_count: u32 = initial_pre_count;
@@ -1183,8 +1196,9 @@ impl Tag {
                         start = i + 1;
                     }
                 }
+                // Inside a prerelease or build metadata, `-` is an identifier character.
                 b'-' => {
-                    if state != State::Pre {
+                    if state == State::None {
                         state = State::Pre;
                         start = i + 1;
                     }
@@ -1204,12 +1218,6 @@ impl Tag {
                         }
                         State::Build => {
                             result.tag.build = sliced_string.sub(&input[start..i]).external();
-                            if cfg!(debug_assertions) {
-                                debug_assert!(!strings::contains_char(
-                                    result.tag.build.slice(sliced_string.buf),
-                                    b'-'
-                                ));
-                            }
                             state = State::None;
                         }
                     }
@@ -1245,8 +1253,8 @@ impl Tag {
 
 #[derive(Copy, Clone, Default)]
 pub struct TagResult {
-    pub tag: Tag,
-    pub len: u32,
+    pub(crate) tag: Tag,
+    pub(crate) len: u32,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1257,8 +1265,12 @@ pub struct TagResult {
 pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
+    /// A number before any wildcard is above `T::MAX`. The range parser reads this, not `valid`.
+    pub(crate) overflow: bool,
     pub version: Partial<T>,
-    pub len: u32,
+    /// Where parsing stopped. It's shorter than the input if trailing bytes aren't part of the
+    /// version.
+    pub(crate) len: u32,
 }
 
 impl<T: VersionInt> Default for ParseResult<T> {
@@ -1266,10 +1278,90 @@ impl<T: VersionInt> Default for ParseResult<T> {
         Self {
             wildcard: Wildcard::None,
             valid: true,
+            overflow: false,
             version: Partial::default(),
             len: 0,
         }
     }
 }
 
-// ported from: src/semver/Version.zig
+#[cfg(test)]
+mod tests {
+    use super::{Tag, Version};
+    use crate::sliced_string::SlicedString;
+
+    fn parse(s: &[u8]) -> Version {
+        let r = Version::parse(SlicedString::init(s, s));
+        assert!(r.valid);
+        r.version.min()
+    }
+
+    #[test]
+    fn zero_pre_is_a_parsed_dash_zero() {
+        let parsed = parse(b"1.0.0-0").tag;
+        assert_eq!(Tag::ZERO_PRE.pre.hash, parsed.pre.hash);
+        assert_eq!(Tag::ZERO_PRE.pre.value, parsed.pre.value);
+        assert!(!Tag::ZERO_PRE.has_build());
+    }
+
+    #[test]
+    fn clone_into_offsets_are_relative_to_the_whole_buffer() {
+        let a_src: &[u8] = b"1.0.0-canary.20240101+build.aaaaaaaa";
+        let b_src: &[u8] = b"1.0.0-canary.20240315+build.bbbbbbbb";
+        let a = parse(a_src);
+        let b = parse(b_src);
+
+        let mut buf = vec![0u8; 128];
+        let mut offset = 0usize;
+        let a2 = a.clone_into(a_src, &mut buf, &mut offset);
+        let b2 = b.clone_into(b_src, &mut buf, &mut offset);
+        assert_eq!(
+            offset,
+            2 * ("canary.20240101".len() + "build.aaaaaaaa".len())
+        );
+
+        assert_eq!(a2.tag.pre.slice(&buf), b"canary.20240101");
+        assert_eq!(a2.tag.build.slice(&buf), b"build.aaaaaaaa");
+        assert_eq!(b2.tag.pre.slice(&buf), b"canary.20240315");
+        assert_eq!(b2.tag.build.slice(&buf), b"build.bbbbbbbb");
+    }
+
+    /// The expected values are what node-semver 6.3.1 and 7.8.5 return.
+    #[test]
+    fn coerce() {
+        let cases: &[(&[u8], Option<[u64; 3]>)] = &[
+            (b"0", Some([0, 0, 0])),
+            (b"v1", Some([1, 0, 0])),
+            (b"x 16.3 y", Some([16, 3, 0])),
+            (b"16.3.0-alpha", Some([16, 3, 0])),
+            (b"1.2.3.4", Some([1, 2, 3])),
+            (b"1.2.3\n4", Some([1, 2, 3])),
+            (b"a1b2", Some([1, 0, 0])),
+            (b"1.", Some([1, 0, 0])),
+            (b"1..2", Some([1, 0, 0])),
+            (b".1", Some([1, 0, 0])),
+            (b"1.2.33333333333333333", Some([1, 2, 0])),
+            (b"1.22222222222222222.3", Some([1, 0, 0])),
+            (b"12345678901234567.1", Some([1, 0, 0])),
+            (b"99999999999999999.2.3 4.5", Some([2, 3, 0])),
+            (
+                b"1.2.3456789012345678.9",
+                Some([1, 2, 3_456_789_012_345_678]),
+            ),
+            (b"9007199254740991", Some([9_007_199_254_740_991, 0, 0])),
+            (b"9007199254740992", None),
+            (b"1.9007199254740992", None),
+            (b"01.2.3", None),
+            (b"1.02.3", None),
+            (b"1.2.03", None),
+            (b"00", None),
+            (b"", None),
+            (b"abc", None),
+            (b"12345678901234567", None),
+        ];
+        for (text, want) in cases {
+            let have = Version::coerce(text).map(|it| [it.major, it.minor, it.patch]);
+            assert_eq!(have, *want, "{}", bstr::BStr::new(text));
+        }
+    }
+}

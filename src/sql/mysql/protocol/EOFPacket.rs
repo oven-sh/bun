@@ -1,9 +1,9 @@
 use super::super::status_flags::StatusFlags;
-use super::new_reader::{NewReader, ReaderContext};
+use super::any_mysql_error::Error as AnyMySQLError;
+use super::stack_reader::PacketReader;
 
 pub struct EOFPacket {
-    pub header: u8,
-    pub warnings: u16,
+    pub(crate) header: u8,
     pub status_flags: StatusFlags,
 }
 
@@ -11,37 +11,20 @@ impl Default for EOFPacket {
     fn default() -> Self {
         Self {
             header: 0xfe,
-            warnings: 0,
             status_flags: StatusFlags::default(),
         }
     }
 }
 
 impl EOFPacket {
-    pub fn decode_internal<Context: ReaderContext>(
-        &mut self,
-        reader: NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn decode_internal(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         self.header = reader.int::<u8>()?;
         if self.header != 0xfe {
-            return Err(bun_core::err!("InvalidEOFPacket"));
+            return Err(AnyMySQLError::InvalidEOFPacket);
         }
 
-        self.warnings = reader.int::<u16>()?;
+        reader.int::<u16>()?; // warnings
         self.status_flags = StatusFlags::from_int(reader.int::<u16>()?);
         Ok(())
     }
 }
-
-// Zig: pub const decode = decoderWrap(EOFPacket, decodeInternal).decode;
-impl EOFPacket {
-    pub fn decode<Context: ReaderContext>(
-        &mut self,
-        context: Context,
-    ) -> Result<(), bun_core::Error> {
-        self.decode_internal(NewReader { wrapped: context })
-    }
-}
-
-// ported from: src/sql/mysql/protocol/EOFPacket.zig

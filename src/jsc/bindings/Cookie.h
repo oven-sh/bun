@@ -59,8 +59,6 @@ public:
 
     static ExceptionOr<Ref<Cookie>> parse(StringView cookieString);
 
-    static String serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies);
-
     const String& name() const { return m_name; }
 
     const String& value() const { return m_value; }
@@ -107,13 +105,12 @@ public:
 
     bool isExpired() const;
 
-    void appendTo(JSC::VM& vm, StringBuilder& builder) const;
-    String toString(JSC::VM& vm) const;
+    // Returns OutOfMemoryError if the Set-Cookie string exceeds the max string length.
+    ExceptionOr<String> toString(JSC::VM& vm) const;
     JSC::JSValue toJSON(JSC::VM& vm, JSC::JSGlobalObject*) const;
     size_t memoryCost() const;
 
     static bool isValidCookieName(const String& name);
-    static bool isValidCookieValue(const String& value); // values are uri component encoded, so this isn't needed
     static bool isValidCookiePath(const String& path);
     static bool isValidCookieDomain(const String& domain);
 
@@ -123,6 +120,9 @@ private:
         int64_t expires, bool secure, CookieSameSite sameSite,
         bool httpOnly, double maxAge, bool partitioned);
 
+    // `builder` must use OverflowPolicy::RecordOverflow, and the caller must check hasOverflowed().
+    void appendTo(JSC::VM& vm, StringBuilder& builder) const;
+
     String m_name;
     String m_value;
     String m_domain;
@@ -131,7 +131,7 @@ private:
     bool m_secure = false;
     CookieSameSite m_sameSite = CookieSameSite::Lax;
     bool m_httpOnly = false;
-    double m_maxAge = 0;
+    double m_maxAge = std::numeric_limits<double>::quiet_NaN();
     bool m_partitioned = false;
 };
 

@@ -2,11 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { describe, test } from "bun:test";
-import "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
   cssTest,
+  cssTestTodo,
   indoc,
   minify_error_test_with_options,
   minify_test,
@@ -96,6 +97,41 @@ describe("css tests", () => {
         padding: var(--custom-padding);
        }`,
     );
+
+    // Adjacent `/` and `*` delim tokens must not be printed as `/*` or `*/`
+    // when minifying, which would open/close a comment and swallow the rest of
+    // the stylesheet.
+    minify_test(":root { --a: x / * y }\n.k { color: red }", ":root{--a:x/ *y}.k{color:red}");
+    minify_test(":root { --a: x * / y }\n.k { color: red }", ":root{--a:x* /y}.k{color:red}");
+    minify_test(":root { --a: x / * / * y }", ":root{--a:x/ * / *y}");
+    minify_test(".foo { unknown-prop: a / * b }", ".foo{unknown-prop:a/ *b}");
+    minify_test(":root { --a: f(x / * y) }", ":root{--a:f(x/ *y)}");
+    minify_test(":root { --a: x / *= y }", ":root{--a:x/ *= y}");
+    // A lone `/` or `*` delim must still minify without extra whitespace.
+    minify_test(":root { --a: 16 / 9 }", ":root{--a:16/9}");
+    minify_test(":root { --a: x * y }", ":root{--a:x*y}");
+    minify_test(":root { --a: x / / y }", ":root{--a:x//y}");
+    // Non-minified output is unchanged.
+    cssTest(":root { --a: x / * y }", ":root {\n  --a: x / * y;\n}\n");
+
+    // Leading/trailing whitespace around a custom-property value is dropped.
+    minify_test(":root{--a: x}", ":root{--a:x}");
+    minify_test(":root{--a:x }", ":root{--a:x}");
+    minify_test(":root{--a: x }", ":root{--a:x}");
+    minify_test(":root{--a:x y}", ":root{--a:x y}");
+    minify_test(":root{--a: x y }", ":root{--a:x y}");
+    // A value that is only whitespace is preserved as a single space.
+    minify_test(":root{--a: }", ":root{--a: }");
+    minify_test(":root{--a:  }", ":root{--a: }");
+    // Same trimming applies inside function arguments.
+    minify_test(":root{--a:f(x y z)}", ":root{--a:f(x y z)}");
+    minify_test(":root{--a:f( x y z )}", ":root{--a:f(x y z)}");
+
+    // An rgb() whose alpha is only known at runtime is parsed into its channels
+    // and printed back from them, in order; the legacy comma form is not a color
+    // here and is left as written.
+    minify_test(":root{--a: rgb(4.7% 13.3% 22% / var(--alpha))}", ":root{--a:rgb(12 34 56/var(--alpha))}");
+    minify_test(":root{--a: rgb(12, 34, 56, var(--alpha))}", ":root{--a:rgb(12,34,56,var(--alpha))}");
   });
 
   describe("pseudo-class edge case", () => {
@@ -138,6 +174,54 @@ describe("css tests", () => {
 }`,
       indoc`.rounded-full{height:infinity;border-radius:3.40282e38px;width:-3.40282e38px}`,
     );
+
+    // NaN is valid inside calc() (CSS Values 4 "Infinities, NaN, and Signed Zero").
+    // A NaN escaping a top-level calculation is censored to zero; it must never be
+    // serialized as the literal `NaNpx`, which browsers reject.
+    minify_test(`a { width: calc(NaN * 1px) }`, `a{width:0px}`);
+    minify_test(`a { width: calc(infinity * 0px) }`, `a{width:0px}`);
+    minify_test(`a { width: calc(infinity * 1px - infinity * 1px) }`, `a{width:0px}`);
+    minify_test(`a { width: min(NaN * 1px, 2px) }`, `a{width:min(0px,2px)}`);
+    minify_test(`a { width: max(NaN * 1px, 2px) }`, `a{width:max(0px,2px)}`);
+    minify_test(`a { width: calc(NaN * 1%) }`, `a{width:0%}`);
+    minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
+    minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
+    minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
+  });
+  describe("clamp() simplification", () => {
+    // The cases lightningcss asserts in its calc tests.
+    minify_test(`.foo { border-width: clamp(1px, 2px, 3px) }`, `.foo{border-width:2px}`);
+    minify_test(`.foo { border-width: clamp(1px, 10px, 3px) }`, `.foo{border-width:3px}`);
+    minify_test(`.foo { border-width: clamp(5px, 2px, 10px) }`, `.foo{border-width:5px}`);
+    minify_test(`.foo { border-width: clamp(100px, 2px, 10px) }`, `.foo{border-width:100px}`);
+    minify_test(`.foo { border-width: clamp(5px + 5px, 5px + 7px, 10px + 20px) }`, `.foo{border-width:12px}`);
+    minify_test(`.foo { border-width: clamp(1px, 2pt, 1in) }`, `.foo{border-width:2pt}`);
+    minify_test(`.foo { border-width: clamp(1em, 2px, 4vh) }`, `.foo{border-width:clamp(1em,2px,4vh)}`);
+    minify_test(`.foo { border-width: clamp(1em, 2em, 4vh) }`, `.foo{border-width:clamp(1em,2em,4vh)}`);
+    minify_test(`.foo { border-width: clamp(1em, 2vh, 4vh) }`, `.foo{border-width:max(1em,2vh)}`);
+    minify_test(`.foo { border-width: clamp(1px, 1px + 2em, 4px) }`, `.foo{border-width:clamp(1px,1px + 2em,4px)}`);
+    minify_test(`.foo { width: clamp(-100px, 0px, 50% - 50vw) }`, `.foo{width:clamp(-100px,0px,50% - 50vw)}`);
+    // The center is equal to one of the bounds.
+    minify_test(`a { width: clamp(2px, 2px, 3px) }`, `a{width:2px}`);
+    minify_test(`a { width: clamp(1px, 2px, 2px) }`, `a{width:2px}`);
+    // The minimum wins over a smaller maximum. The two WPT rows only pass when the minimum is
+    // compared with the center after the maximum has replaced it.
+    minify_test(`a { width: clamp(20px, 15px, 10px) }`, `a{width:20px}`);
+    minify_test(`a { width: clamp(30px, 100px, 20px) }`, `a{width:30px}`);
+    minify_test(`a { width: clamp(-10px, 100px, -30px) }`, `a{width:-10px}`);
+    // A lower bound that cannot be compared at parse time is kept, whether or not the center
+    // was above the maximum.
+    minify_test(`a { width: clamp(10vw, 5px, 20px) }`, `a{width:max(10vw,5px)}`);
+    minify_test(`a { width: clamp(10vw, 30px, 20px) }`, `a{width:max(10vw,20px)}`);
+    // A center that cannot be compared with the maximum leaves the clamp() alone, even when
+    // it could be compared with the minimum.
+    minify_test(`a { width: clamp(10px, 5px, 20vw) }`, `a{width:clamp(10px,5px,20vw)}`);
+    // Other value types.
+    minify_test(`a { width: clamp(10%, 5%, 20%) }`, `a{width:10%}`);
+    minify_test(`a { width: clamp(10%, 25%, 20%) }`, `a{width:20%}`);
+    minify_test(`a { rotate: clamp(0deg, 45deg, 30deg) }`, `a{rotate:30deg}`);
+    minify_test(`a { transition-duration: clamp(1s, 500ms, 2s) }`, `a{transition-duration:1s}`);
+    minify_test(`a { width: calc(clamp(1px, 2px, 3px) + 1px) }`, `a{width:3px}`);
   });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128
@@ -2892,6 +2976,34 @@ describe("css tests", () => {
     );
     minify_test(".foo { background: transparent }", ".foo{background:0 0}");
 
+    // The shorthand prints <box> twice when origin != clip. A single <box>
+    // token sets both origin and clip, so dropping a border-box clip after a
+    // non-default origin would change the declared clip value.
+    minify_test(".foo { background: red content-box border-box }", ".foo{background:red content-box border-box}");
+    minify_test(".foo { background: red border-box content-box }", ".foo{background:red border-box content-box}");
+    minify_test(".foo { background: red border-box padding-box }", ".foo{background:red border-box padding-box}");
+    minify_test(".foo { background: red padding-box border-box }", ".foo{background:red}");
+    minify_test(".foo { background: red border-box border-box }", ".foo{background:red border-box}");
+    cssTest(
+      `
+      .foo {
+        background-color: red;
+        background-position: 0% 0%;
+        background-size: auto;
+        background-repeat: repeat;
+        background-clip: border-box;
+        background-origin: content-box;
+        background-attachment: scroll;
+        background-image: none
+      }
+    `,
+      indoc`
+      .foo {
+        background: red content-box border-box;
+      }
+    `,
+    );
+
     minify_test(
       ".foo { background: url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\") }",
       ".foo{background:url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\")}",
@@ -3105,7 +3217,7 @@ describe("css tests", () => {
       `,
       indoc`
         .foo {
-          background: #af5cae linear-gradient(#c65d07, #00807c);
+          background: #af5cae linear-gradient(#c65d07, #00817d);
           background: lab(51.5117% 43.3777 -29.0443) linear-gradient(lab(52.2319% 40.1449 59.9171), lab(47.7776% -34.2947 -7.65904));
         }
       `,
@@ -5225,6 +5337,8 @@ describe("css tests", () => {
     minify_test('[foo="foo bar"] {color:red}', "[foo=foo\\ bar]{color:red}");
     minify_test('[foo="foo bar baz"] {color:red}', '[foo="foo bar baz"]{color:red}');
     minify_test('[foo=""] {color:red}', '[foo=""]{color:red}');
+    minify_test('[foo="123"] {color:red}', '[foo="123"]{color:red}');
+    minify_test('[foo="\\\\"] {color:red}', "[foo=\\\\]{color:red}");
     minify_test('.test:not([foo="bar"]) {color:red}', ".test:not([foo=bar]){color:red}");
     minify_test(".test + .foo {color:red}", ".test+.foo{color:red}");
     minify_test(".test ~ .foo {color:red}", ".test~.foo{color:red}");
@@ -5644,6 +5758,7 @@ describe("css tests", () => {
       "view-transition-image-pair",
       "view-transition-new",
       "view-transition-old",
+      "view-transition-group-children",
     ]) {
       minify_test(`:root::${name}(*) {position: fixed}`, `:root::${name}(*){position:fixed}`);
       minify_test(`:root::${name}(foo) {position: fixed}`, `:root::${name}(foo){position:fixed}`);
@@ -5651,6 +5766,18 @@ describe("css tests", () => {
       // Test class selector syntax (.class-name)
       minify_test(`:root::${name}(.slide-out) {position: fixed}`, `:root::${name}(.slide-out){position:fixed}`);
       minify_test(`:root::${name}(.fade-in) {animation-name: fade}`, `:root::${name}(.fade-in){animation-name:fade}`);
+      // <pt-name-and-class-selector>: a name or `*` followed by classes, or classes alone.
+      minify_test(`:root::${name}(*.class) {position: fixed}`, `:root::${name}(*.class){position:fixed}`);
+      minify_test(`:root::${name}(*.class.class) {position: fixed}`, `:root::${name}(*.class.class){position:fixed}`);
+      minify_test(`:root::${name}(foo.class) {position: fixed}`, `:root::${name}(foo.class){position:fixed}`);
+      minify_test(`:root::${name}(foo.bar.baz) {position: fixed}`, `:root::${name}(foo.bar.baz){position:fixed}`);
+      minify_test(
+        `:root::${name}(foo.bar.baz):only-child {position: fixed}`,
+        `:root::${name}(foo.bar.baz):only-child{position:fixed}`,
+      );
+      minify_test(`:root::${name}(.foo.bar) {position: fixed}`, `:root::${name}(.foo.bar){position:fixed}`);
+      minify_test(`:root::${name}(  .foo.bar  ) {position: fixed}`, `:root::${name}(.foo.bar){position:fixed}`);
+      minify_test(`:root::${name}(  foo.bar  ) {position: fixed}`, `:root::${name}(foo.bar){position:fixed}`);
       error_test(
         `:root::${name}(foo):first-child {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidPseudoClassAfterPseudoElement)",
@@ -5659,6 +5786,23 @@ describe("css tests", () => {
         `:root::${name}(foo)::before {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidState)",
       );
+      // White space is not allowed between the name and a class, or inside the classes.
+      test.each([
+        ["*.*", "Expected identifier after '.' in class selector, found: *"],
+        ["*. cls", "Expected identifier after '.' in class selector"],
+        [". cls", "Expected identifier after '.' in class selector"],
+        ["foo .bar", "Unexpected token: ."],
+        [".foo .bar", "Unexpected token: ."],
+        ["*.cls. c", "Expected identifier after '.' in class selector"],
+        ["*.cls>cls", "Unexpected token: >"],
+        ["*.cls.foo.*", "Expected identifier after '.' in class selector, found: *"],
+        ["foo.bar baz", "Unexpected token: baz"],
+        ["foo.inherit", "Unexpected token: inherit"],
+        ["inherit.foo", "Unexpected token: inherit"],
+        ["", "Unexpected end of input"],
+      ])(`ERROR: :root::${name}(%s) {position: fixed}`, (argument, message) => {
+        expect(() => minify_test_with_options(`:root::${name}(${argument}) {position: fixed}`, "")).toThrow(message);
+      });
     }
 
     minify_test(".foo ::deep .bar {width: 20px}", ".foo ::deep .bar{width:20px}");
@@ -7017,6 +7161,46 @@ describe("css tests", () => {
     );
   });
 
+  describe("animation", () => {
+    // The animation name is serialized last, in canonical order.
+    minify_test(".foo { animation: anim 2s }", ".foo{animation:2s anim}");
+    minify_test(".foo { animation: 0.25s ease-out forwards anim }", ".foo{animation:.25s ease-out forwards anim}");
+    minify_test(".foo { animation: none }", ".foo{animation:none}");
+
+    // Name-less shorthands must keep their components (must NOT collapse to
+    // `none`) — a lone trailing `none` is dropped as redundant.
+    minify_test(".foo { animation: 2s }", ".foo{animation:2s}");
+    minify_test(".foo { animation: 2s ease-in-out }", ".foo{animation:2s ease-in-out}");
+    minify_test(
+      ".foo { animation: 3s linear 1s infinite alternate }",
+      ".foo{animation:3s linear 1s infinite alternate}",
+    );
+    minify_test(".foo { animation: 2s none }", ".foo{animation:2s}");
+    // 0s duration must still be emitted when a nonzero delay follows.
+    minify_test(".foo { animation: 0s 2s foo }", ".foo{animation:0s 2s foo}");
+
+    // Multiple comma-separated animations.
+    minify_test(".foo { animation: spin 1s, 2s slide }", ".foo{animation:1s spin,2s slide}");
+
+    // Vendor-prefixed shorthand.
+    minify_test(".foo { -webkit-animation: spin 1s }", ".foo{-webkit-animation:1s spin}");
+
+    // Timeline component in the shorthand: round-trips a dashed-ident timeline
+    // and drops the default `auto` timeline.
+    minify_test(".foo { animation: 1s spin --my-timeline }", ".foo{animation:1s spin --my-timeline}");
+    minify_test(".foo { animation: 1s spin auto }", ".foo{animation:1s spin}");
+
+    // animation-name longhand.
+    minify_test(".foo { animation-name: foo }", ".foo{animation-name:foo}");
+    minify_test(".foo { animation-name: foo, bar }", ".foo{animation-name:foo,bar}");
+    minify_test('.foo { animation-name: "foo" }', ".foo{animation-name:foo}");
+
+    // CSS-wide keywords must NOT be consumed as an animation name.
+    minify_test(".foo { animation: inherit }", ".foo{animation:inherit}");
+    minify_test(".foo { animation: unset }", ".foo{animation:unset}");
+    minify_test(".foo { animation-name: initial }", ".foo{animation-name:initial}");
+  });
+
   describe("transform", () => {
     minify_test(".foo { transform: translate(2px, 3px)", ".foo{transform:translate(2px,3px)}");
     minify_test(".foo { transform: translate(2px, 0px)", ".foo{transform:translate(2px)}");
@@ -7168,10 +7352,16 @@ describe("css tests", () => {
     minify_test(".foo { scale: 1 0 1 }", ".foo{scale:1 0}");
     minify_test(".foo { scale: 1 0 0 }", ".foo{scale:1 0 0}");
 
-    // TODO: Re-enable with a better solution
-    //       See: https://github.com/parcel-bundler/buncss/issues/288
-    // minify_test(".foo { transform: scale(3); scale: 0.5 }", ".foo{transform:scale(1.5)}");
-    minify_test(".foo { scale: 0.5; transform: scale(3); }", ".foo{transform:scale(3)}");
+    // calc() payloads must survive the transform property handler's deep clone.
+    minify_test(".foo { translate: calc(50% - 100px + 20px) 0px }", ".foo{translate:calc(50% - 80px)}");
+    minify_test(".foo { translate: 1px 2px; rotate: 30deg; scale: 2 }", ".foo{translate:1px 2px;rotate:30deg;scale:2}");
+    // `transform` is not a shorthand: it does not reset the individual transform properties.
+    minify_test(
+      ".foo { translate: calc(50% - 100px + 20px) 0px; transform: translate(2px, 3px) }",
+      ".foo{transform:translate(2px,3px);translate:calc(50% - 80px)}",
+    );
+    minify_test(".foo { transform: scale(3); scale: 0.5 }", ".foo{transform:scale(3);scale:.5}");
+    minify_test(".foo { scale: 0.5; transform: scale(3); }", ".foo{transform:scale(3);scale:.5}");
 
     prefix_test(
       `
@@ -7223,6 +7413,213 @@ describe("css tests", () => {
         transform: translateX(20px);
       }
       `,
+    );
+  });
+
+  // https://github.com/parcel-bundler/lightningcss/pull/1340
+  describe("individual transforms", () => {
+    for (const [property, value, identity] of [
+      ["translate", "10px", "0"],
+      ["rotate", "30deg", "0deg"],
+      ["scale", "2", "1"],
+    ]) {
+      // `transform` is not a shorthand that resets the individual properties.
+      for (const [transform, individual] of [
+        ["scale(3)", value],
+        ["none", "none"],
+        ["none", identity],
+      ]) {
+        // `rotate: 0deg` prints as `rotate: none` until lightningcss #1147 is ported.
+        const check = individual === "0deg" ? cssTestTodo : cssTest;
+        const expected = `
+          .box {
+            transform: ${transform};
+            ${property}: ${individual};
+          }
+        `;
+        check(
+          `
+          .box {
+            transform: ${transform};
+            ${property}: ${individual};
+          }
+          `,
+          expected,
+        );
+        check(
+          `
+          .box {
+            ${property}: ${individual};
+            transform: ${transform};
+          }
+          `,
+          expected,
+        );
+      }
+    }
+
+    cssTest(
+      `
+      .box {
+        transform: translateX(5px);
+        scale: 2;
+        rotate: 30deg;
+        translate: 10px;
+        transform: scale(3);
+        translate: 20px 30px;
+        rotate: x 40deg;
+        scale: 4 5;
+      }
+      `,
+      `
+      .box {
+        transform: scale(3);
+        translate: 20px 30px;
+        rotate: x 40deg;
+        scale: 4 5;
+      }
+      `,
+    );
+
+    // `rotate: 0deg` prints as `rotate: none` until lightningcss #1147 is ported.
+    cssTestTodo(
+      `
+      .base {
+        translate: 10px;
+        rotate: 30deg;
+        scale: 2;
+      }
+
+      .base.reset {
+        transform: none;
+        translate: none;
+        rotate: none;
+        scale: none;
+      }
+
+      .base.identity {
+        translate: 0;
+        rotate: 0deg;
+        scale: 1;
+        transform: none;
+      }
+      `,
+      `
+      .base {
+        translate: 10px;
+        rotate: 30deg;
+        scale: 2;
+      }
+
+      .base.reset {
+        transform: none;
+        translate: none;
+        rotate: none;
+        scale: none;
+      }
+
+      .base.identity {
+        transform: none;
+        translate: 0;
+        rotate: 0deg;
+        scale: 1;
+      }
+      `,
+    );
+
+    cssTest(
+      `
+      .box {
+        transform: scale(2) !important;
+        translate: 10px;
+        rotate: 30deg !important;
+        scale: 3;
+        translate: 20px !important;
+        transform: none;
+        translate: 30px !important;
+      }
+      `,
+      `
+      .box {
+        transform: none;
+        translate: 10px;
+        scale: 3;
+        transform: scale(2) !important;
+        translate: 30px !important;
+        rotate: 30deg !important;
+      }
+      `,
+    );
+
+    cssTest(
+      `
+      .box {
+        transform: rotate(10deg);
+        translate: 10px;
+        translate: var(--shift);
+        rotate: 20deg;
+        transform: var(--motion);
+        scale: 2;
+        scale: var(--zoom);
+        transform: translateX(2px);
+      }
+      `,
+      `
+      .box {
+        transform: rotate(10deg);
+        translate: 10px;
+        translate: var(--shift);
+        rotate: 20deg;
+        transform: var(--motion);
+        scale: 2;
+        scale: var(--zoom);
+        transform: translateX(2px);
+      }
+      `,
+    );
+
+    cssTest(
+      `
+      .box {
+        -webkit-transform: scale(2);
+        translate: 10px;
+        transform: scale(3);
+        rotate: 30deg;
+      }
+      `,
+      `
+      .box {
+        -webkit-transform: scale(2);
+        translate: 10px;
+        transform: scale(3);
+        rotate: 30deg;
+      }
+      `,
+    );
+
+    prefix_test(
+      `
+      .box {
+        translate: 10px;
+        transform: scale(2);
+        rotate: none;
+        scale: 1;
+      }
+      `,
+      `
+      .box {
+        -webkit-transform: scale(2);
+        -moz-transform: scale(2);
+        transform: scale(2);
+        translate: 10px;
+        rotate: none;
+        scale: 1;
+      }
+      `,
+      {
+        firefox: Some(6 << 16),
+        safari: Some(6 << 16),
+      },
     );
   });
 
@@ -7445,6 +7842,128 @@ describe("css tests", () => {
     );
   });
 
+  describe("page", () => {
+    minify_test("@page { margin: 1em }", "@page{margin:1em}");
+    minify_test("@page :left { margin: 1em }", "@page:left{margin:1em}");
+    minify_test("@page :blank:first { margin: 1em }", "@page:blank:first{margin:1em}");
+    minify_test("@page LandscapeTable { margin: 1em }", "@page LandscapeTable{margin:1em}");
+    minify_test("@page CompanyLetterHead:first { margin: 1em }", "@page CompanyLetterHead:first{margin:1em}");
+    minify_test("@page :first, :blank { margin: 1em }", "@page:first,:blank{margin:1em}");
+    minify_test("@page toc, index { margin: 1em }", "@page toc,index{margin:1em}");
+    minify_test("@page \\31 st { margin: 1em }", "@page \\31 st{margin:1em}");
+    minify_test("@page a\\ b { margin: 1em }", "@page a\\ b{margin:1em}");
+
+    minify_test("@page:left{margin:1em}", "@page:left{margin:1em}");
+    minify_test("@page:first{margin:1em}", "@page:first{margin:1em}");
+    minify_test("@page:blank:first{margin:1em}", "@page:blank:first{margin:1em}");
+    minify_test("@page LandscapeTable{margin:1em}", "@page LandscapeTable{margin:1em}");
+    minify_test("@page:first,:blank{margin:1em}", "@page:first,:blank{margin:1em}");
+    minify_test("@page toc,index{margin:1em}", "@page toc,index{margin:1em}");
+    minify_test("@page CompanyLetterHead:first{margin:1em}", "@page CompanyLetterHead:first{margin:1em}");
+    minify_test("@page \\31 st{margin:1em}", "@page \\31 st{margin:1em}");
+  });
+
+  describe("container", () => {
+    minify_test("@container (width > 100px) { a { color: red } }", "@container (width>100px){a{color:red}}");
+    minify_test("@container not (width > 100px) { a { color: red } }", "@container not (width>100px){a{color:red}}");
+
+    // `not` takes a single parenthesized query, so the grouping parens around
+    // a nested and/or group must survive minification for the output to parse.
+    minify_test(
+      "@container not ((width > 100px) and (height > 100px)) { a { color: red } }",
+      "@container not ((width>100px) and (height>100px)){a{color:red}}",
+    );
+    minify_test(
+      "@container not ((width > 100px) or (height > 100px)) { a { color: red } }",
+      "@container not ((width>100px) or (height>100px)){a{color:red}}",
+    );
+    minify_test(
+      "@container my-layout not ((width > 100px) and (height > 100px)) { a { color: red } }",
+      "@container my-layout not ((width>100px) and (height>100px)){a{color:red}}",
+    );
+
+    // A nested group keeps its parens when its operator differs from the
+    // parent's; a nested group with the same operator is flattened.
+    minify_test(
+      "@container ((width > 100px) or (height > 100px)) and (orientation: landscape) { a { color: red } }",
+      "@container ((width>100px) or (height>100px)) and (orientation:landscape){a{color:red}}",
+    );
+    minify_test(
+      "@container ((width > 100px) and (height > 100px)) and (orientation: landscape) { a { color: red } }",
+      "@container (width>100px) and (height>100px) and (orientation:landscape){a{color:red}}",
+    );
+
+    // The same grammar applies inside style() queries.
+    minify_test("@container style(not (--a: 1)) { a { color: red } }", "@container style(not (--a:1)){a{color:red}}");
+    minify_test(
+      "@container style(not ((--a: 1) and (--b: 2))) { a { color: red } }",
+      "@container style(not ((--a:1) and (--b:2))){a{color:red}}",
+    );
+    minify_test(
+      "@container style(not ((width: 1px) and (height: 2px))) { a { color: red } }",
+      "@container style(not ((width:1px) and (height:2px))){a{color:red}}",
+    );
+    minify_test(
+      "@container style(((--a: 1) or (--b: 2)) and (--c: 3)) { a { color: red } }",
+      "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
+    );
+    minify_test(
+      "@container style((--a: 1) or (--b: 2)) and style(--c: 3) { a { color: red } }",
+      "@container style((--a:1) or (--b:2)) and style(--c:3){a{color:red}}",
+    );
+
+    // The minified forms parse back to themselves.
+    minify_test(
+      "@container not ((width>100px) and (height>100px)){a{color:red}}",
+      "@container not ((width>100px) and (height>100px)){a{color:red}}",
+    );
+    minify_test(
+      "@container ((width>100px) or (height>100px)) and (orientation:landscape){a{color:red}}",
+      "@container ((width>100px) or (height>100px)) and (orientation:landscape){a{color:red}}",
+    );
+    minify_test(
+      "@container style(not ((--a:1) and (--b:2))){a{color:red}}",
+      "@container style(not ((--a:1) and (--b:2))){a{color:red}}",
+    );
+    minify_test(
+      "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
+      "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
+    );
+  });
+
+  describe("font-palette-values", () => {
+    minify_test(
+      "@font-palette-values --x{font-family:Foo;base-palette:2}",
+      "@font-palette-values --x{font-family:Foo;base-palette:2}",
+    );
+    minify_test("@font-palette-values --x{base-palette:light}", "@font-palette-values --x{base-palette:light}");
+    minify_test("@font-palette-values --x{base-palette:65535}", "@font-palette-values --x{base-palette:65535}");
+    minify_test(
+      "@font-palette-values --x{override-colors:0 red,1 #00f}",
+      "@font-palette-values --x{override-colors:0 red,1 #00f}",
+    );
+
+    // Out-of-range palette indices don't fit the internal u16 storage; they
+    // must be preserved as unknown declarations instead of panicking.
+    minify_test("@font-palette-values --x{base-palette:99999}", "@font-palette-values --x{base-palette:99999}");
+    minify_test("@font-palette-values --x{base-palette:-1}", "@font-palette-values --x{base-palette:-1}");
+    minify_test(
+      "@font-palette-values --x{override-colors:99999 red}",
+      "@font-palette-values --x{override-colors:99999 red}",
+    );
+    minify_test("@font-palette-values --x{override-colors:-1 red}", "@font-palette-values --x{override-colors:-1 red}");
+    // Fuzzer-minimized input: unterminated block with an overflowing index.
+    minify_test("@font-palette-values --{base-palette:99999", "@font-palette-values --{base-palette:99999}");
+  });
+
+  describe("grid-template-areas", () => {
+    // Not in the typed property table yet; `.` null-cell tokens (including
+    // multi-dot runs) must survive the unparsed-token round-trip unchanged.
+    minify_test('.foo{grid-template-areas:"a . b" ". c ."}', '.foo{grid-template-areas:"a . b" ". c ."}');
+    minify_test('.foo{grid-template-areas:"a ... b"}', '.foo{grid-template-areas:"a ... b"}');
+    minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(
@@ -7470,6 +7989,258 @@ describe("css tests", () => {
         background: conic-gradient(from calc(1turn / 0) at calc(0 / 0), red, blue);
       }
       `,
+      );
+    });
+
+    describe("unparsed oklab color fallbacks", () => {
+      minify_test(".foo { color: var(--x, oklab(40% 0.1 0.1)) }", ".foo{color:var(--x,oklab(40% .1 .1))}");
+      minify_test(".foo { color: var(--x, oklch(40% 0.1 30)) }", ".foo{color:var(--x,oklch(40% .1 30))}");
+      minify_test(".foo { color: var(--x, lab(40% 0.1 0.1)) }", ".foo{color:var(--x,lab(40% .1 .1))}");
+      minify_test(".foo { color: var(--x, lch(40% 0.1 30)) }", ".foo{color:var(--x,lch(40% .1 30))}");
+      minify_test('.foo { color: "a" oklab(40% 0.1 0.1) }', '.foo{color:"a" oklab(40% .1 .1)}');
+      minify_test('.foo { color: "a" lab(40% 0.1 0.1) }', '.foo{color:"a" lab(40% .1 .1)}');
+    });
+
+    describe("color fallbacks with system colors and currentColor", () => {
+      prefix_test(
+        `
+          .foo {
+            background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
+          }
+        `,
+        indoc`
+          .foo {
+            background: background linear-gradient(#41001b, #da3671);
+            background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
+          }
+        `,
+        indoc`
+          .foo {
+            background: background linear-gradient(color(display-p3 .342311 -.157987 .0918331), color(display-p3 .787212 .27046 .444387));
+            background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
+          }
+        `,
+        {
+          safari: 14 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            background: linear-gradient(currentColor, lch(50% 50 180));
+          }
+        `,
+        indoc`
+          .foo {
+            background: linear-gradient(currentColor, #008675);
+            background: linear-gradient(currentColor, lch(50% 50 180));
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            background: buttonface linear-gradient(lch(50% 50 180), canvas);
+          }
+        `,
+        indoc`
+          .foo {
+            background: buttonface linear-gradient(#008675, canvas);
+            background: buttonface linear-gradient(lch(50% 50 180), canvas);
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            color: light-dark(buttonface, lch(50% 50 180));
+          }
+        `,
+        indoc`
+          .foo {
+            color: var(--buncss-light, buttonface) var(--buncss-dark, lch(50% 50 180));
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            text-shadow: 0 0 currentColor, 0 0 lch(50% 50 180);
+          }
+        `,
+        indoc`
+          .foo {
+            text-shadow: 0 0, 0 0 #008675;
+            text-shadow: 0 0, 0 0 lch(50% 50 180);
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            text-shadow: 0 0 currentColor, 0 0 lch(50% 50 180);
+          }
+        `,
+        indoc`
+          .foo {
+            text-shadow: 0 0, 0 0 color(display-p3 -.0472161 .537112 .461858);
+            text-shadow: 0 0, 0 0 lch(50% 50 180);
+          }
+        `,
+        {
+          safari: 14 << 16,
+        },
+      );
+    });
+
+    // rgb()/hsl() whose alpha is only known at runtime (var(), calc(var()), ...)
+    // are downleveled to the legacy comma syntax for targets without
+    // space-separated color notation. Every component, including the alpha,
+    // has to be comma separated there or the declaration is invalid.
+    describe("unresolved alpha downleveled to rgba()/hsla()", () => {
+      const legacyOnly = { chrome: 60 << 16 };
+      const modern = { chrome: 90 << 16 };
+
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: rgba(12, 34, 56, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / var(--alpha, 50%)); }",
+        indoc`
+          .foo {
+            color: rgba(12, 34, 56, var(--alpha, 50%));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / calc(var(--alpha) * 2)); }",
+        indoc`
+          .foo {
+            color: rgba(12, 34, 56, calc(var(--alpha) * 2));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(5% 50% 100% / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: rgba(13, 128, 255, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { --x: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            --x: rgba(12, 34, 56, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { box-shadow: 0 0 4px rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            box-shadow: 0 0 4px rgba(12, 34, 56, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(from light-dark(yellow, red) r g b / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: var(--buncss-light, rgba(255, 255, 0, var(--alpha))) var(--buncss-dark, rgba(255, 0, 0, var(--alpha)));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: light-dark(rgb(12 34 56 / var(--alpha)), hsl(200 30% 40% / var(--alpha))); }",
+        indoc`
+          .foo {
+            color: var(--buncss-light, rgba(12, 34, 56, var(--alpha))) var(--buncss-dark, hsla(200, 30%, 40%, var(--alpha)));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: hsl(200 30% 40% / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: hsla(200, 30%, 40%, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { --x: hsl(200 30% 40% / var(--alpha)); }",
+        indoc`
+          .foo {
+            --x: hsla(200, 30%, 40%, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+
+      // Targets that support the modern syntax keep it as written.
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: rgb(12 34 56 / var(--alpha));
+          }
+        `,
+        modern,
+      );
+      prefix_test(
+        ".foo { --x: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            --x: rgb(12 34 56 / var(--alpha));
+          }
+        `,
+        modern,
+      );
+      prefix_test(
+        ".foo { color: hsl(200 30% 40% / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: hsl(200 30% 40% / var(--alpha));
+          }
+        `,
+        modern,
       );
     });
 
@@ -7528,5 +8299,51 @@ describe("css tests", () => {
       const output = await Bun.file(join(__dirname, "unicode_expected.css")).text();
       cssTest(input, output);
     });
+  });
+
+  test("deeply nested rules keep two spaces of indentation per level", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { _test } = require("bun:internal-for-testing").cssInternals;
+let css = "color: red";
+for (let i = 0; i < 150; i++) css = ".a { " + css + " }";
+const output = _test(css, "");
+const line = output.split("\\n").find(l => l.includes("color: red"));
+console.log(line.length - line.trimStart().length);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("300");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a rule nested in :host(&) or ::slotted(&)", async () => {
+    const cases = [
+      [":host(&) { .b { color: red } }", ":host(:scope) .b{color:red}"],
+      ["::slotted(&) { & { color: red } }", "::slotted(:scope){color:red}"],
+      [".a { :host(&) { .c { color: red } } }", ":host(.a) .c{color:red}"],
+      [".a { ::slotted(&) { &:hover { color: red } } }", "::slotted(.a):hover{color:red}"],
+    ];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { minifyTest } = require("bun:internal-for-testing").cssInternals;
+for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console.log(minifyTest(source, "", { chrome: 95 << 16 }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual(cases.map(([, expected]) => expected));
+    expect(exitCode).toBe(0);
   });
 });

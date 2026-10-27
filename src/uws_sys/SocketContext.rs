@@ -6,12 +6,11 @@
 use core::ffi::{c_char, c_long};
 use core::ptr;
 
-use bun_boringssl_sys::SSL_CTX;
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 
 use crate::create_bun_socket_error_t;
 
-/// `[mtime_sec, mtime_nsec, size]` for the SSL cache-key digest (spec
-/// `SocketContext.zig:81`: `bun.sys.stat(path)` → `st.mtime() ++ st.size`).
+/// `[mtime_sec, mtime_nsec, size]` for the SSL cache-key digest.
 /// Body moved DOWN from `bun_sys` — it only needs `libc::stat`, which this
 /// crate already links, so the former link-time hook bought nothing. Returns
 /// `None` on stat failure (digest feeds zeros — `create_ssl_context` will then
@@ -84,8 +83,8 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // `[sec_field, nsec_field, size]` — the digest only needs *some*
     // deterministic encoding of mtime, not the libuv POSIX-epoch split the
     // deleted `__bun_uws_stat_file` produced. The SSL-context cache keyed on
-    // this digest is in-memory process-lifetime only (spec `SocketContext.zig`
-    // — no on-disk persistence), so cross-version byte-compat of the key is
+    // this digest is in-memory process-lifetime only (no on-disk
+    // persistence), so cross-version byte-compat of the key is
     // irrelevant; only stability *within* a process matters.
     let ticks = (u64::from(ft.dwHighDateTime) << 32) | u64::from(ft.dwLowDateTime);
     let size = (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow);
@@ -113,10 +112,18 @@ pub struct BunSocketContextOptions {
     pub ca: *const *const c_char,
     pub ca_count: u32,
     pub secure_options: u32,
+    pub ssl_min_version: i32,
+    pub ssl_max_version: i32,
     pub reject_unauthorized: i32,
     pub request_cert: i32,
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
+    pub session_timeout: i32,
+    pub crl: *const *const c_char,
+    pub crl_count: u32,
+    pub allow_partial_trust_chain: i32,
+    pub sigalgs: *const c_char,
+    pub ecdh_curve: *const c_char,
 }
 
 impl Default for BunSocketContextOptions {
@@ -136,30 +143,49 @@ impl Default for BunSocketContextOptions {
             ca: ptr::null(),
             ca_count: 0,
             secure_options: 0,
+            ssl_min_version: 0,
+            ssl_max_version: 0,
             reject_unauthorized: 0,
             request_cert: 0,
             client_renegotiation_limit: 3,
             client_renegotiation_window: 600,
+            session_timeout: 0,
+            crl: ptr::null(),
+            crl_count: 0,
+            allow_partial_trust_chain: 0,
+            sigalgs: ptr::null(),
+            ecdh_curve: ptr::null(),
         }
     }
 }
 
 impl BunSocketContextOptions {
-    /// Build a BoringSSL `SSL_CTX*` from these options. Caller owns one ref
-    /// and releases with `SSL_CTX_free` — the passphrase is freed inside this
-    /// call once private-key load completes, so plain `SSL_CTX_free` is
-    /// correct on every path.
-    ///
-    /// Mode-neutral: the same `SSL_CTX*` may back client connects and server
-    /// accepts. CTX-level verify mode comes from `request_cert`/`ca`/
-    /// `reject_unauthorized` here; the per-socket client override (always run
-    /// chain validation, populate verify_error) is applied in
-    /// `us_internal_ssl_attach`, so a server reusing this ctx never sends
-    /// CertificateRequest unless these options asked it to.
-    pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<*mut SSL_CTX> {
+    /// Build a BoringSSL `SSL_CTX` from these options. The passphrase is freed
+    /// inside this call once private-key load completes. The verify mode follows
+    /// `request_cert`/`reject_unauthorized` only; see `us_ssl_ctx_from_options`.
+    pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
         // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.
-        let ctx = unsafe { c::us_ssl_ctx_from_options(self, err) };
-        if ctx.is_null() { None } else { Some(ctx) }
+        // A non-null return carries the +1 from `SSL_CTX_new`.
+        unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
+    }
+
+    /// Sets `digest` (this struct's `digest()`) as the session id context: see `us_ssl_apply_selected_ctx`.
+    pub fn create_ssl_context_with_digest(
+        self,
+        digest: &[u8; 32],
+        err: &mut create_bun_socket_error_t,
+    ) -> Option<OwnedSslCtx> {
+        let ctx = self.create_ssl_context(err)?;
+        // SAFETY: `ctx` is live and not shared yet; the call copies `digest`
+        // (32 bytes, the session id context maximum, so it cannot fail).
+        unsafe {
+            bun_boringssl_sys::SSL_CTX_set_session_id_context(
+                ctx.as_ptr(),
+                digest.as_ptr(),
+                digest.len(),
+            );
+        }
+        Some(ctx)
     }
 
     /// SHA-256 over every field this struct carries, dereferencing string
@@ -234,10 +260,17 @@ impl BunSocketContextOptions {
         feed_arr(&mut h, self.cert, self.cert_count);
         feed_arr(&mut h, self.ca, self.ca_count);
         h.update(bun_core::bytes_of(&self.secure_options));
+        h.update(bun_core::bytes_of(&self.ssl_min_version));
+        h.update(bun_core::bytes_of(&self.ssl_max_version));
         h.update(bun_core::bytes_of(&self.reject_unauthorized));
         h.update(bun_core::bytes_of(&self.request_cert));
         h.update(bun_core::bytes_of(&self.client_renegotiation_limit));
         h.update(bun_core::bytes_of(&self.client_renegotiation_window));
+        h.update(bun_core::bytes_of(&self.session_timeout));
+        feed_arr(&mut h, self.crl, self.crl_count);
+        h.update(bun_core::bytes_of(&self.allow_partial_trust_chain));
+        feed_z(&mut h, self.sigalgs);
+        feed_z(&mut h, self.ecdh_curve);
         let mut out = [0u8; 32];
         h.final_(&mut out);
         out
@@ -263,12 +296,12 @@ impl BunSocketContextOptions {
         sum(self.key, self.key_count, &mut n);
         sum(self.cert, self.cert_count, &mut n);
         sum(self.ca, self.ca_count, &mut n);
+        sum(self.crl, self.crl_count, &mut n);
         n
     }
 }
 
-/// Thin SHA-256 wrapper over the raw `bun_boringssl_sys` FFI so `digest()`
-/// reads the same as the Zig (`Sha256.init`/`update`/`final`). No higher-tier
+/// Thin SHA-256 wrapper over the raw `bun_boringssl_sys` FFI. No higher-tier
 /// `bun_boringssl::Sha256` exists yet; this stays local until one does.
 struct Sha256(core::mem::MaybeUninit<bun_boringssl_sys::SHA256_CTX>);
 impl Sha256 {
@@ -300,13 +333,32 @@ impl Sha256 {
 pub mod c {
     use super::*;
     unsafe extern "C" {
-        pub fn us_ssl_ctx_from_options(
+        pub(crate) fn us_ssl_ctx_from_options(
             options: BunSocketContextOptions,
             err: *mut create_bun_socket_error_t,
         ) -> *mut SSL_CTX;
         // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
+        /// Appends the certificates in the NUL-terminated PEM `content` to
+        /// `ctx`'s trust store; returns 0 when nothing could be added.
+        pub fn us_ssl_ctx_add_ca_cert(
+            ctx: *mut SSL_CTX,
+            content: *const core::ffi::c_char,
+        ) -> core::ffi::c_int;
+        /// Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (the
+        /// caller frees them with libc free); returns 0 with a static
+        /// `err_reason` tag on failure.
+        pub fn us_ssl_parse_pkcs12(
+            data: *const core::ffi::c_char,
+            len: usize,
+            pass: *const core::ffi::c_char,
+            out_key: *mut *mut core::ffi::c_char,
+            out_key_len: *mut usize,
+            out_cert: *mut *mut core::ffi::c_char,
+            out_cert_len: *mut usize,
+            out_ca: *mut *mut core::ffi::c_char,
+            out_ca_len: *mut usize,
+            err_reason: *mut *const core::ffi::c_char,
+        ) -> core::ffi::c_int;
     }
 }
-
-// ported from: src/uws_sys/SocketContext.zig

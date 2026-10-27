@@ -1,49 +1,58 @@
 //! JSC bridges for `bun.http.{Headers,H2Client,H3Client}`. Keeps `src/http/`
 //! free of JSC types.
 
-use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_core::{StringPointer, ZigString};
 use bun_http::Headers;
 use bun_http::headers::{EntryList, api};
-use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{FetchHeaders, HTTPHeaderName, JSGlobalObject, JsError, JsResult};
 
-/// Port of `Headers.from` (Headers.zig). Moved up from `bun_http` so it can
+use crate::generated_bindgen::headers_jsc::{H2LiveCounts, H3LiveCounts};
+
+/// `Headers` indexes its buffer with `u32` `StringPointer`s, so the total size can't exceed `u32::MAX`.
+fn throw_headers_too_large(global: &JSGlobalObject) -> JsError {
+    global.throw_value(global.create_range_error_instance(format_args!(
+        "Headers exceed the maximum total size of {} bytes",
+        u32::MAX
+    )))
+}
+
+/// Moved up from `bun_http` so it can
 /// name `FetchHeaders` directly instead of dispatching through a vtable.
 ///
 /// `body_content_type` is `Some(ct)` only when the body has a *user-set*
 /// content-type (callers gate on `has_content_type_from_user()` before passing
 /// `content_type()`); `None` means no body or no user-set content-type.
 pub fn from_fetch_headers(
+    global: &JSGlobalObject,
     fetch_headers: Option<&FetchHeaders>,
     body_content_type: Option<&[u8]>,
-) -> Headers {
-    // PORT NOTE: `FetchHeaders::{count,fast_has_,copy_to}` take `&mut self` but
-    // are read-only FFI shims; cast through `*mut` (matching the prior
-    // `link_interface!` impl which did `from_ref(h).cast_mut()`).
-    let h_ptr: Option<*mut FetchHeaders> = fetch_headers.map(|h| core::ptr::from_ref(h).cast_mut());
-
-    let mut header_count: u32 = 0;
-    let mut buf_len: u32 = 0;
-    if let Some(h) = h_ptr {
-        // SAFETY: `h` is a valid `&FetchHeaders` for the call; FFI is read-only.
-        unsafe { (*h).count(&mut header_count, &mut buf_len) };
-    }
+) -> JsResult<Headers> {
+    let (fetch_header_count, buf_len_before_content_type) =
+        match fetch_headers.map(FetchHeaders::count) {
+            None => (0, 0),
+            Some(Some(counts)) => counts,
+            Some(None) => return Err(throw_headers_too_large(global)),
+        };
+    let (mut header_count, mut buf_len) = (fetch_header_count, buf_len_before_content_type);
     let mut headers = Headers {
         entries: EntryList::default(),
         buf: Vec::new(),
     };
-    let buf_len_before_content_type = buf_len;
     let needs_content_type = 'brk: {
         if let Some(body_ct) = body_content_type {
-            // SAFETY: see `count` above.
-            let has_ct_header = h_ptr
-                .map(|h| unsafe { (*h).fast_has_(HTTPHeaderName::ContentType as u8) })
-                .unwrap_or(false);
+            let has_ct_header =
+                fetch_headers.is_some_and(|h| h.fast_has_(HTTPHeaderName::ContentType as u8));
             if !has_ct_header {
-                header_count += 1;
-                buf_len += u32::try_from(body_ct.len() + b"Content-Type".len()).unwrap();
+                let Some((new_count, new_len)) = header_count.checked_add(1).zip(
+                    u32::try_from(b"Content-Type".len() + body_ct.len())
+                        .ok()
+                        .and_then(|ct_len| buf_len.checked_add(ct_len)),
+                ) else {
+                    return Err(throw_headers_too_large(global));
+                };
+                header_count = new_count;
+                buf_len = new_len;
                 break 'brk true;
             }
         }
@@ -62,8 +71,7 @@ pub fn from_fetch_headers(
     headers.buf.reserve_exact(buf_len as usize);
     // SAFETY: capacity reserved above; bytes are fully initialized by copyTo / the copy below.
     unsafe { headers.buf.set_len(buf_len as usize) };
-    // PORT NOTE: reshaped for borrowck — Zig took two column slices off one `sliced` view.
-    // The Rust `Slice::items` returns `&mut [F]` from `&self`; the two columns are
+    // `Slice::items` returns `&mut [F]` from `&self`; the two columns are
     // disjoint allocations so simultaneous access is sound, but borrowck can't see
     // that. Take raw column pointers up front and slice in scoped blocks.
     let sliced = headers.entries.slice();
@@ -72,9 +80,26 @@ pub fn from_fetch_headers(
     let names_ptr: *mut api::StringPointer = sliced.items_raw::<"name", api::StringPointer>();
     // SAFETY: same `items_raw` contract as above; `value` column is a disjoint allocation.
     let values_ptr: *mut api::StringPointer = sliced.items_raw::<"value", api::StringPointer>();
-    if let Some(h) = h_ptr {
-        // SAFETY: `h` is a valid `&FetchHeaders` for the call; columns sized by `count` above.
-        unsafe { (*h).copy_to(names_ptr, values_ptr, headers.buf.as_mut_ptr()) };
+    // Zero-init so any slot `copy_to` fails to write (iterator skip, count
+    // desync) reads as `{0, 0}` — a valid empty slice — rather than garbage.
+    // SAFETY: both columns hold exactly `header_count` `StringPointer` slots.
+    unsafe {
+        core::ptr::write_bytes(names_ptr, 0, header_count as usize);
+        core::ptr::write_bytes(values_ptr, 0, header_count as usize);
+    }
+    if let Some(h) = fetch_headers {
+        // SAFETY: each column has `header_count >= fetch_header_count` zeroed, unborrowed slots.
+        let (names, values) = unsafe {
+            (
+                core::slice::from_raw_parts_mut(names_ptr, fetch_header_count as usize),
+                core::slice::from_raw_parts_mut(values_ptr, fetch_header_count as usize),
+            )
+        };
+        h.copy_to(
+            names,
+            values,
+            &mut headers.buf[..buf_len_before_content_type as usize],
+        );
     }
 
     // TODO: maybe we should send Content-Type header first instead of last?
@@ -102,108 +127,21 @@ pub fn from_fetch_headers(
         }
     }
 
-    headers
+    Ok(headers)
 }
 
-/// Build a `WebCore::FetchHeaders` from `bun.http.Headers` storage.
-///
-/// PORT NOTE: `FetchHeaders` (opaque C++ handle) was moved into `bun_jsc`, so
-/// the prior dep-cycle on `bun_runtime` no longer applies. The C++ side
-/// receives raw `StringPointer` column pointers; `bun_http_types` and
-/// `bun_string` both re-export the canonical `bun_core::StringPointer`, so no
-/// layout cast is needed.
-pub fn to_fetch_headers(
-    this: &Headers,
-    global: &JSGlobalObject,
-) -> JsResult<NonNull<FetchHeaders>> {
-    use bun_http_types::ETag::HeaderEntryColumns;
-    use bun_jsc::JsError;
-    if this.entries.len() == 0 {
-        return Ok(FetchHeaders::create_empty());
-    }
-    let names: &[StringPointer] = this.entries.items_name();
-    let values: &[StringPointer] = this.entries.items_value();
-    // SAFETY: `names`/`values` point into live slices of `this.entries.len()`
-    // entries; C++ reads exactly `count_` of each and does not retain the pointers.
-    FetchHeaders::create(
-        global,
-        // PORT NOTE: C++ side reads only; cast_mut() is safe (no mutation).
-        names.as_ptr().cast_mut(),
-        values.as_ptr().cast_mut(),
-        // Spec headers_jsc.zig:12 uses `ZigString.fromBytes` (scans for
-        // non-ASCII and tags UTF-8); `init` would leave the buffer Latin-1
-        // and mojibake any UTF-8 header value bytes ≥0x80.
-        &ZigString::from_bytes(this.buf.as_slice()),
-        this.entries.len() as u32,
-    )
-    .ok_or(JsError::Thrown)
-}
-
-pub struct H2TestingAPIs;
-
-impl H2TestingAPIs {
-    // Zig source has no attribute — generate-js2native.ts scans by signature shape.
-    // TODO(port): once a `#[bun_jsc::host_fn]` proc-macro lands, annotate this so the
-    // extern "C" thunk is emitted (currently no proc-macro crate exists).
-    pub fn live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        use bun_http::h2_client;
-        let obj = JSValue::create_empty_object(global, 2);
-        // PORT NOTE: Zig `.jsNumber(i32)` → `js_number_from_int32`; h2 atomics
-        // are `AtomicI32` (signed) so no widening.
-        obj.put(
-            global,
-            b"sessions",
-            JSValue::js_number_from_int32(h2_client::live_sessions.load(Ordering::Relaxed)),
-        );
-        obj.put(
-            global,
-            b"streams",
-            JSValue::js_number_from_int32(h2_client::live_streams.load(Ordering::Relaxed)),
-        );
-        Ok(obj)
+pub(crate) fn h2_live_counts() -> H2LiveCounts {
+    use bun_http::h2_client;
+    H2LiveCounts {
+        sessions: h2_client::live_sessions.load(Ordering::Relaxed),
+        streams: h2_client::live_streams.load(Ordering::Relaxed),
     }
 }
 
-pub struct H3TestingAPIs;
-
-impl H3TestingAPIs {
-    /// Named distinctly from H2's `live_counts` because generate-js2native.ts
-    /// mangles `[^A-Za-z]` to `_`, so `H2Client.zig` and `H3Client.zig` produce
-    /// the same path prefix and the function name has to differ.
-    // TODO(port): once a `#[bun_jsc::host_fn]` proc-macro lands, annotate this so the
-    // extern "C" thunk is emitted (currently no proc-macro crate exists).
-    pub fn quic_live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        use bun_http::h3_client;
-        let obj = JSValue::create_empty_object(global, 2);
-        // PORT NOTE: h3 atomics are `AtomicU32`; widen to u64 for `js_number_from_uint64`.
-        obj.put(
-            global,
-            b"sessions",
-            JSValue::js_number_from_uint64(u64::from(
-                h3_client::live_sessions.load(Ordering::Relaxed),
-            )),
-        );
-        obj.put(
-            global,
-            b"streams",
-            JSValue::js_number_from_uint64(u64::from(
-                h3_client::live_streams.load(Ordering::Relaxed),
-            )),
-        );
-        Ok(obj)
+pub(crate) fn h3_live_counts() -> H3LiveCounts {
+    use bun_http::h3_client;
+    H3LiveCounts {
+        sessions: h3_client::live_sessions.load(Ordering::Relaxed),
+        streams: h3_client::live_streams.load(Ordering::Relaxed),
     }
 }
-
-/// Free-fn aliases of [`H2TestingAPIs::live_counts`] /
-/// [`H3TestingAPIs::quic_live_counts`] so `bun_runtime::dispatch::js2native`
-/// can `pub use` them (associated fns aren't importable items).
-#[inline]
-pub fn h2_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    H2TestingAPIs::live_counts(global, frame)
-}
-#[inline]
-pub fn h3_quic_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    H3TestingAPIs::quic_live_counts(global, frame)
-}
-
-// ported from: src/http_jsc/headers_jsc.zig

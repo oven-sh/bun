@@ -1,17 +1,22 @@
 #pragma once
 
 #include "BunClientData.h"
+#include <wtf/HashMap.h>
+#include <wtf/Vector.h>
 
 #include "../V8Isolate.h"
 #include "Oddball.h"
 
-namespace v8 {
+namespace Bun {
+class HandleScopeImpl;
+}
 
-class HandleScope;
+namespace v8 {
 
 namespace shim {
 
 class HandleScopeBuffer;
+struct Handle;
 
 class GlobalInternals : public JSC::JSCell {
 public:
@@ -29,22 +34,12 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<GlobalInternals, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForV8GlobalInternals.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForV8GlobalInternals = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForV8GlobalInternals.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForV8GlobalInternals = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<GlobalInternals, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForV8GlobalInternals, m_subspaceForV8GlobalInternals));
     }
 
     JSC::Structure* objectTemplateStructure(JSC::JSGlobalObject* globalObject) const
     {
         return m_objectTemplateStructure.getInitializedOnMainThread(globalObject);
-    }
-
-    JSC::Structure* handleScopeBufferStructure(JSC::JSGlobalObject* globalObject) const
-    {
-        return m_handleScopeBufferStructure.getInitializedOnMainThread(globalObject);
     }
 
     JSC::Structure* functionTemplateStructure(JSC::JSGlobalObject* globalObject) const
@@ -57,11 +52,66 @@ public:
         return m_v8FunctionStructure.getInitializedOnMainThread(globalObject);
     }
 
-    HandleScopeBuffer* globalHandles() const { return m_globalHandles.getInitializedOnMainThread(this); }
+    // Returns the scope for v8::Global handles. It's never closed.
+    HandleScopeBuffer* globalHandles();
 
-    HandleScope* currentHandleScope() const { return m_currentHandleScope; }
+    // Returns the innermost open scope's V8 handles (GlobalObject::m_currentHandleScopeImpl). Like V8,
+    // aborts if no scope is open. Bun opens a scope around every native callback it makes.
+    HandleScopeBuffer* currentHandleScope();
 
-    void setCurrentHandleScope(HandleScope* handleScope) { m_currentHandleScope = handleScope; }
+    // Escape-slot reservations for live EscapableHandleScopes, keyed by the
+    // scope's stack address. The slot is reserved at scope construction (so it
+    // sits below any handles created inside the scope and survives
+    // HandleScope::DeleteExtensions) and consumed by EscapeSlot(). Entries are
+    // purged when their owning buffer clears (scope close) — a scope destroyed
+    // by V8's inline destructor without calling Escape() has no other hook —
+    // and a reused stack address simply overwrites the stale entry.
+    struct EscapeReservation {
+        Handle* handle { nullptr };
+        HandleScopeBuffer* buffer { nullptr };
+    };
+    WTF::HashMap<void*, EscapeReservation>& escapeReservations() { return m_escapeReservations; }
+    void purgeEscapeReservations(HandleScopeBuffer* buffer)
+    {
+        m_escapeReservations.removeIf([buffer](auto& entry) { return entry.value.buffer == buffer; });
+    }
+
+    // Return-value slots of the callback frames currently on the native stack
+    // (innermost last). V8's inline ReturnValue::Set stores a Local's Address
+    // — for heap values a pointer into some HandleScopeBuffer's storage —
+    // into the frame, and V8 guarantees the returned value outlives any inner
+    // handle scope (the scope owns only the slot, never the object). Scope
+    // teardown consults this list to rescue handles a frame still points at
+    // (HandleScopeBuffer::deleteGrantsBack / evacuateActiveReturnValues).
+    WTF::Vector<TaggedPointer*>& activeReturnValueSlots() { return m_activeReturnValueSlots; }
+
+    // RAII registration of a callback frame's return-value slot for the
+    // duration of the native callback.
+    class ActiveReturnValueSlotScope {
+        WTF_MAKE_NONCOPYABLE(ActiveReturnValueSlotScope);
+
+    public:
+        ActiveReturnValueSlotScope(GlobalInternals* internals, TaggedPointer* slot)
+            : m_internals(internals)
+        {
+            m_internals->activeReturnValueSlots().append(slot);
+        }
+        ~ActiveReturnValueSlotScope()
+        {
+            m_internals->activeReturnValueSlots().removeLast();
+        }
+
+    private:
+        GlobalInternals* m_internals;
+    };
+
+    WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcPrologueCallbacks() { return m_gcPrologueCallbacks; }
+    WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcEpilogueCallbacks() { return m_gcEpilogueCallbacks; }
+    WTF::Vector<std::pair<NearHeapLimitCallback, void*>>& nearHeapLimitCallbacks() { return m_nearHeapLimitCallbacks; }
+
+    // MakeWeak/ClearWeak bookkeeping: global-handle slot (in globalHandles()) to
+    // the parameter passed to MakeWeak.
+    WTF::HashMap<uintptr_t*, void*>& weakHandleParameters() { return m_weakHandleParameters; }
 
     Isolate* isolate() { return &m_isolate; }
 
@@ -74,11 +124,18 @@ public:
 private:
     Zig::GlobalObject* m_globalObject;
     JSC::LazyClassStructure m_objectTemplateStructure;
-    JSC::LazyClassStructure m_handleScopeBufferStructure;
     JSC::LazyClassStructure m_functionTemplateStructure;
     JSC::LazyClassStructure m_v8FunctionStructure;
-    HandleScope* m_currentHandleScope;
-    JSC::LazyProperty<GlobalInternals, HandleScopeBuffer> m_globalHandles;
+    WTF::HashMap<void*, EscapeReservation> m_escapeReservations;
+    // No inline capacity, because in-cell inline Vector storage would leave stale ASAN container
+    // annotations behind (this cell is swept without running destructors).
+    WTF::Vector<TaggedPointer*> m_activeReturnValueSlots;
+    JSC::LazyProperty<GlobalInternals, Bun::HandleScopeImpl> m_globalHandles;
+
+    WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcPrologueCallbacks;
+    WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcEpilogueCallbacks;
+    WTF::Vector<std::pair<NearHeapLimitCallback, void*>> m_nearHeapLimitCallbacks;
+    WTF::HashMap<uintptr_t*, void*> m_weakHandleParameters;
 
     Oddball m_undefinedValue;
     Oddball m_nullValue;
@@ -90,7 +147,6 @@ private:
     void finishCreation(JSC::VM& vm);
     GlobalInternals(JSC::VM& vm, JSC::Structure* structure, Zig::GlobalObject* globalObject)
         : Base(vm, structure)
-        , m_currentHandleScope(nullptr)
         , m_undefinedValue(Oddball::Kind::kUndefined)
         , m_nullValue(Oddball::Kind::kNull)
         , m_trueValue(Oddball::Kind::kTrue)

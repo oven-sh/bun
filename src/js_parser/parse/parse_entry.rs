@@ -1,11 +1,11 @@
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
-use core::ffi::c_void;
 use core::mem::MaybeUninit;
 
+use crate::Error;
 use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_core;
 use bun_core::strings;
-use bun_core::{self, Error, err};
 use bun_wyhash::Wyhash;
 
 use crate::parser::options;
@@ -15,28 +15,21 @@ use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, WrapMode,
+    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
+    WrapMode,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
-use bun_ast::{B, E, Expr, G, S, Stmt, Symbol};
+use bun_ast::{B, E, Expr, G, S, Stmt};
 
-// Named instantiations of `P<'_, TS, SCAN>` matching the Zig
-// `JavaScriptParser`/`TypeScriptParser`/etc. comptime aliases.
+// Named instantiations of `P<'_, TS, SCAN>`.
 pub type JavaScriptParser<'a> = P<'a, false, false>;
-pub type JSXParser<'a> = P<'a, false, false>;
-pub type TypeScriptParser<'a> = P<'a, true, false>;
 pub type TSXParser<'a> = P<'a, true, false>;
-pub type JavaScriptImportScanner<'a> = P<'a, false, true>;
-pub type JSXImportScanner<'a> = P<'a, false, true>;
-pub type TypeScriptImportScanner<'a> = P<'a, true, true>;
-pub type TSXImportScanner<'a> = P<'a, true, true>;
 
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
 type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 
-/// Stack-local in-place `P` constructor (Zig: `var p: ParserType = undefined;
-/// try ParserType.init(.., &p)`). `P` is ~5 KiB; the previous
+/// Stack-local in-place `P` constructor. `P` is ~5 KiB; the previous
 /// `let mut p = P::init(..)?` shape forced 2-3 by-value moves of the whole
 /// struct (ASM-verified: `_scan_imports` 14168-B frame, 5× `memcpy`). This
 /// macro reserves an uninitialized slot on the caller's stack, has `P::init`
@@ -58,17 +51,97 @@ macro_rules! init_p {
     }};
 }
 
+/// What `Parser::parse_only` parsed.
+pub struct ParsedOnly<'p, 'a> {
+    pub stmts: &'p [js_ast::Stmt],
+    p: &'p P<'a, false, false>,
+}
+
+impl<'a> ParsedOnly<'_, 'a> {
+    /// An unvisited identifier is its spelling.
+    #[inline]
+    pub fn name_of(&self, r#ref: js_ast::Ref) -> &'a [u8] {
+        self.p.load_name_from_ref(r#ref)
+    }
+    /// Where the parameters of the async arrow at `at` start.
+    pub fn async_arrow_parameters(&self, at: js_ast::Loc) -> Option<i32> {
+        self.starts()?
+            .async_arrow_parameters
+            .get(&at.start)
+            .copied()
+    }
+    /// Where the expression after the `=>` at `at` starts.
+    pub fn arrow_expression_body(&self, at: js_ast::Loc) -> Option<i32> {
+        self.starts()?
+            .arrow_expression_bodies
+            .get(&at.start)
+            .copied()
+    }
+    /// Where the class element whose name or static block is at `at` starts.
+    pub fn class_element(&self, at: js_ast::Loc) -> Option<i32> {
+        self.starts()?.class_elements.get(&at.start).copied()
+    }
+    fn starts(&self) -> Option<&crate::p::StartsForParseOnly> {
+        self.p.starts_for_parse_only.as_ref()
+    }
+    pub fn import_path(&self, import_record_index: u32) -> &[u8] {
+        self.p
+            .import_records
+            .items()
+            .get(import_record_index as usize)
+            .map_or(&[], |record| record.path.text)
+    }
+    pub fn module_syntax(&self) -> ModuleSyntax {
+        ModuleSyntax {
+            import_meta: self.p.has_import_meta,
+            top_level_await: self.p.top_level_await_keyword.len > 0,
+        }
+    }
+}
+
+/// Module record flags found while parsing.
+#[derive(Clone, Copy, Default)]
+pub struct ModuleSyntax {
+    pub import_meta: bool,
+    pub top_level_await: bool,
+}
+
+/// Runs `Parser::parse_only` on JavaScript text that isn't one of the build's files. Returns `None`
+/// on a parse error.
+pub fn parse_only_text<R>(
+    text: &[u8],
+    top_level_await: bool,
+    jsc_builtin_syntax: bool,
+    f: impl FnOnce(&ParsedOnly<'_, '_>) -> R,
+) -> Option<R> {
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(&b"chunk.js"[..], text);
+    let mut options = Options::init(Default::default(), bun_ast::Loader::Js);
+    options.features.no_macros = true;
+    options.features.top_level_await = top_level_await;
+    options.jsc_builtin_syntax = jsc_builtin_syntax;
+    options.suppress_warnings_about_weird_code = true;
+    let define = Define::default();
+    let mut log = bun_ast::Log::init();
+    let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+    parser.parse_only(f).ok()
+}
+
 pub struct Parser<'a> {
-    pub options: Options<'a>,
-    pub lexer: js_lexer::Lexer<'a>,
-    /// Raw pointer alias of `lexer.log`. Zig held two `*Log` pointers; Rust
+    pub(crate) options: Options<'a>,
+    pub(crate) lexer: js_lexer::Lexer<'a>,
+    /// Raw pointer alias of `lexer.log`. Rust
     /// cannot hold two live `&'a mut Log`, so both the parser- and lexer-side
     /// handles are `NonNull` and dereferenced at use sites (see `log_mut` /
     /// `Lexer::log()`). The pointee outlives `'a` (see `init`).
-    pub log: core::ptr::NonNull<bun_ast::Log>,
-    pub source: &'a bun_ast::Source,
-    pub define: &'a Define,
-    pub bump: &'a Arena,
+    pub(crate) log: core::ptr::NonNull<bun_ast::Log>,
+    pub(crate) source: &'a bun_ast::Source<'a>,
+    pub(crate) define: &'a Define,
+    pub(crate) bump: &'a Arena,
+    /// `log.errors` before the priming `lexer.next()` in `init`.
+    pub(crate) orig_error_count: u32,
 }
 
 pub struct Options<'a> {
@@ -76,10 +149,12 @@ pub struct Options<'a> {
     pub ts: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
+    /// Keeps every directive in the AST, in its original position and with its original text.
+    /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
+    pub keep_directives: bool,
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,
     pub suppress_warnings_about_weird_code: bool,
-    pub filepath_hash_for_hmr: u32,
     pub features: RuntimeFeatures,
 
     pub tree_shaking: bool,
@@ -94,6 +169,8 @@ pub struct Options<'a> {
     pub allow_unresolved: &'a options::AllowUnresolved,
 
     pub module_type: options::ModuleType,
+    /// The source is one of JavaScriptCore's builtins: `@name` is a name.
+    pub jsc_builtin_syntax: bool,
     pub output_format: options::Format,
 
     pub transform_only: bool,
@@ -112,11 +189,18 @@ pub struct Options<'a> {
     /// - Wraps last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE
     pub repl_mode: bool,
+
+    /// Lower `toml_datetime`-tagged strings in a lazy-export AST to `Temporal.*.from` calls.
+    pub lower_toml_datetimes: bool,
+
+    /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
+    /// module rather than becoming a redirect to what it re-exports.
+    pub is_entry_point: bool,
 }
 
 impl<'a> Default for Options<'a> {
     fn default() -> Self {
-        // Zig: `macro_context = undefined` — modeled as `None`; caller must set
+        // `macro_context` is `None`; caller must set
         // before use. This impl exists so `_parse` can `core::mem::take` the
         // real options out of `Parser` (moving the heap-owning `jsx: Pragma`
         // by value) instead of bitwise-copying it and double-freeing on drop.
@@ -125,10 +209,10 @@ impl<'a> Default for Options<'a> {
             ts: false,
             keep_names: true,
             ignore_dce_annotations: false,
+            keep_directives: false,
             preserve_unused_imports_ts: false,
-            use_define_for_class_fields: false,
+            use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
-            filepath_hash_for_hmr: 0,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,
@@ -138,21 +222,23 @@ impl<'a> Default for Options<'a> {
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
+            jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             framework: None,
             repl_mode: false,
+            lower_toml_datetimes: false,
+            is_entry_point: false,
         }
     }
 }
 
 impl<'a> Options<'a> {
     /// Field-by-field clone for the bundler's empty-file fallback
-    /// (ParseTask.zig:335-342: `getEmptyAST(..., opts, ...)` after
-    /// `caches.js.parse(..., opts, ...)` returned null). Zig passed `opts` by
-    /// value (bitwise copy) to *both* calls; in Rust `parse()` consumes `opts`,
+    /// (`getEmptyAST(..., opts, ...)` after `caches.js.parse(..., opts, ...)`
+    /// returned null). `parse()` consumes `opts`,
     /// and `Options` is not `Clone` because `macro_context` is `&'a mut`.
     ///
     /// Co-located with the struct so adding a field is a hard error here —
@@ -175,12 +261,14 @@ impl<'a> Options<'a> {
             ts: self.ts,
             keep_names: self.keep_names,
             ignore_dce_annotations: self.ignore_dce_annotations,
+            keep_directives: self.keep_directives,
             preserve_unused_imports_ts: self.preserve_unused_imports_ts,
             use_define_for_class_fields: self.use_define_for_class_fields,
             suppress_warnings_about_weird_code: self.suppress_warnings_about_weird_code,
-            filepath_hash_for_hmr: self.filepath_hash_for_hmr,
             features: RuntimeFeatures {
                 react_fast_refresh: f.react_fast_refresh,
+                react_compiler: f.react_compiler,
+                react_compiler_parse_test_pragmas: f.react_compiler_parse_test_pragmas,
                 hot_module_reloading: f.hot_module_reloading,
                 server_components: f.server_components,
                 is_macro_runtime: f.is_macro_runtime,
@@ -201,6 +289,7 @@ impl<'a> Options<'a> {
                 auto_polyfill_require: f.auto_polyfill_require,
                 replace_exports: Default::default(),
                 dont_bundle_twice: f.dont_bundle_twice,
+                code_coverage: f.code_coverage,
                 unwrap_commonjs_packages: f.unwrap_commonjs_packages,
                 commonjs_at_runtime: f.commonjs_at_runtime,
                 unwrap_commonjs_to_esm: f.unwrap_commonjs_to_esm,
@@ -210,11 +299,9 @@ impl<'a> Options<'a> {
                 runtime_transpiler_cache: None,
                 lower_using: f.lower_using,
                 bundler_feature_flags: None,
+                define_hash: f.define_hash,
                 repl_mode: f.repl_mode,
                 jsx_optimization_inline: f.jsx_optimization_inline,
-                dynamic_require: f.dynamic_require,
-                remove_whitespace: f.remove_whitespace,
-                use_import_meta_require: f.use_import_meta_require,
             },
             tree_shaking: self.tree_shaking,
             bundle: self.bundle,
@@ -224,12 +311,15 @@ impl<'a> Options<'a> {
             warn_about_unbundled_modules: self.warn_about_unbundled_modules,
             allow_unresolved: self.allow_unresolved,
             module_type: self.module_type,
+            jsc_builtin_syntax: self.jsc_builtin_syntax,
             output_format: self.output_format,
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
             framework: self.framework,
             repl_mode: self.repl_mode,
+            lower_toml_datetimes: self.lower_toml_datetimes,
+            is_entry_point: self.is_entry_point,
         }
     }
 
@@ -242,7 +332,7 @@ impl<'a> Options<'a> {
                 // this holds the values for the jsx optimizaiton flags, which have both been removed
                 // as the optimizations break newer versions of react, see https://github.com/oven-sh/bun/issues/11025
                 let jsx_optimizations: [bool; 2] = [false, false];
-                // `bool: NoUninit`, `u8: AnyBitPattern`; matches Zig `std.mem.asBytes`.
+                // `bool: NoUninit`, `u8: AnyBitPattern`.
                 hasher.update(bytemuck::cast_slice::<bool, u8>(&jsx_optimizations));
             } else {
                 hasher.update(b"NO_JSX");
@@ -259,48 +349,52 @@ impl<'a> Options<'a> {
             hasher.update(b"no_dce");
         }
 
+        if !self.use_define_for_class_fields {
+            hasher.update(b"udfcf=0");
+        }
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
     // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
     // to avoid changing line numbers too much to make source mapping more readable
-    pub fn runtime_merge_adjacent_expression_statements(&self) -> bool {
+    pub(crate) fn runtime_merge_adjacent_expression_statements(&self) -> bool {
         self.bundle
     }
 
     pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Options<'static> {
-        // Zig left `macro_context` as `undefined` and the rest of the fields at
-        // their declared defaults. Rust models the undefined pointer as `None`
+        // `macro_context` is `None`
         // (see field comment); caller overwrites before use.
         let mut opts = Options {
             ts: loader.is_typescript(),
             jsx,
             keep_names: true,
             ignore_dce_annotations: false,
+            keep_directives: false,
             preserve_unused_imports_ts: false,
-            use_define_for_class_fields: false,
+            use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
-            filepath_hash_for_hmr: 0,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,
             code_splitting: false,
             package_version: b"",
-            // Zig: `macro_context: *MacroContextType() = undefined` — uninitialized
-            // raw pointer the caller overwrites before any read. In Rust,
-            // materializing an invalid `&mut T` is immediate UB regardless of
+            // Materializing an invalid `&mut T` is immediate UB regardless of
             // use, so model "not yet set" as `None`; callers must assign `Some(_)`
             // before any read site `.unwrap()`s it.
             macro_context: None,
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
+            jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             framework: None,
             repl_mode: false,
+            lower_toml_datetimes: loader == options::Loader::Toml,
+            is_entry_point: false,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -308,18 +402,26 @@ impl<'a> Options<'a> {
 }
 
 // ── live `Parser::init` ───────────────────────────────────────────────────
-// Zig held two aliasing `*Log` pointers (parser + lexer). Rust models this as
+// The two aliasing `Log` handles (parser + lexer) are modeled as
 // `NonNull<Log>` on both sides — neither stores a long-lived `&mut`, so no
 // Stacked-Borrows tag is invalidated when accesses interleave.
 impl<'a> Parser<'a> {
     pub fn init(
         options: Options<'a>,
         log: &mut bun_ast::Log,
-        source: &'a bun_ast::Source,
+        source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
-        let lexer = js_lexer::Lexer::init(log, source, bump)?;
+        source.check_parseable_len(log, "File")?;
+        let orig_error_count = log.errors;
+        let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
+        // Must be set before the priming `next()` so leading comments are seen.
+        lexer.track_comments = options.features.minify_identifiers;
+        lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
+        lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
+        lexer.step();
+        lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
         // chain (the `&'a mut Log` was consumed by `Lexer::init`).
         let log_ptr = lexer.log;
@@ -330,24 +432,13 @@ impl<'a> Parser<'a> {
             define,
             source,
             log: log_ptr,
+            orig_error_count,
         })
-    }
-
-    /// Reborrow the shared `Log`. Callers must not hold two results live at
-    /// once (or alongside `self.lexer.log()`).
-    #[inline]
-    pub fn log_mut(&mut self) -> &mut bun_ast::Log {
-        // SAFETY: `log` was created from the `&'a mut Log` passed to `init`,
-        // which outlives `'a` (and therefore `self`). `self.lexer.log` aliases
-        // the same allocation as a `NonNull` (not `&mut`), so this transient
-        // reborrow does not invalidate it.
-        unsafe { self.log.as_mut() }
     }
 }
 
 // ── live `Parser::parse` / `Parser::scan_imports` symbols ────────────────
-// `parse()` is the real const-generic dispatcher (Zig: `if (ts && jsx.parse)
-// _parse(TSXParser) else …`). `_parse` carries the correct `<const TS, JX>`
+// `parse()` is the real const-generic dispatcher. `_parse` carries the correct `<const TS, JX>`
 // shape but its body is blocked on `P::{init, prepare_for_visit_pass,
 // append_part, to_ast, …}` (gated in P.rs); the full ported body is preserved
 // per-method-gated in the impl block below and replaces this stub once that
@@ -355,7 +446,6 @@ impl<'a> Parser<'a> {
 impl<'a> Parser<'a> {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
     pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
-        // TODO(port): narrow error set
         #[cfg(target_arch = "wasm32")]
         {
             self.options.ts = true;
@@ -366,7 +456,7 @@ impl<'a> Parser<'a> {
         // JSX is no longer part of the parser's monomorphization (it only
         // affects a few expr arms — see `parser.rs`); `P::init` reads the
         // transform mode off `options.jsx.parse` at runtime, so the only
-        // remaining comptime split is TypeScript.
+        // remaining compile-time split is TypeScript.
         #[cfg(not(target_arch = "wasm32"))]
         {
             if self.options.ts {
@@ -377,11 +467,51 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parses, and visits nothing: `f` gets the statements as they were written (nothing folded, dropped or bound).
+    /// `Err`: the source does not parse.
+    #[cold]
+    pub fn parse_only<R>(mut self, f: impl FnOnce(&ParsedOnly<'_, 'a>) -> R) -> Result<R, Error> {
+        type Pi<'a> = P<'a, false, false>;
+        let lexer = core::mem::replace(
+            &mut self.lexer,
+            js_lexer::Lexer::init_without_reading(
+                self.bump.alloc(bun_ast::Log::default()),
+                self.source,
+                self.bump,
+            ),
+        );
+        let options = core::mem::take(&mut self.options);
+        let mut __p = init_p!(Pi<'_>;
+            self.bump, self.log, self.source, self.define, lexer, options);
+        // SAFETY: `init_p!` only yields after `init` succeeded.
+        let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
+        p.starts_for_parse_only = Some(Default::default());
+        if p.lexer.token == js_lexer::T::THashbang {
+            p.lexer.next()?;
+        }
+        if p.log().errors > self.orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+        let mut opts = ParseStatementOptions {
+            scope: StatementScope::Module,
+            ..Default::default()
+        };
+        let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
+        // What the parser only logs is still an error: the statements are its best guess.
+        if p.log().errors > self.orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+        Ok(f(&ParsedOnly {
+            stmts: stmts.as_slice(),
+            p,
+        }))
+    }
+
     /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from
     /// `bun run`, so keep the `_scan_imports` monomorphizations out of the hot
     /// `.text` between the lexer and the live `_parse` bodies.
     #[cold]
-    pub fn scan_imports(&mut self, scan_pass: &'a mut ScanPassResult) -> Result<(), Error> {
+    pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult<'a>) -> Result<(), Error> {
         if self.options.ts {
             self._scan_imports::<true>(scan_pass)
         } else {
@@ -392,12 +522,10 @@ impl<'a> Parser<'a> {
     #[cold]
     fn _scan_imports<const TS: bool>(
         &mut self,
-        scan_pass: &'a mut ScanPassResult,
+        scan_pass: &mut ScanPassResult<'a>,
     ) -> Result<(), Error> {
         type Pi<'a, const TS: bool> = P<'a, TS, true>;
-        // Zig moves lexer/options by value into `P` (Parser.zig) and only
-        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
-        // on `Parser.lexer`. In Rust, `Lexer` owns `Vec`s and `Options` owns
+        // `Lexer` owns `Vec`s and `Options` owns
         // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
         // when `self` later drops. Move them out, leaving inert placeholders.
         //
@@ -417,14 +545,30 @@ impl<'a> Parser<'a> {
         let options = core::mem::take(&mut self.options);
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
-        // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
-        let mut __p = init_p!(Pi<'_, TS>;
+        // no `&mut` is materialized.
+        let mut __p = init_p!(Pi<'a, TS>;
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut Pi<'_, TS> = unsafe { __p.assume_init_mut() };
-        p.import_records = crate::p::ImportRecordList::Borrowed(&mut scan_pass.import_records);
-        p.named_imports = crate::p::NamedImportsType::Borrowed(&mut scan_pass.named_imports);
+        let p: &mut Pi<'a, TS> = unsafe { __p.assume_init_mut() };
 
+        // `p` holds the result's containers while it scans.
+        p.import_records =
+            crate::p::ImportRecordList::Scan(core::mem::take(&mut scan_pass.import_records));
+        p.named_imports = core::mem::take(&mut scan_pass.named_imports);
+        if TS {
+            p.parse_pass_symbol_uses = Some(core::mem::take(&mut scan_pass.used_symbols));
+        }
+        let result = Self::scan_imports_with(p);
+        scan_pass.import_records = p.import_records.take_scan(p.arena);
+        scan_pass.named_imports = core::mem::take(&mut p.named_imports);
+        if let Some(used_symbols) = p.parse_pass_symbol_uses.take() {
+            scan_pass.used_symbols = used_symbols;
+        }
+        result
+    }
+
+    #[cold]
+    fn scan_imports_with<const TS: bool>(p: &mut P<'a, TS, true>) -> Result<(), Error> {
         // The problem with our scan pass approach is type-only imports.
         // We don't have accurate symbol counts.
         // So we don't have a good way to distinguish between a type-only import and not.
@@ -433,15 +577,16 @@ impl<'a> Parser<'a> {
             // re-hash it one identifier reference at a time (≈ one tracked
             // symbol per 16 source bytes). `ensure_total_capacity` is a no-op
             // when the map already retains enough capacity from a prior file.
-            let _ = scan_pass
-                .used_symbols
-                .ensure_total_capacity(self.source.contents.len() / 16);
-            p.parse_pass_symbol_uses = Some(&mut scan_pass.used_symbols);
+            let _ = p
+                .parse_pass_symbol_uses
+                .as_mut()
+                .expect("set by the caller for TS")
+                .ensure_total_capacity(p.source.contents.len() / 16);
         }
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
-            is_module_scope: true,
+            scope: StatementScope::Module,
             ..Default::default()
         };
 
@@ -452,7 +597,7 @@ impl<'a> Parser<'a> {
         match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
             Ok(_) => {}
             Err(e) => {
-                if e == err!("StackOverflow") {
+                if e == crate::Error::StackOverflow {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
                     p.log().add_error(
                         Some(p.source),
@@ -488,9 +633,6 @@ impl<'a> Parser<'a> {
                     .set(ImportRecordFlags::IS_UNUSED, new_unused);
             }
 
-            // PORT NOTE: `scan_pass.used_symbols`/`import_records` are still
-            // exclusively borrowed inside `p`; route through `p`'s fields so the
-            // borrow checker sees disjoint field access on the same struct.
             let import_records = p.import_records.items_mut();
             let mut iter = p
                 .parse_pass_symbol_uses
@@ -511,8 +653,7 @@ impl<'a> Parser<'a> {
         // So we say "did we parse any JSX?"
         // if yes, just automatically add the import so that .bun knows to include the file.
         if p.options.jsx.parse && p.needs_jsx_import {
-            // PORT NOTE: Zig's `string` aliased the long-lived option storage
-            // directly. `add_import_record` requires `&'a [u8]`, but borrowing
+            // `add_import_record` requires `&'a [u8]`, but borrowing
             // `p.options` would conflict with `&mut p`, so copy into the arena.
             let arena = p.arena;
             let import_source: &'a [u8] = arena.alloc_slice_copy(p.options.jsx.import_source());
@@ -532,20 +673,16 @@ impl<'a> Parser<'a> {
             );
         }
 
-        scan_pass.approximate_newline_count = p.lexer.approximate_newline_count;
         Ok(())
     }
 
-    pub fn to_lazy_export_ast(
+    pub(crate) fn to_lazy_export_ast(
         &mut self,
         expr: Expr,
         runtime_api_call: &'static [u8],
         symbols: js_ast::symbol::List<'a>,
     ) -> Result<crate::Result<'a>, Error> {
-        // TODO(port): narrow error set
-        // Zig moves lexer/options by value into `P` (Parser.zig) and only
-        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
-        // on `Parser.lexer`. In Rust we move them out and leave inert
+        // Move lexer/options out and leave inert
         // placeholders so `self` may drop without double-free.
         //
         // The placeholder lexer gets its own arena `Log` so it does not alias
@@ -563,7 +700,7 @@ impl<'a> Parser<'a> {
         let options = core::mem::take(&mut self.options);
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
-        // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
+        // no `&mut` is materialized.
         let mut __p = init_p!(JavaScriptParser<'_>;
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
@@ -578,13 +715,20 @@ impl<'a> Parser<'a> {
         // If we added to `p.symbols` it's going to fuck up all the indices
         // in the `symbols` array.
         debug_assert!(p.symbols.len() == 0);
-        // Zig: `moveToListManaged(arena)` — the buffer is already arena-backed,
-        // so this is now a plain move (matches Zig's pointer re-tag).
+        // The buffer is already arena-backed, so this is a plain move.
         p.symbols = symbols;
 
         p.prepare_for_visit_pass()?;
 
         let mut final_expr = expr;
+
+        // TOML date/time literals become `Temporal.*.from("...")` calls over
+        // a real unbound symbol, so the chunk renamer reserves the name
+        // instead of letting a user `Temporal` binding capture it.
+        if p.options.lower_toml_datetimes {
+            let mut temporal_ref: Option<js_ast::Ref> = None;
+            lower_date_time_literals(p, &mut final_expr, &mut temporal_ref)?;
+        }
 
         // Optionally call a runtime API function to transform the expression
         if !runtime_api_call.is_empty() {
@@ -605,11 +749,10 @@ impl<'a> Parser<'a> {
         });
         let part = js_ast::Part {
             stmts: stmts.into(),
-            symbol_uses: core::mem::take(&mut p.symbol_uses),
+            symbol_uses: p.take_symbol_uses()?,
             ..Default::default()
         };
         let mut parts = BumpVec::with_capacity_in(2, p.arena);
-        // PERF(port): was appendSliceAssumeCapacity — profile if hot
         parts.push(ns_export_part);
         parts.push(part);
 
@@ -632,113 +775,114 @@ impl<'a> Parser<'a> {
             b"",
         )?))
     }
+}
 
-    pub fn analyze(
-        &mut self,
-        context: *mut c_void,
-        callback: &dyn Fn(*mut c_void, &mut TSXParser, &mut [js_ast::Part]) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        // See `_scan_imports`: move lexer/options out, leaving inert
-        // placeholders so `self` may drop without double-free.
-        //
-        // The placeholder lexer gets its own arena `Log` so it does not alias
-        // `self.log` (see `_scan_imports`).
-        let lexer = core::mem::replace(
-            &mut self.lexer,
-            js_lexer::Lexer::init_without_reading(
-                // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
-                // placeholder is never read after this point.
-                self.bump.alloc(bun_ast::Log::default()),
-                self.source,
-                self.bump,
-            ),
-        );
-        let options = core::mem::take(&mut self.options);
-        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
-        // field docs), so handing the same raw pointer to both is defined —
-        // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
-        let mut __p = init_p!(TSXParser<'_>;
-            self.bump, self.log, self.source, self.define, lexer, options);
-        // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut TSXParser<'_> = unsafe { __p.assume_init_mut() };
+/// A container queued by `lower_date_time_literals`' worklist.
+enum DateTimeLowerContainer {
+    Object(js_ast::StoreRef<E::Object>),
+    Array(js_ast::StoreRef<E::Array>),
+}
 
-        // Consume a leading hashbang comment
-        let mut hashbang: &[u8] = b"";
-        if p.lexer.token == js_lexer::T::THashbang {
-            hashbang = p.lexer.identifier;
-            p.lexer.next()?;
-        }
-        let _ = hashbang;
-
-        // Parse the file in the first pass, but do not bind symbols
-        let mut opts = ParseStatementOptions {
-            is_module_scope: true,
-            ..Default::default()
-        };
-        let mut parse_tracer = bun_core::perf::trace("JSParser.parse");
-
-        let stmts = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
-            Ok(s) => s,
-            Err(e) => {
-                #[cfg(target_arch = "wasm32")]
-                {
-                    Output::print(format_args!(
-                        "JSParser.parse: caught error {} at location: {}\n",
-                        e.name(),
-                        p.lexer.loc().start
-                    ));
-                    let _ = p.log().print(Output::writer());
-                }
-                return Err(e);
-            }
-        };
-
-        parse_tracer.end();
-
-        // Zig spec (Parser.zig:292) reads `self.log.errors`; `p.log` and
-        // `self.log` alias the same `NonNull<Log>` so either is fine — route
-        // through `p` for clarity.
-        if p.log().errors > 0 {
-            #[cfg(target_arch = "wasm32")]
-            {
-                // If the logger is backed by console.log, every print appends a newline.
-                // so buffering is kind of mandatory here
-                // TODO(port): Zig builds a custom GenericWriter wrapping Output::print and a
-                // buffered writer over it. Provide a `bun_core::Output::buffered()`
-                // that returns an `impl core::fmt::Write` flushed on drop.
-                for msg in p.log().msgs.as_slice() {
-                    let mut m: bun_ast::Msg = *msg;
-                    let _ = m.write_format(Output::writer(), true);
+/// Rewrites every `toml_datetime`-tagged `E::String` in `expr` (in place)
+/// into a `Temporal.<Class>.from("<text>")` call, declaring the unbound
+/// `Temporal` symbol on first use. The calls are pure-annotated so tree
+/// shaking may drop unused exports. Iterative: deep dotted TOML headers nest
+/// objects far beyond safe recursion depth.
+fn lower_date_time_literals<'a>(
+    p: &mut JavaScriptParser<'a>,
+    expr: &mut Expr,
+    temporal_ref: &mut Option<js_ast::Ref>,
+) -> Result<(), Error> {
+    let mut work: Vec<DateTimeLowerContainer> = Vec::new();
+    lower_one_date_time_literal(p, expr, temporal_ref, &mut work)?;
+    while let Some(container) = work.pop() {
+        match container {
+            DateTimeLowerContainer::Object(mut obj) => {
+                for property in obj.properties.slice_mut() {
+                    if let Some(value) = &mut property.value {
+                        lower_one_date_time_literal(p, value, temporal_ref, &mut work)?;
+                    }
                 }
             }
-            return Err(err!("SyntaxError"));
+            DateTimeLowerContainer::Array(mut arr) => {
+                for item in arr.items.slice_mut() {
+                    lower_one_date_time_literal(p, item, temporal_ref, &mut work)?;
+                }
+            }
         }
-
-        let mut visit_tracer = bun_core::perf::trace("JSParser.visit");
-        p.prepare_for_visit_pass()?;
-
-        let mut parts = BumpVec::new_in(p.arena);
-
-        p.append_part(&mut parts, stmts.into_bump_slice_mut())?;
-        visit_tracer.end();
-
-        let mut analyze_tracer = bun_core::perf::trace("JSParser.analyze");
-        callback(context, p, parts.as_mut_slice())?;
-        analyze_tracer.end();
-        Ok(())
     }
+    Ok(())
+}
 
+fn lower_one_date_time_literal<'a>(
+    p: &mut JavaScriptParser<'a>,
+    expr: &mut Expr,
+    temporal_ref: &mut Option<js_ast::Ref>,
+    work: &mut Vec<DateTimeLowerContainer>,
+) -> Result<(), Error> {
+    match expr.data {
+        js_ast::ExprData::EString(str) if str.toml_datetime.is_some() => {
+            let ref_ = match *temporal_ref {
+                Some(ref_) => ref_,
+                None => {
+                    let ref_ =
+                        p.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"Temporal")?;
+                    *temporal_ref = Some(ref_);
+                    ref_
+                }
+            };
+            let (class, text) = {
+                let str = str.get();
+                let kind = str.toml_datetime.expect("infallible: guard checked");
+                (kind.temporal_class(), str.slice8())
+            };
+            let loc = expr.loc;
+            p.record_usage(ref_);
+            let namespace = p.new_expr(E::Identifier::init(ref_), loc);
+            let class_dot = p.new_expr(
+                E::Dot {
+                    target: namespace,
+                    name: E::Str::new(class),
+                    name_loc: loc,
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                },
+                loc,
+            );
+            let from_dot = p.new_expr(
+                E::Dot {
+                    target: class_dot,
+                    name: E::Str::new(b"from"),
+                    name_loc: loc,
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                },
+                loc,
+            );
+            let arg = p.new_expr(E::String::init(text), loc);
+            let args_slice: &mut [Expr] = p.arena.alloc_slice_fill_with(1, |_| arg);
+            *expr = p.new_expr(
+                E::Call {
+                    target: from_dot,
+                    args: Vec::from_arena_slice(args_slice),
+                    can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
+                    ..Default::default()
+                },
+                loc,
+            );
+        }
+        js_ast::ExprData::EArray(arr) => work.push(DateTimeLowerContainer::Array(arr)),
+        js_ast::ExprData::EObject(obj) => work.push(DateTimeLowerContainer::Object(obj)),
+        _ => {}
+    }
+    Ok(())
+}
+
+impl<'a> Parser<'a> {
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
-        // TODO(port): narrow error set
-        // TODO(port): bun_crash_handler::current_action — `Action` stores
-        // `&'static [u8]` but `self.source.path.text` is `'a`; widen
-        // the lifetime on `Action` (Zig held the same pointer). Once unblocked:
-        //   let _restore = bun_crash_handler::scoped_action(Action::Parse(self.source.path.text));
-        // (`ActionGuard` restores the previous action on Drop — no scopeguard.)
+        bun_crash_handler::scoped_action!(bun_crash_handler::Action::Parse(self.source.path.text));
 
-        // Zig moves lexer/options by value into `P` (Parser.zig:339) and only
-        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
-        // on `Parser.lexer`. `parse()` consumes `self` by value, so we
+        // `parse()` consumes `self` by value, so we
         // destructure here and hand the owned `lexer`/`options` straight to
         // `P::init` — no `ptr::read`/`mem::replace` placeholder dance, no
         // double-free hazard.
@@ -749,14 +893,12 @@ impl<'a> Parser<'a> {
             source,
             define,
             bump,
+            orig_error_count,
         } = self;
 
-        // `lexer.log` aliases `log`; route through the centralised
-        // `Lexer::log()` accessor so this site stays safe.
-        let orig_error_count = lexer.log().errors;
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
-        // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
+        // no `&mut` is materialized.
         let mut __p = init_p!(P<'_, TS, false>;
             bump, log, source, define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
@@ -772,26 +914,20 @@ impl<'a> Parser<'a> {
             p.should_fold_typescript_constant_expressions = true;
         }
 
-        // PERF(port): was stack-fallback arena (42 * sizeof(BinaryExpressionVisitor)) — profile if hot
+        // Pre-sized to typical worst-case binary-expression nesting depth.
         p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
-        // PERF(port): was stack-fallback arena (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile if hot
         p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
-
-        // (Zig asserted the stack-fallback arena owns the buffer; not applicable here.)
-
-        // defer {
-        //     if (p.allocated_names_pool) |pool| {
-        //         pool.data = p.allocated_names;
-        //         pool.release();
-        //         p.allocated_names_pool = null;
-        //     }
-        // }
 
         // Consume a leading hashbang comment
         let mut hashbang: &[u8] = b"";
         if p.lexer.token == js_lexer::T::THashbang {
             hashbang = p.lexer.identifier;
             p.lexer.next()?;
+        }
+
+        // The first token may already have logged an error; halt before the early returns below.
+        if p.log().errors > orig_error_count {
+            return Err(crate::Error::SyntaxError);
         }
 
         // Detect a leading "// @bun" pragma
@@ -804,13 +940,10 @@ impl<'a> Parser<'a> {
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
-        if true
-        /* TODO(port): feature_flag */
-        {
+        if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                // TODO(port): `Path::is_node_module`/`is_jsx_file` live on the
-                // resolver `fs::Path` (not the logger stub) — inline their
-                // bodies until the logger Path grows them.
+                // `Path::is_node_module`/`is_jsx_file` live on the resolver
+                // `fs::Path` (not the logger stub) — their bodies are inlined here.
                 let path = &p.source.path;
                 #[cfg(windows)]
                 const NM: &[u8] = b"\\node_modules\\";
@@ -832,7 +965,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
-            is_module_scope: true,
+            scope: StatementScope::Module,
             ..Default::default()
         };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
@@ -845,7 +978,7 @@ impl<'a> Parser<'a> {
             Ok(s) => s.into_bump_slice_mut(),
             Err(e) => {
                 parse_tracer.end();
-                if e == err!("StackOverflow") {
+                if e == crate::Error::StackOverflow {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
                     p.log().add_error(
                         Some(p.source),
@@ -854,7 +987,7 @@ impl<'a> Parser<'a> {
                     );
 
                     // Return a SyntaxError so that we reuse existing code for handling errors.
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
 
                 return Err(e);
@@ -869,20 +1002,45 @@ impl<'a> Parser<'a> {
         //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
         //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
         if p.log().errors > orig_error_count {
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
-        // TODO(port): bun_crash_handler::CURRENT_ACTION.set(Action::Visit(self.source.path.text))
-        // — see lifetime note at top of fn.
+        // A second guard dropped at end of `_parse` restores the previous action.
+        bun_crash_handler::scoped_action!(bun_crash_handler::Action::Visit(source.path.text));
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
 
+        if p.options.features.react_compiler.is_enabled() {
+            let rc_options = bun_react_compiler::ReactCompilerOptions {
+                enabled: true,
+                is_dev: p.options.jsx.development,
+                parse_test_pragmas: p.options.features.react_compiler_parse_test_pragmas,
+                output_mode: p
+                    .options
+                    .features
+                    .react_compiler
+                    .is_ssr()
+                    .then(|| "ssr".to_owned()),
+                ..Default::default()
+            };
+            let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);
+            let import_bindings = bun_react_compiler::collect_import_bindings(
+                stmts,
+                p.import_records.items(),
+                p.symbols.as_slice(),
+            );
+            p.react_compiler = Some(Box::new(bun_react_compiler::ReactCompilerState::new(
+                rc_options,
+                opt_out,
+                import_bindings,
+            )));
+        }
+
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
-        let mut parts = BumpVec::<js_ast::Part>::new_in(p.arena);
-        // (defer after.deinit()/before.deinit() — Zig only frees the backing buffer; element
-        // ownership is transferred into `parts` below via bitwise copy + set_len(0).)
+        let mut parts = BumpVec::<js_ast::Part>::with_capacity_in(stmts.len() + 2, p.arena);
+        // (Element ownership is transferred into `parts` below via bitwise copy + set_len(0).)
 
         if p.options.bundle {
             // The bundler requires a part for generated module wrappers. This
@@ -961,12 +1119,12 @@ impl<'a> Parser<'a> {
             // The TypeScript compiler itself contains code with this pattern, so
             // it's important to implement this optimization.
 
-            // PORT NOTE: `Loc` lacks `Hash` (logger crate), so the
+            // `Loc` lacks `Hash` (logger crate), so the
             // `scopes_in_order_for_enum` lookups linear-scan `keys()` —
-            // matches Zig's ArrayHashMap linear behaviour at small N (one
+            // fine at small N (one
             // entry per top-level `enum`). `scope_order_to_visit` is
             // `&'a [_]` (a `Copy` cursor) so save/restore is a plain value
-            // copy, mirroring the Zig `[]ScopeOrder` slice value.
+            // copy.
             let arena = p.arena;
             let mut preprocessed_enums: BumpVec<BumpVec<'a, js_ast::Part>> = BumpVec::new_in(arena);
             let mut preprocessed_enum_i: usize = 0;
@@ -980,8 +1138,7 @@ impl<'a> Parser<'a> {
                             .iter()
                             .position(|k| *k == stmt.loc)
                             .expect("enum scope-order entry recorded during parse");
-                        // Map stores `&'a [ScopeOrder]` (Zig `[]ScopeOrder` slice
-                        // value); shared borrow may freely alias the inner
+                        // Map stores `&'a [ScopeOrder]`; shared borrow may freely alias the inner
                         // re-lookup performed by `append_part → visit_stmts`.
                         p.scope_order_to_visit = p.scopes_in_order_for_enum.values()[idx];
 
@@ -1001,13 +1158,12 @@ impl<'a> Parser<'a> {
                     js_ast::StmtData::SLocal(local) => {
                         if (local.decls.len_u32() as usize) > 1 {
                             for decl in local.decls.slice() {
-                                // PORT NOTE: `S::Local`/`Decl` are not `Copy`;
+                                // `S::Local`/`Decl` are not `Copy`;
                                 // rebuild the struct instead of `**local`.
                                 let _local = S::Local {
                                     kind: local.kind,
                                     is_export: local.is_export,
-                                    was_ts_import_equals: local.was_ts_import_equals,
-                                    was_commonjs_export: local.was_commonjs_export,
+                                    origin: local.origin,
                                     decls: G::DeclList::init_one(G::Decl {
                                         binding: decl.binding,
                                         value: decl.value,
@@ -1053,11 +1209,11 @@ impl<'a> Parser<'a> {
                         let should_move = !p.options.bundle && class.class.can_be_moved();
 
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        let appended = p.append_part(&mut parts, sliced)?;
 
-                        if should_move {
-                            // PORT NOTE: `Part` isn't `Copy`; pop+push instead of last+truncate.
-                            before.push(parts.pop().expect("unreachable"));
+                        if should_move && appended {
+                            // `Part` isn't `Copy`; pop+push instead of last+truncate.
+                            before.push(parts.pop().expect("infallible: part was appended"));
                         }
                     }
                     js_ast::StmtData::SExportDefault(value) => {
@@ -1066,14 +1222,14 @@ impl<'a> Parser<'a> {
                         // https://github.com/oven-sh/bun/issues/1961
                         let should_move = !p.options.bundle && value.can_be_moved();
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        let appended = p.append_part(&mut parts, sliced)?;
 
-                        if should_move {
-                            before.push(parts.pop().expect("unreachable"));
+                        if should_move && appended {
+                            before.push(parts.pop().expect("infallible: part was appended"));
                         }
                     }
                     js_ast::StmtData::SEnum(_) => {
-                        // PORT NOTE: `Part` isn't `Clone`; move out the
+                        // `Part` isn't `Clone`; move out the
                         // pre-visited parts instead of `appendSlice`.
                         let enum_parts = core::mem::replace(
                             &mut preprocessed_enums[preprocessed_enum_i],
@@ -1106,7 +1262,7 @@ impl<'a> Parser<'a> {
 
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
@@ -1149,7 +1305,6 @@ impl<'a> Parser<'a> {
                             bun_ast::Loc::EMPTY,
                         )),
                     };
-                    // PERF(port): was assume_capacity
                     declared_symbols.append_assume_capacity(DeclaredSymbol {
                         ref_: p.dirname_ref,
                         is_top_level: true,
@@ -1204,6 +1359,153 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Finalize referenced-export tracking for `import("str")` /
+        // `require("str")`. Several namespace refs may exist for one import
+        // record (the synthetic ref from `transpose_import` plus a
+        // `const ns = …` / `.then(ns => …)` / `{...rest}` local). A record is
+        // fully tracked only when *every* such ref had all its uses accounted
+        // for (`use_count_estimate == 0`); the alias set is the union across
+        // them. Untracked records get no entry and keep every export.
+        if !p
+            .imports_to_convert_from_dynamic_import
+            .as_slice()
+            .is_empty()
+        {
+            #[derive(Default)]
+            struct PerRecord {
+                escaped: bool,
+                aliases: Vec<bun_ast::StoreStr>,
+                items: Vec<bun_ast::ast_result::DynamicImportItem>,
+                /// A name is read some other way (a `{...rest}` copy, a local
+                /// that stays one), so the call's value must hold it.
+                needs_value: bool,
+            }
+            let mut by_record: bun_collections::ArrayHashMap<u32, PerRecord> = Default::default();
+            // A namespace ref is listed once per registration and once per
+            // destructure of it; its alias map only needs one walk.
+            let mut seen_namespace: bun_collections::HashMap<(bun_ast::Ref, u32), ()> =
+                Default::default();
+            let arena = p.arena;
+            for i in 0..p.imports_to_convert_from_dynamic_import.len() {
+                let (ns_ref, import_record_id, scope) = {
+                    let d = &p.imports_to_convert_from_dynamic_import[i];
+                    (d.namespace.ref_, d.import_record_id, d.scope)
+                };
+                let escaped = {
+                    let symbol = &p.symbols[ns_ref.inner_index() as usize];
+                    // `must_not_be_renamed` / `contains_direct_eval` cover
+                    // direct `eval()` (or `with`) in scope, which can read the
+                    // namespace by name without a tracked property access. A
+                    // linked symbol was merged with another declaration (a
+                    // hoisted `var`, a parameter), so its own use count says
+                    // nothing.
+                    let tracked = p.namespace_tracked_uses.get(&ns_ref).copied().unwrap_or(0);
+                    // A source-visible local escapes when it has uses nobody
+                    // accounted for; the synthetic per-`import()` ref (never
+                    // referenced in source) escapes when its one consumer did not.
+                    (if p.dynamic_import_namespace_locals.contains_key(&ns_ref) {
+                        symbol.use_count_estimate > tracked || tracked == u32::MAX
+                    } else {
+                        tracked == 0
+                    }) || symbol.must_not_be_renamed()
+                        || symbol.has_link()
+                        || scope.is_some_and(|s| s.contains_direct_eval)
+                        || p.dynamic_import_escaped_records
+                            .contains_key(&import_record_id)
+                };
+                let entry = bun_core::handle_oom(by_record.get_or_put(import_record_id));
+                if !entry.found_existing {
+                    *entry.value_ptr = PerRecord::default();
+                }
+                let rec = entry.value_ptr;
+                rec.escaped |= escaped;
+                if rec.escaped
+                    || seen_namespace
+                        .insert((ns_ref, import_record_id), ())
+                        .is_some()
+                {
+                    continue;
+                }
+                let Some(map) = p.import_items_for_namespace.get(&ns_ref) else {
+                    continue;
+                };
+                for (key, loc_ref) in map.keys().iter().zip(map.values().iter()) {
+                    let local = loc_ref.ref_;
+                    // A destructured local that is never read does not keep
+                    // its export alive — unless it was merged with another
+                    // declaration or a direct `eval` can read it by name.
+                    if local.is_valid() {
+                        let symbol = &p.symbols[local.inner_index() as usize];
+                        if symbol.use_count_estimate == 0
+                            && !symbol.has_link()
+                            && !symbol.must_not_be_renamed()
+                        {
+                            continue;
+                        }
+                    }
+                    let alias = bun_ast::StoreStr::new(arena.alloc_slice_copy(key));
+                    rec.aliases.push(alias);
+                    let is_require_marker = p
+                        .import_records
+                        .items()
+                        .get(import_record_id as usize)
+                        .is_some_and(|record| crate::p::is_require_marker(record, key));
+                    // A read off `ns` (an item already), or a local a pattern
+                    // binds. Assigning to either, or reaching the local through
+                    // a hoisting merge or a direct `eval`, keeps the read as
+                    // written.
+                    let is_item = local.is_valid()
+                        && !is_require_marker
+                        && (p.is_import_item.contains_key(&local)
+                            || p.dynamic_import_destructured_locals.contains_key(&local))
+                        && !p.symbols[ns_ref.inner_index() as usize].has_been_assigned_to()
+                        && p.dynamic_import_namespace_locals
+                            .get(&ns_ref)
+                            .is_none_or(|records| records.len() == 1)
+                        && {
+                            let symbol = &p.symbols[local.inner_index() as usize];
+                            !symbol.has_been_assigned_to()
+                                && !symbol.has_link()
+                                && !symbol.must_not_be_renamed()
+                                && !p.named_imports.contains(&local)
+                        };
+                    if is_item {
+                        rec.items.push(bun_ast::ast_result::DynamicImportItem {
+                            local,
+                            alias,
+                            namespace_ref: ns_ref,
+                        });
+                    } else {
+                        rec.needs_value = true;
+                    }
+                }
+            }
+
+            for i in 0..by_record.len() {
+                let import_record_id = by_record.keys()[i];
+                let rec = &mut by_record.values_mut()[i];
+                if rec.escaped {
+                    continue;
+                }
+                rec.aliases.sort_by(|a, b| a.slice().cmp(b.slice()));
+                rec.aliases.dedup_by(|a, b| a.slice() == b.slice());
+                let aliases = arena.alloc_slice_copy(&rec.aliases);
+                let items = arena.alloc_slice_copy(&rec.items);
+                bun_core::handle_oom(
+                    p.dynamic_import_aliases.put(
+                        import_record_id,
+                        bun_ast::ast_result::DynamicImportUse {
+                            aliases: bun_ast::StoreSlice::new(aliases),
+                            items: bun_ast::StoreSlice::new(items),
+                            needs_namespace_object: rec.needs_value
+                                || p.dynamic_import_needs_object
+                                    .contains_key(&import_record_id),
+                        },
+                    ),
+                );
+            }
+        }
+
         // This is a workaround for broken module environment checks in packages like lodash-es
         // https://github.com/lodash/lodash/issues/5660
         let mut force_esm = false;
@@ -1222,16 +1524,13 @@ impl<'a> Parser<'a> {
                 let mut remaining_stmts: &mut [Stmt] = all_stmts;
 
                 for i in 0..p.imports_to_convert_from_require.len() {
-                    // PORT NOTE: borrowck — copy out the three Copy fields so the
+                    // borrowck — copy out the three Copy fields so the
                     // immutable borrow of `p.imports_to_convert_from_require`
                     // ends before `p.module_scope_mut()` takes `&mut self`.
                     let (ns_ref, ns_loc, import_record_id) = {
                         let deferred_import = &p.imports_to_convert_from_require[i];
                         (
-                            deferred_import
-                                .namespace
-                                .ref_
-                                .expect("infallible: ref bound"),
+                            deferred_import.namespace.ref_,
                             deferred_import.namespace.loc,
                             deferred_import.import_record_id,
                         )
@@ -1243,7 +1542,7 @@ impl<'a> Parser<'a> {
 
                     import_part_stmts[0] = Stmt::alloc(
                         S::Import {
-                            star_name_loc: Some(ns_loc),
+                            star_name_loc: ns_loc,
                             import_record_index: import_record_id,
                             namespace_ref: ns_ref,
                             default_name: None,
@@ -1259,7 +1558,6 @@ impl<'a> Parser<'a> {
                         ref_: ns_ref,
                         is_top_level: true,
                     });
-                    // PERF(port): was assume_capacity
                     before.push(js_ast::Part {
                         stmts: import_part_stmts.into(),
                         declared_symbols,
@@ -1273,9 +1571,8 @@ impl<'a> Parser<'a> {
             }
 
             if p.commonjs_named_exports.count() > 0 {
-                // PORT NOTE: borrowck — `deoptimize_commonjs_named_exports` mut-borrows
-                // `self`, so the `values()`/`keys()` slices are read once into locals
-                // (Zig kept slice handles across the call).
+                // borrowck — `deoptimize_commonjs_named_exports` mut-borrows
+                // `self`, so the `values()`/`keys()` slices are read once into locals.
                 let export_names_len = p.commonjs_named_exports.keys().len();
                 let first_export_ref_loc = p.commonjs_named_exports.values()[0].loc_ref.loc;
                 let export_refs_len = p.commonjs_named_exports.values().len();
@@ -1301,9 +1598,15 @@ impl<'a> Parser<'a> {
                             }
                         }
 
-                        if needs_decl_count > 0 {
+                        if needs_decl_count > 0 || p.has_top_level_function_merged_with_var {
                             p.symbols.as_mut_slice()[p.exports_ref.inner_index() as usize]
                                 .use_count_estimate += export_refs_len as u32;
+                            p.deoptimize_commonjs_named_exports();
+                        } else if p.symbols.as_slice()[p.module_ref.inner_index() as usize]
+                            .use_count_estimate
+                            > p.module_exports_rewrite_count
+                        {
+                            // `module.constructor` and other uses of `module` need the wrapper.
                             p.deoptimize_commonjs_named_exports();
                         }
                     }
@@ -1406,7 +1709,6 @@ impl<'a> Parser<'a> {
                                             && p.imports_to_convert_from_require.as_slice()[0]
                                                 .namespace
                                                 .ref_
-                                                .unwrap()
                                                 .eql(id.ref_)
                                         {
                                             // We know it's 0 because there is only one import in the whole file
@@ -1417,12 +1719,14 @@ impl<'a> Parser<'a> {
 
                                     None
                                 };
-                                if let Some(id) = redirect_import_record_index {
+                                if let Some(id) = redirect_import_record_index
+                                    && !p.options.is_entry_point
+                                {
                                     part.symbol_uses = Default::default();
                                     return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
                                         import_records: p.import_records.move_to_baby_list(p.arena),
                                         redirect_import_record_index: Some(id),
-                                        named_imports: core::mem::take(&mut *p.named_imports),
+                                        named_imports: core::mem::take(&mut p.named_imports),
                                         named_exports: core::mem::take(&mut p.named_exports),
                                         ..js_ast::Ast::empty_in(p.arena)
                                     })));
@@ -1432,182 +1736,156 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+        }
 
-            if p.commonjs_named_exports_deoptimized
-                && p.options.features.unwrap_commonjs_to_esm
-                && p.unwrap_all_requires
-                && p.imports_to_convert_from_require.len() == 1
-                && p.import_records.len() == 1
-                && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
-            {
-                'outer_part_loop: for part in parts.iter_mut() {
-                    // Specially handle modules shaped like this:
-                    //
-                    //    doSomeStuff();
-                    //    module.exports = require('./foo.js');
-                    //
-                    // An example is react-dom/index.js, which does a DCE check.
-                    // Snapshot the StoreSlice (Copy) so the `&mut` borrow over the
-                    // arena slice doesn't conflict with the `part.stmts = …` rewrite
-                    // below.
-                    let part_stmts_ss = part.stmts;
-                    let part_stmts: &mut [Stmt] = part_stmts_ss.slice_mut();
-                    if part_stmts.len() > 1 {
-                        break;
-                    }
-
-                    for j in 0..part_stmts.len() {
-                        let stmt = &mut part_stmts[j];
-                        if let js_ast::StmtData::SExpr(s_expr) = &stmt.data {
-                            let value: Expr = s_expr.value;
-
-                            if let js_ast::ExprData::EBinary(bin_ptr) = value.data {
-                                let mut bin = bin_ptr;
-                                loop {
-                                    let left = bin.left;
-                                    let right = bin.right;
-
-                                    if bin.op == js_ast::op::Code::BinAssign
-                                        && matches!(right.data, js_ast::ExprData::ERequireString(_))
-                                        && matches!(&left.data, js_ast::ExprData::EDot(d)
-                                            if d.name == b"exports"
-                                                && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
-                                                    if id.ref_.eql(p.module_ref)))
-                                    {
-                                        let req = match &right.data {
-                                            js_ast::ExprData::ERequireString(r) => r,
-                                            _ => unreachable!(),
-                                        };
-                                        p.export_star_import_records.push(req.import_record_index);
-                                        let namespace_ref =
-                                            p.imports_to_convert_from_require.as_slice()
-                                                [req.unwrapped_id as usize]
-                                                .namespace
-                                                .ref_
-                                                .unwrap();
-
-                                        let stmt_loc = stmt.loc;
-                                        part.stmts = {
-                                            let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(
-                                                part.stmts.len() + 1,
-                                                p.arena,
-                                            );
-                                            // PERF(port): was appendSliceAssumeCapacity
-                                            new_stmts.extend_from_slice(&part_stmts[0..j]);
-
-                                            new_stmts.push(Stmt::alloc(
-                                                S::ExportStar {
-                                                    import_record_index: req.import_record_index,
-                                                    namespace_ref,
-                                                    alias: None,
-                                                },
-                                                stmt_loc,
-                                            ));
-                                            new_stmts.extend_from_slice(&part_stmts[j + 1..]);
-                                            bun_ast::StoreSlice::from_bump(new_stmts)
-                                        };
-
-                                        part.import_record_indices.push(req.import_record_index);
-                                        p.symbols.as_mut_slice()
-                                            [p.module_ref.inner_index() as usize]
-                                            .use_count_estimate = 0;
-                                        let ns_idx = namespace_ref.inner_index() as usize;
-                                        p.symbols.as_mut_slice()[ns_idx].use_count_estimate =
-                                            p.symbols.as_slice()[ns_idx]
-                                                .use_count_estimate
-                                                .saturating_sub(1);
-                                        let _ = part.symbol_uses.swap_remove(&namespace_ref);
-
-                                        for (i, before_part) in before.iter().enumerate() {
-                                            if before_part.tag
-                                                == bun_ast::PartTag::ImportToConvertFromRequire
-                                            {
-                                                let _ = before.swap_remove(i);
-                                                break;
-                                            }
-                                        }
-
-                                        if p.esm_export_keyword.len == 0 {
-                                            p.esm_export_keyword.loc = stmt_loc;
-                                            p.esm_export_keyword.len = 5;
-                                        }
-                                        p.commonjs_named_exports_deoptimized = false;
-                                        break;
-                                    }
-
-                                    if let js_ast::ExprData::EBinary(rb) = right.data {
-                                        bin = rb;
-                                        continue;
-                                    }
-
-                                    break;
-                                }
-                                let _ = bin_ptr;
-                            }
-                        }
-                    }
-                    let _ = &mut *part;
-                    // PORT NOTE: Zig had no explicit continue/break here; loop continues
-                    continue 'outer_part_loop;
-                }
+        // `checkDCE(); module.exports = require('./cjs/...')` (react-dom/index.js in production).
+        // The unwrapped require() is already an `import * as ns`, so `export * from` replaces
+        // the assignment and the file needs no wrapper (`convert_stmts_for_chunk` undoes it).
+        if p.options.features.unwrap_commonjs_to_esm
+            && p.unwrap_all_requires
+            && !p.options.is_entry_point
+            && !p.has_es_module_syntax
+            && p.commonjs_named_exports.count() == 0
+            && !p.has_top_level_return
+            && !p.has_with_scope
+            && !p.has_top_level_function_merged_with_var
+            && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
+            && p.symbols.as_slice()[p.exports_ref.inner_index() as usize].use_count_estimate == 0
+        {
+            struct ModuleExportsOfNamespace {
+                part_idx: usize,
+                stmt_idx: usize,
+                /// `checkDCE(), module.exports = ns` (the `if` block folded by
+                /// minification): the operand before the assignment.
+                leading: Option<Expr>,
+                assign_loc: bun_ast::Loc,
+                namespace_ref: js_ast::Ref,
+                import_record_index: u32,
             }
-        } else if p.options.bundle && parts.is_empty() {
-            // This flag is disabled because it breaks circular export * as from
-            //
-            //  entry.js:
-            //
-            //    export * from './foo';
-            //
-            //  foo.js:
-            //
-            //    export const foo = 123
-            //    export * as ns from './foo'
-            //
-            if false
-            /* TODO(port): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */
-            {
-                // If the file only contains "export * from './blah'
-                // we pretend the file never existed in the first place.
-                // the semantic difference here is in export default statements
-                // note: export_star_import_records are not filled in yet
 
-                if !before.is_empty() && p.import_records.len() == 1 {
-                    let export_star_redirect: Option<&S::ExportStar> = 'brk: {
-                        let mut export_star: Option<&S::ExportStar> = None;
-                        for part in before.iter() {
-                            for stmt in part.stmts.iter() {
-                                match &stmt.data {
-                                    js_ast::StmtData::SExportStar(star) => {
-                                        if star.alias.is_some() {
-                                            break 'brk None;
-                                        }
-
-                                        if export_star.is_some() {
-                                            break 'brk None;
-                                        }
-
-                                        export_star = Some(&**star);
-                                    }
-                                    js_ast::StmtData::SEmpty(_) | js_ast::StmtData::SComment(_) => {
-                                    }
-                                    _ => {
-                                        break 'brk None;
-                                    }
-                                }
+            let found: Option<ModuleExportsOfNamespace> = 'search: {
+                for (part_idx, part) in parts.iter().enumerate() {
+                    for (stmt_idx, stmt) in part.stmts.iter().enumerate() {
+                        let js_ast::StmtData::SExpr(s_expr) = &stmt.data else {
+                            continue;
+                        };
+                        let value: Expr = s_expr.value;
+                        let (leading, assign): (Option<Expr>, Expr) = match value.data {
+                            js_ast::ExprData::EBinary(bin)
+                                if bin.op == js_ast::op::Code::BinComma =>
+                            {
+                                (Some(bin.left), bin.right)
                             }
+                            _ => (None, value),
+                        };
+                        let js_ast::ExprData::EBinary(bin) = assign.data else {
+                            continue;
+                        };
+                        if bin.op != js_ast::op::Code::BinAssign
+                            || !matches!(&bin.left.data, js_ast::ExprData::EDot(d)
+                                if d.name == b"exports"
+                                    && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
+                                        if id.ref_.eql(p.module_ref)))
+                        {
+                            continue;
                         }
-                        export_star
-                    };
-
-                    if let Some(star) = export_star_redirect {
-                        return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                            import_records: p.import_records.move_to_baby_list(p.arena),
-                            redirect_import_record_index: Some(star.import_record_index),
-                            named_imports: core::mem::take(&mut *p.named_imports),
-                            named_exports: core::mem::take(&mut p.named_exports),
-                            ..js_ast::Ast::empty_in(p.arena)
-                        })));
+                        let js_ast::ExprData::EIdentifier(id) = &bin.right.data else {
+                            continue;
+                        };
+                        let Some(deferred) = p
+                            .imports_to_convert_from_require
+                            .iter()
+                            .find(|deferred| deferred.namespace.ref_.eql(id.ref_))
+                        else {
+                            continue;
+                        };
+                        break 'search Some(ModuleExportsOfNamespace {
+                            part_idx,
+                            stmt_idx,
+                            leading,
+                            assign_loc: assign.loc,
+                            namespace_ref: id.ref_,
+                            import_record_index: deferred.import_record_id,
+                        });
                     }
+                }
+                None
+            };
+
+            if let Some(found) = found {
+                let part = &mut parts[found.part_idx];
+                let stmt_loc = part.stmts.slice()[found.stmt_idx].loc;
+
+                // Like `s_export_star`: the export star declares its own namespace symbol.
+                let name = p.load_name_from_ref(found.namespace_ref);
+                let export_star_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
+                VecExt::append(&mut p.module_scope_mut().generated, export_star_ref);
+                part.declared_symbols.append(DeclaredSymbol {
+                    ref_: export_star_ref,
+                    is_top_level: true,
+                })?;
+
+                part.stmts = {
+                    let old_stmts: &[Stmt] = part.stmts.slice();
+                    let mut new_stmts =
+                        BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + 1, p.arena);
+                    new_stmts.extend_from_slice(&old_stmts[..found.stmt_idx]);
+                    if let Some(leading) = found.leading {
+                        new_stmts.push(Stmt::alloc(
+                            S::SExpr {
+                                value: leading,
+                                does_not_affect_tree_shaking: false,
+                            },
+                            stmt_loc,
+                        ));
+                    }
+                    new_stmts.push(Stmt::alloc(
+                        S::ExportStar {
+                            import_record_index: found.import_record_index,
+                            namespace_ref: export_star_ref,
+                            alias: None,
+                        },
+                        found.assign_loc,
+                    ));
+                    new_stmts.extend_from_slice(&old_stmts[found.stmt_idx + 1..]);
+                    bun_ast::StoreSlice::from_bump(new_stmts)
+                };
+
+                // The assignment was the only use of `module` and one use of `ns`.
+                let _ = part.symbol_uses.swap_remove(&p.module_ref);
+                p.symbols.as_mut_slice()[p.module_ref.inner_index() as usize].use_count_estimate =
+                    0;
+                match part.symbol_uses.get_mut(&found.namespace_ref) {
+                    Some(uses) if uses.count_estimate() > 1 => uses.subtract(1),
+                    _ => {
+                        let _ = part.symbol_uses.swap_remove(&found.namespace_ref);
+                    }
+                }
+                let ns_symbol =
+                    &mut p.symbols.as_mut_slice()[found.namespace_ref.inner_index() as usize];
+                ns_symbol.use_count_estimate = ns_symbol.use_count_estimate.saturating_sub(1);
+                let ns_is_unused = ns_symbol.use_count_estimate == 0
+                    && !p
+                        .import_items_for_namespace
+                        .get(&found.namespace_ref)
+                        .is_some_and(|items| items.count() > 0);
+                if ns_is_unused {
+                    // Drop the unused `import * as ns` part, keeping the other imports in order.
+                    if let Some(i) = before.iter().position(|before_part| {
+                        before_part.tag == bun_ast::PartTag::ImportToConvertFromRequire
+                            && before_part
+                                .declared_symbols
+                                .refs()
+                                .iter()
+                                .any(|declared| declared.eql(found.namespace_ref))
+                    }) {
+                        let _ = before.remove(i);
+                    }
+                }
+
+                if p.esm_export_keyword.len == 0 {
+                    p.esm_export_keyword.loc = stmt_loc;
+                    p.esm_export_keyword.len = 5;
                 }
             }
         }
@@ -1627,6 +1905,8 @@ impl<'a> Parser<'a> {
             p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate > 0;
 
         let mut wrap_mode: WrapMode = WrapMode::None;
+        // Checked after `to_ast`, which marks TypeScript type-only imports unused.
+        let mut reject_import_statements = false;
 
         if p.is_deoptimized_commonjs() {
             exports_kind = js_ast::ExportsKind::Cjs;
@@ -1637,87 +1917,7 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::Cjs;
             if p.options.features.commonjs_at_runtime {
                 wrap_mode = WrapMode::BunCommonjs;
-
-                let import_record: Option<&ImportRecord> = 'brk: {
-                    for import_record in p.import_records.items() {
-                        if import_record.flags.intersects(
-                            ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED,
-                        ) {
-                            continue;
-                        }
-                        if import_record.kind == bun_ast::ImportKind::Stmt {
-                            break 'brk Some(import_record);
-                        }
-                    }
-
-                    None
-                };
-
-                // make it an error to use an import statement with a commonjs exports usage
-                if let Some(record) = import_record {
-                    // find the usage of the export symbol
-
-                    let mut notes = BumpVec::<bun_ast::Data>::new_in(p.arena);
-
-                    notes.push(bun_ast::Data {
-                        text: {
-                            use std::io::Write;
-                            let mut v = Vec::<u8>::new();
-                            let _ = write!(
-                                &mut v,
-                                "Try require({}) instead",
-                                bun_core::fmt::QuotedFormatter {
-                                    text: record.path.text
-                                }
-                            );
-                            std::borrow::Cow::Owned(v)
-                        },
-                        ..Default::default()
-                    });
-
-                    if uses_module_ref {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'module' was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if uses_exports_ref {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'exports' was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if p.has_top_level_return {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because top-level return was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if p.has_with_scope {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because a \"with\" statement is used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    p.log().add_range_error_with_notes(
-                        Some(p.source),
-                        record.range,
-                        b"Cannot use import statement with CommonJS-only features".as_slice(),
-                        notes.into_iter().collect::<Vec<_>>().into_boxed_slice(),
-                    );
-                }
+                reject_import_statements = true;
             }
         } else {
             match p.options.module_type {
@@ -1916,10 +2116,9 @@ impl<'a> Parser<'a> {
             }
 
             // if they didn't use any of the jest globals, don't inject it, I guess.
-            // PORT NOTE: Zig used `inline for (comptime std.meta.fieldNames(Jest))` — comptime
-            // reflection over Jest's Ref fields. Rust iterates the static `Jest::FIELDS`
-            // table (`&[(&'static str, fn(&Jest) -> Ref)]`) instead; declaration order
-            // matches the Zig struct so emitted clause/property order is identical.
+            // Iterates the static `Jest::FIELDS`
+            // table (`&[(&'static str, fn(&Jest) -> Ref)]`); declaration order
+            // determines the emitted clause/property order.
             let items_count: usize = {
                 let mut count: usize = 0;
                 for (_name, get_ref) in Jest::FIELDS {
@@ -1976,6 +2175,7 @@ impl<'a> Parser<'a> {
                     B::Object {
                         properties,
                         is_single_line: false,
+                        close_brace_loc: bun_ast::Loc::EMPTY,
                     },
                     bun_ast::Loc::EMPTY,
                 );
@@ -2026,7 +2226,7 @@ impl<'a> Parser<'a> {
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
                         clauses.push(js_ast::ClauseItem {
                             name: js_ast::LocRef {
-                                ref_: Some(r),
+                                ref_: r,
                                 loc: bun_ast::Loc::EMPTY,
                             },
                             alias: js_ast::StoreStr::new(symbol_name.as_bytes()),
@@ -2054,7 +2254,7 @@ impl<'a> Parser<'a> {
                         items: clauses,
                         import_record_index: import_record_id,
                         default_name: None,
-                        star_name_loc: None,
+                        star_name_loc: bun_ast::Loc::EMPTY,
                         is_single_line: false,
                         phase_defer: false,
                     },
@@ -2089,16 +2289,19 @@ impl<'a> Parser<'a> {
                 i += 1;
             }
 
-            runtime_imports[0..i].sort_unstable_by(|a, b| {
-                RuntimeImports::ALL_SORTED_INDEX[*a as usize]
-                    .cmp(&RuntimeImports::ALL_SORTED_INDEX[*b as usize])
-            });
+            bun_collections::index_sort::sort_slice_unstable_by(
+                &mut runtime_imports[0..i],
+                |a, b| {
+                    RuntimeImports::ALL_SORTED_INDEX[*a as usize]
+                        .cmp(&RuntimeImports::ALL_SORTED_INDEX[*b as usize])
+                },
+            );
 
             if i > 0 {
-                // PORT NOTE: snapshot to break the `&mut self` ↔ `&self.runtime_imports`
+                // snapshot to break the `&mut self` ↔ `&self.runtime_imports`
                 // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
                 // never touches `self.runtime_imports`, so the clone is purely a
-                // borrow-checker workaround (Zig passed by value here).
+                // borrow-checker workaround.
                 let symbols = p.runtime_imports.clone();
                 p.generate_import_stmt(
                     RuntimeImports::NAME,
@@ -2108,6 +2311,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"import_",
                     true,
+                    js_ast::PartTag::Runtime,
                 )
                 .expect("unreachable");
             }
@@ -2118,12 +2322,12 @@ impl<'a> Parser<'a> {
             && p.options.features.auto_import_jsx
             && p.options.jsx.runtime == options::JSX::Runtime::Automatic
         {
-            // PORT NOTE: `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
+            // `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
             // and `symbols: &Sym`, so the Pragma-owned `Box<[u8]>` paths are copied into the
             // bump arena (giving them the required `'a` lifetime) and `jsx_imports` is moved
             // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
             // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
-            // semantically a no-op vs. the Zig.
+            // semantically a no-op.
             let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());
             let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
             let jsx_imports = core::mem::take(&mut p.jsx_imports);
@@ -2140,6 +2344,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"",
                     false,
+                    js_ast::PartTag::JsxImport,
                 )
                 .expect("unreachable");
             }
@@ -2154,6 +2359,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"",
                     false,
+                    js_ast::PartTag::JsxImport,
                 )
                 .expect("unreachable");
             }
@@ -2175,6 +2381,74 @@ impl<'a> Parser<'a> {
                     enabled: true,
                 }],
             )?;
+        }
+
+        if let Some(rc_state) = p.react_compiler.take() {
+            let mut rc_stmts: Vec<Stmt> = Vec::new();
+            let result = bun_react_compiler::finish(
+                *rc_state,
+                &mut crate::react_compiler_host::ReactCompilerHost::new(p),
+                &mut rc_stmts,
+            );
+            if let bun_react_compiler::CompileOutput::Error { error, .. } = result {
+                p.log().add_range_error_fmt(
+                    Some(p.source),
+                    bun_ast::Range::NONE,
+                    format_args!("React Compiler: {error}"),
+                );
+            }
+            if !rc_stmts.is_empty() {
+                let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+                let mut import_record_indices: js_ast::PartImportRecordIndices =
+                    bun_alloc::AstAlloc::vec();
+                for stmt in &rc_stmts {
+                    match &stmt.data {
+                        js_ast::StmtData::SImport(import) => {
+                            import_record_indices.push(import.import_record_index);
+                            declared_symbols.append(DeclaredSymbol {
+                                ref_: import.namespace_ref,
+                                is_top_level: true,
+                            })?;
+                            for item in import.items.iter() {
+                                declared_symbols.append(DeclaredSymbol {
+                                    ref_: item.name.ref_,
+                                    is_top_level: true,
+                                })?;
+                                p.is_import_item.insert(item.name.ref_, ());
+                                p.named_imports.put(
+                                    item.name.ref_,
+                                    js_ast::NamedImport {
+                                        alias: Some(item.alias),
+                                        alias_loc: item.alias_loc,
+                                        namespace_ref: import.namespace_ref,
+                                        import_record_index: import.import_record_index,
+                                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                        alias_is_star: false,
+                                        is_exported: false,
+                                    },
+                                )?;
+                            }
+                        }
+                        js_ast::StmtData::SFunction(func) => {
+                            if let Some(ref_) = func.func.name.map(|n| n.ref_) {
+                                declared_symbols.append(DeclaredSymbol {
+                                    ref_,
+                                    is_top_level: true,
+                                })?;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                before.push(js_ast::Part {
+                    stmts: p.arena.alloc_slice_copy(&rc_stmts).into(),
+                    tag: js_ast::PartTag::ReactCompiler,
+                    declared_symbols,
+                    import_record_indices,
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                });
+            }
         }
 
         if p.react_refresh.register_used || p.react_refresh.signature_used {
@@ -2199,19 +2473,8 @@ impl<'a> Parser<'a> {
             )?;
         }
 
-        // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
-        #[allow(deprecated)]
-        if !p.response_ref.is_null() && {
-            // We only want to do this if the symbol is used and didn't get
-            // bound to some other value
-            let symbol: &Symbol = &p.symbols.as_slice()[p.response_ref.inner_index() as usize];
-            !symbol.has_link() && symbol.use_count_estimate > 0
-        } {
-            p.generate_import_stmt_for_bake_response(&mut before)?;
-        }
-
         if !before.is_empty() || !after.is_empty() {
-            // Single up-front reserve preserves the Zig fused-growth; the inner
+            // Single up-front reserve; the inner
             // reserve() calls in prepend_from / append become no-ops.
             parts.reserve(before.len() + after.len());
             parts.prepend_from(&mut before);
@@ -2222,9 +2485,7 @@ impl<'a> Parser<'a> {
         // p.popScope();
 
         #[cfg(not(target_arch = "wasm32"))]
-        if true
-        /* TODO(port): feature_flag */
-        {
+        if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 if p.macro_call_count != 0 {
                     // disable this for:
@@ -2236,15 +2497,92 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(crate::Result::Ast(p.to_ast(
-            &mut parts,
-            exports_kind,
-            wrap_mode,
-            hashbang,
-        )?))
+        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+
+        if reject_import_statements {
+            // An empty range marks a parser-generated record, like the JSX runtime import.
+            let import_record: Option<&ImportRecord> =
+                ast.import_records.as_slice().iter().find(|import_record| {
+                    !import_record
+                        .flags
+                        .intersects(ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED)
+                        && import_record.kind == bun_ast::ImportKind::Stmt
+                        && !import_record.range.is_empty()
+                });
+
+            if let Some(record) = import_record {
+                let mut notes = BumpVec::<bun_ast::Data>::new_in(p.arena);
+
+                notes.push(bun_ast::Data {
+                    text: {
+                        use std::io::Write;
+                        let mut v = Vec::<u8>::new();
+                        let _ = write!(
+                            &mut v,
+                            "Try require({}) instead",
+                            bun_core::fmt::QuotedFormatter {
+                                text: record.path.text
+                            }
+                        );
+                        std::borrow::Cow::Owned(v)
+                    },
+                    ..Default::default()
+                });
+
+                if uses_module_ref {
+                    notes.push(bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"This file is CommonJS because 'module' was used",
+                        ),
+                        ..Default::default()
+                    });
+                }
+
+                if uses_exports_ref {
+                    notes.push(bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"This file is CommonJS because 'exports' was used",
+                        ),
+                        ..Default::default()
+                    });
+                }
+
+                if p.has_top_level_return {
+                    notes.push(bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"This file is CommonJS because top-level return was used",
+                        ),
+                        ..Default::default()
+                    });
+                }
+
+                if p.has_with_scope {
+                    notes.push(bun_ast::Data {
+                        text: std::borrow::Cow::Borrowed(
+                            b"This file is CommonJS because a \"with\" statement is used",
+                        ),
+                        ..Default::default()
+                    });
+                }
+
+                p.log().add_range_error_with_notes(
+                    Some(p.source),
+                    record.range,
+                    b"Cannot use import statement with CommonJS-only features".as_slice(),
+                    notes.into_iter().collect::<Vec<_>>().into_boxed_slice(),
+                );
+            }
+        }
+
+        // If there were errors during to_ast, also halt here
+        if p.log().errors > orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+
+        Ok(crate::Result::Ast(ast))
     }
 
-    // PORT NOTE: associated fn (was `&self` reading `self.lexer.source.contents`)
+    // associated fn (was `&self` reading `self.lexer.source.contents`)
     // because `_parse` consumes `self` by value and destructures it before this
     // call site; the source contents are passed explicitly.
     // called from gated `_parse` body above
@@ -2332,5 +2670,3 @@ struct PragmaState {
 pub type MacroContext = Option<*mut c_void>;
 #[cfg(not(target_arch = "wasm32"))]
 pub type MacroContext = crate::Macro::MacroContext;
-
-// ported from: src/js_parser/ast/Parser.zig

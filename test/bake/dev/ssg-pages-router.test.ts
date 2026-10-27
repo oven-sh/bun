@@ -1,6 +1,6 @@
 // Test SSG pages router functionality
 import { expect } from "bun:test";
-import { devTest } from "../bake-harness";
+import { devTest, minimalFramework } from "../bake-harness";
 
 devTest("SSG pages router - multiple static pages", {
   framework: "react",
@@ -157,7 +157,8 @@ devTest("SSG pages router - hot reload on page changes", {
 
     // this %c%s%c is a react devtools thing and I don't know how to turn it off
     await c.expectMessage("%c%s%c updated load");
-    expect(await c.elemText("h1")).toBe("Updated Content");
+    // The log comes from the render; React commits the DOM in a later task.
+    await c.expectElemText("h1", "Updated Content");
   },
 });
 
@@ -385,5 +386,25 @@ devTest("SSG pages router - catch-all routes [...slug]", {
     expect(await c4.elemText("h1")).toBe("Catch-all Route");
     expect(await c4.elemText("#params")).toBe('{"slug":["blog","2024","january","new-features"]}');
     expect(await c4.elemsText("li")).toEqual(["blog", "2024", "january", "new-features"]);
+  },
+});
+
+devTest("a param named like an array index is stored under the index", {
+  framework: minimalFramework,
+  files: {
+    "routes/[0].ts": `
+      export default function (req, meta) {
+        return Response.json({ keys: Object.keys(meta.params), byIndex: meta.params[0] });
+      }
+    `,
+    "routes/posts/[...0].ts": `
+      export default function (req, meta) {
+        return Response.json({ keys: Object.keys(meta.params), byIndex: meta.params[0] });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/hello").equals({ keys: ["0"], byIndex: "hello" });
+    await dev.fetch("/posts/a/b").equals({ keys: ["0"], byIndex: ["a", "b"] });
   },
 });

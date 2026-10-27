@@ -1,13 +1,9 @@
 use bun_core::ZStr;
-#[cfg(unix)]
 use bun_sys::FdExt;
 use bun_sys::{self, Fd, Mode};
 
-// PORT NOTE: Zig's `input_path: anytype` type-switches on `@TypeOf(input_path)` between
-// `bun.webcore.PathOrFileDescriptor` and `[:0]const u8` / `[:0]u8`. Rust has no type-switch,
-// so this is expressed as a sealed trait whose impls encode each `switch (PathT)` arm.
-// TODO(port): verify callers — if only one input type is ever used per call site, consider
-// monomorphizing into two free fns instead of the trait.
+// A sealed trait whose impls cover each accepted input type
+// (`PathOrFileDescriptor` and zero-terminated path slices).
 pub trait OpenForWritingInput {
     fn open_for_writing_result(
         &self,
@@ -19,7 +15,7 @@ pub trait OpenForWritingInput {
     ) -> bun_sys::Result<Fd>;
 }
 
-impl OpenForWritingInput for crate::PathOrFileDescriptor {
+impl OpenForWritingInput for crate::PathOrFileDescriptor<'_> {
     fn open_for_writing_result(
         &self,
         dir: Fd,
@@ -32,7 +28,7 @@ impl OpenForWritingInput for crate::PathOrFileDescriptor {
         match self {
             Path(path) => {
                 *is_nonblocking = true;
-                bun_sys::openat_a(dir, path.slice(), input_flags, mode)
+                bun_sys::openat_a(dir, path, input_flags, mode)
             }
             Fd(fd_) => bun_sys::dup_with_flags(*fd_, 0),
         }
@@ -40,19 +36,6 @@ impl OpenForWritingInput for crate::PathOrFileDescriptor {
 }
 
 impl OpenForWritingInput for &ZStr {
-    fn open_for_writing_result(
-        &self,
-        dir: Fd,
-        input_flags: i32,
-        mode: Mode,
-        _is_nonblocking: &mut bool,
-        openat: &dyn Fn(Fd, &ZStr, i32, Mode) -> bun_sys::Result<Fd>,
-    ) -> bun_sys::Result<Fd> {
-        openat(dir, self, input_flags, mode)
-    }
-}
-
-impl OpenForWritingInput for &mut ZStr {
     fn open_for_writing_result(
         &self,
         dir: Fd,
@@ -75,7 +58,7 @@ pub fn open_for_writing<P, C>(
     force_sync: bool,
     out_nonblocking: &mut bool,
     ctx: C,
-    on_force_sync_or_isa_tty: fn(C),
+    on_tty: fn(C),
     is_pollable: fn(mode: Mode) -> bool,
 ) -> bun_sys::Result<Fd>
 where
@@ -91,7 +74,7 @@ where
         force_sync,
         out_nonblocking,
         ctx,
-        on_force_sync_or_isa_tty,
+        on_tty,
         is_pollable,
         bun_sys::openat,
     )
@@ -107,7 +90,7 @@ pub fn open_for_writing_impl<P, C>(
     force_sync: bool,
     out_nonblocking: &mut bool,
     ctx: C,
-    on_force_sync_or_isa_tty: fn(C),
+    on_tty: fn(C),
     is_pollable: fn(mode: Mode) -> bool,
     openat: fn(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> bun_sys::Result<Fd>,
 ) -> bun_sys::Result<Fd>
@@ -116,14 +99,11 @@ where
 {
     #[cfg(windows)]
     {
-        let _ = (
-            is_socket,
-            out_nonblocking,
-            ctx,
-            on_force_sync_or_isa_tty,
-            is_pollable,
-        );
+        let _ = (is_socket, out_nonblocking, ctx, on_tty, is_pollable);
     }
+    // `O_NONBLOCK` opens an asynchronous handle, and `uv_fs_write` fails on those with EINVAL.
+    #[cfg(windows)]
+    let input_flags = input_flags & !bun_sys::O::NONBLOCK;
     // TODO: this should be concurrent.
     #[cfg(unix)]
     let mut isatty = false;
@@ -152,6 +132,9 @@ where
 
                 *is_socket = bun_sys::S::ISSOCK(stat.st_mode as Mode);
 
+                if isatty {
+                    on_tty(ctx);
+                }
                 if force_sync || isatty {
                     // Prevents interleaved or dropped stdout/stderr output for terminals.
                     // As noted in the following reference, local TTYs tend to be quite fast and
@@ -160,9 +143,6 @@ where
                     // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
                     let _ = bun_sys::update_nonblocking(fd, false);
                     is_nonblocking = false;
-                    // this.force_sync = true;
-                    // this.writer.force_sync = true;
-                    on_force_sync_or_isa_tty(ctx);
                 } else if !is_nonblocking {
                     let flags = match bun_sys::get_fcntl_flags(fd) {
                         Ok(flags) => flags,
@@ -189,12 +169,11 @@ where
 
     #[cfg(windows)]
     {
-        // TODO(port): bun_sys::windows::GetFileType
         *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
             != 0
             && !force_sync;
-        return Ok(fd);
+        // The libuv writer needs a CRT fd. `Fd::uv()` panics on a HANDLE.
+        return fd
+            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
     }
 }
-
-// ported from: src/io/openForWriting.zig

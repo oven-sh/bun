@@ -24,46 +24,37 @@ use crate::shell::states::pipeline::Pipeline;
 pub enum Yield {
     /// Step the node at this id (`Interpreter::next_node`).
     Next(NodeId),
-    /// Start the node at this id (`Interpreter::start_node`). Used when a
-    /// freshly-created child needs starting at top-of-stack.
-    Start(NodeId),
     /// IOWriter completed a chunk synchronously; fire `on_io_writer_chunk` on
     /// the registered child at top-of-stack.
     OnIoWriterChunk {
         child: crate::shell::io_writer::ChildPtr,
         written: usize,
-        // TODO(port): bun_jsc::SystemError — opaque until jsc compiles.
+        // `bun_sys::SystemError`, consistent with the rest of the shell
+        // subsystem (IOWriter/IOReader/Builtin); converted to a JS error at
+        // the throw boundary.
         err: Option<bun_sys::SystemError>,
     },
     /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task
     /// callback will resume by calling `.run()` again later.
     Suspended,
-    /// Threw a JS error.
-    Failed,
+    /// The node threw a JS exception; `Interpreter::fail` winds the script down.
+    Failed(NodeId),
     Done,
 }
 
 impl Yield {
     #[inline]
-    pub const fn suspended() -> Yield {
+    pub(crate) const fn suspended() -> Yield {
         Yield::Suspended
     }
     #[inline]
-    pub const fn done() -> Yield {
+    pub(crate) const fn done() -> Yield {
         Yield::Done
-    }
-    #[inline]
-    pub const fn failed() -> Yield {
-        Yield::Failed
-    }
-
-    pub fn is_done(&self) -> bool {
-        matches!(self, Yield::Done)
     }
 }
 
 thread_local! {
-    /// Debug-only re-entrancy guard. See Zig `_dbg_catch_exec_within_exec`.
+    /// Debug-only re-entrancy guard.
     static DBG_CATCH_EXEC_WITHIN_EXEC: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -84,7 +75,6 @@ impl DbgDepthGuard {
             debug_assert!(n <= Self::MAX_DEPTH);
             DBG_CATCH_EXEC_WITHIN_EXEC.set(n + 1);
         }
-        let _ = tag;
         Self
     }
 }
@@ -100,7 +90,7 @@ impl Drop for DbgDepthGuard {
 
 impl Yield {
     /// Trampoline: drive the interpreter until it suspends/finishes.
-    pub fn run(self, interp: &Interpreter) {
+    pub(crate) fn run(self, interp: &Interpreter) {
         let tag: &'static str = (&self).into();
         let _depth = DbgDepthGuard::enter(tag);
 
@@ -108,12 +98,12 @@ impl Yield {
         // We start cmd1, return to the pipeline, start cmd2, etc. — so we keep
         // a small stack of pipeline NodeIds to resume.
         //
-        // PERF(port): was stack-fallback alloc (4 inline) — profile if hot;
-        // smallvec::SmallVec<[NodeId; 4]> is the right shape.
+        // PERF: profile if hot; smallvec::SmallVec<[NodeId; 4]> would avoid
+        // the heap allocation.
         let mut pipeline_stack: Vec<NodeId> = Vec::with_capacity(4);
+        let mut rejection = None;
 
-        // Zig used a labelled `state: switch` as a tail-call trampoline. Rust
-        // lowers it to `loop { state = match state { ... } }`.
+        // Tail-call trampoline: `loop { state = match state { ... } }`.
         let mut state = self;
         loop {
             state = match state {
@@ -132,16 +122,19 @@ impl Yield {
                     }
                     interp.next_node(id)
                 }
-                Yield::Start(id) => interp.start_node(id),
                 Yield::OnIoWriterChunk {
                     child,
                     written,
                     err,
                 } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err),
-                Yield::Suspended | Yield::Failed | Yield::Done => {
+                Yield::Failed(id) => interp.fail(id, &mut rejection),
+                Yield::Suspended | Yield::Done => {
                     if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
                         y
                     } else {
+                        if let Some(rejection) = rejection {
+                            interp.reject(rejection);
+                        }
                         return;
                     }
                 }
@@ -162,5 +155,3 @@ impl Yield {
         None
     }
 }
-
-// ported from: src/shell/Yield.zig

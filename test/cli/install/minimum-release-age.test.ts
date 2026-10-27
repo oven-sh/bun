@@ -1,6 +1,14 @@
 import type { Server } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { rmSync } from "node:fs";
+import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+
+// These tests drive real `bun install` runs against a mock registry, which is
+// slow under the debug/ASAN build — give them the same generous timeout the
+// other install test files use so they don't flake on the 5s default.
+setDefaultTimeout(1000 * 60 * 5);
 
 /**
  * Comprehensive test suite for the minimum-release-age security feature.
@@ -8,8 +16,11 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
  * prerelease handling, 7-day give-up threshold, and edge cases.
  */
 describe("minimum-release-age", () => {
-  let mockRegistryServer: Server;
+  let mockRegistryServer: Server<undefined>;
   let mockRegistryUrl: string;
+  // Every request the mock registry served, so tests can assert which manifests
+  // were fetched and whether the abbreviated or the full document was requested.
+  const registryRequests: { pathname: string; accept: string | null }[] = [];
   const currentTime = Date.now();
   const SECONDS_PER_DAY = 24 * 60 * 60;
   const MS_PER_SECOND = 1000;
@@ -19,12 +30,13 @@ describe("minimum-release-age", () => {
   const daysAgo = (days: number) => new Date(currentTime - days * DAY_MS).toISOString();
 
   // Helper to create a minimal valid tarball
-  const createTarball = (name: string, version: string) => {
+  const createTarball = (name: string, version: string, fields: object = {}) => {
     const packageJson = JSON.stringify({
       name,
       version,
       description: "test package",
       main: "index.js",
+      ...fields,
     });
 
     // Create a simple tar structure (simplified for testing)
@@ -34,7 +46,7 @@ describe("minimum-release-age", () => {
     };
 
     let tarSize = 0;
-    const entries = [];
+    const entries: Buffer[] = [];
 
     for (const [path, content] of Object.entries(files)) {
       const contentBuf = Buffer.from(content, "utf8");
@@ -72,12 +84,15 @@ describe("minimum-release-age", () => {
     return Bun.gzipSync(tarball);
   };
 
+  let manyVersionsManifest: string | undefined;
+
   beforeAll(async () => {
     // Start mock registry server
     mockRegistryServer = Bun.serve({
       port: 0,
       async fetch(req) {
         const url = new URL(req.url);
+        registryRequests.push({ pathname: url.pathname, accept: req.headers.get("accept") });
 
         // Special timestamp helpers for edge case packages
         const futureTime = new Date(currentTime + 7 * DAY_MS).toISOString();
@@ -786,6 +801,115 @@ describe("minimum-release-age", () => {
           return Response.json(packageData);
         }
 
+        // TEST PACKAGE 14: snapshot-package (prerelease tag longer than the 8 bytes a
+        // semver string stores inline; every published version is younger than the
+        // filters used in the tests, so nothing can be selected)
+        if (url.pathname === "/snapshot-package") {
+          const packageData = {
+            name: "snapshot-package",
+            "dist-tags": {
+              latest: "1.0.0",
+              snapshot: "1.0.0-snapshot.20240101",
+            },
+            versions: {
+              "1.0.0-snapshot.20240101": {
+                name: "snapshot-package",
+                version: "1.0.0-snapshot.20240101",
+                dist: {
+                  tarball: `${mockRegistryUrl}/snapshot-package/-/snapshot-package-1.0.0-snapshot.20240101.tgz`,
+                  integrity: "sha512-snapshot==",
+                },
+              },
+              "1.0.0": {
+                name: "snapshot-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/snapshot-package/-/snapshot-package-1.0.0.tgz`,
+                  integrity: "sha512-stable==",
+                },
+              },
+            },
+            time: {
+              "1.0.0-snapshot.20240101": daysAgo(2),
+              "1.0.0": daysAgo(1),
+            },
+          };
+
+          return Response.json(packageData);
+        }
+
+        // TEST PACKAGE 15: nightly-package (prerelease tags longer than the inline
+        // limit; the older nightly passes a 5 day filter, the newer one does not)
+        if (url.pathname === "/nightly-package") {
+          const packageData = {
+            name: "nightly-package",
+            "dist-tags": {
+              latest: "1.0.0-nightly.20240102",
+            },
+            versions: {
+              "1.0.0-nightly.20240101": {
+                name: "nightly-package",
+                version: "1.0.0-nightly.20240101",
+                dist: {
+                  tarball: `${mockRegistryUrl}/nightly-package/-/nightly-package-1.0.0-nightly.20240101.tgz`,
+                  integrity: "sha512-nightly1==",
+                },
+              },
+              "1.0.0-nightly.20240102": {
+                name: "nightly-package",
+                version: "1.0.0-nightly.20240102",
+                dist: {
+                  tarball: `${mockRegistryUrl}/nightly-package/-/nightly-package-1.0.0-nightly.20240102.tgz`,
+                  integrity: "sha512-nightly2==",
+                },
+              },
+            },
+            time: {
+              "1.0.0-nightly.20240101": daysAgo(30),
+              "1.0.0-nightly.20240102": daysAgo(1),
+            },
+          };
+
+          return Response.json(packageData);
+        }
+
+        // TEST PACKAGE: many-versions-package (large version count, time entries
+        // in reverse order relative to versions). Exercises the publish-time
+        // index built during manifest parse.
+        if (url.pathname === "/many-versions-package") {
+          if (manyVersionsManifest === undefined) {
+            const N = 2000;
+            const versions: Record<string, unknown> = {};
+            const timeEntries: Array<[string, string]> = [];
+            for (let i = 0; i < N; i++) {
+              const v = `1.${i}.0`;
+              versions[v] = {
+                name: "many-versions-package",
+                version: v,
+                dist: {
+                  tarball: `${mockRegistryUrl}/many-versions-package/-/many-versions-package-${v}.tgz`,
+                  integrity: "sha512-fake==",
+                },
+              };
+              // Newest few versions are 1 day old; everything else is 30 days old.
+              timeEntries.push([v, i >= N - 3 ? daysAgo(1) : daysAgo(30)]);
+            }
+            // Reverse the time entries so the per-version lookup cannot rely on
+            // matching array positions between `versions` and `time`.
+            timeEntries.reverse();
+            timeEntries.unshift(["created", daysAgo(30)], ["modified", daysAgo(1)]);
+            manyVersionsManifest = JSON.stringify({
+              name: "many-versions-package",
+              "dist-tags": { latest: `1.${N - 1}.0` },
+              versions,
+              time: Object.fromEntries(timeEntries),
+            });
+          }
+          return new Response(manyVersionsManifest, {
+            headers: { "content-type": "application/json" },
+          });
+        }
+
         // Serve tarballs
         if (url.pathname.includes(".tgz")) {
           // Match both regular and scoped package tarballs
@@ -887,11 +1011,236 @@ describe("minimum-release-age", () => {
       const exitCode = await proc.exited;
       const stderr = await proc.stderr.text();
 
-      // Should fail because 3.0.0 is too recent
-      expect(exitCode).toBe(1);
-      expect(stderr.toLowerCase()).toMatch(
-        /blocked.*npm.*minimal.*age.*gate|blocked.*minimum.*release.*age|too.*recent/,
+      // Should fail because 3.0.0 is too recent; same argument order as the "(but package exists)" error.
+      expect(stderr).toContain(
+        `error: No version matching "3.0.0" found for specifier "regular-package" (blocked by minimum-release-age: ${5 * SECONDS_PER_DAY} seconds)`,
       );
+      expect(exitCode).toBe(1);
+    });
+
+    // 1.0.0 is 30 days old, 2.0.0 10, 2.1.0 6 and 3.0.0 1.
+    test.each([
+      { range: "1.0.0 || ^2.0.0", resolved: "2.1.0" },
+      { range: "3.0.0 || ^2.0.0", resolved: "2.1.0" },
+      { range: "1.0.0 || 3.0.0", resolved: "1.0.0" },
+      { range: "1.0.0 >=2", resolved: null },
+    ])("an exact version that starts the range $range is not the whole range", async ({ range, resolved }) => {
+      using dir = tempDir("exact-version-first", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": range },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      if (resolved === null) {
+        expect(stderr).toContain(
+          `error: No version matching "${range}" found for specifier "regular-package" (but package exists)`,
+        );
+        expect(exitCode).toBe(1);
+      } else {
+        expect(stderr).not.toContain("error:");
+        expect((await Bun.file(`${dir}/bun.lock`).text()).match(/regular-package@[^"]+/g)).toEqual([
+          `regular-package@${resolved}`,
+        ]);
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    test("reports the range and package name when every version in a range is too recent", async () => {
+      using dir = tempDir("range-all-too-recent", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "^2.1.0" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      // 2.1.0 is 6 days old and 3.0.0 is 1 day old; ^2.1.0 excludes 1.0.0 and 2.0.0.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${10 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain(
+        `error: No version matching "^2.1.0" found for specifier "regular-package" (blocked by minimum-release-age: ${10 * SECONDS_PER_DAY} seconds)`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("reports the package name and tag when every version behind a dist-tag is too recent", async () => {
+      using dir = tempDir("dist-tag-all-too-recent", {
+        "package.json": JSON.stringify({
+          dependencies: { "all-future-package": "latest" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain(
+        `error: Package "all-future-package" with tag "latest" not found (all versions blocked by minimum-release-age: ${5 * SECONDS_PER_DAY} seconds)`,
+      );
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  describe("exact version with a cached manifest", () => {
+    // An exact version can be resolved from a cached manifest without asking the
+    // registry again. An install without an age gate caches the abbreviated
+    // manifest, which (from the real registry as well as from this mock) has no
+    // publish times, so an age-gated install must not resolve from it. Each test
+    // uses its own cache directory and reads which manifest flavor was requested
+    // off the Accept header.
+    const minAge = 5 * SECONDS_PER_DAY;
+    const minAgeArgs = ["--minimum-release-age", `${minAge}`];
+    const blockedMessage = `No version matching "3.0.0" found for specifier "regular-package" (blocked by minimum-release-age: ${minAge} seconds)`;
+
+    const project = (dependencies: Record<string, string>, bunfig: Record<string, unknown> = {}) => ({
+      "package.json": JSON.stringify({ name: "app", dependencies }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: mockRegistryUrl, ...bunfig } }),
+    });
+
+    async function runWithCache(cwd: string, cacheDir: string, args: string[], { stale = false } = {}) {
+      const firstRequest = registryRequests.length;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args, "--no-verify"],
+        cwd,
+        env: {
+          ...bunEnv,
+          BUN_INSTALL_CACHE_DIR: cacheDir,
+          // BUN_MANIFEST_CACHE=1 treats every cached manifest as past its
+          // freshness window, which is the state the exact-version shortcut
+          // exists for.
+          ...(stale && { BUN_MANIFEST_CACHE: "1" }),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const manifestRequests = registryRequests
+        .slice(firstRequest)
+        .filter(({ pathname }) => pathname === "/regular-package")
+        .map(({ accept }) => (accept?.includes("application/vnd.npm.install-v1+json") ? "abbreviated" : "full"));
+      return { stdout, stderr, exitCode, manifestRequests };
+    }
+
+    // bun install does not wait for the manifest cache write before it exits, so a run can leave nothing behind.
+    async function populateCache(cwd: string, cacheDir: string, flavor: "abbreviated" | "full", args: string[] = []) {
+      for (let attempt = 0; ; attempt++) {
+        const { manifestRequests, exitCode } = await runWithCache(cwd, cacheDir, ["install", ...args]);
+        expect(manifestRequests).toEqual([flavor]);
+        expect(exitCode).toBe(0);
+        if ((await readdir(cacheDir)).some(name => name.endsWith(".npm"))) return;
+        if (attempt === 20) throw new Error("the manifest was never cached");
+        await rm(`${cwd}/bun.lock`, { force: true });
+        await rm(`${cwd}/node_modules`, { recursive: true, force: true });
+      }
+    }
+
+    test("too-recent exact version is blocked when only the abbreviated manifest is cached", async () => {
+      using cache = tempDir("abbreviated-cache", {});
+      using ungated = tempDir("abbreviated-ungated", project({ "regular-package": "3.0.0" }));
+      using gated = tempDir("abbreviated-gated", project({ "regular-package": "3.0.0" }));
+
+      await populateCache(String(ungated), String(cache), "abbreviated");
+
+      const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs]);
+      expect(second.stderr).toContain(blockedMessage);
+      expect(second.manifestRequests).toEqual(["full"]);
+      expect(await Bun.file(`${gated}/node_modules/regular-package/package.json`).exists()).toBe(false);
+      expect(second.exitCode).toBe(1);
+    });
+
+    test("old enough exact version installs after the full manifest is fetched", async () => {
+      using cache = tempDir("abbreviated-cache-old", {});
+      using ungated = tempDir("abbreviated-ungated-old", project({ "regular-package": "1.0.0" }));
+      using gated = tempDir("abbreviated-gated-old", project({ "regular-package": "1.0.0" }));
+
+      await populateCache(String(ungated), String(cache), "abbreviated");
+
+      const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs]);
+      expect(second.manifestRequests).toEqual(["full"]);
+      expect(await Bun.file(`${gated}/bun.lock`).text()).toContain("regular-package@1.0.0");
+      expect(second.exitCode).toBe(0);
+    });
+
+    test("bun add of a too-recent exact version is blocked when only the abbreviated manifest is cached", async () => {
+      using cache = tempDir("abbreviated-cache-add", {});
+      using ungated = tempDir("abbreviated-ungated-add", project({ "regular-package": "3.0.0" }));
+      using gated = tempDir("abbreviated-gated-add", project({}));
+
+      await populateCache(String(ungated), String(cache), "abbreviated");
+
+      const second = await runWithCache(String(gated), String(cache), ["add", "regular-package@3.0.0", ...minAgeArgs]);
+      expect(second.stderr).toContain(blockedMessage);
+      expect(second.manifestRequests).toEqual(["full"]);
+      expect(await Bun.file(`${gated}/package.json`).json()).toEqual({ name: "app", dependencies: {} });
+      expect(second.exitCode).toBe(1);
+    });
+
+    test("old enough exact version still resolves from a stale full manifest without a request", async () => {
+      using cache = tempDir("full-cache", {});
+      using first = tempDir("full-first", project({ "regular-package": "1.0.0" }));
+      using second = tempDir("full-second", project({ "regular-package": "1.0.0" }));
+
+      await populateCache(String(first), String(cache), "full", minAgeArgs);
+
+      const fromCache = await runWithCache(String(second), String(cache), ["install", ...minAgeArgs], { stale: true });
+      expect(fromCache.manifestRequests).toEqual([]);
+      expect(await Bun.file(`${second}/bun.lock`).text()).toContain("regular-package@1.0.0");
+      expect(fromCache.exitCode).toBe(0);
+    });
+
+    test("too-recent exact version is still blocked by a stale full manifest without a request", async () => {
+      using cache = tempDir("full-cache-blocked", {});
+      using first = tempDir("full-first-blocked", project({ "regular-package": "1.0.0" }));
+      using second = tempDir("full-second-blocked", project({ "regular-package": "3.0.0" }));
+
+      await populateCache(String(first), String(cache), "full", minAgeArgs);
+
+      const fromCache = await runWithCache(String(second), String(cache), ["install", ...minAgeArgs], { stale: true });
+      expect(fromCache.stderr).toContain(blockedMessage);
+      expect(fromCache.manifestRequests).toEqual([]);
+      expect(await Bun.file(`${second}/node_modules/regular-package/package.json`).exists()).toBe(false);
+      expect(fromCache.exitCode).toBe(1);
+    });
+
+    test("excluded exact version still resolves from the abbreviated manifest without a request", async () => {
+      using cache = tempDir("abbreviated-cache-excluded", {});
+      using ungated = tempDir("abbreviated-ungated-excluded", project({ "regular-package": "3.0.0" }));
+      using gated = tempDir(
+        "abbreviated-gated-excluded",
+        project({ "regular-package": "3.0.0" }, { minimumReleaseAgeExcludes: ["regular-package"] }),
+      );
+
+      await populateCache(String(ungated), String(cache), "abbreviated");
+
+      const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs], { stale: true });
+      expect(second.manifestRequests).toEqual([]);
+      expect(await Bun.file(`${gated}/bun.lock`).text()).toContain("regular-package@3.0.0");
+      expect(second.exitCode).toBe(0);
     });
   });
 
@@ -1208,10 +1557,13 @@ describe("minimum-release-age", () => {
             "regular-package": "*",
           },
         }),
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-minimumReleaseAgeExcludes = ["excluded-package"]
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            minimumReleaseAgeExcludes: ["excluded-package"],
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       const proc = Bun.spawn({
@@ -1233,6 +1585,343 @@ registry = "${mockRegistryUrl}"`,
       expect(lockfile).toContain("regular-package@2.1.0");
       expect(lockfile).not.toContain("regular-package@3.0.0");
     });
+
+    // https://github.com/oven-sh/bun/issues/28967: "name@version" entries exempt
+    // one version instead of every current and future version of the package.
+    //
+    // Fixture ages: excluded-package 1.0.0 (10d), 1.0.1 (12h, latest);
+    // @scope/scoped-package 1.0.0 (20d), 1.5.0 (8d), 2.0.0 (1d, latest);
+    // bugfix-package 1.0.0 (8d), 1.0.1 (2.5d), 1.0.2 (1.5d), 1.0.3 (12h, latest);
+    // canary-package 2.0.0-canary.3 (5d), canary.4 (2d), canary.5 (12h, dist-tag "canary").
+    describe("name@version entries", () => {
+      function project(
+        name: string,
+        dependencies: Record<string, string>,
+        minimumReleaseAgeDays: number,
+        minimumReleaseAgeExcludes: string[],
+      ) {
+        return tempDir(`exclusions-${name}`, {
+          "package.json": JSON.stringify({ dependencies }),
+          "bunfig.toml": Bun.TOML.stringify({
+            install: {
+              minimumReleaseAge: minimumReleaseAgeDays * SECONDS_PER_DAY,
+              minimumReleaseAgeExcludes,
+              registry: mockRegistryUrl,
+            },
+          }),
+        });
+      }
+
+      // Every project gets its own manifest cache so the resolution path a
+      // test exercises does not depend on which tests ran before it.
+      // --no-verify: the fixture manifests carry placeholder integrity values.
+      async function install(dir: string, { args = [] as string[], env = {} as Record<string, string> } = {}) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--no-verify", ...args],
+          cwd: dir,
+          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"), ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        const lockfile = Bun.file(join(dir, "bun.lock"));
+        let resolved: Record<string, string> | null = null;
+        if (await lockfile.exists()) {
+          const { packages } = Bun.JSONC.parse(await lockfile.text()) as { packages: Record<string, [string]> };
+          resolved = Object.fromEntries(Object.entries(packages).map(([name, [resolution]]) => [name, resolution]));
+        }
+        return { stderr, exitCode, resolved };
+      }
+
+      test.concurrent("exempts only the listed version", async () => {
+        using dir = project("pinned", { "excluded-package": "*", "regular-package": "*" }, 5, [
+          "excluded-package@1.0.1",
+        ]);
+        const { stderr, exitCode, resolved } = await install(String(dir), { args: ["--verbose"] });
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({
+          // Too recent for the gate, but listed.
+          "excluded-package": "excluded-package@1.0.1",
+          // It isn't listed, so it's still gated (3.0.0 is 1 day old).
+          "regular-package": "regular-package@2.1.0",
+        });
+        // Installing a listed version is not a downgrade, so only
+        // regular-package is reported as filtered.
+        expect(stderr.split(/\r?\n/).filter(line => line.includes("[minimum-release-age]"))).toEqual([
+          `[minimum-release-age] regular-package@>=0.0.0 selected 2.1.0 instead of 3.0.0 due to ${5 * SECONDS_PER_DAY}-second filter`,
+        ]);
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("does not exempt other versions of the package", async () => {
+        using dir = project("other-version", { "excluded-package": "*" }, 5, ["excluded-package@0.9.0"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "excluded-package": "excluded-package@1.0.0" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("scoped package", async () => {
+        using dir = project("scoped-pinned", { "@scope/scoped-package": "*" }, 5, ["@scope/scoped-package@2.0.0"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "@scope/scoped-package": "@scope/scoped-package@2.0.0" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("bare scoped package name still exempts every version", async () => {
+        using dir = project("scoped-bare", { "@scope/scoped-package": "*" }, 5, ["@scope/scoped-package"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "@scope/scoped-package": "@scope/scoped-package@2.0.0" });
+        expect(exitCode).toBe(0);
+      });
+
+      // With a 1.8 day gate and no exemption, bugfix-package resolves to 1.0.0:
+      // 1.0.3 and 1.0.2 are too recent, 1.0.1 passes the gate but was released
+      // only 1 day after 1.0.2 so the stability check walks on to 1.0.0.
+      test.concurrent("a listed version that is too recent is installed", async () => {
+        using dir = project("too-recent", { "bugfix-package": "*" }, 1.8, ["bugfix-package@1.0.2"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "bugfix-package": "bugfix-package@1.0.2" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("a listed version that passes the gate is not skipped by the stability check", async () => {
+        using dir = project("stability", { "bugfix-package": "*" }, 1.8, ["bugfix-package@1.0.1"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "bugfix-package": "bugfix-package@1.0.1" });
+        expect(exitCode).toBe(0);
+      });
+
+      // With a 1.2 day gate, 1.0.3 is blocked and 1.0.2 passes the gate but was
+      // released only 1 day before 1.0.3, so the walk keeps it as a fallback and
+      // continues; without an exemption it ends on 1.0.0. A listed 1.0.1 ends
+      // the walk there, taking precedence over the unstable fallback the same
+      // way a stable version does.
+      test.concurrent.each([
+        ["*", "range"],
+        ["latest", "dist-tag"],
+      ])("a listed version is preferred over a newer unstable fallback (%s dependency)", async (spec, label) => {
+        using dir = project(`fallback-${label}`, { "bugfix-package": spec }, 1.2, ["bugfix-package@1.0.1"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "bugfix-package": "bugfix-package@1.0.1" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("dist-tag dependency falls back to a listed version", async () => {
+        using dir = project("dist-tag-walk", { "bugfix-package": "latest" }, 1.8, ["bugfix-package@1.0.2"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "bugfix-package": "bugfix-package@1.0.2" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("dist-tag dependency pointing at a listed version", async () => {
+        using dir = project("dist-tag-target", { "excluded-package": "latest" }, 5, ["excluded-package@1.0.1"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "excluded-package": "excluded-package@1.0.1" });
+        expect(exitCode).toBe(0);
+      });
+
+      // Without the exemption the "canary" tag (canary.5) is too recent and the
+      // walk lands on canary.3, see "filters canary versions correctly".
+      test.concurrent("prerelease version", async () => {
+        using dir = project("prerelease", { "canary-package": "canary" }, 3, ["canary-package@2.0.0-canary.4"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "canary-package": "canary-package@2.0.0-canary.4" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("exact dependency on a listed version", async () => {
+        using dir = project("exact", { "excluded-package": "1.0.1" }, 5, ["excluded-package@1.0.1"]);
+
+        const first = await install(String(dir));
+        expect(first.stderr).not.toContain("error:");
+        expect(first.resolved).toEqual({ "excluded-package": "excluded-package@1.0.1" });
+        expect(first.exitCode).toBe(0);
+
+        // The first install cached the manifest. With manifest cache-control
+        // disabled (BUN_MANIFEST_CACHE=1) the cached copy counts as expired, and
+        // an exact version found in an expired cached manifest is resolved
+        // before any registry request, through a separate age check.
+        rmSync(join(String(dir), "bun.lock"));
+        rmSync(join(String(dir), "node_modules"), { recursive: true });
+        const second = await install(String(dir), { env: { BUN_MANIFEST_CACHE: "1" } });
+        expect(second.stderr).not.toContain("error:");
+        expect(second.resolved).toEqual({ "excluded-package": "excluded-package@1.0.1" });
+        expect(second.exitCode).toBe(0);
+      });
+
+      test.concurrent("exact dependency on a version that is not listed is still blocked", async () => {
+        using dir = project("exact-blocked", { "excluded-package": "1.0.1" }, 5, ["excluded-package@1.0.0"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).toContain(`blocked by minimum-release-age: ${5 * SECONDS_PER_DAY} seconds`);
+        expect(resolved).toBeNull();
+        expect(exitCode).toBe(1);
+      });
+
+      test.concurrent("several versions joined with ||", async () => {
+        using dir = project(
+          "union",
+          { "bugfix-package": "*", "@scope/scoped-package": "*" },
+          1.8,
+          // The version that matters is last in one entry and first in the
+          // other, so both halves of each entry have to be honored.
+          ["bugfix-package@1.0.1 || 1.0.2", "@scope/scoped-package@2.0.0||1.0.0"],
+        );
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({
+          "bugfix-package": "bugfix-package@1.0.2",
+          "@scope/scoped-package": "@scope/scoped-package@2.0.0",
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("entries that are not exact versions are ignored with a warning", async () => {
+        const entries = [
+          "excluded-package@",
+          "excluded-package@latest",
+          "excluded-package@^1.0.0",
+          "excluded-package@1.x",
+          "excluded-package@1.0.1 || ^1.0.0",
+          "excluded-package@1.0.1 junk",
+        ];
+        using dir = project("malformed", { "excluded-package": "*" }, 5, entries);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(stderr.split(/\r?\n/).filter(line => line.includes("minimumReleaseAgeExcludes"))).toEqual(
+          entries.map(
+            entry =>
+              `warn: ignoring minimumReleaseAgeExcludes entry "${entry}": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
+          ),
+        );
+        // "excluded-package@" must not turn into a whole-package exemption, and
+        // the 1.0.1 in the rejected entries must not be honored either.
+        expect(resolved).toEqual({ "excluded-package": "excluded-package@1.0.0" });
+        expect(exitCode).toBe(0);
+      });
+
+      // Without the flag's declaration its value is a positional: `bun install --minimum-release-age-excludes x` = `bun add x`.
+      describe("--minimum-release-age-excludes", () => {
+        const gated = { "excluded-package": "excluded-package@1.0.0", "regular-package": "regular-package@2.1.0" };
+        test.concurrent.each<[string, string[], string[], Record<string, string>]>([
+          [
+            "one name",
+            [],
+            ["--minimum-release-age-excludes", "excluded-package"],
+            { ...gated, "excluded-package": "excluded-package@1.0.1" },
+          ],
+          [
+            "=name",
+            [],
+            ["--minimum-release-age-excludes=excluded-package"],
+            { ...gated, "excluded-package": "excluded-package@1.0.1" },
+          ],
+          [
+            "a comma-separated list, spaces ignored",
+            [],
+            ["--minimum-release-age-excludes", "excluded-package, regular-package,"],
+            { "excluded-package": "excluded-package@1.0.1", "regular-package": "regular-package@3.0.0" },
+          ],
+          [
+            "repeated",
+            [],
+            ["--minimum-release-age-excludes", "excluded-package", "--minimum-release-age-excludes", "regular-package"],
+            { "excluded-package": "excluded-package@1.0.1", "regular-package": "regular-package@3.0.0" },
+          ],
+          [
+            "replaces the bunfig.toml list",
+            ["regular-package"],
+            ["--minimum-release-age-excludes", "excluded-package"],
+            { ...gated, "excluded-package": "excluded-package@1.0.1" },
+          ],
+          [
+            "an empty value clears the bunfig.toml list",
+            ["excluded-package"],
+            ["--minimum-release-age-excludes", ""],
+            gated,
+          ],
+          [
+            "name@version exempts that version only",
+            [],
+            ["--minimum-release-age-excludes", "excluded-package@1.0.1,regular-package@2.9.9"],
+            { ...gated, "excluded-package": "excluded-package@1.0.1" },
+          ],
+          [
+            "name@a || b",
+            [],
+            ["--minimum-release-age-excludes", "regular-package@2.9.9 || 3.0.0"],
+            { ...gated, "regular-package": "regular-package@3.0.0" },
+          ],
+        ])("%s", async (name, bunfigList, args, expected) => {
+          using dir = project(
+            `cli-${name.replace(/[^a-z]+/g, "-")}`,
+            { "excluded-package": "*", "regular-package": "*" },
+            5,
+            bunfigList,
+          );
+          const before = await Bun.file(join(String(dir), "package.json")).text();
+          const { stderr, exitCode, resolved } = await install(String(dir), { args });
+          expect(stderr).not.toContain("error:");
+          expect(stderr).not.toContain("minimumReleaseAgeExcludes");
+          expect(resolved).toEqual(expected);
+          expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(before);
+          expect(exitCode).toBe(0);
+        });
+
+        test.concurrent("an entry that is not an exact version is ignored with the bunfig.toml warning", async () => {
+          using dir = project("cli-malformed", { "excluded-package": "*" }, 5, []);
+          const { stderr, exitCode, resolved } = await install(String(dir), {
+            args: ["--minimum-release-age-excludes", "excluded-package@^1.0.0"],
+          });
+          expect(stderr.split(/\r?\n/).filter(line => line.includes("minimumReleaseAgeExcludes"))).toEqual([
+            `warn: ignoring minimumReleaseAgeExcludes entry "excluded-package@^1.0.0": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
+          ]);
+          expect(resolved).toEqual({ "excluded-package": "excluded-package@1.0.0" });
+          expect(exitCode).toBe(0);
+        });
+
+        test.concurrent("applies to bun add and bun update", async () => {
+          using dir = project("cli-add-update", { "regular-package": "^2.0.0" }, 5, []);
+          const run = async (...cmd: string[]) => {
+            await using proc = Bun.spawn({
+              cmd: [
+                bunExe(),
+                ...cmd,
+                "--no-verify",
+                "--minimum-release-age-excludes",
+                "excluded-package,regular-package",
+              ],
+              cwd: String(dir),
+              env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            const { dependencies } = await Bun.file(join(String(dir), "package.json")).json();
+            return { stderr, exitCode, dependencies };
+          };
+          expect(await run("add", "excluded-package")).toEqual({
+            stderr: expect.not.stringContaining("error:"),
+            exitCode: 0,
+            dependencies: { "excluded-package": "^1.0.1", "regular-package": "^2.0.0" },
+          });
+          expect(await run("update", "--latest", "regular-package")).toEqual({
+            stderr: expect.not.stringContaining("error:"),
+            exitCode: 0,
+            dependencies: { "excluded-package": "^1.0.1", "regular-package": "^3.0.0" },
+          });
+        });
+      });
+    });
   });
 
   describe("configuration", () => {
@@ -1241,9 +1930,12 @@ registry = "${mockRegistryUrl}"`,
         "package.json": JSON.stringify({
           dependencies: { "regular-package": "*" },
         }),
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       const proc = Bun.spawn({
@@ -1267,9 +1959,12 @@ registry = "${mockRegistryUrl}"`,
         "package.json": JSON.stringify({
           dependencies: { "regular-package": "*" },
         }),
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${10 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 10 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       // CLI says 5 days, bunfig says 10 days
@@ -1296,9 +1991,12 @@ registry = "${mockRegistryUrl}"`,
         "package.json": JSON.stringify({
           dependencies: { "regular-package": "*" },
         }),
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${10 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 10 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       const proc = Bun.spawn({
@@ -1317,12 +2015,97 @@ registry = "${mockRegistryUrl}"`,
       expect(lockfile).toContain("regular-package@3.0.0");
     });
 
+    test.each([
+      ["--minimum-release-age 0 over a bunfig gate", `${10 * SECONDS_PER_DAY}`, ["--minimum-release-age", "0"]],
+      ["minimumReleaseAge = 0", "0", []],
+    ])("%s is no gate, so the abbreviated manifest is requested", async (_, minimumReleaseAge, args) => {
+      using dir = tempDir("no-gate", {
+        "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+        "bunfig.toml": `[install]\nminimumReleaseAge = ${minimumReleaseAge}\nregistry = "${mockRegistryUrl}"\n`,
+      });
+
+      const firstRequest = registryRequests.length;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/.bun-cache` },
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const exitCode = await proc.exited;
+
+      const manifestRequests = registryRequests.slice(firstRequest).filter(r => r.pathname === "/regular-package");
+      expect(manifestRequests.map(r => r.accept)).toEqual([
+        "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+      ]);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toContain("regular-package@3.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    // `nan` compared false with everything, so it switched the gate off.
+    test.concurrent.each(["nan", "inf", "+inf", "-inf", "-1"])(
+      "minimumReleaseAge = %s is a config error",
+      async value => {
+        using dir = tempDir("not-a-finite-age", {
+          "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+          "bunfig.toml": `[install]\nminimumReleaseAge = ${value}\nregistry = "${mockRegistryUrl}"\n`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("error: Expected positive number of seconds for minimumReleaseAge");
+        expect(await Bun.file(`${dir}/bun.lock`).exists()).toBe(false);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    test.concurrent.each([
+      ['"5d"', "regular-package@2.1.0"],
+      ['"1 week"', "regular-package@2.0.0"],
+      ['"432000"', "regular-package@2.1.0"],
+      ['"0"', "regular-package@3.0.0"],
+      ['"5x"', null],
+      ['"-5d"', null],
+      ['"inf"', null],
+      ['""', null],
+      ["true", null],
+    ])("minimumReleaseAge = %s", async (value, locked) => {
+      using dir = tempDir("age-as-text", {
+        "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+        "bunfig.toml": `[install]\nminimumReleaseAge = ${value}\nregistry = "${mockRegistryUrl}"\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--lockfile-only"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/.bun-cache` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      if (locked) {
+        expect(stderr).not.toContain("error:");
+        expect(await Bun.file(`${dir}/bun.lock`).text()).toContain(locked);
+      } else {
+        expect(stderr).toContain("error: Expected number of seconds for minimumReleaseAge");
+        expect(await Bun.file(`${dir}/bun.lock`).exists()).toBe(false);
+      }
+      expect(exitCode).toBe(locked ? 0 : 1);
+    });
+
     test("global bunfig.toml configuration works", async () => {
       // Create a fake home directory with global bunfig
       using globalConfigDir = tempDir("global-config", {
-        ".bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        ".bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       // Create project directory (no local bunfig)
@@ -1356,9 +2139,12 @@ registry = "${mockRegistryUrl}"`,
     test("local bunfig overrides global bunfig", async () => {
       // Create a fake home directory with global bunfig
       using globalConfigDir = tempDir("global-config-override", {
-        ".bunfig.toml": `[install]
-minimumReleaseAge = ${10 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        ".bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 10 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       // Create project directory with local bunfig
@@ -1366,9 +2152,12 @@ registry = "${mockRegistryUrl}"`,
         "package.json": JSON.stringify({
           dependencies: { "regular-package": "*" },
         }),
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       const proc = Bun.spawn({
@@ -1482,9 +2271,10 @@ registry = "${mockRegistryUrl}"`,
       const stderr = await proc.stderr.text();
 
       // Should fail gracefully
+      expect(stderr).toContain(
+        'error: No version matching "99.0.0" found for specifier "regular-package" (but package exists)',
+      );
       expect(exitCode).toBe(1);
-      // Error message varies but should indicate version not found
-      expect(stderr.toLowerCase()).toMatch(/not found|no version matching|failed to resolve/);
     });
   });
 
@@ -1496,9 +2286,12 @@ registry = "${mockRegistryUrl}"`,
         "package.json": JSON.stringify({
           dependencies: { "regular-package": "*" },
         }),
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       const proc = Bun.spawn({
@@ -1548,6 +2341,34 @@ registry = "${mockRegistryUrl}"`,
       expect(lockfile).toContain("regular-package@2.1.0");
       expect(lockfile).toContain("bugfix-package@1.0.0");
       expect(lockfile).toContain("canary-package@");
+    });
+
+    test("large manifest: per-version publish times resolve independent of time-object order", async () => {
+      // The mock registry serves 2000 versions with the `time` object reversed
+      // relative to `versions`. The newest 3 versions are 1 day old; the rest
+      // are 30 days old. With a 5-day threshold the resolver must pick 1.1996.0.
+      using dir = tempDir("many-versions", {
+        "package.json": JSON.stringify({
+          dependencies: { "many-versions-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("many-versions-package@1.1996.0");
+      expect(lockfile).not.toContain("many-versions-package@1.1999.0");
+      expect(lockfile).not.toContain("many-versions-package@1.1997.0");
     });
   });
 
@@ -1624,9 +2445,12 @@ registry = "${mockRegistryUrl}"`,
           dependencies: { "regular-package": "^2.0.0" },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
-        "bunfig.toml": `[install]
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-registry = "${mockRegistryUrl}"`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 5 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
       });
 
       // First install
@@ -1660,6 +2484,177 @@ registry = "${mockRegistryUrl}"`,
       expect(stdout).not.toContain("3.0.0");
       // Should show note about minimum release age
       expect(stdout.toLowerCase()).toContain("minimum release age");
+    });
+
+    // registry.npmjs.org has `hasInstallScript` only in the abbreviated document. The full one,
+    // which has the publish times, has the `scripts` of each version instead.
+    test.concurrent.each([
+      ["hoisted", "postinstall"],
+      ["isolated", "postinstall"],
+      ["hoisted", "preinstall"],
+      ["hoisted", "install"],
+    ])("reports a blocked script (%s linker, %s)", async (linker, script) => {
+      const name = "with-install-script";
+      const scripts = { test: "exit 1", [script]: "exit 1" };
+      // 0.9.0 has scripts too, but none that an install runs.
+      const published = { "0.9.0": { test: "exit 1" }, "1.0.0": scripts };
+      using registry = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const { pathname, origin } = new URL(req.url);
+          const abbreviated = req.headers.get("accept")?.includes("application/vnd.npm.install-v1+json");
+          const versions: Record<string, object> = {};
+          for (const [version, scripts] of Object.entries(published)) {
+            const tarball = `/${name}/-/${name}-${version}.tgz`;
+            if (pathname === tarball) return new Response(createTarball(name, version, { scripts }));
+            versions[version] = {
+              name,
+              version,
+              dist: { tarball: origin + tarball },
+              ...(!abbreviated ? { scripts } : version === "1.0.0" ? { hasInstallScript: true } : {}),
+            };
+          }
+          const time = { "0.9.0": daysAgo(40), "1.0.0": daysAgo(30) };
+          return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions, ...(abbreviated ? {} : { time }) });
+        },
+      });
+      using dir = tempDir("blocked-script", {
+        "package.json": JSON.stringify({ dependencies: { [name]: "1.0.0", quiet: `npm:${name}@0.9.0` } }),
+        ".npmrc": `registry=${registry.url}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--linker", linker, "--save-text-lockfile", "--minimum-release-age", "60"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("Blocked 1 postinstall");
+      const lockfile = (await Bun.file(join(String(dir), "bun.lock")).text()).split("\n");
+      expect(lockfile.find(line => line.includes(`"${name}@1.0.0"`))).toContain(`"hasInstallScript": true`);
+      expect(lockfile.find(line => line.includes(`"${name}@0.9.0"`))).not.toContain("hasInstallScript");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Semver strings longer than 8 bytes are not stored inline: they are offsets into
+  // the string buffer they were parsed from, and the lockfile and each package
+  // manifest have their own buffer. The prerelease tags of snapshot-package and
+  // nightly-package are long enough to live in those buffers, so these tests
+  // notice when a version is printed through the other side's buffer.
+  describe("prerelease tags longer than an inline semver string", () => {
+    const minimumReleaseAge = `${5 * SECONDS_PER_DAY}`;
+
+    async function run(cmd: string[], cwd: string, env: NodeJS.Dict<string> = bunEnv) {
+      await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test("bun outdated sizes the Update and Latest columns by the current version when nothing passes the filter", async () => {
+      using dir = tempDir("outdated-long-prerelease", {
+        "package.json": JSON.stringify({
+          dependencies: {
+            // Already on their latest versions, so they stay out of the table. They
+            // sort before snapshot-package in bun.lock, so their names and tarball
+            // URLs fill the lockfile string buffer first and snapshot-package's
+            // prerelease tag ends up at an offset past the end of its (much smaller)
+            // manifest buffer. Closer to the start of the buffer, a read through the
+            // wrong buffer returns wrong bytes of the right length and the table
+            // lines up by accident.
+            "bugfix-package": "1.0.3",
+            "exact-threshold-package": "2.0.0",
+            "regular-package": "3.0.0",
+            "snapshot-package": "snapshot",
+          },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      // Installed without the filter: the snapshot is only two days old.
+      const install = await run([bunExe(), "install", "--no-verify"], String(dir));
+      expect(install).toMatchObject({ exitCode: 0 });
+
+      // With the filter, neither the `snapshot` tag nor `latest` has a version old
+      // enough, so both columns fall back to showing the current version.
+      const { stdout, exitCode } = await run(
+        [bunExe(), "outdated", "--minimum-release-age", minimumReleaseAge],
+        String(dir),
+      );
+      const table = stdout.slice(stdout.indexOf("\n") + 1);
+      expect(table).toMatchInlineSnapshot(`
+        "|----------------------------------------------------------------------------------------------------|
+        | Package          | Current                 | Update                    | Latest                    |
+        |------------------|-------------------------|---------------------------|---------------------------|
+        | snapshot-package | 1.0.0-snapshot.20240101 | 1.0.0-snapshot.20240101 * | 1.0.0-snapshot.20240101 * |
+        |----------------------------------------------------------------------------------------------------|
+        Note: The * indicates that version isn't true latest due to minimum release age
+        "
+      `);
+      const widths = table
+        .split("\n")
+        .filter(line => line.startsWith("|"))
+        .map(line => line.length);
+      expect(new Set(widths).size).toBe(1);
+      expect(exitCode).toBe(0);
+    });
+
+    test("--verbose prints the dependency's range from the lockfile", async () => {
+      using dir = tempDir("verbose-long-prerelease", {
+        "package.json": JSON.stringify({
+          dependencies: { "nightly-package": "^1.0.0-nightly.20240101" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const { stderr, exitCode } = await run(
+        [bunExe(), "install", "--minimum-release-age", minimumReleaseAge, "--no-verify", "--verbose"],
+        String(dir),
+      );
+      expect(stderr.split("\n").filter(line => line.includes("[minimum-release-age]"))).toEqual([
+        "[minimum-release-age] nightly-package@>=1.0.0-nightly.20240101 <2.0.0-0 selected 1.0.0-nightly.20240101 instead of 1.0.0-nightly.20240102 due to 432000-second filter",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("an exact pin rejected from a cached manifest is reported with the manifest's version", async () => {
+      using dir = tempDir("cached-manifest-long-prerelease", {
+        "package.json": JSON.stringify({
+          dependencies: { "nightly-package": "^1.0.0-nightly.20240101" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      // Puts nightly-package's manifest, including publish times, in the cache.
+      const first = await run(
+        [bunExe(), "install", "--minimum-release-age", minimumReleaseAge, "--no-verify"],
+        String(dir),
+      );
+      expect(first).toMatchObject({ exitCode: 0 });
+
+      await Bun.write(
+        `${dir}/package.json`,
+        JSON.stringify({ dependencies: { "nightly-package": "1.0.0-nightly.20240102" } }),
+      );
+      // BUN_MANIFEST_CACHE=1 treats every cached manifest as stale, which is how a
+      // manifest cached more than a few minutes ago looks. Exact pins are then
+      // checked against the cached manifest instead of a fresh download, and that
+      // check is what reports the rejected version.
+      const second = await run(
+        [bunExe(), "install", "--minimum-release-age", minimumReleaseAge, "--no-verify"],
+        String(dir),
+        { ...bunEnv, BUN_MANIFEST_CACHE: "1" },
+      );
+      expect(second.stderr).toMatchInlineSnapshot(`
+        "error: No version matching "1.0.0-nightly.20240102" found for specifier "nightly-package" (blocked by minimum-release-age: 432000 seconds)
+        error: nightly-package@1.0.0-nightly.20240102 failed to resolve
+        "
+      `);
+      expect(second.exitCode).toBe(1);
     });
   });
 
@@ -1782,7 +2777,7 @@ registry = "${mockRegistryUrl}"`,
         stderr: "pipe",
       });
 
-      expect(proc.exited).resolves.toBe(0);
+      await expect(proc.exited).resolves.toBe(0);
 
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       // Scoped package should be filtered (1.5.0 not 2.0.0)
@@ -1891,6 +2886,67 @@ registry = "${mockRegistryUrl}"`,
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       expect(lockfile).toContain("regular-package@2.1.0");
     });
+
+    // https://github.com/oven-sh/bun/issues/40031
+    // bun.lock pins regular-package@3.0.0, which is inside the age window. Writing the same range as `catalog:` makes
+    // a plain install resolve the row again: the gate is for new resolutions, so the pin stays installable. A frozen
+    // install keeps the row as it is locked.
+    describe.each([
+      // A cold cache: the manifest is fetched with publish times.
+      { title: "exact version, cold cache", range: "3.0.0", first: [], second: [], sameCache: false },
+      // --force loads the cached manifest as expired: the exact-version fast path.
+      {
+        title: "exact version, expired cached manifest",
+        range: "3.0.0",
+        first: ["--minimum-release-age", "1"],
+        second: ["--force"],
+        sameCache: true,
+      },
+      { title: "range whose every version is too recent", range: "^3.0.0", first: [], second: [], sameCache: false },
+    ])("a version bun.lock pins is not blocked: $title", ({ range, first, second, sameCache }) => {
+      test.concurrent.each([[["--frozen-lockfile"]], [[]]])("install %j", async mode => {
+        const manifest = (spec: string) =>
+          JSON.stringify({
+            name: "repro",
+            workspaces: { catalog: { "regular-package": range } },
+            dependencies: { "regular-package": spec },
+          });
+        using dir = tempDir("pinned-too-recent", {
+          "package.json": manifest(range),
+          ".npmrc": `registry=${mockRegistryUrl}`,
+        });
+        const install = async (cache: string, args: string[]) => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "install", "--no-verify", ...args],
+            cwd: String(dir),
+            env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/${cache}` },
+            stdout: "ignore",
+            stderr: "pipe",
+          });
+          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          return { stderr, exitCode, lockfile: await Bun.file(`${dir}/bun.lock`).text() };
+        };
+
+        expect(await install("cache-1", first)).toMatchObject({
+          exitCode: 0,
+          lockfile: expect.stringContaining("regular-package@3.0.0"),
+        });
+        await Bun.write(`${dir}/package.json`, manifest("catalog:"));
+
+        expect(
+          await install(sameCache ? "cache-1" : "cache-2", [
+            ...mode,
+            ...second,
+            "--minimum-release-age",
+            `${5 * SECONDS_PER_DAY}`,
+          ]),
+        ).toMatchObject({
+          stderr: expect.not.stringMatching(/minimum[- ]release[- ]age/),
+          exitCode: 0,
+          lockfile: expect.stringContaining("regular-package@3.0.0"),
+        });
+      });
+    });
   });
 
   describe("monorepo with linker modes", () => {
@@ -1900,10 +2956,11 @@ registry = "${mockRegistryUrl}"`,
           name: "my-monorepo",
           workspaces: ["packages/*"],
         }),
-        "bunfig.toml": `
-[install]
-linker = "${linker}"
-`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            linker,
+          },
+        }),
         "packages/app/package.json": JSON.stringify({
           name: "app",
           version: "1.0.0",
@@ -2083,6 +3140,75 @@ linker = "${linker}"
       expect(exitCode).toBe(1);
       expect(stderr.toLowerCase()).toMatch(/invalid|error/);
     });
+
+    // The number used to be read as a prefix: `5d` was 5 seconds, so a 5 day gate let a 1 day old version in.
+    // It is read whole: a number of seconds, or digits and one unit.
+    describe.each(["install", "add", "update"])("bun %s", command => {
+      test.concurrent.each([
+        ...["5x", "5dd", "5 d d", "5d ", "d", ".d", "-5d", "1e3d", "5D", "5..5d", "1e999d"],
+        ...["5/../x", "5:6", "1e999", "NaN", "Infinity", "-0.5", "", " 5", "0x10"],
+      ])("--minimum-release-age=%j is refused", async value => {
+        using dir = tempDir("partly-numeric-age", {
+          "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+          ".npmrc": `registry=${mockRegistryUrl}`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            command,
+            ...(command === "add" ? ["excluded-package"] : []),
+            `--minimum-release-age=${value}`,
+          ],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(`error: Expected --minimum-release-age to be a positive number: ${value}`);
+        expect(await Bun.file(join(String(dir), "bun.lock")).exists()).toBe(false);
+        expect(exitCode).toBe(1);
+      });
+
+      test.concurrent.each([
+        ...["432000", "4.32e5", "432000.5", "+432000"],
+        ...[
+          "5d",
+          "5 days",
+          "5.5day",
+          "120h",
+          "120 hours",
+          "7200m",
+          "7200 mins",
+          "432000s",
+          "432000 seconds",
+          "0.75w",
+          "0.75 weeks",
+        ],
+      ])("--minimum-release-age=%s is 5 days", async value => {
+        using dir = tempDir("numeric-age", {
+          "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+          ".npmrc": `registry=${mockRegistryUrl}`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            command,
+            ...(command === "add" ? ["excluded-package"] : []),
+            "--no-verify",
+            `--minimum-release-age=${value}`,
+          ],
+          cwd: String(dir),
+          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(await Bun.file(join(String(dir), "bun.lock")).text()).toContain("regular-package@2.1.0");
+        expect(exitCode).toBe(0);
+      });
+    });
   });
 
   describe("malformed registry data", () => {
@@ -2127,13 +3253,110 @@ linker = "${linker}"
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      // Should succeed - invalid timestamps should be skipped gracefully
-      expect(exitCode).toBe(0);
+      // Its age is unknown
+      expect(stderr).toContain(
+        `No version matching "*" found for specifier "bad-timestamp-package" (blocked by minimum-release-age: ${5 * SECONDS_PER_DAY} seconds)`,
+      );
+      expect(exitCode).toBe(1);
+    });
+  });
 
-      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
-      expect(lockfile).toContain("bad-timestamp-package@1.0.0");
+  describe.concurrent("which version passes a gate of 5 days", () => {
+    type Versions = Record<string, { time?: unknown; deprecated?: string }>;
+    /** What every specifier of `expected` resolves `dep` to; null when the install fails. */
+    async function picked(versions: Versions, latest: string, specs: string[]) {
+      using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          Response.json({
+            name: "dep",
+            "dist-tags": { latest },
+            versions: Object.fromEntries(
+              Object.entries(versions).map(([version, { deprecated }]) => [
+                version,
+                { name: "dep", version, deprecated, dist: { tarball: `${server.url}dep-${version}.tgz` } },
+              ]),
+            ),
+            time: Object.fromEntries(Object.entries(versions).map(([version, { time }]) => [version, time])),
+          }),
+      });
+      const entries = specs.map(async spec => {
+        using dir = tempDir("age-gate-pick", { "package.json": JSON.stringify({ dependencies: { dep: spec } }) });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--lockfile-only", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+          cwd: String(dir),
+          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), BUN_CONFIG_REGISTRY: server.url.href },
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        const failed = await proc.exited;
+        return [
+          spec,
+          failed ? null : (await Bun.file(join(String(dir), "bun.lock")).text()).match(/"dep@([^"]+)"/)![1],
+        ];
+      });
+      return Object.fromEntries(await Promise.all(entries));
+    }
+
+    // Each row is also what npm-pick-manifest 11.0.3 answers with `before` 5 days ago.
+    test.each<[string, Versions, string, Record<string, string | null>]>([
+      [
+        "the newest version that passes is deprecated",
+        {
+          "1.0.0": { time: daysAgo(30) },
+          "2.0.0": { time: daysAgo(10), deprecated: "old" },
+          "3.0.0": { time: daysAgo(1) },
+        },
+        "3.0.0",
+        { "*": "1.0.0", ">=1.0.0": "1.0.0", latest: "1.0.0", "": "1.0.0", "^2.0.0": "2.0.0" },
+      ],
+      [
+        "only a deprecated version passes",
+        { "1.0.0": { time: daysAgo(30), deprecated: "old" }, "2.0.0": { time: daysAgo(1) } },
+        "2.0.0",
+        { "*": "1.0.0", ">=1.0.0": "1.0.0", latest: "1.0.0", "": "1.0.0" },
+      ],
+      [
+        "latest is deprecated and the next version is too recent",
+        {
+          "1.0.0": { time: daysAgo(30) },
+          "1.5.0": { time: daysAgo(1) },
+          "2.0.0": { time: daysAgo(30), deprecated: "old" },
+        },
+        "2.0.0",
+        { "*": "1.0.0", "": "1.0.0", latest: "2.0.0" },
+      ],
+      [
+        "every version is deprecated and too recent",
+        { "1.0.0": { time: daysAgo(1), deprecated: "old" }, "2.0.0": { time: daysAgo(1), deprecated: "old" } },
+        "2.0.0",
+        { "*": null, "": null, latest: null },
+      ],
+    ])("%s", async (_, versions, latest, expected) => {
+      expect(await picked(versions, latest, Object.keys(expected))).toEqual(expected);
+    });
+
+    const passes = { "^1.0.0": "1.1.0", "1.1.0": "1.1.0", latest: "1.1.0" };
+    const blocked = { "^1.0.0": "1.0.0", "1.1.0": null, latest: "1.0.0" };
+    test.each<[string, unknown, typeof passes | typeof blocked]>([
+      ["ISO 8601, now", daysAgo(0), blocked],
+      ["ISO 8601, old", daysAgo(30), passes],
+      ["RFC 2822, now", new Date(currentTime).toUTCString(), blocked],
+      ["RFC 2822, old", new Date(currentTime - 30 * DAY_MS).toUTCString(), passes],
+      ["not a date", "yesterday", blocked],
+      ["a number", currentTime - 30 * DAY_MS, blocked],
+      ["true", true, blocked],
+      ["an object", {}, blocked],
+      ["an empty string", "", passes],
+      ["null", null, passes],
+      ["false", false, passes],
+      ["0", 0, passes],
+      ["missing", undefined, passes],
+    ])("a publish time that is %s", async (_, time, expected) => {
+      const versions = { "1.0.0": { time: daysAgo(30) }, "1.1.0": { time } };
+      expect(await picked(versions, "1.1.0", Object.keys(expected))).toEqual(expected);
     });
   });
 
@@ -2254,6 +3477,305 @@ linker = "${linker}"
     });
   });
 
+  // A required peer that nothing in the tree provides and that no published
+  // version satisfies only warns and stays unresolved (bun-lock.test.ts, "peer
+  // no published version satisfies"). A peer whose satisfying versions are all
+  // blocked by the age gate has to end up the same way on every path that can
+  // report the blocked lookup, and each of those paths has to give the other
+  // dependency kinds the same answer as well.
+  describe("every satisfying version blocked", () => {
+    const AGE_GATE = 3 * SECONDS_PER_DAY;
+    const blockedSuffix = `(blocked by minimum-release-age: ${AGE_GATE} seconds)`;
+    const blockedPeerWarning = (range: string, name = "gated") =>
+      `warn: No version matching "${range}" found for peer dependency "${name}" ${blockedSuffix}`;
+
+    // gated@2.0.0 is the only version the dependencies below accept and it is
+    // inside the age window; every version of `fresh` is inside it.
+    const registryPackages: Record<
+      string,
+      { time: Record<string, string>; peerDependencies?: Record<string, string> }
+    > = {
+      gated: { time: { "1.0.0": daysAgo(30), "2.0.0": daysAgo(1) } },
+      fresh: { time: { "1.0.0": daysAgo(1) } },
+      "needs-gated": { time: { "1.0.0": daysAgo(30) }, peerDependencies: { gated: "^2.0.0" } },
+      // The newest 1.x is inside the age window.
+      shared: { time: { "1.0.0": daysAgo(40), "1.1.0": daysAgo(30), "1.2.0": daysAgo(1), "2.0.0": daysAgo(20) } },
+      "a-any-shared": { time: { "1.0.0": daysAgo(30) }, peerDependencies: { shared: ">=1.0.0" } },
+      "b-shared-1": { time: { "1.0.0": daysAgo(30) }, peerDependencies: { shared: "^1.0.0" } },
+    };
+
+    function serveRegistry() {
+      const requests: string[] = [];
+      const server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const { origin, pathname } = new URL(req.url);
+          requests.push(pathname);
+          const tarball = pathname.match(/^\/([^/]+)\/-\/\1-(\d+\.\d+\.\d+)\.tgz$/);
+          if (tarball) return new Response(createTarball(tarball[1], tarball[2]));
+          const name = pathname.slice(1);
+          const pkg = registryPackages[name];
+          if (!pkg) return new Response("Not Found", { status: 404 });
+          const versions: Record<string, unknown> = {};
+          for (const version of Object.keys(pkg.time)) {
+            versions[version] = {
+              name,
+              version,
+              dist: { tarball: `${origin}/${name}/-/${name}-${version}.tgz` },
+              peerDependencies: pkg.peerDependencies,
+            };
+          }
+          return Response.json({
+            name,
+            "dist-tags": { latest: Object.keys(pkg.time).at(-1) },
+            versions,
+            time: pkg.time,
+          });
+        },
+      });
+      return {
+        origin: server.url.origin,
+        requests,
+        [Symbol.dispose]() {
+          server.stop(true);
+        },
+      };
+    }
+
+    function createProject(registryOrigin: string, files: Record<string, string>) {
+      return tempDir("age-gated-peer", { ...files, ".npmrc": `registry=${registryOrigin}` });
+    }
+
+    async function install(dir: string, { args = [] as string[], env = {} as Record<string, string> } = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${AGE_GATE}`, ...args],
+        cwd: dir,
+        // One manifest/tarball cache per project, so the second install of a
+        // test sees exactly what its first install cached.
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/.bun-cache`, ...env },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+
+    async function reResolve(dir: string) {
+      await rm(`${dir}/bun.lock`, { force: true });
+      await rm(`${dir}/node_modules`, { recursive: true, force: true });
+    }
+
+    type InstallOptions = Parameters<typeof install>[1];
+    type InstallResult = Awaited<ReturnType<typeof install>>;
+
+    // `bun install` writes fetched manifests to the cache from a background
+    // thread and does not wait for that on exit, so a small install can finish
+    // before its manifests are on disk. Resolve from scratch until `manifests`
+    // of them are; every run has to produce the same result.
+    async function installUntilManifestsCached(
+      dir: string,
+      manifests: number,
+      expectResult: (result: InstallResult) => void,
+      options?: InstallOptions,
+    ) {
+      for (let attempt = 0; ; attempt++) {
+        expectResult(await install(dir, options));
+        const cached = (await readdir(`${dir}/.bun-cache`).catch((): string[] => [])).filter(name =>
+          name.endsWith(".npm"),
+        );
+        if (cached.length >= manifests) return;
+        if (attempt === 20) throw new Error(`only ${cached.length} of ${manifests} manifests were cached`);
+        await reResolve(dir);
+      }
+    }
+
+    test.concurrent("peer declared by a registry package", async () => {
+      using registry = serveRegistry();
+      using dir = createProject(registry.origin, {
+        "package.json": JSON.stringify({ name: "app", dependencies: { "needs-gated": "1.0.0" } }),
+      });
+
+      let { stderr, exitCode } = await install(String(dir));
+      expect(stderr).toContain(blockedPeerWarning("^2.0.0"));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(`${dir}/node_modules/needs-gated/package.json`).exists()).toBeTrue();
+      expect(await Bun.file(`${dir}/node_modules/gated/package.json`).exists()).toBeFalse();
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile.replaceAll(registry.origin, "<registry>")).toMatchInlineSnapshot(`
+        "{
+          "lockfileVersion": 1,
+          "configVersion": 1,
+          "workspaces": {
+            "": {
+              "name": "app",
+              "dependencies": {
+                "needs-gated": "1.0.0",
+              },
+            },
+          },
+          "packages": {
+            "needs-gated": ["needs-gated@1.0.0", "<registry>/needs-gated/-/needs-gated-1.0.0.tgz", { "peerDependencies": { "gated": "^2.0.0" } }, ""],
+          }
+        }
+        "
+      `);
+
+      ({ stderr, exitCode } = await install(String(dir), { args: ["--frozen-lockfile"] }));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
+    });
+
+    test.concurrent("peers declared by the root package and a workspace (range, exact pin, dist-tag)", async () => {
+      using registry = serveRegistry();
+      using dir = createProject(registry.origin, {
+        "package.json": JSON.stringify({
+          name: "app",
+          workspaces: ["packages/*"],
+          peerDependencies: { gated: "^2.0.0", fresh: "latest" },
+        }),
+        "packages/ws/package.json": JSON.stringify({ name: "ws", peerDependencies: { gated: "2.0.0" } }),
+      });
+
+      let { stderr, exitCode } = await install(String(dir));
+      expect(stderr).toContain(blockedPeerWarning("^2.0.0"));
+      expect(stderr).toContain(blockedPeerWarning("2.0.0"));
+      expect(stderr).toContain(blockedPeerWarning("latest", "fresh"));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toMatchInlineSnapshot(`
+        "{
+          "lockfileVersion": 2,
+          "configVersion": 1,
+          "workspaces": {
+            "": {
+              "name": "app",
+              "peerDependencies": {
+                "fresh": "latest",
+                "gated": "^2.0.0",
+              },
+            },
+            "packages/ws": {
+              "name": "ws",
+              "peerDependencies": {
+                "gated": "2.0.0",
+              },
+            },
+          },
+          "packages": {
+            "ws": ["ws@workspace:packages/ws"],
+          }
+        }
+        "
+      `);
+
+      ({ stderr, exitCode } = await install(String(dir), { args: ["--frozen-lockfile"] }));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
+    });
+
+    // An exact pin whose cached manifest has expired is answered from that
+    // manifest instead of being looked up again, which is a separate place the
+    // blocked version gets reported from. BUN_MANIFEST_CACHE=1 keeps writing
+    // the cache but treats everything in it as expired, so the second install
+    // of `gated@2.0.0` (declared as `group`) takes that path; it has to say the
+    // same thing the first install said from the fresh manifest.
+    const staleManifests = { env: { BUN_MANIFEST_CACHE: "1" } };
+    async function expectSameAnswerFromExpiredManifest(
+      group: "dependencies" | "optionalDependencies" | "peerDependencies",
+      expectResult: (result: InstallResult) => void,
+    ) {
+      using registry = serveRegistry();
+      using dir = createProject(registry.origin, {
+        "package.json": JSON.stringify({ name: "app", [group]: { gated: "2.0.0" } }),
+      });
+
+      await installUntilManifestsCached(String(dir), 1, expectResult, staleManifests);
+      expect(registry.requests).toContain("/gated");
+
+      await reResolve(String(dir));
+      registry.requests.length = 0;
+      expectResult(await install(String(dir), staleManifests));
+      expect(registry.requests).toEqual([]);
+    }
+
+    test.concurrent("peer exact pin answered from an expired cached manifest", async () => {
+      await expectSameAnswerFromExpiredManifest("peerDependencies", ({ stderr, exitCode }) => {
+        expect(stderr).toContain(blockedPeerWarning("2.0.0"));
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    test.concurrent("regular exact pin answered from an expired cached manifest", async () => {
+      await expectSameAnswerFromExpiredManifest("dependencies", ({ stderr, exitCode }) => {
+        expect(stderr).toContain(`error: No version matching`);
+        expect(stderr).toContain(blockedSuffix);
+        expect(exitCode).toBe(1);
+      });
+    });
+
+    test.concurrent("optional exact pin answered from an expired cached manifest", async () => {
+      await expectSameAnswerFromExpiredManifest("optionalDependencies", ({ stderr, exitCode }) => {
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    test.concurrent(
+      "peer bound to the version already in the tree, with and without a warm manifest cache",
+      async () => {
+        using registry = serveRegistry();
+        using dir = createProject(registry.origin, {
+          "package.json": JSON.stringify({
+            name: "app",
+            dependencies: { gated: "^1.0.0", "needs-gated": "1.0.0" },
+          }),
+        });
+
+        const expectBoundToInstalledVersion = ({ stderr, exitCode }: InstallResult) => {
+          expect(stderr).toContain('warn: incorrect peer dependency "gated@1.0.0"');
+          expect(stderr).not.toContain("blocked by minimum-release-age");
+          expect(stderr).not.toContain("error:");
+          expect(exitCode).toBe(0);
+        };
+
+        const verbose = { args: ["--verbose"] };
+        await installUntilManifestsCached(String(dir), 2, expectBoundToInstalledVersion, verbose);
+        const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+        expect(lockfile).toContain('"gated@1.0.0"');
+
+        // With both manifests in the cache the peer is looked up synchronously
+        // while regular dependencies are still being resolved, before the pass
+        // that binds peers to what the tree contains.
+        await reResolve(String(dir));
+        registry.requests.length = 0;
+        expectBoundToInstalledVersion(await install(String(dir), verbose));
+        expect(registry.requests).toEqual([]);
+        expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
+      },
+    );
+
+    test.concurrent("the version every dependent of a peer accepts is picked behind the gate too", async () => {
+      using registry = serveRegistry();
+      using dir = createProject(registry.origin, {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { "a-any-shared": "1.0.0", "b-shared-1": "1.0.0" },
+        }),
+      });
+
+      const { stderr, exitCode } = await install(String(dir));
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).not.toContain("error:");
+      expect((await Bun.file(`${dir}/bun.lock`).text()).match(/"shared@[^"]+"/g)).toEqual(['"shared@1.1.0"']);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("clock skew scenarios", () => {
     test("handles packages with future timestamps", async () => {
       using dir = tempDir("future-timestamp", {
@@ -2300,25 +3822,25 @@ linker = "${linker}"
       const [exitCode, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
 
       // Should fail - no versions pass the age gate
+      expect(stderr).toContain(
+        `error: No version matching "*" found for specifier "all-future-package" (blocked by minimum-release-age: ${5 * SECONDS_PER_DAY} seconds)`,
+      );
       expect(exitCode).toBe(1);
-      expect(stderr.toLowerCase()).toMatch(/no version|blocked|failed to resolve/);
     });
   });
 
   describe("security scanner integration", () => {
     // Helper to create common scanner configuration files
-    const createScannerConfig = (extraConfig = "", scannerImpl?: string) => {
-      // Normalize extraConfig to ensure proper newline separation
-      const normalizedExtra = extraConfig ? (extraConfig.endsWith("\n") ? extraConfig : extraConfig + "\n") : "";
+    const createScannerConfig = (extraInstallConfig: Record<string, unknown> = {}, scannerImpl?: string) => {
       return {
-        "bunfig.toml": `
-[install]
-cache = false
-registry = "${mockRegistryUrl}"
-${normalizedExtra}
-[install.security]
-scanner = "./scanner.ts"
-`,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: mockRegistryUrl,
+            ...extraInstallConfig,
+            security: { scanner: "./scanner.ts" },
+          },
+        }),
         "scanner.ts":
           scannerImpl ??
           `
@@ -2421,7 +3943,7 @@ export const scanner = {
           dependencies: { "regular-package": "*" },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
-        ...createScannerConfig("", advisoryScannerImpl),
+        ...createScannerConfig({}, advisoryScannerImpl),
       });
 
       await using proc = Bun.spawn({
@@ -2449,9 +3971,10 @@ export const scanner = {
           dependencies: { "regular-package": "*" },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
-        ...createScannerConfig(`minimumReleaseAge = ${5 * SECONDS_PER_DAY}
-minimumReleaseAgeExcludes = ["regular-package"]
-`),
+        ...createScannerConfig({
+          minimumReleaseAge: 5 * SECONDS_PER_DAY,
+          minimumReleaseAgeExcludes: ["regular-package"],
+        }),
       });
 
       await using proc = Bun.spawn({

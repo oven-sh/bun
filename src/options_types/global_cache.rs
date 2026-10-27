@@ -10,17 +10,19 @@ pub enum GlobalCache {
     disable,
 }
 
-impl GlobalCache {
-    pub const MAP: phf::Map<&'static [u8], GlobalCache> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub static MAP: GlobalCache = {
         b"auto" => GlobalCache::auto,
         b"force" => GlobalCache::force,
         b"disable" => GlobalCache::disable,
         b"fallback" => GlobalCache::fallback,
     };
+}
 
-    pub fn allow_version_specifier(self) -> bool {
-        self == GlobalCache::force
-    }
+impl GlobalCache {
+    /// The map type is a zero-sized handle, so this is the same map as the
+    /// module-level `MAP` static.
+    pub const MAP: __ComptimeStringMap_MAP = __ComptimeStringMap_MAP(());
 
     pub fn can_use(self, has_a_node_modules_folder: bool) -> bool {
         // When there is a node_modules folder, we default to false
@@ -46,16 +48,4 @@ impl GlobalCache {
     pub fn is_enabled(self) -> bool {
         self != GlobalCache::disable
     }
-
-    pub fn can_install(self) -> bool {
-        matches!(
-            self,
-            GlobalCache::auto
-                | GlobalCache::allow_install
-                | GlobalCache::force
-                | GlobalCache::fallback
-        )
-    }
 }
-
-// ported from: src/options_types/GlobalCache.zig

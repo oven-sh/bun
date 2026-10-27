@@ -187,6 +187,43 @@ This parameter checks the bundle for strings like `DROP`, `REMOVE`, and `FAIL` w
 
 Places that are not required to be dce'd contain `POSSIBLE_REMOVAL` and do not trigger an error if not removed. These might be able to be optimized in the future.
 
+## Output check
+
+`expectBundled` reads every `.js`, `.mjs` and `.cjs` file that the build writes. The fixture fails when one of them:
+
+- does not parse (with acorn), as a module for `format: "esm"` and as a script for the other formats;
+- uses a name that the bundler makes up, and never declares it: `exports_lib`, `module_lib`, `require_lib`, `init_lib`, `import_lib`, `export_foo`, `$foo`, `lib_default` or a `__` runtime helper. This is the shape behind `ReferenceError: exports_lib is not defined`.
+
+The check needs no `run` step, and it also reads the code that a run does not reach.
+
+A name that the fixture spells out is its own and is left alone: in one of the `files`, in `banner`, `footer`, a `define` value or a JSX option, or in a package that `install` adds.
+
+Two options turn a failure off for one fixture. Each of them fails the fixture when it excuses nothing, so that it goes away with the bug.
+
+- `allowUndeclaredGeneratedNames` lists the names that an open bundler bug leaves without a declaration. Link the issue in a comment.
+- `allowOutputSyntaxError: true` is for an output that is not JavaScript on purpose.
+
+```ts
+itBundled("example/DynamicRequireInIife", {
+  files: {
+    "/entry.js": `console.log(require(process.argv[2]));`,
+  },
+  format: "iife",
+  // https://github.com/oven-sh/bun/issues/24540: iife output calls `__require` and does not define it.
+  allowUndeclaredGeneratedNames: ["__require"],
+});
+```
+
+The check does not see:
+
+- a `compile` fixture, whose output is an executable;
+- the output of an entry point that is a stylesheet;
+- an output over 64 MB, or over 1 MB on a debug or ASAN build, where acorn is slow;
+- a generated name that `minifyIdentifiers` renamed, or one of a shape that is not in the list above;
+- a name that is declared, but only after the statement that reads it;
+- any format or target other than the one the fixture builds.
+
+## keepNames tricks
 ## keepNames tricks
 
 In `esbuild/default.test.ts`, test `default/KeepNamesTreeShaking`, we call the esbuild cli to minify identifiers, and then check the code for expected class names to survive the minification (keep names forcibily sets functions `.name`).

@@ -843,6 +843,8 @@ describe("bundler", () => {
       expect(code).toMatch(/delete\s+\(0,\s*exports_\w+\)/);
       expect(code).not.toMatch(/delete\s+exports_\w+\b/);
     },
+    // https://github.com/oven-sh/bun/issues/12518: nothing declares the `exports_entry` that the read prints.
+    allowUndeclaredGeneratedNames: ["exports_entry"],
   });
   // https://github.com/oven-sh/bun/issues/4565
   // `exports.x = ...` as the unbraced body of if/while/do/else must not be

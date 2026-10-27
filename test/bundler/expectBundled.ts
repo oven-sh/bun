@@ -1,16 +1,27 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { BuildConfig, BuildOutput, BunPlugin, CompileBuildOptions, fileURLToPath, Loader, PluginBuilder } from "bun";
+import { getLineInfo } from "acorn";
+import {
+  BuildConfig,
+  BuildOutput,
+  BunPlugin,
+  CompileBuildOptions,
+  fileURLToPath,
+  Glob,
+  Loader,
+  PluginBuilder,
+} from "bun";
 import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import filenamify from "filenamify";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isCI, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isWindows } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
+import { findUndeclaredGeneratedNames } from "./outputCheck";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
 export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
@@ -139,6 +150,11 @@ const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? bunEx
 /** Set by test/aot/transpiler-parity.test.ts: a test that runs its outputs is built with `bun build --compile --aot`, one executable per entry point, so what runs is compiled code. Each such test prints `[aot] bundle: <id>` on stderr. */
 const COMPILES_AHEAD_OF_TIME = process.env.BUN_BUNDLER_TEST_AOT;
 export const RUN_UNCHECKED_TESTS = false;
+/**
+ * The output check does not read a larger output. acorn needs about 10 seconds for a megabyte on a debug build of
+ * JavaScriptCore, and `edgecase/AwsCdkLib` writes 36 MB.
+ */
+const largestCheckedOutput = (isDebug || isASAN ? 1 : 64) * 1024 * 1024;
 
 const tempDirectoryTemplate = path.join(realpathSync(tmpdir()), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
 if (!existsSync(path.dirname(tempDirectoryTemplate)))
@@ -332,6 +348,14 @@ export interface BundlerTestInput {
    * contain the specified strings. This lets us test that certain values are not bundled.
    */
   assertNotPresent?: Record<string, string | string[]>;
+  /**
+   * Generated names (`exports_lib`, `__require`, ...) that a JS output uses without a declaration, because of an
+   * open bundler bug. Link the issue in a comment. The test fails on any other such name, and on an entry that no
+   * output needs. See "Output check" in `expectBundled.md`.
+   */
+  allowUndeclaredGeneratedNames?: string[];
+  /** For a JS output that is not JavaScript on purpose. The test fails when every output parses. */
+  allowOutputSyntaxError?: true;
 
   /** Used on tests in the esbuild suite that fail and skip. */
   skipOnEsbuild?: boolean;
@@ -475,7 +499,7 @@ function testRef(id: string, options: BundlerTestInput): BundlerTestRef {
 /** A test that uses an option the selected backend does not implement: registered as a todo, not run. */
 class UnsupportedOptionError extends Error {}
 
-function expectBundled(
+export function expectBundled(
   id: string,
   opts: BundlerTestInput,
   dryRun = false,
@@ -491,6 +515,8 @@ function expectBundled(
   if (!ignoreFilter && FILTER && !filterMatches(id)) return testRef(id, opts);
 
   let {
+    allowOutputSyntaxError,
+    allowUndeclaredGeneratedNames,
     assertNotPresent,
     assetNaming,
     backend,
@@ -803,6 +829,7 @@ function expectBundled(
         throw new Error(`Failed to install dependencies: ${reason}`);
       }
     }
+    const inputText = new Map<string, string>();
     for (const [file, contents] of Object.entries(files)) {
       const filename = path.join(root, file);
       mkdirSync(path.dirname(filename), { recursive: true });
@@ -811,6 +838,7 @@ function expectBundled(
           ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\"))
           : contents;
       writeFileSync(filename, formattedContents as any);
+      if (typeof formattedContents === "string") inputText.set(filename, formattedContents);
     }
 
     if (useDefineForClassFields !== undefined) {
@@ -919,8 +947,8 @@ function expectBundled(
               reactCompiler && "--react-compiler",
               reactFastRefresh && "--react-fast-refresh",
               outbase && `--root=${outbase}`,
-              banner && `--banner="${banner}"`, // TODO: --banner-css=*
-              footer && `--footer="${footer}"`,
+              banner && `--banner=${banner}`, // --banner-css=* is not passed
+              footer && `--footer=${footer}`,
               ignoreDCEAnnotations && `--ignore-dce-annotations`,
               emitDCEAnnotations && `--emit-dce-annotations`,
               deprecatedNamespaceObjectSetters === false && `--no-deprecated-namespace-object-setters`,
@@ -1675,6 +1703,84 @@ for (const [key, blob] of build.outputs) {
             );
           }
           throw error;
+        }
+      }
+
+      // Every JS output has to parse, and has to declare each generated name that it uses. An entry point that
+      // is a stylesheet is not read: its default outfile is `/out.js` too.
+      if (!ESBUILD && !(entryPaths.length && entryPaths.every(file => file.endsWith(".css")))) {
+        const outputs = outfile
+          ? [outfile].filter(file => /\.[cm]?js$/.test(file))
+          : outdir
+            ? [...new Glob("**/*.{js,mjs,cjs}").scanSync(outdir)].map(file => path.join(outdir!, file))
+            : [];
+        const ownText = [files, define ?? {}, { banner, footer, ...jsx }].flatMap(part =>
+          Object.values(part).map(String),
+        );
+        let installedText: string[] | undefined;
+        const excused = new Set<string>();
+        const problems: string[] = [];
+        let unread = 0;
+        let unparsed = 0;
+        for (const file of outputs.sort()) {
+          const code = readFileSync(file, "utf8");
+          // An input file that is in the output directory, and that the build did not write over.
+          if (inputText.get(file) === code) continue;
+          if (code.length > largestCheckedOutput) {
+            unread++;
+            continue;
+          }
+          const report = (offset: number, problem: string) => {
+            const { line, column } = getLineInfo(code, offset);
+            const [excerpt] = code.slice(Math.max(code.lastIndexOf("\n", offset - 1) + 1, offset - 80)).split("\n", 1);
+            const where = `${file.slice(root.length).replaceAll("\\", "/")}:${line}:${column + 1}`;
+            problems.push(`  ${where}: ${problem}\n    ${excerpt.slice(0, 160).trim()}`);
+          };
+          let undeclared: Map<string, number>;
+          try {
+            undeclared = findUndeclaredGeneratedNames(code, format === "esm" ? "module" : "script");
+          } catch (error: any) {
+            // acorn puts a `pos` on its errors. Any other error is not about the output.
+            const pos: unknown = error?.pos;
+            if (!(error instanceof SyntaxError) || typeof pos !== "number") throw error;
+            unparsed++;
+            if (!allowOutputSyntaxError) report(pos, `SyntaxError: ${error.message.replace(/ \(\d+:\d+\)$/, "")}`);
+            continue;
+          }
+          for (const [name, offset] of undeclared) {
+            const whole = new RegExp(`(?<![\\w$])${name.replaceAll("$", "\\$")}(?![\\w$])`);
+            // A name that the fixture spells out is its own, and so is one that a package it installs spells out.
+            if (ownText.some(text => whole.test(text))) continue;
+            if (allowUndeclaredGeneratedNames?.includes(name)) {
+              excused.add(name);
+              continue;
+            }
+            if (install) {
+              const installed = path.join(root, "node_modules");
+              installedText ??= [...new Glob("**/*.{js,mjs,cjs}").scanSync(installed)].map(file =>
+                readFileSync(path.join(installed, file), "utf8"),
+              );
+              if (installedText.some(text => whole.test(text))) continue;
+            }
+            report(offset, `nothing declares the generated name \`${name}\``);
+          }
+        }
+        // An option that excuses nothing has to go, or it hides the next fault.
+        if (!unread && !unparsed) {
+          if (allowOutputSyntaxError) {
+            problems.push("  allowOutputSyntaxError: every JS output parses. Remove the option.");
+          }
+          for (const name of allowUndeclaredGeneratedNames ?? []) {
+            if (excused.has(name)) continue;
+            problems.push(
+              `  allowUndeclaredGeneratedNames: no output uses \`${name}\` without a declaration. Remove the entry and its comment.`,
+            );
+          }
+        }
+        if (problems.length) {
+          throw new Error(
+            'Output check failed, see "Output check" in test/bundler/expectBundled.md:\n' + problems.join("\n"),
+          );
         }
       }
     }

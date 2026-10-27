@@ -72,7 +72,10 @@ describe("bundler", () => {
     },
   });
   itBundled("npm/LodashES", {
-    install: ["lodash-es"],
+    install: ["lodash-es@4.17.21"],
+    // https://github.com/oven-sh/bun/issues/45729: `module` in an ES module prints as `module_<file>`, which
+    // nothing declares. The `typeof` test in front of each read keeps the bundle from throwing.
+    allowUndeclaredGeneratedNames: ["module__nodeUtil", "module_isBuffer"],
     files: {
       "/entry.ts": /* tsx */ `
         import { isEqual, isBuffer } from "lodash-es";

@@ -917,7 +917,7 @@ __std_search_1                                                                  
 
 # ----------------------------------------------------------------------------
 # MSVC CRT libm + mem*/str* SIMD variants. Gate: __isa_available.
-# (44 symbols)
+# (46 symbols)
 # ----------------------------------------------------------------------------
 __remainder_piby2_fma3      [AVX, FMA]
 __remainder_piby2_fma3_bdl  [AVX, FMA]
@@ -939,6 +939,8 @@ cos                         [AVX, FMA]
 cosf                        [AVX, FMA]
 cosh_fma                    [AVX, FMA]
 coshf_fma                   [AVX, FMA]
+erf_fma                     [AVX, FMA]
+erfc_fma                    [AVX, FMA]
 exp                         [AVX, FMA]
 exp2_fma                    [AVX, FMA]
 expf                        [AVX, FMA]

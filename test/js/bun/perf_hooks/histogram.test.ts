@@ -2797,7 +2797,8 @@ describe("the options of monitorEventLoopDelay", () => {
         "-e",
         `const h = require("node:perf_hooks").monitorEventLoopDelay({ samplePerIteration: true });
         h.enable();
-        setTimeout(() => console.log(h.count > 0), 10);`,
+        const check = () => (h.count > 0 ? console.log(true) : setImmediate(check));
+        check();`,
       ],
       { encoding: "utf8", timeout: 30_000 },
     );

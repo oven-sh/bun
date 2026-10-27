@@ -1986,3 +1986,5 @@ pub type BufferedReader = PosixBufferedReader;
 pub type BufferedReader = WindowsBufferedReader;
 #[cfg(not(any(unix, windows)))]
 compile_error!("Unsupported platform");
+
+bun_core::assert_distinct_flag_bits!(PosixFlags);

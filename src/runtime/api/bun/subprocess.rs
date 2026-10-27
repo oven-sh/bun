@@ -1540,3 +1540,5 @@ pub(crate) mod testing_apis {
         true
     }
 }
+
+bun_core::assert_distinct_flag_bits!(Flags);

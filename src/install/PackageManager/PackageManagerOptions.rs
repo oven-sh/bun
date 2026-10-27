@@ -1451,3 +1451,5 @@ impl Enable {
         self.contains(Enable::GLOBAL_VIRTUAL_STORE)
     }
 }
+
+bun_core::assert_distinct_flag_bits!(Enable);

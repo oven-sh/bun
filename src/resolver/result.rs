@@ -444,3 +444,5 @@ pub struct LoadResult {
     pub(crate) dirname_fd: FD,
     pub(crate) file_fd: FD,
 }
+
+bun_core::assert_distinct_flag_bits!(ResultFlags);

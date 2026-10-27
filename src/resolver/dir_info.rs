@@ -396,6 +396,7 @@ impl Flags {
 }
 /// Allows addressing individual flags as `DirInfo::Flag::X`.
 pub use Flags as Flag;
+bun_core::assert_distinct_flag_bits!(Flags);
 
 // Goal: Really fast, low allocation directory map exploiting cache locality where we don't worry about lifetimes much.
 // 1. Don't store the keys or values of directories that don't exist

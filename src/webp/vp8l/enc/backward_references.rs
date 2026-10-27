@@ -6,7 +6,9 @@ use super::lossless::{prefix_encode, vector_mismatch};
 use crate::Result;
 use crate::util::{Bug, Checked, SliceExt, try_vec};
 use crate::vp8l::color_cache::{ColorCache, hash_pix};
-use crate::vp8l::format_constants::{NUM_LENGTH_CODES, NUM_LITERAL_CODES};
+use crate::vp8l::common::{
+    CODE_TO_PLANE, CODE_TO_PLANE_CODES, FIRST_CACHE_CODE, NUM_LENGTH_CODES, NUM_LITERAL_CODES,
+};
 
 /// The format allows 11.
 pub(crate) const MAX_COLOR_CACHE_BITS: u32 = 10;
@@ -18,8 +20,8 @@ const MAX_LENGTH_BITS: u32 = 12;
 const WINDOW_SIZE_BITS: u32 = 20;
 /// The longest copy.
 pub(crate) const MAX_LENGTH: usize = (1 << MAX_LENGTH_BITS) - 1;
-/// The longest distance: 120 codes are taken by the short distances.
-const WINDOW_SIZE: usize = (1 << WINDOW_SIZE_BITS) - 120;
+/// The longest distance: the codes of the nearest pixels take up part of the range.
+const WINDOW_SIZE: usize = (1 << WINDOW_SIZE_BITS) - CODE_TO_PLANE_CODES;
 
 /// From this length on a copy is cheaper than literals.
 const MIN_LENGTH: usize = 4;
@@ -79,19 +81,22 @@ impl BackwardRefs {
     }
 }
 
-#[rustfmt::skip]
-static PLANE_TO_CODE_LUT: [u8; 128] = [
-    96,   73,  55,  39,  23,  13,   5,  1,  255, 255, 255, 255, 255, 255, 255, 255,
-    101,  78,  58,  42,  26,  16,   8,  2,    0,   3,  9,   17,  27,  43,  59,  79,
-    102,  86,  62,  46,  32,  20,  10,  6,    4,   7,  11,  21,  33,  47,  63,  87,
-    105,  90,  70,  52,  37,  28,  18,  14,  12,  15,  19,  29,  38,  53,  71,  91,
-    110,  99,  82,  66,  48,  35,  30,  24,  22,  25,  31,  36,  49,  67,  83, 100,
-    115, 108,  94,  76,  64,  50,  44,  40,  34,  41,  45,  51,  65,  77,  95, 109,
-    118, 113, 103,  92,  80,  68,  60,  56,  54,  57,  61,  69,  81,  93, 104, 114,
-    119, 116, 111, 106,  97,  88,  84,  74,  72,  75,  85,  89,  98, 107, 112, 117,
-];
+/// The inverse of `CODE_TO_PLANE`. The places left at 255 are those of the pixel itself and of later ones.
+static PLANE_TO_CODE_LUT: [u8; 128] = {
+    let mut lut = [255; 128];
+    let mut planes: &[u8] = &CODE_TO_PLANE;
+    let mut code = 0;
+    while let [plane, rest @ ..] = planes {
+        if let Some((_, [entry, ..])) = lut.split_at_mut_checked(*plane as usize) {
+            *entry = code;
+        }
+        code += 1;
+        planes = rest;
+    }
+    lut
+};
 
-/// `VP8LDistanceToPlaneCode`: the distances to the pixels nearest in two dimensions get the 120 lowest codes.
+/// `VP8LDistanceToPlaneCode`: the distances to the pixels nearest in two dimensions get the lowest codes.
 #[inline]
 pub(crate) fn distance_to_plane_code(xsize: usize, dist: u32) -> u32 {
     let xsize = xsize.max(1) as u32;
@@ -102,11 +107,11 @@ pub(crate) fn distance_to_plane_code(xsize: usize, dist: u32) -> u32 {
     } else if xoffset + 8 > xsize && yoffset < 7 {
         (yoffset + 1) * 16 + 8 + (xsize - xoffset)
     } else {
-        return dist + 120;
+        return dist + CODE_TO_PLANE_CODES as u32;
     };
     match PLANE_TO_CODE_LUT.get(index as usize) {
         Some(&code) => u32::from(code) + 1,
-        None => dist + 120,
+        None => dist + CODE_TO_PLANE_CODES as u32,
     }
 }
 
@@ -651,9 +656,7 @@ fn calculate_best_cache_size(
         histo.literal.write_at(NUM_LITERAL_CODES, &lengths)?;
         if bits > 0 {
             let hits = hits.sub(1 << bits..2 << bits)?;
-            histo
-                .literal
-                .write_at(NUM_LITERAL_CODES + NUM_LENGTH_CODES, hits)?;
+            histo.literal.write_at(FIRST_CACHE_CODE, hits)?;
         }
         histo.red = literals.red;
         histo.blue = literals.blue;

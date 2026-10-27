@@ -2,6 +2,7 @@
 
 use crate::Result;
 use crate::util::{Checked, SliceExt, try_vec};
+use crate::vp8l::common::MAX_CACHE_BITS;
 
 /// `VP8LHashPix`: the top `32 - shift` bits of the hash.
 #[inline]
@@ -15,9 +16,8 @@ pub(crate) struct ColorCache {
 }
 
 impl ColorCache {
-    /// `hash_bits` is 1 to `MAX_CACHE_BITS`.
     pub(crate) fn new(hash_bits: u32) -> Result<Self> {
-        debug_assert!((1..=11).contains(&hash_bits));
+        debug_assert!((1..=MAX_CACHE_BITS).contains(&hash_bits));
         Ok(Self {
             colors: try_vec(0, 1 << hash_bits)?,
             hash_shift: 32 - hash_bits,

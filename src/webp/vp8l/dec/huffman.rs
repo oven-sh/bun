@@ -1,24 +1,23 @@
 //! `huffman_utils.c`: two-level lookup tables for decoding prefix codes.
 
 use crate::util::{Bug, Checked, SliceExt};
-use crate::vp8l::format_constants::{
-    CODE_LENGTH_CODES, HUFFMAN_CODES_PER_META_CODE, MAX_ALLOWED_CODE_LENGTH, MAX_CACHE_BITS,
-    NUM_LENGTH_CODES, NUM_LITERAL_CODES,
+use crate::vp8l::common::{
+    CODE_LENGTH_CODES, FIRST_CACHE_CODE, HUFFMAN_CODES_PER_META_CODE, MAX_ALLOWED_CODE_LENGTH,
+    MAX_CACHE_BITS,
 };
 use crate::{Error, Result};
 
 pub(super) const HUFFMAN_TABLE_BITS: u32 = 8;
 pub(super) const HUFFMAN_TABLE_MASK: u32 = (1 << HUFFMAN_TABLE_BITS) - 1;
 
-pub(super) const LENGTHS_TABLE_BITS: u32 = 7;
+const LENGTHS_TABLE_BITS: u32 = 7;
 pub(super) const LENGTHS_TABLE_MASK: u32 = (1 << LENGTHS_TABLE_BITS) - 1;
 
 pub(super) const HUFFMAN_PACKED_BITS: u32 = 6;
 pub(super) const HUFFMAN_PACKED_TABLE_SIZE: usize = 1 << HUFFMAN_PACKED_BITS;
 
 /// The largest alphabet: green, with the largest color cache.
-pub(super) const MAX_CODE_LENGTHS_SIZE: usize =
-    (1 << MAX_CACHE_BITS) + NUM_LITERAL_CODES + NUM_LENGTH_CODES;
+pub(super) const MAX_CODE_LENGTHS_SIZE: usize = FIRST_CACHE_CODE + (1 << MAX_CACHE_BITS);
 
 /// `bits` in the low half and `value` in the high half, so that it takes one load.
 #[derive(Clone, Copy, Default)]
@@ -60,7 +59,7 @@ pub(super) struct HTreeGroup {
     pub(super) is_trivial_literal: bool,
     /// If so, the pixel, with a green of 0.
     pub(super) literal_arb: u32,
-    /// Whether green has a single symbol too, which `literal_arb` then includes.
+    /// Whether no bit is read: green and distance have a single symbol too, and `literal_arb` includes green's, a literal.
     pub(super) is_trivial_code: bool,
     pub(super) use_packed_table: bool,
     /// From the next bits to a whole pixel, if it is short.
@@ -94,30 +93,24 @@ fn get_next_key(key: u32, len: u32) -> u32 {
     }
 }
 
-/// Stores `code` in `table[0]`, `table[step]`, `table[2 * step]`... below `end`.
+/// Stores `code` in `table[0]`, `table[step]`, `table[2 * step]`...
 #[inline]
-fn replicate_value(
-    table: &mut [HuffmanCode],
-    step: usize,
-    end: usize,
-    code: HuffmanCode,
-) -> Checked {
-    for entry in table.sub_mut(..end)?.iter_mut().step_by(step) {
+fn replicate_value(table: &mut [HuffmanCode], step: usize, code: HuffmanCode) {
+    for entry in table.iter_mut().step_by(step) {
         *entry = code;
     }
-    Ok(())
 }
 
 /// The bits of the second-level table that starts with a code of `len` bits.
 #[inline]
 fn next_table_bit_size(
-    count: &[i32; MAX_ALLOWED_CODE_LENGTH + 1],
+    counts: &[i32; MAX_ALLOWED_CODE_LENGTH + 1],
     mut len: usize,
     root_bits: usize,
 ) -> Checked<usize> {
     let mut left = 1 << (len - root_bits);
     while len < MAX_ALLOWED_CODE_LENGTH {
-        left -= count.at(len)?;
+        left -= counts.at(len)?;
         if left <= 0 {
             break;
         }
@@ -127,7 +120,7 @@ fn next_table_bit_size(
     Ok(len - root_bits)
 }
 
-/// The size of the table, or `None` for an incomplete code. Fills `root_table` if given. `sorted` is scratch space.
+/// The size of the table, or `None` for an invalid code. Fills `root_table` if given. `sorted` is scratch space.
 fn build_huffman_table(
     mut root_table: Option<&mut [HuffmanCode]>,
     root_bits: usize,
@@ -135,19 +128,19 @@ fn build_huffman_table(
     sorted: &mut [u16],
 ) -> Checked<Option<usize>> {
     let mut total_size = 1 << root_bits;
-    let mut count = [0i32; MAX_ALLOWED_CODE_LENGTH + 1];
-    let mut offset = [0usize; MAX_ALLOWED_CODE_LENGTH + 1];
+    let mut counts = [0i32; MAX_ALLOWED_CODE_LENGTH + 1];
+    let mut offsets = [0usize; MAX_ALLOWED_CODE_LENGTH + 1];
 
     for &len in code_lengths {
-        *count.at_mut(len.into())? += 1;
+        *counts.at_mut(len.into())? += 1;
     }
-    let [zeros, lengths @ ..] = &count;
+    let [zeros, lengths @ ..] = &counts;
     if *zeros as usize == code_lengths.len() {
         return Ok(None);
     }
 
     let mut next_offset = 0;
-    for ((len, &count), offset) in (1..).zip(lengths).zip(offset.iter_mut().skip(1)) {
+    for ((len, &count), offset) in (1..).zip(lengths).zip(offsets.iter_mut().skip(1)) {
         *offset = next_offset;
         if len < MAX_ALLOWED_CODE_LENGTH && count > 1 << len {
             return Ok(None);
@@ -159,7 +152,7 @@ fn build_huffman_table(
     if root_table.is_some() {
         for (symbol, &len) in (0..).zip(code_lengths) {
             if len > 0 {
-                let offset = offset.at_mut(len.into())?;
+                let offset = offsets.at_mut(len.into())?;
                 sorted.put(*offset, symbol)?;
                 *offset += 1;
             }
@@ -169,23 +162,23 @@ fn build_huffman_table(
     if num_symbols == 1 {
         if let Some(table) = root_table {
             let code = HuffmanCode::new(0, sorted.at(0)?);
-            replicate_value(table, 1, total_size, code)?;
+            table.sub_mut(..total_size)?.fill(code);
         }
         return Ok(Some(total_size));
     }
 
-    let mut sorted = sorted.iter().copied();
+    let mut symbols = sorted.iter().copied();
     let mut low = u32::MAX;
     let mask = total_size as u32 - 1;
     let mut key = 0u32;
     let mut num_nodes = 1i32;
     let mut num_open = 1i32;
     let mut table_size = 1usize << root_bits;
-    let mut table = 0usize;
+    let mut table_start = 0usize;
 
     let mut step = 2;
     for len in 1..=root_bits {
-        let count = count.at_mut(len)?;
+        let count = counts.at_mut(len)?;
         num_open <<= 1;
         num_nodes += num_open;
         num_open -= *count;
@@ -194,9 +187,8 @@ fn build_huffman_table(
         }
         if let Some(root_table) = root_table.as_deref_mut() {
             while *count > 0 {
-                let code = HuffmanCode::new(len as u8, sorted.next().ok_or(Bug)?);
-                let table = root_table.sub_mut(key as usize..)?;
-                replicate_value(table, step, table_size - key as usize, code)?;
+                let code = HuffmanCode::new(len as u8, symbols.next().ok_or(Bug)?);
+                replicate_value(root_table.sub_mut(key as usize..table_size)?, step, code);
                 key = get_next_key(key, len as u32);
                 *count -= 1;
             }
@@ -208,33 +200,33 @@ fn build_huffman_table(
     for len in root_bits + 1..=MAX_ALLOWED_CODE_LENGTH {
         num_open <<= 1;
         num_nodes += num_open;
-        num_open -= count.at(len)?;
+        num_open -= counts.at(len)?;
         if num_open < 0 {
             return Ok(None);
         }
-        while count.at(len)? > 0 {
+        while counts.at(len)? > 0 {
             if key & mask != low {
-                table += table_size;
-                let table_bits = next_table_bit_size(&count, len, root_bits)?;
+                table_start += table_size;
+                let table_bits = next_table_bit_size(&counts, len, root_bits)?;
                 table_size = 1 << table_bits;
                 total_size += table_size;
                 low = key & mask;
                 if let Some(root_table) = root_table.as_deref_mut() {
                     let entry = HuffmanCode::new(
                         (table_bits + root_bits) as u8,
-                        (table - low as usize) as u16,
+                        (table_start - low as usize) as u16,
                     );
                     root_table.put(low as usize, entry)?;
                 }
             }
             if let Some(root_table) = root_table.as_deref_mut() {
-                let code = HuffmanCode::new((len - root_bits) as u8, sorted.next().ok_or(Bug)?);
-                let start = (key >> root_bits) as usize;
-                let table = root_table.sub_mut(table + start..)?;
-                replicate_value(table, step, table_size - start, code)?;
+                let code = HuffmanCode::new((len - root_bits) as u8, symbols.next().ok_or(Bug)?);
+                let first = table_start + (key >> root_bits) as usize;
+                let table = root_table.sub_mut(first..table_start + table_size)?;
+                replicate_value(table, step, code);
             }
             key = get_next_key(key, len as u32);
-            *count.at_mut(len)? -= 1;
+            *counts.at_mut(len)? -= 1;
         }
         step <<= 1;
     }

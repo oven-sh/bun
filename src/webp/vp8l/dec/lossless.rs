@@ -3,22 +3,22 @@
 use core::cell::Cell;
 use core::mem::take;
 
-use super::predictors::{
-    BLACK, Block, Pixel, add_pixels, block_of, first_pixel, predict, uses_left,
-};
+use super::predictors::{BLACK, Block, Pixel, add_pixel, add_pixels, block_of, first_pixel};
 use crate::util::{Bug, Checked, SliceExt};
-use crate::vp8l::format_constants::{TransformType, sub_sample_size};
+use crate::vp8l::common::{
+    MAX_PALETTE_SIZE, Multipliers, TransformType, color_transform_delta, sub_sample_size,
+};
+use crate::vp8l::predictors::{predict, uses_left};
 
 /// The size of `Transform::data` for `ColorIndexing`, whatever the number of colors, so that any index is valid.
-pub(super) const COLOR_MAP_SIZE: usize = 256;
+pub(super) const COLOR_MAP_SIZE: usize = MAX_PALETTE_SIZE;
 
 pub(super) struct Transform {
     pub(super) kind: TransformType,
     /// Tiles are `1 << bits` pixels wide and high. For `ColorIndexing`, a pixel holds `1 << bits` indices.
     pub(super) bits: u32,
-    /// The size of the image that the inverse transform makes.
+    /// The width of the image that the inverse transform makes.
     pub(super) xsize: usize,
-    pub(super) ysize: usize,
     /// Pixels as 0xAARRGGBB.
     pub(super) data: Vec<u32>,
 }
@@ -160,24 +160,18 @@ fn add_green_to_blue_and_red(pixels: &mut [Pixel]) {
     }
 }
 
-#[inline(always)]
-fn color_transform_delta(color_pred: i8, color: i8) -> i32 {
-    (i32::from(color_pred) * i32::from(color)) >> 5
-}
-
-/// `VP8LTransformColorInverse`, with the multipliers as `color_code` packs them.
+/// `VP8LTransformColorInverse`
 #[inline]
-fn transform_color_inverse(color_code: u32, pixels: &mut [Pixel]) {
-    let [green_to_red, green_to_blue, red_to_blue, _] = color_code.to_le_bytes().map(|m| m as i8);
+fn transform_color_inverse(m: Multipliers, pixels: &mut [Pixel]) {
     for pixel in pixels {
         let argb = u32::from_le_bytes(*pixel);
         let green = (argb >> 8) as i8;
         let mut new_red = ((argb >> 16) & 0xff) as i32;
         let mut new_blue = (argb & 0xff) as i32;
-        new_red += color_transform_delta(green_to_red, green);
+        new_red += color_transform_delta(m.green_to_red as i8, green);
         new_red &= 0xff;
-        new_blue += color_transform_delta(green_to_blue, green);
-        new_blue += color_transform_delta(red_to_blue, new_red as i8);
+        new_blue += color_transform_delta(m.green_to_blue as i8, green);
+        new_blue += color_transform_delta(m.red_to_blue as i8, new_red as i8);
         new_blue &= 0xff;
         let argb = (argb & 0xff00_ff00) | ((new_red as u32) << 16) | new_blue as u32;
         *pixel = argb.to_le_bytes();
@@ -195,7 +189,7 @@ impl Transform {
             let row = below.sub_mut(..width)?;
             let first = row.at_mut(0)?;
             let above = if y == 0 { BLACK } else { upper.at(0)? };
-            *first = first_pixel(add_pixels(block_of(*first), block_of(above)));
+            *first = add_pixel(*first, above);
             if y == 0 {
                 if width > 1 {
                     predictor_add_mode(1, upper, row, 1, width)?;
@@ -231,25 +225,25 @@ impl Transform {
             for (tile, &color_code) in row.chunks_mut(1 << self.bits).zip(codes) {
                 // Without multipliers, which is common, nothing changes.
                 if color_code & 0x00ff_ffff != 0 {
-                    transform_color_inverse(color_code, tile);
+                    transform_color_inverse(Multipliers::from_color_code(color_code), tile);
                 }
             }
         }
         Ok(())
     }
 
-    /// Sets `dst` to `value` of the colors. Each of `indices` packs `1 << bits` indices, the first in the lowest bits.
+    /// Sets `dst` to the colors, converted. Each of `indices` packs `1 << bits` indices, the first in the lowest bits.
     #[inline(always)]
     fn color_index_inverse<T>(
         &self,
         mut indices: impl Iterator<Item = u8>,
         dst: &[Cell<T>],
-        value: impl Fn(u32) -> T,
+        convert: impl Fn(u32) -> T,
     ) -> Checked {
         let color_map = self.data.array_at::<COLOR_MAP_SIZE>(0)?;
         if self.bits == 0 {
             for (dst, index) in dst.iter().zip(indices) {
-                dst.set(value(color_map.at(index.into())?));
+                dst.set(convert(color_map.at(index.into())?));
             }
             return Ok(());
         }
@@ -258,7 +252,7 @@ impl Transform {
         for row in dst.chunks_exact(self.xsize) {
             for (pixels, mut packed_pixels) in row.chunks(1 << self.bits).zip(&mut indices) {
                 for dst in pixels {
-                    dst.set(value(color_map.at((packed_pixels & bit_mask).into())?));
+                    dst.set(convert(color_map.at((packed_pixels & bit_mask).into())?));
                     packed_pixels >>= bits_per_pixel;
                 }
             }
@@ -275,14 +269,14 @@ impl Transform {
     /// `VP8LInverseTransform`, from `rows_in` or in place, to `cache[top..]`. Before that is the predictor's last row.
     pub(super) fn inverse(
         &self,
-        row_start: usize,
-        row_end: usize,
+        y_start: usize,
+        y_end: usize,
         rows_in: Option<&[u32]>,
         cache: &mut [Pixel],
         top: usize,
     ) -> Checked {
         let width = self.xsize;
-        let num_rows = row_end.checked_sub(row_start).ok_or(Bug)?;
+        let num_rows = y_end.checked_sub(y_start).ok_or(Bug)?;
         let end = top + num_rows * width;
         // Bundled pixels go to the end, so that none is overwritten before it is read.
         let in_width = match self.kind {
@@ -299,18 +293,16 @@ impl Transform {
             TransformType::SubtractGreen => add_green_to_blue_and_red(cache.sub_mut(top..end)?),
             TransformType::Predictor => {
                 let rows = cache.sub_mut(top.checked_sub(width).ok_or(Bug)?..end)?;
-                self.predictor_inverse(row_start, row_end, rows)?;
-                if row_end != self.ysize {
-                    rows.move_within(num_rows * width, 0, width)?;
-                }
+                self.predictor_inverse(y_start, y_end, rows)?;
+                rows.move_within(num_rows * width, 0, width)?;
             }
             TransformType::CrossColor => {
-                self.color_space_inverse(row_start, cache.sub_mut(top..end)?)?;
+                self.color_space_inverse(y_start, cache.sub_mut(top..end)?)?;
             }
             TransformType::ColorIndexing => {
                 let out = Cell::from_mut(cache.sub_mut(top..end)?).as_slice_of_cells();
                 let bundled = out.sub(in_start - top..)?;
-                let indices = bundled.iter().map(|pixel| green(pixel.get()));
+                let indices = bundled.iter().map(|pixel| green_of(pixel.get()));
                 self.color_index_inverse(indices, out, u32::to_le_bytes)?;
             }
         }
@@ -319,12 +311,12 @@ impl Transform {
 }
 
 #[inline(always)]
-pub(super) fn green(pixel: Pixel) -> u8 {
+pub(super) fn green_of(pixel: Pixel) -> u8 {
     let [_, green, _, _] = pixel;
     green
 }
 
-/// From 0xAARRGGBB.
+/// `src` holds pixels as 0xAARRGGBB.
 pub(super) fn copy_pixels(src: &[u32], dst: &mut [Pixel]) {
     for (dst, argb) in dst.iter_mut().zip(src) {
         *dst = argb.to_le_bytes();

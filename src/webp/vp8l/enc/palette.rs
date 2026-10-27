@@ -2,8 +2,8 @@
 
 use crate::util::{Checked, SliceExt};
 use crate::vp8l::color_cache::hash_pix;
-use crate::vp8l::enc::predictors::sub_pixels;
-use crate::vp8l::format_constants::MAX_PALETTE_SIZE;
+use crate::vp8l::common::MAX_PALETTE_SIZE;
+use crate::vp8l::enc::lossless::sub_pixels;
 
 /// Up to `MAX_PALETTE_SIZE` colors.
 #[derive(Clone, Copy)]

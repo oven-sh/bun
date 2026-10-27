@@ -2,7 +2,7 @@
 
 use crate::Result;
 use crate::util::{Bug, Checked, SliceExt, try_vec};
-use crate::vp8l::format_constants::MAX_ALLOWED_CODE_LENGTH;
+use crate::vp8l::common::{DEFAULT_CODE_LENGTH, MAX_ALLOWED_CODE_LENGTH};
 
 /// One symbol of a `HuffmanTreeCode`, which is a slice of these.
 #[derive(Clone, Copy, Default)]
@@ -266,8 +266,7 @@ fn code_repeated_zeros(mut repetitions: usize, tokens: &mut Vec<Token>) {
 pub(crate) fn create_compressed_huffman_tree(tree: &[Symbol], tokens: &mut Vec<Token>) {
     debug_assert!(tokens.capacity() >= tree.len());
     tokens.clear();
-    // What a decoder takes the length before the first one to be.
-    let mut prev_value = 8;
+    let mut prev_value = DEFAULT_CODE_LENGTH;
     for run in tree.chunk_by(|a, b| a.length == b.length) {
         let value = run.first().map_or(0, |symbol| symbol.length);
         if value == 0 {

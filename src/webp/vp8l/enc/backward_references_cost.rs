@@ -8,7 +8,7 @@ use super::lossless::{LOG_2_PRECISION_BITS, div_round, fast_log2, prefix_encode}
 use crate::Result;
 use crate::util::{Bug, Checked, SliceExt, try_vec, try_with_capacity};
 use crate::vp8l::color_cache::ColorCache;
-use crate::vp8l::format_constants::{NUM_DISTANCE_CODES, NUM_LENGTH_CODES, NUM_LITERAL_CODES};
+use crate::vp8l::common::{FIRST_CACHE_CODE, NUM_DISTANCE_CODES, NUM_LITERAL_CODES};
 
 /// What each symbol costs.
 struct CostModel {
@@ -63,7 +63,7 @@ impl CostModel {
 
     #[inline]
     fn get_cache_cost(&self, idx: u32) -> Checked<i64> {
-        let literal_idx = NUM_LITERAL_CODES + NUM_LENGTH_CODES + idx as usize;
+        let literal_idx = FIRST_CACHE_CODE + idx as usize;
         Ok(self.literal.at(literal_idx)?.into())
     }
 

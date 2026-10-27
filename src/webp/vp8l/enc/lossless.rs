@@ -1,6 +1,8 @@
-//! `lossless_enc.c`, `lossless_common.h`: fixed-point logarithms and entropies, prefix codes, color transforms.
+//! `lossless_enc.c`, `lossless_common.h`: fixed-point logarithms and entropies, prefix codes, pixel arithmetic, color transforms.
 
 use crate::util::{Checked, SliceExt};
+use crate::vp8l::common::{ARGB_BLACK, Multipliers, color_transform_delta};
+use crate::vp8l::predictors::Pixels;
 
 /// The number of fractional bits of every logarithm, entropy and cost.
 pub(crate) const LOG_2_PRECISION_BITS: u32 = 23;
@@ -413,6 +415,65 @@ pub(crate) fn get_combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntrop
     runs.finish()
 }
 
+/// `VP8LSubPixels`: the difference of each component, modulo 256.
+#[inline]
+pub(crate) const fn sub_pixels(a: u32, b: u32) -> u32 {
+    let alpha_and_green = 0x00ff_00ffu32
+        .wrapping_add(a & 0xff00_ff00)
+        .wrapping_sub(b & 0xff00_ff00);
+    let red_and_blue = 0xff00_ff00u32
+        .wrapping_add(a & 0x00ff_00ff)
+        .wrapping_sub(b & 0x00ff_00ff);
+    (alpha_and_green & 0xff00_ff00) | (red_and_blue & 0x00ff_00ff)
+}
+
+/// Applies `f` to each of the four components, and clamps the results to 0..=255.
+#[inline]
+fn per_component(a: u32, b: u32, c: u32, f: impl Fn(i32, i32, i32) -> i32) -> u32 {
+    let [a0, a1, a2, a3] = a.to_le_bytes();
+    let [b0, b1, b2, b3] = b.to_le_bytes();
+    let [c0, c1, c2, c3] = c.to_le_bytes();
+    let one = |a: u8, b: u8, c: u8| f(a.into(), b.into(), c.into()).clamp(0, 255) as u8;
+    u32::from_le_bytes([
+        one(a0, b0, c0),
+        one(a1, b1, c1),
+        one(a2, b2, c2),
+        one(a3, b3, c3),
+    ])
+}
+
+/// One pixel as 0xAARRGGBB.
+impl Pixels for u32 {
+    const BLACK: Self = ARGB_BLACK;
+
+    #[inline]
+    fn average2(a0: Self, a1: Self) -> Self {
+        (((a0 ^ a1) & 0xfefe_fefe) >> 1) + (a0 & a1)
+    }
+
+    #[inline]
+    fn select(a: Self, b: Self, c: Self) -> Self {
+        let pa_minus_pb: i32 = a
+            .to_le_bytes()
+            .into_iter()
+            .zip(b.to_le_bytes())
+            .zip(c.to_le_bytes())
+            .map(|((a, b), c)| i32::from(b.abs_diff(c)) - i32::from(a.abs_diff(c)))
+            .sum();
+        if pa_minus_pb <= 0 { a } else { b }
+    }
+
+    #[inline]
+    fn clamped_add_subtract_full(c0: Self, c1: Self, c2: Self) -> Self {
+        per_component(c0, c1, c2, |a, b, c| a + b - c)
+    }
+
+    #[inline]
+    fn clamped_add_subtract_half(c0: Self, c1: Self, c2: Self) -> Self {
+        per_component(Self::average2(c0, c1), c2, 0, |a, b, _| a + (a - b) / 2)
+    }
+}
+
 /// `VP8LSubtractGreenFromBlueAndRed`
 pub(crate) fn subtract_green_from_blue_and_red(argb_data: &mut [u32]) {
     for argb in argb_data {
@@ -423,31 +484,18 @@ pub(crate) fn subtract_green_from_blue_and_red(argb_data: &mut [u32]) {
     }
 }
 
-/// `VP8LMultipliers`: signed, in 3.5 fixed point.
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Multipliers {
-    pub(crate) green_to_red: u8,
-    pub(crate) green_to_blue: u8,
-    pub(crate) red_to_blue: u8,
-}
-
-#[inline]
-const fn color_transform_delta(color_pred: u8, color: u8) -> i32 {
-    (color_pred as i8 as i32 * color as i8 as i32) >> 5
-}
-
 #[inline]
 const fn transform_color_red(green_to_red: u8, argb: u32) -> u8 {
     let [_, green, red, _] = argb.to_le_bytes();
-    (red as i32 - color_transform_delta(green_to_red, green)) as u8
+    (red as i32 - color_transform_delta(green_to_red as i8, green as i8)) as u8
 }
 
 #[inline]
 const fn transform_color_blue(green_to_blue: u8, red_to_blue: u8, argb: u32) -> u8 {
     let [blue, green, red, _] = argb.to_le_bytes();
     (blue as i32
-        - color_transform_delta(green_to_blue, green)
-        - color_transform_delta(red_to_blue, red)) as u8
+        - color_transform_delta(green_to_blue as i8, green as i8)
+        - color_transform_delta(red_to_blue as i8, red as i8)) as u8
 }
 
 /// `VP8LTransformColor`

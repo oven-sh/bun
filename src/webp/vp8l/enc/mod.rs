@@ -8,7 +8,6 @@ mod huffman;
 mod lossless;
 mod palette;
 mod predictor;
-mod predictors;
 
 use self::backward_references::{
     BackwardRefs, HashChain, Lz77, MAX_COLOR_CACHE_BITS, PixOrCopy, get_backward_references,
@@ -19,21 +18,21 @@ use self::histogram::{
 };
 use self::huffman::{Scratch, Symbol, Token, create_compressed_huffman_tree, create_huffman_tree};
 use self::lossless::{
-    LOG_2_PRECISION_BITS, bits_log2_floor, bundle_color_map, fast_log2, prefix_encode,
+    LOG_2_PRECISION_BITS, bits_log2_floor, bundle_color_map, fast_log2, prefix_encode, sub_pixels,
     subtract_green_from_blue_and_red,
 };
 use self::palette::{Palette, get_color_palette, palette_sort_minimize_deltas};
 use self::predictor::{color_space_transform, optimize_sampling, residual_image};
-use super::format_constants::{
-    CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES, IMAGE_SIZE_BITS, MAGIC_BYTE, MAX_HUFFMAN_BITS,
-    MAX_PALETTE_SIZE, MAX_TRANSFORM_BITS, MIN_HUFFMAN_BITS, MIN_TRANSFORM_BITS, NUM_DISTANCE_CODES,
-    NUM_LENGTH_CODES, NUM_LITERAL_CODES, NUM_TRANSFORM_BITS, TransformType, VERSION, VERSION_BITS,
-    sub_sample_size,
+use super::common::{
+    CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES, CODE_LENGTH_EXTRA_BITS, CODE_LENGTH_LITERALS,
+    FIRST_CACHE_CODE, HUFFMAN_CODES_PER_META_CODE, IMAGE_SIZE_BITS, MAGIC_BYTE,
+    MAX_ALLOWED_CODE_LENGTH, MAX_HUFFMAN_BITS, MAX_PALETTE_SIZE, MAX_TRANSFORM_BITS,
+    MIN_HUFFMAN_BITS, MIN_TRANSFORM_BITS, NUM_DISTANCE_CODES, NUM_HUFFMAN_BITS, NUM_LITERAL_CODES,
+    NUM_TRANSFORM_BITS, TransformType, VERSION, VERSION_BITS, color_index_bits, sub_sample_size,
 };
 use crate::container::Image;
 use crate::util::{Bug, Checked, SliceExt, try_vec, try_with_capacity};
 use crate::{Input, Result};
-use predictors::sub_pixels;
 
 /// The most tiles that can each have prefix codes of their own.
 const MAX_HUFF_IMAGE_SIZE: usize = 2600;
@@ -307,7 +306,12 @@ impl HuffmanCodes {
             .zip(symbols.chunks_exact_mut(group_size))
         {
             for (population, code) in histo.populations_mut().into_iter().zip(split_group(group)?) {
-                create_huffman_tree(population, 15, &mut scratch, code)?;
+                create_huffman_tree(
+                    population,
+                    MAX_ALLOWED_CODE_LENGTH as u8,
+                    &mut scratch,
+                    code,
+                )?;
             }
         }
         Ok(Self {
@@ -346,7 +350,7 @@ impl HuffmanCodes {
     }
 }
 
-fn split_group(group: &mut [Symbol]) -> Checked<[&mut [Symbol]; 5]> {
+fn split_group(group: &mut [Symbol]) -> Checked<[&mut [Symbol]; HUFFMAN_CODES_PER_META_CODE]> {
     let num_literal_symbols = group
         .len()
         .checked_sub(GROUP_SIZE_WITHOUT_LITERAL)
@@ -395,11 +399,9 @@ fn store_huffman_tree_to_bit_mask(
 ) -> Checked {
     for token in tokens {
         write_huffman_code(bw, huffman_code.at(token.code.into())?);
-        match token.code {
-            16 => bw.put_bits(token.extra_bits.into(), 2),
-            17 => bw.put_bits(token.extra_bits.into(), 3),
-            18 => bw.put_bits(token.extra_bits.into(), 7),
-            _ => {}
+        if let Some(slot) = u32::from(token.code).checked_sub(CODE_LENGTH_LITERALS) {
+            let n_bits = CODE_LENGTH_EXTRA_BITS.at(slot as usize)?;
+            bw.put_bits(token.extra_bits.into(), n_bits.into());
         }
     }
     Ok(())
@@ -425,11 +427,12 @@ fn store_full_huffman_code(
     // The zeros at the end can be left out, at the price of saying how many tokens there are.
     let mut trailing_zero_bits = 0;
     let mut trimmed_length = tokens.len();
+    let [_, short_run_bits, long_run_bits] = CODE_LENGTH_EXTRA_BITS;
     for token in tokens.iter().rev() {
         let extra_bits = match token.code {
             0 => 0,
-            17 => 3,
-            18 => 7,
+            17 => short_run_bits.into(),
+            18 => long_run_bits.into(),
             _ => break,
         };
         trimmed_length -= 1;
@@ -533,7 +536,7 @@ fn store_image_to_bit_mask(
                 write_huffman_code(bw, codes.alpha.at(a)?);
             }
             PixOrCopy::CacheIdx(idx) => {
-                let literal_ix = NUM_LITERAL_CODES + NUM_LENGTH_CODES + idx as usize;
+                let literal_ix = FIRST_CACHE_CODE + idx as usize;
                 write_huffman_code(bw, codes.literal.at(literal_ix)?);
             }
             PixOrCopy::Copy { distance, len } => {
@@ -675,7 +678,7 @@ fn encode_image_internal(
                 histogram_bits_in,
                 MAX_HUFFMAN_BITS,
             )?;
-            bw.put_bits(histogram_bits - 2, 3);
+            bw.put_bits(histogram_bits - MIN_HUFFMAN_BITS, NUM_HUFFMAN_BITS);
             let histo_width = sub_sample_size(width, histogram_bits);
             let histo_height = sub_sample_size(height, histogram_bits);
             encode_image_no_huffman(
@@ -867,12 +870,7 @@ fn map_image_from_palette(
     width: usize,
     height: usize,
 ) -> Result<usize> {
-    let xbits = match palette.len() {
-        ..=2 => 3,
-        3..=4 => 2,
-        5..=16 => 1,
-        _ => 0,
-    };
+    let xbits = color_index_bits(palette.len());
     apply_palette(argb, palette, width, height, xbits)?;
     let current_width = sub_sample_size(width, xbits);
     argb.truncate(current_width * height);

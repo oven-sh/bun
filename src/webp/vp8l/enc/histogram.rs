@@ -7,8 +7,9 @@ use super::lossless::{
 };
 use crate::Result;
 use crate::util::{Bug, Checked, SliceExt, try_vec, try_with_capacity};
-use crate::vp8l::format_constants::{
-    CODE_LENGTH_CODES, NUM_DISTANCE_CODES, NUM_LENGTH_CODES, NUM_LITERAL_CODES, sub_sample_size,
+use crate::vp8l::common::{
+    CODE_LENGTH_CODES, FIRST_CACHE_CODE, HUFFMAN_CODES_PER_META_CODE, NUM_DISTANCE_CODES,
+    NUM_LENGTH_CODES, NUM_LITERAL_CODES, sub_sample_size,
 };
 
 /// Into how many ranges the cost of the literal, the red and the blue symbols each is split.
@@ -16,9 +17,6 @@ const NUM_PARTITIONS: usize = 4;
 const BIN_SIZE: usize = NUM_PARTITIONS * NUM_PARTITIONS * NUM_PARTITIONS;
 /// The most histograms that the greedy combining can be given.
 const MAX_HISTO_GREEDY: i64 = 100;
-
-/// How many kinds of symbols there are: literal, red, blue, alpha, distance.
-const NUM_CHANNELS: usize = 5;
 
 /// What `get_histo_image_symbols` knows about one kind of symbol of a histogram.
 #[derive(Clone, Copy, Default)]
@@ -39,7 +37,7 @@ pub(crate) struct Histogram {
     pub(crate) alpha: [u32; NUM_LITERAL_CODES],
     /// The prefix codes of distances.
     pub(crate) distance: [u32; NUM_DISTANCE_CODES],
-    channels: [Channel; NUM_CHANNELS],
+    channels: [Channel; HUFFMAN_CODES_PER_META_CODE],
     /// The sum of the costs of the channels.
     bit_cost: u64,
     bin_id: usize,
@@ -47,8 +45,7 @@ pub(crate) struct Histogram {
 
 /// `VP8LHistogramNumCodes`
 pub(crate) const fn histogram_num_codes(palette_code_bits: u32) -> usize {
-    NUM_LITERAL_CODES
-        + NUM_LENGTH_CODES
+    FIRST_CACHE_CODE
         + if palette_code_bits > 0 {
             1 << palette_code_bits
         } else {
@@ -65,7 +62,7 @@ impl Histogram {
             blue: [0; NUM_LITERAL_CODES],
             alpha: [0; NUM_LITERAL_CODES],
             distance: [0; NUM_DISTANCE_CODES],
-            channels: [Channel::default(); NUM_CHANNELS],
+            channels: [Channel::default(); HUFFMAN_CODES_PER_META_CODE],
             bit_cost: 0,
             bin_id: 0,
         })
@@ -80,7 +77,7 @@ impl Histogram {
 
     fn clear(&mut self) {
         self.populations_mut().into_iter().for_each(|p| p.fill(0));
-        self.channels = [Channel::default(); NUM_CHANNELS];
+        self.channels = [Channel::default(); HUFFMAN_CODES_PER_META_CODE];
         self.bit_cost = 0;
         self.bin_id = 0;
     }
@@ -97,7 +94,7 @@ impl Histogram {
         Ok(())
     }
 
-    fn populations(&self) -> [&[u32]; NUM_CHANNELS] {
+    fn populations(&self) -> [&[u32]; HUFFMAN_CODES_PER_META_CODE] {
         [
             &self.literal,
             &self.red,
@@ -107,7 +104,7 @@ impl Histogram {
         ]
     }
 
-    pub(crate) fn populations_mut(&mut self) -> [&mut [u32]; NUM_CHANNELS] {
+    pub(crate) fn populations_mut(&mut self) -> [&mut [u32]; HUFFMAN_CODES_PER_META_CODE] {
         [
             &mut self.literal,
             &mut self.red,
@@ -137,7 +134,7 @@ impl Histogram {
                 *self.blue.at_mut(b.into())? += 1;
             }
             PixOrCopy::CacheIdx(idx) => {
-                let literal_ix = NUM_LITERAL_CODES + NUM_LENGTH_CODES + idx as usize;
+                let literal_ix = FIRST_CACHE_CODE + idx as usize;
                 *self.literal.at_mut(literal_ix)? += 1;
             }
             PixOrCopy::Copy { distance, len } => {
@@ -183,7 +180,7 @@ impl Histogram {
         self.channels = channels;
     }
 
-    fn update_cost(&mut self, bit_cost: u64, costs: &[u64; NUM_CHANNELS]) {
+    fn update_cost(&mut self, bit_cost: u64, costs: &[u64; HUFFMAN_CODES_PER_META_CODE]) {
         self.bit_cost = bit_cost;
         for (channel, &cost) in self.channels.iter_mut().zip(costs) {
             channel.cost = cost;
@@ -238,10 +235,10 @@ impl Histogram {
 
 /// The flags, not the costs, of the sum of two histograms. Trivial in one and unused in the other is not trivial.
 fn combined_channels(
-    c1: &[Channel; NUM_CHANNELS],
-    c2: &[Channel; NUM_CHANNELS],
-) -> [Channel; NUM_CHANNELS] {
-    let mut out = [Channel::default(); NUM_CHANNELS];
+    c1: &[Channel; HUFFMAN_CODES_PER_META_CODE],
+    c2: &[Channel; HUFFMAN_CODES_PER_META_CODE],
+) -> [Channel; HUFFMAN_CODES_PER_META_CODE] {
+    let mut out = [Channel::default(); HUFFMAN_CODES_PER_META_CODE];
     for ((out, c1), c2) in out.iter_mut().zip(c1).zip(c2) {
         out.trivial_symbol = c1
             .trivial_symbol
@@ -333,12 +330,12 @@ fn get_combined_histogram_entropy(
     a: &Histogram,
     b: &Histogram,
     cost_threshold: i64,
-) -> Option<(u64, [u64; NUM_CHANNELS])> {
+) -> Option<(u64, [u64; HUFFMAN_CODES_PER_META_CODE])> {
     if cost_threshold <= 0 {
         return None;
     }
     let mut cost = 0u64;
-    let mut costs = [0; NUM_CHANNELS];
+    let mut costs = [0; HUFFMAN_CODES_PER_META_CODE];
     for (((out, (x, c1)), y), c2) in costs
         .iter_mut()
         .zip(a.populations().into_iter().zip(&a.channels))
@@ -572,7 +569,7 @@ struct HistogramPair {
     /// What the merge saves, negated.
     cost_diff: i64,
     cost_combo: u64,
-    costs: [u64; NUM_CHANNELS],
+    costs: [u64; HUFFMAN_CODES_PER_META_CODE],
 }
 
 impl HistogramPair {

@@ -1,16 +1,13 @@
 //! `predictor_enc.c`: chooses the spatial predictor and the color transform of each tile, and applies them.
 
 use super::lossless::{
-    Accumulated, ColorTile, LOG_2_PRECISION_BITS, Multipliers, combined_shannon_entropy, div_round,
+    Accumulated, ColorTile, LOG_2_PRECISION_BITS, combined_shannon_entropy, div_round, sub_pixels,
     transform_color,
 };
 use crate::Result;
 use crate::util::{Checked, SliceExt, try_vec};
-use crate::vp8l::enc::predictors::{
-    predictor0, predictor1, predictor2, predictor3, predictor4, predictor5, predictor6, predictor7,
-    predictor8, predictor9, predictor10, predictor11, predictor12, predictor13, sub_pixels,
-};
-use crate::vp8l::format_constants::{ARGB_BLACK, MAX_TRANSFORM_BITS, sub_sample_size};
+use crate::vp8l::common::{ARGB_BLACK, MAX_TRANSFORM_BITS, Multipliers, sub_sample_size};
+use crate::vp8l::predictors::predict;
 use core::ops::Range;
 
 const SPATIAL_PREDICTOR_BIAS: i64 = 15 << LOG_2_PRECISION_BITS;
@@ -87,8 +84,7 @@ fn residual_of<const EXACT: bool>(current: &mut u32, predict: u32) -> u32 {
 
 /// The residuals of `current_row[x_start..x_end]`, where `x_start` is not 0.
 #[inline]
-fn predict_batch<const EXACT: bool>(
-    predictor: impl Fn(u32, u32, u32, u32) -> u32,
+fn predict_batch<const EXACT: bool, const MODE: u32>(
     upper_row: &[u32],
     current_row: &mut [u32],
     x_start: usize,
@@ -99,14 +95,14 @@ fn predict_batch<const EXACT: bool>(
     if EXACT {
         let current = current_row.sub(x_start - 1..x_end)?.array_windows();
         for ((&[left, current], &[top_left, top, top_right]), out) in current.zip(upper).zip(out) {
-            *out = sub_pixels(current, predictor(left, top_left, top, top_right));
+            *out = sub_pixels(current, predict(MODE, left, top_left, top, top_right));
         }
     } else {
         let mut left = current_row.at(x_start - 1)?;
         let current = current_row.sub_mut(x_start..x_end)?;
         for ((current, &[top_left, top, top_right]), out) in current.iter_mut().zip(upper).zip(out)
         {
-            *out = residual_of::<EXACT>(current, predictor(left, top_left, top, top_right));
+            *out = residual_of::<EXACT>(current, predict(MODE, left, top_left, top, top_right));
             left = *current;
         }
     }
@@ -135,25 +131,25 @@ fn get_residual<const EXACT: bool>(
         out = out.sub_mut(1..)?;
     }
     macro_rules! batch {
-        ($predictor:expr) => {
-            predict_batch::<EXACT>($predictor, upper_row, current_row, x_start, x_end, out)
+        ($mode:literal) => {
+            predict_batch::<EXACT, $mode>(upper_row, current_row, x_start, x_end, out)
         };
     }
     match if y == 0 { 1 } else { mode } {
-        0 => batch!(predictor0),
-        1 => batch!(predictor1),
-        2 => batch!(predictor2),
-        3 => batch!(predictor3),
-        4 => batch!(predictor4),
-        5 => batch!(predictor5),
-        6 => batch!(predictor6),
-        7 => batch!(predictor7),
-        8 => batch!(predictor8),
-        9 => batch!(predictor9),
-        10 => batch!(predictor10),
-        11 => batch!(predictor11),
-        12 => batch!(predictor12),
-        _ => batch!(predictor13),
+        0 => batch!(0),
+        1 => batch!(1),
+        2 => batch!(2),
+        3 => batch!(3),
+        4 => batch!(4),
+        5 => batch!(5),
+        6 => batch!(6),
+        7 => batch!(7),
+        8 => batch!(8),
+        9 => batch!(9),
+        10 => batch!(10),
+        11 => batch!(11),
+        12 => batch!(12),
+        _ => batch!(13),
     }
 }
 
@@ -426,19 +422,6 @@ pub(crate) fn residual_image(
 
 // Color transform functions.
 
-const fn color_code_to_multipliers(color_code: u32) -> Multipliers {
-    let [green_to_red, green_to_blue, red_to_blue, _] = color_code.to_le_bytes();
-    Multipliers {
-        green_to_red,
-        green_to_blue,
-        red_to_blue,
-    }
-}
-
-const fn multipliers_to_color_code(m: Multipliers) -> u32 {
-    u32::from_le_bytes([m.green_to_red, m.green_to_blue, m.red_to_blue, 0xff])
-}
-
 /// The `quality` of an image. In an alpha plane red and blue are 0, so that it never gets this transform.
 const QUALITY: i32 = 70;
 
@@ -578,7 +561,7 @@ pub(crate) fn color_space_transform(
             let tile_width = all_x_max - tile_x_offset;
             let offset = tile_y * tile_xsize + tile_x;
             if tile_y != 0 {
-                prev_y = color_code_to_multipliers(image.at(offset - tile_xsize)?);
+                prev_y = Multipliers::from_color_code(image.at(offset - tile_xsize)?);
             }
             let tile_range =
                 tile_y_offset * width + tile_x_offset..(all_y_max - 1) * width + all_x_max;
@@ -595,7 +578,7 @@ pub(crate) fn color_space_transform(
                 green_to_blue,
                 red_to_blue,
             };
-            image.put(offset, multipliers_to_color_code(prev_x))?;
+            image.put(offset, prev_x.to_color_code())?;
             for row in argb.sub_mut(tile_range)?.chunks_mut(width.max(1)) {
                 transform_color(prev_x, row.sub_mut(..tile_width)?);
             }

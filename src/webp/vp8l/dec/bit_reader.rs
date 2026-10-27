@@ -1,17 +1,19 @@
 //! `bit_reader_utils.c`: `VP8LBitReader`, which reads bits from the least significant one on.
 
 /// Bits that are prefetched.
-const LBITS: u32 = 64;
+const LBITS: u32 = u64::BITS;
 /// Bits that are ready after `fill_bit_window`, at least.
 const WBITS: u32 = 32;
+/// The most bits that `read_bits` reads.
+const MAX_NUM_BIT_READ: u32 = 24;
 
 pub(super) struct BitReader<'a> {
-    /// The 8 bytes in front of `pos`.
+    /// The 8 bytes before `pos`.
     val: u64,
     buf: &'a [u8],
     /// The next byte to go into `val`.
     pos: usize,
-    /// How many bits of `val` are used up. More than `LBITS` once the data has run out.
+    /// How many bits of `val` are used up. More than `LBITS` if some were past the end, until `eos` is set.
     bit_pos: u32,
     /// Whether a bit past the end was read. It lags behind `is_end_of_stream`.
     pub(super) eos: bool,
@@ -20,15 +22,13 @@ pub(super) struct BitReader<'a> {
 impl<'a> BitReader<'a> {
     pub(super) fn new(buf: &'a [u8]) -> Self {
         let mut bytes = [0; 8];
-        let mut pos = 0;
         for (to, &from) in bytes.iter_mut().zip(buf) {
             *to = from;
-            pos += 1;
         }
         Self {
             val: u64::from_le_bytes(bytes),
             buf,
-            pos,
+            pos: buf.len().min(bytes.len()),
             bit_pos: 0,
             eos: false,
         }
@@ -80,7 +80,7 @@ impl<'a> BitReader<'a> {
 
     #[inline]
     fn do_fill_bit_window(&mut self) {
-        // As libwebp, only while more than 8 bytes are left.
+        // Like libwebp, only while more than 8 bytes are left.
         if let Some(&[b0, b1, b2, b3, ..]) =
             self.buf.get(self.pos..).and_then(<[u8]>::first_chunk::<9>)
         {
@@ -93,10 +93,10 @@ impl<'a> BitReader<'a> {
         self.shift_bytes();
     }
 
-    /// The next `num_bits` bits, at most 24, or 0 past the end.
+    /// The next `num_bits` bits, at most `MAX_NUM_BIT_READ`, or 0 past the end.
     #[inline]
     pub(super) fn read_bits(&mut self, num_bits: u32) -> u32 {
-        debug_assert!(num_bits <= 24);
+        debug_assert!(num_bits <= MAX_NUM_BIT_READ);
         if self.eos {
             self.set_end_of_stream();
             return 0;

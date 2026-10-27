@@ -1,10 +1,13 @@
 //! `zstd_compress_sequences.c`: how the sequences of a block are encoded.
 
-use super::fse::{self, FSE_NCOUNTBOUND, FseCTable, FseRepeat};
+use super::fse::{
+    self, FSE_NCOUNTBOUND, FseCTable, FseRepeat, FseSymbolTransform, PredefinedCTable,
+};
 use super::internal::{FseCTables, LongLengthType, SeqDef, Strategy};
 use crate::common::{
-    LL_BITS, LL_FSE_LOG, MAX_LL, MAX_ML, MAX_SEQ, ML_BITS, ML_FSE_LOG, OFF_FSE_LOG,
-    SymbolEncodingType,
+    DEFAULT_MAX_OFF, LL_BITS, LL_DEFAULT_NORM, LL_DEFAULT_NORM_LOG, LL_FSE_LOG, MAX_LL, MAX_ML,
+    MAX_SEQ, ML_BITS, ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG, ML_FSE_LOG, OF_DEFAULT_NORM,
+    OF_DEFAULT_NORM_LOG, OFF_FSE_LOG, SymbolEncodingType,
 };
 use crate::error::{ErrorCode, Result};
 use crate::util::{SliceExt, highbit32};
@@ -173,20 +176,118 @@ pub(crate) fn select_encoding_type(
     Ok(SymbolEncodingType::Compressed)
 }
 
+const fn t(delta_find_state: i32, delta_nb_bits: u32) -> FseSymbolTransform {
+    FseSymbolTransform {
+        delta_find_state,
+        delta_nb_bits,
+    }
+}
+
+/// What [`FseCTable::build`] makes of [`LL_DEFAULT_NORM`].
+#[rustfmt::skip]
+static LL_DEFAULT_CTABLE: PredefinedCTable = PredefinedCTable::new(
+    LL_DEFAULT_NORM_LOG,
+    [
+         64,  65,  86, 107,  66,  87, 108,  88, 109,  67, 110,  68,  89,  90, 111,  69,
+        112,  70,  91,  92, 113,  71, 114,  72,  93,  94, 115,  73, 116,  95,  74, 117,
+         75,  96,  97, 118,  76, 119,  77,  98,  99, 120,  78, 121,  79, 100, 101, 122,
+         80, 123,  81, 102, 103,  82, 104,  83, 105,  84, 106,  85, 127, 126, 125, 124,
+    ],
+    [
+        t(-4, 327552), t( 1, 327584), t( 5, 393088), t( 7, 393088), t( 9, 393088), t(11, 393088),
+        t(13, 393088), t(15, 393088), t(17, 393088), t(19, 393088), t(21, 393088), t(23, 393088),
+        t(25, 393088), t(28, 393152), t(29, 393152), t(30, 393152), t(30, 393088), t(32, 393088),
+        t(34, 393088), t(36, 393088), t(38, 393088), t(40, 393088), t(42, 393088), t(44, 393088),
+        t(46, 393088), t(47, 327584), t(51, 393088), t(54, 393152), t(55, 393152), t(56, 393152),
+        t(57, 393152), t(58, 393152), t(59, 393152), t(60, 393152), t(61, 393152), t(62, 393152),
+    ],
+);
+
+/// What [`FseCTable::build`] makes of [`OF_DEFAULT_NORM`].
+#[rustfmt::skip]
+static OF_DEFAULT_CTABLE: PredefinedCTable = PredefinedCTable::new(
+    OF_DEFAULT_NORM_LOG,
+    [
+         32,  55,  46,  37,  51,  42,  33,  56,  38,  47,  43,  52,  34,  57,  48,  39,
+         53,  44,  35,  58,  49,  40,  54,  45,  36,  50,  41,  63,  62,  61,  60,  59,
+    ],
+    [
+        t(-1, 327648), t( 0, 327648), t( 1, 327648), t( 2, 327648), t( 3, 327648), t( 4, 327648),
+        t( 4, 327616), t( 6, 327616), t( 8, 327616), t(11, 327648), t(12, 327648), t(13, 327648),
+        t(14, 327648), t(15, 327648), t(16, 327648), t(17, 327648), t(18, 327648), t(19, 327648),
+        t(20, 327648), t(21, 327648), t(22, 327648), t(23, 327648), t(24, 327648), t(25, 327648),
+        t(26, 327648), t(27, 327648), t(28, 327648), t(29, 327648), t(30, 327648),
+    ],
+);
+
+/// What [`FseCTable::build`] makes of [`ML_DEFAULT_NORM`].
+#[rustfmt::skip]
+static ML_DEFAULT_CTABLE: PredefinedCTable = PredefinedCTable::new(
+    ML_DEFAULT_NORM_LOG,
+    [
+         64,  65,  86, 107, 108,  66,  87, 109,  67,  88,  89, 110,  68, 111,  69,  90,
+         91, 112,  70, 113,  92,  71, 114,  93,  72, 115,  94,  73, 116,  95,  74, 117,
+         96,  75, 118,  97,  76, 119,  98,  77, 120,  99,  78, 100,  79, 101,  80, 102,
+         81, 103,  82, 104,  83, 105,  84, 106,  85, 127, 126, 125, 124, 123, 122, 121,
+    ],
+    [
+        t(-1, 393152), t(-3, 327552), t( 2, 327584), t( 6, 393088), t( 8, 393088), t(10, 393088),
+        t(12, 393088), t(14, 393088), t(16, 393088), t(19, 393152), t(20, 393152), t(21, 393152),
+        t(22, 393152), t(23, 393152), t(24, 393152), t(25, 393152), t(26, 393152), t(27, 393152),
+        t(28, 393152), t(29, 393152), t(30, 393152), t(31, 393152), t(32, 393152), t(33, 393152),
+        t(34, 393152), t(35, 393152), t(36, 393152), t(37, 393152), t(38, 393152), t(39, 393152),
+        t(40, 393152), t(41, 393152), t(42, 393152), t(43, 393152), t(44, 393152), t(45, 393152),
+        t(46, 393152), t(47, 393152), t(48, 393152), t(49, 393152), t(50, 393152), t(51, 393152),
+        t(52, 393152), t(53, 393152), t(54, 393152), t(55, 393152), t(56, 393152), t(57, 393152),
+        t(58, 393152), t(59, 393152), t(60, 393152), t(61, 393152), t(62, 393152),
+    ],
+);
+
+/// What is particular to literal lengths, to offsets or to match lengths in how a table is made.
+pub(crate) struct CodeKind {
+    pub(crate) fse_log: u32,
+    pub(crate) default_norm: &'static [i16],
+    pub(crate) default_norm_log: u32,
+    /// The largest code that the predefined table has.
+    pub(crate) default_max: u32,
+    default_ctable: &'static PredefinedCTable,
+}
+
+pub(crate) static LL_KIND: CodeKind = CodeKind {
+    fse_log: LL_FSE_LOG,
+    default_norm: &LL_DEFAULT_NORM,
+    default_norm_log: LL_DEFAULT_NORM_LOG,
+    default_max: MAX_LL,
+    default_ctable: &LL_DEFAULT_CTABLE,
+};
+
+pub(crate) static OF_KIND: CodeKind = CodeKind {
+    fse_log: OFF_FSE_LOG,
+    default_norm: &OF_DEFAULT_NORM,
+    default_norm_log: OF_DEFAULT_NORM_LOG,
+    default_max: DEFAULT_MAX_OFF,
+    default_ctable: &OF_DEFAULT_CTABLE,
+};
+
+pub(crate) static ML_KIND: CodeKind = CodeKind {
+    fse_log: ML_FSE_LOG,
+    default_norm: &ML_DEFAULT_NORM,
+    default_norm_log: ML_DEFAULT_NORM_LOG,
+    default_max: MAX_ML,
+    default_ctable: &ML_DEFAULT_CTABLE,
+};
+
 /// `ZSTD_buildCTable`: makes the table for `nb_seq` codes, the last of which is `last_code` and of which `count` is the
 /// distribution, and writes what the decoder needs to make the same one. Returns how many bytes that takes.
 pub(crate) fn build_ctable(
     dst: &mut [u8],
     next_ctable: &mut FseCTable,
-    fse_log: u32,
+    kind: &CodeKind,
     ty: SymbolEncodingType,
     count: &mut [u32],
     max: u32,
     nb_seq: usize,
     last_code: u8,
-    default_norm: &[i16],
-    default_norm_log: u32,
-    default_max: u32,
     prev_ctable: &FseCTable,
 ) -> Result<usize> {
     match ty {
@@ -203,12 +304,12 @@ pub(crate) fn build_ctable(
             Ok(0)
         }
         SymbolEncodingType::Basic => {
-            next_ctable.build(default_norm, default_max, default_norm_log)?;
+            next_ctable.set_predefined(kind.default_ctable);
             Ok(0)
         }
         SymbolEncodingType::Compressed => {
             let mut norm = [0i16; MAX_SEQ as usize + 1];
-            let table_log = fse::optimal_table_log(fse_log, nb_seq, max);
+            let table_log = fse::optimal_table_log(kind.fse_log, nb_seq, max);
             // The last code is the first state, which takes no transition.
             let last_count = count.at_mut(usize::from(last_code))?;
             let without_last = usize::from(*last_count > 1);

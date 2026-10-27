@@ -9,14 +9,13 @@ use super::internal::{
 use super::literals::compress_literals;
 use super::params::CCtxParams;
 use super::sequences::{
-    self, CodeCounts, SeqCodes, SeqHistograms, build_ctable, cross_entropy_cost, encode_sequences,
-    fse_bit_cost, select_encoding_type, summarize,
+    self, CodeCounts, CodeKind, LL_KIND, ML_KIND, OF_KIND, SeqCodes, SeqHistograms, build_ctable,
+    cross_entropy_cost, encode_sequences, fse_bit_cost, select_encoding_type, summarize,
 };
 use super::{hist, huf::HufCTable};
 use crate::common::{
-    DEFAULT_MAX_OFF, HUF_SYMBOLVALUE_MAX, LIT_HUF_LOG, LL_BITS, LL_DEFAULT_NORM,
-    LL_DEFAULT_NORM_LOG, LL_FSE_LOG, LONGNBSEQ, MAX_LL, MAX_ML, MINMATCH, ML_BITS, ML_DEFAULT_NORM,
-    ML_DEFAULT_NORM_LOG, ML_FSE_LOG, OF_DEFAULT_NORM, OF_DEFAULT_NORM_LOG, OFF_FSE_LOG,
+    HUF_SYMBOLVALUE_MAX, LIT_HUF_LOG, LL_BITS, LL_DEFAULT_NORM, LL_DEFAULT_NORM_LOG, LONGNBSEQ,
+    MINMATCH, ML_BITS, ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG, OF_DEFAULT_NORM, OF_DEFAULT_NORM_LOG,
     SymbolEncodingType, ZSTD_BLOCKHEADERSIZE,
 };
 use crate::error::{ErrorCode, Result};
@@ -49,14 +48,6 @@ struct SymbolEncodingTypeStats {
     last_count_size: usize,
 }
 
-/// What is particular to lengths or to offsets in how a table is made.
-struct CodeKind<'a> {
-    fse_log: u32,
-    default_norm: &'a [i16],
-    default_norm_log: u32,
-    default_max: u32,
-}
-
 /// The table of one kind of code in the previous block.
 #[derive(Clone, Copy)]
 struct PrevTable<'a> {
@@ -73,7 +64,7 @@ struct TableHeader {
 /// Chooses how to encode `nb_seq` codes, the last of which is `last_code` and of which `count` is the distribution,
 /// makes the table and writes its header.
 fn build_table(
-    kind: &CodeKind<'_>,
+    kind: &CodeKind,
     prev: PrevTable<'_>,
     next_table: &mut FseCTable,
     next_repeat_mode: &mut FseRepeat,
@@ -101,18 +92,7 @@ fn build_table(
         strategy,
     )?;
     let size = build_ctable(
-        dst,
-        next_table,
-        kind.fse_log,
-        ty,
-        count,
-        max,
-        nb_seq,
-        last_code,
-        kind.default_norm,
-        kind.default_norm_log,
-        kind.default_max,
-        prev.table,
+        dst, next_table, kind, ty, count, max, nb_seq, last_code, prev.table,
     )?;
     Ok(TableHeader { ty, size })
 }
@@ -139,12 +119,7 @@ fn build_sequences_statistics(
     };
 
     let ll = build_table(
-        &CodeKind {
-            fse_log: LL_FSE_LOG,
-            default_norm: &LL_DEFAULT_NORM,
-            default_norm_log: LL_DEFAULT_NORM_LOG,
-            default_max: MAX_LL,
-        },
+        &LL_KIND,
         PrevTable {
             table: &prev_entropy.litlength_c_table,
             repeat_mode: prev_entropy.litlength_repeat_mode,
@@ -159,12 +134,7 @@ fn build_sequences_statistics(
     )?;
     let op_of = written(&ll);
     let of = build_table(
-        &CodeKind {
-            fse_log: OFF_FSE_LOG,
-            default_norm: &OF_DEFAULT_NORM,
-            default_norm_log: OF_DEFAULT_NORM_LOG,
-            default_max: DEFAULT_MAX_OFF,
-        },
+        &OF_KIND,
         PrevTable {
             table: &prev_entropy.offcode_c_table,
             repeat_mode: prev_entropy.offcode_repeat_mode,
@@ -179,12 +149,7 @@ fn build_sequences_statistics(
     )?;
     let op_ml = written(&of);
     let ml = build_table(
-        &CodeKind {
-            fse_log: ML_FSE_LOG,
-            default_norm: &ML_DEFAULT_NORM,
-            default_norm_log: ML_DEFAULT_NORM_LOG,
-            default_max: MAX_ML,
-        },
+        &ML_KIND,
         PrevTable {
             table: &prev_entropy.matchlength_c_table,
             repeat_mode: prev_entropy.matchlength_repeat_mode,

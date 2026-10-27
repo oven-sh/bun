@@ -43,6 +43,40 @@ pub(crate) struct FseCTable {
 
 const SYMBOL_TT_SIZE: usize = (MAX_SEQ as usize + 1).next_power_of_two();
 
+/// A table for a distribution that is known in advance, of a table log of at most 6.
+pub(crate) struct PredefinedCTable {
+    table_log: u32,
+    max_symbol_value: u32,
+    state_table: [u16; 64],
+    symbol_tt: [FseSymbolTransform; SYMBOL_TT_SIZE],
+}
+
+impl PredefinedCTable {
+    pub(crate) const fn new<const STATES: usize, const SYMBOLS: usize>(
+        table_log: u32,
+        states: [u16; STATES],
+        transforms: [FseSymbolTransform; SYMBOLS],
+    ) -> Self {
+        let mut table = Self {
+            table_log,
+            max_symbol_value: SYMBOLS as u32 - 1,
+            state_table: [0; 64],
+            symbol_tt: FseCTable::new().symbol_tt,
+        };
+        table
+            .state_table
+            .split_at_mut(STATES)
+            .0
+            .copy_from_slice(&states);
+        table
+            .symbol_tt
+            .split_at_mut(SYMBOLS)
+            .0
+            .copy_from_slice(&transforms);
+        table
+    }
+}
+
 impl FseCTable {
     pub(crate) const fn new() -> Self {
         Self {
@@ -163,6 +197,16 @@ impl FseCTable {
             }
         }
         Ok(())
+    }
+
+    /// What [`Self::build`] does for the distribution that `table` was made for.
+    pub(crate) fn set_predefined(&mut self, table: &PredefinedCTable) {
+        self.table_log = table.table_log;
+        self.max_symbol_value = table.max_symbol_value;
+        if let Some(states) = self.state_table.first_chunk_mut() {
+            *states = table.state_table;
+        }
+        self.symbol_tt = table.symbol_tt;
     }
 
     /// `FSE_buildCTable_rle`: a table that encodes `symbol_value`, and nothing else, in 0 bits.

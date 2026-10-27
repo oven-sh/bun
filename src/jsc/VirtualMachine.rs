@@ -4188,6 +4188,7 @@ impl ResolveMode {
 pub struct ResolveFunctionResult<'r> {
     pub path: &'r [u8],
     pub(crate) query_string: &'r [u8],
+    pub(crate) is_standalone: bool,
 }
 
 /// Per-thread `BufferPrinter` used when printing transpiled module source.
@@ -5517,6 +5518,9 @@ impl VirtualMachine {
                 self.has_any_macro_remappings || self.transpiler.options.macro_remap.count() > 0;
         }
         ret.query_string = query_string;
+        ret.is_standalone = result
+            .flags
+            .contains(bun_resolver::ResultFlags::IS_STANDALONE_MODULE);
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;

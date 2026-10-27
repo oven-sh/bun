@@ -342,8 +342,7 @@ impl<'a> Options<'a> {
                 // this holds the values for the jsx optimizaiton flags, which have both been removed
                 // as the optimizations break newer versions of react, see https://github.com/oven-sh/bun/issues/11025
                 let jsx_optimizations: [bool; 2] = [false, false];
-                // `bool: NoUninit`, `u8: AnyBitPattern`.
-                hasher.update(bytemuck::cast_slice::<bool, u8>(&jsx_optimizations));
+                hasher.update(bun_core::slice_as_bytes(&jsx_optimizations));
             } else {
                 hasher.update(b"NO_JSX");
             }

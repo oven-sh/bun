@@ -399,8 +399,7 @@ pub mod Runtime {
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.
-            // `bool: NoUninit`, `u8: AnyBitPattern` → `cast_slice` is statically sound.
-            hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
+            hasher.update(bun_core::slice_as_bytes(&bools));
             hasher.update(&[self.react_compiler as u8]);
 
             // `P::runs_imports_in_turn` depends on both, even when `P::uses_test_api` is false. Other files hash nothing extra.

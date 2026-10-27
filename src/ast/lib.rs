@@ -2918,9 +2918,7 @@ pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
         // that outlives this call, so `*ov` is a live `Arena`. The returned
         // slice is borrowed from that arena; its lifetime is widened to
         // `'static` per the `StoreStr` convention (arena ownership, bulk-freed
-        // on scope drop — callers must not hold it past that boundary). This is
-        // lifetime erasure, not a value cast, so no safe `bytemuck`/`as`
-        // equivalent exists.
+        // on scope drop — callers must not hold it past that boundary).
         return unsafe {
             let dup: *const [u8] = (*ov).alloc_slice_copy(bytes);
             &*dup

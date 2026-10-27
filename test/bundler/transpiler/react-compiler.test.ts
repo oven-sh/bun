@@ -4342,27 +4342,38 @@ test("react-compiler keeps what it works out for locals that a loop assigns from
       }
     `,
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  // The text of each function in the output of a build.
+  const functionsOf = async (...flags: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...flags, "--target=browser", "--external=*", "entry.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout
+      .split(/^function /m)
+      .slice(1)
+      .map(text => ({ name: text.slice(0, text.indexOf("(")), text }));
+  };
+  const [compiled, written] = await Promise.all([functionsOf("--react-compiler"), functionsOf()]);
+
+  // A component that the compiler refuses has the text of the build without the compiler. One that it compiles with
+  // an empty cache has no `_c` either, but another text.
+  expect(compiled[0].text).toBe(written[0].text);
   // The size of the cache of each component, and what each of its blocks depends on.
-  const compiled = stdout
-    .split(/^function /m)
-    .slice(1)
-    .map(text => ({
-      name: text.slice(0, text.indexOf("(")),
+  expect(
+    compiled.map(({ name, text }) => ({
+      name,
       cache: text.match(/\b_c\((\d+)\)/)?.[1] ?? "none",
       blocks: Array.from(text.matchAll(/^ *if \((\$\[\d+\] .*)\)(?: \{)?$/gm), ([, condition]) =>
         condition.replaceAll(/\$\[\d+\] (?:!== |=== __MEMO_CACHE_SENTINEL)/g, "").replaceAll(" || ", ", "),
       ),
-    }));
-  expect(compiled).toEqual([
+    })),
+  ).toEqual([
     { name: "ALocalArrayOrAProp", cache: "none", blocks: [] },
     {
       name: "FourFunctions",
@@ -4371,7 +4382,6 @@ test("react-compiler keeps what it works out for locals that a loop assigns from
     },
     { name: "AFunctionThatReturnsTheOneBefore", cache: "5", blocks: ["props.first", "props, t0"] },
   ]);
-  expect(exitCode).toBe(0);
 });
 
 // ValidateNoRefAccessInRender gives a function the type of what it returns. The port

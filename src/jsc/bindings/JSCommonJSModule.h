@@ -83,6 +83,7 @@ public:
     // wrapper closes over are the graph's. Null: the global object's.
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
+    bool m_filenameIsModuleKey { false };
     bool ignoreESModuleAnnotation { false };
     // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
     static constexpr uint32_t noCompiledModule = UINT32_MAX;
@@ -136,6 +137,7 @@ public:
     }
     void setExportsObject(JSC::JSValue exportsObject);
     JSValue filename() { return m_filename.get(); }
+    JSString* filenameForResolution(JSGlobalObject*, JSString*);
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
 

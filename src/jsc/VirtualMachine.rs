@@ -4208,13 +4208,14 @@ static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
+    split_query: bool,
 ) -> &'a [u8] {
     // In a `data:` URL everything after the comma is the payload; a `?` is
     // part of the data, not a query string.
     if bun_core::strings::has_prefix_comptime(specifier_, b"data:") {
         return specifier_;
     }
-    if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
+    if split_query && let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
         *query_string = &specifier_[i..];
         &specifier_[..i]
     } else {
@@ -5358,6 +5359,7 @@ impl VirtualMachine {
         is_esm: bool,
         is_a_file_path: bool,
         global_cache: bun_resolver::GlobalCache,
+        split_query: bool,
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
@@ -5410,10 +5412,12 @@ impl VirtualMachine {
 
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
-        let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        let normalized_specifier =
+            normalize_specifier_for_resolution(specifier, &mut query_string, split_query);
         let top_level_dir = self.top_level_dir();
         let mut source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
+                // File URLs have already been decoded; a filesystem referrer can contain literal `?` and `#`.
                 bun_resolver::fs::PathName::init(source).dir_with_trailing_slash()
             } else {
                 source
@@ -5535,6 +5539,7 @@ impl VirtualMachine {
         source: &bun_core::String,
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
+        split_query: bool,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
         if global.has_plugins() {
             match run_on_resolve(global, specifier, source)? {
@@ -5570,6 +5575,7 @@ impl VirtualMachine {
                         query_string,
                         mode,
                         global_cache,
+                        split_query,
                     )?;
                     // Not on disk, for an `onLoad` to serve.
                     if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
@@ -5586,6 +5592,7 @@ impl VirtualMachine {
             query_string,
             mode,
             global.bun_vm().transpiler.resolver.opts.global_cache,
+            split_query,
         )
     }
 
@@ -5596,6 +5603,7 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
         global_cache: bun_resolver::GlobalCache,
+        split_query: bool,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
@@ -5647,7 +5655,15 @@ impl VirtualMachine {
         }
 
         let specifier_utf8 = specifier.to_utf8();
-        let source_utf8 = source.to_utf8();
+        let source_is_file_url = source.starts_with_ascii(b"file://");
+        let decoded_source;
+        let source_path = if source_is_file_url {
+            decoded_source = bun_url::path_from_file_url(source);
+            &decoded_source
+        } else {
+            source
+        };
+        let source_utf8 = source_path.to_utf8();
 
         if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
             specifier_utf8.slice(),
@@ -5742,6 +5758,7 @@ impl VirtualMachine {
             mode.is_esm(),
             IS_A_FILE_PATH,
             global_cache,
+            split_query,
         );
         if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
@@ -5790,7 +5807,12 @@ impl VirtualMachine {
         }
 
         if let Some(query) = query_string {
-            *query = bun_core::String::clone_utf8(result.query_string);
+            // `bun build --compile` finds an embedded module by its exact key, so that key gets no suffix.
+            if result.is_standalone {
+                *query = bun_core::String::EMPTY;
+            } else if split_query || query.is_empty() {
+                *query = bun_core::String::clone_utf8(result.query_string);
+            }
         }
 
         Ok(Ok(bun_core::String::clone_utf8(result.path)))
@@ -8041,12 +8063,17 @@ fn run_on_resolve(
     let Some((namespace, path)) = ModuleLoader::plugin_namespace_and_path(&specifier) else {
         return Ok(None);
     };
-    // The importer's key ends in the query it was imported with.
-    let importer = importer.to_utf8();
-    let importer = match bun_core::strings::index_of_char_usize(&importer, b'?') {
-        Some(query) => &importer[..query],
-        None => &importer[..],
+    // Decode URL referrers without interpreting delimiters in filesystem paths.
+    let is_file_url = importer.starts_with_ascii(b"file://");
+    let decoded_importer;
+    let importer = if is_file_url {
+        decoded_importer = bun_url::path_from_file_url(importer);
+        &decoded_importer
+    } else {
+        importer
     };
+    let importer = importer.to_utf8();
+    let importer = importer.slice();
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
         &bun_core::StringView::from_bytes(if namespace == b"file" { b"" } else { namespace }),
         &bun_core::StringView::borrow_utf8(path),

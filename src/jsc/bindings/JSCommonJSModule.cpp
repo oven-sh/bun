@@ -358,6 +358,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         return true;
     }
 
+    JSValue requireMapKey = this->m_id.get();
     evaluateCommonJSModuleOnce(
         globalObject->vm(),
         globalObject,
@@ -373,7 +374,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         // On error, remove the module from the require map
         // so that it can be re-evaluated on the next require.
         // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
-        requireMapOf(globalObject, moduleGraph())->remove(globalObject, this->filename());
+        requireMapOf(globalObject, moduleGraph())->remove(globalObject, requireMapKey);
         RETURN_IF_EXCEPTION(scope, false);
 
         scope.throwException(globalObject, exception);
@@ -417,6 +418,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     RELEASE_AND_RETURN(throwScope, JSValue::encode(returnValue));
 }
 
+JSString* JSCommonJSModule::filenameForResolution(JSGlobalObject* globalObject, JSString* filename)
+{
+    // Only an unchanged module key carries a query suffix. A decoded or replaced
+    // filename is a filesystem path and can contain a literal question mark.
+    if (!m_filenameIsModuleKey || filename != m_filename.get())
+        return filename;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto value = filename->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    unsigned pathLength = moduleKeyPathLength(value);
+    if (pathLength == value->length())
+        return filename;
+    return JSC::jsSubstring(globalObject, filename, 0, pathLength);
+}
+
 JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -455,6 +471,7 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
     if (!filename) [[unlikely]] {
         RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, 0)));
     }
+    filename = boundModule->filenameForResolution(globalObject, filename);
     RETURN_IF_EXCEPTION(scope, {});
     Bun::PathResolveModule parent = { .paths = nullptr, .filename = filename, .pathsArrayLazy = true };
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::resolveLookupPaths(globalObject, requestStr, parent)));
@@ -699,7 +716,11 @@ JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::
     if (!thisObject->m_paths) {
         JSValue filename = thisObject->filename();
         ASSERT(filename);
-        auto filenameWtfStr = filename.toWTFString(globalObject);
+        auto* filenameString = filename.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        filenameString = thisObject->filenameForResolution(globalObject, filenameString);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto filenameWtfStr = filenameString->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         BunString filenameStr = Bun::toString(filenameWtfStr);
         JSValue paths = JSValue::decode(Resolver__nodeModulePathsJSValue(&filenameStr, globalObject, true));
@@ -817,6 +838,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterFilename,
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     thisObject->m_filename.set(globalObject->vm(), thisObject, string);
+    thisObject->m_filenameIsModuleKey = false;
     return true;
 }
 
@@ -1058,6 +1080,46 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globa
     return JSValue::encode(module);
 }
 
+struct CommonJSModulePaths {
+    JSString* filename;
+    JSString* dirname;
+    bool filenameIsModuleKey;
+};
+
+static CommonJSModulePaths pathsForCommonJSModule(Zig::GlobalObject* globalObject, JSString* requireMapKey)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String key = requireMapKey->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto filenameString = key;
+    bool decodedFileURLKey = false;
+    if (key.startsWith("file://"_s)) {
+        auto url = WTF::URL(key);
+        if (url.isValid() && !url.isEmpty()) {
+            auto path = url.fileSystemPath();
+            if (path.find('?') != WTF::notFound) {
+                filenameString = path;
+                decodedFileURLKey = true;
+            }
+        }
+    }
+    auto* filename = filenameString == key ? requireMapKey : jsString(vm, filenameString);
+    auto index = filenameString.reverseFind(
+        PLATFORM_SEP,
+        decodedFileURLKey ? filenameString.length() : moduleKeyPathLength(filenameString));
+
+    JSString* dirname;
+    if (index != WTF::notFound) {
+        dirname = JSC::jsSubstring(globalObject, filename, 0, index);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        dirname = jsEmptyString(vm);
+    }
+
+    return { filename, dirname, filename == requireMapKey };
+}
+
 JSCommonJSModule* JSCommonJSModule::create(
     Zig::GlobalObject* globalObject,
     JSC::JSString* requireMapKey,
@@ -1067,22 +1129,14 @@ JSCommonJSModule* JSCommonJSModule::create(
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto key = requireMapKey->value(globalObject);
+    auto paths = pathsForCommonJSModule(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    auto index = key->reverseFind(PLATFORM_SEP, key->length());
-
-    JSString* dirname;
-    if (index != WTF::notFound) {
-        dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    } else {
-        dirname = jsEmptyString(vm);
-    }
 
     auto* out = JSCommonJSModule::create(
         vm,
         globalObject->CommonJSModuleObjectStructure(),
-        requireMapKey, requireMapKey, dirname, SourceCode());
+        requireMapKey, paths.filename, paths.dirname, SourceCode());
+    out->m_filenameIsModuleKey = paths.filenameIsModuleKey;
 
     if (exportsObject) {
         out->putDirect(
@@ -1666,15 +1720,9 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
-        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
-        JSString* dirname;
-        JSString* filename = requireMapKey;
-        if (index != WTF::notFound) {
-            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
-            dirname = jsEmptyString(vm);
-        }
+        JSString* cacheKey = requireMapKey;
+        auto paths = pathsForCommonJSModule(globalObject, requireMapKey);
+        RETURN_IF_EXCEPTION(scope, {});
         // The process's entry point is module "."; a graph has no such module.
         if (!graph && requireMap->size() == 0) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
@@ -1698,13 +1746,14 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         moduleObject = JSCommonJSModule::create(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
+            requireMapKey, paths.filename, paths.dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
+        moduleObject->m_filenameIsModuleKey = paths.filenameIsModuleKey;
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
             JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
 
-        requireMap->set(globalObject, filename, moduleObject);
+        requireMap->set(globalObject, cacheKey, moduleObject);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         sourceOrigin = Zig::toSourceOrigin(sourceURL, isBuiltIn);
@@ -1757,7 +1806,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                                 // On error, remove the module from the require map
                                 // so that it can be re-evaluated on the next require.
-                                requireMap->remove(globalObject, moduleObject->filename());
+                                requireMap->remove(globalObject, keyValue);
                                 RETURN_IF_EXCEPTION(scope, void());
 
                                 scope.throwException(globalObject, exception);
@@ -1798,15 +1847,9 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
-        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
-        JSString* dirname;
-        JSString* filename = requireMapKey;
-        if (index != WTF::notFound) {
-            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
-            dirname = jsEmptyString(vm);
-        }
+        JSString* cacheKey = requireMapKey;
+        auto paths = pathsForCommonJSModule(globalObject, requireMapKey);
+        RETURN_IF_EXCEPTION(scope, {});
         // The process's entry point is module "."; a graph has no such module.
         if (!graph && requireMap->size() == 0) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
@@ -1815,13 +1858,14 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         moduleObject = JSCommonJSModule::create(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
+            requireMapKey, paths.filename, paths.dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
+        moduleObject->m_filenameIsModuleKey = paths.filenameIsModuleKey;
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
             JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
 
-        requireMap->set(globalObject, filename, moduleObject);
+        requireMap->set(globalObject, cacheKey, moduleObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

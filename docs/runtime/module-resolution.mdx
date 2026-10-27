@@ -98,6 +98,12 @@ That said, using CommonJS is discouraged in new projects.
 
 ---
 
+## File URLs
+
+File URLs preserve percent-encoded filename characters. For example, `%3F` and `%23` in a URL path refer to literal `?` and `#` characters in a filename. A URL's query and fragment remain part of its module identity.
+
+A CommonJS module's filename and directory are filesystem paths. Literal `?` and `#` characters in those paths remain intact when the module resolves a relative dependency. Bun also retains its existing query handling for CommonJS `require()` specifiers.
+
 ## Module systems
 
 Bun has native support for CommonJS and ES modules. ES modules are the recommended module format for new projects, but CommonJS modules are still widely used in the Node.js ecosystem.

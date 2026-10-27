@@ -1,0 +1,2 @@
+a67dacc0 WIP webp: vectorisable loop filters and colour conversion (with temporary timers)
+2d847eca webp: add the lossy decoder

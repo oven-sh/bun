@@ -173,30 +173,27 @@ fn parse(input: &[u8], want_headers: bool) -> Result<Parsed<'_>, DecodeError> {
         .as_ref()
         .is_some_and(|vp8x| vp8x.flags & ANIMATION_FLAG != 0);
     let canvas = vp8x.as_ref().map(|vp8x| (vp8x.width, vp8x.height));
-    if animated && want_headers {
-        // libwebp goes on parsing, and turns success and a lack of data into this.
-        return match parse_image(data, want_headers, riff_size, canvas) {
-            Ok(_) | Err(DecodeError::NotEnoughData) => Err(DecodeError::UnsupportedFeature),
-            Err(error) => Err(error),
-        };
-    }
-    match (canvas, want_headers) {
-        (Some((width, height)), false) if animated => Ok(Parsed {
+    // Without `want_headers` the `VP8X` chunk can answer alone.
+    let from_canvas = canvas
+        .filter(|_| !want_headers)
+        .map(|(width, height)| Parsed {
             width,
             height,
             headers: None,
-        }),
-        (Some((width, height)), false) => {
-            match parse_image(data, want_headers, riff_size, canvas) {
-                Err(DecodeError::NotEnoughData) => Ok(Parsed {
-                    width,
-                    height,
-                    headers: None,
-                }),
-                result => result,
-            }
+        });
+    if animated && let Some(parsed) = from_canvas {
+        return Ok(parsed);
+    }
+    match (
+        parse_image(data, want_headers, riff_size, canvas),
+        from_canvas,
+    ) {
+        // libwebp parses an animation to the end before it refuses it.
+        (Ok(_) | Err(DecodeError::NotEnoughData), _) if animated => {
+            Err(DecodeError::UnsupportedFeature)
         }
-        _ => parse_image(data, want_headers, riff_size, canvas),
+        (Err(DecodeError::NotEnoughData), Some(parsed)) => Ok(parsed),
+        (result, _) => result,
     }
 }
 

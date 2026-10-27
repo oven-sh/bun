@@ -11,7 +11,14 @@ pub fn assemble(
     icc: Option<&[u8]>,
 ) -> Result<Vec<u8>, crate::EncodeError> {
     crate::container::assemble(
-        &crate::container::Image { width, height, bitstream, is_lossless, alpha, lossless_has_alpha },
+        &crate::container::Image {
+            width,
+            height,
+            bitstream,
+            is_lossless,
+            alpha,
+            lossless_has_alpha,
+        },
         icc,
     )
 }

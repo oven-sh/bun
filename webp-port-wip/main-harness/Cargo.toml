@@ -1,0 +1,17 @@
+[package]
+name = "webp-diff"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+bun_webp = { path = "/root/repos/oven-sh/bun/src/webp" }
+
+# Optimised, but an integer overflow or a failed debug_assert! in bun_webp still aborts.
+[profile.release]
+opt-level = 3
+overflow-checks = true
+debug-assertions = true
+debug = 1
+panic = "abort"

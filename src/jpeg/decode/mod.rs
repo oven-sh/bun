@@ -124,7 +124,6 @@ pub struct Decoder<'a> {
     pub(crate) total_imcu_rows: u32,
 
     pub(crate) mcus_per_row: u32,
-    pub(crate) mcu_rows_in_scan: u32,
     pub(crate) blocks_in_mcu: usize,
     /// For each block of an MCU, the index into `cur_comp` of its component.
     pub(crate) mcu_membership: [u8; MAX_BLOCKS_IN_MCU],
@@ -180,7 +179,6 @@ impl<'a> Decoder<'a> {
             max_v_samp: 1,
             total_imcu_rows: 0,
             mcus_per_row: 0,
-            mcu_rows_in_scan: 0,
             blocks_in_mcu: 0,
             mcu_membership: [0; MAX_BLOCKS_IN_MCU],
         };
@@ -345,7 +343,6 @@ impl<'a> Decoder<'a> {
             let ci = self.scan_comp_index(0)?;
             let comp = self.comps.get_mut(ci).ok_or(Error::Internal)?;
             self.mcus_per_row = comp.width_in_blocks;
-            self.mcu_rows_in_scan = comp.height_in_blocks;
             comp.mcu_width = 1;
             comp.mcu_height = 1;
             comp.last_col_width = 1;
@@ -358,7 +355,6 @@ impl<'a> Decoder<'a> {
             self.mcu_membership = [0; MAX_BLOCKS_IN_MCU];
         } else {
             self.mcus_per_row = div_round_up(self.width, self.max_h_samp * data_unit);
-            self.mcu_rows_in_scan = div_round_up(self.height, self.max_v_samp * data_unit);
             self.blocks_in_mcu = 0;
             for i in 0..self.comps_in_scan {
                 let ci = self.scan_comp_index(i)?;

@@ -141,7 +141,7 @@ describe("bundler", () => {
 
         // AsyncEntryPoint.ts
         async function AsyncEntryPoint() {
-          await (init_BaseElement() || Promise.resolve().then(() => init_BaseElement()));
+          await (init_BaseElement() || Promise.resolve().then(init_BaseElement));
           console.log("Launching AsyncEntryPoint", BaseElement());
         }
 
@@ -149,7 +149,7 @@ describe("bundler", () => {
         await Promise.resolve();
         AsyncEntryPoint();
 
-        //# debugId=721434D005877A6764756E2164756E21
+        //# debugId=A82C952F74419D1164756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

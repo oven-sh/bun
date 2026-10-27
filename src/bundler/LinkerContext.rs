@@ -5210,27 +5210,6 @@ impl InsideWrapperPrefix {
             return;
         }
 
-        let promise_method = |name: &'static [u8], argument: Expr| {
-            let mut args = bun_ast::ExprNodeList::init_capacity(1);
-            args.append_assume_capacity(argument);
-            Expr::init(
-                E::Call {
-                    target: Expr::init(
-                        E::Dot {
-                            target: Expr::init_identifier(promise_ref, Loc::EMPTY),
-                            name: name.into(),
-                            name_loc: Loc::EMPTY,
-                            ..Default::default()
-                        },
-                        Loc::EMPTY,
-                    ),
-                    args,
-                    ..Default::default()
-                },
-                Loc::EMPTY,
-            )
-        };
-
         let last_sync = self
             .joined
             .iter()
@@ -5242,7 +5221,7 @@ impl InsideWrapperPrefix {
                 Joined::Async(wrapper_ref, loc) => {
                     awaited.push(init_call(wrapper_ref, loc));
                     if last_sync.is_some_and(|last| index < last) {
-                        // `Promise.resolve(init_a()).catch(() => {})`: a later statement can throw.
+                        // `init_a()?.catch(() => {})`: a later statement can throw. A re-entered `init_a()` is `undefined`.
                         let mut handler = bun_ast::ExprNodeList::init_capacity(1);
                         handler.append_assume_capacity(Expr::init(E::Arrow::default(), Loc::EMPTY));
                         out.push(Stmt::alloc(
@@ -5251,17 +5230,16 @@ impl InsideWrapperPrefix {
                                     E::Call {
                                         target: Expr::init(
                                             E::Dot {
-                                                target: promise_method(
-                                                    b"resolve",
-                                                    init_call(wrapper_ref, loc),
-                                                ),
+                                                target: init_call(wrapper_ref, loc),
                                                 name: b"catch".into(),
                                                 name_loc: Loc::EMPTY,
+                                                optional_chain: Some(bun_ast::OptionalChain::Start),
                                                 ..Default::default()
                                             },
                                             Loc::EMPTY,
                                         ),
                                         args: handler,
+                                        optional_chain: Some(bun_ast::OptionalChain::Continuation),
                                         ..Default::default()
                                     },
                                     Loc::EMPTY,
@@ -5279,15 +5257,29 @@ impl InsideWrapperPrefix {
         let value = if awaited.len() == 1 {
             awaited.slice()[0]
         } else {
-            promise_method(
-                b"all",
-                Expr::init(
-                    E::Array {
-                        items: awaited,
-                        ..Default::default()
-                    },
-                    Loc::EMPTY,
-                ),
+            let mut args = bun_ast::ExprNodeList::init_capacity(1);
+            args.append_assume_capacity(Expr::init(
+                E::Array {
+                    items: awaited,
+                    ..Default::default()
+                },
+                Loc::EMPTY,
+            ));
+            Expr::init(
+                E::Call {
+                    target: Expr::init(
+                        E::Dot {
+                            target: Expr::init_identifier(promise_ref, Loc::EMPTY),
+                            name: b"all".into(),
+                            name_loc: Loc::EMPTY,
+                            ..Default::default()
+                        },
+                        Loc::EMPTY,
+                    ),
+                    args,
+                    ..Default::default()
+                },
+                Loc::EMPTY,
             )
         };
         out.push(Stmt::alloc(

@@ -2782,13 +2782,9 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                     self.print(b"||");
                     self.print_space();
-                    self.print(b"Promise.resolve()");
-                    let _ = self.print_dot_then_prefix();
-                    self.print_space_before_identifier();
+                    self.print(b"Promise.resolve().then(");
                     self.print_symbol(meta.wrapper_ref);
-                    self.print(b"()");
-                    self.print_dot_then_suffix();
-                    self.print(b")");
+                    self.print(b"))");
                     if meta.exports_ref.is_valid() {
                         let _ = self.print_dot_then_prefix();
                         self.print_space_before_identifier();

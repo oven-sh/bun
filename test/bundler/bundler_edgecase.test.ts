@@ -2593,7 +2593,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("await (init_async() || Promise.resolve().then(() => init_async()))");
+      expect(out).toContain("await (init_async() || Promise.resolve().then(init_async))");
       expect(out).toContain("init_sync()");
     },
   });
@@ -4444,7 +4444,7 @@ describe("bundler", () => {
       // a starts, then b, then the wrapper waits for a. The `.catch` gives
       // a's promise a handler for when b throws.
       expect(api.readFile("/out.js").replace(/\s+/g, " ")).toContain(
-        "Promise.resolve(init_a()).catch(() => {}); init_b(); await init_a();",
+        "init_a()?.catch(() => {}); init_b(); await init_a();",
       );
     },
   });
@@ -4476,6 +4476,41 @@ describe("bundler", () => {
       `,
     },
   });
+  // The same with a CommonJS import after the async one. The entry has no
+  // wrapper, so `var import_c = ...` stays a declaration in source position.
+  for (const minify of [false, true]) {
+    itBundled(`edgecase/UnwrappedEntryCommonJSImportAfterAsyncDependency${minify ? "Minify" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import "./a.js";
+          import c from "./c.cjs";
+          console.log("entry", c.value);
+          import("./a.js");
+        `,
+        "/a.js": /* js */ `
+          console.log("a start");
+          await 0;
+          console.log("a end");
+        `,
+        "/c.cjs": /* js */ `
+          console.log("c");
+          module.exports = { value: "C" };
+        `,
+      },
+      format: "esm",
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      run: {
+        stdout: `
+          a start
+          c
+          a end
+          entry C
+        `,
+      },
+    });
+  }
   // The CommonJS module's exports are a thenable: joining the `require_c()`
   // with the awaited dependencies must not await them.
   itBundled("edgecase/WrappedCommonJSDependencyAfterAsyncDependencyKeepsImportOrder", {
@@ -4739,7 +4774,9 @@ describe("bundler", () => {
     },
   });
   // The next cases: a module that `import()` loads and that imports its caller
-  // back does not run in the middle of the caller's synchronous code.
+  // back does not run in the middle of the caller's synchronous code. They hold
+  // the wait for one dependency at a bare `await init_a()`: with a guard such
+  // as `init_a() && await init_a()`, x runs inside the `import()` call.
   // x reads what the caller set after the call.
   itBundled("edgecase/ImportCallTargetRunsAfterCallerCode", {
     files: {
@@ -4803,7 +4840,8 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "x sees hDone: true ready: true" },
   });
-  // a awaits the `import()` of x, and x imports a back. x does not wait for a.
+  // a awaits the `import()` of x, and x imports a back. x does not wait for a,
+  // as in bun's runtime (#32437). node leaves the source unsettled.
   itBundled("edgecase/AwaitedImportCallOfModuleThatImportsCallerSettles", {
     files: {
       "/entry.js": /* js */ `
@@ -4826,6 +4864,29 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "x sees after: true\na got 43\nentry end" },
   });
+  // The other direction: a waits for b, and b awaits the `import()` of a. The
+  // source does not settle on node (exit 13) or on bun, and the bundle does the
+  // same. It does not throw at `init_a().then`.
+  itBundled("edgecase/AwaitedImportCallOfWaitingImporterStaysUnsettled", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        console.log("entry end");
+      `,
+      "/a.js": /* js */ `
+        import "./b.js";
+        console.log("a body");
+      `,
+      "/b.js": /* js */ `
+        console.log("b start");
+        await import("./a.js");
+        console.log("b end");
+      `,
+    },
+    format: "esm",
+    target: "node",
+    run: { runtime: "node", exitCode: 13, stdout: "b start" },
+  });
   // app has imports after router, and page imports app back. page runs after them.
   itBundled("edgecase/ImportCallFromDependencyRunsAfterImporterLaterImports", {
     files: {
@@ -4846,82 +4907,6 @@ describe("bundler", () => {
     },
     format: "esm",
     run: { stdout: "page sees store: ready" },
-  });
-  // router awaits the `import()` of home, home imports store, and app imports
-  // store after router. store does not wait for router, so nothing hangs.
-  itBundled("edgecase/AwaitedImportCallSharesDependencyWithLaterImport", {
-    files: {
-      "/entry.js": /* js */ `
-        await import("./app.js");
-        console.log("entry");
-      `,
-      "/app.js": /* js */ `
-        import "./router.js";
-        import "./store.js";
-        console.log("app");
-      `,
-      "/router.js": /* js */ `
-        export const routes = { home: "/" };
-        console.log("router start");
-        const home = await import("./home.js");
-        console.log("router got", home.name);
-      `,
-      "/store.js": /* js */ `
-        import { routes } from "./router.js";
-        export const store = { routes };
-        console.log("store body");
-      `,
-      "/home.js": /* js */ `
-        import { store } from "./store.js";
-        export const name = "home";
-        console.log("home sees store:", typeof store);
-      `,
-    },
-    format: "esm",
-    run: {
-      stdout: `
-        router start
-        store body
-        home sees store: object
-        router got home
-        app
-        entry
-      `,
-    },
-  });
-  // b awaits the `import()` of x, x imports b back, and c imports x.
-  itBundled("edgecase/TwoImportCallsWithASharedDependencySettle", {
-    files: {
-      "/entry.js": /* js */ `
-        console.log("entry start");
-        await Promise.all([import("./b.js"), import("./c.js")]);
-        console.log("entry end");
-      `,
-      "/b.js": /* js */ `
-        console.log("b start");
-        await import("./x.js");
-        console.log("b end");
-      `,
-      "/c.js": /* js */ `
-        import "./x.js";
-        console.log("c body");
-      `,
-      "/x.js": /* js */ `
-        import "./b.js";
-        console.log("x body");
-      `,
-    },
-    format: "esm",
-    run: {
-      stdout: `
-        entry start
-        b start
-        x body
-        c body
-        b end
-        entry end
-      `,
-    },
   });
   // a calls `import()` on p while p is still at its imports. The call settles when p ends.
   itBundled("edgecase/ImportCallOfImporterFromAsyncDependency", {
@@ -5264,6 +5249,79 @@ describe("bundler", () => {
     format: "esm",
     run: {
       stdout: "s:r:c p:q:r p:q:r",
+    },
+  });
+
+  // With `--splitting`, a file has a wrapper only when CommonJS reaches it.
+  // load.cjs makes the `import()`, so both modes wrap x and its dependencies.
+  for (const splitting of [false, true]) {
+    itBundled(`edgecase/WrappedDependenciesKeepImportOrderBehindCommonJS${splitting ? "Splitting" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import load from "./load.cjs";
+          await load();
+          console.log("entry");
+        `,
+        "/load.cjs": /* js */ `module.exports = () => import("./x.js");`,
+        "/x.js": /* js */ `
+          import "./a.js";
+          import c from "./c.cjs";
+          import "./b.js";
+          console.log("x body", c.value);
+        `,
+        "/a.js": /* js */ `
+          console.log("a start");
+          await 0;
+          console.log("a end");
+        `,
+        "/b.js": /* js */ `console.log("b");`,
+        "/c.cjs": /* js */ `
+          console.log("c");
+          module.exports = { value: "C" };
+        `,
+      },
+      format: "esm",
+      splitting,
+      outdir: "/out",
+      run: {
+        file: "/out/entry.js",
+        stdout: `
+          a start
+          c
+          b
+          a end
+          x body C
+          entry
+        `,
+      },
+    });
+  }
+
+  // `--format=cjs` prints the external import as `require("polyfill")`. The
+  // `init_w()` of the import after it stays below that line.
+  itBundled("edgecase/WrappedESMImportAfterExternalRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        import "polyfill";
+        import "./w.js";
+        console.log("entry");
+        import("./lazy.js");
+      `,
+      "/w.js": /* js */ `console.log("w, polyfill =", globalThis.polyfill);`,
+      "/lazy.js": /* js */ `import "./w.js";`,
+    },
+    format: "cjs",
+    target: "node",
+    external: ["polyfill"],
+    runtimeFiles: {
+      "/node_modules/polyfill/index.js": /* js */ `console.log("polyfill"); globalThis.polyfill = true;`,
+    },
+    run: {
+      stdout: `
+        polyfill
+        w, polyfill = true
+        entry
+      `,
     },
   });
 

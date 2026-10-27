@@ -1054,3 +1054,201 @@ describe.concurrent("Zstandard HTTP compression", () => {
     expect(echoed).toBe(testString);
   });
 });
+
+// The compressor is a port of zstd 1.5.7, and gives the same bytes. The expected values are from the C library.
+describe("the output is that of zstd 1.5.7", () => {
+  // Words, copies of earlier parts at all distances, noise and runs: something for every part of the compressor.
+  function sample(size: number, seed: number) {
+    let state = seed >>> 0 || 1;
+    const next = () => {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      return (state >>>= 0);
+    };
+    const words = ["function ", "return ", "const ", "zstd", "\n  ", "{", "}", "(", ");", "await ", "=> ", "length", "0"];
+    const out = new Uint8Array(size);
+    let at = 0;
+    while (at < size) {
+      const kind = next() % 16;
+      if (kind < 8) {
+        for (const c of words[next() % words.length]) if (at < size) out[at++] = c.charCodeAt(0);
+      } else if (kind < 13 && at > 8) {
+        const distance = 1 + (next() % Math.min(at, 1 << (next() % 20)));
+        for (let n = 3 + (next() % (1 << (next() % 10))); n > 0 && at < size; n--, at++) out[at] = out[at - distance];
+      } else if (kind < 15) {
+        for (let n = 1 + (next() % 40); n > 0 && at < size; n--) out[at++] = next();
+      } else {
+        const byte = next();
+        for (let n = 1 + (next() % 2000); n > 0 && at < size; n--) out[at++] = byte;
+      }
+    }
+    return out;
+  }
+  const digest = (bytes: Uint8Array) => `${bytes.length} ${Bun.hash.xxHash64(bytes).toString(16)}`;
+  const c = zlib.constants;
+
+  it("at every level", () => {
+    const large = sample(400_000, 1);
+    const small = sample(3_000, 2);
+    const results: Record<string, string> = {};
+    for (let level = 1; level <= 22; level++) {
+      results[level] = `${digest(zstdCompressSync(large, { level }))}, ${digest(zstdCompressSync(small, { level }))}`;
+    }
+    for (const level of [-1, -7, -100]) {
+      const params = { [c.ZSTD_c_compressionLevel]: level };
+      results[level] = `${digest(zlib.zstdCompressSync(large, { params }))}, ${digest(zlib.zstdCompressSync(small, { params }))}`;
+    }
+    expect(results).toMatchInlineSnapshot(`
+      {
+        "-1": "23477 2ffb3d0f3737833b, 382 c2a4c99592694597",
+        "-100": "79898 7ffbd56b19ee394, 1100 ae3344236a56deb9",
+        "-7": "29376 651fda629ac959c4, 481 55bfd66062e7c9ad",
+        "1": "24480 542ab87e1aa5fc9d, 396 107a4b7a04d25d37",
+        "10": "22592 19e5d2e09fe1ccad, 363 808b964648b85372",
+        "11": "22525 e0091e2608de2f00, 365 d83d5f8947b95fc1",
+        "12": "22525 e0091e2608de2f00, 365 dd249e23858fad1",
+        "13": "22510 f89e05ebc8ca7534, 358 eb0fe5ebe5118657",
+        "14": "22503 56827c33f86de3ae, 358 2f482857ef5c63f0",
+        "15": "22494 cc870ca463c122df, 356 7ceb5d984fe44594",
+        "16": "22635 c4a94ba8858c12d5, 355 25870ac97fe974",
+        "17": "22416 9a7fd5afd172f89b, 355 eede2d4cbdcf2340",
+        "18": "22010 8c967ec9b15ed62c, 353 5fffa6db6ed0ebda",
+        "19": "21820 967a4e946bf30696, 353 5fffa6db6ed0ebda",
+        "2": "23951 df37d7c5becb22d8, 384 7f01926a9aa9a46b",
+        "20": "21820 967a4e946bf30696, 353 478b55fe951a5684",
+        "21": "21735 ca28a8b1ffaeb4d9, 353 478b55fe951a5684",
+        "22": "21651 e9a29d4a60784b2c, 354 50650b6ef5b2b80a",
+        "3": "23931 de5a0598c57be84b, 382 c2a4c99592694597",
+        "4": "23923 85d64ea007fb86d3, 369 312f9dca641ef386",
+        "5": "23732 be13ecafaf15c817, 369 f3efffcbd8524307",
+        "6": "22720 47e610d53a3c1546, 364 6175591ab882c5a6",
+        "7": "22749 8176e71ad03765e7, 361 c028bca7b43936ae",
+        "8": "22683 96b450c8ed9a4a06, 361 c028bca7b43936ae",
+        "9": "22683 96b450c8ed9a4a06, 363 808b964648b85372",
+      }
+    `);
+  });
+
+  it("with parameters", () => {
+    const data = sample(700_000, 3);
+    const cases: Record<string, Record<number, number>> = {
+      checksum: { [c.ZSTD_c_checksumFlag]: 1 },
+      noContentSize: { [c.ZSTD_c_contentSizeFlag]: 0 },
+      smallWindow: { [c.ZSTD_c_windowLog]: 12, [c.ZSTD_c_compressionLevel]: 7 },
+      hashChain: { [c.ZSTD_c_strategy]: c.ZSTD_lazy2, [c.ZSTD_c_windowLog]: 14, [c.ZSTD_c_searchLog]: 6 },
+      rows: { [c.ZSTD_c_strategy]: c.ZSTD_greedy, [c.ZSTD_c_searchLog]: 6, [c.ZSTD_c_minMatch]: 6 },
+      binaryTree: { [c.ZSTD_c_strategy]: c.ZSTD_btlazy2, [c.ZSTD_c_chainLog]: 14, [c.ZSTD_c_hashLog]: 13 },
+      optimal: { [c.ZSTD_c_strategy]: c.ZSTD_btopt, [c.ZSTD_c_targetLength]: 20, [c.ZSTD_c_minMatch]: 3 },
+      longDistance: { [c.ZSTD_c_enableLongDistanceMatching]: 1, [c.ZSTD_c_windowLog]: 20 },
+      longDistanceOptimal: {
+        [c.ZSTD_c_enableLongDistanceMatching]: 1,
+        [c.ZSTD_c_compressionLevel]: 16,
+        [c.ZSTD_c_ldmMinMatch]: 16,
+        [c.ZSTD_c_ldmHashLog]: 12,
+        [c.ZSTD_c_ldmBucketSizeLog]: 2,
+        [c.ZSTD_c_ldmHashRateLog]: 3,
+      },
+      // ZSTD_c_targetCBlockSize
+      smallBlocks: { 130: 2000, [c.ZSTD_c_compressionLevel]: 5 },
+      // ZSTD_c_format: ZSTD_f_zstd1_magicless
+      magicless: { 10: 1 },
+      workers: { [c.ZSTD_c_nbWorkers]: 2, [c.ZSTD_c_jobSize]: 1, [c.ZSTD_c_checksumFlag]: 1 },
+      workersOverlap: { [c.ZSTD_c_nbWorkers]: 3, [c.ZSTD_c_jobSize]: 1, [c.ZSTD_c_overlapLog]: 9, [c.ZSTD_c_windowLog]: 17 },
+      workersLongDistance: {
+        [c.ZSTD_c_nbWorkers]: 2,
+        [c.ZSTD_c_jobSize]: 1,
+        [c.ZSTD_c_enableLongDistanceMatching]: 1,
+        [c.ZSTD_c_windowLog]: 18,
+      },
+    };
+    const results: Record<string, string> = {};
+    for (const [name, params] of Object.entries(cases)) {
+      const compressed = zlib.zstdCompressSync(data, { params });
+      results[name] = digest(compressed);
+      if (name !== "magicless") expect(zlib.zstdDecompressSync(compressed).equals(data)).toBe(true);
+    }
+    expect(results).toMatchInlineSnapshot(`
+      {
+        "binaryTree": "39948 1232d8597f5c6",
+        "checksum": "41241 3cd85e71c12cf382",
+        "hashChain": "43217 7356b4e36e4bf4d8",
+        "longDistance": "41055 eedc98c3e261bec7",
+        "longDistanceOptimal": "38970 b85121583248455b",
+        "magicless": "41233 5ee803ef2ad12e33",
+        "noContentSize": "41234 b8ffb3bc3aef5fff",
+        "optimal": "38610 6d0c3f5689a3abe9",
+        "rows": "40635 26480c2e116c84d5",
+        "smallBlocks": "41058 4ef9d31b35c0acf8",
+        "smallWindow": "47463 95833be523748c4a",
+        "workers": "42269 b08e46380ba74997",
+        "workersLongDistance": "42141 793c24a764fcda50",
+        "workersOverlap": "42697 e672bcac52118c4d",
+      }
+    `);
+  });
+
+  it("with a dictionary", () => {
+    const dictionary = sample(20_000, 4);
+    const results: Record<string, string> = {};
+    for (const level of [-3, 1, 3, 5, 8, 13, 16, 19]) {
+      // Short input searches the tables of the dictionary, long input starts from a copy of them.
+      for (const size of [5_000, 200_000]) {
+        const data = new Uint8Array(size);
+        data.set(sample(size, 5));
+        data.set(dictionary.subarray(3_000, 6_000), 1_000);
+        const options = { dictionary, params: { [c.ZSTD_c_compressionLevel]: level }, pledgedSrcSize: size };
+        const compressed = zlib.zstdCompressSync(data, options);
+        results[`${level}, ${size}`] = digest(compressed);
+        expect(zlib.zstdDecompressSync(compressed, { dictionary }).equals(data)).toBe(true);
+      }
+    }
+    expect(results).toMatchInlineSnapshot(`
+      {
+        "-3, 200000": "11919 4646c7adfd3c7bfc",
+        "-3, 5000": "99 bcf9a6b6959f244",
+        "1, 200000": "11393 8ca74189c4dd8590",
+        "1, 5000": "85 5d94a445fbc1debf",
+        "13, 200000": "10612 72de0a04d3ab1dcc",
+        "13, 5000": "81 cf05da8002ffcca1",
+        "16, 200000": "10283 7e7f3e5510d0205b",
+        "16, 5000": "76 83586779a3533541",
+        "19, 200000": "10258 ecf6c3f4322413b5",
+        "19, 5000": "76 83586779a3533541",
+        "3, 200000": "11130 17e414f5ae34a715",
+        "3, 5000": "86 9b1f540d55f03dd",
+        "5, 200000": "10837 6628de069ef68382",
+        "5, 5000": "81 e436c64b13b807ee",
+        "8, 200000": "10482 8c6f6c78776fc48e",
+        "8, 5000": "78 ba67e3347e65a4a8",
+      }
+    `);
+  });
+
+  it("in a stream with flushes", async () => {
+    const data = sample(600_000, 6);
+    const results: Record<string, string> = {};
+    for (const level of [1, 6, 12, 17]) {
+      const stream = zlib.createZstdCompress({ params: { [c.ZSTD_c_compressionLevel]: level } });
+      const chunks: Buffer[] = [];
+      stream.on("data", chunk => chunks.push(chunk));
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      stream.on("end", resolve).on("error", reject);
+      for (let at = 0, n = 1; at < data.length; at += n, n = (n * 7) % 90_001) {
+        stream.write(data.subarray(at, at + n));
+        if (n % 3 === 0) stream.flush();
+      }
+      stream.end();
+      await promise;
+      results[level] = digest(Buffer.concat(chunks));
+    }
+    expect(results).toMatchInlineSnapshot(`
+      {
+        "1": "34466 1bd006842da7fff7",
+        "12": "31194 38b6be8e301dd3fc",
+        "17": "31048 2bcbaf13b8ae7446",
+        "6": "31602 54d0ef9110ac7561",
+      }
+    `);
+  });
+});

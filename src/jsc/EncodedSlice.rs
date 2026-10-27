@@ -29,7 +29,7 @@ unsafe extern "C" {
     safe fn EncodedSlice__toDOMExceptionInstance(
         this: &EncodedSlice,
         global: &JSGlobalObject,
-        code: u8,
+        code: DOMExceptionCode,
     ) -> JSValue;
     safe fn EncodedSlice__toValueGC(this: &EncodedSlice, global: &JSGlobalObject) -> JSValue;
     // EncodedSlice__toExternalValue: use the generated `cpp::` re-export (canonical signature).
@@ -92,7 +92,7 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
         global: &JSGlobalObject,
         code: DOMExceptionCode,
     ) -> JSValue {
-        EncodedSlice__toDOMExceptionInstance(self, global, code as u8)
+        EncodedSlice__toDOMExceptionInstance(self, global, code)
     }
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         EncodedSlice__toValueGC(self, global)

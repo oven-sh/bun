@@ -3777,6 +3777,8 @@ JSC::EncodedJSValue EncodedSlice__external(const EncodedSlice* arg0, JSC::JSGlob
     }
 }
 
+static_assert(sizeof(WebCore::ExceptionCode) == 1, "bun_jsc::DOMExceptionCode is #[repr(u8)]");
+static_assert(WebCore::TypeMismatchError == 13, "bun_jsc::DOMExceptionCode::TypeMismatchError");
 JSC::EncodedJSValue EncodedSlice__toDOMExceptionInstance(const EncodedSlice* str, JSC::JSGlobalObject* globalObject, WebCore::ExceptionCode code)
 {
     return JSValue::encode(createDOMException(globalObject, code, toStringCopy(*str)));

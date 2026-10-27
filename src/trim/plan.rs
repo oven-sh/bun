@@ -5,7 +5,6 @@ use core::mem::offset_of;
 use bun_exe_format::builtins::Image;
 use bun_exe_format::image::KnownSection;
 use bun_exe_format::section::find_known_section;
-use bun_options_types::trim::TrimRequest;
 use bun_removable_features::{
     Feature, FeatureSet, RemovableFeatureState, Removal, RuntimeRequirement,
 };
@@ -19,6 +18,8 @@ use crate::model::{
     TrimInput, TrimPlan, TrimTable, UsedFeatures, UsedLocales, WantedLocaleGroups,
 };
 use crate::table::read_trim_table;
+
+const STARTS_WORKERS: Feature = Feature::WorkerConstructor;
 
 pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPlan, TrimError> {
     if !input.removes_anything() {
@@ -53,9 +54,11 @@ pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPla
         input.request.locales.as_deref(),
         &table.icu_languages,
     )?;
-    let runs_library_text = is_template || can_run_library_text(input.used, &decision.requirements);
+    let runs_library_text = is_template
+        || can_run_library_text(input.used, &decision.requirements)
+        || can_start_worker_without_image(input.used, &decision);
     let mut plan = plan_table(&table, decision, &wanted, runs_library_text);
-    plan.refused_entry_points = find_refused_entry_points(&table, &plan.decision, input.request);
+    plan.refused_entry_points = find_refused_entry_points(&table, &plan.decision);
     if !is_template {
         return Ok(plan);
     }
@@ -106,6 +109,15 @@ fn can_run_library_text(used: &UsedFeatures, requirements: &[OptionRequirement])
             .iter()
             .any(|unseen| unseen.cause.admits_library_text())
         || requirements.iter().any(runs_unseen_code)
+}
+
+// A Worker that starts from a text that the build has not compiled gets a VM without the image, where nothing that a program can enter is removed (`runs_worker_of_text_apart` in src/jsc/compiled_program.rs). Its realm holds nothing compiled and runs each built-in module from its text.
+fn can_start_worker_without_image(used: &UsedFeatures, decision: &Decision) -> bool {
+    let has_compiled_code_of_each = !used.starts_workers_from_unseen_code && used.causes.is_empty();
+    let removed = decision.removed();
+    used.uses(STARTS_WORKERS)
+        && !has_compiled_code_of_each
+        && RuntimeRequirement::WholeRuntime.is_available_with(|feature| removed.contains(feature))
 }
 
 pub fn read_feature_edges(executable: &mut Image<'_>) -> Result<FeatureEdges, TrimError> {
@@ -182,17 +194,9 @@ pub(crate) fn plan_table(
     }
 }
 
-fn find_refused_entry_points(
-    table: &TrimTable,
-    decision: &Decision,
-    request: &TrimRequest,
-) -> Vec<RefusedEntryPoint> {
+fn find_refused_entry_points(table: &TrimTable, decision: &Decision) -> Vec<RefusedEntryPoint> {
     let removed = decision.removed();
     let is_removed = |set: SetIndex| table.sets[usize::from(set.0)].is_subset_of(&removed);
-    // The request takes a feature whoever uses it, so that it is gone says nothing about who names what.
-    let mut unused = removed;
-    unused.subtract(&decision.requested);
-    unused.subtract(&FeatureSet::from_features(&request.remove_internal));
     table
         .entry_point_needs
         .iter()
@@ -200,7 +204,7 @@ fn find_refused_entry_points(
         .filter_map(|entry| {
             Some(RefusedEntryPoint {
                 range: entry.range,
-                named_feature: find_feature_that_refuses(entry, &table.sets, decision, &unused)?,
+                named_feature: find_feature_that_refuses(entry, &table.sets, decision)?,
             })
         })
         .collect()
@@ -213,9 +217,9 @@ fn find_feature_that_refuses(
     entry: &EntryPointNeeds,
     sets: &[FeatureSet],
     decision: &Decision,
-    unused: &FeatureSet,
 ) -> Option<Feature> {
-    let is_unused = |feature: &Feature| unused.contains(*feature);
+    // The request takes a feature whoever uses it, so that it is gone says nothing about who names what.
+    let is_unused = |feature: &Feature| decision.unretained.contains(*feature);
     let find_unused = |set: Option<SetIndex>| sets[usize::from(set?.0)].iter().find(is_unused);
     let stays_for_others = |feature: Feature| {
         matches!(
@@ -301,6 +305,7 @@ fn plan_icu_package(
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use bun_exe_format::image::AddressRange;
+    use bun_options_types::trim::TrimRequest;
     use bun_removable_features::{FEATURES_HASH, Removal, TrimFeature};
 
     use super::*;
@@ -652,6 +657,27 @@ mod tests {
         let planned = plan_program_using(&used, FeatureEdges::default(), &internally);
         assert_eq!(planned.removal_of(Feature::Ffi), Removal::Unused);
         assert!(planned.refused_entry_points.is_empty());
+    }
+
+    #[test]
+    fn entry_point_is_refused_where_the_request_removes_what_nothing_uses() {
+        let used = [Feature::Sql, Feature::Sqlite];
+        let refused = |request: &TrimRequest| {
+            plan_program_using(&used, FeatureEdges::default(), request).refused_entry_points
+        };
+        let by_use = refused(&removing_unused());
+        assert_eq!(by_use.len(), 1);
+        assert_eq!(by_use[0].named_feature, Feature::Ffi);
+        let by_name = TrimRequest {
+            remove: vec![TrimFeature::Ffi],
+            ..removing_unused()
+        };
+        assert_eq!(refused(&by_name), by_use);
+        let internally = TrimRequest {
+            remove_internal: vec![Feature::Ffi],
+            ..removing_unused()
+        };
+        assert_eq!(refused(&internally), by_use);
     }
 
     #[test]
@@ -1087,6 +1113,33 @@ mod tests {
             assert!(!offsets(&named).contains(&0x100) && !offsets(&named).contains(&0x110));
             assert!(offsets(&reached).contains(&0x110));
         }
+    }
+
+    #[test]
+    fn worker_of_unseen_code_keeps_module_texts() {
+        let keeps_texts = |used: &UsedFeatures, request: &TrimRequest| {
+            let offsets = planned_offsets(used, &ExecutableSettings::default(), request);
+            !offsets.contains(&0x100) && !offsets.contains(&0x110)
+        };
+        let whole = TrimRequest::default();
+        let starting = UsedFeatures::from_features(&[Feature::WorkerConstructor]);
+        assert!(keeps_texts(&starting, &whole));
+        assert!(!keeps_texts(&starting, &removing_unused()));
+        assert!(!keeps_texts(&UsedFeatures::from_features(&[]), &whole));
+
+        let compiled = UsedFeatures {
+            starts_workers_from_unseen_code: false,
+            ..starting
+        };
+        assert!(!keeps_texts(&compiled, &whole));
+        let loading_by_name = UsedFeatures {
+            causes: vec![UnseenCode {
+                cause: UnseenCodeCause::LoadsModuleByName,
+                witness: None,
+            }],
+            ..compiled
+        };
+        assert!(keeps_texts(&loading_by_name, &whole));
     }
 
     #[test]

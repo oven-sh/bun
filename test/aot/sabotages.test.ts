@@ -4,6 +4,8 @@
 // conditions under which it may change the code. An ordinary build holds
 // none of it. `bun compile --aot-list=registry` lists the names. For each name the table below has the programs that must notice, and this test passes only if
 // AT LEAST ONE RUN OF THEM DIFFERS FROM PLAIN BUN OR DIES. A sabotage that nothing sees fails here, and so does a name that the table lacks: each says which program is still to be written.
+// A compiler that has learned more may no longer do to a program what the sabotage breaks. Each program of the table that sees nothing any more has a line of its own, `SABOTAGE <name>: NOT NOTICED BY <program>`,
+// and the names that a single program is left to notice are listed at the end: those want another program before the last one goes.
 // A run that notices has its control: the same program in the same environment without the sabotage, as plain Bun.
 //
 //   bun test test/aot/sabotages                          all
@@ -217,10 +219,12 @@ const noticedBy: Record<string, Row | Row[]> = {
     "typed/functionAbove-object-reads-aWriterOnOneTurn-testedBehind-inAClosure",
     "untyped/functionAbove-object-reads-aWriterOnOneTurn-testedBehind-inAClosure",
   ),
+  // The writer has to stay somebody else: one that the compiler follows and copies into the loop has become a store of the loop's own.
   CarriedVariablesAreWrittenByOthers: ofFamily(
     "variables-of-enclosing-code-in-loops",
-    "typed/moduleLet-whole-storesThenReads-aWriterUnderAProxy-asLongAsTheTurnSays-moduleLoop",
-    "untyped/moduleVar-text-readsOnBothSides-aWriterUnderAProxy-asLongAsTheTurnSays-loop",
+    "typed/moduleLet-whole-storesThenReads-aWriterUnderTextMadeAtRunTime-overAList-handlerInALoop",
+    "untyped/moduleLet-whole-storesThenReads-aWriterUnderTextMadeAtRunTime-overAList-whileLoop",
+    "typed/functionAbove-list-storesThenReads-aWriterUnderANative-testedBehind-once",
   ),
   DelayedStoresAreLeftOut: ofFamily(
     "variables-of-enclosing-code-in-loops",
@@ -294,7 +298,12 @@ const wanted = process.env.AOT_SABOTAGE ?? "";
 
 describe.skipIf(!listed)("compile/aot/sabotages", () => {
   const folder = String(tempDir("aot-sabotages", {}));
-  afterAll(() => rmSync(folder, { recursive: true, force: true }));
+  const noticedByOneProgramAlone: string[] = [];
+  afterAll(() => {
+    rmSync(folder, { recursive: true, force: true });
+    if (noticedByOneProgramAlone.length)
+      console.error(`SABOTAGES THAT ONE PROGRAM ALONE NOTICES: ${noticedByOneProgramAlone.sort().join(" ")}`);
+  });
   const carrier = listed ? withoutDebugInformation() : [];
   const root = join(import.meta.dir, "programs");
   let executables = 0;
@@ -397,7 +406,10 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
                   [...flags, `--aot-sabotage=${name}`],
                   isGenerated ? asTheyAre : underCollections,
                 );
-                if (!noticed) return [];
+                if (!noticed) {
+                  console.error(`SABOTAGE ${name}: NOT NOTICED BY ${topic}/${program}`);
+                  return [];
+                }
                 expect({ path, control: await departure(path, flags, [noticed.environment]) }).toEqual({ path });
                 return [`${path} ${JSON.stringify(noticed.environment)}: ${noticed.how}`];
               }),
@@ -406,6 +418,7 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
         )
       ).flat();
       console.error(`SABOTAGE ${name}: ${seen.join(" | ") || "nobody noticed"}`);
+      if (seen.length === 1) noticedByOneProgramAlone.push(name);
       expect({ name, isNoticed: seen.length > 0 }).toEqual({ name, isNoticed: true });
     },
     1_800_000,

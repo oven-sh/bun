@@ -278,7 +278,7 @@ fn build_body_with_references(offset: usize) -> Body {
         let from_compiler = DeclaredType::from_compiler(ty(63));
         builder.convert(operand, from_compiler, IllTypedCause::None);
         builder.check(operand, ty(64), None);
-        builder.builtin(BuiltinId::GlobalThis);
+        builder.builtin(BuiltinId::GlobalThis, false);
         builder.get_module_variable(VariableId::new(80 + offset));
         builder.direct_eval(EvalScopeId::new(82 + offset), operand, operand, None, &[]);
         builder.data(DataId::new(83 + offset));
@@ -379,7 +379,7 @@ fn remap_changes_exactly_reference_words() {
 fn remap_of_body_without_references_changes_nothing() {
     let function = build_function(&[], |builder| {
         let left = builder.integer(REMAP_OFFSET as i64);
-        let right = builder.builtin(BuiltinId::GlobalThis);
+        let right = builder.builtin(BuiltinId::GlobalThis, false);
         let sum = builder.add(left, right);
         builder.return_value(Some(sum));
     });

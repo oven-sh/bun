@@ -293,7 +293,7 @@ fn builtin_references_are_dropped() {
 
     let functions = [
         build_function(&[], |builder| {
-            builder.builtin(BuiltinId::GlobalThis);
+            builder.builtin(BuiltinId::GlobalThis, false);
             builder.return_value(None);
         }),
         build_function(&[], |builder| builder.return_value(None)),

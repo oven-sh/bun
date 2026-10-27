@@ -87,6 +87,7 @@ impl<'a> ReportFixture<'a> {
                 features: Vec::new(),
                 causes: Vec::new(),
                 locales: UsedLocales::Listed(Vec::new()),
+                starts_workers_from_unseen_code: false,
             },
         }
     }

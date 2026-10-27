@@ -145,6 +145,7 @@ const HEADER_TRANSFER_ENCODING = 1 << 3;
 const HEADER_CONTENT_LENGTH = 1 << 4;
 const HEADER_TRAILER = 1 << 5;
 const HEADER_SPILLED = 1 << 6;
+const HEADER_MAP_IS_MISSING = 1 << 7;
 const HEADER_UNUSUAL = HEADER_DATE | HEADER_CONNECTION | HEADER_KEEP_ALIVE | HEADER_TRANSFER_ENCODING | HEADER_SPILLED;
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
@@ -215,6 +216,7 @@ const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const MathMin = Math.min;
 const MathFloor = Math.floor;
 const DateNow = Date.now;
@@ -2231,9 +2233,18 @@ let serverSocketSetTimeout: $Node.HttpServerSocket["setTimeout"] | undefined;
 let netSocketResume: (() => NetSocketBase) | undefined;
 let netSocketPrototype: { resume: unknown } | undefined;
 let serverSocketPrototype: object | undefined;
+// The class extends what `net.Socket` holds when it is made. Where a program has stored another class there, no short road is taken.
+function extendStoredNetSocket(ServerSocket: NodeHTTPServerSocketConstructor, StoredNetSocket: NetSocketConstructor) {
+  // Refuses what no class can extend.
+  void class extends StoredNetSocket {};
+  ObjectSetPrototypeOf(ServerSocket, StoredNetSocket);
+  ObjectSetPrototypeOf(ServerSocket.prototype, StoredNetSocket.prototype);
+  netSocketResume = undefined;
+}
+
 function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
   if (NodeHTTPServerSocket) return NodeHTTPServerSocket;
-  require("node:net");
+  const { Socket: StoredNetSocket }: { Socket: unknown } = require("node:net");
   const NetSocket = netConstructors.Socket as unknown as NetSocketConstructor;
   const NetSocketPrototype = NetSocket.prototype;
   const { getTimerDuration } = require("internal/timers");
@@ -2325,8 +2336,8 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       this._writableState.decodeStrings = true;
       this.$ownReadableState = this._readableState;
       this.$ownWritableState = this._writableState;
-      this.$writableMark = +this.writableHighWaterMark;
-      this.$readableMark = +this.readableHighWaterMark;
+      this.$writableMark = +this.$ownWritableState.highWaterMark;
+      this.$readableMark = +this.$ownReadableState.highWaterMark;
       if (IS_COMPILED_AHEAD_OF_TIME) this.$resumeUnlessFlowing = resumeUnlessFlowing;
       this.server = server;
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
@@ -2907,6 +2918,10 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
   netSocketResume = NetSocket.prototype.resume;
   netSocketPrototype = NetSocket.prototype;
   serverSocketPrototype = NodeHTTPServerSocket.prototype;
+  if (StoredNetSocket !== NetSocket) {
+    ("unlikely");
+    extendStoredNetSocket(NodeHTTPServerSocket, StoredNetSocket as NetSocketConstructor);
+  }
   return NodeHTTPServerSocket;
 }
 
@@ -3356,50 +3371,51 @@ function takesChunks(req: $Node.IncomingMessage): boolean {
   return req.httpVersionMajor! >= 1 && req.httpVersionMinor! >= 1;
 }
 
+// Walks the headers into `flat`. Answers with the bits of those that frame the response.
+function renderHeadersInto(flat: unknown[], res: $Node.ServerResponse, exchange: Exchange | undefined): number {
+  const entries = headerEntriesOf(exchange, res);
+  if (entries === undefined) return HEADER_MAP_IS_MISSING;
+  let bits = 0;
+  for (let i = 0; i < entries.length; i += 3) {
+    const key = entries[i] as string;
+    const value = entries[i + 2] as $Node.HttpHeaderValue;
+    if (key === "date") bits |= HEADER_DATE;
+    else if (key === "connection") {
+      bits |= HEADER_CONNECTION;
+      if (RE_CONN_CLOSE.test($isArray(value) ? value.join(", ") : String(value))) {
+        storeMustClose(res, exchange);
+      }
+    } else if (key === "keep-alive") bits |= HEADER_KEEP_ALIVE;
+    else if (key === "transfer-encoding") bits |= HEADER_TRANSFER_ENCODING;
+    else if (key === "content-length") bits |= HEADER_CONTENT_LENGTH;
+    pushRenderedHeader(flat, res, key, entries[i + 1] as string, value);
+  }
+  return bits;
+}
+
 function renderNativeHeaders(res: $Node.ServerResponse, exchange: Exchange | undefined): unknown[] {
   let autoHeaders = 0;
   let keepAliveSecs = 0;
+  const isItself = exchange !== undefined && exchange.response === res;
+  let bits = isItself ? exchange.headerBits : HEADER_SPILLED;
   let flat: unknown[];
-  let bits: number;
-  let hasNoMapOfHeaders = false;
-  const bitsOfExchange = exchange !== undefined && exchange.response === res ? exchange.headerBits : HEADER_SPILLED;
-  if ((bitsOfExchange & HEADER_UNUSUAL) === 0) {
+  if ((bits & HEADER_UNUSUAL) === 0) {
     // The bits of headers in the compact form say which of them frame the response: nobody walks them.
-    bits = bitsOfExchange;
     flat = flatHeadersOf(exchange!);
   } else {
-    const entries = headerEntriesOf(exchange, res);
-    hasNoMapOfHeaders = entries === undefined;
     flat = [];
-    bits = 0;
-    const entriesLength = entries === undefined ? 0 : entries.length;
-    for (let i = 0; i < entriesLength; i += 3) {
-      const key = entries![i] as string;
-      const value = entries![i + 2] as $Node.HttpHeaderValue;
-      if (key === "date") bits |= HEADER_DATE;
-      else if (key === "connection") {
-        bits |= HEADER_CONNECTION;
-        if (RE_CONN_CLOSE.test($isArray(value) ? value.join(", ") : String(value))) {
-          storeMustClose(res, exchange);
-        }
-      } else if (key === "keep-alive") bits |= HEADER_KEEP_ALIVE;
-      else if (key === "transfer-encoding") bits |= HEADER_TRANSFER_ENCODING;
-      else if (key === "content-length") bits |= HEADER_CONTENT_LENGTH;
-      pushRenderedHeader(flat, res, key, entries![i + 1] as string, value);
-    }
+    bits = renderHeadersInto(flat, res, exchange);
   }
-  const hasDate = (bits & HEADER_DATE) !== 0;
-  const hasConnection = (bits & HEADER_CONNECTION) !== 0;
-  const hasKeepAlive = (bits & HEADER_KEEP_ALIVE) !== 0;
   const hasTransferEncoding = (bits & HEADER_TRANSFER_ENCODING) !== 0;
   const hasContentLength = (bits & HEADER_CONTENT_LENGTH) !== 0;
 
-  if (res.sendDate && !hasDate) {
+  if (res.sendDate && (bits & HEADER_DATE) === 0) {
     autoHeaders |= AUTO_HEADER_DATE;
   }
 
   // The headers that frame the body are looked for in the map of headers.
-  if (hasNoMapOfHeaders) throw new TypeError("undefined is not an object (evaluating 'headers[name]')");
+  if ((bits & HEADER_MAP_IS_MISSING) !== 0)
+    throw new TypeError("undefined is not an object (evaluating 'headers[name]')");
 
   let defectiveNoBodyResponse = false;
   if (hasTransferEncoding) {
@@ -3422,10 +3438,7 @@ function renderNativeHeaders(res: $Node.ServerResponse, exchange: Exchange | und
     } else if (res._removedTE) {
       closeDelimited = true;
       storeMustClose(res, exchange);
-    } else if (
-      res._removedContLen ||
-      (exchange !== undefined && exchange.response === res ? exchange.isFrozenChunked : res[kFramingFrozenChunked])
-    ) {
+    } else if (res._removedContLen || (isItself ? exchange.isFrozenChunked : res[kFramingFrozenChunked])) {
       if ($callNoInline(takesChunks, undefined, res.req)) {
         forceChunked = true;
       } else {
@@ -3439,18 +3452,18 @@ function renderNativeHeaders(res: $Node.ServerResponse, exchange: Exchange | und
     if (res.shouldKeepAlive === false) {
       storeMustClose(res, exchange);
     }
-  } else if (!hasConnection) {
+  } else if ((bits & HEADER_CONNECTION) === 0) {
     if (
       !defectiveNoBodyResponse &&
       !closeDelimited &&
       canPersist &&
       !res.maxRequestsOnConnectionReached &&
-      (reachesShouldKeepAlive(res) ? res[kShouldKeepAlive] : res.shouldKeepAlive) !== false &&
+      (isItself && reachesShouldKeepAlive(res) ? res[kShouldKeepAlive] : res.shouldKeepAlive) !== false &&
       requestShouldKeepAlive(res.req)
     ) {
       const keepAliveTimeout = res._keepAliveTimeout;
       const maxRequestsPerSocket = res._maxRequestsPerSocket;
-      if (keepAliveTimeout && !hasKeepAlive) {
+      if (keepAliveTimeout && (bits & HEADER_KEEP_ALIVE) === 0) {
         let timeoutSecs = lastKeepAliveSecs;
         if (keepAliveTimeout !== lastKeepAliveTimeout) {
           timeoutSecs = MathFloor(keepAliveTimeout / 1000);

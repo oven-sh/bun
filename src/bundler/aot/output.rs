@@ -60,6 +60,7 @@ pub(crate) fn finish_build(
         engine,
         summary,
         further_programs,
+        starts_workers_from_unseen_code,
     } = compilation;
     let ProgramSummary {
         entry_points: entry_paths,
@@ -75,6 +76,7 @@ pub(crate) fn finish_build(
         output_files,
         engine,
         further_programs,
+        starts_workers_from_unseen_code,
         entry_points,
         root_directory: Vec::new(),
         package_names: Vec::new(),

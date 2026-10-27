@@ -388,7 +388,8 @@ impl<'a> Build<'a> {
                 provider: self.provider,
                 resolve_entry_point: &|written| resolve_entry_point(host, request.code, written),
             };
-            self.started_workers.files = find_code_that_starts_workers(files, &search);
+            (self.started_workers.files, self.started_workers.code) =
+                find_code_that_starts_workers(files, &search);
         }
         if !self.started_workers.copies.is_empty() || !self.started_workers.files.is_empty() {
             self.started_workers.held_texts = texts_of_program_files(files)

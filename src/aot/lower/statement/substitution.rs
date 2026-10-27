@@ -1,5 +1,5 @@
 use bun_sema::bind::{Binding, Decl, PatParent};
-use bun_sema::hir::{ExprId, ExprKind, FnBody, FnId, VarDeclId};
+use bun_sema::hir::{ExprId, FnBody, FnId, VarDeclId};
 
 use crate::lower::FileLowering;
 use crate::lower::transpiled::{Rewrite, TranspiledFile};
@@ -68,12 +68,7 @@ impl FileLowering<'_, '_, '_, '_> {
     // `const a = f(); const b = a; return b;` is printed `return f();`. The position of that `return`.
     pub(in crate::lower) fn find_return_printed_with(&self, declaration: VarDeclId) -> Option<u32> {
         let transpiled = self.transpiled.as_ref()?;
-        let mut value = self.skip_unprinted_syntax(self.hir[declaration].init);
-        while let ExprKind::Ident(_) = self.hir[value].kind
-            && let Some(initializer) = self.find_printed_initializer(value)
-        {
-            value = self.skip_unprinted_syntax(initializer);
-        }
+        let value = self.follow_replaced_names(self.hir[declaration].init);
         transpiled.find_return_of_moved_value_at(self.parsed_position(value))
     }
 

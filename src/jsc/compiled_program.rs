@@ -44,7 +44,7 @@ unsafe extern "C" {
     fn Bun__AOT__admitsUnknownJavaScript(image: Bytes) -> bool;
     fn Bun__AOT__loadsCodeOutsideImage(image: Bytes) -> bool;
     fn Bun__AOT__omitsFunctionSource(image: Bytes) -> bool;
-    safe fn Bun__AOT__useNoImageOnThisThread() -> bool;
+    fn Bun__AOT__useNoImageOnThisThread(specifier: Bytes) -> bool;
     safe fn Bun__AOT__imageCode() -> Bytes;
     safe fn Bun__AOT__takePagesForTablesOfFirstThread();
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
@@ -592,8 +592,9 @@ pub(crate) fn runs_worker_of_text_apart() -> bool {
 }
 
 /// On the thread of a Worker that starts from text, before its VM is created. False where this Bun runs nothing but compiled code.
-pub(crate) fn use_no_image_on_this_thread() -> bool {
-    let uses_none = Bun__AOT__useNoImageOnThisThread();
+pub(crate) fn use_no_image_on_this_thread(specifier: &[u8]) -> bool {
+    // SAFETY: `specifier` outlives the call.
+    let uses_none = unsafe { Bun__AOT__useNoImageOnThisThread(bytes_of(specifier)) };
     if uses_none {
         bun_core::run_no_compiled_program_on_this_thread();
     }

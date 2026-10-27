@@ -80,11 +80,12 @@ pub fn decide(input: &TrimInput<'_>, edges: &FeatureEdges) -> Decision {
     }
     close(&mut retained, edges);
 
-    let mut unused = FeatureSet::EMPTY;
+    let mut unretained = FeatureSet::EMPTY;
     if request.removes_unused || input.is_program_compiled() {
-        unused = FeatureSet::all();
-        unused.subtract(&retained.set);
+        unretained = FeatureSet::all();
+        unretained.subtract(&retained.set);
     }
+    let mut unused = unretained;
     for &feature in &request.remove_internal {
         unused.insert(feature);
     }
@@ -103,6 +104,7 @@ pub fn decide(input: &TrimInput<'_>, edges: &FeatureEdges) -> Decision {
     Decision {
         unused,
         requested,
+        unretained,
         retained: collect_retained(&present, retained.reasons),
         requirements,
     }
@@ -799,8 +801,26 @@ mod tests {
         let used = using(&[Feature::NativeAddons, Feature::Ffi]);
         let decision = decide_with_edges(&used, &request, &requirement);
         assert!(decision.unused.contains(Feature::NativeAddons));
+        assert!(!decision.unretained.contains(Feature::NativeAddons));
         assert!(!decision.unused.contains(Feature::Ffi));
         assert_eq!(decision.reason_of(Feature::NativeAddons), None);
+    }
+
+    #[test]
+    fn request_does_not_change_what_nothing_retains() {
+        let used = using(&[Feature::Sql]);
+        let by_use = decide_request(&used, &removing_unused());
+        assert!(by_use.unretained.contains(Feature::Ffi));
+        assert!(!by_use.unretained.contains(Feature::Sql));
+        assert_eq!(by_use.unretained, by_use.unused);
+        let request = TrimRequest {
+            remove: vec![TrimFeature::Ffi, TrimFeature::Sql],
+            remove_internal: vec![Feature::Sqlite, Feature::Sql],
+            ..removing_unused()
+        };
+        let by_name = decide_request(&used, &request);
+        assert_eq!(by_name.unretained, by_use.unretained);
+        assert!(by_name.unused.contains(Feature::Sql));
     }
 
     #[test]
@@ -817,6 +837,7 @@ mod tests {
             assert_eq!(decision.removal_of(feature), Removal::Requested);
             assert_eq!(decision.reason_of(feature), None);
         }
+        assert!(!decision.unretained.contains(Feature::Sqlite));
         assert_eq!(decision.removal_of(Feature::Sql), Removal::Present);
         assert_eq!(decision.removal_of(Feature::Ffi), Removal::Unused);
     }

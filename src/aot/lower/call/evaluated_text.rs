@@ -36,7 +36,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let compiled = self.file.reference_function(FunctionKey::Source(function));
 
         self.set_position(self.file.last_mapped_position(site.callee));
-        let expected = self.emit_locked_builtin(text.callee.id);
+        let expected = self.emit_builtin_itself(text.callee.id);
         let test = self.builder.strict_eq(callee.function, expected);
         let matches = self.create_block();
         let differs = self.create_block();

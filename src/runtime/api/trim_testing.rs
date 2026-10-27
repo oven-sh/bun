@@ -40,6 +40,7 @@ pub(crate) fn trim_executable(
             features: used_features.into_iter().map(named_use_of).collect(),
             causes: Vec::new(),
             locales: UsedLocales::Unknown(None),
+            starts_workers_from_unseen_code: true,
         }
     };
     let summary = trim_in_memory(global, &mut bytes, &used, &request)?;

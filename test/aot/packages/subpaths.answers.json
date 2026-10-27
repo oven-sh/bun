@@ -24,8 +24,5 @@
   },
   "exports.closed_literal6.mjs": {
     "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
-  },
-  "imports.app_dyn.mjs": {
-    "output": "two \"app:two\"\nvariable THROWS ResolveMessage ERR_MODULE_NOT_FOUND\nnone THROWS ResolveMessage ERR_MODULE_NOT_FOUND\n"
   }
 }

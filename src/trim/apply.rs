@@ -721,9 +721,7 @@ mod tests {
         TrimPlan {
             decision: Decision {
                 unused: FeatureSet::from_features(&[unused_feature(), named_feature()]),
-                requested: FeatureSet::EMPTY,
-                retained: Vec::new(),
-                requirements: Vec::new(),
+                ..Decision::empty()
             },
             ranges,
             refused_entry_points: Vec::new(),

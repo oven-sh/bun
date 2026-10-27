@@ -307,6 +307,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.jump_by_typeof(operand, value, &[(known::object, passed)], failed);
             }
             LeafTest::NumberQuestion { question, operand } => {
+                // The program reads the callee in front of the operand, whatever the operand turns out to be.
+                self.emit_locked_builtin(question);
                 let value = self.lower_operand_of_question(expression, operand);
                 self.set_position(self.file.hir[expression].pos);
                 let split = self.split_expression_on_type(Some(operand), value, TypeTable::NUMBER);

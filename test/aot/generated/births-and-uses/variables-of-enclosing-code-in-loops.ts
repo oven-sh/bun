@@ -14,7 +14,7 @@ const kinds: Record<string, Kind> = {
   sometimesNothing: { type: "number | undefined", first: seed => `${seed} > 1 ? undefined : ${seed}`, next: (held, by) => `${by} % 2 ? undefined : (${held} ?? 0) + ${by}`, show: held => `String(${held})` },
 };
 
-type Helper = "peek" | "poke" | "probe" | "converter" | "changers" | "proxy";
+type Helper = "peek" | "poke" | "probe" | "converter" | "changers" | "proxy" | "caller";
 const helpers = (kind: Kind, held: string, needs: Helper[]) =>
   [
     needs.includes("peek") && `function peek(): void { say("peek", ${kind.show(held)}); }`,
@@ -23,6 +23,8 @@ const helpers = (kind: Kind, held: string, needs: Helper[]) =>
     needs.includes("converter") && `const converter = { toString(): string { poke(2); return "c"; } };`,
     needs.includes("changers") && `const changers: ((by: number) => void)[] = [poke, () => {}, poke];`,
     needs.includes("proxy") && `const proxy = new Proxy({} as Record<string, string>, { get(): string { poke(3); return "p"; } });`,
+    // No build has this text in front of it, so whom it calls is out of sight however much the compiler follows.
+    needs.includes("caller") && `const caller = new Function("callee", "by", process.argv.length > 99 ? "" : "callee(by);") as (callee: (by: number) => void, by: number) => void;`,
   ]
     .filter(Boolean)
     .join(" ");
@@ -42,6 +44,7 @@ const observers: Record<string, Observer> = {
   aWriterUnderAProxy: { needs: ["proxy"], text: "seen += proxy.any;" },
   aWriterOutOfAList: { needs: ["changers"], text: "changers[at % 3](at);" },
   aWriterByReflect: { needs: ["poke"], text: "Reflect.apply(poke, undefined, [at]);" },
+  aWriterUnderTextMadeAtRunTime: { needs: ["caller"], text: "caller(poke, at);" },
   aBuiltInThatThrowsOnOneTurn: { text: `seen += "ab".repeat(2 - at).length;`, around: (loop, shown) => `try { ${loop} } catch (error) { say("caught", (error as Error).name, ${shown}); }` },
   aBuiltInThatThrowsOutOfTheFunction: { text: `seen += "ab".repeat(2 - at).length;` },
   aHandlerInTheTurn: { needs: ["peek"], text: "try { fail(at === 1); } catch (error) { peek(); }" },

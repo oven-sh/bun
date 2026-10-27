@@ -119,7 +119,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(super) fn emit_private_global_get(&mut self, name: &[u8]) -> ValueId {
         let key = self.file.engine_private_key(name);
-        let global = self.builder.builtin(BuiltinId::GlobalThis);
+        let global = self.builder.builtin(BuiltinId::GlobalThis, false);
         self.builder.prop_get(global, key, true, false)
     }
 
@@ -130,7 +130,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         exit: Option<BlockId>,
     ) -> Lowered<ValueId> {
         match intrinsic {
-            Intrinsic::Builtin(id) => Ok(self.emit_locked_builtin(id)),
+            Intrinsic::Builtin(id) => Ok(self.emit_builtin_itself(id)),
             Intrinsic::LinkTimeConstant(constant) => Ok(self.builder.link_time_constant(constant)),
             Intrinsic::NativeBinding(id) => Ok(self.builder.native_binding(id)),
             Intrinsic::Undefined | Intrinsic::Directive(_) | Intrinsic::Erased => {
@@ -194,7 +194,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Intrinsic::Builtin(id) => Ok(self.lower_builtin_function_call(site, id)),
             Intrinsic::Construct(id) => {
                 let [argument] = lower_named_arguments(self, site)?;
-                let callee = self.emit_locked_builtin(id);
+                let callee = self.emit_builtin_itself(id);
                 let arguments = Arguments::Values(smallvec![argument]);
                 Ok(match id {
                     BuiltinId::Array => {

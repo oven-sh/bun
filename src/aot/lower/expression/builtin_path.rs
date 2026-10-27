@@ -33,9 +33,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.record_position(position);
     }
 
+    // The read of a locked member where the program writes it. A holder may add a member when it is first read, which shows in the order of its keys.
     pub(in crate::lower) fn emit_locked_builtin(&mut self, builtin: BuiltinId) -> ValueId {
         match table::entry(builtin).scope {
-            Scope::Realm => self.builder.builtin(builtin),
+            Scope::Realm => self.builder.builtin(builtin, false),
+            Scope::Module => self.emit_module_builtin(builtin),
+        }
+    }
+
+    // The object itself, where the program reads nothing: its holder stays as it is.
+    pub(in crate::lower) fn emit_builtin_itself(&mut self, builtin: BuiltinId) -> ValueId {
+        match table::entry(builtin).scope {
+            Scope::Realm => self.builder.builtin(builtin, true),
             Scope::Module => self.emit_module_builtin(builtin),
         }
     }

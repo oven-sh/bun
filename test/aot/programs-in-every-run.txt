@@ -135,6 +135,7 @@ arrays/in-which-storage-each-maker-of-a-list-of-numbers-keeps-them
 arrays/includes-and-index-of-short-and-long
 arrays/index-fill-grows-like-push
 arrays/index-of-and-includes-with-strings
+arrays/integers-of-any-size-are-stored-into-a-clamped-array
 arrays/lists-made-by-a-length-hold-numbers-and-then-other-things
 arrays/lists-name-a-parameter-that-a-call-stores-an-int32-to-and-each-gets-another-kind-of-value
 arrays/lists-of-fractions-returned-by-functions-that-are-handed-a-list-of-texts-are-read-by-index
@@ -353,12 +354,16 @@ builtin-modules/json-stringify-of-wide-texts-with-quotes-control-characters-and-
 builtin-modules/members-that-are-more-than-data
 builtin-modules/members-that-load-modules-or-evaluate-text-are-imported-by-name
 builtin-modules/methods-named-like-the-functions-of-node-path
+builtin-modules/named-import-from-bun-is-copied-at-the-statement
 builtin-modules/names-lengths-and-texts-of-library-functions-that-the-program-enters
+builtin-modules/native-module-import-error-is-cached
+builtin-modules/native-module-import-reads-user-accessors-once
 builtin-modules/natives-read-members-of-what-they-are-handed
 builtin-modules/next-tick-read-in-a-function-that-does-nothing-else
 builtin-modules/next-tick-read-in-a-loop-that-never-runs
 builtin-modules/next-tick-read-returned-to-a-caller-that-ignores-it
 builtin-modules/next-tick-read-used-only-in-a-branch-not-taken
+builtin-modules/process-user-accessor-import
 builtin-modules/refused-arguments-run-their-getters-and-traps
 builtin-modules/refused-arguments-with-and-without-a-constructor
 builtin-modules/refused-receiver-whose-fields-nobody-reads
@@ -368,6 +373,7 @@ builtin-modules/rejected-argument-whose-fields-nobody-reads
 builtin-modules/require-resolve-answers-the-name-of-a-built-in-module-as-it-was-asked
 builtin-modules/slow-buffer-to-json
 builtin-modules/sqlite-in-memory-with-no-optional-pass
+builtin-modules/static-import-of-bun-reads-no-user-accessors
 builtin-modules/the-exports-of-a-native-module-are-captured-when-it-is-first-loaded
 builtin-modules/the-library-describes-a-proxy-in-its-error-without-asking-it
 builtin-modules/the-name-of-a-built-in-module-reaches-a-loader-through-a-parameter-a-loop-or-a-choice
@@ -473,7 +479,10 @@ calls/a-spread-call-of-a-method-that-returns-this
 calls/a-spread-resolved-behind-the-last-round
 calls/a-variable-that-holds-a-bound-function-an-object-or-a-class-is-constructed-and-called
 calls/a-variable-that-holds-json-parse-or-string-is-called-in-a-loop
+calls/a-worker-is-terminated-inside-a-loop-below-a-number-of-the-program
 calls/a-worker-is-terminated-inside-a-loop-that-calls-nothing
+calls/a-worker-is-terminated-inside-a-loop-that-walks-on-past-the-end-of-a-typed-array
+calls/a-worker-is-terminated-inside-a-loop-up-to-a-length-with-nothing-behind-it
 calls/an-async-function-that-takes-the-rest-of-its-arguments-is-found-by-name-and-called-at-every-level-on-the-way-up-from-the-end-of-the-stack
 calls/async-functions-of-a-library-that-take-the-rest-of-their-arguments-are-called-at-every-level-on-the-way-up-from-the-end-of-the-stack
 calls/bind-found-by-name
@@ -1353,6 +1362,12 @@ enums/an-enum-is-stored-to-through-import-calls-in-three-forms
 enums/an-enum-is-stored-to-through-the-to-esm-helper-of-a-bundler
 enums/an-enum-is-stored-to-through-what-require-gives-of-its-file
 enums/an-enum-made-of-an-enum-made-of-an-enum-that-was-stored-to
+enums/an-enum-of-a-declaration-file-is-read-through-a-constant-of-that-file
+enums/an-enum-of-a-file-used-only-for-its-types-is-imported-by-import-type
+enums/an-enum-of-a-file-used-only-for-its-types-names-its-members-in-brackets
+enums/an-enum-of-a-file-used-only-for-its-types-names-its-own-members-by-a-path
+enums/an-enum-of-a-file-used-only-for-its-types-names-members-of-other-enums
+enums/an-enum-of-a-file-used-only-for-its-types-stands-in-an-interface-that-is-all-that-is-imported
 enums/an-enum-of-another-file-is-looked-up-by-keys-and-read-by-names
 enums/an-enum-set-from-an-enum-inside-a-namespace-beside-it-is-read-from-its-object
 enums/an-enum-that-is-read-by-its-members-alone
@@ -1396,6 +1411,7 @@ errors/a-proxy-of-what-is-no-function-is-called
 errors/a-read-of-an-accessor-of-a-web-class-on-its-prototype-leaves-no-frame
 errors/a-read-of-an-accessor-without-a-function-object-leaves-no-frame
 errors/a-read-through-super-under-a-null-prototype-quotes-the-expression
+errors/a-refused-apply-names-the-member-that-was-called
 errors/an-error-with-a-joined-message-is-thrown-into-a-catch-that-reads-nothing-and-every-pass-is-verified
 errors/call-sites-and-limits-of-stack-traces-that-list-a-built-in-function
 errors/call-sites-of-a-default-constructor-and-frames-under-a-local-named-reflect
@@ -1728,6 +1744,7 @@ host-classes/keys-of-five-prototypes-after-calls-on-instances-where-the-listed-v
 host-classes/keys-of-four-objects-after-a-member-is-compared-or-looked-for
 host-classes/keys-of-four-objects-after-loops-that-call-their-functions-in-some-turns-or-in-none
 host-classes/keys-of-four-objects-after-loops-that-call-their-functions-in-some-turns-or-in-none-in-hot-code
+host-classes/keys-of-four-objects-after-what-the-compiler-writes-with-their-functions
 host-classes/keys-of-json-after-a-call-and-a-walk
 host-classes/keys-of-json-in-its-descriptors-after-a-call
 host-classes/keys-of-json-listed-by-a-function-that-also-takes-parsed-text
@@ -1736,6 +1753,7 @@ host-classes/keys-of-object-after-a-call-and-a-spread
 host-classes/keys-of-object-after-a-loop-over-bun-where-nothing-names-what-the-loop-asks-for
 host-classes/keys-of-object-after-calls-that-write-out-what-they-take
 host-classes/keys-of-process-after-a-loop-over-bun
+host-classes/keys-of-process-after-a-pattern-takes-a-member-known-at-build-time-where-the-listed-value-could-be-one-nobody-knows
 host-classes/keys-of-process-after-a-read-of-env-and-a-rest-pattern-that-names-a-member
 host-classes/keys-of-process-after-a-rest-pattern
 host-classes/keys-of-process-after-a-rest-pattern-that-names-a-member
@@ -2042,6 +2060,7 @@ language/the-copies-at-the-end-of-a-block-outnumber-the-registers
 language/the-flow-analysis-is-at-rest-when-it-ends
 language/the-global-object-is-asked-for-another-prototype-and-then-for-its-own-names
 language/the-last-case-of-a-switch-that-lists-every-value-falls-through-to-the-rest
+language/the-lowest-bits-of-numbers-of-any-size
 language/the-name-of-a-bound-function-whose-target-has-its-name-from-a-computed-key
 language/the-rest-stands-in-front-of-the-cases-of-a-switch-that-lists-every-value
 language/this-at-the-top-level-of-a-module-is-undefined
@@ -2178,6 +2197,7 @@ modules/a-file-exports-constructor-beside-a-definition-under-a-key-that-only-the
 modules/a-file-exports-constructor-beside-a-store-under-a-key-that-only-the-run-knows-and-the-name-is-imported
 modules/a-file-exports-what-a-function-constructs-with-constructor-among-its-own-names
 modules/a-file-in-typescript-hands-on-the-names-of-packages-that-typescript-compiled-to-commonjs
+modules/a-file-is-named-by-a-platform-that-the-program-assigned
 modules/a-file-named-cjs-in-the-output-of-bun-build-is-an-es-module
 modules/a-file-of-a-cycle-awaits-before-its-constant-is-stored
 modules/a-file-of-a-cycle-calls-through-its-neighbor-a-function-of-a-file-that-has-not-begun-which-reads-a-file-below-it
@@ -2583,6 +2603,7 @@ native-callbacks/split-stores-into-what-the-species-of-the-pattern-answers
 native-callbacks/split-stores-into-what-the-species-of-the-pattern-assigns-to
 native-callbacks/the-json-directive-of-console-calls-the-to-json-of-a-bigint
 native-callbacks/what-code-of-an-operand-hands-back-is-used
+node-http-probes/a-class-stored-in-net-socket-is-the-base-of-connections
 node-http-probes/a-map-of-headers-stored-before-the-first-header
 node-http-probes/a-request-is-read-behind-a-socket-of-another-class
 node-http-probes/a-request-that-ends-reads-its-socket
@@ -3182,6 +3203,7 @@ untyped-code/a-read-through-a-proxy-asks-the-run-time-once
 untyped-code/a-read-through-a-proxy-calls-the-trap-of-its-handler
 untyped-code/a-sloppy-store-through-a-proxy-goes-on-when-the-trap-says-no
 untyped-code/a-store-for-a-proxy-of-the-object-ends-in-the-object
+untyped-code/a-store-for-a-proxy-of-the-object-itself-ends-in-the-object
 untyped-code/a-test-or-a-store-through-a-proxy-calls-the-trap-of-its-handler
 untyped-code/a-value-read-from-a-field-is-expected-to-be-what-is-stored-there
 untyped-code/amounts-added-to-a-field-carry-into-its-high-word
@@ -3343,6 +3365,7 @@ ways-into-library-modules/querystring-stringify-through-get-builtin-module-by-ap
 ways-into-library-modules/util-inspect-through-get-builtin-module-as-a-reaction
 webassembly/module-in-data-url
 workers/a-worker-of-text-asks-for-the-module-of-bun-s-own-tests
+workers/a-worker-of-text-loads-the-modules-of-bun
 workers/a-worker-of-text-runs-beside-compiled-workers
 workers/a-worker-that-parsed-a-text-ends
 workers/channels-between-workers

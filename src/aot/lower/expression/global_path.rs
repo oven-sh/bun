@@ -55,7 +55,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         let key = self.file.atom_key(name);
         let is_free_name = self.sees_script_bindings();
-        let global = self.builder.builtin(BuiltinId::GlobalThis);
+        let global = self.builder.builtin(BuiltinId::GlobalThis, false);
         self.builder
             .prop_get(global, key, is_free_name, is_for_type_of)
     }
@@ -64,7 +64,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let key = self.file.atom_key(name);
         let mode = self.mode();
         let is_free_name = self.sees_script_bindings();
-        let global = self.builder.builtin(BuiltinId::GlobalThis);
+        let global = self.builder.builtin(BuiltinId::GlobalThis, false);
         self.file.fragment.note_write(key);
         self.builder
             .prop_set(global, key, mode, value, is_free_name);
@@ -74,7 +74,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let key = self.file.atom_key(name);
         let mode = self.mode();
         let is_free_name = self.sees_script_bindings();
-        let global = self.builder.builtin(BuiltinId::GlobalThis);
+        let global = self.builder.builtin(BuiltinId::GlobalThis, false);
         self.builder.prop_delete(global, key, mode, is_free_name)
     }
 

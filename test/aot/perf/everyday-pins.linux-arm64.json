@@ -64,12 +64,12 @@
     "untyped": 748
   },
   "everyday-loops-over-lists-and-typed-arrays/list-of-integers-stored-to-in-place": {
-    "typed": 6310,
-    "untyped": 6817.8
+    "typed": 4644,
+    "untyped": 4642
   },
   "everyday-loops-over-lists-and-typed-arrays/uint8-clamped-array-brightened": {
-    "typed": 4653.5,
-    "untyped": 4643.5
+    "typed": 3881,
+    "untyped": 3876
   },
   "everyday-loops-over-lists-and-typed-arrays/int32-array-reversed-in-place": {
     "typed": 2092,

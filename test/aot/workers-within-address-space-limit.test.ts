@@ -133,7 +133,9 @@ if (Bun.isMainThread) {
   type Entry = { id: number; next: Entry | null };
   let head: Entry | null = null;
   for (let i = 0; i < 10_000; i++) head = { id: i, next: head };
-  postMessage(head!.id);
+  let entries = 0;
+  for (let entry: Entry | null = head; entry; entry = entry.next) entries++;
+  postMessage(entries);
 }
 `;
 
@@ -412,6 +414,12 @@ if (!Bun.isMainThread) {
 const workersWithFewObjectsRunOutOfRoom = `declare var self: Worker;
 type Link = { next: Link | null; a: number; b: number };
 let head: Link | null = null;
+// What nobody reads the compiler need not keep: each Worker that has filled its room says how long its list is.
+function links() {
+  let count = 0;
+  for (let link = head; link; link = link.next) count++;
+  return count;
+}
 if (Bun.isMainThread) {
   const megabytesKeptFirst = Number(process.argv[2]);
   for (let i = 0; i < megabytesKeptFirst * 1024 * 32; i++) head = { next: head, a: i, b: i };
@@ -443,7 +451,7 @@ if (Bun.isMainThread) {
       try {
         for (let i = 0; ; i++) head = { next: head, a: i, b: i };
       } catch (error) {
-        postMessage(error instanceof RangeError);
+        postMessage(error instanceof RangeError && links() > 100_000);
       }
       return;
     }
@@ -463,6 +471,12 @@ if (Bun.isMainThread) {
 const wavesOfWorkersRunOutOfRoom = `declare var self: Worker;
 type Link = { next: Link | null; a: number; b: number };
 let head: Link | null = null;
+// What nobody reads the compiler need not keep: each Worker that has filled its room says how long its list is.
+function links() {
+  let count = 0;
+  for (let link = head; link; link = link.next) count++;
+  return count;
+}
 const keep: unknown[] = [];
 const text = JSON.stringify(
   Array.from({ length: 4000 }, (_, i) => ({ id: i, name: "n" + i, tags: ["a", "b", String(i)], nested: { x: i, y: [i, i + 1] } })),
@@ -504,7 +518,7 @@ if (Bun.isMainThread) {
       try {
         for (let i = 0; ; i++) head = { next: head, a: i, b: i };
       } catch {}
-      return postMessage("full");
+      return postMessage("full, " + links());
     }
     setInterval(() => keep.push(JSON.parse(text)), 1);
   };
@@ -518,6 +532,12 @@ if (Bun.isMainThread) {
 const workersThatKeepListsRunOutOfRoom = `declare var self: Worker;
 type Link = { next: Link | null; a: number; b: number };
 let head: Link | null = null;
+// What nobody reads the compiler need not keep: each Worker that has filled its room says how long its list is.
+function links() {
+  let count = 0;
+  for (let link = head; link; link = link.next) count++;
+  return count;
+}
 const keep: unknown[] = [];
 const numbers = Array.from({ length: 6000 }, (_, i) => i);
 const json = JSON.stringify(Array.from({ length: 2000 }, (_, i) => ({ id: i, name: "n" + i, tags: ["a", String(i)], nested: { x: i, y: [i, i + 1] } })));
@@ -602,7 +622,7 @@ if (Bun.isMainThread) {
       try {
         for (let i = 0; ; i++) head = { next: head, a: i, b: i };
       } catch (error) {
-        postMessage(error instanceof RangeError);
+        postMessage(error instanceof RangeError && links() > 100_000);
       }
       return;
     }

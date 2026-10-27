@@ -203,7 +203,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 }
 
 impl Checker<'_, '_> {
-    pub(in crate::check) fn names_one_declaration(&self, file: FileId, entity: ExprId) -> bool {
+    /// A file that is read for its types alone has no code, so nothing in it waits for a run time.
+    pub(in crate::check) fn is_left_to_run_time(&self, file: FileId, entity: ExprId) -> bool {
+        self.is_compiled_file(file) && !self.names_one_declaration(file, entity)
+    }
+
+    fn names_one_declaration(&self, file: FileId, entity: ExprId) -> bool {
         let named = self.resolve_constant_entity(file, entity);
         named.is_some_and(|symbol| {
             self.is_global_number(symbol) || self.files().decls_of(symbol).len() == 1

@@ -83,6 +83,8 @@ pub struct UsedFeatures {
     pub features: Vec<UsedFeature>,
     pub causes: Vec<UnseenCode>,
     pub locales: UsedLocales,
+    /// False: the build has compiled the code that every Worker of the program starts from.
+    pub starts_workers_from_unseen_code: bool,
 }
 
 impl UsedFeatures {
@@ -94,6 +96,7 @@ impl UsedFeatures {
                 witness: None,
             }],
             locales: UsedLocales::Unknown(None),
+            starts_workers_from_unseen_code: true,
         }
     }
 
@@ -108,11 +111,16 @@ impl UsedFeatures {
             features: features.iter().map(without_witness).collect(),
             causes: Vec::new(),
             locales: UsedLocales::Unknown(None),
+            starts_workers_from_unseen_code: true,
         }
     }
 
     pub fn has_cause(&self, cause: UnseenCodeCause) -> bool {
         self.causes.iter().any(|unseen| unseen.cause == cause)
+    }
+
+    pub fn uses(&self, feature: Feature) -> bool {
+        self.features.iter().any(|used| used.feature == feature)
     }
 
     pub fn names(&self, feature: Feature) -> bool {
@@ -194,6 +202,8 @@ pub struct Decision {
     pub unused: FeatureSet,
     /// Those of `unused` that `compile.trim.remove` names.
     pub requested: FeatureSet,
+    /// Those of `unused` that nothing retains. The rest goes only because the request names it.
+    pub unretained: FeatureSet,
     pub retained: Vec<Retained>,
     pub requirements: Vec<OptionRequirement>,
 }
@@ -203,6 +213,7 @@ impl Decision {
         Decision {
             unused: FeatureSet::EMPTY,
             requested: FeatureSet::EMPTY,
+            unretained: FeatureSet::EMPTY,
             retained: Vec::new(),
             requirements: Vec::new(),
         }

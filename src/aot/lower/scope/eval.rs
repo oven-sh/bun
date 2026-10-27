@@ -37,7 +37,7 @@ pub(crate) fn lower_direct_eval(
     let (function, this) = lowering.lower_identifier_callee(callee);
     let arguments = lowering.lower_arguments(site.args);
     lowering.set_position(hir[call].pos);
-    let eval = lowering.builder.builtin(BuiltinId::Eval);
+    let eval = lowering.emit_builtin_itself(BuiltinId::Eval);
     let is_eval = lowering.builder.strict_eq(function, eval);
 
     let direct = lowering.create_block();

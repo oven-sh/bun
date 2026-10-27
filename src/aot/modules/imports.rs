@@ -297,14 +297,20 @@ impl<'a, 's> FileBinder<'a, 's> {
         }
         let (files, file, scan) = (self.context.files, self.file, self.scan);
         let binding = match find_imported_value_site(files, file, scan, import, symbol) {
-            Some(site) => self.bind_item(site, item),
+            Some(site) => self.bind_item(site, item, symbol),
             None => UNUSED,
         };
         self.imports.bindings.push((symbol, binding));
     }
 
-    fn bind_item(&mut self, site: usize, item: ImportedItem) -> PendingBinding {
+    fn bind_item(&mut self, site: usize, item: ImportedItem, symbol: SymbolId) -> PendingBinding {
         let scan = self.scan;
+        if let (&ScannedSite::Module(exporter), &ImportedItem::Name { name, .. }) =
+            (&scan.sites[site], &item)
+            && let Some(binding) = self.bind_copied_member(exporter, name, symbol)
+        {
+            return PendingBinding::Bound(binding);
+        }
         match (&scan.sites[site], item) {
             (&ScannedSite::Module(module), ImportedItem::Namespace(phase)) => {
                 let phase = phase_towards(self.context.modules.interop(module).kind, phase);
@@ -325,6 +331,31 @@ impl<'a, 's> FileBinder<'a, 's> {
                 debug_assert!(false, "an imported value has a module or a load failure");
                 UNUSED
             }
+        }
+    }
+
+    /// `import { a } from "bun"` runs as `var { a } = Bun` where the statement stands.
+    fn bind_copied_member(
+        &self,
+        exporter: ModuleRef,
+        name: Atom,
+        symbol: SymbolId,
+    ) -> Option<ImportBinding> {
+        let ModuleRef::Runtime(module) = exporter else {
+            return None;
+        };
+        let holder = table::canonical_id(table::object_replacing_namespace(module)?);
+        let (names, platform) = (self.context.builtin_names, self.context.platform);
+        match find_module_export(names, module, name, platform) {
+            ModuleExport::Found(member) => {
+                let is_copied = name != known::default
+                    && (is_property_that_a_store_replaces(member) || self.is_exported(symbol));
+                is_copied.then_some(ImportBinding::BuiltinMember { holder, name })
+            }
+            ModuleExport::PropertyOfNamespace(_) => {
+                Some(ImportBinding::BuiltinMember { holder, name })
+            }
+            ModuleExport::Absent | ModuleExport::Unknown | ModuleExport::HeldByNamespace => None,
         }
     }
 
@@ -388,7 +419,9 @@ impl<'a, 's> FileBinder<'a, 's> {
             }
             Resolution::RuntimeMember { module, name } => {
                 let (names, platform) = (context.builtin_names, context.platform);
-                bind_runtime_member(names, module, name, platform).map_err(|()| not_found)?
+                let is_asked_itself = exporter == ModuleRef::Runtime(module);
+                bind_runtime_member(names, module, name, platform, is_asked_itself)
+                    .map_err(|()| not_found)?
             }
             Resolution::Synthetic { module, name } => PendingBinding::Synthetic { module, name },
             Resolution::LiveName { module, name } => {
@@ -549,6 +582,7 @@ fn bind_runtime_member(
     module: RuntimeModule,
     name: Atom,
     platform: Platforms,
+    is_asked_itself: bool,
 ) -> Result<PendingBinding, ()> {
     let binding = match find_module_export(names, module, name, platform) {
         ModuleExport::Found(member)
@@ -562,9 +596,13 @@ fn bind_runtime_member(
             });
         }
         ModuleExport::Found(member) => ImportBinding::Builtin(member),
-        ModuleExport::PropertyOfNamespace(holder) => ImportBinding::BuiltinMember { holder, name },
+        ModuleExport::PropertyOfNamespace(holder) if is_asked_itself => {
+            ImportBinding::BuiltinMember { holder, name }
+        }
         ModuleExport::Absent => return Err(()),
-        ModuleExport::Unknown | ModuleExport::HeldByNamespace => {
+        ModuleExport::PropertyOfNamespace(_)
+        | ModuleExport::Unknown
+        | ModuleExport::HeldByNamespace => {
             let module = ModuleRef::Runtime(module);
             return Ok(PendingBinding::Synthetic { module, name });
         }

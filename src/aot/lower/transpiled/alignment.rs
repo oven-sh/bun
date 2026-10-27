@@ -702,20 +702,22 @@ impl<'a, 's> Alignment<'a, 's> {
             (ExprKind::Binary { op, left, right }, ExprData::EBinary(printed))
                 if printed.op == binary_op_code(op) =>
             {
-                if self.may_be_printed_at(right, printed.right.loc) {
-                    self.push(left, printed.left);
-                    self.push(right, printed.right);
-                    return true;
-                }
-                let is_swapped = is_equality(op)
+                let is_in_order = self.may_be_printed_at(right, printed.right.loc);
+                let is_swapped = !is_in_order
+                    && is_equality(op)
                     && self.may_be_printed_at(left, printed.right.loc)
                     && self.may_be_printed_at(right, printed.left.loc);
+                let (printed_left, printed_right) = match (is_in_order, is_swapped) {
+                    (true, _) => (printed.left, printed.right),
+                    (false, true) => (printed.right, printed.left),
+                    (false, false) => return false,
+                };
                 if is_swapped {
                     self.rewrites.insert(expression, Rewrite::SwappedOperands);
-                    self.push(left, printed.right);
-                    self.push(right, printed.left);
                 }
-                is_swapped
+                self.push(left, printed_left);
+                self.push(right, printed_right);
+                true
             }
             (ExprKind::Assign { target, value, .. }, ExprData::EBinary(printed))
                 if printed.op.binary_assign_target() != AssignTarget::None =>

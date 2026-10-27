@@ -6,7 +6,7 @@ use crate::modules::imports::{
 };
 use crate::modules::interop::ImportPhase;
 use crate::modules::module_set::ModuleSet;
-use crate::modules::requests::{FileScan, ScannedSite, Scans, import_phase};
+use crate::modules::requests::{FileScan, ScannedSite, Scans, import_phase, is_replaced_by_object};
 use crate::modules::{BindInput, ModuleRef, find_library_files};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound, Decl, SymbolId};
@@ -299,6 +299,11 @@ impl EntryCollector<'_, '_> {
             return has_value.then_some(ExportEntry::Local(local));
         };
         let site = find_imported_value_site(self.files, self.file, self.scan, import, local)?;
+        let is_copy = matches!(imported, ImportedName::Name(name) if name != known::default)
+            && matches!(self.scan.sites[site], ScannedSite::Module(target) if is_replaced_by_object(target));
+        if is_copy {
+            return Some(ExportEntry::Local(local));
+        }
         let site = site as u32;
         Some(match imported {
             ImportedName::Namespace => ExportEntry::ImportedNamespace {

@@ -67,7 +67,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return Err((site.callee, Misuse::Position));
         };
         let function = self.lower_member_base(site.callee, function, site.exit);
-        let apply = self.emit_locked_builtin(BuiltinId::FunctionPrototypeApply);
+        let apply = self.emit_builtin_itself(BuiltinId::FunctionPrototypeApply);
         let callee = Callee::without_key(apply, Some(function), None);
         Ok(self.lower_call_with_rest(site, callee, site.arguments))
     }
@@ -77,9 +77,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         site: IntrinsicCall<'_>,
         builtin: BuiltinId,
     ) -> ValueId {
-        let function = self.emit_locked_builtin(builtin);
+        let function = self.emit_builtin_itself(builtin);
         let holder = table::entry(builtin).holder;
-        let this = holder.map(|holder| self.emit_locked_builtin(holder));
+        let this = holder.map(|holder| self.emit_builtin_itself(holder));
         let callee = Callee::without_key(function, this, None);
         self.lower_call_with_rest(site, callee, site.arguments)
     }
@@ -253,7 +253,7 @@ pub(super) fn lower_throw(
         | None => {
             let message = lowering.lower_expression(argument);
             lowering.set_position(position);
-            let constructor = lowering.emit_locked_builtin(constructor);
+            let constructor = lowering.emit_builtin_itself(constructor);
             let arguments = Arguments::Values(smallvec![message]);
             let error = lowering.emit_construct(constructor, arguments, None);
             lowering.emit_throw(error);

@@ -110,7 +110,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             PrivateStateKind::Field => BuiltinId::WeakMap,
             PrivateStateKind::Brand => BuiltinId::WeakSet,
         };
-        let builtin = self.emit_locked_builtin(builtin);
+        let builtin = self.emit_builtin_itself(builtin);
         let is_builtin = self.builder.strict_eq(constructor, builtin);
         self.emit_guard(is_builtin, done);
         let part = PrivateStatePart::Collection;

@@ -1,6 +1,7 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, SymbolId};
-use bun_sema::hir::{ExprId, ExprKind, MemberKey};
+use bun_sema::bind::{Binding, Decl, SymbolId};
+use bun_sema::hir::{ExprId, ExprKind, ImportId, MemberKey};
+use bun_sema::program::Sym;
 
 use crate::builtins::id::{BuiltinId, BuiltinName};
 use crate::builtins::{BuiltinPath, Mutability, Resolved, table};
@@ -17,10 +18,41 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let file = &mut *self.file;
         let binding = file.inputs.modules.import_binding(file.file, symbol);
+        if let ImportBinding::BuiltinMember { .. } = binding {
+            let variable = file.ensure_variable(file.imported_copy_key(symbol));
+            let path = file.builtins.of_symbol(symbol);
+            let value = self.builder.get_module_variable(variable);
+            return match path.map(|path| (path.id, path.mutability)) {
+                Some((id, Mutability::AlwaysLocked | Mutability::ConstantUnlessWritten)) => {
+                    self.expect_builtin(value, table::canonical_id(id))
+                }
+                Some((_, Mutability::ChangesOnItsOwn)) | None => value,
+            };
+        }
         let local_name = file.bound.symbol(symbol).name;
         let name = file.intern_binding_name(Binding::Symbol(symbol), local_name);
         let path = file.builtins.of_symbol(symbol);
         emit_import_binding(self, binding, name, path)
+    }
+
+    /// `import { a } from "bun"` runs as `var { a } = Bun` where the statement stands.
+    pub(crate) fn lower_import(&mut self, import: ImportId) {
+        for specifier in self.file.hir[import].named.iter() {
+            let symbol = self.file.bound.declared_symbol(Decl::ImportSpec(specifier));
+            if symbol.is_none() {
+                continue;
+            }
+            let binding = (self.file.inputs.modules).import_binding(self.file.file, symbol);
+            let ImportBinding::BuiltinMember { holder, name } = binding else {
+                continue;
+            };
+            let object = self.builder.builtin(holder, false);
+            let value = self.emit_named_read(object, name);
+            let variable = self
+                .file
+                .ensure_variable(self.file.imported_copy_key(symbol));
+            self.builder.put_module_variable(variable, value);
+        }
     }
 
     pub(crate) fn emit_variable_read(&mut self, key: VariableKey, name: StringId) -> ValueId {
@@ -106,7 +138,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some((locked, Mutability::AlwaysLocked))
                 if table::is_legal_builtin_constant(locked) =>
             {
-                self.builder.builtin(locked)
+                self.builder.builtin(locked, false)
             }
             // A locked property that holds a function of the host, which has no entry of its own: `import { wrap } from "node:module"`.
             Some((_, Mutability::AlwaysLocked | Mutability::ChangesOnItsOwn)) => {
@@ -123,11 +155,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let entry = table::entry(id);
         match (entry.module, entry.holder) {
             (None, Some(holder)) => {
-                let object = self.builder.builtin(holder);
+                let object = self.builder.builtin(holder, false);
                 let key = self.file.text_key_of_name(entry.name);
                 self.builder.prop_get(object, key, false, false)
             }
-            (Some(_), Some(_) | None) | (None, None) => self.builder.builtin(id),
+            (Some(_), Some(_) | None) | (None, None) => self.builder.builtin(id, false),
         }
     }
 
@@ -221,7 +253,7 @@ pub(super) fn emit_import_binding(
             holder,
             name: member_name,
         } => {
-            let object = lowering.builder.builtin(holder);
+            let object = lowering.builder.builtin(holder, false);
             lowering.emit_named_read(object, member_name)
         }
         ImportBinding::NamespaceRead {
@@ -245,6 +277,13 @@ pub(super) fn emit_import_binding(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    pub(in crate::lower) fn imported_copy_key(&self, symbol: SymbolId) -> VariableKey {
+        VariableKey::Symbol(Sym {
+            file: self.file,
+            id: symbol,
+        })
+    }
+
     pub(in crate::lower) fn text_key_of_name(&mut self, name: BuiltinName) -> PropertyKeyId {
         debug_assert!(
             !table::is_symbol_name(name),

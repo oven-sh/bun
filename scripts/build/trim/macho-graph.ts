@@ -54,6 +54,40 @@ export function* pointersInMachO(path: string): Generator<[at: number, target: n
   closeSync(fd);
 }
 
+export function exportedNamesOfMachO(path: string): string[] {
+  const fd = openSync(path, "r");
+  const commands = readAt(fd, 32, readAt(fd, 0, 32).readUInt32LE(20));
+  let trie: Buffer = Buffer.alloc(0);
+  for (let at = 0; at < commands.length; at += commands.readUInt32LE(at + 4)) {
+    const kind = commands.readUInt32LE(at);
+    if (kind === 0x80000033) trie = readAt(fd, commands.readUInt32LE(at + 8), commands.readUInt32LE(at + 12));
+    else if (kind === 0x80000022) trie = readAt(fd, commands.readUInt32LE(at + 40), commands.readUInt32LE(at + 44));
+  }
+  closeSync(fd);
+  const readNumber = (at: number): [value: number, end: number] => {
+    let value = 0;
+    for (let scale = 1; ; scale *= 128) {
+      const byte = trie[at++]!;
+      value += (byte & 127) * scale;
+      if (byte < 128) return [value, at];
+    }
+  };
+  const names: string[] = [];
+  const pending: [node: number, prefix: string][] = trie.length > 0 ? [[0, ""]] : [];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    const [exportBytes, exportAt] = readNumber(next[0]);
+    if (exportBytes > 0) names.push(next[1]);
+    let at = exportAt + exportBytes;
+    for (let children = trie[at++]!; children > 0; children--) {
+      const end = trie.indexOf(0, at);
+      const [child, behind] = readNumber(end + 1);
+      pending.push([child, next[1] + trie.toString("latin1", at, end)]);
+      at = behind;
+    }
+  }
+  return names;
+}
+
 export const isOneUnitOfAssembly = (output: string) =>
   output === "__TEXT,__jsc_bytecode" || output === "__TEXT,__jsc_wasm";
 
@@ -527,13 +561,25 @@ function findRoots(
   return { roots, stringsRetained };
 }
 
-function findExportedNodes(exportedSymbols: string, external: Map<string, number>): Set<number> {
+// The list has what native addons and libraries that the program loads ask for by name. Whatever else the image exports, dyld binds
+// the system's libraries to: they call the replaced operator new and delete whatever the program does.
+function findExportedNodes(
+  executable: string,
+  exportedSymbols: string,
+  external: Map<string, number>,
+): { exported: Set<number>; enteredBySystem: Set<number> } {
+  const listed = new Set(
+    readFileSync(exportedSymbols, "utf8")
+      .split("\n")
+      .map(line => line.trim()),
+  );
   const exported = new Set<number>();
-  for (const line of readFileSync(exportedSymbols, "utf8").split("\n")) {
-    const node = external.get(line.trim());
-    if (node !== undefined) exported.add(node);
+  const enteredBySystem = new Set<number>();
+  for (const name of new Set([...listed, ...exportedNamesOfMachO(executable)])) {
+    const node = external.get(name);
+    if (node !== undefined) (listed.has(name) ? exported : enteredBySystem).add(node);
   }
-  return exported;
+  return { exported, enteredBySystem };
 }
 
 function createResolver(
@@ -579,6 +625,7 @@ export function readMachOGraph(
   const pointersOnlyInFixups = connectFixups(executable, placedNodes, index.fileOfNode, successors);
   connectAssemblyUnits(output, successors);
   const { roots, stringsRetained } = findRoots(output, objects, index, connections, stringHash.keys());
+  const { exported, enteredBySystem } = findExportedNodes(executable, exportedSymbols, index.external);
   const graph = createSectionGraph({
     format: "macho",
     isArm64: image.isArm64,
@@ -588,8 +635,8 @@ export function readMachOGraph(
     object: index.fileOfNode.map(file => files.get(file) ?? "?"),
     section: atoms.map(atom => atom.name),
     successors,
-    roots,
-    exported: findExportedNodes(exportedSymbols, index.external),
+    roots: new Set([...roots, ...enteredBySystem]),
+    exported,
     liveWithoutReference: connections.liveWithoutReference,
     names: atoms.map(atom => [atom.name]),
     aliases: index.aliases,

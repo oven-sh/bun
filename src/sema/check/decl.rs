@@ -498,7 +498,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Evaluated::default();
         }
         let is_for_build = match location {
-            Location::Member(..) => self.files.is_compile_build(),
+            Location::Member(of, _) => self.is_compiled_file(of),
             Location::Variable(..) | Location::Expr(..) => false,
         };
         let (mut file, mut e, mut location) = (file, e, location);
@@ -563,7 +563,7 @@ impl<'p, 's> Checker<'p, 's> {
                     Evaluated::default()
                 }
                 ExprKind::Ident(_) | ExprKind::Index { .. } | ExprKind::Dot { .. } => {
-                    if is_for_build && !self.names_one_declaration(file, e) {
+                    if is_for_build && self.is_left_to_run_time(file, e) {
                         begun.push(Evaluating::LeftToRunTime);
                     }
                     match self.evaluate_entity(file, e, location) {

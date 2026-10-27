@@ -10,7 +10,7 @@ use bun_sema::session::Arena;
 use bun_trim::UsedFeatures;
 
 use crate::builtins::unlinked_files::UnlinkedFiles;
-use crate::compile::{BuildFailed, Compilation, compile};
+use crate::compile::{BuildFailed, CodeOfWorkers, Compilation, compile};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::log_diagnostic;
 use crate::engine::{self, EngineModuleId, EngineResult, RejectedOptionWord};
@@ -27,7 +27,9 @@ fn wrap_statistics(statistics: Statistics) -> interface::statistics::Statistics 
 fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
     let wrap_engine = |engine| interface::engine::EngineResult(Opaque::new(engine));
     let (summary, further) = (compilation.summary, compilation.further_programs);
+    let has_compiled_code_of_workers = compilation.started_workers.code == CodeOfWorkers::Compiled;
     interface::Compilation {
+        starts_workers_from_unseen_code: !has_compiled_code_of_workers,
         engine: wrap_engine(compilation.engine),
         further_programs: further.into_iter().map(wrap_engine).collect(),
         summary: interface::compile::ProgramSummary {

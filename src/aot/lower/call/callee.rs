@@ -225,6 +225,8 @@ enum Around {
 pub(in crate::lower) struct PrintedOperators {
     // By a name in whose place an initializer is printed: where that begins.
     first_positions: RefCell<FxHashMap<ExprId, u32>>,
+    // By a name in whose place an initializer is printed: what stands there once every such name is followed to its initializer.
+    printed_behind_names: RefCell<FxHashMap<ExprId, ExprId>>,
     // The functions printed in place of a name whose last position is being looked for.
     entered_functions: RefCell<SmallVec<[FnId; 4]>>,
 }
@@ -877,14 +879,32 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The literal that Bun's transpiler prints in place of an expression, if it prints one.
-    fn find_literal_value(&self, expression: ExprId) -> Option<Constant> {
+    // What Bun's transpiler prints of an expression, with each name in whose place it prints an initializer followed to that initializer.
+    // In a row of constants that are each named after the one before, every name is followed once.
+    pub(in crate::lower) fn follow_replaced_names(&self, expression: ExprId) -> ExprId {
         let mut printed = self.skip_unprinted_syntax(expression);
-        while let ExprKind::Ident(_) = self.hir[printed].kind
-            && let Some(initializer) = self.find_printed_initializer(printed)
-        {
+        let mut replaced: SmallVec<[ExprId; 4]> = SmallVec::new();
+        while let ExprKind::Ident(_) = self.hir[printed].kind {
+            let known = self.printed_operators.printed_behind_names.borrow();
+            if let Some(&end) = known.get(&printed) {
+                printed = end;
+                break;
+            }
+            drop(known);
+            let Some(initializer) = self.find_printed_initializer(printed) else {
+                break;
+            };
+            replaced.push(printed);
             printed = self.skip_unprinted_syntax(initializer);
         }
+        let mut known = self.printed_operators.printed_behind_names.borrow_mut();
+        known.extend(replaced.into_iter().map(|name| (name, printed)));
+        printed
+    }
+
+    // The literal that Bun's transpiler prints in place of an expression, if it prints one.
+    fn find_literal_value(&self, expression: ExprId) -> Option<Constant> {
+        let printed = self.follow_replaced_names(expression);
         match self.find_rewrite(printed) {
             Some(Rewrite::Literal { value, .. }) => Some(value),
             _ => find_written_literal(self.hir, self.bound, printed),

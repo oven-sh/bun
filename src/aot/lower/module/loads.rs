@@ -404,7 +404,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             callee.function = self.branch_if_expression_nullish(written, callee.function, exit);
         }
         let arguments = self.lower_arguments(arguments);
-        let expected = self.builder.builtin(BuiltinId::NodeModuleCreateRequire);
+        let expected = self.emit_builtin_itself(BuiltinId::NodeModuleCreateRequire);
         let is_expected = self.builder.strict_eq(callee.function, expected);
         let matched = self.create_block();
         let other = self.create_unlikely_block();
@@ -415,7 +415,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let message = self.emit_text(
             b"Cannot call createRequire: process.getBuiltinModule was replaced and returned a different createRequire. This executable can't load a module from a dynamic path.",
         );
-        let constructor = self.builder.builtin(BuiltinId::Error);
+        let constructor = self.emit_builtin_itself(BuiltinId::Error);
         let error = self.emit_construct(constructor, Arguments::Values(smallvec![message]), None);
         self.builder.throw(error);
 
@@ -554,7 +554,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let module = self.file.module_id();
                 self.builder.module_builtin(expected, module)
             }
-            Scope::Realm => self.builder.builtin(expected),
+            Scope::Realm => self.builder.builtin(expected, true),
         }
     }
 
@@ -722,7 +722,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // The build spells a candidate from the folder of the file: "./plugins/a.js".
     fn emit_path_from_own_directory(&mut self, text: ValueId) -> ValueId {
         let directory = self.get_commonjs_variable(CommonJsVariable::Dirname);
-        let starts_with = self.builder.builtin(BuiltinId::StringPrototypeStartsWith);
+        let starts_with = self.emit_builtin_itself(BuiltinId::StringPrototypeStartsWith);
         let is_below = call::emit_call(self, starts_with, Some(text), &[directory]);
         let is_below = self.builder.to_boolean(is_below);
         let spelled = self.builder.create_variable(None);
@@ -735,12 +735,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.continue_in(below);
         let length = PropertyName::Constant(self.file.atom_key(known::length));
         let length = self.emit_get(directory, length);
-        let slice = self.builder.builtin(BuiltinId::StringPrototypeSlice);
+        let slice = self.emit_builtin_itself(BuiltinId::StringPrototypeSlice);
         let mut rest = call::emit_call(self, slice, Some(text), &[length]);
         // `path.join` answers `B:\~BUN\root\plugins\a.js` there.
         let platform = self.file.inputs.options.platform;
         if platform.contains(Platforms::WINDOWS) {
-            let replace_all = self.builder.builtin(BuiltinId::StringPrototypeReplaceAll);
+            let replace_all = self.emit_builtin_itself(BuiltinId::StringPrototypeReplaceAll);
             let separators = [self.emit_text(b"\\"), self.emit_text(b"/")];
             rest = call::emit_call(self, replace_all, Some(rest), &separators);
         }
@@ -777,10 +777,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         {
             below = rest;
             let separator = self.emit_text(separator);
-            let last_index_of = self.builder.builtin(BuiltinId::StringPrototypeLastIndexOf);
+            let last_index_of = self.emit_builtin_itself(BuiltinId::StringPrototypeLastIndexOf);
             let end = call::emit_call(self, last_index_of, Some(directory), &[separator]);
             let start = self.builder.integer(0);
-            let slice = self.builder.builtin(BuiltinId::StringPrototypeSlice);
+            let slice = self.emit_builtin_itself(BuiltinId::StringPrototypeSlice);
             directory = call::emit_call(self, slice, Some(directory), &[start, end]);
         }
         let below: Vec<u8> = bun_core::strings::split(below, b"/")
@@ -807,7 +807,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .branch(is_text, Edge::to(spelled_as_text), Edge::to(other));
 
             self.continue_in(spelled_as_text);
-            let replace_all = self.builder.builtin(BuiltinId::StringPrototypeReplaceAll);
+            let replace_all = self.emit_builtin_itself(BuiltinId::StringPrototypeReplaceAll);
             let separators = [self.emit_text(b"/"), self.emit_text(b"\\")];
             let with_one_separator = call::emit_call(self, replace_all, Some(text), &separators);
             let is_same_file = self.builder.strict_eq(with_one_separator, expected);
@@ -837,7 +837,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         );
         let parts = [head, written, tail].map(|part| self.builder.string(part));
         let message = self.builder.strcat(&parts);
-        let constructor = self.builder.builtin(BuiltinId::Error);
+        let constructor = self.emit_builtin_itself(BuiltinId::Error);
         let arguments = Arguments::Values(smallvec![message]);
         let error = self.emit_construct(constructor, arguments, None);
         let name = self.file.intern_bytes(b"code");
@@ -996,8 +996,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_settled_promise(&mut self, method: BuiltinId, value: ValueId) -> ValueId {
-        let method = self.builder.builtin(method);
-        let promise = self.builder.builtin(BuiltinId::Promise);
+        let method = self.emit_builtin_itself(method);
+        let promise = self.emit_builtin_itself(BuiltinId::Promise);
         call::emit_call(self, method, Some(promise), &[value])
     }
 

@@ -81,6 +81,7 @@ pub(crate) fn compile_to_executable(
     for program in &build.further_programs {
         add_used_features(&mut used, used_features(program));
     }
+    used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code;
     if (used.features.iter()).any(|used| used.feature == Feature::SystemCaCertificates) {
         request.executable.flags |= Flags::NAMES_SYSTEM_CA_CERTIFICATES;
     }
@@ -712,6 +713,7 @@ fn add_used_features(used: &mut UsedFeatures, further: UsedFeatures) {
             cause: unseen.cause,
             witness: None,
         }));
+    used.starts_workers_from_unseen_code |= further.starts_workers_from_unseen_code;
     match (&mut used.locales, further.locales) {
         (UsedLocales::Unknown(_), _) => {}
         (locales, UsedLocales::Unknown(_)) => *locales = UsedLocales::Unknown(None),

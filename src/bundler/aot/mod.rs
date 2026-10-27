@@ -65,6 +65,8 @@ pub struct AotBuild {
     pub engine: EngineResult,
     /// `Compilation::further_programs`
     pub further_programs: Vec<EngineResult>,
+    /// `Compilation::starts_workers_from_unseen_code`
+    pub starts_workers_from_unseen_code: bool,
     pub entry_points: Vec<AotEntryPoint>,
     pub root_directory: Vec<u8>,
     /// The names of packages that lead to entry points. The positions are those in `entry_points`.

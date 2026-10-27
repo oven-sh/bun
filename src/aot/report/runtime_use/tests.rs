@@ -535,7 +535,7 @@ fn feature_lines_list_kept_then_removed() {
                 reason: RetainReason::Allowed(TrimFeature::Lint),
             },
         ],
-        requirements: Vec::new(),
+        ..Decision::empty()
     };
     let fixture = ReportFixture::new(ResultRecords::default());
     let mut entries = Vec::new();
@@ -682,7 +682,7 @@ fn run_time_name_says_nothing_about_a_feature_that_stays_or_that_the_build_asked
             feature: Feature::IntlCollation,
             reason: RetainReason::Allowed(TrimFeature::Intl),
         }],
-        requirements: Vec::new(),
+        ..Decision::empty()
     };
     let mut expected = vec![
         line("the compiler can see every API this program uses", None),

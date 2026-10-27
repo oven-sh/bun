@@ -201,6 +201,7 @@ fn default_lets_nothing_be_removed() {
         features: Vec::new(),
         causes: vec![missing],
         locales: UsedLocales::Unknown(None),
+        starts_workers_from_unseen_code: true,
     };
     assert_eq!(features_of(&[use_of_word(ABSENT_WORD)]), expected);
 }
@@ -296,6 +297,7 @@ fn no_record_gives_empty_list_and_no_cause() {
         features: Vec::new(),
         causes: Vec::new(),
         locales: listed(&[]),
+        starts_workers_from_unseen_code: true,
     };
     assert_eq!(features_of(&[]), expected);
 }
@@ -315,6 +317,7 @@ fn result_with_image_gives_its_records() {
         features: vec![used(Feature::RegExp, 0), used(Feature::Fetch, 1)],
         causes: vec![evaluates_text],
         locales: listed(&["de", "en-US"]),
+        starts_workers_from_unseen_code: true,
     };
     assert_eq!(used_features_of_result(b"image"), expected);
 }

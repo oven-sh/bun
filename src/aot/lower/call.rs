@@ -88,7 +88,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         builtin: BuiltinId,
         arguments: &[ValueId],
     ) -> ValueId {
-        let callee = self.builder.builtin(builtin);
+        let callee = self.emit_builtin_itself(builtin);
         emit_call(self, callee, None, arguments)
     }
 
@@ -98,7 +98,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         this: Option<ValueId>,
         arguments: &[ValueId],
     ) -> ValueId {
-        let callee = self.emit_locked_builtin(builtin);
+        let callee = self.emit_builtin_itself(builtin);
         emit_call(self, callee, this, arguments)
     }
 

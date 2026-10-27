@@ -1,5 +1,5 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{InitialState, SymbolId};
+use bun_sema::bind::{BindingKind, InitialState, SymbolId};
 use bun_sema::check::aot::ClassRef;
 
 use super::{BindingRef, ScopeSlot};
@@ -15,6 +15,11 @@ impl FileLowering<'_, '_, '_, '_> {
             return id;
         }
         let variable = match key {
+            VariableKey::Symbol(symbol)
+                if self.bound.binding_kind(symbol.id) == BindingKind::Import =>
+            {
+                self.create_untyped_variable(self.bound.symbol(symbol.id).name)
+            }
             VariableKey::Symbol(symbol) => self.create_symbol_variable(symbol.id),
             VariableKey::ClassSlot { class, slot } => self.create_class_slot_variable(class, slot),
             VariableKey::ModulePath { variable, .. } => {

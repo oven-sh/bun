@@ -6792,26 +6792,46 @@ export const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
-    test("still reports the error when a type is nested too deeply to print in full", async () => {
-      // An optimized build prints about 700 levels, and the check itself runs out of stack at about 3,000. Other builds
-      // have larger frames, by a platform-dependent amount, so they use a depth at which the whole type may be printed.
-      const isOptimized = !isDebug && !isASAN;
-      const depth = isOptimized ? 1500 : 100;
-      using dir = project({
-        "a.ts": `declare const x: ${repeat("{ a: ", depth)}1${repeat(" }", depth)};
-export const wrong: number = x;
-`,
-      });
+    // The printer writes `any` for what is nested deeper than the stack that it may use. An optimized build prints about
+    // 5,000 levels. Other builds have larger frames, by a platform-dependent amount, so they use a depth at which the
+    // whole type may be printed.
+    const isOptimized = !isDebug && !isASAN;
+    const writtenAsOneType = (depth: number) =>
+      `declare const x: ${repeat("{ a: ", depth)}1${repeat(" }", depth)};\nexport const wrong: number = x;\n`;
+    /** `source` assigns a type of `depth` levels to a number in its last line. Returns how many levels are printed. */
+    async function printedLevels(source: string, depth: number) {
+      using dir = project({ "a.ts": source });
       const { stdout, stderr, exitCode } = await check(dir, ["--noErrorTruncation"]);
+      expect(stderr).not.toContain("ran out of stack");
       const levels = stdout.split("{ a: ").length - 1;
       expect(levels).toBeGreaterThanOrEqual(50);
-      if (isOptimized) expect(levels).toBeLessThan(depth);
       const innermost = levels < depth ? "any" : "1";
       expect(stdout).toBe(
-        `a.ts(2,14): error TS2322: Type '${repeat("{ a: ", levels)}${innermost}${repeat("; }", levels)}' is not assignable to type 'number'.`,
+        `a.ts(${source.split("\n").length - 1},14): error TS2322: Type '${repeat("{ a: ", levels)}${innermost}${repeat("; }", levels)}' is not assignable to type 'number'.`,
       );
       expect(stderr.split("\n")[0]).toBe("Found 1 error in 1 file, checked 1 file [time]");
       expect(exitCode).toBe(1);
+      return levels;
+    }
+
+    test("still reports the error when a type is nested too deeply to print in full", async () => {
+      // Each level has a declaration of its own, because the parser takes fewer levels in one type than the printer prints.
+      const depth = isOptimized ? 20_000 : 100;
+      const outer = Array.from({ length: depth - 1 }, (_, i) => `declare const x${i + 2}: { a: typeof x${i + 1} };\n`);
+      const levels = await printedLevels(
+        `declare const x1: { a: 1 };\n${outer.join("")}export const wrong: number = x${depth};\n`,
+        depth,
+      );
+      if (isOptimized) expect(levels).toBeLessThan(depth);
+    });
+
+    test("reports the error when a type is written 1,500 levels deep", async () => {
+      const depth = isOptimized ? 1500 : 100;
+      await printedLevels(writtenAsOneType(depth), depth);
+    });
+
+    test.skipIf(!isOptimized)("prints a type that is written 3,500 levels deep in full", async () => {
+      expect(await printedLevels(writtenAsOneType(3_500), 3_500)).toBe(3_500);
     });
 
     // How deep an expression can nest depends on how much stack is left, not on a count. A build that isn't optimized has

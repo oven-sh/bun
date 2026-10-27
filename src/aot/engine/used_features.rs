@@ -61,6 +61,7 @@ fn from_records(
         features: used,
         causes: causes.collect(),
         locales: used_locales(locales, text_of),
+        starts_workers_from_unseen_code: true,
     }
 }
 

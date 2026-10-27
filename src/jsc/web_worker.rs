@@ -968,7 +968,7 @@ impl WebWorker {
         }
 
         let runs_apart = self.runs_text_beside_compiled_program
-            && crate::compiled_program::use_no_image_on_this_thread();
+            && crate::compiled_program::use_no_image_on_this_thread(&self.unresolved_specifier);
         if !runs_apart && let Some(image) = self.image {
             crate::compiled_program::use_image_of_worker(image);
         }

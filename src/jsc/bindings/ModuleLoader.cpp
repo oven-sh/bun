@@ -1019,6 +1019,17 @@ ALWAYS_INLINE auto guardedNativeModuleGenerator()
         return generator;
 }
 
+template<SyntheticModuleType type>
+ALWAYS_INLINE bool throwIfNativeModuleIsRemoved(Zig::GlobalObject* globalObject, ASCIILiteral specifier)
+{
+    constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
+    constexpr auto feature = InternalModuleRegistryConstants::moduleFeatures[type & mask];
+    if constexpr (feature)
+        return Bun__throwIfModuleIsRemoved(globalObject, static_cast<uint16_t>(*feature), specifier.characters(), specifier.length());
+    else
+        return false;
+}
+
 JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject* globalObject, uint32_t registryID, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1029,6 +1040,8 @@ JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject* globalObject, uint32
     switch (SyntheticModuleType::InternalModuleRegistryFlag | registryID) {
 #define CASE(str, name)                                                                                                                             \
     case SyntheticModuleType::name:                                                                                                                 \
+        if (throwIfNativeModuleIsRemoved<SyntheticModuleType::name>(globalObject, str)) [[unlikely]]                                                \
+            return nullptr;                                                                                                                         \
         guardedNativeModuleGenerator<SyntheticModuleType::name, generateNativeModule_##name>()(globalObject, moduleKey, exportNames, exportValues); \
         break;
         BUN_FOREACH_ESM_NATIVE_MODULE(CASE)
@@ -1036,6 +1049,8 @@ JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject* globalObject, uint32
 
 #define LAZY_CASE(str, name)                                                                                                                                                \
     case SyntheticModuleType::name:                                                                                                                                         \
+        if (throwIfNativeModuleIsRemoved<SyntheticModuleType::name>(globalObject, str)) [[unlikely]]                                                                        \
+            return nullptr;                                                                                                                                                 \
         deferredExportsSource = guardedNativeModuleGenerator<SyntheticModuleType::name, generateNativeModule_##name>()(globalObject, moduleKey, exportNames, exportValues); \
         break;
         BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(LAZY_CASE)

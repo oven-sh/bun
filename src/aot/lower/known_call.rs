@@ -156,7 +156,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn guard_builtin(&mut self, value: ValueId, builtin: BuiltinId, slow_path: BlockId) {
-        let builtin = self.emit_locked_builtin(builtin);
+        let builtin = self.emit_builtin_itself(builtin);
         let is_unchanged = self.builder.strict_eq(value, builtin);
         self.emit_guard(is_unchanged, slow_path);
     }

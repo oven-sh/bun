@@ -74,10 +74,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             | StmtKind::Directive { .. }
             | StmtKind::Interface(_)
             | StmtKind::TypeAlias(_)
-            | StmtKind::Import(_)
             | StmtKind::ExportNamed(_)
             | StmtKind::ExportStar { .. }
             | StmtKind::ExportAsNamespace(_) => {}
+            StmtKind::Import(import) => self.lower_import(import),
             StmtKind::Expr(expression) => {
                 let were_suspended = self.builder.suspend_records(true);
                 if self.file.is_left_by_transpiler(statement) {

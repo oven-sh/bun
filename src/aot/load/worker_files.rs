@@ -6,14 +6,18 @@ use bun_paths::resolve_path::dirname;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, CommonJsVariable, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{BinOp, Branches, CallId, ExprId, ExprKind, PropKind, StmtKind};
-use bun_sema::import_sites::{ImportSiteKind, find_values_of_parameter};
+use bun_sema::hir::{
+    BinOp, Branches, CallId, ExportSpecId, ExprId, ExprKind, PatId, PatKind, PropKey, PropKind,
+    StmtKind,
+};
+use bun_sema::import_sites::{ImportSiteKind, find_values_of_parameter, is_exported};
 use bun_sema::messages::Category;
 use bun_sema::program::{CodeAnswer, FileId, Files};
 use bun_sema_driver::Locator;
 use bun_sema_driver::host::to_native;
 
-use crate::builtins::{BuiltinId, RuntimeModule, table};
+use crate::builtins::{BuiltinId, Intrinsic, Resolved, RuntimeModule, table};
+use crate::compile::CodeOfWorkers;
 use crate::diagnostics::{ShownPosition, new_driver_diagnostic, position_of_diagnostic};
 use crate::load::loaders::{loader_named_by_path, script_kind_of};
 use crate::load::module_paths::{
@@ -23,7 +27,7 @@ use crate::load::named_loads::find_import_of;
 use crate::load::source_provider::SourceProvider;
 use crate::load::sources::parsed_source;
 use crate::load::{SourceKind, is_host_path, is_in_node_modules};
-use crate::module_keys::{is_url_with_text, name_of_text};
+use crate::module_keys::{is_name_of_text, is_url_with_text, name_of_text};
 use crate::options::{EntryText, PathOptions};
 use crate::statistics::{LimitId, LimitValues};
 
@@ -220,13 +224,15 @@ struct Walk<'a, 's> {
     /// Each file with its `WorkerFile::has_options`.
     copies: Vec<(FileId, bool)>,
     texts: Vec<WorkerFile>,
+    /// A Worker may start from what was not followed to its end, so from a text that is not among `texts`.
+    has_unseen_start: bool,
 }
 
 // `import path from "./worker.js" with { type: "file" }; new Worker(path)`, `new Worker("./worker.js")` and `new Worker("data:text/javascript,..")`: the build has seen the code that the Worker runs, or finds it. What the constructor is given is followed back through variables, parameters and exports to the import, to the path or to the text. In the order of their paths.
 pub(crate) fn find_code_that_starts_workers(
     files: &Files<'_>,
     search: &WorkerSearch<'_>,
-) -> Vec<WorkerFile> {
+) -> (Vec<WorkerFile>, CodeOfWorkers) {
     let &WorkerSearch {
         limits,
         loaders,
@@ -264,10 +270,15 @@ pub(crate) fn find_code_that_starts_workers(
         start: (FileId(0), ExprId(0)),
         copies: Vec::new(),
         texts: Vec::new(),
+        has_unseen_start: false,
     };
     for &file in files.compiled_files() {
         walk.visit_file(file);
     }
+    let code = match walk.has_unseen_start {
+        true => CodeOfWorkers::Unseen,
+        false => CodeOfWorkers::Compiled,
+    };
     let mut found: Vec<WorkerFile> = (walk.copies.iter())
         .filter_map(|&(copy, has_options)| {
             Some(WorkerFile {
@@ -279,7 +290,7 @@ pub(crate) fn find_code_that_starts_workers(
     found.append(&mut walk.texts);
     found.sort_unstable();
     found.dedup();
-    found
+    (found, code)
 }
 
 // Every code file that the program embeds with the `file` loader, sorted by path.
@@ -353,6 +364,7 @@ impl Walk<'_, '_> {
         }
         let (hir, bound) = (files.hir(file), files.bound(file));
         let decisions = &files.analysis(file).decisions;
+        let mut callees: Vec<ExprId> = Vec::new();
         for expression in (0..hir.exprs.len() as u32).map(ExprId) {
             let ExprKind::New(call) = hir[expression].kind else {
                 continue;
@@ -368,6 +380,7 @@ impl Walk<'_, '_> {
             if !starts_worker || !is_evaluated {
                 continue;
             }
+            callees.push(callee);
             let mut arguments = hir.ids(hir[call].args);
             if let Some(argument) = arguments.next() {
                 let options = arguments.next();
@@ -379,6 +392,90 @@ impl Walk<'_, '_> {
                     self.follow(file, argument);
                 }
             }
+        }
+        self.has_unseen_start |= !self.names_constructors_only_as(file, &callees);
+    }
+
+    /// Whether nothing but `callees` gets hold of a constructor of Workers in the file.
+    fn names_constructors_only_as(&self, file: FileId, callees: &[ExprId]) -> bool {
+        let files = self.files;
+        let Some(source) = parsed_source(files, file) else {
+            return false;
+        };
+        let (hir, bound, analysis) = (files.hir(file), files.bound(file), files.analysis(file));
+        let is_threads =
+            |module: Option<RuntimeModule>| module.is_some() && module == self.modules[0];
+        let mut kinds = (analysis.import_sites.iter().enumerate())
+            .filter(|&(site, _)| is_threads(self.find_module_answered(file, Some(site))))
+            .map(|(_, site)| site.kind);
+        let is_followed =
+            |kind| matches!(kind, ImportSiteKind::Import(_) | ImportSiteKind::Require(_));
+        let mut exported = (0..hir.export_specs.len() as u32).map(ExportSpecId);
+        let is_import = |specifier| match bound.exported_binding(specifier) {
+            Binding::Symbol(symbol) => {
+                bound.binding_initializer(hir, symbol) == BindingInitializer::Import
+            }
+            _ => false,
+        };
+        if !kinds.all(is_followed) || exported.any(is_import) {
+            return false;
+        }
+        let is_global = |expression| {
+            let id = match source.builtins.of_expr(expression) {
+                Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) => path.id,
+                Some(Resolved::Intrinsic(Intrinsic::Builtin(id))) => id,
+                Some(Resolved::Intrinsic(_)) | None => return false,
+            };
+            Some(table::canonical_id(id)) == self.constructor
+        };
+        (0..hir.exprs.len() as u32).map(ExprId).all(|expression| {
+            let is_evaluated = bound.parent_of_expr(expression) != Parent::None
+                && !analysis.decisions.is_dead_expr(expression);
+            if !is_evaluated || callees.contains(&expression) {
+                return true;
+            }
+            !is_global(expression)
+                && !self.is_worker_of_node(file, expression)
+                && (!is_threads(self.find_module(file, expression))
+                    || self.is_read_by_names(file, expression))
+        })
+    }
+
+    /// Of an expression that is a module of Bun's own: whether the file only reads members of it by names that are written there, each of which `find_member_of_module` finds.
+    fn is_read_by_names(&self, file: FileId, module: ExprId) -> bool {
+        let (hir, bound) = (self.files.hir(file), self.files.bound(file));
+        let keeps_to_itself = |name: PatId| match bound.initialized_binding(name) {
+            Binding::Symbol(symbol) => {
+                matches!(hir[name].kind, PatKind::Ident(_))
+                    && bound.is_stable_binding(symbol)
+                    && !is_exported(hir, bound, symbol)
+            }
+            _ => false,
+        };
+        match bound.parent_of_expr(module) {
+            Parent::Expr(parent) => match hir[parent].kind {
+                ExprKind::Dot { obj, .. } => obj == module,
+                _ => {
+                    hir.skip_type_assertions(parent) == hir.skip_type_assertions(module)
+                        && self.is_read_by_names(file, parent)
+                }
+            },
+            Parent::VarInit(declaration) => match hir[hir[declaration].pat].kind {
+                PatKind::Ident(_) => {
+                    matches!(hir[module].kind, ExprKind::Call(_))
+                        && keeps_to_itself(hir[declaration].pat)
+                }
+                PatKind::Object(properties) => properties.iter().all(|property| {
+                    let has_name = matches!(hir.runtime_binding_key(property), PropKey::Name(_));
+                    let property = &hir[property];
+                    has_name
+                        && !property.is_rest
+                        && property.default.is_none()
+                        && keeps_to_itself(property.value)
+                }),
+                PatKind::Array(_) | PatKind::Missing => false,
+            },
+            _ => false,
         }
     }
 
@@ -480,15 +577,19 @@ impl Walk<'_, '_> {
                 continue;
             }
             let variables_left = self.variables_left;
-            if let Some(text) = self.find_text(file, expression)
-                && (self.add_evaluated_text(&text) || self.add_url(&text) || self.add_path(&text))
+            let text = self.find_text(file, expression);
+            if let Some(text) = &text
+                && (self.add_evaluated_text(text) || self.add_url(text) || self.add_path(text))
             {
                 continue;
             }
             self.variables_left = variables_left;
+            // A path under which the executable holds no code starts no Worker, whatever else the expression leads to.
+            let is_path = text.is_some_and(|text| !is_name_of_text(&text));
+            let had_unseen_start = self.has_unseen_start;
             match hir[expression].kind {
                 ExprKind::Call(call) if !self.is_evaluated => {
-                    self.follow_object_url(file, call);
+                    self.has_unseen_start |= self.follow_object_url(file, call).is_none();
                 }
                 ExprKind::Cond { branches, .. } => {
                     let Branches { yes, no } = hir.branches(branches);
@@ -508,9 +609,21 @@ impl Walk<'_, '_> {
                     self.follow_default_of(file, obj);
                 }
                 ExprKind::Ident(_) => self.follow_name(file, expression),
-                _ => {}
+                _ => self.has_unseen_start = true,
+            }
+            if is_path {
+                self.has_unseen_start = had_unseen_start;
             }
         }
+    }
+
+    /// What `BoundIn::binding_initializer` answers. A variable that is stored to may hold something else.
+    fn find_initializer_of(&mut self, file: FileId, symbol: SymbolId) -> BindingInitializer {
+        let (hir, bound) = (self.files.hir(file), self.files.bound(file));
+        let initializer = bound.binding_initializer(hir, symbol);
+        self.has_unseen_start |=
+            initializer != BindingInitializer::Import && !bound.is_stable_binding(symbol);
+        initializer
     }
 
     // What the constructor of a Worker makes of the value that the expression always evaluates to, if that is a text or a URL: a constant, or constants and the path of the file itself that `+`, a template, `encodeURIComponent()`, `btoa()`, `new URL()` and the functions of node:path and node:url put together. A path is what the program sees when it runs, with forward slashes.
@@ -571,7 +684,7 @@ impl Walk<'_, '_> {
                 }
                 Binding::Symbol(symbol) if self.variables_left > 0 => {
                     self.variables_left -= 1;
-                    match bound.binding_initializer(hir, symbol) {
+                    match self.find_initializer_of(file, symbol) {
                         BindingInitializer::Expression(source) => self.find_text(file, source),
                         _ => None,
                     }
@@ -728,8 +841,9 @@ impl Walk<'_, '_> {
             return false;
         }
         // `bun run` reads what a `data:` URL holds as TypeScript with JSX, whatever type the URL names.
-        if let Some(contents) = self.provider.decode_data_url(url) {
-            self.add_text(url.to_vec(), contents, Loader::Tsx);
+        match self.provider.decode_data_url(url) {
+            Some(contents) => self.add_text(url.to_vec(), contents, Loader::Tsx),
+            None => self.has_unseen_start = true,
         }
         true
     }
@@ -757,8 +871,9 @@ impl Walk<'_, '_> {
     // The run time knows the text behind an object URL by what it says.
     fn add_text_of_blob(&mut self, contents: Vec<u8>, r#type: Option<&[u8]>) {
         let loader = self.provider.loader_of_blob(r#type);
-        if let Some(loader) = loader.filter(|it| LOADERS_OF_CODE.contains(it)) {
-            self.add_text(name_of_text(loader, &contents), contents, loader);
+        match loader.filter(|it| LOADERS_OF_CODE.contains(it)) {
+            Some(loader) => self.add_text(name_of_text(loader, &contents), contents, loader),
+            None => self.has_unseen_start = true,
         }
     }
 
@@ -789,13 +904,22 @@ impl Walk<'_, '_> {
 
     // `new Worker(text, { eval: true })` of node:worker_threads, which makes a Blob without a type of the text.
     fn follow_evaluated_text(&mut self, file: FileId, text: ExprId, options: ExprId) -> bool {
-        let Ok(Some(evaluates)) = self.find_property(file, options, b"eval") else {
-            return false;
+        let evaluates = match self.find_property(file, options, b"eval") {
+            Ok(Some(evaluates)) => evaluates,
+            Ok(None) => return false,
+            Err(()) => {
+                self.has_unseen_start = true;
+                return false;
+            }
         };
         let decisions = &self.files.analysis(file).decisions;
-        let evaluates = decisions.constant(self.files.hir(file), evaluates);
-        if evaluates != FoldedValue::Constant(Constant::Boolean(true)) {
-            return false;
+        match decisions.constant(self.files.hir(file), evaluates) {
+            FoldedValue::Constant(Constant::Boolean(true)) => {}
+            FoldedValue::Constant(Constant::Boolean(false)) => return false,
+            _ => {
+                self.has_unseen_start = true;
+                return false;
+            }
         }
         self.is_evaluated = true;
         self.follow(file, text);
@@ -819,7 +943,10 @@ impl Walk<'_, '_> {
             return None;
         }
         let mut arguments = hir.ids(hir[blob].args);
-        let parts = self.find_initializer(file, arguments.next()?);
+        let written = arguments.next()?;
+        let parts = self.find_initializer(file, written);
+        // Whoever else holds the list can add to it.
+        self.has_unseen_start |= parts != hir.skip_type_assertions(written);
         let ExprKind::Array(parts) = hir[parts].kind else {
             return None;
         };
@@ -851,7 +978,7 @@ impl Walk<'_, '_> {
         else {
             return expression;
         };
-        match bound.binding_initializer(hir, symbol) {
+        match self.find_initializer_of(file, symbol) {
             BindingInitializer::Expression(source) if self.variables_left > 0 => {
                 self.variables_left -= 1;
                 self.find_initializer(file, source)
@@ -947,6 +1074,7 @@ impl Walk<'_, '_> {
     fn follow_default_of(&mut self, file: FileId, namespace: ExprId) {
         let hir = self.files.hir(file);
         let ExprKind::Await(promise) = hir[hir.skip_type_assertions(namespace)].kind else {
+            self.has_unseen_start = true;
             return;
         };
         let call = hir.skip_type_assertions(promise);
@@ -958,6 +1086,7 @@ impl Walk<'_, '_> {
         let files = self.files;
         let bound = files.bound(file);
         let Binding::Symbol(symbol) = bound.binding(mention) else {
+            self.has_unseen_start = true;
             return;
         };
         if !matches!(bound.symbol(symbol).decls, [Decl::Param(_)]) {
@@ -965,61 +1094,77 @@ impl Walk<'_, '_> {
         }
         let is_loaded = parsed_source(files, file).is_some() && files.compiled(file).is_some();
         if !is_loaded || self.parameters_left == 0 {
+            self.has_unseen_start = true;
             return;
         }
         self.parameters_left -= 1;
         let (hir, decisions) = (files.hir(file), &files.analysis(file).decisions);
-        let values = find_values_of_parameter(hir, bound, decisions, mention).unwrap_or_default();
-        self.pending.extend(values.iter().map(|&it| (file, it)));
+        match find_values_of_parameter(hir, bound, decisions, mention) {
+            Some(values) => self.pending.extend(values.iter().map(|&it| (file, it))),
+            None => self.has_unseen_start = true,
+        }
     }
 
     fn follow_symbol(&mut self, file: FileId, symbol: SymbolId) {
         let files = self.files;
-        let (hir, bound) = (files.hir(file), files.bound(file));
         if self.variables_left == 0 {
+            self.has_unseen_start = true;
             return;
         }
         self.variables_left -= 1;
-        match bound.binding_initializer(hir, symbol) {
+        match self.find_initializer_of(file, symbol) {
             BindingInitializer::Expression(source) => self.pending.push((file, source)),
             BindingInitializer::PatternProperty { source, path }
                 if path[..] == [known::default] =>
             {
                 self.follow_default_of(file, source);
             }
-            BindingInitializer::Import => {
-                if let Some((import, name)) = find_import_of(files, file, symbol) {
+            BindingInitializer::Import => match find_import_of(files, file, symbol) {
+                Some((import, name)) => {
                     let kind = ImportSiteKind::Import(import);
                     let site = files.analysis(file).import_site_index(kind);
                     self.follow_export(file, site, name);
                 }
-            }
-            _ => {}
+                None => self.has_unseen_start = true,
+            },
+            _ => self.has_unseen_start = true,
         }
     }
 
     fn follow_export(&mut self, importer: FileId, site: Option<usize>, name: Atom) {
+        self.has_unseen_start |= !self.follow_declarations_of_export(importer, site, name);
+    }
+
+    /// False: what the name is exported with is not all followed.
+    fn follow_declarations_of_export(
+        &mut self,
+        importer: FileId,
+        site: Option<usize>,
+        name: Atom,
+    ) -> bool {
         let files = self.files;
         let answer = site.and_then(|site| files.compiled(importer)?.code_answers.get(site));
         let Some(&CodeAnswer::File(exporter)) = answer else {
-            return;
+            return false;
         };
         let is_copy = parsed_source(files, exporter)
             .is_some_and(|it| it.kind == SourceKind::Data && it.loader == Loader::File);
         if is_copy {
-            if name == known::default && !self.is_evaluated {
+            let is_path = name == known::default && !self.is_evaluated;
+            if is_path {
                 self.copies.push((exporter, self.has_options));
             }
-            return;
+            return is_path;
         }
         if files.compiled(exporter).is_none() {
-            return;
+            return false;
         }
         let (hir, bound) = (files.hir(exporter), files.bound(exporter));
         let exports = bound.table(bound.symbol(bound.file_symbol).exports);
         let Some(&(_, export)) = exports.iter().find(|entry| entry.0 == name) else {
-            return;
+            return false;
         };
+        let mut follows_all = true;
         for &declaration in bound.symbol(export).decls {
             match declaration {
                 Decl::ExportSpec(specifier) => {
@@ -1028,26 +1173,28 @@ impl Walk<'_, '_> {
                     if item.type_only || statement.type_only {
                         continue;
                     }
-                    if statement.has_module_specifier {
-                        if self.variables_left > 0 {
-                            self.variables_left -= 1;
-                            let kind = ImportSiteKind::ExportFrom(item.export);
-                            let site = files.analysis(exporter).import_site_index(kind);
-                            self.follow_export(exporter, site, item.local);
-                        }
+                    if statement.has_module_specifier && self.variables_left > 0 {
+                        self.variables_left -= 1;
+                        let kind = ImportSiteKind::ExportFrom(item.export);
+                        let site = files.analysis(exporter).import_site_index(kind);
+                        self.follow_export(exporter, site, item.local);
+                    } else if statement.has_module_specifier {
+                        follows_all = false;
                     } else if let Binding::Symbol(local) = bound.exported_binding(specifier) {
                         self.follow_symbol(exporter, local);
+                    } else {
+                        follows_all = false;
                     }
                 }
                 Decl::Var(_) => self.follow_symbol(exporter, bound.declared_symbol(declaration)),
-                Decl::ExportExpr(statement) => {
-                    if let StmtKind::ExportDefault(value) = hir[statement].kind {
-                        self.pending.push((exporter, value));
-                    }
-                }
-                _ => {}
+                Decl::ExportExpr(statement) => match hir[statement].kind {
+                    StmtKind::ExportDefault(value) => self.pending.push((exporter, value)),
+                    _ => follows_all = false,
+                },
+                _ => follows_all = false,
             }
         }
+        follows_all
     }
 }
 

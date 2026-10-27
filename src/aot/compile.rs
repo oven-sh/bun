@@ -117,9 +117,21 @@ pub struct Compilation {
     pub(crate) started_workers: StartedWorkers,
 }
 
+/// What the files that were loaded say about the code that their Workers start from. The later one holds of two loads together.
+#[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) enum CodeOfWorkers {
+    /// No file names a constructor of Workers.
+    #[default]
+    NoneNamed,
+    /// Each constructor is named only to be called, with a path or with code that the build has compiled.
+    Compiled,
+    Unseen,
+}
+
 /// What the programs that are compiled say about the Workers that they start.
 #[derive(Default)]
 pub(crate) struct StartedWorkers {
+    pub code: CodeOfWorkers,
     /// What `find_code_that_starts_workers` found, and the `copies` that the engine saw passed to `new Worker()`.
     pub files: Vec<WorkerFile>,
     /// What `find_embedded_code_files` found.
@@ -143,6 +155,7 @@ impl StartedWorkers {
     }
 
     fn add(&mut self, further: StartedWorkers) {
+        self.code = self.code.max(further.code);
         self.files.extend(further.files);
         self.copies.extend(further.copies);
         self.left_out.extend(further.left_out);
@@ -851,6 +864,7 @@ fn add_programs_of_worker_files(
     texts_not_started.sort_unstable();
     texts_not_started.dedup();
     for text in &texts_not_started {
+        first.started_workers.code = CodeOfWorkers::Unseen;
         let place = text.started_at.as_ref();
         log_diagnostic_at(&mut left_out.said, Code::WorkerTextNotCompiled, &[], place);
     }

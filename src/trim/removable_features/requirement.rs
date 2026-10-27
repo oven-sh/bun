@@ -23,7 +23,7 @@ impl RuntimeRequirement {
         self.is_available_with(is_removed)
     }
 
-    fn is_available_with(self, is_removed: impl Fn(Feature) -> bool) -> bool {
+    pub fn is_available_with(self, is_removed: impl Fn(Feature) -> bool) -> bool {
         match self {
             RuntimeRequirement::Nothing => true,
             RuntimeRequirement::Feature(feature) => !is_removed(feature),

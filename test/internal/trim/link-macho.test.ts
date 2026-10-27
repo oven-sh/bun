@@ -724,6 +724,32 @@ describeEachMachine("Mach-O $name", machine => {
       ]);
       expectCleanRuns({ programResult, trimmedResult });
     });
+
+    test("stays where the list for loaded code does not name it, though only a feature's code calls it", async () => {
+      using dir = tempDir("trim-macho-exports", {
+        ...sources,
+        "entry.c": `
+          int feature_code(int);
+          int for_the_system(int);
+          __attribute__((noinline)) int entered(int x) { return feature_code(x) * 3 + for_the_system(x + 1); }
+        `,
+        "more.c": `
+          ${mixingFunction("only_for_the_system", 3)}
+          __attribute__((noinline)) int for_the_system(int x) { for (int i = 0; i < 5; i++) x = x * 7 + i; return only_for_the_system(x); }
+        `,
+      });
+      const { featuresOf, programResult, trimmedResult } = await linked(machine, String(dir), {
+        objects: ["feature_code", "entry", "more", "table", "embedder", "main"],
+        linkFlags: ["-Wl,-exported_symbol,_for_the_system"],
+      });
+      expect(["for_the_system", "only_for_the_system", "entered", "feature_code_0"].map(featuresOf)).toEqual([
+        undefined,
+        undefined,
+        [Extra],
+        [Extra],
+      ]);
+      expectCleanRuns({ programResult, trimmedResult });
+    });
   });
 
   describe("each stub", () => {

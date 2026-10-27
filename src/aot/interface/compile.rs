@@ -26,6 +26,8 @@ pub struct Compilation {
     /// Of a build whose entry points begin programs of their own: the program of each entry point behind the first, in their order.
     /// `summary.entry_points` lists all of them then, and `engine` is the program of the first.
     pub further_programs: Vec<EngineResult>,
+    /// `UsedFeatures::starts_workers_from_unseen_code`
+    pub starts_workers_from_unseen_code: bool,
 }
 
 pub struct BuildFailed {

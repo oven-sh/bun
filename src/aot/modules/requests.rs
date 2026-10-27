@@ -310,6 +310,7 @@ impl FileScanner<'_, '_> {
                 ImportSiteKind::JsxRuntime
                 | ImportSiteKind::JsxPackage
                 | ImportSiteKind::ExportFrom(_) => (ImportPhase::Evaluation, false),
+                ImportSiteKind::Import(_) if is_replaced_by_object(target) => continue,
                 ImportSiteKind::Import(import) => (import_phase(self.hir, import), false),
                 ImportSiteKind::ExportStar(statement) => (
                     ImportPhase::Evaluation,
@@ -324,6 +325,14 @@ impl FileScanner<'_, '_> {
             });
         }
         requests.drafts
+    }
+}
+
+/// `import .. from "bun"` runs as `var .. = Bun` and loads no module.
+pub(super) fn is_replaced_by_object(target: ModuleRef) -> bool {
+    match target {
+        ModuleRef::Runtime(module) => table::object_replacing_namespace(module).is_some(),
+        _ => false,
     }
 }
 

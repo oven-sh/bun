@@ -28,6 +28,7 @@
 // `--scene sceneOfASmallPackage`: the ordinary scenes are all of that kind.
 // `--only-throwers 12`, with `--together`: one run of this script in eight takes only the programs that end in an error under `bun run`, each as an entry point of its own.
 // `--compares-errors`: two runs that end in an error agree only if the last error that each printed has the same class and, but for what it quotes of the source, the same message.
+// `--keeps-what-compile-shares`: a program at which the executable differs from `bun run` exactly as one built without --aot does is kept too, as a kind of its own.
 // `--each-a-program 25`: a quarter of the runs of this script leave --together aside: each program is an entry point, which begins a program of its own, at most 120 to a build.
 // `--launders 50`: in half of the runs of this script every program has values handed through a function that the build knows nothing about (launder-values.ts). Such programs share executables.
 // `--checks 50`: half of the other runs, and every run that launders, build with the compiler's checks that move no output: every pass is verified, and references are validated. `--checks never`: no run does.
@@ -94,6 +95,7 @@ const { values: options } = parseArgs({
     "each-a-program": { type: "string", default: "0" },
     "only-throwers": { type: "string", default: "0" },
     "compares-errors": { type: "boolean", default: false },
+    "keeps-what-compile-shares": { type: "boolean", default: false },
     checks: { type: "string", default: "0" },
     "hides-function-text": { type: "boolean", default: false },
     // Kinds of outcomes that are only counted otherwise, separated by commas.
@@ -117,7 +119,10 @@ const countsOfPrograms = options.count
   .map(each => (isEachAProgram ? Math.min(Number(each), 120) : Number(each)));
 let count = countsOfPrograms[0];
 const hidesFunctionText = options["hides-function-text"];
-const alsoKept = options["also-keep"].split(",").filter(Boolean);
+const alsoKept = [
+  ...options["also-keep"].split(",").filter(Boolean),
+  ...(options["keeps-what-compile-shares"] ? ["as an executable without --aot"] : []),
+];
 const buildFlags = [
   ...options.flags.split(" ").filter(Boolean),
   ...(hidesFunctionText ? ["--no-compile-function-source"] : []),

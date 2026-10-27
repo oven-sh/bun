@@ -236,6 +236,9 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
             ImportBinding::Synthetic(export) | ImportBinding::CapturedBuiltin { export, .. } => {
                 self.add_variable(binding, VariableKey::SyntheticExport(export));
             }
+            ImportBinding::BuiltinMember { .. } => {
+                self.add_variable(binding, file.imported_copy_key(symbol));
+            }
             ImportBinding::Unbound | ImportBinding::Unused | ImportBinding::Local => {}
             _ => {
                 let value = module::emit_import_binding(self.lowering, import, name);

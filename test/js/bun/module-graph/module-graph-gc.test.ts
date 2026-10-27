@@ -543,8 +543,9 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     expect(output).toBeInstanceOf(Response);
   });
 
-  // Collection is not dispose(): nothing of the graph is left in a rewrite that outlives it, and it goes on.
-  test("an HTMLRewriter rewrite goes on to its end when the graph that started it is collected without dispose(), with handlers and a body of the host's", async () => {
+  // Its handlers run in the async context of transform(), which names the graph: the rewrite keeps that context,
+  // and so the graph, until it is over.
+  test("an HTMLRewriter rewrite keeps the graph whose script started it, with handlers and a body of the host's, until it is over", async () => {
     const lifetimes = new Lifetimes();
     let body!: ReadableStreamDefaultController<Uint8Array>;
     await using server = Bun.serve({
@@ -569,10 +570,11 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       output = graph.run(() => io.rewriteWith(rewriter, input));
       await seen.promise;
     })();
-    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    expect(await lifetimes.survives("graph")).toBe(true);
     body.enqueue(new TextEncoder().encode("<p>2</p><script>2</script>"));
     body.close();
     expect(await output!.text()).toBe("<p>1</p><p>2</p>");
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
   });
 
   // The promise of a read of the whole output is a GC root until the body is settled, and its reactions reach

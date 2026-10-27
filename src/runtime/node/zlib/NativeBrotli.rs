@@ -280,34 +280,36 @@ mod _impl {
     }
 
     impl Context {
-        pub(crate) fn init(&mut self, dictionary: Option<&[u8]>) -> Error {
-            // Mirrors node's Init(): the previous instance and its dictionary
-            // go before new ones are built. `init` is JS-reachable twice on one
-            // handle.
+        /// A new encoder or decoder, with the defaults and nothing left of the one before.
+        fn start(&mut self) {
+            // The previous instance and its dictionary go before new ones are built.
             self.state = State::None;
             self.params.clear();
-            let dictionary = dictionary.filter(|d| !d.is_empty());
-            match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => {
-                    let mut encoder = Box::new(Encoder::new());
-                    let err = match dictionary {
-                        Some(dict) => Self::attach_encoder_dictionary(&mut encoder, dict),
-                        None => Error::ok(),
-                    };
-                    self.state = State::Encoder(encoder);
-                    err
-                }
-                bun_zlib::NodeMode::BROTLI_DECODE => {
-                    let mut decoder = Box::new(Decoder::new());
-                    let attached =
-                        dictionary.is_none_or(|dict| decoder.attach_dictionary(dict.into()));
-                    self.state = State::Decoder(decoder);
-                    if !attached {
+            self.encode_ok = false;
+            self.decode_result = DecoderResult::Error;
+            self.error = DecoderErrorCode::NoError;
+            self.state = match self.mode {
+                bun_zlib::NodeMode::BROTLI_ENCODE => State::Encoder(Box::new(Encoder::new())),
+                bun_zlib::NodeMode::BROTLI_DECODE => State::Decoder(Box::new(Decoder::new())),
+                _ => unreachable!(),
+            };
+        }
+
+        /// `init` is JS-reachable twice on one handle.
+        pub(crate) fn init(&mut self, dictionary: Option<&[u8]>) -> Error {
+            self.start();
+            let Some(dictionary) = dictionary.filter(|d| !d.is_empty()) else {
+                return Error::ok();
+            };
+            match &mut self.state {
+                State::Encoder(encoder) => Self::attach_encoder_dictionary(encoder, dictionary),
+                State::Decoder(decoder) => {
+                    if !decoder.attach_dictionary(dictionary.into()) {
                         return Self::dictionary_error(c"Failed to attach brotli dictionary");
                     }
                     Error::ok()
                 }
-                _ => unreachable!(),
+                State::None => unreachable!(),
             }
         }
 
@@ -352,10 +354,7 @@ mod _impl {
         pub(crate) fn reset(&mut self) -> Error {
             let old = mem::take(&mut self.state);
             let params = mem::take(&mut self.params);
-            let err = self.init(None);
-            if err.is_error() {
-                return err;
-            }
+            self.start();
             let attached = match (old, &mut self.state) {
                 (State::Encoder(old), State::Encoder(new)) => old
                     .into_prepared_dictionaries()

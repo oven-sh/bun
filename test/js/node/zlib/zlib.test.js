@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { pbkdf2Sync, randomFillSync } from "node:crypto";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
@@ -647,6 +648,60 @@ describe("zlib.brotli", () => {
       const options = { dictionary, params: { [c.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } };
       expect(await through(zlib.createBrotliDecompress(options), compressed)).toEqual(input);
     });
+
+    it("starts over in the middle of a stream", async () => {
+      const options = { dictionary, params: { [c.BROTLI_PARAM_QUALITY]: 5, [c.BROTLI_PARAM_LGWIN]: 16 } };
+      const compressed = zlib.brotliCompressSync(input, options);
+      for (const [stream, data, expected] of [
+        [zlib.createBrotliCompress(options), input, compressed],
+        [zlib.createBrotliDecompress({ dictionary }), compressed, input],
+      ]) {
+        const chunks = [];
+        stream.on("data", chunk => chunks.push(chunk));
+        stream.write(data.subarray(0, data.length >> 1));
+        await new Promise(resolve => stream.flush(resolve));
+        chunks.length = 0;
+        stream.reset();
+        stream.end(data);
+        await once(stream, "end");
+        expect(Buffer.concat(chunks)).toEqual(expected);
+      }
+    });
+
+    // A stream closes its handle after an error.
+    it("forgets the error of the stream before, on the handle", () => {
+      const handle = zlib.createBrotliDecompress()._handle;
+      const errors = [];
+      handle.onerror = (message, errno, code) => errors.push(code);
+      const out = Buffer.alloc(5);
+      const write = data => handle.writeSync(c.BROTLI_OPERATION_FINISH, data, 0, data.length, out, 0, out.length);
+      write(Buffer.from("9101", "hex"));
+      handle.reset();
+      write(zlib.brotliCompressSync("hello"));
+      expect(out.toString()).toBe("hello");
+      expect(errors).toEqual(["ERR__ERROR_FORMAT_WINDOW_BITS"]);
+    });
+  });
+
+  it("does not take a distance into the dictionary for one into a window of 32 MiB", () => {
+    const c = zlib.constants;
+    const window = (1 << 25) - 16;
+    const dictionary = pbkdf2Sync("dictionary", "", 1, 4096, "sha256");
+    // Zeros, but for a copy from the dictionary when the window is full. As far back as the distance of that copy, which
+    // is further than the window, the input has the zeros that follow the copy.
+    const input = Buffer.alloc(window + 65536);
+    dictionary.copy(input, window + 4096, 1000, 2000);
+    const compressed = zlib.brotliCompressSync(input, {
+      dictionary,
+      params: {
+        [c.BROTLI_PARAM_QUALITY]: 4,
+        [c.BROTLI_PARAM_LARGE_WINDOW]: 1,
+        [c.BROTLI_PARAM_LGWIN]: 25,
+        [c.BROTLI_PARAM_SIZE_HINT]: input.length,
+      },
+    });
+    const options = { dictionary, params: { [c.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } };
+    expect(zlib.brotliDecompressSync(compressed, options).equals(input)).toBe(true);
   });
 
   it("continues a copy from the dictionary in a stream that starts at an offset", () => {
@@ -665,7 +720,10 @@ describe("zlib.brotli", () => {
     ]);
     const stream = Buffer.concat([
       zlib.brotliCompressSync(first, { params, dictionary, finishFlush: c.BROTLI_OPERATION_FLUSH }),
-      zlib.brotliCompressSync(second, { params: { ...params, [BROTLI_PARAM_STREAM_OFFSET]: first.length }, dictionary }),
+      zlib.brotliCompressSync(second, {
+        params: { ...params, [BROTLI_PARAM_STREAM_OFFSET]: first.length },
+        dictionary,
+      }),
     ]);
     expect(zlib.brotliDecompressSync(stream, { dictionary }).equals(Buffer.concat([first, second]))).toBe(true);
   });

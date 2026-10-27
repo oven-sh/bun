@@ -1228,7 +1228,8 @@ impl<'arena> ScopeOrder<'arena> {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+/// No `Default`: each caller of `parse_paren_expr` states the flags.
+#[derive(Clone, Copy)]
 pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,

@@ -75,8 +75,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc,
             level,
             ParenExprOpts {
+                is_async: false,
+                force_arrow_fn: false,
                 flags,
-                ..Default::default()
+                after_type_parameters: false,
             },
         )
     }
@@ -956,8 +958,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc,
                     level,
                     ParenExprOpts {
+                        is_async: false,
                         force_arrow_fn: true,
-                        ..Default::default()
+                        flags: EFlags::None,
+                        after_type_parameters: false,
                     },
                 );
             }
@@ -992,11 +996,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc,
                         level,
                         ParenExprOpts {
+                            is_async: false,
                             force_arrow_fn: result
                                 == SkipTypeParameterResult::DefinitelyTypeParameters,
                             flags,
                             after_type_parameters: true,
-                            ..Default::default()
                         },
                     );
                 }

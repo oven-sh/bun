@@ -1829,8 +1829,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         level,
                         ParenExprOpts {
                             is_async: true,
+                            force_arrow_fn: false,
                             flags,
-                            ..Default::default()
+                            after_type_parameters: false,
                         },
                     );
                 }
@@ -1860,7 +1861,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             flags
                                         },
                                         after_type_parameters: true,
-                                        ..Default::default()
                                     },
                                 );
                             }

@@ -569,6 +569,15 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? b => (c): T => d : e", "x = a ? (b) => (c) => d : e;\n");
       exp("x = a ? b => async (c) : d => e", "x = a ? (b) => async(c) : (d) => e;\n");
       exp("x = a ? b => async (c): T => d : e", "x = a ? (b) => async (c) => d : e;\n");
+      exp("x = a ? (b) => (c) : d => e : f", "x = a ? (b) => (c) => e : f;\n");
+      exp("x = a ? async b => (c) : d => e : f", "x = a ? async (b) => (c) => e : f;\n");
+      exp("x = a ? b => c => (d) : e => f : g", "x = a ? (b) => (c) => (d) => f : g;\n");
+      exp("x = a ? ({ b }) => (c) : d => e", "x = a ? ({ b }) => c : (d) => e;\n");
+      exp("x = a ? ([b]) => (c) : d => e", "x = a ? ([b]) => c : (d) => e;\n");
+      exp("x = a ? (b = 1) => (c) : d => e", "x = a ? (b = 1) => c : (d) => e;\n");
+      exp("x = a ? b => ([c]) : d => e", "x = a ? (b) => [c] : (d) => e;\n");
+      exp("x = a ? b => (c, d) : e => f", "x = a ? (b) => (c, d) : (e) => f;\n");
+      exp("x = a ? b => (c = 1) : d => e", "x = a ? (b) => c = 1 : (d) => e;\n");
 
       // The body of an arrow function with a return type. Without the rule this
       // printed "x = a ? b : (T) => (c) => e".
@@ -593,6 +602,9 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? b = c = (d) : e => f", "x = a ? b = c = d : (e) => f;\n");
       exp("x = a ? b = c => (d) : e => f", "x = a ? b = (c) => d : (e) => f;\n");
       exp("x = a ? b => c = (d) : e => f", "x = a ? (b) => c = d : (e) => f;\n");
+      exp("x = a ? [b] = (c) : d => e", "x = a ? [b] = c : (d) => e;\n");
+      exp("x = a ? { b } = (c) : d => e", "x = a ? { b } = c : (d) => e;\n");
+      exp("x = a ? b.c = (d) : e => f", "x = a ? b.c = d : (e) => f;\n");
       for (const op of [
         "+=",
         "-=",
@@ -622,6 +634,7 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? async <T>(b) : c => d", "x = a ? async(b) : (c) => d;\n");
       exp("x = a ? async <T>(b): c => d : e", "x = a ? async (b) => d : e;\n");
       exp("x = a ? async <T>(b) => (c) : d => e", "x = a ? async (b) => c : (d) => e;\n");
+      exp("x = a ? b => <T>(c) : d => e", "x = a ? (b) => c : (d) => e;\n");
 
       // The false branch of a conditional in one of these positions
       exp("x = a ? b ? c : d = (e) : f => g", "x = a ? b ? c : d = e : (f) => g;\n");
@@ -636,6 +649,14 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? b => f((c): T => d) : e", "x = a ? (b) => f((c) => d) : e;\n");
       exp("x = a ? b => { return (c) } : d => e", "x = a ? (b) => {\n  return c;\n} : (d) => e;\n");
       exp("x = a ? b => `${(c)}` : d => e", "x = a ? (b) => `${c}` : (d) => e;\n");
+      exp("x = a ? b => ((c): T => d) : e", "x = a ? (b) => (c) => d : e;\n");
+      exp("x = a ? b => { return (c): T => d } : e", "x = a ? (b) => {\n  return (c) => d;\n} : e;\n");
+      exp("x = a ? b => ({ k: (c): T => d }) : e", "x = a ? (b) => ({ k: (c) => d }) : e;\n");
+      exp("x = a ? b => `${(c): T => d}` : e", "x = a ? (b) => `${(c) => d}` : e;\n");
+      exp("x = a ? b => (c, (d): T => e) : f", "x = a ? (b) => (c, (d) => e) : f;\n");
+      exp("x = a ? function* () { yield (c): T => d } : e", "x = a ? function* () {\n  yield (c) => d;\n} : e;\n");
+      exp("x = b => (c): T => d", "x = (b) => (c) => d;\n");
+      exp("x = b = (c): T => d", "x = b = (c) => d;\n");
 
       // ... and after "()", "(...b", "(b:" and "(b?", which can only be parameters
       exp("x = a ? () => (b): T => c : d", "x = a ? () => (b) => c : d;\n");
@@ -648,12 +669,15 @@ describe("Bun.Transpiler", () => {
       err("x = a ? (b: B) => (c) : d => e", 'Expected ":" but found end of file');
       err("x = a ? (...b) => (c) : d => e", 'Expected ":" but found end of file');
       err("x = a ? (b?) => (c) : d => e", 'Expected ":" but found end of file');
+      err("x = a ? async () => (b) : c => d", 'Expected ":" but found end of file');
+      err("x = a ? b => () => (c) : d => e", 'Expected ":" but found end of file');
 
       // Such a body takes "(d) : e => f" as an arrow function, so no ":" is left for "(b)"
       exp("x = a ? (b) : c => () => (d) : e => f", "x = a ? b : (c) => () => (d) => f;\n");
       exp("x = a ? (b): T => () => (b) : d => e", "x = a ? b : (T) => () => (b) => e;\n");
       exp("x = a ? (b): T => (q: Q) => (c) : d => e", "x = a ? b : (T) => (q) => (c) => e;\n");
       exp("x = a ? (b): T => (...r) => (c) : d => e", "x = a ? b : (T) => (...r) => (c) => e;\n");
+      exp("x = a ? (b): T => async () => (c) : d => e", "x = a ? b : (T) => async () => (c) => e;\n");
       exp("x = a ? q => (b): T => () => (c) : d => e", "x = a ? (q) => b : (T) => () => (c) => e;\n");
       exp("x = a ? q = (b): T => () => (c) : d => e", "x = a ? q = b : (T) => () => (c) => e;\n");
       exp("x = a ? (b) : c => async (...r): R => d", "x = a ? b : (c) => async (...r) => d;\n");
@@ -687,6 +711,7 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? (q) => async() : d => e", "x = a ? (q) => async() : (d) => e;\n");
       exp("x = a ? async q => async(...r) : d => e", "x = a ? async (q) => async(...r) : (d) => e;\n");
       exp("x = a ? q = async() : d => e", "x = a ? q = async() : (d) => e;\n");
+      exp("x = a ? q = async (c) : d => e", "x = a ? q = async(c) : (d) => e;\n");
       exp("x = a ? b ? c : q => async() : d => e", "x = a ? b ? c : (q) => async() : (d) => e;\n");
       exp("x = a ? q => async (): T => b : c", "x = a ? (q) => async () => b : c;\n");
       exp("x = a ? q = async (): T => b : c", "x = a ? q = async () => b : c;\n");
@@ -902,21 +927,27 @@ export const next = byId ? (n) => n : (n) => n + 1;
     it("runs conditionals whose branches are arrow functions", async () => {
       using dir = tempDir("ts-conditional-arrow-branches", {
         "index.ts": `
-          const byId = false;
+          const byId = process.argv.includes("--by-id");
           const pick = byId ? id => ({ id }) : name => ({ name });
           console.log(JSON.stringify(pick("a")));
           const next = byId ? (n): number => (n) : n => n + 1;
           console.log(typeof next, next(1));
         `,
       });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "index.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: '{"name":"a"}\nfunction 2\n', stderr: "", exitCode: 0 });
+      const run = async (...args) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.ts", ...args],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      expect(await Promise.all([run(), run("--by-id")])).toEqual([
+        { stdout: '{"name":"a"}\nfunction 2\n', stderr: "", exitCode: 0 },
+        { stdout: '{"id":"a"}\nfunction 1\n', stderr: "", exitCode: 0 },
+      ]);
     });
 
     it("reads the lines of TypeScript's test for `async(` between the ? and : as TypeScript's fix does", () => {
@@ -1166,6 +1197,7 @@ export const next = byId ? (n) => n : (n) => n + 1;
       // A call of "async" with such an argument stays a call, and keeps its spread
       exp("x = y ? a ? async(b as B, ...c) : d => e : f", "x = y ? a ? async(b, ...c) : (d) => e : f;\n");
       exp("x = a ? q => async(c, ...b!) : d => e", "x = a ? (q) => async(c, ...b) : (d) => e;\n");
+      exp("x = a ? async(b!) : d => (e): T => f", "x = a ? async(b) : (d) => (e) => f;\n");
       exp("x = a ? z + async(c as C) : d", "x = a ? z + async(c) : d;\n");
       exp("switch (x) { case async((b), ...c): d => e; }", "switch (x) {\n  case async(b, ...c):\n}");
 

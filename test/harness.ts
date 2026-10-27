@@ -1987,12 +1987,6 @@ export function isMacOSVersionAtLeast(minVersion: number): boolean {
   return parseFloat(macOSVersion) >= minVersion;
 }
 
-/** `openat2(RESOLVE_BENEATH)` on Linux, `O_RESOLVE_BENEATH` on macOS and FreeBSD. */
-export function kernelResolvesBeneath(): boolean {
-  const [major, minor] = os.release().split(".").map(Number);
-  return (isLinux && (major > 5 || (major === 5 && minor >= 6))) || isMacOSVersionAtLeast(26) || isFreeBSD;
-}
-
 export function readableStreamFromArray(array) {
   return new ReadableStream({
     pull(controller) {

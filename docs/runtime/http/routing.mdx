@@ -207,7 +207,7 @@ Bun.serve({
 });
 ```
 
-Bun percent-decodes the part of the request URL after the prefix once and opens it relative to `dir`. Bun rejects non-canonical paths with `404`, so the served path is always the path the router matched. A path is non-canonical if it contains `.`, `..`, empty segments, `%2F`, or a `%XX` sequence encoding a character that may appear literally in a path segment. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`, so the kernel clamps symlinks that would escape `dir`. On macOS 26+ and FreeBSD it uses `O_RESOLVE_BENEATH`, so a symlink that would escape `dir`, or that has an absolute target, is a `404`. Bun follows symlinks wherever they lead on other systems, on Linux before 5.6, and where a seccomp policy blocks `openat2`.
+Bun percent-decodes the part of the request URL after the prefix once and opens it relative to `dir`. Bun rejects non-canonical paths with `404`, so the served path is always the path the router matched. A path is non-canonical if it contains `.`, `..`, empty segments, `%2F`, or a `%XX` sequence encoding a character that may appear literally in a path segment. On Linux, symlinks resolve as if `dir` were the root directory: a `..` stops at `dir`, and an absolute target starts from it. The kernel does this with `openat2(RESOLVE_IN_ROOT)`, and Bun applies the same rules itself where `openat2` is missing (before Linux 5.6, or when a seccomp policy blocks it). On macOS and FreeBSD, Bun follows a symlink only to what is in `dir`, and anything else is a `404`. On Windows, Bun follows symlinks wherever they lead.
 
 <Info>
   Routing is case-sensitive, but filesystems on macOS and Windows are case-insensitive by default. As a result, a

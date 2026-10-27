@@ -9,8 +9,10 @@ use crate::{CloseOnDrop, E, Error, Fd, Maybe, Mode, O, Tag};
 pub enum Symlinks {
     /// No constraint and no cost, for a `dir` that holds no symlink.
     Follow,
-    /// Followed while relative and in `dir`, by `openat2` or `O_RESOLVE_BENEATH`. Refused without those.
+    /// Followed while relative and in `dir`.
     FollowInside,
+    /// Followed as if `dir` were `/`, which is also its own parent.
+    FollowAsRoot,
     Refuse,
 }
 
@@ -28,53 +30,65 @@ const ENOTCAPABLE: i32 = 107;
 #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
 use libc::{ENOTCAPABLE, O_RESOLVE_BENEATH};
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-const EAGAIN_ATTEMPTS: u32 = 4;
+/// As many as the kernel follows for one path.
+const SYMLINKS_LIMIT: u32 = if cfg!(any(target_os = "linux", target_os = "android")) {
+    40
+} else {
+    32
+};
 
 /// A `path` that would leave `dir` is `EXDEV`, and a symlink that is not followed `ELOOP` or `ENOTDIR`.
 pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode, symlinks: Symlinks) -> Maybe<Fd> {
     if symlinks == Symlinks::Follow {
         return crate::openat(dir, path, flags, mode);
     }
-    match openat_if_supported(dir, path, flags, mode, symlinks) {
+    refuse_absolute_and_dot_dot(path.as_bytes(), Tag::open)?;
+    match openat_by_kernel(dir, path, flags, mode, symlinks) {
         Some(Err(err)) if err.get_errno() == E::EAGAIN => {}
         Some(result) => return result,
         None => {}
     }
+    match open_without_symlinks(dir, path, flags, mode) {
+        Err(err)
+            if symlinks != Symlinks::Refuse
+                && matches!(err.get_errno(), E::ELOOP | E::ENOTDIR | E::EMLINK) => {}
+        result => return result,
+    }
+    let resolved = resolve_symlinks(dir, path, flags, symlinks)?;
+    open_without_symlinks(dir, ZStr::from_slice_with_nul(&resolved), flags, mode)
+        .map_err(|e| e.with_path(path.as_bytes()))
+}
+
+fn open_without_symlinks(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
     #[cfg(target_os = "macos")]
     return crate::openat(dir, path, flags | O::NOFOLLOW_ANY, mode);
     #[cfg(not(target_os = "macos"))]
     open_component_by_component(dir, path, flags, mode)
 }
 
-/// `None` where the kernel cannot do this, for a caller that would rather not refuse every symlink then.
-pub fn openat_if_supported(
+/// `None` where the kernel cannot do this.
+fn openat_by_kernel(
     dir: Fd,
     path: &ZStr,
     flags: i32,
     mode: Mode,
     symlinks: Symlinks,
 ) -> Option<Maybe<Fd>> {
-    if let Err(err) = refuse_absolute_and_dot_dot(path.as_bytes(), Tag::open) {
-        return Some(Err(err));
-    }
-
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         use crate::linux_syscall::ResolveFlags;
-        let mut resolve = ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS;
-        if symlinks == Symlinks::Refuse {
-            resolve |= ResolveFlags::NO_SYMLINKS;
-        }
-        // A rename or mount anywhere on the system while a symlink's `..` resolves is `EAGAIN`.
-        let mut result = Err(libc::EAGAIN);
-        for _ in 0..EAGAIN_ATTEMPTS {
-            result = crate::openat2_if_available(dir, path, flags, mode, resolve)?;
-            if !matches!(result, Err(libc::EAGAIN)) {
-                break;
-            }
-        }
+        let resolve = ResolveFlags::NO_MAGICLINKS
+            | match symlinks {
+                Symlinks::FollowAsRoot => ResolveFlags::IN_ROOT,
+                Symlinks::Refuse => ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS,
+                _ => ResolveFlags::BENEATH,
+            };
+        let result = crate::openat2_if_available(dir, path, flags, mode, resolve)?;
         Some(result.map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes())))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    if symlinks == Symlinks::FollowAsRoot {
+        return None;
     }
     #[cfg(target_os = "macos")]
     {
@@ -170,6 +184,94 @@ fn open_component_by_component(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> 
         _close = Some(CloseOnDrop::new(current));
     }
     Err(with_path(Error::from_code(E::ENOENT, Tag::open)))
+}
+
+/// `path` without its symlinks and with a NUL. Only `open_without_symlinks` may open it: the disk can change after this has read it.
+fn resolve_symlinks(dir: Fd, path: &ZStr, flags: i32, symlinks: Symlinks) -> Maybe<Vec<u8>> {
+    fn read_link(dir: Fd, path: &mut Vec<u8>, target: &mut [u8]) -> Maybe<usize> {
+        path.push(0);
+        let result = crate::readlinkat(dir, ZStr::from_slice_with_nul(path), target);
+        path.pop();
+        result
+    }
+    let with_path = |e: Error| e.with_path(path.as_bytes());
+    let fail = |e: E| Err(with_path(Error::from_code(e, Tag::open)));
+    let exclusive = flags & (O::CREAT | O::EXCL) == O::CREAT | O::EXCL;
+    let mut target_buf = path_buffer_pool::get();
+    let mut resolved: Vec<u8> = Vec::with_capacity(path.len() + 3);
+    let mut tail: &[u8] = b"";
+    let mut spliced: Vec<u8>;
+    let mut rest = path.as_bytes();
+    let mut followed = 0;
+    loop {
+        rest = strings::trim_left(rest, b"/");
+        let (name, after) =
+            rest.split_at(strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len()));
+        let parent = resolved.len();
+        if name.is_empty() {
+            break;
+        }
+        if matches!(name, b"." | b"..") {
+            // The kernel looks these up in a directory, and `EINVAL` says that `x/.` is one.
+            if !resolved.is_empty() {
+                resolved.extend_from_slice(b"/.");
+                let looked_up = read_link(dir, &mut resolved, &mut target_buf.0);
+                resolved.truncate(parent);
+                match looked_up {
+                    Err(err) if err.get_errno() != E::EINVAL => return Err(with_path(err)),
+                    _ => {}
+                }
+            }
+            // Only the target of a symlink has one.
+            if name == b".." {
+                if resolved.is_empty() && symlinks != Symlinks::FollowAsRoot {
+                    return fail(E::EXDEV);
+                }
+                resolved.truncate(strings::last_index_of_char(&resolved, b'/').unwrap_or(0));
+            }
+            tail = b"/.";
+            rest = after;
+            continue;
+        }
+        if !resolved.is_empty() {
+            resolved.push(b'/');
+        }
+        resolved.extend_from_slice(name);
+        let last = strings::trim_left(after, b"/").is_empty();
+        let len = match read_link(dir, &mut resolved, &mut target_buf.0) {
+            // `O_EXCL` is about the symlink itself.
+            Ok(len) if !(last && exclusive) => len,
+            Err(err) if err.get_errno() != E::EINVAL && !(last && err.get_errno() == E::ENOENT) => {
+                return Err(with_path(err));
+            }
+            _ => {
+                tail = if after.is_empty() { b"" } else { b"/" };
+                rest = after;
+                continue;
+            }
+        };
+        resolved.truncate(parent);
+        followed += 1;
+        match target_buf.0[..len].first() {
+            _ if followed > SYMLINKS_LIMIT => return fail(E::ELOOP),
+            None => return fail(E::ENOENT),
+            Some(b'/') if symlinks == Symlinks::FollowAsRoot => resolved.clear(),
+            Some(b'/') => return fail(E::EXDEV),
+            Some(_) => {}
+        }
+        let mut next = Vec::with_capacity(len + after.len());
+        next.extend_from_slice(&target_buf.0[..len]);
+        next.extend_from_slice(after);
+        spliced = next;
+        rest = &spliced;
+    }
+    if resolved.is_empty() {
+        resolved.push(b'.');
+    } else {
+        resolved.extend_from_slice(tail);
+    }
+    resolved.push(0);
+    Ok(resolved)
 }
 
 fn refuse_absolute_and_dot_dot(path: &[u8], tag: Tag) -> Maybe<()> {

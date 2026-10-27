@@ -244,8 +244,14 @@ pub struct MemoryDecoder<'a> {
     holes: usize,
 }
 
-/// A sparse map of a few bytes declares up to 2^60 zeros, so unlike data, holes cost no input.
-const HOLES_LIMIT: usize = 1024 * 1024 * 1024;
+/// A sparse map of a few bytes declares up to 2^60 zeros. Held to what gzip can make of the same input, about 1,000 times.
+fn holes_limit(archive: &[u8]) -> usize {
+    const MIB: usize = 1024 * 1024;
+    archive
+        .len()
+        .saturating_mul(1024)
+        .clamp(64 * MIB, 1024 * MIB)
+}
 
 impl<'a> MemoryDecoder<'a> {
     /// Fails for what is not an archive, and if the first block of a gzip layer does not decompress.
@@ -310,6 +316,7 @@ impl<'a> MemoryDecoder<'a> {
     /// Appends at most `size` bytes of the current entry's contents. Holes read as zeros.
     pub fn read_data(&mut self, size: usize, out: &mut Vec<u8>) -> Result<()> {
         let start = out.len();
+        let limit = holes_limit(self.data);
         let zeros_up_to = |out: &mut Vec<u8>, holes: &mut usize, offset: i64| -> Result<()> {
             let have = out.len().saturating_sub(start);
             let offset = usize::try_from(offset).map_err(|_| Error::OutOfOrderSparse)?;
@@ -318,8 +325,8 @@ impl<'a> MemoryDecoder<'a> {
             }
             let zeros = offset.min(size).saturating_sub(have);
             *holes = holes.saturating_add(zeros);
-            if *holes > HOLES_LIMIT {
-                return Err(Error::HolesTooLarge);
+            if *holes > limit {
+                return Err(Error::HolesTooLarge { limit });
             }
             out.try_reserve(zeros)?;
             out.resize(out.len().saturating_add(zeros), 0);

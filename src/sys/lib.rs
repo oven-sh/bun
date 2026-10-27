@@ -1934,7 +1934,16 @@ mod posix_impl {
             return None;
         }
         let flags = flags | O::CLOEXEC;
-        match super::linux_syscall::openat2(dir, path, flags, mode, resolve) {
+        // A rename or mount anywhere on the system while a symlink's `..` resolves is `EAGAIN`.
+        const EAGAIN_ATTEMPTS: u32 = 4;
+        let mut result = Err(libc::EAGAIN);
+        for _ in 0..EAGAIN_ATTEMPTS {
+            result = super::linux_syscall::openat2(dir, path, flags, mode, resolve);
+            if !matches!(result, Err(libc::EAGAIN)) {
+                break;
+            }
+        }
+        match result {
             Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
                 let probe = super::linux_syscall::openat2(
                     dir,
@@ -1957,21 +1966,6 @@ mod posix_impl {
                 }
             }
             result => Some(result),
-        }
-    }
-    /// `openat2(RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS)`: resolves `path` as
-    /// if `dir` were `/`. Falls back to plain `openat` on kernels without
-    /// `openat2` (or when seccomp blocks it), caching the unavailability.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn openat2_in_root(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-        use super::linux_syscall::ResolveFlags;
-        let dir = dir.as_fd();
-        let resolve = ResolveFlags::IN_ROOT | ResolveFlags::NO_MAGICLINKS;
-        match openat2_if_available(dir, path, flags, mode, resolve) {
-            Some(result) => {
-                result.map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
-            }
-            None => openat(dir, path, flags, mode),
         }
     }
     pub fn close(fd: Fd) -> Maybe<()> {

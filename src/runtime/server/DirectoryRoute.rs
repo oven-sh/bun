@@ -289,7 +289,7 @@ impl DirectoryRoute {
         (bun_sys::S::ISREG(mode) && !had_trailing_slash).then_some(Subpath::File(file, stat, false))
     }
 
-    /// `openat2(RESOLVE_IN_ROOT|NO_MAGICLINKS)` on Linux, `O_RESOLVE_BENEATH` on macOS and FreeBSD, `openat` without those.
+    /// Linux resolves symlinks as `openat2(RESOLVE_IN_ROOT)` does, with or without it. Windows follows them anywhere.
     fn open_beneath(&self, rel: &[u8]) -> Option<File> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let zrel = resolve_path::z(rel, &mut *buf);
@@ -302,14 +302,12 @@ impl DirectoryRoute {
         #[cfg(windows)]
         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let fd = bun_sys::openat2_in_root(self.root_fd.get(), zrel, flags, 0).ok()?;
-        #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
         let fd = {
-            use bun_sys::beneath::{Symlinks, openat_if_supported};
-            openat_if_supported(self.root_fd.get(), zrel, flags, 0, Symlinks::FollowInside)
-                .unwrap_or_else(|| bun_sys::openat(self.root_fd.get(), zrel, flags, 0))
-                .ok()?
+            use bun_sys::beneath::{Symlinks, openat};
+            openat(self.root_fd.get(), zrel, flags, 0, Symlinks::FollowAsRoot).ok()?
         };
+        #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+        let fd = self.open_within_root(zrel, flags)?;
         #[cfg(windows)]
         let fd = bun_sys::openat(self.root_fd.get(), zrel, flags, 0).ok()?;
         // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
@@ -318,6 +316,36 @@ impl DirectoryRoute {
         fd.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
             .ok()
             .map(File::from_fd)
+    }
+
+    /// A symlink may be absolute or leave the root on its way, as long as what it leads to is in the root.
+    #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+    fn open_within_root(&self, rel: &bun_core::ZStr, flags: i32) -> Option<Fd> {
+        use bun_sys::beneath::{self, Symlinks};
+        use resolve_path::platform::Posix;
+        let root = self.root_fd.get();
+        match beneath::openat(root, rel, flags, 0, Symlinks::FollowInside) {
+            Err(err) if err.get_errno() == bun_sys::E::EXDEV => {}
+            result => return result.ok(),
+        }
+        // Merely opening a FIFO or a device has side effects, so nothing is opened before it is known to be in the root.
+        let mut root_buf = bun_paths::path_buffer_pool::get();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut real_buf = bun_paths::path_buffer_pool::get();
+        let root_path = &*bun_sys::get_fd_path(root, &mut root_buf).ok()?;
+        let path = resolve_path::join_z_buf_checked::<Posix>(
+            &mut path_buf.0,
+            &[root_path, rel.as_bytes()],
+        )?;
+        let below = bun_sys::realpath(path, &mut real_buf)
+            .ok()?
+            .strip_prefix(strings::trim_right(root_path, b"/"))?;
+        if !matches!(below.first(), None | Some(b'/')) {
+            return None;
+        }
+        let below = strings::trim_left(below, b"/");
+        let below = resolve_path::z(if below.is_empty() { b"." } else { below }, &mut path_buf);
+        beneath::openat(root, below, flags, 0, Symlinks::Refuse).ok()
     }
 
     fn stat_cache_lookup(&self, rel: &[u8], stat: &bun_sys::Stat) -> (u64, [u8; 32], usize) {

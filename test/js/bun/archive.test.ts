@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, kernelResolvesBeneath, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
@@ -1239,6 +1239,30 @@ describe("Bun.Archive", () => {
           plain: ["ReadError"],
           glob: [0],
         },
+        "a file through a symlink that comes back": {
+          links: [["back", "../dest/real"]],
+          archives: [[directory("real"), file("back/new.txt")]],
+          plain: ["ReadError"],
+          glob: [1],
+        },
+        "a file through a symlink that goes down first": {
+          links: [
+            ["deep/er/unused", "unused"],
+            ["deep/out", "er/../../../outside"],
+          ],
+          archives: [[file("deep/out/new.txt")]],
+          plain: ["ReadError"],
+          glob: [0],
+        },
+        "a file through a symlink through a symlink": {
+          links: [
+            ["a/up", ".."],
+            ["out", "a/up/../outside"],
+          ],
+          archives: [[file("out/new.txt")]],
+          plain: ["ReadError"],
+          glob: [0],
+        },
         "a file over a symlink": {
           links: [["victim.txt", "../outside/victim.txt"]],
           archives: [[file("victim.txt")]],
@@ -1376,10 +1400,14 @@ describe("Bun.Archive", () => {
         return { list, results: JSON.parse(stdout) as Record<string, (number | string)[]> };
       }
 
+      /** `count` symlinks, each to the next, and the last to `real`. */
+      const chain = (count: number): [string, string][] =>
+        Array.from({ length: count }, (_, i) => [`link${i}`, i + 1 < count ? `link${i + 1}` : "real"]);
+
       describe.each([
-        ["by default", {}, kernelResolvesBeneath()],
-        ["when the kernel is not asked", { BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH: "1" }, false],
-      ] as const)("%s", (_, env, followsInside) => {
+        ["by default", {}],
+        ["when the kernel is not asked", { BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH: "1" }],
+      ] as const)("%s", (_, env) => {
         test.concurrent.each(["plain", "glob"] as const)("nothing is written outside of it (%s)", async mode => {
           using dir = tempDir("archive-symlinks", fixture);
           const { list, results } = await extractAll(String(dir), leaving, mode, env);
@@ -1407,38 +1435,99 @@ describe("Bun.Archive", () => {
 
         test.concurrent.each(["plain", "glob"] as const)("one that stays inside (%s)", async mode => {
           using dir = tempDir("archive-symlinks", fixture);
+          const cases: Record<string, Case & { followed: boolean }> = {
+            "file": {
+              followed: true,
+              links: [["alias", "real"]],
+              archives: [[directory("real"), file("alias/new.txt")]],
+            },
+            "up": {
+              followed: true,
+              links: [["a/up", ".."]],
+              archives: [[directory("real"), file("a/up/real/new.txt")]],
+            },
+            "down and up": {
+              followed: true,
+              links: [["a/b/alias", "../b/./../../real//"]],
+              archives: [[directory("real"), file("a/b/alias/new.txt")]],
+            },
+            "over one": {
+              followed: true,
+              links: [["alias.txt", "real/new.txt"]],
+              archives: [[directory("real"), file("alias.txt")]],
+            },
+            // macOS follows 32 for one path and Linux 40.
+            "30 of them": {
+              followed: true,
+              links: chain(30),
+              archives: [[directory("real"), file("link0/new.txt")]],
+            },
+            "41 of them": {
+              followed: false,
+              links: chain(41),
+              archives: [[directory("real"), file("link0/new.txt")]],
+            },
+            "to itself": {
+              followed: false,
+              links: [["alias", "alias"]],
+              archives: [[directory("real"), file("alias/new.txt")]],
+            },
+            // The kernels refuse every absolute one.
+            "absolute": {
+              followed: false,
+              links: [["alias", "$/dest/real"]],
+              archives: [[directory("real"), file("alias/new.txt")]],
+            },
+          };
+          const { list, results } = await extractAll(String(dir), cases, mode, env);
+          const before = (root: string, links: [string, string][]) =>
+            Object.fromEntries(
+              links.flatMap(([path, target]) => {
+                const names = path.split("/");
+                const parents = names.slice(1).map((_, i) => [join(...names.slice(0, i + 1)), "directory"]);
+                return [...parents, [join(...names), "-> " + target.replace("$", root)]];
+              }),
+            );
+          expect(
+            Object.fromEntries(list.map(({ name, dest }) => [name, { results: results[name], tree: tree(dest) }])),
+          ).toEqual(
+            Object.fromEntries(
+              list.map(({ name, root }) => [
+                name,
+                {
+                  results: [cases[name].followed ? 2 : mode === "plain" ? "ReadError" : 1],
+                  tree: {
+                    ...before(root, cases[name].links!),
+                    "real": "directory",
+                    ...(cases[name].followed && { [join("real", "new.txt")]: "from the archive" }),
+                  },
+                },
+              ]),
+            ),
+          );
+        });
+
+        test.concurrent.each(["plain", "glob"] as const)("one that goes back and forth 400 times (%s)", async mode => {
+          using dir = tempDir("archive-symlinks", fixture);
+          const deep = Buffer.alloc(80, "d/").toString();
+          const backAndForth = Buffer.alloc(200 * 5, "x/../").toString();
           const { list, results } = await extractAll(
             String(dir),
             {
-              "file": {
-                links: [["alias", "real"]],
-                archives: [[directory("real"), file("alias/new.txt")]],
-              },
-              "up": {
-                links: [["a/up", ".."]],
-                archives: [[directory("real"), file("a/up/real/new.txt")]],
-              },
-              // The kernels refuse every absolute one.
-              "absolute": {
-                links: [["alias", "$/dest/real"]],
-                archives: [[directory("real"), file("alias/new.txt")]],
+              "long": {
+                links: [
+                  [deep + "first", backAndForth + "second"],
+                  [deep + "second", backAndForth + "real"],
+                ],
+                archives: [[directory(deep + "x"), directory(deep + "real"), file(deep + "first/new")]],
               },
             },
             mode,
             env,
           );
-          const refused = mode === "plain" ? "ReadError" : 1;
-          const written = followsInside && { [join("real", "new.txt")]: "from the archive" };
-          expect({
-            results,
-            file: tree(list[0].dest),
-            up: tree(list[1].dest),
-            absolute: tree(list[2].dest),
-          }).toEqual({
-            results: { file: [followsInside ? 2 : refused], up: [followsInside ? 2 : refused], absolute: [refused] },
-            file: { "alias": "-> real", "real": "directory", ...written },
-            up: { "a": "directory", [join("a", "up")]: "-> ..", "real": "directory", ...written },
-            absolute: { "alias": "-> " + join(list[2].dest, "real"), "real": "directory" },
+          expect({ results, written: existsSync(join(list[0].dest, deep, "real", "new")) }).toEqual({
+            results: { long: [3] },
+            written: true,
           });
         });
 
@@ -2499,12 +2588,15 @@ describe("Bun.Archive", () => {
     // Holes are the only bytes of a member that the archive does not hold, so
     // a member of any size takes a few hundred bytes of archive. In memory
     // they are zeros that have to be written. On disk they are nothing.
-    describe("more than 1 GiB of holes", () => {
-      const limit = 2 ** 30;
+    // 1,024 times the size of the archive, but not less than 64 MiB or more than 1 GiB.
+    describe("more holes than files() reads", () => {
+      const limit = 64 * 2 ** 20;
       const data = Buffer.alloc(512, 0x41);
       const member = (build: typeof paxSparseEntry, name: string, holes: number) =>
         build(name, data.length + holes, [{ offset: 0, data }]);
-      const message = "The holes of sparse files add up to more than 1 GiB, too much to read into memory";
+      const tooLarge = (limit: number) =>
+        `The holes of sparse files add up to more than ${limit} bytes, the most that is read into memory from an archive of this size`;
+      const message = tooLarge(limit);
 
       test.each([
         ["gnu", oldGnuSparseEntry],
@@ -2527,15 +2619,41 @@ describe("Bun.Archive", () => {
         expect([...files].map(([name, file]) => [name, file.size])).toEqual([["small.bin", data.length + first]]);
       });
 
+      test("how many of them files() reads depends on the size of the archive", async () => {
+        const sizes = async (padding: number, holes: (length: number) => number) => {
+          const archive = (holes: number) =>
+            Buffer.concat([
+              ustarEntry("padding.bin", Buffer.alloc(padding)),
+              member(paxSparseEntry, "big.bin", holes),
+              Buffer.alloc(1024),
+            ]);
+          const files = await new Bun.Archive(archive(holes(archive(limit).length))).files("big.bin");
+          return [...files].map(([, file]) => file.size - data.length);
+        };
+        const length = 68 * 1024;
+        expect({
+          "8 MiB, 4 KiB of archive": await sizes(0, () => 8 * 2 ** 20),
+          "1,024 times an archive of 68 KiB": await sizes(64 * 1024, length => length * 1024),
+          "and 1 byte": await sizes(64 * 1024, length => length * 1024 + 1).catch(e => e.message),
+          "1 GiB and 1 byte, 2 MiB of archive": await sizes(2 * 2 ** 20, () => 2 ** 30 + 1).catch(e => e.message),
+        }).toEqual({
+          "8 MiB, 4 KiB of archive": [8 * 2 ** 20],
+          "1,024 times an archive of 68 KiB": [length * 1024],
+          "and 1 byte": tooLarge(length * 1024),
+          "1 GiB and 1 byte, 2 MiB of archive": tooLarge(2 ** 30),
+        });
+      });
+
       test.each([
         ["without a glob", undefined],
         ["with a glob", { glob: "**" }],
       ] as const)("extract() writes them (%s)", async (_, options) => {
         using dir = tempDir("sparse-many-holes", {});
-        const bytes = Buffer.concat([member(paxSparseEntry, "big.bin", limit + 1), Buffer.alloc(1024)]);
+        const holes = 2 ** 30 + 1;
+        const bytes = Buffer.concat([member(paxSparseEntry, "big.bin", holes), Buffer.alloc(1024)]);
         expect(await new Bun.Archive(bytes).extract(String(dir), options)).toBe(1);
         const stat = statSync(join(String(dir), "big.bin"));
-        expect(stat.size).toBe(data.length + limit + 1);
+        expect(stat.size).toBe(data.length + holes);
         if (isLinux || isWindows) expect(stat.blocks * 512).toBeLessThan(1024 * 1024);
       });
     });

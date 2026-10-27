@@ -147,10 +147,12 @@ console.log(`Extracted ${count} entries`);
 On Linux and macOS, `extract()` also stays inside the target directory when that directory already contains symlinks, including symlinks from an archive you extracted there earlier:
 
 - Bun does not write through a symlink that leads out of the target directory, or through one with an absolute target. When a file entry needs such a symlink, `extract()` rejects, or skips the entry if you pass a glob. `extract()` skips a directory entry that needs one.
-- Bun follows a relative symlink that stays inside the target directory on Linux 5.6 or later and macOS 26 or later. On older kernels, Bun treats every symlink in an entry's path as one that leads out.
+- Bun follows a relative symlink that stays inside the target directory.
 - Bun creates a symlink entry only in a directory that it reaches without following a symlink, and skips the entry otherwise.
 
 On Windows, `extract()` does not check the junctions and symlinks that already exist in the target directory.
+
+On Linux 5.6 or later, Bun resolves these paths with the `openat2` system call, and resolves them itself where a seccomp policy answers `openat2` with `ENOSYS` or `EPERM`. If your seccomp policy kills the process instead, set `BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH=1` so that Bun never makes the call.
 
 ### Filtering Extracted Files
 
@@ -209,7 +211,7 @@ Each `File` object includes:
 
 **Note**: `files()` loads file contents into memory. For large archives, use `extract()` to write directly to disk instead.
 
-The holes of a sparse file take no space in the archive, and `files()` reads them as zeros. `files()` rejects once the holes it has read from one archive add up to more than 1 GiB. `extract()` has no such limit, because it leaves holes unallocated on disk.
+The holes of a sparse file take no space in the archive, and `files()` reads them as zeros. `files()` rejects once the holes it has read from one archive add up to more than 1,024 times the size of the archive as it was given, so the compressed size of a `.tar.gz`. It always reads up to 64 MiB of holes and never more than 1 GiB. `extract()` has no such limit, because it leaves holes unallocated on disk.
 
 ### Error Handling
 

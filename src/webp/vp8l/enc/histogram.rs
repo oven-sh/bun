@@ -173,7 +173,7 @@ impl Histogram {
             .literal
             .sub(NUM_LITERAL_CODES..)?
             .sub(..NUM_LENGTH_CODES)?;
-        let extra = extra_cost(lengths) + extra_cost(&self.distance);
+        let extra = extra_cost(lengths).wrapping_add(extra_cost(&self.distance));
         Ok(cost.wrapping_add(u64::from(extra) << LOG_2_PRECISION_BITS))
     }
 

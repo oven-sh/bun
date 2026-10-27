@@ -356,7 +356,7 @@ impl<'a> Frame<'a> {
             y_end -= extra_y_rows;
         }
         let y_end = y_end.min(self.height);
-        // libwebp decodes alpha a few rows at a time, but ends up asking for every row, so this fails the same images.
+        // libwebp does this a few rows at a time unless the levels are pre-processed, and fails the same images.
         if let Some(alpha_data) = self.alpha_data.take() {
             let plane = alpha::dec::decode(alpha_data, self.emitter.width(), self.height)?;
             self.emitter.set_alpha(plane);

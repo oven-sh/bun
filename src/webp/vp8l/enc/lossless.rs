@@ -612,8 +612,8 @@ pub(crate) fn extra_cost(population: &[u32]) -> u32 {
         .iter()
         .skip(2)
         .zip(1..)
-        .map(|(&[even, odd], extra_bits)| extra_bits * (even + odd))
-        .sum()
+        .map(|(&[even, odd], extra_bits)| even.wrapping_add(odd).wrapping_mul(extra_bits))
+        .fold(0, u32::wrapping_add)
 }
 
 /// `VP8LAddVectorEq`

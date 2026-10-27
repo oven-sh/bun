@@ -141,8 +141,7 @@ pub(crate) fn select_encoding_type(
             if *repeat_mode == FseRepeat::Valid && nb_seq < STATIC_FSE_NB_SEQ_MAX {
                 return Ok(SymbolEncodingType::Repeat);
             }
-            if nb_seq < dynamic_fse_nb_seq_min
-                || most_frequent < (nb_seq >> (default_norm_log - 1))
+            if nb_seq < dynamic_fse_nb_seq_min || most_frequent < (nb_seq >> (default_norm_log - 1))
             {
                 *repeat_mode = FseRepeat::None;
                 return Ok(SymbolEncodingType::Basic);

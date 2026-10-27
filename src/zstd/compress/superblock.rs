@@ -11,10 +11,9 @@ use super::params::CCtxParams;
 use super::sequences::{cross_entropy_cost, encode_sequences, fse_bit_cost};
 use super::{hist, huf};
 use crate::common::{
-    BlockType, DEFAULT_MAX_OFF, HUF_SYMBOLVALUE_MAX, LL_BITS, LL_DEFAULT_NORM,
-    LL_DEFAULT_NORM_LOG, MAX_LL, MAX_ML, MAX_OFF, MAX_SEQ, MINMATCH, ML_BITS, ML_DEFAULT_NORM,
-    ML_DEFAULT_NORM_LOG, OF_DEFAULT_NORM, OF_DEFAULT_NORM_LOG, SymbolEncodingType,
-    ZSTD_BLOCKHEADERSIZE,
+    BlockType, DEFAULT_MAX_OFF, HUF_SYMBOLVALUE_MAX, LL_BITS, LL_DEFAULT_NORM, LL_DEFAULT_NORM_LOG,
+    MAX_LL, MAX_ML, MAX_OFF, MAX_SEQ, MINMATCH, ML_BITS, ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG,
+    OF_DEFAULT_NORM, OF_DEFAULT_NORM_LOG, SymbolEncodingType, ZSTD_BLOCKHEADERSIZE,
 };
 use crate::error::{ErrorCode, Result};
 use crate::util::{SliceExt, write_le24, write_le32};
@@ -76,9 +75,7 @@ fn compress_sub_block_literal(
             return Ok((no_compress_literals(dst, literals)?, false));
         }
         // The size of the header was a guess.
-        if lh_size
-            < 3 + usize::from(c_lit_size >= 1 << 10) + usize::from(c_lit_size >= 16 << 10)
-        {
+        if lh_size < 3 + usize::from(c_lit_size >= 1 << 10) + usize::from(c_lit_size >= 16 << 10) {
             return Ok((no_compress_literals(dst, literals)?, false));
         }
     }
@@ -163,7 +160,10 @@ fn compress_sub_block_sequences(
         op += tables.len();
     } else {
         let repeat = SymbolEncodingType::Repeat as u32;
-        dst.put(seq_head, ((repeat << 6) + (repeat << 4) + (repeat << 2)) as u8)?;
+        dst.put(
+            seq_head,
+            ((repeat << 6) + (repeat << 4) + (repeat << 2)) as u8,
+        )?;
     }
 
     let bitstream_size = encode_sequences(
@@ -402,7 +402,8 @@ fn size_block_sequences(
     if budget > target_budget {
         return Ok(1);
     }
-    let mut in_size = usize::from(first.lit_length) + usize::from(first.ml_base) + MINMATCH as usize;
+    let mut in_size =
+        usize::from(first.lit_length) + usize::from(first.ml_base) + MINMATCH as usize;
 
     let mut n = 1;
     for seq in rest {
@@ -462,13 +463,12 @@ fn compress_sub_block_multi(
             write_seq_entropy,
         )? + est_lit_size
             + ZSTD_BLOCKHEADERSIZE;
-        let avg_lit_cost = if nb_literals != 0 {
-            (est_lit_size * BYTESCALE) / nb_literals
-        } else {
-            BYTESCALE
-        };
+        let avg_lit_cost = (est_lit_size * BYTESCALE)
+            .checked_div(nb_literals)
+            .unwrap_or(BYTESCALE);
         let avg_seq_cost = ((est_block_size - est_lit_size) * BYTESCALE) / nb_seqs;
-        let nb_sub_blocks = ((est_block_size + target_c_block_size / 2) / target_c_block_size).max(1);
+        let nb_sub_blocks =
+            ((est_block_size + target_c_block_size / 2) / target_c_block_size).max(1);
         let avg_block_budget = (est_block_size * BYTESCALE) / nb_sub_blocks;
         if est_block_size > src.len() {
             return Ok(0);
@@ -544,7 +544,10 @@ fn compress_sub_block_multi(
 
     if write_lit_entropy {
         // The table was not written, so the next block cannot use it again.
-        next_c_block.entropy.huf.clone_from(&prev_c_block.entropy.huf);
+        next_c_block
+            .entropy
+            .huf
+            .clone_from(&prev_c_block.entropy.huf);
     }
     if write_seq_entropy && need_sequence_entropy_tables(&entropy_metadata.fse_metadata) {
         // Neither were these, and there is no going back to the previous ones.

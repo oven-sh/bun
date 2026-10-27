@@ -104,7 +104,6 @@ pub(crate) enum CParamMode {
     /// The dictionary keeps its own tables, so its size does not count.
     AttachDict,
     CreateCDict,
-    Unknown,
 }
 
 /// `ZSTD_CCtx_params`, without the fields that nothing can change from their default.
@@ -459,7 +458,7 @@ pub(crate) fn adjust_c_params_internal(
     const MAX_WINDOW_RESIZE: u64 = 1 << (ZSTD_WINDOWLOG_MAX - 1);
 
     match mode {
-        CParamMode::Unknown | CParamMode::NoAttachDict => {}
+        CParamMode::NoAttachDict => {}
         CParamMode::CreateCDict => {
             if dict_size != 0 && src_size == ZSTD_CONTENTSIZE_UNKNOWN {
                 src_size = MIN_SRC_SIZE;
@@ -540,8 +539,12 @@ pub(crate) fn get_c_params_from_cctx_params(
     dict_size: usize,
     mode: CParamMode,
 ) -> CompressionParameters {
-    let mut c_params =
-        get_c_params_internal(cctx_params.compression_level, src_size_hint, dict_size, mode);
+    let mut c_params = get_c_params_internal(
+        cctx_params.compression_level,
+        src_size_hint,
+        dict_size,
+        mode,
+    );
     if cctx_params.ldm_params.enable_ldm == ParamSwitch::Enable {
         c_params.window_log = ZSTD_LDM_DEFAULT_WINDOW_LOG;
     }
@@ -734,7 +737,9 @@ impl WorkspaceNeeds<'_> {
         total += aligned64(max_nb_seq * SIZEOF_SEQ_DEF);
         if self.ldm_params.enable_ldm == ParamSwitch::Enable {
             total += aligned64((1usize << self.ldm_params.hash_log) * SIZEOF_LDM_ENTRY)
-                + aligned64(ldm::get_max_nb_seq(*self.ldm_params, self.block_size) * SIZEOF_RAW_SEQ)
+                + aligned64(
+                    ldm::get_max_nb_seq(*self.ldm_params, self.block_size) * SIZEOF_RAW_SEQ,
+                )
                 + (1usize << (self.ldm_params.hash_log - self.ldm_params.bucket_size_log));
         }
         total

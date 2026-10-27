@@ -651,7 +651,12 @@ fn row_next_cached_hash(
         mls,
         hash_salt,
     )? as u32;
-    row_prefetch(hash_table, tag_table, ((new_hash >> ZSTD_ROW_HASH_TAG_BITS) << row_log) as usize, row_log);
+    row_prefetch(
+        hash_table,
+        tag_table,
+        ((new_hash >> ZSTD_ROW_HASH_TAG_BITS) << row_log) as usize,
+        row_log,
+    );
     let cached = cache.at_mut((idx & ZSTD_ROW_HASH_CACHE_MASK) as usize)?;
     Ok(core::mem::replace(cached, new_hash))
 }
@@ -675,7 +680,17 @@ fn row_update_internal_impl(
 
     for idx in update_start_idx..update_end_idx {
         let hash = if use_cache {
-            row_next_cached_hash(&mut ms.hash_cache, hash_table, tag_table, row_log, prefix, idx, hash_log, mls, hash_salt)?
+            row_next_cached_hash(
+                &mut ms.hash_cache,
+                hash_table,
+                tag_table,
+                row_log,
+                prefix,
+                idx,
+                hash_log,
+                mls,
+                hash_salt,
+            )?
         } else {
             hash_ptr_salted(
                 prefix.buf,
@@ -826,7 +841,17 @@ fn row_find_best_match<const MLS: u32, const ROW_ENTRIES: usize, const DICT_MODE
     } else {
         let prefix = src.prefix();
         row_update_internal(ms, prefix, ip, MLS, row_log, row_mask, true)?;
-        row_next_cached_hash(&mut ms.hash_cache, &ms.hash_table, &ms.tag_table, row_log, prefix, curr, hash_log, MLS, hash_salt)?
+        row_next_cached_hash(
+            &mut ms.hash_cache,
+            &ms.hash_table,
+            &ms.tag_table,
+            row_log,
+            prefix,
+            curr,
+            hash_log,
+            MLS,
+            hash_salt,
+        )?
     };
     ms.hash_salt_entropy = ms.hash_salt_entropy.wrapping_add(hash);
 

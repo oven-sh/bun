@@ -192,25 +192,6 @@ pub(crate) fn adjust_parameters(params: &mut LdmParams, c_params: &CompressionPa
     params.bucket_size_log = params.bucket_size_log.min(params.hash_log);
 }
 
-/// `ZSTD_cwksp_alloc_size`, which adds something only under ASAN.
-const fn cwksp_alloc_size(size: usize) -> usize {
-    size
-}
-
-/// `ZSTD_ldm_getTableSize`: how many bytes of workspace the C code takes for the tables.
-pub(crate) fn get_table_size(params: LdmParams) -> usize {
-    let ldm_h_size = 1usize << (params.hash_log & 63);
-    let ldm_bucket_size_log = params.bucket_size_log.min(params.hash_log);
-    let ldm_bucket_size = 1usize << ((params.hash_log - ldm_bucket_size_log) & 63);
-    let total_size = cwksp_alloc_size(ldm_bucket_size)
-        + cwksp_alloc_size(ldm_h_size.wrapping_mul(size_of::<LdmEntry>()));
-    if params.enable_ldm == ParamSwitch::Enable {
-        total_size
-    } else {
-        0
-    }
-}
-
 /// `ZSTD_ldm_getMaxNbSeq`: the most sequences that `max_chunk_size` bytes can give.
 pub(crate) fn get_max_nb_seq(params: LdmParams, max_chunk_size: usize) -> usize {
     if params.enable_ldm == ParamSwitch::Enable {

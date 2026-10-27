@@ -18,7 +18,7 @@ pub(crate) const ZSTD_OPT_NUM: usize = 1 << 12;
 pub(crate) const ZSTD_OPT_SIZE: usize = ZSTD_OPT_NUM + 3;
 
 pub(crate) const ZSTD_MAX_HUF_HEADER_SIZE: usize = 128;
-pub(crate) const ZSTD_MAX_FSE_HEADERS_SIZE: usize = (53 * 9 + 36 * 9 + 32 * 8 + 7) / 8;
+pub(crate) const ZSTD_MAX_FSE_HEADERS_SIZE: usize = (53usize * 9 + 36 * 9 + 32 * 8).div_ceil(8);
 
 /// `ZSTD_strategy`
 #[repr(u8)]
@@ -416,8 +416,6 @@ impl SeqStore {
 }
 
 pub(crate) const REPCODE1_TO_OFFBASE: u32 = 1;
-pub(crate) const REPCODE2_TO_OFFBASE: u32 = 2;
-pub(crate) const REPCODE3_TO_OFFBASE: u32 = 3;
 
 /// `OFFSET_TO_OFFBASE`: `offset` is not 0.
 #[inline(always)]
@@ -773,13 +771,6 @@ impl Window {
         let end = self.index_of(self.next_src);
         self.low_limit = end;
         self.dict_limit = end;
-    }
-
-    /// `ZSTD_window_isEmpty`
-    pub(crate) fn is_empty(&self) -> bool {
-        self.dict_limit == ZSTD_WINDOW_START_INDEX
-            && self.low_limit == ZSTD_WINDOW_START_INDEX
-            && self.next_src.wrapping_sub(self.base) == ZSTD_WINDOW_START_INDEX as usize
     }
 
     /// `ZSTD_window_hasExtDict`

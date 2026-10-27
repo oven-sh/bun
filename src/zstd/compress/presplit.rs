@@ -4,9 +4,6 @@ use super::hist;
 use crate::error::Result;
 use crate::util::SliceExt;
 
-/// What the C code needs of workspace, which counts in the size of a context.
-pub(crate) const ZSTD_SLIPBLOCK_WORKSPACESIZE: usize = 8208;
-
 const THRESHOLD_PENALTY_RATE: u64 = 16;
 const THRESHOLD_BASE: i32 = THRESHOLD_PENALTY_RATE as i32 - 2;
 const THRESHOLD_PENALTY: i32 = 3;

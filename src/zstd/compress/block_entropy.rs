@@ -536,7 +536,9 @@ fn estimate_block_size_symbol_type(
     let mut max = max_code;
     hist::count_fast_wksp(&mut count, &mut max, code_table)?;
     let estimate_in_bits = match ty {
-        SymbolEncodingType::Basic => cross_entropy_cost(default_norm, default_norm_log, &count, max),
+        SymbolEncodingType::Basic => {
+            cross_entropy_cost(default_norm, default_norm_log, &count, max)
+        }
         SymbolEncodingType::Rle => Ok(0),
         SymbolEncodingType::Compressed | SymbolEncodingType::Repeat => {
             fse_bit_cost(fse_c_table, &count, max)
@@ -638,7 +640,10 @@ pub(crate) fn build_entropy_statistics_and_estimate_sub_block_size(
 /// `ZSTD_countSeqStoreLiteralsBytes`
 pub(crate) fn count_seq_store_literals_bytes(store: &SeqStore, chunk: &SeqChunk) -> Result<usize> {
     let sequences = store.sequences.sub(chunk.seq_start..chunk.seq_end)?;
-    let mut literals_bytes: usize = sequences.iter().map(|seq| usize::from(seq.lit_length)).sum();
+    let mut literals_bytes: usize = sequences
+        .iter()
+        .map(|seq| usize::from(seq.lit_length))
+        .sum();
     if chunk.long_length_type == LongLengthType::LiteralLength
         && (chunk.long_length_pos as usize) < sequences.len()
     {

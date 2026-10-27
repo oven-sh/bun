@@ -254,7 +254,9 @@ pub fn frame_extent(src: &[u8]) -> Result<FrameExtent> {
     };
     let mut ip = header.header_size;
     loop {
-        let Some(remaining) = src.get(ip..).filter(|rest| rest.len() >= ZSTD_BLOCKHEADERSIZE)
+        let Some(remaining) = src
+            .get(ip..)
+            .filter(|rest| rest.len() >= ZSTD_BLOCKHEADERSIZE)
         else {
             return Ok(FrameExtent::AtLeast(ip + ZSTD_BLOCKHEADERSIZE));
         };

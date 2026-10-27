@@ -14,8 +14,8 @@ use super::internal::{
     DictTableLoadMethod, EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType,
     MatchState, ParamSwitch, Prefix, RawSeq, RawSeqStore, SeqChunk, SeqStore, Strategy,
     TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
-    ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX, min_gain,
-    no_compress_block, offbase_is_repcode, offset_to_offbase, rle_compress_block, update_rep,
+    ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX, min_gain, no_compress_block,
+    offbase_is_repcode, offset_to_offbase, rle_compress_block, update_rep,
 };
 use super::params::{
     CCtxParams, CParamMode, Format, MatchStateSizes, Workspace, WorkspaceNeeds,
@@ -182,11 +182,7 @@ fn reset_match_state(
     force_reset_index: IndexResetPolicy,
     for_who: ResetTarget,
 ) -> Result<()> {
-    let sizes = MatchStateSizes::new(
-        c_params,
-        use_row_match_finder,
-        for_who == ResetTarget::CCtx,
-    );
+    let sizes = MatchStateSizes::new(c_params, use_row_match_finder, for_who == ResetTarget::CCtx);
 
     if force_reset_index == IndexResetPolicy::Reset {
         ms.window = Window::new();
@@ -301,12 +297,14 @@ fn load_dictionary_content(
         }
     }
 
-    ms.window.update(src.start_addr(), src.buf, src.len(), false);
+    ms.window
+        .update(src.start_addr(), src.buf, src.len(), false);
 
     if let Some(ls) = ls
         && params.ldm_params.enable_ldm == ParamSwitch::Enable
     {
-        ls.window.update(src.start_addr(), src.buf, src.len(), false);
+        ls.window
+            .update(src.start_addr(), src.buf, src.len(), false);
         ls.loaded_dict_end = if params.force_window {
             0
         } else {
@@ -371,7 +369,9 @@ fn dict_ncount_repeat(
     if dict_max_symbol_value < max_symbol_value {
         return FseRepeat::Check;
     }
-    let counts = normalized_counter.iter().take(max_symbol_value as usize + 1);
+    let counts = normalized_counter
+        .iter()
+        .take(max_symbol_value as usize + 1);
     if counts.into_iter().any(|&count| count == 0) {
         return FseRepeat::Check;
     }
@@ -460,11 +460,8 @@ fn load_c_entropy(bs: &mut CompressedBlockState, dict: &[u8]) -> Result<usize> {
             let max_offset = dict_content_size as u32 + (128 << 10);
             offcode_max = highbit32(max_offset);
         }
-        bs.entropy.fse.offcode_repeat_mode = dict_ncount_repeat(
-            &offcode_ncount,
-            offcode_max_value,
-            offcode_max.min(MAX_OFF),
-        );
+        bs.entropy.fse.offcode_repeat_mode =
+            dict_ncount_repeat(&offcode_ncount, offcode_max_value, offcode_max.min(MAX_OFF));
 
         for rep in bs.rep {
             if rep == 0 || rep as usize > dict_content_size {
@@ -1643,7 +1640,12 @@ impl FrameCompressor {
         }
 
         let ms = &mut self.match_state;
-        if !(ms.window).update(src.start_addr(), src.buf, src.len(), ms.force_non_contiguous) {
+        if !(ms.window).update(
+            src.start_addr(),
+            src.buf,
+            src.len(),
+            ms.force_non_contiguous,
+        ) {
             ms.force_non_contiguous = false;
             ms.next_to_update = ms.window.dict_limit;
         }

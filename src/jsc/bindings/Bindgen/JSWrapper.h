@@ -62,7 +62,8 @@ public:
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
-    static JSClassConstructor* create(JSC::VM&, JSC::JSGlobalObject*, WTF::ASCIILiteral name, JSC::NativeFunction call, JSC::NativeFunction construct, unsigned length, std::span<const JSC::HashTableValue>, JSC::JSObject* prototype);
+    // It inherits from `base`, the constructor of the class that this one extends, or from `Function.prototype`.
+    static JSClassConstructor* create(JSC::VM&, JSC::JSGlobalObject*, WTF::ASCIILiteral name, JSC::NativeFunction call, JSC::NativeFunction construct, unsigned length, std::span<const JSC::HashTableValue>, JSC::JSObject* prototype, JSC::JSObject* base = nullptr);
 
 private:
     JSClassConstructor(JSC::VM&, JSC::Structure*, JSC::NativeFunction call, JSC::NativeFunction construct);

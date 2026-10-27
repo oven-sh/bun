@@ -3148,8 +3148,10 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
 });
 
 // Once a worker's VM has been stopped — by its own process.exit(), from a timer, from a subprocess
-// onExit callback (a foreign trampoline), or by the parent's terminate() landing mid-callback —
-// nothing it had queued may run: not the rest of the callback, not a nextTick, not a microtask.
+// onExit callback (a foreign trampoline), from a listener or callback that native code called for
+// script (process.emit(), dispatchEvent(), abort(), the abort algorithm of pipeTo()), or by the
+// parent's terminate() landing mid-callback — nothing it had queued may run: not the rest of the
+// callback, not the script that called emit() or dispatchEvent(), not a nextTick, not a microtask.
 describe("nothing queued runs after the worker's VM stops", () => {
   const cases: [string, string, (w: Worker) => void][] = [
     [
@@ -3159,6 +3161,57 @@ describe("nothing queued runs after the worker's VM stops", () => {
          Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
          process.exit(0);
          parentPort.postMessage("sync code after exit ran");
+       }, 5);`,
+      () => {},
+    ],
+    [
+      "process.exit() in a process.emit() listener",
+      `process.on("stop", () => process.exit(0));
+       setTimeout(() => {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         process.emit("stop");
+         parentPort.postMessage("sync code after emit ran");
+       }, 5);`,
+      () => {},
+    ],
+    [
+      "process.exit() in an EventTarget listener",
+      `const target = new EventTarget();
+       target.addEventListener("stop", () => process.exit(0));
+       setTimeout(() => {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         target.dispatchEvent(new Event("stop"));
+         parentPort.postMessage("sync code after dispatchEvent ran");
+       }, 5);`,
+      () => {},
+    ],
+    [
+      "process.exit() in an 'abort' listener",
+      `const controller = new AbortController();
+       controller.signal.addEventListener("abort", () => process.exit(0));
+       setTimeout(() => {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         controller.abort();
+         parentPort.postMessage("sync code after abort ran");
+       }, 5);`,
+      () => {},
+    ],
+    [
+      "process.exit() in a stream's cancel() that the abort algorithm of pipeTo() calls",
+      `let sink;
+       const controller = new AbortController();
+       new ReadableStream({ cancel() { process.exit(0); } })
+         .pipeTo(new WritableStream({ start(c) { sink = c; } }), { signal: controller.signal })
+         .catch(() => {});
+       setTimeout(() => {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         sink.error(new Error("sink failed"));
+         controller.abort();
+         parentPort.postMessage("sync code after abort ran");
        }, 5);`,
       () => {},
     ],
@@ -3195,6 +3248,488 @@ describe("nothing queued runs after the worker's VM stops", () => {
       expect(typeof code).toBe("number");
     });
   }
+});
+
+// A worker in a microtask-only loop could not be stopped (terminate(), or its own process.exit()) when
+// the termination trap was serviced inside native code that caught the TerminationException and dropped
+// it, so the checkpoint never stopped, the worker never returned to its event loop, and the worker never
+// exited:
+// - the BunPerformMicrotaskJob handler in JSC (the job for `queueMicrotask()` and for the C++ web
+//   streams' start/pull/write reactions) cleared it with a plain clearException() (oven-sh/WebKit#491);
+// - JSEventListener::handleEvent and EventEmitter::innerInvokeEventListeners took it through the
+//   NakedPtr<Exception> overload of JSC::call(), which clears unconditionally, and then reported it to
+//   a reporter that ignores terminations.
+//
+// Every shape except the stream ones is deterministic: the listener or callback posts 'go' and spins,
+// so terminate() lands inside it while the `await 0` continuation is already queued behind it. Two
+// things would hide the bug, so the shapes avoid them: module linking during startup re-arms a dropped
+// termination (a DeferTermination scope fires the trap again), so the loop starts from a timer; and a
+// drain started after a timer callback is refused at its entry once the VM is stopping, so the listener
+// shapes spin from their second call, inside the checkpoint the `await 0` continuation runs in. The
+// stream shapes are the reported ones; they post 'go' once the loop has run for a while, and there the
+// trap only sometimes lands inside the start reaction.
+describe("terminate() or process.exit() while a microtask-only loop keeps entering native-dispatched callbacks", () => {
+  const spin = "parentPort.postMessage('go'); for (;;) {}";
+  const spinOnSecondCall = "let n = 0; const L = () => { if (n++) { " + spin + " } };";
+  const shapes: [name: string, shape: { setup?: string; loop: string; progress?: boolean; exit?: number }][] = [
+    ["queueMicrotask()", { loop: "queueMicrotask(() => { " + spin + " });" }],
+    ["read() of a stream", { loop: "new Response('abc').body.getReader().read();", progress: true }],
+    ["tee() of a stream", { loop: "new Response('abc').body.tee();", progress: true }],
+    [
+      "dispatchEvent()",
+      {
+        setup: spinOnSecondCall + "const et = new EventTarget(); et.addEventListener('x', L);",
+        loop: "et.dispatchEvent(new Event('x'));",
+      },
+    ],
+    [
+      "abort()",
+      {
+        setup: spinOnSecondCall,
+        loop: "{ const ac = new AbortController(); ac.signal.addEventListener('abort', L); ac.abort(); }",
+      },
+    ],
+    ["process.emit()", { setup: spinOnSecondCall + "process.on('evt', L);", loop: "process.emit('evt');" }],
+    // process.exit() inside the job: the worker exits on its own with that code, and runs nothing after.
+    ["process.exit() in queueMicrotask()", { loop: "queueMicrotask(() => { process.exit(42); });", exit: 42 }],
+    [
+      "process.exit() in a WritableStream's write()",
+      { loop: "new WritableStream({ write() { process.exit(42); } }).getWriter().write('x');", exit: 42 },
+    ],
+  ];
+  const rounds = 2;
+  // A hang guard for one round, under the file's test timeout. A build that stops the worker never waits for it.
+  const deadline = isDebug ? 20_000 : 6_000;
+
+  test.concurrent.each(shapes)("%s", async (_name, { setup = "", loop, progress = false, exit }) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const progress = ${progress};
+        const exit = ${exit ?? null};
+        const src =
+          "const { parentPort } = require('worker_threads');" +
+          ${JSON.stringify(setup)} +
+          (progress ? "let k = 0;" : "") +
+          "setTimeout(() => {" +
+          "(async () => { for (;;) { " +
+          (progress ? "if (k++ === 50) parentPort.postMessage('go');" : "") +
+          ${JSON.stringify(loop)} + " await 0; } })();" +
+          "}, 0);";
+        (async () => {
+          for (let i = 0; i < ${rounds}; i++) {
+            const w = new Worker(src, { eval: true });
+            const exited = new Promise(r => w.once("exit", c => r("exit code " + c)));
+            const errored = new Promise(r => w.once("error", e => r("error " + (e && e.message))));
+            const hang = Bun.sleep(${deadline}).then(() => "HANG");
+            const fail = why => {
+              console.log(why + " in round " + i);
+              process.exit(2);
+            };
+            if (exit !== null) {
+              const got = await Promise.race([exited, errored, hang]);
+              if (got !== "exit code " + exit) fail(got);
+            } else {
+              const got = await Promise.race([new Promise(r => w.once("message", r)), exited, errored, hang]);
+              if (got !== "go") fail(got + " before 'go'");
+              const code = await Promise.race([w.terminate(), hang]);
+              if (code === "HANG") fail("HANG");
+            }
+          }
+          console.log("PASS");
+          process.exit(0);
+        })();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "PASS\n", stderr: "", exitCode: 0 });
+  });
+});
+
+// The same when the stop is made by the handler of an uncaught error: an 'uncaughtException' or
+// 'uncaughtExceptionMonitor' listener, the capture callback, a `process._fatalException` getter, a
+// Bun.ModuleGraph's onError or the worker's global 'error' listener calls process.exit(), or the
+// parent's terminate() lands in it. Three callers report the error:
+//  - the nextTick queue, between two callbacks, with no script frame beneath it. The handler's stop is
+//    then all that keeps the queue from calling the callbacks behind the one that threw.
+//  - the microtask checkpoint, which still has the tick pass that follows it to run.
+//  - the worker's start sequence, for an entry point that throws. It goes on to a GC and to the first
+//    loop turn: a termination that the handler's script left pending there ends a build with assertions.
+// Releases before this stopped in the first two only when the queued callbacks had never run (JSC
+// raised the dropped termination again when it first linked their code), so some rows queue functions
+// that ran before.
+// Each worker runs in a child process: under `bun test` a worker's uncaught error goes to the test
+// runner and not to the worker's own handlers, and an assertion in the runtime ends the child.
+describe("a worker stopped by the handler of its uncaught error", () => {
+  const prelude = `const { parentPort } = require("node:worker_threads");
+    const post = message => parentPort.postMessage(message);
+    process.on("exit", code => post("exit " + code));
+    const reportAndExit = error => { post("reported " + error.message); process.exit(7); };
+    const queueWork = () => {
+      process.nextTick(() => post("nextTick ran"));
+      queueMicrotask(() => post("microtask ran"));
+      (async () => { await 0; post("await continuation ran"); })();
+    };
+    let armed = false;
+    const tick = () => { if (armed) post("nextTick ran"); };
+    const microtask = () => { if (armed) post("microtask ran"); };
+    const continuation = async () => { await 0; if (armed) post("await continuation ran"); };
+    const queueWorkThatRanBefore = () => { process.nextTick(tick); queueMicrotask(microtask); continuation(); };
+    const reasonWithStackGetter = () =>
+      Object.defineProperty(new Error("boom"), "stack", { get() { post("stack getter ran"); return ""; } });
+    const errorWithCodeGetter = () =>
+      Object.defineProperty(new RangeError("boom"), "code", { get() { post("code getter ran"); return "E_BOOM"; } });\n`;
+  const tickThrows = `setImmediate(() => { process.nextTick(() => { throw new Error("boom"); }); queueWork(); });`;
+  const microtaskThrowsWithATickQueued = `setImmediate(() => {
+      queueMicrotask(() => { process.nextTick(() => post("nextTick ran")); throw new Error("boom"); });
+    });`;
+  const captureMustNotRun = `process.setUncaughtExceptionCaptureCallback(() => post("capture callback ran"));`;
+  // The assertion needs an Error whose stack nothing has read: the GC of the start sequence formats it.
+  const unreadStack = `globalThis.unreadStack = new Error("kept");`;
+  const rejects = `setImmediate(() => { Promise.reject(reasonWithStackGetter()); }); setInterval(() => {}, 1000);`;
+  const reportedThenExit = { messages: ["reported boom", "exit 7"], errors: [], code: 7 };
+  const exitOnly = { messages: ["exit 7"], errors: [], code: 7 };
+  const errorEventThenExit = {
+    messages: ["code getter ran", "error event", "exit 5"],
+    errors: ["RangeError: boom"],
+    code: 5,
+  };
+
+  const cases: [name: string, worker: string, parent: string, expected: object, flags?: string[]][] = [
+    // Reported by the nextTick queue.
+    [
+      "'uncaughtException' listener exits, a nextTick callback threw",
+      `process.on("uncaughtException", reportAndExit); ${tickThrows}`,
+      "",
+      reportedThenExit,
+    ],
+    [
+      "'uncaughtException' listener exits, a nextTick callback threw, the queued callbacks ran before",
+      `process.on("uncaughtException", reportAndExit); queueWorkThatRanBefore();
+       setImmediate(() => { armed = true; process.nextTick(() => { throw new Error("boom"); }); queueWorkThatRanBefore(); });`,
+      "",
+      reportedThenExit,
+    ],
+    [
+      "'uncaughtExceptionMonitor' listener exits, a nextTick callback threw",
+      `process.on("uncaughtExceptionMonitor", reportAndExit); ${tickThrows}`,
+      "",
+      reportedThenExit,
+    ],
+    [
+      // Node emits a destroyed stream's 'error' from a nextTick; with no 'error' listener it is thrown there.
+      "'uncaughtException' listener exits, a stream's unhandled 'error' event",
+      `process.on("uncaughtException", reportAndExit);
+       setImmediate(() => { new (require("node:stream").Readable)({ read() {} }).destroy(new Error("boom")); queueWork(); });`,
+      "",
+      reportedThenExit,
+    ],
+    [
+      "'uncaughtException' listener exits, only an await continuation is queued",
+      `process.on("uncaughtException", reportAndExit);
+       setImmediate(() => {
+         process.nextTick(() => { throw new Error("boom"); });
+         (async () => { await 0; post("await continuation ran"); })();
+       });`,
+      "",
+      reportedThenExit,
+    ],
+    [
+      "'uncaughtExceptionMonitor' listener exits with a capture callback set, a nextTick callback threw",
+      `process.on("uncaughtExceptionMonitor", reportAndExit); ${captureMustNotRun} ${tickThrows}`,
+      "",
+      reportedThenExit,
+    ],
+    [
+      "capture callback exits, a nextTick callback threw",
+      `process.setUncaughtExceptionCaptureCallback(reportAndExit); ${tickThrows}`,
+      "",
+      reportedThenExit,
+    ],
+    [
+      "terminate() lands in the 'uncaughtException' listener, a nextTick callback threw",
+      `process.on("uncaughtException", () => { post("in the listener"); for (;;) {} }); ${tickThrows}`,
+      `worker.on("message", message => message === "in the listener" && worker.terminate());`,
+      { messages: ["in the listener"], errors: [], code: 1 },
+    ],
+    // Reported by the microtask checkpoint.
+    [
+      "'uncaughtException' listener exits, a microtask threw with a nextTick callback queued",
+      `process.on("uncaughtException", reportAndExit); ${microtaskThrowsWithATickQueued}`,
+      "",
+      reportedThenExit,
+    ],
+    [
+      "'uncaughtExceptionMonitor' listener exits with a capture callback set, a microtask threw with a nextTick callback queued",
+      `process.on("uncaughtExceptionMonitor", reportAndExit); ${captureMustNotRun} ${microtaskThrowsWithATickQueued}`,
+      "",
+      reportedThenExit,
+    ],
+    [
+      // The first error is reported with nothing armed, so the capture callback and the tick have run before.
+      "'uncaughtExceptionMonitor' listener exits for the second error with a capture callback set, a microtask threw with a nextTick callback queued",
+      `process.on("uncaughtExceptionMonitor", error => { if (armed) reportAndExit(error); });
+       process.setUncaughtExceptionCaptureCallback(() => { if (armed) post("capture callback ran"); });
+       queueMicrotask(() => { process.nextTick(tick); throw new Error("first"); });
+       setImmediate(() => { armed = true; queueMicrotask(() => { process.nextTick(tick); throw new Error("boom"); }); });`,
+      "",
+      reportedThenExit,
+    ],
+    // Reported as a rejection. What follows the handler in that report must not run either: the
+    // 'unhandledRejection' listeners, and the warning, which reads the reason's `stack`.
+    [
+      "capture callback exits for a rejection, --unhandled-rejections=strict",
+      `process.setUncaughtExceptionCaptureCallback(reportAndExit); ${rejects}`,
+      "",
+      reportedThenExit,
+      ["--unhandled-rejections=strict"],
+    ],
+    [
+      "'uncaughtException' listener exits for a rejection, --unhandled-rejections=strict",
+      `process.on("uncaughtException", reportAndExit); ${rejects}`,
+      "",
+      reportedThenExit,
+      ["--unhandled-rejections=strict"],
+    ],
+    [
+      "'unhandledRejection' listener exits, --unhandled-rejections=warn",
+      `process.on("unhandledRejection", reportAndExit); ${rejects}`,
+      "",
+      reportedThenExit,
+      ["--unhandled-rejections=warn"],
+    ],
+    // Reported by the start sequence.
+    [
+      "'uncaughtException' listener exits, the CommonJS entry point throws",
+      `process.on("uncaughtException", () => process.exit(7)); throw new Error("boom");`,
+      "",
+      exitOnly,
+    ],
+    [
+      "'uncaughtExceptionMonitor' listener exits, the CommonJS entry point throws",
+      `process.on("uncaughtExceptionMonitor", () => process.exit(7)); throw new Error("boom");`,
+      "",
+      exitOnly,
+    ],
+    [
+      "capture callback exits, the CommonJS entry point throws",
+      `process.setUncaughtExceptionCaptureCallback(() => process.exit(7)); throw new Error("boom");`,
+      "",
+      exitOnly,
+    ],
+    [
+      "'uncaughtException' listener exits, the ES module entry point rejects",
+      `process.on("uncaughtException", () => process.exit(7)); await 0; throw new Error("boom");`,
+      "",
+      exitOnly,
+    ],
+    [
+      "capture callback exits, the ES module entry point rejects",
+      `process.setUncaughtExceptionCaptureCallback(() => process.exit(7)); await 0; throw new Error("boom");`,
+      "",
+      exitOnly,
+    ],
+    [
+      "process._fatalException getter exits, the CommonJS entry point throws",
+      `Object.defineProperty(process, "_fatalException", { get() { process.exit(7); } }); throw new Error("boom");`,
+      "",
+      exitOnly,
+    ],
+    [
+      "process._fatalException getter exits, the ES module entry point rejects",
+      `Object.defineProperty(process, "_fatalException", { get() { process.exit(7); } }); await 0; throw new Error("boom");`,
+      "",
+      exitOnly,
+    ],
+    [
+      "'workerMessage' listener exits, message buffered while the entry point loaded",
+      `${unreadStack} process.on("workerMessage", () => process.exit(7)); setInterval(() => {}, 1000);`,
+      `postMessageToThread(worker.threadId, "hello").catch(() => {});`,
+      exitOnly,
+    ],
+    // An error of a Bun.ModuleGraph's code goes to its onError first.
+    [
+      "Bun.ModuleGraph onError exits, a nextTick callback of the graph threw",
+      `new Bun.ModuleGraph({ onError: reportAndExit }).run(() => setImmediate(() => {
+         process.nextTick(() => { throw new Error("boom"); });
+         queueWork();
+       }));`,
+      "",
+      reportedThenExit,
+    ],
+    [
+      "Bun.ModuleGraph onError exits, the global 'error' listener threw in the graph",
+      `const graph = new Bun.ModuleGraph({ onError: reportAndExit });
+       globalThis.addEventListener("error", () => graph.run(() => { throw new Error("boom"); }));
+       setTimeout(() => { throw new Error("first"); }, 1);`,
+      "",
+      { messages: ["reported boom", "exit 7"], errors: ["Error: first"], code: 7 },
+    ],
+    // The worker's global 'error' event comes before the report to the parent, and a listener can stop the
+    // worker there. The parent still receives the error, as it was thrown: it is cloned before the listeners
+    // run (the clone reads the error's properties), so nothing of it is read after the stop.
+    [
+      "a global 'error' listener's change to the error does not reach the parent",
+      `globalThis.addEventListener("error", event => { event.error.message = "changed by the listener"; });
+       setTimeout(() => { throw new RangeError("boom"); }, 1);`,
+      "",
+      { messages: ["exit 1"], errors: ["RangeError: boom"], code: 1 },
+    ],
+    [
+      "global 'error' listener exits, a timer threw",
+      `globalThis.addEventListener("error", () => { post("error event"); process.exit(5); });
+       setTimeout(() => { throw errorWithCodeGetter(); }, 1);`,
+      "",
+      errorEventThenExit,
+    ],
+    [
+      "global 'error' listener exits, a microtask threw",
+      `globalThis.addEventListener("error", () => { post("error event"); process.exit(5); });
+       setTimeout(() => queueMicrotask(() => { throw errorWithCodeGetter(); }), 1);`,
+      "",
+      errorEventThenExit,
+    ],
+    [
+      "global 'error' listener exits from its handleEvent getter, a timer threw",
+      `globalThis.addEventListener("error", { get handleEvent() { post("error event"); process.exit(5); } });
+       setTimeout(() => { throw errorWithCodeGetter(); }, 1);`,
+      "",
+      errorEventThenExit,
+    ],
+    [
+      "global 'error' listener exits from the then getter of what it returns, a timer threw",
+      `globalThis.addEventListener("error", () => ({ get then() { post("error event"); process.exit(5); } }));
+       setTimeout(() => { throw errorWithCodeGetter(); }, 1);`,
+      "",
+      errorEventThenExit,
+    ],
+    [
+      "global 'error' listener exits from the then() of what it returns, a microtask threw",
+      `globalThis.addEventListener("error", () => ({ then() { post("error event"); process.exit(5); } }));
+       setTimeout(() => queueMicrotask(() => { throw errorWithCodeGetter(); }), 1);`,
+      "",
+      errorEventThenExit,
+    ],
+  ];
+
+  // A Web Worker tells its parent of the stop with 'close'.
+  const webCases: [name: string, worker: string, expected: object][] = [
+    [
+      "'uncaughtException' listener exits, a nextTick callback threw",
+      `process.on("uncaughtException", reportAndExit); ${tickThrows}`,
+      reportedThenExit,
+    ],
+    [
+      "'uncaughtExceptionMonitor' listener exits, a nextTick callback threw",
+      `process.on("uncaughtExceptionMonitor", reportAndExit); ${tickThrows}`,
+      reportedThenExit,
+    ],
+    [
+      "global 'error' listener exits, a microtask threw",
+      `globalThis.addEventListener("error", () => { post("error event"); process.exit(5); });
+       setTimeout(() => queueMicrotask(() => { throw errorWithCodeGetter(); }), 1);`,
+      { messages: ["error event", "exit 5"], errors: ["RangeError: boom"], code: 5 },
+    ],
+    [
+      "EventTarget listener exits, the script that called dispatchEvent() does not go on",
+      `const target = new EventTarget();
+       target.addEventListener("stop", () => process.exit(7));
+       setImmediate(() => { queueWork(); target.dispatchEvent(new Event("stop")); post("script after dispatchEvent() ran"); });`,
+      exitOnly,
+    ],
+  ];
+
+  const run = async (script: string, flags: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode };
+  };
+  const printed = (expected: object) => ({
+    stdout: JSON.stringify(expected),
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+
+  test.concurrent.each(cases)("%s", async (_name, worker, parent, expected, flags = []) => {
+    const script = `const { Worker, postMessageToThread } = require("node:worker_threads");
+      const worker = new Worker(${JSON.stringify(prelude + worker)}, { eval: true });
+      const seen = { messages: [], errors: [] };
+      worker.on("message", message => seen.messages.push(message));
+      worker.on("error", error => seen.errors.push(error.name + ": " + error.message));
+      worker.on("exit", code => console.log(JSON.stringify({ ...seen, code })));
+      ${parent}`;
+    expect(await run(script, flags)).toEqual(printed(expected));
+  });
+
+  test.concurrent.each(webCases)("Web Worker: %s", async (_name, worker, expected) => {
+    const script = `const worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(prelude + worker)}])));
+      const seen = { messages: [], errors: [] };
+      worker.addEventListener("message", event => seen.messages.push(event.data));
+      // The message of a Web Worker's 'error' event is the error as the worker would print it: keep its "Name: message" line.
+      worker.addEventListener("error", event => seen.errors.push(event.message.split("\\n").find(line => /^\\w*Error: /.test(line)) ?? event.message));
+      worker.addEventListener("close", event => console.log(JSON.stringify({ ...seen, code: event.code })));`;
+    expect(await run(script, [])).toEqual(printed(expected));
+  });
+
+  // The start sequence hands the worker what postMessageToThread() buffered while the entry point loaded.
+  // An entry point that stopped the worker first (the static import makes it end the load as a stop) gets
+  // none of it: its 'workerMessage' listener does not run. Nothing answers the sender then, as in Node: its
+  // promise is still pending when the worker has exited.
+  test.concurrent.each([
+    [
+      "its 'workerMessage' listener does not run",
+      `process.on("workerMessage", () => parentPort.postMessage("'workerMessage' listener ran"));`,
+    ],
+    ["with no 'workerMessage' listener", ""],
+  ])("postMessageToThread() to a worker whose entry point called process.exit(): %s", async (_name, listener) => {
+    using dir = tempDir("worker-message-after-exit", {
+      "entry.mjs": `import { parentPort } from "node:worker_threads";
+        import "./dependency.mjs";
+        ${listener}
+        process.exit(3);`,
+      "dependency.mjs": `export {};`,
+      "main.mjs": `import { Worker, postMessageToThread } from "node:worker_threads";
+        const worker = new Worker(new URL("./entry.mjs", import.meta.url));
+        const messages = [];
+        worker.on("message", message => messages.push(message));
+        let sender = "pending";
+        postMessageToThread(worker.threadId, "hello").then(
+          () => (sender = "resolved"),
+          error => (sender = "rejected " + error.code),
+        );
+        worker.on("exit", code => {
+          console.log(JSON.stringify({ messages, code, sender }));
+          process.exit(0);
+        });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ messages: [], code: 3, sender: "pending" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // A worker's stop makes JSC forbid execution in the step that throws its TerminationException (WebCore's

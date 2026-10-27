@@ -221,7 +221,7 @@ function setupMainThreadPort(port: any, setEntryEvaluatedHook: (hook: () => void
   mainThreadPort.on("message", handleMessageFromMainThreadGated);
 
   // Stored on ZigGlobalObject (WriteBarrier), not on globalThis, so user code
-  // can't observe or clobber it. WebWorker__entrySettled calls it once.
+  // can't observe or clobber it. WebWorker__entrySettled calls it once, or never when the worker stopped first.
   setEntryEvaluatedHook(() => {
     entryEvaluated = true;
     const pending = pendingMainPortMessages;

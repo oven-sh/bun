@@ -6638,6 +6638,14 @@ bool Bun::takeTerminationOutsideScript(JSC::VM& vm, JSC::TopExceptionScope& scop
     return true;
 }
 
+bool Bun::clearExceptionOrTakeTermination(JSC::VM& vm, JSC::TopExceptionScope& scope)
+{
+    if (scope.tryClearException()) [[likely]]
+        return true;
+    takeTerminationOutsideScript(vm, scope);
+    return false;
+}
+
 extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

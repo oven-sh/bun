@@ -874,7 +874,6 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     String dirnameString = dirnameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    WTF::NakedPtr<JSC::Exception> exception;
     evaluateCommonJSModuleOnce(
         vm,
         uncheckedDowncast<Zig::GlobalObject>(globalObject),

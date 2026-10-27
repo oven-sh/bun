@@ -48,3 +48,20 @@ hyperfine --warmup 1 \
 gets a fresh global; the VM-level SourceProvider cache means the 2MB is
 transpiled and parsed once, and every subsequent file rebuilds the module
 record from cached `module_info` with zero re-parsing.
+
+## `builtins/`: files that import built-in modules
+
+```sh
+bun builtins/setup.ts 100        # files
+hyperfine --warmup 1 \
+  -n 'bun'           'bun test ./builtins/suite' \
+  -n 'bun --isolate' 'bun test --isolate ./builtins/suite'
+```
+
+Each test file imports `node:fs`, `node:stream`, `node:crypto` and `node:zlib`
+and does nothing else. Under `--isolate` each file evaluates those modules
+again in its fresh global. The process keeps the source and the unlinked code
+of a built-in module, so a file parses and compiles one only when it is the
+first file of its process to load it (with `--parallel`, of its worker). The
+files after it link that code and run the module's top level. A file that
+calls `Bun.gc(true)` deletes the code, and the next file compiles it again.

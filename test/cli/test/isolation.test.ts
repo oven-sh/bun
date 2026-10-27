@@ -1111,6 +1111,165 @@ describe.concurrent("bun test --isolate", () => {
   });
 });
 
+// Under --isolate the code of a built-in module belongs to the VM: the first file to load a module parses and compiles
+// it, and the files after it link that code and only run the module's top level again. BUN_JSC_reportBytecodeCompileTimes
+// logs every function JSC compiles, named by a hash of its source.
+describe.concurrent("--isolate: the code of built-in modules", () => {
+  const file = (name: string, body: string, inTest = "") => `
+    import { test, expect } from "bun:test";
+    ${body}
+    test("${name}", async () => { ${inTest} expect(typeof x).toBe("object"); });
+  `;
+  const imports = (module: string, name: string) => file(name, `import * as x from "${module}";`);
+  const control = file("control", `const x = {};`);
+
+  // How many times a run of `files` compiled each function.
+  async function compiled(dir: ReturnType<typeof tempDir>, files: string[], env: Record<string, string> = {}) {
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      files.map(name => `./${name}.test.ts`),
+      {
+        ...bunEnv,
+        BUN_JSC_reportBytecodeCompileTimes: "1",
+        // At level 2 every collection is a Bun.gc(true), which deletes all bytecode.
+        BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+        ...env,
+      },
+    );
+    expect(stderr).toContain(`${files.length} pass`);
+    expect(exitCode).toBe(0);
+    const times = new Map<string, number>();
+    for (const [, hash] of stderr.matchAll(/^Compiled (#\w+) into bytecode/gm))
+      times.set(hash, (times.get(hash) ?? 0) + 1);
+    return { times, stdout, stderr };
+  }
+
+  test("a later file compiles none of the functions of a module an earlier file loaded", async () => {
+    using dir = tempDir("isolate-builtin-code", {
+      "a.test.ts": imports("node:stream", "a"),
+      "b.test.ts": imports("node:stream", "b"),
+      "c.test.ts": imports("node:stream", "c"),
+      "d.test.ts": imports("node:stream", "d"),
+      "realm.test.ts": file(
+        "realm",
+        `import * as x from "node:stream";`,
+        `await new ShadowRealm().importValue("node:stream", "Readable");`,
+      ),
+    });
+    const [one, withRealm, four] = await Promise.all([
+      compiled(dir, ["a"]),
+      compiled(dir, ["realm"]),
+      compiled(dir, ["a", "b", "c", "d"]),
+    ]);
+    // The functions of node:stream and of the internal modules it requires are what a ShadowRealm, which shares no
+    // code (last test), compiles again. That leaves out the functions of src/js/builtins on the way: the VM keeps
+    // those weakly, and a collection between two files makes the later file compile one again.
+    const ofTheModule = [...one.times].flatMap(([hash, times]) =>
+      withRealm.times.get(hash) === times + 1 ? [hash] : [],
+    );
+    expect({
+      functions: ofTheModule.length > 0,
+      compiledAgain: ofTheModule.filter(hash => four.times.get(hash)! > one.times.get(hash)!).length,
+    }).toEqual({ functions: true, compiledAgain: 0 });
+  });
+
+  // The VM keeps the code, whatever becomes of the global that made it. The loading file's global owns a marker:
+  // when no marker is left, that global is gone.
+  test("a later file links code whose first global was collected", async () => {
+    using dir = tempDir("isolate-builtin-code-root", {
+      "control.test.ts": control,
+      "first.test.ts": file("first", `const x = {};`),
+      "loader.test.ts": file(
+        "loader",
+        `import * as x from "node:querystring";
+         import { heapStats } from "bun:jsc";
+         globalThis.marker = new Bun.Glob("*");`,
+        `console.log("MARKERS=" + heapStats().objectTypeCounts.Glob);`,
+      ),
+      "spacer1.test.ts": file("spacer1", `const x = {};`),
+      "spacer2.test.ts": file("spacer2", `const x = {};`),
+      "collector.test.ts": file(
+        "collector",
+        `import { fullGC, heapStats } from "bun:jsc";
+         const x = {};`,
+        `fullGC(); console.log("MARKERS=" + (heapStats().objectTypeCounts.Glob ?? 0));`,
+      ),
+      "later.test.ts": imports("node:querystring", "later"),
+    });
+    const [none, one, all] = await Promise.all([
+      compiled(dir, ["control"]),
+      compiled(dir, ["loader"]),
+      compiled(dir, ["first", "loader", "spacer1", "spacer2", "collector", "later"]),
+    ]);
+    const ofTheModule = [...one.times.keys()].filter(hash => !none.times.has(hash));
+    expect({
+      markers: all.stdout.match(/^MARKERS=\d+$/gm),
+      functions: ofTheModule.length > 0,
+      compiledAgain: ofTheModule.filter(hash => all.times.get(hash)! > one.times.get(hash)!).length,
+    }).toEqual({ markers: ["MARKERS=1", "MARKERS=0"], functions: true, compiledAgain: 0 });
+  });
+
+  // Precise coverage that starts in the second file instruments what is compiled from then on. The second file does
+  // not link the code of the first, which has no instrumentation: it compiles its own, and the third file links that.
+  // (The second file imports the module dynamically so that the import comes after the start of the coverage.)
+  test("a file in another code generation mode compiles its own", async () => {
+    using dir = tempDir("isolate-builtin-code-mode", {
+      "a.test.ts": imports("node:querystring", "a"),
+      "b.test.ts": imports("node:querystring", "b"),
+      "covered.test.ts": file(
+        "covered",
+        `import { Session } from "node:inspector";
+         const session = new Session();
+         session.connect();
+         session.post("Profiler.enable");
+         session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+         const x = await import("node:querystring");`,
+      ),
+      "c.test.ts": imports("node:querystring", "c"),
+    });
+    const [plain, covered] = await Promise.all([compiled(dir, ["a", "b", "c"]), compiled(dir, ["a", "covered", "c"])]);
+    const more = [...plain.times].map(([hash, times]) => (covered.times.get(hash) ?? 0) - times);
+    expect({
+      compiledOnceMore: more.filter(n => n === 1).length > 0,
+      compiledMoreThanThat: more.filter(n => n > 1).length,
+    }).toEqual({ compiledOnceMore: true, compiledMoreThanThat: 0 });
+  });
+
+  // The execution count of a function is kept with its code, and here every file runs the same code. A top level
+  // runs once in a file: many files must not make it look hot. With the threshold at two runs, and the code deleted
+  // once on the way, the JIT compiles no top level (its name is the module's).
+  test("the JIT does not take a top level for hot after many files ran it", async () => {
+    const names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    using dir = tempDir("isolate-builtin-code-jit", {
+      ...Object.fromEntries(names.map(name => [`${name}.test.ts`, imports("node:stream", name)])),
+      "c.test.ts": file("c", `import * as x from "node:stream";`, `Bun.gc(true);`),
+    });
+    const { stderr } = await compiled(dir, names, {
+      BUN_JSC_thresholdForJITAfterWarmUp: "30",
+      BUN_JSC_reportBaselineCompileTimes: "1",
+    });
+    expect(stderr.match(/^Optimized (?:node|bun|internal):.*$/gm) ?? []).toEqual([]);
+  });
+
+  // A ShadowRealm runs beside the global that made it. Two globals that both run do not share the code of a module
+  // (see internalModuleCode() in InternalModuleRegistry.cpp): the realm compiles its own.
+  test("a ShadowRealm compiles its own", async () => {
+    using dir = tempDir("isolate-builtin-code-realm", {
+      "host.test.ts": imports("node:path", "host"),
+      "realm.test.ts": file(
+        "realm",
+        `import * as x from "node:path";`,
+        `const join = await new ShadowRealm().importValue("node:path", "join");
+         expect(join("a", "b")).toBe(x.join("a", "b"));`,
+      ),
+    });
+    const [host, hostAndRealm] = await Promise.all([compiled(dir, ["host"]), compiled(dir, ["realm"])]);
+    const compiledAgainByRealm = [...host.times].filter(([hash, times]) => hostAndRealm.times.get(hash) === times + 1);
+    expect(compiledAgainByRealm.length).toBeGreaterThan(0);
+  });
+});
+
 // --isolate raises JSC's FTL warm-up threshold. JSC options are set once per
 // process, by whoever initializes JSC first. The [install] hoist patterns are
 // regexes, and compiling them while bunfig.toml loaded used to initialize JSC

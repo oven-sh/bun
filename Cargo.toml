@@ -2,8 +2,8 @@
 resolver = "2"
 members = [
   "src/opaque",
+  "src/pod",
   "src/analytics",
-  "src/api",
   "src/base64",
   "src/bundler",
   "src/collections",
@@ -15,15 +15,37 @@ members = [
   "src/install/windows-shim",
   "src/parsers",
   "src/io",
-  "src/libarchive",
+  "src/archive",
   "src/md",
   "src/paths",
   "src/resolver",
   "src/safety",
+  "src/sema",
+  "src/sema/baselines",
+  "src/sema/driver",
+  "src/sema/parser",
+  "src/sema/standalone",
+  "src/lint",
+  "src/lint/eslint",
+  "src/lint/typescript",
+  "src/lint/plugins",
+  "src/lint/oxlint",
+  "src/lint/unicorn",
+  "src/lint/react",
+  "src/lint/jest",
+  "src/lint/json",
+  "src/lint/markdown",
+  "src/lint/graph",
+  "src/lint/react_compiler",
+  "src/lint/driver",
+  "src/lint/conformance",
+  "src/format",
+  "src/format/conformance",
   "src/semver",
   "src/sourcemap",
   "src/sql",
   "src/sys",
+  "src/tar",
   "src/threading",
   "src/valkey",
   "src/watcher",
@@ -38,6 +60,7 @@ members = [
   "src/event_loop",
   "src/exe_format",
   "src/highway",
+  "src/histogram",
   "src/http_jsc",
   "src/http_types",
   "src/ini",
@@ -78,6 +101,9 @@ members = [
   "src/standalone_graph",
   "src/uws",
   "src/wyhash",
+  "src/yarr",
+  "src/node_path",
+  "src/text_diff",
   "src/hash",
   "src/boringssl_sys",
   "src/bun_core",
@@ -100,22 +126,12 @@ members = [
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
-  "src/bun_bin",
 ]
 # `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
 # fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
 # Keeping it out of `members` means its `[profile]` section is ignored and its
 # heavy dev-dependencies (criterion, html5ever) never enter `Cargo.lock`.
 exclude = ["vendor"]
-
-# Lint pack run by `bun run rust:mordant` (.github/workflows/rust-lints.yml). Pinned:
-# bumping the rev is a PR of its own, where whatever the new revision finds gets
-# fixed or added to mordant-baseline.toml. Mordant brings its own nightly
-# (see its rust-toolchain), which must still be able to compile this workspace.
-[workspace.metadata.dylint]
-libraries = [
-    { git = "https://github.com/scarletindustries/mordant", rev = "12d279767fd7150afe7e549003896b5ec54493f6" },
-]
 
 [workspace.package]
 version = "0.0.0"
@@ -125,19 +141,19 @@ edition = "2024"
 # Zig's release build is one compilation unit with whole-program optimization.
 # Cargo's defaults (lto=false, codegen-units=16) leave us at ~105 crates × 16
 # CGUs ≈ 1680 separately-optimized units with NO cross-crate inlining beyond
-# `#[inline]`-annotated leaf fns. `lto = "fat"` + `codegen-units = 1` collapses
-# the whole Rust crate graph into one LLVM module, matching Zig's shape.
+# `#[inline]`-annotated leaf fns. Here each crate is one unit
+# (`codegen-units = 1`) of ThinLTO bitcode, and bun's link runs the LTO over
+# all of them (`scripts/build/rust.ts` adds `-C linker-plugin-lto`), together
+# with the C/C++ where that is LTO too. rustc runs no LTO of its own: it links
+# nothing of bun, so `lto = "off"`, which also leaves each crate's bitcode
+# with the summary a ThinLTO link imports through.
 #
 # `panic = "abort"` — the `std::panic` hook in `bun_crash_handler` aborts,
 # so `catch_unwind` is unreachable for Rust panics regardless, and no landing
 # pads means smaller `.pdata`/`.xdata`.
 #
-# Cross-language LTO (`-C linker-plugin-lto`, so Rust bitcode joins the C++
-# `-flto=full` link) is wired in `scripts/build/rust.ts` behind `cfg.lto`; it
-# requires the *linker's* LLVM to be ≥ rustc's bundled LLVM, so the build
-# points `-fuse-ld` at rustc's `rust-lld` rather than clang's when enabled.
 [profile.release]
-lto = "fat"
+lto = "off"
 codegen-units = 1
 debug = "line-tables-only"
 strip = "none"
@@ -146,22 +162,12 @@ panic = "abort"
 [profile.dev]
 panic = "abort"
 # Split DWARF: debuginfo goes into `.dwo` files alongside each `.o` instead of
-# being packed into the rlibs and then re-packed into `libbun_rust.a`. The debug
-# `.a` was ~1.5 GB (≥80% debuginfo) and the `bun_bin` staticlib step alone spent
-# ~6s archiving it. With split DWARF the `.a` is ~1/4 the size, per-crate
-# codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
+# being packed into the rlibs. Per-crate codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
 # the skeleton CUs (`DW_AT_dwo_name`) pointing into `<target>/deps/*.dwo`.
 # No effect on the compiled code. Windows uses PDB so this is a no-op there
 # (rustc ignores it); Darwin's `"unpacked"` is the `.o`-is-the-debuginfo mode
 # `dsymutil` already expects.
 split-debuginfo = "unpacked"
-
-# Fast-iteration release build for local benching when fat LTO's link time
-# (minutes) is in the way. `bun run build:release --cargo-profile=release-dev`.
-[profile.release-dev]
-inherits = "release"
-lto = "thin"
-codegen-units = 16
 
 # Release with debuginfo retained for `perf record` / flamegraphs. Same opt
 # level as release; binary is large but profilable.
@@ -170,7 +176,7 @@ inherits = "release"
 debug = "line-tables-only"
 strip = "none"
 
-# `bun_shim_impl.exe` — the Windows .bin/ launcher PE that gets
+# `bun-shim-impl.exe` — the Windows .bin/ launcher PE that gets
 # `include_bytes!`'d into bun.exe and copied next to every package binary by
 # `bun install`. Zig built it freestanding ReleaseFast (no libc,
 # single-threaded, ~13 KiB). The Rust port matches that with
@@ -191,7 +197,7 @@ codegen-units = 1
 strip = "symbols"
 # Pin these so the shim PE is byte-identical across bun's own profiles.
 # rust.ts sets CARGO_PROFILE_RELEASE_{LTO,DEBUG_ASSERTIONS} for the main
-# bun_bin build and the shim build shares that env; without explicit values
+# bun_runtime build and the shim build shares that env; without explicit values
 # here the env overrides on `release` would be inherited.
 debug-assertions = false
 overflow-checks = false
@@ -205,7 +211,7 @@ warnings = { level = "deny", priority = -1 }
 # (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
 # them here so a plain `cargo build` / `cargo check` (without those flags)
 # doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself
@@ -278,7 +284,7 @@ clone_on_copy = "deny"
 useless_conversion = "deny"
 # vec_box / boxed_local: legit patterns are `#[expect]`-suppressed at the site
 # with a one-line "why the box is load-bearing" comment (intrusive-list address
-# stability, JsClass finalizer thunk contract). Anything new must justify itself.
+# stability, a task's reclaim point). Anything new must justify itself.
 vec_box = "deny"
 boxed_local = "deny"
 arc_with_non_send_sync = "deny"
@@ -339,7 +345,7 @@ new_ret_no_self = "allow"
 map_identity = "allow"
 
 [workspace.dependencies]
-rust-argon2 = "3.0"
+rust-argon2 = { path = "vendor/rust-argon2" }
 bcrypt = "0.19"
 getrandom = "0.4"
 strum = { version = "0.26", features = ["derive"] }
@@ -363,13 +369,13 @@ rustix = { version = "0.38", default-features = false, features = ["std", "fs", 
 bitflags = "2"
 thiserror = "2"
 smallvec = "1"
-typed-arena = "2"
 itoa = "1"
+encoding_rs = "0.8.35"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
+bun_pod = { path = "src/pod" }
 bun_analytics = { path = "src/analytics" }
-bun_api = { path = "src/api" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
 bun_collections = { path = "src/collections" }
@@ -380,15 +386,36 @@ bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
-bun_libarchive = { path = "src/libarchive" }
+bun_archive = { path = "src/archive" }
 bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
+bun_sema = { path = "src/sema" }
+bun_sema_baselines = { path = "src/sema/baselines" }
+bun_sema_driver = { path = "src/sema/driver" }
+bun_sema_parser = { path = "src/sema/parser" }
+bun_lint = { path = "src/lint" }
+bun_lint_eslint = { path = "src/lint/eslint" }
+bun_lint_typescript = { path = "src/lint/typescript" }
+bun_lint_plugins = { path = "src/lint/plugins" }
+bun_lint_oxlint = { path = "src/lint/oxlint" }
+bun_lint_unicorn = { path = "src/lint/unicorn" }
+bun_lint_react = { path = "src/lint/react" }
+bun_lint_jest = { path = "src/lint/jest" }
+bun_lint_json = { path = "src/lint/json" }
+bun_lint_markdown = { path = "src/lint/markdown" }
+bun_lint_graph = { path = "src/lint/graph" }
+bun_lint_react_compiler = { path = "src/lint/react_compiler" }
+bun_format = { path = "src/format" }
+bun_format_conformance = { path = "src/format/conformance" }
+bun_lint_driver = { path = "src/lint/driver" }
+bun_lint_conformance = { path = "src/lint/conformance" }
 bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }
+bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
@@ -403,6 +430,7 @@ bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }
 bun_highway = { path = "src/highway" }
+bun_histogram = { path = "src/histogram" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }
@@ -443,6 +471,9 @@ bun_semver_jsc = { path = "src/semver_jsc" }
 bun_standalone_graph = { path = "src/standalone_graph" }
 bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
+bun_yarr = { path = "src/yarr" }
+bun_node_path = { path = "src/node_path" }
+bun_text_diff = { path = "src/text_diff" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
 bun_core = { path = "src/bun_core" }
@@ -460,10 +491,20 @@ bun_zstd = { path = "src/zstd" }
 bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
-bun_runtime = { path = "src/runtime", default-features = false }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"
+
+# The runners behind `--run-typescript-tests`, `--run-prettier-tests` and `--run-eslint-tests`. Only canary and debug
+# builds have them, and the time goes into what they test, which keeps its own level.
+[profile.release.package.bun_sema_baselines]
+opt-level = "z"
+
+[profile.release.package.bun_format_conformance]
+opt-level = "z"
+
+[profile.release.package.bun_lint_conformance]
+opt-level = "z"

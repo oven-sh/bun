@@ -3,7 +3,6 @@
 
 use core::mem::{offset_of, size_of};
 use core::ptr;
-use core::slice;
 
 // New error types for PE manipulation
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
@@ -28,16 +27,12 @@ pub enum Error {
     TooManySections,
     #[error("SectionExists")]
     SectionExists,
-    #[error("InputIsSigned")]
-    InputIsSigned,
     #[error("InvalidSecurityDirectory")]
     InvalidSecurityDirectory,
     #[error("SecurityDirInsideImage")]
     SecurityDirInsideImage,
     #[error("UnexpectedOverlayPresent")]
     UnexpectedOverlayPresent,
-    #[error("InsufficientSpace")]
-    InsufficientSpace,
 }
 
 /// Windows PE Binary manipulation for codesigning standalone executables
@@ -147,7 +142,9 @@ pub(crate) struct SectionHeader {
     pub characteristics: u32,         // Characteristics
 }
 
-const PE_SIGNATURE: u32 = 0x0000_4550; // "PE\0\0"
+bun_core::impl_pod!(DOSHeader, PEHeader, SectionHeader);
+
+pub(crate) const PE_SIGNATURE: u32 = 0x0000_4550; // "PE\0\0"
 const DOS_SIGNATURE: u16 = 0x5A4D; // "MZ"
 const OPTIONAL_HEADER_MAGIC_64: u16 = 0x020B;
 
@@ -228,15 +225,11 @@ impl PEFile {
     fn get_section_headers(&self) -> Result<&[SectionHeader], Error> {
         let start = self.section_headers_offset;
         let size = size_of::<SectionHeader>() * self.num_sections as usize;
-        if start + size > self.data.len() {
-            return Err(Error::OutOfBounds);
-        }
-        // SAFETY: bounds-checked above; SectionHeader is #[repr(C, packed)] (align 1) POD.
-        let ptr = unsafe { self.data.as_ptr().add(start).cast::<SectionHeader>() };
-        // SAFETY: `[start, start + size)` lies within `self.data` per the check above; the
-        // bytes are initialized from the input PE image and SectionHeader is repr(C) Copy
-        // with no invalid bit patterns.
-        Ok(unsafe { slice::from_raw_parts(ptr, self.num_sections as usize) })
+        let bytes = self
+            .data
+            .get(start..start + size)
+            .ok_or(Error::OutOfBounds)?;
+        Ok(bun_core::cast_slice(bytes))
     }
 
     pub fn init(pe_data: &[u8]) -> Result<Box<PEFile>, Error> {
@@ -319,10 +312,7 @@ impl PEFile {
         let section_alignment = optional_header.section_alignment;
         for i in 0..num_sections as usize {
             let sh_off = section_headers_offset + i * size_of::<SectionHeader>();
-            // SAFETY: `sh_off + size_of::<SectionHeader>()` is within `data` per the
-            // `section_headers_offset + section_headers_size <= data.len()` check above.
-            let section =
-                unsafe { ptr::read_unaligned(data.as_ptr().add(sh_off).cast::<SectionHeader>()) };
+            let section: SectionHeader = crate::read_struct(&data[sh_off..]);
             let vs_effective = section.virtual_size.max(section.size_of_raw_data);
             section
                 .virtual_address
@@ -564,11 +554,7 @@ impl PEFile {
         if new_sh_off + size_of::<SectionHeader>() > first_raw as usize {
             return Err(Error::InsufficientHeaderSpace);
         }
-        // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD
-        let sh_bytes = unsafe {
-            slice::from_raw_parts((&raw const sh).cast::<u8>(), size_of::<SectionHeader>())
-        };
-        self.data[new_sh_off..new_sh_off + size_of::<SectionHeader>()].copy_from_slice(sh_bytes);
+        crate::write_struct(&mut self.data[new_sh_off..], &sh);
 
         // 8. Write payload
         // At data[new_raw ..]: write u64 LE length prefix, then data

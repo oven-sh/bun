@@ -11,7 +11,8 @@
 // uninitialised buffer held. vImageBuffer_InitWithCGImage
 // converts to a caller-chosen pixel format directly — including straight
 // alpha — so PNG round-trip stays byte-exact and we drop the manual unpremul
-// loop. Encode likewise wraps the straight-alpha buffer in a CGImage via
+// loop; the bitmap context survives only as a fallback for layouts vImage
+// rejects. Encode likewise wraps the straight-alpha buffer in a CGImage via
 // CGImageCreate(kCGImageAlphaLast) instead of bouncing through a premultiplied
 // bitmap context, dropping the per-pixel premultiply scratch copy.
 //
@@ -47,6 +48,10 @@ struct VFmt {
     const double* decode;
     int32_t renderingIntent;
 };
+// Same layout/ABI as CGRect (four doubles); the SDK typedef is avoided for the same reason as above.
+struct BunRect {
+    double x, y, w, h;
+};
 
 // One field per dlsym; declared as a struct so the loader is a 5-line for-each
 // over an offset/name table. Ordering doesn't matter.
@@ -77,9 +82,15 @@ struct Syms {
     CFRef (*CGImageCreate)(size_t, size_t, size_t, size_t, size_t, CFRef, uint32_t, CFRef, const double*, bool, int32_t);
     size_t (*CGImageGetWidth)(CFRef);
     size_t (*CGImageGetHeight)(CFRef);
+    uint32_t (*CGImageGetAlphaInfo)(CFRef);
+    CFRef (*CGImageGetDataProvider)(CFRef);
     void (*CGImageRelease)(CFRef);
     CFRef (*CGDataProviderCreateWithData)(void*, const void*, size_t, void*);
+    CFRef (*CGDataProviderCopyData)(CFRef);
     void (*CGDataProviderRelease)(CFRef);
+    CFRef (*CGBitmapContextCreate)(void*, size_t, size_t, size_t, size_t, CFRef, uint32_t);
+    void (*CGContextDrawImage)(CFRef, BunRect, CFRef);
+    void (*CGContextRelease)(CFRef);
     // ImageIO
     CFRef (*CGImageSourceCreateWithData)(CFRef, CFRef);
     CFRef (*CGImageSourceCreateImageAtIndex)(CFRef, size_t, CFRef);
@@ -88,6 +99,7 @@ struct Syms {
     bool (*CGImageDestinationFinalize)(CFRef);
     // Accelerate / vImage
     long (*vImageBuffer_InitWithCGImage)(VBuf*, VFmt*, const double*, CFRef, uint32_t);
+    long (*vImageUnpremultiplyData_RGBA8888)(const VBuf*, const VBuf*, uint32_t);
     long (*vImageScale_ARGB8888)(const VBuf*, const VBuf*, void*, uint32_t);
     long (*vImageRotate90_ARGB8888)(const VBuf*, const VBuf*, uint8_t, const uint8_t*, uint32_t);
     long (*vImageHorizontalReflect_ARGB8888)(const VBuf*, const VBuf*, uint32_t);
@@ -123,15 +135,22 @@ constexpr struct {
     SYM(CGImageCreate),
     SYM(CGImageGetWidth),
     SYM(CGImageGetHeight),
+    SYM(CGImageGetAlphaInfo),
+    SYM(CGImageGetDataProvider),
     SYM(CGImageRelease),
     SYM(CGDataProviderCreateWithData),
+    SYM(CGDataProviderCopyData),
     SYM(CGDataProviderRelease),
+    SYM(CGBitmapContextCreate),
+    SYM(CGContextDrawImage),
+    SYM(CGContextRelease),
     SYM(CGImageSourceCreateWithData),
     SYM(CGImageSourceCreateImageAtIndex),
     SYM(CGImageDestinationCreateWithData),
     SYM(CGImageDestinationAddImage),
     SYM(CGImageDestinationFinalize),
     SYM(vImageBuffer_InitWithCGImage),
+    SYM(vImageUnpremultiplyData_RGBA8888),
     SYM(vImageScale_ARGB8888),
     SYM(vImageRotate90_ARGB8888),
     SYM(vImageHorizontalReflect_ARGB8888),
@@ -176,11 +195,14 @@ const Syms* load()
 // `kCGImageAlphaLast`/`kCFStringEncodingUTF8` are in scope and an
 // anonymous-namespace shadow is ambiguous at the use site.
 constexpr uint32_t kBunCGImageAlphaLast = 3; // straight RGBA, A in byte 3
+constexpr uint32_t kBunCGImageAlphaPremultipliedLast = 1;
+constexpr uint32_t kBunCGImageAlphaNone = 0;
+constexpr uint32_t kBunCGImageAlphaNoneSkipLast = 5;
+constexpr uint32_t kBunCGImageAlphaNoneSkipFirst = 6;
 constexpr uint32_t kBunCFStringEncodingUTF8 = 0x08000100;
 constexpr int kBunCFNumberDoubleType = 13;
 // vImage_Flags — values copied verbatim from <Accelerate/vImage_Types.h>;
-// keep them in sync, the kvImageNoAllocate one used to be wrong (4 vs 512)
-// and silently turned every CG decode into 0xAA garbage in debug builds.
+// keep them in sync, a wrong constant silently turns every CG decode into garbage.
 constexpr uint32_t kBunVImageEdgeExtend = 8;
 constexpr uint32_t kBunVImageDoNotTile = 16;
 // (kvImageHighQualityResampling = 32 — unused; default kernel is already
@@ -271,15 +293,17 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     if (!data) return CG_DECODE_FAILED;
     struct R {
         const Syms* s;
-        CFRef d, src, img, cs;
+        CFRef d, src, img, cs, ctx, px;
         ~R()
         {
+            if (px) s->CFRelease(px);
+            if (ctx) s->CGContextRelease(ctx);
             if (cs) s->CGColorSpaceRelease(cs);
             if (img) s->CGImageRelease(img);
             if (src) s->CFRelease(src);
             if (d) s->CFRelease(d);
         }
-    } r { s, data, nullptr, nullptr, nullptr };
+    } r { s, data, nullptr, nullptr, nullptr, nullptr, nullptr };
 
     r.src = s->CGImageSourceCreateWithData(data, nullptr);
     if (!r.src) return CG_DECODE_FAILED;
@@ -310,12 +334,28 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     VBuf buf { out, h, w, w * 4 };
     VFmt fmt { 8, 32, r.cs, kBunCGImageAlphaLast, 0, nullptr, 0 };
     auto rc = s->vImageBuffer_InitWithCGImage(&buf, &fmt, nullptr, r.img, kBunVImageNoAllocate);
-    // The contract is that kvImageNoAllocate honours buf.data exactly, but be
-    // defensive: an OS that ignored the flag would set buf.data to its own
-    // malloc and leave `out` uninitialised — that's the garbage we shipped
-    // before the constant was fixed.
-    if (rc != 0 || buf.data != out) return CG_DECODE_FAILED;
-    return CG_OK;
+    if (rc == 0 && buf.data != out) return CG_DECODE_FAILED;
+    if (rc != 0) {
+        // vImage rejects the packed 10-bit layout ImageIO returns for 10-bit HEVC; CoreGraphics still draws it.
+        std::memset(out, 0, w * h * 4);
+        r.ctx = s->CGBitmapContextCreate(out, w, h, 8, w * 4, r.cs, kBunCGImageAlphaPremultipliedLast);
+        if (!r.ctx) return CG_DECODE_FAILED;
+        s->CGContextDrawImage(r.ctx, BunRect { 0, 0, static_cast<double>(w), static_cast<double>(h) }, r.img);
+        if (s->vImageUnpremultiplyData_RGBA8888(&buf, &buf, kBunVImageDoNotTile) != 0) return CG_DECODE_FAILED;
+    }
+    // ImageIO decodes lazily and a codec failure (eg HEVC) draws every byte as 0 without an error.
+    uint32_t alpha = s->CGImageGetAlphaInfo(r.img);
+    bool opaque = alpha == kBunCGImageAlphaNone || alpha == kBunCGImageAlphaNoneSkipLast || alpha == kBunCGImageAlphaNoneSkipFirst;
+    uint8_t all = 0xFF, any = 0;
+    for (size_t i = 3, n = w * h * 4; i < n; i += 4) {
+        all &= out[i];
+        any |= out[i];
+    }
+    if (opaque) return all == 0xFF ? CG_OK : CG_DECODE_FAILED;
+    if (any) return CG_OK;
+    // Fully transparent output from an alpha source: only the provider copy tells "all clear" from "failed".
+    r.px = s->CGDataProviderCopyData(s->CGImageGetDataProvider(r.img));
+    return r.px ? CG_OK : CG_DECODE_FAILED;
 }
 
 // Encode RGBA8 → format. format: 0=jpeg, 1=png, 2=webp, 3=heic, 4=avif.

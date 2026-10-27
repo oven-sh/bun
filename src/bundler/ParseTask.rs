@@ -114,6 +114,8 @@ pub struct ParseTask<'a> {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// The linker inlines `import.meta.main` in this entry point, so the parser does not.
+    pub(crate) keep_import_meta_main: bool,
 }
 
 pub enum ParseTaskStage {
@@ -310,6 +312,7 @@ impl<'a> ParseTask<'a> {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
+            keep_import_meta_main: false,
         }
     }
 
@@ -351,6 +354,7 @@ impl Default for ParseTask<'_> {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            keep_import_meta_main: false,
         }
     }
 }
@@ -642,6 +646,7 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            keep_import_meta_main: false,
         };
         let source = Source {
             path: bun_paths::fs::Path {
@@ -2664,7 +2669,10 @@ pub mod parse_worker {
         // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
         // in which we inline `true`.
         if topts.inline_entrypoint_import_meta_main || !task.is_entry_point {
-            opts.import_meta_main_value = Some(task.is_entry_point && !topts.has_dev_server());
+            // The linker inlines it instead if a chunk of another entry point can hold a copy.
+            if !task.keep_import_meta_main {
+                opts.import_meta_main_value = Some(task.is_entry_point && !topts.has_dev_server());
+            }
         } else if target == options::Target::Node {
             opts.lower_import_meta_main_for_node_js = true;
         }

@@ -676,6 +676,14 @@ new Worker(new URL("./my-worker.ts", import.meta.url).href);
 
 When you add multiple entrypoints to a standalone executable, Bun bundles each one separately into the executable.
 
+In a standalone executable, `import.meta.main` can be `true` in the entrypoint of a worker. To run code only on the main thread, such as the code that starts the workers, check `Bun.isMainThread`:
+
+```ts index.ts icon="/icons/typescript.svg"
+if (Bun.isMainThread) {
+  new Worker("./my-worker.ts");
+}
+```
+
 We may eventually detect statically-known paths in `new Worker(path)` and bundle them automatically. For now, you need to list the worker file as an entrypoint, as in the earlier example.
 
 If you use a relative path to a file not included in the standalone executable, Bun loads that path from disk relative to the process's current working directory, and errors if it doesn't exist. With [`--disallow-code-generation-from-strings=strict`](/runtime/code-generation-from-strings#files-on-disk-are-not-part-of-the-program), Bun refuses it.

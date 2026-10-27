@@ -371,7 +371,9 @@ const _: () = {
             input: &mut Parser,
         ) -> Result<Self::QualifiedRule> {
             // For now there are no options that apply within @keyframes
-            let options = ParserOptions::default(None);
+            let mut options = ParserOptions::default(None);
+            // Unlike lightningcss: a browser drops an invalid item and keeps the keyframe.
+            options.error_recovery = true;
             let declarations = DeclarationBlock::parse(input, &options)?;
             Ok(Keyframe {
                 selectors: prelude,

@@ -305,10 +305,17 @@ pub(crate) fn scan_imports_and_exports(
 
                 match record.kind {
                     ImportKind::Stmt => {
-                        // A disabled module is an empty CommonJS module for every import syntax.
+                        // The empty module of a disabled file follows the rule described
+                        // below. Its placeholder AST has a lazy export, so that rule's own
+                        // condition does not cover it.
                         if col_ref!(input_files)[other_file].path.is_disabled {
-                            col!(exports_kind)[other_file] = ExportsKind::Cjs;
-                            col!(flags)[other_file].wrap = WrapKind::Cjs;
+                            if record.flags.intersects(
+                                ImportRecordFlags::CONTAINS_IMPORT_STAR
+                                    | ImportRecordFlags::CONTAINS_DEFAULT_ALIAS,
+                            ) {
+                                col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                                col!(flags)[other_file].wrap = WrapKind::Cjs;
+                            }
                             continue;
                         }
 
@@ -1875,7 +1882,7 @@ mod __css_validation {
             all_import_records: *mut [ImportRecordList<'bump>],
             all_css_asts: *mut [CssCol],
             all_symbols: &'a symbol::Map,
-            all_sources: *mut [Source],
+            all_sources: *mut [Source<'a>],
             log: &'a mut Log,
         }
 
@@ -1920,8 +1927,7 @@ mod __css_validation {
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
                         ),
-                    )
-                    .clone_line_text(self.log.clone_line_text),
+                    ),
                     notes: Box::<[bun_ast::Data]>::from(
                         &[
                             bun_ast::range_data(

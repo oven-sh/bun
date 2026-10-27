@@ -60,7 +60,7 @@ describe("bundler", () => {
     },
   });
 
-  // Test the "browser" field in "package.json". These are esbuild's 19
+  // Test the "browser" field in "package.json". The first 19 cases are esbuild's
   // end-to-end cases. The target defaults to "browser". A mapped file prints
   // "works"; the file the map replaces throws, has invalid syntax, or is absent.
   const works = `console.log('works')`;
@@ -230,6 +230,7 @@ describe("bundler", () => {
     run: { stdout: "works" },
   });
 
+  // The cases from here to the end of the "browser" field block are not esbuild's.
   // The same matrix through `import` statements.
   itBundled("extra/BrowserFieldImportBareKeyDotSlash", {
     files: {
@@ -301,6 +302,7 @@ describe("bundler", () => {
   // A remap target that leads back to the same subpath is a cycle. The remap
   // stops applying: the subpath's own file is used, or the import fails.
   itBundled("extra/BrowserFieldSubpathRemapCycleToSelf", {
+    skipOnEsbuild: true, // esbuild overflows its stack on a remap cycle
     files: {
       "entry.js": `require('pkg-a/x')`,
       "node_modules/pkg-a/package.json": `{ "browser": { "./x": "pkg-a/x" } }`,
@@ -310,6 +312,7 @@ describe("bundler", () => {
     },
   });
   itBundled("extra/BrowserFieldSubpathRemapCycleToSelfWithFile", {
+    skipOnEsbuild: true, // esbuild overflows its stack on a remap cycle
     files: {
       "entry.js": `require('pkg-a/x')`,
       "node_modules/pkg-a/package.json": `{ "browser": { "./x": "pkg-a/x" } }`,
@@ -318,6 +321,7 @@ describe("bundler", () => {
     run: { stdout: "works" },
   });
   itBundled("extra/BrowserFieldSubpathRemapCycleBetweenPackages", {
+    skipOnEsbuild: true, // esbuild overflows its stack on a remap cycle
     files: {
       "entry.js": `import 'pkg-a/x'`,
       "node_modules/pkg-a/package.json": `{ "browser": { "./x": "pkg-b/y" } }`,
@@ -369,6 +373,56 @@ describe("bundler", () => {
       "node_modules/pkg/node.js": `throw 'fail'`,
     },
     run: { stdout: `["object",["default"],"object",0,"undefined"]` },
+  });
+  // The empty module is CommonJS also when the disabled file is ".mjs" or ".mts".
+  // esbuild treats it as ESM, and fails the build on the default import.
+  itBundled("extra/BrowserFieldDisabledModuleWithEsmExtension", {
+    skipOnEsbuild: true,
+    files: {
+      "entry.js": `
+        import mjs from 'pkg/node.mjs'
+        import * as mts from 'pkg/node.mts'
+        console.log(JSON.stringify([mjs, require('pkg/node.mjs'), mts.default, require('pkg/node.mts')]))
+      `,
+      "node_modules/pkg/package.json": `{ "browser": { "./node.mjs": false, "./node.mts": false } }`,
+      "node_modules/pkg/node.mjs": `throw 'fail'`,
+      "node_modules/pkg/node.mts": `throw 'fail'`,
+    },
+    run: { stdout: `[{},{},{},{}]` },
+  });
+  // A re-export from a disabled module behaves as in esbuild. `export *` has
+  // nothing to re-export. A named re-export is undefined, with a warning.
+  const disabledReExport = {
+    "package.json": `{ "browser": { "./node.js": false } }`,
+    "node.js": `throw 'fail'`,
+    "star.js": `export * from './node.js'`,
+    "named.js": `export { named, default as def } from './node.js'; export * as ns from './node.js'`,
+  };
+  itBundled("extra/BrowserFieldDisabledModuleReExport", {
+    files: {
+      "entry.js": `
+        import * as star from './star'
+        import { named, def, ns } from './named'
+        console.log(JSON.stringify([Object.keys(star), typeof named, def, Object.keys(ns)]))
+      `,
+      ...disabledReExport,
+    },
+    bundleWarnings: {
+      "/named.js": [
+        `Import "named" will always be undefined because the file "(disabled):node.js" has no exports`,
+        `Import "named" will always be undefined because the file "(disabled):node.js" has no exports`,
+      ],
+    },
+    run: { stdout: `[[],"undefined",{},["default"]]` },
+  });
+  itBundled("extra/BrowserFieldDisabledModuleReExportStarMissingName", {
+    files: {
+      "entry.js": `import { x } from './star'; console.log(x)`,
+      ...disabledReExport,
+    },
+    bundleErrors: {
+      "/entry.js": [`No matching export in "star.js" for import "x"`],
+    },
   });
   // A subpath the package disables is also disabled when imported from outside
   // the package, and it stays a separate module from the enabled file.

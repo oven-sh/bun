@@ -2,15 +2,23 @@ use bun_collections::StringHashMap;
 
 use crate::IndexStringMap::IndexInt;
 
+/// The pretty-path prefix of the empty module that stands in for a path the
+/// "browser" field disabled. esbuild prints the same prefix.
+pub(crate) const DISABLED_PRETTY_PREFIX: &[u8] = b"(disabled):";
+
+/// An unused import of that empty module is dropped, as esbuild drops it.
+pub(crate) const DISABLED_MODULE_SIDE_EFFECTS: bun_ast::SideEffects =
+    bun_ast::SideEffects::NoSideEffectsPureData;
+
 /// Abstracts over the two structurally-identical `Path` ports (`bun_paths::fs::Path`
 /// and `bun_resolver::fs::Path`) so the bundler can key the map with either while
 /// the crates converge.
 pub trait PathLike {
     fn path_text(&self) -> &[u8];
 
-    /// The map key. A disabled module is keyed by its `(disabled):` pretty path,
-    /// so it stays separate from the same file enabled.
-    fn source_key(&self) -> &[u8];
+    /// The path names the empty module of a disabled file, not the file.
+    /// `is_disabled` alone does not say so: records that stay external carry it too.
+    fn is_disabled_module(&self) -> bool;
 }
 
 // `bun_resolver::fs::Path` is now a re-export of `bun_paths::fs::Path` (D090),
@@ -22,12 +30,8 @@ impl PathLike for bun_paths::fs::Path<'_> {
     }
 
     #[inline]
-    fn source_key(&self) -> &[u8] {
-        if self.is_disabled {
-            self.pretty
-        } else {
-            self.text
-        }
+    fn is_disabled_module(&self) -> bool {
+        self.is_disabled && self.pretty.starts_with(DISABLED_PRETTY_PREFIX)
     }
 }
 
@@ -37,6 +41,9 @@ impl PathLike for bun_paths::fs::Path<'_> {
 #[derive(Default)]
 pub struct PathToSourceIndexMap {
     pub(crate) map: Map,
+    /// The empty modules of disabled files, keyed by the same text. A file can be in
+    /// the graph both ways.
+    disabled: Map,
 }
 
 pub type Map = StringHashMap<IndexInt>;
@@ -46,8 +53,39 @@ pub type Map = StringHashMap<IndexInt>;
 pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
 impl PathToSourceIndexMap {
+    fn map_for(&self, path: &impl PathLike) -> &Map {
+        if path.is_disabled_module() {
+            &self.disabled
+        } else {
+            &self.map
+        }
+    }
+
+    fn map_for_mut(&mut self, path: &impl PathLike) -> &mut Map {
+        if path.is_disabled_module() {
+            &mut self.disabled
+        } else {
+            &mut self.map
+        }
+    }
+
     pub(crate) fn get_path(&self, path: &impl PathLike) -> Option<IndexInt> {
-        self.get(path.source_key())
+        self.map_for(path).get(path.path_text()).copied()
+    }
+
+    pub(crate) fn put_path(
+        &mut self,
+        path: &impl PathLike,
+        value: IndexInt,
+    ) -> Result<(), bun_alloc::AllocError> {
+        self.map_for_mut(path).put(path.path_text(), value)
+    }
+
+    pub(crate) fn get_or_put_path(
+        &mut self,
+        path: &impl PathLike,
+    ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
+        self.map_for_mut(path).get_or_put(path.path_text())
     }
 
     pub(crate) fn get(&self, text: impl AsRef<[u8]>) -> Option<IndexInt> {

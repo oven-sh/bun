@@ -831,9 +831,7 @@ impl File {
                             self.source_hash,
                         );
                     }
-                    Encoding::Latin1 => {
-                        BunString::create_static_external(self.contents.as_bytes(), true)
-                    }
+                    Encoding::Latin1 => BunString::create_static_external(self.contents.as_bytes()),
                     Encoding::Utf16 => {
                         let units = self.utf16_units();
                         if self.source_hash != 0 {
@@ -2743,12 +2741,12 @@ pub(crate) fn download_to_path(
                 scopeguard::defer! {
                     let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name.as_bytes());
                 }
-                let extract_res = bun_libarchive::Archiver::extract_to_dir(
+                let extract_res = bun_archive::Archiver::extract_to_dir(
                     tarball_bytes.as_slice(),
                     tmpdir.fd(),
                     None,
                     &mut (),
-                    bun_libarchive::ExtractOptions {
+                    bun_archive::ExtractOptions {
                         // "package/bin"
                         depth_to_skip: 2,
                         ..Default::default()

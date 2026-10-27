@@ -1,7 +1,8 @@
 import assert from "assert";
+import type { BunPlugin } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -98,140 +99,10 @@ describe("bundler", () => {
     },
     target: "browser",
     run: {
-      stdout: "object\nobject\nundefined",
+      stdout: "function\nfunction\nundefined",
     },
     onAfterBundle(api) {
       api.expectFile("out.js").not.toInclude("import ");
-    },
-  });
-  // A builtin without a browser polyfill is one shared empty module, whatever
-  // syntax reaches it: require(), import, import * as, and import().
-  for (const format of ["esm", "cjs", "iife"] as const) {
-    for (const minify of [false, true]) {
-      itBundled(`browser/NodeBuiltinDisabledShape${format.toUpperCase()}${minify ? "Minified" : ""}`, {
-        files: {
-          "/entry.js": /* js */ `
-            import c from "./c.cjs";
-            import d from "node:fs";
-            import * as ns from "node:fs";
-            import { readFileSync } from "node:fs";
-            import("node:fs").then(m => {
-              console.log(JSON.stringify({
-                requireTwiceIdentical: c.a === c.b,
-                typeofRequire: typeof c.a,
-                requireKeys: Object.keys(c.a).length,
-                requireIsDefault: c.a === d,
-                typeofDefault: typeof d,
-                typeofNamespace: typeof ns,
-                namespaceDefaultIsDefault: ns.default === d,
-                typeofNamed: typeof readFileSync,
-                dynamicDefaultIsDefault: m.default === d,
-                typeofDynamicNamed: typeof m.readFileSync,
-              }));
-            });
-          `,
-          "/c.cjs": /* js */ `
-            exports.a = require("node:fs");
-            exports.b = require("node:fs");
-          `,
-        },
-        target: "browser",
-        format,
-        minifySyntax: minify,
-        minifyIdentifiers: minify,
-        minifyWhitespace: minify,
-        onAfterBundle(api) {
-          api.expectFile("out.js").not.toInclude(`import("node:fs")`);
-          api.expectFile("out.js").not.toInclude(`import('node:fs')`);
-        },
-        run: {
-          stdout: JSON.stringify({
-            requireTwiceIdentical: true,
-            typeofRequire: "object",
-            requireKeys: 0,
-            requireIsDefault: true,
-            typeofDefault: "object",
-            typeofNamespace: "object",
-            namespaceDefaultIsDefault: true,
-            typeofNamed: "undefined",
-            dynamicDefaultIsDefault: true,
-            typeofDynamicNamed: "undefined",
-          }),
-        },
-      });
-    }
-  }
-  // import() of such a builtin resolves to the same empty module instead of
-  // staying in the output as a request the browser cannot serve.
-  itBundled("browser/NodeBuiltinDisabledDynamicImport", {
-    files: {
-      "/entry.js": /* js */ `
-        const specifiers = ["node:fs", "fs", "fs/promises", "node:fs/promises", "node:child_process", "node:vm"];
-        const results = await Promise.all([
-          import("node:fs"),
-          import("fs"),
-          import("fs/promises"),
-          import("node:fs/promises"),
-          import("node:child_process"),
-          import("node:vm"),
-        ]);
-        for (let i = 0; i < results.length; i++) {
-          const m = results[i];
-          console.log(specifiers[i], typeof m.default, Object.keys(m.default).length, Object.keys(m).join(","));
-        }
-        console.log(results[0].default === results[1].default, results[2].default === results[3].default);
-      `,
-    },
-    target: "browser",
-    onAfterBundle(api) {
-      api.expectFile("out.js").not.toInclude(`import("`);
-    },
-    run: {
-      stdout: `
-        node:fs object 0 default
-        fs object 0 default
-        fs/promises object 0 default
-        node:fs/promises object 0 default
-        node:child_process object 0 default
-        node:vm object 0 default
-        true true
-      `,
-    },
-  });
-  // With code splitting, a disabled module that only import() reaches gets its
-  // own chunk. The promise resolves to the same shape as without splitting.
-  itBundled("browser/DisabledModuleDynamicImportSplitting", {
-    files: {
-      "/entry.js": /* js */ `
-        import { load } from "pkg";
-        const builtin = await import("node:fs");
-        const file = await load();
-        for (const m of [builtin, file]) {
-          console.log(typeof m.default, Object.keys(m.default).length, Object.keys(m).join(","));
-        }
-      `,
-      "/node_modules/pkg/package.json": `{ "main": "./index.js", "browser": { "./node.js": false } }`,
-      "/node_modules/pkg/index.js": `export const load = () => import("./node.js");`,
-      "/node_modules/pkg/node.js": `throw new Error("fail");`,
-    },
-    target: "browser",
-    splitting: true,
-    outdir: "/out",
-    onAfterBundle(api) {
-      // Two chunks besides the entry: one per disabled module.
-      const chunks = readdirSync(api.outdir).filter(name => name !== "entry.js");
-      expect(chunks.length).toBe(2);
-      for (const chunk of chunks) {
-        api.expectFile("/out/entry.js").toInclude(`import("./${chunk}")`);
-        api.expectFile(`/out/${chunk}`).toInclude("(disabled):");
-      }
-    },
-    run: {
-      file: "/out/entry.js",
-      stdout: `
-        object 0 default
-        object 0 default
-      `,
     },
   });
   itBundled("browser/NodeTTY", {
@@ -397,7 +268,7 @@ describe("bundler", () => {
     target: "browser",
     run: {
       stdout:
-        "{\n  assert: {\n    AssertionError: [Getter/Setter],\n    CallTracker: [Getter/Setter],\n    deepEqual: [Getter/Setter],\n    deepStrictEqual: [Getter/Setter],\n    default: [Getter/Setter],\n    doesNotMatch: [Getter/Setter],\n    doesNotReject: [Getter/Setter],\n    doesNotThrow: [Getter/Setter],\n    equal: [Getter/Setter],\n    fail: [Getter/Setter],\n    ifError: [Getter/Setter],\n    match: [Getter/Setter],\n    notDeepEqual: [Getter/Setter],\n    notDeepStrictEqual: [Getter/Setter],\n    notEqual: [Getter/Setter],\n    notStrictEqual: [Getter/Setter],\n    ok: [Getter/Setter],\n    rejects: [Getter/Setter],\n    strict: [Getter/Setter],\n    strictEqual: [Getter/Setter],\n    throws: [Getter/Setter],\n  },\n  buffer: {\n    Blob: [Getter/Setter],\n    Buffer: [Getter/Setter],\n    File: [Getter/Setter],\n    INSPECT_MAX_BYTES: [Getter/Setter],\n    atob: [Getter/Setter],\n    btoa: [Getter/Setter],\n    constants: [Getter/Setter],\n    default: [Getter/Setter],\n    isAscii: [Getter/Setter],\n    isUtf8: [Getter/Setter],\n    kMaxLength: [Getter/Setter],\n    kStringMaxLength: [Getter/Setter],\n    resolveObjectURL: [Getter/Setter],\n    transcode: [Getter/Setter],\n  },\n  child_process: {\n    default: {},\n  },\n  cluster: {\n    default: {},\n  },\n  console2: {\n    default: [Getter/Setter],\n  },\n  constants: {\n    DH_CHECK_P_NOT_PRIME: [Getter/Setter],\n    DH_CHECK_P_NOT_SAFE_PRIME: [Getter/Setter],\n    DH_NOT_SUITABLE_GENERATOR: [Getter/Setter],\n    DH_UNABLE_TO_CHECK_GENERATOR: [Getter/Setter],\n    E2BIG: [Getter/Setter],\n    EACCES: [Getter/Setter],\n    EADDRINUSE: [Getter/Setter],\n    EADDRNOTAVAIL: [Getter/Setter],\n    EAFNOSUPPORT: [Getter/Setter],\n    EAGAIN: [Getter/Setter],\n    EALREADY: [Getter/Setter],\n    EBADF: [Getter/Setter],\n    EBADMSG: [Getter/Setter],\n    EBUSY: [Getter/Setter],\n    ECANCELED: [Getter/Setter],\n    ECHILD: [Getter/Setter],\n    ECONNABORTED: [Getter/Setter],\n    ECONNREFUSED: [Getter/Setter],\n    ECONNRESET: [Getter/Setter],\n    EDEADLK: [Getter/Setter],\n    EDESTADDRREQ: [Getter/Setter],\n    EDOM: [Getter/Setter],\n    EDQUOT: [Getter/Setter],\n    EEXIST: [Getter/Setter],\n    EFAULT: [Getter/Setter],\n    EFBIG: [Getter/Setter],\n    EHOSTUNREACH: [Getter/Setter],\n    EIDRM: [Getter/Setter],\n    EILSEQ: [Getter/Setter],\n    EINPROGRESS: [Getter/Setter],\n    EINTR: [Getter/Setter],\n    EINVAL: [Getter/Setter],\n    EIO: [Getter/Setter],\n    EISCONN: [Getter/Setter],\n    EISDIR: [Getter/Setter],\n    ELOOP: [Getter/Setter],\n    EMFILE: [Getter/Setter],\n    EMLINK: [Getter/Setter],\n    EMSGSIZE: [Getter/Setter],\n    EMULTIHOP: [Getter/Setter],\n    ENAMETOOLONG: [Getter/Setter],\n    ENETDOWN: [Getter/Setter],\n    ENETRESET: [Getter/Setter],\n    ENETUNREACH: [Getter/Setter],\n    ENFILE: [Getter/Setter],\n    ENGINE_METHOD_ALL: [Getter/Setter],\n    ENGINE_METHOD_CIPHERS: [Getter/Setter],\n    ENGINE_METHOD_DH: [Getter/Setter],\n    ENGINE_METHOD_DIGESTS: [Getter/Setter],\n    ENGINE_METHOD_DSA: [Getter/Setter],\n    ENGINE_METHOD_ECDH: [Getter/Setter],\n    ENGINE_METHOD_ECDSA: [Getter/Setter],\n    ENGINE_METHOD_NONE: [Getter/Setter],\n    ENGINE_METHOD_PKEY_ASN1_METHS: [Getter/Setter],\n    ENGINE_METHOD_PKEY_METHS: [Getter/Setter],\n    ENGINE_METHOD_RAND: [Getter/Setter],\n    ENGINE_METHOD_STORE: [Getter/Setter],\n    ENOBUFS: [Getter/Setter],\n    ENODATA: [Getter/Setter],\n    ENODEV: [Getter/Setter],\n    ENOENT: [Getter/Setter],\n    ENOEXEC: [Getter/Setter],\n    ENOLCK: [Getter/Setter],\n    ENOLINK: [Getter/Setter],\n    ENOMEM: [Getter/Setter],\n    ENOMSG: [Getter/Setter],\n    ENOPROTOOPT: [Getter/Setter],\n    ENOSPC: [Getter/Setter],\n    ENOSR: [Getter/Setter],\n    ENOSTR: [Getter/Setter],\n    ENOSYS: [Getter/Setter],\n    ENOTCONN: [Getter/Setter],\n    ENOTDIR: [Getter/Setter],\n    ENOTEMPTY: [Getter/Setter],\n    ENOTSOCK: [Getter/Setter],\n    ENOTSUP: [Getter/Setter],\n    ENOTTY: [Getter/Setter],\n    ENXIO: [Getter/Setter],\n    EOPNOTSUPP: [Getter/Setter],\n    EOVERFLOW: [Getter/Setter],\n    EPERM: [Getter/Setter],\n    EPIPE: [Getter/Setter],\n    EPROTO: [Getter/Setter],\n    EPROTONOSUPPORT: [Getter/Setter],\n    EPROTOTYPE: [Getter/Setter],\n    ERANGE: [Getter/Setter],\n    EROFS: [Getter/Setter],\n    ESPIPE: [Getter/Setter],\n    ESRCH: [Getter/Setter],\n    ESTALE: [Getter/Setter],\n    ETIME: [Getter/Setter],\n    ETIMEDOUT: [Getter/Setter],\n    ETXTBSY: [Getter/Setter],\n    EWOULDBLOCK: [Getter/Setter],\n    EXDEV: [Getter/Setter],\n    F_OK: [Getter/Setter],\n    NPN_ENABLED: [Getter/Setter],\n    O_APPEND: [Getter/Setter],\n    O_CREAT: [Getter/Setter],\n    O_DIRECTORY: [Getter/Setter],\n    O_EXCL: [Getter/Setter],\n    O_NOCTTY: [Getter/Setter],\n    O_NOFOLLOW: [Getter/Setter],\n    O_NONBLOCK: [Getter/Setter],\n    O_RDONLY: [Getter/Setter],\n    O_RDWR: [Getter/Setter],\n    O_SYMLINK: [Getter/Setter],\n    O_SYNC: [Getter/Setter],\n    O_TRUNC: [Getter/Setter],\n    O_WRONLY: [Getter/Setter],\n    POINT_CONVERSION_COMPRESSED: [Getter/Setter],\n    POINT_CONVERSION_HYBRID: [Getter/Setter],\n    POINT_CONVERSION_UNCOMPRESSED: [Getter/Setter],\n    RSA_NO_PADDING: [Getter/Setter],\n    RSA_PKCS1_OAEP_PADDING: [Getter/Setter],\n    RSA_PKCS1_PADDING: [Getter/Setter],\n    RSA_PKCS1_PSS_PADDING: [Getter/Setter],\n    RSA_SSLV23_PADDING: [Getter/Setter],\n    RSA_X931_PADDING: [Getter/Setter],\n    R_OK: [Getter/Setter],\n    SIGABRT: [Getter/Setter],\n    SIGALRM: [Getter/Setter],\n    SIGBUS: [Getter/Setter],\n    SIGCHLD: [Getter/Setter],\n    SIGCONT: [Getter/Setter],\n    SIGFPE: [Getter/Setter],\n    SIGHUP: [Getter/Setter],\n    SIGILL: [Getter/Setter],\n    SIGINT: [Getter/Setter],\n    SIGIO: [Getter/Setter],\n    SIGIOT: [Getter/Setter],\n    SIGKILL: [Getter/Setter],\n    SIGPIPE: [Getter/Setter],\n    SIGPROF: [Getter/Setter],\n    SIGQUIT: [Getter/Setter],\n    SIGSEGV: [Getter/Setter],\n    SIGSTOP: [Getter/Setter],\n    SIGSYS: [Getter/Setter],\n    SIGTERM: [Getter/Setter],\n    SIGTRAP: [Getter/Setter],\n    SIGTSTP: [Getter/Setter],\n    SIGTTIN: [Getter/Setter],\n    SIGTTOU: [Getter/Setter],\n    SIGURG: [Getter/Setter],\n    SIGUSR1: [Getter/Setter],\n    SIGUSR2: [Getter/Setter],\n    SIGVTALRM: [Getter/Setter],\n    SIGWINCH: [Getter/Setter],\n    SIGXCPU: [Getter/Setter],\n    SIGXFSZ: [Getter/Setter],\n    SSL_OP_ALL: [Getter/Setter],\n    SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION: [Getter/Setter],\n    SSL_OP_CIPHER_SERVER_PREFERENCE: [Getter/Setter],\n    SSL_OP_CISCO_ANYCONNECT: [Getter/Setter],\n    SSL_OP_COOKIE_EXCHANGE: [Getter/Setter],\n    SSL_OP_CRYPTOPRO_TLSEXT_BUG: [Getter/Setter],\n    SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS: [Getter/Setter],\n    SSL_OP_EPHEMERAL_RSA: [Getter/Setter],\n    SSL_OP_LEGACY_SERVER_CONNECT: [Getter/Setter],\n    SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER: [Getter/Setter],\n    SSL_OP_MICROSOFT_SESS_ID_BUG: [Getter/Setter],\n    SSL_OP_MSIE_SSLV2_RSA_PADDING: [Getter/Setter],\n    SSL_OP_NETSCAPE_CA_DN_BUG: [Getter/Setter],\n    SSL_OP_NETSCAPE_CHALLENGE_BUG: [Getter/Setter],\n    SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG: [Getter/Setter],\n    SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG: [Getter/Setter],\n    SSL_OP_NO_COMPRESSION: [Getter/Setter],\n    SSL_OP_NO_QUERY_MTU: [Getter/Setter],\n    SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION: [Getter/Setter],\n    SSL_OP_NO_SSLv2: [Getter/Setter],\n    SSL_OP_NO_SSLv3: [Getter/Setter],\n    SSL_OP_NO_TICKET: [Getter/Setter],\n    SSL_OP_NO_TLSv1: [Getter/Setter],\n    SSL_OP_NO_TLSv1_1: [Getter/Setter],\n    SSL_OP_NO_TLSv1_2: [Getter/Setter],\n    SSL_OP_PKCS1_CHECK_1: [Getter/Setter],\n    SSL_OP_PKCS1_CHECK_2: [Getter/Setter],\n    SSL_OP_SINGLE_DH_USE: [Getter/Setter],\n    SSL_OP_SINGLE_ECDH_USE: [Getter/Setter],\n    SSL_OP_SSLEAY_080_CLIENT_DH_BUG: [Getter/Setter],\n    SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG: [Getter/Setter],\n    SSL_OP_TLS_BLOCK_PADDING_BUG: [Getter/Setter],\n    SSL_OP_TLS_D5_BUG: [Getter/Setter],\n    SSL_OP_TLS_ROLLBACK_BUG: [Getter/Setter],\n    S_IFBLK: [Getter/Setter],\n    S_IFCHR: [Getter/Setter],\n    S_IFDIR: [Getter/Setter],\n    S_IFIFO: [Getter/Setter],\n    S_IFLNK: [Getter/Setter],\n    S_IFMT: [Getter/Setter],\n    S_IFREG: [Getter/Setter],\n    S_IFSOCK: [Getter/Setter],\n    S_IRGRP: [Getter/Setter],\n    S_IROTH: [Getter/Setter],\n    S_IRUSR: [Getter/Setter],\n    S_IRWXG: [Getter/Setter],\n    S_IRWXO: [Getter/Setter],\n    S_IRWXU: [Getter/Setter],\n    S_IWGRP: [Getter/Setter],\n    S_IWOTH: [Getter/Setter],\n    S_IWUSR: [Getter/Setter],\n    S_IXGRP: [Getter/Setter],\n    S_IXOTH: [Getter/Setter],\n    S_IXUSR: [Getter/Setter],\n    UV_UDP_REUSEADDR: [Getter/Setter],\n    W_OK: [Getter/Setter],\n    X_OK: [Getter/Setter],\n  },\n  crypto: {\n    Cipher: [Getter/Setter],\n    Cipheriv: [Getter/Setter],\n    DEFAULT_ENCODING: [Getter/Setter],\n    Decipher: [Getter/Setter],\n    Decipheriv: [Getter/Setter],\n    DiffieHellman: [Getter/Setter],\n    DiffieHellmanGroup: [Getter/Setter],\n    Hash: [Getter/Setter],\n    Hmac: [Getter/Setter],\n    Sign: [Getter/Setter],\n    Verify: [Getter/Setter],\n    constants: [Getter/Setter],\n    createCipher: [Getter/Setter],\n    createCipheriv: [Getter/Setter],\n    createCredentials: [Getter/Setter],\n    createDecipher: [Getter/Setter],\n    createDecipheriv: [Getter/Setter],\n    createDiffieHellman: [Getter/Setter],\n    createDiffieHellmanGroup: [Getter/Setter],\n    createECDH: [Getter/Setter],\n    createHash: [Getter/Setter],\n    createHmac: [Getter/Setter],\n    createSign: [Getter/Setter],\n    createVerify: [Getter/Setter],\n    default: [Getter/Setter],\n    getCiphers: [Getter/Setter],\n    getCurves: [Getter/Setter],\n    getDiffieHellman: [Getter/Setter],\n    getHashes: [Getter/Setter],\n    getRandomValues: [Getter/Setter],\n    listCiphers: [Getter/Setter],\n    pbkdf2: [Getter/Setter],\n    pbkdf2Sync: [Getter/Setter],\n    privateDecrypt: [Getter/Setter],\n    privateEncrypt: [Getter/Setter],\n    prng: [Getter/Setter],\n    pseudoRandomBytes: [Getter/Setter],\n    publicDecrypt: [Getter/Setter],\n    publicEncrypt: [Getter/Setter],\n    randomBytes: [Getter/Setter],\n    randomFill: [Getter/Setter],\n    randomFillSync: [Getter/Setter],\n    randomUUID: [Getter/Setter],\n    rng: [Getter/Setter],\n    webcrypto: [Getter/Setter],\n  },\n  dgram: {\n    default: {},\n  },\n  dns: {\n    default: {},\n  },\n  domain: {\n    create: [Getter/Setter],\n    createDomain: [Getter/Setter],\n  },\n  events: {\n    EventEmitter: [Getter/Setter],\n    addAbortListener: [Getter/Setter],\n    captureRejectionSymbol: [Getter/Setter],\n    default: [Getter/Setter],\n    getEventListeners: [Getter/Setter],\n    getMaxListeners: [Getter/Setter],\n    init: [Getter/Setter],\n    listenerCount: [Getter/Setter],\n    once: [Getter/Setter],\n    setMaxListeners: [Getter/Setter],\n  },\n  fs: {\n    default: {},\n  },\n  http: {\n    Agent: [Getter/Setter],\n    ClientRequest: [Getter/Setter],\n    IncomingMessage: [Getter/Setter],\n    METHODS: [Getter/Setter],\n    STATUS_CODES: [Getter/Setter],\n    default: [Getter/Setter],\n    get: [Getter/Setter],\n    globalAgent: [Getter/Setter],\n    request: [Getter/Setter],\n  },\n  https: {\n    Agent: [Getter/Setter],\n    ClientRequest: [Getter/Setter],\n    IncomingMessage: [Getter/Setter],\n    METHODS: [Getter/Setter],\n    OutgoingMessage: [Getter/Setter],\n    STATUS_CODES: [Getter/Setter],\n    Server: [Getter/Setter],\n    ServerResponse: [Getter/Setter],\n    createServer: [Getter/Setter],\n    default: [Getter/Setter],\n    get: [Getter/Setter],\n    globalAgent: [Getter/Setter],\n    maxHeaderSize: [Getter/Setter],\n    request: [Getter/Setter],\n    setMaxIdleHTTPParsers: [Getter/Setter],\n    validateHeaderName: [Getter/Setter],\n    validateHeaderValue: [Getter/Setter],\n  },\n  module: {\n    default: {},\n  },\n  net: {\n    default: [Getter/Setter],\n    isIP: [Getter/Setter],\n    isIPv4: [Getter/Setter],\n    isIPv6: [Getter/Setter],\n  },\n  os: {\n    EOL: [Getter/Setter],\n    arch: [Getter/Setter],\n    cpus: [Getter/Setter],\n    endianness: [Getter/Setter],\n    freemem: [Getter/Setter],\n    getNetworkInterfaces: [Getter/Setter],\n    homedir: [Getter/Setter],\n    hostname: [Getter/Setter],\n    loadavg: [Getter/Setter],\n    networkInterfaces: [Getter/Setter],\n    platform: [Getter/Setter],\n    release: [Getter/Setter],\n    tmpDir: [Getter/Setter],\n    tmpdir: [Getter/Setter],\n    totalmem: [Getter/Setter],\n    type: [Getter/Setter],\n    uptime: [Getter/Setter],\n  },\n  path: {\n    _makeLong: [Getter/Setter],\n    basename: [Getter/Setter],\n    default: [Getter/Setter],\n    delimiter: [Getter/Setter],\n    dirname: [Getter/Setter],\n    extname: [Getter/Setter],\n    format: [Getter/Setter],\n    isAbsolute: [Getter/Setter],\n    join: [Getter/Setter],\n    normalize: [Getter/Setter],\n    parse: [Getter/Setter],\n    posix: [Getter/Setter],\n    relative: [Getter/Setter],\n    resolve: [Getter/Setter],\n    sep: [Getter/Setter],\n  },\n  perf_hooks: {\n    default: {},\n  },\n  process: {\n    addListener: [Getter/Setter],\n    argv: [Getter/Setter],\n    binding: [Getter/Setter],\n    browser: [Getter/Setter],\n    chdir: [Getter/Setter],\n    cwd: [Getter/Setter],\n    emit: [Getter/Setter],\n    env: [Getter/Setter],\n    listeners: [Getter/Setter],\n    nextTick: [Getter/Setter],\n    off: [Getter/Setter],\n    on: [Getter/Setter],\n    once: [Getter/Setter],\n    prependListener: [Getter/Setter],\n    prependOnceListener: [Getter/Setter],\n    removeAllListeners: [Getter/Setter],\n    removeListener: [Getter/Setter],\n    title: [Getter/Setter],\n    umask: [Getter/Setter],\n    version: [Getter/Setter],\n    versions: [Getter/Setter],\n  },\n  punycode: {\n    default: [Getter/Setter],\n  },\n  querystring: {\n    decode: [Getter/Setter],\n    default: [Getter/Setter],\n    encode: [Getter/Setter],\n    escape: [Getter/Setter],\n    parse: [Getter/Setter],\n    stringify: [Getter/Setter],\n    unescape: [Getter/Setter],\n    unescapeBuffer: [Getter/Setter],\n  },\n  readline: {\n    default: {},\n  },\n  repl: {\n    default: {},\n  },\n  stream: Function {\n    default: [Stream: Readable],\n    length: [Getter],\n    name: [Getter],\n    prototype: [Getter],\n    ReadableState: [Getter],\n    _fromList: [Getter],\n    from: [Getter],\n    fromWeb: [Getter],\n    toWeb: [Getter],\n    wrap: [Getter],\n    _uint8ArrayToBuffer: [Getter],\n    _isUint8Array: [Getter],\n    isDisturbed: [Getter],\n    isErrored: [Getter],\n    isReadable: [Getter],\n    Readable: [Getter],\n    Writable: [Getter],\n    Duplex: [Getter],\n    Transform: [Getter],\n    PassThrough: [Getter],\n    addAbortSignal: [Getter],\n    finished: [Getter],\n    destroy: [Getter],\n    pipeline: [Getter],\n    compose: [Getter],\n    Stream: [Getter],\n    isDestroyed: [Function: isDestroyed],\n    isWritable: [Function: isWritable],\n    setDefaultHighWaterMark: [Function: setDefaultHighWaterMark],\n    getDefaultHighWaterMark: [Function: getDefaultHighWaterMark],\n    promises: [Getter],\n  },\n  string_decoder: {\n    StringDecoder: [Getter/Setter],\n    default: [Getter/Setter],\n  },\n  sys: {\n    TextDecoder: [Getter/Setter],\n    TextEncoder: [Getter/Setter],\n    _extend: [Getter/Setter],\n    callbackify: [Getter/Setter],\n    callbackifyOnRejected: [Getter/Setter],\n    debuglog: [Getter/Setter],\n    default: [Getter/Setter],\n    deprecate: [Getter/Setter],\n    format: [Getter/Setter],\n    inherits: [Getter/Setter],\n    inspect: [Getter/Setter],\n    isArray: [Getter/Setter],\n    isBoolean: [Getter/Setter],\n    isBuffer: [Getter/Setter],\n    isDate: [Getter/Setter],\n    isError: [Getter/Setter],\n    isFunction: [Getter/Setter],\n    isNull: [Getter/Setter],\n    isNullOrUndefined: [Getter/Setter],\n    isNumber: [Getter/Setter],\n    isObject: [Getter/Setter],\n    isPrimitive: [Getter/Setter],\n    isRegExp: [Getter/Setter],\n    isString: [Getter/Setter],\n    isSymbol: [Getter/Setter],\n    isUndefined: [Getter/Setter],\n    log: [Getter/Setter],\n    promisify: [Getter/Setter],\n    types: [Getter/Setter],\n  },\n  timers: {\n    _unrefActive: [Getter/Setter],\n    clearImmediate: [Getter/Setter],\n    clearInterval: [Getter/Setter],\n    clearTimeout: [Getter/Setter],\n    promises: [Getter/Setter],\n    setImmediate: [Getter/Setter],\n    setInterval: [Getter/Setter],\n    setTimeout: [Getter/Setter],\n  },\n  tls: {\n    default: {},\n  },\n  tty: {\n    ReadStream: [Getter/Setter],\n    WriteStream: [Getter/Setter],\n    default: [Getter/Setter],\n    isatty: [Getter/Setter],\n  },\n  url: {\n    URL: [Getter/Setter],\n    URLSearchParams: [Getter/Setter],\n    Url: [Getter/Setter],\n    default: [Getter/Setter],\n    format: [Getter/Setter],\n    parse: [Getter/Setter],\n    resolve: [Getter/Setter],\n    resolveObject: [Getter/Setter],\n  },\n  util: {\n    TextDecoder: [Getter/Setter],\n    TextEncoder: [Getter/Setter],\n    _extend: [Getter/Setter],\n    callbackify: [Getter/Setter],\n    callbackifyOnRejected: [Getter/Setter],\n    debuglog: [Getter/Setter],\n    default: [Getter/Setter],\n    deprecate: [Getter/Setter],\n    format: [Getter/Setter],\n    inherits: [Getter/Setter],\n    inspect: [Getter/Setter],\n    isArray: [Getter/Setter],\n    isBoolean: [Getter/Setter],\n    isBuffer: [Getter/Setter],\n    isDate: [Getter/Setter],\n    isError: [Getter/Setter],\n    isFunction: [Getter/Setter],\n    isNull: [Getter/Setter],\n    isNullOrUndefined: [Getter/Setter],\n    isNumber: [Getter/Setter],\n    isObject: [Getter/Setter],\n    isPrimitive: [Getter/Setter],\n    isRegExp: [Getter/Setter],\n    isString: [Getter/Setter],\n    isSymbol: [Getter/Setter],\n    isUndefined: [Getter/Setter],\n    log: [Getter/Setter],\n    promisify: [Getter/Setter],\n    types: [Getter/Setter],\n  },\n  v8: {\n    default: {},\n  },\n  vm: {\n    default: {},\n  },\n  zlib: {\n    default: [Getter/Setter],\n  },\n}",
+        "{\n  assert: {\n    AssertionError: [Getter/Setter],\n    CallTracker: [Getter/Setter],\n    deepEqual: [Getter/Setter],\n    deepStrictEqual: [Getter/Setter],\n    default: [Getter/Setter],\n    doesNotMatch: [Getter/Setter],\n    doesNotReject: [Getter/Setter],\n    doesNotThrow: [Getter/Setter],\n    equal: [Getter/Setter],\n    fail: [Getter/Setter],\n    ifError: [Getter/Setter],\n    match: [Getter/Setter],\n    notDeepEqual: [Getter/Setter],\n    notDeepStrictEqual: [Getter/Setter],\n    notEqual: [Getter/Setter],\n    notStrictEqual: [Getter/Setter],\n    ok: [Getter/Setter],\n    rejects: [Getter/Setter],\n    strict: [Getter/Setter],\n    strictEqual: [Getter/Setter],\n    throws: [Getter/Setter],\n  },\n  buffer: {\n    Blob: [Getter/Setter],\n    Buffer: [Getter/Setter],\n    File: [Getter/Setter],\n    INSPECT_MAX_BYTES: [Getter/Setter],\n    atob: [Getter/Setter],\n    btoa: [Getter/Setter],\n    constants: [Getter/Setter],\n    default: [Getter/Setter],\n    isAscii: [Getter/Setter],\n    isUtf8: [Getter/Setter],\n    kMaxLength: [Getter/Setter],\n    kStringMaxLength: [Getter/Setter],\n    resolveObjectURL: [Getter/Setter],\n    transcode: [Getter/Setter],\n  },\n  child_process: [Function: child_process],\n  cluster: [Function: cluster],\n  console2: {\n    default: [Getter/Setter],\n  },\n  constants: {\n    DH_CHECK_P_NOT_PRIME: [Getter/Setter],\n    DH_CHECK_P_NOT_SAFE_PRIME: [Getter/Setter],\n    DH_NOT_SUITABLE_GENERATOR: [Getter/Setter],\n    DH_UNABLE_TO_CHECK_GENERATOR: [Getter/Setter],\n    E2BIG: [Getter/Setter],\n    EACCES: [Getter/Setter],\n    EADDRINUSE: [Getter/Setter],\n    EADDRNOTAVAIL: [Getter/Setter],\n    EAFNOSUPPORT: [Getter/Setter],\n    EAGAIN: [Getter/Setter],\n    EALREADY: [Getter/Setter],\n    EBADF: [Getter/Setter],\n    EBADMSG: [Getter/Setter],\n    EBUSY: [Getter/Setter],\n    ECANCELED: [Getter/Setter],\n    ECHILD: [Getter/Setter],\n    ECONNABORTED: [Getter/Setter],\n    ECONNREFUSED: [Getter/Setter],\n    ECONNRESET: [Getter/Setter],\n    EDEADLK: [Getter/Setter],\n    EDESTADDRREQ: [Getter/Setter],\n    EDOM: [Getter/Setter],\n    EDQUOT: [Getter/Setter],\n    EEXIST: [Getter/Setter],\n    EFAULT: [Getter/Setter],\n    EFBIG: [Getter/Setter],\n    EHOSTUNREACH: [Getter/Setter],\n    EIDRM: [Getter/Setter],\n    EILSEQ: [Getter/Setter],\n    EINPROGRESS: [Getter/Setter],\n    EINTR: [Getter/Setter],\n    EINVAL: [Getter/Setter],\n    EIO: [Getter/Setter],\n    EISCONN: [Getter/Setter],\n    EISDIR: [Getter/Setter],\n    ELOOP: [Getter/Setter],\n    EMFILE: [Getter/Setter],\n    EMLINK: [Getter/Setter],\n    EMSGSIZE: [Getter/Setter],\n    EMULTIHOP: [Getter/Setter],\n    ENAMETOOLONG: [Getter/Setter],\n    ENETDOWN: [Getter/Setter],\n    ENETRESET: [Getter/Setter],\n    ENETUNREACH: [Getter/Setter],\n    ENFILE: [Getter/Setter],\n    ENGINE_METHOD_ALL: [Getter/Setter],\n    ENGINE_METHOD_CIPHERS: [Getter/Setter],\n    ENGINE_METHOD_DH: [Getter/Setter],\n    ENGINE_METHOD_DIGESTS: [Getter/Setter],\n    ENGINE_METHOD_DSA: [Getter/Setter],\n    ENGINE_METHOD_ECDH: [Getter/Setter],\n    ENGINE_METHOD_ECDSA: [Getter/Setter],\n    ENGINE_METHOD_NONE: [Getter/Setter],\n    ENGINE_METHOD_PKEY_ASN1_METHS: [Getter/Setter],\n    ENGINE_METHOD_PKEY_METHS: [Getter/Setter],\n    ENGINE_METHOD_RAND: [Getter/Setter],\n    ENGINE_METHOD_STORE: [Getter/Setter],\n    ENOBUFS: [Getter/Setter],\n    ENODATA: [Getter/Setter],\n    ENODEV: [Getter/Setter],\n    ENOENT: [Getter/Setter],\n    ENOEXEC: [Getter/Setter],\n    ENOLCK: [Getter/Setter],\n    ENOLINK: [Getter/Setter],\n    ENOMEM: [Getter/Setter],\n    ENOMSG: [Getter/Setter],\n    ENOPROTOOPT: [Getter/Setter],\n    ENOSPC: [Getter/Setter],\n    ENOSR: [Getter/Setter],\n    ENOSTR: [Getter/Setter],\n    ENOSYS: [Getter/Setter],\n    ENOTCONN: [Getter/Setter],\n    ENOTDIR: [Getter/Setter],\n    ENOTEMPTY: [Getter/Setter],\n    ENOTSOCK: [Getter/Setter],\n    ENOTSUP: [Getter/Setter],\n    ENOTTY: [Getter/Setter],\n    ENXIO: [Getter/Setter],\n    EOPNOTSUPP: [Getter/Setter],\n    EOVERFLOW: [Getter/Setter],\n    EPERM: [Getter/Setter],\n    EPIPE: [Getter/Setter],\n    EPROTO: [Getter/Setter],\n    EPROTONOSUPPORT: [Getter/Setter],\n    EPROTOTYPE: [Getter/Setter],\n    ERANGE: [Getter/Setter],\n    EROFS: [Getter/Setter],\n    ESPIPE: [Getter/Setter],\n    ESRCH: [Getter/Setter],\n    ESTALE: [Getter/Setter],\n    ETIME: [Getter/Setter],\n    ETIMEDOUT: [Getter/Setter],\n    ETXTBSY: [Getter/Setter],\n    EWOULDBLOCK: [Getter/Setter],\n    EXDEV: [Getter/Setter],\n    F_OK: [Getter/Setter],\n    NPN_ENABLED: [Getter/Setter],\n    O_APPEND: [Getter/Setter],\n    O_CREAT: [Getter/Setter],\n    O_DIRECTORY: [Getter/Setter],\n    O_EXCL: [Getter/Setter],\n    O_NOCTTY: [Getter/Setter],\n    O_NOFOLLOW: [Getter/Setter],\n    O_NONBLOCK: [Getter/Setter],\n    O_RDONLY: [Getter/Setter],\n    O_RDWR: [Getter/Setter],\n    O_SYMLINK: [Getter/Setter],\n    O_SYNC: [Getter/Setter],\n    O_TRUNC: [Getter/Setter],\n    O_WRONLY: [Getter/Setter],\n    POINT_CONVERSION_COMPRESSED: [Getter/Setter],\n    POINT_CONVERSION_HYBRID: [Getter/Setter],\n    POINT_CONVERSION_UNCOMPRESSED: [Getter/Setter],\n    RSA_NO_PADDING: [Getter/Setter],\n    RSA_PKCS1_OAEP_PADDING: [Getter/Setter],\n    RSA_PKCS1_PADDING: [Getter/Setter],\n    RSA_PKCS1_PSS_PADDING: [Getter/Setter],\n    RSA_SSLV23_PADDING: [Getter/Setter],\n    RSA_X931_PADDING: [Getter/Setter],\n    R_OK: [Getter/Setter],\n    SIGABRT: [Getter/Setter],\n    SIGALRM: [Getter/Setter],\n    SIGBUS: [Getter/Setter],\n    SIGCHLD: [Getter/Setter],\n    SIGCONT: [Getter/Setter],\n    SIGFPE: [Getter/Setter],\n    SIGHUP: [Getter/Setter],\n    SIGILL: [Getter/Setter],\n    SIGINT: [Getter/Setter],\n    SIGIO: [Getter/Setter],\n    SIGIOT: [Getter/Setter],\n    SIGKILL: [Getter/Setter],\n    SIGPIPE: [Getter/Setter],\n    SIGPROF: [Getter/Setter],\n    SIGQUIT: [Getter/Setter],\n    SIGSEGV: [Getter/Setter],\n    SIGSTOP: [Getter/Setter],\n    SIGSYS: [Getter/Setter],\n    SIGTERM: [Getter/Setter],\n    SIGTRAP: [Getter/Setter],\n    SIGTSTP: [Getter/Setter],\n    SIGTTIN: [Getter/Setter],\n    SIGTTOU: [Getter/Setter],\n    SIGURG: [Getter/Setter],\n    SIGUSR1: [Getter/Setter],\n    SIGUSR2: [Getter/Setter],\n    SIGVTALRM: [Getter/Setter],\n    SIGWINCH: [Getter/Setter],\n    SIGXCPU: [Getter/Setter],\n    SIGXFSZ: [Getter/Setter],\n    SSL_OP_ALL: [Getter/Setter],\n    SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION: [Getter/Setter],\n    SSL_OP_CIPHER_SERVER_PREFERENCE: [Getter/Setter],\n    SSL_OP_CISCO_ANYCONNECT: [Getter/Setter],\n    SSL_OP_COOKIE_EXCHANGE: [Getter/Setter],\n    SSL_OP_CRYPTOPRO_TLSEXT_BUG: [Getter/Setter],\n    SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS: [Getter/Setter],\n    SSL_OP_EPHEMERAL_RSA: [Getter/Setter],\n    SSL_OP_LEGACY_SERVER_CONNECT: [Getter/Setter],\n    SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER: [Getter/Setter],\n    SSL_OP_MICROSOFT_SESS_ID_BUG: [Getter/Setter],\n    SSL_OP_MSIE_SSLV2_RSA_PADDING: [Getter/Setter],\n    SSL_OP_NETSCAPE_CA_DN_BUG: [Getter/Setter],\n    SSL_OP_NETSCAPE_CHALLENGE_BUG: [Getter/Setter],\n    SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG: [Getter/Setter],\n    SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG: [Getter/Setter],\n    SSL_OP_NO_COMPRESSION: [Getter/Setter],\n    SSL_OP_NO_QUERY_MTU: [Getter/Setter],\n    SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION: [Getter/Setter],\n    SSL_OP_NO_SSLv2: [Getter/Setter],\n    SSL_OP_NO_SSLv3: [Getter/Setter],\n    SSL_OP_NO_TICKET: [Getter/Setter],\n    SSL_OP_NO_TLSv1: [Getter/Setter],\n    SSL_OP_NO_TLSv1_1: [Getter/Setter],\n    SSL_OP_NO_TLSv1_2: [Getter/Setter],\n    SSL_OP_PKCS1_CHECK_1: [Getter/Setter],\n    SSL_OP_PKCS1_CHECK_2: [Getter/Setter],\n    SSL_OP_SINGLE_DH_USE: [Getter/Setter],\n    SSL_OP_SINGLE_ECDH_USE: [Getter/Setter],\n    SSL_OP_SSLEAY_080_CLIENT_DH_BUG: [Getter/Setter],\n    SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG: [Getter/Setter],\n    SSL_OP_TLS_BLOCK_PADDING_BUG: [Getter/Setter],\n    SSL_OP_TLS_D5_BUG: [Getter/Setter],\n    SSL_OP_TLS_ROLLBACK_BUG: [Getter/Setter],\n    S_IFBLK: [Getter/Setter],\n    S_IFCHR: [Getter/Setter],\n    S_IFDIR: [Getter/Setter],\n    S_IFIFO: [Getter/Setter],\n    S_IFLNK: [Getter/Setter],\n    S_IFMT: [Getter/Setter],\n    S_IFREG: [Getter/Setter],\n    S_IFSOCK: [Getter/Setter],\n    S_IRGRP: [Getter/Setter],\n    S_IROTH: [Getter/Setter],\n    S_IRUSR: [Getter/Setter],\n    S_IRWXG: [Getter/Setter],\n    S_IRWXO: [Getter/Setter],\n    S_IRWXU: [Getter/Setter],\n    S_IWGRP: [Getter/Setter],\n    S_IWOTH: [Getter/Setter],\n    S_IWUSR: [Getter/Setter],\n    S_IXGRP: [Getter/Setter],\n    S_IXOTH: [Getter/Setter],\n    S_IXUSR: [Getter/Setter],\n    UV_UDP_REUSEADDR: [Getter/Setter],\n    W_OK: [Getter/Setter],\n    X_OK: [Getter/Setter],\n  },\n  crypto: {\n    Cipher: [Getter/Setter],\n    Cipheriv: [Getter/Setter],\n    DEFAULT_ENCODING: [Getter/Setter],\n    Decipher: [Getter/Setter],\n    Decipheriv: [Getter/Setter],\n    DiffieHellman: [Getter/Setter],\n    DiffieHellmanGroup: [Getter/Setter],\n    Hash: [Getter/Setter],\n    Hmac: [Getter/Setter],\n    Sign: [Getter/Setter],\n    Verify: [Getter/Setter],\n    constants: [Getter/Setter],\n    createCipher: [Getter/Setter],\n    createCipheriv: [Getter/Setter],\n    createCredentials: [Getter/Setter],\n    createDecipher: [Getter/Setter],\n    createDecipheriv: [Getter/Setter],\n    createDiffieHellman: [Getter/Setter],\n    createDiffieHellmanGroup: [Getter/Setter],\n    createECDH: [Getter/Setter],\n    createHash: [Getter/Setter],\n    createHmac: [Getter/Setter],\n    createSign: [Getter/Setter],\n    createVerify: [Getter/Setter],\n    default: [Getter/Setter],\n    getCiphers: [Getter/Setter],\n    getCurves: [Getter/Setter],\n    getDiffieHellman: [Getter/Setter],\n    getHashes: [Getter/Setter],\n    getRandomValues: [Getter/Setter],\n    listCiphers: [Getter/Setter],\n    pbkdf2: [Getter/Setter],\n    pbkdf2Sync: [Getter/Setter],\n    privateDecrypt: [Getter/Setter],\n    privateEncrypt: [Getter/Setter],\n    prng: [Getter/Setter],\n    pseudoRandomBytes: [Getter/Setter],\n    publicDecrypt: [Getter/Setter],\n    publicEncrypt: [Getter/Setter],\n    randomBytes: [Getter/Setter],\n    randomFill: [Getter/Setter],\n    randomFillSync: [Getter/Setter],\n    randomUUID: [Getter/Setter],\n    rng: [Getter/Setter],\n    webcrypto: [Getter/Setter],\n  },\n  dgram: [Function: dgram],\n  dns: [Function: dns],\n  domain: {\n    create: [Getter/Setter],\n    createDomain: [Getter/Setter],\n  },\n  events: {\n    EventEmitter: [Getter/Setter],\n    addAbortListener: [Getter/Setter],\n    captureRejectionSymbol: [Getter/Setter],\n    default: [Getter/Setter],\n    getEventListeners: [Getter/Setter],\n    getMaxListeners: [Getter/Setter],\n    init: [Getter/Setter],\n    listenerCount: [Getter/Setter],\n    once: [Getter/Setter],\n    setMaxListeners: [Getter/Setter],\n  },\n  fs: [Function: fs],\n  http: {\n    Agent: [Getter/Setter],\n    ClientRequest: [Getter/Setter],\n    IncomingMessage: [Getter/Setter],\n    METHODS: [Getter/Setter],\n    STATUS_CODES: [Getter/Setter],\n    default: [Getter/Setter],\n    get: [Getter/Setter],\n    globalAgent: [Getter/Setter],\n    request: [Getter/Setter],\n  },\n  https: {\n    Agent: [Getter/Setter],\n    ClientRequest: [Getter/Setter],\n    IncomingMessage: [Getter/Setter],\n    METHODS: [Getter/Setter],\n    OutgoingMessage: [Getter/Setter],\n    STATUS_CODES: [Getter/Setter],\n    Server: [Getter/Setter],\n    ServerResponse: [Getter/Setter],\n    createServer: [Getter/Setter],\n    default: [Getter/Setter],\n    get: [Getter/Setter],\n    globalAgent: [Getter/Setter],\n    maxHeaderSize: [Getter/Setter],\n    request: [Getter/Setter],\n    setMaxIdleHTTPParsers: [Getter/Setter],\n    validateHeaderName: [Getter/Setter],\n    validateHeaderValue: [Getter/Setter],\n  },\n  module: [Function: module2],\n  net: {\n    default: [Getter/Setter],\n    isIP: [Getter/Setter],\n    isIPv4: [Getter/Setter],\n    isIPv6: [Getter/Setter],\n  },\n  os: {\n    EOL: [Getter/Setter],\n    arch: [Getter/Setter],\n    cpus: [Getter/Setter],\n    endianness: [Getter/Setter],\n    freemem: [Getter/Setter],\n    getNetworkInterfaces: [Getter/Setter],\n    homedir: [Getter/Setter],\n    hostname: [Getter/Setter],\n    loadavg: [Getter/Setter],\n    networkInterfaces: [Getter/Setter],\n    platform: [Getter/Setter],\n    release: [Getter/Setter],\n    tmpDir: [Getter/Setter],\n    tmpdir: [Getter/Setter],\n    totalmem: [Getter/Setter],\n    type: [Getter/Setter],\n    uptime: [Getter/Setter],\n  },\n  path: {\n    _makeLong: [Getter/Setter],\n    basename: [Getter/Setter],\n    default: [Getter/Setter],\n    delimiter: [Getter/Setter],\n    dirname: [Getter/Setter],\n    extname: [Getter/Setter],\n    format: [Getter/Setter],\n    isAbsolute: [Getter/Setter],\n    join: [Getter/Setter],\n    normalize: [Getter/Setter],\n    parse: [Getter/Setter],\n    posix: [Getter/Setter],\n    relative: [Getter/Setter],\n    resolve: [Getter/Setter],\n    sep: [Getter/Setter],\n  },\n  perf_hooks: [Function: perf_hooks],\n  process: {\n    addListener: [Getter/Setter],\n    argv: [Getter/Setter],\n    binding: [Getter/Setter],\n    browser: [Getter/Setter],\n    chdir: [Getter/Setter],\n    cwd: [Getter/Setter],\n    emit: [Getter/Setter],\n    env: [Getter/Setter],\n    listeners: [Getter/Setter],\n    nextTick: [Getter/Setter],\n    off: [Getter/Setter],\n    on: [Getter/Setter],\n    once: [Getter/Setter],\n    prependListener: [Getter/Setter],\n    prependOnceListener: [Getter/Setter],\n    removeAllListeners: [Getter/Setter],\n    removeListener: [Getter/Setter],\n    title: [Getter/Setter],\n    umask: [Getter/Setter],\n    version: [Getter/Setter],\n    versions: [Getter/Setter],\n  },\n  punycode: {\n    default: [Getter/Setter],\n  },\n  querystring: {\n    decode: [Getter/Setter],\n    default: [Getter/Setter],\n    encode: [Getter/Setter],\n    escape: [Getter/Setter],\n    parse: [Getter/Setter],\n    stringify: [Getter/Setter],\n    unescape: [Getter/Setter],\n    unescapeBuffer: [Getter/Setter],\n  },\n  readline: [Function: readline],\n  repl: [Function: repl],\n  stream: Function {\n    default: [Stream: Readable],\n    length: [Getter],\n    name: [Getter],\n    prototype: [Getter],\n    ReadableState: [Getter],\n    _fromList: [Getter],\n    from: [Getter],\n    fromWeb: [Getter],\n    toWeb: [Getter],\n    wrap: [Getter],\n    _uint8ArrayToBuffer: [Getter],\n    _isUint8Array: [Getter],\n    isDisturbed: [Getter],\n    isErrored: [Getter],\n    isReadable: [Getter],\n    Readable: [Getter],\n    Writable: [Getter],\n    Duplex: [Getter],\n    Transform: [Getter],\n    PassThrough: [Getter],\n    addAbortSignal: [Getter],\n    finished: [Getter],\n    destroy: [Getter],\n    pipeline: [Getter],\n    compose: [Getter],\n    Stream: [Getter],\n    isDestroyed: [Function: isDestroyed],\n    isWritable: [Function: isWritable],\n    setDefaultHighWaterMark: [Function: setDefaultHighWaterMark],\n    getDefaultHighWaterMark: [Function: getDefaultHighWaterMark],\n    promises: [Getter],\n  },\n  string_decoder: {\n    StringDecoder: [Getter/Setter],\n    default: [Getter/Setter],\n  },\n  sys: {\n    TextDecoder: [Getter/Setter],\n    TextEncoder: [Getter/Setter],\n    _extend: [Getter/Setter],\n    callbackify: [Getter/Setter],\n    callbackifyOnRejected: [Getter/Setter],\n    debuglog: [Getter/Setter],\n    default: [Getter/Setter],\n    deprecate: [Getter/Setter],\n    format: [Getter/Setter],\n    inherits: [Getter/Setter],\n    inspect: [Getter/Setter],\n    isArray: [Getter/Setter],\n    isBoolean: [Getter/Setter],\n    isBuffer: [Getter/Setter],\n    isDate: [Getter/Setter],\n    isError: [Getter/Setter],\n    isFunction: [Getter/Setter],\n    isNull: [Getter/Setter],\n    isNullOrUndefined: [Getter/Setter],\n    isNumber: [Getter/Setter],\n    isObject: [Getter/Setter],\n    isPrimitive: [Getter/Setter],\n    isRegExp: [Getter/Setter],\n    isString: [Getter/Setter],\n    isSymbol: [Getter/Setter],\n    isUndefined: [Getter/Setter],\n    log: [Getter/Setter],\n    promisify: [Getter/Setter],\n    types: [Getter/Setter],\n  },\n  timers: {\n    _unrefActive: [Getter/Setter],\n    clearImmediate: [Getter/Setter],\n    clearInterval: [Getter/Setter],\n    clearTimeout: [Getter/Setter],\n    promises: [Getter/Setter],\n    setImmediate: [Getter/Setter],\n    setInterval: [Getter/Setter],\n    setTimeout: [Getter/Setter],\n  },\n  tls: [Function: tls],\n  tty: {\n    ReadStream: [Getter/Setter],\n    WriteStream: [Getter/Setter],\n    default: [Getter/Setter],\n    isatty: [Getter/Setter],\n  },\n  url: {\n    URL: [Getter/Setter],\n    URLSearchParams: [Getter/Setter],\n    Url: [Getter/Setter],\n    default: [Getter/Setter],\n    format: [Getter/Setter],\n    parse: [Getter/Setter],\n    resolve: [Getter/Setter],\n    resolveObject: [Getter/Setter],\n  },\n  util: {\n    TextDecoder: [Getter/Setter],\n    TextEncoder: [Getter/Setter],\n    _extend: [Getter/Setter],\n    callbackify: [Getter/Setter],\n    callbackifyOnRejected: [Getter/Setter],\n    debuglog: [Getter/Setter],\n    default: [Getter/Setter],\n    deprecate: [Getter/Setter],\n    format: [Getter/Setter],\n    inherits: [Getter/Setter],\n    inspect: [Getter/Setter],\n    isArray: [Getter/Setter],\n    isBoolean: [Getter/Setter],\n    isBuffer: [Getter/Setter],\n    isDate: [Getter/Setter],\n    isError: [Getter/Setter],\n    isFunction: [Getter/Setter],\n    isNull: [Getter/Setter],\n    isNullOrUndefined: [Getter/Setter],\n    isNumber: [Getter/Setter],\n    isObject: [Getter/Setter],\n    isPrimitive: [Getter/Setter],\n    isRegExp: [Getter/Setter],\n    isString: [Getter/Setter],\n    isSymbol: [Getter/Setter],\n    isUndefined: [Getter/Setter],\n    log: [Getter/Setter],\n    promisify: [Getter/Setter],\n    types: [Getter/Setter],\n  },\n  v8: [Function: v8],\n  vm: [Function: vm],\n  zlib: {\n    default: [Getter/Setter],\n  },\n}",
 
       validate(ctx) {},
     },
@@ -422,69 +293,86 @@ describe("bundler", () => {
     },
   });
 
-  // A package the user marks external stays external: neither the browser
-  // polyfill ("path") nor the disabled stub ("fs") replaces it.
-  itBundled("browser/ExternalWinsOverBuiltinPolyfillAndStub", {
+  // A path that a package.json "browser" map sets to false is one empty CommonJS
+  // module, `(disabled):<path>`, as in esbuild. Bun's own stubs for Node.js
+  // builtins (see "browser/NodeFS") are not that module.
+  itBundled("browser/BrowserFieldDisabledModuleIsNotTheBuiltinStub", {
     files: {
       "/entry.js": /* js */ `
-        import fs from "fs";
-        import fsPrefixed from "node:fs";
-        import path from "path";
-        console.log(typeof fs.readFileSync, typeof fsPrefixed.readFileSync, typeof path.join);
+        import fromPackage from "pkg";
+        const own = require("fs");
+        console.log(typeof own, typeof fromPackage, Object.keys(fromPackage).length);
       `,
+      "/node_modules/pkg/package.json": `{ "main": "./index.js", "browser": { "fs": false } }`,
+      "/node_modules/pkg/index.js": `module.exports = require("fs");`,
     },
     target: "browser",
-    external: ["fs", "path"],
     onAfterBundle(api) {
-      api.expectFile("out.js").toInclude(`from "fs"`);
-      api.expectFile("out.js").toInclude(`from "node:fs"`);
-      api.expectFile("out.js").toInclude(`from "path"`);
+      api.expectFile("out.js").toInclude("(disabled):fs");
     },
     run: {
-      stdout: "function function function",
+      stdout: "function object 0",
     },
   });
 
-  // When an onResolve plugin matches but declines, the default resolver runs
-  // from the plugin path. A disabled import still becomes the shared empty
-  // module there, the same as without a plugin.
-  itBundled("browser/BrowserFieldDisabledModuleWithDecliningOnResolvePlugin", () => {
+  // The default resolver runs from the importer's parse, and from the answer of
+  // an onResolve plugin that declines. Both make the same bundle.
+  test("browser/BrowserFieldSameOutputWithDecliningOnResolvePlugin", async () => {
+    using dir = tempDir("browser-field-declining-plugin", {
+      "entry.js": /* js */ `
+        import info from "pkg";
+        import "fs";
+        console.log(JSON.stringify(info));
+      `,
+      "node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false, "nodeonly": false } }`,
+      "node_modules/pkg/index.js": /* js */ `
+        import * as ns from "./node.js";
+        import nodeonly from "nodeonly";
+        import { named } from "./node.js";
+        export default [typeof ns, typeof ns.default, typeof nodeonly, typeof named, require("./node.js") === require("./node.js")];
+      `,
+      "node_modules/pkg/node.js": `throw 'fail'`,
+      "node_modules/nodeonly/index.js": `throw 'fail'`,
+    });
     const declined: string[] = [];
-    return {
-      files: {
-        "/entry.js": /* js */ `
-          import info from "pkg";
-          console.log(JSON.stringify(info));
-        `,
-        "/node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false, "nodeonly": false } }`,
-        "/node_modules/pkg/index.js": /* js */ `
-          import * as ns from "./node.js";
-          import nodeonly from "nodeonly";
-          export default [typeof ns, typeof ns.default, typeof nodeonly, require("./node.js") === require("./node.js")];
-        `,
-        "/node_modules/pkg/node.js": `throw 'fail'`,
-        "/node_modules/nodeonly/index.js": `throw 'fail'`,
-      },
-      target: "browser",
-      plugins: [
-        {
-          name: "decline",
-          setup(builder) {
-            builder.onResolve({ filter: /.*/ }, args => {
-              declined.push(args.path);
-              return undefined;
-            });
-          },
-        },
-      ],
-      onAfterBundle() {
-        expect(declined).toContain("./node.js");
-        expect(declined).toContain("nodeonly");
-      },
-      run: {
-        stdout: `["object","object","object",true]`,
-      },
+    const build = async (plugins: BunPlugin[]) => {
+      const result = await Bun.build({
+        entrypoints: [path.join(String(dir), "entry.js")],
+        target: "browser",
+        plugins,
+      });
+      expect(result.success).toBe(true);
+      return await result.outputs[0].text();
     };
+    const plain = await build([]);
+    const withPlugin = await build([
+      {
+        name: "decline",
+        setup(builder) {
+          builder.onResolve({ filter: /.*/ }, args => {
+            declined.push(args.path);
+            return undefined;
+          });
+        },
+      },
+    ]);
+    expect(declined).toContain("./node.js");
+    expect(declined).toContain("nodeonly");
+    expect(withPlugin).toBe(plain);
+    expect(plain).toMatch(/^\/\/ \(disabled\):.*node_modules\/pkg\/node\.js$/m);
+
+    await Bun.write(path.join(String(dir), "out.js"), plain);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`["object","object","object","undefined",true]\n`);
+    expect(exitCode).toBe(0);
   });
 
   // An onLoad plugin never gets a disabled module. Its filter matches the real
@@ -559,6 +447,144 @@ describe("bundler", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout + stderr).not.toContain("TS2305");
     expect(exitCode).toBe(0);
+  });
+
+  // One disabled file is one empty module, also when one import reaches it
+  // through a symlinked package directory and another through its real path.
+  test("browser/BrowserFieldDisabledModuleBehindSymlink", async () => {
+    using dir = tempDir("browser-field-symlink", {
+      "entry.js": /* js */ `
+        import viaLink from "pkg/node.js";
+        import viaPackage from "pkg";
+        console.log(viaLink === viaPackage, JSON.stringify(viaLink));
+      `,
+      "packages/pkg/package.json": `{ "name": "pkg", "main": "./index.js", "browser": { "./node.js": false } }`,
+      "packages/pkg/index.js": `module.exports = require("./node.js");`,
+      "packages/pkg/node.js": `throw "fail";`,
+    });
+    mkdirSync(path.join(String(dir), "node_modules"));
+    symlinkSync(path.join(String(dir), "packages", "pkg"), path.join(String(dir), "node_modules", "pkg"), "junction");
+
+    const result = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.js")],
+      target: "browser",
+    });
+    expect(result.success).toBe(true);
+    const out = await result.outputs[0].text();
+    const disabledModules = out.match(/^\/\/ \(disabled\):.*$/gm) ?? [];
+    expect(disabledModules).toHaveLength(1);
+    expect(disabledModules[0]).toEndWith("/packages/pkg/node.js");
+
+    await Bun.write(path.join(String(dir), "out.js"), out);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true {}\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // A named import of a disabled module is always undefined. Like esbuild, the
+  // build warns when the import is in the project and stays quiet when it is in
+  // a dependency, where the user cannot change it.
+  itBundled("browser/BrowserFieldDisabledNamedImportWarnsInProject", {
+    files: {
+      "/entry.js": /* js */ `
+        import { named } from "./node.js";
+        console.log(typeof named);
+      `,
+      "/package.json": `{ "browser": { "./node.js": false } }`,
+      "/node.js": `throw 'fail'`,
+    },
+    target: "browser",
+    bundleWarnings: {
+      "/entry.js": [`Import "named" will always be undefined because the file "(disabled):node.js" has no exports`],
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
+  itBundled("browser/BrowserFieldDisabledNamedImportIsQuietInNodeModules", {
+    files: {
+      "/entry.js": /* js */ `
+        import kind from "pkg";
+        console.log(kind);
+      `,
+      "/node_modules/pkg/package.json": `{ "main": "./index.js", "browser": { "./node.js": false } }`,
+      "/node_modules/pkg/index.js": /* js */ `
+        import { named } from "./node.js";
+        export default typeof named;
+      `,
+      "/node_modules/pkg/node.js": `throw 'fail'`,
+    },
+    target: "browser",
+    bundleWarnings: {},
+    run: {
+      stdout: "undefined",
+    },
+  });
+
+  // With code splitting, a disabled module that only import() reaches gets its
+  // own chunk. The promise resolves to `{ default: {} }`, the same as without
+  // splitting. This differs from esbuild on purpose: esbuild resolves to `{}`
+  // here, but only with splitting and only when nothing else requires the module.
+  itBundled("browser/BrowserFieldDisabledModuleDynamicImportSplitting", {
+    files: {
+      "/entry.js": /* js */ `
+        import { load } from "pkg";
+        const m = await load();
+        console.log(typeof m.default, Object.keys(m.default).length, Object.keys(m).join(","));
+      `,
+      "/node_modules/pkg/package.json": `{ "main": "./index.js", "browser": { "./node.js": false } }`,
+      "/node_modules/pkg/index.js": `export const load = () => import("./node.js");`,
+      "/node_modules/pkg/node.js": `throw new Error("fail");`,
+    },
+    target: "browser",
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      const chunks = readdirSync(api.outdir).filter(name => name !== "entry.js");
+      expect(chunks.length).toBe(1);
+      api.expectFile("/out/entry.js").toInclude(`import("./${chunks[0]}")`);
+      api.expectFile(`/out/${chunks[0]}`).toInclude("(disabled):node_modules/pkg/node.js");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "object 0 default",
+    },
+  });
+  // A static import that does not use the value of the disabled module adds no
+  // shared chunk: the empty module has no side effects.
+  itBundled("browser/BrowserFieldDisabledModuleUnusedStaticImportSplitting", {
+    files: {
+      "/a.js": `import { lib } from "pkg"; console.log("a", lib);`,
+      "/b.js": `import { lib } from "pkg"; console.log("b", lib);`,
+      "/node_modules/pkg/package.json": `{ "main": "./index.js", "browser": { "./node.js": false, "fs": false } }`,
+      "/node_modules/pkg/index.js": /* js */ `
+        import "./node.js";
+        import { readFileSync } from "fs";
+        export const lib = typeof readFileSync;
+      `,
+      "/node_modules/pkg/node.js": `throw new Error("fail");`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    target: "browser",
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      for (const name of readdirSync(api.outdir)) {
+        api.expectFile(`/out/${name}`).not.toInclude("(disabled):");
+      }
+    },
+    run: [
+      { file: "/out/a.js", stdout: "a undefined" },
+      { file: "/out/b.js", stdout: "b undefined" },
+    ],
   });
 
   // #4928: a package.json "browser": {"<builtin>": false} must win over the
@@ -757,6 +783,56 @@ describe("bundler", () => {
     target: "browser",
     bundleErrors: {
       "<bun>": ['"pkg" is disabled due to "browser" field in package.json (entry point)'],
+    },
+  });
+  itBundled("browser/EntryPointDisabledByPackageSubpathBrowserField", {
+    // The package's map disables a subpath that is named as the entry point.
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: {
+      "/node_modules/pkg/package.json": /* json */ `
+        { "name": "pkg", "browser": { "./node": false } }
+      `,
+      "/node_modules/pkg/node.js": /* js */ `
+        console.log("node only");
+      `,
+    },
+    entryPointsRaw: ["pkg/node"],
+    root: "/",
+    target: "browser",
+    bundleErrors: {
+      "<bun>": ['"pkg/node" is disabled due to "browser" field in package.json (entry point)'],
+    },
+  });
+  itBundled("browser/EntryPointDisabledModuleFieldBuildsMain", {
+    // The map disables the "module" file of the package and not its "main" file,
+    // so "main" is the entry point. A `require` of the package gets the same file.
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: {
+      "/other.js": /* js */ `
+        console.log(require("pkg"));
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        { "name": "pkg", "main": "./main.js", "module": "./module.js", "browser": { "./module.js": false } }
+      `,
+      "/node_modules/pkg/main.js": /* js */ `
+        module.exports = "main";
+      `,
+      "/node_modules/pkg/module.js": /* js */ `
+        throw "fail";
+      `,
+    },
+    entryPointsRaw: ["pkg", "./other.js"],
+    target: "browser",
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/node_modules/pkg/main.js").toContain(`"main"`);
+      api.expectFile("/out/node_modules/pkg/main.js").not.toContain("(disabled):");
+    },
+    run: {
+      file: "/out/other.js",
+      stdout: "main",
     },
   });
   itBundled("browser/EntryPointIsNodeBuiltinStubbedForBrowser", {

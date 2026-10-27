@@ -11,6 +11,7 @@ use bun_alloc as allocators;
 use bun_core::MutableString;
 use bun_sys::Fd as FD;
 
+use crate::dir_info::DirInfoRef;
 use crate::options;
 use crate::package_json::PackageJSON;
 use crate::resolver::Dependency;
@@ -20,12 +21,12 @@ use crate::resolver::Dependency;
 // without a per-site lifetime annotation.
 type Path = crate::fs::Path<'static>;
 
-pub struct PathPair {
-    pub primary: Path,
-    pub secondary: Option<Path>,
+pub struct PathPair<'r> {
+    pub primary: crate::fs::Path<'r>,
+    pub secondary: Option<crate::fs::Path<'r>>,
 }
 
-impl Default for PathPair {
+impl Default for PathPair<'_> {
     fn default() -> Self {
         Self {
             primary: Path::empty(),
@@ -34,15 +35,15 @@ impl Default for PathPair {
     }
 }
 
-pub(crate) struct PathPairIter<'a> {
+pub(crate) struct PathPairIter<'a, 'r> {
     index: u8,
-    ctx: &'a mut PathPair,
+    ctx: &'a mut PathPair<'r>,
 }
 
-impl<'a> PathPairIter<'a> {
-    pub(crate) fn next(&mut self) -> Option<&mut Path> {
+impl<'a, 'r> PathPairIter<'a, 'r> {
+    pub(crate) fn next(&mut self) -> Option<&mut crate::fs::Path<'r>> {
         if let Some(path_) = self.next_() {
-            let p: *mut Path = path_;
+            let p: *mut crate::fs::Path<'r> = path_;
             // SAFETY: `p` is the exclusive `&mut Path` just returned by `next_()`,
             // coerced to a raw pointer so `self` can be re-borrowed for the
             // recursive call; `p` is not dereferenced after that call, so no two
@@ -57,7 +58,7 @@ impl<'a> PathPairIter<'a> {
         None
     }
 
-    fn next_(&mut self) -> Option<&mut Path> {
+    fn next_(&mut self) -> Option<&mut crate::fs::Path<'r>> {
         let ind = self.index;
         self.index = self.index.saturating_add(1);
 
@@ -69,8 +70,8 @@ impl<'a> PathPairIter<'a> {
     }
 }
 
-impl PathPair {
-    pub(crate) fn iter(&mut self) -> PathPairIter<'_> {
+impl<'r> PathPair<'r> {
+    pub(crate) fn iter(&mut self) -> PathPairIter<'_, 'r> {
         PathPairIter {
             ctx: self,
             index: 0,
@@ -84,8 +85,8 @@ impl PathPair {
 // `result.primary_side_effects_data = loader.side_effects()` type-checks.
 use bun_ast::SideEffects;
 
-pub struct Result {
-    pub path_pair: PathPair,
+pub struct Result<'r> {
+    pub path_pair: PathPair<'r>,
 
     pub jsx: options::jsx::Pragma,
 
@@ -107,7 +108,7 @@ pub struct Result {
     pub flags: ResultFlags,
 }
 
-impl Default for Result {
+impl Default for Result<'_> {
     fn default() -> Self {
         Self {
             path_pair: PathPair::default(),
@@ -216,14 +217,14 @@ impl ResultFlags {
     }
 }
 
-pub enum ResultUnion {
-    Success(Result),
+pub enum ResultUnion<'r> {
+    Success(Result<'r>),
     Failure(crate::Error),
     Pending(PendingResolution),
     NotFound,
 }
 
-impl Result {
+impl<'r> Result<'r> {
     /// Read-only view of the `package_json` field. It stores `Option<*const _>`
     /// (rather than `Option<&'static _>`) so [`Default`] / zeroed-init stays
     /// bit-valid. Takes the `Copy` field, not `&self`, so a site that already
@@ -242,7 +243,7 @@ impl Result {
         ptr.map(|p| unsafe { &*p })
     }
 
-    pub fn path(&mut self) -> Option<&mut Path> {
+    pub fn path(&mut self) -> Option<&mut crate::fs::Path<'r>> {
         if !self.path_pair.primary.is_disabled {
             return Some(&mut self.path_pair.primary);
         }
@@ -256,7 +257,7 @@ impl Result {
         None
     }
 
-    pub fn path_const(&self) -> Option<&Path> {
+    pub fn path_const(&self) -> Option<&crate::fs::Path<'r>> {
         if !self.path_pair.primary.is_disabled {
             return Some(&self.path_pair.primary);
         }
@@ -362,13 +363,16 @@ impl DebugLogs {
 }
 
 pub struct MatchResult {
-    pub(crate) path_pair: PathPair,
+    pub(crate) path_pair: PathPair<'static>,
     pub(crate) dirname_fd: FD,
     pub(crate) file_fd: FD,
     pub(crate) is_node_module: bool,
     pub(crate) package_json: Option<*const PackageJSON>,
+    pub(crate) dir_info: Option<DirInfoRef>,
     pub(crate) module_type: options::ModuleType,
     pub(crate) is_external: bool,
+    /// A "browser" map lookup picked `path_pair.primary`, so no other lookup applies to it.
+    pub(crate) browser_remapped: bool,
 }
 
 impl Default for MatchResult {
@@ -379,8 +383,10 @@ impl Default for MatchResult {
             file_fd: FD::INVALID,
             is_node_module: false,
             package_json: None,
+            dir_info: None,
             module_type: options::ModuleType::Unknown,
             is_external: false,
+            browser_remapped: false,
         }
     }
 }

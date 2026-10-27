@@ -222,7 +222,7 @@ impl<'a> LinkerContext<'a> {
     /// `generate_isolated_hash`) must continue to deref the raw
     /// `self.parse_graph` field directly.
     #[inline]
-    pub(crate) fn parse_graph(&self) -> &Graph<'_> {
+    pub(crate) fn parse_graph(&self) -> &Graph<'a> {
         debug_assert!(
             !self.parse_graph.is_null(),
             "LinkerContext.parse_graph accessed before load()"
@@ -494,9 +494,9 @@ impl<'a> LinkerContext<'a> {
     /// allocation (debug panic / release heap corruption).
     pub(crate) fn path_with_pretty_initialized(
         &mut self,
-        path: &bun_paths::fs::Path<'static>,
-        arena: &Bump,
-    ) -> Result<bun_paths::fs::Path<'static>, BunError> {
+        path: &bun_paths::fs::Path<'a>,
+        arena: &'a Bump,
+    ) -> Result<bun_paths::fs::Path<'a>, BunError> {
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
         generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
     }
@@ -858,7 +858,7 @@ impl<'a> LinkerContext<'a> {
         entry_points: &[Index],
         server_component_boundaries: &bun_ast::server_component_boundary::List,
         reachable: &[Index],
-    ) -> Result<Box<[Chunk]>, LinkError> {
+    ) -> Result<Box<[Chunk<'a>]>, LinkError> {
         // SAFETY: forwarded; see fn-level contract.
         unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
 
@@ -1840,12 +1840,12 @@ pub struct GenerateChunkCtx<'a> {
     /// owner-outlives-holder invariant holds and per-task reads go through
     /// safe `Deref`. Read-only: each task writes only through its own
     /// `*mut Chunk`.
-    pub(crate) chunks: bun_ptr::BackRef<[Chunk]>,
+    pub(crate) chunks: bun_ptr::BackRef<[Chunk<'a>]>,
     /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
     /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
     /// provenance; per-task slot writes recover the raw `*mut Chunk` via
     /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
-    pub(crate) chunk: bun_ptr::BackRef<Chunk, bun_ptr::Mut>,
+    pub(crate) chunk: bun_ptr::BackRef<Chunk<'a>, bun_ptr::Mut>,
 }
 // SAFETY: see note above — each task writes only its own `*mut Chunk` slot;
 // shared reads are read-only.
@@ -1919,7 +1919,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
 ) -> (
     &'a PendingPartRange<'a>,
     *mut LinkerContext<'a>,
-    *mut Chunk,
+    *mut Chunk<'a>,
     scopeguard::ScopeGuard<
         &'static mut crate::thread_pool::Worker,
         impl FnOnce(&'static mut crate::thread_pool::Worker),
@@ -1937,7 +1937,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
 }
 
 impl<'a> LinkerContext<'a> {
-    pub(crate) fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &Bump) -> u64 {
+    pub(crate) fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &'a Bump) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
         let mut hasher = ContentHasher::default();
@@ -3343,11 +3343,8 @@ impl<'a> LinkerContext<'a> {
         self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
     }
 
-    /// Note: returns `'static` so callers can hold the source across a
-    /// `&mut self.log` borrow; the underlying `parse_graph.input_files` slab
-    /// is append-only and outlives the link step (LIFETIMES.tsv: GRAPHBACKED).
     #[inline]
-    pub(crate) fn get_source<I: TryInto<usize>>(&self, index: I) -> &'static Source {
+    pub(crate) fn get_source<I: TryInto<usize>>(&self, index: I) -> &Source<'a> {
         // Note: callers pass both `u32` and
         // `usize`. Route through `TryInto<usize>` so the SoA index works for
         // either width without forcing `as`-casts at every call site.
@@ -3355,11 +3352,7 @@ impl<'a> LinkerContext<'a> {
             Ok(i) => i,
             Err(_) => unreachable!(),
         };
-        // SAFETY: parse_graph backref into BundleV2.graph; the input_files SoA
-        // is monotonically grown and never freed for the link step's lifetime,
-        // so the element address is stable. `'static` is a white lie matching
-        // the `*mut Graph` erasure on `self.parse_graph`.
-        unsafe { &*core::ptr::from_ref(&(*self.parse_graph).input_files.items_source()[index]) }
+        &self.parse_graph().input_files.items_source()[index]
     }
 
     /// `log` is an explicit parameter (not `self.log`) because the dev-server
@@ -4019,19 +4012,21 @@ impl<'a> LinkerContext<'a> {
                         }
                     }
 
-                    // Warn about importing from a file that is known to not have any exports
-                    // (for a disabled module, its default import is the `{}` exports object).
-                    let is_always_undefined = match status {
-                        ImportTrackerStatus::CjsWithoutExports => true,
-                        ImportTrackerStatus::Disabled => {
-                            !named_import.alias_is_star
-                                && named_import.alias.is_some_and(|a| a.slice() != b"default")
-                        }
-                        _ => false,
-                    };
-                    if is_always_undefined
+                    // Warn about importing from a file that is known to not have any exports.
+                    // The default import of a disabled module is its `{}` exports object.
+                    let is_disabled_named_import = status == ImportTrackerStatus::Disabled
+                        && !named_import.alias_is_star
+                        && named_import.alias.is_some_and(|a| a.slice() != b"default");
+                    if (status == ImportTrackerStatus::CjsWithoutExports
+                        || is_disabled_named_import)
                         && !self.is_call_record(prev_source_index, named_import.import_record_index)
                     {
+                        if is_disabled_named_import {
+                            // Printed as `undefined`, so the empty module is not needed for it.
+                            // SAFETY: the symbol slot is disjoint from `named_import` (`graph.ast`).
+                            unsafe { self.graph.symbol_mut(tracker.import_ref) }
+                                .import_item_status = ImportItemStatus::Missing;
+                        }
                         let source = self.get_source(tracker.source_index.get());
                         let imported = self.get_source(next_tracker.source_index.get());
                         // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
@@ -4039,17 +4034,27 @@ impl<'a> LinkerContext<'a> {
                             .alias
                             .expect("infallible: alias present")
                             .slice();
+                        let message = format_args!(
+                            "Import \"{}\" will always be undefined because the file \"{}\" has no exports",
+                            bstr::BStr::new(alias),
+                            bstr::BStr::new(&imported.path.pretty),
+                        );
                         // Split-borrow with `named_import` (`&self.graph`) —
                         // `log_disjoint` returns the disjoint `Transpiler.log` backref.
-                        self.log_disjoint().add_range_warning_fmt(
-                            Some(source),
-                            source.range_of_identifier(named_import.alias_loc),
-                            format_args!(
-                                "Import \"{}\" will always be undefined because the file \"{}\" has no exports",
-                                bstr::BStr::new(alias),
-                                bstr::BStr::new(&imported.path.pretty),
-                            ),
-                        );
+                        // Like esbuild, an import inside node_modules is not the user's to fix.
+                        if is_disabled_named_import && source.path.is_node_module() {
+                            self.log_disjoint().add_debug_fmt(
+                                Some(source),
+                                named_import.alias_loc,
+                                message,
+                            );
+                        } else {
+                            self.log_disjoint().add_range_warning_fmt(
+                                Some(source),
+                                source.range_of_identifier(named_import.alias_loc),
+                                message,
+                            );
+                        }
                     }
                 }
 

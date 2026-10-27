@@ -9350,6 +9350,11 @@ describe("rules", () => {
           "@supports (color:lab(0% 0 0)) or (top:0){.b{color:lab(40% 56.6 39)}}",
           "@supports (color:lab(0% 0 0)) or (top:0){.b{color:#b32323;color:lab(40% 56.6 39)}}",
         ],
+        // Safari 14 has color(display-p3 ..) and no other space.
+        [
+          "@supports (color:color(display-p3 0 0 0)){.b{color:color(srgb 1 0 0)}}",
+          "@supports (color:color(display-p3 0 0 0)){.b{color:color(display-p3 .917488 .200287 .138561);color:color(srgb 1 0 0)}}",
+        ],
         // Any value is valid for a custom property, so this holds in browsers without lab().
         [
           "@supports (--x:lab(0% 0 0)){.b{color:lab(40% 56.6 39)}}",

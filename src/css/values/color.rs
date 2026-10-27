@@ -611,10 +611,11 @@ impl CssColor {
                 return ColorFallbackKind::empty();
             }
             CssColor::Predefined(predefined) => 'brk: {
-                if matches!(**predefined, PredefinedColor::DisplayP3(_))
-                    && targets.should_compile_same(Feature::P3Colors)
-                {
-                    break 'brk ColorFallbackKind::P3.and_below();
+                if matches!(**predefined, PredefinedColor::DisplayP3(_)) {
+                    if targets.should_compile_same(Feature::P3Colors) {
+                        break 'brk ColorFallbackKind::P3.and_below();
+                    }
+                    return ColorFallbackKind::empty();
                 }
                 if targets.should_compile_same(Feature::ColorFunction) {
                     break 'brk ColorFallbackKind::LAB.and_below();

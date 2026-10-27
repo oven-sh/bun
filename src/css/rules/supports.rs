@@ -141,9 +141,8 @@ impl SupportsCondition {
                 LABColor::Oklab(_) | LABColor::Oklch(_) => css::Features::OKLAB_COLORS,
             },
             Ok(CssColor::Predefined(color)) => match *color {
-                PredefinedColor::DisplayP3(_) => {
-                    css::Features::COLOR_FUNCTION | css::Features::P3_COLORS
-                }
+                // Safari 10.1 to 14 has `color(display-p3 ..)` and no other space.
+                PredefinedColor::DisplayP3(_) => css::Features::P3_COLORS,
                 _ => css::Features::COLOR_FUNCTION,
             },
             _ => css::Features::empty(),

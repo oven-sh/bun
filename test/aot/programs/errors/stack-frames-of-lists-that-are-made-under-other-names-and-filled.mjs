@@ -8,7 +8,7 @@ const framesIn = stack =>
       line
         .trim()
         .replace(/^at /, "")
-        .replace(/\/.*\//, "")
+        .replace(/(?:[A-Z]:)?[\\/].*[\\/]/, "")
         .replace(/native:\d+:\d+/, "native"),
     )
     .join(" < ");
@@ -39,6 +39,31 @@ const rows = {
   underAnotherNameWithNew(length) {
     const list = new Other(length).fill(0);
     return list;
+  },
+  underANameUsedOnce(length) {
+    const Named = Array;
+    const list = Named(length);
+    return list;
+  },
+  underANameUsedOnceWithNew(length) {
+    const Named = Array;
+    const list = new Named(length);
+    return list;
+  },
+  underANameUsedOnceAndFilled(length) {
+    const Named = Array;
+    const list = Named(length).fill(0);
+    return list;
+  },
+  underANameUsedTwice(length) {
+    const Named = Array;
+    const list = Named(length);
+    return [list, Named];
+  },
+  underANameUsedTwiceWithNew(length) {
+    const Named = Array;
+    const list = new Named(length).fill(0);
+    return [list, Named];
   },
   memberOfAnObject(length) {
     const list = holder.Array(length).fill(0);

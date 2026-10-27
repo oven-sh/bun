@@ -153,6 +153,95 @@ console.log(handle.fd);
   await expectSameAsBunRun(String(dir), "written-beside-another-key.mjs");
 });
 
+test("whoever lists the own keys of the prototype object of a library class calls its methods under them", async () => {
+  const statement = `import { Database } from "bun:sqlite";
+const it = new Database(":memory:").query("select 1 as a");
+`;
+  const calls = (above: string, keys: string, call = "it[key]()") => `${statement}const above = ${above};
+for (const key of ${keys}) {
+  if (key === "constructor" || typeof Reflect.getOwnPropertyDescriptor(above, key).value !== "function") continue;
+  try {
+    ${call};
+    console.log(String(key), "ran");
+  } catch (error) {
+    console.log(String(key), error.name);
+  }
+}
+`;
+  using dir = tempDir("aot-own-keys-of-prototype-objects-of-library-classes", {
+    "every-key.mjs": calls("Object.getPrototypeOf(it)", "Reflect.ownKeys(above)"),
+    "names.mjs": calls("Reflect.getPrototypeOf(it)", "Object.getOwnPropertyNames(above)"),
+    "symbols.mjs": calls("Object.getPrototypeOf(it)", "Object.getOwnPropertySymbols(above)"),
+    "descriptors.mjs": calls("Object.getPrototypeOf(it)", "Object.keys(Object.getOwnPropertyDescriptors(above))"),
+    "by-the-accessor.mjs": calls("it.__proto__", "Reflect.ownKeys(above)"),
+    "on-an-heir.mjs": calls("Object.getPrototypeOf(it)", "Reflect.ownKeys(above)", "Object.create(it)[key]()"),
+    "off-the-prototype-object.mjs": calls(
+      "Object.getPrototypeOf(it)",
+      "Reflect.ownKeys(above)",
+      "Reflect.apply(above[key], it, [])",
+    ),
+    "bound-under-other-names.mjs": `${statement}const above = Object.getPrototypeOf(it);
+const bound = {};
+for (const key of Object.getOwnPropertyNames(above))
+  if (key !== "constructor" && typeof Object.getOwnPropertyDescriptor(above, key).value === "function") bound[key + "Later"] = it[key].bind(it);
+for (const key of Object.keys(bound)) console.log(key, typeof bound[key]());
+`,
+    "every-level.mjs": `import { Session } from "node:inspector";
+class Mine extends Session {
+  own() {}
+}
+const box = JSON.parse("{}");
+box.it = new Mine();
+for (let level = Object.getPrototypeOf(box.it); level !== Object.prototype; level = Object.getPrototypeOf(level)) {
+  for (const key of Reflect.ownKeys(level)) {
+    if (!["own", "connect", "connectToMainThread", "disconnect"].includes(key)) continue;
+    try {
+      box.it[key]();
+      console.log(key, "ran");
+    } catch (error) {
+      console.log(key, error.name);
+    }
+  }
+}
+`,
+  });
+  const directory = String(dir);
+  for (const entry of [
+    "every-key.mjs",
+    "names.mjs",
+    "symbols.mjs",
+    "descriptors.mjs",
+    "by-the-accessor.mjs",
+    "on-an-heir.mjs",
+    "off-the-prototype-object.mjs",
+    "bound-under-other-names.mjs",
+    "every-level.mjs",
+  ])
+    await expectSameAsBunRun(directory, entry);
+});
+
+test("listing the own keys of another object brings in no method of a library class", async () => {
+  using dir = tempDir("aot-own-keys-of-other-objects", {
+    "lines.txt": "one\ntwo\nthree\n",
+    "held.mjs": `import { open } from "node:fs/promises";
+const box = JSON.parse('{"a":1}');
+box.handle = await open("lines.txt");
+console.log(typeof box.handle.fd);
+await box.handle.close();
+`,
+    "listed.mjs": `import { open } from "node:fs/promises";
+const box = JSON.parse('{"a":1}');
+box.handle = await open("lines.txt");
+console.log(typeof box.handle.fd, Reflect.ownKeys(box), Object.getOwnPropertyNames(box.handle).length >= 0, Object.getPrototypeOf(box) === Object.prototype);
+await box.handle.close();
+`,
+  });
+  const directory = String(dir);
+  const held = await expectSameAsBunRun(directory, "held.mjs");
+  const listed = await expectSameAsBunRun(directory, "listed.mjs");
+  expect({ held: held.filesOfLineEditor, listed: listed.filesOfLineEditor }).toEqual({ held: [], listed: [] });
+});
+
 test("an accessor of a library class runs where the program or the library reads or stores by its name", async () => {
   using dir = tempDir("aot-accessors-of-library-classes", {
     "stored-by-the-library.mjs": `import { SQL } from "bun";

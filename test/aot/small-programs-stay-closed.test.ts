@@ -64,6 +64,10 @@ const programsThatNeedMoreOfTheLibrary: Record<string, { text: string; output: s
     text: `const day = new Function("return '2024-01-08' // 010");\nconsole.log(day());\n`,
     output: "2024-01-08\n",
   },
+  "a text is transpiled": {
+    text: `console.log(new Bun.Transpiler({ loader: "ts" }).transformSync("const a: number = 1; console.log(a);").trim());\n`,
+    output: "const a = 1;\nconsole.log(a);\n",
+  },
   "a promise is settled": {
     text: `async function twice(x: number) {\n  return x * 2;\n}\ntwice(21).then(value => console.log(value));\n`,
     output: "42\n",

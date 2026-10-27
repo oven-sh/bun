@@ -65,7 +65,6 @@ server.stop(true);
   "Bun.Transpiler": {
     source: `const transpiler = new Bun.Transpiler({ loader: "tsx" });\nconsole.log(transpiler.transformSync("const x: number = 1; export default x;").trim());\nconsole.log(JSON.stringify(transpiler.scanImports("import a from 'a'; import('b');")));\n`,
     untrimmed: `const x = 1;\nexport default x;\n[{"kind":"import-statement","path":"a"},{"kind":"dynamic-import","path":"b"}]\n`,
-    runsUnseenCode: "Bun.Transpiler",
   },
 };
 

@@ -16,7 +16,7 @@ function attempt(label, run) {
       "|",
       String(error.message).replace(/ \(evaluating .*$/, ""),
       "|",
-      frames.map(line => line.trim().replace(/\(?[^ (]*\/([^\/ ]+:\d+:\d+)\)?/, "$1")).join(" < "),
+      frames.map(line => line.trim().replace(/\(?[^ (]*[\\/]([^\\/ ]+:\d+:\d+)\)?/, "$1")).join(" < "),
     );
   }
 }

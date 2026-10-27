@@ -6,6 +6,9 @@
 //   beside         nothing, a store or a definition under a text that only the run knows, a definition on an object that only the run knows, `delete`, `Object.freeze` and its kin,
 //                  another prototype, a global that holds the object, seventy more names
 //   taken by       `import()`, `import * as`, an import of the names, of the default, `export *` in a file between, `require`
+//
+// With `handedOn`, many of the stores stand under an `if`, in an arm of a conditional expression, behind `&&`, in a function, a loop, a `switch` or a `try`, and most programs take the names
+// through getters of a second CommonJS file, as compilers emit them, over one or two ES modules that hand the names on.
 import type { Random } from "./random";
 
 const namesOfObjectPrototype = [
@@ -30,7 +33,10 @@ const member = (holder: string, name: string) => (isIdentifier(name) ? `${holder
 const keyInLiteral = (name: string) =>
   name === "__proto__" ? `["__proto__"]` : isIdentifier(name) ? name : `"${name}"`;
 
-export function generate(random: Random): { file: string; text: string; files: Record<string, string> } {
+export function generate(
+  random: Random,
+  handedOn = false,
+): { file: string; text: string; files: Record<string, string> } {
   const names = [
     "one",
     ...random.sample(
@@ -53,26 +59,32 @@ export function generate(random: Random): { file: string; text: string; files: R
   ];
   // `constructor` is the name that is most often treated apart.
   if (!names.includes("constructor") && random.chance(0.4)) names.push("constructor");
+  // Where the names are handed on, most files have few names and their text shows each of them.
+  const isPlain = handedOn && random.chance(0.7);
+  if (isPlain) names.splice(1, names.length, ...random.sample(ordinaryNames.slice(1), random.between(0, 2)));
+  if (isPlain && random.chance(0.2)) names.push(random.pick(namesOfObjectPrototype));
+  for (const name of handedOn ? ["default", "__esModule"] : [])
+    if (!names.includes(name) && random.chance(0.5)) names.push(name);
   const order = random.shuffled(names);
 
   const ways = order.map(name =>
     random.weighted([
-      [6, "assigned"],
-      [3, "in the literal"],
+      [isPlain ? 30 : 6, "assigned"],
+      [isPlain ? 0 : 3, "in the literal"],
       [3, "defined"],
-      [2, "defined for good"],
-      [name === "hidden" ? 12 : 3, "defined and not listed"],
-      [1, "a getter"],
-      [1, "a getter that is not listed"],
-      [2, "Object.assign"],
-      [2, "a loop"],
+      [isPlain ? 0 : 2, "defined for good"],
+      [isPlain ? 0 : name === "hidden" ? 12 : 3, "defined and not listed"],
+      [isPlain ? 0 : 1, "a getter"],
+      [isPlain ? 0 : 1, "a getter that is not listed"],
+      [isPlain ? 0 : 2, "Object.assign"],
+      [isPlain ? 0 : 2, "a loop"],
     ] as const),
   );
   const hasLiteral = ways.includes("in the literal");
   const made = hasLiteral
     ? "a literal"
     : random.weighted([
-        [12, "exports"],
+        [isPlain ? 120 : 12, "exports"],
         [2, "an instance of a class"],
         [2, "an instance of a function"],
         [1, "an object without a prototype"],
@@ -155,7 +167,22 @@ export function generate(random: Random): { file: string; text: string; files: R
         `const source_${at} = { ${keyInLiteral(name)}: ${held} };\nfor (const key of Object.keys(source_${at})) ${target}[key] = source_${at}[key];`,
       );
   });
-  if (random.chance(0.25))
+  if (handedOn)
+    stores.forEach((line, at) => {
+      if (line.startsWith("const ") || random.chance(0.4)) return;
+      const expression = line.slice(0, -1);
+      stores[at] = random.weighted([
+        [3, `if (unknown === "two") ${line}`],
+        [random.chance(0.2) ? 1 : 0, `if (unknown !== "two") ${line}`],
+        [2, `unknown === "two" ? (${expression}) : 0;`],
+        [2, `unknown === "two" && (${expression});`],
+        [1, `const store_${at} = () => {\n${line}\n};\nstore_${at}();`],
+        [1, `for (let turn = 0; turn < 1; turn++) ${line}`],
+        [1, `switch (unknown) {\ncase "two":\n${line}\n}`],
+        [1, `try {\n${line}\n} finally {\n}`],
+      ]);
+    });
+  if (random.chance(isPlain ? 0.02 : 0.25))
     stores.push(
       `${target}[${random.pick(["Symbol.iterator", "Symbol.toStringTag", `Symbol.for("mark")`])}] = "under a symbol";`,
     );
@@ -184,7 +211,7 @@ export function generate(random: Random): { file: string; text: string; files: R
       `for (let i = 0; i < 70; i++) ${target}["k" + i] = i;`,
     ],
     random.weighted([
-      [2, 0],
+      [isPlain ? 60 : 2, 0],
       [6, 1],
       [3, 2],
       [1, 3],
@@ -224,6 +251,49 @@ export function generate(random: Random): { file: string; text: string; files: R
       ),
       `let listed = "";\nfor (const key in ${holder}) listed += key + " ";\nconsole.log("for in", listed);`,
     ].join("\n") + "\n";
+
+  if (handedOn && random.chance(0.75)) {
+    const written = asked.filter(
+      name => isIdentifier(name) && !name.startsWith("__") && order.includes(name) && name !== "default",
+    );
+    // The default of a file without the flag is the whole object.
+    if (random.chance(order.includes("__esModule") ? 0.5 : 0.15)) written.push("default");
+    const handed = random.sample(written, isPlain ? 3 : random.between(1, 3));
+    const byName = `export { ${handed.join(", ")} } from "./lib.cjs";\n`;
+    const byStar = `export * from "./lib.cjs";\n${handed.includes("default") ? `export { default } from "./lib.cjs";\n` : ""}`;
+    const between = random.weighted([
+      [3, "names"],
+      [2, "a star"],
+      [1, "two modules"],
+    ]);
+    if (between === "two modules") {
+      files["further.mjs"] = random.chance(0.5) ? byName : byStar;
+      files["between.mjs"] =
+        `export * from "./further.mjs";\n${handed.includes("default") ? `export { default } from "./further.mjs";\n` : ""}`;
+    } else files["between.mjs"] = between === "names" ? byName : byStar;
+    files["over.cjs"] =
+      `"use strict";\n${random.chance(0.8) ? `Object.defineProperty(exports, "__esModule", { value: true });\n` : ""}var below_1 = require("./between.mjs");\n` +
+      handed
+        .map(
+          name =>
+            `Object.defineProperty(exports, "${name}", { enumerable: true, get: function () { return below_1.${name}; } });\n`,
+        )
+        .join("");
+    return random.weighted([
+      [2, { file: "main.mjs", text: `import * as names from "./over.cjs";\n${said}${show("names")}`, files }],
+      [2, { file: "main.mjs", text: `import names from "./over.cjs";\n${said}console.log(said(names));\n`, files }],
+      [
+        4,
+        {
+          file: "main.mjs",
+          text: `import { ${handed.map(name => `${name} as taken_${name}`).join(", ")} } from "./over.cjs";\n${said}${handed.map(name => `console.log("${name}", said(taken_${name}));`).join("\n")}\n`,
+          files,
+        },
+      ],
+      [1, { file: "main.cjs", text: `${said}const names = require("./over.cjs");\n${show("names")}`, files }],
+      [1, { file: "main.mjs", text: `${said}const names = await import("./over.cjs");\n${show("names")}`, files }],
+    ]);
+  }
 
   const taker = random.weighted([
     [5, "import()"],

@@ -151,12 +151,19 @@ impl<'s> Folder<'_, 's> {
             if self.evaluator.over_limit_count() != over_limit_before {
                 self.strings_over_limit.push(e);
             }
-            if let Value::Known(_) = folded.value {
+            let is_nan = folded.value.is_nan();
+            let is_folded_by_build_alone = self.has_operand_folded_by_build_alone(e)
+                || (is_nan && self.converts_an_operand_to_a_number(e));
+            if is_folded_by_build_alone {
+                self.folded_by_build_alone.insert(index);
+            }
+            // `bun run` writes `NaN` for what it folds. Any other NaN has the sign that its operation gives where it runs.
+            if is_nan && is_folded_by_build_alone {
+                self.conditions.insert(e, false);
+                self.effects[index] = folded.effects;
+            } else if let Value::Known(_) = folded.value {
                 self.values[index] = folded.value;
                 self.effects[index] = folded.effects;
-            }
-            if self.has_operand_folded_by_build_alone(e) {
-                self.folded_by_build_alone.insert(index);
             }
         }
     }

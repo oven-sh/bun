@@ -479,6 +479,57 @@ const cases: Record<string, Case> = {
     disk: { ...kinds, "first.ts": `(globalThis as any).order = ["preload"];` },
     prints: `plugin: {"kind":"js"} js\n[ "preload" ]\n`,
   },
+  // The first file writes the second, which names the entry point as the executable at hand does.
+  "a file in front of the program imports the entry point, and a file of the program asks for it while it is loaded": {
+    program: {
+      "main.ts":
+        prelude +
+        `import "./asks.cjs";
+        import "./last.cjs";
+        console.log("the entry point runs");
+        export const answer = 42;
+        if (process.argv.length > 3) void import(at("plain.js"));`,
+      "asks.cjs": `console.log("a file of the program asks");
+        import("./main.ts").then(namespace => console.log("it gets", namespace.answer));`,
+      "last.cjs": `console.log("the last file runs");`,
+    },
+    env: { BUN_OPTIONS: "--preload ./writes.cjs --preload ./written.mjs" },
+    disk: {
+      "writes.cjs": `require("node:fs").writeFileSync("written.mjs", "import { answer } from " + JSON.stringify(Bun.main) + ';\\nconsole.log("the file in front gets", answer);\\n');`,
+      "written.mjs": "",
+    },
+    prints:
+      "a file of the program asks\nthe last file runs\nthe entry point runs\nthe file in front gets 42\nit gets 42\n",
+  },
+  // A bundle runs the module that throws in front of the CommonJS file. Compiled ahead of time the files run in the order of `bun run`.
+  "a file of the program that requires the entry point then catches what a module of the graph throws": {
+    program: {
+      "main.ts":
+        prelude +
+        `import "./asks.cjs";
+        import "./throws.ts";
+        console.log("the entry point runs");
+        export const answer = 42;
+        if (process.argv.length > 3) void import(at("plain.js"));`,
+      "asks.cjs": `console.log("a file of the program asks");
+        try {
+          console.log("it gets", require("./main.ts").answer);
+        } catch (error) {
+          console.log("it catches", error.name, error.message);
+        }`,
+      "throws.ts": `console.log("the last module runs");
+        throw new RangeError("thrown by the last module");`,
+    },
+    env: { BUN_OPTIONS: "--preload ./writes.cjs --preload ./written.mjs" },
+    disk: {
+      "writes.cjs": `process.on("uncaughtException", error => console.log("nobody catches", error.name, error.message));
+        require("node:fs").writeFileSync("written.mjs", "import " + JSON.stringify(Bun.main) + ";");`,
+      "written.mjs": "",
+    },
+    prints: "the last module runs\nnobody catches RangeError thrown by the last module\n",
+    differs:
+      "a file of the program asks\nthe last module runs\nit catches RangeError thrown by the last module\nnobody catches RangeError thrown by the last module\n",
+  },
   "text that is evaluated loads files where the program does": {
     program: {
       "main.ts":

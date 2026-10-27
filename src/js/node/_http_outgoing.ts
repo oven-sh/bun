@@ -909,13 +909,13 @@ function parseUniqueHeadersOption(headers: string[] | null | undefined) {
   return unique;
 }
 
-const HEADER_DATE = http.HEADER_DATE;
-const HEADER_CONNECTION = http.HEADER_CONNECTION;
-const HEADER_KEEP_ALIVE = http.HEADER_KEEP_ALIVE;
-const HEADER_TRANSFER_ENCODING = http.HEADER_TRANSFER_ENCODING;
-const HEADER_CONTENT_LENGTH = http.HEADER_CONTENT_LENGTH;
-const HEADER_TRAILER = http.HEADER_TRAILER;
-const HEADER_SPILLED = http.HEADER_SPILLED;
+const HEADER_DATE = 1 << 0;
+const HEADER_CONNECTION = 1 << 1;
+const HEADER_KEEP_ALIVE = 1 << 2;
+const HEADER_TRANSFER_ENCODING = 1 << 3;
+const HEADER_CONTENT_LENGTH = 1 << 4;
+const HEADER_TRAILER = 1 << 5;
+const HEADER_SPILLED = 1 << 6;
 
 const kInlineHeaderValues = 6;
 const kMaxShapedHeaders = 31;

@@ -8,6 +8,7 @@ const build = ["build", "--compile", "--aot", "--outfile", "main"];
 const evaluates = "eval: the program calls eval() or new Function()";
 const loadsByName = "dynamic-import: the program calls import() or require() with a dynamic path";
 const runsOtherCode = "runtime-code: the program can run code that isn't in the executable";
+const loadsMachineCode = "native-code: the program loads a native addon or a shared library";
 const importsFromOutside = "external-import: the program imports a module that isn't in the executable";
 const seesEveryApi = "the compiler can see every API this program uses";
 
@@ -88,14 +89,9 @@ describe.concurrent("a way for unseen code to run has its place in the program",
     [
       "process.dlopen",
       `process.dlopen({ exports: {} }, process.argv[2]);`,
-      `${runsOtherCode} (process.dlopen) at main.ts:2:9`,
+      `${loadsMachineCode} (process.dlopen) at main.ts:2:9`,
     ],
     ["Bun.plugin", `Bun.plugin({ name: "p", setup() {} });`, `${runsOtherCode} (Bun.plugin) at main.ts:2:5`],
-    [
-      "Bun.Transpiler",
-      `new Bun.Transpiler().transformSync(process.argv[2]);`,
-      `${runsOtherCode} (Bun.Transpiler) at main.ts:2:9`,
-    ],
   ])("%s", async (_, text, line) => {
     expect((await report(text)).whyOpen).toContain(line);
   });
@@ -125,12 +121,12 @@ describe.concurrent("a way for unseen code to run has its place in the program",
     [
       "dlopen of bun:ffi",
       `import { dlopen } from "bun:ffi";\ndlopen(process.argv[2], {});`,
-      `${runsOtherCode} (bun:ffi.dlopen) at main.ts:3:1`,
+      `${loadsMachineCode} (bun:ffi.dlopen) at main.ts:3:1`,
     ],
     [
       "cc of bun:ffi",
       `import { cc } from "bun:ffi";\ncc({ source: process.argv[2], symbols: {} });`,
-      `${runsOtherCode} (bun:ffi.cc) at main.ts:3:1`,
+      `${loadsMachineCode} (bun:ffi.cc) at main.ts:3:1`,
     ],
   ])("%s", async (_, text, line) => {
     const { whyOpen } = await report(text);
@@ -140,7 +136,7 @@ describe.concurrent("a way for unseen code to run has its place in the program",
 
   test("a native addon that is required", async () => {
     expect((await report(`require("./hello.node");`, { "hello.node": "no addon" })).whyOpen).toContain(
-      `${runsOtherCode} (process.dlopen) at main.ts:2:1`,
+      `${loadsMachineCode} (process.dlopen) at main.ts:2:1`,
     );
   });
 

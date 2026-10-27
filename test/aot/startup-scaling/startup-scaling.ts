@@ -13,8 +13,7 @@ const usedCount = 50;
 const smallCount = 100;
 const largeCount = (kind: Kind) => kind.largeCount ?? (kind.isSlowToCompile ? 4_000 : 20_000);
 
-// TODO: 20,000 unused enums cost 86,016 bytes of private memory at the start, and 20,000 unused static fields 151,552: 4 and 8 bytes each.
-const kindsThatGrow = ["CommonJS modules", "embedded files", "enums", "static fields"];
+const kindsThatGrow = ["CommonJS modules", "embedded files"];
 
 const usedKinds = kinds.filter(kind => kind.name !== "built-in modules");
 

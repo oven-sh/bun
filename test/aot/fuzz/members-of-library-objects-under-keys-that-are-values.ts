@@ -310,7 +310,7 @@ ${exported}function nameOf(key${T(": PropertyKey")})${T(": string")} {
 }
 `;
   const shows = `${exported}function show(value${any})${T(": string")} {
-  if (typeof value === "string") return value.length > 40 || value.includes("/") ? "a text" : JSON.stringify(value);
+  if (typeof value === "string") return value.length > 40 || /[\\\\/]/.test(value) ? "a text" : JSON.stringify(value);
   if (typeof value === "symbol") return "@" + value.description;
   if (typeof value === "function") return "function " + value.name;
   if (typeof value === "bigint") return "a big integer";

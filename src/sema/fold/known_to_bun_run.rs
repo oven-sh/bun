@@ -156,6 +156,19 @@ impl Folder<'_, '_> {
         is_decided_by_one || (left.is_some() && right.is_some())
     }
 
+    /// `bun run` computes with two numbers and leaves `undefined + 1` alone.
+    pub(super) fn converts_an_operand_to_a_number(&self, e: ExprId) -> bool {
+        let ExprKind::Binary { op, left, right } = self.hir[e].kind else {
+            return false;
+        };
+        let is_arithmetic = matches!(
+            op,
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow
+        );
+        let is_number = |operand: ExprId| self.folded(operand).value.is_number();
+        is_arithmetic && !(is_number(left) && is_number(right))
+    }
+
     fn converts_an_operand(&self, left: ExprId, right: ExprId) -> bool {
         let (Value::Known(left), Value::Known(right)) =
             (self.folded(left).value, self.folded(right).value)

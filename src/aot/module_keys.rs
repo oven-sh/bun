@@ -2,25 +2,46 @@
 
 use bun_ast::Loader;
 use bun_paths::fs::PathName;
-use bun_sema::resolve::CodeImportKind;
 
-use crate::options::DEFAULT_LOADERS;
+pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[
+    (b".cjs", Loader::Js),
+    (b".css", Loader::Css),
+    (b".cts", Loader::Ts),
+    (b".html", Loader::Html),
+    // Bun reads JSX in `.js` files.
+    (b".js", Loader::Jsx),
+    (b".json", Loader::Json),
+    (b".json5", Loader::Json5),
+    (b".jsonc", Loader::Jsonc),
+    (b".jsx", Loader::Jsx),
+    (b".mjs", Loader::Js),
+    (b".mts", Loader::Ts),
+    (b".node", Loader::Napi),
+    (b".text", Loader::Text),
+    (b".toml", Loader::Toml),
+    (b".ts", Loader::Ts),
+    (b".tsx", Loader::Tsx),
+    (b".txt", Loader::Text),
+    (b".wasm", Loader::Wasm),
+    (b".yaml", Loader::Yaml),
+    (b".yml", Loader::Yaml),
+];
 
+/// What an import without attributes gets.
 pub fn loader_by_name(path: &[u8]) -> Loader {
-    loader_by_path(DEFAULT_LOADERS, path, CodeImportKind::Import)
+    loader_by_path_or(DEFAULT_LOADERS, path, Loader::File)
 }
 
-pub fn loader_by_path<E: AsRef<[u8]>>(
+/// `unnamed`: the loader of a file whose extension names none.
+pub fn loader_by_path_or<E: AsRef<[u8]>>(
     table: &[(E, Loader)],
     path: &[u8],
-    kind: CodeImportKind,
+    unnamed: Loader,
 ) -> Loader {
-    match (loader_named_by_path(table, path), kind) {
-        (Some(loader), _) => loader,
-        (None, _) if PathName::init(path).ext.is_empty() => Loader::Tsx,
-        (None, CodeImportKind::EntryPoint) => Loader::Tsx,
-        (None, CodeImportKind::Require) => Loader::Ts,
-        (None, CodeImportKind::Import) => Loader::File,
+    match loader_named_by_path(table, path) {
+        Some(loader) => loader,
+        None if PathName::init(path).ext.is_empty() => Loader::Tsx,
+        None => unnamed,
     }
 }
 

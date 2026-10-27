@@ -983,7 +983,7 @@ async function runTogether(folder: string, entryPoints: number[], extension: str
 /** What the program at `position` prints both ways when one entry point imports `texts` in this order, if that differs. */
 async function differsTogether(folder: string, texts: string[], extension: string, position: number) {
   layOut(folder, texts, extension, 1, [texts.map((_, index) => index)]);
-  await build(folder, 1, extension, 1, undefined, texts.length);
+  const { writesToBuiltins } = await build(folder, 1, extension, 1, undefined, texts.length);
   if (!existsSync(join(folder, "batch"))) return undefined;
   // Behind a program that ends in an error stands no mark.
   const ofTheProgram = (ran: Map<number, Ended>) => {
@@ -996,7 +996,7 @@ async function differsTogether(folder: string, texts: string[], extension: strin
   // A difference counts when a second pair of runs shows the same one.
   const second = await runTogether(folder, [0], extension, texts.length);
   return ofTheProgram(second.compiled) === printed && ofTheProgram(second.plain) === expected
-    ? { compiled: printed ?? "", plain: expected }
+    ? { compiled: printed ?? "", plain: expected, isBesideAWriteToABuiltIn: writesToBuiltins.size > 0 }
     : undefined;
 }
 
@@ -1230,13 +1230,16 @@ async function askAmongNeighbors(text: string, extension: string, add: (kind: st
       }
     }
     const summary = firstDifference(difference.compiled, difference.plain);
-    keepFind("among-neighbors", summary, {
-      ["program" + extension]: text,
-      "neighbors.txt": listed([...before, text, ...behind]),
-      "report.txt": `among-neighbors\n${bun} build --compile --aot ${buildFlags.join(" ")}\n${summary}DIFFERS ONLY AMONG NEIGHBORS: one entry point imports the ${before.length + 1 + behind.length} programs of neighbors.txt in that order with import statements, and the program is number ${before.length}\n`,
-      "compiled.stdout": difference.compiled,
-      "bun-run.stdout": difference.plain,
-    });
+    // The programs of an entry point share a realm. An executable refuses a write to a built-in, so only under `bun run` do the neighbors see it.
+    if (difference.isBesideAWriteToABuiltIn) add("among neighbors of which one writes to a built-in");
+    else
+      keepFind("among-neighbors", summary, {
+        ["program" + extension]: text,
+        "neighbors.txt": listed([...before, text, ...behind]),
+        "report.txt": `among-neighbors\n${bun} build --compile --aot ${buildFlags.join(" ")}\n${summary}DIFFERS ONLY AMONG NEIGHBORS: one entry point imports the ${before.length + 1 + behind.length} programs of neighbors.txt in that order with import statements, and the program is number ${before.length}\n`,
+        "compiled.stdout": difference.compiled,
+        "bun-run.stdout": difference.plain,
+      });
   }
   rmSync(subset, { recursive: true, force: true });
 }
@@ -1322,6 +1325,14 @@ async function judgeUnderCollections(
       const alike = suspects.filter(index => expected.get(index) === now.get(index));
       add("bun run prints that under collections too", alike.length);
       suspects = suspects.filter(index => !alike.includes(index));
+    }
+    if (!endedEarly) {
+      // A program that prints the time of day prints another one a second later.
+      const withoutTimes = (text = "") =>
+        text.replace(/\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b|\b1[6-9]\d{11}(?:\.\d+)?\b/g, "<time>");
+      const timely = suspects.filter(index => withoutTimes(now.get(index)) === withoutTimes(then.get(index)));
+      add("prints another time of day under collections", timely.length);
+      suspects = suspects.filter(index => !timely.includes(index));
     }
     for (const index of suspects.slice(0, 3)) {
       const kind = !endedEarly

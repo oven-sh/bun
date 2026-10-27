@@ -251,6 +251,10 @@
     "typed": 12,
     "untyped": 12
   },
+  "everyday-classes/fields-declared-without-a-value-are-assigned-in-constructors": {
+    "typed": 59.7,
+    "untyped": 57.7
+  },
   "everyday-classes/fields-with-initializers": {
     "typed": 7,
     "untyped": 7

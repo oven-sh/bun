@@ -17,7 +17,7 @@ pub(super) fn find_locked_builtin(
     file: &FileLowering<'_, '_, '_, '_>,
     callee: ExprId,
 ) -> Option<BuiltinId> {
-    match file.builtins.of_expr(file.skip_type_syntax(callee)) {
+    match file.builtins.of_pure_expr(file.skip_type_syntax(callee)) {
         Some(Resolved::Builtin(path)) => path.locked_builtin().map(table::canonical_id),
         Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => None,
     }

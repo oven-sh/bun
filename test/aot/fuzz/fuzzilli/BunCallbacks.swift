@@ -1010,6 +1010,60 @@ struct ScenesOfStores: FuzzingPostProcessor {
     }
 }
 
+extension ProgramBuilder {
+    /// A read or a store under a key that a variable holds, where the key is a name that the receiver really has. What is read goes into a list.
+    /// The lifter writes a string into the place that uses it, so the key is a variable with a name. A `var` can be declared twice, which a spliced copy does.
+    func buildAccessUnderAKeyInAVariable() {
+        let receiver: Variable
+        let names: [String]
+        switch Int.random(in: 0..<10) {
+        case 0:
+            receiver = createIntArray(with: (0..<Int.random(in: 0...3)).map { Int64($0) + 5 })
+            names = ["length", "length", "length", "0", "-1", "at", "constructor"]
+        case 1:
+            receiver = createFloatArray(with: [1.5, 2.5])
+            names = ["length", "length", "0", "1", "at"]
+        case 2:
+            receiver = createArray(with: randomJsVariables(n: Int.random(in: 1...2)))
+            names = ["length", "length", "0", "at"]
+        case 3:
+            receiver = loadString("text")
+            names = ["length", "0", "at", "constructor"]
+        case 4:
+            receiver = construct(createNamedVariable(forBuiltin: chooseUniform(from: ["Map", "Set"])))
+            names = ["size", "size", "has", "constructor"]
+        case 5:
+            receiver = construct(
+                createNamedVariable(forBuiltin: chooseUniform(from: ["Uint8Array", "Float64Array", "Int32Array"])),
+                withArgs: [loadInt(2)])
+            names = ["length", "byteLength", "0", "-1", "at"]
+        case 6:
+            receiver = buildPlainFunction(with: .parameters(n: 2)) { _ in }
+            names = ["name", "length", "prototype", "constructor"]
+        default:
+            receiver = randomJsVariable()
+            names = ["length", "size", "name", "constructor", "0"]
+        }
+        let key = createNamedVariable(
+            "key\(Int.random(in: 0..<1000))", declarationMode: .var,
+            initialValue: loadString(chooseUniform(from: names)))
+        switch Int.random(in: 0..<10) {
+        case 0...4:
+            _ = createArray(with: [getComputedProperty(key, of: receiver)])
+        case 5:
+            _ = createArray(with: [getComputedProperty(key, of: receiver), getComputedProperty(key, of: receiver)])
+        case 6:
+            _ = getComputedProperty(key, of: receiver)
+        case 7, 8:
+            setComputedProperty(key, of: receiver, to: loadInt(Int64.random(in: -1...3)), guard: true)
+            _ = createArray(with: [getComputedProperty(key, of: receiver)])
+        default:
+            updateComputedProperty(key, of: receiver, with: loadInt(1), using: .Add, guard: true)
+            _ = createArray(with: [getComputedProperty(key, of: receiver)])
+        }
+    }
+}
+
 let bunCallbackGenerators: [(CodeGenerator, Int)] = weight == 0 ? [] : [
     (CodeGenerator("BunCountedCallbacksGenerator") { b in
         let counter = b.loadInt(0)
@@ -1023,4 +1077,5 @@ let bunCallbackGenerators: [(CodeGenerator, Int)] = weight == 0 ? [] : [
         }
     }, 12 * weight),
     (CodeGenerator("BunStoresBehindBuiltinsGenerator") { b in b.buildSceneOfStoresInABlockOrAFunction() }, 12 * weight),
+    (CodeGenerator("BunKeysInVariablesGenerator") { b in b.buildAccessUnderAKeyInAVariable() }, 60),
 ]

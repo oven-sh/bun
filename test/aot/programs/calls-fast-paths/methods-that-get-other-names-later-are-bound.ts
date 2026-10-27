@@ -40,7 +40,7 @@ async function shows(): Promise<void> {
 }
 await shows();
 
-const namesIn = (error: any): string => String(error.stack).split("\n").slice(1).map(line => line.trim().replace(/^at /, "").replace(/ ?\(.*\)$/, "").replace(/^\/.*$/, "<file>")).join(" < ");
+const namesIn = (error: any): string => String(error.stack).split("\n").slice(1).map(line => line.trim().replace(/^at /, "").replace(/ ?\(.*\)$/, "").replace(/^(?:[A-Z]:)?[\\/].*$/, "<file>")).join(" < ");
 function bindsWhatFails(k: K): Array<(x: number) => unknown> { return [k.fails.bind(k), k.failsLater.bind(k), k.fails.bind(k, 7), k.failsLater.bind(k, 8)]; }
 async function showsFrames(label: string): Promise<void> {
   let bound: Array<(x: number) => unknown> = [];

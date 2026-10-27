@@ -143,6 +143,7 @@ fn blocker_codes_do_not_follow_enumerator_names() {
             "dynamic-import",
             "dynamic-import",
             "runtime-code",
+            "native-code",
             "build-option",
         ]
     );

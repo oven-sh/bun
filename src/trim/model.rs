@@ -27,12 +27,13 @@ pub enum UnseenCodeCause {
     LoadsModuleByName,
     LoadsCodeByName,
     RunsUnseenCode,
+    RunsMachineCode,
     OptionAdmitsCode,
 }
 
 impl UnseenCodeCause {
     #[cfg(any(test, feature = "test_support"))]
-    pub const ALL: [UnseenCodeCause; 10] = [
+    pub const ALL: [UnseenCodeCause; 11] = [
         UnseenCodeCause::ProgramNotCompiled,
         UnseenCodeCause::ReportMissing,
         UnseenCodeCause::FlowResultDisabled,
@@ -42,6 +43,7 @@ impl UnseenCodeCause {
         UnseenCodeCause::LoadsModuleByName,
         UnseenCodeCause::LoadsCodeByName,
         UnseenCodeCause::RunsUnseenCode,
+        UnseenCodeCause::RunsMachineCode,
         UnseenCodeCause::OptionAdmitsCode,
     ];
 
@@ -56,6 +58,7 @@ impl UnseenCodeCause {
                 | UnseenCodeCause::EvaluatesText
                 | UnseenCodeCause::LoadsModuleByName
                 | UnseenCodeCause::RunsUnseenCode
+                | UnseenCodeCause::RunsMachineCode
         )
     }
 }

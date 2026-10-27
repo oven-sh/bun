@@ -25,7 +25,7 @@ use bun_sema::program::{FileId, Files};
 use rustc_hash::FxHashMap;
 
 use crate::builtins::table::{self, BuiltinFlags};
-use crate::builtins::{BuiltinId, BuiltinKind, Resolved, ResolvedBuiltins};
+use crate::builtins::{BuiltinId, BuiltinKind, ResolvedBuiltins};
 use crate::load::sources::parsed_source;
 use crate::modules::{Member, ModuleGraph};
 use crate::options::RemovableOptions;
@@ -644,7 +644,7 @@ impl<'a, 's> Removable<'a, 's> {
                 }
                 _ => false,
             },
-            Some(Binding::Free) => self.is_builtin_read(identifier, false),
+            Some(Binding::Free) => self.is_builtin_read(identifier),
             None => false,
         }
     }
@@ -703,7 +703,7 @@ impl<'a, 's> Removable<'a, 's> {
         is_export_of_namespace
             || self.is_bound_to_binding(expression, object)
             || self.inlined_member(expression).is_some()
-            || self.is_builtin_read(expression, false)
+            || self.is_builtin_read(expression)
     }
 
     // The read of a binding of another module, whatever becomes of the object that the member is written on.
@@ -714,24 +714,17 @@ impl<'a, 's> Removable<'a, 's> {
             })
     }
 
-    // A free name, or a path of names from one, that the table of built-ins knows at every step.
-    fn is_builtin_read(&self, expression: ExprId, is_below_path_left_out: bool) -> bool {
-        let Some(Resolved::Builtin(path)) = self.builtins.of_expr(expression) else {
+    fn is_builtin_read(&self, expression: ExprId) -> bool {
+        let steps = self.builtins.global_path(self.hir, self.bound, expression);
+        let Some((global, members)) = steps.as_deref().and_then(<[_]>::split_last) else {
             return false;
         };
-        match self.find_link(expression) {
-            Some((object, _)) => {
-                let is_left_out = is_below_path_left_out || is_read_left_out_by_bun_run(path.id);
-                self.stack.is_safe_to_recurse()
-                    && is_read_without_code(path.id, false)
-                    && (is_left_out || !may_be_added_by_first_read(path.id))
-                    && self.is_builtin_read(object, is_left_out)
-            }
-            None => {
-                self.find_static_binding(expression) == Some(Binding::Free)
-                    && is_read_without_code(path.id, true)
-            }
-        }
+        let mut is_left_out = false;
+        members.iter().all(|member| {
+            is_left_out |= is_read_left_out_by_bun_run(member.id);
+            is_read_without_code(member.id, false)
+                && (is_left_out || !may_be_added_by_first_read(member.id))
+        }) && is_read_without_code(global.id, true)
     }
 
     // `typeof a !== "undefined" && a`, `typeof a < "u" ? a : b`: the name is read only where it is known to exist.

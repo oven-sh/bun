@@ -91,12 +91,12 @@
 //   elements-stored-below-an-object-that-intercepts-them lists, objects and instances take elements by index, and at some time an object above them begins to intercept such stores: a Proxy in the chain, a setter or a value that cannot be written under an index; objects are made before and behind that time, collections run in between, classes are made by the hundred (elements-stored-below-an-object-that-intercepts-them.ts)
 //   sums-of-whole-numbers-at-the-edges-of-what-a-double-holds loops add and subtract whole numbers at the edges of 31, 32, 52 and 53 bits and cut the sum to 32 bits, to a whole number, or not at all; now and then a field holds what is no whole number (sums-of-whole-numbers-at-the-edges-of-what-a-double-holds.ts)
 //   objects-that-may-be-missing-hold-one-another two to four objects, each made under a try of its own, hold one another and something of their own; the last one leaves the function on some ways only (objects-that-may-be-missing-hold-one-another.ts)
-//   <any of these>-in-several-files the same program with the declarations at its top laid into up to four further files, which import from each other; in every second program they import from its first file too (declarations-in-files-of-their-own.ts), and in every second typed program some of them are JavaScript, half of these beside a declaration file that says too little: `1` for number, one member of a union
+//   <any of these>-in-several-files the same program with the declarations at its top laid into up to four further files, which import from each other; in every second program they import from its first file too (declarations-in-files-of-their-own.ts), and in every second typed program some of them are JavaScript, half of these beside a declaration file that says too little: `1` for number, one member of a union; two in five of those files are not valid either, and the program has a tsconfig.json with skipLibCheck; three in five of the files with declarations are packages in node_modules, half of them CommonJS; one in four of the files that stay TypeScript says too little in its own annotations, under @ts-nocheck; in three programs of ten the first file imports through a barrel
 //   host-functions-throw-in-code-that-built-ins-call a function of the host or of the language throws inside a getter, a conversion, a callback, a trap, an iterator or a listener that a built-in function has called; the call stands in tail position or not, and the exception is caught in that function, around the built-in function, further up or nowhere (host-functions-throw-in-code-that-built-ins-call.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { withPackedPrograms } from "../generate";
-import { printFor, staysAScript, type Bed, type Program } from "./beds";
+import { printFor, projects, staysAScript, type Bed, type Program } from "./beds";
 import { withDeclarationsInFilesOfTheirOwn } from "./declarations-in-files-of-their-own";
 import { erased, mutate, reprinted } from "./mutate";
 import { Random } from "./random";
@@ -213,7 +213,8 @@ function declarationsThatSayTooLittle(typed: string, random: Random): string | u
         return;
       const end = endOf(unit, close + 3, "{");
       if (end < 0 || /\n/.test(unit.slice(0, end))) return;
-      const text = `export declare function${unit.slice(`export ${head[1] ?? ""}function`.length, end).trimEnd()};`;
+      // A declaration has no `*`: what the type says is all there is to say.
+      const text = `export declare function ${unit.slice(`export ${head[1] ?? ""}function${head[2] ?? ""}`.length, end).trim()};`;
       declared.push({
         text,
         ...(head[2] ? {} : { type: [text.length - 1 - unit.slice(close + 3, end).trimEnd().length, text.length - 1] }),
@@ -243,13 +244,65 @@ function declarationsThatSayTooLittle(typed: string, random: Random): string | u
 }
 
 /** Some of the files as JavaScript, their types erased: what the others know about them is inferred, or stands in a declaration file beside them that says too little. A file stays as it is where another one takes a type from it, or where it declares what JavaScript has no word for. */
+/** The TypeScript itself says too little: one to three of its exported functions and constants are annotated with less than they give, and `// @ts-nocheck` at its top keeps the checker quiet about it. Nothing where there is nothing to say less about. */
+function withAnnotationsThatSayTooLittle(typed: string, random: Random): string | undefined {
+  const places: [from: number, to: number][] = [];
+  for (const { 0: head, index } of typed.matchAll(/^export (?:(?:async )?function [\w$]+|const [\w$]+: )/gm)) {
+    const behind = index + head.length;
+    if (head.endsWith(": ")) places.push([behind, endOf(typed, behind, "=")]);
+    else {
+      const open = typed[behind] === "<" ? endOf(typed, behind, "bracket") + 1 : behind;
+      const close = typed[open] === "(" ? endOf(typed, open, "bracket") : -1;
+      if (close > 0 && typed.startsWith(": ", close + 1)) places.push([close + 3, endOf(typed, close + 3, "{")]);
+    }
+  }
+  let changed = typed;
+  let said = 0;
+  // From the last on, so that the places in front stay where they are.
+  for (const [from, to] of random
+    .sample(
+      places.filter(([, to]) => to > 0),
+      3,
+    )
+    .sort((a, b) => b[0] - a[0])) {
+    const less = narrower(typed.slice(from, to).trim(), random);
+    if (!less) continue;
+    changed = `${changed.slice(0, from)}${less} ${changed.slice(to)}`;
+    said++;
+  }
+  return said ? "// @ts-nocheck\n" + changed : undefined;
+}
+
+// What a checker reports inside a declaration file and nowhere else. Under `skipLibCheck` nobody hears of it.
+const invalidDeclarations: readonly string[] = [
+  "export declare const invalidName: Missing;",
+  "export declare function invalidResult(value: number): Absent<string>;",
+  "export declare const invalidArguments: Date<string>;",
+  "export declare const declaredTwice: number;\nexport declare const declaredTwice: string;",
+  "export declare class InvalidHeir extends NotDeclared {}",
+  "export interface InvalidInterface extends Missing {}",
+  "export type InvalidRing = InvalidRing;",
+  "export declare function invalidParameter(value: Missing.Inner): void;",
+  "export declare const invalidQuery: typeof notDeclared;",
+  "export declare let invalidMember: Array<number>.absent;".replace(".absent", '["absent"]'),
+];
+
+/** The declarations with one to three more that are not valid, and now and then a result of a type that nobody declares. */
+function withInvalidDeclarations(declarations: string, random: Random): string {
+  const unknown = random.chance(0.5)
+    ? declarations.replace(/^(export declare function [^\n]*\): )[^\n]*;$/m, "$1Missing;")
+    : declarations;
+  return unknown + random.sample(invalidDeclarations, random.between(1, 3)).map(each => each + "\n").join(""); // prettier-ignore
+}
+
 function withSomeFilesInJavaScript(
   text: string,
   files: Record<string, string>,
   random: Random,
 ): Record<string, string> {
   const all = [text, ...Object.values(files)].join("\n");
-  return Object.fromEntries(
+  let isInvalid = false;
+  const changed = Object.fromEntries(
     Object.entries(files).flatMap(([path, typed]) => {
       const stem = path.replace(/\.ts$/, "");
       const isAsked = random.chance(0.5);
@@ -259,42 +312,139 @@ function withSomeFilesInJavaScript(
         const untyped = erased(typed, "ts");
         if (untyped.includes('from "bun:wrap"')) return [[path, typed]];
         const declarations = random.chance(0.5) ? declarationsThatSayTooLittle(typed, random) : undefined;
-        return [[stem + ".js", untyped], ...(declarations ? [[stem + ".d.ts", declarations]] : [])];
+        if (!declarations) return [[stem + ".js", untyped]];
+        if (!random.chance(0.4)) return [[stem + ".js", untyped], [stem + ".d.ts", declarations]]; // prettier-ignore
+        isInvalid = true;
+        return [[stem + ".js", untyped], [stem + ".d.ts", withInvalidDeclarations(declarations, random)]]; // prettier-ignore
       } catch {
         return [[path, typed]];
       }
     }),
   );
+  // The program has a tsconfig.json of its own then, under which declaration files are not checked.
+  const own = { compilerOptions: { ...projects["the-bed's-own"].tsconfig!.compilerOptions, skipLibCheck: true } };
+  return isInvalid ? { ...changed, "tsconfig.json": JSON.stringify(own) + "\n" } : changed;
 }
 
-/** The programs of a source, each in several files. Nothing where a program declares too little at its top, or asks there what `this` is. */
+/** The first file takes what it imports through one more file, which only hands on what the others export: all of a file by a star, or name by name. As it was where the first file imports nothing of them. */
+function throughABarrel(text: string, extension: string, random: Random): { text: string; barrel?: string } {
+  const handedOn: string[] = [];
+  const end = extension === "ts" ? "" : `.${extension}`;
+  const changed = text.replace(
+    /^import (type )?\{ ([^}]*) \} from ("\.\/declared-\d+(?:\.\w+)?");$/gm,
+    (_, type: string | undefined, names: string, from: string) => {
+      const star = `export * from ${from};`;
+      if (!handedOn.includes(star))
+        handedOn.push(random.chance(0.5) ? star : `export ${type ?? ""}{ ${names} } from ${from};`);
+      return `import ${type ?? ""}{ ${names} } from "./barrel${end}";`;
+    },
+  );
+  return handedOn.length ? { text: changed, barrel: handedOn.map(line => line + "\n").join("") } : { text };
+}
+
+/** An ES module, printed one statement a line, as the CommonJS file that compilers make of it: functions are laid on `exports` at the top, the rest at the end. Nothing where a form is left that has no such spelling. */
+function asCommonJS(text: string): string | undefined {
+  const functions: string[] = [];
+  const names = new Bun.Transpiler({ loader: "js" }).scan(text).exports;
+  const body = text
+    .replace(
+      /^import \{ ([^}]*) \} from ("[^"]*");$/gm,
+      (_, taken: string, from: string) => `const { ${taken.replaceAll(" as ", ": ")} } = require(${from});`,
+    )
+    .replace(
+      /^export ((?:async )?function\*? ?([\w$]+))/gm,
+      (_, head: string, name: string) => (functions.push(name), head),
+    )
+    .replace(/^export (?=(?:class|const|let|var) )/gm, "");
+  if (/^(?:import|export)\b|\bimport\.meta\b|^await\b|\bfor await\b/m.test(body) || names.includes("default")) return;
+  const laidOn = (name: string) => `exports.${name} = ${name};\n`;
+  return `"use strict";\nObject.defineProperty(exports, "__esModule", { value: true });\n${functions.map(laidOn).join("")}${body}${body.endsWith("\n") ? "" : "\n"}${names.filter(name => !functions.includes(name)).map(laidOn).join("")}`; // prettier-ignore
+}
+
+/** Some of the JavaScript that has declarations beside it becomes a package: `node_modules/declared-<n>` with a package.json, imported by its name. A file goes only if all that it imports has gone. */
+function withSomeFilesAsPackages(
+  text: string,
+  files: Record<string, string>,
+  random: Random,
+): { text: string; files: Record<string, string>; packages: number } {
+  const moved: string[] = [];
+  for (const path of Object.keys(files)) {
+    const stem = /^(declared-\d+)\.js$/.exec(path)?.[1];
+    if (!stem || !files[`${stem}.d.ts`] || !random.chance(0.6)) continue;
+    const imported = [files[path], files[`${stem}.d.ts`]].flatMap(each => Array.from(each.matchAll(/from "\.\/([\w-]+)(?:\.\w+)?"/g), match => match[1])); // prettier-ignore
+    if (imported.every(name => moved.includes(name))) moved.push(stem);
+  }
+  const byName = (each: string) => each.replace(/(from )"\.\/([\w-]+)(?:\.\w+)?"/g, (whole, from: string, name: string) => (moved.includes(name) ? `${from}"${name}"` : whole)); // prettier-ignore
+  const laid: Record<string, string> = {};
+  for (const [path, each] of Object.entries(files)) {
+    const [, stem, end] = /^(declared-\d+)(\.js|\.d\.ts)$/.exec(path) ?? [];
+    laid[moved.includes(stem) ? `node_modules/${stem}/index${end}` : path] = /\.[jt]s$/.test(path)
+      ? byName(each)
+      : each;
+  }
+  // Two packages of one name and one version count as one package, and a build may hold many programs.
+  for (const name of moved) {
+    const index = `node_modules/${name}/index.js`;
+    const required = random.chance(0.5) ? asCommonJS(laid[index]) : undefined;
+    if (required) laid[index] = required;
+    laid[`node_modules/${name}/package.json`] = JSON.stringify({ name, version: `1.0.${Bun.hash.crc32(laid[index])}`, type: required ? "commonjs" : "module", main: "index.js", types: "index.d.ts" }) + "\n"; // prettier-ignore
+  }
+  return { text: byName(text), files: laid, packages: moved.length };
+}
+
+/** A program in one file, laid into several in all the ways above; `notes` says in which. Nothing where it declares too little at its top, or asks there what `this` is. */
+export function laidIntoFiles(
+  text: string,
+  extension: string,
+  random: Random,
+): { text: string; files: Record<string, string>; notes: string } | undefined {
+  const isTyped = extension === "ts";
+  if (namesThisAtItsTop(text, isTyped ? "ts" : "js")) return;
+  const laid = withDeclarationsInFilesOfTheirOwn(text, extension, random, random.chance(0.5));
+  if (!laid) return;
+  const files = isTyped && random.chance(0.5) ? withSomeFilesInJavaScript(laid.text, laid.files, random) : laid.files;
+  const { text: first, barrel } = random.chance(0.3)
+    ? throughABarrel(laid.text, extension, random)
+    : { text: laid.text };
+  if (barrel) files[`barrel.${extension}`] = barrel;
+  const { text: entry, files: all, packages } = withSomeFilesAsPackages(first, files, random);
+  let unchecked = 0;
+  for (const path of isTyped ? Object.keys(all) : []) {
+    const lying =
+      /^declared-\d+\.ts$/.test(path) && random.chance(0.25) && withAnnotationsThatSayTooLittle(all[path], random);
+    if (lying) (unchecked++, (all[path] = lying));
+  }
+  const untyped = isTyped ? Object.keys(files).filter(path => path.endsWith(".js")).length : 0;
+  const declared = Object.keys(files).filter(path => path.endsWith(".d.ts")).length;
+  const isUnchecked = "tsconfig.json" in files;
+  return {
+    text: entry,
+    files: all,
+    notes: `${Object.keys(files).length + 1 - declared - Number(isUnchecked)} files${untyped ? `, ${untyped} in JavaScript` : ""}${declared ? `, ${declared} of them beside declarations that say too little${isUnchecked ? " and are not valid, under skipLibCheck" : ""}` : ""}${barrel ? ", one a barrel" : ""}${packages ? `, ${packages} as packages` : ""}${unchecked ? `, ${unchecked} with annotations that say too little, under @ts-nocheck` : ""}`,
+  };
+}
+
+/** The programs of a source, each in several files. */
 const laidIntoSeveralFiles =
   (source: Source): Source =>
   (seed, bed) => {
     if (!bed.takesSeveralFiles) return;
     const whole = source(seed, bed);
-    if (!whole || whole.files || namesThisAtItsTop(whole.text, whole.extension)) return;
+    if (!whole || whole.files) return;
     // `print` is a declaration like the others: it lies in one file and the rest import it.
     const isWithoutPrint = /\bprint\(/.test(whole.text) && !/\b(function|const|let|var) print\b/.test(whole.text);
     const text = isWithoutPrint ? printFor(whole.extension === "ts") + whole.text : whole.text;
     // Many a source takes the lowest bit of the seed for "typed".
-    const random = new Random(new Random(seed).next() ^ 0x2f11e5);
-    const laid = withDeclarationsInFilesOfTheirOwn(text, whole.extension, random, random.chance(0.5));
+    const laid = laidIntoFiles(text, whole.extension, new Random(new Random(seed).next() ^ 0x2f11e5));
     if (!laid) return;
-    const files =
-      whole.extension === "ts" && random.chance(0.5)
-        ? withSomeFilesInJavaScript(laid.text, laid.files, random)
-        : laid.files;
-    const untyped = whole.extension === "ts" ? Object.keys(files).filter(path => path.endsWith(".js")).length : 0;
-    const declared = Object.keys(files).filter(path => path.endsWith(".d.ts")).length;
     const { alone, ...rest } = whole;
     return {
       ...rest,
       text: laid.text,
-      files,
+      files: laid.files,
       source: whole.source + inSeveralFiles,
       inOneFile: text,
-      notes: `${whole.notes} | ${Object.keys(files).length + 1 - declared} files${untyped ? `, ${untyped} in JavaScript` : ""}${declared ? `, ${declared} of them beside declarations that say too little` : ""}`,
+      notes: `${whole.notes} | ${laid.notes}`,
     };
   };
 

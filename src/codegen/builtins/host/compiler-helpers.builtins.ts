@@ -282,7 +282,6 @@ export default b.declarations(
       runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: calledOrChanged },
     }),
     checkedArrayLength: arrayMaker("checkedArrayLength", b.operand("length"), { length: [b.returned] }),
-    checkedLengthOfArrayCall: arrayMaker("checkedLengthOfArrayCall", b.operand("length"), { length: [b.returned] }),
     // The front end writes arrayOfUndefined where the mapper is undefined, so this one never gets that.
     arrayFromLength: arrayMaker("arrayFromLength", newArrayOf(b.callbackResult("mapper")), {
       length: lengthOfNewArray,

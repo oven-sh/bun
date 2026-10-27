@@ -4,7 +4,7 @@ use bun_core::strings::contains_char;
 use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{Binding, BindingInitializer, BindingKind, Decl, FnOwner, Parent};
 use bun_sema::check::spans::skip_trivia;
-use bun_sema::fold::{Constant, Decision, FoldedValue, TreeNode, push_children};
+use bun_sema::fold::{self, Constant, Decision, FoldedValue, TreeNode, push_children};
 use bun_sema::hir::{
     BinOp, Call, Chain, EnumMemberId, ExprFlags, ExprId, ExprKind, FnBody, FnKind, IdList,
     MemberKey, PropKey, PropKind, UnOp, end_of_expr, start_of,
@@ -226,22 +226,68 @@ fn is_computable(op: BinOp) -> bool {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
+enum StringForm {
+    Flat,
+    // The result of `+`. Bun's transpiler inlines none as the value of a constant and converts none to a number.
+    Rope,
+    // Has a character outside ASCII. Bun's transpiler folds no `+` over one.
+    Utf16,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
 enum LiteralKind {
     Number,
-    String,
+    String(StringForm),
     Boolean,
     Null,
     Undefined,
     BigInt,
 }
 
+// The kind of literal that Bun's transpiler folds an operator over two literals into.
+fn find_folded_kind(op: BinOp, left: LiteralKind, right: LiteralKind) -> Option<LiteralKind> {
+    use LiteralKind::{BigInt, Boolean, Null, Number, String, Undefined};
+    let is_comparison = matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge);
+    if is_equality(op) {
+        let is_folded = match (left, right) {
+            (Null | Undefined, _) | (_, Null | Undefined) => true,
+            (Boolean | Number, Boolean | Number) => true,
+            (BigInt, BigInt) | (String(_), String(_)) => true,
+            (String(_), Number) => matches!(op, BinOp::EqEqEq | BinOp::NotEqEq),
+            _ => false,
+        };
+        return is_folded.then_some(Boolean);
+    }
+    match (left, right) {
+        (Number, Number) if is_comparison => Some(Boolean),
+        (Number, Number) => Some(Number),
+        (String(left), String(right)) if is_comparison => {
+            ((left == StringForm::Utf16) == (right == StringForm::Utf16)).then_some(Boolean)
+        }
+        (String(StringForm::Utf16), _) | (_, String(StringForm::Utf16)) => None,
+        (String(_), _) | (_, String(_)) if op == BinOp::Add => Some(String(StringForm::Rope)),
+        _ => None,
+    }
+}
+
+// What stands around the start of an expression in the text that Bun's transpiler prints.
+#[derive(Copy, Clone)]
+enum Around {
+    Spread,
+    Operator(BinOp),
+    RightOperand(BinOp),
+    Condition,
+    Access { is_callee: bool },
+}
+
 // What Bun's transpiler prints for the operators of a file. Each is asked once, however many operators and names of constants lead to it.
 #[derive(Default)]
 pub(in crate::lower) struct PrintedOperators {
-    literals: RefCell<FxHashMap<ExprId, bool>>,
-    kinds: RefCell<FxHashMap<ExprId, Option<LiteralKind>>>,
-    // By the only use of a variable whose initializer is printed there: the initializer, if it is a literal.
-    literals_visited_again: RefCell<FxHashMap<ExprId, Option<ExprId>>>,
+    // Indexed by `is_asking_about_variable_used_once`, which changes the answers.
+    kinds: [RefCell<FxHashMap<ExprId, Option<LiteralKind>>>; 2],
+    values: [RefCell<FxHashMap<ExprId, Option<Constant>>>; 2],
+    // By the only use of a variable: the initializer that is printed there, if the statement is visited again.
+    revisited_initializers: RefCell<FxHashMap<ExprId, Option<ExprId>>>,
     // By a name in whose place an initializer or a value is printed: where that begins.
     first_positions: RefCell<FxHashMap<ExprId, u32>>,
     // Whether a variable that is used once is being asked about. What that question asks of other such variables is answered without them.
@@ -249,12 +295,24 @@ pub(in crate::lower) struct PrintedOperators {
 }
 
 impl PrintedOperators {
-    fn find_literal(&self, operator: ExprId) -> Option<bool> {
-        self.literals.borrow().get(&operator).copied()
+    fn find_kind(&self, operator: ExprId) -> Option<Option<LiteralKind>> {
+        let kinds = &self.kinds[usize::from(self.is_asking_about_variable_used_once())];
+        kinds.borrow().get(&operator).copied()
     }
 
-    fn find_kind(&self, operator: ExprId) -> Option<Option<LiteralKind>> {
-        self.kinds.borrow().get(&operator).copied()
+    fn remember_kind(&self, operator: ExprId, kind: Option<LiteralKind>) {
+        let kinds = &self.kinds[usize::from(self.is_asking_about_variable_used_once())];
+        kinds.borrow_mut().insert(operator, kind);
+    }
+
+    fn find_value(&self, operator: ExprId) -> Option<Option<Constant>> {
+        let values = &self.values[usize::from(self.is_asking_about_variable_used_once())];
+        values.borrow().get(&operator).copied()
+    }
+
+    fn remember_value(&self, operator: ExprId, value: Option<Constant>) {
+        let values = &self.values[usize::from(self.is_asking_about_variable_used_once())];
+        values.borrow_mut().insert(operator, value);
     }
 
     pub(in crate::lower) fn is_asking_about_variable_used_once(&self) -> bool {
@@ -282,7 +340,7 @@ impl FileLowering<'_, '_, '_, '_> {
         // What is printed in place of a name stands where the name stands.
         let mut is_callee = is_callee;
         loop {
-            if self.is_printed_as_literal(last) {
+            if self.is_literal_operand(last) {
                 return self.first_position(last);
             }
             if let Some(value) = self.find_printed_member(last) {
@@ -561,25 +619,19 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.runs_as_written() {
             return start_of(self.hir, right);
         }
-        let is_in_parentheses = match self.hir[self.skip_to_printed_initializer(right)].kind {
-            ExprKind::Fn(function) => self.hir[function].kind == FnKind::Arrow,
-            ExprKind::Cond { test, .. } => self.find_printed_condition(test).is_none(),
-            ExprKind::Assign { .. } => true,
-            _ => false,
-        };
-        match is_in_parentheses {
+        match self.begins_with_parenthesis_in(right, Around::RightOperand(BinOp::In)) {
             true => self.last_mapped_position(left),
             false => self.first_position(right),
         }
     }
 
-    // What Bun's transpiler prints in place of the only use of a variable.
-    fn skip_to_printed_initializer(&self, expression: ExprId) -> ExprId {
-        let mut printed = self.skip_type_syntax(expression);
+    // What stands in place of an operand when Bun's transpiler last visits the operator around it.
+    fn skip_to_initializer_visited_again(&self, operand: ExprId) -> ExprId {
+        let mut printed = self.skip_unprinted_syntax(operand);
         while let ExprKind::Ident(_) = self.hir[printed].kind
-            && let Some(initializer) = self.find_printed_initializer(printed)
+            && let Some(initializer) = self.find_revisited_initializer(printed)
         {
-            printed = self.skip_type_syntax(initializer);
+            printed = self.skip_unprinted_syntax(initializer);
         }
         printed
     }
@@ -643,8 +695,6 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.runs_as_written() {
             return hir[first].pos;
         }
-        // The result of an operator that the transpiler computes stands where the operator's expression is written.
-        let mut is_computed = false;
         let mut replaced: SmallVec<[ExprId; 4]> = SmallVec::new();
         let position = loop {
             let next = match hir.written_kind(first) {
@@ -652,7 +702,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     op: BinOp::Comma,
                     left,
                     right,
-                } => match !is_computed && self.is_removed_when_unused(left) {
+                } => match self.is_removed_when_unused(left) {
                     true => right,
                     false => left,
                 },
@@ -661,31 +711,14 @@ impl FileLowering<'_, '_, '_, '_> {
                 {
                     operand
                 }
-                ExprKind::Binary { op, left, right } => {
-                    let (printed_left, printed_right) = self.printed_operands(op, left, right);
-                    let is_behind_comma = self.skip_unprinted_syntax(printed_left)
-                        != self.skip_type_syntax(printed_left);
-                    let is_literal = self.is_printed_as_literal(first);
-                    let is_name = |operand: ExprId| {
-                        let operand = self.skip_type_syntax(operand);
-                        matches!(hir[operand].kind, ExprKind::Ident(_))
-                    };
-                    // A text that it joins stands where the left operand does, which is the initializer that it has printed in place of a name.
-                    let is_joined_to_initializer = op == BinOp::Add
-                        && is_name(printed_left)
-                        && self.find_literal_kind(first) == Some(LiteralKind::String)
-                        && self
-                            .find_printed_value(self.skip_type_syntax(printed_left))
-                            .is_none();
-                    is_computed |= is_literal
-                        && !is_joined_to_initializer
-                        && (is_name(printed_left)
-                            || is_behind_comma && self.is_literal_operand(printed_right));
-                    match is_literal {
-                        true => left,
-                        false => printed_left,
-                    }
+                // The transpiler gives a string that it concatenates the position of the left operand as printed, and any other folded result the position of the expression as parsed.
+                ExprKind::Binary { left, .. } if self.is_rope(first) => left,
+                ExprKind::Binary { .. } | ExprKind::Dot { .. }
+                    if self.is_literal_operand(first) =>
+                {
+                    break self.parsed_position(first);
                 }
+                ExprKind::Binary { op, left, right } => self.printed_operands(op, left, right).0,
                 ExprKind::Cond { test, branches } => match self.find_printed_condition(test) {
                     Some(true) => hir.branches(branches).yes,
                     Some(false) => hir.branches(branches).no,
@@ -695,18 +728,24 @@ impl FileLowering<'_, '_, '_, '_> {
                 ExprKind::Index { obj, index, .. } => {
                     self.find_printed_element(obj, index).unwrap_or(obj)
                 }
-                // The transpiler gives what it makes of `void 0` the position of the operand.
+                // The transpiler gives what it makes of `void 0` the position of the operand, which is still a name if an initializer is printed there later.
                 ExprKind::Unary {
                     op: UnOp::Void,
                     operand,
-                } if self.is_printed_as_undefined(first) => operand,
+                } if self.is_printed_as_undefined(first) => {
+                    let is_literal = self.is_literal_operand(operand)
+                        && !self.becomes_literal_when_visited_again(operand);
+                    match is_literal {
+                        true => operand,
+                        false => break self.parsed_position(operand),
+                    }
+                }
                 ExprKind::Dot { obj, .. } => obj,
                 ExprKind::Call(site) | ExprKind::TaggedTemplate(site) => hir[site].callee,
                 ExprKind::Unary {
                     op: UnOp::PostInc | UnOp::PostDec,
                     operand,
                 } => operand,
-                ExprKind::Ident(_) if is_computed => break hir[first].pos,
                 ExprKind::Ident(_)
                     if let Some(&position) =
                         self.printed_operators.first_positions.borrow().get(&first) =>
@@ -734,23 +773,41 @@ impl FileLowering<'_, '_, '_, '_> {
         position
     }
 
+    // Bun's parser gives an expression the position of its first operand, without the parentheses around it.
+    fn parsed_position(&self, expression: ExprId) -> u32 {
+        let hir = self.hir;
+        let mut first = self.skip_type_syntax(expression);
+        loop {
+            let next = match hir.written_kind(first) {
+                ExprKind::Binary { left, .. } => left,
+                ExprKind::Cond { test, .. } => test,
+                ExprKind::Assign { target, .. } => target,
+                ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } => obj,
+                ExprKind::Call(site) | ExprKind::TaggedTemplate(site) => hir[site].callee,
+                ExprKind::Unary {
+                    op: UnOp::PostInc | UnOp::PostDec,
+                    operand,
+                } => operand,
+                _ => return hir[first].pos,
+            };
+            first = self.skip_type_syntax(next);
+        }
+    }
+
     // Whether the text that Bun's transpiler prints for the operand of a `...` begins with a parenthesis, which its source map does not know.
     pub(in crate::lower) fn begins_with_parenthesis(&self, operand: ExprId) -> bool {
-        #[derive(Copy, Clone)]
-        enum Around {
-            Spread,
-            Operator(BinOp),
-            Condition,
-            Access { is_callee: bool },
-        }
+        self.begins_with_parenthesis_in(operand, Around::Spread)
+    }
+
+    fn begins_with_parenthesis_in(&self, operand: ExprId, around: Around) -> bool {
         let hir = self.hir;
         let mut first = self.skip_type_syntax(operand);
-        let mut around = Around::Spread;
+        let mut around = around;
         loop {
             let is_access = matches!(around, Around::Access { .. });
             let is_loose = !matches!(around, Around::Spread);
             let (next, below) = match hir.written_kind(first) {
-                _ if self.is_printed_as_literal(first) => return false,
+                _ if self.is_literal_operand(first) => return false,
                 ExprKind::Binary {
                     op: BinOp::Comma,
                     left,
@@ -773,6 +830,9 @@ impl FileLowering<'_, '_, '_, '_> {
                         Around::Spread => op == BinOp::Comma,
                         Around::Operator(outer) => {
                             op == BinOp::Comma || needs_parentheses(outer, op, true)
+                        }
+                        Around::RightOperand(outer) => {
+                            op == BinOp::Comma || needs_parentheses(outer, op, false)
                         }
                         Around::Condition => op == BinOp::Comma,
                         Around::Access { .. } => true,
@@ -832,82 +892,35 @@ impl FileLowering<'_, '_, '_, '_> {
     // Bun's transpiler computes an operator whose operands are literals, and prints the result at the position of the operator's expression.
     // Bun's transpiler prints the initializer of a variable in place of its only use. Where the expression of that statement is an operator or a condition it visits the expression again, and computes
     // what has become an operator over literals.
-    fn find_literal_visited_again(&self, name: ExprId) -> Option<ExprId> {
+    fn find_revisited_initializer(&self, name: ExprId) -> Option<ExprId> {
         let is_asking = &self.printed_operators.is_asking_about_variable_used_once;
         if is_asking.get() {
             return None;
         }
-        let remembered = &self.printed_operators.literals_visited_again;
-        if let Some(&literal) = remembered.borrow().get(&name) {
-            return literal;
+        let remembered = &self.printed_operators.revisited_initializers;
+        if let Some(&initializer) = remembered.borrow().get(&name) {
+            return initializer;
         }
         is_asking.set(true);
         let initializer = self.find_initializer_visited_again(name);
         is_asking.set(false);
-        let initializer = initializer?;
-        let literal = self.is_literal_operand(initializer).then_some(initializer);
-        remembered.borrow_mut().insert(name, literal);
-        literal
+        remembered.borrow_mut().insert(name, initializer);
+        initializer
+    }
+
+    fn find_literal_visited_again(&self, name: ExprId) -> Option<ExprId> {
+        self.find_revisited_initializer(name)
+            .filter(|&initializer| self.is_literal_operand(initializer))
     }
 
     // `1 + "ab".length` and `Level.High`, of which Bun's transpiler prints the value.
     pub(in crate::lower) fn is_folded_into_literal(&self, expression: ExprId) -> bool {
         match self.hir.written_kind(self.skip_type_syntax(expression)) {
+            ExprKind::Unary { op: UnOp::Void, .. } => false,
             ExprKind::Binary { .. }
             | ExprKind::Unary { .. }
             | ExprKind::Dot { .. }
-            | ExprKind::Index { .. } => self.is_printed_as_literal(expression),
-            _ => false,
-        }
-    }
-
-    fn is_printed_as_literal(&self, expression: ExprId) -> bool {
-        let hir = self.hir;
-        match hir.written_kind(self.skip_type_syntax(expression)) {
-            ExprKind::Unary { op, operand } => {
-                let name = self.skip_type_syntax(operand);
-                let is_number_name = match hir[name].kind {
-                    ExprKind::Ident(known::Infinity | known::NaN) => {
-                        matches!(op, UnOp::Plus | UnOp::Minus)
-                            && matches!(self.bound.binding(name), Binding::Free)
-                    }
-                    _ => false,
-                };
-                is_number_name
-                    || matches!(
-                        op,
-                        UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof
-                    ) && self.is_literal_operand(operand)
-            }
-            ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }
-                if let Some(member) =
-                    self.find_named_enum_member(self.skip_type_syntax(expression)) =>
-            {
-                self.is_enum_member_known_when_parsed(member)
-            }
-            ExprKind::Ident(_) => {
-                let name = self.skip_type_syntax(expression);
-                self.find_printed_value(name).is_some()
-                    || self.find_literal_visited_again(name).is_some()
-            }
-            ExprKind::Dot { obj, .. } => {
-                matches!(hir[self.skip_type_syntax(obj)].kind, ExprKind::String(_))
-                    && matches!(
-                        hir.member_key(self.skip_type_syntax(expression)),
-                        Some((_, MemberKey::Name(known::length)))
-                    )
-            }
-
-            ExprKind::Binary { op, left, right } => {
-                is_computable(op)
-                    && self.is_literal_operand(right)
-                    && self.is_literal_operand(left)
-                    && self.is_computed(op, left, right)
-            }
-            ExprKind::Template { exprs } => {
-                let mut substitutions = hir.ids(exprs);
-                !exprs.is_empty() && substitutions.all(|part| self.is_literal_operand(part))
-            }
+            | ExprKind::Index { .. } => self.is_literal_operand(expression),
             _ => false,
         }
     }
@@ -975,11 +988,30 @@ impl FileLowering<'_, '_, '_, '_> {
             Some((other, hir[other].init.some()?))
         });
         match first {
-            Some((other, initializer)) => {
-                self.is_literal_operand(initializer)
-                    && (other == member || !self.is_text(initializer))
-            }
+            Some((other, initializer)) => match self.find_literal_kind(initializer) {
+                Some(LiteralKind::Number) => true,
+                Some(LiteralKind::String(_)) => other == member,
+                _ => false,
+            },
             None => index <= limit,
+        }
+    }
+
+    fn find_enum_member_value(&self, member: EnumMemberId) -> Option<Constant> {
+        let hir = self.hir;
+        let owner = self.bound.enum_member_owner[member.idx()].some()?;
+        let members = hir[owner].members;
+        let index = (member.0 - members.start) as usize;
+        let first = (0..=index)
+            .rev()
+            .find_map(|other| Some((other, hir[members.at(other)].init.some()?)));
+        match first {
+            Some((other, initializer)) if other == index => self.find_literal_value(initializer),
+            Some((other, initializer)) => match self.find_literal_value(initializer)? {
+                Constant::Number(start) => Some(Constant::Number(start + (index - other) as f64)),
+                _ => None,
+            },
+            None => Some(Constant::Number(index as f64)),
         }
     }
 
@@ -991,7 +1023,7 @@ impl FileLowering<'_, '_, '_, '_> {
             let inner = self.skip_type_syntax(part);
             let is_removed = match hir[inner].kind {
                 ExprKind::Ident(_) => match self.bound.binding(inner) {
-                    Binding::Free => false,
+                    Binding::Free => self.is_literal_operand(inner),
                     // It keeps a read of what `import { name }` or `import name` binds.
                     Binding::Symbol(symbol) => {
                         let mut declarations = self.bound.symbol(symbol).decls.iter();
@@ -1072,12 +1104,19 @@ impl FileLowering<'_, '_, '_, '_> {
         let hir = self.hir;
         let mut stack = vec![TreeNode::Expr(expression)];
         while let Some(node) = stack.pop() {
-            if let TreeNode::Expr(part) = node
-                && matches!(hir[part].kind, ExprKind::Ident(_))
-                && self.find_printed_value(part).is_none()
-                && self.find_literal_visited_again(part).is_some()
-            {
-                return true;
+            if let TreeNode::Expr(part) = node {
+                // `void a` is folded at the first visit.
+                if matches!(hir[part].kind, ExprKind::Unary { op: UnOp::Void, .. })
+                    && self.is_printed_as_undefined(part)
+                {
+                    continue;
+                }
+                if matches!(hir[part].kind, ExprKind::Ident(_))
+                    && self.find_printed_value(part).is_none()
+                    && self.find_literal_visited_again(part).is_some()
+                {
+                    return true;
+                }
             }
             push_children(hir, node, &mut stack);
         }
@@ -1147,25 +1186,31 @@ impl FileLowering<'_, '_, '_, '_> {
         {
             literal = self.skip_type_syntax(right);
         }
-        let is_true = match hir[literal].kind {
-            ExprKind::Null if op == BinOp::Nullish => return Some(false),
-            ExprKind::Unary {
-                op: UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof,
-                ..
-            } if op == BinOp::Nullish => return Some(true),
-            ExprKind::Null | ExprKind::False => false,
-            ExprKind::True => true,
-            ExprKind::Number(index) => {
-                let number = hir.numbers[index as usize];
-                number != 0.0 && !number.is_nan()
+        if op == BinOp::Nullish {
+            let printed = match hir[literal].kind {
+                ExprKind::Ident(_) => self.skip_to_initializer_visited_again(literal),
+                _ => literal,
+            };
+            let is_never_nullish = match hir[printed].kind {
+                ExprKind::Unary { op, .. } => matches!(
+                    op,
+                    UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof
+                ),
+                ExprKind::Binary { op, .. } => {
+                    !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma)
+                }
+                _ => false,
+            };
+            if is_never_nullish {
+                return Some(true);
             }
-            ExprKind::String(text) => text != known::empty,
-            _ => return None,
-        };
+            let kind = self.find_literal_kind(literal)?;
+            return Some(!matches!(kind, LiteralKind::Null | LiteralKind::Undefined));
+        }
+        let is_true = self.find_printed_condition(literal)?;
         Some(match op {
             BinOp::And => !is_true,
-            BinOp::Or => is_true,
-            _ => true,
+            _ => is_true,
         })
     }
 
@@ -1232,10 +1277,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.is_printed_as_specifier(branches.yes)
                     && self.is_printed_as_specifier(branches.no)
             }
-            _ => {
-                self.is_literal_operand(printed)
-                    && self.find_literal_kind(printed) == Some(LiteralKind::String)
-            }
+            _ => self.is_string_literal_operand(printed),
         }
     }
 
@@ -1315,83 +1357,257 @@ impl FileLowering<'_, '_, '_, '_> {
         (index.fract() == 0.0 && index >= 0.0 && hir.ids(elements).all(is_plain)).then_some(element)
     }
 
-    // Whether Bun's transpiler computes an operator whose operands are these two literals.
-    fn is_computed(&self, op: BinOp, left: ExprId, right: ExprId) -> bool {
-        let kinds = (self.find_literal_kind(left), self.find_literal_kind(right));
-        let (Some(left), Some(right)) = kinds else {
-            return false;
-        };
-        match (left, right) {
-            (LiteralKind::Number, LiteralKind::Number) => true,
-            (LiteralKind::String, LiteralKind::String) => {
-                is_equality(op)
-                    || matches!(
-                        op,
-                        BinOp::Add | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
-                    )
-            }
-            (LiteralKind::String, _) | (_, LiteralKind::String) => op == BinOp::Add,
-            _ => is_equality(op) && left == right,
+    // The kind of literal that Bun's transpiler prints in place of an expression, if it prints one.
+    // The operators of `a + b + c` are asked from the innermost on, so that each finds the answer for its left operand.
+    fn find_literal_kind(&self, expression: ExprId) -> Option<LiteralKind> {
+        let written = self.skip_type_syntax(expression);
+        if !matches!(self.hir[written].kind, ExprKind::Binary { .. }) {
+            return self.compute_literal_kind(written);
         }
-    }
-
-    // What kind of literal Bun's transpiler prints for an operand that it prints as a literal.
-    fn find_literal_kind(&self, operand: ExprId) -> Option<LiteralKind> {
-        let hir = self.hir;
-        let mut operand = self.skip_unprinted_syntax(operand);
-        loop {
-            let written = match self.find_named_enum_member(operand) {
-                Some(member) => match hir[member].init.some() {
-                    Some(initializer) => initializer,
-                    None => return Some(LiteralKind::Number),
-                },
-                None => match hir[operand].kind {
-                    ExprKind::Ident(_) => self
-                        .find_printed_value(operand)
-                        .or_else(|| self.find_literal_visited_again(operand))?,
-                    _ => break,
-                },
-            };
-            operand = self.skip_unprinted_syntax(written);
-        }
-        if let ExprKind::Binary { op, left, right } = hir[operand].kind {
-            if let Some(kind) = self.printed_operators.find_kind(operand) {
-                return kind;
-            }
-            let kind = self.find_computed_kind(op, left, right);
-            let mut kinds = self.printed_operators.kinds.borrow_mut();
-            kinds.insert(operand, kind);
+        if let Some(kind) = self.printed_operators.find_kind(written) {
             return kind;
         }
-        // `"ab".length`
-        if matches!(hir.written_kind(operand), ExprKind::Dot { .. })
-            && self.is_printed_as_literal(operand)
+        let mut row: SmallVec<[ExprId; 8]> = smallvec![written];
+        while let Some(left) = self.find_deciding_left_operator(row[row.len() - 1])
+            && self.printed_operators.find_kind(left).is_none()
         {
-            return Some(LiteralKind::Number);
+            row.push(left);
         }
-        match self.decisions().constant(hir, operand) {
-            FoldedValue::Constant(Constant::Number(_)) => Some(LiteralKind::Number),
-            FoldedValue::Constant(Constant::String(_)) => Some(LiteralKind::String),
-            FoldedValue::Constant(Constant::Boolean(_)) => Some(LiteralKind::Boolean),
-            FoldedValue::Constant(Constant::Null) => Some(LiteralKind::Null),
-            FoldedValue::Constant(Constant::Undefined) => Some(LiteralKind::Undefined),
-            FoldedValue::Constant(Constant::BigInt(_)) => Some(LiteralKind::BigInt),
+        let mut kind = None;
+        for &operator in row.iter().rev() {
+            kind = self.compute_literal_kind(operator);
+            self.printed_operators.remember_kind(operator, kind);
+        }
+        kind
+    }
+
+    fn compute_literal_kind(&self, expression: ExprId) -> Option<LiteralKind> {
+        let hir = self.hir;
+        let printed = self.skip_unprinted_syntax(expression);
+        if let Some(member) = self.find_named_enum_member(printed) {
+            if !self.is_enum_member_known_when_parsed(member) {
+                return None;
+            }
+            return match hir[member].init.some().map(|it| self.find_literal_kind(it)) {
+                Some(Some(LiteralKind::String(StringForm::Rope))) => {
+                    Some(LiteralKind::String(StringForm::Flat))
+                }
+                Some(kind) => kind,
+                None => Some(LiteralKind::Number),
+            };
+        }
+        let form_of = |text: Atom| match self.queries.atom_bytes(text).is_ascii() {
+            true => StringForm::Flat,
+            false => StringForm::Utf16,
+        };
+        match hir.written_kind(printed) {
+            ExprKind::Null => Some(LiteralKind::Null),
+            ExprKind::True | ExprKind::False => Some(LiteralKind::Boolean),
+            ExprKind::Number(_) => Some(LiteralKind::Number),
+            ExprKind::BigInt(_) => Some(LiteralKind::BigInt),
+            ExprKind::String(text) => Some(LiteralKind::String(form_of(text))),
+            ExprKind::Template { exprs } => {
+                let is_ascii = |kind| kind != LiteralKind::String(StringForm::Utf16);
+                let mut texts = hir.ids(hir.template_texts(exprs));
+                match texts.all(|text| form_of(text) == StringForm::Flat) {
+                    true => hir
+                        .ids(exprs)
+                        .all(|part| self.find_literal_kind(part).is_some_and(is_ascii))
+                        .then_some(LiteralKind::String(StringForm::Flat)),
+                    false => exprs
+                        .is_empty()
+                        .then_some(LiteralKind::String(StringForm::Utf16)),
+                }
+            }
+            ExprKind::Ident(name) if matches!(self.bound.binding(printed), Binding::Free) => {
+                match name {
+                    known::undefined => Some(LiteralKind::Undefined),
+                    known::Infinity | known::NaN => Some(LiteralKind::Number),
+                    _ => None,
+                }
+            }
+            ExprKind::Ident(_) => {
+                let value = self
+                    .find_printed_value(printed)
+                    .or_else(|| self.find_literal_visited_again(printed))?;
+                self.find_literal_kind(value)
+            }
+            ExprKind::Dot { obj, .. } => {
+                let is_length = matches!(
+                    hir.member_key(printed),
+                    Some((_, MemberKey::Name(known::length)))
+                );
+                let is_string =
+                    || matches!(self.find_literal_kind(obj), Some(LiteralKind::String(_)));
+                (is_length && is_string()).then_some(LiteralKind::Number)
+            }
+            ExprKind::Unary { op: UnOp::Void, .. } => self
+                .is_printed_as_undefined(printed)
+                .then_some(LiteralKind::Undefined),
+            ExprKind::Unary { op, operand } => {
+                let operand = self.find_literal_kind(operand)?;
+                match op {
+                    UnOp::Plus | UnOp::Minus | UnOp::BitNot => match operand {
+                        LiteralKind::BigInt
+                        | LiteralKind::String(StringForm::Rope | StringForm::Utf16) => None,
+                        _ => Some(LiteralKind::Number),
+                    },
+                    UnOp::Not => Some(LiteralKind::Boolean),
+                    UnOp::Typeof => Some(LiteralKind::String(StringForm::Flat)),
+                    _ => None,
+                }
+            }
+            ExprKind::Binary { op, left, right } if is_computable(op) => {
+                let (left, right) = self.printed_operands(op, left, right);
+                let right_kind = self.find_literal_kind(right)?;
+                let left_kind = self.find_literal_kind(left)?;
+                let is_number_comparison = left_kind == LiteralKind::Number
+                    && matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge);
+                match !is_number_comparison || self.is_comparison_folded(left, right) {
+                    true => find_folded_kind(op, left_kind, right_kind),
+                    false => None,
+                }
+            }
             _ => None,
         }
     }
 
-    fn find_computed_kind(&self, op: BinOp, left: ExprId, right: ExprId) -> Option<LiteralKind> {
-        let kinds = (
-            self.find_literal_kind(left)?,
-            self.find_literal_kind(right)?,
-        );
-        let is_text = matches!(kinds, (LiteralKind::String, _) | (_, LiteralKind::String));
-        Some(match op {
-            BinOp::Add if is_text => LiteralKind::String,
-            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => LiteralKind::Boolean,
-            _ if is_equality(op) => LiteralKind::Boolean,
-            _ => LiteralKind::Number,
-        })
+    // Bun's transpiler folds `<` over two numbers unless one is NaN, or both are finite and one is beyond the safe integers.
+    fn is_comparison_folded(&self, left: ExprId, right: ExprId) -> bool {
+        const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
+        let values = [left, right].map(|operand| self.find_literal_value(operand));
+        let [Some(Constant::Number(left)), Some(Constant::Number(right))] = values else {
+            return true;
+        };
+        !left.is_nan()
+            && !right.is_nan()
+            && (left.is_infinite()
+                || right.is_infinite()
+                || left.abs().max(right.abs()) <= MAX_SAFE_INTEGER)
+    }
+
+    pub(in crate::lower) fn is_literal_operand(&self, expression: ExprId) -> bool {
+        self.find_literal_kind(expression).is_some()
+    }
+
+    pub(in crate::lower) fn is_string_literal_operand(&self, expression: ExprId) -> bool {
+        matches!(
+            self.find_literal_kind(expression),
+            Some(LiteralKind::String(_))
+        )
+    }
+
+    fn is_rope(&self, expression: ExprId) -> bool {
+        self.find_literal_kind(expression) == Some(LiteralKind::String(StringForm::Rope))
+    }
+
+    // Whether Bun's transpiler prints the literal wherever the name of a constant that is initialized with it stands.
+    pub(in crate::lower) fn can_be_constant_value(&self, initializer: ExprId) -> bool {
+        let is_inlined = match self.find_literal_kind(initializer) {
+            Some(LiteralKind::BigInt | LiteralKind::String(StringForm::Rope)) | None => false,
+            Some(_) => true,
+        };
+        // It decides at the first visit, where a variable that is used once still stands in the initializer.
+        is_inlined && !self.becomes_literal_when_visited_again(initializer)
+    }
+
+    fn find_value_known_to_build(&self, expression: ExprId) -> Option<Constant> {
+        match self.decisions().constant(self.hir, expression) {
+            FoldedValue::Constant(value) | FoldedValue::ConstantOutsideDeadZone(value) => {
+                Some(value)
+            }
+            FoldedValue::Unknown => None,
+        }
+    }
+
+    // The value of the literal that Bun's transpiler prints in place of an expression, if it prints one.
+    fn find_literal_value(&self, expression: ExprId) -> Option<Constant> {
+        self.find_literal_kind(expression)?;
+        let written = self.skip_type_syntax(expression);
+        if !matches!(self.hir[written].kind, ExprKind::Binary { .. }) {
+            return self.compute_literal_value(written);
+        }
+        if let Some(value) = self.printed_operators.find_value(written) {
+            return value;
+        }
+        let mut row: SmallVec<[ExprId; 8]> = smallvec![written];
+        while self.find_value_known_to_build(row[row.len() - 1]).is_none()
+            && let Some(left) = self.find_deciding_left_operator(row[row.len() - 1])
+            && self.printed_operators.find_value(left).is_none()
+        {
+            row.push(left);
+        }
+        let mut value = None;
+        for &operator in row.iter().rev() {
+            value = self.compute_literal_value(operator);
+            self.printed_operators.remember_value(operator, value);
+        }
+        value
+    }
+
+    fn compute_literal_value(&self, expression: ExprId) -> Option<Constant> {
+        let hir = self.hir;
+        let printed = self.skip_unprinted_syntax(expression);
+        if let Some(value) = self.find_value_known_to_build(printed) {
+            return Some(value);
+        }
+        if let Some(member) = self.find_named_enum_member(printed) {
+            return self.find_enum_member_value(member);
+        }
+        let atoms = &self.queries.files().atoms;
+        match hir.written_kind(printed) {
+            ExprKind::Ident(name) if matches!(self.bound.binding(printed), Binding::Free) => {
+                match name {
+                    known::undefined => Some(Constant::Undefined),
+                    known::Infinity => Some(Constant::Number(f64::INFINITY)),
+                    known::NaN => Some(Constant::Number(f64::NAN)),
+                    _ => None,
+                }
+            }
+            ExprKind::Ident(_) => {
+                let value = self
+                    .find_printed_value(printed)
+                    .or_else(|| self.find_literal_visited_again(printed))?;
+                self.find_literal_value(value)
+            }
+            ExprKind::Dot { obj, .. } => match self.find_literal_value(obj)? {
+                Constant::String(text) => {
+                    let units = self
+                        .queries
+                        .atom_bytes(text)
+                        .iter()
+                        .map(|&byte| match byte {
+                            0x80..=0xBF => 0,
+                            0xF0.. => 2,
+                            _ => 1,
+                        });
+                    Some(Constant::Number(f64::from(units.sum::<u32>())))
+                }
+                _ => None,
+            },
+            ExprKind::Template { exprs } => {
+                let mut texts = hir.ids(hir.template_texts(exprs)).map(Constant::String);
+                let mut joined = texts.next()?;
+                for (part, text) in hir.ids(exprs).zip(texts) {
+                    for next in [self.find_literal_value(part)?, text] {
+                        joined = fold::apply_binary(atoms, BinOp::Add, [joined, next], usize::MAX)?;
+                    }
+                }
+                Some(joined)
+            }
+            ExprKind::Unary { op: UnOp::Void, .. } => Some(Constant::Undefined),
+            ExprKind::Unary { op, operand } => {
+                fold::apply_unary(atoms, op, self.find_literal_value(operand)?)
+            }
+            ExprKind::Binary { op, left, right } => {
+                let operands = [
+                    self.find_literal_value(left)?,
+                    self.find_literal_value(right)?,
+                ];
+                fold::apply_binary(atoms, op, operands, usize::MAX)
+            }
+            _ => None,
+        }
     }
 
     // Bun's transpiler moves a literal on the left of an equality operator to the right.
@@ -1404,44 +1620,14 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.runs_as_written() {
             return (left, right);
         }
+        // It decides at the first visit, where a variable that is used once still stands in the operand.
         let is_moved = |operand| {
-            let printed = self.skip_unprinted_syntax(operand);
-            match self.hir[printed].kind {
-                ExprKind::BigInt(_) => true,
-                ExprKind::Ident(name) => {
-                    name == known::undefined && matches!(self.bound.binding(printed), Binding::Free)
-                }
-                _ => self.is_literal_operand(printed),
-            }
+            self.is_literal_operand(operand) && !self.becomes_literal_when_visited_again(operand)
         };
         match is_equality(op) && is_moved(left) && !is_moved(right) {
             true => (right, left),
             false => (left, right),
         }
-    }
-
-    // The operators of `a + b + c` are asked from the innermost on, so that each finds the answer for its left operand.
-    pub(in crate::lower) fn is_literal_operand(&self, expression: ExprId) -> bool {
-        let written = self.skip_type_syntax(expression);
-        if !matches!(self.hir[written].kind, ExprKind::Binary { .. }) {
-            return self.is_printed_literal(written);
-        }
-        if let Some(is_literal) = self.printed_operators.find_literal(written) {
-            return is_literal;
-        }
-        let mut row: SmallVec<[ExprId; 8]> = smallvec![written];
-        while let Some(left) = self.find_deciding_left_operator(row[row.len() - 1])
-            && self.printed_operators.find_literal(left).is_none()
-        {
-            row.push(left);
-        }
-        let mut is_literal = false;
-        for &operator in row.iter().rev() {
-            is_literal = self.is_printed_literal(operator);
-            let mut literals = self.printed_operators.literals.borrow_mut();
-            literals.insert(operator, is_literal);
-        }
-        is_literal
     }
 
     // The left operand of an operator, where that is an operator which decides what is printed for this one.
@@ -1451,21 +1637,8 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         let left = self.skip_type_syntax(left);
         let is_deciding = matches!(self.hir[left].kind, ExprKind::Binary { .. })
-            && (op == BinOp::Comma || is_computable(op) && self.is_literal_operand(right));
+            && (!is_computable(op) || self.is_literal_operand(right));
         is_deciding.then_some(left)
-    }
-
-    fn is_printed_literal(&self, expression: ExprId) -> bool {
-        let inner = self.skip_unprinted_syntax(expression);
-        match self.hir[inner].kind {
-            ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::String(_) => true,
-            ExprKind::Template { exprs } => exprs.is_empty(),
-            _ => self.is_printed_as_literal(inner),
-        }
     }
 
     // `undefined` and `void 0`, which Bun's transpiler prints `void 0`.
@@ -1478,22 +1651,14 @@ impl FileLowering<'_, '_, '_, '_> {
             ExprKind::Unary {
                 op: UnOp::Void,
                 operand,
-            } => self.is_literal_operand(operand),
-            _ => false,
-        }
-    }
-
-    pub(in crate::lower) fn is_text(&self, expression: ExprId) -> bool {
-        match self.hir[self.skip_type_syntax(expression)].kind {
-            ExprKind::String(_) => true,
-            ExprKind::Template { exprs } => exprs.is_empty(),
+            } => self.is_removed_when_unused(operand),
             _ => false,
         }
     }
 
     // `x + "a" + "b"` is printed `x + "ab"`.
     fn is_joined_with_text_on_the_left(&self, left: ExprId, right: ExprId) -> bool {
-        let left = self.hir[self.skip_type_syntax(left)].kind;
+        let left = self.hir[self.skip_to_initializer_visited_again(left)].kind;
         let ExprKind::Binary {
             op: BinOp::Add,
             right: middle,
@@ -1502,37 +1667,18 @@ impl FileLowering<'_, '_, '_, '_> {
         else {
             return false;
         };
-        self.is_text(middle) && self.is_text(right)
+        let is_ascii = |kind| kind != LiteralKind::String(StringForm::Utf16);
+        let middle = self.find_literal_kind(middle);
+        matches!(middle, Some(kind @ LiteralKind::String(_)) if is_ascii(kind))
+            && self.find_literal_kind(right).is_some_and(is_ascii)
     }
 
     // Of `true ? a : b` Bun's transpiler prints `a`.
     pub(in crate::lower) fn find_printed_condition(&self, test: ExprId) -> Option<bool> {
-        let hir = self.hir;
-        let test = self.skip_type_syntax(test);
-        match hir[test].kind {
-            ExprKind::True => Some(true),
-            ExprKind::False | ExprKind::Null => Some(false),
-            _ if self.is_printed_as_undefined(test) => Some(false),
-            ExprKind::Unary {
-                op: UnOp::Not,
-                operand,
-            } => self.find_printed_condition(operand).map(|is_true| !is_true),
-            ExprKind::Ident(_)
-                if let Some(value) = self
-                    .find_printed_value(test)
-                    .or_else(|| self.find_literal_visited_again(test)) =>
-            {
-                self.find_printed_condition(value)
-            }
-            _ if !self.is_literal_operand(test) => None,
-            _ => match self.decisions().constant(hir, test) {
-                FoldedValue::Constant(Constant::Boolean(value)) => Some(value),
-                FoldedValue::Constant(Constant::Number(value)) => {
-                    Some(value != 0.0 && !value.is_nan())
-                }
-                FoldedValue::Constant(Constant::String(value)) => Some(value != known::empty),
-                _ => None,
-            },
+        let value = self.find_literal_value(test)?;
+        match fold::apply_unary(&self.queries.files().atoms, UnOp::Not, value)? {
+            Constant::Boolean(is_false) => Some(!is_false),
+            _ => None,
         }
     }
 
@@ -1749,7 +1895,7 @@ fn find_locked_builtin(
     file: &FileLowering<'_, '_, '_, '_>,
     expression: ExprId,
 ) -> Option<BuiltinId> {
-    match file.builtins.of_expr(expression) {
+    match file.builtins.of_pure_expr(expression) {
         Some(Resolved::Builtin(path)) => path.locked_builtin(),
         Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => None,
     }

@@ -84,6 +84,8 @@ row('optional_chain', 'r ^= p.nn?.f ?? 0: the reference is there', group='fields
     ts=('(p: T): number', 'let r = 0;', 'r ^= p.nn?.f{i} ?? 0;', 'r'), go=('(p *T) int64', 'var r int64', 'if p.nn != nil { r ^= p.nn.f[{i}] }', 'r'), cc=('long %s(T* p)', 'long r = 0;', 'if (p->nn) r ^= p->nn->f[{i}];', 'r'), call='x ^= F(a)')
 row('getter_call', 'r ^= o.size with `get size()` of a class nobody extends', group='fields',
     ts=('(o: WithGetter, r: number): number', '', 'r = (r + o.size) | 0;', 'r'), go=('(o *WithGetter, r int64) int64', '', 'r = r + o.Size()', 'r'), cc=('long %s(WithGetter* o, long r)', '', 'r = r + o->size();', 'r'), call={'ts': 'x = F((i & 1) === 0 ? wA : wB, x)', 'go': 'x = F(wg[i & 1], x)', 'cc': 'x = F(wg[i & 1], x)'})
+row('getter_call_other', 'r += o.size; o = o.other: the getter of another object at each site, so no two reads are one', group='fields', less='field_read',
+    ts=('(o: WithGetter2, r: number): number', '', 'r = (r + o.size) | 0; o = o.other;', 'r'), go=('(o *WithGetter2, r int64) int64', '', 'r = r + o.Size(); o = o.other', 'r'), cc=('long %s(WithGetter2* o, long r)', '', 'r = r + o->size(); o = o->other;', 'r'), call={'ts': 'x = F((i & 1) === 0 ? wC : wD, x)', 'go': 'x = F(wg2[i & 1], x)', 'cc': 'x = F(wg2[i & 1], x)'})
 # ---- numbers
 row('add_int', 'r = (r + p.f) | 0: an integer added (with the read of a field)', group='numbers',
     ts=('(p: T, r: number): number', '', 'r = (r + p.f{i}) | 0;', 'r'), go=('(p *T, r int64) int64', '', 'r = r + p.f[{i}]', 'r'), cc=('long %s(T* p, long r)', '', 'r = r + p->f[{i}];', 'r'), call='x = F(a, x)')
@@ -288,6 +290,10 @@ row('throw_catch', 'try { throw new Error("x") } catch { r += 1 }: thrown and ca
     ts=('(r: number): number', '', 'try { if (r >= 0) throw new Error("x"); } catch (e) { r = (r + {i1}) | 0; }', 'r'),
     go=('(r int64) int64', '', 'func() { defer func() { if recover() != nil { r = r + {i1} } }(); if r >= 0 { panic(errX) } }()', 'r'),
     cc=('long %s(long r)', '', 'try { if (r >= 0) throw std::runtime_error("x"); } catch (std::exception&) { r = r + {i1}; }', 'r'), call='x = F(x & 65535)')
+row('throw_catch_read', 'try { throw new Error("x") } catch (e) { r += e.message.length }: the same, and the handler reads the error, so it has to be made', group='calls', heavy=1,
+    ts=('(r: number): number', '', 'try { if (r >= 0) throw new Error("x"); } catch (e) { r = (r + (e as Error).message.length + {i1}) | 0; }', 'r'),
+    go=('(r int64) int64', '', 'func() { defer func() { if e := recover(); e != nil { r = r + int64(len(e.(error).Error())) + {i1} } }(); if r >= 0 { panic(errors.New("x")) } }()', 'r'),
+    cc=('long %s(long r)', '', 'try { if (r >= 0) throw std::runtime_error("x"); } catch (std::exception& e) { r = r + (long)strlen(e.what()) + {i1}; }', 'r'), call='x = F(x & 65535)')
 # ---- objects born inside objects
 row('nested_read', 'r ^= p.c.d; p = p.next: a field of the object that p was born with in its field c (Go, C++: a struct held by value)', group='fields', less='field_read',
     ts=('(p: NS): number', 'let r = 0;', 'r ^= p.c.d; p = p.next;', 'r'), go=('(p *NS) int64', 'var r int64', 'r ^= p.c.d; p = p.next', 'r'), cc=('long %s(NS* p)', 'long r = 0;', 'r ^= p->c.d; p = p->next;', 'r'),
@@ -351,6 +357,9 @@ row('table_literal', 'LR[k] = a table of 24 constant objects { k, v } (Go, C++: 
 row('object_spread', 'p = { ...p, a: k }: three fields; the collector included (Go, C++: a struct copied by value)', group='allocation',
     ts=('(p: P3): P3', '', 'p = { ...p, a: {i} };', 'p'), go=('(p P3) P3', '', '{ q := p; q.a = {i}; p = q }', 'p'), cc=('P3 %s(P3 p)', '', '{ P3 q = p; q.a = {i}; p = q; }', 'p'),
     call={'ts': 'ring4[i & 7] = F(ring4[(i + 1) & 7])', 'go': 'p3 = F(p3)', 'cc': 'p3 = F(p3)'}, final={'ts': ' ^ walk4()', 'go': ' ^ p3.a ^ p3.b', 'cc': ' ^ p3.a ^ p3.b'})
+row('object_spread_kept', 'p = { ...p, a: k }: the same, against a struct on the heap in Go (new, copy, one store): both sides make an object', group='allocation',
+    ts=('(p: P3): P3', '', 'p = { ...p, a: {i} };', 'p'), go=('(p *P3) *P3', '', '{ q := new(P3); *q = *p; q.a = {i}; p = q }', 'p'), cc=None,
+    call={'ts': 'ring4[i & 7] = F(ring4[(i + 1) & 7])', 'go': 'ring4g[i & 7] = F(ring4g[(i + 1) & 7])'}, final={'ts': ' ^ walk4()', 'go': ' ^ walk4g()'})
 # ---- tests of type
 row('typeof_test', 'if (typeof p.u === "string") r ^= k: a field of type string | number (half are strings)', group='type tests',
     ts=('(p: TU): number', 'let r = 0;', 'if (typeof p.u{i} === "string") r ^= {i1};', 'r'), go=('(p *TU) int64', 'var r int64', 'if _, ok := p.u[{i}].(string); ok { r ^= {i1} }', 'r'), cc=('long %s(TU* p)', 'long r = 0;', 'if (std::holds_alternative<std::string>(p->u[{i}])) r ^= {i1};', 'r'), call='x ^= F(UU0)')
@@ -446,6 +455,8 @@ item('K', 'class K { k: number; constructor(k: number) { this.k = k; } m(a: numb
 item('KF', 'class KF { k: number; constructor(k: number) { this.k = k; } m(a: number): number { ' + TSB + 'return (a + this.k) | 0; } }\nObject.freeze(KF.prototype);')
 item('WithGetter', 'class WithGetter { n: number; constructor(n: number) { this.n = n | 0; } get size(): number { return this.n; } }')
 item('wA wB', 'const wA = new WithGetter(LEN), wB = new WithGetter(LEN + 1);')
+item('WithGetter2', 'class WithGetter2 { n: number; other: WithGetter2; constructor(n: number) { this.n = n | 0; this.other = this; } get size(): number { return this.n; } }')
+item('wC wD', 'const wC = new WithGetter2(LEN), wD = new WithGetter2(LEN + 1); wC.other = wD; wD.other = wC;')
 item('P3', 'interface P3 { a: number; b: number; c: number; }')
 item('ring4 walk4', 'const ring4: P3[] = []; for (let i = 0; i < 8; ++i) ring4.push({ a: i + LEN, b: i, c: LEN });\nfunction walk4(): number { let r = 0; for (const p of ring4) r = (r + p.a + p.b + p.c) | 0; return r; }')
 item('bytes', 'const bytes = new Uint8Array(64); for (let i = 0; i < 64; ++i) bytes[i] = (i * 7 + 1) & 31;')
@@ -612,6 +623,7 @@ for t in ('V1', 'V2'):
 go.append('type Shape interface { isShape() }\ntype Circle struct { next Shape; r int64 }\ntype Square struct { next Shape; pad, s int64 }\nfunc (*Circle) isShape() {}\nfunc (*Square) isShape() {}')
 go.append('type TU struct { u [16]any }\ntype BaseI interface { Z() int64 }\ntype D1 struct { z, p1 int64 }\ntype D2 struct { z int64; p2 string }\nfunc (d *D1) Z() int64 { return d.z }\nfunc (d *D2) Z() int64 { return d.z }\ntype TB struct { b [16]BaseI }')
 go.append('type I interface { M(int64) int64 }\ntype I1 struct { k int64 }\ntype I2 struct { j string; k int64 }\ntype K struct { k int64 }')
+go.append('type WithGetter2 struct { n int64; other *WithGetter2 }\nfunc (o *WithGetter2) Size() int64 { return o.n }\nvar wg2 [2]*WithGetter2; var ring4g [8]*P3\nfunc walk4g() int64 { var r int64; for _, p := range ring4g { r = r + p.a + p.b + p.c }; return r }')
 go.append('type WithGetter struct { n int64 }\nfunc (o *WithGetter) Size() int64 { return o.n }\ntype P3 struct { a, b, c int64 }\nvar wg [2]*WithGetter; var p3 P3; var bytes []byte; var sinkl []int64; var re1 = regexp.MustCompile(`^t\\d+$`); var re2 = regexp.MustCompile(`^t(\\d+)$`); var re3 = regexp.MustCompile(`\\d+`); var errX = errors.New("x")')
 go.append('type Rec struct { Id int64 `json:"id"`; Name string `json:"name"`; Ok bool `json:"ok"`; Tags []string `json:"tags"` }')
 go.append('type Lit struct { Id int64 `json:"id"`; Name string `json:"name"`; Ok bool `json:"ok"` }\ntype Rec2 struct { Head *Rec `json:"head"`; Tail *Rec `json:"tail"`; Label string `json:"label"` }\ntype Note struct { Role string `json:"role"`; Text string `json:"text"` }\nvar rec2 *Rec2; var recs []*Rec; var recAny any; var note, wideNote *Note')
@@ -662,6 +674,7 @@ func main() {
 	two = []func(int64) int64{''' + sixteen(2, 'arrow%d(%s)') + '''}; many = []func(int64) int64{''' + sixteen(ARROWS, 'arrow%d(%s)') + '''}; bigs = [2]func(int64) int64{makeBig(LEN), makeBig(LEN + 1)}
 	ho := [16]*Holder{}; for j := range ho { ho[j] = &Holder{f: many[j]} }; for j := range ho { ho[j].next = ho[(j + 1) & 15] }; HO0 = ho[0]
 	for j := range caps { caps[j] = &Cap{text: codes}; for i := range caps[j].c { caps[j].c[i] = LEN + int64(j) + int64(i) } }
+	wg2 = [2]*WithGetter2{{n: LEN}, {n: LEN + 1}}; wg2[0].other = wg2[1]; wg2[1].other = wg2[0]; for i := int64(0); i < 8; i++ { ring4g[i] = &P3{i + LEN, i, LEN} }
 	wg = [2]*WithGetter{{LEN}, {LEN + 1}}; p3 = P3{LEN, 1, LEN}; bytes = make([]byte, 64); for i := range bytes { bytes[i] = byte((i * 7 + 1) & 31) }
 	rec = &Rec{LEN + 1000, WORD + "-name", LEN > 0, []string{WORD, os.Args[5]}}; textb, _ = json.Marshal(rec)
 	rec2 = &Rec2{rec, &Rec{LEN, WORD, LEN < 0, []string{}}, WORD}; for i := int64(0); i < 8; i++ { recs = append(recs, &Rec{LEN + i, WORD + strconv.FormatInt(i, 10), i & 1 == 0, []string{WORD, os.Args[5]}}) }; json.Unmarshal(textb, &recAny)
@@ -680,11 +693,12 @@ h.append('struct T2 { T2* next; long a, b; };\nstruct Opt { Opt* next; std::opti
 h.append('struct TU { std::variant<std::string, long> u[16]; };\nstruct Base { long z; virtual ~Base(); };\nstruct D1 : Base { long p1; };\nstruct D2 : Base { std::string p2; };\nstruct TB { Base* b[16]; };')
 h.append('struct V { virtual long M(long) = 0; };\nstruct K { long k; long m(long); };\nstruct B { virtual ~B(); };\nstruct D : B { B* other; };')
 h.append('struct Holder { Holder* next; std::function<long(long)> f; };')
+h.append('struct WithGetter2 { long n; WithGetter2* other; long size() const { return n; } };')
 h.append('struct WithGetter { long n; long size() const { return n; } };\nstruct P3 { long a, b, c; };\nextern std::regex re1;')
 h.append('extern long ' + ', '.join('G%d' % i for i in R16) + ';')
 h.append('struct Cap { std::string text; long c[16]; };\nvoid capSet(Cap*, const std::string&, long); long capSum(Cap*); long capInner(Cap*, long);')
 h.append('long g1(long); long h1(long); long g3(long, long, long); long gs(std::string_view, long); std::string gi(std::string);')
-rc = ['#include "kit.h"']; mc = ['#include "kit.h"', '#include <cstdio>', '#include <cstdlib>', '#include <cstring>', '#include <map>']
+rc = ['#include "kit.h"', '#include <cstring>']; mc = ['#include "kit.h"', '#include <cstdio>', '#include <cstdlib>', '#include <cstring>', '#include <map>']
 ccnames = []
 for r in ROWS:
     if not r['cc']: continue
@@ -695,7 +709,7 @@ for r in ROWS:
         rc.append('%s {\n%s    %s\n    %s\n}' % (sig % f, '    ' + pre + '\n' if pre else '', '\n    '.join(sites(site, n)), 'return %s;' % ret if ret else ''))
 mc.append('long ' + ', '.join('G%d' % i for i in R16) + ';')
 mc.append('std::vector<std::string_view> LS[16]; std::vector<std::string> LJ[16]; std::vector<KV> LR[16];')
-mc.append('Base::~Base() {} B::~B() {}\nstd::regex re1("^t\\\\d+$"); static WithGetter* wg[2]; static P3 p3; static std::vector<unsigned char> bytes;')
+mc.append('Base::~Base() {} B::~B() {}\nstd::regex re1("^t\\\\d+$"); static WithGetter* wg[2]; static WithGetter2* wg2[2]; static P3 p3; static std::vector<unsigned char> bytes;')
 mc.append('struct I1 : V { long k; long M(long a) override { ' + CCB + 'return a + k; } };\nstruct I2 : V { std::string j; long k; long M(long a) override { ' + CCB + 'return a + k + 1; } };\nlong K::m(long a) { ' + CCB + 'return a + k; }')
 mc.append('static Cap* caps[2];\nvoid capSet(Cap* s, const std::string& t, long v) { s->text = t; for (long& c : s->c) c += v; }\nlong capSum(Cap* s) { long r = s->text.size(); for (long c : s->c) r ^= c; return r; }\nlong capInner(Cap* s, long a) { ' + CCB + 'return a + s->c[0]; }')
 mc.append('long g1(long a) { ' + CCB + 'return a + G0; }\nlong h1(long a) { ' + CCB + 'return a + G1; }\nlong g3(long a, long b, long c) { ' + CCB + 'return a + b + c + G0; }\nlong gs(std::string_view s, long a) { ' + CCB + 'return a + (long)s.size() + G0; }\nstd::string gi(std::string s) { ' + CCB + 'return s; }')
@@ -738,6 +752,7 @@ int main(int argc, char** argv) {
     long c0 = LEN, c1 = LEN + 1; cs[0] = [c0](long a) { ''' + CCB + '''return a + c0; }; cs[1] = [c1](long a) { ''' + CCB + '''return a + c1; };
     two = { ''' + sixteen(2, 'arrow%d(%s)') + ''' }; many = { ''' + sixteen(ARROWS, 'arrow%d(%s)') + ''' }; bigs[0] = makeBig(LEN); bigs[1] = makeBig(LEN + 1);
     { static Holder ho[16]; for (int j = 0; j < 16; ++j) { ho[j].f = many[j]; ho[j].next = &ho[(j + 1) & 15]; } HO0 = &ho[0]; }
+    wg2[0] = new WithGetter2{LEN, nullptr}; wg2[1] = new WithGetter2{LEN + 1, wg2[0]}; wg2[0]->other = wg2[1];
     wg[0] = new WithGetter{LEN}; wg[1] = new WithGetter{LEN + 1}; p3 = P3{LEN, 1, LEN}; for (int i = 0; i < 64; ++i) bytes.push_back((i * 7 + 1) & 31);
     for (long j = 0; j < 2; ++j) { caps[j] = new Cap(); caps[j]->text = codes; for (long i = 0; i < 16; ++i) caps[j]->c[i] = LEN + j + i; }
     ks[0] = new K{LEN}; ks[1] = new K{LEN + 1}; bs[0] = std::bind_front(&K::m, ks[0]); bs[1] = std::bind_front(&K::m, ks[1]);

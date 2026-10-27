@@ -20,6 +20,12 @@ fn member_holder(id: BuiltinId) -> BuiltinId {
     }
 }
 
+struct KeyName {
+    name: BuiltinName,
+    mutability: Mutability,
+    has_side_effects: bool,
+}
+
 impl Resolver<'_, '_> {
     pub(super) fn path_of_member(
         &self,
@@ -118,13 +124,21 @@ impl Resolver<'_, '_> {
         ExprState::of_path(self.find_global(name))
     }
 
-    fn find_key_name(&self, key: MemberKey) -> Option<(BuiltinName, Mutability)> {
+    fn find_key_name(&self, key: MemberKey) -> Option<KeyName> {
         match key {
-            MemberKey::Name(name) => Some((self.input.names.get(name)?, Mutability::AlwaysLocked)),
+            MemberKey::Name(name) => Some(KeyName {
+                name: self.input.names.get(name)?,
+                mutability: Mutability::AlwaysLocked,
+                has_side_effects: false,
+            }),
             MemberKey::Computed(computed) => {
-                let key = self.value_of(computed)?.path;
-                let symbol = table::well_known_symbol(key.id)?;
-                Some((table::name_of_symbol(symbol), key.mutability))
+                let key = self.value_of(computed)?;
+                let symbol = table::well_known_symbol(key.path.id)?;
+                Some(KeyName {
+                    name: table::name_of_symbol(symbol),
+                    mutability: key.path.mutability,
+                    has_side_effects: key.has_side_effects,
+                })
             }
             MemberKey::PrivateName(_) => None,
         }
@@ -151,17 +165,22 @@ impl Resolver<'_, '_> {
         }
         let module_object = find_module_object_in(holder);
         let is_held = held.is_some() || known.is_none() || module_object.is_some();
+        let has_side_effects = holder.has_side_effects;
         let holder = module_object.unwrap_or(holder);
-        let Some((name, key_mutability)) = self.find_key_name(key) else {
+        let Some(key) = self.find_key_name(key) else {
             return ExprState::Unresolved;
         };
-        let Some(path) = self.find_member(holder, name) else {
+        let Some(path) = self.find_member(holder, key.name) else {
             return ExprState::Unresolved;
         };
         let member = ResolvedValue::object(BuiltinPath {
             id: path.id,
-            mutability: path.mutability.min(key_mutability),
+            mutability: path.mutability.min(key.mutability),
         });
+        let member = match has_side_effects || key.has_side_effects {
+            true => member.with_side_effects(),
+            false => member,
+        };
         match is_held {
             true => ExprState::Held(member),
             false => ExprState::Builtin(member),

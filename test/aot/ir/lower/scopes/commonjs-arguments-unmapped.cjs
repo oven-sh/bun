@@ -1,5 +1,5 @@
 // RUN: lower
-// CHECK: function {{*}}kind=CommonJsModule thisType
+// CHECK: function {{*}}kind=CommonJsModule flags=[IsHiddenInStackTraces] thisType
 // CHECK: [[made]] = FinishObject
 // CHECK: = CallDirect [[made]], {{*}}, [[made]], {{*}}function=[[wrapper]]
 // CHECK: function [[wrapper]] module={{*}}flags=[HasThis, HasArgumentCount, HasHiddenRest] length=5

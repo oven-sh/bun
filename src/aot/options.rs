@@ -75,29 +75,7 @@ pub struct PathOptions {
     pub entry_point_names: Vec<Vec<u8>>,
 }
 
-pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[
-    (b".cjs", Loader::Js),
-    (b".css", Loader::Css),
-    (b".cts", Loader::Ts),
-    (b".html", Loader::Html),
-    // Bun reads JSX in `.js` files.
-    (b".js", Loader::Jsx),
-    (b".json", Loader::Json),
-    (b".json5", Loader::Json5),
-    (b".jsonc", Loader::Jsonc),
-    (b".jsx", Loader::Jsx),
-    (b".mjs", Loader::Js),
-    (b".mts", Loader::Ts),
-    (b".node", Loader::Napi),
-    (b".text", Loader::Text),
-    (b".toml", Loader::Toml),
-    (b".ts", Loader::Ts),
-    (b".tsx", Loader::Tsx),
-    (b".txt", Loader::Text),
-    (b".wasm", Loader::Wasm),
-    (b".yaml", Loader::Yaml),
-    (b".yml", Loader::Yaml),
-];
+pub use crate::module_keys::DEFAULT_LOADERS;
 
 #[cfg(any(test, feature = "test_support"))]
 pub fn default_loaders() -> Vec<(Vec<u8>, Loader)> {

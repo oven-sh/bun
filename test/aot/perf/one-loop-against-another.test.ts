@@ -49,6 +49,8 @@ const rows: Row[] = [
   ["pieces-of-two-characters.ts", erased, "slices of three characters", "slices of two characters", 1.3],
   ["pieces-of-two-characters.ts", [], "groups of three digits", "groups of two digits", 1.2],
   ["pieces-of-two-characters.ts", erased, "groups of three digits", "groups of two digits", 1.2],
+  ["a-text-joined-of-parts.ts", [], "behind a look under a computed name", "nothing was looked up", 1.1],
+  ["a-text-joined-of-parts.ts", erased, "behind a look under a computed name", "nothing was looked up", 1.1],
   ["a-list-that-is-emptied-now-and-then.ts", [], "kept to the end", "emptied every 256 turns", 3],
   ["a-list-that-is-emptied-now-and-then.ts", erased, "kept to the end", "emptied every 256 turns", 3],
   [

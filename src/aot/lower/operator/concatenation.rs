@@ -1,5 +1,4 @@
 use bun_sema::bind::Parent;
-use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, UnOp};
 use smallvec::{SmallVec, smallvec};
 
@@ -74,9 +73,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             _ => {}
         }
         if self.file.is_literal_operand(printed) {
-            return match self.file.decisions().constant(hir, printed) {
-                FoldedValue::Constant(Constant::String(_)) => PrintedOperand::Text,
-                _ => PrintedOperand::OtherLiteral,
+            return match self.file.is_string_literal_operand(printed) {
+                true => PrintedOperand::Text,
+                false => PrintedOperand::OtherLiteral,
             };
         }
         match hir[printed].kind {

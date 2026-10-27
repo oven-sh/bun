@@ -357,8 +357,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 CalleeKnowledge::Unresolved => {
                     match find_own_require(hir, bound, decisions, callee)? {
                         OwnRequire::OfFile => CalleeTest::Expected(BuiltinId::ModuleRequire),
-                        OwnRequire::OfOtherFile(_) => CalleeTest::IsFilled,
-                        OwnRequire::Made => return None,
+                        OwnRequire::OfOtherFile(_) | OwnRequire::Made => CalleeTest::IsFilled,
                     }
                 }
                 CalleeKnowledge::Bound => {

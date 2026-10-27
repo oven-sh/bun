@@ -28,8 +28,6 @@ const known: Record<string, number> = {
   "analysis/AOTInductionVariables.h relationalOperators": 4,
   "analysis/AOTIntegerRelations.cpp wholeBinaryOperators": 3,
   "analysis/AOTPropertyAccessElements.cpp elementOperations": 10,
-  "analysis/AOTUnspecifiedValuePaths.cpp Folder::canFold": 14,
-  "analysis/AOTUnspecifiedValuePaths.cpp MergingWalker::narrow": 4,
   "analysis/AOTValueIdentity.cpp isBorrowedInnerObject": 3,
   "analysis/AOTValueIdentity.cpp operationsOnCell": 8,
   "analysis/AOTValueIdentity.h handsOnBorrowedInnerObject": 5,

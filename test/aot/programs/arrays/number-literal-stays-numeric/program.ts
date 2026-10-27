@@ -1,4 +1,7 @@
 // How an array literal keeps its elements from its birth goes by its type, written around it or worked out by the checker: a list of numbers keeps numbers, which is what every place typed number[] expects.
+// A list of parameters keeps numbers where the parameters are known to be numbers: the analysis of the whole program has seen every call, or the function tests them where it is entered. A build with
+// every function cold and without the results of the analysis has neither, so there the two lists of parameters keep every value, which is what code that tests nothing reads fastest:
+// number-literal-stays-numeric.expected.every-function-cold-and-no-flow-results.txt.
 declare const console: { log(...values: unknown[]): void };
 declare function describe(value: unknown): string;
 function kind(list: unknown): string { return (/(CopyOnWrite)?ArrayWith\w+/.exec(describe(list))?.[0] ?? "no array").replace("CopyOnWrite", ""); }

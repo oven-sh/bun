@@ -188,7 +188,7 @@ fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
             features.union_with(&FeatureSet::from_features(&RUNS_FILES_FROM_DISK));
             features
         }
-        UnseenCodeCause::RunsUnseenCode => {
+        UnseenCodeCause::RunsUnseenCode | UnseenCodeCause::RunsMachineCode => {
             let mut features = features_reachable_by_text();
             features.insert(Feature::NativeAddons);
             features
@@ -427,7 +427,7 @@ mod tests {
         assert!(expected.contains(Feature::NativeAddons));
         expected.subtract(&FeatureSet::from_features(&[Feature::NativeAddons]));
 
-        let addon = UsedFeatures::with_cause(UnseenCodeCause::RunsUnseenCode);
+        let addon = UsedFeatures::with_cause(UnseenCodeCause::RunsMachineCode);
         assert_eq!(decide_request(&addon, &removing_unused()).unused, expected);
     }
 

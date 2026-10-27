@@ -144,7 +144,7 @@ impl Resolver<'_, '_> {
                 for &name in members {
                     value = ResolvedValue::object(self.find_member(value, name)?);
                 }
-                Some(value.predicted())
+                Some(value.stored())
             }
         }
     }
@@ -194,6 +194,7 @@ impl Resolver<'_, '_> {
                 Some(ResolvedValue {
                     path,
                     kind: HolderKind::Object,
+                    ..
                 }) => paths.push((symbol, path)),
                 Some(ResolvedValue {
                     kind: HolderKind::ModuleNamespace,

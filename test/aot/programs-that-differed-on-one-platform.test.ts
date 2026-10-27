@@ -35,7 +35,16 @@ programsBuiltWith("static-modules", "in-every-run", [], {}, 1, 1, [
   "five-names/path-join-slashes",
 ]);
 // Windows on x64: a catch clause gets what code of the program throws inside an operation of the run time.
-programsBuiltWith("errors", "in-every-run", [], {}, 1, 1, ["what-is-thrown-inside-an-operation-is-what-is-caught"]);
+// Windows: a frame divides the folders of its file by `\`. The other programs cut the folders off at `/` alone, so they printed where their files lie, and those of an executable lie elsewhere.
+programsBuiltWith("errors", "in-every-run", [], {}, 1, 1, [
+  "what-is-thrown-inside-an-operation-is-what-is-caught",
+  "stack-frames-in-callbacks-of-chained-array-methods",
+  "stack-frames-of-a-require-that-stands-behind-operands-that-are-dropped",
+  "stack-frames-of-functions-that-return-a-variable-behind-a-branch-never-taken-that-declares-a-name",
+  "stack-frames-where-the-initializer-of-a-field-throws",
+  "stack-positions-of-patterns-over-constants-that-hold-undefined",
+]);
+programsBuiltWith("calls-fast-paths", "in-every-run", [], {}, 1, 1, ["methods-that-get-other-names-later-are-bound"]);
 // Windows: a function of the library makes the object of the environment there, and it read `Symbol.for`. A built-in object lists the member that was read first in front.
 test("Symbol lists its keys in one order whether or not a variable of the environment was read before", async () => {
   using dir = tempDir("aot-keys-of-symbol-behind-the-environment", {

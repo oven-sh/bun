@@ -58,7 +58,7 @@ import {
   type RunResult,
 } from "./run-programs";
 
-const runner = "run-each-in-a-worker.ts";
+export const runner = "run-each-in-a-worker.ts";
 const plainBun = process.env.AOT_PLAIN_BUN ?? bunExe();
 // It is written for the main thread.
 const terminatesWorkers = (path: string) => readFileSync(path, "utf8").includes(".terminate(");
@@ -75,7 +75,7 @@ const departToday = new Map(
 );
 // The work that a build does once is a hundredth of the build at this number, and an image is about a megabyte.
 const programsInOneExecutable = 64;
-const mark = "=== the program above has ended with";
+export const mark = "=== the program above has ended with";
 // Windows takes 32,767 characters.
 const longestCommandLine = isWindows ? 30_000 : 1_000_000;
 const redsExplained = 5;
@@ -85,7 +85,7 @@ const today = Math.floor(Date.now() / 86_400_000);
 const isInShareOfToday = (name: string) => Number(BigInt(Bun.hash("alone " + name)) % BigInt(oneIn)) === (shareNumber + today) % oneIn;
 
 type Options = { build?: string[]; entryPoints?: string[]; buildEnv?: object; env?: Record<string, string>; reference?: string; erased?: string; alone?: string; mainThread?: string; skipWithASAN?: string; todoOn?: Record<string, string> };
-const optionsOf = (path: string): Options => (existsSync(besideOf(path) + ".json") ? JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")) : {});
+export const optionsOf = (path: string): Options => (existsSync(besideOf(path) + ".json") ? JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")) : {});
 const nameOf = (path: string) => besideOf(inPrograms(path)).replaceAll("\\", "/");
 // Bun reads its feature flags from the environment of the process. What a Worker is given in `env` doesn't set them.
 const processEnvOf = (path: string) => Object.fromEntries(Object.entries(optionsOf(path).env ?? {}).filter(([name]) => name.startsWith("BUN_FEATURE_FLAG_")));
@@ -128,7 +128,7 @@ const familiesAlone = [
 ];
 
 /** Why nothing here builds the program: run-programs.ts knows how. */
-function whyLeftOut(path: string): string | undefined {
+export function whyLeftOut(path: string): string | undefined {
   const beside = besideOf(path);
   if (existsSync(beside + ".todo.txt")) return "it is a todo";
   if (existsSync(beside + ".build-errors.txt")) return "its build is meant to fail";
@@ -143,7 +143,7 @@ function whyLeftOut(path: string): string | undefined {
 }
 
 /** Why the program is not one of many entry points that run in Workers, but has an executable of its own and runs on the main thread. */
-function whyAlone(path: string): string | undefined {
+export function whyAlone(path: string): string | undefined {
   if (familiesAlone.some(family => family.test(nameOf(path)))) return "its family is built alone";
   const { env, alone, mainThread } = optionsOf(path);
   if (alone) return `alone: ${alone}`;
@@ -168,7 +168,7 @@ async function spawnedFor(seconds: number, cmd: string[], cwd: string) {
 }
 
 /** As an entry point is spelled for a build in `root`, and for the runner there. */
-const fromRunner = (root: string, path: string) => "./" + relative(root, path).replaceAll("\\", "/");
+export const fromRunner = (root: string, path: string) => "./" + relative(root, path).replaceAll("\\", "/");
 
 /** Windows has several spellings for one path: either separator, either case. */
 const spelledOneWay = (path: string) => (isWindows ? normalize(path.replace(/^\/(?=[a-z]:)/i, "")).toLowerCase() : path);
@@ -194,14 +194,14 @@ const whatABuildSaid = (ran: { stderr: string; exitCode: number; signal: number 
 
 const textOf = ({ stdout, stderr, exitCode }: RunResult) => stdout + (exitCode ? `exit code ${exitCode}\n${stderr}\n` : stderr);
 
-function firstDifference(result: RunResult, expected: RunResult | string): string {
+export function firstDifference(result: RunResult, expected: RunResult | string): string {
   const [a, b] = [textOf(result).split("\n"), (typeof expected === "string" ? expected : textOf(expected)).split("\n")];
   const line = a.findIndex((text, index) => text !== b[index]);
   return line < 0 ? `it ends at line ${a.length}` : `line ${line + 1}: ${(a[line] ?? "<end>").slice(0, 160)} | expected: ${(b[line] ?? "<end>").slice(0, 160)}`;
 }
 
 /** One way to build the programs: where each has come to lie, or why the compiler has refused it. */
-class Way {
+export class Way {
   executableOf = new Map<string, string>();
   refused = new Map<string, string>();
   /** The smallest sets of programs that were not built together, though each half of the set was, with the command that says so. */

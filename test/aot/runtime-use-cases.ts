@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { accountsFor, build, closed, completeness, computedModuleName, external, globalObject, notYet, open, retainsFeature, uncompiledModule, unseenCode, type Use } from "./runtime-use-expectations";
+import { accountsFor, build, closed, completeness, computedModuleName, external, globalObject, machineCode, notYet, open, retainsFeature, uncompiledModule, unseenCode, type Use } from "./runtime-use-expectations";
 import { declared, of, runtimeUse } from "./runtime-use-harness";
 import { eachRow, gap, test } from "./supported";
 
@@ -514,7 +514,7 @@ group("parts of Bun that run code the compiler does not see", () => {
     ["linkSymbols of bun:ffi", `import { linkSymbols } from "bun:ffi";\nconsole.log(linkSymbols({}));`, "bun:ffi.linkSymbols"],
     ["CFunction of bun:ffi", `import { CFunction } from "bun:ffi";\nconsole.log(CFunction({ ptr: 0 as any }));`, "bun:ffi.CFunction"],
   ])("the report is open with %s", async (_, text, builtin) => {
-    expect(completeness(await of(text))).toEqual(open(unseenCode(builtin)));
+    expect(completeness(await of(text))).toEqual(open(machineCode(builtin)));
   });
 
   // A Worker has a global of its own and starts with an entry point of the build, and the report holds what every entry point uses.
@@ -550,7 +550,7 @@ group("parts of Bun that run code the compiler does not see", () => {
     ["has another extension and is imported with the type napi", `// @ts-ignore\nimport addon from "./hello.bin" with { type: "napi" };\nconsole.log(addon);`],
   ])("the report is open with a native addon that %s", async (_, text) => {
     const use = await runtimeUse({ "main.ts": declared + text, "hello.node": "no addon", "hello.bin": "no addon" });
-    expect(completeness(use)).toEqual(open(unseenCode("process.dlopen")));
+    expect(completeness(use)).toEqual(open(machineCode("process.dlopen")));
   });
 
   test("only a call that the program reaches opens the report: it stays closed with a native addon that is required in a function that nothing calls", async () => {
@@ -578,9 +578,9 @@ group("parts of Bun that run code the compiler does not see", () => {
   test.each([
     ["transformSync", `console.log(new Bun.Transpiler().transformSync(process.argv[2]));`],
     ["scan", `console.log(new Bun.Transpiler().scan(process.argv[2]));`],
-  ])("Bun.Transpiler runs the macros of the text it is given among the program's own objects: it is listed and the report is open: %s", async (_, text) => {
+  ])("Bun.Transpiler makes text of text, and an executable that runs only its own code refuses the macros in it: it is listed and the report stays closed: %s", async (_, text) => {
     const use = await of(text);
-    expect({ ...completeness(use), listed: use.lines.includes("Bun Transpiler") }).toEqual({ ...open(unseenCode("Bun.Transpiler")), listed: true });
+    expect({ ...completeness(use), listed: use.lines.includes("Bun Transpiler") }).toEqual({ ...closed, listed: true });
   });
 
   test.each([

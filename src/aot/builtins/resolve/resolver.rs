@@ -25,6 +25,7 @@ pub(super) enum HolderKind {
 pub(super) struct ResolvedValue {
     pub(super) path: BuiltinPath,
     pub(super) kind: HolderKind,
+    pub(super) has_side_effects: bool,
 }
 
 impl ResolvedValue {
@@ -32,6 +33,7 @@ impl ResolvedValue {
         ResolvedValue {
             path,
             kind: HolderKind::Object,
+            has_side_effects: false,
         }
     }
 
@@ -39,6 +41,16 @@ impl ResolvedValue {
         let mutability = &mut self.path.mutability;
         *mutability = (*mutability).min(Mutability::ConstantUnlessWritten);
         self
+    }
+
+    pub(super) fn with_side_effects(mut self) -> ResolvedValue {
+        self.has_side_effects = true;
+        self.predicted()
+    }
+
+    pub(super) fn stored(mut self) -> ResolvedValue {
+        self.has_side_effects = false;
+        self.predicted()
     }
 }
 
@@ -480,7 +492,7 @@ impl<'a, 's> Resolver<'a, 's> {
             ExprKind::Call(_) => self.compute_call_state(expr),
             ExprKind::ImportMeta => self.compute_import_meta_state(),
             ExprKind::Binary { op: BinOp::Comma, right, .. } => {
-                ExprState::of_value(self.value_of(right).map(ResolvedValue::predicted))
+                ExprState::of_value(self.value_of(right).map(ResolvedValue::with_side_effects))
             }
             ExprKind::Assign { target, .. } => match self.find_held_value(target) {
                 Some(value) => ExprState::Held(value),
@@ -520,12 +532,19 @@ impl<'a, 's> Resolver<'a, 's> {
         };
         let mut exprs = Vec::new();
         let mut expr_bits = vec![0u64; input.hir.exprs.len().div_ceil(64)];
+        let mut exprs_with_side_effects = Vec::new();
         for expr in self.evaluated.map(ExprId) {
             let resolved = match self.states[(expr.0 - self.first_state) as usize] {
                 ExprState::Builtin(ResolvedValue {
                     path,
                     kind: HolderKind::Object,
-                }) => Resolved::Builtin(path),
+                    has_side_effects,
+                }) => {
+                    if has_side_effects {
+                        exprs_with_side_effects.push(expr);
+                    }
+                    Resolved::Builtin(path)
+                }
                 ExprState::DynamicGlobal(path) => Resolved::DynamicGlobal(path),
                 ExprState::Intrinsic(intrinsic) => Resolved::Intrinsic(intrinsic),
                 ExprState::Builtin(ResolvedValue {
@@ -544,6 +563,7 @@ impl<'a, 's> Resolver<'a, 's> {
         ResolvedBuiltins {
             exprs: exprs.into_boxed_slice(),
             expr_bits: expr_bits.into_boxed_slice(),
+            exprs_with_side_effects: exprs_with_side_effects.into_boxed_slice(),
             symbols: symbols.into_boxed_slice(),
             commonjs: self.commonjs,
             evaluated_texts: output.evaluated_texts.into_boxed_slice(),

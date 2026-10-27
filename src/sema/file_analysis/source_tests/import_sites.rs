@@ -96,6 +96,22 @@ const BUILTIN_MODULE_CALLS: &[(&str, usize)] = &[
         0,
     ),
     (r#"other.getBuiltinModule("node:fs");"#, 0),
+    (
+        r#"import process from "node:process"; process.getBuiltinModule("node:fs");"#,
+        2,
+    ),
+    (
+        r#"import * as host from "process"; host.getBuiltinModule("node:fs");"#,
+        2,
+    ),
+    (
+        r#"import process from "./process"; process.getBuiltinModule("node:fs");"#,
+        1,
+    ),
+    (
+        r#"import { env as process } from "node:process"; process.getBuiltinModule("node:fs");"#,
+        1,
+    ),
 ];
 
 const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
@@ -192,6 +208,186 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; const meta = import.meta; createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"process.getBuiltinModule("node:module").createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"const { createRequire } = process.getBuiltinModule("node:module"); createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"const { createRequire: make } = globalThis.process.getBuiltinModule("module"); const load = make(import.meta.url); load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"const host = process; const m = host.getBuiltinModule("node:module"); m.createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"const createRequire = process.getBuiltinModule("node:module").createRequire; createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"function f() { return load("a"); } const load = m.createRequire(import.meta.url); var m = process.getBuiltinModule("node:module");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"const createRequire = require("node:module").createRequire; createRequire(__filename)("a");"#,
+        &["node:module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"const m = require("node:module"); const again = m; const make = again.createRequire; const same = make; same(__filename)("a");"#,
+        &["node:module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"module.require("node:module").createRequire(__filename)("a");"#,
+        &["node:module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"require.call(null, "node:module").createRequire(__filename)("a");"#,
+        &["node:module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"const load = require; load("node:module").createRequire(__filename)("a");"#,
+        &["node:module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"require("node:module").Module.createRequire(__filename)("a");"#,
+        &["node:module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"const { Module: { createRequire } } = require("node:module"); createRequire(__filename)("a");"#,
+        &["node:module", "a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; createRequire(import.meta.url)("node:module").createRequire(import.meta.url)("a");"#,
+        &["node:module", "a"],
+    ),
+    (
+        "a.mjs",
+        r#"import * as m from "node:module"; m.default.createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { Module } from "node:module"; Module.createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"(await import("node:module")).createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"(await import("node:module")).default.createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"const { createRequire } = await import("node:module"); createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"const { default: { createRequire } } = await import("node:module"); createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import.meta.require("node:module").createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import process from "node:process"; process.getBuiltinModule("node:module").createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"const m = (() => require("node:module"))(); m.createRequire(__filename)("a");"#,
+        &["node:module", "a"],
+    ),
+    (
+        "a.mjs",
+        r#"process.getBuiltinModule("node:fs").createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"process.getBuiltinModule(name).createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"other.getBuiltinModule("node:module").createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"function f(process) { process.getBuiltinModule("node:module").createRequire(import.meta.url)("a"); }"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"process.getBuiltinModule("node:module").other.createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"process.getBuiltinModule("node:module").createRequire.other(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"process.getBuiltinModule("node:module")[name](import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"let m = process.getBuiltinModule("node:module"); m = other; m.createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import("node:module").createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"(await other("node:module")).createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"require.resolve("node:module").createRequire(__filename)("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const load = load("node:module").createRequire(__filename); load("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const a = b.createRequire; const b = a("node:module"); a(__filename)("a");"#,
         &[],
     ),
 ];

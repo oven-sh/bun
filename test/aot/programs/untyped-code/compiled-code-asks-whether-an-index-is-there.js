@@ -1,15 +1,16 @@
-// `index in object`: the elements of a list, of an object with names and of a typed array answer in compiled code, whether the index is there or not, and so does an object that has no elements. The run time is asked where something else may answer.
+// `index in object`: the elements of a list, of an object with names and of a typed array answer in compiled code, whether the index is there or not, and so does an object that has no elements. Object.hasOwn(object, index) is answered so where the object has elements. The run time is asked where something else may answer.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const asked = () => count("operationAOTInByValAndCache") + count("operationAOTInByValGeneric");
+const asked = () => count("operationAOTInByValAndCache") + count("operationAOTInByValGeneric") + count("operationAOTHasOwnByValAndCache") + count("operationAOTToKey");
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 function attempt(label, work) { let said; try { said = JSON.stringify(work()); } catch (error) { said = "threw " + error.constructor.name + ": " + error.message; } console.log(label + ": " + said); }
-function measure(label, object, keys, bound) {
+function measure(label, object, keys, bound, asksForOwn = true) {
   let text = "";
   for (const key of keys) text += " " + (key in object ? "i" : "-") + (Object.hasOwn(object, key) ? "o" : "-");
   let found = 0;
-  for (let i = 0; i < 40; i++) if (keys[i % keys.length] in object) found++;
+  const small = keys.filter(key => key >= 0 && key < 1024);
+  for (let i = 0; i < 40; i++) { if (keys[i % keys.length] in object) found++; if (asksForOwn && Object.hasOwn(object, small[i % small.length])) found++; }
   const before = asked();
-  for (let i = 0; i < 2000; i++) if (keys[i % keys.length] in object) found++;
+  for (let i = 0; i < 2000; i++) { if (keys[i % keys.length] in object) found++; if (asksForOwn && Object.hasOwn(object, small[i % small.length])) found++; }
   console.log(label + ":" + text + " " + found + " | " + (asked() - before <= bound));
 }
 const near = [0, 1, 2, 3, 4, 5, 7, 100, 2147483647];
@@ -24,20 +25,20 @@ measure("an empty list that had elements", (() => { const list = [1, 2]; list.le
 measure("names and indexes", { name: 1, 0: "a", 1: "b", 3: "d" }, near, 0);
 measure("an array-like", { length: 2, 0: 0.5, 1: undefined }, near, 0);
 measure("elements that were stored", (() => { const o = { count: 1 }; o[0] = 1; o[2] = 2; o[5] = null; return o; })(), near, 0);
-measure("bytes", new Uint8Array(4), near, 0);
-measure("no bytes", new Uint8Array(0), near, 0);
-measure("fractions in a typed array", new Float64Array(3), near, 0);
-measure("big numbers in a typed array", new BigInt64Array(5), near, 0);
-measure("a part of a buffer", new Int16Array(new ArrayBuffer(16), 4, 3), near, 0);
-measure("negative indexes of bytes", new Uint8Array(4), [-1, -2147483648, 0, 3], 0);
-measure("names alone", { name: 1, other: 2 }, near, 0);
+measure("bytes", new Uint8Array(4), near, 0, false);
+measure("no bytes", new Uint8Array(0), near, 0, false);
+measure("fractions in a typed array", new Float64Array(3), near, 0, false);
+measure("big numbers in a typed array", new BigInt64Array(5), near, 0, false);
+measure("a part of a buffer", new Int16Array(new ArrayBuffer(16), 4, 3), near, 0, false);
+measure("negative indexes of bytes", new Uint8Array(4), [-1, -2147483648, 0, 3], 0, false);
+measure("names alone", { name: 1, other: 2 }, near, 0, false);
 measure("names that came late", (() => { const o = { name: 1 }; o.late = 2; o["later" + o.late] = 3; return o; })(), near, 0);
-measure("nothing", {}, near, 0);
+measure("nothing", {}, near, 0, false);
 measure("filled by index", (() => { const o = {}; o[0] = 1; o[2] = 2; return o; })(), near, 0);
-measure("a map", new Map, near, 0);
-measure("a date", new Date(0), near, 0);
-measure("no prototype", Object.create(null), near, 0);
-measure("below an object without elements", Object.create(Object.create(null)), near, 0);
+measure("a map", new Map, near, 0, false);
+measure("a date", new Date(0), near, 0, false);
+measure("no prototype", Object.create(null), near, 0, false);
+measure("below an object without elements", Object.create(Object.create(null)), near, 0, false);
 
 // Here something else may answer, or the key is a name. Nothing is pinned.
 const far = [-1, -2147483648, 0, 1, 2, 3, 4, 5, 8, 1000, 2147483647, 4294967294, 4294967295, 0.5, -0, 1.0, NaN, "1", "01", "-1", "1.0", "length", "name"];

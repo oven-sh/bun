@@ -1,5 +1,5 @@
 // RUN: lower
-// CHECK: function {{*}}kind=CommonJsModule flags=[IsSloppy] thisType
+// CHECK: function {{*}}kind=CommonJsModule flags=[IsSloppy, IsHiddenInStackTraces] thisType
 // CHECK: = CallDirect {{*}}function=[[wrapper]]
 // CHECK: function [[wrapper]] module={{*}}flags=[IsSloppy, HasThis] length=5
 // CHECK-NEXT: b0([[this]]: anything, [[exports]]: anything, [[require]]: anything, [[module]]: anything, [[filename]]: anything, [[dirname]]: anything):

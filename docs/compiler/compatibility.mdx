@@ -84,6 +84,8 @@ Some of these take a slow path: a `Proxy` used as an array, and an array with ho
 | `require()` of such modules where one of them awaits, so that `require()` throws          | The first of them begins, then `require()` throws                | In some turns `require()` throws first and they begin behind the error. Each module runs once, behind what it imports                                                                                                                   |
 | `__esModule` of a CommonJS file, stored by a file that is imported behind it              | An `import` goes by what it was when the file had run            | An `import` goes by what it is when every CommonJS file that the module imports has run, as in `bun build --compile` and Node.js                                                                                                        |
 | `import { x }`, where a CommonJS file has a getter for `x` that isn't enumerable          | The import fails: the file has no export named `x`               | Finds `x` if the getter only returns a member of another file, as in `return other.x`, and the text of the file shows all of its exports, as in an executable built without `--aot`. Otherwise the import fails                         |
+| A CommonJS file that is imported back while a `require()` of an ES module runs it         | Some importers keep its exports of that moment, later ones don't | All importers read the same exports: those of that moment while the file runs, and what it has exported at its end from then on. `import()` gives the namespace object that `import * as` gave                                          |
+| `process.nextTick()` in a file that an `import` loads, with more files still to run       | When the tick runs hangs on when the other files were read       | Each file runs once, in the order of the imports, and ticks keep their order. A tick may run behind a file that it runs ahead of under `bun run`, or ahead of the importing module where it runs behind it under `bun run`              |
 | `import` of a package whose package.json has both `"module"` and `"main"`                 | Loads the file that `"main"` names                               | Loads the file that `"module"` names, as in an executable built without `--aot`. If the program also loads the package with `require()`, both load the file that `"main"` names                                                         |
 | `undefined[key] = value`, and the same on `null`                                          | Converts the key, which can run your code, then throws           | Throws first, as the specification says. The key's `toString()` never runs                                                                                                                                                              |
 | `arguments` in a string that `eval` runs in a generator or an async function              | A `ReferenceError`, or those of a function further out           | Those of the generator or async function. The same under `bun run` if its own code names `arguments`, or if an async function has no `await`                                                                                            |
@@ -318,7 +320,7 @@ It makes no difference whether there is a `?.` on the way, as in `process?.versi
 
 Only the globals count, and the `process` of `import process from "node:process"`, which is the same object. A parameter, a variable or an import that is called `Bun` or `process` is read when the program runs, like any other.
 
-So that the answers stay true, an executable can't replace what gives them. Assigning to, redefining or deleting the global `process`, or `process.isBun`, `process.versions` and `process.release`, throws the `TypeError` above. The objects `process.versions` and `process.release` are frozen, so a program that overwrites `process.versions.node` to pass for another version of Node.js can't do that in an executable. The global `Bun` is read-only under `bun run` too. Every other property of `process` and `Bun` follows the rule of the last group.
+So that the answers stay true, an executable can't replace what gives them. Assigning to, redefining or deleting the global `process`, or `process.isBun`, `process.versions` and `process.release`, throws the `TypeError` above. `process.versions.bun`, `process.versions.node` and `process.release.name` are read-only, so a program that overwrites `process.versions.node` to pass for another version of Node.js can't do that in an executable. The rest of the two objects works as it does under `bun run`: a loader can still add `process.versions.pnp`. The global `Bun` is read-only under `bun run` too. Every other property of `process` and `Bun` follows the rule of the last group.
 
 ### New properties on built-in prototypes
 
@@ -442,7 +444,9 @@ This affects `process.stdout`, `stderr`, `stdin`, `openStdin()`, `finalization`,
 
 A function of a `node:` module that your program imports and never calls isn't compiled either. A string rarely finds one, but it can: on an object such as `process` that inherits from `EventEmitter`, or by loading the module itself, as in `process.getBuiltinModule("node:http").request(url)` in a program that only has `import { createServer } from "node:http"`. The call then throws `'...' was not compiled into this executable because your code never calls it`, with the function's name.
 
-`process.mainModule` is `undefined` in a string unless [a file of your program names it](#module-objects), as it is in every executable built without `--aot`. It's the only path from a string to your CommonJS modules, so without it the compiler knows every caller of what they export. `require.cache` is no such path: [it lists none of them](#the-module-cache).
+`process.mainModule` is `undefined` in a string unless [a file of your program names it](#module-objects), as it is in every executable built without `--aot`. Besides `import()` of an entry point, it's the only path from a string to your modules, so without it the compiler knows every caller of what the other files export. `require.cache` is no such path: [it lists none of them](#the-module-cache).
+
+A string can `import()` an entry point of the build by its path. A JSON file or another data file that's compiled into the executable is different: a string finds it only if your program has a dynamic `import()` or `require()` of its own. Otherwise the import rejects with `ERR_MODULE_NOT_FOUND`, as in an executable built without `--aot`.
 
 Everything that belongs to the language always works in a string: `Array`, `Map`, `Promise`, `JSON`, regular expressions, generators. So does everything that Bun implements natively, such as `fetch`, `Bun.file` and `Bun.serve`.
 
@@ -695,7 +699,13 @@ warn: TS100064: this import path isn't a constant. If it resolves to code that i
 
 An `--external` package has `require`, `module`, `require.cache` and every built-in module, whole: the compiler can't see what the package calls, so a build with `--external` compiles every function of the built-in modules in the executable, not only the ones that your program calls. That makes the executable a few megabytes larger. The package doesn't see the modules of your program, as in an executable built without `--aot`: its `module.parent` has the path of the file that required it and empty `exports`, and `require.cache` lists the files that were loaded from disk. If a file of your program [names a way between module objects](#module-objects), the package finds your modules through `process.mainModule` too. [Built-in objects are read-only](#built-in-objects-are-read-only) for it too: it can add a global or a property, and it can't replace one that your compiled code uses. `globalThis.fetch = polyfill` in such a package throws a `TypeError` if your program calls `fetch`.
 
-`createRequire()`, `import.meta.require()` and `module.require()` follow the same rules. So does a [macro](/bundler/macros) in text that you hand to `new Bun.Transpiler()` at run time: the file of the macro has to be in the executable.
+`createRequire()`, `import.meta.require()` and `module.require()` follow the same rules.
+
+`new Bun.Transpiler()` works and costs nothing: it turns text into text. A [macro](/bundler/macros) in that text is code that the build never saw, so it follows the rule for [code from strings](#code-from-strings). Making a transpiler doesn't count as a call to `eval`, and in a program with no such call, `transform()`, `transformSync()` and `scan()` throw for a text that calls a macro:
+
+```txt
+error: Macros cannot be used in this executable, which only runs code that was compiled into it
+```
 
 ### Load code from disk
 

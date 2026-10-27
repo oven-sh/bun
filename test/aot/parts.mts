@@ -164,11 +164,13 @@ export const rows: Row[] = [
   variant("every-function-cold", ["--aot-heat=everything-is-cold"], {}, 3, [
     [
       [
+        "calls/construct-trace-forwarding-function",
         "errors/call-sites-of-a-default-constructor-and-frames-under-a-local-named-reflect",
         "errors/call-sites-of-reflect-construct-with-a-target-that-is-handed-in",
         "objects/a-field-that-names-a-class-gets-a-record-by-a-key-in-brackets",
         "objects/a-field-that-names-a-class-holds-a-function",
         "objects/a-field-that-names-three-classes-gets-a-record",
+        "errors/stack-frames-above-a-constructed-function-that-ends-in-a-call",
         "errors/stack-positions-of-method-calls-whose-read-throws-or-runs-a-getter",
       ],
     ],
@@ -181,6 +183,9 @@ export const rows: Row[] = [
     [
       [
         [
+          "arrays/an-empty-literal-without-a-declared-type-is-born-for-what-is-pushed-into-it",
+          "arrays/number-literal-stays-numeric",
+          "errors/stack-frames-above-a-constructed-function-that-ends-in-a-call",
           "errors/stack-positions-behind-variables-that-are-used-once",
           "errors/stack-positions-of-method-calls-whose-read-throws-or-runs-a-getter",
         ],
@@ -196,8 +201,10 @@ export const rows: Row[] = [
   variant("heat-shuffled", ["--aot-heat=shuffled", "--aot-layout-seed=1"], {}, 3, [
     [
       [
+        "calls/construct-trace-forwarding-function",
         "classes-and-closures/what-is-made-with-a-closure-over-a-typed-parameter-that-gets-another-kind-of-value",
         "errors/call-sites-of-a-default-constructor-and-frames-under-a-local-named-reflect",
+        "errors/stack-frames-above-a-constructed-function-that-ends-in-a-call",
       ],
     ],
   ]),
@@ -282,6 +289,18 @@ export const rows: Row[] = [
       ["flow-rules-delayed", [`--aot-testing=${rules}`], {}, index + 1, 3],
     ],
   ),
+  [
+    "aot/values-that-may-be-something-else",
+    32,
+    "./programs-whose-values-may-be-something-else",
+    "programsWhoseValuesMayBeSomethingElse",
+  ],
+  [
+    "aot/values-that-may-be-something-else-in-every-run",
+    0,
+    "./programs-whose-values-may-be-something-else",
+    "variantsThatEveryRunTakes",
+  ],
   ["aot/variant-trimmed-runtime", 3, "./run-programs", "variantWithTrimmedRuntime"],
   ["aot/variant-without-flow-result", 8, "./flow-result-kinds", "variantsWithoutOneFlowResult"],
 
@@ -603,6 +622,7 @@ const onlyDraw = new Set([
   "programsAsSeparateEntryPoints",
   "programsBuiltWith",
   "programsMarkedAsFailing",
+  "programsWhoseValuesMayBeSomethingElse",
   "testTrimmedMatchesUntrimmed",
   "variantWithTrimmedRuntime",
   "variantsWithoutOneFlowResult",
@@ -635,6 +655,7 @@ const onTrial = [
   "aot/servers/effect-servers.test.ts",
   "aot/servers/schedules-of-servers.test.ts",
   "aot/servers/schedules-of-tanstack.test.ts",
+  "aot/values-that-may-be-something-else-in-every-run.test.ts",
 ];
 export const unitsThatDraw = new Set([...unitsOfCallees(new Set([...onlyDraw, ...alsoDraw])), ...onTrial]);
 export const unitsThatOnlyDraw = new Set([...unitsOfCallees(onlyDraw), ...onTrial]);

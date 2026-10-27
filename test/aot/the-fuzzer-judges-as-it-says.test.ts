@@ -12,7 +12,7 @@ import { expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { ProductBed, projects, type Bed, type Judged, type Program } from "./fuzz/beds";
+import { ProductBed, projects, wholeText, type Bed, type Judged, type Program } from "./fuzz/beds";
 import { fuzz } from "./fuzz/fuzzer";
 import { reduceFiles, type Whole } from "./fuzz/reduce";
 import { allSources } from "./fuzz/sources";
@@ -450,6 +450,65 @@ test(
       ]);
     for (const program of mixed)
       expect([program!.extension, program!.notes]).toEqual(["ts", expect.stringContaining("in JavaScript")]);
+    // Where a declaration file is not valid, the program says that such files are not checked.
+    const unchecked = Array.from({ length: 400 }, (_, seed) => sources[source](seed, takesFiles)).filter(
+      program => program?.files!["tsconfig.json"],
+    );
+    expect(unchecked.length).toBeGreaterThan(2);
+    for (const program of unchecked) {
+      expect(JSON.parse(program!.files!["tsconfig.json"]).compilerOptions).toMatchObject({
+        skipLibCheck: true,
+        strict: true,
+      });
+      expect(
+        Object.entries(program!.files!)
+          .filter(([path]) => path.endsWith(".d.ts"))
+          .map(([, text]) => text)
+          .join(""),
+      ).toMatch(/Missing|Absent|NotDeclared|notDeclared|declaredTwice|InvalidRing|invalidArguments|invalidMember/);
+      expect(program!.notes).toContain("under skipLibCheck");
+    }
+    // Some JavaScript with declarations is a package, and whoever imported the file imports the package.
+    const withPackages = Array.from({ length: 400 }, (_, seed) => sources[source](seed, takesFiles)).filter(program =>
+      Object.keys(program?.files ?? {}).some(path => path.startsWith("node_modules/")),
+    );
+    expect(withPackages.length).toBeGreaterThan(4);
+    const kinds = new Set<string>();
+    for (const program of withPackages) {
+      const names = Object.keys(program!.files!).flatMap(
+        path => /^node_modules\/([\w-]+)\/package\.json$/.exec(path)?.[1] ?? [],
+      );
+      for (const name of names) {
+        expect(Object.keys(program!.files!)).toContain(`node_modules/${name}/index.js`);
+        expect(Object.keys(program!.files!)).toContain(`node_modules/${name}/index.d.ts`);
+        expect(wholeText(program!)).toContain(`from "${name}"`);
+        expect(wholeText(program!)).not.toContain(`from "./${name}"`);
+      }
+      expect(program!.notes).toContain("as packages");
+      for (const name of names) {
+        const { type } = JSON.parse(program!.files![`node_modules/${name}/package.json`]);
+        kinds.add(type);
+        expect(/^(import|export) /m.test(program!.files![`node_modules/${name}/index.js`])).toBe(type === "module");
+      }
+    }
+    expect([...kinds].sort()).toEqual(["commonjs", "module"]);
+    // Some TypeScript says too little about itself, and the checker is told to keep quiet there.
+    const quiet = Array.from({ length: 200 }, (_, seed) => sources[source](seed, takesFiles)).filter(program =>
+      program?.notes.includes("under @ts-nocheck"),
+    );
+    expect(quiet.length).toBeGreaterThan(4);
+    for (const program of quiet)
+      expect(Object.entries(program!.files!).filter(([path, text]) => path.endsWith(".ts") && text.startsWith("// @ts-nocheck\n"))).not.toEqual([]); // prettier-ignore
+    // The first file of some imports through a file that only hands on what the others export.
+    const barrels = Array.from({ length: 60 }, (_, seed) => sources[source](seed, takesFiles)).filter(
+      program => program?.files!["barrel.ts"],
+    );
+    expect(barrels.length).toBeGreaterThan(4);
+    for (const program of barrels) {
+      expect(program!.text).toContain(`from "./barrel";`);
+      expect(program!.text).not.toMatch(/from "\.\/declared-/);
+      expect(program!.files!["barrel.ts"]).toMatch(/^(export (\*|(type )?\{[^}]*\}) from "(\.\/)?declared-\d+";\n)+$/);
+    }
     const stored = async (fails: (program: Program) => boolean) => {
       using folder = tempDir("aot-fuzzer-files-first", {});
       const bed = { ...standIn(() => {}), takesSeveralFiles: true };

@@ -45,20 +45,15 @@ attempt(() => HTMLRewriter.prototype.on.call({}, "a", {}));
 //// URLPattern
 attempt(() => URLPattern.prototype.test.call({}, "a"));
 //// WebSocket
-//@ todo the table has no entry for the prototype object of this class, so the call is not seen and --trim removes the method: ERR_FEATURE_REMOVED in place of the TypeError about the receiver
 attempt(() => WebSocket.prototype.close.call({}));
 //// Worker
-//@ todo the table has no entry for the prototype object of this class, so the call is not seen and --trim removes the method: ERR_FEATURE_REMOVED in place of the TypeError about the receiver
 attempt(() => Worker.prototype.terminate.call({}));
 //// MessagePort
-//@ todo the table has no entry for the prototype object of this class, so the call is not seen and --trim removes the method: ERR_FEATURE_REMOVED in place of the TypeError about the receiver
 attempt(() => MessagePort.prototype.ref.call({}));
 //// BroadcastChannel
-//@ todo the table has no entry for the prototype object of this class, so the call is not seen and --trim removes the method: ERR_FEATURE_REMOVED in place of the TypeError about the receiver
 attempt(() => BroadcastChannel.prototype.postMessage.call({}, 1));
 //// SubtleCrypto
-//@ todo the table has no entry for the prototype object of this class, so the call is not seen and --trim removes the method: ERR_FEATURE_REMOVED in place of the TypeError about the receiver
+//@ exit 1
 attempt(() => SubtleCrypto.prototype.exportKey.call({}));
 //// File
-//@ todo the table has no entry for the prototype object of this class, so the call is not seen and --trim removes the method: ERR_FEATURE_REMOVED in place of the TypeError about the receiver
 attempt(() => File.prototype.image.call({}));

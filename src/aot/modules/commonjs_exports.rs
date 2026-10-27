@@ -335,7 +335,7 @@ impl CommonJsExports {
         }
         for (text, number) in modules.iter().zip(0..) {
             exports.add_module(number, text);
-            exports.bind_names_of_module(input.modules, tables, text);
+            exports.bind_names_of_module(input.modules, tables, number, text);
         }
         exports.modules = modules;
         for table in &mut exports.files {
@@ -381,20 +381,21 @@ impl CommonJsExports {
         }
     }
 
+    fn add_name_source(&mut self, module: usize, taker: ModuleRef, source: ModuleRef) {
+        let sources = &mut self.name_sources[module];
+        if !sources.contains(&source) {
+            sources.push(source);
+            self.dependents.entry(source).or_default().push(taker);
+        }
+    }
+
     fn add_module(&mut self, module: usize, text: &OwnText) {
-        let mut sources: Vec<ModuleRef> = Vec::new();
+        self.name_sources.push(Vec::new());
         for alias in &text.aliases {
-            if let AliasTarget::Member { module: source, .. } = alias.target
-                && !sources.contains(&source)
-            {
-                sources.push(source);
-                self.dependents
-                    .entry(source)
-                    .or_default()
-                    .push(text.module());
+            if let AliasTarget::Member { module: source, .. } = alias.target {
+                self.add_name_source(module, text.module(), source);
             }
         }
-        self.name_sources.push(sources);
         let table = &mut self.files[text.file.idx()];
         let accesses = text.accesses.iter().map(|access| OwnAccess {
             node: access.node,
@@ -421,7 +422,13 @@ impl CommonJsExports {
             .extend(erased.map(|&statement| (statement, module)));
     }
 
-    fn bind_names_of_module(&mut self, modules: &ModuleSet, tables: &ExportTables, text: &OwnText) {
+    fn bind_names_of_module(
+        &mut self,
+        modules: &ModuleSet,
+        tables: &ExportTables,
+        number: usize,
+        text: &OwnText,
+    ) {
         let module = text.module();
         for alias in &text.aliases {
             let resolved = tables.resolve_required(modules, module, alias.name);
@@ -432,6 +439,12 @@ impl CommonJsExports {
             };
             if target != Target::Name(module, alias.name) {
                 self.targets.insert((module, alias.name), target);
+            }
+            // ES modules may hand the name on between the module that the getter names and the one that has it.
+            if let Target::Name(owner, _) = target
+                && owner != module
+            {
+                self.add_name_source(number, module, owner);
             }
             if tables.commonjs.is_copied(module, alias.name) {
                 self.copied_names.insert((module, alias.name));

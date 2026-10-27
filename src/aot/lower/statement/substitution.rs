@@ -101,7 +101,11 @@ impl FileLowering<'_, '_, '_, '_> {
     // The same where the statement that holds the name begins with an operator or a condition.
     pub(in crate::lower) fn find_initializer_visited_again(&self, name: ExprId) -> Option<ExprId> {
         let statement = self.find_statement_around(name)?;
-        let first = self.skip_type_syntax(self.find_first_expression(statement)?);
+        let first = self.find_first_expression(statement)?;
+        let first = match self.hir[statement].kind {
+            StmtKind::Expr(_) => self.skip_operators_dropped_when_unused(first),
+            _ => self.skip_type_syntax(first),
+        };
         matches!(
             self.hir[first].kind,
             ExprKind::Binary { .. } | ExprKind::Unary { .. } | ExprKind::Cond { .. }
@@ -386,11 +390,7 @@ impl FileLowering<'_, '_, '_, '_> {
         matches!(hir[decl.pat].kind, PatKind::Ident(_))
             && self.bound.variable_kind(hir, declaration) == VarKind::Const
             && decl.init.is_some()
-            && (self.is_literal_operand(decl.init) || self.is_printed_as_undefined(decl.init))
-            && !matches!(
-                hir[self.skip_type_syntax(decl.init)].kind,
-                ExprKind::Binary { left, .. } if self.is_text(left)
-            )
+            && self.can_be_constant_value(decl.init)
     }
 
     fn find_statement_around(&self, expression: ExprId) -> Option<StmtId> {

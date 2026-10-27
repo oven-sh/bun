@@ -5,6 +5,7 @@ use bun_sema::hir::{ExprId, ExprKind, FnId, MemberKey, PatKind, PropKey, PropKin
 use smallvec::SmallVec;
 
 use super::variables::BodyForm;
+use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{BlockFrequency, ImportPhase, NullishAccess};
 use crate::ir::{FunctionKey, ModuleId, TypeTable, ValueId, VariableId, VariableKey};
@@ -378,8 +379,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             module @ ModuleRef::File(_) => {
                 let is_own = file.body_form() == BodyForm::Plain
-                    && file.builtins.builtin_of_expression(access)
-                        == Some(BuiltinId::ModuleObjectExports);
+                    && matches!(
+                        file.builtins.of_pure_expr(access),
+                        Some(Resolved::Builtin(path)) if path.id == BuiltinId::ModuleObjectExports
+                    );
                 is_own.then_some(module)
             }
             _ => None,

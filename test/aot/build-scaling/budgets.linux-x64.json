@@ -286,6 +286,10 @@
     "millionInstructions": 6448,
     "megabytes": 153
   },
+  "classes that each extend a class of their own, all stored on the global object under computed names": {
+    "millionInstructions": 42104,
+    "megabytes": 475
+  },
   "classes that are all declared before the first is constructed, in a build that validates": {
     "millionInstructions": 62300,
     "megabytes": 720

@@ -598,6 +598,30 @@ function turn(i: number): number {
   kept[8 + (i & 7)] = b;
   return a.tick() + b.tick() + b.tag.length + (i & 1);
 }
+//// fields-declared-without-a-value-are-assigned-in-constructors
+class Shape {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+class Circle extends Shape {
+  radius: number;
+  label: string;
+  constructor(x: number, radius: number) {
+    super(x, x + 1);
+    this.radius = radius;
+    this.label = "c";
+  }
+}
+const kept: Shape[] = [];
+function turn(i: number): number {
+  const circle = new Circle(i, i);
+  kept[i & 7] = circle;
+  return ((circle.x + circle.y + circle.radius) & 7) + circle.label.length;
+}
 //// constructor-function-with-a-prototype
 function Legacy(this: any, n: number) {
   this.n = n;

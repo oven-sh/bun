@@ -213,13 +213,11 @@ number	NaN	(1 / 0) % 2
 number	2	2 % (1 / 0)
 number	-0	0 * -1
 number	12	"3" * "4"
-number	NaN	"a" * 1
 number	3	"6" / "2"
 number	3	"5" - 2
 number	1	null + 1
 number	2	true + 1
 number	2	true + true
-number	NaN	void 0 + 1
 number	0	null + null
 number	9007199254740992	9007199254740992 + 1
 number	Infinity	1e308 * 10
@@ -290,6 +288,10 @@ bigint	7	0 || 7n
 
 # unknown
 unknown	-	x
+unknown	-	"a" * 1
+unknown	-	void 0 + 1
+unknown	-	-("a" * 1)
+unknown	-	1 - void 0
 unknown	-	f()
 unknown	-	x + 1
 unknown	-	-x

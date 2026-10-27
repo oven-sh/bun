@@ -24,6 +24,7 @@ fn namespace_value(namespace: BuiltinId) -> ResolvedValue {
             mutability: Mutability::AlwaysLocked,
         },
         kind: HolderKind::ModuleNamespace,
+        has_side_effects: false,
     }
 }
 

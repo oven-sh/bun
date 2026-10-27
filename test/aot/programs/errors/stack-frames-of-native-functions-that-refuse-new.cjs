@@ -1,7 +1,7 @@
 // Each line: the frames of the TypeError of `new f()`, where f is a function that is no constructor. A native function stands in a frame of its own above the caller.
 function show(label, error) {
   const frames = String(error.stack).split("\n").slice(1, 5);
-  const places = frames.map(line => line.trim().replace(/\(?[^ (]*\/([^\/ ]+:\d+:\d+)\)?/, "$1"));
+  const places = frames.map(line => line.trim().replace(/\(?[^ (]*[\\/]([^\\/ ]+:\d+:\d+)\)?/, "$1"));
   console.log(
     label,
     "|",

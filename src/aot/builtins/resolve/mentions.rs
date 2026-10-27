@@ -245,7 +245,7 @@ impl Resolver<'_, '_> {
             let MentionUse::StoredInto(symbol) = self.classify_use(expr) else {
                 continue;
             };
-            let value = value.predicted();
+            let value = value.stored();
             match self.held.get(&symbol) {
                 None => {
                     self.held.insert(symbol, Some(value));

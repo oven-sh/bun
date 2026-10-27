@@ -2,9 +2,10 @@
 // whose prototype object lies above its own does, the compiler takes a read that finds nothing on an instance for `undefined`. Where one of them says nothing, the read answers a value nobody knows.
 // So a list is held to what it says, however the instance is made. the-table-of-built-ins-lists-the-own-names-of-new-instances.test.ts constructs each class. Here an instance is made by a class of
 // the program below it, by Reflect.construct() for another new.target, by the operations of the language that make one without a call, and by the calls that no table of operands finds.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tls } from "harness";
 import { findBuiltinTable } from "./generate";
+import { test } from "./supported";
 
 const table = findBuiltinTable(bunExe());
 

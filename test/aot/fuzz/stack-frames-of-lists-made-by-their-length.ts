@@ -100,7 +100,7 @@ const uses: readonly (readonly [number, (made: string, any: string) => string])[
   [2, made => `return void ${made};`],
   [2, made => `return [${made}];`],
   [2, made => `let list;\nlist = ${made};\nreturn list;`],
-  [2, (made, any) => `return ${made}${any} || 0;`],
+  [2, (made, any) => (any ? `const list: any = ${made};\nreturn list || 0;` : `return ${made} || 0;`)],
   [2, made => `return calls >= 0 ? ${made} : 0;`],
   [2, made => `const list = ${made};\ncalls++;\nreturn list;`],
   [1, made => `return { list: ${made} };`],

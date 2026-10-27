@@ -9,10 +9,10 @@ import {
   closed,
   completeness,
   external,
+  machineCode,
   open,
   retainsFeature,
   uncompiledModule,
-  unseenCode,
   type Use,
 } from "./runtime-use-expectations";
 import { declared, of, runtimeUse, tsconfig, withDeclarations } from "./runtime-use-harness";
@@ -177,7 +177,7 @@ group("with --disallow-code-generation-from-strings no string becomes code throu
       withFlag(text),
       withFlag(text, "--disallow-code-generation-from-strings=strict"),
     ]);
-    const expected = open(unseenCode("process.dlopen"));
+    const expected = open(machineCode("process.dlopen"));
     expect(reports.map(completeness)).toEqual([expected, expected, expected]);
   });
 
@@ -467,7 +467,7 @@ group("the report of a build", () => {
     };
     const use = await runtimeUse(files, build);
     expect({ ...completeness(use), exitCode: use.exitCode }).toEqual({
-      ...open(unseenCode("process.dlopen")),
+      ...open(machineCode("process.dlopen")),
       exitCode: 0,
     });
   });

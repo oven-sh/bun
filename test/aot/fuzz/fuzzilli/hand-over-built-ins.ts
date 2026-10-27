@@ -240,6 +240,8 @@ export function giveNamesOfGlobals(text: string) {
     )
       continue;
     text = text.replace(new RegExp(`(?<![\\w$.])${from}\\b`, "g"), to);
+    // A text that names one of these and shows no kind of module runs as CommonJS under `bun run`, where a `const` of that name at the top is declared twice.
+    if (/^(?:require|module|exports)$/.test(to) && !/^(?:import|export)\b/m.test(text)) text += "\nexport {};\n";
   }
   return text;
 }

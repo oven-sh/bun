@@ -10,6 +10,8 @@
 //   <program>.expected.txt                the output under --aot where it is meant to differ from plain Bun, for example
 //                                         because a value that does not match its declared type throws a TypeError
 //                                         The build with --aot-erase-types is held to it too: the difference does not come from a type (a locked built-in, `f.caller`)
+//   <program>.expected.<label>.txt        the output under variant("<label>", ..) where its flags change what the program prints: the program asks the engine how it keeps a value,
+//                                         which no other program can see, and says why the answer is another one there. The variant holds the program to this text
 //   <program>.build-errors.txt            the build must fail with exit code 1 and exactly these `error:` lines
 //   <program>.todo.txt                    the program fails today, and why; it is listed as a todo and not run
 //   <program>.json                        { "build": [flags for `bun build`], "buildEnv": { .. }, "env": { .. }, "reference": "compiled" }
@@ -615,6 +617,8 @@ type Setup = {
   runEnv: Record<string, string> | Record<string, string>[];
   erasesTypes: boolean;
   stubCopies?: number;
+  /** Of a variant. */
+  label?: string;
 };
 export type RunResult = ReturnType<typeof told>;
 export type StatisticBound = { name: string; relation: "=" | ">=" | "<="; bound: number };
@@ -925,8 +929,13 @@ async function run(path: string, beside: string, setup: Setup) {
   }
   // The flags of a variant change what the compiler does, and so do erased types: the counts hold for neither.
   const isBuiltAsWritten = setup.buildFlags.length === 0 && setup.stubCopies === undefined;
+  const storedForVariant = `${keptBeside(path)}.expected.${setup.label}.txt`;
   const ways = [
-    { way: "compiled", stored: beside + ".expected.txt", program: createProgram([], isBuiltAsWritten ? bounds : []) },
+    {
+      way: "compiled",
+      stored: setup.label && existsSync(storedForVariant) ? storedForVariant : beside + ".expected.txt",
+      program: createProgram([], isBuiltAsWritten ? bounds : []),
+    },
   ];
   if (setup.stubCopies !== undefined) ways[0].program = await withStubCopies(ways[0].program, setup.stubCopies);
   if (setup.erasesTypes && hasTypes(path))
@@ -1029,7 +1038,7 @@ export function measuresTimeOrMemory(path: string): boolean {
   if (!measuring.has(path)) measuring.set(path, differenceOfReadings.test(sourceOf(path)));
   return measuring.get(path)!;
 }
-function sourceOf(path: string): string {
+export function sourceOf(path: string): string {
   const unwritten = notYetWritten.get(path);
   if (unwritten) return Object.values(unwritten.program.files).join("\n");
   if (!/[\\/]main\.[a-z]+$/.test(path)) return readFileSync(path, "utf8");
@@ -1225,7 +1234,7 @@ export function variant(
         const { skipInVariants, skipInVariant } = JSON.parse(readFileSync(besideOf(path) + ".json", "utf8"));
         return !skipInVariants && ![label, labels].flat().some(skipped => skipInVariant?.[skipped]);
       }),
-    { buildFlags, runEnv, erasesTypes: false, stubCopies },
+    { buildFlags, runEnv, erasesTypes: false, stubCopies, label },
   );
 }
 

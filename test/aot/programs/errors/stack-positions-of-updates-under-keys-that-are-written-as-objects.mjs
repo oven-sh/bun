@@ -1,7 +1,7 @@
 // Each line: the frames of an error under an update of a member whose key is written as an object: the getter's caller stands at the object, and the test of the object at the last record.
 function show(label, error) {
   const frames = String(error.stack).split("\n").slice(1, 4);
-  const places = frames.map(line => line.trim().replace(/\(?[^ (]*\/([^\/ ]+:\d+:\d+)\)?/, "$1"));
+  const places = frames.map(line => line.trim().replace(/\(?[^ (]*[\\/]([^\\/ ]+:\d+:\d+)\)?/, "$1"));
   console.log(label, "|", error.name, "|", places.join(" < "));
 }
 const k = "count";

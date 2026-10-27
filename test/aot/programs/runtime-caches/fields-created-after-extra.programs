@@ -1325,10 +1325,11 @@ console.log("defined once again: " + run(() => new DefinedOnce()));
 function add(o, value) { o.added = value; }
 {
   const answers = new Set();
+  const keysAtBirth = Object.keys(Host());
   for (let i = 0; i < turns; i++) {
     const o = hidden(new DefinedTwice());
     add(o, i & 1);
-    answers.add(typeof o.added + " " + o.added + " " + Object.keys(o).join());
+    answers.add(typeof o.added + " " + o.added + " " + Object.keys(o).filter(name => !keysAtBirth.includes(name)).join());
   }
   console.log("added by a store: " + [...answers].join(" | "));
 }

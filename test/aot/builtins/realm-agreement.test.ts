@@ -108,6 +108,19 @@ test("the table lists every own key of the constructors that a program can name"
   expect(JSON.parse((await runFile(keysOfConstructors)).stdout)).toEqual({ unlisted: [], comparesMany: true });
 });
 
+test("an object of the table passes the instance test of no class that the table keeps it out of", async () => {
+  const list: string[] = JSON.parse((await runFile(mismatches)).stdout);
+  expect(list.filter(line => line.includes("passes the instance test of"))).toEqual([]);
+  const script = [
+    'import { aotBuiltinMismatches } from "bun:internal-for-testing";',
+    "Object.defineProperty(globalThis, 'Reflect', { value: new Map() });",
+    "console.log(JSON.stringify(aotBuiltinMismatches()));",
+  ].join("\n");
+  expect(JSON.parse((await runFile(script)).stdout)).toContain(
+    "Reflect: passes the instance test of Map, and the table says it is no instance",
+  );
+});
+
 test("a mismatch is reported", async () => {
   const script = [
     'import { aotBuiltinMismatches } from "bun:internal-for-testing";',

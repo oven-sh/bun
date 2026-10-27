@@ -1,0 +1,12 @@
+ways-into-library-modules/async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process	async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process.cjs:variable@533-578
+ways-into-library-modules/async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process	async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process.cjs:field@533-578
+ways-into-library-modules/async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process	async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process.cjs:element@551-575
+ways-into-library-modules/async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process	async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process.cjs:parameter@551-575
+ways-into-library-modules/async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process	async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process.cjs:field@551-575
+ways-into-library-modules/async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process	async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process.cjs:variable@551-575
+known-helpers/stars-imported-by-an-es-module	first.cjs:unknown@36-43
+known-helpers/stars-imported-by-an-es-module	first.cjs:unknown@352-360
+modules/data-urls-are-imported-as-data	data-urls-are-imported-as-data.mjs:element@3007-3013
+modules/data-urls-are-imported-as-data	data-urls-are-imported-as-data.mjs:field@2999-3015
+modules/data-urls-are-imported-as-data	data-urls-are-imported-as-data.mjs:written@3098-3104
+modules/data-urls-are-imported-as-data	data-urls-are-imported-as-data.mjs:handed@3007-3013

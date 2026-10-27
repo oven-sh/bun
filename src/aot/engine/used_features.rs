@@ -71,9 +71,8 @@ fn cause_of(cause: EngineCause) -> UnseenCodeCause {
         EngineCause::ImportsUncompiledModule => UnseenCodeCause::ImportsUncompiledCode,
         EngineCause::LoadsModuleByName => UnseenCodeCause::LoadsModuleByName,
         EngineCause::LoadsCodeByName => UnseenCodeCause::LoadsCodeByName,
-        EngineCause::RunsUnseenCode | EngineCause::RunsMachineCode => {
-            UnseenCodeCause::RunsUnseenCode
-        }
+        EngineCause::RunsUnseenCode => UnseenCodeCause::RunsUnseenCode,
+        EngineCause::RunsMachineCode => UnseenCodeCause::RunsMachineCode,
         EngineCause::OptionAdmitsCode => UnseenCodeCause::OptionAdmitsCode,
         EngineCause::LimitReached => UnseenCodeCause::FlowGaveUp,
         EngineCause::FlowResultDisabled => UnseenCodeCause::FlowResultDisabled,

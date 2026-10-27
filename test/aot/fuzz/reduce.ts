@@ -185,10 +185,11 @@ export interface ReduceFilesOptions {
 
 const quoted = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** The import and export statements of a file at `from` that name the file at `to`, with or without its extension. */
+/** The import and export statements of a file at `from` that name the file at `to`, with or without its extension; a file of a package in node_modules is named by the package. */
 function statementsNaming(from: string, to: string): RegExp {
   const path = relative(dirname(from), to).replaceAll("\\", "/");
-  const specifier = quoted(path.startsWith(".") ? path : "./" + path).replace(/\\\.\w+$/, "(?:$&|\\.[cm]?js)?");
+  const ofPackage = /^node_modules\/((?:@[^/]+\/)?[^/]+)\//.exec(to)?.[1];
+  const specifier = ofPackage ? quoted(ofPackage) : quoted(path.startsWith(".") ? path : "./" + path).replace(/\\\.\w+$/, "(?:$&|\\.[cm]?js)?");
   return new RegExp(`^[ \\t]*(?:import|export)\\b[\\w$*\\s,]*(?:\\{[^{}]*\\})?[\\w$*\\s,]*(["'])${specifier}\\1[^;\\n]*;?[ \\t]*\\n?`, "gm");
 }
 

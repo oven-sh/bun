@@ -16,7 +16,6 @@ const enumerationsOfOthers = new Set(["B3", "Air", "MacroAssembler", "ValueRep",
 
 const known: Record<string, string> = {
   "analysis/AOTInductionVariables.cpp": "Opcode 4",
-  "analysis/AOTUnspecifiedValuePaths.cpp": "Opcode 2",
   "analysis/AOTVisibleStores.cpp": "Opcode 2",
   "builtins/AOTBuiltinUses.cpp": "Opcode 3",
   "builtins/AOTResolveBuiltins.cpp": "Opcode 1",

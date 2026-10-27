@@ -466,8 +466,19 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // The bytecode of `Array()` and `Array(length)` makes the array without a call, so the caller stays on the stack. A module of the library is bytecode too.
+    // It goes by the callee that Bun's transpiler prints.
     fn makes_array_in_caller(&self, site: Call) -> bool {
-        let inner = self.skip_unprinted_syntax(site.callee);
+        let arguments: SmallVec<[ExprId; 4]> = self.hir.ids(site.args).collect();
+        if arguments.len() > 1 || intrinsic::has_spread(self.hir, &arguments) {
+            return false;
+        }
+        let mut inner = self.skip_unprinted_syntax(site.callee);
+        while let ExprKind::Ident(_) = self.hir[inner].kind
+            && self.bound.binding(inner) != Binding::Free
+            && let Some(initializer) = self.find_printed_initializer(inner)
+        {
+            inner = self.skip_unprinted_syntax(initializer);
+        }
         let is_array = match self.builtins.of_expr(inner) {
             Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) => {
                 path.id == BuiltinId::Array
@@ -475,11 +486,7 @@ impl FileLowering<'_, '_, '_, '_> {
             Some(Resolved::Intrinsic(Intrinsic::Builtin(id))) => id == BuiltinId::Array,
             Some(Resolved::Intrinsic(_)) | None => false,
         };
-        let arguments: SmallVec<[ExprId; 4]> = self.hir.ids(site.args).collect();
-        is_array
-            && self.is_free_name(inner)
-            && arguments.len() <= 1
-            && !intrinsic::has_spread(self.hir, &arguments)
+        is_array && self.is_free_name(inner)
     }
 
     fn find_callee_by_signature(&mut self, call: ExprId, inner: ExprId) -> Option<BuiltinId> {

@@ -414,7 +414,7 @@ fn resolve_input<'x, 's>(file: &'x FileLowering<'_, '_, '_, 's>) -> ResolveInput
 
 impl FileLowering<'_, '_, '_, '_> {
     fn resolves_to_builtin(&self, (path, builtin): BuiltinPathExpr) -> bool {
-        match self.builtins.of_expr(path) {
+        match self.builtins.of_pure_expr(path) {
             Some(Resolved::Builtin(path)) => path.id == builtin,
             Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => false,
         }

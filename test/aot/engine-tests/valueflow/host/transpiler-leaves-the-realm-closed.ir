@@ -1,8 +1,10 @@
 # new Bun.Transpiler(input)
-# The transpiler makes text of text. It runs code only for a macro, through a few lines of its own that import the macro's file, and the loader refuses a file that is not in the image.
-# So the realm is not changed behind the analysis. plugin-changes-the-realm.ir has code that is started with a loader in its hands
-# RUN: valueflow-why flag=h19
+# The transpiler makes text of text. It would run code only for a macro, and refuses macros in an image that admits no code from outside.
+# So making one lets no code in, and the realm is not changed behind the analysis. plugin-changes-the-realm.ir has code that is started with a loader in its hands
+# RUN: valueflow-why flag=h19 flag=h5
 # CHECK: flag=h19
+# CHECK-NEXT: not held
+# CHECK: flag=h5
 # CHECK-NEXT: not held
 
 module m0 path="main.js" displayPath="main.js" body=f0

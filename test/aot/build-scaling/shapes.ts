@@ -782,6 +782,20 @@ export const shapes: Shape[] = [
         `console.log(sum);\n`,
     }),
   },
+  // What a base class allocates for a class nobody knows may be an object of any class that is out of sight: each such class has all those allocations among its objects.
+  {
+    name: "classes that each extend a class of their own, all stored on the global object under computed names",
+    counted: "pairs of classes",
+    size: 1600,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `let sum = 0;\nclass First {}\nglobalThis["k" + sum] = First;\n` +
+        lines(size, index => `class Base${index} {}\nclass Below${index} extends Base${index} {}\nif (new Below${index}() instanceof Base${index}) sum++;\nglobalThis["k" + sum] = Below${index};`) +
+        `console.log(sum);\n`,
+    }),
+  },
   {
     name: "classes that are all declared before the first is constructed, in a build that validates",
     counted: "classes",

@@ -230,7 +230,7 @@ fn every_engine_cause_maps() {
         ),
         (
             EngineCause::RunsMachineCode,
-            UnseenCodeCause::RunsUnseenCode,
+            UnseenCodeCause::RunsMachineCode,
         ),
         (
             EngineCause::LoadsCodeByName,

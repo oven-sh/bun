@@ -33,7 +33,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
 impl FileLowering<'_, '_, '_, '_> {
     fn is_always_resolvable(&self, target: ExprId) -> bool {
-        match self.builtins.of_expr(target) {
+        match self.builtins.of_pure_expr(target) {
             Some(Resolved::Builtin(path)) => match path.mutability {
                 Mutability::AlwaysLocked => true,
                 Mutability::ConstantUnlessWritten | Mutability::ChangesOnItsOwn => false,

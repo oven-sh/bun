@@ -12,6 +12,6 @@ export const show = (label, error) =>
       String(error && error.stack)
         .split("\n")
         .slice(1, 6)
-        .map(line => line.trim().replace(/\(?[^ (]*\/([^\/ ]+:\d+:\d+)\)?/, "$1"))
+        .map(line => line.trim().replace(/\(?[^ (]*[\\/]([^\\/ ]+:\d+:\d+)\)?/, "$1"))
         .join(" < "),
   );

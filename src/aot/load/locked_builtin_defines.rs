@@ -89,7 +89,7 @@ enum KnownValue {
 
 /// The paths that programs test to find out which runtime they are on.
 /// `Bun` is read-only and cannot be deleted (ZigGlobalObject.lut.txt), so no program replaces it.
-/// The table locks `process` and the name after it, and BunProcess.cpp freezes `process.versions` and `process.release` in an executable.
+/// The table locks `process` and the name after it, and BunProcess.cpp makes the name after that read-only in an executable.
 const RUNTIME_IDENTITY: [(&[&str], KnownValue); 7] = [
     (&["Bun"], KnownValue::Object),
     (&["process", "isBun"], KnownValue::True),

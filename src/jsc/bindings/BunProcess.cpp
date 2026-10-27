@@ -258,6 +258,12 @@ static inline String unicodeVersionString()
 #endif
 }
 
+// `bun build --compile --aot` folds reads of process.versions.node, process.versions.bun and process.release.name, so a compiled program must not change the three.
+static unsigned attributesOfFoldedMember(VM& vm)
+{
+    return vm.hasCompiledCode() ? PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete : 0;
+}
+
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -265,8 +271,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
     RETURN_IF_EXCEPTION(scope, {});
 
-    putDirectNamed(vm, object, "node"_s, JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION))));
-    putDirectNamed(vm, object, "bun"_s, JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__version)).substring(1)));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s), JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION))), attributesOfFoldedMember(vm));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "bun"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__version)).substring(1)), attributesOfFoldedMember(vm));
 
     struct VersionEntry {
         const char* name;
@@ -324,39 +330,18 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     return object;
 }
 
-// `bun build --compile --aot` folds reads of process.versions and process.release, so a compiled program must not change them.
-static JSValue freezeInCompiledProgram(VM& vm, JSObject* processObject, JSValue created)
-{
-    if (!vm.hasCompiledCode() || !created.isObject()) [[likely]]
-        return created;
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSC::objectConstructorFreeze(processObject->globalObject(), asObject(created));
-    scope.assertNoException();
-    return created;
-}
-
-static JSValue constructFrozenVersions(VM& vm, JSObject* processObject)
-{
-    return freezeInCompiledProgram(vm, processObject, constructVersions(vm, processObject));
-}
-
 static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* release = JSC::constructEmptyObject(globalObject);
 
-    release->putDirect(vm, vm.propertyNames->name, jsOwnedString(vm, String("node"_s)), 0); // maybe this should be 'bun' eventually
+    release->putDirect(vm, vm.propertyNames->name, jsOwnedString(vm, String("node"_s)), attributesOfFoldedMember(vm)); // maybe this should be 'bun' eventually
     putDirectNamed(vm, release, "sourceUrl"_s, jsOwnedString(vm, String::fromLatin1(Bun__githubURL)));
     putDirectNamed(vm, release, "headersUrl"_s, jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
     return release;
-}
-
-static JSValue constructFrozenRelease(VM& vm, JSObject* processObject)
-{
-    return freezeInCompiledProgram(vm, processObject, constructProcessReleaseObject(vm, processObject));
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
@@ -5362,7 +5347,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   ppid                             processPpid                                         CustomAccessor
   reallyExit                       Process_functionReallyExit                          Function 1
   ref                              Process_ref                                         Function 1
-  release                          constructFrozenRelease                              PropertyCallback
+  release                          constructProcessReleaseObject                       PropertyCallback
   report                           constructProcessReportObject                        PropertyCallback
   resourceUsage                    Process_functionResourceUsage                       Function 0
   revision                         constructRevision                                   PropertyCallback
@@ -5377,7 +5362,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   unref                            Process_unref                                       Function 1
   uptime                           Process_functionUptime                              Function 1
   version                          constructVersion                                    PropertyCallback
-  versions                         constructFrozenVersions                             PropertyCallback
+  versions                         constructVersions                                   PropertyCallback
 
 #if !OS(WINDOWS)
   getegid                          Process_functiongetegid                             Function 0

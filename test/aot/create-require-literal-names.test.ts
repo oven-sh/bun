@@ -85,6 +85,63 @@ const require = createRequire(import.meta.url);
 try { require("./not-there.cjs"); } catch (error) { console.log(error.code); }
 console.log(require("./lib.cjs").name);
 `,
+  "get-builtin-module.mjs": `console.log(process.getBuiltinModule("node:module").createRequire(import.meta.url)("./lib.cjs").name);
+`,
+  "get-builtin-module-taken-apart.mjs": `const { createRequire } = process.getBuiltinModule("node:module");
+console.log(createRequire(import.meta.url)("./lib.cjs").name);
+`,
+  "get-builtin-module-in-a-variable.mjs": `const mod = globalThis.process.getBuiltinModule("module");
+const load = mod.createRequire(import.meta.url);
+function late() { return load("./other.cjs")(); }
+console.log(load("./lib.cjs").name, late(), load("dep").dep, typeof load("node:fs").readFileSync, typeof load.resolve);
+`,
+  "get-builtin-module-of-an-imported-process.mjs": `import process from "node:process";
+console.log(process.getBuiltinModule("node:module").createRequire(import.meta.url)("./lib.cjs").name);
+`,
+  "get-builtin-module-called-in-its-dead-zone.mjs": `function early() { return load("./lib.cjs").name; }
+try { console.log(early()); } catch (error) { console.log(error.name); }
+const load = process.getBuiltinModule("node:module").createRequire(import.meta.url);
+console.log(early());
+`,
+  "get-builtin-module.ts": `const { createRequire } = process.getBuiltinModule("node:module") as typeof import("node:module");
+const load = createRequire(import.meta.url) as NodeJS.Require;
+console.log((load("./lib.cjs") as { name: string }).name);
+`,
+  "read-into-a-variable.cjs": `const createRequire = require("node:module").createRequire;
+console.log(createRequire(__filename)("./lib.cjs").name);
+`,
+  "from-variable-to-variable.cjs": `const mod = require("node:module");
+const same = mod;
+const make = same.createRequire;
+const again = make;
+console.log(again(__filename)("./lib.cjs").name);
+`,
+  "module-require.cjs": `console.log(module.require("node:module").createRequire(__filename)("./lib.cjs").name);
+`,
+  "require-under-another-name.cjs": `const ask = require;
+console.log(ask("node:module").createRequire(__filename)("./lib.cjs").name, require.call(null, "module").createRequire(__filename)("./other.cjs")());
+`,
+  "the-module-class.cjs": `const { Module } = require("node:module");
+console.log(Module.createRequire(__filename)("./lib.cjs").name, require("node:module").Module.createRequire(__filename)("./other.cjs")());
+`,
+  "a-made-require-asks-for-node-module.mjs": `import { createRequire } from "node:module";
+const first = createRequire(import.meta.url);
+const second = first("node:module").createRequire(import.meta.url);
+console.log(second("./lib.cjs").name);
+`,
+  "the-default-of-the-namespace.mjs": `import * as mod from "node:module";
+console.log(mod.default.createRequire(import.meta.url)("./lib.cjs").name);
+`,
+  "awaited-import.mjs": `console.log((await import("node:module")).createRequire(import.meta.url)("./lib.cjs").name);
+const { createRequire } = await import("module");
+const { default: { createRequire: make } } = await import("node:module");
+console.log(createRequire(import.meta.url)("./other.cjs")(), make(import.meta.url)("dep").dep);
+`,
+  "returned-by-a-function-called-where-it-is-written.mjs": `import { createRequire } from "node:module";
+const load = (() => createRequire(import.meta.url))();
+const mod = (() => process.getBuiltinModule("node:module"))();
+console.log(load("./lib.cjs").name, mod.createRequire(import.meta.url)("./other.cjs")());
+`,
 };
 
 const compiledOnly = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };

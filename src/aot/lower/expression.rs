@@ -267,16 +267,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(value) = self.try_lower_mention(expression) {
             return value;
         }
+        if let Some(Resolved::Builtin(path)) = self.file.builtins.of_pure_expr(expression)
+            && let Some(builtin) = path.locked_builtin()
+        {
+            return self.emit_locked_builtin(builtin);
+        }
         match self.file.builtins.of_expr(expression) {
-            Some(Resolved::Builtin(path)) if path.locked_builtin().is_some() => {
-                self.emit_locked_builtin(path.id)
-            }
             Some(Resolved::Builtin(path))
                 if !matches!(self.file.hir[expression].kind, ExprKind::Ident(_)) =>
             {
-                if let Some(builtin) = path.locked_builtin() {
-                    return self.emit_locked_builtin(builtin);
-                }
                 let value = self.lower_by_kind(expression, evaluation);
                 self.expect_path(path, value)
             }

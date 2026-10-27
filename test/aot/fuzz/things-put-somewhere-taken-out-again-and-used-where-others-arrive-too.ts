@@ -2,8 +2,10 @@
 //
 //   where      what the language gives a function, an object, a class, a call, an error, a promise, a generator; collections and lists; descriptors, keys of every kind, proxies; the global object; what the host keeps
 //              for a timer, an event, an emitter, a signal, a stream; a variable that a module exports, `exports`, what a JSON file holds, the cache of `require`, `import.meta`
+//              later (`laterCorners`): what Bun keeps for a socket, a websocket, a server, a database; new members of objects of Bun and of the web; asynchronous contexts, reasons of streams, newer built-ins
+//   then       nothing, or a second place that the thing goes through once it is out of the first
 //   the thing  (`things`) one of two functions, classes, layouts, instances, keys or names of methods, a text among numbers, a fraction among integers, an object that is changed at the far end, a function that loads
-//              modules, that makes functions out of text or that evaluates text
+//              modules, that makes functions out of text or that evaluates text, that imports, that starts workers
 //   inside     nothing, or something that is put there in its place and holds it: a literal, a list, a closure, a map, a set, an instance, a getter, a prototype, one or two levels deep
 //   written    straight, statement behind statement, or as functions that put what they are handed and answer what they take out; the thing where it is put, or under a name
 //   the files  one; the place apart; the use apart; every part in a file of its own; ES modules or CommonJS; the program and the use in JavaScript or in TypeScript, over a declaration file, over what TypeScript
@@ -381,6 +383,157 @@ const places: Record<string, Place> = {
 };
 export const corners = Object.keys(places);
 
+/** Places that came later: objects of Bun and of the host, and newer places of the language. They have rows of their own in the test, behind the rows of the others. */
+const database = 'import { Database } from "bun:sqlite";\nconst held = new Database(":memory:");';
+const storage = 'const held = new (process.getBuiltinModule("node:async_hooks").AsyncLocalStorage)();';
+const later: Record<string, Place> = {
+  "the data of a socket that Bun listens on": [
+    object,
+    'await new Promise(done => {\n  const server = Bun.listen({\n    hostname: "127.0.0.1",\n    port: 0,\n    data: §,\n    socket: {\n      open(socket) {\n        held.seen = socket.data;\n        socket.end();\n        server.stop(true);\n        done();\n      },\n      data() {},\n    },\n  });\n  Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {}, error() {} } });\n});',
+    seen,
+  ],
+  "the data of a socket that Bun connects": [
+    object,
+    'await new Promise(done => {\n  const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });\n  Bun.connect({\n    hostname: "127.0.0.1",\n    port: server.port,\n    data: §,\n    socket: {\n      open(socket) {\n        held.seen = socket.data;\n        socket.end();\n        server.stop(true);\n        done();\n      },\n      data() {},\n      error() {},\n    },\n  });\n});',
+    seen,
+  ],
+  "the data of a socket of Bun, stored later": [
+    object,
+    'await new Promise(done => {\n  const server = Bun.listen({\n    hostname: "127.0.0.1",\n    port: 0,\n    socket: {\n      open(socket) {\n        socket.data = §;\n        socket.end();\n      },\n      close(socket) {\n        held.seen = socket.data;\n        server.stop(true);\n        done();\n      },\n      data() {},\n    },\n  });\n  Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {}, error() {} } });\n});',
+    seen,
+  ],
+  "the data of a websocket of a server of Bun": [
+    object,
+    'await new Promise(done => {\n  const server = Bun.serve({\n    hostname: "127.0.0.1",\n    port: 0,\n    fetch(request, server) {\n      return server.upgrade(request, { data: § }) ? undefined : new Response("no");\n    },\n    websocket: {\n      open(socket) {\n        held.seen = socket.data;\n        socket.close();\n        server.stop(true);\n        done();\n      },\n      message() {},\n    },\n  });\n  new WebSocket(`ws://127.0.0.1:${server.port}/`);\n});',
+    seen,
+  ],
+  "thrown in the handler of a server of Bun": [
+    object,
+    'const server = Bun.serve({\n  hostname: "127.0.0.1",\n  port: 0,\n  fetch() {\n    throw §;\n  },\n  error(thrown) {\n    held.seen = thrown;\n    return new Response("caught");\n  },\n});\nawait (await fetch(`http://127.0.0.1:${server.port}/`)).text();\nawait server.stop(true);',
+    seen,
+  ],
+  "Bun.peek": [object, "held.promise = Promise.resolve(§);", "Bun.peek(held.promise)"],
+  "Bun.readableStreamToArray": [
+    object,
+    "held.stream = new ReadableStream({\n  start(controller) {\n    controller.enqueue(§);\n    controller.close();\n  },\n});",
+    "(await Bun.readableStreamToArray(held.stream))[0]",
+  ],
+  "a new member of a file of Bun": ['const held = Bun.file("nowhere.txt");', "held.member = §;", "held.member"],
+  "a new member of a response": ['const held = new Response("");', "held.member = §;", "held.member"],
+  "a new member of a request": ['const held = new Request("http://localhost/");', "held.member = §;", "held.member"],
+  "a new member of headers": ["const held = new Headers();", "held.member = §;", "held.member"],
+  "a new member of a blob": ["const held = new Blob([]);", "held.member = §;", "held.member"],
+  "a new member of an address": ['const held = new URL("http://localhost/");', "held.member = §;", "held.member"],
+  "a new member of a buffer of node": ["const held = Buffer.alloc(1);", "held.member = §;", "held.member"],
+  "a new member of Bun": ["const held = Bun;", "held.memberOfTheProgram = §;", "held.memberOfTheProgram"],
+  "the class that the rows of a database become": [
+    database,
+    'held.rows = held.query("select 1 as a").as(§);',
+    "held.rows.get().constructor",
+    "c",
+  ],
+  "a transaction of a database": [database, "held.run = held.transaction(§);", "held.run", "f"],
+  "the store of an AsyncLocalStorage": [storage, "held.enterWith(§);", "held.getStore()"],
+  "the store of an AsyncLocalStorage, in run": [storage, "held.seen = held.run(§, () => held.getStore());", seen],
+  "the store of an AsyncLocalStorage, behind an await": [
+    storage,
+    "held.seen = await held.run(§, async () => {\n  await null;\n  return held.getStore();\n});",
+    seen,
+  ],
+  "a function bound to an asynchronous context": [
+    object,
+    'held.run = process.getBuiltinModule("node:async_hooks").AsyncLocalStorage.bind(§);',
+    "held.run",
+    "f",
+  ],
+  "the reason of a signal that follows another": [
+    object,
+    "held.signal = AbortSignal.any([AbortSignal.abort(§)]);",
+    "held.signal.reason",
+  ],
+  "what a signal throws": [
+    object,
+    "try {\n  AbortSignal.abort(§).throwIfAborted();\n} catch (thrown) {\n  held.seen = thrown;\n}",
+    seen,
+  ],
+  "the reason a stream is cancelled for": [
+    object,
+    "await new ReadableStream({\n  cancel(reason) {\n    held.seen = reason;\n  },\n}).cancel(§);",
+    seen,
+  ],
+  "the reason a stream is aborted for": [
+    object,
+    "await new WritableStream({\n  abort(reason) {\n    held.seen = reason;\n  },\n}).abort(§);",
+    seen,
+  ],
+  "what a stream that changes nothing passes on": [
+    "const held = new TransformStream();",
+    "held.writable.getWriter().write(§);",
+    "(await held.readable.getReader().read()).value",
+  ],
+  "a chunk of a stream of node": [
+    'const held = new (process.getBuiltinModule("node:stream").PassThrough)({ objectMode: true });',
+    "held.write(§);",
+    "held.read()",
+    "o",
+  ],
+  "what events.once answers": [
+    'const held = new (process.getBuiltinModule("node:events"))();',
+    'held.promise = process.getBuiltinModule("node:events").once(held, "event");\nheld.emit("event", §);',
+    "(await held.promise)[0]",
+  ],
+  "what a promisified function answers": [
+    object,
+    'held.promise = process.getBuiltinModule("node:util").promisify(done => done(null, §))();',
+    "await held.promise",
+  ],
+  "what a timer of node:timers/promises answers": [
+    object,
+    'held.promise = process.getBuiltinModule("node:timers/promises").setTimeout(0, §);',
+    "await held.promise",
+  ],
+  "an argument of setImmediate": [
+    object,
+    "await new Promise(done =>\n  setImmediate(given => {\n    held.seen = given;\n    done();\n  }, §),\n);",
+    seen,
+  ],
+  "the data of a message event": [object, 'held.event = new MessageEvent("message", { data: § });', "held.event.data"],
+  "the error of an error event": [object, 'held.event = new ErrorEvent("error", { error: § });', "held.event.error"],
+  "an argument of an event of process": [
+    object,
+    'process.once("handed", given => {\n  held.seen = given;\n});\nprocess.emit("handed", §);',
+    seen,
+  ],
+  "what a channel of diagnostics publishes": [
+    'const held = process.getBuiltinModule("node:diagnostics_channel").channel("handed");',
+    "held.subscribe(message => {\n  held.seen = message;\n});\nheld.publish(§);",
+    seen,
+  ],
+  "what prepareStackTrace answers": [
+    object,
+    'Error.prepareStackTrace = () => (§);\nheld.seen = new Error("asked").stack;\nError.prepareStackTrace = undefined;',
+    seen,
+  ],
+  "what a stack of disposables hands back": [
+    object,
+    "{\n  const stack = new DisposableStack();\n  stack.adopt(§, given => {\n    held.seen = given;\n  });\n  stack.dispose();\n}",
+    seen,
+  ],
+  "the error of a SuppressedError": [object, "held.error = new SuppressedError(§, 0);", "held.error.error"],
+  "Array.fromAsync": [object, "held.promise = Array.fromAsync([§]);", "(await held.promise)[0]"],
+  "Object.groupBy": [object, 'held.groups = Object.groupBy([§], () => "all");', "held.groups.all[0]"],
+  "Map.groupBy": [object, "held.groups = Map.groupBy([§], () => 0);", "held.groups.get(0)[0]"],
+  "Promise.try": [object, "held.promise = Promise.try(() => (§));", "await held.promise"],
+  "Promise.any": [object, "held.promise = Promise.any([§]);", "await held.promise"],
+  "Iterator.from": [
+    object,
+    "held.steps = Iterator.from({\n  next() {\n    return { value: §, done: false };\n  },\n});",
+    "held.steps.next().value",
+  ],
+};
+export const laterCorners = Object.keys(later);
+Object.assign(places, later);
+
 type Thing = {
   /** Declarations of `First` and `Second`, which the things or their use need, and what a declaration file says of `First`. */
   ahead?: string;
@@ -390,6 +543,10 @@ type Thing = {
   type: string;
   use: string;
   kind: "a function" | "a constructor" | "an object" | "a primitive value";
+  /** Its use waits for something. */
+  isAwaited?: true;
+  /** A file that its use starts as a worker. */
+  worker?: string;
 };
 const modules = [
   "async_hooks",
@@ -528,6 +685,64 @@ const all: Record<string, Thing> = {
     use: `§("yield 1")().next().value`,
     kind: "a function",
   },
+  "a function that imports": {
+    odd: [
+      "name => import(name)",
+      "async name => await import(name)",
+      "name => import(name).then(all => all)",
+      "name => Promise.resolve(name).then(late => import(late))",
+    ],
+    honest: "async name => ({ name, other: 1 })",
+    type: "(name: string) => Promise<object>",
+    use: `Object.keys(await §(["node:", "%"].join(""))).length > 1`,
+    kind: "a function",
+    isAwaited: true,
+  },
+  "the constructor of asynchronous functions": {
+    odd: ["Object.getPrototypeOf(async function () {}).constructor", "async function () {}.constructor"],
+    honest: "() => async () => 2",
+    type: "(text: string) => Function",
+    use: `await §("return 1")()`,
+    kind: "a function",
+    isAwaited: true,
+  },
+  "the constructor of asynchronous generator functions": {
+    odd: ["Object.getPrototypeOf(async function* () {}).constructor"],
+    honest: "() =>\n  async function* () {\n    yield 2;\n  }",
+    type: "(text: string) => Function",
+    use: `(await §("yield 1")().next()).value`,
+    kind: "a function",
+    isAwaited: true,
+  },
+  "a function that starts workers": {
+    odd: [
+      "file => new Worker(file)",
+      "file => new globalThis.Worker(file)",
+      "file => Reflect.construct(Worker, [file])",
+      "(...given) => new Worker(...given)",
+      `file => new (Reflect.get(globalThis, "Worker"))(file)`,
+    ],
+    honest:
+      "() => ({\n  addEventListener(name, listener) {\n    queueMicrotask(() => listener({ data: 2 }));\n  },\n  terminate() {},\n})",
+    type: "(file: string) => {\n  addEventListener(name: string, listener: (event: { data: unknown }) => void): void;\n  terminate(): void;\n}",
+    use: `await new Promise(resolve => {\n    const worker = §("./works.mjs");\n    worker.addEventListener("message", event => {\n      worker.terminate();\n      resolve(event.data);\n    });\n  })`,
+    kind: "a function",
+    isAwaited: true,
+    worker: "postMessage(1);\n",
+  },
+  "a function that starts workers of node": {
+    odd: [
+      `file => new (process.getBuiltinModule("node:worker_threads").Worker)(file)`,
+      `file => Reflect.construct(process.getBuiltinModule("node:worker_threads").Worker, [file])`,
+      `file => new (Reflect.get(require("node:worker_threads"), "Worker"))(file)`,
+    ],
+    honest: "() => ({\n  once(name, listener) {\n    queueMicrotask(() => listener(2));\n  },\n})",
+    type: "(file: string) => { once(name: string, listener: (message: unknown) => void): unknown }",
+    use: `await new Promise(resolve => §("./works.mjs").once("message", resolve))`,
+    kind: "a function",
+    isAwaited: true,
+    worker: `process.getBuiltinModule("node:worker_threads").parentPort.postMessage(1);\n`,
+  },
 };
 /** Things that came later: they have rows of their own in the test, behind the rows of the others. */
 export const laterThings = [
@@ -535,6 +750,11 @@ export const laterThings = [
   "the function that evaluates text",
   "what node:vm runs text with",
   "the constructor of generator functions",
+  "a function that imports",
+  "the constructor of asynchronous functions",
+  "the constructor of asynchronous generator functions",
+  "a function that starts workers",
+  "a function that starts workers of node",
 ];
 export const things = Object.keys(all).filter(name => !laterThings.includes(name));
 
@@ -585,18 +805,56 @@ export function thingsOf(corner: string): string[] {
   });
 }
 
+/** The thing that a place meets in a row of the test: its own things in turn, and from the twelfth row on the later things, where it takes functions. */
+const inRow = (corner: string, row: number) => {
+  const takes = thingsOf(corner);
+  return row >= 11 && takes.includes("a function that loads modules")
+    ? laterThings[row - 11]
+    : takes[row % takes.length];
+};
+const rows = 11 + laterThings.length;
+/** A place that can stand in a function behind another place. */
+const canFollow = [...corners, ...laterCorners].filter(
+  corner => !places[corner][4] && !/\b(import|export) /.test(places[corner][0]),
+);
+/**
+ * What each fixed seed of the test takes: every place of the first kind in every row, then every later place in every row, then every place twice with another place behind it, through which
+ * goes a thing that both take.
+ */
+export const drawn: { corner: string; thing: string; then?: string }[] = [
+  ...Array.from({ length: corners.length * rows }, (_, index) => {
+    const corner = corners[index % corners.length];
+    return { corner, thing: inRow(corner, Math.floor(index / corners.length)) };
+  }),
+  ...Array.from({ length: laterCorners.length * rows }, (_, index) => {
+    const corner = laterCorners[index % laterCorners.length];
+    return { corner, thing: inRow(corner, Math.floor(index / laterCorners.length)) };
+  }),
+  ...[0, 1].flatMap(turn =>
+    [...corners, ...laterCorners].map((corner, at) => {
+      const then = canFollow[(at * 7 + turn * 53 + 11) % canFollow.length];
+      const both = Array.from({ length: rows }, (_, row) => inRow(corner, row)).filter(thing =>
+        Array.from({ length: rows }, (_, row) => inRow(then, row)).includes(thing),
+      );
+      return { corner, thing: both[(at + turn * 5) % both.length], then };
+    }),
+  ),
+];
+
 type Unit = { text: string; defines: string[]; needs: string[] };
 
 export function generate(
   random: Random,
   corner: string,
   wanted?: string,
-): { file: string; text: string; files: Record<string, string> } {
+  then?: string,
+): { file: string; text: string; files: Record<string, string>; entryPoints?: string[] } {
   // The relations first.
   const [holder, putsBare, takesBare, accepts, besides] = places[corner];
   const name = wanted ?? random.pick(thingsOf(corner));
   const thing = all[name];
-  const isAsync = putsBare.includes("await") || takesBare.includes("await");
+  const next = then === undefined ? undefined : places[then];
+  const isAsync = [putsBare, takesBare, ...(next ? [next[1], next[2]] : [])].some(each => each.includes("await"));
   const isChanged = name === "an object that is changed";
   const isStraight = random.chance(0.6);
   const isNamed = isChanged || !isStraight || random.chance(0.3);
@@ -608,7 +866,9 @@ export function generate(
     [3, "every part apart"],
   ] as const);
   const odd = accepts === "c" ? random.pick(thing.odd.slice(0, 1)) : random.pick(thing.odd);
-  const isCommonJS = !isAsync && !odd.includes("import.meta") && !holder.includes("import") && random.chance(0.25);
+  const waits = thing.isAwaited ? "await " : "";
+  const isCommonJS =
+    !waits && !isAsync && !odd.includes("import.meta") && !holder.includes("import") && random.chance(0.25);
   // What puts and takes is written as JavaScript: where it stands in a file of TypeScript, that file is not checked.
   const isApart = split === "the place apart" || split === "every part apart";
   const language = random.weighted([
@@ -630,7 +890,12 @@ export function generate(
 
   const isTyped = language !== "JavaScript";
   const put = carrier ? putsBare.replaceAll("§", `(${carrier[0].replaceAll("§", "(§)")})`) : putsBare;
-  const take = carrier ? carrier[1].replaceAll("§", `(${takesBare})`) : takesBare;
+  const taker = carrier ? carrier[1].replaceAll("§", `(${takesBare})`) : takesBare;
+  // What was taken out of the first place goes through the second one, which stands in a function of its own.
+  const through = next
+    ? `${isAsync ? "async " : ""}function through(value) {\n${next[0]}\n${next[1].replaceAll("§", "value")}\nreturn ${next[2]};\n}\n`
+    : "";
+  const take = next ? `${isAsync ? "await " : ""}through(${taker})` : taker;
   const use =
     name === "two functions"
       ? isAsked
@@ -670,10 +935,14 @@ export function generate(
         needs: ["held"],
       };
   const takes: Unit = isStraight
-    ? { text: `const taken = ${take};`, defines: ["taken"], needs: ["held"] }
-    : { text: `${isAsync ? "async " : ""}function take() {\n  return ${take};\n}`, defines: ["take"], needs: ["held"] };
+    ? { text: `${through}const taken = ${take};`, defines: ["taken"], needs: ["held"] }
+    : {
+        text: `${through}${isAsync ? "async " : ""}function take() {\n  return ${take};\n}`,
+        defines: ["take"],
+        needs: ["held"],
+      };
   const uses: Unit = {
-    text: `function use(given${isTyped ? `: ${thing.type}` : ""}) {\n  return ${of(use, "given")};\n}`,
+    text: `${waits && "async "}function use(given${isTyped ? `: ${thing.type}` : ""}) {\n  return ${of(use, "given")};\n}`,
     defines: ["use"],
     needs: use.includes("First") ? ["First"] : [],
   };
@@ -682,20 +951,20 @@ export function generate(
     honestCalls === 0
       ? ""
       : honestCalls === 1
-        ? `console.log("the other", use(${honest}));\n`
-        : `{\n  let last;\n  for (let turn = 0; turn < ${honestCalls}; turn++) last = use(${honest});\n  console.log("the other", last);\n}\n`;
+        ? `console.log("the other", ${waits}use(${honest}));\n`
+        : `{\n  let last;\n  for (let turn = 0; turn < ${honestCalls}; turn++) last = ${waits}use(${honest});\n  console.log("the other", last);\n}\n`;
   const oddly =
     (isStraight
       ? ""
       : `${named}\n${isAsync ? "await " : ""}put(odd);\nconst taken = ${isAsync ? "await " : ""}take();\n`) +
-    `${language === "inferred" ? "// @ts-ignore\n" : ""}console.log("taken out", use(taken));\n` +
+    `${language === "inferred" ? "// @ts-ignore\n" : ""}console.log("taken out", ${waits}use(taken));\n` +
     (isChanged ? `console.log("where it was made", odd.a);\n` : "");
   const body =
     (isHonestNamed ? `const honest${isTyped ? `: ${thing.type}` : ""} = ${thing.honest};\n` : "") +
     (order === "ahead" ? honestly + oddly : order === "behind" ? oddly + honestly : honestly + oddly + honestly);
   const calls: Unit = {
     text: isInAFunction
-      ? `${isAsync && !isStraight ? "async " : ""}function run() {\n${body}}\n${isAsync && !isStraight ? "await " : ""}run();`
+      ? `${waits || (isAsync && !isStraight) ? "async " : ""}function run() {\n${body}}\n${waits || (isAsync && !isStraight) ? "await " : ""}run();`
       : body.trimEnd(),
     defines: [],
     needs: ["use", ...(isStraight ? ["taken", ...(isChanged ? ["odd"] : [])] : ["put", "take"]), ...ahead.defines],
@@ -728,7 +997,7 @@ export function generate(
               [`uses.${typed}`, [uses]],
               [`main.${typed}`, [first, calls]],
             ];
-  const files: Record<string, string> = { ...besides };
+  const files: Record<string, string> = { ...besides, ...(thing.worker && { "works.mjs": thing.worker }) };
   const present = laid.filter(([, units]) => units.some(unit => unit.text));
   const types: Record<string, string> = {
     First: thing.first ?? "export declare class First {\n  tag(): number;\n}\n",
@@ -797,5 +1066,5 @@ export function generate(
   }
   const file = `main.${typed}`;
   const { [file]: text, ...others } = files;
-  return { file, text, files: others };
+  return { file, text, files: others, ...(thing.worker && { entryPoints: ["works.mjs"] }) };
 }

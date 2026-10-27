@@ -209,6 +209,61 @@ if (Bun.isMainThread) {
 }
 `;
 
+// Every Worker starts first. Ahead of each of three waves a Worker of its own keeps objects until it catches a RangeError, and goes on holding them.
+// Then the four Workers of the wave parse a long text again and again, and keep what they get, until each has ended.
+const wavesOfWorkersRunOutOfRoom = `declare var self: Worker;
+type Link = { next: Link | null; a: number; b: number };
+let head: Link | null = null;
+const keep: unknown[] = [];
+const text = JSON.stringify(
+  Array.from({ length: 4000 }, (_, i) => ({ id: i, name: "n" + i, tags: ["a", "b", String(i)], nested: { x: i, y: [i, i + 1] } })),
+);
+if (Bun.isMainThread) {
+  const start = () => {
+    const worker = new Worker(new URL(import.meta.url));
+    worker.addEventListener("error", () => {});
+    return new Promise<Worker>(resolve => (worker.onmessage = () => resolve(worker)));
+  };
+  const waves: Worker[][] = [];
+  const fillers: Worker[] = [];
+  for (let wave = 0; wave < 3; wave++) {
+    waves.push([]);
+    for (let i = 0; i < 4; i++) waves[wave].push(await start());
+  }
+  for (let wave = 0; wave < 3; wave++) fillers.push(await start());
+  for (let wave = 0; wave < 3; wave++) {
+    fillers[wave].postMessage("fill");
+    // One that finds no room while it has few objects ends, too.
+    await new Promise(resolve => {
+      fillers[wave].onmessage = resolve;
+      fillers[wave].addEventListener("close", resolve);
+    });
+    const codes = await Promise.all(
+      waves[wave].map(worker => {
+        worker.postMessage("parse");
+        return new Promise<number>(resolve =>
+          worker.addEventListener("close", event => resolve((event as unknown as { code: number }).code)),
+        );
+      }),
+    );
+    console.log("wave", wave, "ended with codes", codes.join(" "));
+  }
+  process.exit(0);
+} else {
+  self.onmessage = event => {
+    if (event.data === "fill") {
+      try {
+        for (let i = 0; ; i++) head = { next: head, a: i, b: i };
+      } catch {}
+      return postMessage("full");
+    }
+    setInterval(() => keep.push(JSON.parse(text)), 1);
+  };
+  setInterval(() => {}, 1000);
+  postMessage("ready");
+}
+`;
+
 // More shapes of objects than the table that finds properties by name has rows for at first.
 const readsManyShapesByName = `const objects: any[] = [];
 for (let i = 0; i < 120_000; i++) {
@@ -392,6 +447,22 @@ describe.concurrent("Workers of a compiled program within a limit on the address
         String(megabytesKeptFirst),
       );
       const stdout = "RangeError: Out of memory, code 1\n".repeat(4);
+      expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
+        places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
+      );
+    },
+    240_000,
+  );
+
+  test.skipIf(!isLinux || isASAN)(
+    "wave after wave of Workers ends where no room is left, and the program goes on",
+    async () => {
+      const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
+      const results = await runEach(
+        places.map(place => ({ limitInKB: 1536 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
+        wavesOfWorkersRunOutOfRoom,
+      );
+      const stdout = [0, 1, 2].map(wave => `wave ${wave} ended with codes 1 1 1 1\n`).join("");
       expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
         places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
       );

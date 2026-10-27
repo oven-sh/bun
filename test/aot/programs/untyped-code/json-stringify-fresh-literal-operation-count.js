@@ -57,4 +57,4 @@ measure("with a replacer", i => JSON.stringify({ a: i, b: 2 }, ["b"]));
 measure("with a space", i => JSON.stringify({ a: i }, null, 1));
 measure("a bigint throws", i => { try { return JSON.stringify({ a: i, b: 1n }); } catch (error) { return error.constructor.name; } });
 measure("members evaluated in order", i => { const order = []; const text = JSON.stringify({ a: (order.push("a"), i), b: (order.push("b"), 2) }); return text + order.join(""); });
-console.log("needed the engine: " + (counted ? left.join(" | ") : "null and undefined | undefined first | undefined now and then | a function and a symbol | a member with toJSON within | a name twice | names that are indexes | a spread | a getter | a method | __proto__ computed | a member named toJSON | with a replacer | a bigint throws | members evaluated in order"));
+console.log("needed the engine: " + (counted ? left.join(" | ") : "undefined now and then | a function and a symbol | a member with toJSON within | names that are indexes | a getter | a method | a member named toJSON | with a replacer | a bigint throws | members evaluated in order"));

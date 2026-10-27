@@ -364,6 +364,12 @@ const routes: Record<string, Record<string, Route>> = {
     "transpiler with a macro": {
       body: `const f = temporaryFile('.ts', glue('export function m() { globalThis.RAN', ' = 1; return 1; }')); new Bun.Transpiler({ loader: 'ts', macro: {} }).transformSync(glue('import { m } from ', JSON.stringify(f), ' with { type: "macro" }; m();'))`,
     },
+    "transpiler with a macro out of a built-in module": {
+      body: `new Bun.Transpiler({ loader: 'ts' }).transformSync(glue('import { runInThisContext as m } from "node:vm" with { type: "macro" }; m(', JSON.stringify(text), ');'))`,
+    },
+    "transpiler that scans a text with a macro": {
+      body: `new Bun.Transpiler({ loader: 'ts' }).scan(glue('import { runInThisContext as m } from "node:vm" with { type: "macro" }; m(', JSON.stringify(text), ');'))`,
+    },
     "build plugin from a file": {
       body: `const f = temporaryFile('.js', moduleText); await Bun.build({ entrypoints: [f], plugins: [require(f)] })`,
     },

@@ -1,12 +1,24 @@
 use bun_ast::Loader;
 use bun_sema::program::HostLoader;
-use bun_sema::resolve::ScriptKind;
+use bun_sema::resolve::{CodeImportKind, ScriptKind};
 
+use crate::module_keys::loader_by_path_or;
 #[cfg(test)]
 pub(crate) use crate::module_keys::loader_name;
-pub(crate) use crate::module_keys::{
-    loader_by_name, loader_by_path, loader_named_by_path, parses_text_as_data,
-};
+pub(crate) use crate::module_keys::{loader_by_name, loader_named_by_path, parses_text_as_data};
+
+pub(crate) fn loader_by_path<E: AsRef<[u8]>>(
+    table: &[(E, Loader)],
+    path: &[u8],
+    kind: CodeImportKind,
+) -> Loader {
+    let unnamed = match kind {
+        CodeImportKind::EntryPoint => Loader::Tsx,
+        CodeImportKind::Require => Loader::Ts,
+        CodeImportKind::Import => Loader::File,
+    };
+    loader_by_path_or(table, path, unnamed)
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum HostLoaderKind {
@@ -100,8 +112,6 @@ pub(crate) fn reads_raw_bytes(loader: Loader) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use bun_sema::resolve::CodeImportKind;
-
     use super::*;
     use crate::options::DEFAULT_LOADERS;
 

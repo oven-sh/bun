@@ -24,6 +24,7 @@
 #include "BunClientData.h"
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
+#include "ObjectBindings.h"
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
@@ -166,7 +167,8 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     if (callsPrepareStackTrace) {
         // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
         // it will display the stack as a formatted string, so we have to do the same.
-        errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
+        putDirectOrThrow(lexicalGlobalObject, errorObject, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
+        RETURN_IF_EXCEPTION(scope, {});
 
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(errorObject);
@@ -918,7 +920,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         String sourceURL;
         JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
         RETURN_IF_EXCEPTION(scope, {});
-        errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        putDirectOrThrow(globalObject, errorObject, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

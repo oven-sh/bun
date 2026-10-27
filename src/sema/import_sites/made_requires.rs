@@ -1,4 +1,4 @@
-use super::call_sites::{expr_kind, is_free_common_js};
+use super::call_sites::{expr_kind, find_request_of_exports, is_free_common_js};
 use crate::atom::{Atom, known};
 use crate::bind::{
     Binding, BindingInitializer, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl,
@@ -9,6 +9,7 @@ use crate::hir::{
     Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList, MemberKey,
     NodeData, PatKind, StmtKind,
 };
+use smallvec::SmallVec;
 
 fn is_node_module(specifier: Atom) -> bool {
     specifier == known::module || specifier == known::node_module
@@ -54,67 +55,115 @@ pub(crate) fn find_imported_export(
     })
 }
 
-fn import_from_node_module(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    symbol: SymbolId,
-) -> Option<Option<Atom>> {
-    let (specifier, export) = find_imported_export(hir, bound, symbol)?;
-    is_node_module(specifier).then_some(export)
-}
-
 fn is_import_meta_require(hir: &File<'_>, e: ExprId) -> bool {
     matches!(hir.member_key(e), Some((object, MemberKey::Name(name)))
         if name == known::require
             && matches!(expr_kind(hir, hir.skip_type_assertions(object)), Some(ExprKind::ImportMeta)))
 }
 
-fn is_request_of_node_module(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    let Some(ExprKind::Call(call)) = expr_kind(hir, e) else {
-        return false;
-    };
-    let callee = hir.skip_type_assertions(hir[call].callee);
-    let is_import_meta_require = is_import_meta_require(hir, callee);
-    let is_require = is_free_common_js(hir, bound, callee, CommonJsVariable::Require);
-    let specifier = hir
-        .ids(hir[call].args)
-        .next()
-        .and_then(|argument| expr_kind(hir, argument));
-    (is_require || is_import_meta_require)
-        && matches!(specifier, Some(ExprKind::String(text)) if is_node_module(text))
+#[derive(Copy, Clone)]
+pub(super) struct StepsLeft {
+    parameters: usize,
+    requests: usize,
 }
 
-fn is_object_of_node_module(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    let e = hir.skip_type_assertions(e);
-    let Some(symbol) = settled_symbol(hir, bound, e) else {
-        return is_request_of_node_module(hir, bound, e);
+impl StepsLeft {
+    pub(super) const ALL: StepsLeft = StepsLeft {
+        parameters: LONGEST_CHAIN_OF_PARAMETERS,
+        requests: LONGEST_CHAIN_OF_REQUESTS,
     };
-    match bound.binding_initializer(hir, symbol) {
-        BindingInitializer::Import => import_from_node_module(hir, bound, symbol) == Some(None),
-        BindingInitializer::Expression(source) => {
-            is_request_of_node_module(hir, bound, hir.skip_type_assertions(source))
-        }
-        _ => false,
-    }
 }
 
-fn is_create_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    let e = hir.skip_type_assertions(e);
-    if let Some((object, key)) = hir.member_key(e) {
-        return matches!(key, MemberKey::Name(name) if name == known::createRequire)
-            && is_object_of_node_module(hir, bound, object);
+#[derive(Copy, Clone)]
+pub(super) struct Text<'a, 'h, 'b, 'd> {
+    pub(super) hir: &'a File<'h>,
+    pub(super) bound: &'a Bound<'b>,
+    pub(super) decisions: Option<&'a Decisions<'d>>,
+}
+
+impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
+    pub(super) fn of(
+        hir: &'a File<'h>,
+        bound: &'a Bound<'b>,
+        decisions: Option<&'a Decisions<'d>>,
+    ) -> Self {
+        Text {
+            hir,
+            bound,
+            decisions,
+        }
     }
-    let Some(symbol) = settled_symbol(hir, bound, e) else {
-        return false;
-    };
-    match bound.binding_initializer(hir, symbol) {
-        BindingInitializer::Import => {
-            import_from_node_module(hir, bound, symbol) == Some(Some(known::createRequire))
+
+    fn find_requested_module(self, e: ExprId, left: StepsLeft) -> Option<Atom> {
+        let hir = self.hir;
+        let argument = match expr_kind(hir, e)? {
+            ExprKind::Await(promise) => match expr_kind(hir, hir.skip_type_assertions(promise))? {
+                ExprKind::ImportCall { args } => hir.ids(args).next(),
+                _ => None,
+            },
+            ExprKind::Call(_) => {
+                let requests = left.requests.checked_sub(1)?;
+                let text = Text::of(hir, self.bound, None);
+                find_request_of_exports(text, e, StepsLeft { requests, ..left })
+            }
+            _ => None,
+        };
+        match expr_kind(hir, argument?)? {
+            ExprKind::String(specifier) => Some(specifier),
+            _ => None,
         }
-        BindingInitializer::PatternProperty { source, path } => {
-            path[..] == [known::createRequire] && is_object_of_node_module(hir, bound, source)
+    }
+
+    // `const { b } = require("k").a; b.c` reads `c`, `b` and `a` off "k".
+    fn find_names_read_off_module(
+        self,
+        e: ExprId,
+        left: StepsLeft,
+    ) -> Option<(Atom, SmallVec<[Atom; 4]>)> {
+        let Text { hir, bound, .. } = self;
+        let mut names = SmallVec::new();
+        let mut e = e;
+        for _ in 0..=LONGEST_CHAIN_OF_BINDINGS {
+            e = hir.skip_type_assertions(e);
+            while let Some((object, key)) = hir.member_key(e) {
+                let MemberKey::Name(name) = key else {
+                    return None;
+                };
+                names.push(name);
+                e = hir.skip_type_assertions(object);
+            }
+            if let Some(returned) = iife_return_value(hir, e) {
+                e = returned;
+                continue;
+            }
+            let Some(symbol) = settled_symbol(hir, bound, e) else {
+                return Some((self.find_requested_module(e, left)?, names));
+            };
+            match bound.binding_initializer(hir, symbol) {
+                BindingInitializer::Import => {
+                    let (specifier, export) = find_imported_export(hir, bound, symbol)?;
+                    names.extend(export);
+                    return Some((specifier, names));
+                }
+                BindingInitializer::Expression(source) => e = source,
+                BindingInitializer::PatternProperty { source, path } => {
+                    names.extend(path.iter().rev().copied());
+                    e = source;
+                }
+                _ => return None,
+            }
         }
-        _ => false,
+        None
+    }
+
+    fn is_create_require(self, e: ExprId, left: StepsLeft) -> bool {
+        let Some((specifier, names)) = self.find_names_read_off_module(e, left) else {
+            return false;
+        };
+        let names_the_object = |&name: &Atom| name == known::default || name == known::Module;
+        is_node_module(specifier)
+            && matches!(names.split_first(), Some((&last, before))
+                if last == known::createRequire && before.iter().all(names_the_object))
     }
 }
 
@@ -137,7 +186,8 @@ fn names_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     is_import_meta_member && !bound.import_meta_may_be_modified()
 }
 
-fn is_made_for_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
+fn is_made_for_own_file(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> bool {
+    let Text { hir, bound, .. } = text;
     let Some(ExprKind::Call(call)) = expr_kind(hir, hir.skip_type_assertions(e)) else {
         return false;
     };
@@ -145,7 +195,7 @@ fn is_made_for_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     arguments
         .next()
         .is_some_and(|base| names_own_file(hir, bound, base))
-        && is_create_require(hir, bound, hir[call].callee)
+        && text.is_create_require(hir[call].callee, left)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -158,6 +208,7 @@ pub enum OwnRequire {
 
 const LONGEST_CHAIN_OF_BINDINGS: usize = 8;
 const LONGEST_CHAIN_OF_PARAMETERS: usize = 3;
+const LONGEST_CHAIN_OF_REQUESTS: usize = 3;
 
 fn iife_return_value(hir: &File<'_>, e: ExprId) -> Option<ExprId> {
     let Some(ExprKind::Call(call)) = expr_kind(hir, e) else {
@@ -251,19 +302,21 @@ fn find_call_around(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option
 }
 
 fn is_given_require_of_file(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    decisions: Option<&Decisions<'_>>,
+    text: Text<'_, '_, '_, '_>,
     (function, index): (FnId, usize),
-    parameters_left: usize,
+    left: StepsLeft,
 ) -> bool {
+    let Text {
+        hir,
+        bound,
+        decisions,
+    } = text;
     let Some((expression, call)) = find_call_around(hir, bound, function) else {
         return false;
     };
     let is_require_of_file = |arguments: IdList<ExprId>| {
         argument_at(hir, arguments, index).is_some_and(|argument| {
-            follow_to_own_require(hir, bound, decisions, argument, parameters_left)
-                == Some(OwnRequire::OfFile)
+            follow_to_own_require(text, argument, left) == Some(OwnRequire::OfFile)
         })
     };
     if call.callee == expression {
@@ -304,21 +357,25 @@ pub fn find_own_require(
     decisions: Option<&Decisions<'_>>,
     e: ExprId,
 ) -> Option<OwnRequire> {
-    follow_to_own_require(hir, bound, decisions, e, LONGEST_CHAIN_OF_PARAMETERS)
+    follow_to_own_require(Text::of(hir, bound, decisions), e, StepsLeft::ALL)
 }
 
-fn follow_to_own_require(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    decisions: Option<&Decisions<'_>>,
+pub(super) fn follow_to_own_require(
+    text: Text<'_, '_, '_, '_>,
     e: ExprId,
-    parameters_left: usize,
+    left: StepsLeft,
 ) -> Option<OwnRequire> {
+    let Text {
+        hir,
+        bound,
+        decisions,
+    } = text;
     let is_parameter_with_require_of_file = |e: ExprId| {
-        parameters_left > 0
-            && find_settled_parameter(hir, bound, e).is_some_and(|parameter| {
-                is_given_require_of_file(hir, bound, decisions, parameter, parameters_left - 1)
+        left.parameters.checked_sub(1).is_some_and(|parameters| {
+            find_settled_parameter(hir, bound, e).is_some_and(|parameter| {
+                is_given_require_of_file(text, parameter, StepsLeft { parameters, ..left })
             })
+        })
     };
     let mut e = hir.skip_type_assertions(e);
     for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
@@ -332,7 +389,7 @@ fn follow_to_own_require(
             continue;
         }
         let Some(source) = settled_initializer(hir, bound, e) else {
-            if is_made_for_own_file(hir, bound, e) {
+            if is_made_for_own_file(text, e, left) {
                 return Some(OwnRequire::Made);
             }
             if let Some(path) = find_imported_require(hir, bound, e) {
@@ -513,9 +570,11 @@ pub fn holds_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -
 }
 
 pub fn is_made_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
+    let text = Text::of(hir, bound, None);
     let chain = settled_chain(hir, bound, e).take(LONGEST_CHAIN_OF_BINDINGS);
     let written = chain.last().and_then(|e| expr_kind(hir, e));
-    matches!(written, Some(ExprKind::Call(call)) if is_create_require(hir, bound, hir[call].callee))
+    matches!(written, Some(ExprKind::Call(call))
+        if text.is_create_require(hir[call].callee, StepsLeft::ALL))
 }
 
 pub fn may_still_be_undefined(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {

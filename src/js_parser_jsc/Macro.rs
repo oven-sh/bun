@@ -110,6 +110,16 @@ impl MacroContext {
         caller: Expr,
         function_name: &[u8],
     ) -> crate::Result<Expr> {
+        if bun_jsc::compiled_program::compiled_program()
+            .is_some_and(|program| !bun_jsc::compiled_program::admits_unknown_javascript(program))
+        {
+            log.add_range_error(
+                Some(source),
+                import_range,
+                b"Macros cannot be used in this executable, which only runs code that was compiled into it",
+            );
+            return Err(crate::Error::MacroFailed);
+        }
         // A macro's entry point is text made here, with names in it from the source that imports the macro, which may be a
         // string. The engine would refuse it, but nothing catches that rejection.
         if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Strict {

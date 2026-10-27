@@ -27,8 +27,8 @@ impl FileLowering<'_, '_, '_, '_> {
         let Constant::String(name) = find_constant(self, left)? else {
             return None;
         };
-        let Some(Resolved::Builtin(holder)) = self.builtins.of_expr(self.skip_type_syntax(right))
-        else {
+        let holder = self.builtins.of_pure_expr(self.skip_type_syntax(right));
+        let Some(Resolved::Builtin(holder)) = holder else {
             return None;
         };
         let name = table::find_name(self.queries.atom_bytes(name))?;
@@ -85,7 +85,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.lower_member_reads(branches.no);
             }
             _ => {
-                if let Some(Resolved::Builtin(path)) = self.file.builtins.of_expr(expression)
+                if let Some(Resolved::Builtin(path)) = self.file.builtins.of_pure_expr(expression)
                     && path.locked_builtin().is_some()
                 {
                     self.emit_locked_builtin(path.id);

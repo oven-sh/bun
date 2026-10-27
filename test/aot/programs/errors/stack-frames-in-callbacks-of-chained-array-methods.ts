@@ -8,7 +8,7 @@ const framesIn = (stack: unknown): string =>
       line
         .trim()
         .replace(/^at /, "")
-        .replace(/\/.*\//, "")
+        .replace(/(?:[A-Z]:)?[\\/].*[\\/]/, "")
         .replace(/native:\d+:\d+/, "native"),
     )
     .join(" < ");

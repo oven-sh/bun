@@ -58,6 +58,7 @@ function f4 name="runtime" module=m6 kind=Module results=[{type=anything}] {
 # CHECK-NEXT: moduleRequests 7 21
 # CHECK-NEXT: linkRequests 7 14
 # CHECK-NEXT: evaluationRequests 3 6
+# CHECK-NEXT: groupsLoadedWithGroups 0 0
 # CHECK-NEXT: entryPointLinkPlan 5 20
 # CHECK-NEXT: linkPlanRoots 0 0
 # CHECK-NEXT: linkPlanStepsOfRoots 0 0
@@ -91,6 +92,8 @@ function f4 name="runtime" module=m6 kind=Module results=[{type=anything}] {
 # ROWS-NEXT: evaluationRequest 0 target=m1
 # ROWS-NEXT: evaluationRequest 1 target=m2
 # ROWS-NEXT: evaluationRequest 2 target=m0
+# ROWS-NEXT: loadedTogether module=m1 head=m0
+# ROWS-NEXT: loadedTogether module=m2 head=m0
 # ROWS-NEXT: linkPlanStep module=m3
 # ROWS-NEXT: linkPlanStep module=m4
 # ROWS-NEXT: linkPlanStep module=m5

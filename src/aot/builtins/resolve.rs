@@ -197,6 +197,7 @@ impl CommonJsBuiltins {
 pub struct ResolvedBuiltins {
     exprs: Box<[(ExprId, Resolved)]>,
     expr_bits: Box<[u64]>,
+    exprs_with_side_effects: Box<[ExprId]>,
     symbols: Box<[(SymbolId, BuiltinPath)]>,
     commonjs: CommonJsBuiltins,
     evaluated_texts: Box<[EvaluatedText]>,
@@ -220,8 +221,13 @@ impl ResolvedBuiltins {
         at.ok().map(|at| self.exprs[at].1)
     }
 
-    /// `Object.keys` gives `[Object.keys, Object]`. `of_expr` resolves the value of any expression, `(f(), Object.keys)` too.
-    /// This one answers only for a free name and for named, non-optional member reads on one, which have no side effects.
+    /// `of_expr` resolves the value of `(f(), Object.keys)` and `(f(), module).exports` too. Whatever stands in for an expression, or drops it, asks this one.
+    pub fn of_pure_expr(&self, expr: ExprId) -> Option<Resolved> {
+        let has_side_effects = self.exprs_with_side_effects.binary_search(&expr).is_ok();
+        self.of_expr(expr).filter(|_| !has_side_effects)
+    }
+
+    /// `Object.keys` gives `[Object.keys, Object]`. It answers only for a free name and for named, non-optional member reads on one.
     pub fn global_path(
         &self,
         hir: &hir::File<'_>,
@@ -231,7 +237,7 @@ impl ResolvedBuiltins {
         let mut steps = SmallVec::new();
         let mut current = hir.skip_type_assertions(expr);
         loop {
-            let Some(Resolved::Builtin(path)) = self.of_expr(current) else {
+            let Some(Resolved::Builtin(path)) = self.of_pure_expr(current) else {
                 return None;
             };
             steps.push(path);

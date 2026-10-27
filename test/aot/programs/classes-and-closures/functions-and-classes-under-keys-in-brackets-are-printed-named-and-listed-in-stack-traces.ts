@@ -27,7 +27,7 @@ function framesOf(call: () => unknown): string {
         line
           .trim()
           .replace(/ ?\(.*\)$/, "")
-          .replace(/at \/.*$/, "at <file>"),
+          .replace(/at (?:[A-Z]:)?[\\/].*$/, "at <file>"),
       )
       .join(" < ");
   }

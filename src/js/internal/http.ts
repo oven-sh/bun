@@ -123,15 +123,6 @@ const http1ServerPipeline: {
   mustCloseConnection?: (res: $Node.ServerResponse) => boolean;
 } = {};
 
-/** What `headerBits` of an exchange says of the headers that are set. */
-const HEADER_DATE = 1 << 0;
-const HEADER_CONNECTION = 1 << 1;
-const HEADER_KEEP_ALIVE = 1 << 2;
-const HEADER_TRANSFER_ENCODING = 1 << 3;
-const HEADER_CONTENT_LENGTH = 1 << 4;
-const HEADER_TRAILER = 1 << 5;
-const HEADER_SPILLED = 1 << 6;
-
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -766,13 +757,6 @@ function checkShouldUseProxy(
 }
 
 export {
-  HEADER_CONNECTION,
-  HEADER_CONTENT_LENGTH,
-  HEADER_DATE,
-  HEADER_KEEP_ALIVE,
-  HEADER_SPILLED,
-  HEADER_TRAILER,
-  HEADER_TRANSFER_ENCODING,
   METHODS,
   STATUS_CODES,
   abortedSymbol,

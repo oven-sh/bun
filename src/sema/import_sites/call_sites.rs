@@ -1,5 +1,6 @@
 use super::made_requires::{
-    OwnRequire, find_own_require, follow_settled_bindings, holds_import_meta_require,
+    OwnRequire, StepsLeft, Text, find_imported_export, find_own_require, follow_settled_bindings,
+    follow_to_own_require, holds_import_meta_require, settled_symbol,
 };
 use super::{ImportSite, ImportSiteKind, ImportSpecifier, ScanInputs};
 use crate::atom::{Atom, Interner, known};
@@ -16,7 +17,7 @@ pub(crate) fn call_site_kind(
     call: ExprId,
 ) -> Option<ImportSiteKind> {
     let form = find_call_form(hir, call)?;
-    find_call_site(hir, bound, None, call, form).map(|site| site.kind)
+    find_call_site(Text::of(hir, bound, None), call, form, StepsLeft::ALL).map(|site| site.kind)
 }
 
 pub(crate) fn call_site_arguments(
@@ -25,7 +26,22 @@ pub(crate) fn call_site_arguments(
     call: ExprId,
 ) -> Option<IdList<ExprId>> {
     let form = find_call_form(hir, call)?;
-    find_call_site(hir, bound, None, call, form).map(|site| site.args)
+    find_call_site(Text::of(hir, bound, None), call, form, StepsLeft::ALL).map(|site| site.args)
+}
+
+pub(super) fn find_request_of_exports(
+    text: Text<'_, '_, '_, '_>,
+    call: ExprId,
+    left: StepsLeft,
+) -> Option<ExprId> {
+    let form = find_call_form(text.hir, call)?;
+    let site = find_call_site(text, call, form, left)?;
+    match site.kind {
+        ImportSiteKind::Require(_)
+        | ImportSiteKind::ImportMetaRequire(_)
+        | ImportSiteKind::GetBuiltinModule(_) => text.hir.ids(site.args).next(),
+        _ => None,
+    }
 }
 
 pub(super) fn expr_kind(hir: &File<'_>, e: ExprId) -> Option<ExprKind> {
@@ -75,8 +91,19 @@ pub fn find_require_call(
     callee: ExprId,
     args: IdList<ExprId>,
 ) -> Option<RequireCall> {
+    let text = Text::of(hir, bound, decisions);
+    follow_to_require_call(text, callee, args, StepsLeft::ALL)
+}
+
+fn follow_to_require_call(
+    text: Text<'_, '_, '_, '_>,
+    callee: ExprId,
+    args: IdList<ExprId>,
+    left: StepsLeft,
+) -> Option<RequireCall> {
+    let hir = text.hir;
     let callee = hir.skip_type_assertions(callee);
-    if find_own_require(hir, bound, decisions, callee).is_some() {
+    if follow_to_own_require(text, callee, left).is_some() {
         return Some(RequireCall {
             require: callee,
             form: RequireCallForm::Direct,
@@ -87,7 +114,7 @@ pub fn find_require_call(
         (object, MemberKey::Name(name)) => (hir.skip_type_assertions(object), name),
         (_, MemberKey::PrivateName(_) | MemberKey::Computed(_)) => return None,
     };
-    find_own_require(hir, bound, decisions, require)?;
+    follow_to_own_require(text, require, left)?;
     if name == known::call && args.len() > 1 {
         return Some(RequireCall {
             require,
@@ -123,12 +150,12 @@ struct CallSite {
 }
 
 fn find_call_site(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    decisions: Option<&Decisions<'_>>,
+    text: Text<'_, '_, '_, '_>,
     call: ExprId,
     form: CallForm,
+    left: StepsLeft,
 ) -> Option<CallSite> {
+    let Text { hir, bound, .. } = text;
     let create_site = |kind, args| CallSite {
         kind,
         args,
@@ -144,7 +171,7 @@ fn find_call_site(
         return None;
     }
     let callee = hir.skip_type_assertions(callee);
-    if let Some(found) = find_require_call(hir, bound, decisions, callee, args) {
+    if let Some(found) = follow_to_require_call(text, callee, args, left) {
         return Some(create_site(ImportSiteKind::Require(call), found.args));
     }
     if holds_import_meta_require(hir, bound, callee) {
@@ -173,7 +200,7 @@ fn find_call_site(
         if is_import_meta {
             return Some(create_site(ImportSiteKind::ImportMetaResolve(call), args));
         }
-        let is_require = find_own_require(hir, bound, decisions, object).is_some();
+        let is_require = follow_to_own_require(text, object, left).is_some();
         return is_require.then(|| create_site(ImportSiteKind::RequireResolve(call), args));
     }
     if name == known::getBuiltinModule {
@@ -193,6 +220,11 @@ fn is_global_process(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     let e = follow_settled_bindings(hir, bound, e);
     if is_free_name(hir, bound, e, &[known::process]) {
         return true;
+    }
+    let imported =
+        settled_symbol(hir, bound, e).and_then(|symbol| find_imported_export(hir, bound, symbol));
+    if let Some((specifier, None)) = imported {
+        return specifier == known::process || specifier == known::node_process;
     }
     matches!(hir.member_key(e), Some((object, MemberKey::Name(name)))
         if name == known::process
@@ -268,7 +300,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         if bound.parent_of_expr(call) == Parent::None || is_dead_in_bun_run {
             continue;
         }
-        let Some(found) = find_call_site(hir, bound, Some(decisions), call, form) else {
+        let text = Text::of(hir, bound, Some(decisions));
+        let Some(found) = find_call_site(text, call, form, StepsLeft::ALL) else {
             continue;
         };
         if is_dead {

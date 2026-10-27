@@ -630,6 +630,7 @@ pub(super) fn unseen_code_sentence(cause: UnseenCodeCause) -> &'static str {
             "the program calls import() or require() with a dynamic path"
         }
         UnseenCodeCause::RunsUnseenCode => "the program can run code that isn't in the executable",
+        UnseenCodeCause::RunsMachineCode => "the program loads a native addon or a shared library",
         UnseenCodeCause::OptionAdmitsCode => {
             "a build option lets the executable load code at run time"
         }
@@ -751,6 +752,7 @@ pub(super) fn trim_blocker_code(cause: UnseenCodeCause) -> &'static str {
         UnseenCodeCause::ImportsUncompiledCode => "external-import",
         UnseenCodeCause::LoadsModuleByName | UnseenCodeCause::LoadsCodeByName => "dynamic-import",
         UnseenCodeCause::RunsUnseenCode => "runtime-code",
+        UnseenCodeCause::RunsMachineCode => "native-code",
         UnseenCodeCause::OptionAdmitsCode => "build-option",
     }
 }

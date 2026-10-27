@@ -84,7 +84,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn find_locked_symbol_key(&mut self, key: ExprId) -> Option<PropertyKeyId> {
-        let path = match self.builtins.of_expr(self.skip_type_syntax(key)) {
+        let path = match self.builtins.of_pure_expr(self.skip_type_syntax(key)) {
             Some(Resolved::Builtin(path)) => path,
             Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => return None,
         };

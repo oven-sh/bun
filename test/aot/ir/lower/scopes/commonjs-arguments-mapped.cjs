@@ -1,5 +1,5 @@
 // RUN: lower
-// CHECK: function {{*}}kind=CommonJsModule flags=[IsSloppy] thisType
+// CHECK: function {{*}}kind=CommonJsModule flags=[IsSloppy, IsHiddenInStackTraces] thisType
 // CHECK: [[made]] = FinishObject
 // CHECK: [[closure]] = NewClosure function=[[wrapper]]
 // CHECK: = CallDirect [[made]], [[closure]], {{*}}, [[made]], {{*}}function=[[wrapper]]

@@ -478,6 +478,8 @@ known_atoms! {
     meta_filename = "filename",
     meta_dir = "dir",
     meta_dirname = "dirname",
+    Module = "Module",
+    node_process = "node:process",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never

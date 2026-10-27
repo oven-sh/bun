@@ -28,7 +28,6 @@ export default b.declarations(
     "%NodeVMBinding%.Script",
     "%NodeVMBinding%.Module",
     "%NodeVMBinding%.compileFunction",
-    "Bun.Transpiler",
   ]),
   marked("HoldsLoader", [
     "%ModuleRequire%.cache",

@@ -55,6 +55,11 @@ export function unseenCode(use: string): string {
   return `runtime-code: the program can run code that isn't in the executable (${use})`;
 }
 
+/** The same for a built-in that loads machine code. */
+export function machineCode(use: string): string {
+  return `native-code: the program loads a native addon or a shared library (${use})`;
+}
+
 /** `name`: as in src/trim/features, for example `HtmlRewriter`. */
 export function retainsFeature(lines: string[], name: string): boolean {
   const line = "kept " + featureNamed(model, name).text;

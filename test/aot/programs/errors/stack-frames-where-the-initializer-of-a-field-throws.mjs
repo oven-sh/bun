@@ -3,7 +3,7 @@ function frames(error) {
     .split("\n")
     .filter(line => line.trimStart().startsWith("at "))
     .slice(0, 3)
-    .map(line => line.trim().replace(/\(?[^ (]*\/([^/]*)\)?$/, "$1"))
+    .map(line => line.trim().replace(/\(?[^ (]*[\\/]([^\\/]*)\)?$/, "$1"))
     .join(" | ");
 }
 function thrower() {

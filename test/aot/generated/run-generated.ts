@@ -13,6 +13,7 @@
 //   AOT_GENERATED_HANDS=all bun test ..                      every program hands its functions to the host (../fuzz/functions-the-host-could-call.ts)
 //   AOT_GENERATED_INSIDE=all bun test ..                     the text of every program stands inside something (../fuzz/the-whole-file-inside-something.ts)
 //   AOT_GENERATED_OPENS=all bun test ..                      every program opens the world (../fuzz/the-world-is-open.ts)
+//   AOT_GENERATED_READS_LESS=all bun test ..                 every program takes the name and the message of what it has caught out of `${caught}` (the form `caught` of ../tools/let-values-be-something-else.ts)
 //   AOT_GENERATED_IN_ONE_EXECUTABLE=1 bun test ..            an executable for each program, also where programs share one
 import { afterAll, describe, expect, test } from "bun:test";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
@@ -81,6 +82,8 @@ export type Generated = {
   referenceIsCompiled?: true;
   /** Lines whose answer is written down in the test and not asked of plain Bun: a line that starts with a key ends with its value. */
   written?: Record<string, string>;
+  /** The lines that the executable prints. Plain Bun prints the same lines in another order, and docs/compiler/compatibility.mdx says where. */
+  printsInThisOrder?: string[];
   /** Nothing is put into its text: it declares names such as `Bun`, `Symbol` and `globalThis` itself, and what a run puts into a text uses them. */
   keepsItsText?: true;
   /** More flags for the build of this program. */
@@ -238,7 +241,8 @@ export function generated(title: string, given: Generated[]) {
   const staysAsItIs = (program: Generated) =>
     !!program.wasOnceWrong || !!program.linesDepartToday || !!program.written || !!program.keepsItsText;
   // A change to a text can hide what the text shows, so half the programs of a family run as they are written. Of the other half, two in three take one change, and each of the rest takes
-  // every change that a draw of its own gives it.
+  // every change that a draw of its own gives it. Each of these changes brings something that the build does not know. One takes something away, and a quarter of the first half takes it alone:
+  // a member that is read off what a `catch` has caught is a read off a value that nobody knows, and with it a build holds every getter of that name. Without it the program may be all there is.
   const changes = ["turns", "collections", "host", "inside", "open"] as const;
   const isDrawn = (program: Generated, change: (typeof changes)[number], byItself: boolean) => {
     const draw = Bun.hash.crc32(`${title} | ${program.name}`);
@@ -309,6 +313,15 @@ export function generated(title: string, given: Generated[]) {
   for (const [index, program] of chosen.entries())
     if (validated.has(program)) chosen[index] = { ...program, flags: ["--aot-validate"] };
 
+  const readsLessOffWhatItHasCaught = (program: Generated) =>
+    !staysAsItIs(program) &&
+    (process.env.AOT_GENERATED_READS_LESS === "all" || Bun.hash.crc32(`${title} | ${program.name}`) % 8 === 0);
+  function withLessReadOffWhatIsCaught(name: string, text: string): string {
+    // It loads TypeScript, which few files need.
+    const tool = require("../tools/let-values-be-something-else");
+    return tool.write(tool.read(name, text), "caught@0-0") ?? text;
+  }
+
   function write(program: Generated, folder: string) {
     const { file, text, files, links, entryPoints = [] } = program.make();
     // The changes: a program keeps its short loops as loops, collects inside its calls, hands its functions to the host, stands inside a function, a try, a loop or the like, or opens the world.
@@ -336,6 +349,7 @@ export function generated(title: string, given: Generated[]) {
       let written = content;
       if (/\.[cm]?[jt]s$/.test(name)) {
         const loader = name.endsWith("ts") ? "ts" : "js";
+        if (readsLessOffWhatItHasCaught(program)) written = withLessReadOffWhatIsCaught(name, written);
         if (keepsItsLoops) written = withTurnsNobodyKnows(written);
         if (collectsInsideCalls) written = withCollectionsInsideCalls(written, loader);
         if (handsItsFunctionsOn) written = withFunctionsTheHostCouldCall(written, loader);
@@ -629,6 +643,18 @@ export function generated(title: string, given: Generated[]) {
               if (program.linesDepartToday) return void expect(compiled.signal).toBeNull();
               if (program.mayBeRefused && compiled.exitCode === 0 && compiled.stdout.startsWith("THROWS TypeError "))
                 return;
+              if (program.printsInThisOrder)
+                return void expect({
+                  lines: compiled.stdout.trimEnd().split("\n"),
+                  sorted: compiled.stdout.split("\n").sort(),
+                  signal: compiled.signal,
+                  exitCode: compiled.exitCode,
+                }).toEqual({
+                  lines: program.printsInThisOrder,
+                  sorted: plain.stdout.split("\n").sort(),
+                  signal: null,
+                  exitCode,
+                });
               const written = Object.entries(program.written ?? {});
               const [ours, theirs] = [
                 compiled.stdout.split("\n"),

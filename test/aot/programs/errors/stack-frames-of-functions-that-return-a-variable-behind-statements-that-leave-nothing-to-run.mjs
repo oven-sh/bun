@@ -8,7 +8,7 @@ function frames() {
         .replace(/^at /, "")
         .replace(/[ @(].*/, ""),
     )
-    .filter(name => !name.includes("/"))
+    .filter(name => !/[\\/]/.test(name))
     .join(" | ");
 }
 function touch() {}

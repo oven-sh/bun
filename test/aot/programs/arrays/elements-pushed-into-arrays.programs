@@ -1065,7 +1065,7 @@ tell("an array", ["a", "b", "c"], true);
 tell("a hole below an element of the prototype", (() => { const list = filled(new Inherits<string>(), "a", "b", "c"); delete list[1]; return list; })(), false);
 tell("a hole", (() => { const list = filled(new Rows<string>(), "a", "b", "c"); delete list[1]; return list; })(), false);
 tell("a hole in an array", (() => { const list = ["a", "b", "c"]; delete list[1]; return list; })(), true);
-tell("shorter than it says", likeAnArray({ length: 3, 0: "a" }), false);
+tell("shorter than it says", likeAnArray({ length: 3, 0: "a" }), true);
 //// growth-in-counted-loops.js
 // Arrays that counted loops append to: parameters, fields, literals longer than any planned capacity, arrays that cannot grow in place, loops that end early, and arrays replaced inside the loop.
 function checksum(array) {

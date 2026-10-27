@@ -139,6 +139,13 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   the processor time, so a run takes a quarter, by the day and the lane: the two lanes that run every file have taken every program in two days; `AOT_SHARE=all` takes all. Left out:
   what is built with flags or entry points of its own. The programs in `programs-as-separate-entry-points.known.txt` do not print what is expected today and are todos. It is in the step that holds
   up nothing.
+- **Values that may be something else.** `values-that-may-be-something-else-<part>` (`programs-whose-values-may-be-something-else.ts`) writes the stored programs again with
+  `tools/let-values-be-something-else.ts`: one expression may, behind a test that is false in every run and that no build knows, also be a value that nobody knows, what another name holds or a
+  value of another kind; or it comes by another road, through a variable, a parameter, a field, an element, or written where its variable was read; or the file reads less off what it has
+  caught. What a build no longer knows it must do without, and what it now knows it may use: each variant prints what plain Bun prints for the same text. The variants of a program are the
+  entry points of one executable. A program has thousands, so a run takes a few programs by the day and the lane, and of each as many variants of one form as of another. The name of a
+  variant says how to write it again. `programs-whose-values-may-be-something-else.fixed.txt` lists the variants that every run takes, and `.known.txt` those that do not print what is
+  expected today, which are todos. What is drawn is in the step that holds up nothing.
 - **The check of references.** `run-programs.ts` builds every program with `--aot-check=validate-references`.
 - **What the back end is told.** `--aot-check=ClaimsToBackEnd` leaves the code of an ordinary build as it is up to the last phase that moves a value and adds code that finds out in
   the run whether a word that was said never to change has changed, a number lies in its range, a cell in the frame is read before it is filled. An ASAN or debug build of Bun builds

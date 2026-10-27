@@ -1189,11 +1189,3 @@ function stopsToday(
       "\n";
   else delete programs[file];
 }
-stopsToday(
-  values,
-  "a-generator-with-many-steps-and-a-delegation-walked-by-a-loop.js",
-  "in-a-validating-build",
-  "--aot-validate",
-  undefined,
-  "the build stops: UnspecifiedValueInspected, the comparison of the position in the list that the generator hands over to; with every pass verified, behind FuseGeneratorLoops",
-);

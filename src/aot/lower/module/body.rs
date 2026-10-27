@@ -82,6 +82,10 @@ impl FileLowering<'_, '_, '_, '_> {
         if kind == ModuleKind::CommonJs {
             header.flags = header.flags.without(self.scopes.entry_flags(key));
         }
+        // The text of the file is the function that such a body calls. Nobody wrote the body, so no stack trace lists it.
+        if self.body_form() == commonjs::BodyForm::Wrapped {
+            header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES;
+        }
         header
     }
 

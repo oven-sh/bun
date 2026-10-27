@@ -34,6 +34,42 @@ const constructorsBelow = {
 
 const undeclaredFunction = b.otherwiseBy(b.generic);
 
+const numbersFrom = (first: number, ...names: readonly string[]) =>
+  Object.fromEntries(names.map((name, index) => [name, b.constant(first + index)]));
+const constantsOf = (holder: b.BuiltinPath, constants: Readonly<Record<string, b.ConstantField>>) =>
+  Object.entries(constants).flatMap(([name, constant]) => b.static(`${holder}.${name}`, constant));
+
+const phasesOfEvent = numbersFrom(0, "NONE", "CAPTURING_PHASE", "AT_TARGET", "BUBBLING_PHASE");
+const statesOfWebSocket = numbersFrom(0, "CONNECTING", "OPEN", "CLOSING", "CLOSED");
+const codesOfDOMException = numbersFrom(
+  1,
+  "INDEX_SIZE_ERR",
+  "DOMSTRING_SIZE_ERR",
+  "HIERARCHY_REQUEST_ERR",
+  "WRONG_DOCUMENT_ERR",
+  "INVALID_CHARACTER_ERR",
+  "NO_DATA_ALLOWED_ERR",
+  "NO_MODIFICATION_ALLOWED_ERR",
+  "NOT_FOUND_ERR",
+  "NOT_SUPPORTED_ERR",
+  "INUSE_ATTRIBUTE_ERR",
+  "INVALID_STATE_ERR",
+  "SYNTAX_ERR",
+  "INVALID_MODIFICATION_ERR",
+  "NAMESPACE_ERR",
+  "INVALID_ACCESS_ERR",
+  "VALIDATION_ERR",
+  "TYPE_MISMATCH_ERR",
+  "SECURITY_ERR",
+  "NETWORK_ERR",
+  "ABORT_ERR",
+  "URL_MISMATCH_ERR",
+  "QUOTA_EXCEEDED_ERR",
+  "TIMEOUT_ERR",
+  "INVALID_NODE_TYPE_ERR",
+  "DATA_CLONE_ERR",
+);
+
 // src/jsc/bindings/webcore/streams: without operands a construction runs no code of the program; with them it reads their members, calls `start` and keeps the rest.
 const streamClass = (name: string, operands: readonly string[], proto: Readonly<Record<string, b.Field>>) =>
   b.class(name, {
@@ -148,6 +184,8 @@ export default b.declarations(
   Object.entries(constructorsBelow).flatMap(([parent, paths]) =>
     paths.flatMap(path => constructorOnly(path, { extends: parent })),
   ),
+  constantsOf("DOMException", codesOfDOMException),
+  constantsOf("WebSocket", statesOfWebSocket),
   // JSPerformanceObserver.cpp makes the list at each read.
   b.static(
     "PerformanceObserver.supportedEntryTypes",
@@ -207,6 +245,7 @@ export default b.declarations(
     // `isTrusted` is an own property of every event, not a member of Event.prototype.
     namesDefinedOnNewInstances: ["isTrusted"],
     typesOfNamesDefinedOnNewInstances: b.typesByName({ isTrusted: b.bool }),
+    static: phasesOfEvent,
     call: { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
     construct: [
       // The type is required: it counts the operands, so a type that is not passed is not one that is undefined.
@@ -235,6 +274,7 @@ export default b.declarations(
       },
     ],
     proto: {
+      ...phasesOfEvent,
       type: readsStream(b.string),
       eventPhase: readsStream(b.int(0, 65535)),
       bubbles: readsStream(b.bool),

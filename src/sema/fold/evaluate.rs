@@ -43,6 +43,14 @@ impl Value {
     fn string(text: Atom) -> Value {
         Value::from(Constant::String(text))
     }
+
+    pub(super) fn is_number(self) -> bool {
+        matches!(self, Value::Known(Primitive::Constant(Constant::Number(_))))
+    }
+
+    pub(super) fn is_nan(self) -> bool {
+        matches!(self, Value::Known(Primitive::Constant(Constant::Number(number))) if number.is_nan())
+    }
 }
 
 #[derive(Copy, Clone)]

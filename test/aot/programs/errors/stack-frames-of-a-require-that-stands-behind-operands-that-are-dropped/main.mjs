@@ -1,6 +1,6 @@
 globalThis.show = function show(label) {
   const frames = new Error().stack.split("\n").filter(line => /\bfrom\w+ /.test(line));
-  console.log(label, "|", frames.map(line => line.trim().replace(/\(.*\//, "(")).join(" < "));
+  console.log(label, "|", frames.map(line => line.trim().replace(/\(.*[\\/]/, "(")).join(" < "));
 };
 const none = 0;
 const two = 0;

@@ -2200,13 +2200,13 @@ const borrowed = { name: "borrowed", describe: Item.prototype.describe };
 for (const item of [made, created, reflected, reflectedObject, borrowed]) console.log(item.describe(), item instanceof Item);
 Item.call(created, "filled late");
 console.log(created.describe());
-//// one-test-of-the-object-answers-for-all-the-fields-its-constructor-fills.js
-// A reader of several fields tests the object once instead of each slot. Every object below goes through the same readers: the first one a constructor makes, one that lost a field, one whose
-// field became an accessor, one that was seen before it was finished, one whose constructor left early, one made for another new.target, and one that the constructor was only called on.
-// STATISTIC: BirthsFinished >= 2
+//// objects-of-constructors-are-changed-by-constant-texts-that-are-compiled-with-the-program.js
+// The objects and the readers of one-test-of-the-object-answers-for-all-the-fields-its-constructor-fills.js. Here the three functions made of text are made of constant texts, which are
+// compiled with the program: the compiler sees every object come back, which fields are deleted and redefined, and what arrives on the prototype object and leaves it again.
+// What arrives there stands under `key`, `sibling` and `memo`. It stops no store under `tag` or `child`, so the constructor still says where the last of those is stored.
+// STATISTIC: BirthsFinished >= 1
 const out = [];
 globalThis.hide = new Function("value", "return value");
-// What the compiler cannot read: it only knows that the objects go there.
 const define = new Function("object", "key", "descriptor", "return Object.defineProperty(object, key, descriptor)");
 const remove = new Function("object", "key", "return delete object[key]");
 

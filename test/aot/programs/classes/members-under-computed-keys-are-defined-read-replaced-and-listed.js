@@ -314,7 +314,7 @@ function sayFrames(error) {
     .split("\n")
     .slice(1, 3)
     .map(line => line.trim().split(" (")[0])
-    .map(name => (name.includes("/") ? "at no name" : name));
+    .map(name => (/[\\/]/.test(name) ? "at no name" : name));
   say("frames", error.message + ": " + names.join(" < "));
 }
 function sayFramesOf(run) {

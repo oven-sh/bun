@@ -365,6 +365,26 @@ fn a_getter_needs_the_variable_of_the_other_module() {
 }
 
 #[test]
+fn a_getter_needs_the_variable_of_the_module_behind_es_modules_that_hand_the_name_on() {
+    let over_es_module = BARREL.replace("inner.cjs", "between.mjs");
+    for (inner, shape) in [
+        ("exports.b = 1;", Shape::Names),
+        ("exports.b = 1; console.log(exports);", Shape::Value),
+        ("if (Math.random()) exports.b = 1;", Shape::Value),
+    ] {
+        let files = [
+            ("main.cjs", READS_A),
+            ("module.cjs", &over_es_module[..]),
+            ("between.mjs", "export * from './further.mjs';"),
+            ("further.mjs", "export { b } from './inner.cjs';"),
+            ("inner.cjs", inner),
+        ];
+        let shapes = shapes_of(&files, ["module.cjs", "inner.cjs"]);
+        assert_eq!(shapes, [shape, shape], "{inner}");
+    }
+}
+
+#[test]
 fn a_getter_is_a_name_only_where_its_module_is_loaded_before() {
     for module in [
         // A read in front of the `require` throws.

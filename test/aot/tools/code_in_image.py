@@ -16,9 +16,9 @@ TABLES = ['types', 'typeSites', 'layouts', 'classes', 'layoutSets', 'allocations
           'methodLookupFunctions', 'methodTableDependents', 'removedFields', 'addedNames', 'classPrototypeNames', 'parsedRecordFields',
           'functionNames', 'functionNameGroups', 'functionNameRuns', 'functionRecordNumbers', 'functionRecords', 'functionRecordsByFunction', 'functionSources', 'implementedBuiltins', 'closureFunctionKinds', 'functionLengths',
           'closureCaptureCounts', 'functionsWithLargeCounts', 'closureCellNumbers', 'functionTexts', 'constructors', 'boundFunctions', 'constructEntrypoints',
-          'staticsLayout', 'staticsRuns', 'staticsRoots', 'staticsNarrowRoots', 'staticsClearedEachCollection', 'functionVariables', 'identifiersByHash', 'identifiersOfEngineSymbols', 'keyCellIdentifiers', 'literalStrings',
+          'staticsLayout', 'staticsRuns', 'staticsOfFiles', 'staticsOfImportedFiles', 'staticsRoots', 'staticsNarrowRoots', 'staticsClearedEachCollection', 'functionVariables', 'identifiersByHash', 'identifiersOfEngineSymbols', 'keyCellIdentifiers', 'literalStrings',
           'literalStringTable', 'literalStringLimits', 'literalStringDigests', 'bigIntConstants', 'data', 'requests', 'builtinCells', 'eagerBuiltinCells', 'constantBuiltinMembers', 'globalBindings', 'entryPoints',
-          'modules', 'moduleDirectories', 'moduleDisplayPaths', 'moduleRequests', 'linkRequests', 'evaluationRequests', 'entryPointLinkPlan', 'linkPlanRoots', 'linkPlanStepsOfRoots', 'moduleExports', 'indirectExports',
+          'modules', 'moduleDirectories', 'moduleDisplayPaths', 'moduleRequests', 'linkRequests', 'evaluationRequests', 'groupsLoadedWithGroups', 'entryPointLinkPlan', 'linkPlanRoots', 'linkPlanStepsOfRoots', 'moduleExports', 'indirectExports',
           'syntheticExports', 'requiredNames', 'moduleFailures', 'modulesByPath', 'modulesOfUncompiledCode', 'compiledRuntimeModules', 'compiledRuntimeFunctions']
 
 def zigzag(v): return (v >> 1) ^ -(v & 1)

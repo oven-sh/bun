@@ -580,10 +580,25 @@ describe("Bun.Transpiler", () => {
       // A cast in parentheses before "=>" is read as it was. TypeScript reports an error.
       exp("x = a ? (b as B) => c : d", "x = a ? (b) => c : d;\n");
 
-      // The operand of a "<T>" cast is read as it was: a ":" behind its parentheses can still be a return type
-      exp("x = a ? (p): T => <B[]>(b) : d => e", "x = a ? p : (T) => (b) => e;\n");
-      err("switch (x) { case <B[]>(b): d => e; }", 'Expected ":" but found ";"');
-      exp("x = <B[]>(b): T => c", "x = (b) => c;\n");
+      // The operand of a "<T>" cast is a unary expression in TypeScript, so a ":" behind its
+      // parentheses is not a return type
+      exp("x = a ? (p): T => <B[]>(b) : d => e", "x = a ? (p) => b : (d) => e;\n");
+      exp("x = a ? () => <B[]>(b) : c => d", "x = a ? () => b : (c) => d;\n");
+      exp("x = a ? async (): T => <B[]>(b) : c => d", "x = a ? async () => b : (c) => d;\n");
+      exp("x = a ? async() : c => <B[]>({ c }) : b => [c]", "x = a ? async () => ({ c }) : (b) => [c];\n");
+      exp("x = a ? <A[]><B[]>(b) : c => d", "x = a ? b : (c) => d;\n");
+      exp("x = a ? <A[]><T>(b) : c => d", "x = a ? b : (c) => d;\n");
+      exp("switch (x) { case <B[]>(b): d => e; }", "switch (x) {\n  case b:\n}");
+      exp("switch (x) { case <B[]>async (b): d => e; }", "switch (x) {\n  case async(b):\n}");
+      err("x = <B[]>(b): T => c", 'Expected ";" but found ":"');
+      err("x = <B[]>async (b): T => c", 'Expected ";" but found ":"');
+      err("x = <A[]><T>(b): U => c", 'Expected ";" but found ":"');
+      err("x = a ? <B[]>(b) : c => d : e", 'Expected ";" but found ":"');
+
+      // ... and before "=>" it is read as it was. TypeScript reports an error.
+      exp("x = <B[]>(b) => c", "x = (b) => c;\n");
+      exp("x = <B[]>b => c", "x = (b) => c;\n");
+      exp("x = a ? <B[]>(b) => c : d", "x = a ? (b) => c : d;\n");
     });
 
     describe("a rest item in parentheses that are not parameters", () => {
@@ -634,6 +649,8 @@ describe("Bun.Transpiler", () => {
         `(${item}, ...r)`,
         `(c, ...${item})`,
       ]);
+      // The parentheses of a cast operand
+      heads.push("<B[]>(b)", "<B[]>(b, c)", "<B[]>({ b })", "<A[]><B[]>(b)");
       const positions = [
         head => `x = a ? ${head} : d => e;`,
         head => `x = a ? ${head} : d => (e): T => f;`,

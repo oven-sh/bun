@@ -1231,6 +1231,7 @@ pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
     pub(crate) is_after_question_and_before_colon: bool,
+    pub(crate) is_cast_operand: bool,
 }
 
 #[repr(u8)]

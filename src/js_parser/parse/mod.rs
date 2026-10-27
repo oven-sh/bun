@@ -520,7 +520,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || opts.force_arrow_fn
             || (Self::IS_TYPESCRIPT_ENABLED
                 && p.lexer.token == T::TColon
-                && !errors.has_erased_syntax)
+                && !errors.has_erased_syntax
+                && !opts.is_cast_operand)
         {
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
@@ -1731,6 +1732,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_async: true,
                             is_after_question_and_before_colon: flags
                                 == EFlags::AfterQuestionAndBeforeColon,
+                            is_cast_operand: flags == EFlags::TsCastOperand,
                             ..Default::default()
                         },
                     );
@@ -1755,6 +1757,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         is_async: true,
                                         force_arrow_fn: result
                                             == SkipTypeParameterResult::DefinitelyTypeParameters,
+                                        is_cast_operand: flags == EFlags::TsCastOperand,
                                         ..Default::default()
                                     },
                                 );

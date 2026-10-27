@@ -76,6 +76,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             level,
             ParenExprOpts {
                 is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
+                is_cast_operand: flags == EFlags::TsCastOperand,
                 ..Default::default()
             },
         )
@@ -994,6 +995,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ParenExprOpts {
                             force_arrow_fn: result
                                 == SkipTypeParameterResult::DefinitelyTypeParameters,
+                            is_cast_operand: flags == EFlags::TsCastOperand,
                             ..Default::default()
                         },
                     );
@@ -1004,7 +1006,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             p.skip_type_script_type(Level::Lowest)?;
             p.lexer.expect_greater_than::<false>()?;
-            return p.parse_prefix(level, errors, flags);
+            return p.parse_prefix(level, errors, EFlags::TsCastOperand);
         }
 
         p.lexer.unexpected()?;

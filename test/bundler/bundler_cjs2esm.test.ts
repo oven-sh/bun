@@ -293,18 +293,20 @@ describe("bundler", () => {
       run: { stdout: `${stdout}\n${stdout}` },
     });
   }
+  // A name that is read off a `...rest` copy of the namespace object is a name too.
   itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleNamesOnly", {
     files: {
       "/app.mjs": /* js */ `
         import { version, add } from "./index.cjs";
         import * as ns from "./index.cjs";
         const { version: dynamicVersion } = await import("./index.cjs");
-        console.log(version, add(1, 2), ns.version, ns.add(1, 2), dynamicVersion);
+        const { version: copiedVersion, ...rest } = await import("./index.cjs");
+        console.log(version, add(1, 2), ns.version, ns.add(1, 2), dynamicVersion, copiedVersion, rest.add(1, 2));
       `,
       ...esModuleBehindRequire,
     },
     cjs2esm: true,
-    run: { stdout: "1.2.3 3 1.2.3 3 1.2.3" },
+    run: { stdout: "1.2.3 3 1.2.3 3 1.2.3 1.2.3 3" },
   });
   itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleRequireOnly", {
     files: {
@@ -386,6 +388,21 @@ describe("bundler", () => {
       run: { file: "/out/app.js", stdout: "1.2.3 1.2.3 true,true" },
     });
   }
+  // `default` read off a `...rest` copy of the namespace object, or the copy as a value, reads the file.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleDynamicImportRest", {
+    files: {
+      "/app.mjs": /* js */ `
+        const { version, ...rest } = await import("./index.cjs");
+        const { ...value } = await import("./index.cjs");
+        const { ...control } = await import("./control.cjs");
+        console.log(version, rest.default === control.default, Object.keys(value).join() === Object.keys(control).join());
+      `,
+      ...esModuleBehindRequire,
+      "/esm.mjs": esModuleWithoutDefault,
+    },
+    cjs2esm: { unhandled: ["/control.cjs", "/index.cjs"] },
+    run: { stdout: "1.2.3 true true" },
+  });
   // The bundler checks no name against a CommonJS module: `missing` is checked only where the import links past.
   itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleMissingNameBesideDefault", {
     files: {

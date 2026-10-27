@@ -13,8 +13,12 @@ export interface ParserCases {
   bodies: [cuts: number[], data: string, expected: string][];
 }
 export const parserCasesPath = join(import.meta.dir, "parser.json.gz");
-export const loadParserCases = async (): Promise<ParserCases> =>
-  JSON.parse(Buffer.from(Bun.gunzipSync(await Bun.file(parserCasesPath).bytes())).toString());
+const parserCasesJson = async () => Buffer.from(Bun.gunzipSync(await Bun.file(parserCasesPath).bytes()));
+export const loadParserCases = async (): Promise<ParserCases> => JSON.parse((await parserCasesJson()).toString());
+export const parserCasesHash = async () =>
+  createHash("sha256")
+    .update(await parserCasesJson())
+    .digest("hex");
 
 export const parsed = (slots: number, data: string) =>
   internals.http1Internals.parseResponse(Buffer.from(data, "hex"), slots);

@@ -5,8 +5,9 @@
 // What is in the repository does not come from the code under test:
 // - clients.json was recorded with the last Bun that linked picohttpparser (9b8347a24e).
 // - No such Bun has `http1Internals`. The results in parser.json.gz were printed by a program that called
-//   picohttpparser itself, at f4d94b48 with Bun's patch, the way Bun did. Its inputs were picked by coverage from the
-//   corpus of a fuzzer that compared the two parsers.
+//   picohttpparser itself, at f4d94b48 with Bun's patch, the way Bun did, built with and without SSE4.2. The inputs are
+//   1,851 that were picked by coverage from the corpus of a fuzzer that compared the two parsers, and reach every line
+//   and branch of src/http1, and then every byte value at 16 places of a head and 10 places of a body.
 import {
   clients,
   decoded,
@@ -47,4 +48,9 @@ for (const client of Object.keys(clients) as Client[]) {
     recorded[client][part] = Object.fromEntries(responses[part].map(([label]) => [label, first[label]]));
   }
 }
-await Bun.write(recordedPath, JSON.stringify(recorded, null, 1) + "\n");
+// Some of the characters cannot be told apart by eye, or seen at all.
+const escaped = JSON.stringify(recorded, null, 1).replace(
+  /[^\n -~]/g,
+  character => "\\u" + character.charCodeAt(0).toString(16).padStart(4, "0"),
+);
+await Bun.write(recordedPath, escaped + "\n");

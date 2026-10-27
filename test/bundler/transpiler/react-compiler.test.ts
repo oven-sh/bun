@@ -1656,6 +1656,10 @@ describe("bundler", () => {
     HexSign: [`"0x+10" == 16`, false],
     OctalSign: [`"0o+7" != 7`, true],
     BinarySign: [`true == "0b+1"`, false],
+    // The prefix can be in upper case.
+    HexUpperCase: [`"0XfF" == 255`, true],
+    OctalUpperCase: [`"0O17" != 15`, false],
+    BinaryUpperCase: [`true == "0B1"`, true],
     // More digits than 64 bits hold. After the first row the number is `Number(BigInt(text))`, the nearest double,
     // where a sum of the digits in a double gives the double next to it.
     Hex17Digits: [`"0x10000000000000000" == 18446744073709551616`, true],
@@ -1716,9 +1720,11 @@ describe("bundler", () => {
       target: "browser",
       backend,
       onAfterBundle(api) {
+        const out = api.readFile("/out.js");
         // Every row is a constant in the output, so what is printed is what the compiler computed.
-        const folded = api.readFile("/out.js").match(/String\((true|false)\)/g);
-        expect(folded).toHaveLength(Object.keys(looseEquality).length);
+        expect(out.match(/String\((true|false)\)/g)).toHaveLength(Object.keys(looseEquality).length);
+        // One branch of `Branch` is left, and no comparison is left in `InAnArrow`.
+        expect(out.match(/props\.(then|else)|0x\+10/g)).toHaveLength(1);
       },
       run: {
         stdout: [

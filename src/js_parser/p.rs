@@ -24,9 +24,10 @@ use crate::{
     FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
     ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
-    PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
-    ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
-    TransposeState, WrapMode, fs, is_eval_or_arguments, options, statement_cares_about_scope,
+    PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RelocateVarsMode, RuntimeImports,
+    ScopeOrder, ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef,
+    ThenCatchChain, TransposeState, WrapMode, fs, is_eval_or_arguments, options,
+    statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -1180,6 +1181,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.dynamic_import_destructured_locals.insert(id.r#ref, ());
             }
         }
+    }
+
+    /// The lowering of a top-level `using` turns the module's declarations into assignments, and the printer drops a bound local only from a declaration.
+    pub(crate) fn note_destructured_declaration_locals(
+        &mut self,
+        properties: &[bun_ast::B::Property],
+    ) {
+        if self.will_wrap_module_in_try_catch_for_using && self.current_scope == self.module_scope {
+            return;
+        }
+        self.note_destructured_locals(properties);
     }
 
     /// Register a user-declared local (`const|let|var ns`, `.then(ns => …)`,
@@ -8000,6 +8012,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.relocated_top_level_vars
             .push(LocRef { loc, ref_: r#ref });
         self.record_usage(r#ref);
+        // A module-level declaration did not count as a use of its name, and the tracking of `import()` values counts uses.
+        if self.current_scope == self.module_scope {
+            self.note_tracked_namespace_use(r#ref);
+        }
         Expr::init_identifier(r#ref, loc)
     }
 
@@ -9907,9 +9923,14 @@ impl LowerUsingDeclarationsContext {
     ) -> ListManaged<'a, Stmt> {
         let mut result = BumpVec::new_in(p.arena);
         let mut exports = BumpVec::<js_ast::ClauseItem>::new_in(p.arena);
+        // Hoisted functions, exports and other files read the module body's declarations from outside the try.
+        let is_module_body = p.current_scope == p.module_scope;
+        // The linker's `__esm` wrapper and the REPL transform hoist top-level declarations only.
+        let relocate_vars = is_module_body && (p.options.bundle || p.options.repl_mode);
+        let mut commonjs_export_decls = bun_alloc::AstAlloc::vec();
         let mut end: u32 = 0;
         for i in 0..stmts.len() {
-            let stmt = stmts[i];
+            let mut stmt = stmts[i];
             match stmt.data {
                 js_ast::StmtData::SDirective(_)
                 | js_ast::StmtData::SImport(_)
@@ -9919,19 +9940,14 @@ impl LowerUsingDeclarationsContext {
                     result.push(stmt);
                     continue;
                 }
-                js_ast::StmtData::SClass(mut c) => {
-                    // An exported class leaves the try block unless it has static blocks or computed keys.
-                    let runs_code = c.is_export
-                        && c.class.properties.slice().iter().any(|property| {
-                            property.kind == js_ast::g::PropertyKind::ClassStaticBlock
-                                || property.flags.contains(js_ast::flags::Property::IsComputed)
-                        });
-                    if c.is_export && !runs_code {
+                js_ast::StmtData::SClass(mut c) if is_module_body => {
+                    // A class that runs no code when it is defined leaves the try, like a function.
+                    if c.class.can_be_moved() {
                         result.push(stmt);
                         continue;
                     }
+                    let name = c.class.class_name.expect("a class statement has a name");
                     if c.is_export {
-                        let name = c.class.class_name.expect("an exported class has a name");
                         exports.push(js_ast::ClauseItem {
                             name: LocRef {
                                 loc: name.loc,
@@ -9941,23 +9957,21 @@ impl LowerUsingDeclarationsContext {
                             alias_loc: name.loc,
                             ..Default::default()
                         });
-                        let class = core::mem::take(&mut c.class);
-                        let value = p.new_expr(class, stmt.loc);
-                        let binding = p.b(B::Identifier { r#ref: name.ref_ }, name.loc);
-                        stmts[end as usize] = p.s(
-                            S::Local {
-                                kind: js_ast::s::Kind::KVar,
-                                decls: G::DeclList::init_one(G::Decl {
-                                    binding,
-                                    value: Some(value),
-                                }),
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        );
-                        end += 1;
-                        continue;
                     }
+                    let class = core::mem::take(&mut c.class);
+                    let value = p.new_expr(class, stmt.loc);
+                    let binding = p.b(B::Identifier { r#ref: name.ref_ }, name.loc);
+                    stmt = p.s(
+                        S::Local {
+                            kind: js_ast::s::Kind::KVar,
+                            decls: G::DeclList::init_one(G::Decl {
+                                binding,
+                                value: Some(value),
+                            }),
+                            ..Default::default()
+                        },
+                        stmt.loc,
+                    );
                 }
                 js_ast::StmtData::SExportDefault(_) => {
                     continue; // this prevents re-exporting default since we already have it as an .s_export_clause
@@ -9986,6 +10000,46 @@ impl LowerUsingDeclarationsContext {
                     }
                 }
                 js_ast::StmtData::SLocal(mut local) => {
+                    // The linker handles `var $x` (a lifted `exports.x`) only at part level.
+                    if local.origin.is_commonjs_export() {
+                        debug_assert!(local.decls.len() == 1);
+                        let decl = *local.decls.at(0);
+                        let (js_ast::b::B::BIdentifier(identifier), Some(value)) =
+                            (decl.binding.data, decl.value)
+                        else {
+                            unreachable!("a lifted CommonJS export is `var $x = value`")
+                        };
+                        VecExt::append(
+                            &mut commonjs_export_decls,
+                            Decl {
+                                binding: decl.binding,
+                                value: None,
+                            },
+                        );
+                        let target = p.new_expr(
+                            E::CommonJSExportIdentifier {
+                                ref_: identifier.r#ref,
+                            },
+                            decl.binding.loc,
+                        );
+                        let store = p.new_expr(
+                            E::Binary {
+                                op: js_ast::op::Code::BinAssign,
+                                left: target,
+                                right: value,
+                            },
+                            stmt.loc,
+                        );
+                        stmts[end as usize] = p.s(
+                            S::SExpr {
+                                value: store,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        );
+                        end += 1;
+                        continue;
+                    }
                     // If any of these are exported, turn it into a "var" and add export clauses
                     if local.is_export {
                         local.is_export = false;
@@ -10015,9 +10069,46 @@ impl LowerUsingDeclarationsContext {
                 _ => {}
             }
 
+            if relocate_vars
+                && let js_ast::StmtData::SLocal(local) = stmt.data
+                && local.kind == js_ast::s::Kind::KVar
+            {
+                // A declaration that runs no code leaves the try, like a function. A `var` of the source keeps its place: code may read it before its initializer.
+                let runs_no_code = local.decls.len_u32() > 0
+                    && local
+                        .decls
+                        .slice()
+                        .iter()
+                        .all(|decl| match decl.binding.data {
+                            js_ast::b::B::BIdentifier(id) => decl.value.is_none_or(|value| {
+                                value.can_be_moved()
+                                    && p.symbols[id.r#ref.inner_index() as usize].kind
+                                        != js_ast::symbol::Kind::Hoisted
+                            }),
+                            _ => false,
+                        });
+                if runs_no_code {
+                    result.push(stmt);
+                    continue;
+                }
+                match p.relocate_vars_to_top_level(local.decls.slice(), RelocateVarsMode::Normal) {
+                    Some(assignments) => stmt = assignments,
+                    None => continue,
+                }
+            }
+
             stmts[end as usize] = stmt;
             end += 1;
         }
+        debug_assert!(
+            !relocate_vars
+                || stmts[..end as usize].iter().all(|stmt| match stmt.data {
+                    js_ast::StmtData::SLocal(local) => local.kind != js_ast::s::Kind::KVar,
+                    js_ast::StmtData::SClass(_) => false,
+                    _ => true,
+                }),
+            "a module-level declaration stays inside the try that lowers a top-level using"
+        );
 
         let non_exported_statements = bun_ast::StoreSlice::new_mut(&mut stmts[..end as usize]);
 
@@ -10129,7 +10220,20 @@ impl LowerUsingDeclarationsContext {
 
         // Wrap everything in a try/catch/finally block
         p.record_usage(caught_ref);
-        result.reserve(2 + usize::from(!exports.is_empty()));
+        result.reserve(
+            2 + usize::from(!exports.is_empty()) + usize::from(!commonjs_export_decls.is_empty()),
+        );
+        if !commonjs_export_decls.is_empty() {
+            result.push(p.s(
+                S::Local {
+                    kind: js_ast::s::Kind::KVar,
+                    origin: js_ast::s::LocalOrigin::CommonJsExport,
+                    decls: commonjs_export_decls,
+                    ..Default::default()
+                },
+                loc,
+            ));
+        }
         let stack_binding = p.b(
             B::Identifier {
                 r#ref: self.stack_ref,

@@ -787,6 +787,21 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test("declarations on a line with a top-level using persist", async () => {
+      // The REPL lowers `using`: the line runs inside one try/finally, and its
+      // declarations have to leave it to reach the next line.
+      const { outputs, stderr, exitCode } = await runRepl([
+        "var disposed = false; using handle = { [Symbol.dispose]() { disposed = true; } }; const a = 6000; let b = 70; var c = 8",
+        "[disposed, a + b + c]",
+        "using resource = { value: 41, [Symbol.dispose]() {} }; class Plain {} class Reader { static value = resource.value + 1 }",
+        "[typeof Plain, Reader.value]",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["undefined", "[ true, 6078 ]", "undefined", '[ "function", 42 ]']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("multiline input", () => {

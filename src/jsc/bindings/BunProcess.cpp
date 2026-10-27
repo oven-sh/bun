@@ -184,6 +184,7 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" void Bun__setExitCode(void*, uint8_t);
+extern "C" void Bun__Process__writeExitTrace(const BunString* warning);
 extern "C" void Bun__closeChildIPC(JSGlobalObject*);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
@@ -3807,23 +3808,70 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     return {};
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableExitTrace, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    uint32_t frameLimit = Bun::DEFAULT_ERROR_STACK_TRACE_LIMIT;
+    if (JSValue limit = callFrame->argument(0); !limit.isUndefined()) {
+        double number = limit.toNumber(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        // A limit below zero is no frames, as `--stack-trace-limit=-1` is in Node. NaN compares false.
+        frameLimit = number > 0 ? clampTo<uint32_t>(number) : 0;
+    }
+    defaultGlobalObject(globalObject)->processObject()->m_traceExitFrameLimit = frameLimit;
+    return JSValue::encode(jsUndefined());
+}
+
+// Node prints this from Environment::Exit(), which process.reallyExit() calls with its argument:
+// https://github.com/nodejs/node/blob/v26.3.0/src/env.cc#L1895-L1918
+// It throws nothing. An exception check after it would act on a pending termination and cancel the exit.
+static void printExitTrace(Zig::GlobalObject* globalObject, int32_t exitCode, uint32_t frameLimit)
+{
+    // Function names and source URLs come from JS. Past `String::MaxLength` there is no warning, and the exit goes on.
+    WTF::StringBuilder warning { WTF::OverflowPolicy::RecordOverflow };
+    warning.append("(node:"_s);
+    warning.append(getpid());
+    if (auto* context = globalObject->scriptExecutionContext(); !context->isMainThread()) {
+        warning.append(", thread:"_s);
+        warning.append(context->identifier() - 1);
+    }
+    warning.append(") WARNING: Exited the environment with code "_s);
+    warning.append(exitCode);
+    // Skips process.reallyExit(). When process.exit() called it, that is the top frame and counts, as in Node.
+    warning.append(Bun::formatCurrentStackTrace(JSC::getVM(globalObject), globalObject, 1, frameLimit));
+    warning.append('\n');
+    if (warning.hasOverflowed()) [[unlikely]]
+        return;
+
+    WTF::String text = warning.toString();
+    BunString textRef = Bun::toString(text);
+    Bun__Process__writeExitTrace(&textRef);
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    uint8_t exitCode = 0;
+    int32_t exitCode = 0;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isAnyInt()) {
-        exitCode = static_cast<uint8_t>(arg0.toInt32(globalObject) % 256);
+        exitCode = arg0.toInt32(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
+    auto* process = zigGlobal->processObject();
     // Node's reallyExit is the raw exit that does not run 'exit' listeners. Arm
     // m_isExiting so dispatchExitInternal (via Bun__Process__exit) skips them
     // while native shutdown (profiles, cleanup hooks, SQLite close) still runs.
-    zigGlobal->processObject()->m_isExiting = true;
-    Bun__Process__exit(zigGlobal, exitCode);
+    process->m_isExiting = true;
+    if (auto frameLimit = process->m_traceExitFrameLimit) [[unlikely]] {
+        // In a worker Bun__Process__exit returns, and the worker can call this again before it stops.
+        process->m_traceExitFrameLimit = std::nullopt;
+        printExitTrace(zigGlobal, exitCode, *frameLimit);
+    }
+    Bun__Process__exit(zigGlobal, static_cast<uint8_t>(exitCode % 256));
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
     // WebWorker exit path it called requests JSC termination (guarded so it's a
     // no-op when re-entered from a process.on('exit') handler).

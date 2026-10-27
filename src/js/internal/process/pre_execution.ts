@@ -5,6 +5,10 @@
 // scan, bail early when nothing applies.
 
 let writeSync: typeof import("node:fs").writeSync;
+// The frames as text, with no Error and no `Error.prepareStackTrace`: Node prints its traces from native code.
+// A built-in module is `node:internal/<id>` in them, as in Node (and its tests match that form, for example
+// /internal\/process\/pre_execution/).
+let formatCurrentStackTrace: (frameLimit: number, framesToSkip: number) => string;
 let envTracePrintMessage = false;
 let envTracePrintJsStack = false;
 let inEnvTrace = false;
@@ -16,13 +20,6 @@ function writeStderr(out: string): void {
   } catch {
     // Tracing output is best-effort (e.g. EPIPE on a closed stderr).
   }
-}
-
-// Builtin frames render as `internal:<id>`; Node.js renders the same frames
-// as `node:internal/<id>` (and tests regex-match the Node form, e.g.
-// /internal\/process\/pre_execution/).
-function rewriteFrame(frame: string): string {
-  return frame.replace("(internal:", "(node:internal/");
 }
 
 function getSourceLine(file: string, line: number): string | null {
@@ -123,20 +120,17 @@ function printEnvTrace(kind: EnvOpKind, key: string | null): void {
       out = key === null ? "[--trace-env] enumerate environment variables\n" : `[--trace-env] ${op} "${key}"\n`;
     }
     if (envTracePrintJsStack) {
-      // The capture burns 3 frames on trace machinery (printEnvTrace, the
-      // proxy trap, and the Error line); widen the limit so the user still
-      // sees `Error.stackTraceLimit` real frames.
-      const limit = Error.stackTraceLimit;
-      Error.stackTraceLimit = limit + 3;
-      const stack = new Error().stack!.split("\n");
-      Error.stackTraceLimit = limit;
-      // stack[0] = "Error", [1] = printEnvTrace, [2] = the proxy trap.
+      // Node prints ten frames, whatever `Error.stackTraceLimit` and `--stack-trace-limit` are:
+      // https://github.com/nodejs/node/blob/v26.3.0/src/node_internals.h#L86-L88
+      // The 2 frames not printed are printEnvTrace and the proxy trap.
+      const stack = formatCurrentStackTrace(10, 2).split("\n");
+      // A newline comes before each frame, so stack[0] is empty.
       let corrected = false;
-      for (let i = 3; i < stack.length; i++) {
+      for (let i = 1; i < stack.length; i++) {
         let frame = stack[i];
         if (!corrected) {
           const m = frame.match(RE_FRAME_LOC);
-          if (m && !m[1].startsWith("internal:") && !m[1].startsWith("native") && m[1] !== "unknown") {
+          if (m && !m[1].startsWith("node:internal/") && !m[1].startsWith("native") && m[1] !== "unknown") {
             corrected = true;
             const col = v8Column(kind, m[1], Number(m[2]), key);
             if (col > 0) {
@@ -145,7 +139,7 @@ function printEnvTrace(kind: EnvOpKind, key: string | null): void {
             }
           }
         }
-        out += rewriteFrame(frame) + "\n";
+        out += frame + "\n";
       }
     }
     if (out !== "") writeStderr(out);
@@ -230,29 +224,6 @@ function readStartupEnvVars(): void {
   for (let i = 0; i < names.length; i++) void env[names[i]];
 }
 
-function installExitTracing(): void {
-  const realExit = process.exit;
-  // Replaces node's native `Environment::Exit` warning: the wrapper frame
-  // below stands in for node's `at process.exit` top frame, so stack counts
-  // under --stack-trace-limit match node exactly.
-  function exit(code?: number | string | null) {
-    const resolved = code ?? process.exitCode ?? 0;
-    let prefix: string;
-    if (Bun.isMainThread) {
-      prefix = `(node:${process.pid}) `;
-    } else {
-      const tid = require("node:worker_threads").threadId;
-      prefix = `(node:${process.pid}, thread:${tid}) `;
-    }
-    let out = `${prefix}WARNING: Exited the environment with code ${resolved}\n`;
-    const stack = new Error().stack!.split("\n");
-    for (let i = 1; i < stack.length; i++) out += rewriteFrame(stack[i]) + "\n";
-    writeStderr(out);
-    return realExit.$call(process, code);
-  }
-  process.exit = exit as typeof process.exit;
-}
-
 {
   const execArgv = process.execArgv;
   let catString: string | null = null;
@@ -295,9 +266,15 @@ function installExitTracing(): void {
     }
   }
 
+  // Node's --trace-exit prints `--stack-trace-limit` frames, not `Error.stackTraceLimit` frames:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/env.cc#L1911-L1915
+  let exitTraceFrameLimit: number | undefined;
   if (stackTraceLimit !== null) {
     const limit = Number(stackTraceLimit);
-    if (Number.isFinite(limit)) Error.stackTraceLimit = limit;
+    if (Number.isFinite(limit)) {
+      Error.stackTraceLimit = limit;
+      exitTraceFrameLimit = limit;
+    }
   }
 
   // CLI-driven tracing runs in worker VMs too (workers inherit the parent's
@@ -320,17 +297,27 @@ function installExitTracing(): void {
     require("internal/trace_events").setFilePattern(filePattern);
   }
 
-  if (traceExit || traceEnv || traceEnvJsStack) {
+  if (traceExit) {
+    const enableExitTrace = $newCppFunction("BunProcess.cpp", "jsFunctionEnableExitTrace", 1) as (
+      frameLimit: number | undefined,
+    ) => void;
+    enableExitTrace(exitTraceFrameLimit);
+  }
+  if (traceEnv || traceEnvJsStack) {
     // The agent's raw binding capture, NOT node:fs — loading node:fs here
     // would freeze unwrapped natives into its bound exports and a later
     // dynamic createTracing(...).enable() of fs categories would miss events;
     // it also keeps our own stderr writes out of fs.sync traces.
     writeSync = require("internal/trace_events").rawWriteSync;
-  }
-  if (traceExit) installExitTracing();
-  if (traceEnv || traceEnvJsStack) {
     envTracePrintMessage = traceEnv;
     envTracePrintJsStack = traceEnvJsStack;
+    if (traceEnvJsStack) {
+      formatCurrentStackTrace = $newCppFunction(
+        "FormatStackTraceForJS.cpp",
+        "jsFunctionFormatCurrentStackTrace",
+        2,
+      ) as typeof formatCurrentStackTrace;
+    }
     installEnvTracing();
   }
 }

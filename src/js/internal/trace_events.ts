@@ -39,7 +39,7 @@ let fileWriteRequested = false;
 // calls don't pollute the user's trace.
 let suppressFsEvents = false;
 // writeSync captured at module load, before installFsInstrumentation can
-// shadow the binding's methods — pre_execution prints --trace-env/--trace-exit
+// shadow the binding's methods. pre_execution prints --trace-env
 // output through this so node:fs is never evaluated pre-user-code and the
 // agent's own stderr writes never show up as fs.sync.write trace events.
 const fsBinding = require("internal/fs/binding");

@@ -51,8 +51,8 @@ pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
 type Key = Option<NonNull<c_void>>;
 
 /// Changed through `&self`, because a callback `run()` calls can post and unregister. Every borrow
-/// of the map is inside one of the private methods below, which copy a key or a value in or out and
-/// call nothing but the map: hashing and comparing a pointer, and the allocator, cannot come back
+/// of the map is inside one of the methods below other than `run()`, which copy a key or a value in
+/// or out and call nothing but the map: hashing and comparing a pointer, and the allocator, cannot come back
 /// here. `run()` holds none across a callback.
 #[derive(Default)]
 pub struct DeferredTaskQueue {

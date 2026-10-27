@@ -336,33 +336,34 @@ union active_reqs_u {
     count: c_uint,
 }
 /// libuv and the callbacks it runs write these fields while `tick()` borrows the loop, so each is a
-/// `Cell`, which has the layout of what it holds.
+/// `Cell`, which has the layout of what it holds. Only the keep-alive count is `pub`: libuv follows
+/// the pointers, and its pool threads write `wq`, `wq_mutex` and `wq_async`, which Rust never touches.
 #[repr(C)]
 pub struct Loop {
-    pub data: Cell<*mut c_void>,
+    data: Cell<*mut c_void>,
     pub active_handles: Cell<c_uint>,
-    pub handle_queue: Cell<uv__queue>,
+    handle_queue: Cell<uv__queue>,
     active_reqs: Cell<active_reqs_u>,
-    pub internal_fields: Cell<*mut c_void>,
-    pub stop_flag: Cell<c_uint>,
-    pub iocp: Cell<HANDLE>,
-    pub time: Cell<u64>,
-    pub pending_reqs_tail: Cell<*mut uv_req_t>,
-    pub endgame_handles: Cell<*mut uv_handle_t>,
-    pub timer_heap: Cell<*mut c_void>,
-    pub prepare_handles: Cell<*mut uv_prepare_t>,
-    pub check_handles: Cell<*mut uv_check_t>,
-    pub idle_handles: Cell<*mut uv_idle_t>,
-    pub next_prepare_handle: Cell<*mut uv_prepare_t>,
-    pub next_check_handle: Cell<*mut uv_check_t>,
-    pub next_idle_handle: Cell<*mut uv_idle_t>,
-    pub poll_peer_sockets: Cell<[SOCKET; 4]>,
-    pub active_tcp_streams: Cell<c_uint>,
-    pub active_udp_streams: Cell<c_uint>,
-    pub timer_counter: Cell<u64>,
-    pub wq: Cell<uv__queue>,
-    pub wq_mutex: Cell<uv_mutex_t>,
-    pub wq_async: Cell<uv_async_t>,
+    internal_fields: Cell<*mut c_void>,
+    stop_flag: Cell<c_uint>,
+    iocp: Cell<HANDLE>,
+    time: Cell<u64>,
+    pending_reqs_tail: Cell<*mut uv_req_t>,
+    endgame_handles: Cell<*mut uv_handle_t>,
+    timer_heap: Cell<*mut c_void>,
+    prepare_handles: Cell<*mut uv_prepare_t>,
+    check_handles: Cell<*mut uv_check_t>,
+    idle_handles: Cell<*mut uv_idle_t>,
+    next_prepare_handle: Cell<*mut uv_prepare_t>,
+    next_check_handle: Cell<*mut uv_check_t>,
+    next_idle_handle: Cell<*mut uv_idle_t>,
+    poll_peer_sockets: Cell<[SOCKET; 4]>,
+    active_tcp_streams: Cell<c_uint>,
+    active_udp_streams: Cell<c_uint>,
+    timer_counter: Cell<u64>,
+    wq: Cell<uv__queue>,
+    wq_mutex: Cell<uv_mutex_t>,
+    wq_async: Cell<uv_async_t>,
 }
 pub type uv_loop_t = Loop;
 
@@ -546,6 +547,11 @@ impl Loop {
     #[inline]
     pub fn as_ptr(&self) -> *mut Loop {
         ptr::from_ref(self).cast_mut()
+    }
+    /// `uv_now`: the loop's cached clock, in milliseconds.
+    #[inline]
+    pub fn time(&self) -> u64 {
+        self.time.get()
     }
     #[inline]
     pub fn stop(&self) {

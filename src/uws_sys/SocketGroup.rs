@@ -17,29 +17,30 @@ use crate::{
 };
 
 /// C and the callbacks it dispatches (`close_all` runs `on_close`) write these fields while Rust
-/// borrows the group, so each is a `Cell`, which has the layout of what it holds.
+/// borrows the group, so each is a `Cell`, which has the layout of what it holds. C follows the
+/// raw pointers, so those are not `pub`.
 #[repr(C)]
 pub struct SocketGroup {
-    pub loop_: Cell<*mut Loop>,
+    loop_: Cell<*mut Loop>,
     pub vtable: Cell<Option<&'static VTable>>,
     /// Embedding owner — typed access via `owner<T>()`. `*mut c_void` only
     /// because the C ABI slot is heterogenous (Listener / uWS App / RareData /
     /// null); never read this field directly — go through `owner::<T>()`.
     ext: Cell<*mut c_void>,
-    pub head_sockets: Cell<*mut us_socket_t>,
-    pub head_connecting_sockets: Cell<*mut ConnectingSocket>,
-    pub head_listen_sockets: Cell<*mut ListenSocket>,
-    pub iterator: Cell<*mut us_socket_t>,
-    pub prev: Cell<*mut SocketGroup>,
-    pub next: Cell<*mut SocketGroup>,
-    pub global_tick: Cell<u32>,
+    head_sockets: Cell<*mut us_socket_t>,
+    head_connecting_sockets: Cell<*mut ConnectingSocket>,
+    head_listen_sockets: Cell<*mut ListenSocket>,
+    iterator: Cell<*mut us_socket_t>,
+    prev: Cell<*mut SocketGroup>,
+    next: Cell<*mut SocketGroup>,
+    global_tick: Cell<u32>,
     /// Sockets currently parked in `loop.data.low_prio_head` with
     /// `s->group == this`. They are NOT in `head_sockets` while queued, so
     /// `close_all`/`destroy` must account for them separately.
-    pub low_prio_count: Cell<u16>,
-    pub timestamp: Cell<u8>,
-    pub long_timestamp: Cell<u8>,
-    pub linked: Cell<u8>,
+    low_prio_count: Cell<u16>,
+    timestamp: Cell<u8>,
+    long_timestamp: Cell<u8>,
+    linked: Cell<u8>,
 }
 
 #[repr(C)]
@@ -104,6 +105,27 @@ impl SocketGroup {
         ptr::from_ref(self).cast_mut()
     }
 
+    /// Whether [`init`](Self::init) has run, and [`reset`](Self::reset) has not since.
+    #[inline]
+    pub fn is_initialized(&self) -> bool {
+        !self.loop_.get().is_null()
+    }
+
+    /// No socket of any kind belongs to the group.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.head_sockets.get().is_null()
+            && self.head_connecting_sockets.get().is_null()
+            && self.head_listen_sockets.get().is_null()
+            && self.low_prio_count.get() == 0
+    }
+
+    /// The group linked into the loop after this one.
+    #[inline]
+    pub fn next(&self) -> *mut SocketGroup {
+        self.next.get()
+    }
+
     // Not `impl Drop`. SocketGroup is `#[repr(C)]`, embedded
     // by-value in its owner, and its lifecycle is FFI-managed (C unlinks it
     // from the loop). PORTING.md's #[repr(C)]-across-FFI exception applies:
@@ -116,6 +138,16 @@ impl SocketGroup {
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller upholds the contract above.
         unsafe { us_socket_group_deinit(this) }
+    }
+
+    /// [`destroy`](Self::destroy) for a group that stays in use: it can be `init`ed again.
+    ///
+    /// # Safety
+    /// As [`destroy`](Self::destroy).
+    pub unsafe fn reset(&self) {
+        // SAFETY: fn contract.
+        unsafe { us_socket_group_deinit(self.as_ptr()) };
+        self.loop_.set(ptr::null_mut());
     }
 
     pub fn close_all(&self) {

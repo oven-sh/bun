@@ -1339,9 +1339,10 @@ pub mod waiter_thread_posix {
                         out,
                         ResultTaskMini::<T>::run_from_main_thread_mini,
                     );
-                    mini.enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
-                        core::ptr::addr_of_mut!((*out).task),
-                    ));
+                    bun_event_loop::MiniEventLoop::Shared::enqueue_task_concurrent(
+                        *mini,
+                        core::ptr::NonNull::new_unchecked(core::ptr::addr_of_mut!((*out).task)),
+                    );
                 }
                 // `out` is now owned by the mini queue; freed in `run_from_main_thread_mini`.
             }
@@ -1750,16 +1751,12 @@ impl Default for WindowsOptions {
         Self {
             verbatim_arguments: false,
             hide_window: true,
-            // Every `bun.spawnSync` call site sets `loop_` explicitly. A
-            // zeroed handle here keeps `..Default::default()` usable
-            // for the other fields. `spawn_process_windows` (the sole consumer)
-            // asserts non-null at the read site so a forgotten `loop_` panics
-            // with a pointed message instead of segfaulting at the `.uv_loop`
-            // field offset.
-            // SAFETY: `EventLoopHandle` is a `Copy` enum of raw pointers; the
-            // all-zero bit pattern is discriminant 0 with a null payload —
-            // valid representation, never dereferenced before assignment.
-            loop_: unsafe { bun_core::ffi::zeroed_unchecked() },
+            // Every `bun.spawnSync` call site sets `loop_` explicitly. A null
+            // handle here keeps `..Default::default()` usable for the other
+            // fields.
+            // SAFETY: `spawn_process_windows` panics on it before anything
+            // dispatches through it.
+            loop_: unsafe { EventLoopHandle::init(core::ptr::null_mut()) },
         }
     }
 }
@@ -1988,16 +1985,15 @@ mod spawn_process_body {
         // SAFETY: argv is null-terminated, argv[0] is non-null
         uv_process_options.file = options.argv0.unwrap_or_else(|| unsafe { *argv });
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
-        // `WindowsOptions::default()` leaves `loop_` zeroed (every
-        // `bun.spawnSync` call site sets it explicitly). A zeroed
-        // `EventLoopHandle` is discriminant 0 (`Js`) with a null inner pointer,
-        // which `uv_loop()` below would dereference. Catch that with a clear
+        // `WindowsOptions::default()` leaves `loop_` a `Js` handle with a null
+        // pointer (every `bun.spawnSync` call site sets it explicitly), which
+        // `uv_loop()` below would dereference. Catch that with a clear
         // panic instead of an opaque exit-code-3. Release-build assert: this is
         // the contract boundary, not a debug aid.
         assert!(
             !options.windows.loop_.into_tag_ptr().1.is_null(),
             "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
-         WindowsOptions::default() leaves it zeroed (Zig spec: `= undefined`); \
+         WindowsOptions::default() leaves it null (Zig spec: `= undefined`); \
          every caller must populate it — see src/CLAUDE.md §Spawning Subprocesses \
          (`.loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(...))`)."
         );
@@ -2816,7 +2812,6 @@ mod spawn_process_body {
             argv: *const *const c_char,
             envp: *const *const c_char,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
-            let loop_ = options.windows.loop_.platform_event_loop();
             // All stdio inherited: the child is the foreground program on our console.
             let _child = crate::ctrl_c::Child::enter();
             let mut spawned =
@@ -2824,6 +2819,8 @@ mod spawn_process_body {
                     Err(err) => return Ok(Err(err)),
                     Ok(proces) => proces,
                 };
+            // After `spawn_process_windows` has checked the handle.
+            let loop_ = options.windows.loop_.platform_event_loop();
 
             // Sole owner during sync spawn; detached and released on return,
             // by which time the loop has drained and no uv callback holds a
@@ -2838,7 +2835,7 @@ mod spawn_process_body {
             // SAFETY: read-only field access between uv ticks; the uv exit
             // callback's `&mut Process` does not overlap this `&Process`.
             while !unsafe { (*process).has_exited() } {
-                (*loop_).run();
+                loop_.run();
             }
 
             Ok(Ok(Result {
@@ -2933,7 +2930,7 @@ mod spawn_process_body {
             // SAFETY: read-only field access between uv ticks; callbacks fired
             // inside `tick()` write through the same `this_ptr` root.
             while unsafe { (*this_ptr).waiting_count } > 0 {
-                (*loop_.platform_event_loop()).tick();
+                loop_.platform_event_loop().tick();
             }
 
             // SAFETY: loop drained (waiting_count == 0); no further uv callback

@@ -203,9 +203,27 @@ impl<T: Node> UnboundedQueue<T> {
         self.push_batch(item, item);
     }
 
+    /// [`push`](Self::push) for a queue whose consumer may free it as soon as it has popped
+    /// `item`, which can be before this returns: no reference to the queue is held by then.
+    ///
+    /// # Safety
+    /// `this` is live until `item` has been popped. `item`: as for [`push`](Self::push).
+    pub unsafe fn push_raw(this: *const Self, item: NonNull<T>) {
+        // SAFETY: fn contract.
+        unsafe { Self::push_batch_raw(this, item, item) }
+    }
+
     /// `first..=last` must form a valid intrusive chain of live `T` nodes. The
     /// caller transfers logical ownership of every node in the chain.
     pub(crate) fn push_batch(&self, first: NonNull<T>, last: NonNull<T>) {
+        // SAFETY: `self` is borrowed for the whole call.
+        unsafe { Self::push_batch_raw(self, first, last) }
+    }
+
+    /// # Safety
+    /// `this` is live until `first` has been popped.
+    #[inline]
+    unsafe fn push_batch_raw(this: *const Self, first: NonNull<T>, last: NonNull<T>) {
         let (first, last) = (first.as_ptr(), last.as_ptr());
         // SAFETY: caller guarantees `last` is a live node (NonNull is non-null).
         unsafe { T::set_next(last, ptr::null_mut()) };
@@ -222,13 +240,15 @@ impl<T: Node> UnboundedQueue<T> {
             }
             debug_assert!(item == last, "`last` should be reachable from `first`");
         }
-        let old_back = self.back.0.swap(last, Ordering::AcqRel);
+        // SAFETY: fn contract: the chain is not linked in yet.
+        let old_back = unsafe { &(*this).back.0 }.swap(last, Ordering::AcqRel);
         if !old_back.is_null() {
             // SAFETY: `old_back` was the previous tail, still live (its `next`
             // is null and no consumer has popped past it yet — see `pop`).
             unsafe { T::atomic_store_next(old_back, first, Ordering::Release) };
         } else {
-            self.front.0.store(first, Ordering::Release);
+            // SAFETY: as for `back`. This store is what links the chain in.
+            unsafe { &(*this).front.0 }.store(first, Ordering::Release);
         }
     }
 

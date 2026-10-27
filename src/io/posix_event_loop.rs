@@ -569,7 +569,7 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        let watcher_fd = loop_.fd.get();
+        let watcher_fd = loop_.fd();
 
         syslog!(
             "register: FilePoll(0x{:x}, generation_number={}) {} ({})",
@@ -891,7 +891,7 @@ impl FilePoll {
             return sys::Result::Ok(());
         }
 
-        let watcher_fd = loop_.fd.get();
+        let watcher_fd = loop_.fd();
         let both_directions = disarmed_only
             || (self.flags.contains(Flags::PollReadable)
                 && self.flags.contains(Flags::PollWritable));

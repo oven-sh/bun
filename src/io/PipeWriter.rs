@@ -511,8 +511,12 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     pub fn register_poll(&mut self) {
         let Some(poll) = self.get_poll() else { return };
         // Use the event loop from the parent, not the global one
-        let loop_ = self.parent_event_loop().loop_();
-        match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
+        let event_loop = self.parent_event_loop();
+        match poll.register_with_fd(
+            event_loop.platform_event_loop(),
+            FilePollKind::Writable,
+            poll.fd(),
+        ) {
             sys::Result::Err(err) => {
                 // Same report as a failed write (the streaming writer does the
                 // same): parents expect every error to be followed by `on_close`.
@@ -622,9 +626,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
                 p
             }
         };
-        let loop_ = self.parent_event_loop().loop_();
+        let event_loop = self.parent_event_loop();
 
-        match poll.register_with_fd(loop_, FilePollKind::Writable, fd) {
+        match poll.register_with_fd(event_loop.platform_event_loop(), FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
                 // A poll from an earlier start() still holds that start's fd.
                 if existing_poll.is_none() {
@@ -884,8 +888,9 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
     fn register_poll(&mut self) {
         let Some(poll) = self.get_poll() else { return };
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        let loop_ = unsafe { Parent::loop_(self.parent()) }.cast();
+        // SAFETY: parent BACKREF set via set_parent; it and its loop outlive this writer, on the
+        // loop's thread.
+        let loop_ = unsafe { &*Parent::loop_(self.parent()) };
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => self.report_error_and_close(err),
             sys::Result::Ok(()) => {}
@@ -1158,7 +1163,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             }
         };
 
-        match poll.register_with_fd(loop_.loop_(), FilePollKind::Writable, fd) {
+        match poll.register_with_fd(loop_.platform_event_loop(), FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
                 // A poll from an earlier start() still holds that start's fd.
                 if existing_poll.is_none() {

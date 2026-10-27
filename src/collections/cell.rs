@@ -3,12 +3,13 @@
 //!
 //! They are to `Vec`, `LinearFifo` and the hash maps what `Cell` is to an integer: a value goes in
 //! or comes out whole, and no reference into the container is ever handed out. No method takes a
-//! closure, clones or drops an element, and map keys are integers ([`IntKey`]), so the only foreign
-//! code that runs while a method borrows the container is the global allocator, which cannot reach
-//! it. That is what every `SAFETY` comment below means by "nothing here re-enters". `UnsafeCell`
+//! closure, clones or drops an element, and map keys are integers or pointers ([`Key`]), so the only
+//! foreign code that runs while a method borrows the container is the global allocator, which cannot
+//! reach it. That is what every `SAFETY` comment below means by "nothing here re-enters". `UnsafeCell`
 //! makes every type here `!Sync`.
 
 use core::cell::UnsafeCell;
+use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
 
@@ -61,6 +62,12 @@ impl<T> VecCell<T> {
         unsafe { core::mem::replace(&mut *self.0.get(), value) }
     }
 
+    /// Drops the old `Vec` with no borrow of the cell live.
+    #[inline]
+    pub fn set(&self, value: Vec<T>) {
+        drop(self.replace(value));
+    }
+
     /// Removes the element at `index` and puts the last one in its place.
     #[inline]
     pub fn swap_remove(&self, index: usize) -> T {
@@ -76,10 +83,28 @@ impl<T: Copy> VecCell<T> {
         unsafe { (&*self.0.get()).get(index).copied() }
     }
 
+    /// Panics if `index` is out of range.
+    #[inline]
+    pub fn set_at(&self, index: usize, value: T) {
+        // SAFETY: nothing here re-enters.
+        unsafe { (&mut *self.0.get())[index] = value }
+    }
+
     #[inline]
     pub fn extend_from_slice(&self, values: &[T]) {
-        // SAFETY: nothing here re-enters. `values` cannot be a borrow of this `Vec`: none exists.
-        unsafe { (&mut *self.0.get()).extend_from_slice(values) }
+        // SAFETY: nothing here re-enters: the elements are copied as bytes, not through `Clone`,
+        // into the room just reserved. `values` cannot be a borrow of this `Vec`: none exists.
+        unsafe {
+            let vec = &mut *self.0.get();
+            vec.reserve(values.len());
+            let len = vec.len();
+            core::ptr::copy_nonoverlapping(
+                values.as_ptr(),
+                vec.as_mut_ptr().add(len),
+                values.len(),
+            );
+            vec.set_len(len + values.len());
+        }
     }
 }
 
@@ -87,6 +112,13 @@ impl<T> Default for VecCell<T> {
     #[inline]
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<T> From<Vec<T>> for VecCell<T> {
+    #[inline]
+    fn from(value: Vec<T>) -> Self {
+        Self(UnsafeCell::new(value))
     }
 }
 
@@ -102,6 +134,17 @@ impl<T: Copy> FifoCell<T> {
     pub fn write_item(&self, item: T) -> Result<(), AllocError> {
         // SAFETY: nothing here re-enters.
         unsafe { (&mut *self.0.get()).write_item(item) }
+    }
+
+    /// [`write_item`](Self::write_item) without the capacity check.
+    ///
+    /// # Safety
+    /// [`ensure_unused_capacity`](Self::ensure_unused_capacity) made room for this item, and
+    /// nothing that was written since has used that room.
+    #[inline]
+    pub unsafe fn write_item_assume_capacity(&self, item: T) {
+        // SAFETY: nothing here re-enters. The slot is free: fn contract.
+        unsafe { (&mut *self.0.get()).write_item_assume_capacity(item) }
     }
 
     #[inline]
@@ -147,25 +190,44 @@ mod sealed {
     pub trait Sealed {}
 }
 
-/// The integers: keys whose `Hash` and `Eq` are the standard library's. Sealed, because an
-/// implementation written elsewhere could reach the map that is calling it.
-pub trait IntKey: sealed::Sealed + Copy + Eq + core::hash::Hash + IdentityHash {}
+/// The integers and the pointers (by address): keys whose `Hash` and `Eq` are the standard
+/// library's. Sealed, because an implementation written elsewhere could reach the map that is
+/// calling it.
+pub trait Key: sealed::Sealed + Copy + Eq + core::hash::Hash {}
+
+/// The [`Key`]s that can be their own hash.
+pub trait IntKey: Key + IdentityHash {}
 
 macro_rules! int_key {
     ($($t:ty),*) => { $(
         impl sealed::Sealed for $t {}
+        impl Key for $t {}
         impl IntKey for $t {}
     )* };
 }
 int_key!(u32, u64, usize, i32, i64, isize);
 
-pub struct ArrayHashMapCell<K: IntKey, V: Copy>(UnsafeCell<ArrayHashMap<K, V>>);
+macro_rules! pointer_key {
+    ($($t:ty),*) => { $(
+        impl<T> sealed::Sealed for $t {}
+        impl<T> Key for $t {}
+    )* };
+}
+pointer_key!(*const T, *mut T, NonNull<T>);
 
-impl<K: IntKey, V: Copy> ArrayHashMapCell<K, V> {
+pub struct ArrayHashMapCell<K: Key, V: Copy>(UnsafeCell<ArrayHashMap<K, V>>);
+
+impl<K: Key, V: Copy> ArrayHashMapCell<K, V> {
     #[inline]
     pub fn count(&self) -> usize {
         // SAFETY: nothing here re-enters.
         unsafe { (&*self.0.get()).count() }
+    }
+
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        // SAFETY: nothing here re-enters.
+        unsafe { (&*self.0.get()).capacity() }
     }
 
     #[inline]
@@ -187,10 +249,24 @@ impl<K: IntKey, V: Copy> ArrayHashMapCell<K, V> {
         unsafe { (&mut *self.0.get()).put(key, value) }
     }
 
+    /// [`put`](Self::put) that returns the value `key` had.
+    #[inline]
+    pub fn replace(&self, key: K, value: V) -> Option<V> {
+        // SAFETY: nothing here re-enters.
+        unsafe { (&mut *self.0.get()).insert(key, value) }
+    }
+
     #[inline]
     pub fn swap_remove(&self, key: K) -> bool {
         // SAFETY: nothing here re-enters.
         unsafe { (&mut *self.0.get()).swap_remove(&key) }
+    }
+
+    /// Removes the last entry in insertion order. Keeps the capacity.
+    #[inline]
+    pub fn pop(&self) -> Option<(K, V)> {
+        // SAFETY: nothing here re-enters.
+        unsafe { (&mut *self.0.get()).pop() }.map(|entry| (entry.key, entry.value))
     }
 
     #[inline]
@@ -207,7 +283,7 @@ impl<K: IntKey, V: Copy> ArrayHashMapCell<K, V> {
     }
 }
 
-impl<K: IntKey, V: Copy> Default for ArrayHashMapCell<K, V> {
+impl<K: Key, V: Copy> Default for ArrayHashMapCell<K, V> {
     #[inline]
     fn default() -> Self {
         Self(UnsafeCell::new(ArrayHashMap::default()))
@@ -259,9 +335,12 @@ mod tests {
         assert_eq!(a.get(3), Some(4));
         assert_eq!(a.get(4), None);
         assert_eq!(b.swap_remove(0), 1);
-        assert_eq!(a.take(), vec![4, 2, 3]);
+        a.set_at(1, 5);
+        assert_eq!(a.take(), vec![4, 5, 3]);
         assert!(b.is_empty());
         assert_eq!(a.capacity(), 0);
+        a.set(vec![7]);
+        assert_eq!(b.get(0), Some(7));
     }
 
     /// `drop` of an element reaches the cell it came out of.
@@ -281,6 +360,9 @@ mod tests {
         cell.push(Some(PushesOnDrop(Rc::downgrade(&cell))));
         drop(cell.swap_remove(1));
         assert_eq!(cell.len(), 2);
+        cell.push(Some(PushesOnDrop(Rc::downgrade(&cell))));
+        cell.set(Vec::new());
+        assert_eq!(cell.len(), 1);
     }
 
     #[test]
@@ -311,6 +393,28 @@ mod tests {
     }
 
     #[test]
+    fn fifo_cell_fills_reserved_room_across_the_wrap() {
+        let fifo = FifoCell::new();
+        let (a, b) = (&fifo, &fifo);
+        for i in 0..6u32 {
+            a.write_item(i).unwrap();
+        }
+        for i in 0..5 {
+            assert_eq!(b.read_item(), Some(i));
+        }
+        a.ensure_unused_capacity(7).unwrap();
+        for i in 6..13 {
+            // SAFETY: 7 reserved, 7 written.
+            unsafe { b.write_item_assume_capacity(i) };
+        }
+        assert_eq!(a.readable_length(), 8);
+        for i in 5..13 {
+            assert_eq!(a.read_item(), Some(i));
+        }
+        assert_eq!(b.read_item(), None);
+    }
+
+    #[test]
     fn map_cells_are_changed_through_shared_references() {
         let map = ArrayHashMapCell::<i32, u8>::default();
         let (a, b) = (&map, &map);
@@ -322,8 +426,15 @@ mod tests {
         assert!(a.swap_remove(0));
         assert!(!a.swap_remove(0));
         assert_eq!(b.value_at(0), Some(99));
+        assert_eq!(a.replace(1, 7), Some(1));
+        assert_eq!(b.replace(100, 8), None);
+        assert_eq!(a.get(1), Some(7));
+        assert_eq!(b.pop(), Some((100, 8)));
+        assert_eq!(a.get(100), None);
         assert_eq!(a.take().count(), 99);
         assert_eq!(b.count(), 0);
+        assert_eq!(a.capacity(), 0);
+        assert_eq!(b.pop(), None);
 
         let map = IdentityHashMapCell::<u32, u8>::default();
         let (a, b) = (&map, &map);
@@ -333,5 +444,27 @@ mod tests {
         assert_eq!(b.get(7), Some(7));
         assert_eq!(a.remove(7), Some(7));
         assert_eq!(b.get(7), None);
+    }
+
+    #[test]
+    fn pointer_keys_are_stored_once_and_pop_keeps_the_capacity() {
+        let targets = [0u8; 20];
+        let set = ArrayHashMapCell::<NonNull<u8>, ()>::default();
+        let (a, b) = (&set, &set);
+        for target in &targets {
+            a.put(NonNull::from(target), ()).unwrap();
+        }
+        assert_eq!(b.count(), 20);
+        assert!(a.swap_remove(NonNull::from(&targets[3])));
+        assert!(!a.swap_remove(NonNull::from(&targets[3])));
+        assert_eq!(b.get(NonNull::from(&targets[4])), Some(()));
+        let capacity = a.capacity();
+        let mut popped = 0;
+        while let Some((key, ())) = b.pop() {
+            assert!(targets.as_ptr_range().contains(&key.as_ptr().cast_const()));
+            popped += 1;
+        }
+        assert_eq!(popped, 19);
+        assert_eq!(a.capacity(), capacity);
     }
 }

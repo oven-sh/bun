@@ -115,8 +115,9 @@ impl PendingConnect {
         )
         .r#loop();
         RESOLVED.lock().push(Resolved(this));
+        // A DNS thread: `Loop` is `!Sync`, so the pointer goes straight to C.
         // SAFETY: `loop_ptr` is a live uws::Loop for as long as the HTTP thread runs.
-        unsafe { (*loop_ptr).wakeup() };
+        unsafe { uws::us_wakeup_loop(loop_ptr) };
     }
 
     pub(crate) fn drain_resolved() {

@@ -2317,9 +2317,22 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     /// Returns true if the entry was removed.
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
-        let _guard = self.mutex.lock();
+        // SAFETY: `self` is live and initialized.
+        unsafe { Self::remove_raw(self, denormalized_key) }
+    }
+
+    /// [`remove`](Self::remove) for the raw singleton pointer. It forms no reference to the whole
+    /// map, which other threads hold references into (`backing_buf`, `overflow_list`): it
+    /// touches `mutex` and, under it, `index`, as does everything else that reaches `index`.
+    ///
+    /// # Safety
+    /// `this` points to a live, initialized map. Concurrent callers are allowed.
+    pub unsafe fn remove_raw(this: *mut Self, denormalized_key: &[u8]) -> bool {
+        // SAFETY: `this` is live; `Mutex: Sync`, and the guard holds a raw pointer.
+        let _guard = unsafe { (*this).mutex.lock() };
         let _key = Self::key_hash(denormalized_key);
-        self.index.remove(&_key).is_some()
+        // SAFETY: the lock gives this call exclusive access to `index`.
+        unsafe { (*this).index.remove(&_key) }.is_some()
     }
 }
 

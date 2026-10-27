@@ -35,13 +35,13 @@ pub struct PosixLoop {
     pub num_polls: Cell<i32>,
 
     /// Number of ready polls this iteration
-    pub num_ready_polls: Cell<i32>,
+    num_ready_polls: Cell<i32>,
 
     /// Current index in list of ready polls
-    pub(crate) current_ready_poll: Cell<i32>,
+    current_ready_poll: Cell<i32>,
 
     /// Loop's own file descriptor
-    pub fd: Cell<i32>,
+    fd: Cell<i32>,
 
     /// Number of polls owned by Bun
     pub active: Cell<u32>,
@@ -56,7 +56,7 @@ pub struct PosixLoop {
     _ready_polls_align: ReadyPollsAlign,
 
     /// The list of ready polls
-    pub(crate) ready_polls: [Cell<EventType>; 1024],
+    ready_polls: [Cell<EventType>; 1024],
 }
 
 /// Zero-sized, 16-byte-aligned marker field type (see `_ready_polls_align`).
@@ -114,9 +114,8 @@ pub trait LoopHandler {
     const POST: Option<unsafe extern "C" fn(*mut Loop)> = None;
 }
 
-// `impl PosixLoop` is posix-only: every method calls into `c::*` whose
-// signatures are typed `*mut Loop`, and on Windows `Loop = WindowsLoop` so
-// `&mut PosixLoop` does not coerce. Windows callers go through the
+// `impl PosixLoop` is posix-only: the `c::*` signatures are typed `Loop`, which
+// is `WindowsLoop` on Windows. Windows callers go through the
 // `impl WindowsLoop` block below (same surface, different routing).
 #[cfg(not(windows))]
 impl PosixLoop {
@@ -124,6 +123,12 @@ impl PosixLoop {
     #[inline]
     pub fn as_ptr(&self) -> *mut Loop {
         core::ptr::from_ref(self).cast_mut()
+    }
+
+    /// The epoll / kqueue descriptor.
+    #[inline]
+    pub fn fd(&self) -> i32 {
+        self.fd.get()
     }
 
     pub fn update_date(&self) {
@@ -305,11 +310,11 @@ impl PosixLoop {
 pub struct WindowsLoop {
     pub internal_loop_data: InternalLoopData,
 
-    pub uv_loop: Cell<*mut uv::Loop>,
-    pub is_default: Cell<c_int>,
-    pub pre: Cell<*mut uv::uv_prepare_t>,
-    pub check: Cell<*mut uv::uv_check_t>,
-    pub idle_sweep_timer: Cell<*mut crate::Timer>,
+    uv_loop: Cell<*mut uv::Loop>,
+    is_default: Cell<c_int>,
+    pre: Cell<*mut uv::uv_prepare_t>,
+    check: Cell<*mut uv::uv_check_t>,
+    idle_sweep_timer: Cell<*mut crate::Timer>,
 }
 
 #[cfg(windows)]
@@ -452,6 +457,17 @@ impl WindowsLoop {
 pub type Loop = WindowsLoop;
 #[cfg(not(windows))]
 pub type Loop = PosixLoop;
+
+// Fails to compile ("multiple applicable items") if `Loop` is `Sync`, i.e. if a `&Loop` could
+// leave its thread.
+const _: () = {
+    trait AmbiguousIfImpl<A> {
+        fn some_item() {}
+    }
+    impl<T: ?Sized> AmbiguousIfImpl<()> for T {}
+    impl<T: ?Sized + Sync> AmbiguousIfImpl<u8> for T {}
+    let _ = <Loop as AmbiguousIfImpl<_>>::some_item;
+};
 
 /// A loop [`Loop::create`] made. Freed on drop.
 pub struct OwnedLoop(NonNull<Loop>);

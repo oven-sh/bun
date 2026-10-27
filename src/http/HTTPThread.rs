@@ -1041,10 +1041,9 @@ impl HttpThread {
         // observes the published value. This is the canonical "Relaxed gives
         // no happens-before for the init it guards" case.
         if self.has_awoken.load(Ordering::Acquire) {
+            // Any thread. `Loop` is `!Sync`, so another thread forms no `&Loop`:
+            // the pointer goes straight to C.
             // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
-            // Call the raw extern (not `Loop::wakeup(&mut self)`) — this runs
-            // cross-thread while the HTTP thread owns the loop, so forming
-            // `&mut Loop` here would alias.
             unsafe { uws::us_wakeup_loop(self.uws_loop) };
         }
     }

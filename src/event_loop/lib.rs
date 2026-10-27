@@ -72,8 +72,9 @@ impl JsEventLoop {
     #[inline]
     pub(crate) fn current() -> Self {
         // SAFETY: `__bun_js_event_loop_current` returns the live per-thread
-        // `jsc::EventLoop` (panics if none), so the `link_interface!` owner
-        // invariant for `Self::new` is upheld for every dispatch on this handle.
+        // `jsc::EventLoop` (panics if none). The handle is `!Send`, and whoever
+        // frees this thread's VM and loop promises that nothing here uses them
+        // again.
         unsafe {
             Self::new(
                 JsEventLoopKind::Jsc,

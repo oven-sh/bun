@@ -1,5 +1,4 @@
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_uws::Loop as UwsLoop;
@@ -42,28 +41,16 @@ pub enum AnyEventLoop {
 }
 
 impl Default for AnyEventLoop {
-    /// Stub default for `#[derive(Default)]` containers (e.g. the
-    /// `bun_install::PackageManager` stub). Real consumers always overwrite
-    /// this via `init()` / `js_current()` before use.
     fn default() -> Self {
-        AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
+        Self::init()
     }
 }
 
 impl AnyEventLoop {
-    /// Owning thread: the weak poster other threads use to deliver JS-loop
-    /// tasks to this loop's VM; `None` for a mini loop.
-    pub fn js_poster(&self) -> Option<JsPoster> {
-        match self {
-            AnyEventLoop::Js { owner } => Some(owner.js_poster()),
-            AnyEventLoop::Mini(_) => None,
-        }
-    }
-
     pub fn iteration_number(&self) -> u64 {
         match self {
             AnyEventLoop::Js { owner } => owner.iteration_number(),
-            AnyEventLoop::Mini(_) => self.r#loop().iteration_number(),
+            AnyEventLoop::Mini(mini) => mini.loop_.iteration_number(),
         }
     }
 
@@ -112,17 +99,11 @@ impl AnyEventLoop {
     #[inline]
     pub fn r#loop(&self) -> &UwsLoop {
         match self {
-            // SAFETY: the loop of a live event loop, on its thread (`Self` is `!Send`).
+            // SAFETY: whoever made `owner` promised that its uws loop outlives it
+            // (`EventLoopHandle::init`). `Self` is `!Send`, so this is the loop's thread.
             AnyEventLoop::Js { owner } => unsafe { &*owner.uws_loop() },
             AnyEventLoop::Mini(mini) => mini.loop_,
         }
-    }
-
-    /// Alias for [`r#loop`](Self::r#loop) so callers spell `event_loop.loop_()`
-    /// without the raw-identifier escape.
-    #[inline]
-    pub fn loop_(&self) -> &UwsLoop {
-        self.r#loop()
     }
 
     /// Platform-native loop (`us_loop_t*` on POSIX, `uv_loop_t*` on
@@ -133,34 +114,38 @@ impl AnyEventLoop {
     }
 
     /// What another thread wakes this loop with.
+    ///
+    /// # Safety
+    /// As [`LoopWaker::new`], for the uws loop this loop runs on.
     #[inline]
-    pub fn waker(&'static self) -> LoopWaker {
-        LoopWaker::new(self.r#loop())
+    pub unsafe fn waker(&self) -> LoopWaker {
+        // SAFETY: fn contract.
+        unsafe { LoopWaker::new(self.r#loop()) }
     }
 }
 
 /// Wakes a uws loop from any thread.
-// `AtomicPtr` for `Sync`; never stored to.
-pub struct LoopWaker(AtomicPtr<UwsLoop>);
+#[derive(Clone, Copy)]
+pub struct LoopWaker(NonNull<UwsLoop>);
+
+// SAFETY: the pointer only goes to `us_wakeup_loop`, which any thread may call on a live loop.
+unsafe impl Send for LoopWaker {}
+// SAFETY: as above.
+unsafe impl Sync for LoopWaker {}
 
 impl LoopWaker {
+    /// # Safety
+    /// `loop_` is not freed while a thread can still call [`wake`](Self::wake) on the result or on
+    /// a copy of it.
     #[inline]
-    pub fn new(loop_: &'static UwsLoop) -> LoopWaker {
-        LoopWaker(AtomicPtr::new(loop_.as_ptr()))
+    pub unsafe fn new(loop_: &UwsLoop) -> LoopWaker {
+        LoopWaker(NonNull::from(loop_))
     }
 
     #[inline]
     pub fn wake(&self) {
-        // SAFETY: the pointer of a `&'static` loop: whoever frees one (`bun_uws::free_thread_loop`)
-        // promises that no pointer to it is used again. This call is the thread-safe one.
-        unsafe { bun_uws::us_wakeup_loop(self.0.load(Ordering::Relaxed)) };
-    }
-}
-
-impl Clone for LoopWaker {
-    #[inline]
-    fn clone(&self) -> LoopWaker {
-        LoopWaker(AtomicPtr::new(self.0.load(Ordering::Relaxed)))
+        // SAFETY: live (`new`'s contract).
+        unsafe { bun_uws::us_wakeup_loop(self.0.as_ptr()) };
     }
 }
 
@@ -180,6 +165,18 @@ pub enum EventLoopHandle {
     },
     Mini(&'static MiniEventLoop),
 }
+
+// Fails to compile ("multiple applicable items") if a handle could leave its loop's thread.
+const _: () = {
+    trait AmbiguousIfImpl<A> {
+        fn some_item() {}
+    }
+    impl<T: ?Sized> AmbiguousIfImpl<()> for T {}
+    impl<T: ?Sized + Send> AmbiguousIfImpl<u8> for T {}
+    impl<T: ?Sized + Sync> AmbiguousIfImpl<u16> for T {}
+    let _ = <EventLoopHandle as AmbiguousIfImpl<_>>::some_item;
+    let _ = <AnyEventLoop as AmbiguousIfImpl<_>>::some_item;
+};
 
 /// Owned storage for either kind of concurrent task.
 pub enum EventLoopTask {
@@ -213,7 +210,8 @@ impl EventLoopHandle {
     /// Wrap an erased `*mut jsc::EventLoop`. `jsc::EventLoop::handle` is the safe form.
     ///
     /// # Safety
-    /// The `jsc::EventLoop` outlives every dispatch through the result and its copies.
+    /// The `jsc::EventLoop`, and the uws loop it runs on, outlive every use of the result and its
+    /// copies.
     #[inline]
     pub unsafe fn init(js_event_loop: *mut ()) -> EventLoopHandle {
         EventLoopHandle::Js {
@@ -235,14 +233,14 @@ impl EventLoopHandle {
         }
     }
 
-    /// Erase to the `(tag, ptr)` pair stored in `uws::InternalLoopData`
-    /// (`parent_tag` / `parent_ptr`). Tag 1 = JS, tag 2 = mini.
     /// [`into_tag_ptr`](Self::into_tag_ptr) of the handle for an erased `*mut jsc::EventLoop`.
     #[inline]
     pub fn js_tag_ptr(js_event_loop: *mut ()) -> (core::ffi::c_char, *mut core::ffi::c_void) {
         (1, js_event_loop.cast())
     }
 
+    /// Erase to the `(tag, ptr)` pair stored in `uws::InternalLoopData`
+    /// (`parent_tag` / `parent_ptr`). Tag 1 = JS, tag 2 = mini.
     #[inline]
     pub fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
         match self {
@@ -337,7 +335,8 @@ impl EventLoopHandle {
 
     pub fn r#loop(&self) -> &UwsLoop {
         match self {
-            // SAFETY: the loop of an event loop that outlives this handle, on its thread (`Self` is `!Send`).
+            // SAFETY: whoever made `owner` promised that its uws loop outlives it (`init`). `Self`
+            // is `!Send`, so this is the loop's thread.
             EventLoopHandle::Js { owner } => unsafe { &*owner.uws_loop() },
             EventLoopHandle::Mini(mini) => mini.loop_,
         }

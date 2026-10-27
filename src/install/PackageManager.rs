@@ -1006,14 +1006,12 @@ mod holder {
         core::sync::atomic::AtomicBool::new(false);
 
     // Process-lifetime env storage for `init()`. Owned by the singleton, never
-    // freed. Avoids `Box::leak` per PORTING.md §Forbidden. Write-once during
-    // single-threaded init. `AtomicCell<*mut T>` — payload is `Copy` and
-    // pointer-sized, so `.store()` is a safe Release write.
+    // freed. Write-once during single-threaded init. `AtomicCell<*mut T>` —
+    // payload is `Copy` and pointer-sized, so `.store()` is a safe Release write.
     pub(super) static ENV_LOADER: bun_core::AtomicCell<*mut dot_env::Loader> =
         bun_core::AtomicCell::new(core::ptr::null_mut());
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`.
-    /// `OnceLock` per PORTING.md §Forbidden — never `Box::leak` to mint `&'static`.
     pub(super) static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.ca` C-strings
@@ -1633,6 +1631,10 @@ fn allocate_package_manager(
         wr!(resolve_tasks, ResolveTaskQueue::default());
         wr!(lockfile, Box::new(Lockfile::default()));
         wr!(event_loop, event_loop);
+        // `event_loop` runs on this thread's uws loop, which only `bun_uws::free_thread_loop` frees;
+        // its caller promises that no waker is used afterwards. Known gap: a `Worker` that is the
+        // first to auto-install cannot keep that promise, because the manager (this waker, and
+        // `event_loop` itself) outlives it.
         wr!(event_loop_waker, event_loop.waker());
         wr!(
             original_package_json_path,
@@ -2359,7 +2361,7 @@ pub fn init(
     }
     // SAFETY: `init()` runs on the main thread before any other access to the
     // loader. Allocate into a process-lifetime static (same pattern as
-    // `holder::RAW_PTR`) instead of `Box::leak`.
+    // `holder::RAW_PTR`).
     let env: &mut dot_env::Loader = unsafe {
         let mut loader_ptr = holder::ENV_LOADER.load();
         // A second `init()` runs with a different cwd, so it keeps what the first one read from the
@@ -2914,10 +2916,8 @@ pub fn init(
             .unwrap_or_default()
     };
     // `InitOpts.abs_ca_file_name: &'static [u8]` — process-lifetime config
-    // string. Park it in
-    // `holder::ABS_CA_FILE_NAME: OnceLock<Box<[u8]>>` per PORTING.md §Forbidden
-    // (never `Box::leak` to mint `&'static`). `init()` runs once on
-    // the main thread, so `.set()` cannot race; ignore the already-set case for
+    // string. Park it in `holder::ABS_CA_FILE_NAME: OnceLock<Box<[u8]>>`.
+    // `init()` runs once on the main thread, so `.set()` cannot race; ignore the already-set case for
     // hot-reload re-entry (the existing CA path stays valid for the process).
     let abs_ca_file_name_static: &'static [u8] = if abs_ca_file_name.is_empty() {
         b""

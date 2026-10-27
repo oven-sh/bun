@@ -77,15 +77,23 @@ const _: () = {
 impl Shared {
     /// Any thread.
     ///
-    /// `task` must outlive the queued work item; ownership of the intrusive
-    /// node stays with the caller until the callback runs.
-    pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
-        // The loop's thread can run the task as soon as it is in the queue. A loop that an
-        // `AnyEventLoop` owns (one per `Bun.build`, posted to through a raw pointer) may have been
-        // waiting only for that and be dropped next: `self` is not read after the push.
-        let waker = self.waker.clone();
-        self.concurrent_tasks.push(task);
-        waker.wake();
+    /// The loop's thread can run `task` as soon as it is in the queue. A loop that an
+    /// `AnyEventLoop` owns (one per `Bun.build`) may have been waiting only for that and be dropped
+    /// before this returns, so this takes a pointer and does not read `*this` after the push.
+    ///
+    /// # Safety
+    /// `this` is live until its thread has run `task`. `task` is in no queue, and is live until
+    /// the loop's thread has run it (the node stays the caller's).
+    pub unsafe fn enqueue_task_concurrent(
+        this: *const Shared,
+        task: NonNull<AnyTaskWithExtraContext>,
+    ) {
+        // SAFETY: fn contract.
+        unsafe {
+            let waker = (*this).waker;
+            ConcurrentTaskQueue::push_raw(&raw const (*this).concurrent_tasks, task);
+            waker.wake();
+        }
     }
 
     /// Any thread.
@@ -94,11 +102,12 @@ impl Shared {
     /// embedded `AnyTaskWithExtraContext`.
     ///
     /// # Safety
+    /// `this`: as for [`enqueue_task_concurrent`](Self::enqueue_task_concurrent).
     /// `field_offset == offset_of!(C, <field>)` where `<field>: AnyTaskWithExtraContext`,
     /// and `ctx` is non-null and outlives the queued task (intrusive node; ownership stays
     /// with caller).
     pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C, P>(
-        &self,
+        this: *const Shared,
         ctx: *mut C,
         callback: fn(*mut C, *mut P),
         field_offset: usize,
@@ -108,8 +117,8 @@ impl Shared {
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
         unsafe { task.write(New::<C, P>::init(ctx, callback)) };
 
-        // SAFETY: `task` was just initialized above and is non-null (derived from `ctx`).
-        self.enqueue_task_concurrent(unsafe { NonNull::new_unchecked(task) });
+        // SAFETY: fn contract; `task` was just initialized above and is non-null (derived from `ctx`).
+        unsafe { Self::enqueue_task_concurrent(this, NonNull::new_unchecked(task)) };
     }
 }
 
@@ -198,7 +207,9 @@ impl MiniEventLoop {
             tasks: Queue::new(),
             shared: Shared {
                 concurrent_tasks: ConcurrentTaskQueue::default(),
-                waker: LoopWaker::new(loop_),
+                // SAFETY: this thread's loop. Only `bun_uws::free_thread_loop` frees it, and its
+                // caller promises that no thread wakes it afterwards.
+                waker: unsafe { LoopWaker::new(loop_) },
             },
             loop_,
             file_polls: OnceCell::new(),
@@ -225,7 +236,9 @@ impl MiniEventLoop {
             if task.is_null() {
                 break;
             }
-            bun_core::handle_oom(self.tasks.write_item(task));
+            // SAFETY: room for `count` was made above, `iter` yields at most `count` tasks, and
+            // `iter.next()` only follows a link.
+            unsafe { self.tasks.write_item_assume_capacity(task) };
         }
 
         self.tasks.readable_length() - start_count

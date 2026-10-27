@@ -73,7 +73,7 @@ pub fn install_with_manager(
         let scope_url = manager.options.scope.url.url();
         if !scope_url.hostname.is_empty() && !scope_url.is_ip_address() {
             bun_dns::internal::prefetch(
-                manager.event_loop.loop_().as_ptr(),
+                manager.event_loop.r#loop().as_ptr(),
                 scope_url.hostname,
                 scope_url.get_port_auto(),
             );

@@ -929,7 +929,10 @@ pub(crate) enum GetOrStartLoadResult<'a> {
 pub(crate) enum ServePluginsCallback {
     HtmlBundleRoute(bun_ptr::ThisPtr<html_bundle::Route>),
     /// The calling server's DevServer.
-    DevServer,
+    DevServer {
+        react_fast_refresh: bool,
+        jsx_development: bool,
+    },
 }
 
 impl ServePlugins {
@@ -949,7 +952,21 @@ impl ServePlugins {
         loop {
             match &mut self.state {
                 ServePluginsState::Unqueued(_) => {
-                    self.load_and_resolve_plugins(global)?;
+                    let (react_fast_refresh, jsx_development) = match cb {
+                        ServePluginsCallback::HtmlBundleRoute(_) => {
+                            (false, server.config().is_development())
+                        }
+                        ServePluginsCallback::DevServer {
+                            react_fast_refresh,
+                            jsx_development,
+                        } => (react_fast_refresh, jsx_development),
+                    };
+                    self.load_and_resolve_plugins(
+                        global,
+                        matches!(cb, ServePluginsCallback::DevServer { .. }),
+                        react_fast_refresh,
+                        jsx_development,
+                    )?;
                     // could jump to any branch if synchronously resolved
                     continue;
                 }
@@ -962,7 +979,7 @@ impl ServePlugins {
                         ServePluginsCallback::HtmlBundleRoute(route) => {
                             html_bundle_routes.push(RefPtr::from_this(route));
                         }
-                        ServePluginsCallback::DevServer => {
+                        ServePluginsCallback::DevServer { .. } => {
                             // one dev server per server
                             debug_assert!(dev_server.is_none_or(|s| s == server));
                             *dev_server = Some(server);
@@ -982,7 +999,13 @@ impl ServePlugins {
         }
     }
 
-    fn load_and_resolve_plugins(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+    fn load_and_resolve_plugins(
+        &mut self,
+        global: &JSGlobalObject,
+        is_dev_server: bool,
+        react_fast_refresh: bool,
+        jsx_development: bool,
+    ) -> JsResult<()> {
         debug_assert!(matches!(self.state, ServePluginsState::Unqueued(_)));
         let ServePluginsState::Unqueued(plugin_list) = &self.state else {
             unreachable!()
@@ -1034,7 +1057,13 @@ impl ServePlugins {
                 ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
                 _ => unreachable!(),
             }
-            .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
+            .load_and_resolve_plugins_for_serve(
+                plugin_js_array,
+                bunfig_folder_bunstr,
+                is_dev_server,
+                react_fast_refresh,
+                jsx_development,
+            )
         })?;
         global.bun_vm().event_loop_mut().exit();
 

@@ -62,7 +62,7 @@ use bun_sys::FdExt as _;
 use super::{Graph, Side};
 
 // ─── submodules ──────────────────────────────────────────────────────────────
-mod bundle;
+pub(crate) mod bundle;
 mod bundler_vtable;
 pub(crate) mod deferred_request;
 pub(crate) mod directory_watch_store;
@@ -76,6 +76,7 @@ mod http;
 mod js_escape;
 mod lifecycle;
 pub(crate) mod memory_cost;
+mod plugin_watch_store;
 mod protocol;
 mod render;
 mod router_glue;
@@ -418,23 +419,33 @@ pub(crate) enum TestingBatchEvents {
 /// There is only ever one bundle executing at the same time, since all bundles
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
+pub(crate) enum BundleState {
+    Preparing {
+        entry_points: EntryPointList,
+        promise: jsc::StrongOptional,
+    },
+    Running {
+        /// OWNED (LIFETIMES.tsv): `BundleV2.init()` → `deinitWithoutFreeingArena()`.
+        /// Note: `'static` is a stand-in for the DevServer-self lifetime —
+        /// `BundleV2<'a>` borrows the three `Transpiler<'_>` fields stored inline
+        /// in `DevServer`, so the true bound is the `Box<DevServer>` allocation
+        /// (stable address, never moved post-init). Threading a real `'dev` would
+        /// make `DevServer` self-referential; raw-ptr aliasing inside `BundleV2`
+        /// already encodes that contract.
+        _bv2: Box<BundleV2<'static>>,
+        /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
+        /// boxed allocation's stable address; same erasure as `bv2` above).
+        _heap: Box<bun_alloc::MimallocArena>,
+        /// Backs the small `AstVec`s built during bundle setup
+        /// (`start_async_bundle`'s AST scope); dropped with the bundle.
+        _ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+        /// Information BundleV2 needs to finalize the bundle
+        start_data: bundler::bundle_v2::DevServerInput,
+    },
+}
+
 pub(crate) struct CurrentBundle {
-    /// OWNED (LIFETIMES.tsv): `BundleV2.init()` → `deinitWithoutFreeingArena()`.
-    /// Note: `'static` is a stand-in for the DevServer-self lifetime —
-    /// `BundleV2<'a>` borrows the three `Transpiler<'_>` fields stored inline
-    /// in `DevServer`, so the true bound is the `Box<DevServer>` allocation
-    /// (stable address, never moved post-init). Threading a real `'dev` would
-    /// make `DevServer` self-referential; raw-ptr aliasing inside `BundleV2`
-    /// already encodes that contract.
-    pub(crate) _bv2: Box<BundleV2<'static>>,
-    /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
-    /// boxed allocation's stable address; same erasure as `bv2` above).
-    pub(crate) _heap: Box<bun_alloc::MimallocArena>,
-    /// Backs the small `AstVec`s built during bundle setup
-    /// (`start_async_bundle`'s AST scope); dropped with the bundle.
-    pub(crate) _ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
-    /// Information BundleV2 needs to finalize the bundle
-    pub(crate) start_data: bundler::bundle_v2::DevServerInput,
+    pub(crate) state: BundleState,
     /// Started when the bundle was queued
     pub(crate) timer: Instant,
     /// If any files in this bundle were due to hot-reloading, some extra work
@@ -558,6 +569,7 @@ pub(crate) struct DevServer {
     // `Watcher::shutdown` instead.
     pub(crate) bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
     pub(crate) directory_watchers: DirectoryWatchStore,
+    pub(crate) plugin_watchers: plugin_watch_store::PluginWatchStore,
     /// Heap-owned via `heap::into_raw` so a still-queued
     /// `HotReloadEvent.concurrent_task` can outlive `DevServer`; see the
     /// `next_event` check in `Drop`.

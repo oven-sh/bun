@@ -1240,6 +1240,8 @@ pub mod bv2_impl {
             pub struct LoadSuccess {
                 pub source_code: Box<[u8]>,
                 pub loader: Loader,
+                pub watch_files: Vec<Box<[u8]>>,
+                pub watch_dirs: Vec<Box<[u8]>>,
             }
             /// Mirrors `JSBundler.Load.Value` (`union(enum)`).
             #[derive(Default)]
@@ -4993,6 +4995,16 @@ pub mod bv2_impl {
                 jsc_api::JSBundler::LoadValue::NoMatch => {
                     let source =
                         &this.graph.input_files.items_source()[load.source_index.get() as usize];
+                    if let Some(dev) = this.dev_server {
+                        dev.replace_plugin_watch_dependencies(
+                            source.path.key_for_incremental_graph(),
+                            load.bake_graph(),
+                            !source.path.is_file(),
+                            &[],
+                            &[],
+                        )
+                        .expect("OOM");
+                    }
                     // If it's a file namespace, we should run it through the parser like normal.
                     // The file could be on disk.
                     if source.path.is_file() {
@@ -5025,7 +5037,18 @@ pub mod bv2_impl {
                     this.decrement_scan_counter();
                 }
                 jsc_api::JSBundler::LoadValue::Success(code) => {
-                    // `code`: LoadSuccess { source_code, loader }
+                    if let Some(dev) = this.dev_server {
+                        let source = &this.graph.input_files.items_source()
+                            [load.source_index.get() as usize];
+                        dev.replace_plugin_watch_dependencies(
+                            source.path.key_for_incremental_graph(),
+                            load.bake_graph(),
+                            !source.path.is_file(),
+                            &code.watch_files,
+                            &code.watch_dirs,
+                        )
+                        .expect("OOM");
+                    }
                     // When a plugin returns a file loader, we always need to populate additional_files
                     let should_copy_for_bundling = code.loader.should_copy_for_bundling();
                     if should_copy_for_bundling {
@@ -5072,9 +5095,6 @@ pub mod bv2_impl {
                                 break 'add_watchers;
                             }
 
-                            // TODO: support explicit watchFiles array. this is not done
-                            // right now because DevServer requires a table to map
-                            // watched files and dirs to their respective dependants.
                             let fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
                                 let mut buf = bun_paths::path_buffer_pool::get();
                                 // On kqueue platforms paths are already

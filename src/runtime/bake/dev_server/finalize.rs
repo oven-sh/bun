@@ -68,6 +68,10 @@ impl<'a> HotUpdateContext<'a> {
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
     bv2.deinit_without_freeing_arena();
+    finish_bundle_cleanup(dev, had_sent_hmr_event);
+}
+
+pub(super) fn finish_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
     let script_requests = match &mut dev.current_bundle {
         Some(current_bundle) => ::core::mem::take(&mut current_bundle.script_requests),
         None => Vec::new(),
@@ -132,6 +136,65 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
     if let Some(server) = dev.server.as_mut() {
         server.on_static_request_complete();
     }
+}
+
+pub(super) fn respond_to_failed_bundle(dev: &mut DevServer) -> JsResult<()> {
+    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
+    // Note: erase the agent borrow to a raw pointer so it can be passed
+    // through `send_serialized_failures` (which takes `&mut *dev` while
+    // the borrow derives from `&*dev`) and then re-used below. The agent
+    // lives in the VM's `Debugger`, which outlives this scope.
+    let mut inspector_agent_ptr: Option<*const BunFrontendDevServerAgent> =
+        dev.inspector().map(std::ptr::from_ref);
+
+    while let Some(node) = dev
+        .current_bundle
+        .as_mut()
+        .expect("bundle active")
+        .requests
+        .pop_first()
+    {
+        // SAFETY: `pop_first` hands back ownership of the intrusive node;
+        // `data` was initialized by `defer_request`.
+        let req = unsafe { (*node).data.assume_init_mut() };
+        let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
+        // SAFETY: the node stays alive until `deref_()` releases it below.
+        scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
+
+        let rb = dev.route_bundle_ptr(req.route_bundle_index);
+        rb.server_state = route_bundle::State::PossibleBundlingFailures;
+
+        let resp: AnyResponse = match &mut req.handler {
+            Handler::Aborted => continue,
+            Handler::ServerHandler(saved) => 'brk: {
+                let resp = saved.response;
+                saved.deinit();
+                break 'brk resp;
+            }
+            Handler::BundledHtmlPage(ram) => ram.response,
+        };
+
+        // SAFETY: see Note on `failures` above; `dev_ptr` is live and
+        // `send_serialized_failures` does not mutate `bundling_failures`.
+        let failures = unsafe { (*dev_ptr).bundling_failures.values() };
+        dev.send_serialized_failures(
+            resp,
+            failures,
+            // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
+            inspector_agent_ptr.take().map(|p| unsafe { &*p }),
+        )?;
+    }
+    if let Some(agent_ptr) = inspector_agent_ptr {
+        let mut buf: Vec<u8> = Vec::new();
+        dev.encode_serialized_failures(
+            dev.bundling_failures.values(),
+            &mut buf,
+            // SAFETY: `agent_ptr` is from `dev.inspector()` above; live for this scope.
+            Some(unsafe { &*agent_ptr }),
+        )?;
+    }
+
+    Ok(())
 }
 
 pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
@@ -1085,53 +1148,7 @@ pub(super) fn finalize_bundle(
     if !dev.incremental_result.failures_added.is_empty() {
         dev.bundles_since_last_error = 0;
 
-        // Note: erase the agent borrow to a raw pointer so it can be passed
-        // through `send_serialized_failures` (which takes `&mut *dev` while
-        // the borrow derives from `&*dev`) and then re-used below. The agent
-        // lives in the VM's `Debugger`, which outlives this scope.
-        let mut inspector_agent_ptr: Option<*const BunFrontendDevServerAgent> =
-            dev.inspector().map(std::ptr::from_ref);
-
-        while let Some(node) = current_bundle!().requests.pop_first() {
-            // SAFETY: `pop_first` hands back ownership of the intrusive node;
-            // `data` was initialized by `defer_request`.
-            let req = unsafe { (*node).data.assume_init_mut() };
-            let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
-            // SAFETY: the node stays alive until `deref_()` releases it below.
-            scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
-
-            let rb = dev.route_bundle_ptr(req.route_bundle_index);
-            rb.server_state = route_bundle::State::PossibleBundlingFailures;
-
-            let resp: AnyResponse = match &mut req.handler {
-                Handler::Aborted => continue,
-                Handler::ServerHandler(saved) => 'brk: {
-                    let resp = saved.response;
-                    saved.deinit();
-                    break 'brk resp;
-                }
-                Handler::BundledHtmlPage(ram) => ram.response,
-            };
-
-            // SAFETY: see Note on `failures` above; `dev_ptr` is live and
-            // `send_serialized_failures` does not mutate `bundling_failures`.
-            let failures = unsafe { (*dev_ptr).bundling_failures.values() };
-            dev.send_serialized_failures(
-                resp,
-                failures,
-                // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
-                inspector_agent_ptr.take().map(|p| unsafe { &*p }),
-            )?;
-        }
-        if let Some(agent_ptr) = inspector_agent_ptr {
-            let mut buf: Vec<u8> = Vec::new();
-            dev.encode_serialized_failures(
-                dev.bundling_failures.values(),
-                &mut buf,
-                // SAFETY: `agent_ptr` is from `dev.inspector()` above; live for this scope.
-                Some(unsafe { &*agent_ptr }),
-            )?;
-        }
+        respond_to_failed_bundle(dev)?;
 
         return Ok(());
     }

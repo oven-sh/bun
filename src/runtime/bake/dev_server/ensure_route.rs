@@ -155,7 +155,17 @@ pub(super) fn ensure_route_is_bundled(
                                     .as_ref()
                                     .expect("infallible: server bound")
                                     .get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer,
+                                        crate::server::ServePluginsCallback::DevServer {
+                                            react_fast_refresh: dev
+                                                .client_transpiler()
+                                                .options
+                                                .react_fast_refresh,
+                                            jsx_development: dev
+                                                .client_transpiler()
+                                                .options
+                                                .jsx
+                                                .development,
+                                        },
                                     );
                                 match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {

@@ -63,12 +63,25 @@ impl DirectoryWatchStore {
             entry.dir
         );
 
-        self.dev_bun_watcher().remove_at_index::<true>(
-            bun_watcher::WatchItemKind::File,
-            entry.watch_index,
-            0,
-            &[],
-        );
+        // SAFETY: the plugin store is disjoint from this resolution store.
+        let retained_by_plugin = unsafe {
+            (*self.owner())
+                .plugin_watchers
+                .has_directory(&self.watches.keys()[entry_index])
+        };
+        if !retained_by_plugin {
+            let hash = Watcher::get_hash(&self.watches.keys()[entry_index]);
+            let watcher = self.dev_bun_watcher();
+            let _guard = watcher.mutex.lock_guard();
+            if let Some(index) = watcher.index_of(hash) {
+                watcher.remove_at_index::<false>(
+                    bun_watcher::WatchItemKind::Directory,
+                    index,
+                    0,
+                    &[],
+                );
+            }
+        }
 
         // The Box key drops on swap_remove_at.
         let _ = self.watches.swap_remove_at(entry_index);
@@ -93,8 +106,6 @@ pub(crate) struct Entry {
     pub(crate) dir_fd_owned: bool,
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
-    /// To pass to `Watcher.remove`.
-    pub(crate) watch_index: bun_watcher::WatchItemIndex,
 }
 impl Default for Entry {
     fn default() -> Self {
@@ -102,7 +113,6 @@ impl Default for Entry {
             dir: bun_sys::Fd::INVALID,
             dir_fd_owned: false,
             first_dep: 0,
-            watch_index: 0,
         }
     }
 }
@@ -357,13 +367,13 @@ impl DirectoryWatchStore {
         // the watcher reads it on a file event. Owning the copy also lets the
         // map keep its own boxed key independently, so no extra intermediate
         // `Box` is needed here.
-        let watch_index = match self.dev_bun_watcher().add_directory::<true>(
+        match self.dev_bun_watcher().add_directory::<true>(
             fd,
             dir_name_to_watch,
             bun_watcher::Watcher::get_hash(dir_name_to_watch),
         ) {
             Err(_) => return Err(DirectoryWatchInsertError::Ignore),
-            Ok(id) => id,
+            Ok(_) => {}
         };
 
         // Disarm errdefer guards: success path.
@@ -379,7 +389,6 @@ impl DirectoryWatchStore {
             dir: fd,
             dir_fd_owned: owned_fd,
             first_dep: dep,
-            watch_index,
         };
         Ok(())
     }

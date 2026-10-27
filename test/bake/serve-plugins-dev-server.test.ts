@@ -11,6 +11,109 @@ const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body><script type="module" src="./entry.ts"></script></body></html>`;
 
+test.concurrent("onStart rejection waits for every started callback before the next bundle", async () => {
+  using dir = tempDir("serve-plugins-onstart-settle", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": `
+      export default {
+        name: "settle-start-callbacks",
+        setup(build) {
+          build.onStart(() => {
+            const state = globalThis.startState;
+            if (state.rejecting) {
+              state.events.push("fast-reject");
+              throw new Error("preparation rejected");
+            }
+            if (state.armed) {
+              state.events.push("next-start");
+            }
+          });
+          build.onStart(async () => {
+            const state = globalThis.startState;
+            if (!state.rejecting) {
+              return;
+            }
+            state.rejecting = false;
+            state.events.push("slow-enter");
+            state.entered.resolve();
+            await state.release.promise;
+            await Bun.write(new URL("./generated.ts", import.meta.url), 'export default "late generated value";');
+            state.events.push("slow-settled");
+            state.settled.resolve();
+          });
+        },
+      };
+    `,
+    "render.ts": `export function render(request, meta) { return new Response(meta.pageModule.default); }`,
+    "routes/index.ts": `export default "initial";`,
+    "routes/next.ts": `import value from "../generated.ts"; export default value;`,
+    "generated.ts": `export default "initial generated value";`,
+    "server.ts": `
+      import { writeFileSync } from "node:fs";
+      const state = globalThis.startState = {
+        armed: false,
+        rejecting: false,
+        events: [],
+        entered: Promise.withResolvers(),
+        release: Promise.withResolvers(),
+        settled: Promise.withResolvers(),
+      };
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        app: { framework: { fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" }] } },
+      });
+      try {
+        await fetch(server.url).then(response => response.text());
+        state.armed = true;
+        state.rejecting = true;
+        writeFileSync("routes/index.ts", 'export default "edited";');
+        await state.entered.promise;
+        const pendingBeforeRequest = server.pendingRequests;
+        let responded = false;
+        const next = fetch(new URL("/next", server.url), { signal: AbortSignal.timeout(5_000) });
+        next.then(() => { responded = true; }, () => { responded = true; });
+        const deadline = Date.now() + 5_000;
+        while (server.pendingRequests <= pendingBeforeRequest && !responded && !state.events.includes("next-start")) {
+          if (Date.now() >= deadline) {
+            throw new Error("second page request was not received");
+          }
+          await new Promise(setImmediate);
+        }
+        // Drain promise reactions after observing the queued request, while its sibling remains gated.
+        await new Promise(setImmediate);
+        const overlapped = responded || state.events.includes("next-start");
+        state.events.push("gate-release");
+        state.release.resolve();
+        await state.settled.promise;
+        const response = await next;
+        const body = await response.text();
+        console.log(JSON.stringify({ overlapped, status: response.status, body, events: state.events }));
+      } finally {
+        state.release.resolve();
+        await server.stop(true);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const line = stdout.split("\n").find(line => line.startsWith("{"));
+  expect(line, stderr).toBeDefined();
+  const result = JSON.parse(line!);
+  expect(result.overlapped).toBe(false);
+  expect(result.status).toBe(200);
+  expect(result.body).toBe("late generated value");
+  expect(result.events).toContain("next-start");
+  expect(result.events.indexOf("next-start")).toBeGreaterThan(result.events.indexOf("slow-settled"));
+  expect(exitCode, stderr).toBe(0);
+});
+
 // DevServer waits on `[serve.static]` plugins and the plugin promise rejects.
 // Exercises ServePlugins.handleOnReject with pending.dev_server set — the request that
 // was deferred while plugins were pending must be released once the DevServer is told

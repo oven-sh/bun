@@ -378,6 +378,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "YAMLObject.bind.ts": "typeof Bun.YAML",
   "bake_plugins.bind.ts": null,
   "bindgen_test.bind.ts": null,
+  "bundle.bind.ts": null,
   "bun_string_jsc.bind.ts": null,
   "cares_jsc.bind.ts": null,
   "color_js.bind.ts": "typeof Bun",

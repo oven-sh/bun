@@ -31,7 +31,7 @@ use super::params::{
     MIN_QUALITY_FOR_OPTIMIZE_HISTOGRAMS, ZOPFLIFICATION_QUALITY, max_hash_table_size,
 };
 use super::ring_buffer::RingBuffer;
-use super::utf8_util::{MIN_UTF8_RATIO, is_mostly_utf8};
+use super::utf8_util::is_mostly_utf8;
 use super::{
     DEFAULT_QUALITY, DEFAULT_WINDOW, EncoderError, EncoderMode, EncoderOperation, EncoderParameter,
     Fallible, MAX_WINDOW_BITS,
@@ -460,7 +460,7 @@ fn choose_context_mode(
     length: usize,
 ) -> Checked<ContextType> {
     if params.quality >= MIN_QUALITY_FOR_HQ_BLOCK_SPLITTING
-        && !is_mostly_utf8(data, pos, mask, length, MIN_UTF8_RATIO)?
+        && !is_mostly_utf8(data, pos, mask, length)?
     {
         return Ok(ContextType::Signed);
     }

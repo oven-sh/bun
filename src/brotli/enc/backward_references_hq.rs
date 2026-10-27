@@ -223,13 +223,11 @@ impl ZopfliCostModel {
         ringbuffer: &[u8],
         ringbuffer_mask: usize,
     ) -> Checked {
-        let mut literal_histograms = [0usize; 3 * 256];
         estimate_bit_costs_for_literals(
             position,
             self.num_bytes,
             ringbuffer_mask,
             ringbuffer,
-            &mut literal_histograms,
             self.literal_costs.sub_mut(1..)?,
         )?;
         self.accumulate_literal_costs(|literal_costs, i| literal_costs.at(i + 1))?;

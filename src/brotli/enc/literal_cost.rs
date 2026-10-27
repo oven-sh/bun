@@ -4,38 +4,23 @@ use super::fast_log::fast_log2;
 use super::utf8_util::is_mostly_utf8;
 use crate::util::{Checked, SliceExt};
 
-const MIN_UTF8_RATIO: f64 = 0.75;
-
-/// Which byte of a UTF-8 character follows `c`, which itself follows `last`: 0 for the first one, up to `clamp`.
-fn utf8_position(last: usize, c: usize, clamp: usize) -> usize {
-    if c < 128 {
-        0
-    } else if c >= 192 {
-        1.min(clamp)
-    } else if last < 0xE0 {
-        // The end of a character of two or three bytes.
-        0
-    } else {
-        2.min(clamp)
-    }
+/// Whether the second or the third byte of a UTF-8 character follows `c`, which itself follows `last`. A fourth byte
+/// counts as a first one.
+fn is_inside_character(last: usize, c: usize) -> bool {
+    c >= 192 || (c >= 128 && last >= 0xE0)
 }
 
-/// How many histograms, less one, to use for the bytes of UTF-8 characters.
-fn decide_multi_byte_stats_level(
-    pos: usize,
-    len: usize,
-    mask: usize,
-    data: &[u8],
-) -> Checked<usize> {
-    let mut counts = [0usize; 3];
+/// Whether there are enough bytes inside of UTF-8 characters to give them a histogram of their own. One more for the
+/// third bytes would be natural, but compresses worse.
+fn has_multi_byte_characters(pos: usize, len: usize, mask: usize, data: &[u8]) -> Checked<bool> {
+    let mut count = 0usize;
     let mut last_c = 0usize;
     for i in 0..len {
         let c = usize::from(data.at((pos + i) & mask)?);
-        *counts.at_mut(utf8_position(last_c, c, 2))? += 1;
+        count += usize::from(is_inside_character(last_c, c));
         last_c = c;
     }
-    // 2 would be the natural choice where there are many third bytes, but 1 compresses better.
-    Ok(if counts[1] + counts[2] < 25 { 0 } else { 1 })
+    Ok(count >= 25)
 }
 
 fn estimate_bit_costs_for_literals_utf8(
@@ -43,18 +28,18 @@ fn estimate_bit_costs_for_literals_utf8(
     len: usize,
     mask: usize,
     data: &[u8],
-    histogram: &mut [usize],
     cost: &mut [f32],
 ) -> Checked {
     const WINDOW_HALF: usize = 495;
     const PROLOGUE_LENGTH: usize = 2000;
     const MULTIPLIER: f64 = 0.35 / 2000.0;
-    let max_utf8 = decide_multi_byte_stats_level(pos, len, mask, data)?;
+    let multi_byte = has_multi_byte_characters(pos, len, mask, data)?;
+    // Which histogram counts the byte after `c`, which itself follows `last`.
+    let utf8_position =
+        |last: usize, c: usize| usize::from(multi_byte && is_inside_character(last, c));
     let byte = |ix: usize| data.at(ix & mask).map(usize::from);
-    // One histogram for each position in a character.
-    let histogram = histogram.sub_mut(..3 * 256)?;
-    histogram.fill(0);
-    let mut in_window_utf8 = [0usize; 3];
+    let mut histogram = [0usize; 2 * 256];
+    let mut in_window_utf8 = [0usize; 2];
 
     let mut last_c = 0usize;
     let mut utf8_pos = 0usize;
@@ -62,7 +47,7 @@ fn estimate_bit_costs_for_literals_utf8(
         let c = byte(pos + i)?;
         *histogram.at_mut(256 * utf8_pos + c)? += 1;
         *in_window_utf8.at_mut(utf8_pos)? += 1;
-        utf8_pos = utf8_position(last_c, c, max_utf8);
+        utf8_pos = utf8_position(last_c, c);
         last_c = c;
     }
 
@@ -79,7 +64,7 @@ fn estimate_bit_costs_for_literals_utf8(
             } else {
                 byte(pos + i - WINDOW_HALF - 2)?
             };
-            let utf8_pos = utf8_position(last_c, c, max_utf8);
+            let utf8_pos = utf8_position(last_c, c);
             *histogram.at_mut(256 * utf8_pos + byte(pos + i - WINDOW_HALF)?)? -= 1;
             *in_window_utf8.at_mut(utf8_pos)? -= 1;
         }
@@ -87,13 +72,13 @@ fn estimate_bit_costs_for_literals_utf8(
             // A byte enters the window.
             let c = byte(pos + i + WINDOW_HALF - 1)?;
             let last_c = byte(pos + i + WINDOW_HALF - 2)?;
-            let utf8_pos = utf8_position(last_c, c, max_utf8);
+            let utf8_pos = utf8_position(last_c, c);
             *histogram.at_mut(256 * utf8_pos + byte(pos + i + WINDOW_HALF)?)? += 1;
             *in_window_utf8.at_mut(utf8_pos)? += 1;
         }
         let c = if i < 1 { 0 } else { byte(pos + i - 1)? };
         let last_c = if i < 2 { 0 } else { byte(pos + i - 2)? };
-        let utf8_pos = utf8_position(last_c, c, max_utf8);
+        let utf8_pos = utf8_position(last_c, c);
         let histo = histogram.at(256 * utf8_pos + byte(pos + i)?)?.max(1);
         let mut lit_cost = fast_log2(in_window_utf8.at(utf8_pos)?) - fast_log2(histo);
         lit_cost += 0.02905;
@@ -111,22 +96,20 @@ fn estimate_bit_costs_for_literals_utf8(
 }
 
 /// Sets `cost[i]` to the estimated number of bits of the literal at `pos + i`, for `i < len`, from how frequent the
-/// byte is among those around it. `histogram` is scratch space of `3 * 256` elements.
+/// byte is among those around it.
 pub(crate) fn estimate_bit_costs_for_literals(
     pos: usize,
     len: usize,
     mask: usize,
     data: &[u8],
-    histogram: &mut [usize],
     cost: &mut [f32],
 ) -> Checked {
     const WINDOW_HALF: usize = 2000;
-    if is_mostly_utf8(data, pos, mask, len, MIN_UTF8_RATIO)? {
-        return estimate_bit_costs_for_literals_utf8(pos, len, mask, data, histogram, cost);
+    if is_mostly_utf8(data, pos, mask, len)? {
+        return estimate_bit_costs_for_literals_utf8(pos, len, mask, data, cost);
     }
     let byte = |ix: usize| data.at(ix & mask).map(usize::from);
-    let histogram = histogram.sub_mut(..256)?;
-    histogram.fill(0);
+    let mut histogram = [0usize; 256];
     let mut in_window = WINDOW_HALF.min(len);
     for i in 0..in_window {
         *histogram.at_mut(byte(pos + i)?)? += 1;

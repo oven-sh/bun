@@ -2,9 +2,6 @@
 
 use crate::util::{Checked, SliceExt};
 
-/// The `min_fraction` for [`is_mostly_utf8`] that the encoder uses.
-pub(crate) const MIN_UTF8_RATIO: f64 = 0.75;
-
 /// The length of the UTF-8 character at the start of `input`, of which `size` bytes count, or `None` if there is none.
 fn parse_as_utf8(input: &[u8], size: usize) -> Checked<Option<usize>> {
     let b0 = u32::from(input.at(0)?);
@@ -43,14 +40,9 @@ fn parse_as_utf8(input: &[u8], size: usize) -> Checked<Option<usize>> {
     Ok(None)
 }
 
-/// Whether more than `min_fraction` of the `length` bytes from `pos` on are UTF-8.
-pub(crate) fn is_mostly_utf8(
-    data: &[u8],
-    pos: usize,
-    mask: usize,
-    length: usize,
-    min_fraction: f64,
-) -> Checked<bool> {
+/// Whether more than three quarters of the `length` bytes from `pos` on are UTF-8.
+pub(crate) fn is_mostly_utf8(data: &[u8], pos: usize, mask: usize, length: usize) -> Checked<bool> {
+    const MIN_FRACTION: f64 = 0.75;
     let mut size_utf8 = 0usize;
     let mut i = 0usize;
     while i < length {
@@ -62,5 +54,5 @@ pub(crate) fn is_mostly_utf8(
             None => i += 1,
         }
     }
-    Ok(size_utf8 as f64 > min_fraction * length as f64)
+    Ok(size_utf8 as f64 > MIN_FRACTION * length as f64)
 }

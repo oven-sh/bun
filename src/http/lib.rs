@@ -5495,8 +5495,14 @@ mod response_metadata_tests {
         let response = metadata.response();
         assert_eq!((response.status_code, response.minor_version), (200, 1));
         assert_eq!(response.status, b"OK");
-        assert_eq!(response.headers.list.len(), 2);
-        assert_eq!(response.headers.list[1].name(), b"ETag");
+        let headers: Vec<(&[u8], &[u8])> = response
+            .headers
+            .list
+            .iter()
+            .map(|header| (header.name(), header.value()))
+            .collect();
+        let expected: [(&[u8], &[u8]); 2] = [(b"Content-Type", b"text/plain"), (b"ETag", b"\"1\"")];
+        assert_eq!(headers, expected);
         assert_eq!(metadata.url(), HREF);
         assert_eq!(metadata.status_code(), 200);
         assert_eq!(metadata.status_text(), b"OK");
@@ -5528,6 +5534,12 @@ mod response_metadata_tests {
         result.metadata.take().or(earlier)
     }
 
+    /// `HTTPClient::clone_metadata`: the stored head is dropped in place, then a new one is stored.
+    fn clears_and_stores(stored: &mut Option<HTTPResponseMetadata>) {
+        *stored = None;
+        *stored = Some(head());
+    }
+
     #[test]
     fn dropped_in_place() {
         let metadata = head();
@@ -5536,8 +5548,8 @@ mod response_metadata_tests {
         read(stored.as_ref().unwrap());
         stored = Some(head());
         read(stored.as_ref().unwrap());
-        stored = None;
-        assert!(stored.is_none());
+        clears_and_stores(&mut stored);
+        read(stored.as_ref().unwrap());
     }
 
     #[test]

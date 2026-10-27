@@ -10131,3 +10131,33 @@ describe("a `&` with no parent rule", () => {
     { chrome: 80 << 16 },
   );
 });
+
+describe("rounding to 6 digits only cuts a fraction short", () => {
+  for (const css of [
+    // Kept as tokens: the source text prints.
+    "a{--x:1234567.5}",
+    "a{--ts:1700000000.25}",
+    "a{--x:123456.78}",
+    // Typed values are f32: its shortest digits print.
+    "a{width:1234567.5px}",
+    "a{width:123456.78px}",
+    "a{max-width:9999999px}",
+    "a{margin:-1000001px}",
+    "a{flex-grow:1234567}",
+    "a{transition-delay:9999999s}",
+    // 1024.08 * 100 is 102407.99 as an f32.
+    "a{width:102408%}",
+  ]) {
+    minify_test(css, css);
+  }
+  minify_test("@media (min-width:1234567px){a{color:red}}", "@media (width>=1234567px){a{color:red}}");
+  // From 2^24 on an f32 does not hold every integer.
+  minify_test("a{width:2147483647px}", "a{width:2147483600px}");
+  minify_test("a{width:calc(infinity * 1px)}", "a{width:3.40282e38px}");
+
+  minify_test("a{width:33.3333333333%}", "a{width:33.3333%}");
+  minify_test("a{width:42.8571428571%}", "a{width:42.8571%}");
+  minify_test("a{--x:241.8301435407}", "a{--x:241.83}");
+  minify_test("a{opacity:.123456789}", "a{opacity:.123457}");
+  minify_test("a{width:12345.678px}", "a{width:12345.7px}");
+});

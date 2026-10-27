@@ -86,8 +86,8 @@ test("CSS parser should handle extremely large floating-point values without cra
     "/* [path] */
     .test-rounded-full {
       border-radius: 3.40282e38px;
-      width: 2147480000px;
-      height: -2147480000px;
+      width: 2147483600px;
+      height: -2147483600px;
     }
 
     .test-negative {
@@ -104,14 +104,14 @@ test("CSS parser should handle extremely large floating-point values without cra
     }
 
     .test-percentages {
-      width: 1000000000000000000%;
-      height: -1000000000000000000%;
+      width: 1000000050000000000%;
+      height: -1000000050000000000%;
     }
 
     .test-boundaries {
-      margin: 2147480000px;
-      padding: -2147480000px;
-      left: 4294970000px;
+      margin: 2147483600px;
+      padding: -2147483600px;
+      left: 4294967300px;
     }
 
     .test-normal {

@@ -3695,23 +3695,26 @@ impl<'a> Parser<'a> {
         self.input.tokenizer.position
     }
 
-    /// The source text of the token `next*` returned last, if it is an integer of over 6 digits
-    /// or touches another number: `5.0.1` is `5.0` and `.1`, whose values print as `5.1`.
+    /// The source text of the numeric token `next*` returned last, if an f32 may not hold it
+    /// (`1700000000.25`, `123456.78`) or it touches another number: `5.0.1` is `5.0` and `.1`,
+    /// whose values print as `5.1`.
     #[inline]
     pub(crate) fn raw_number_text(&self) -> Option<&'static [u8]> {
         let cached = self.input.cached_token.as_ref()?;
-        let int_value: Option<i32> = match &cached.token {
-            Token::Number(num) => num.int_value,
-            Token::Percentage { int_value, .. } => *int_value,
-            Token::Dimension(dimension) => dimension.num.int_value,
-            _ => return None,
-        };
+        if !matches!(
+            cached.token,
+            Token::Number(_) | Token::Percentage { .. } | Token::Dimension(_)
+        ) {
+            return None;
+        }
         let text = self.slice_from_cloned(cached.start_position);
         let before = &self.input.tokenizer.src[..cached.start_position];
         let touches_a_number = self.next_byte() == Some(b'.')
             || text.starts_with(b"+")
             || (text.starts_with(b".") && before.last().is_some_and(u8::is_ascii_digit));
-        let is_long = int_value.is_some_and(|int| int.unsigned_abs() >= 10u32.pow(f32::DIGITS));
+        let digits = text.strip_prefix(b"-").unwrap_or(text);
+        let integer_digits = digits.iter().take_while(|b| b.is_ascii_digit()).count();
+        let is_long = integer_digits > 6 || (integer_digits == 6 && digits.get(6) == Some(&b'.'));
         (is_long || touches_a_number).then_some(text)
     }
 
@@ -5452,7 +5455,14 @@ impl Token {
                 int_value,
                 has_sign,
             } => {
-                serializer::write_numeric(*unit_value * 100.0, *int_value, *has_sign, writer)?;
+                let mut percent = *unit_value * 100.0;
+                let mut int_value = *int_value;
+                // `unit_value` is rounded: where all digits print, the product's fraction is noise.
+                if percent.abs() >= 1e5 {
+                    percent = percent.round();
+                    int_value = Some(percent as i32);
+                }
+                serializer::write_numeric(percent, int_value, *has_sign, writer)?;
                 writer.write_all(b"%")
             }
             Token::Dimension(d) => {
@@ -6223,6 +6233,8 @@ pub(crate) fn dtoa_short_impl(buf: &mut [u8; 129], value: f32, precision: u8) ->
     debug_assert!(value.is_finite());
     // Format the f32, not `value as f64`: `restrict_prec` rounds its shortest round-trip digits.
     let magnitude = value.abs();
+    // Rounding only cuts a fraction short: from 6 integer digits on, all 9 digits of an f32 print.
+    let precision = if magnitude >= 1e5 { 9 } else { precision };
     let len = if magnitude == 0.0 || (1e-6..1e21).contains(&magnitude) {
         bun_core::fmt::buf_print_infallible(&mut buf[1..], format_args!("{value}")).len()
     } else {

@@ -987,7 +987,16 @@ struct Materializer<'a> {
 }
 
 impl Materializer<'_> {
+    /// The text of a macro's value is not in the file that calls the macro.
+    fn loc(&self, loc: bun_ast::Loc) -> bun_ast::Loc {
+        if self.was_originally_macro {
+            return bun_ast::Loc::EMPTY;
+        }
+        loc
+    }
+
     fn expr(&self, e: &Expr, loc: bun_ast::Loc) -> Expr {
+        let loc = self.loc(loc);
         match &e.data {
             js_ast::expr::Data::EObjectJSON(o) => Expr::init(self.object(o.get()), loc),
             js_ast::expr::Data::EArrayJSON(a) => Expr::init(self.array(a.get(), loc), loc),
@@ -1013,7 +1022,7 @@ impl Materializer<'_> {
                     data: self.rehome(row.key),
                     ..Default::default()
                 },
-                row.key_loc,
+                self.loc(row.key_loc),
             );
             let value_loc = match value_locs {
                 Some(locs) => locs[i],
@@ -1032,7 +1041,7 @@ impl Materializer<'_> {
             properties,
             is_single_line: o.is_single_line,
             was_originally_macro: self.was_originally_macro,
-            close_brace_loc: o.close_brace_loc,
+            close_brace_loc: self.loc(o.close_brace_loc),
             ..Default::default()
         }
     }
@@ -1066,12 +1075,13 @@ impl Materializer<'_> {
             items,
             is_single_line: a.is_single_line,
             was_originally_macro: self.was_originally_macro,
-            close_bracket_loc: a.close_bracket_loc,
+            close_bracket_loc: self.loc(a.close_bracket_loc),
             ..Default::default()
         }
     }
 
     fn json_value(&self, value: &E::JsonValue, loc: bun_ast::Loc) -> Expr {
+        let loc = self.loc(loc);
         match value {
             E::JsonValue::Object(o) => Expr::init(self.object(o.get()), loc),
             E::JsonValue::Array(a) => Expr::init(self.array(a.get(), loc), loc),

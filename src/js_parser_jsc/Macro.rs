@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use bun_ast::DisableStoreReset;
 use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
-use bun_ast::{Log, Range, Source};
+use bun_ast::{Loc, Log, Range, Source};
 use bun_bundler::options::TransformOptions;
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
 use bun_collections::{ArrayHashMap, HashMap};
@@ -639,7 +639,10 @@ impl<'a> Run<'a> {
                 stack_check: bun_core::StackCheck::init(),
             };
 
-            runner.run(result)
+            // Only the value as a whole has text in the file, that of the call.
+            let data = runner.run(result)?.data;
+            let loc = caller.loc;
+            Ok(Expr { loc, data })
         })
     }
 
@@ -704,10 +707,10 @@ impl<'a> Run<'a> {
                 if self.is_top_level {
                     return Ok(self.caller);
                 } else {
-                    return Ok(Expr::init(E::Undefined {}, self.caller.loc));
+                    return Ok(Expr::init(E::Undefined {}, Loc::EMPTY));
                 }
             }
-            T::Null => return Ok(Expr::init(E::Null {}, self.caller.loc)),
+            T::Null => return Ok(Expr::init(E::Null {}, Loc::EMPTY)),
             T::Private => {
                 self.is_top_level = false;
 
@@ -741,11 +744,11 @@ impl<'a> Run<'a> {
                     // shared-view/content-type slices borrow its store.
                     let (bytes, ct) =
                         unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
-                    return expr_from_blob(bytes, self.bump, ct, self.log, self.caller.loc)
+                    return expr_from_blob(bytes, self.bump, ct, self.log)
                         .map_err(|_| MacroError::MacroFailed);
                 }
 
-                return Ok(Expr::init(E::EString::EMPTY, self.caller.loc));
+                return Ok(Expr::init(E::EString::EMPTY, Loc::EMPTY));
             }
 
             T::Boolean => {
@@ -753,7 +756,7 @@ impl<'a> Run<'a> {
                     data: ExprData::EBoolean(E::Boolean {
                         value: value.to_boolean(),
                     }),
-                    loc: self.caller.loc,
+                    loc: Loc::EMPTY,
                 });
             }
             T::Array => {
@@ -775,7 +778,7 @@ impl<'a> Run<'a> {
                         was_originally_macro: true,
                         ..Default::default()
                     },
-                    self.caller.loc,
+                    Loc::EMPTY,
                 );
                 *_entry.value_ptr = expr;
                 let mut i: usize = 0;
@@ -812,7 +815,7 @@ impl<'a> Run<'a> {
                         was_originally_macro: true,
                         ..Default::default()
                     },
-                    self.caller.loc,
+                    Loc::EMPTY,
                 );
                 *_entry.value_ptr = expr;
 
@@ -840,7 +843,7 @@ impl<'a> Run<'a> {
                     // key into the `MacroContext` bump arena so it outlives the
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
                     let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
-                    let key = Expr::init(E::EString::init(key_bytes), self.caller.loc);
+                    let key = Expr::init(E::EString::init(key_bytes), Loc::EMPTY);
                     VecExt::append(
                         &mut properties,
                         G::Property {
@@ -866,14 +869,11 @@ impl<'a> Run<'a> {
             T::Integer => {
                 return Ok(Expr::init(
                     E::Number::new(value.to_int32() as f64),
-                    self.caller.loc,
+                    Loc::EMPTY,
                 ));
             }
             T::Double => {
-                return Ok(Expr::init(
-                    E::Number::new(value.as_number()),
-                    self.caller.loc,
-                ));
+                return Ok(Expr::init(E::Number::new(value.as_number()), Loc::EMPTY));
             }
             T::String => {
                 let bun_str = value.to_bun_string(self.global)?;
@@ -890,10 +890,7 @@ impl<'a> Run<'a> {
                 // (arena-owned per the parser's `Str` convention). Copy into
                 // the `MacroContext` bump arena.
                 let arena_slice: &[u16] = self.bump.alloc_slice_copy(&utf16_bytes);
-                return Ok(Expr::init(
-                    E::EString::init_utf16(arena_slice),
-                    self.caller.loc,
-                ));
+                return Ok(Expr::init(E::EString::init_utf16(arena_slice), Loc::EMPTY));
             }
             T::Promise => {
                 if let Some(cached) = self.visited.get(value) {
@@ -1127,7 +1124,6 @@ fn expr_from_blob(
     bump: &bun_alloc::Arena,
     content_type: &[u8],
     log: &mut Log,
-    loc: bun_ast::Loc,
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
 
@@ -1147,7 +1143,6 @@ fn expr_from_blob(
             Ok(e) => e,
             Err(_) => return Err(crate::Error::MacroFailed),
         };
-        out_expr.loc = loc;
         match &mut out_expr.data {
             ExprData::EObject(obj) => obj.was_originally_macro = true,
             ExprData::EArray(arr) => arr.was_originally_macro = true,
@@ -1182,7 +1177,7 @@ fn expr_from_blob(
                 data,
                 ..Default::default()
             },
-            loc,
+            Loc::EMPTY,
         ));
     }
 
@@ -1206,6 +1201,6 @@ fn expr_from_blob(
             data,
             ..Default::default()
         },
-        loc,
+        Loc::EMPTY,
     ))
 }

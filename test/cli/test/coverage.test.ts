@@ -1637,6 +1637,38 @@ class Decorated {}
     ]);
   });
 
+  test.concurrent("a decision is listed where it ends in the value of a const from earlier in the file", async () => {
+    const { lcov } = await run(
+      {
+        "macro.ts": `export const object = () => ({ a: 1, list: [2, 3], inner: { b: "b" } });
+export const json = () => Response.json({ a: 1, list: [2, 3] });
+`,
+        "lib.ts": `import { object, json } from "./macro.ts" with { type: "macro" };
+enum Mode { A, B }
+const MEMBER = Mode.A;
+const OBJECT = object();
+const FETCHED = json();
+const { list: LIST } = object();
+export const member = (v?: unknown) => v ?? MEMBER;
+export const whole = (v?: unknown) => v ?? OBJECT;
+export const property = (v?: unknown) => v ?? OBJECT.a;
+export const inner = (v?: unknown) => v ?? OBJECT.inner;
+export const fetched = (v?: unknown) => v ?? FETCHED;
+export const list = (v?: unknown) => v ?? LIST;
+`,
+        "lib.test.ts": `
+        import { test } from "bun:test";
+        import * as lib from "./lib.ts";
+        test("lib", () => { for (const f of Object.values(lib)) f(), f(); });
+      `,
+        "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+      },
+      [],
+    );
+    expect(decisionsOf(lcov["lib.ts"])).toEqual([7, 8, 9, 10, 11, 12].map(line => [line, [2, 0]]));
+    expect(lcov["lib.ts"].match(/^DA:[1-6],\d+$/gm)).toEqual([2, 3, 4, 5, 6].map(line => `DA:${line},1`));
+  });
+
   test.concurrent.each([
     ["coverageThreshold = 0.9", 0],
     ["coverageThreshold = { lines = 0.9 }", 0],

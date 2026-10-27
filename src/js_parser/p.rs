@@ -2177,6 +2177,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(replacement) = self.const_values.get(&ref_) {
                 let data = replacement.data;
                 self.ignore_usage(ref_);
+                if let js_ast::ExprData::EInlinedEnum(inlined) = data {
+                    let data = inlined.value.data;
+                    return self.wrap_inlined_enum(Expr { loc, data }, inlined.comment.slice());
+                }
                 return Expr { loc, data };
             }
         }

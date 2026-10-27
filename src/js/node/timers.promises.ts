@@ -140,8 +140,12 @@ async function* setInterval(after?: number, value?, options: TimerOptions = {}) 
         if (wake) {
           const promise = wake;
           wake = undefined;
+          const rejected = $newPromise();
+          // It gets its handler in a later microtask. Until then it must not count as an unhandled rejection.
+          $pokePromiseAsHandled(rejected);
+          $rejectPromise(rejected, $makeAbortError(undefined, { cause: signal.reason }));
           // Resolved with a rejected promise, as in node: next() then rejects 4 ticks after the abort.
-          $resolvePromise(promise, Promise.$reject($makeAbortError(undefined, { cause: signal.reason })));
+          $resolvePromise(promise, rejected);
         }
       };
       signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null, once: true }));

@@ -37,35 +37,37 @@ const fn dms_end_index(dms: &DictMatchState<'_>) -> u32 {
 
 // ── binary tree search ────────────────────────────────────────────────────
 
-/// What a search in the binary trees works on.
+/// What the searches in the binary trees work on for the time of a block: the tables of a [`MatchState`], and what does
+/// not change of it.
 struct Dubt<'a> {
     hash_table: &'a mut [u32],
     bt: &'a mut Nodes,
     input: TreeInput<'a>,
+    /// The dictionary, if searches go on in it.
+    dms: Option<&'a DictMatchState<'a>>,
     hasher: Hasher,
     /// `window.lowLimit`
     low_limit: u32,
     max_distance: u32,
-    /// `ZSTD_getLowestMatchIndex` of `curr`.
-    window_low: u32,
+    /// How far a match can be, if that is not down to `low_limit`.
+    reach: u32,
     nb_compares: u32,
-    next_to_update: u32,
-    /// The position that is searched for, which is `ip` in `input.near`.
-    curr: u32,
-    ip: u32,
+    next_to_update: &'a mut u32,
 }
 
 impl<'a> Dubt<'a> {
-    fn new(
-        ms: &'a mut MatchState,
-        src: &BlockSrc<'a>,
-        ip: usize,
-        iend: usize,
-        mls: u32,
-    ) -> Result<Self> {
-        let c_params = ms.c_params;
-        if ms.hash_table.len() != 1usize.wrapping_shl(c_params.hash_log)
-            || ms.chain_table.len() != 1usize.wrapping_shl(c_params.chain_log)
+    fn new(ms: &'a mut MatchState, src: &'a BlockSrc<'a>, search_dms: bool) -> Result<Self> {
+        let MatchState {
+            hash_table,
+            chain_table,
+            next_to_update,
+            window,
+            c_params,
+            loaded_dict_end,
+            ..
+        } = ms;
+        if hash_table.len() != 1usize.wrapping_shl(c_params.hash_log)
+            || chain_table.len() != 1usize.wrapping_shl(c_params.chain_log)
         {
             return Err(BUG);
         }
@@ -73,29 +75,33 @@ impl<'a> Dubt<'a> {
             buf: src.dict_buf,
             base: src.dict_base,
         };
-        let curr = src.index_of(ip);
-        let dict_limit = ms.window.dict_limit;
+        let max_distance = 1u32.wrapping_shl(c_params.window_log);
         Ok(Self {
-            window_low: ms.get_lowest_match_index(curr, c_params.window_log),
-            hash_table: ms.hash_table.as_mut_slice(),
-            bt: bt_nodes(&mut ms.chain_table),
-            input: TreeInput::new(src.prefix(), dict, dict_limit, iend)?,
-            hasher: Hasher::new(c_params.hash_log, mls),
-            low_limit: ms.window.low_limit,
-            max_distance: 1u32.wrapping_shl(c_params.window_log),
+            hash_table: hash_table.as_mut_slice(),
+            bt: bt_nodes(chain_table),
+            input: TreeInput::new(src.prefix(), dict, window.dict_limit, src.end)?,
+            dms: src.dms.as_ref().filter(|_| search_dms),
+            hasher: Hasher::new(c_params.hash_log, c_params.min_match.clamp(4, 6)),
+            low_limit: window.low_limit,
+            max_distance,
+            // A dictionary is valid as a whole until it is invalidated as a whole.
+            reach: if *loaded_dict_end != 0 {
+                u32::MAX
+            } else {
+                max_distance
+            },
             nb_compares: 1u32.wrapping_shl(c_params.search_log),
-            next_to_update: ms.next_to_update,
-            curr,
-            ip: curr.wrapping_sub(dict_limit),
+            next_to_update,
         })
     }
 
     /// `ZSTD_updateDUBT`: adds the positions from `next_to_update` up to `curr` to the trees, as unsorted chains.
     #[inline(always)]
-    fn update(&mut self) -> Result<()> {
+    fn update(&mut self, curr: u32) -> Result<()> {
         let near = self.input.near;
-        if self.curr.saturating_sub(self.next_to_update) >= LONG_UPDATE {
-            let first = self.next_to_update..self.curr;
+        let next_to_update = *self.next_to_update;
+        if curr.saturating_sub(next_to_update) >= LONG_UPDATE {
+            let first = next_to_update..curr;
             let dict_limit = self.input.dict_limit;
             return update_many(
                 self.hash_table,
@@ -106,7 +112,7 @@ impl<'a> Dubt<'a> {
                 dict_limit,
             );
         }
-        for idx in self.next_to_update..self.curr {
+        for idx in next_to_update..curr {
             let bytes = near.read64(idx.wrapping_sub(self.input.dict_limit));
             let h = self.hasher.hash(bytes.ok_or(BUG)?);
             let match_index = table_get(self.hash_table, h);
@@ -144,18 +150,22 @@ impl<'a> Dubt<'a> {
         sort_dubt1(self.bt, &self.input, curr, nb_compares, bt_low, window_low)
     }
 
-    /// `ZSTD_DUBT_findBestMatch`, but for the dictionary. Returns the length of the best match, or 0, and how many more
-    /// positions could have been compared if the dictionary is to be searched.
+    /// `ZSTD_DUBT_findBestMatch` for the position `ip` of `input.near`, but for the dictionary. Returns the length of the
+    /// best match, or 0, and how many more positions could have been compared if the dictionary is to be searched.
     #[inline(always)]
-    fn find_best_match(&mut self, off_base_ptr: &mut u32) -> Result<DubtFound> {
-        let curr = self.curr;
-        let h = self
-            .hasher
-            .hash(self.input.near.read64(self.ip).ok_or(BUG)?);
+    fn find_best_match(&mut self, ip: u32, off_base_ptr: &mut u32) -> Result<DubtFound> {
+        let curr = ip.wrapping_add(self.input.dict_limit);
+        // `ZSTD_getLowestMatchIndex`
+        let window_low = if curr.wrapping_sub(self.low_limit) > self.reach {
+            curr.wrapping_sub(self.reach)
+        } else {
+            self.low_limit
+        };
+        let h = self.hasher.hash(self.input.near.read64(ip).ok_or(BUG)?);
         let mut match_index = table_get(self.hash_table, h);
-        bt_look_ahead::<2, 1>(self.hash_table, self.bt, &self.input, self.hasher, self.ip);
+        bt_look_ahead::<2, 1>(self.hash_table, self.bt, &self.input, self.hasher, ip);
 
-        let unsort_limit = bt_low(self.bt, curr).max(self.window_low);
+        let unsort_limit = bt_low(self.bt, curr).max(window_low);
         let mut nb_candidates = self.nb_compares;
         let mut previous_candidate = 0u32;
 
@@ -194,9 +204,9 @@ impl<'a> Dubt<'a> {
         let nb_compares = bt_walk(
             self.bt,
             &self.input,
-            self.ip,
+            ip,
             match_index,
-            self.window_low.saturating_add(1),
+            window_low.saturating_add(1),
             self.nb_compares,
             Descent::new(self.bt, curr),
             |match_index, common| {
@@ -222,7 +232,7 @@ impl<'a> Dubt<'a> {
         )?;
 
         // Skip repetitive patterns.
-        self.next_to_update = match_end_idx.wrapping_sub(8);
+        *self.next_to_update = match_end_idx.wrapping_sub(8);
         Ok(DubtFound {
             best_length,
             nb_compares: if search_dict { nb_compares } else { 0 },
@@ -231,10 +241,45 @@ impl<'a> Dubt<'a> {
 }
 
 impl Dubt<'_> {
-    /// [`DictTree::root`] for the position that is searched for.
+    /// `ZSTD_BtFindBestMatch`: updates the trees up to the position `ip` of `input.near` and returns the best match there.
+    /// Its length is 0 if there is none.
+    #[inline(never)]
+    fn search(&mut self, ip: u32) -> Result<Found> {
+        let mut off_base = 999_999_999u32;
+        let curr = ip.wrapping_add(self.input.dict_limit);
+        let len = if curr < *self.next_to_update {
+            // In an area that is skipped.
+            0
+        } else {
+            let dict_root = match self.dms {
+                Some(dms) => self.dict_root(dms, ip)?,
+                None => 0,
+            };
+            self.update(curr)?;
+            let found = self.find_best_match(ip, &mut off_base)?;
+            match self.dms {
+                Some(dms) if dict_root != 0 && found.nb_compares != 0 => find_better_dict_match(
+                    dms,
+                    self.input,
+                    self.low_limit,
+                    ip,
+                    dict_root,
+                    found,
+                    &mut off_base,
+                )?,
+                _ => found.best_length,
+            }
+        };
+        Ok(Found {
+            len,
+            off_base: NonZeroU32::new(off_base).ok_or(BUG)?,
+        })
+    }
+
+    /// [`DictTree::root`] for the position `ip` of `input.near`.
     #[inline(always)]
-    fn dict_root(&self, dms: &DictMatchState<'_>) -> Result<u32> {
-        let bytes = self.input.near.read64(self.ip).ok_or(BUG)?;
+    fn dict_root(&self, dms: &DictMatchState<'_>, ip: u32) -> Result<u32> {
+        let bytes = self.input.near.read64(ip).ok_or(BUG)?;
         let hasher = self.hasher.with_log(dms.ms.c_params.hash_log);
         DictTree::root(*dms, hasher.hash(bytes))
     }
@@ -357,59 +402,6 @@ fn sort_dubt1(
 struct DubtFound {
     best_length: u32,
     nb_compares: u32,
-}
-
-/// `ZSTD_BtFindBestMatch`, when `mls` and the mode are not constants.
-#[inline(never)]
-fn bt_search(
-    ms: &mut MatchState,
-    src: &BlockSrc<'_>,
-    ip: usize,
-    i_limit: usize,
-    off_base_ptr: &mut u32,
-    mls: u32,
-    search_dms: bool,
-) -> Result<usize> {
-    if ip < src.pos_of(ms.next_to_update) {
-        // In an area that is skipped.
-        return Ok(0);
-    }
-    let mut dubt = Dubt::new(ms, src, ip, i_limit, mls)?;
-    let dms = src.dms.as_ref().filter(|_| search_dms);
-    let dict_root = match dms {
-        Some(dms) => dubt.dict_root(dms)?,
-        None => 0,
-    };
-    dubt.update()?;
-    let found = dubt.find_best_match(off_base_ptr)?;
-    let best_length = match dms {
-        Some(dms) if dict_root != 0 && found.nb_compares != 0 => find_better_dict_match(
-            dms,
-            dubt.input,
-            dubt.low_limit,
-            dubt.ip,
-            dict_root,
-            found,
-            off_base_ptr,
-        )?,
-        _ => found.best_length,
-    };
-    ms.next_to_update = dubt.next_to_update;
-    Ok(best_length as usize)
-}
-
-/// `ZSTD_BtFindBestMatch`: updates the trees up to `ip` and returns the length of the best match there, or 0.
-/// `off_base_ptr` is written to if there is one.
-#[inline(always)]
-fn bt_find_best_match<const MLS: u32, const DICT_MODE: u8>(
-    ms: &mut MatchState,
-    src: &BlockSrc<'_>,
-    ip: usize,
-    i_limit: usize,
-    off_base_ptr: &mut u32,
-) -> Result<usize> {
-    let search_dms = DICT_MODE == DICT_MATCH_STATE;
-    bt_search(ms, src, ip, i_limit, off_base_ptr, MLS, search_dms)
 }
 
 // ── what the match finders share ──────────────────────────────────────────
@@ -724,25 +716,14 @@ trait Finder<'a>: Sized {
 
 // ── binary trees, for the parser ──────────────────────────────────────────
 
-struct TreeFinder<'a, const DICT_MODE: u8> {
-    ms: &'a mut MatchState,
-    src: &'a BlockSrc<'a>,
-    /// Where the position 0 is in `src.buf`.
-    prefix_start: usize,
-    mls: u32,
-}
+struct TreeFinder<'a, const DICT_MODE: u8>(Dubt<'a>);
 
 impl<'a, const DICT_MODE: u8> Finder<'a> for TreeFinder<'a, DICT_MODE> {
     const MARGIN: u32 = 8;
 
     #[inline(always)]
-    fn new(ms: &'a mut MatchState, src: &'a BlockSrc<'a>, block: LazyBlock<'a>) -> Result<Self> {
-        Ok(Self {
-            mls: ms.c_params.min_match.clamp(4, 6),
-            prefix_start: src.pos_of(block.base_index),
-            ms,
-            src,
-        })
+    fn new(ms: &'a mut MatchState, src: &'a BlockSrc<'a>, _block: LazyBlock<'a>) -> Result<Self> {
+        Ok(Self(Dubt::new(ms, src, DICT_MODE == DICT_MATCH_STATE)?))
     }
 
     #[inline(always)]
@@ -752,18 +733,8 @@ impl<'a, const DICT_MODE: u8> Finder<'a> for TreeFinder<'a, DICT_MODE> {
         wanted: Wanted,
         _skipping: bool,
     ) -> Result<Option<Found>> {
-        let ip = self.prefix_start + ip as usize;
-        let iend = self.src.end;
-        let mut off_base = 999_999_999u32;
-        let len = match self.mls {
-            4 => bt_find_best_match::<4, DICT_MODE>(self.ms, self.src, ip, iend, &mut off_base),
-            5 => bt_find_best_match::<5, DICT_MODE>(self.ms, self.src, ip, iend, &mut off_base),
-            _ => bt_find_best_match::<6, DICT_MODE>(self.ms, self.src, ip, iend, &mut off_base),
-        }? as u32;
-        if len <= wanted.longer_than {
-            return Ok(None);
-        }
-        Ok(NonZeroU32::new(off_base).map(|off_base| Found { len, off_base }))
+        let found = self.0.search(ip)?;
+        Ok(Some(found).filter(|found| found.len > wanted.longer_than))
     }
 
     #[inline(always)]

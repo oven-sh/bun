@@ -576,23 +576,24 @@ impl Finder {
                 ip = end;
             } else {
                 // The match, and how much of it is known. `ip` is moved to where it is for.
-                let (place, known) = if window.has_after_first::<{ u64::MAX }>(place_long, bytes0) {
-                    (place_long, 8)
-                } else if window.has_after_first::<0xFFFF_FFFF>(place_short, bytes0) {
-                    // A short match: a long one at the next position is preferred.
-                    let bytes1 = le64_at::<1, _>(here);
-                    let place3 = table_swap(hash_long, hash8(bytes1, h_bits_l, 0), curr + 1)
-                        .wrapping_sub(origin_index);
-                    if window.read64(place3) == Some(bytes1) && place3 > 0 {
-                        ip += 1;
-                        (place3, 8)
+                let (place, known) =
+                    if window.has::<{ u64::MAX }>(place_long, bytes0) && place_long > 0 {
+                        (place_long, 8)
+                    } else if window.has::<0xFFFF_FFFF>(place_short, bytes0) && place_short > 0 {
+                        // A short match: a long one at the next position is preferred.
+                        let bytes1 = le64_at::<1, _>(here);
+                        let place3 = table_swap(hash_long, hash8(bytes1, h_bits_l, 0), curr + 1)
+                            .wrapping_sub(origin_index);
+                        if window.read64(place3) == Some(bytes1) && place3 > 0 {
+                            ip += 1;
+                            (place3, 8)
+                        } else {
+                            (place_short, 4)
+                        }
                     } else {
-                        (place_short, 4)
-                    }
-                } else {
-                    ip += ((ip - sink.anchor) >> K_SEARCH_STRENGTH) + 1;
-                    continue;
-                };
+                        ip += ((ip - sink.anchor) >> K_SEARCH_STRENGTH) + 1;
+                        continue;
+                    };
                 let end = ip + known + window.count(ip + known, place + known);
                 look_ahead::<MLS>(near, end, hash_long, h_bits_l, hash_small, h_bits_s);
                 let back = window.count_backwards(ip, sink.anchor, place);

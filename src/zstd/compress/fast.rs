@@ -394,12 +394,12 @@ impl<'a> Segments<'a> {
         spot.segment.read64(spot.pos)
     }
 
-    /// Whether the bits of `MASK` are the same in `bytes` and in the 8 bytes at `place`, which are in one segment, and
-    /// `place` is not the first one.
+    /// Whether the bits of `MASK` are the same in `bytes` and in the 8 bytes at `place`, which are in one segment, as they
+    /// are wherever a table leads to.
     #[inline(always)]
-    pub(super) fn has_after_first<const MASK: u64>(self, place: u32, bytes: u64) -> bool {
+    pub(super) fn has<const MASK: u64>(self, place: u32, bytes: u64) -> bool {
         let spot = self.spot(place);
-        spot.segment.has::<MASK>(spot.pos, bytes) && place > 0
+        spot.segment.has::<MASK>(spot.pos, bytes)
     }
 
     /// The 4 bytes that are `offset` before the position `pos`, if they are in one segment. Which one that is does not
@@ -499,7 +499,7 @@ impl Finder {
                     break (ip2 - back, end, REPCODE1_TO_OFFBASE);
                 }
                 let mut match0 = idx0.wrapping_sub(base_index);
-                if near.read32(match0) == Some(bytes0 as u32) {
+                if near.has::<0xFFFF_FFFF>(match0, bytes0) {
                     table_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
                 } else {
                     // As far as they are hashed or compared.
@@ -507,7 +507,7 @@ impl Finder {
                     current0 += 1;
                     let idx1 = table_swap(hash_table, hash_of::<MLS>(bytes1, hlog), current0);
                     match0 = idx1.wrapping_sub(base_index);
-                    if near.read32(match0) != Some(bytes1 as u32) {
+                    if !near.has::<0xFFFF_FFFF>(match0, bytes1) {
                         current0 = base_index.wrapping_add(ip2);
                         bytes0 = le64_at::<0, _>(ahead);
                         ip2 += step;
@@ -632,14 +632,14 @@ impl Finder {
                 }
                 let mut place = idx0.wrapping_sub(origin_index);
                 let mut next = u32::MAX;
-                if window.read32(place) == Some(bytes0 as u32) {
+                if window.has::<0xFFFF_FFFF>(place, bytes0) {
                     table_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
                 } else {
                     let bytes1 = bytes0 >> 8;
                     current0 += 1;
                     let idx1 = table_swap(hash_table, hash_of::<MLS>(bytes1, hlog), current0);
                     place = idx1.wrapping_sub(origin_index);
-                    if window.read32(place) != Some(bytes1 as u32) {
+                    if !window.has::<0xFFFF_FFFF>(place, bytes1) {
                         current0 = base_index.wrapping_add(ip2);
                         bytes0 = le64_at::<0, _>(ahead);
                         ip2 += step;

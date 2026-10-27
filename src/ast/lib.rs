@@ -502,7 +502,7 @@ impl IntoText for Box<[u8]> {
 
 /// Sink adapter for [`Log::print`] — lets callers pass either a borrowed
 /// `fmt::Write` impl or the `*mut bun_core::io::Writer` returned by
-/// `Output::error_writer()` (the dominant call shape across the tree).
+/// `Output::error_writer()`. [`Log::print_to_stderr`] is the call for stderr.
 pub trait IntoLogWrite {
     type W: fmt::Write;
     fn into_log_write(self) -> Self::W;
@@ -521,9 +521,9 @@ impl fmt::Write for IoWriterAdapter {
         if self.0.is_null() {
             return Ok(());
         }
-        // SAFETY: `Output::error_writer()` returns a pointer to a long-lived
-        // adapter header (see bun_core::io::Writer); callers hold it only for
-        // the duration of this `print` call.
+        // SAFETY: non-null, checked above. `Log::print` drops this adapter before it
+        // returns, and the writer of each caller outlives that call: a thread-local
+        // stdio writer, or the stack adapter of `print_messages_to_stderr`.
         unsafe { (*self.0).write_all(s.as_bytes()) }.map_err(|_| fmt::Error)
     }
 }

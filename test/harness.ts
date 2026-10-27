@@ -463,8 +463,6 @@ export async function runCommandMaxRSS(options: { cmd: string[]; cwd?: string; e
   return result;
 }
 
-// Runs the `{ cmd, cwd }` passed as JSON in the last argument and prints one
-// JSON line: the command's output, exit status, and number of write(2) calls.
 const writeCountSpawner = /* js */ `
   const syscw = () => Number(require("fs").readFileSync("/proc/self/io", "utf8").match(/^syscw: (\\d+)$/m)[1]);
   const before = syscw();
@@ -474,14 +472,23 @@ const writeCountSpawner = /* js */ `
   console.log(JSON.stringify({ stdout, stderr, exitCode, writes: syscw() - before }));
 `;
 
+/** Whether `runCommandWriteCount` works here: Linux, with task I/O accounting in the kernel. */
+export function canCountWriteSyscalls(): boolean {
+  try {
+    return /^syscw: \d+$/m.test(fs.readFileSync("/proc/self/io", "utf8"));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Runs `cmd` in `cwd` and returns its output, exit status, and the number of
  * write(2) calls made by it and by the processes it waited for.
  *
- * Linux only. The number is `syscw` in /proc/<pid>/io. The kernel adds the
- * counters of a process to the parent that reaps it, so the parent here is a
- * small bun process that reads its own counter before and after. It makes no
- * write of its own in between.
+ * The number is `syscw` in /proc/<pid>/io, see `canCountWriteSyscalls`. The
+ * kernel adds the counters of a process to the parent that reaps it, so the
+ * parent here is a small bun process that reads its own counter before and
+ * after. It makes no write of its own in between.
  */
 export async function runCommandWriteCount(options: { cmd: string[]; cwd?: string; env?: NodeJS.Dict<string> }) {
   await using proc = Bun.spawn({

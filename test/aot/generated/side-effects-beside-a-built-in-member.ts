@@ -323,7 +323,7 @@ export const caseFiles = (): CaseFile[] =>
             if (isAsync && /\bclass\b/.test(expression)) return;
             if (isTyped && place.name === "in-front-of-a-comma" && looksPureToTheChecker.test(form)) return;
             if (isTyped && place.test && isDecidedForTheChecker.test(form)) return;
-            // Plain Bun does not parse a spread among the operands of `eval`.
+            // No spread among the operands of `eval`.
             if (/\beval\(\.\.\./.test(expression)) return;
             const declared = isTyped ? before.replace("let sink;", "let sink: any;") : before;
             // The checker rejects a test of a function that is always there.

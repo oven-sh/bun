@@ -1,0 +1,140 @@
+//// async-storage/main.mjs
+class C { m() { return 1; } }
+function g(x) { return x === undefined ? "none" : x + 1; }
+import { AsyncLocalStorage } from "node:async_hooks"; const s = new AsyncLocalStorage(); s.run(new C(), () => { const q = s.getStore().m; q.k = 5; console.log(g(new C().m.k)); });
+//// descriptor/main.mjs
+class C { m() { return 1; } }
+const q = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(new Proxy(new C(), {})), "m").value;
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k));
+//// emitter/main.mjs
+class C { m() { return 1; } }
+function g(x) { return x === undefined ? "none" : x + 1; }
+import { EventEmitter } from "node:events"; const e = new EventEmitter(); e.on("x", (o) => { const q = o.m; q.k = 5; console.log(g(new C().m.k)); }); e.emit("x", new C());
+//// event-detail/main.mjs
+class C { m() { return 1; } }
+function g(x) { return x === undefined ? "none" : x + 1; }
+const t = new EventTarget(); t.addEventListener("x", (e) => { const q = e.detail.m; q.k = 5; console.log(g(new C().m.k)); }); t.dispatchEvent(new CustomEvent("x", { detail: new C() }));
+//// global-instance/main.mjs
+class C { m() { return 1; } }
+globalThis.x = new C(); const q = globalThis[process.argv[2] ?? "x"].m;
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k));
+//// list-holder/main.mjs
+class C { m() { return 1; } }
+const h = [new C()]; const q = h[Number(process.argv[2] ?? 0)].m;
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k));
+//// literal/main.mjs
+class C { m() { return 1; } }
+const lit = { m() { return 1; } }; C.prototype.m = lit.m; const q = new Proxy(lit, {}).m;
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k));
+//// message-channel/main.mjs
+class C { m() { return 1; } }
+function g(x) { return x === undefined ? "none" : x + 1; }
+const h = { o: new C() }; const q = Reflect.apply(Object.values, null, [h])[0].m; q.k = 5; console.log(g(new C().m.k));
+//// next-tick/main.mjs
+class C { m() { return 1; } }
+function g(x) { return x === undefined ? "none" : x + 1; }
+process.nextTick((o) => { const q = o.m; q.k = 5; console.log(g(new C().m.k)); }, new C());
+//// prototype-of-proxy/main.mjs
+class C { m() { return 1; } }
+const q = Object.getPrototypeOf(new Proxy(new C(), {})).m;
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k));
+//// proxy-below/main.mjs
+class C { m() { return 1; } }
+const q = Object.create(new Proxy(new C(), {})).m;
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k));
+//// proxy-call/main.mjs
+class C { m() { return 1; } }
+function g(x) { return x === undefined ? "none" : x + 1; }
+const p = new Proxy(() => new C(), {}); const q = p().m; q.k = 5; console.log(g(new C().m.k));
+//// proxy-class/main.mjs
+class C { m() { return 1; } }
+const q = new Proxy(C, {}).prototype.m;
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k));
+//// proxy-getter/main.mjs
+class C { m() { return 1; } }
+function g(x) { return x === undefined ? "none" : x + 1; }
+const p = new Proxy({ inner: new C() }, {}); const q = p.inner.m; q.k = 5; console.log(g(new C().m.k));
+//// proxy-getter-member/main.mjs
+class C { m() { return 1; } }
+function g(x) { return x === undefined ? "none" : x + 1; }
+class D { get v() { return 1; } } const p = new Proxy(new D(), {}); const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(p), "v").get; d.k = 5; console.log(g(Object.getOwnPropertyDescriptor(D.prototype, "v").get.k));
+//// proxy-handler/main.mjs
+class C { m() { return 1; } }
+const q = new Proxy({}, { get: (t, k) => new C()[k] }).m;
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k));
+//// proxy-instance/main.mjs
+class C { m() { return 1; } }
+const q = new Proxy(new C(), {}).m;
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k));
+//// proxy-prototype/main.mjs
+class C { m() { return 1; } }
+const q = new Proxy(C.prototype, {}).m;
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k));
+//// proxy-static/main.mjs
+class C { m() { return 1; } }
+function g(x) { return x === undefined ? "none" : x + 1; }
+class E extends C { static s() {} } const q = new Proxy(E, {}).prototype.m; q.k = 5; console.log(g(new C().m.k));
+//// queue-microtask/main.mjs
+class C { m() { return 1; } }
+function g(x) { return x === undefined ? "none" : x + 1; }
+const held = new C(); globalThis.reportError ??= 0; Promise.resolve(held).then((o) => { const q = o.m; q.k = 5; console.log(g(new C().m.k)); });
+//// reflect-get/main.mjs
+class C { m() { return 1; } }
+const q = Reflect.get(new C(), process.argv[2] ?? "m");
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k));
+//// target-below/main.mjs
+class C { m() { return 1; } }
+const q = new Proxy(Object.create(new C()), {}).m;
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k));
+//// timer-argument/main.mjs
+class C { m() { return 1; } }
+function g(x) { return x === undefined ? "none" : x + 1; }
+setTimeout((o) => { const q = o.m; q.k = 5; console.log(g(new C().m.k)); }, 0, new C());
+//// weak-ref/main.mjs
+class C { m() { return 1; } }
+function g(x) { return x === undefined ? "none" : x + 1; }
+const q = new WeakRef(new C()).deref().m; q.k = 5; console.log(g(new C().m.k));
+//// called-with-another-receiver/main.mjs
+class C { constructor() { this.x = 1; this.y = 2; } m() { return this.x; } }
+const p = new Proxy({ inner: new C() }, {});
+const q = p.inner.m;
+console.log(q.call({ x: "text" }), q.call({ y: 1, z: 2, x: 3.5 }), new C().m());
+try { console.log(q()); } catch (error) { console.log(error.constructor.name); }
+//// taken-off-a-value-out-of-the-global-object/main.mjs
+class C { constructor() { this.x = 1; } m() { return this.x; } n() { return typeof this; } }
+globalThis.box = { inner: new C() };
+const q = globalThis[process.argv[9] ?? "box"].inner.m;
+q.k = 5;
+function g(x) { return x === undefined ? "none" : x + 1; }
+console.log(g(new C().m.k), q.call({ x: "other" }), globalThis[process.argv[9] ?? "box"].inner.n.call(7));
+//// constructed-and-bound/main.mjs
+function F() { this.x = 1; }
+F.prototype.m = function () { return this === undefined ? "none" : this.x; };
+const p = new Proxy({ inner: new F() }, {});
+const q = p.inner.m;
+const made = new q();
+console.log(typeof made, made instanceof q, q.bind({ x: "bound" })(), new F().m());

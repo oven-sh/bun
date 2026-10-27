@@ -21,6 +21,43 @@ case_tests! {
         assert!(!case.mentions(BuiltinId::BunServe));
         assert!(!case.mentions(BuiltinId::Bun));
     };
+    comma_has_side_effects: PROGRAM, "f(), Math.floor; (f(), Math).ceil; (f(), Math)?.abs; (f(), Math)[\"max\"]; Array.prototype[(f(), Symbol.iterator)];", |case| {
+        let impure = [
+            ("f(), Math.floor", BuiltinId::MathFloor),
+            ("(f(), Math).ceil", BuiltinId::MathCeil),
+            ("(f(), Math)?.abs", BuiltinId::MathAbs),
+            ("(f(), Math)[\"max\"]", BuiltinId::MathMax),
+            ("Array.prototype[(f(), Symbol.iterator)]", BuiltinId::ArrayPrototypeValues),
+        ];
+        for (text, id) in impure {
+            assert_builtin(case, text, id);
+            assert_mutability(case, text, Mutability::ConstantUnlessWritten);
+            assert!(!case.is_pure(text), "{text}");
+            assert_eq!(case.global_path(text), None, "{text}");
+        }
+        assert!(case.is_pure("Math.floor"));
+        assert!(case.is_pure("Symbol.iterator"));
+    };
+    alias_of_comma_is_pure: PROGRAM, "const m = (f(), Math); m.floor;", |case| {
+        assert_builtin(case, "m.floor", BuiltinId::MathFloor);
+        assert!(case.is_pure("m.floor"));
+        assert_eq!(case.global_path("m.floor"), None);
+    };
+    global_path_starts_at_a_free_name: PROGRAM, "Math.floor; (Math as any).ceil; Math[\"abs\"]; Math?.max; Array.prototype[Symbol.iterator]; Math;", |case| {
+        assert_eq!(case.global_path("Math.floor"), Some(vec![BuiltinId::MathFloor, BuiltinId::Math]));
+        assert_eq!(case.global_path("(Math as any).ceil"), Some(vec![BuiltinId::MathCeil, BuiltinId::Math]));
+        assert_eq!(case.global_path("Math[\"abs\"]"), Some(vec![BuiltinId::MathAbs, BuiltinId::Math]));
+        assert_eq!(case.global_path("Math"), Some(vec![BuiltinId::Math]));
+        assert_eq!(case.global_path("Math?.max"), None);
+        assert_eq!(case.global_path("Array.prototype[Symbol.iterator]"), None);
+        assert!(case.is_pure("Math?.max"));
+        assert!(case.is_pure("Array.prototype[Symbol.iterator]"));
+    };
+    exports_of_comma_has_side_effects: SCRIPT, "(f(), module).exports; module.exports;", |case| {
+        assert_builtin(case, "(f(), module).exports", BuiltinId::ModuleObjectExports);
+        assert!(!case.is_pure("(f(), module).exports"));
+        assert!(case.is_pure("module.exports"));
+    };
     private_name_is_no_member: PROGRAM, "class C { #floor = 1; static f() { return Math.#floor; } }", |case|
         assert_unresolved(case, "Math.#floor");
 }

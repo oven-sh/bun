@@ -42,7 +42,8 @@ export const values: Record<string, [made: string, ahead: string, behind: string
 export const looks: Record<string, (builtIn: string) => string> = {
   "compared": builtIn => `if (v === ${builtIn}) console.log("same");`,
   "compared the other way round": builtIn => `if (${builtIn} === v) console.log("same");`,
-  "compared loosely": builtIn => `if (v == ${builtIn}) console.log("same");`,
+  "compared loosely": builtIn =>
+    `try { if (v == ${builtIn}) console.log("same"); } catch (error) { console.log("THROWS", error.constructor.name); }`,
   "compared for a difference": builtIn => `if (v !== ${builtIn}) console.log("other"); else console.log("same");`,
   "a case of a switch": builtIn => `switch (v) { case ${builtIn}: console.log("same"); }`,
   "compared in a condition": builtIn => `console.log(v === ${builtIn} ? "same" : "other");`,

@@ -666,7 +666,14 @@ impl<'a, 's> FileScan<'a, 's> {
                     }
                 }
                 StmtKind::Expr(_) | StmtKind::Enum(_) | StmtKind::ExportDefault(_) => {
-                    if removable.is_some_and(|it| it.statement(statement)) {
+                    let is_enum_known_whole = match hir[statement].kind {
+                        StmtKind::Enum(declaration) => {
+                            let members = self.input.known_objects(&self.known_members);
+                            members.knows_every_member(self.file, declaration)
+                        }
+                        _ => false,
+                    };
+                    if removable.is_some_and(|it| is_enum_known_whole || it.statement(statement)) {
                         self.add_statement_part(statement);
                     } else if let Some(removable) = removable {
                         self.add_export_store_part(removable, statement);

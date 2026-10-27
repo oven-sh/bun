@@ -93,11 +93,18 @@ Promise.all([() => load("./nested/inner.cjs").load("."), () => load("./nested/in
     source: `import { createRequire } from "node:module";
 import "./lib.cjs";
 import "./nested/index.cjs";
-const make = createRequire;
-const load = make(import.meta.url);
+const holder = { make: createRequire };
+const load = holder.make(import.meta.url);
 ${answerOf}
 console.log(JSON.stringify(await Promise.all([() => load("./lib.cjs"), () => load("./lib"), () => load("./nested")].map(answerOf))));`,
     prints: [refusal, refusal, refusal],
+  },
+  "create-require-under-another-name.mjs": {
+    source: `import { createRequire } from "node:module";
+const make = createRequire;
+const load = make(import.meta.url);
+console.log(JSON.stringify([load("./lib.cjs").name, load("./lib").name, load("./nested").name]));`,
+    prints: ["lib", "lib", "nested"],
   },
   "computed-import.mjs": {
     source: `import "./esm.mjs";

@@ -145,9 +145,10 @@ fn find_target(atoms: &Interner<'_>, specifier: ImportSpecifier) -> Option<Runti
 fn assert_same_answers(with_facts: &ResolvedBuiltins, without: &ResolvedBuiltins, source: &str) {
     let describe = |resolved: &ResolvedBuiltins| {
         format!(
-            "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+            "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
             resolved.exprs,
             resolved.expr_bits,
+            resolved.exprs_with_side_effects,
             resolved.symbols,
             resolved.evaluated_texts,
             resolved.module_object_mentions,
@@ -339,6 +340,19 @@ impl Case<'_, '_> {
     #[track_caller]
     fn builtin(&self, text: &str) -> Option<BuiltinId> {
         self.path(text).map(|path| path.id)
+    }
+
+    #[track_caller]
+    fn is_pure(&self, text: &str) -> bool {
+        self.resolved.of_pure_expr(self.expr(text)).is_some()
+    }
+
+    #[track_caller]
+    fn global_path(&self, text: &str) -> Option<Vec<BuiltinId>> {
+        let steps = self
+            .resolved
+            .global_path(self.hir, self.bound, self.expr(text))?;
+        Some(steps.iter().map(|step| step.id).collect())
     }
 
     #[track_caller]

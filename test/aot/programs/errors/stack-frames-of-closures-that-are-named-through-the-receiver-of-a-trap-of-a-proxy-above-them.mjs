@@ -1,4 +1,4 @@
-// A proxy stands above a closure, and its trap keeps the receiver of a read. The closure is named through what was kept, every other time. Each line: the name in the first frame of the closure. The stored output lists a closure that was not named under the name that was given last.
+// A proxy stands above a closure, and its trap keeps the receiver of a read. The closure is named through what was kept, every other time. Each line: the name in the first frame of the closure.
 const firstFrame = stack =>
   stack
     .split("\n")[1]

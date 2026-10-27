@@ -31,7 +31,7 @@ FORM = [(name, int(size)) for name, size in (word.split(":") for word in """
   methodLookupFunctions:4 methodTableDependents:12 removedFields:8 addedNames:8 classPrototypeNames:8 parsedRecordFields:8
   functionNames:3 functionNameGroups:4 functionNameRuns:8 functionRecordNumbers:1 functionRecords:4 functionRecordsByFunction:8 functionSources:3 implementedBuiltins:8 closureFunctionKinds:2 functionLengths:1
   closureCaptureCounts:1 functionsWithLargeCounts:7 closureCellNumbers:3 functionTexts:12 constructors:8 boundFunctions:16 constructEntrypoints:8
-  staticsLayout:8 staticsRuns:16 staticsOfFiles:16 staticsOfImportedFiles:4 staticsRoots:8 staticsNarrowRoots:8 staticsClearedEachCollection:8 functionVariables:8 identifiersByHash:4 identifiersOfEngineSymbols:4 keyCellIdentifiers:4 literalStrings:4
+  staticsLayout:8 staticsRuns:16 staticsOfFiles:12 staticsOfImportedFiles:4 staticsRoots:8 staticsNarrowRoots:8 staticsClearedEachCollection:8 functionVariables:8 identifiersByHash:4 identifiersOfEngineSymbols:4 keyCellIdentifiers:4 literalStrings:4
   literalStringTable:4 literalStringLimits:4 literalStringDigests:28 bigIntConstants:4 data:8 requests:4 builtinCells:4 eagerBuiltinCells:4 constantBuiltinMembers:4 globalBindings:4 entryPoints:4
   modules:40 moduleDirectories:6 moduleDisplayPaths:6 moduleRequests:3 linkRequests:2 evaluationRequests:2 groupsLoadedWithGroups:2 entryPointLinkPlan:4 linkPlanRoots:12 linkPlanStepsOfRoots:4 moduleExports:8 indirectExports:8 syntheticExports:8
   requiredNames:8 moduleFailures:8 modulesByPath:2 modulesOfUncompiledCode:4 compiledRuntimeModules:8 compiledRuntimeFunctions:12

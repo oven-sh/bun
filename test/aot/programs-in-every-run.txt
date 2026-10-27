@@ -1235,6 +1235,7 @@ enums/enums-with-reverse-keys-of-every-kind
 enums/members-of-an-enum-of-another-file-are-read-through-imports-barrels-stars-and-namespaces
 enums/members-of-an-enum-of-another-file-stand-in-every-kind-of-place
 enums/members-of-an-enum-stand-in-every-kind-of-place
+enums/members-that-are-the-lengths-of-texts
 enums/members-with-non-ascii-names-are-read-after-the-enum-object-changes
 enums/static-field-of-a-base-class-and-an-own-property-of-its-subclass-hold-numbers-past-int32
 enums/static-field-of-a-const-enum-type-holds-a-number-past-int32
@@ -1322,6 +1323,7 @@ errors/stack-frames-of-calls-of-a-function-held-in-a-variable-used-once
 errors/stack-frames-of-classes-and-members-named-while-the-program-runs
 errors/stack-frames-of-classes-called-without-new
 errors/stack-frames-of-closures-of-one-function-that-code-made-at-run-time-names-one-by-one
+errors/stack-frames-of-closures-renamed-before-their-maker-calls-them-in-a-file-with-direct-eval
 errors/stack-frames-of-closures-that-are-named-through-the-receiver-of-a-trap-of-a-proxy-above-them
 errors/stack-frames-of-closures-that-get-the-first-name-out-of-sight-between-the-throw-and-the-read-of-the-stack
 errors/stack-frames-of-commonjs-files-that-hold-a-direct-eval-or-a-with-statement

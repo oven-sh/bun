@@ -107,8 +107,6 @@ export const knownToday: Record<string, string> = {
   "enums: a member as a key [ts]":
     "each file: code bytes 212 -> 134, operations 10 -> 6, run-time operations 241 -> 240; bundled: code bytes 212 -> 134, operations 10 -> 6, run-time operations 241 -> 240",
   "enums: an enum handed out whole [ts, two files]": "bundled: operations 15 -> 13",
-  "enums: members are computed [ts, two files]":
-    "each file: run-time operations 252 -> 244; bundled: code bytes 497 -> 149, operations 31 -> 7, run-time operations 252 -> 238",
   "enums: members are computed [ts]":
     "each file: code bytes 447 -> 375, run-time operations 251 -> 244; bundled: code bytes 447 -> 149, operations 24 -> 7, run-time operations 251 -> 238",
   "enums: the name of a member [ts, two files]": "bundled: code bytes 268 -> 240, operations 16 -> 14",

@@ -1,6 +1,7 @@
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use bun_core::strings;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, Parent, SymbolId};
 use bun_sema::check::aot::is_member_visited_before;
@@ -34,7 +35,14 @@ pub(crate) struct MemberRead {
     pub validity: Validity,
 }
 
-type MemberValues = Rc<[Option<Constant>]>;
+#[derive(Copy, Clone)]
+struct MemberValue {
+    value: Constant,
+    // No transpiler works it out for an executable, so a read in the file of the enum reads the object: it throws before the enum has run.
+    is_known_to_build_alone: bool,
+}
+
+type MemberValues = Rc<[Option<MemberValue>]>;
 
 // Which members an initializer may name for its value to be known.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -49,8 +57,10 @@ enum Named {
 struct Initializers<'a> {
     file: FileId,
     declaration: EnumId,
-    earlier: &'a [Option<Constant>],
+    earlier: &'a [Option<MemberValue>],
     named: Named,
+    // Whether the initializer that is evaluated rests on a value that the build alone knows.
+    is_known_to_build_alone: &'a Cell<bool>,
 }
 
 #[derive(Default)]
@@ -227,23 +237,28 @@ impl<'a, 's> KnownObjects<'a, 's> {
         let (enumeration, declaration, member) = self.find_named_member(file, access)?;
         let hir = self.files.hir(file);
         let declared_in = self.files.hir(enumeration.file);
+        let values = self.values_of(enumeration.file, declaration, named);
+        let index = (member.0 - declared_in[declaration].members.start) as usize;
+        let MemberValue {
+            value,
+            is_known_to_build_alone,
+        } = values[index]?;
+        let is_in_place_of_reads = !is_known_to_build_alone;
         let validity = if enumeration.file == file {
-            if !is_member_visited_before(hir, member, access) {
+            if !is_in_place_of_reads || !is_member_visited_before(hir, member, access) {
                 return None;
             }
             Validity::Always
-        } else if declared_in[declaration].flags.contains(Flags::CONST) {
+        } else if is_in_place_of_reads && declared_in[declaration].flags.contains(Flags::CONST) {
             Validity::Always
         } else if !self.graph.half(ModuleRef::File(file)) {
             Validity::WhileObjectIsNotHandedOn
         } else {
             return None;
         };
-        let values = self.values_of(enumeration.file, declaration, named);
-        let index = (member.0 - declared_in[declaration].members.start) as usize;
         Some(MemberRead {
             object: enumeration,
-            value: values[index]?,
+            value,
             validity,
         })
     }
@@ -425,6 +440,12 @@ impl<'a, 's> KnownObjects<'a, 's> {
         is_plain_read(hir, bound, access).then_some((object, value))
     }
 
+    /// To run such a declaration is to make the object and nothing else.
+    pub(crate) fn knows_every_member(&self, file: FileId, declaration: EnumId) -> bool {
+        let values = self.values_of(file, declaration, Named::OwnAndOneStepAway);
+        values.iter().all(Option::is_some)
+    }
+
     // What is known of a declaration hangs on the declaration alone, never on who asks first: a build asks in more than one order.
     fn values_of(&self, file: FileId, declaration: EnumId, named: Named) -> MemberValues {
         let key = (file, declaration, named);
@@ -442,22 +463,25 @@ impl<'a, 's> KnownObjects<'a, 's> {
         file: FileId,
         declaration: EnumId,
         named: Named,
-    ) -> Vec<Option<Constant>> {
+    ) -> Vec<Option<MemberValue>> {
         let hir = self.files.hir(file);
         let members = hir[declaration].members;
-        let mut values: Vec<Option<Constant>> = Vec::with_capacity(members.len());
+        let mut values: Vec<Option<MemberValue>> = Vec::with_capacity(members.len());
         // A member without an initializer is one more than the member before it, if that is a number.
         let mut counted = Some(0.0);
+        let is_known_to_build_alone = Cell::new(false);
         for member in members.iter() {
             let node = &hir[member];
             let value = if node.computed_name.is_some() {
                 None
             } else if let Some(initializer) = node.init.some() {
+                is_known_to_build_alone.set(false);
                 let initializers = Initializers {
                     file,
                     declaration,
                     earlier: &values,
                     named,
+                    is_known_to_build_alone: &is_known_to_build_alone,
                 };
                 self.evaluate(initializers, initializer)
             } else {
@@ -467,7 +491,10 @@ impl<'a, 's> KnownObjects<'a, 's> {
                 Some(Constant::Number(number)) => Some(number + 1.0),
                 _ => None,
             };
-            values.push(value);
+            values.push(value.map(|value| MemberValue {
+                value,
+                is_known_to_build_alone: is_known_to_build_alone.get(),
+            }));
         }
         values
     }
@@ -516,11 +543,16 @@ impl<'a, 's> KnownObjects<'a, 's> {
             declaration,
             earlier,
             named,
+            is_known_to_build_alone,
         } = initializers;
         let (hir, bound) = (self.files.hir(file), self.files.bound(file));
         let find_earlier = |member: EnumMemberId| {
             let index = (member.0 - hir[declaration].members.start) as usize;
-            earlier.get(index).copied().flatten()
+            let earlier = earlier.get(index).copied().flatten()?;
+            if earlier.is_known_to_build_alone {
+                is_known_to_build_alone.set(true);
+            }
+            Some(earlier.value)
         };
         match hir[expression].kind {
             ExprKind::Unary { op, operand }
@@ -540,6 +572,15 @@ impl<'a, 's> KnownObjects<'a, 's> {
                     return None;
                 }
                 find_earlier(member)
+            }
+            ExprKind::Dot { .. } | ExprKind::Index { .. }
+                if let Some((text, MemberKey::Name(name))) = hir.member_key(expression)
+                    && name == known::length
+                    && let Some(Constant::String(text)) = self.evaluate(initializers, text) =>
+            {
+                is_known_to_build_alone.set(true);
+                let length = strings::wtf8_len_utf16(self.files.atoms.bytes(text));
+                Some(Constant::Number(f64::from(length)))
             }
             ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 match self.find_named_member(file, expression)? {

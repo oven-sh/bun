@@ -277,3 +277,56 @@ fn function_of_the_file_of_an_enum_that_nobody_calls_hands_nothing_on() {
     let files = [("main.ts", USES_READER), ("color.ts", color.as_str())];
     assert!(!hands_on_enum(&files));
 }
+
+// Whether the executable makes the object of the first enum of a file.
+fn makes_object_of_enum(files: &[(&str, &str)], path: &str) -> bool {
+    with_left_out_declarations(files, |files, left_out| {
+        let file = find_file(files, path);
+        !left_out.is_statement_left_out(file, files.hir(file)[EnumId(0)].stmt)
+    })
+}
+
+const LENGTHS: &str = "export enum Size { Length = 'text'.length, More = Length + 1, InBrackets = ('a' + 'b')['length'] }";
+
+#[test]
+fn member_that_is_the_length_of_a_text_is_known_to_another_file() {
+    for main in [
+        "import { Size } from './size'; console.log(Size.Length, Size.More, Size['InBrackets']);",
+        "import * as all from './size'; console.log(all.Size.Length);",
+        "import './size';",
+    ] {
+        let files = [("main.ts", main), ("size.ts", LENGTHS)];
+        assert!(!makes_object_of_enum(&files, "/project/size.ts"), "{main}");
+    }
+}
+
+// An executable reads the object there: the read throws before the enum has run, and finds what the program has stored.
+#[test]
+fn member_that_is_the_length_of_a_text_is_read_from_the_object_in_the_file_of_the_enum() {
+    for read in [
+        "console.log(Size.Length);",
+        "console.log(Size.More);",
+        "export const read = () => Size.InBrackets; console.log(read());",
+    ] {
+        let main = format!("{LENGTHS} {read}");
+        let files = [("main.ts", main.as_str())];
+        assert!(makes_object_of_enum(&files, "/project/main.ts"), "{read}");
+    }
+}
+
+#[test]
+fn enum_with_a_member_that_the_build_cannot_work_out_is_made() {
+    for members in [
+        "Length = process.argv.length",
+        "Length = 'text'.length, Other = process.argv.length",
+        "Length = ('text' as any).size",
+        "Length = (5 as any).length",
+    ] {
+        let size = format!("export enum Size {{ {members} }}");
+        let files = [("main.ts", "import './size';"), ("size.ts", size.as_str())];
+        assert!(
+            makes_object_of_enum(&files, "/project/size.ts"),
+            "{members}"
+        );
+    }
+}

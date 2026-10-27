@@ -202,8 +202,9 @@ group("modules that are named at run time", () => {
     ["import() of a computed name", `const name: string = process.argv[2]; import(name);`],
     ["import() of a computed path", `const name: string = process.argv[2]; import("./" + name);`],
     ["require of a computed name", `console.log(require(process.argv[2]));`],
-    ["node:module out of process.getBuiltinModule", `console.log(process.getBuiltinModule("node:module").createRequire((import.meta as any).url)("late-package"));`],
-    ["node:module out of process.getBuiltinModule in a function that is called", `function load() { return process.getBuiltinModule("node:module").createRequire((import.meta as any).url)("late-package"); }\nconsole.log(load());`],
+    ["node:module out of process.getBuiltinModule", `console.log(process.getBuiltinModule("node:module").createRequire((import.meta as any).url)(process.argv[2]));`],
+    ["node:module out of process.getBuiltinModule in a function that is called", `function load() { return process.getBuiltinModule("node:module").createRequire((import.meta as any).url)(process.argv[2]); }\nconsole.log(load());`],
+    ["node:module out of process.getBuiltinModule, for another file", `console.log(process.getBuiltinModule("node:module").createRequire(process.argv[2])("late-package"));`],
     ["process.getBuiltinModule of a computed name", `console.log(process.getBuiltinModule(process.argv[2]));`],
   ])("the report is open with %s", async (_, text) => {
     expect(completeness(await of(text))).toEqual(open(computedModuleName));
@@ -214,11 +215,12 @@ group("modules that are named at run time", () => {
     ["require.cache", `console.log(require.cache);`],
     ["process.mainModule", `console.log(process.mainModule);`],
     ["the names of the members of process", `console.log(Object.keys(process));`],
+    ["a constant name for what createRequire out of process.getBuiltinModule made for the file", `console.log(process.getBuiltinModule("node:module").createRequire((import.meta as any).url)("late-package"));`],
   ])("nothing is loaded, so the report stays closed with %s", async (_, text) => {
     expect(completeness(await of(text))).toEqual(closed);
   });
 
-  const asks = `process.getBuiltinModule("node:module").createRequire((import.meta as any).url)("late-package")`;
+  const asks = `process.getBuiltinModule("node:module").createRequire((import.meta as any).url)(process.argv[2])`;
 
   test.each([
     ["a function that nothing calls", { "main.ts": declared + `function never() { return ${asks}; }\nconsole.log(1);` }],

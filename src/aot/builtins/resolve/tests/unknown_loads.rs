@@ -21,6 +21,9 @@ const KNOWN_LOADS: &[&str] = &[
     "import { createRequire } from 'node:module'; createRequire(import.meta.url)(name);",
     "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); load('./a.json'); load.resolve(name); typeof load;",
     "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url), same = load; same('./a.json');",
+    "import { createRequire } from 'node:module'; const make = createRequire; make(import.meta.url)(name);",
+    "process.getBuiltinModule('node:module').createRequire(import.meta.url)(name);",
+    "const { createRequire } = process.getBuiltinModule('node:module'); createRequire(import.meta.url)('./a.json');",
 ];
 
 const KNOWN_LOADS_OF_SCRIPTS: &[&str] = &[
@@ -35,6 +38,8 @@ const KNOWN_LOADS_OF_SCRIPTS: &[&str] = &[
     "require('node:vm');",
     "require('node:module');",
     "const { createRequire } = require('node:module'); createRequire(__filename)('./a.json');",
+    "const createRequire = require('node:module').createRequire; createRequire(__filename)('./a.json');",
+    "module.require('node:module').createRequire(__filename)(name);",
 ];
 
 const UNKNOWN_LOADS: &[&str] = &[
@@ -61,7 +66,6 @@ const UNKNOWN_LOADS: &[&str] = &[
     "import { createRequire } from 'node:module'; f(createRequire);",
     "import { createRequire } from 'node:module'; export { createRequire };",
     "export { createRequire } from 'node:module';",
-    "import { createRequire } from 'node:module'; const make = createRequire; make(import.meta.url)(name);",
     "import Module from 'node:module'; Module._load(name);",
     "import Module from 'node:module'; new Module(id).require(name);",
     "import Module from 'node:module'; f(Module);",

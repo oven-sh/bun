@@ -141,6 +141,26 @@ describe("cmd in the options object", () => {
     ])("still rejects %s", (_, args, message) => {
       expect(outcome(() => fn(...args))).toEqual({ ...notAnArray, message });
     });
+
+    const revoked = { name: "TypeError", code: undefined, message: expect.stringContaining("revoked") };
+
+    test("throws for a Proxy of an array that is revoked before the call", () => {
+      const { proxy, revoke } = Proxy.revocable([bunExe(), "--version"], {});
+      revoke();
+      expect(outcome(() => fn({ cmd: proxy }))).toEqual(revoked);
+    });
+
+    test("throws for a Proxy of an array that a later option getter revokes", () => {
+      const { proxy, revoke } = Proxy.revocable([bunExe(), "--version"], {});
+      const options = {
+        cmd: proxy,
+        get argv0() {
+          revoke();
+          return undefined;
+        },
+      };
+      expect(outcome(() => fn(options))).toEqual(revoked);
+    });
   });
 
   describe.each<[string, () => string[]]>([

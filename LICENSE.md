@@ -28,7 +28,7 @@ Bun statically links these libraries:
 | [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT |
 | [`lsquic`](https://github.com/litespeedtech/lsquic) | MIT (portions derived from [Chromium proto-quic](https://github.com/litespeedtech/lsquic/blob/master/LICENSE.chrome), BSD 3-Clause) |
 | [`mimalloc`](https://github.com/microsoft/mimalloc) | MIT |
-| [`picohttp`](https://github.com/h2o/picohttpparser) | dual-licensed under the Perl License or the MIT License |
+| [`picohttp`](https://github.com/h2o/picohttpparser) (not linked: `src/http1` is derived from it) | dual-licensed under the Perl License or the MIT License |
 | [`zstd`](https://github.com/facebook/zstd) | dual-licensed under the BSD License or GPLv2 license |
 | [`simdutf`](https://github.com/simdutf/simdutf) | Apache 2.0 |
 | [`tinycc`](https://github.com/tinycc/tinycc) | LGPL v2.1 |

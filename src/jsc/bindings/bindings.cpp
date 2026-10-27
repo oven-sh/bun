@@ -2555,8 +2555,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 
         for (size_t j = 0; j < end; j++) {
             PicoHTTPHeader header = pico_headers.ptr[j];
-            // picohttpparser reports obs-fold continuation lines with an empty
-            // name; skip those. Empty *values* must flow through so duplicate
+            // Skip empty names. Empty *values* must flow through so duplicate
             // headers combine per the Fetch spec ("a, , c") and a lone empty
             // header is still visible to JS, matching the uWS/H3 paths.
             if (header.name.len == 0)

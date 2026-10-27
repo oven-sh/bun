@@ -2471,10 +2471,9 @@ impl<'p, 's> Checker<'p, 's> {
         self.place_in_check_order(file, hir.parent(declaration), hir[tp].start, true)
     }
 
-    /// Returns a sort key for when `checkSourceFile` reaches `node`, at `pos` in `file`. It visits the files in
-    /// program order, a file's statements in source order, and then the file's `links.deferredNodes` in
-    /// `checkNodeDeferred` order. A deferred node defers its contents only when it's checked itself, so they come
-    /// after everything deferred until then. `is_deferred` is true if `node` is checked by `checkDeferredNodes`
+    /// Returns a sort key for when `checkSourceFile` reaches `node`, at `pos` in `file`: the files in program order,
+    /// a file's statements in source order, then its `links.deferredNodes` in `checkNodeDeferred` order. A deferred
+    /// node defers its contents when it's checked itself. `is_deferred` is true if `node` is checked deferred
     /// although it isn't a deferred expression.
     fn place_in_check_order(
         &self,
@@ -4387,24 +4386,15 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`: the entry at `to` of the stack was created no
-    /// earlier than the entry at `from`. tsgo numbers types in the order it creates them. Here the same type has one
-    /// id however it was reached, so the order is derived from how each entry was created:
-    ///
-    /// 1. An entry that is the type of a type node in the declaration it was reached through (a member of a class,
-    ///    an interface or a type literal, a parameter or the result of a function type) is created when
-    ///    `checkSourceFile` reaches that declaration. If the declaration is in a file that is checked, and comes
-    ///    before the source element being checked in check order, two such entries are in the order of their
-    ///    declarations.
-    /// 2. The two types the comparison started with (`tops`, or the first entries of the stacks) existed before it,
-    ///    and so did every type their keys mention, directly or through the keys of the types they mention: a type
-    ///    is created after the types its key mentions. An entry that existed before the comparison, by 1 or 2, is
-    ///    older than one that the comparison created on demand.
-    /// 3. Two entries that existed before the comparison are ordered by height, then by push order: a type is
-    ///    taller than the types it's built from.
-    /// 4. Of two entries created on demand, one whose key mentions the other is the newer one. Otherwise the
-    ///    comparison created the one it reached first: the one that was pushed first is the older one. Push numbers
-    ///    grow with every level, and a level's target has a lower one than its source. No two entries share one, so
-    ///    this is a total order.
+    /// earlier than the entry at `from`. tsgo numbers types as it creates them. Here a type has one id however it's
+    /// reached, so the order follows from how each entry was created:
+    /// 1. The type of a type node in the declaration the entry was reached through is created when `checkSourceFile`
+    ///    reaches that declaration (`written_at`). Two such entries are in the order of their declarations.
+    /// 2. `tops` and what their keys mention existed before the comparison. They are older than an entry the
+    ///    comparison created on demand.
+    /// 3. Two entries that existed before are in height order, then push order: a type is taller than its parts.
+    /// 4. Of two on-demand entries, the one whose key mentions the other is newer. Otherwise the one pushed first
+    ///    is older. Every entry has its own push number, so this is a total order.
     fn is_at_least_as_new(
         &self,
         to: usize,
@@ -4460,12 +4450,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Rule 1 of `is_at_least_as_new` for the entry at `at`: the place in check order of the declaration that the
-    /// entry is the type of a type node in, if `checkSourceFile` reaches that declaration before the source element
-    /// being checked. The declaration is the entry at the level before on either stack: a parameter is compared
-    /// with the sides swapped, so the declaration can be on the other stack. A member of a union is compared after
-    /// the union, and a union is what an optional member or one declared as a union resolves to, so the union's
-    /// parent is the member's too.
+    /// Rule 1 of `is_at_least_as_new`: the place in check order of the declaration the entry at `at` is the type of a
+    /// type node in, if `checkSourceFile` reaches it before the source element being checked. The declaration is the
+    /// entry at the level before, on either stack because parameters are compared with the sides swapped. A union
+    /// on the stack between them is what an optional member or a member declared as a union resolves to.
     fn written_at(
         &self,
         at: usize,
@@ -4501,9 +4489,9 @@ impl<'p, 's> Checker<'p, 's> {
         (at < now).then_some(at)
     }
 
-    /// The place in check order of the declaration of `parent`, if `parent` is a class, an interface, a type
-    /// literal or a function type that is not instantiated, declared in a file that reports semantic errors, and
-    /// one of `written` is the type of a member, a parameter or the result declared in it.
+    /// The place in check order of `parent`'s declaration, if `parent` is an uninstantiated class, interface, type
+    /// literal or function type in a checked file, and one of `written` is the type of a member, a parameter or the
+    /// result declared in it.
     fn place_of_declaration_of(
         &self,
         parent: TypeId,
@@ -4586,8 +4574,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The place in check order of the source element being checked. `checkDeferredNodes` checks a type
-    /// parameter of a class, an interface or a type alias, and an assertion, after the statements of the file.
+    /// The place in check order of the source element being checked. A type parameter of a class, an interface or a
+    /// type alias, and an assertion, are checked by `checkDeferredNodes`.
     fn place_of_current(&self, current: CurrentNode) -> (u32, u32, u32) {
         match current {
             CurrentNode::Expr(file, e) => {

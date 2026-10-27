@@ -3875,10 +3875,9 @@ impl<'p, 's> Types<'p, 's> {
         order.then_with(|| a.0.cmp(&b.0))
     }
 
-    /// True if the interning key of one of `wholes` mentions `part`, directly or through the keys of the types it
-    /// mentions, which includes what a mapper, a signature or a component list in a key references. A type is created
-    /// after the types its key mentions, so `part` is then older than that whole. Only a type taller than `part` can
-    /// mention it, so no other key is followed.
+    /// True if the key of one of `wholes` mentions `part`, directly or through the keys of the types it mentions (a
+    /// mapper, a signature or a component list in a key included). A type is created after the types its key
+    /// mentions. Only a type taller than `part` can mention it, so no other key is followed.
     pub fn key_mentions(&self, wholes: &[TypeId], part: TypeId) -> bool {
         let height = self.rank(part).height;
         let mut to_visit: SmallVec<[TypeId; 16]> = SmallVec::new();

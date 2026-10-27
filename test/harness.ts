@@ -13,7 +13,7 @@ import { execSync } from "child_process";
 import { readdir, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
-import { dirname, isAbsolute, join, sep } from "path";
+import { dirname, isAbsolute, join, relative, sep } from "path";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -1112,132 +1112,123 @@ export function ospath(path: string) {
 }
 
 /**
- * Iterates through each tree in the lockfile, checking for each package
- * on disk. Also requires each package dependency. Not tested well for
- * non-npm packages (links, folders, git dependencies, etc.)
+ * Checks `node_modules` against a lockfile from `parseLockfile()`, for a project that `bun install` installed in
+ * full (no `--production`, `--omit` or `--filter`), with either linker.
+ *
+ * Follows the dependencies from the root package as Node does: a dependency is the nearest `node_modules/<name>`
+ * at or above the folder of its dependent. That folder has to hold the package the lockfile resolves it to: an npm
+ * package by name and version, a workspace package by its folder. Any other package only has to be there.
+ *
+ * An install does not follow the lockfile everywhere. A package for another os or cpu and a bundled dependency are
+ * not compared, an optional dependency can be missing, and a peer dependency can load another copy.
  */
-export async function toMatchNodeModulesAt(lockfile: any, root: string) {
-  function shouldSkip(pkg: any, dep: any): boolean {
-    // Band-aid as toMatchNodeModulesAt will sometimes ask this function
-    // if a package depends on itself
-    if (pkg?.name === dep?.name) return true;
-    return (
-      !pkg ||
-      !pkg.resolution ||
-      dep.behavior.optional ||
-      (dep.behavior.dev && pkg.id !== 0) ||
-      (pkg.arch && pkg.arch !== process.arch)
-    );
+export function toMatchNodeModulesAt(lockfile: any, root: string) {
+  root = fs.realpathSync(root);
+  // Where the isolated linker keeps the packages. The hoisted linker does not make this folder.
+  const store = join(root, "node_modules", ".bun");
+  const isolated = fs.existsSync(store);
+  const problems: string[] = [];
+  const where = (path: string) => relative(root, path).replaceAll("\\", "/") || ".";
+  const memberFolder = (pkg: any) => join(root, pkg.resolution.value.slice("workspace:".length));
+  const runsHere = (pkg: any) =>
+    (!pkg.os || pkg.os.includes(process.platform)) && (!pkg.arch || pkg.arch.includes(process.arch));
+
+  // Stops at `root`, so that a `node_modules` above the project never satisfies a dependency. Stops at `store` too:
+  // a package in it has a link to each of its dependencies next to it, and `store/node_modules` only serves the
+  // imports that a package does not declare.
+  function lookup(name: string, from: string): string | undefined {
+    for (let dir = from; dir !== store; dir = dirname(dir)) {
+      const folder = join(dir, "node_modules", name);
+      if (basename(dir) !== "node_modules" && fs.existsSync(folder)) return fs.realpathSync(folder);
+      if (dir === root || dir === dirname(dir)) return;
+    }
   }
-  for (const { path, dependencies } of lockfile.trees) {
-    for (const { package_id, id } of Object.values(dependencies) as any[]) {
-      const treeDep = lockfile.dependencies[id];
-      const treePkg = lockfile.packages[package_id];
-      if (shouldSkip(treePkg, treeDep)) continue;
 
-      const treeDepPath = join(root, path, treeDep.name);
-
-      switch (treePkg.resolution.tag) {
-        case "npm":
-          const onDisk = await Bun.file(join(treeDepPath, "package.json")).json();
-          if (!Bun.deepMatch({ name: treePkg.name, version: treePkg.resolution.value }, onDisk)) {
-            return {
-              pass: false,
-              message: () => `
-Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: treePkg.name, version: treePkg.resolution.value })}
-Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
-            };
-          }
-
-          // Ok, we've confirmed the package exists and has the correct version. Now go through
-          // each of its transitive dependencies and confirm the same.
-          for (const depId of treePkg.dependencies) {
-            const dep = lockfile.dependencies[depId];
-            const pkg = lockfile.packages[dep.package_id];
-            if (shouldSkip(pkg, dep)) continue;
-
-            try {
-              const resolved = await Bun.file(Bun.resolveSync(join(dep.name, "package.json"), treeDepPath)).json();
-              switch (pkg.resolution.tag) {
-                case "npm":
-                  const name = dep.is_alias ? dep.npm.name : dep.name;
-                  if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
-                    if (dep.literal === "*") {
-                      // allow any version, just needs to be resolvable
-                      continue;
-                    }
-                    if (dep.behavior.peer && dep.npm) {
-                      // allow peer dependencies to not match exactly, but still satisfy
-                      if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
-                    }
-                    return {
-                      pass: false,
-                      message: () =>
-                        `Expected ${dep.name} to have version ${pkg.resolution.value} in ${treeDepPath}, but got ${resolved.version}`,
-                    };
-                  }
-                  break;
-              }
-            } catch (e) {
-              return {
-                pass: false,
-                message: () => `Expected ${dep.name} to be resolvable in ${treeDepPath}`,
-              };
-            }
-          }
-          break;
-
-        default:
-          if (!fs.existsSync(treeDepPath)) {
-            return {
-              pass: false,
-              message: () => `Expected ${treePkg.resolution.tag} "${treeDepPath}" to exist`,
-            };
-          }
-
-          for (const depId of treePkg.dependencies) {
-            const dep = lockfile.dependencies[depId];
-            const pkg = lockfile.packages[dep.package_id];
-            if (shouldSkip(pkg, dep)) continue;
-            try {
-              const resolved = await Bun.file(Bun.resolveSync(join(dep.name, "package.json"), treeDepPath)).json();
-              switch (pkg.resolution.tag) {
-                case "npm":
-                  const name = dep.is_alias ? dep.npm.name : dep.name;
-                  if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
-                    if (dep.literal === "*") {
-                      // allow any version, just needs to be resolvable
-                      continue;
-                    }
-                    // workspaces don't need a version
-                    if (treePkg.resolution.tag === "workspace" && !resolved.version) continue;
-                    if (dep.behavior.peer && dep.npm) {
-                      // allow peer dependencies to not match exactly, but still satisfy
-                      if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
-                    }
-                    return {
-                      pass: false,
-                      message: () =>
-                        `Expected ${dep.name} to have version ${pkg.resolution.value} in ${treeDepPath}, but got ${resolved.version}`,
-                    };
-                  }
-                  break;
-              }
-            } catch (e) {
-              return {
-                pass: false,
-                message: () => `Expected ${dep.name} to be resolvable in ${treeDepPath}`,
-              };
-            }
-          }
-
-          break;
+  /** Returns what `folder` is instead, or undefined if it is the place of `pkg`. */
+  function mismatch(pkg: any, folder: string): string | undefined {
+    switch (pkg.resolution.tag) {
+      case "npm": {
+        let manifest: { name?: unknown; version?: unknown };
+        try {
+          manifest = JSON.parse(fs.readFileSync(join(folder, "package.json"), "utf8").replace(/^\uFEFF/, ""));
+        } catch {
+          return "has no package.json that can be read";
+        }
+        if (manifest.name === pkg.name && manifest.version === pkg.resolution.value) return;
+        return `is ${manifest.name}@${manifest.version}`;
       }
+      case "workspace": {
+        const member = memberFolder(pkg);
+        if (fs.existsSync(member) && fs.realpathSync(member) === folder) return;
+        return `is not ${where(member)}`;
+      }
+      case "root":
+        if (folder === root) return;
+        return "is not the root package";
+    }
+  }
+
+  function report(folder: string, dep: any, target: any, what: string) {
+    const dependent = folder === root ? "the root package" : where(folder);
+    const wanted = dep.behavior.workspace
+      ? `has the workspace package ${dep.name}`
+      : `depends on ${dep.name}@${dep.literal}`;
+    const locked = target ? ` (lockfile: ${target.name}@${target.resolution.value})` : "";
+    problems.push(`${dependent} ${wanted}${locked}, but ${what}`);
+  }
+
+  // Each folder that is known to hold a package, with the id of that package.
+  const visited = new Map<string, number>([[root, 0]]);
+  const queue: [pkg: any, folder: string][] = [[lockfile.packages[0], root]];
+  function visit(pkg: any, folder: string) {
+    if (visited.has(folder)) return;
+    visited.set(folder, pkg.id);
+    queue.push([pkg, folder]);
+  }
+
+  for (const [pkg, folder] of queue) {
+    for (const id of pkg.dependencies) {
+      const dep = lockfile.dependencies[id];
+      const target = lockfile.packages[dep.package_id];
+      if (dep.behavior.bundled) continue;
+      if (!target) {
+        // Only an optional or a peer dependency can be without a package.
+        const required = !dep.behavior.optional && !dep.behavior.peer;
+        if (required) report(folder, dep, target, "the lockfile has no package for it");
+        continue;
+      }
+      if (!runsHere(target)) continue;
+
+      // The root lists every workspace package, and the dependencies of one are followed from its own folder. Only
+      // the hoisted linker links it into the root's `node_modules`, unless another dependency of the root has its name.
+      if (dep.behavior.workspace && target.resolution.tag === "workspace") {
+        const member = memberFolder(target);
+        if (!fs.existsSync(member)) {
+          report(folder, dep, target, `there is no ${where(member)}`);
+          continue;
+        }
+        visit(target, fs.realpathSync(member));
+        if (isolated || lockfile.trees[0]?.dependencies[dep.name]?.id !== id) continue;
+      }
+
+      const found = lookup(dep.name, folder);
+      if (found === undefined) {
+        if (!dep.behavior.optional) report(folder, dep, target, `there is no node_modules/${dep.name}`);
+        continue;
+      }
+      if (visited.get(found) === target.id) continue;
+      const wrong = mismatch(target, found);
+      if (wrong === undefined) visit(target, found);
+      else if (!dep.behavior.peer) report(folder, dep, target, `${where(found)} ${wrong}`);
     }
   }
 
   return {
-    pass: true,
+    pass: problems.length === 0,
+    message: () =>
+      problems.length === 0
+        ? `Expected node_modules in ${root} not to match the lockfile`
+        : `node_modules in ${root} does not match the lockfile:\n  ${problems.join("\n  ")}`,
   };
 }
 
@@ -1886,7 +1877,7 @@ interface BunHarnessTestMatchers {
   toSpawn(expectedStdout?: string): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
   toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
-  toMatchNodeModulesAt(root: string): Promise<void>;
+  toMatchNodeModulesAt(root: string): void;
   toHaveBins(expectedBins: string[]): void;
   toBeValidBin(expectedLinkPath: string): void;
   toBeWorkspaceLink(expectedLinkPath: string): void;

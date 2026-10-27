@@ -23,7 +23,7 @@ const inputs = [
 describe("inspect.table", () => {
   inputs.forEach(input => {
     test(Bun.inspect(input, { colors: false, sorted: true, compact: true }), () => {
-      expect(inspect.table(input, { colors: false, sorted: true })).toMatchSnapshot();
+      expect(inspect.table(input, { colors: false, sorted: true } as Bun.BunInspectOptions)).toMatchSnapshot();
     });
   });
 
@@ -47,6 +47,15 @@ describe("inspect.table", () => {
     expect(inspect.table(function () {})).not.toBeEmpty();
   });
 
+  it("takes a subclass of Array, and Array.prototype, as the list of properties", () => {
+    const rows = [{ a: 1, b: 2 }];
+    class Properties extends Array<string> {}
+    expect(inspect.table(rows, Properties.from(["a"]), { colors: false })).toBe(
+      inspect.table(rows, ["a"], { colors: false }),
+    );
+    expect(inspect.table(rows, Array.prototype, { colors: false })).toBe(inspect.table(rows, [], { colors: false }));
+  });
+
   it("a depth option above the cell depth cap prints cells like the default", () => {
     const rows = [{ a: [1, 2], m: new Map([[1, 2]]), s: new Set([1]), o: { x: 1 } }];
     const byDefault = inspect.table(rows);
@@ -54,8 +63,8 @@ describe("inspect.table", () => {
     expect(byDefault).toContain("Map(1) { 1: 2 }");
     expect(byDefault).toContain("Set(1) { 1 }");
     expect(byDefault).toContain("{ x: 1 }");
-    expect(inspect.table(rows, { depth: 10 })).toBe(byDefault);
-    expect(inspect.table(rows, { depth: Infinity })).toBe(byDefault);
+    expect(inspect.table(rows, { depth: 10 } as Bun.BunInspectOptions)).toBe(byDefault);
+    expect(inspect.table(rows, { depth: Infinity } as Bun.BunInspectOptions)).toBe(byDefault);
   });
 
   it("a container nested in a cell prints as a marker", () => {
@@ -70,12 +79,12 @@ describe("inspect.table", () => {
 describe("inspect.table (ansi)", () => {
   inputs.forEach(input => {
     test(Bun.inspect(input, { colors: false, sorted: true, compact: true }), () => {
-      expect(inspect.table(input, { colors: true, sorted: true })).toMatchSnapshot();
+      expect(inspect.table(input, { colors: true, sorted: true } as Bun.BunInspectOptions)).toMatchSnapshot();
     });
   });
 });
 
-const withProperties = [
+const withProperties: [object, string[]][] = [
   [{ a: 1, b: 2 }, ["b"]],
   [{ a: 1, b: 2 }, ["a"]],
 ];
@@ -83,7 +92,9 @@ const withProperties = [
 describe("inspect.table (with properties)", () => {
   withProperties.forEach(([input, properties]) => {
     test(Bun.inspect(input, { colors: false, sorted: true, compact: true }), () => {
-      expect(inspect.table(input, properties, { colors: false, sorted: true })).toMatchSnapshot();
+      expect(
+        inspect.table(input, properties, { colors: false, sorted: true } as Bun.BunInspectOptions),
+      ).toMatchSnapshot();
     });
   });
 });
@@ -91,7 +102,9 @@ describe("inspect.table (with properties)", () => {
 describe("inspect.table (with properties and colors)", () => {
   withProperties.forEach(([input, properties]) => {
     test(Bun.inspect(input, { colors: false, sorted: true, compact: true }), () => {
-      expect(inspect.table(input, properties, { colors: true, sorted: true })).toMatchSnapshot();
+      expect(
+        inspect.table(input, properties, { colors: true, sorted: true } as Bun.BunInspectOptions),
+      ).toMatchSnapshot();
     });
   });
 });
@@ -99,7 +112,7 @@ describe("inspect.table (with properties and colors)", () => {
 describe("inspect.table (with colors in 2nd position)", () => {
   withProperties.forEach(([input, properties]) => {
     test(Bun.inspect(input, { colors: false, sorted: true, compact: true }), () => {
-      expect(inspect.table(input, { colors: true, sorted: true })).toMatchSnapshot();
+      expect(inspect.table(input, { colors: true, sorted: true } as Bun.BunInspectOptions)).toMatchSnapshot();
     });
   });
 });

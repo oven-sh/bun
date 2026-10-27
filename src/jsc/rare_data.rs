@@ -3,9 +3,10 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::JSGlobalObject;
+use crate::bindgen::JsHeap;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
 use bun_core::strings;
@@ -213,6 +214,8 @@ pub struct RareData {
     // TODO: make this per JSGlobalObject instead of global
     // This does not handle ShadowRealm correctly!
     pub(crate) cleanup_hooks: Vec<CleanupHook>,
+    /// Joins `cleanup_hooks` once `VirtualMachine::teardown` has everything back from other threads.
+    pub(crate) cleanup_hooks_after_teardown_wait: Vec<CleanupHook>,
 
     pub(crate) file_polls: Option<Box<FilePollStore>>,
 
@@ -229,7 +232,7 @@ pub struct RareData {
     /// CTX. Cached separately so the hot `tls:true` / `wss://` path skips even the
     /// SHA-256 + map lookup. Ref owned here. Lazy-init body lives in
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
-    /// Held for the VM's lifetime so the weak-cache entry never tombstones.
+    /// Held until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
     pub default_client_ssl_ctx: Option<boring::OwnedSslCtx>,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
@@ -293,6 +296,7 @@ impl Default for RareData {
             entropy_cache: None,
             hot_map: None,
             cleanup_hooks: Vec::new(),
+            cleanup_hooks_after_teardown_wait: Vec::new(),
             file_polls: None,
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
@@ -820,6 +824,8 @@ impl RareData {
         owned.extend_from_slice(ciphers);
         owned.push(0);
         self.tls_default_ciphers = Some(owned.into_boxed_slice());
+        // Built from the previous list. Open connections hold their own reference.
+        self.default_client_ssl_ctx = None;
     }
 
     pub fn push_cleanup_hook(
@@ -832,11 +838,26 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
+    pub fn push_cleanup_hook_after_teardown_wait(
+        &mut self,
+        global_this: &JSGlobalObject,
+        ctx: *mut c_void,
+        func: CleanupHookFunction,
+    ) {
+        self.cleanup_hooks_after_teardown_wait
+            .push(CleanupHook::from(global_this, ctx, func));
+    }
+
+    /// The loop a first `spawn_sync_event_loop` call made.
+    pub fn existing_spawn_sync_event_loop(&self) -> Option<&SpawnSyncEventLoop> {
+        self.spawn_sync_event_loop_.as_deref()
+    }
+
     /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
     pub fn spawn_sync_event_loop(
         &mut self,
         vm: &mut VirtualMachine,
-    ) -> Option<&mut SpawnSyncEventLoop> {
+    ) -> Option<&SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
             // `self` address, so the value must not move after init; allocate
@@ -851,7 +872,7 @@ impl RareData {
             // SAFETY: `init` fully initialised the slot when it returned `true`.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
-        self.spawn_sync_event_loop_.as_deref_mut()
+        self.spawn_sync_event_loop_.as_deref()
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────
@@ -901,9 +922,7 @@ impl RareData {
     ) -> crate::virtual_machine::SweepResult {
         // A native close path can cascade (closing one socket completes or
         // fails another, whose own close lands in a group already drained), so
-        // loop until every group is observed empty in the same pass — bounded;
-        // the post-close force-drain in close_all handles whatever is left
-        // after the cap.
+        // loop until every group is observed empty in the same pass — bounded.
         // Walk the loop's linked-group list rather than just our 14 embedded
         // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
         // sockets land *there*, not in RareData. Iterating only the embedded
@@ -1059,43 +1078,27 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
 // TLS default ciphers JS bindings
 // ──────────────────────────────────────────────────────────────────────────
 
-#[crate::host_fn(export = "Bun__setTLSDefaultCiphers")]
-fn set_tls_default_ciphers_from_js(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    let ciphers = if !args.is_empty() {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    if !ciphers.is_string() {
-        return Err(global_this.throw_invalid_argument_type_value(b"ciphers", b"string", ciphers));
-    }
-    let utf8 = ciphers.to_utf8(global_this)?;
+pub(crate) fn set_tls_default_ciphers(heap: &JsHeap<'_>, ciphers: &[u8]) {
+    // SAFETY: only the VM is taken from it.
+    let global_this = unsafe { heap.global() };
     // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
     // is the audited single-JS-thread `&mut` escape hatch.
     global_this
         .bun_vm()
         .as_mut()
         .rare_data()
-        .set_tls_default_ciphers(utf8.slice());
-    Ok(JSValue::UNDEFINED)
+        .set_tls_default_ciphers(ciphers);
 }
 
-#[crate::host_fn(export = "Bun__getTLSDefaultCiphers")]
-fn get_tls_default_ciphers_from_js(
-    global_this: &JSGlobalObject,
-    _callframe: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn get_tls_default_ciphers<'a>(heap: &JsHeap<'a>) -> &'a [u8] {
+    // SAFETY: only the VM is taken from it.
+    let global_this = unsafe { heap.global() };
     // `bun_vm()` is the safe BACKREF accessor; see above.
     let rare = global_this.bun_vm().as_mut().rare_data();
-    let bytes = match rare.tls_default_ciphers() {
+    match rare.tls_default_ciphers() {
         Some(c) => c,
         None => uws::get_default_ciphers().as_bytes(),
-    };
-    crate::bun_string_jsc::create_utf8_for_js(global_this, bytes)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

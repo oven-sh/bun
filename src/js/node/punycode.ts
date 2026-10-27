@@ -153,7 +153,7 @@ const basicToDigit = function (codePoint) {
 const digitToBasic = function (digit, flag) {
   //  0..25 map to ASCII a..z or A..Z
   // 26..35 map to ASCII 0..9
-  return digit + 22 + 75 * (digit < 26) - ((flag != 0) << 5);
+  return digit + 22 + 75 * +(digit < 26) - (+(flag != 0) << 5);
 };
 
 /**
@@ -206,7 +206,7 @@ const decode = function (input: string) {
   // Main decoding loop: start just after the last delimiter if any basic code
   // points were copied; start at the beginning otherwise.
 
-  for (let index = basic > 0 ? basic + 1 : 0; index < inputLength /* no final expression */; ) {
+  for (let index = basic > 0 ? basic + 1 : 0; index < inputLength /* no final expression */;) {
     // `index` is the index of the next character to be consumed.
     // Decode a generalized variable-length integer into `delta`,
     // which gets added to `i`. The overflow checking is easier

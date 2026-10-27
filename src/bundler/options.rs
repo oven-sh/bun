@@ -52,7 +52,6 @@ pub(crate) fn validate_path(
     // TODO: switch to getFdPath()-based implementation
     // `join_abs_string` resolves `.`/`..` against `cwd` into a threadlocal
     // buffer which is then boxed.
-    let _ = path_kind;
     let out =
         bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[rel_path]);
     if out.is_empty() {
@@ -256,9 +255,6 @@ const DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[
 /// `bun_bundler::options` so `use bun_bundler::options::TargetExt;` makes
 /// `.bake_graph()` etc. available on the single canonical type.
 pub trait TargetExt: Copy {
-    // `fromJS` lives in `bun_bundler_jsc::options_jsc::target_from_js`
-    // (PORTING.md "*_jsc alias" rule).
-
     fn bake_graph(self) -> crate::bake_types::Graph;
     fn out_extensions(self) -> StringHashMap<&'static [u8]>;
 
@@ -464,7 +460,7 @@ pub enum GetLoaderAndVirtualSourceErr {
 
 pub struct LoaderResult<'a> {
     pub loader: Option<Loader>,
-    pub virtual_source: Option<&'a bun_ast::Source>,
+    pub virtual_source: Option<&'a bun_ast::Source<'a>>,
     pub path: Fs::Path<'a>,
     pub is_main: bool,
     pub specifier: &'a [u8],
@@ -476,7 +472,7 @@ pub struct LoaderResult<'a> {
 pub fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: &'a VmLoaderCtx,
-    virtual_source_to_use: &'a mut Option<bun_ast::Source>,
+    virtual_source_to_use: &'a mut Option<bun_ast::Source<'a>>,
     blob_to_deinit: &mut Option<OpaqueBlob>,
     type_attribute_str: Option<&[u8]>,
 ) -> Result<LoaderResult<'a>, GetLoaderAndVirtualSourceErr> {
@@ -486,11 +482,11 @@ pub fn get_loader_and_virtual_source<'a>(
 
     // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
     let mut loader: Option<Loader> = path.loader(unsafe { &*jsc_vm.loaders() });
-    let mut virtual_source: Option<&'a bun_ast::Source> = None;
+    let mut virtual_source: Option<&'a bun_ast::Source<'a>> = None;
 
     if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm
-        let eval_source: &'a bun_ast::Source = unsafe { &*eval_source };
+        let eval_source: &'a bun_ast::Source<'a> = unsafe { &*eval_source };
         // The eval/stdin entry path uses the platform path separator
         // (`/` becomes `\` on Windows), so the suffix is per-platform.
         const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
@@ -530,16 +526,9 @@ pub fn get_loader_and_virtual_source<'a>(
             }
 
             if !jsc_vm.blob_needs_read_file(blob) {
-                // SAFETY: `path.text` aliases jsc_vm-owned storage (blob filename
-                // or normalized specifier), which outlives the `virtual_source`
-                // returned to the caller.
-                let static_text: &'static [u8] = bun_ast::StoreStr::new(path.text).slice();
-                *virtual_source_to_use = Some(bun_ast::Source {
-                    path: bun_paths::fs::Path::init(static_text),
-                    contents: Cow::Borrowed(jsc_vm.blob_shared_view(blob)),
-                    ..Default::default()
-                });
-                virtual_source = virtual_source_to_use.as_ref();
+                virtual_source = Some(virtual_source_to_use.insert(
+                    bun_ast::Source::init_path_string(path.text, jsc_vm.blob_shared_view(blob)),
+                ));
             }
         } else {
             return Err(GetLoaderAndVirtualSourceErr::BlobNotFound);
@@ -555,7 +544,9 @@ pub fn get_loader_and_virtual_source<'a>(
         }
     }
 
-    let is_main = strings::eql_long(specifier, jsc_vm.main(), true);
+    let is_main = jsc_vm
+        .main()
+        .is_some_and(|main| strings::eql_long(specifier, main, true));
 
     let dir = path.name().dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
@@ -774,20 +765,6 @@ impl ESMConditions {
             import: import_condition_map,
             require: require_condition_map,
             style: style_condition_map,
-        })
-    }
-
-    pub fn clone(&self) -> Result<ESMConditions, bun_alloc::AllocError> {
-        let default = self.default.clone()?;
-        let import = self.import.clone()?;
-        let require = self.require.clone()?;
-        let style = self.style.clone()?;
-
-        Ok(ESMConditions {
-            default,
-            import,
-            require,
-            style,
         })
     }
 
@@ -1194,6 +1171,27 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// What `BundleOptions::type_check` checks.
+pub struct TypeChecked<'a, 'i> {
+    pub cwd: &'a [u8],
+    /// `tsconfig_override`, which the resolver reads in place of every other.
+    pub tsconfig: Option<&'a [u8]>,
+    /// `custom_conditions`
+    pub conditions: &'a [Box<[u8]>],
+    /// `loaders`. A file that only has types is not in the bundle, so not among `sources`.
+    pub loaders: &'a LoaderHashTable,
+    /// The path of each JavaScript or TypeScript file that an entry point resolved to, or that a
+    /// page imports.
+    pub entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
+    /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
+    /// bundle, which the type checker takes instead of reading the file again.
+    pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
+}
+
+/// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns
+/// whether the build goes on.
+pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool;
+
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
     pub footer: Cow<'static, [u8]>,
@@ -1327,6 +1325,12 @@ pub struct BundleOptions<'a> {
     pub fold_chunks: bool,
     /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
     pub module_preload: bool,
+    /// `--check`, `check: true`: type checks the program when every file is parsed, before
+    /// anything is linked. `bun_runtime` provides it: the bundler does not depend on the type
+    /// checker.
+    pub type_check: Option<TypeCheck>,
+    /// `--conditions`, `conditions`: those of `conditions` that are not there by default.
+    pub custom_conditions: Vec<Box<[u8]>>,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1339,6 +1343,8 @@ pub struct BundleOptions<'a> {
     pub bytecode_depth: u32,
     /// Run JSC's build-time bytecode optimization passes over the cached bytecode (`optimize.bytecode`).
     pub optimize_bytecode: bool,
+    /// `--compile --bytecode`: payload order files to lay the bytecode out by (`bytecode_order`), most important first.
+    pub bytecode_order: Vec<Box<[u8]>>,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
     pub compile_target_builtins: CompileTargetBuiltins,
 
@@ -1536,12 +1542,15 @@ impl<'a> BundleOptions<'a> {
             min_chunk_size: self.min_chunk_size,
             fold_chunks: self.fold_chunks,
             module_preload: self.module_preload,
+            type_check: self.type_check,
+            custom_conditions: self.custom_conditions.clone(),
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
             optimize_bytecode: self.optimize_bytecode,
+            bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
@@ -1718,6 +1727,8 @@ impl<'a> BundleOptions<'a> {
             min_chunk_size: None,
             fold_chunks: true,
             module_preload: true,
+            type_check: None,
+            custom_conditions: transform.conditions.clone(),
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 
@@ -1791,6 +1802,7 @@ impl<'a> BundleOptions<'a> {
             bytecode: false,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
+            bytecode_order: Vec::new(),
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
             debugger: false,
@@ -1909,9 +1921,10 @@ impl<'a> BundleOptions<'a> {
 
         // Reborrow the raw `*mut Log`
         // for the duration of this call only.
+        let top_level_dir = fs.top_level_dir();
         opts.external = init_external_modules(
             &mut fs.fs,
-            fs.top_level_dir,
+            top_level_dir,
             &transform
                 .external
                 .iter()
@@ -2116,7 +2129,7 @@ pub enum PlaceholderField {
 
 // Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
 #[inline]
-fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
+pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
     let needle: &[u8] = match field {
         PlaceholderField::Dir => b"[dir]",
         PlaceholderField::Name => b"[name]",
@@ -2325,7 +2338,8 @@ fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
 fn path_template_print_tolerates_malformed_brackets() {
     fn run(template: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
-        path_template_print(&mut out, template, b"D", b"N", b"E", Some(0), b"T", false).unwrap();
+        let hash = Some(bun_core::fmt::ContentHash::short(0));
+        path_template_print(&mut out, template, b"D", b"N", b"E", hash, b"T", false).unwrap();
         out
     }
     // Unterminated known placeholder: used to slice one past the end.
@@ -2469,6 +2483,34 @@ impl PathTemplate {
             &self.placeholder.target,
             sanitize_parent_dirs,
         )
+    }
+
+    /// Max output path length. A `PathBuffer` also needs room for a `.map` or `.jsc` suffix and the NUL.
+    pub(crate) const MAX_OUTPUT_PATH_LEN: usize = bun_paths::MAX_PATH_BYTES - 1 - ".map".len();
+
+    /// Logs an error and returns `false` when `output_path` exceeds `MAX_OUTPUT_PATH_LEN`.
+    pub(crate) fn check_output_path(
+        &self,
+        log: &mut bun_ast::Log,
+        input: &[u8],
+        output_path: &[u8],
+    ) -> bool {
+        if output_path.len() <= Self::MAX_OUTPUT_PATH_LEN {
+            return true;
+        }
+        log.add_range_error_fmt_with_note(
+            None,
+            bun_ast::Range::NONE,
+            format_args!(
+                "Output path for {} is too long ({} bytes, the limit on this platform is {})",
+                bun_core::fmt::quote(input),
+                output_path.len(),
+                Self::MAX_OUTPUT_PATH_LEN,
+            ),
+            format_args!("naming template is {}", bun_core::fmt::quote(&self.data)),
+            bun_ast::Range::NONE,
+        );
+        false
     }
 }
 

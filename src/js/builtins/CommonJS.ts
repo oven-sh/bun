@@ -216,6 +216,7 @@ export function requireESM(this, resolved: string, requirer?: JSCommonJSModule) 
   return exports;
 }
 
+$visibility = "Private";
 export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
   $assert(this);
   // Runs inside `$require`, which removes the require map entry if the user's handler lets this throw.

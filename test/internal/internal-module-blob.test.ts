@@ -184,33 +184,34 @@ describe("functions implemented in src/js/builtins", () => {
   });
 
   test("carry the name into the descriptor, toString(), inspect, bind and stack frames", () => {
-    // Buffer.from rejects a number from inside the builtin, so its frame is in the stack.
+    const { scanSync } = Bun.Glob.prototype;
+    // The native half rejects the options under the builtin's frame.
     let error: Error | undefined;
     try {
-      Buffer.from(1 as unknown as string);
+      new Bun.Glob("*").scanSync({ cwd: 1 as unknown as string });
     } catch (e) {
       error = e as Error;
     }
 
     expect({
-      descriptor: Object.getOwnPropertyDescriptor(Buffer.from, "name"),
-      toString: Buffer.from.toString(),
-      inspect: Bun.inspect(Bun.Glob.prototype.scanSync),
-      bound: Buffer.from.bind(null).name,
-      frame: error!.stack!.includes("at from ("),
+      descriptor: Object.getOwnPropertyDescriptor(scanSync, "name"),
+      toString: scanSync.toString(),
+      inspect: Bun.inspect(scanSync),
+      bound: scanSync.bind(null).name,
     }).toEqual({
-      descriptor: { value: "from", writable: false, enumerable: false, configurable: true },
-      toString: "function from() { [native code] }",
+      descriptor: { value: "scanSync", writable: false, enumerable: false, configurable: true },
+      toString: "function scanSync() { [native code] }",
       inspect: "[Function: scanSync]",
-      bound: "bound from",
-      frame: true,
+      bound: "bound scanSync",
     });
+    // `native:` is the frame of a JS builtin. A host function prints `(unknown)`.
+    expect(error!.stack).toMatch(/^\s+at scanSync \(native:\d+:\d+\)$/m);
   });
 
   // A builtin gets its name when its executable is first created, once per VM.
   test("are named in the VM of a Worker", async () => {
     const url = URL.createObjectURL(
-      new Blob([`postMessage([Buffer.from.name, Bun.peek.name, Bun.peek.status.name, console.write.name]);`]),
+      new Blob([`postMessage([Buffer.isBuffer.name, Bun.peek.name, Bun.peek.status.name, console.write.name]);`]),
     );
     const worker = new Worker(url);
     try {
@@ -218,7 +219,7 @@ describe("functions implemented in src/js/builtins", () => {
       worker.onmessage = event => resolve(event.data);
       worker.onerror = reject;
       worker.addEventListener("close", event => reject(new Error(`worker closed (${event.code}) without a message`)));
-      expect(await promise).toEqual(["from", "peek", "status", "write"]);
+      expect(await promise).toEqual(["isBuffer", "peek", "status", "write"]);
     } finally {
       worker.terminate();
       URL.revokeObjectURL(url);

@@ -362,27 +362,30 @@ mod tests {
         }
     }
 
-    fn check_huffman(string: &[u8]) {
-        let len = huffman::encoded_len(string);
-        let (mut coded, mut decoded) = (vec![1], vec![2]);
-        assert!(huffman::encode(string, &mut coded, false));
-        assert_eq!(coded.len(), 1 + len);
-        assert_eq!(
-            huffman::decode(&coded[1..], &mut decoded, string.len()),
-            Ok(())
-        );
-        assert_eq!(decoded[1..], *string);
-        if len > 0 {
-            let too_large = huffman::decode(&coded[1..], &mut decoded, string.len() - 1);
-            assert_eq!(too_large, Err(Error::TooLarge));
-        }
+    /// With and without the stand-in for the SIMD kernel.
+    fn decode_huffman(coded: &[u8], max_len: usize) -> Result<Vec<u8>> {
+        let [without, with] = [false, true].map(|kernel| {
+            huffman::test_kernel::ENABLED.set(kernel);
+            let mut decoded = vec![2];
+            let result = huffman::decode(coded, &mut decoded, max_len);
+            huffman::test_kernel::ENABLED.set(false);
+            result.map(|()| decoded.split_off(1))
+        });
+        assert_eq!(without, with);
+        with
+    }
 
-        let mut unless_longer = vec![1];
-        if huffman::encode(string, &mut unless_longer, true) {
-            assert!(len <= string.len());
-            assert_eq!(unless_longer, coded);
-        } else {
-            assert_eq!(unless_longer, [1]);
+    fn check_huffman(string: &[u8]) {
+        let mut coded = vec![1];
+        huffman::encode(string, &mut coded);
+        assert_eq!(coded.len(), 1 + huffman::encoded_len(string));
+        assert_eq!(
+            decode_huffman(&coded[1..], string.len()),
+            Ok(string.to_vec())
+        );
+        if !string.is_empty() {
+            let too_large = decode_huffman(&coded[1..], string.len() - 1);
+            assert_eq!(too_large, Err(Error::TooLarge));
         }
     }
 
@@ -392,6 +395,8 @@ mod tests {
         for string in every_byte.chunks(1).chain([&every_byte[..]]) {
             check_huffman(string);
         }
+        // 13 zeros, the first entry of the decoder's table.
+        check_huffman(b"000");
     }
 
     #[test]
@@ -427,7 +432,7 @@ mod tests {
             ("5961", 2),            // "--", then 0001, which the padding would make "a"
             ("18c6318c63 18c6318c63 18c6318c63 18", 25),
         ] {
-            let decode = |max_len| huffman::decode(&hex(coded), &mut Vec::new(), max_len);
+            let decode = |max_len| decode_huffman(&hex(coded), max_len);
             assert_eq!(decode(symbols), Err(Error::Invalid), "{coded}");
             assert_eq!(decode(symbols - 1), Err(Error::TooLarge), "{coded}");
             assert_eq!(decode(0), Err(Error::TooLarge), "{coded}");

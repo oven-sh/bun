@@ -4,16 +4,51 @@ use crate::{Error, Result};
 
 #[cfg(not(test))]
 use bun_highway::{has_hpack_huffman_kernel, hpack_huffman_decode_short};
-
-/// The SIMD kernel is C++, which this crate's own tests are not linked with.
 #[cfg(test)]
-fn has_hpack_huffman_kernel() -> bool {
-    false
-}
+use test_kernel::{has_hpack_huffman_kernel, hpack_huffman_decode_short};
 
+/// The SIMD kernel is C++, which this crate's own tests are not linked with. This one does what that one may do.
 #[cfg(test)]
-fn hpack_huffman_decode_short(_: &[u8], bit_pos: usize, _: &mut [u8]) -> (usize, usize) {
-    (bit_pos, 0)
+#[allow(clippy::indexing_slicing)]
+pub(crate) mod test_kernel {
+    use super::{Decoder, code};
+
+    thread_local! {
+        pub(crate) static ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    pub(super) fn has_hpack_huffman_kernel() -> bool {
+        ENABLED.get()
+    }
+
+    pub(super) fn hpack_huffman_decode_short(
+        src: &[u8],
+        mut bit_pos: usize,
+        out: &mut [u8],
+    ) -> (usize, usize) {
+        let bit = |i: usize| {
+            src.get(i / 8)
+                .map_or(1, |byte| u64::from(byte >> (7 - i % 8) & 1))
+        };
+        let mut written = 0;
+        // It may stop anywhere, also where it started.
+        for _ in 0..(bit_pos * 7 + src.len()) % 29 {
+            let window = (0..64).fold(0, |window, i| window << 1 | bit(bit_pos + i));
+            let prefix = Decoder::prefix(window);
+            let len = usize::from(code(prefix.symbols[0]).1);
+            if prefix.count == 0 || len > 8 || bit_pos + len > src.len() * 8 {
+                break;
+            }
+            let Some(block) = out.get_mut(written..written + 16) else {
+                break;
+            };
+            block.fill(0xaa);
+            block[0] = prefix.symbols[0];
+            written += 1;
+            bit_pos += len;
+        }
+        (bit_pos, written)
+    }
 }
 
 const EOS: usize = 256;
@@ -97,71 +132,27 @@ pub(crate) fn encoded_len(src: &[u8]) -> usize {
     bits.div_ceil(8)
 }
 
-struct Writer<'a> {
-    /// The low `pending` bits are not written yet: under 8 between calls.
-    bits: u64,
-    pending: u32,
-    out: &'a mut Vec<u8>,
-}
-
-impl Writer<'_> {
-    /// `len` is at most 56.
-    #[inline(always)]
-    fn put(&mut self, (code, len): (u64, u32)) {
-        self.bits = (self.bits << len) | code;
-        self.pending += len;
-        // All of them are written. Those that do not fill a byte yet are written again next time.
-        let whole = self.out.len() + (self.pending / 8) as usize;
-        let bytes = (self.bits << (64 - self.pending)).to_be_bytes();
-        self.out.extend_from_slice(&bytes);
-        self.out.truncate(whole);
-        self.pending %= 8;
-    }
-}
-
-/// Appends the code of `src`. With `give_up`, not if at some point it is longer than what it stands for.
-pub(crate) fn encode(src: &[u8], out: &mut Vec<u8>, give_up: bool) -> bool {
-    let start = out.len();
-    let mut writer = Writer {
-        bits: 0,
-        pending: 0,
-        out,
-    };
-    let code = |byte| {
+pub(crate) fn encode(src: &[u8], out: &mut Vec<u8>) {
+    // The low `pending` bits are not written yet: under 32 here, and a code has at most 30.
+    let mut bits: u64 = 0;
+    let mut pending: u32 = 0;
+    for &byte in src {
         let (code, len) = code(byte);
-        (u64::from(code), u32::from(len))
-    };
-    let (groups, rest) = src.as_chunks::<4>();
-    for (i, group) in groups.iter().enumerate() {
-        let [a, b, c, d] = group.map(code);
-        let len = a.1 + b.1 + c.1 + d.1;
-        if len <= 56 {
-            // Put together as two pairs, neither of which waits for the other.
-            let (ab, cd) = ((a.0 << b.1) | b.0, (c.0 << d.1) | d.0);
-            writer.put(((ab << (c.1 + d.1)) | cd, len));
-        } else {
-            for code in [a, b, c, d] {
-                writer.put(code);
-            }
-        }
-        if give_up && writer.out.len() - start > (i + 1) * 4 {
-            writer.out.truncate(start);
-            return false;
+        bits = (bits << len) | u64::from(code);
+        pending += u32::from(len);
+        if pending >= 32 {
+            pending -= 32;
+            out.extend_from_slice(&((bits >> pending) as u32).to_be_bytes());
         }
     }
-    for &byte in rest {
-        writer.put(code(byte));
+    // The last byte is filled up with the start of EOS, which is all ones.
+    let padding = pending.wrapping_neg() & 7;
+    bits = (bits << padding) | ((1 << padding) - 1);
+    pending += padding;
+    while pending > 0 {
+        pending -= 8;
+        out.push((bits >> pending) as u8);
     }
-    if writer.pending > 0 {
-        // The last byte is filled up with the start of EOS, which is all ones.
-        let padding = 8 - writer.pending;
-        writer.put(((1 << padding) - 1, padding));
-    }
-    if give_up && out.len() - start > src.len() {
-        out.truncate(start);
-        return false;
-    }
-    true
 }
 
 /// The code has 257 leaves, so its tree has 256 inner nodes and a node fits a `u8`.

@@ -51,7 +51,8 @@ A call costs about 15 ns before the first symbol, which pays off from about a do
 - once its calls on this string have yielded under 12 symbols on average, which is what happens in
   text that is dense in such codes, like JSON.
 
-That leaves one call wasted on such text.
+That leaves one call wasted on such text. It shows most on a short string: 5 to 8 bytes that start
+with a short code and go on with codes of 10 to 13 bits take 43 ns instead of 35.
 
 ## Which CPUs
 
@@ -104,10 +105,15 @@ against the scalar code of the time.
 | encoder, `pshufb` rows, lanes merged to 32 bits (SSE4) | 55 ns against 54           |
 | encoder, the same with 64-bit lanes (AVX2)             | 45 ns                      |
 | encoder, `vpermi2b`, 64-bit lanes (AVX-512 VBMI)       | 38 ns                      |
-| encoder, scalar, one pass, four codes per write        | 40.5 ns: what is used now  |
+| encoder, scalar, one pass, four codes per write        | 40.5 ns, see below         |
 | the whole crate compiled for AVX-512                   | no change either way       |
 | wyhash replaced by one multiplication                  | no change                  |
 | calling the kernel unless 7 ones in a row come up      | `p,` has 7 ones in a row   |
 
 The encoder's codes have to be joined bit by bit whatever finds them, and header strings are too
 short for the lookups to matter.
+
+The scalar one-pass encoder was in the crate for a day and was taken out again. It starts coding
+before it knows whether the code will be shorter than the text. On Sapphire Rapids it made the
+corpus 22% faster. On Cascade Lake the corpus took as long as before. On both, a string that is
+sent as it is took 1.3 to 2 times as long, and one of 1 to 3 bytes 1.1 to 1.3 times.

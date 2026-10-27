@@ -548,11 +548,13 @@ describe("hpackHuffmanDecodeShort", () => {
     return count;
   }
 
-  it.skipIf(!hasKernel)("every symbol, from every bit of a byte", () => {
+  it.skipIf(!hasKernel)("every symbol, from every bit of three bytes", () => {
     for (const symbol of all) {
-      for (let skipped = 0; skipped < 8; skipped++) {
+      for (let skipped = 0; skipped < 24; skipped++) {
         const at = `symbol=${symbol} skipped=${skipped}`;
         expect(decode("0".repeat(skipped), symbol, "", at), at).toBe(1);
+        // With zeros after it instead of the padding.
+        expect(decode("0".repeat(skipped), symbol + "0", "", at), at).toBe(2);
       }
     }
   });

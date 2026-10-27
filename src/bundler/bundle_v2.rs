@@ -6742,18 +6742,17 @@ pub mod bv2_impl {
                     }
                 }
 
-                // Left external for target bun; other targets get the parse task's target error.
-                if import_record.loader == Some(Loader::Sqlite) && ctx.target.is_bun() {
+                if let Some(loader @ (Loader::Sqlite | Loader::SqliteEmbedded)) =
+                    import_record.loader
+                {
+                    // Removable when unused if it ends up external.
                     import_record
                         .flags
                         .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
-                    continue;
-                }
-
-                if import_record.loader == Some(Loader::SqliteEmbedded) {
-                    import_record
-                        .flags
-                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                    // Left external for target bun; other targets get the parse task's target error.
+                    if loader == Loader::Sqlite && ctx.target.is_bun() {
+                        continue;
+                    }
                 }
 
                 if self.enqueue_on_resolve_plugin_if_needed(
@@ -7105,11 +7104,15 @@ pub mod bv2_impl {
                     {
                         import_record.path = resolve_result.path_pair.primary;
                     }
-                    import_record.flags.set(
-                        bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
-                        resolve_result.primary_side_effects_data
-                            != bun_ast::SideEffects::HasSideEffects,
-                    );
+                    // Insert only: the resolver does not see import attributes, so it
+                    // cannot overrule a record that is already removable when unused.
+                    if resolve_result.primary_side_effects_data
+                        != bun_ast::SideEffects::HasSideEffects
+                    {
+                        import_record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                    }
                     continue;
                 }
 

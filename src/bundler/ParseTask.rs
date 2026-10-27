@@ -1087,11 +1087,23 @@ pub mod parse_worker {
 
             Loader::SqliteEmbedded | Loader::Sqlite => {
                 if !topts.target.is_bun() {
-                    // logger OOM-only
-                    let _ = log.add_error(
+                    let mut notes: Vec<bun_ast::Data> = Vec::new();
+                    // An entry point is never external, and the dev server has no `external` option.
+                    if !opts.is_entry_point && !topts.has_dev_server() {
+                        notes.push(bun_ast::range_data(
+                            None,
+                            bun_ast::Range::NONE,
+                            b"To build for another target, mark the database as external \
+                              (pass \"--external <path>\" to the CLI, or add it to \"external\" \
+                              in Bun.build) and load it with import(), which keeps \
+                              { with: { type: \"sqlite\" } } in the output",
+                        ));
+                    }
+                    log.add_range_error_with_notes(
                         Some(source),
-                        Loc::EMPTY,
+                        bun_ast::Range::NONE,
                         b"To use the \"sqlite\" loader, set target to \"bun\"",
+                        notes.into_boxed_slice(),
                     );
                     return Err(crate::Error::ParserError);
                 }

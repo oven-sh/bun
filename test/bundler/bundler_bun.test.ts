@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import path from "node:path";
 import { itBundled } from "./expectBundled";
 
 const nestedFunctions = /* js */ `
@@ -78,11 +80,8 @@ describe("bundler", () => {
     run: { stdout: "RedisClient\nRedisClient\nRedisClient\n" },
   });
   // Only the Bun runtime can open a database the bundle leaves external, so a
-  // sqlite import attribute has to fail the build for the other targets, the
-  // way `embed: "true"` and `--loader .db:sqlite` already did. The plain
-  // `with { type: "sqlite" }` form used to be externalized before that check
-  // ran: the build succeeded and the output imported the database as a plain
-  // module, with the attribute dropped.
+  // sqlite import attribute fails the build for the other targets, the way
+  // `embed: "true"` and `--loader .db:sqlite` do, unless the database is external.
   //
   // The fixture is `app.db` on purpose: `.sqlite` selects the loader by
   // extension alone, while a `.db` file only gets it from the attribute.
@@ -93,8 +92,15 @@ describe("bundler", () => {
       db.exec("insert into messages values ('Hello, world!')");
       return db.serialize();
     })();
-    const targetError = {
-      "/app.db": ['To use the "sqlite" loader, set target to "bun"'],
+    const targetErrorText = 'To use the "sqlite" loader, set target to "bun"';
+    const targetError = { "/app.db": [targetErrorText] };
+    // A .js entry: an unused import in a .ts file is always dropped.
+    const unusedImport = {
+      "/entry.js": /* js */ `
+        import db from './app.db' with {type: "sqlite"};
+        console.log("ran");
+      `,
+      "/app.db": database,
     };
     for (const target of ["node", "browser"] as const) {
       itBundled(`bun/sqlite-attribute-target-${target}`, {
@@ -145,7 +151,140 @@ describe("bundler", () => {
           "/entry.ts": ['Could not resolve: "./app.db"'],
         },
       });
+      // The way out that the error's note names. This program opens the
+      // database only under Bun, so its bundle runs on the target and under Bun.
+      itBundled(`bun/sqlite-attribute-external-dynamic-import-target-${target}`, {
+        target,
+        external: ["./app.db"],
+        files: {
+          "/entry.ts": /* js */ `
+            if (typeof Bun !== "undefined") {
+              const { default: db } = await import('./app.db', {with: {type: "sqlite"}});
+              console.log(db.query("select message from messages LIMIT 1").get().message);
+            } else {
+              console.log("no database");
+            }
+          `,
+          "/app.db": database,
+        },
+        run: [
+          { stdout: "Hello, world!" },
+          ...(target === "node" ? [{ runtime: "node", stdout: "no database" } as const] : []),
+        ],
+      });
+      // An external sqlite import has no side effects on any target, so an
+      // unused one is dropped.
+      itBundled(`bun/sqlite-attribute-external-unused-import-target-${target}`, {
+        target,
+        external: ["./app.db"],
+        files: unusedImport,
+        onAfterBundle(api) {
+          api.expectFile("out.js").not.toContain("app.db");
+        },
+        run: { stdout: "ran" },
+      });
     }
+    // The same import, left external through the two plugin exits.
+    itBundled("bun/sqlite-attribute-external-unused-import-plugin-declines", {
+      target: "node",
+      external: ["./app.db"],
+      files: unusedImport,
+      plugins(builder) {
+        builder.onResolve({ filter: /app\.db$/ }, () => undefined);
+      },
+      onAfterBundle(api) {
+        api.expectFile("out.js").not.toContain("app.db");
+      },
+      run: { stdout: "ran" },
+    });
+    itBundled("bun/sqlite-attribute-external-unused-import-plugin-external", {
+      target: "node",
+      files: unusedImport,
+      plugins(builder) {
+        builder.onResolve({ filter: /app\.db$/ }, args => ({ path: args.path, external: true }));
+      },
+      onAfterBundle(api) {
+        api.expectFile("out.js").not.toContain("app.db");
+      },
+      run: { stdout: "ran" },
+    });
+    // Loading the shared chunk has no side effects either: the entry that uses
+    // nothing from it does not import it.
+    itBundled("bun/sqlite-attribute-external-splitting", {
+      target: "node",
+      splitting: true,
+      outdir: "/out",
+      external: ["./app.db"],
+      entryPoints: ["/a.js", "/b.js", "/c.js"],
+      files: {
+        "/a.js": `import { query } from "./shared.js"; console.log("a", query);`,
+        "/b.js": `import { query } from "./shared.js"; console.log("b");`,
+        "/c.js": `import { query } from "./shared.js"; console.log("c", query);`,
+        "/shared.js": /* js */ `
+          import db from './app.db' with {type: "sqlite"};
+          export function query() { return db; }
+        `,
+        "/app.db": database,
+      },
+      onAfterBundle(api) {
+        api.expectFile("out/b.js").not.toContain("import");
+      },
+      run: { file: "/out/b.js", runtime: "node", stdout: "b" },
+    });
+    // `embed: "true"` is the same import once the database is external.
+    for (const target of ["bun", "node"] as const) {
+      itBundled(`bun/sqlite-attribute-embed-external-unused-import-target-${target}`, {
+        target,
+        external: ["./app.db"],
+        files: {
+          "/entry.js": /* js */ `
+            import db from './app.db' with {type: "sqlite", embed: "true"};
+            console.log("ran");
+          `,
+          "/app.db": database,
+        },
+        onAfterBundle(api) {
+          api.expectFile("out.js").not.toContain("app.db");
+        },
+        run: { stdout: "ran" },
+      });
+    }
+    test("the target error names `external` in a note, except for an entry point", async () => {
+      using dir = tempDir("sqlite-target-error-note", {
+        "entry.js": `import db from './app.db' with {type: "sqlite"};\nconsole.log(db);\n`,
+        "app.db": "x",
+        "entry.sqlite": "x",
+      });
+      const note =
+        'To build for another target, mark the database as external (pass "--external <path>" to the CLI, or add it to "external" in Bun.build) and load it with import(), which keeps { with: { type: "sqlite" } } in the output';
+      const build = async (entry: string) => {
+        const { logs } = await Bun.build({
+          entrypoints: [path.join(String(dir), entry)],
+          target: "node",
+          throw: false,
+        });
+        return logs.map(log => ({
+          message: log.message,
+          notes: (log as unknown as { notes: BuildMessage[] }).notes.map(note => note.message),
+        }));
+      };
+      expect(await build("entry.js")).toEqual([{ message: targetErrorText, notes: [note] }]);
+      // An entry point cannot be external.
+      expect(await build("entry.sqlite")).toEqual([{ message: targetErrorText, notes: [] }]);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./entry.js", "--target", "node"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(`error: ${targetErrorText}`);
+      expect(stderr).toContain(`note: ${note}`);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
   });
   itBundled("bun/embedded-sqlite-file", {
     target: "bun",

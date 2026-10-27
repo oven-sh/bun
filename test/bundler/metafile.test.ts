@@ -328,6 +328,28 @@ describe("bundler metafile", () => {
     expect(foundExternal).toBe(true);
   });
 
+  test("metafile does not mark an embedded sqlite database as external", async () => {
+    using dir = tempDir("metafile-sqlite-embed-test", {
+      "index.js": `import db from "./app.db" with { type: "sqlite", embed: "true" }; console.log(db);`,
+      "app.db": "x",
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.js`],
+      metafile: true,
+      target: "bun",
+    });
+
+    expect(result.success).toBe(true);
+    const { inputs } = result.metafile as Metafile;
+    const indexInput = Object.keys(inputs).find(path => path.endsWith("index.js"))!;
+    const databaseInput = Object.keys(inputs).find(path => path.endsWith("app.db"))!;
+    expect(databaseInput).toBeString();
+    expect(inputs[indexInput].imports).toEqual([
+      { path: databaseInput, kind: "import-statement", original: "./app.db" },
+    ]);
+  });
+
   test("metafile with code splitting", async () => {
     using dir = tempDir("metafile-splitting-test", {
       "a.js": `import { shared } from "./shared.js"; console.log("a", shared);`,

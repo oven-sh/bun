@@ -344,7 +344,10 @@ In the runtime and bundler, SQLite databases can be directly imported. Bun loads
 import db from "./my.db" with { type: "sqlite" };
 ```
 
-<Warning>The `sqlite` loader is only supported when the target is `bun`.</Warning>
+<Warning>
+  The `sqlite` loader is only supported when the target is `bun`. A build for another target fails, unless the database
+  is marked as [`external`](/bundler#external).
+</Warning>
 
 By default, Bun does not bundle the database file on disk into the final output. The database file stays external to the bundle, so you can use a database loaded elsewhere.
 

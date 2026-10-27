@@ -40,7 +40,7 @@ const fixture = {
     };
   `,
   "run.ts": /* ts */ `
-    import { jscDescribe } from "bun:jsc";
+    import { generateHeapSnapshotForDebugging, jscDescribe } from "bun:jsc";
     import { heapFromTimer } from ${JSON.stringify(join(import.meta.dir, "..", "module-graph", "module-graph-lifetimes.ts"))};
     import html from "./index.html";
 
@@ -60,6 +60,40 @@ const fixture = {
         await turn();
       }
       return collected;
+    }
+
+    // What the heap says about the server's cell, and whether more time frees it.
+    function cellInHeap() {
+      const { nodes, edges, roots, nodeClassNames, edgeTypes, edgeNames, labels } = generateHeapSnapshotForDebugging() as any;
+      const className = new Map<number, string>();
+      let id: number | undefined;
+      for (let i = 0; i < nodes.length; i += 7) {
+        className.set(nodes[i], nodeClassNames[nodes[i + 2]]);
+        if (BigInt(nodes[i + 5]) === serverAddress) id = nodes[i];
+      }
+      if (id === undefined) return "its cell is not in the heap";
+      const incoming: string[] = [];
+      for (let i = 0; i < edges.length; i += 4)
+        if (edges[i + 1] === id) {
+          const type = edgeTypes[edges[i + 2]];
+          const name = type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : edges[i + 3];
+          incoming.push(className.get(edges[i]) + " " + type + ":" + name);
+        }
+      const reasons: string[] = [];
+      for (let i = 0; i < roots.length; i += 3) if (roots[i] === id) reasons.push(String(labels[roots[i + 1]] ?? roots[i + 1]));
+      return "its cell is in the heap as " + className.get(id) + ", incoming edges [" + incoming + "], root entries [" + reasons + "]";
+    }
+    async function survivor() {
+      const path = (await heapFromTimer()).pathTo(serverAddress) ?? "nothing that a root reaches";
+      const cell = await new Promise<string>(resolve => setTimeout(() => resolve(cellInHeap()), 0));
+      const start = performance.now();
+      let rounds = 0;
+      for (; !collected && performance.now() - start < 3000; rounds++) {
+        Bun.gc(true);
+        await turn();
+      }
+      const later = (collected ? "collected" : "not collected") + " after " + rounds + " more rounds, " + Math.round(performance.now() - start) + " ms";
+      return "held by " + path + "; " + cell + "; " + later;
     }
 
     // Its own frame, so that nothing on the stack still refers to the server
@@ -104,9 +138,7 @@ const fixture = {
         pendingRequestsWhileParked,
         stopBeforeRelease,
         // A server that survives is reported with what holds it.
-        collectedAfterwards:
-          (await collectServer()) ||
-          "held by " + ((await heapFromTimer()).pathTo(serverAddress) ?? "nothing that a root reaches"),
+        collectedAfterwards: (await collectServer()) || (await survivor()),
       }),
     );
   `,

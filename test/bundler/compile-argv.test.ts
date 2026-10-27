@@ -1,5 +1,282 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
+import { join } from "path";
 import { itBundled } from "./expectBundled";
+
+const runtimeEnv = {
+  BUN_OPTIONS: undefined,
+  BUN_BE_BUN: undefined,
+  BUN_INSPECT: undefined,
+  BUN_INSPECT_CONNECT_TO: undefined,
+  BUN_INSPECT_PRELOAD: undefined,
+  BUN_INSPECT_NOTIFY: undefined,
+};
+
+describe.each(["api", "cli"] as const)("compile env options (%s)", backend => {
+  describe.each([false, true])("embedded flags: %s", embedded => {
+    const execArgv = embedded ? ["--smol"] : [];
+    itBundled(`compile/env-options/${backend}/disabled-${embedded}`, ({ root }) => {
+      const preload = join(root, "preload.ts");
+      return {
+        backend,
+        compile: { envOptions: false, execArgv },
+        files: {
+          "/entry.ts": `console.log(JSON.stringify({ entry: "APP", execArgv: process.execArgv, args: process.argv.slice(2), value: process.env.APP_VALUE, env: Object.fromEntries(["BUN_OPTIONS", "BUN_BE_BUN", "BUN_INSPECT", "BUN_INSPECT_CONNECT_TO", "BUN_INSPECT_PRELOAD"].map(key => [key, process.env[key]])) }));`,
+        },
+        runtimeFiles: { "/preload.ts": `console.log("PRELOAD");` },
+        run: [
+          [{ BUN_OPTIONS: `--preload=${preload}` }, ["argument"]],
+          [{ BUN_OPTIONS: "--invalid-runtime-option" }, ["argument"]],
+          [{ BUN_BE_BUN: "1" }, ["-e", 'console.log("CLI")']],
+          [{ BUN_INSPECT_PRELOAD: preload }, ["argument"]],
+          [{ BUN_INSPECT: "ws://127.0.0.1:0/compiled?wait=1" }, ["argument"]],
+          [{ BUN_INSPECT_CONNECT_TO: "invalid inspector URL" }, ["argument"]],
+          [
+            { BUN_BE_BUN: "1", BUN_OPTIONS: `--preload=${preload}`, BUN_INSPECT_PRELOAD: preload },
+            ["-e", 'console.log("CLI")'],
+          ],
+        ].map(([env, args]) => ({
+          env: { ...runtimeEnv, APP_VALUE: "preserved", ...(env as Record<string, string>) },
+          args: args as string[],
+          validate({ stdout, stderr }) {
+            expect(JSON.parse(stdout)).toEqual({ entry: "APP", execArgv, args, value: "preserved", env });
+            expect(stderr).toBe("");
+          },
+        })),
+      };
+    });
+  });
+
+  describe.each([undefined, true])("envOptions: %s", envOptions => {
+    itBundled(`compile/env-options/${backend}/enabled-${envOptions}`, ({ root }) => ({
+      backend,
+      compile: { envOptions, execArgv: ["--smol"] },
+      files: { "/entry.ts": `console.log("APP");` },
+      runtimeFiles: { "/preload.ts": `console.log("PRELOAD");` },
+      run: [
+        { env: { ...runtimeEnv, BUN_OPTIONS: `--preload=${join(root, "preload.ts")}` }, stdout: "PRELOAD\nAPP" },
+        { env: { ...runtimeEnv, BUN_INSPECT_PRELOAD: join(root, "preload.ts") }, stdout: "PRELOAD\nAPP" },
+        {
+          env: { ...runtimeEnv, BUN_BE_BUN: "1" },
+          args: ["-e", 'console.log("CLI", Bun.isStandaloneExecutable)'],
+          stdout: "CLI false",
+        },
+      ],
+    }));
+  });
+});
+
+describe("compile env options validation", () => {
+  test.each([false, true])(
+    "rejects a custom executable path in the API (path with spaces: %s)",
+    async pathWithSpaces => {
+      using dir = tempDir("compile-env-options-custom", {
+        "entry.ts": `console.log("APP");`,
+        "custom runtime café": "unused executable",
+      });
+      const executablePath = pathWithSpaces ? join(String(dir), "custom runtime café") : bunExe();
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        compile: { outfile: join(String(dir), "out"), envOptions: false, executablePath },
+        throw: false,
+      });
+      expect(result.logs.map(log => log.message)).toEqual([
+        `Disabling runtime environment options cannot be combined with custom executable path ${JSON.stringify(executablePath)}.\nnote: Remove --compile-executable-path or compile.executablePath to use the current Bun executable.`,
+      ]);
+      expect(result.success).toBe(false);
+    },
+  );
+
+  describe.each([
+    { kind: "version", backend: "cli", bytecode: false },
+    { kind: "executable", backend: "cli", bytecode: false },
+    { kind: "version", backend: "cli", bytecode: true },
+    { kind: "executable", backend: "cli", bytecode: true },
+    { kind: "version", backend: "api", bytecode: false },
+    { kind: "executable", backend: "api", bytecode: false },
+    { kind: "version", backend: "api", bytecode: true },
+    { kind: "executable", backend: "api", bytecode: true },
+    { kind: "target", backend: "cli", bytecode: false },
+    { kind: "target", backend: "cli", bytecode: true },
+    { kind: "target", backend: "api", bytecode: false },
+    { kind: "target", backend: "api", bytecode: true },
+    { kind: "baseline", backend: "cli", bytecode: false },
+    { kind: "baseline", backend: "cli", bytecode: true },
+    { kind: "baseline", backend: "api", bytecode: false },
+    { kind: "baseline", backend: "api", bytecode: true },
+  ])("custom runtime %j", ({ kind, backend, bytecode }) => {
+    test.concurrent("rejects an unverified runtime before downloading or writing it", async () => {
+      using dir = tempDir("compile-env-options-target", { "entry.ts": `console.log("APP");` });
+      let requests = 0;
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch() {
+          requests++;
+          return new Response("unexpected download", { status: 500 });
+        },
+      });
+      const hostPlatform = isWindows ? "windows" : process.platform;
+      const otherPlatform = hostPlatform === "linux" ? "windows" : "linux";
+      const libc = isMusl ? "-musl" : "";
+      const target =
+        kind === "version"
+          ? `bun-linux-x64${libc}-v1.0.0`
+          : kind === "baseline"
+            ? `bun-${hostPlatform}-x64${libc}-baseline`
+            : `bun-${otherPlatform}-x64`;
+      const option = kind === "executable" ? `--compile-executable-path=${bunExe()}` : `--target=${target}`;
+      await using proc = Bun.spawn({
+        cmd:
+          backend === "cli"
+            ? [
+                bunExe(),
+                "build",
+                "--compile",
+                "--no-compile-env-options",
+                ...(bytecode ? ["--bytecode"] : []),
+                option,
+                "--outfile",
+                join(String(dir), "out"),
+                join(String(dir), "entry.ts"),
+              ]
+            : [
+                bunExe(),
+                "-e",
+                `const result = await Bun.build({
+            entrypoints: [process.argv.at(-2)],
+            compile: {
+              outfile: process.argv.at(-1),
+              envOptions: false,
+              ${kind === "executable" ? `executablePath: ${JSON.stringify(bunExe())}` : `target: ${JSON.stringify(target)}`},
+            },
+            bytecode: ${bytecode},
+            throw: false,
+          });
+          for (const log of result.logs) console.error(log.message);
+          process.exit(result.success ? 0 : 1);`,
+                join(String(dir), "entry.ts"),
+                join(String(dir), "out"),
+              ],
+        env: {
+          ...bunEnv,
+          ...runtimeEnv,
+          BUN_COMPILE_TARGET_TARBALL_URL: String(server.url),
+          BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(requests).toBe(0);
+      expect(stderr).toContain(
+        kind === "executable"
+          ? `Disabling runtime environment options cannot be combined with custom executable path "${bunExe()}".\nnote: Remove --compile-executable-path or compile.executablePath to use the current Bun executable.`
+          : "Disabling runtime environment options requires the default Bun target",
+      );
+      if (kind !== "executable") {
+        expect(stderr).toContain(
+          `received "${kind === "version" ? target : `${target}-v${Bun.version.replaceAll("-debug", "")}`}"`,
+        );
+        expect(stderr).toContain("note: Remove --target or compile.target to use the current Bun executable.");
+      }
+      expect(await Bun.file(join(String(dir), "out")).exists()).toBe(false);
+      expect(code).toBe(1);
+    });
+  });
+
+  itBundled("compile/env-options/inspector-connect", {
+    compile: { envOptions: false },
+    outfile: "/app.exe",
+    files: {
+      "/entry.ts": `
+        import { open, url } from "node:inspector";
+        try {
+          using inspector = open(0, "127.0.0.1");
+          console.log(url() ? "opened" : "missing URL");
+        } catch (error) {
+          console.log(error.code);
+        }
+      `,
+    },
+    async onAfterBundle({ outfile, join }) {
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            socket.end();
+          },
+          data() {},
+        },
+      });
+      const env = { ...bunEnv, ...runtimeEnv, BUN_INSPECT_CONNECT_TO: `tcp://127.0.0.1:${listener.port}` };
+      // inspector.open() refuses a VM with an environment-configured inspector,
+      // even if its debugger thread has not connected yet.
+      {
+        await using proc = Bun.spawn({ cmd: [bunExe(), join("entry.ts")], env, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, code }).toEqual({ stdout: "ERR_INSPECTOR_ALREADY_ACTIVATED\n", code: 0 });
+      }
+      await using proc = Bun.spawn({ cmd: [outfile], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("opened\n");
+      expect(stderr).toMatch(/^Debugger listening on ws:\/\/127\.0\.0\.1:\d+\/[0-9a-f-]+\n$/);
+      expect({ code, signal: proc.signalCode }).toEqual({ code: 0, signal: null });
+    },
+  });
+
+  describe.each([null, "false", 0, {}, []].map(value => ({ value })))("envOptions: %j", ({ value: envOptions }) => {
+    test("requires a boolean", () => {
+      const build = () => Bun.build({ entrypoints: [import.meta.path], compile: { envOptions: envOptions as any } });
+      expect(build).toThrow(TypeError);
+      expect(build).toThrow(/compile\.envOptions.*boolean/);
+    });
+  });
+
+  describe.each([false, true])("own envOptions: %s", own => {
+    test("only reads an own property", async () => {
+      let read = false;
+      const property = {
+        get envOptions() {
+          read = true;
+          return false;
+        },
+      };
+      const compile = own ? property : Object.create(property);
+      using dir = tempDir("compile-env-options-inherited", { "entry.ts": "const = ;" });
+      const result = await Bun.build({ entrypoints: [join(String(dir), "entry.ts")], compile, throw: false });
+      expect(result.success).toBe(false);
+      expect(read).toBe(own);
+    });
+  });
+
+  describe.each(["--compile-env-options", "--no-compile-env-options"])("%s", flag => {
+    test.concurrent("requires --compile", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", flag, import.meta.path],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("--compile-env-options requires --compile");
+      expect(code).toBe(1);
+    });
+  });
+
+  test.concurrent("rejects conflicting CLI flags", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--compile-env-options", "--no-compile-env-options", import.meta.path],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Cannot use both --compile-env-options and --no-compile-env-options");
+    expect(code).toBe(1);
+  });
+});
 
 // `BUN_JSC_dumpOptions=2` prints every JSC option as `   name=value` on stderr
 // once JSCInitialize has applied Bun's overrides.

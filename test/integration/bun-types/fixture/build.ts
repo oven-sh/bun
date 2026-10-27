@@ -22,6 +22,17 @@ Bun.build({
   compile: {},
 });
 
+Bun.build({ entrypoints: ["hey"], compile: { envOptions: false, execArgv: ["--smol"] } });
+Bun.build({ entrypoints: ["hey"], compile: { envOptions: true } });
+Bun.build({ entrypoints: ["hey"], compile: { envOptions: undefined } });
+Bun.build({
+  entrypoints: ["hey"],
+  compile: {
+    // @ts-expect-error envOptions requires a boolean
+    envOptions: "false",
+  },
+});
+
 Bun.build({
   entrypoints: ["hey"],
   plugins: [

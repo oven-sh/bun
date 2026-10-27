@@ -14,8 +14,6 @@ use crate::common::constants::{
 /// How thorough H5 and H6 are.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HasherParams {
-    /// `log2` of the number of hashes.
-    pub(crate) bucket_bits: u32,
     /// `log2` of how many positions are kept for each hash.
     pub(crate) block_bits: u32,
     pub(crate) num_last_distances_to_check: usize,
@@ -193,14 +191,14 @@ impl EncoderParams {
 
     /// Which hasher a quality uses:
     ///
-    /// | quality | hasher | small window | large input | large input and window |
+    /// | quality | hasher | `lgwin <= 16` | input of 1 MiB or more | and `lgwin > 24` |
     /// | --- | --- | --- | --- | --- |
     /// | 2 | H2 | | | |
-    /// | 3 | H3 | | | H35, whatever the input |
+    /// | 3 | H3 | | | H35, for any input |
     /// | 4 | H4 | | H54 | H55 |
-    /// | 5, 6 | H58 | H40 | H68 | H65 |
-    /// | 7, 8 | H5 | H41 | H6 | H65 |
-    /// | 9 | H5 | H42 | H6 | H65 |
+    /// | 5, 6 | H58 | H40 | H68, if `lgwin >= 19` | H65 |
+    /// | 7, 8 | H5 | H41 | H6, if `lgwin >= 19` | H65 |
+    /// | 9 | H5 | H42 | H6, if `lgwin >= 19` | H65 |
     /// | 10, 11 | H10 | | | |
     ///
     /// H58 and H68 are H5 and H6 with a tag for each candidate, by which most are rejected without a look at them. That
@@ -210,7 +208,6 @@ impl EncoderParams {
         // Qualities up to 2 are too fast for a large window, and H10 already works well with one.
         let large_window = self.lgwin > 24;
         let hasher_params = HasherParams {
-            bucket_bits: 15,
             block_bits: (self.quality - 1) as u32,
             num_last_distances_to_check: match self.quality {
                 ..7 => 4,
@@ -251,7 +248,6 @@ mod tests {
     fn chooses_the_hasher_of_the_reference_encoder() {
         const MIB: usize = 1 << 20;
         let p = |block_bits, num_last_distances_to_check| HasherParams {
-            bucket_bits: 15,
             block_bits,
             num_last_distances_to_check,
         };

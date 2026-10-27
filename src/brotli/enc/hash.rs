@@ -349,8 +349,8 @@ impl<'a> BucketSearch<'a> {
         }))
     }
 
-    /// Tells whether to go on with the next position. If `LONG`, the first 4 bytes of most candidates are those at
-    /// `cur_ix`.
+    /// Tells whether to go on with the next position. `LONG` compares the first 4 bytes before the rest, as the
+    /// reference encoder does in the hashers of 5 bytes.
     #[inline(always)]
     fn try_position<const LONG: bool>(
         &mut self,

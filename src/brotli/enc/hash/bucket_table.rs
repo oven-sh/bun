@@ -1,12 +1,16 @@
 //! The storage of the hasher that keeps the last few positions of each hash.
 
-use crate::enc::Fallible;
 use crate::util::{Bug, Checked, SliceExt, try_reserve_up_to, try_zeroed};
 use bun_core::AllocError;
+
+/// How many bits a hash has.
+pub(crate) const BUCKET_BITS: u32 = 15;
+const NUM_BUCKETS: usize = 1 << BUCKET_BITS;
 
 /// Which block is the bucket's own, counted from 1, or 0 if it has none yet. Then how many positions were added to the
 /// bucket, modulo 65536.
 pub(crate) type Head = [u16; 2];
+const _: () = assert!(NUM_BUCKETS <= u16::MAX as usize);
 
 pub(crate) struct BucketTable {
     /// How many positions a bucket holds. Older ones are forgotten.
@@ -29,16 +33,11 @@ pub(crate) struct Buckets<'a> {
 }
 
 impl BucketTable {
-    pub(crate) fn new(bucket_bits: u32, block_bits: u32) -> Fallible<Self> {
-        let num_buckets = 1usize << bucket_bits;
-        // A `Head` has 16 bits for the number of a block.
-        if num_buckets > usize::from(u16::MAX) {
-            return Err(Bug.into());
-        }
+    pub(crate) fn new(block_bits: u32) -> Result<Self, AllocError> {
         Ok(Self {
             block_size: 1 << block_bits,
             block_bits,
-            heads: try_zeroed(num_buckets)?,
+            heads: try_zeroed(NUM_BUCKETS)?,
             blocks: Vec::new(),
             is_clear: true,
         })
@@ -53,8 +52,8 @@ impl BucketTable {
     pub(crate) fn reserve(&mut self, positions: usize) -> Result<(), AllocError> {
         try_reserve_up_to(
             &mut self.blocks,
-            positions.min(self.heads.len()) * self.block_size,
-            self.heads.len() * self.block_size,
+            positions.min(NUM_BUCKETS) * self.block_size,
+            NUM_BUCKETS * self.block_size,
         )
     }
 
@@ -110,5 +109,16 @@ impl Buckets<'_> {
         let before = *added;
         *added = before.wrapping_add(1);
         Ok(Some((usize::from(block) << self.block_bits, before)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `ChooseHasher` of the reference encoder sets for H6, and for H5 from quality 7 on.
+    #[test]
+    fn same_parameters_as_the_reference_encoder() {
+        assert_eq!(BUCKET_BITS, 15);
     }
 }

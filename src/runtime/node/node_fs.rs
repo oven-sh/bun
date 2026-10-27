@@ -152,7 +152,7 @@ use super::time_like::TimeLike;
 use super::types::{
     Dirent, Encoding, FileSystemFlags, FileSystemFlagsKind, NameTooLong, Parsing, PathLike,
     PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg,
-    VectorArrayBuffer,
+    VectorArrayBuffer, refused_path,
 };
 use crate::generated_bindgen::node_fs_binding as generated;
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
@@ -2770,7 +2770,7 @@ pub(crate) mod args {
                 ctx.throw_invalid_argument_type_value(
                     b"oldPath",
                     b"string or an instance of Buffer or URL",
-                    old_path.to_js(),
+                    refused_path(old_path),
                 )
             })?;
             // `Drop for PathLike` runs on early return.
@@ -2778,7 +2778,7 @@ pub(crate) mod args {
                 ctx.throw_invalid_argument_type_value(
                     b"newPath",
                     b"string or an instance of Buffer or URL",
-                    new_path.to_js(),
+                    refused_path(new_path),
                 )
             })?;
             Ok(Rename { old_path, new_path })
@@ -3353,7 +3353,7 @@ pub(crate) mod args {
                 ctx.throw_invalid_argument_type_value(
                     b"prefix",
                     b"string, Buffer, or URL",
-                    prefix.to_js(),
+                    refused_path(prefix),
                 )
             })?;
             let encoding = parse_encoding_arg(ctx, options, Encoding::Utf8)?;
@@ -3620,7 +3620,7 @@ pub(crate) mod args {
             let generated::WriteString::Text(buffer) = buffer else {
                 return Err(ctx.throw_invalid_argument_type_value(
                     b"buffer",
-                    b"string or TypedArray",
+                    b"string or an instance of Buffer, TypedArray, or DataView",
                     bv.to_js(),
                 ));
             };

@@ -117,8 +117,8 @@ const SERIALIZATION_VERSION: u8 = 4;
 
 pub(crate) use crate::generated_bindgen::blob::js_Blob as js;
 use crate::generated_bindgen::blob::{
-    BlobName, BlobOptionsArgument, BlobOrBuildArtifact, BlobParts, BlobPropertyBag, BlobType,
-    BunFileOptions, BunWriteOptions, OptionText, S3Options, WriteOptionsArgument,
+    BlobName, BlobOrBuildArtifact, BlobParts, BlobPropertyBag, BlobType, BunFileOptions,
+    BunWriteOptions, OptionText, S3Options, WriteOptionsArgument,
 };
 use crate::generated_bindgen::blob_arguments::{BlobSliceBound, BunWriteData};
 use crate::generated_bindgen::image::ImageOptions;
@@ -257,7 +257,7 @@ pub(crate) trait BlobExt {
     fn constructor(
         cx: &mut JsScope<'_>,
         parts: BlobParts<'_>,
-        options: BlobOptionsArgument<'_>,
+        options: Option<JsLocal<'_, jsc::JSObject>>,
     ) -> JsResult<*mut Blob>
     where
         Self: Sized;
@@ -2100,16 +2100,16 @@ impl BlobExt for Blob {
     fn constructor(
         cx: &mut JsScope<'_>,
         parts: BlobParts<'_>,
-        options: BlobOptionsArgument<'_>,
+        options: Option<JsLocal<'_, jsc::JSObject>>,
     ) -> JsResult<*mut Blob> {
         let global_this = cx.global();
         let blob = match parts {
-            BlobParts::Undefined | BlobParts::Null => Blob::init_empty(global_this),
+            BlobParts::Missing => Blob::init_empty(global_this),
             BlobParts::List(parts) => Blob::get::<false, true>(global_this, parts.to_js())?,
             BlobParts::Buffer(parts) => Blob::get::<false, true>(global_this, parts.to_js())?,
         };
 
-        if let BlobOptionsArgument::Options(options) = options
+        if let Some(options) = options
             && let Some(content_type_str) =
                 BlobPropertyBag::from_js(global_this, options.to_js())?.r#type
         {

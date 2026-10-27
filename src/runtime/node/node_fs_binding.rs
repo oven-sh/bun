@@ -76,7 +76,7 @@ fn run_async<A: FsArgument>(
         let cx = cx.js_thread();
         let global = cx.global();
         let callback = callback.map(JsLocal::to_js);
-        let args = match parsed_async_args(global, args, parsing) {
+        let args = match finish_parsing_async_args(global, args, parsing) {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => {
                 return reject_before_schedule(global, callback, error);
@@ -111,11 +111,11 @@ fn parse_async_args<A: FsArgument>(
 ) -> JsResult<ParsedAsyncArgs<A>> {
     let mut parsing = Parsing::new(Flavor::Async);
     let args = from_js(global, &mut parsing)?;
-    Ok(parsed_async_args(global, args, parsing))
+    Ok(finish_parsing_async_args(global, args, parsing))
 }
 
-/// `args` were parsed with `parsing`, under [`Flavor::Async`].
-fn parsed_async_args<A: FsArgument>(
+/// Whether the operation is scheduled with `args`, which were parsed with `parsing` under [`Flavor::Async`].
+fn finish_parsing_async_args<A: FsArgument>(
     global: &JSGlobalObject,
     args: A,
     mut parsing: Parsing,

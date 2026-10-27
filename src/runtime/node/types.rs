@@ -766,25 +766,12 @@ pub(crate) trait PathLikeExt {
         Self: Sized;
 }
 
-impl generated::PathLike<'_> {
-    /// The argument, for the error of a caller that [`PathLikeExt::from_js`] gave `None`.
-    pub(crate) fn to_js(self) -> JSValue {
-        match self {
-            Self::String(string) => string.to_js(),
-            Self::Buffer(buffer) => buffer.to_js(),
-            Self::Url(_) => unreachable!("a URL is a path"),
-            Self::Other(value) => value.to_js(),
-        }
-    }
-}
-
-impl generated::PathOrFileDescriptor<'_> {
-    /// As [`generated::PathLike::to_js`].
-    pub(crate) fn to_js(self) -> JSValue {
-        match self {
-            Self::Fd(fd) => JSValue::js_number(f64::from(fd)),
-            Self::Path(path) => path.to_js(),
-        }
+/// The value to name in an error, after [`PathLikeExt::from_js`] returned `None` for `path`.
+pub(crate) fn refused_path(path: generated::PathLike<'_>) -> JSValue {
+    match path {
+        generated::PathLike::Buffer(buffer) => buffer.to_js(),
+        generated::PathLike::Other(value) => value.to_js(),
+        generated::PathLike::String(_) | generated::PathLike::Url(_) => unreachable!(),
     }
 }
 
@@ -1709,10 +1696,13 @@ impl PathOrBlob {
         PathOrFileDescriptor::from_js(ctx, path, &mut Parsing::new(Flavor::Sync))?
             .map(PathOrBlob::Path)
             .ok_or_else(|| {
+                let generated::PathOrFileDescriptor::Path(path) = path else {
+                    unreachable!()
+                };
                 ctx.throw_invalid_argument_type_value(
                     b"destination",
                     b"path, file descriptor, or Blob",
-                    path.to_js(),
+                    refused_path(path),
                 )
             })
     }

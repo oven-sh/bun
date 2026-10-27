@@ -53,13 +53,11 @@ const unlink = { ...method, args: { options: S3Options.otherAsNull }, length: 0 
 export const WriteOptionsArgument = b.union({ missing: b.null, options: S3Options, other: b.opaque });
 
 export const BlobParts = b.union({
-  undefined: b.undefined,
-  null: b.null,
+  missing: b.null,
   list: b.jsArray,
   buffer: b.bufferSource.allowShared,
 });
 
-export const BlobOptionsArgument = b.union({ missing: b.undefined, options: b.object, other: b.ignored });
 /** Read after `parts` is converted. */
 export const BlobPropertyBag = b.dictionary(
   { type: b.string.utf8.owned.otherAsNull },
@@ -78,7 +76,7 @@ export const Blob = b.class({
   rustTraits: ["crate::webcore::blob::BlobExt"],
   estimatedSize: true,
   construct: {
-    args: { parts: BlobParts, options: BlobOptionsArgument },
+    args: { parts: BlobParts, options: b.object.otherAsNull },
     expected: { parts: "new Blob() expects an Array" },
     ...js,
     length: 0,

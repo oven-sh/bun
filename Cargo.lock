@@ -839,6 +839,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_jpeg"
+version = "0.0.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "bun_js_parser"
 version = "0.0.0"
 dependencies = [

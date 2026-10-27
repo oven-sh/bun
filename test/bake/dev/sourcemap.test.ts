@@ -98,11 +98,10 @@ devTest("hmr chunk source map follows the source when mappings do not change", {
       await dev.write("App.tsx", source);
       const chunk = await c.getMostRecentHmrChunk();
       expect(chunk).toContain(`"${word}"`);
-      const sourceMapUrl = chunk.match(/\n\/\/# sourceMappingURL=(\S+)/)?.[1];
-      expect(sourceMapUrl).toBeString();
-      mapUrls.add(sourceMapUrl!);
+      const sourceMapUrl = sourceMappingUrl(chunk);
+      mapUrls.add(sourceMapUrl);
       lastSourceMapUrl = sourceMapUrl;
-      const sourceMap = await dev.fetch(sourceMapUrl!).json();
+      const sourceMap = await dev.fetch(sourceMapUrl).json();
       expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath)).toEqual([dev.join("App.tsx")]);
       expect(sourceMap.sourcesContent[1]).toBe(source);
     }
@@ -113,8 +112,7 @@ devTest("hmr chunk source map follows the source when mappings do not change", {
     await dev.writeNoChanges("App.tsx");
     const chunk = await c.getMostRecentHmrChunk();
     expect(chunk).toContain(`"DDD"`);
-    const sourceMapUrl = chunk.match(/\n\/\/# sourceMappingURL=(\S+)/)?.[1];
-    expect(sourceMapUrl).toBe(lastSourceMapUrl);
+    expect(sourceMappingUrl(chunk)).toBe(lastSourceMapUrl);
   },
 });
 
@@ -151,10 +149,9 @@ devTest("hmr chunk source map follows the line count of a part without mappings"
         await dev.writeNoChanges("App.tsx");
       }
       const chunk = await c.getMostRecentHmrChunk();
-      const sourceMapUrl = chunk.match(/\n\/\/# sourceMappingURL=(\S+)/)?.[1];
-      expect(sourceMapUrl).toBeString();
-      mapUrls.add(sourceMapUrl!);
-      const sourceMap = await dev.fetch(sourceMapUrl!).json();
+      const sourceMapUrl = sourceMappingUrl(chunk);
+      mapUrls.add(sourceMapUrl);
+      const sourceMap = await dev.fetch(sourceMapUrl).json();
       expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath).sort()).toEqual(
         [dev.join("index.ts"), dev.join("data.txt"), dev.join("App.tsx")].sort(),
       );
@@ -181,12 +178,16 @@ async function extractSourceMapHtml(dev: Dev, html: string) {
   return extractSourceMap(dev, scriptSource);
 }
 
-async function extractSourceMap(dev: Dev, scriptSource: string) {
-  const sourceMapUrl = scriptSource.match(/\n\/\/# sourceMappingURL=([^"]+)/);
+function sourceMappingUrl(scriptSource: string) {
+  const sourceMapUrl = scriptSource.match(/\n\/\/# sourceMappingURL=(\S+)/);
   if (!sourceMapUrl) {
     throw new Error("Source map URL not found in " + scriptSource);
   }
-  const sourceMap = await dev.fetch(sourceMapUrl[1]).text();
+  return sourceMapUrl[1];
+}
+
+async function extractSourceMap(dev: Dev, scriptSource: string) {
+  const sourceMap = await dev.fetch(sourceMappingUrl(scriptSource)).text();
   if (!sourceMap.startsWith("{")) {
     throw new Error("Source map is not valid JSON: " + sourceMap);
   }

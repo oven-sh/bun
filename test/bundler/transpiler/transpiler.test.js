@@ -9,6 +9,7 @@ import {
   isDebug,
   tempDir,
 } from "harness";
+import { SourceMap } from "node:module";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -486,6 +487,79 @@ describe("Bun.Transpiler", () => {
       }
       exp(`x = ${kept}`, `x = ${keptOut};\n`);
       exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
+    });
+
+    it('a call of "async" before a ":" stays a call', async () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // The parentheses are tried as parameters first. Spread arguments stay spread when they are not.
+      exp("x = a ? async(b, ...c) : d", "x = a ? async(b, ...c) : d;\n");
+      exp("x = a ? async(b, ...[c, d]) : e", "x = a ? async(b, ...[c, d]) : e;\n");
+      exp("x = a ? async(...b) : c => d", "x = a ? async(...b) : (c) => d;\n");
+      exp("x = a ? async(...b, c) : d", "x = a ? async(...b, c) : d;\n");
+      exp("x = a ? async<T>(...b) : c", "x = a ? async(...b) : c;\n");
+      exp("x = a ? q = async(...b) : c", "x = a ? q = async(...b) : c;\n");
+      exp("x = a ? q => async(b, ...c) : d", "x = a ? (q) => async(b, ...c) : d;\n");
+      exp("x = a ? b ? c : async(...d) : e", "x = a ? b ? c : async(...d) : e;\n");
+      exp("switch (x) { case async(b, ...c): break }", "switch (x) {\n  case async(b, ...c):\n    break;\n}");
+
+      // A spread of an assignment is an error for parameters only
+      exp("x = a ? async(b, ...c = d) : e", "x = a ? async(b, ...c = d) : e;\n");
+      exp("x = a ? ([...b = c]) : d", "x = a ? [...b = c] : d;\n");
+      err("x = async(...b = c) => 0", "A rest argument cannot have a default initializer");
+      err("x = (...a = 1) => 0", "A rest argument cannot have a default initializer");
+      err("x = ([...a = 1]) => 0", "A rest argument cannot have a default initializer");
+      err("x = async (...a = 1): T => 0", "A rest argument cannot have a default initializer");
+      err("x = a ? async (b, ...c = d): T => e : f", "A rest argument cannot have a default initializer");
+
+      // Above assignment level the ":" cannot be a return type
+      exp("x = a ? !async(b, ...c) : d", "x = a ? !async(b, ...c) : d;\n");
+      exp("x = a ? 1 + async(b) : d", "x = a ? 1 + async(b) : d;\n");
+      exp("x = a ? 1 + <T>(b) : c", "x = a ? 1 + b : c;\n");
+      exp("switch (x) { case 1 + async(b): break }", "switch (x) {\n  case 1 + async(b):\n    break;\n}");
+      exp(
+        "async function f() { x = a ? await async(b) : d }",
+        "async function f() {\n  x = a ? await async(b) : d;\n}",
+      );
+      err("x = 1 + async(b) => c", "Unexpected =>");
+
+      // An async arrow function keeps its rest parameter
+      exp("x = a ? async (...b): T => c : d", "x = a ? async (...b) => c : d;\n");
+      exp("x = a ? async (b, ...c): T => d : e", "x = a ? async (b, ...c) => d : e;\n");
+
+      using dir = tempDir("ts-async-call-before-colon", {
+        "index.ts": `
+          function async(...parts: string[]) { return parts.join("+"); }
+          const now = true, more = ["b", "c"];
+          console.log(now ? async("a", ...more) : "none");
+          console.log(now ? 1 + async("a").length : 0);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "a+b+c\n2\n", stderr: "", exitCode: 0 });
+    });
+
+    it('a spread argument of a call of "async" maps to its own column', async () => {
+      const source = "x = a ? async(b, ...c) : d;\n";
+      using dir = tempDir("ts-async-spread-sourcemap", { "entry.ts": source });
+      const result = await Bun.build({ entrypoints: [join(String(dir), "entry.ts")], sourcemap: "external" });
+      expect(result.success).toBe(true);
+      const code = await result.outputs.find(output => output.kind === "entry-point").text();
+      const map = new SourceMap(await result.outputs.find(output => output.kind === "sourcemap").json());
+      const lines = code.split("\n");
+      const line = lines.findIndex(text => text.includes("...c"));
+      const entry = map.findEntry(line, lines[line].indexOf("...c"));
+      expect({ line: entry.originalLine, column: entry.originalColumn }).toEqual({
+        line: 0,
+        column: source.indexOf("...c"),
+      });
     });
 
     it("emitDecoratorMetadata in an arrow function with a return type in a true branch", async () => {

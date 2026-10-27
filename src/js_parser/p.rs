@@ -4019,17 +4019,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let bind = self.convert_expr_to_binding(expr, invalid_log);
-        if let Some(initial) = initializer {
-            let equals_range = self.source.range_of_operator_before(initial.loc, b"=");
-            if is_spread {
-                self.log().add_range_error(
-                    Some(self.source),
-                    equals_range,
-                    b"A rest argument cannot have a default initializer",
-                );
-            } else {
-                // p.markSyntaxFeature();
-            }
+        if is_spread && let Some(initial) = initializer {
+            invalid_log.push(InvalidLoc {
+                loc: self.source.range_of_operator_before(initial.loc, b"=").loc,
+                kind: crate::parser::InvalidLocTag::RestInitializer,
+            });
         }
         ExprBindingTuple {
             binding: bind,

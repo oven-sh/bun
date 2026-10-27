@@ -172,6 +172,7 @@ impl Finder {
                 {
                     ip += 1;
                     let end = ip + 4 + sink.count_before(ip + 4, offset_1);
+                    // Small tables are close by as it is.
                     if LONG == 0 || LONG >= 17 {
                         look_ahead(near, end, hash_long, long, hash_small, small);
                     }
@@ -289,7 +290,7 @@ pub(crate) fn compress_block_double_fast(
     let mut sink = MatchSink::new(seq_store, &block);
     let hash_long = ms.hash_table.sub_mut(..1 << h_bits_l)?;
     let hash_small = ms.chain_table.sub_mut(..1 << h_bits_s)?;
-    // First, what levels 3 and 4 come with if the input is not known to be small, and level 3 if it is.
+    // What the levels come with, for an input of any size.
     match (ms.c_params.min_match, h_bits_l, h_bits_s) {
         (5, 18, 18) => finder.find_matches::<5, 18, 18>(hash_long, hash_small, &mut sink),
         (5, 17, 16) => finder.find_matches::<5, 17, 16>(hash_long, hash_small, &mut sink),
@@ -653,6 +654,7 @@ pub(crate) fn compress_block_double_fast_ext_dict(
     let hash_long = ms.hash_table.sub_mut(..1 << h_bits_l)?;
     let hash_small = ms.chain_table.sub_mut(..1 << h_bits_s)?;
     let (long, small, sink) = (hash_long, hash_small, &mut sink);
+    // What the levels come with, for an input that is large enough to get here.
     match (ms.c_params.min_match, h_bits_l, h_bits_s) {
         (5, 18, 18) => finder.find_matches_ext_dict::<5, 18, 18>(long, small, sink, block.window),
         (5, 17, 16) => finder.find_matches_ext_dict::<5, 17, 16>(long, small, sink, block.window),

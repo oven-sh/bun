@@ -805,7 +805,7 @@ pub(crate) fn compress_block_fast(
     };
     let mut sink = MatchSink::new(seq_store, &block);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
-    // First, what levels 1, 2 and those below 0 come with if the input is not known to be small, and level 1 if it is.
+    // What the levels come with, for an input of any size.
     match (ms.c_params.min_match, hlog) {
         (7, 14) => finder.find_matches::<7, 14>(hash_table, &mut sink),
         (6, 16) => finder.find_matches::<6, 16>(hash_table, &mut sink),
@@ -887,8 +887,8 @@ impl<'a> TaggedTable<'a> {
         })
     }
 
-    /// The place that the table has for the `MLS` first bytes of `bytes`, as many as it was made for. `None` if the tag tells that it is for
-    /// something else, or if it is the first place, which stands for none.
+    /// The place that the table has for the `MLS` first bytes of `bytes`, as many as it was made for. `None` if the tag
+    /// tells that it is for something else, or if it is the first place, which stands for none.
     #[inline(always)]
     pub(super) fn get<const MLS: u32>(self, bytes: u64) -> Option<u32> {
         let hash_and_tag = self.hasher.with_mls(MLS).hash(bytes);
@@ -1081,6 +1081,7 @@ pub(crate) fn compress_block_fast_ext_dict(
     };
     let mut sink = MatchSink::with_near(seq_store, block.window.near, block.istart);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
+    // What the levels come with, for an input that is large enough to get here.
     match (ms.c_params.min_match, hlog) {
         (7, 14) => finder.find_matches_ext_dict::<7, 14>(hash_table, &mut sink, block.window),
         (6, 16) => finder.find_matches_ext_dict::<6, 16>(hash_table, &mut sink, block.window),

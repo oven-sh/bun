@@ -50,13 +50,14 @@ impl<'a> BitCStream<'a> {
     #[inline(always)]
     fn flush(&mut self) {
         let nb_bytes = (self.bit_pos >> 3) as usize;
-        if let Ok(out) = self.dst.array_at_mut(self.pos) {
+        // At the end of the output the stream stops advancing, which `close` reports.
+        let pos = self.pos.min(self.end);
+        if let Ok(out) = self.dst.array_at_mut(pos) {
             *out = self.container.to_le_bytes();
         }
-        self.pos += nb_bytes;
+        self.pos = pos + nb_bytes;
         self.bit_pos &= 7;
-        // All 8 bytes leave only if `add_bits` was given more than fits.
-        self.container = self.container.checked_shr(nb_bytes as u32 * 8).unwrap_or(0);
+        self.container >>= (nb_bytes as u32 * 8) & (CONTAINER_BITS - 1);
     }
 
     /// `BIT_flushBitsFast`: the caller knows that the output is large enough.
@@ -65,13 +66,10 @@ impl<'a> BitCStream<'a> {
         self.flush();
     }
 
-    /// `BIT_flushBits`: at the end of the output the stream stops advancing, which [`Self::close`] reports.
+    /// `BIT_flushBits`
     #[inline(always)]
     pub(crate) fn flush_bits(&mut self) {
         self.flush();
-        if self.pos > self.end {
-            self.pos = self.end;
-        }
     }
 
     /// `BIT_closeCStream`: the size of the stream, or 0 if it did not fit.

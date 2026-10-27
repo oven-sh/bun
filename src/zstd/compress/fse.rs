@@ -37,8 +37,11 @@ pub(crate) struct FseCTable {
     pub(crate) table_log: u32,
     pub(crate) max_symbol_value: u32,
     pub(crate) state_table: [u16; 1 << ML_FSE_LOG],
-    pub(crate) symbol_tt: [FseSymbolTransform; MAX_SEQ as usize + 1],
+    /// More than `MAX_SEQ + 1`, so that a masked symbol is known to be in bounds.
+    pub(crate) symbol_tt: [FseSymbolTransform; SYMBOL_TT_SIZE],
 }
+
+const SYMBOL_TT_SIZE: usize = (MAX_SEQ as usize + 1).next_power_of_two();
 
 impl FseCTable {
     pub(crate) const fn new() -> Self {
@@ -49,7 +52,7 @@ impl FseCTable {
             symbol_tt: [FseSymbolTransform {
                 delta_find_state: 0,
                 delta_nb_bits: 0,
-            }; MAX_SEQ as usize + 1],
+            }; SYMBOL_TT_SIZE],
         }
     }
 
@@ -237,7 +240,9 @@ impl<'a> FseCState<'a> {
     #[inline(always)]
     pub(crate) fn encode_symbol(&mut self, bit_c: &mut BitCStream<'_>, symbol: u32) {
         let symbol_tt = &self.table.symbol_tt;
-        let transform = symbol_tt.at(symbol as usize).unwrap_or_default();
+        let transform = symbol_tt
+            .at(symbol as usize & (SYMBOL_TT_SIZE - 1))
+            .unwrap_or_default();
         let nb_bits_out = ((self.value + transform.delta_nb_bits as usize) >> 16) as u32;
         bit_c.add_bits(self.value as u64, nb_bits_out);
         self.step(nb_bits_out, transform.delta_find_state);

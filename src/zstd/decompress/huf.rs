@@ -524,9 +524,10 @@ fn fill_dtable_x2_level2(
             2 | 4 => length,
             _ => skip_size.next_multiple_of(8),
         };
+        let first_symbol = base_seq;
         dtable
             .sub_mut(..filled)?
-            .fill(build_delt_x2(base_seq, consumed_bits, 0, 1));
+            .fill(build_delt_x2(first_symbol, consumed_bits, 0, 1));
     }
 
     for w in min_weight..max_weight1 {

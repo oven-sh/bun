@@ -1,5 +1,7 @@
 //! The parameters of `zstd_compress.c`: what can be asked for, and how it turns into what is applied.
 
+use core::ops::RangeInclusive;
+
 use super::internal::{
     CompressionParameters, LdmParams, ParamSwitch, Strategy, ZSTD_OPT_SIZE,
     ZSTD_SHORT_CACHE_TAG_BITS,
@@ -144,43 +146,42 @@ pub(crate) const NO_LDM_PARAMS: LdmParams = LdmParams {
 };
 
 /// `ZSTD_cParam_getBounds`
-fn bounds(param: i32) -> Result<(i32, i32)> {
+fn bounds(param: i32) -> Result<RangeInclusive<i32>> {
     Ok(match param {
-        c_param::COMPRESSION_LEVEL => (ZSTD_MIN_CLEVEL, ZSTD_MAX_CLEVEL),
-        c_param::WINDOW_LOG => (ZSTD_WINDOWLOG_MIN, ZSTD_WINDOWLOG_MAX as i32),
-        c_param::HASH_LOG => (ZSTD_HASHLOG_MIN, ZSTD_HASHLOG_MAX),
-        c_param::CHAIN_LOG => (ZSTD_CHAINLOG_MIN, ZSTD_CHAINLOG_MAX),
-        c_param::SEARCH_LOG => (ZSTD_SEARCHLOG_MIN, ZSTD_SEARCHLOG_MAX),
-        c_param::MIN_MATCH => (ZSTD_MINMATCH_MIN, ZSTD_MINMATCH_MAX),
-        c_param::TARGET_LENGTH => (ZSTD_TARGETLENGTH_MIN, ZSTD_TARGETLENGTH_MAX),
-        c_param::STRATEGY => (Strategy::Fast as i32, Strategy::BtUltra2 as i32),
-        c_param::CONTENT_SIZE_FLAG | c_param::CHECKSUM_FLAG | c_param::DICT_ID_FLAG => (0, 1),
-        c_param::NB_WORKERS => (0, ZSTDMT_NBWORKERS_MAX),
-        c_param::JOB_SIZE => (0, ZSTDMT_JOBSIZE_MAX),
-        c_param::OVERLAP_LOG => (ZSTD_OVERLAPLOG_MIN, ZSTD_OVERLAPLOG_MAX),
+        c_param::COMPRESSION_LEVEL => ZSTD_MIN_CLEVEL..=ZSTD_MAX_CLEVEL,
+        c_param::WINDOW_LOG => ZSTD_WINDOWLOG_MIN..=ZSTD_WINDOWLOG_MAX as i32,
+        c_param::HASH_LOG => ZSTD_HASHLOG_MIN..=ZSTD_HASHLOG_MAX,
+        c_param::CHAIN_LOG => ZSTD_CHAINLOG_MIN..=ZSTD_CHAINLOG_MAX,
+        c_param::SEARCH_LOG => ZSTD_SEARCHLOG_MIN..=ZSTD_SEARCHLOG_MAX,
+        c_param::MIN_MATCH => ZSTD_MINMATCH_MIN..=ZSTD_MINMATCH_MAX,
+        c_param::TARGET_LENGTH => ZSTD_TARGETLENGTH_MIN..=ZSTD_TARGETLENGTH_MAX,
+        c_param::STRATEGY => Strategy::Fast as i32..=Strategy::BtUltra2 as i32,
+        c_param::CONTENT_SIZE_FLAG | c_param::CHECKSUM_FLAG | c_param::DICT_ID_FLAG => 0..=1,
+        c_param::NB_WORKERS => 0..=ZSTDMT_NBWORKERS_MAX,
+        c_param::JOB_SIZE => 0..=ZSTDMT_JOBSIZE_MAX,
+        c_param::OVERLAP_LOG => ZSTD_OVERLAPLOG_MIN..=ZSTD_OVERLAPLOG_MAX,
         c_param::ENABLE_LONG_DISTANCE_MATCHING => {
-            (ParamSwitch::Auto as i32, ParamSwitch::Disable as i32)
+            ParamSwitch::Auto as i32..=ParamSwitch::Disable as i32
         }
-        c_param::LDM_HASH_LOG => (ZSTD_LDM_HASHLOG_MIN, ZSTD_LDM_HASHLOG_MAX),
-        c_param::LDM_MIN_MATCH => (ZSTD_LDM_MINMATCH_MIN, ZSTD_LDM_MINMATCH_MAX),
-        c_param::LDM_BUCKET_SIZE_LOG => (ZSTD_LDM_BUCKETSIZELOG_MIN, ZSTD_LDM_BUCKETSIZELOG_MAX),
-        c_param::LDM_HASH_RATE_LOG => (ZSTD_LDM_HASHRATELOG_MIN, ZSTD_LDM_HASHRATELOG_MAX),
-        c_param::FORMAT => (0, 1),
-        c_param::TARGET_C_BLOCK_SIZE => (ZSTD_TARGETCBLOCKSIZE_MIN, ZSTD_TARGETCBLOCKSIZE_MAX),
+        c_param::LDM_HASH_LOG => ZSTD_LDM_HASHLOG_MIN..=ZSTD_LDM_HASHLOG_MAX,
+        c_param::LDM_MIN_MATCH => ZSTD_LDM_MINMATCH_MIN..=ZSTD_LDM_MINMATCH_MAX,
+        c_param::LDM_BUCKET_SIZE_LOG => ZSTD_LDM_BUCKETSIZELOG_MIN..=ZSTD_LDM_BUCKETSIZELOG_MAX,
+        c_param::LDM_HASH_RATE_LOG => ZSTD_LDM_HASHRATELOG_MIN..=ZSTD_LDM_HASHRATELOG_MAX,
+        c_param::FORMAT => 0..=1,
+        c_param::TARGET_C_BLOCK_SIZE => ZSTD_TARGETCBLOCKSIZE_MIN..=ZSTD_TARGETCBLOCKSIZE_MAX,
         _ => return Err(ErrorCode::ParameterUnsupported),
     })
 }
 
 /// `ZSTD_cParam_clampBounds`
 fn clamp_bounds(param: i32, value: i32) -> Result<i32> {
-    let (lower, upper) = bounds(param)?;
-    Ok(value.clamp(lower, upper))
+    let bounds = bounds(param)?;
+    Ok(value.clamp(*bounds.start(), *bounds.end()))
 }
 
 /// `BOUNDCHECK`
 fn bound_check(param: i32, value: i32) -> Result<()> {
-    let (lower, upper) = bounds(param)?;
-    if value < lower || value > upper {
+    if !bounds(param)?.contains(&value) {
         return Err(ErrorCode::ParameterOutOfBound);
     }
     Ok(())

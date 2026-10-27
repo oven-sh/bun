@@ -232,9 +232,19 @@ pub(crate) fn build_ctable(
 }
 
 #[inline(always)]
-fn bits_of<const N: usize>(table: &[u8; N], code: u8) -> u32 {
-    u32::from(table.get(usize::from(code)).copied().unwrap_or(0))
+fn bits_of(table: &[u8; 64], code: u8) -> u32 {
+    u32::from(table.get(usize::from(code & 63)).copied().unwrap_or(0))
 }
+
+/// `table`, long enough for a masked code to be known to be in bounds.
+const fn padded<const N: usize>(table: &[u8; N]) -> [u8; 64] {
+    let mut padded = [0; 64];
+    let (head, _) = padded.split_at_mut(N);
+    head.copy_from_slice(table);
+    padded
+}
+static LL_BITS_PADDED: [u8; 64] = padded(&LL_BITS);
+static ML_BITS_PADDED: [u8; 64] = padded(&ML_BITS);
 
 /// `ZSTD_encodeSequences`: the four slices are of the same length, which is not 0.
 pub(crate) fn encode_sequences(
@@ -266,8 +276,14 @@ pub(crate) fn encode_sequences(
     let mut state_match_length = FseCState::new2(ctable_match_length, u32::from(ml_last));
     let mut state_offset_bits = FseCState::new2(ctable_offset_bits, u32::from(of_last));
     let mut state_lit_length = FseCState::new2(ctable_lit_length, u32::from(ll_last));
-    block_stream.add_bits(u64::from(seq_last.lit_length), bits_of(&LL_BITS, ll_last));
-    block_stream.add_bits(u64::from(seq_last.ml_base), bits_of(&ML_BITS, ml_last));
+    block_stream.add_bits(
+        u64::from(seq_last.lit_length),
+        bits_of(&LL_BITS_PADDED, ll_last),
+    );
+    block_stream.add_bits(
+        u64::from(seq_last.ml_base),
+        bits_of(&ML_BITS_PADDED, ml_last),
+    );
     block_stream.add_bits(u64::from(seq_last.off_base), u32::from(of_last));
     block_stream.flush_bits();
 
@@ -278,9 +294,9 @@ pub(crate) fn encode_sequences(
         .zip(ml_codes)
         .rev()
     {
-        let ll_bits = bits_of(&LL_BITS, ll_code);
+        let ll_bits = bits_of(&LL_BITS_PADDED, ll_code);
         let of_bits = u32::from(of_code);
-        let ml_bits = bits_of(&ML_BITS, ml_code);
+        let ml_bits = bits_of(&ML_BITS_PADDED, ml_code);
         state_offset_bits.encode_symbol(&mut block_stream, u32::from(of_code));
         state_match_length.encode_symbol(&mut block_stream, u32::from(ml_code));
         state_lit_length.encode_symbol(&mut block_stream, u32::from(ll_code));

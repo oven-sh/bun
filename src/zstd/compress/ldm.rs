@@ -111,9 +111,9 @@ impl RollingHashState {
     }
 
     /// `ZSTD_ldm_gear_feed`: writes to `splits` the split points of `data`, as positions in it. Stops at the end of
-    /// `data` or once `splits` is full. Returns how many bytes it went through, and how many splits it found.
+    /// `data` or once `splits` is full.
     #[inline]
-    fn feed(&mut self, data: &[u8], splits: &mut [usize; LDM_BATCH_SIZE]) -> (usize, usize) {
+    fn feed(&mut self, data: &[u8], splits: &mut [usize; LDM_BATCH_SIZE]) -> Fed {
         let mut hash = self.rolling;
         let mask = self.stop_mask;
         let mut n = 0usize;
@@ -144,8 +144,19 @@ impl RollingHashState {
             }
         }
         self.rolling = hash;
-        (n, num_splits)
+        Fed {
+            hashed: n,
+            num_splits,
+        }
     }
+}
+
+/// What [`RollingHashState::feed`] did.
+struct Fed {
+    /// How many bytes it went through.
+    hashed: usize,
+    /// How many splits it found.
+    num_splits: usize,
 }
 
 /// `XXH64`, with a seed of 0.
@@ -318,7 +329,7 @@ pub(crate) fn fill_hash_table(
     let mut splits = [0usize; LDM_BATCH_SIZE];
 
     while ip < iend {
-        let (hashed, num_splits) = hash_state.feed(prefix.buf.sub(ip..iend)?, &mut splits);
+        let Fed { hashed, num_splits } = hash_state.feed(prefix.buf.sub(ip..iend)?, &mut splits);
         for &split in splits.iter().take(num_splits) {
             if ip + split >= istart + min_match_length {
                 let split = ip + split - min_match_length;
@@ -402,7 +413,7 @@ fn generate_sequences_internal(
     ip += min_match_length;
 
     while ip < ilimit {
-        let (hashed, num_splits) = hash_state.feed(buf.sub(ip..ilimit)?, &mut splits);
+        let Fed { hashed, num_splits } = hash_state.feed(buf.sub(ip..ilimit)?, &mut splits);
 
         for (candidate, &split) in candidates.iter_mut().zip(&splits).take(num_splits) {
             let split = ip + split - min_match_length;

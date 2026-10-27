@@ -453,7 +453,10 @@ enum DStage {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DStreamStage {
     Init,
-    LoadHeader,
+    /// `lh_size` bytes of the frame header are in `header_buffer`.
+    LoadHeader {
+        lh_size: usize,
+    },
     Read,
     Load,
     Flush,
@@ -497,7 +500,6 @@ struct DState {
     out_buff: Vec<u8>,
     out_start: usize,
     out_end: usize,
-    lh_size: usize,
     /// The last byte of a frame's input is held back until its output is flushed.
     hostage_byte: bool,
     no_forward_progress: u32,
@@ -547,7 +549,6 @@ impl DCtx {
                 out_buff: Vec::new(),
                 out_start: 0,
                 out_end: 0,
-                lh_size: 0,
                 hostage_byte: false,
                 no_forward_progress: 0,
                 header_buffer: [0; ZSTD_FRAMEHEADERSIZE_MAX],
@@ -1028,6 +1029,37 @@ impl DState {
         Ok(())
     }
 
+    /// Buffers for the frame whose header is `f_params`. Those that are there stay, unless they are too small, or have
+    /// been much too large for many frames.
+    fn resize_buffers(&mut self) -> Result<()> {
+        let needed_in_buff_size = self.f_params.block_size_max.max(4);
+        let needed_out_buff_size = decoding_buffer_size(
+            self.f_params.window_size,
+            self.f_params.frame_content_size,
+            self.f_params.block_size_max,
+        );
+
+        // `ZSTD_DCtx_updateOversizedDuration`
+        if self.in_buff.len() + self.out_buff.len()
+            >= (needed_in_buff_size + needed_out_buff_size) * ZSTD_WORKSPACETOOLARGE_FACTOR
+        {
+            self.oversized_duration += 1;
+        } else {
+            self.oversized_duration = 0;
+        }
+
+        let too_small =
+            self.in_buff.len() < needed_in_buff_size || self.out_buff.len() < needed_out_buff_size;
+        let too_large = self.oversized_duration >= ZSTD_WORKSPACETOOLARGE_MAXDURATION;
+        if too_small || too_large {
+            self.in_buff = Vec::new();
+            self.out_buff = Vec::new();
+            self.in_buff = try_zeroed(needed_in_buff_size)?;
+            self.out_buff = try_zeroed(needed_out_buff_size)?;
+        }
+        Ok(())
+    }
+
     /// `ZSTD_decompressStream`
     fn decompress_stream(
         &mut self,
@@ -1051,32 +1083,33 @@ impl DState {
 
         'work: loop {
             if self.stream_stage == DStreamStage::Init {
-                self.stream_stage = DStreamStage::LoadHeader;
-                self.lh_size = 0;
+                self.stream_stage = DStreamStage::LoadHeader { lh_size: 0 };
                 self.in_pos = 0;
                 self.out_start = 0;
                 self.out_end = 0;
                 self.hostage_byte = false;
             }
 
-            if self.stream_stage == DStreamStage::LoadHeader {
-                match get_frame_header(self.header_buffer.sub(..self.lh_size)?)? {
+            if let DStreamStage::LoadHeader { lh_size } = self.stream_stage {
+                match get_frame_header(self.header_buffer.sub(..lh_size)?)? {
                     HeaderStatus::Complete(header) => self.f_params = header,
                     HeaderStatus::Needs(h_size) => {
-                        let to_load = h_size - self.lh_size;
+                        let to_load = h_size - lh_size;
                         let remaining_input = iend - ip;
                         if to_load > remaining_input {
-                            self.header_buffer.write_at(self.lh_size, src.sub(ip..)?)?;
-                            self.lh_size += remaining_input;
+                            self.header_buffer.write_at(lh_size, src.sub(ip..)?)?;
+                            let lh_size = lh_size + remaining_input;
+                            self.stream_stage = DStreamStage::LoadHeader { lh_size };
                             input.pos = iend;
                             // Refuse what cannot become a frame header.
-                            get_frame_header(self.header_buffer.sub(..self.lh_size)?)?;
-                            return Ok(FRAMEHEADERSIZE_MIN.max(h_size) - self.lh_size
-                                + ZSTD_BLOCKHEADERSIZE);
+                            get_frame_header(self.header_buffer.sub(..lh_size)?)?;
+                            return Ok(
+                                FRAMEHEADERSIZE_MIN.max(h_size) - lh_size + ZSTD_BLOCKHEADERSIZE
+                            );
                         }
                         self.header_buffer
-                            .write_at(self.lh_size, src.span(ip, to_load)?)?;
-                        self.lh_size = h_size;
+                            .write_at(lh_size, src.span(ip, to_load)?)?;
+                        self.stream_stage = DStreamStage::LoadHeader { lh_size: h_size };
                         ip += to_load;
                         continue 'work;
                     }
@@ -1109,7 +1142,7 @@ impl DState {
                     self.stage = DStage::SkipFrame;
                 } else {
                     let header_buffer = self.header_buffer;
-                    self.decode_frame_header(header_buffer.sub(..self.lh_size)?)?;
+                    self.decode_frame_header(header_buffer.sub(..lh_size)?)?;
                     self.expected = ZSTD_BLOCKHEADERSIZE;
                     self.stage = DStage::DecodeBlockHeader;
                 }
@@ -1122,34 +1155,7 @@ impl DState {
                     return Err(ErrorCode::FrameParameterWindowTooLarge);
                 }
 
-                {
-                    let needed_in_buff_size = self.f_params.block_size_max.max(4);
-                    let needed_out_buff_size = decoding_buffer_size(
-                        self.f_params.window_size,
-                        self.f_params.frame_content_size,
-                        self.f_params.block_size_max,
-                    );
-
-                    // `ZSTD_DCtx_updateOversizedDuration`
-                    if self.in_buff.len() + self.out_buff.len()
-                        >= (needed_in_buff_size + needed_out_buff_size)
-                            * ZSTD_WORKSPACETOOLARGE_FACTOR
-                    {
-                        self.oversized_duration += 1;
-                    } else {
-                        self.oversized_duration = 0;
-                    }
-
-                    let too_small = self.in_buff.len() < needed_in_buff_size
-                        || self.out_buff.len() < needed_out_buff_size;
-                    let too_large = self.oversized_duration >= ZSTD_WORKSPACETOOLARGE_MAXDURATION;
-                    if too_small || too_large {
-                        self.in_buff = Vec::new();
-                        self.out_buff = Vec::new();
-                        self.in_buff = try_zeroed(needed_in_buff_size)?;
-                        self.out_buff = try_zeroed(needed_out_buff_size)?;
-                    }
-                }
+                self.resize_buffers()?;
                 self.stream_stage = DStreamStage::Read;
             }
 

@@ -41,7 +41,7 @@ async function runStressTest({
           socket.data ??= {};
           socket.data.read = true;
           sockets[i] = socket;
-          if (socket.write("200 OK\r\nCo") === "200 OK\r\nCo".length) {
+          if (socket.write("HTTP/1.1 200 OK\r\nCo") === "HTTP/1.1 200 OK\r\nCo".length) {
             socket.data.written = true;
             onServerWritten(socket);
           }
@@ -55,7 +55,7 @@ async function runStressTest({
           return;
         }
 
-        if (socket.write("200 OK\r\nCo") === "200 OK\r\nCo".length) {
+        if (socket.write("HTTP/1.1 200 OK\r\nCo") === "HTTP/1.1 200 OK\r\nCo".length) {
           socket.data.written = true;
           onServerWritten(socket);
         }

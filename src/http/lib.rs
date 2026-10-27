@@ -3817,12 +3817,6 @@ impl<'a> HTTPClient<'a> {
         let mut response = loop {
             let mut amount_read: usize = 0;
 
-            // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
-            // if less than 16 it will always be a ShortRead
-            if to_read.len() < 16 {
-                short_read!();
-            }
-
             let parsed = match picohttp::Response::parse_parts(
                 to_read,
                 &mut shared_resp[..],

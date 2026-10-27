@@ -23,7 +23,7 @@ import {
   tlsCert,
 } from "./proxy-stress-helpers";
 
-// Concurrency note: 102 tests share one {http, https} proxy pair from
+// Concurrency note: most tests share one {http, https} proxy pair from
 // beforeAll to avoid ephemeral-port reuse under test.concurrent's rolling
 // listen(0) churn. Tests that inspect proxy.connections keep a dedicated
 // proxy.
@@ -403,6 +403,44 @@ describe("HTTP/1.0 origin through tunnel", () => {
         const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
         expect(await res.text()).toBe("old-school");
         expect(res.status).toBe(200);
+      },
+    );
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A bare LF ends a line, so a complete response head can be as short as the
+// 14 bytes of "HTTP/1.1 200\n\n", from the origin or as the CONNECT reply.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("response head shorter than 16 bytes", () => {
+  for (const { proxyTls, originTls } of cartesian({
+    proxyTls: [false, true] as const,
+    originTls: [false, true] as const,
+  })) {
+    test.concurrent(`${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin`, async () => {
+      await using origin = await createAdversarialOrigin({ tls: originTls, rawResponse: "HTTP/1.1 200\n\nh" });
+      const proxy = sharedProxy(proxyTls);
+      const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
+      expect(await res.text()).toBe("h");
+      expect(res.status).toBe(200);
+    });
+  }
+
+  for (const { proxyTls, connectReply, splitConnectReply } of cartesian({
+    proxyTls: [false, true] as const,
+    connectReply: ["HTTP/1.1 200\n\n", "HTTP/1.1 200\r\n\n", "HTTP/1.1 200\n\r\n"] as const,
+    splitConnectReply: [1, 14] as const,
+  })) {
+    test.concurrent(
+      `${proxyTls ? "https" : "http"}-proxy replies ${JSON.stringify(connectReply)} to CONNECT, ${splitConnectReply === 1 ? "in one write" : "one byte per write"}`,
+      async () => {
+        await using origin = await createAdversarialOrigin({ tls: true, body: "tunneled" });
+        await using proxy = await createAdversarialProxy({ tls: proxyTls, connectReply, splitConnectReply });
+        const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
+        expect(await res.text()).toBe("tunneled");
+        expect(res.status).toBe(200);
+        expect(proxy.connectCount()).toBe(1);
       },
     );
   }

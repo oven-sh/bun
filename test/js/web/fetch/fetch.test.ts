@@ -2515,6 +2515,83 @@ describe("http/1.1 response body length", () => {
     expect(response.arrayBuffer()).resolves.toHaveLength(0);
   });
 });
+
+describe.concurrent("http/1.1 response shorter than 16 bytes", () => {
+  // A bare LF ends a line, so the shortest complete head is the 14 bytes of "HTTP/1.1 200\n\n".
+  const interim = "HTTP/1.1 100 Continue\r\n\r\n";
+
+  function respondWith(writes: string[], { close, secure = false }: { close: boolean; secure?: boolean }) {
+    let request = "";
+    return Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: secure ? tls : undefined,
+      socket: {
+        open(socket) {
+          socket.setNoDelay(true);
+        },
+        async data(socket, chunk) {
+          request += chunk.toString("latin1");
+          if (!request.endsWith("\r\n\r\n")) return;
+          for (const bytes of writes) {
+            socket.write(bytes);
+            // Separate writes then tend to arrive as separate reads. The outcome is the same either way.
+            await new Promise(resolve => setImmediate(resolve));
+          }
+          if (close) socket.end();
+        },
+      },
+    });
+  }
+
+  const outcome = (listener: TCPSocketListener, protocol = "http") =>
+    fetch(`${protocol}://127.0.0.1:${listener.port}/`, { tls: { rejectUnauthorized: false } }).then(
+      async response => ({ status: response.status, body: await response.text() }),
+      error => ({ code: error.code }),
+    );
+
+  it.each([
+    ["HTTP/1.1 200\n\n", 200, ""],
+    ["HTTP/1.1 204\n\n", 204, ""],
+    ["HTTP/1.1 204\r\n\n", 204, ""],
+    ["HTTP/1.1 204\n\r\n", 204, ""],
+    ["HTTP/1.1 200\n\nh", 200, "h"],
+    [interim + "HTTP/1.1 204\n\n", 204, ""],
+    [interim + "HTTP/1.1 200\n\nh", 200, "h"],
+  ])("%j, then the server closes", async (bytes, status, body) => {
+    using listener = respondWith([bytes], { close: true });
+    expect(await outcome(listener)).toEqual({ status, body });
+  });
+
+  // A 204 has no body, so it is complete without the server closing.
+  it.each(["HTTP/1.1 204\n\n", "HTTP/1.1 204\r\n\n", "HTTP/1.1 204\n\r\n", interim + "HTTP/1.1 204\n\n"])(
+    "%j, and the socket stays open",
+    async bytes => {
+      using listener = respondWith([bytes], { close: false });
+      expect(await outcome(listener)).toEqual({ status: 204, body: "" });
+    },
+  );
+
+  it("over TLS", async () => {
+    using listener = respondWith(["HTTP/1.1 200\n\nh"], { close: true, secure: true });
+    expect(await outcome(listener, "https")).toEqual({ status: 200, body: "h" });
+  });
+
+  it("written one byte at a time", async () => {
+    using listener = respondWith([..."HTTP/1.1 200\n\nh"], { close: true });
+    expect(await outcome(listener)).toEqual({ status: 200, body: "h" });
+  });
+
+  it("is rejected when malformed or incomplete", async () => {
+    using malformed = respondWith(["HELLO WORLD\n\n"], { close: true });
+    using incomplete = respondWith(["HTTP/1.1 200\n"], { close: true });
+    expect({ malformed: await outcome(malformed), incomplete: await outcome(incomplete) }).toEqual({
+      malformed: { code: "Malformed_HTTP_Response" },
+      incomplete: { code: "ECONNRESET" },
+    });
+  });
+});
+
 describe("fetch Response life cycle", () => {
   // error: Malformed_HTTP_Response fetching "http://localhost:58888/". For more information, pass `verbose: true` in the second argument to fetch()
   //   path: "http://localhost:58888/",

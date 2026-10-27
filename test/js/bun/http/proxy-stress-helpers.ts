@@ -111,6 +111,9 @@ export interface AdversarialProxyOptions {
   connectStatusBody?: string;
   /** Optional extra headers on the CONNECT reply (success or failure). */
   connectReplyHeaders?: Record<string, string>;
+  /** Exact bytes of the successful CONNECT reply. Replaces the default
+   *  envelope, `connectReplyHeaders` included. */
+  connectReply?: string;
   /**
    * Split the 200 CONNECT envelope into N writes with a `setImmediate` tick
    * between each. Exercises the client's partial-CONNECT-response parser.
@@ -404,7 +407,7 @@ export async function createAdversarialProxy(opts: AdversarialProxyOptions = {})
           let reply = `HTTP/1.1 200 ${STATUS_TEXT[200]}\r\n`;
           for (const [k, v] of Object.entries(opts.connectReplyHeaders ?? {})) reply += `${k}: ${v}\r\n`;
           reply += "\r\n";
-          await writeSplit(client, reply, opts.splitConnectReply ?? 1);
+          await writeSplit(client, opts.connectReply ?? reply, opts.splitConnectReply ?? 1);
           tunneled = true;
           if (stageHit("connect-replied")) return;
           if (leftover.length) {
@@ -510,6 +513,9 @@ export interface AdversarialOriginOptions {
   redirectTo?: string;
   /** Echo the request body as the response body. Overrides `body`. */
   echo?: boolean;
+  /** Exact bytes of the whole response. Overrides every option above that
+   *  shapes it. */
+  rawResponse?: string;
 }
 
 export interface AdversarialOrigin {
@@ -539,6 +545,7 @@ function encodeBody(raw: Buffer, encoding: BodyEncoding): Buffer {
 }
 
 function buildResponse(opts: AdversarialOriginOptions, reqBody: Buffer): Buffer {
+  if (opts.rawResponse !== undefined) return Buffer.from(opts.rawResponse, "latin1");
   if (opts.redirectTo) {
     const head =
       `HTTP/1.1 302 Found\r\n` + `Location: ${opts.redirectTo}\r\n` + `Content-Length: 0\r\nConnection: close\r\n\r\n`;

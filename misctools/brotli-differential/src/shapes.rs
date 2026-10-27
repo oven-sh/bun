@@ -2,12 +2,38 @@
 use crate::enc::{self, EncCase};
 use crate::r#gen;
 use crate::rng::Rng;
+use bun_brotli::{Encoder, EncoderOperation, EncoderParameter, PreparedDictionary};
+
+/// Without the reference.
+fn rust_stream(data: &[u8], params: &[(i32, u32)], dicts: &[Vec<u8>]) -> Result<Vec<u8>, String> {
+    let mut e = Encoder::new();
+    for &(k, v) in params {
+        if !e.set_parameter(EncoderParameter::from_raw(k as u32).unwrap(), v) {
+            return Err(format!("set_parameter({k}, {v})"));
+        }
+    }
+    for d in dicts {
+        if !PreparedDictionary::new(d.clone().into_boxed_slice()).is_some_and(|p| e.attach_prepared_dictionary(p)) {
+            return Err(format!("attach dictionary of {} bytes", d.len()));
+        }
+    }
+    let (mut out, mut buf, mut input) = (Vec::new(), vec![0u8; 1 << 16], data);
+    while !e.is_finished() {
+        let mut room: &mut [u8] = &mut buf;
+        e.compress_stream(EncoderOperation::Finish, &mut input, &mut room).map_err(|e| format!("Rust: {e}"))?;
+        let made = (1 << 16) - room.len();
+        out.extend_from_slice(&buf[..made]);
+    }
+    Ok(out)
+}
 
 fn check(name: &str, seed: u64, rng: &mut Rng, data: &[u8], params: &[(i32, u32)], dicts: &[Vec<u8>], totals: &mut (usize, usize)) {
     let large = params.iter().any(|&(k, v)| k == 6 && v == 1);
     for k in 0..2 {
         let case = EncCase { data: data.to_vec(), params: params.to_vec(), dicts: dicts.to_vec(), schedule: if k == 0 { 0 } else { rng.next() | 1 }, misuse: false };
-        match enc::compare(&case).and_then(|out| enc::round_trip(&out, data, dicts, large, rng.next()).map(|()| out)) {
+        // When a copy goes on into an empty dictionary, the reference reads past its end.
+        let stream = if dicts.iter().any(Vec::is_empty) { rust_stream(data, params, dicts) } else { enc::compare(&case) };
+        match stream.and_then(|out| enc::round_trip(&out, data, dicts, large, rng.next()).map(|()| out)) {
             Ok(out) => {
                 totals.0 += data.len();
                 totals.1 += out.len();
@@ -69,6 +95,11 @@ pub fn run_dict(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus: 
                 dicts.reverse();
             }
         }
+        if rng.chance(1, 10) {
+            for _ in 0..rng.range(1, 3).min(15 - dicts.len()) {
+                dicts.insert(rng.below(dicts.len() + 1), Vec::new());
+            }
+        }
         let all = dicts.concat();
         // Where one dictionary ends and the next one starts.
         let seams: Vec<usize> = dicts.iter().scan(0, |at, d| { *at += d.len(); Some(*at) }).collect();
@@ -76,9 +107,10 @@ pub fn run_dict(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus: 
         while data.len() < len {
             let to_end = block - data.len() % block;
             let straddle = rng.chance(1, 3) && to_end < 30_000;
+            let before_end = rng.range(1, 300).min(to_end);
             let literals = if straddle {
                 // Up to shortly before the end of the block.
-                to_end.saturating_sub(rng.range(1, 300))
+                to_end - before_end
             } else {
                 match rng.below(4) {
                     0 => 0,
@@ -99,6 +131,8 @@ pub fn run_dict(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus: 
                 continue;
             }
             let start = match rng.below(5) {
+                // The block ends first, then the dictionary.
+                _ if straddle && rng.chance(1, 2) => rng.pick(&seams).saturating_sub(before_end + rng.range(1, 200)),
                 0 => 0,
                 1 => rng.pick(&seams).saturating_sub(rng.range(1, 40)),
                 2 => all.len().saturating_sub(rng.range(1, 700)),
@@ -268,4 +302,77 @@ pub fn run_far_dict(seed: u64, qualities: u64) {
         let out = enc::compare(&case).and_then(|out| enc::round_trip(&out, &data, &dicts, true, 0).map(|()| out)).unwrap_or_else(|e| panic!("seed {seed} quality {q}: {e}"));
         println!("quality {q}: {} -> {}", data.len(), out.len());
     }
+}
+
+/// Calls in any order, with any amount of input and of room for output, whether or not the call before was completed or
+/// refused. What matters here is the state of the stream, so the inputs are short and the calls are many.
+pub fn run_states(seed0: u64, iters: u64, qualities: u64) {
+    const SIZES: [usize; 25] = [0, 0, 0, 1, 1, 2, 3, 5, 15, 16, 17, 18, 100, 255, 256, 257, 1000, 5000, 16384, 65535, 65536, 65537, 200_000, 1 << 24, (1 << 24) + 1];
+    const ROOM: [usize; 12] = [0, 0, 1, 1, 2, 3, 5, 16, 600, 5000, 1 << 16, 1 << 22];
+    let qs: Vec<u32> = crate::args::qualities(qualities, 0..12);
+    let mut pool = crate::ring::words(&mut Rng(1), 1 << 20);
+    pool.resize((1 << 24) + 1, b'x');
+    let (mut calls, mut refused, mut decoded) = (0usize, 0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let mut params = vec![(1, q)];
+        if rng.chance(1, 2) {
+            params.push((2, rng.range(10, 24) as u32));
+        }
+        if rng.chance(1, 8) {
+            params.push((6, 1));
+            params.push((2, rng.range(10, 26) as u32));
+        }
+        if rng.chance(1, 8) {
+            params.push((3, rng.range(16, 20) as u32));
+        }
+        if rng.chance(1, 8) {
+            params.push((5, *rng.pick(&[1, 1000, 1 << 20])));
+        }
+        let offset = rng.chance(1, 4);
+        if offset {
+            params.push((9, *rng.pick(&[1, 2, 77, 1 << 10, 1 << 16, (1 << 24) - 1, 1 << 30])));
+        }
+        let large = params.iter().any(|&(k, _)| k == 6);
+        // Long inputs are rare, and rarer where they take long.
+        let sizes = &SIZES[..if rng.chance(1, if q >= 10 { 40 } else { 8 }) { SIZES.len() } else { 19 }];
+        let at = |e: String| -> ! { panic!("seed {seed}: {e}\nparams {params:?}; TRACE=1 shows the calls") };
+        let mut p = enc::Pair::new(&EncCase { data: Vec::new(), params: params.clone(), dicts: Vec::new(), schedule: 0, misuse: true }).unwrap_or_else(|e| at(e));
+        let mut data: Vec<u8> = Vec::new();
+        // The operation that is not complete, and what is left of its input.
+        let mut pending: Option<(i32, usize, usize)> = None;
+        for _ in 0..rng.range(1, 60) {
+            let (op, start, end) = match pending {
+                Some(same) if rng.chance(2, 3) => same,
+                _ => {
+                    let n = *rng.pick(sizes);
+                    let start = rng.below(pool.len() - n + 1);
+                    (if rng.chance(1, 40) { 2 } else { *rng.pick(&[0, 0, 0, 0, 1, 1, 3, 3, 3]) }, start, start + n)
+                }
+            };
+            let (ok, used) = p.step(op, &pool[start..end], *rng.pick(&ROOM)).unwrap_or_else(|e| at(e));
+            calls += 1;
+            refused += usize::from(!ok);
+            if op != 3 {
+                data.extend_from_slice(&pool[start..start + used]);
+            }
+            // After a call that was refused, the operation that it interrupted can still be completed.
+            if ok {
+                pending = (start + used < end || p.has_more_output()).then_some((op, start + used, end));
+            }
+        }
+        // To the end, if it still can get there.
+        for _ in 0..200 {
+            if p.is_finished() || !p.step(2, &[], 1 << 22).unwrap_or_else(|e| at(e)).0 {
+                break;
+            }
+        }
+        if p.is_finished() && !offset {
+            enc::round_trip(&p.out, &data, &[], large, rng.next()).unwrap_or_else(|e| at(e));
+            decoded += 1;
+        }
+    }
+    println!("ok: {iters} iterations, {calls} calls, {refused} refused, {decoded} streams decoded");
 }

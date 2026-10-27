@@ -245,6 +245,7 @@ pub fn run(args: &[String]) -> bool {
         Some("enc-dict") => shapes::run_dict(num(2, 1), num(3, 1000), num(4, 1 << 20) as usize, num(5, 0xFFC), &corpus()),
         Some("enc-far-dict") => shapes::run_far_dict(num(2, 1), num(3, 0x3FC)),
         Some("enc-blocks") => shapes::run_blocks(num(2, 1), num(3, 100), num(4, 1 << 20) as usize, num(5, 0xFF0)),
+        Some("enc-states") => shapes::run_states(num(2, 1), num(3, 1000), num(4, 0xFFF)),
         Some("enc-select") => shapes::run_select(num(2, 1), num(3, 200_000) as usize, &corpus()),
         Some("enc-big") => big::run(num(2, 1), num(3, 6 << 30), args::params(args::rest(args, 4)), &corpus()),
         Some("enc-lap") => big::run_lap(num(2, 1), num(3, (3 << 30) + (64 << 20)), args::params(args::rest(args, 4))),

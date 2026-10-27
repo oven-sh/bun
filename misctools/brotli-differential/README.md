@@ -40,6 +40,7 @@ quality `q`: `0xFFF` for all of them.
 | `enc-dict <seed> <iterations> <max length> <mask>` | compound dictionaries: long copies from them, copies that go on in the next dictionary or in the next block of input, more matches than a search has room for |
 | `enc-far-dict <seed> <mask>` | 36 MiB with a window of 32 MiB: a copy from an attached dictionary, then what is as far back in the input as that copy's distance. Version 1.2.1 of the C encoder takes that for a match at the last distance at quality 4 (H55) |
 | `enc-blocks <seed> <iterations> <max length> <mask>` | stretches of many different kinds: many blocks, block types and histograms to cluster |
+| `enc-states <seed> <iterations> <mask>` | calls in any order, with any amount of input and room, whether or not the call before was completed or refused |
 | `enc-select <seed> <length>` | every quality with every window size and size hints on both sides of 1 MiB: all that decides which hasher is used |
 | `enc-big <seed> <bytes> <param>=<value>...` | one long stream, through both decoders too. The position wraps at 3 GiB and then every 2 GiB |
 | `enc-lap <seed> <bytes> <param>=<value>...` | random data with a period of 2 GiB, for a window of more than 24 bits (`2=25 6=1`). The C encoder writes a stream that decodes to something else: its rolling hasher finds the current position in its table, left there by the lap before, and takes it for a match at distance 0. Only Rust's stream has to be right |

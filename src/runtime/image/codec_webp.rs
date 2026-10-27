@@ -15,14 +15,16 @@ fn convert(failed: codecs::Error) -> impl FnOnce(bun_webp::Error) -> codecs::Err
 }
 
 /// The width and the height, from the headers alone.
-pub(crate) fn probe(bytes: &[u8]) -> Result<(u32, u32), codecs::Error> {
-    let info = bun_webp::get_info(bytes).map_err(convert(codecs::Error::DecodeFailed))?;
-    Ok((info.width, info.height))
+pub(crate) fn probe(bytes: &[u8]) -> Result<bun_webp::Info, codecs::Error> {
+    bun_webp::get_info(bytes).map_err(convert(codecs::Error::DecodeFailed))
 }
 
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     // Header-only probe first so the pixel guard fires before anything is allocated.
-    let (w, h) = probe(bytes)?;
+    let bun_webp::Info {
+        width: w,
+        height: h,
+    } = probe(bytes)?;
     codecs::guard(w, h, max_pixels)?;
     // `bytes` is a borrowed view of a JS ArrayBuffer the user can still WRITE
     // (the pin only blocks detach), so the decoder can see a different image

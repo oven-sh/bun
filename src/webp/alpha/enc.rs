@@ -14,7 +14,7 @@ fn encode_lossless(header: u8, data: &[u8], width: usize, height: usize) -> Resu
     }
     let mut bw = BitWriter::new();
     bw.put_bits(header.into(), 8);
-    encode_stream(Config::ALPHA_PLANE, argb, width, height, &mut bw)?;
+    encode_stream(Config::AlphaPlane, argb, width, height, &mut bw)?;
     bw.finish()
 }
 

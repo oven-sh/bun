@@ -360,7 +360,10 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             (w, h) = handle.read_header(bytes)?;
         }
         Format::Webp => {
-            (w, h) = webp::probe(bytes)?;
+            bun_webp::Info {
+                width: w,
+                height: h,
+            } = webp::probe(bytes)?;
         }
         Format::Bmp => {
             let ih = bmp::parse_header(bytes)?;

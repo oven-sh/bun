@@ -51,25 +51,30 @@ enum Quality {
     Image = 70,
 }
 
-/// What of `WebPConfig` differs between an image and an alpha plane.
+/// What is encoded, for what of `WebPConfig` depends on it.
 #[derive(Clone, Copy)]
-pub(crate) struct Config {
-    quality: Quality,
-    /// Keep the color of transparent pixels.
-    exact: bool,
+pub(crate) enum Config {
+    /// `WebPEncodeLosslessRGBA`
+    Image,
+    /// `EncodeLossless` of `alpha_enc.c`
+    AlphaPlane,
 }
 
 impl Config {
-    /// `WebPEncodeLosslessRGBA`
-    const IMAGE: Self = Self {
-        quality: Quality::Image,
-        exact: false,
-    };
-    /// `EncodeLossless` of `alpha_enc.c`. Every pixel has an alpha of 0, yet its green channel is the data.
-    pub(crate) const ALPHA_PLANE: Self = Self {
-        quality: Quality::AlphaPlane,
-        exact: true,
-    };
+    const fn quality(self) -> Quality {
+        match self {
+            Self::Image => Quality::Image,
+            Self::AlphaPlane => Quality::AlphaPlane,
+        }
+    }
+
+    /// Whether to keep the color of transparent pixels. Every pixel of an alpha plane has an alpha of 0, and its green is the data.
+    const fn exact(self) -> bool {
+        match self {
+            Self::Image => false,
+            Self::AlphaPlane => true,
+        }
+    }
 }
 
 // Analysis
@@ -969,8 +974,8 @@ pub(crate) fn encode_stream(
             &mut argb,
             current_width,
             height,
-            config.quality,
-            config.exact,
+            config.quality(),
+            config.exact(),
             transform_bits,
             bw,
         )?;
@@ -980,7 +985,7 @@ pub(crate) fn encode_stream(
             &mut argb,
             current_width,
             height,
-            config.quality,
+            config.quality(),
             transform_bits,
             bw,
         )?;
@@ -993,7 +998,7 @@ pub(crate) fn encode_stream(
         &argb,
         current_width,
         height,
-        config.quality,
+        config.quality(),
         sub_configs,
         cache_bits_max,
         histo_bits,
@@ -1023,7 +1028,7 @@ pub(crate) fn encode(input: &Input<'_>) -> Result<Image> {
     bw.put_bits(height as u32 - 1, IMAGE_SIZE_BITS);
     bw.put_bits(has_alpha.into(), 1);
     bw.put_bits(VERSION, VERSION_BITS);
-    encode_stream(Config::IMAGE, argb, width, height, &mut bw)?;
+    encode_stream(Config::Image, argb, width, height, &mut bw)?;
 
     Ok(Image {
         width,

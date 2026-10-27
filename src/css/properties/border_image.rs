@@ -149,6 +149,7 @@ impl BorderImage {
         )
     }
 
+    /// Always writes at least one component: `MaskBorder::to_css` appends ` <mode>` after it.
     pub(crate) fn to_css_internal(
         source: &Image,
         slice: &BorderImageSlice,
@@ -157,8 +158,10 @@ impl BorderImage {
         repeat: &BorderImageRepeat,
         dest: &mut Printer,
     ) -> core::result::Result<(), PrintErr> {
+        let mut wrote = false;
         if !source.eql(&Image::default()) {
             source.to_css(dest)?;
+            wrote = true;
         }
         let has_slice = !slice.eql(&BorderImageSlice::default());
         let has_width = !width.eql(&Rect::<BorderImageSideWidth>::all(
@@ -166,7 +169,9 @@ impl BorderImage {
         ));
         let has_outset = !outset.eql(&Rect::<LengthOrNumber>::all(LengthOrNumber::Number(0.0)));
         if has_slice || has_width || has_outset {
-            dest.write_str(" ")?;
+            if wrote {
+                dest.write_str(" ")?;
+            }
             slice.to_css(dest)?;
             if has_width || has_outset {
                 dest.delim(b'/', true)?;
@@ -179,11 +184,19 @@ impl BorderImage {
                 dest.delim(b'/', true)?;
                 outset.to_css(dest)?;
             }
+            wrote = true;
         }
 
         if !repeat.eql(&BorderImageRepeat::default()) {
-            dest.write_str(" ")?;
+            if wrote {
+                dest.write_str(" ")?;
+            }
             return repeat.to_css(dest);
+        }
+
+        // An empty value is an invalid declaration (parcel-bundler/lightningcss#1146, #1336).
+        if !wrote {
+            dest.write_str("none")?;
         }
 
         Ok(())

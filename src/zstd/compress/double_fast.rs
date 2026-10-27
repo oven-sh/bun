@@ -622,12 +622,11 @@ impl Finder {
             let place_short = table_swap(hash_small, hash_of::<MLS>(bytes0, h_bits_s), curr)
                 .wrapping_sub(origin_index);
 
-            let rep_place = window.place_of(ip + 1).wrapping_sub(offset_1);
-            if window.read32(rep_place) == Some((bytes0 >> 8) as u32)
-                && index_overlap_check(older_len, rep_place)
+            if window.read32_before(ip + 1, offset_1) == Some((bytes0 >> 8) as u32)
                 && offset_1 <= window.place_of(ip + 1)
             {
                 ip += 1;
+                let rep_place = window.place_of(ip) - offset_1;
                 let end = ip + 4 + window.count(ip + 4, rep_place + 4);
                 sink.store(ip, end, REPCODE1_TO_OFFBASE);
                 ip = end;
@@ -684,13 +683,12 @@ impl Finder {
             );
 
             while let Some(bytes) = near.read64(ip) {
-                let rep_place = window.place_of(ip).wrapping_sub(offset_2);
-                if !(window.read32(rep_place) == Some(bytes as u32)
-                    && index_overlap_check(older_len, rep_place)
+                if !(window.read32_before(ip, offset_2) == Some(bytes as u32)
                     && offset_2 <= window.place_of(ip))
                 {
                     break;
                 }
+                let rep_place = window.place_of(ip) - offset_2;
                 let end = ip + 4 + window.count(ip + 4, rep_place + 4);
                 core::mem::swap(&mut offset_1, &mut offset_2);
                 let index = base_index.wrapping_add(ip);

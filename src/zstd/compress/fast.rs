@@ -4,7 +4,7 @@ use super::internal::{
     BlockSrc, CompressionParameters, DictTableLoadMethod, HASH_READ_SIZE, K_SEARCH_STRENGTH,
     MatchState, Near, Prefix, REPCODE1_TO_OFFBASE, SeqSink, SeqStore, TableFillPurpose,
     ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, count, count_2segments, hash_of, hash_ptr,
-    index_overlap_check, le32_at, le64_at, offset_to_offbase, table_put, table_swap,
+    index_overlap_check, le32_at, le64_at, offset_to_offbase, table_get, table_put, table_swap,
     write_tagged_index,
 };
 use crate::common::ZSTD_REP_NUM;
@@ -567,6 +567,17 @@ impl<'a> Segments<'a> {
         spot.segment.read64(spot.pos)
     }
 
+    /// The 4 bytes that are `offset` before the position `pos`, if they are in one segment. Which one that is does not
+    /// change much from one time to the next.
+    #[inline(always)]
+    pub(super) fn read32_before(self, pos: u32, offset: u32) -> Option<u32> {
+        let at = pos.wrapping_sub(offset);
+        match self.near.read32(at) {
+            Some(bytes) => Some(bytes),
+            None => self.older.read32(self.place_of(at)),
+        }
+    }
+
     /// `ZSTD_count_2segments`: how long what is at the position `ip` is the same as what is at `place`.
     #[inline(always)]
     pub(super) fn count(self, ip: u32, place: u32) -> u32 {
@@ -767,8 +778,8 @@ impl Finder {
 
                 // The 4 bytes have to be in one segment, with a byte before them.
                 let rep_place = window.place_of(ip2).wrapping_sub(rep_offset1);
-                if window.read32(rep_place) == Some(le32_at::<0, _>(ahead))
-                    && older_len.wrapping_sub(rep_place) >= 4
+                if window.read32_before(ip2, rep_offset1) == Some(le32_at::<0, _>(ahead))
+                    && rep_place != older_len
                     && rep_offset1 > 0
                 {
                     table_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
@@ -832,14 +843,8 @@ impl Finder {
             );
             bytes0 = le64_at::<2, _>(around);
 
-            loop {
+            while window.read32_before(ip0, rep_offset2) == Some(bytes0 as u32) && rep_offset2 > 0 {
                 let rep_place = window.place_of(ip0).wrapping_sub(rep_offset2);
-                if !(window.read32(rep_place) == Some(bytes0 as u32)
-                    && index_overlap_check(older_len, rep_place)
-                    && rep_offset2 > 0)
-                {
-                    break;
-                }
                 let end = ip0 + 4 + window.count(ip0 + 4, rep_place + 4);
                 core::mem::swap(&mut rep_offset1, &mut rep_offset2);
                 table_put(
@@ -900,201 +905,187 @@ pub(crate) fn compress_block_fast(
     Ok(last_literals)
 }
 
-/// `ZSTD_compressBlock_fast_dictMatchState_generic`
-fn compress_block_fast_dict_match_state_generic<const MLS: u32>(
-    ms: &mut MatchState,
-    seq_store: &mut SeqStore,
-    rep: &mut [u32; ZSTD_REP_NUM],
-    src: &BlockSrc<'_>,
-    seg: &TwoSegments<'_>,
-) -> Result<usize> {
-    const K_STEP_INCR: usize = 1 << K_SEARCH_STRENGTH;
+/// What `fast` and `dfast` work out before they look for matches in a block, when a dictionary has its own match state.
+pub(super) struct DictBlock<'a> {
+    /// The current segment, and the content of the dictionary.
+    pub(super) window: Segments<'a>,
+    /// The index of the first position of the current segment.
+    pub(super) prefix_start_index: u32,
+    /// The index that the start of the content has in the dictionary's tables.
+    pub(super) dict_start_index: u32,
+    /// Where the block starts in the current segment.
+    pub(super) istart: u32,
+}
 
-    let hlog = ms.c_params.hash_log;
-    let step_size = least_step(&ms.c_params) as usize;
-    let [mut offset_1, mut offset_2, _] = *rep;
-    let hash_table = ms.hash_table.as_mut_slice();
-    let dms = src.dms.as_ref().ok_or(BUG)?;
-    let dict_hash_table = dms.ms.hash_table.as_slice();
-    let dict_h_bits = dms.ms.tagged_hash_log();
-
-    let mut anchor = seg.istart;
-    let mut ip0 = seg.first();
-    let mut ip1 = seg.istart + step_size;
-
-    'search: while ip1 <= seg.ilimit {
-        let mut hash0 = hash_ptr(seg.buf, ip0, hlog, MLS)?;
-
-        let dict_hash_and_tag0 = hash_ptr(seg.buf, ip0, dict_h_bits, MLS)?;
-        let mut dict_match_index_and_tag =
-            dict_hash_table.at(dict_hash_and_tag0 >> ZSTD_SHORT_CACHE_TAG_BITS)?;
-        let mut dict_tags_match =
-            compare_packed_tags(dict_match_index_and_tag as usize, dict_hash_and_tag0);
-
-        let mut match_index = hash_table.at(hash0)?;
-        let mut curr = src.index_of(ip0);
-        let mut step = step_size;
-        let mut next_step = ip0 + K_STEP_INCR;
-
-        let m_length = loop {
-            let rep_index = curr.wrapping_add(1).wrapping_sub(offset_1);
-            let rep_match = seg.locate(rep_index);
-            let hash1 = hash_ptr(seg.buf, ip1, hlog, MLS)?;
-            let dict_hash_and_tag1 = hash_ptr(seg.buf, ip1, dict_h_bits, MLS)?;
-            hash_table.put(hash0, curr)?;
-
-            if index_overlap_check(seg.prefix_start_index, rep_index)
-                && read_le32(rep_match.buf, rep_match.pos)? == read_le32(seg.buf, ip0 + 1)?
-            {
-                let m_length = count_2segments(
-                    seg.buf,
-                    ip0 + 1 + 4,
-                    rep_match.buf,
-                    rep_match.pos + 4,
-                    seg.iend,
-                    rep_match.end,
-                    seg.prefix_start,
-                )? + 4;
-                ip0 += 1;
-                seq_store.store_seq(
-                    ip0 - anchor,
-                    seg.buf,
-                    anchor,
-                    REPCODE1_TO_OFFBASE,
-                    m_length,
-                )?;
-                break m_length;
-            }
-
-            if dict_tags_match {
-                let dict_match_index = dict_match_index_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS;
-                let dict_match = seg.dict_pos_of(dict_match_index);
-                // A match in the dictionary is only taken if there is no candidate in the prefix.
-                if dict_match_index > seg.dict_start_index
-                    && read_le32(seg.dict_buf, dict_match)? == read_le32(seg.buf, ip0)?
-                    && match_index <= seg.prefix_start_index
-                {
-                    let offset = curr
-                        .wrapping_sub(dict_match_index)
-                        .wrapping_sub(seg.dict_index_delta);
-                    let mut m_length = count_2segments(
-                        seg.buf,
-                        ip0 + 4,
-                        seg.dict_buf,
-                        dict_match + 4,
-                        seg.iend,
-                        seg.dict_end,
-                        seg.prefix_start,
-                    )? + 4;
-                    let back = count_backwards(
-                        seg.buf,
-                        ip0,
-                        anchor,
-                        seg.dict_buf,
-                        dict_match,
-                        seg.dict_start,
-                    );
-                    ip0 -= back;
-                    m_length += back;
-                    offset_2 = offset_1;
-                    offset_1 = offset;
-                    seq_store.store_seq(
-                        ip0 - anchor,
-                        seg.buf,
-                        anchor,
-                        offset_to_offbase(offset),
-                        m_length,
-                    )?;
-                    break m_length;
-                }
-            }
-
-            let match_pos = src.pos_of(match_index);
-            if match4_found(seg.buf, ip0, match_pos, match_index, seg.prefix_start_index)? {
-                let offset = ip0.wrapping_sub(match_pos) as u32;
-                let mut m_length = count(seg.buf, ip0 + 4, seg.buf, match_pos + 4, seg.iend)? + 4;
-                let back =
-                    count_backwards(seg.buf, ip0, anchor, seg.buf, match_pos, seg.prefix_start);
-                ip0 -= back;
-                m_length += back;
-                offset_2 = offset_1;
-                offset_1 = offset;
-                seq_store.store_seq(
-                    ip0 - anchor,
-                    seg.buf,
-                    anchor,
-                    offset_to_offbase(offset),
-                    m_length,
-                )?;
-                break m_length;
-            }
-
-            dict_match_index_and_tag =
-                dict_hash_table.at(dict_hash_and_tag1 >> ZSTD_SHORT_CACHE_TAG_BITS)?;
-            dict_tags_match =
-                compare_packed_tags(dict_match_index_and_tag as usize, dict_hash_and_tag1);
-            match_index = hash_table.at(hash1)?;
-
-            if ip1 >= next_step {
-                step += 1;
-                next_step += K_STEP_INCR;
-            }
-            ip0 = ip1;
-            ip1 += step;
-            if ip1 > seg.ilimit {
-                break 'search;
-            }
-
-            curr = src.index_of(ip0);
-            hash0 = hash1;
-        };
-
-        ip0 += m_length;
-        anchor = ip0;
-
-        if ip0 <= seg.ilimit {
-            hash_table.put(
-                hash_ptr(seg.buf, src.pos_of(curr + 2), hlog, MLS)?,
-                curr + 2,
-            )?;
-            hash_table.put(
-                hash_ptr(seg.buf, ip0 - 2, hlog, MLS)?,
-                src.index_of(ip0 - 2),
-            )?;
-
-            while ip0 <= seg.ilimit {
-                let current2 = src.index_of(ip0);
-                let rep_index2 = current2.wrapping_sub(offset_2);
-                let rep_match2 = seg.locate(rep_index2);
-                if !(index_overlap_check(seg.prefix_start_index, rep_index2)
-                    && read_le32(rep_match2.buf, rep_match2.pos)? == read_le32(seg.buf, ip0)?)
-                {
-                    break;
-                }
-                let rep_length2 = count_2segments(
-                    seg.buf,
-                    ip0 + 4,
-                    rep_match2.buf,
-                    rep_match2.pos + 4,
-                    seg.iend,
-                    rep_match2.end,
-                    seg.prefix_start,
-                )? + 4;
-                core::mem::swap(&mut offset_1, &mut offset_2);
-                seq_store.store_seq(0, seg.buf, anchor, REPCODE1_TO_OFFBASE, rep_length2)?;
-                hash_table.put(hash_ptr(seg.buf, ip0, hlog, MLS)?, current2)?;
-                ip0 += rep_length2;
-                anchor = ip0;
-            }
-        }
-
-        ip1 = ip0 + step_size;
+impl<'a> DictBlock<'a> {
+    pub(super) fn new(src: &BlockSrc<'a>, prefix_start_index: u32) -> Result<Self> {
+        let dms = src.dms.as_ref().ok_or(BUG)?;
+        let dict_start_index = dms.ms.window.dict_limit;
+        Ok(Self {
+            window: Segments {
+                near: Near::new(src.buf.sub(src.pos_of(prefix_start_index)..src.end)?)?,
+                older: Near::new(dms.buf.sub(dms.pos_of(dict_start_index)..dms.end)?)?,
+            },
+            prefix_start_index,
+            dict_start_index,
+            istart: src.index_of(src.start).wrapping_sub(prefix_start_index),
+        })
     }
 
-    let [rep0, rep1, _] = rep;
-    *rep0 = offset_1;
-    *rep1 = offset_2;
-    Ok(seg.iend - anchor)
+    /// The first position to look at: not `istart` if there is nothing before it to match.
+    pub(super) const fn first(&self) -> u32 {
+        self.istart + (self.window.place_of(self.istart) == 0) as u32
+    }
+}
+
+/// A table of a dictionary, where entries have tags.
+#[derive(Clone, Copy)]
+pub(super) struct TaggedTable<'a> {
+    table: &'a [u32],
+    /// How many bits to hash to, tag included.
+    h_bits: u32,
+    /// The index that the first place has in the table.
+    start_index: u32,
+}
+
+impl<'a> TaggedTable<'a> {
+    pub(super) fn new(table: &'a [u32], h_bits: u32, start_index: u32) -> Result<Self> {
+        Ok(Self {
+            table: table.sub(..1 << (h_bits - ZSTD_SHORT_CACHE_TAG_BITS))?,
+            h_bits,
+            start_index,
+        })
+    }
+
+    /// The place that the table has for the `MLS` first bytes of `bytes`. `None` if the tag tells that it is for
+    /// something else, or if it is the first place, which stands for none.
+    #[inline(always)]
+    pub(super) fn get<const MLS: u32>(self, bytes: u64) -> Option<u32> {
+        let hash_and_tag = hash_of::<MLS>(bytes, self.h_bits);
+        let index_and_tag = table_get(self.table, hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS);
+        let index = index_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS;
+        (compare_packed_tags(index_and_tag as usize, hash_and_tag) && index > self.start_index)
+            .then(|| index - self.start_index)
+    }
+}
+
+impl Finder {
+    /// `ZSTD_compressBlock_fast_dictMatchState_generic`
+    #[inline(never)]
+    fn find_matches_dict<const MLS: u32>(
+        &mut self,
+        hash_table: &mut [u32],
+        sink: &mut MatchSink<'_, '_>,
+        window: Segments<'_>,
+        dict_table: TaggedTable<'_>,
+    ) {
+        const K_STEP_INCR: u32 = 1 << K_SEARCH_STRENGTH;
+        let Self {
+            base_index,
+            step_size,
+            hlog,
+            first: mut ip0,
+            mut rep_offset1,
+            mut rep_offset2,
+        } = *self;
+        let near = window.near;
+        if hash_table.is_empty() || dict_table.table.is_empty() {
+            return;
+        }
+        let Some(mut bytes0) = near.read64(ip0) else {
+            return;
+        };
+        let mut ip1 = sink.anchor + step_size;
+
+        'block: loop {
+            let mut step = step_size;
+            let mut next_step = ip0 + K_STEP_INCR;
+            let mut curr;
+
+            // One turn per position. Ends with the place of a match, or with `None` once a repeat is stored.
+            let place = loop {
+                let Some(bytes1) = near.read64(ip1) else {
+                    break 'block;
+                };
+                curr = base_index.wrapping_add(ip0);
+                let match_index = table_swap(hash_table, hash_of::<MLS>(bytes0, hlog), curr);
+
+                if window.read32_before(ip0 + 1, rep_offset1) == Some((bytes0 >> 8) as u32) {
+                    ip0 += 1;
+                    let rep_place = window.place_of(ip0).wrapping_sub(rep_offset1);
+                    let end = ip0 + 4 + window.count(ip0 + 4, rep_place + 4);
+                    sink.store(ip0, end, REPCODE1_TO_OFFBASE);
+                    ip0 = end;
+                    break None;
+                }
+
+                // A match in the dictionary is only taken if there is no candidate in the prefix.
+                if let Some(place) = dict_table.get::<MLS>(bytes0)
+                    && window.older.read32(place) == Some(bytes0 as u32)
+                    && match_index <= base_index
+                {
+                    break Some(place);
+                }
+                let match_pos = match_index.wrapping_sub(base_index);
+                if near.diff64(match_pos, bytes0) as u32 == 0 {
+                    break Some(window.place_of(match_pos));
+                }
+
+                if ip1 >= next_step {
+                    core::hint::cold_path();
+                    step += 1;
+                    next_step += K_STEP_INCR;
+                }
+                ip0 = ip1;
+                ip1 += step;
+                bytes0 = bytes1;
+            };
+
+            if let Some(place) = place {
+                let end = ip0 + 4 + window.count(ip0 + 4, place + 4);
+                let back = window.count_backwards(ip0, sink.anchor, place);
+                rep_offset2 = rep_offset1;
+                rep_offset1 = window.place_of(ip0) - place;
+                sink.store(ip0 - back, end, offset_to_offbase(rep_offset1));
+                ip0 = end;
+            }
+
+            // `ip0` is not past the last position that can be looked at.
+            let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip0 - 2) else {
+                break 'block;
+            };
+            if let Some(to_insert) = near.read64((curr + 2).wrapping_sub(base_index)) {
+                table_put(hash_table, hash_of::<MLS>(to_insert, hlog), curr + 2);
+            }
+            table_put(
+                hash_table,
+                hash_of::<MLS>(le64_at::<0, _>(around), hlog),
+                base_index.wrapping_add(ip0 - 2),
+            );
+            bytes0 = le64_at::<2, _>(around);
+
+            while window.read32_before(ip0, rep_offset2) == Some(bytes0 as u32) {
+                let rep_place = window.place_of(ip0).wrapping_sub(rep_offset2);
+                let end = ip0 + 4 + window.count(ip0 + 4, rep_place + 4);
+                core::mem::swap(&mut rep_offset1, &mut rep_offset2);
+                table_put(
+                    hash_table,
+                    hash_of::<MLS>(bytes0, hlog),
+                    base_index.wrapping_add(ip0),
+                );
+                sink.store(ip0, end, REPCODE1_TO_OFFBASE);
+                ip0 = end;
+                let Some(bytes) = near.read64(ip0) else {
+                    break 'block;
+                };
+                bytes0 = bytes;
+            }
+            ip1 = ip0 + step_size;
+        }
+
+        self.rep_offset1 = rep_offset1;
+        self.rep_offset2 = rep_offset2;
+    }
 }
 
 /// `ZSTD_compressBlock_fast_dictMatchState`
@@ -1104,15 +1095,36 @@ pub(crate) fn compress_block_fast_dict_match_state(
     rep: &mut [u32; ZSTD_REP_NUM],
     src: &BlockSrc<'_>,
 ) -> Result<usize> {
-    let Some(seg) = &TwoSegments::with_dict_match_state(src, ms.window.dict_limit)? else {
-        return Ok(src.end - src.start);
+    let block = DictBlock::new(src, ms.window.dict_limit)?;
+    let dms = src.dms.as_ref().ok_or(BUG)?;
+    let dict_table = TaggedTable::new(
+        &dms.ms.hash_table,
+        dms.ms.tagged_hash_log(),
+        block.dict_start_index,
+    )?;
+    let hlog = ms.c_params.hash_log;
+    let [rep_offset1, rep_offset2, _] = *rep;
+    let mut finder = Finder {
+        base_index: block.prefix_start_index,
+        step_size: least_step(&ms.c_params),
+        hlog,
+        first: block.first(),
+        rep_offset1,
+        rep_offset2,
     };
+    let mut sink = MatchSink::with_near(seq_store, block.window.near, block.istart);
+    let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
     match ms.c_params.min_match {
-        5 => compress_block_fast_dict_match_state_generic::<5>(ms, seq_store, rep, src, seg),
-        6 => compress_block_fast_dict_match_state_generic::<6>(ms, seq_store, rep, src, seg),
-        7 => compress_block_fast_dict_match_state_generic::<7>(ms, seq_store, rep, src, seg),
-        _ => compress_block_fast_dict_match_state_generic::<4>(ms, seq_store, rep, src, seg),
+        5 => finder.find_matches_dict::<5>(hash_table, &mut sink, block.window, dict_table),
+        6 => finder.find_matches_dict::<6>(hash_table, &mut sink, block.window, dict_table),
+        7 => finder.find_matches_dict::<7>(hash_table, &mut sink, block.window, dict_table),
+        _ => finder.find_matches_dict::<4>(hash_table, &mut sink, block.window, dict_table),
     }
+    let last_literals = sink.finish()?;
+    let [rep0, rep1, _] = rep;
+    *rep0 = finder.rep_offset1;
+    *rep1 = finder.rep_offset2;
+    Ok(last_literals)
 }
 
 /// `ZSTD_compressBlock_fast_extDict`

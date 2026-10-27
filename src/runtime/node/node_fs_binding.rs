@@ -401,6 +401,45 @@ pub(crate) fn rm_options_for_testing(
     })
 }
 
+/// Wraps a raw Win32 `HANDLE` in a CRT fd that takes ownership of it. On error
+/// the caller still owns the `HANDLE`.
+/// https://github.com/nodejs/node/blob/98dbf6070e8439e530f1678b11962a0f3719e1f6/src/node_file.cc#L5691
+pub(crate) fn windows_handle_to_fd(cx: &mut JsScope<'_>, handle: JsLocal<'_>) -> JsResult<i32> {
+    let global = cx.global();
+
+    #[cfg(not(windows))]
+    {
+        let _ = handle;
+        return Err(global.throw(format_args!(
+            "windowsHandle is not implemented on this platform"
+        )));
+    }
+
+    #[cfg(windows)]
+    {
+        use core::cmp::Ordering;
+        // `streams.ts` has already checked `typeof handle === "bigint"`.
+        let handle = bun_jsc::JSBigInt::from_js(handle.to_js())
+            .expect("windowsHandle is validated as a bigint");
+        if handle.order(i64::MAX) == Ordering::Greater || handle.order(i64::MIN) == Ordering::Less {
+            return Err(global
+                .err(
+                    bun_jsc::ErrorCode::ERR_OUT_OF_RANGE,
+                    format_args!("windowsHandle does not fit into 64 bits"),
+                )
+                .throw());
+        }
+        let fd =
+            bun_core::fd::uv_open_osfhandle(handle.to_int64() as isize as *mut core::ffi::c_void);
+        if fd == -1 {
+            let err =
+                bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::_open_osfhandle);
+            return Err(global.throw_value(err.to_js(global)));
+        }
+        Ok(fd)
+    }
+}
+
 /// Test-only (`bun:internal-for-testing`): run a flags value through the same
 /// parser `fs.open` uses and return the numeric O_* mask, so node's
 /// `internal/fs/utils` `stringToFlags` tests can assert the production mapping.

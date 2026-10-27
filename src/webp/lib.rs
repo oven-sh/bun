@@ -21,7 +21,7 @@ mod vp8l;
 
 use util::{Bug, Checked, OutOfMemory, SliceExt};
 
-/// libwebp's `VP8StatusCode`.
+/// Those of libwebp's `VP8StatusCode` that a decode of a whole file ends with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     OutOfMemory,
@@ -30,8 +30,6 @@ pub enum DecodeError {
     BitstreamError,
     /// An animation.
     UnsupportedFeature,
-    /// The lossless bitstream ends early.
-    Suspended,
     NotEnoughData,
     /// This crate broke one of its own invariants.
     Bug,
@@ -49,7 +47,7 @@ impl From<OutOfMemory> for DecodeError {
     }
 }
 
-/// libwebp's `WebPEncodingError`.
+/// Those of libwebp's `WebPEncodingError` that the two ways to encode end with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeError {
     OutOfMemory,
@@ -59,8 +57,6 @@ pub enum EncodeError {
     BadDimension,
     /// The first partition of a lossy image is over 512 KiB.
     Partition0Overflow,
-    /// A token partition of a lossy image is over 16 MiB.
-    PartitionOverflow,
     /// The file would be over 4 GiB.
     FileTooBig,
     /// This crate broke one of its own invariants.

@@ -132,13 +132,6 @@ pub enum Tag {
     BakeResolveToSsrGraph,
 }
 
-impl Tag {
-    #[inline]
-    pub fn is_internal(self) -> bool {
-        (self as u8) >= (Tag::Runtime as u8)
-    }
-}
-
 // NOTE: no `impl Default for ImportRecord` — `range`, `path`, `kind` have no
 // sensible defaults. Construction sites must supply required fields explicitly
 // (struct-update or a `new(range, path, kind)` helper).

@@ -1,4 +1,4 @@
-//! WebP, derived from libwebp v1.6.0 (LICENSE). Encodes to the same bytes, decodes to the same pixels as its C code.
+//! WebP, from libwebp v1.6.0 and its later decoder fixes (LICENSE). Encodes to the same bytes, decodes to the same pixels.
 #![forbid(unsafe_code)]
 // Images come from anywhere and a panic aborts the process.
 #![deny(

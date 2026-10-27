@@ -25,7 +25,7 @@ function batches<T>(cases: T[], size: number): [string, T[], number][] {
 }
 
 describe("decode", () => {
-  test.concurrent.each(batches(decodeCases, 100))("cases %s", async (_, cases, start) => {
+  test.each(batches(decodeCases, 100))("cases %s", async (_, cases, start) => {
     const actual = await Promise.all(
       cases.map(async ({ data, decoded }, index) => {
         const file = Buffer.from(data, "base64");
@@ -47,24 +47,34 @@ describe("decode", () => {
         decoded: { width: 32, height: 15, rgba: "ea6839333e4e3c49" },
       },
       {
-        data: "UklGRk4AAABXRUJQVlA4IEEAAACwAwCdASoDgB8AEBB8AAAg2T2kiAuvP0TuFIUukKvoDLv+c0xPpjj/////hv///0w//////0X/nf///////////wA=",
-        decoded: { width: 3, height: 31, rgba: "801a2168af43c85b" },
+        data: "UklGRnAAAABXRUJQVlA4IGMAAACSBACdASovwByAD9IUCAAcby/Yz2lm0eUo8eq51tFU780F4Be3dlEutruJ7cagDgAAGwAAAwAAJ53SUqnfXa6vkrMM55Em////////////////////7//////////////1/ncA",
+        decoded: { width: 47, height: 28, rgba: "0af0ea6c72c50e79" },
       },
       {
-        data: "UklGRlIAAABXRUJQVlA4IEUAAABwAgCdASoCABKAD9jcAAAvjQUotBaLGGQScvXWIP//////////////1P///9D///////////+q///c////////////Zf8A",
-        decoded: { width: 2, height: 18, rgba: "f4b4b6e4edb73358" },
+        data: "UklGRoYAAABXRUJQVlA4IHoAAAByAwCdASoxQA9AQASsBAALxuief+JlpCePqrdA3dHg6jD3pkVgUQAAUv+S/////////////////0Gb////+v////9h/////+D//////////////9n/////N/////////8a////////////////////////Tv//////7w==",
+        decoded: { width: 49, height: 15, rgba: "a935dbefef375a5c" },
       },
       {
-        data: "UklGRlIAAABXRUJQVlA4IEYAAACQAgCdASoQgA9AAAB778/QAEB41q5QkG095ZO1wAD///////////////v///////+7/+3/////////////////////////",
-        decoded: { width: 16, height: 15, rgba: "2e062002111ebc6d" },
+        data: "UklGRo4AAABXRUJQVlA4IIIAAADwBgCdASo9QBGAEAAj95Y9K8wABngD+b7Utn212ydw8w2U6zn3tjPWHh2ZEvPfX+BXBoEaYMl+DKmOBT976tRwAOb//////////////////////////////////5T////E/////////////////////////x3///9h///////s//9K",
+        decoded: { width: 61, height: 17, rgba: "4c397305791f56c1" },
       },
       {
-        data: "UklGRlIAAABXRUJQVlA4IEYAAACQAgCdASoBwAFAADj2CBM3IJKlKUi2VpmXqCcPX4D///85/////////////2//////////////////////////////////",
-        decoded: { width: 1, height: 1, rgba: "ad95131bc0b799c0" },
+        data: "UklGRpgAAABXRUJQVlA4IIwAAAAQBgCdASoPgDNAHoAaCAAfM8zysLrwJANObdKSp8dQx0qBsb+tIE5rmyXnXW14EdMW+YCvYUnyF2AAKL//yf//8///////////+v///////////////////////////xX/////////////////////////7f//////////////////////////////OQ==",
+        decoded: { width: 15, height: 51, rgba: "a5bd7904915f508b" },
       },
     ];
     const actual = await Promise.all(cases.map(({ data }) => observeDecode(Buffer.from(data, "base64"))));
     expect(actual).toEqual(cases.map(({ decoded }) => decoded));
+  });
+
+  // libwebp refuses these since 1844042d, after 1.6.0: the first byte is the boolean decoder's value, which stays below 255.
+  test("a partition that starts with 0xff is refused", async () => {
+    const file = Buffer.from(
+      "UklGRlIAAABXRUJQVlA4IEYAAACQAgCdASoBwAFAADj2CBM3IJKlKUi2VpmXqCcPX4D///85/////////////2//////////////////////////////////",
+      "base64",
+    );
+    expect(await observeMetadata(file)).toEqual({ width: 1, height: 1, format: "webp" });
+    expect(await observeDecode(file)).toEqual({ error: "ERR_IMAGE_DECODE_FAILED" });
   });
 });
 
@@ -72,7 +82,7 @@ describe("encode", () => {
   const large = encodeCases.filter(c => isLarge(c.image));
   const small = encodeCases.filter(c => !isLarge(c.image));
 
-  test.concurrent.each(batches(small, 50))("cases %s", async (_, cases) => {
+  test.each(batches(small, 50))("cases %s", async (_, cases) => {
     const actual = await Promise.all(cases.map(async c => ({ ...c, ...(await observeEncode(c)) })));
     expect(actual).toEqual(cases);
   });

@@ -74,7 +74,7 @@ struct Frame {
 }
 
 impl Frame {
-    /// `StoreFrame`: the image chunks at the cursor, at most one `ALPH` and one `VP8 ` or `VP8L`.
+    /// `StoreFrame`: the image chunks at the cursor, at most one `ALPH`, and one `VP8 ` or `VP8L`.
     fn store(&mut self, reader: &mut Reader<'_>, min_size: usize) -> Option<()> {
         if reader.remaining() < CHUNK_HEADER_SIZE.max(min_size) {
             return None;
@@ -91,14 +91,15 @@ impl Frame {
                 }
                 _ => {
                     reader.pos = start;
-                    return Some(());
+                    break;
                 }
             }
             reader.skip(padded)?;
             if reader.at_end()? {
-                return Some(());
+                break;
             }
         }
+        self.image.map(|_| ())
     }
 
     /// The size of the image, if there is one and no alpha behind it.
@@ -200,7 +201,7 @@ pub fn icc_profile(data: &[u8]) -> Option<&[u8]> {
                 if reader.pos - payload_start > payload_size {
                     return None;
                 }
-                if is_animation && (frame.image.is_some() || frame.alpha.is_some()) {
+                if is_animation {
                     let size = frame.size()?;
                     if x_offset + size.width > canvas.width
                         || y_offset + size.height > canvas.height

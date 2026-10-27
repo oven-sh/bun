@@ -158,17 +158,18 @@ impl<'a> Partitions<'a> {
         let Some((sizes, mut rest)) = buf.split_at_checked(3 * last_part) else {
             return Err(Error::NotEnoughData);
         };
-        let mut parts = [BitReader::new(&[]); MAX_NUM_PARTITIONS];
+        let mut parts = [BitReader::new(&[]).ok_or(Bug)?; MAX_NUM_PARTITIONS];
         for (part, &[s0, s1, s2]) in parts.iter_mut().zip(sizes.as_chunks().0) {
             let size = (u32::from_le_bytes([s0, s1, s2, 0]) as usize).min(rest.len());
             let (data, after) = rest.split_at_checked(size).ok_or(Bug)?;
-            *part = BitReader::new(data);
+            *part = BitReader::new(data).ok_or(Error::BitstreamError)?;
             rest = after;
         }
         if rest.is_empty() {
             return Err(Error::NotEnoughData);
         }
-        parts.put(last_part, BitReader::new(rest))?;
+        let last = BitReader::new(rest).ok_or(Error::BitstreamError)?;
+        parts.put(last_part, last)?;
         Ok(Self {
             parts,
             num_parts_minus_one: last_part,
@@ -450,7 +451,7 @@ impl<'a> Decoder<'a> {
         let Some((first, buf)) = buf.split_at_checked(partition_length) else {
             return Err(Error::NotEnoughData);
         };
-        let mut br = BitReader::new(first);
+        let mut br = BitReader::new(first).ok_or(Error::BitstreamError)?;
         // The color space and whether the decoder has to clamp.
         br.get_value(2);
         let segment_hdr = SegmentHeader::parse(&mut br);

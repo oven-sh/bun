@@ -35,7 +35,11 @@ pub(super) struct BitReader<'a> {
 }
 
 impl<'a> BitReader<'a> {
-    pub(super) fn new(buf: &'a [u8]) -> Self {
+    /// `None` if `buf` starts with 0xff: the first byte is the value, which RFC 6386 section 7.2 keeps below the range.
+    pub(super) fn new(buf: &'a [u8]) -> Option<Self> {
+        if buf.first() == Some(&0xff) {
+            return None;
+        }
         let mut br = Self {
             value: 0,
             range: 255 - 1,
@@ -44,7 +48,7 @@ impl<'a> BitReader<'a> {
             eof: false,
         };
         br.load_new_bytes();
-        br
+        Some(br)
     }
 
     pub(super) fn eof(&self) -> bool {
@@ -53,7 +57,7 @@ impl<'a> BitReader<'a> {
 
     #[inline(always)]
     fn load_new_bytes(&mut self) {
-        // Only when 8 bytes are left, as in libwebp, although 7 are taken: damaged streams decode differently otherwise.
+        // Like libwebp, this loads only when 8 bytes are left, although it takes 7.
         if let (Some(&bytes), Some(rest)) = (self.buf.first_chunk::<8>(), self.buf.get(7..)) {
             self.buf = rest;
             self.value = (u64::from_be_bytes(bytes) >> 8) | (self.value << BITS);

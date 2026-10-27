@@ -92,7 +92,7 @@ fn parse_vp8x(data: &mut &[u8]) -> Result<Option<Vp8x>> {
 
 /// Skips to the next `VP8 ` or `VP8L` chunk header and returns the last `ALPH` payload on the way.
 fn parse_optional_chunks<'a>(data: &mut &'a [u8], riff_size: u32) -> Result<Option<&'a [u8]>> {
-    let mut total_size = (TAG_SIZE + CHUNK_HEADER_SIZE + VP8X_CHUNK_SIZE) as u32;
+    let mut total_size = (TAG_SIZE + CHUNK_HEADER_SIZE + VP8X_CHUNK_SIZE) as u64;
     let mut alpha = None;
     loop {
         let buf = *data;
@@ -104,8 +104,8 @@ fn parse_optional_chunks<'a>(data: &mut &'a [u8], riff_size: u32) -> Result<Opti
             return Err(Error::BitstreamError);
         }
         let disk_chunk_size = CHUNK_HEADER_SIZE as u32 + padded(chunk_size);
-        total_size = total_size.wrapping_add(disk_chunk_size);
-        if riff_size > 0 && total_size > riff_size {
+        total_size += u64::from(disk_chunk_size);
+        if riff_size > 0 && total_size > u64::from(riff_size) {
             return Err(Error::BitstreamError);
         }
         // Before the length check below, so that the bitstream chunk may be incomplete.

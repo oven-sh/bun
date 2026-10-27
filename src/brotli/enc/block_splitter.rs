@@ -53,6 +53,16 @@ impl BlockSplit {
         })
     }
 
+    /// All `length` symbols in one block.
+    fn undivided(length: usize) -> Fallible<Self> {
+        let mut split = Self::with_capacity(1)?;
+        split.num_types = 1;
+        if length != 0 {
+            split.push(0, length as u32)?;
+        }
+        Ok(split)
+    }
+
     /// Appends a block, which there has to be room for.
     pub(crate) fn push(&mut self, block_type: u8, length: u32) -> Checked {
         if self.types.len() == self.types.capacity()
@@ -484,12 +494,7 @@ fn split_symbols<T: Copy + Into<usize>, const N: usize>(
     let mut num_histograms = (length / symbols_per_histogram + 1).min(max_histograms);
 
     if length < MIN_LENGTH_FOR_BLOCK_SPLITTING {
-        let mut split = BlockSplit::with_capacity(1)?;
-        split.num_types = 1;
-        if length != 0 {
-            split.push(0, length as u32)?;
-        }
-        return Ok(split);
+        return BlockSplit::undivided(length);
     }
 
     let mut histograms = try_vec(Histogram::<N>::new(), num_histograms)?;

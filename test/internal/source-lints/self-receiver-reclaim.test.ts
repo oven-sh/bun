@@ -32,9 +32,10 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // reference, whatever it refers to: `ptr::from_ref(x)`, `NonNull::from(&x)`,
 // `&x`. Such a pointer may only read, so a free through it is UB under both
 // models. `HTTPResponseMetadata` freed its header list through the
-// `&'static [Header]` it stored. The owner holds the `Box` (or the raw pointer
-// that `heap::into_raw` returned) and frees through that. It builds a view of
-// the allocation when one is needed and does not store it: a reference stored
+// `&'static [Header]` it stored, and `TranspilerJob` its path through
+// `Path::text`. The owner holds the `Box` (or the raw pointer that
+// `heap::into_raw` returned) and frees through that. It builds a view of the
+// allocation when one is needed and does not store it: a reference stored
 // beside the owner is protected, like `self` above, in every call the owner
 // moves into by value.
 //
@@ -113,9 +114,6 @@ const ALLOW: Record<string, number> = {
   // `free_owned_href(href: &'static [u8])` frees the URL of `fetch.preconnect`
   // through its parameter. #47023 deletes it. Delete this entry with it.
   "src/http/AsyncHTTP.rs": 1,
-  // `TranspilerJob::reset_for_pool` frees the path of the job through
-  // `Path::text`. #47099 converts it. Delete this entry with it.
-  "src/jsc/RuntimeTranspilerStore.rs": 1,
 };
 
 const counts: Record<string, number> = {};
@@ -172,9 +170,8 @@ test("the pattern recognizes the spellings it claims to", () => {
     // rustfmt-wrapped calls.
     "unsafe {\n    bun_core::heap::take(\n        std::ptr::from_mut::<Blob>(self),\n    )\n}",
     "unsafe {\n    bun_core::heap::destroy(\n        self,\n    )\n}",
-    // `HTTPResponseMetadata::drop`, as it was, and
-    // `TranspilerJob::reset_for_pool`: a free through the shared view the
-    // owner stores.
+    // `HTTPResponseMetadata::drop` and `TranspilerJob::reset_for_pool`, as
+    // they were: a free through the shared view the owner stored.
     "unsafe { bun_core::heap::destroy(core::ptr::from_ref(list).cast_mut()) };",
     "drop(unsafe { bun_core::heap::take(ptr::from_ref::<[u8]>(old_path.text).cast_mut()) });",
     "unsafe {\n    bun_core::heap::destroy(\n        core::ptr::from_ref(list).cast_mut(),\n    )\n}",

@@ -5157,13 +5157,9 @@ impl<'a> HTTPClient<'a> {
             return Err(crate::Error::ProxyConnectFailed);
         }
 
-        // RFC 9112 §6.3 item 3: Transfer-Encoding next to Content-Length is an
-        // ambiguous framing (response splitting) and is an error, whatever the
-        // values are. Presence decides it, not the folded state: HEAD and
-        // 1xx/204/304 overwrite content_length above, and a non-chunked coding
-        // leaves transfer_encoding at Identity. Deliberately below the CONNECT
-        // return above: a refused CONNECT fails with the proxy's head attached,
-        // and its body is never read.
+        // RFC 9112 §6.3 item 3: both framing fields is an error, whatever the
+        // values (the state above is overwritten for HEAD and 1xx/204/304).
+        // Below the CONNECT return so a refused CONNECT keeps the proxy's head.
         if saw_content_length && saw_transfer_encoding {
             return Err(crate::Error::ConflictingFraming);
         }

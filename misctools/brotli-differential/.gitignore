@@ -1,4 +1,5 @@
 /target
 /cref
+/cref-fuzz
 /brotli-ref
 Cargo.lock

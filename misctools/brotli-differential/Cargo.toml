@@ -7,7 +7,21 @@ edition = "2024"
 name = "harness"
 path = "src/main.rs"
 
+[[bin]]
+name = "fuzz_dec"
+path = "src/fuzz_dec.rs"
+required-features = ["libfuzzer"]
+
+[[bin]]
+name = "fuzz_enc"
+path = "src/fuzz_enc.rs"
+required-features = ["libfuzzer"]
+
+[features]
+libfuzzer = ["dep:libfuzzer-sys"]
+
 [dependencies]
+libfuzzer-sys = { version = "0.4", optional = true }
 bun_brotli = { path = "../../src/brotli" }
 
 [profile.release]

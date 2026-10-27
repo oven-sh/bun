@@ -103,6 +103,26 @@ impl Pair {
         Ok((c_ok, c_used))
     }
 
+    /// At any time.
+    pub fn set(&mut self, k: i32, v: u32) -> Result<bool, String> {
+        let a = self.c.set(k, v);
+        let b = EncoderParameter::from_raw(k as u32).is_some_and(|p| self.r.set_parameter(p, v));
+        if a != b {
+            return Err(format!("set_parameter({k}, {v}) after {} calls: C {a}, Rust {b}", self.calls));
+        }
+        Ok(a)
+    }
+
+    /// At any time.
+    pub fn attach(&mut self, d: &[u8]) -> Result<bool, String> {
+        let a = self.c.attach(d.to_vec());
+        let b = PreparedDictionary::new(d.into()).is_some_and(|p| self.r.attach_prepared_dictionary(p));
+        if a != b {
+            return Err(format!("attach dictionary of {} bytes after {} calls: C {a}, Rust {b}", d.len(), self.calls));
+        }
+        Ok(a)
+    }
+
     pub fn has_more_output(&mut self) -> bool {
         self.c.has_more_output()
     }
@@ -123,7 +143,7 @@ fn cap_for(rng: &mut Rng) -> usize {
 }
 
 /// Runs `op` to completion with `input`.
-fn run_op(p: &mut Pair, rng: &mut Rng, op: i32, mut input: &[u8], big: bool) -> Result<bool, String> {
+pub fn run_op(p: &mut Pair, rng: &mut Rng, op: i32, mut input: &[u8], big: bool) -> Result<bool, String> {
     let mut idle = 0;
     loop {
         let cap = if big { (input.len() * 2 + 1024).max(1 << 16) } else { cap_for(rng) };

@@ -119,6 +119,24 @@ pub fn compare(case: &DecCase, expect: Option<&[u8]>) -> Result<Outcome, String>
             stalled = 0;
         }
         if done || total_out > case.max_output || stalled > 64 {
+            if cr == 0 || cr == 1 {
+                // What comes after the end is left alone, and the result stays.
+                for extra in [&case.stream[pos..], &[0x1b, 0xff, 0x00][..], &[][..]] {
+                    let n_out = if case.schedule & 2 == 0 { 64 } else { 0 };
+                    let (cr2, cused, cmade) = c.stream(extra, &mut cbuf[..n_out]);
+                    let mut rin: &[u8] = extra;
+                    let mut rout: &mut [u8] = &mut rbuf[..n_out];
+                    let rr2 = r.decompress_stream(&mut rin, &mut rout) as i32;
+                    let (rused, rmade) = (extra.len() - rin.len(), n_out - rout.len());
+                    if cr2 != rr2 || cused != rused || cmade != rmade || c.error_code() != r.error_code() as i32 || c.has_more_output() != r.has_more_output() {
+                        return Err(format!(
+                            "a call after result {cr} differs: result {cr2}/{rr2} used {cused}/{rused} made {cmade}/{rmade} error {}/{:?}",
+                            c.error_code(),
+                            r.error_code()
+                        ));
+                    }
+                }
+            }
             if let Some(e) = expect {
                 if cr == 1 && all_out != e {
                     return Err("decoded data is not the original".into());
@@ -162,5 +180,18 @@ pub fn mutate(rng: &mut Rng, s: &mut Vec<u8>) {
                 }
             }
         }
+    }
+}
+
+/// For the fuzzer, which cannot invent a stream and its dictionary together.
+pub const TEXT: &[u8] = b"The quick brown fox jumps over the lazy dog. <div class=\"header\">function() { return this.value; }</div>\n0123456789";
+
+pub fn dictionaries(which: u8) -> Vec<Vec<u8>> {
+    match which & 3 {
+        0 => vec![],
+        1 => vec![TEXT.to_vec()],
+        2 => vec![TEXT[..7].to_vec(), (0..=255u8).collect(), TEXT[20..].to_vec()],
+        // One too many.
+        _ => (0..16).map(|i| TEXT[i..i * 3 + 1].to_vec()).collect(),
     }
 }

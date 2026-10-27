@@ -1,15 +1,27 @@
+#![feature(alloc_error_hook)]
+mod api;
+mod big;
 mod dec;
 mod enc;
+mod extra;
 mod ffi;
 mod r#gen;
+mod grammar;
+mod oom;
+mod perf;
 mod ring;
 mod rng;
+mod stream;
 
 use dec::{DecCase, compare, mutate};
 use ffi::{EncParams, c_compress};
 use rng::Rng;
 
-const CORPUS_DIRS: &[&str] = &[
+/// Only fails allocations for the `oom` subcommand.
+#[global_allocator]
+static ALLOCATOR: oom::Failing = oom::Failing;
+
+pub const CORPUS_DIRS: &[&str] = &[
     concat!(env!("CARGO_MANIFEST_DIR"), "/brotli-ref/tests/testdata"),
     concat!(env!("CARGO_MANIFEST_DIR"), "/brotli-ref/c/enc"),
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/js/node"),
@@ -421,6 +433,7 @@ fn main() {
         Some("bench-first") => bench_first(&args[2], num(3, 260) as usize, num(4, 11) as u32),
         Some("enc-one") => enc_one(&args[2], &args[3..]),
         Some("bench-enc") => bench_enc(&args[2], num(3, 5) as u32, num(4, 22) as u32, num(5, 5) as usize),
-        _ => eprintln!("usage: harness testdata | dec-fuzz seed iters maxlen | dec-garbage seed iters"),
+        _ if extra::run(&args) => {}
+        _ => eprintln!("see README.md"),
     }
 }

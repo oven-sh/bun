@@ -64,6 +64,41 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
+unsafe extern "C" {
+    fn malloc(n: usize) -> *mut c_void;
+    fn calloc(n: usize, size: usize) -> *mut c_void;
+    fn free(p: *mut c_void);
+}
+
+/// What new memory holds for the reference. It reads a byte of the encoder's ring buffer that it never wrote (see the
+/// README), so with plain `malloc` its output can depend on what the process did before. 0 unless `C_FILL` says otherwise.
+fn fill() -> u8 {
+    static FILL: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    *FILL.get_or_init(|| std::env::var("C_FILL").ok().and_then(|s| s.parse().ok()).unwrap_or(0))
+}
+
+extern "C" fn c_alloc(_: *mut c_void, n: usize) -> *mut c_void {
+    unsafe {
+        match fill() {
+            0 => calloc(1, n),
+            b => {
+                let p = malloc(n);
+                if !p.is_null() {
+                    std::ptr::write_bytes(p.cast::<u8>(), b, n);
+                }
+                p
+            }
+        }
+    }
+}
+
+extern "C" fn c_free(_: *mut c_void, p: *mut c_void) {
+    unsafe { free(p) }
+}
+
+const ALLOC: *const c_void = c_alloc as *const c_void;
+const FREE: *const c_void = c_free as *const c_void;
+
 /// Parameters for a C-encoded stream.
 #[derive(Clone, Debug, Default)]
 pub struct EncParams {
@@ -79,7 +114,7 @@ pub struct CEncoder {
 
 impl CEncoder {
     pub fn new() -> Self {
-        let s = unsafe { BrotliEncoderCreateInstance(std::ptr::null(), std::ptr::null(), std::ptr::null_mut()) };
+        let s = unsafe { BrotliEncoderCreateInstance(ALLOC, FREE, std::ptr::null_mut()) };
         assert!(!s.is_null());
         Self { s, dicts: Vec::new(), _dict_data: Vec::new() }
     }
@@ -88,7 +123,7 @@ impl CEncoder {
     }
     pub fn attach(&mut self, data: Vec<u8>) -> bool {
         let d = unsafe {
-            BrotliEncoderPrepareDictionary(0, data.len(), data.as_ptr(), 11, std::ptr::null(), std::ptr::null(), std::ptr::null_mut())
+            BrotliEncoderPrepareDictionary(0, data.len(), data.as_ptr(), 11, ALLOC, FREE, std::ptr::null_mut())
         };
         if d.is_null() {
             return false;
@@ -157,7 +192,7 @@ pub struct CDecoder {
 
 impl CDecoder {
     pub fn new() -> Self {
-        let s = unsafe { BrotliDecoderCreateInstance(std::ptr::null(), std::ptr::null(), std::ptr::null_mut()) };
+        let s = unsafe { BrotliDecoderCreateInstance(ALLOC, FREE, std::ptr::null_mut()) };
         assert!(!s.is_null());
         Self { s, _dicts: Vec::new() }
     }

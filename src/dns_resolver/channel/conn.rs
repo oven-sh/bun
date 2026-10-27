@@ -158,14 +158,19 @@ impl<I: Io, T> Channel<I, T> {
                 .iter()
                 .find(|server| server.id == conn.server)
                 .map(|server| (server.address, server.udp_port));
-            let count = match self.io.recv(conn.socket, &mut buffer) {
-                // The socket is connected, so the system has normally dropped these already.
-                Ok((_, Some(from)))
-                    if expected.is_some_and(|it| it != (from.ip(), from.port())) =>
-                {
-                    break;
-                }
-                Ok((count, _)) => count,
+            let received = match conn.transport {
+                Transport::Tcp => self.io.recv(conn.socket, &mut buffer),
+                // The socket is connected, so the system has normally dropped what others send already.
+                Transport::Udp => match self.io.recv_from(conn.socket, &mut buffer) {
+                    Ok((_, from)) if expected.is_some_and(|it| it != (from.ip(), from.port())) => {
+                        Err(IoError::WouldBlock)
+                    }
+                    Ok((count, _)) => Ok(count),
+                    Err(error) => Err(error),
+                },
+            };
+            let count = match received {
+                Ok(count) => count,
                 Err(IoError::WouldBlock) => break,
                 Err(IoError::Failed) => {
                     failed = true;

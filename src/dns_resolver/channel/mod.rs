@@ -198,6 +198,11 @@ impl<I: Io, T> Channel<I, T> {
         self.completed.pop_front()
     }
 
+    /// Ends a request that is found wanting before it gets here, in its turn.
+    pub fn fail(&mut self, token: T, error: Error) {
+        self.complete(token, Err(error));
+    }
+
     pub(crate) fn complete(&mut self, token: T, result: Result<Answer>) {
         self.completed.push_back(Completion { token, result });
     }

@@ -7,7 +7,7 @@ use bun_core::strings;
 
 use crate::buf::all_print;
 use crate::channel::ServerConfig;
-use crate::io::{FileError, Io};
+use crate::io::{FileError, Io, Variable};
 use crate::text::{fits, parse_uint, split, take_while, trim, trim_start, word};
 use crate::{Error, Result};
 
@@ -39,6 +39,11 @@ pub(crate) fn load_file<I: Io>(io: &mut I, path: &[u8]) -> Result<Vec<u8>> {
     })
 }
 
+pub(crate) fn load_etc_file<I: Io>(io: &mut I, name: &str) -> Result<Vec<u8>> {
+    let path = io.etc_path(name).ok_or(Error::ENOTFOUND)?;
+    load_file(io, &path)
+}
+
 /// A file that is there and cannot be read is an error. One that is not there says nothing.
 pub(crate) fn read<I: Io>(io: &mut I) -> Result<SysConfig> {
     let mut config = SysConfig {
@@ -46,12 +51,12 @@ pub(crate) fn read<I: Io>(io: &mut I) -> Result<SysConfig> {
         ..SysConfig::default()
     };
     type ParseLine<I> = fn(&mut SysConfig, &mut I, &[u8]);
-    let files: [(&[u8], ParseLine<I>); 2] = [
-        (b"/etc/resolv.conf", SysConfig::parse_resolv_conf_line),
-        (b"/etc/nsswitch.conf", SysConfig::parse_nsswitch_line),
+    let files: [(&str, ParseLine<I>); 2] = [
+        ("resolv.conf", SysConfig::parse_resolv_conf_line),
+        ("nsswitch.conf", SysConfig::parse_nsswitch_line),
     ];
-    for (path, parse_line) in files {
-        match load_file(io, path) {
+    for (name, parse_line) in files {
+        match load_etc_file(io, name) {
             Ok(text) => {
                 for line in split(&text, b"\n", true, None) {
                     parse_line(&mut config, io, line);
@@ -61,10 +66,10 @@ pub(crate) fn read<I: Io>(io: &mut I) -> Result<SysConfig> {
             Err(error) => return Err(error),
         }
     }
-    if let Some(domain) = io.env("LOCALDOMAIN") {
+    if let Some(domain) = io.env(Variable::LocalDomain) {
         config.set_search(&domain, Some(1));
     }
-    if let Some(options) = io.env("RES_OPTIONS") {
+    if let Some(options) = io.env(Variable::ResOptions) {
         config.set_options(&options);
     }
     Ok(config)

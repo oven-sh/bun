@@ -170,7 +170,7 @@ impl Entry {
 
 impl<I: Io, T> Channel<I, T> {
     pub(crate) fn hosts_file(&mut self) -> Result<&HostsFile> {
-        let path = self.io.hosts_path().ok_or(Error::ENOTFOUND)?;
+        let path = self.io.etc_path("hosts").ok_or(Error::ENOTFOUND)?;
         // Without a time to go by, a minute.
         let modified_at = match self.io.modified_time(&path) {
             Some(time) if time != 0 => time,

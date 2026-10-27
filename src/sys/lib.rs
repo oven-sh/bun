@@ -1391,6 +1391,8 @@ impl Tag {
     pub(crate) const fgetxattr: Tag = Tag(111);
     pub const epoll_create1: Tag = Tag(112);
     pub const pthread_create: Tag = Tag(113);
+    pub const socket: Tag = Tag(114);
+    pub const getsockname: Tag = Tag(115);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1398,7 +1400,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 114] = [
+        const NAMES: [&str; 116] = [
             "TODO",
             "dup",
             "access",
@@ -1514,6 +1516,8 @@ impl Tag {
             "fgetxattr",
             "epoll_create1",
             "pthread_create",
+            "socket",
+            "getsockname",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -8190,6 +8194,8 @@ pub mod posix {
 // (just the sockaddr union + a couple of constructors; full resolver lives in
 // `bun_dns`). Dependents only need the data shape + Display.
 // ──────────────────────────────────────────────────────────────────────────
+pub mod socket;
+
 pub mod net {
     use core::fmt;
 
@@ -8335,6 +8341,37 @@ pub mod net {
         pub fn as_sockaddr(&self) -> *const sockaddr {
             (&raw const self.any).cast()
         }
+        pub(crate) fn as_sockaddr_mut(&mut self) -> *mut sockaddr {
+            (&raw mut self.any).cast()
+        }
+
+        /// Of no family, for a system call to fill in.
+        pub(crate) const UNSPECIFIED: Self = Self {
+            // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
+            any: unsafe { core::mem::zeroed() },
+        };
+
+        /// `None` unless the family is IPv4 or IPv6.
+        pub fn to_socket_addr(&self) -> Option<core::net::SocketAddr> {
+            if let Some(v4) = self.as_in4() {
+                // SAFETY: `sin_addr` is 4 bytes of POD on every target.
+                let octets: [u8; 4] =
+                    unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
+                return Some((octets, u16::from_be(v4.sin_port)).into());
+            }
+            let v6 = self.as_in6()?;
+            // SAFETY: `sin6_addr` is 16 bytes of POD on every target.
+            let octets: [u8; 16] = unsafe { *core::ptr::addr_of!(v6.sin6_addr).cast::<[u8; 16]>() };
+            Some(
+                core::net::SocketAddrV6::new(
+                    octets.into(),
+                    u16::from_be(v6.sin6_port),
+                    u32::from_be(v6.sin6_flowinfo),
+                    v6.sin6_scope_id,
+                )
+                .into(),
+            )
+        }
 
         /// Lay out `ip`:`port` as a sockaddr — the one place an in/in6 struct is written over the storage, so callers never cast.
         pub fn from_ip(ip: core::net::IpAddr, port: u16) -> Self {
@@ -8425,6 +8462,15 @@ pub mod net {
             } else {
                 None
             }
+        }
+    }
+    impl From<core::net::SocketAddr> for Address {
+        fn from(address: core::net::SocketAddr) -> Self {
+            let mut this = Self::from_ip(address.ip(), address.port());
+            if let core::net::SocketAddr::V6(v6) = address {
+                this.set_scope_id(v6.scope_id());
+            }
+            this
         }
     }
     impl fmt::Debug for Address {

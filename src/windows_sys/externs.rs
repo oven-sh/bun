@@ -1145,6 +1145,34 @@ pub mod ws2_32 {
     unsafe extern "system" {
         pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
         pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
+        pub fn WSASocketW(
+            af: c_int,
+            r#type: c_int,
+            protocol: c_int,
+            lpProtocolInfo: *mut c_void,
+            g: u32,
+            dwFlags: u32,
+        ) -> usize;
+        pub fn closesocket(s: usize) -> c_int;
+        pub fn ioctlsocket(s: usize, cmd: c_long, argp: *mut u32) -> c_int;
+        pub fn setsockopt(
+            s: usize,
+            level: c_int,
+            optname: c_int,
+            optval: *const c_char,
+            optlen: c_int,
+        ) -> c_int;
+        pub fn bind(s: usize, name: *const sockaddr, namelen: c_int) -> c_int;
+        pub fn connect(s: usize, name: *const sockaddr, namelen: c_int) -> c_int;
+        pub fn getsockname(s: usize, name: *mut sockaddr, namelen: *mut c_int) -> c_int;
+        pub fn recvfrom(
+            s: usize,
+            buf: *mut c_void,
+            len: c_int,
+            flags: c_int,
+            from: *mut sockaddr,
+            fromlen: *mut c_int,
+        ) -> c_int;
         /// `WSAPoll` (`winsock2.h`). Returns count of ready fds, 0 on timeout,
         /// or `SOCKET_ERROR` (-1) on failure (`WSAGetLastError` for the code).
         pub fn WSAPoll(fdArray: *mut WSAPOLLFD, fds: u32, timeout: c_int) -> c_int;
@@ -1159,6 +1187,14 @@ pub mod ws2_32 {
         pub revents: i16,
     }
     pub const SOCKET_ERROR: c_int = -1;
+    pub const INVALID_SOCKET: usize = usize::MAX;
+    pub const WSA_FLAG_OVERLAPPED: u32 = 0x01;
+    pub const WSA_FLAG_NO_HANDLE_INHERIT: u32 = 0x80;
+    /// `_IOW('f', 126, u_long)` (`winsock2.h`).
+    pub const FIONBIO: c_long = 0x8004_667e_u32 as c_long;
+    pub const TCP_NODELAY: c_int = 1;
+    pub const IPPROTO_IPV6: c_int = 41;
+    pub const IPV6_V6ONLY: c_int = 27;
     /// `POLLWRNORM` (`winsock2.h`).
     pub const POLLWRNORM: i16 = 0x0010;
 }

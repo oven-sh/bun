@@ -811,7 +811,7 @@ pub(crate) fn lookup(
     }
 
     let key = get_addr_info_request::PendingCacheKey::init(query);
-    let cache = this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
+    let cache = this.get_or_put_into_pending_cache(&key);
 
     if let CacheHit::Inflight(inflight) = cache {
         let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context);
@@ -838,7 +838,6 @@ pub(crate) fn lookup(
         Some(this.as_ctx_ptr()),
         global_this,
         context,
-        PendingCacheField::PendingHostCacheNative,
     );
     // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
     let promise_value = unsafe { (*request).head.promise.value() };
@@ -859,8 +858,6 @@ pub(crate) fn lookup(
         }
         return lib_c::lookup(this, query, global_this, context);
     }
-
-    this.request_sent(this.vm());
 
     promise_value
 }

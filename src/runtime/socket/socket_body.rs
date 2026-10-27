@@ -29,7 +29,6 @@ use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use crate::node::{BlobOrStringOrBuffer, StringObjects, StringOrBuffer};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl_sys;
-use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::String as BunString;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys as sys;
@@ -1142,7 +1141,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // matching `node:dns` — never collapsed into ECONNREFUSED. On that
         // path `errno` carries the same (possibly negative) getaddrinfo code
         // as `dns_error`, so it is only treated as an errno in the else arm.
-        let dns_err = c_ares::Error::init_eai(dns_error).filter(|_| dns_error != 0);
+        let dns_err = bun_dns::error_from_eai(dns_error).filter(|_| dns_error != 0);
         let err = if let Some(dns_err) = dns_err {
             let hostname: &[u8] = match this.connection.get() {
                 Some(super::listener::UnixOrHost::Host { host, .. }) => host,

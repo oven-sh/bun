@@ -19,6 +19,8 @@ pub(crate) use dns_body::netc;
 #[path = "cares_jsc.rs"]
 pub(crate) mod cares_jsc; // c-ares reply struct → JSValue bridges
 
+mod system_io;
+
 #[path = "options_jsc.rs"]
 pub(crate) mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 

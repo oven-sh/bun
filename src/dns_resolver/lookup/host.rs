@@ -3,11 +3,14 @@
 use core::net::{IpAddr, SocketAddr};
 use std::io::Write as _;
 
+use bun_core::strings;
+
 use super::{Host, NameInfo};
 use crate::channel::{Answer, Channel, LookupId, Owner, Status};
 use crate::io::{Io, Time};
 use crate::record::{Record, rr_type};
-use crate::sysconfig::Source;
+use crate::sysconfig::{Source, load_etc_file};
+use crate::text::{parse_uint, split, trim_start, word};
 use crate::{Error, Result, reply};
 
 /// c-ares's buffer, with its NUL.
@@ -45,6 +48,21 @@ fn reverse_name(address: IpAddr) -> Vec<u8> {
         }
     }
     name
+}
+
+/// services(5): lines of `name port/protocol aliases...`.
+fn tcp_service_name(services: &[u8], port: u16) -> Option<&[u8]> {
+    split(services, b"\n", true, None)
+        .into_iter()
+        .find_map(|line| {
+            let (name, rest) = word(line);
+            let (port_and_protocol, _) = word(trim_start(rest));
+            let (number, protocol) = strings::split_once_char(port_and_protocol, b'/')?;
+            let is_it = !name.starts_with(b"#")
+                && parse_uint(number, 65535) == Some(port.into())
+                && protocol == b"tcp";
+            is_it.then_some(name)
+        })
 }
 
 impl<I: Io, T> Channel<I, T> {
@@ -144,9 +162,9 @@ impl<I: Io, T> Channel<I, T> {
         if port == 0 {
             return None;
         }
-        let name = self
-            .io
-            .service_name(port, "tcp")
+        let name = load_etc_file(&mut self.io, "services")
+            .ok()
+            .and_then(|services| tcp_service_name(&services, port).map(<[u8]>::to_vec))
             .unwrap_or_else(|| port.to_string().into_bytes());
         Some(if name.len() < SERVICE_NAME_SIZE {
             name

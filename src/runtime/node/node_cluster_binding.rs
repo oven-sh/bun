@@ -573,31 +573,15 @@ pub(crate) fn cluster_raw_bind<'a>(
             }
             addr_z[..addr_bytes.len()].copy_from_slice(addr_bytes);
 
-            use bun_cares_sys::ares_inet_pton;
-            // SAFETY: `ss` is a zeroed sockaddr_storage large enough for
-            let parsed = unsafe {
-                if family == libc::AF_INET6 {
-                    let sin6: &mut libc::sockaddr_in6 =
-                        &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
-                    sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
-                    sin6.sin6_port = (port as u16).to_be();
-                    ares_inet_pton(
-                        libc::AF_INET6,
-                        addr_z.as_ptr().cast(),
-                        (&raw mut sin6.sin6_addr).cast(),
-                    ) == 1
-                } else {
-                    let sin: &mut libc::sockaddr_in =
-                        &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
-                    sin.sin_family = libc::AF_INET as libc::sa_family_t;
-                    sin.sin_port = (port as u16).to_be();
-                    ares_inet_pton(
-                        libc::AF_INET,
-                        addr_z.as_ptr().cast(),
-                        (&raw mut sin.sin_addr).cast(),
-                    ) == 1
-                }
+            let literal: Option<core::net::IpAddr> = if family == libc::AF_INET6 {
+                bun_core::ip_address::parse_ares_v6(addr_bytes).map(Into::into)
+            } else {
+                bun_core::ip_address::parse_ares_v4(addr_bytes).map(Into::into)
             };
+            let parsed = literal.is_some();
+            if let Some(ip) = literal {
+                ss = bun_sys::net::Address::from_ip(ip, port as u16).into_storage();
+            }
             if !parsed {
                 // SAFETY: addrinfo is plain C data; all-zero is a valid hints value.
                 let mut hints: libc::addrinfo = unsafe { bun_core::ffi::zeroed_unchecked() };

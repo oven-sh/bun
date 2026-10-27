@@ -3,7 +3,6 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
-use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, String as BunString};
 use bun_event_loop::{
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
@@ -1407,7 +1406,7 @@ impl FetchTasklet {
         // raw getaddrinfo(3) code and is nonzero on this path, so `init_eai`
         // is always `Some`.
         if fail == http::Error::DNSResolveFailed {
-            if let Some(dns_err) = c_ares::Error::init_eai(self.result.dns_error) {
+            if let Some(dns_err) = bun_dns::error_from_eai(self.result.dns_error) {
                 // `dns_hostname` is the owned copy of the exact name the
                 // connect resolved (proxy or post-redirect target), captured
                 // on the HTTP thread; never reconstruct it from `self.http`,

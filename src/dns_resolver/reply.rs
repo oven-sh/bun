@@ -9,7 +9,7 @@ use crate::{Error, Result};
 /// `ares_parse_a_reply()` is given room for this many TTLs.
 const MAX_TTLS: usize = 256;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Kind {
     A,
     Aaaa,
@@ -44,14 +44,19 @@ impl Kind {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct Address {
+    pub address: IpAddr,
+    /// No more than the lowest TTL of the CNAMEs. `None` after the first [`MAX_TTLS`] addresses.
+    pub ttl: Option<i32>,
+}
+
 /// The addresses of one family, and what a `struct hostent` says besides.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Addresses {
     /// The target of the first CNAME, else the last name the answer is about.
     pub name: Option<Name>,
-    pub addresses: Vec<IpAddr>,
-    /// For the first [`MAX_TTLS`] of `addresses`. No more than the lowest TTL of the CNAMEs.
-    pub ttls: Vec<i32>,
+    pub addresses: Vec<Address>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -115,29 +120,25 @@ fn addresses(record: &Record, family: Family) -> Result<Addresses> {
         Err(error) => return Err(error),
     }
 
-    let of_family = || {
-        info.nodes
-            .iter()
-            .filter(|node| Family::of(&node.address) == family)
-    };
-    let addresses: Vec<IpAddr> = of_family().map(|node| node.address).collect();
+    let lowest_alias_ttl = info.aliases.iter().map(|alias| alias.ttl).min();
+    let addresses: Vec<Address> = info
+        .nodes
+        .iter()
+        .filter(|node| Family::of(&node.address) == family)
+        .enumerate()
+        .map(|(index, node)| Address {
+            address: node.address,
+            ttl: (index < MAX_TTLS).then(|| node.ttl.min(lowest_alias_ttl.unwrap_or(i32::MAX))),
+        })
+        .collect();
     if addresses.is_empty() && info.aliases.is_empty() {
         return Err(Error::ENODATA);
     }
-    let lowest_alias_ttl = info.aliases.iter().map(|alias| alias.ttl).min();
-    let ttls = of_family()
-        .take(MAX_TTLS)
-        .map(|node| node.ttl.min(lowest_alias_ttl.unwrap_or(i32::MAX)))
-        .collect();
     let name = match info.aliases.first() {
         Some(alias) => Some(alias.name.clone()),
         None => info.name,
     };
-    Ok(Addresses {
-        name,
-        addresses,
-        ttls,
-    })
+    Ok(Addresses { name, addresses })
 }
 
 /// The answer's records of class IN (and CHAOS, for the two types c-ares also takes it for) that `pick` takes.
@@ -289,7 +290,7 @@ impl Reply {
     pub fn parse(kind: Kind, message: &[u8]) -> Result<Reply> {
         let record = match Record::parse(message) {
             Ok(record) => record,
-            // These five never report a bad name.
+            // The parsers of these types never report a bad name.
             Err(Error::EBADNAME)
                 if matches!(
                     kind,

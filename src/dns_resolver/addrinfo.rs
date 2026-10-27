@@ -5,7 +5,7 @@ use core::net::IpAddr;
 use crate::record::{Name, RData, Record, class};
 use crate::{Error, Result};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Family {
     Unspecified,
     V4,

@@ -57,6 +57,17 @@ pub enum FileError {
     Other,
 }
 
+/// An environment variable.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Variable {
+    /// `LOCALDOMAIN`, in place of the search list.
+    LocalDomain,
+    /// `RES_OPTIONS`, on top of the `options` of resolv.conf(5).
+    ResOptions,
+    /// `HOSTALIASES`, the path of a file of aliases: hostname(7).
+    HostAliases,
+}
+
 pub trait Io {
     type Socket: Copy + Eq;
 
@@ -68,12 +79,14 @@ pub trait Io {
         local: Option<IpAddr>,
     ) -> Result<Opened<Self::Socket>, IoError>;
     fn send(&mut self, socket: Self::Socket, data: &[u8]) -> Result<usize, IoError>;
-    /// The sender is `None` for TCP. The end of a TCP stream is `Failed`.
-    fn recv(
+    /// One datagram and who sent it.
+    fn recv_from(
         &mut self,
         socket: Self::Socket,
         buffer: &mut [u8],
-    ) -> Result<(usize, Option<SocketAddr>), IoError>;
+    ) -> Result<(usize, SocketAddr), IoError>;
+    /// Bytes of a TCP stream, whose end is `Failed`.
+    fn recv(&mut self, socket: Self::Socket, buffer: &mut [u8]) -> Result<usize, IoError>;
     /// Which events [`crate::Channel::process`] is to be called for from now on.
     fn watch(&mut self, socket: Self::Socket, readable: bool, writable: bool);
     /// Also ends the watch.
@@ -86,18 +99,16 @@ pub trait Io {
     fn read_file(&mut self, path: &[u8]) -> Result<Vec<u8>, FileError>;
     /// Seconds since the epoch.
     fn modified_time(&mut self, path: &[u8]) -> Option<i64>;
-    fn env(&mut self, name: &str) -> Option<Vec<u8>>;
+    fn env(&mut self, variable: Variable) -> Option<Vec<u8>>;
     fn hostname(&mut self) -> Option<Vec<u8>>;
-    /// Where hosts(5) is.
-    fn hosts_path(&mut self) -> Option<Vec<u8>>;
+    /// Where the system keeps `hosts`, `services` and the like: `/etc/{name}`, except on Windows.
+    fn etc_path(&mut self, name: &str) -> Option<Vec<u8>>;
 
     /// if_nametoindex(3).
     fn interface_index(&mut self, name: &[u8]) -> Option<u32>;
     fn has_interface(&mut self, index: u32) -> bool;
     /// The address a datagram to `destination` would leave from, without sending one. `Ok(None)`: there is no route.
     fn source_address(&mut self, destination: SocketAddr) -> Result<Option<IpAddr>, IoError>;
-    /// getservbyport(3) for a port in host order.
-    fn service_name(&mut self, port: u16, protocol: &str) -> Option<Vec<u8>>;
     /// The loopback addresses of this machine, if the system keeps a list of them.
     fn loopback_addresses(&mut self) -> Option<Vec<IpAddr>>;
 }

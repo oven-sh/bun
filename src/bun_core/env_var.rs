@@ -170,9 +170,13 @@ new!(pub GITHUB_SERVER_URL: string, "GITHUB_SERVER_URL", {});
 new!(pub GITHUB_SHA: string, "GITHUB_SHA", {});
 new!(pub GITHUB_WORKSPACE: string, "GITHUB_WORKSPACE", {});
 platform_specific_new!(pub HOME: string, posix = "HOME", windows = "USERPROFILE", {});
+// hostname(7): the path of a file of host name aliases.
+new!(pub HOSTALIASES: string, "HOSTALIASES", {});
 new!(pub HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET: string, "HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET", {});
 new!(pub IS_BUN_AUTO_UPDATE: boolean, "IS_BUN_AUTO_UPDATE", { default: false });
 new!(pub JENKINS_URL: string, "JENKINS_URL", {});
+// resolv.conf(5): overrides the search list.
+new!(pub LOCALDOMAIN: string, "LOCALDOMAIN", {});
 // Dump mimalloc statistics at the end of the process. Note that this is not the same as
 // `MIMALLOC_VERBOSE`, documented here: https://microsoft.github.io/mimalloc/environment.html
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
@@ -206,6 +210,8 @@ new!(pub npm_package_json: string, "npm_package_json", {});
 new!(pub PATH: string, "PATH", {});
 platform_specific_new!(pub PWD: string, posix = "PWD", windows = None, {});
 new!(pub REPL_ID: boolean, "REPL_ID", { default: false });
+// resolv.conf(5): more `options`.
+new!(pub RES_OPTIONS: string, "RES_OPTIONS", {});
 new!(pub RUNNER_DEBUG: boolean, "RUNNER_DEBUG", { default: false });
 platform_specific_new!(pub SDKROOT: string, posix = "SDKROOT", windows = None, {});
 platform_specific_new!(pub SHELL: string, posix = "SHELL", windows = None, {});

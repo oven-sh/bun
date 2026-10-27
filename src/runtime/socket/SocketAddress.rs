@@ -5,10 +5,10 @@
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
 //! Requires updating bindgen.
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 use core::mem;
 
-use bun_cares_sys::c_ares as ares;
+use bun_core::ip_address::{format_v4, format_v6, parse_ares_v4, parse_ares_v6};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
@@ -191,9 +191,8 @@ impl SocketAddress {
         // - "[::1]" -> "::1"
         // - "0x.0x.0" -> "0.0.0.0"
         let paddr = host.latin1(); // presentation address
-        // Uses `ares_inet_pton` (already linked) to fill the sockaddr in place.
         // A `%scope` suffix populates `scope_id`, but
-        // `ares_inet_pton` does not accept it, so we strip and parse it here.
+        // `parse_ares_v6` does not accept it, so we strip and parse it here.
         // (WHATWG URL host parsing rejects zone identifiers, so in practice
         // `URL::host_()` should not yield one — handled defensively.)
         let addr = if paddr.len() >= 2 && paddr[0] == b'[' && paddr[paddr.len() - 1] == b']' {
@@ -206,31 +205,25 @@ impl SocketAddress {
                 // Non-numeric zone would require if_nametoindex; treat as invalid here.
                 scope_id = bun_core::fmt::parse_int::<u32>(zone, 10).ok()?;
             }
-            let mut sin6 = inet::sockaddr_in6 {
+            let sin6 = inet::sockaddr_in6 {
                 family: AF::INET6.int(),
                 port: port_.to_be(),
                 flowinfo: 0,
-                addr: [0u8; 16],
+                addr: parse_ares_v6(inner)?,
                 scope_id,
                 ..inet::sockaddr_in6::ZEROED
             };
-            if !pton_noerr(inet::AF_INET6, inner, (&raw mut sin6.addr).cast::<c_void>()) {
-                return None;
-            }
             SocketAddress {
                 _addr: sockaddr { sin6 },
                 _presentation: JsCell::new(BunString::DEAD),
             }
         } else {
-            let mut sin = inet::sockaddr_in {
+            let sin = inet::sockaddr_in {
                 family: AF::INET.int(),
                 port: port_.to_be(),
-                addr: 0,
+                addr: u32::from_ne_bytes(parse_ares_v4(paddr)?),
                 ..inet::sockaddr_in::ZEROED
             };
-            if !pton_noerr(inet::AF_INET, paddr, (&raw mut sin.addr).cast::<c_void>()) {
-                return None;
-            }
             SocketAddress {
                 _addr: sockaddr { sin },
                 _presentation: JsCell::new(BunString::DEAD),
@@ -319,10 +312,6 @@ impl SocketAddress {
     pub(crate) fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
         let mut presentation: BunString = BunString::EMPTY;
 
-        // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
-        // copy the string.
-        // PERF: could use a small stack buffer with heap fallback.
-
         let addr: sockaddr = match options.family {
             AF::INET => {
                 let mut sin: inet::sockaddr_in = inet::sockaddr_in {
@@ -333,14 +322,8 @@ impl SocketAddress {
                 };
                 if let Some(address_str) = options.address {
                     presentation = address_str;
-                    let slice = presentation.to_owned_slice_z();
-                    // Box<ZStr> drops at scope exit
-                    pton(
-                        global,
-                        inet::AF_INET,
-                        &slice,
-                        (&raw mut sin.addr).cast::<c_void>(),
-                    )?;
+                    let octets = parse_ares_v4(&presentation.to_utf8());
+                    sin.addr = u32::from_ne_bytes(octets.ok_or_else(|| invalid_address(global))?);
                 } else {
                     sin.addr = sockaddr::LOOPBACK_V4.as_sin().unwrap().addr;
                 }
@@ -356,19 +339,20 @@ impl SocketAddress {
                     ..inet::sockaddr_in6::ZEROED
                 };
                 if let Some(address_str) = options.address {
-                    presentation = address_str;
-                    let mut slice = presentation.to_owned_slice_z();
+                    let text = address_str.to_utf8();
                     // As in libuv's `uv_inet_pton`, the address ends at a zone id.
-                    if let Some((address, _)) = strings::split_once_char(slice.as_bytes(), b'%') {
-                        slice = bun_core::ZBox::from_bytes(address);
-                        presentation = BunString::DEAD;
-                    }
-                    pton(
-                        global,
-                        inet::AF_INET6,
-                        &slice,
-                        (&raw mut sin6.addr).cast::<c_void>(),
-                    )?;
+                    let octets = match strings::split_once_char(&text, b'%') {
+                        Some((address, _)) => parse_ares_v6(address),
+                        None => parse_ares_v6(&text),
+                    };
+                    let has_zone = strings::contains_char(&text, b'%');
+                    sin6.addr = octets.ok_or_else(|| invalid_address(global))?;
+                    drop(text);
+                    presentation = if has_zone {
+                        BunString::DEAD
+                    } else {
+                        address_str
+                    };
                 } else {
                     sin6.addr = inet::IN6ADDR_ANY_INIT;
                 }
@@ -643,46 +627,15 @@ impl SocketAddress {
     }
 }
 
-fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> JsResult<()> {
-    use bun_jsc::js_global_object::SysErrOptions;
-    // SAFETY: addr is NUL-terminated, dst points to a valid in_addr/in6_addr
-    match unsafe { ares::ares_inet_pton(af, addr.as_ptr(), dst) } {
-        0 => Err(global.throw_sys_error(
-            &SysErrOptions {
-                code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
-                errno: None,
-                name: None,
-            },
-            format_args!("Invalid socket address"),
-        )),
-
-        // Open question: the proper way to
-        // convert a C errno into a JS exception.
-        -1 => Err(global.throw_sys_error(
-            &SysErrOptions {
-                code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
-                errno: Some(bun_sys::last_errno()),
-                name: None,
-            },
-            format_args!("Invalid socket address"),
-        )),
-        1 => Ok(()),
-        _ => unreachable!(),
-    }
-}
-
-/// Non-throwing `ares_inet_pton` wrapper used by `SocketAddress::parse` (which
-/// returns `undefined` on failure instead of throwing). Copies `addr` into a
-/// stack buffer to NUL-terminate it for the C call.
-fn pton_noerr(af: c_int, addr: &[u8], dst: *mut c_void) -> bool {
-    let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize + 1];
-    if addr.len() >= buf.len() {
-        return false;
-    }
-    buf[..addr.len()].copy_from_slice(addr);
-    // buf[addr.len()] is already 0
-    // SAFETY: buf is NUL-terminated, dst points to a valid in_addr/in6_addr
-    unsafe { ares::ares_inet_pton(af, buf.as_ptr().cast(), dst) == 1 }
+fn invalid_address(global: &JSGlobalObject) -> bun_jsc::JsError {
+    global.throw_sys_error(
+        &bun_jsc::js_global_object::SysErrOptions {
+            code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
+            errno: None,
+            name: None,
+        },
+        format_args!("Invalid socket address"),
+    )
 }
 
 // =============================================================================
@@ -886,19 +839,16 @@ impl sockaddr {
     }
 
     pub(crate) fn fmt<'a>(&self, buf: &'a mut [u8; inet::INET6_ADDRSTRLEN as usize]) -> &'a ZStr {
-        let addr_src: *const c_void = match self.as_sin() {
-            Some(sin) => core::ptr::from_ref(&sin.addr).cast::<c_void>(),
+        let text = match self.as_sin() {
+            Some(sin) => format_v4(sin.addr.to_ne_bytes()),
             None => {
                 let sin6 = self.as_sin6().expect("sockaddr family is INET or INET6");
-                core::ptr::from_ref(&sin6.addr).cast::<c_void>()
+                format_v6(sin6.addr)
             }
         };
-        // SAFETY: buf is INET6_ADDRSTRLEN bytes; addr_src points to in_addr/in6_addr per family().
-        let len =
-            unsafe { bun_cares_sys::ntop(self.family().int() as c_int, addr_src, &mut buf[..]) }
-                .expect("Invariant violation: SocketAddress created with invalid IPv6 address")
-                .len();
-        // SAFETY: buf[len] == 0 written by ares_inet_ntop above
+        let len = text.len();
+        buf[..len].copy_from_slice(&text);
+        buf[len] = 0;
         let formatted = ZStr::from_buf(&buf[..], len);
         debug_assert!(bun_core::is_all_ascii(formatted.as_bytes()));
         formatted
@@ -933,18 +883,6 @@ impl sockaddr {
 
 // =============================================================================
 
-// The same types are defined in a bunch of different places. We should probably unify them.
-// Compile-time checks: socklen_t shape parity + AF constant parity with c-ares.
-#[cfg(not(windows))]
-const _: () = {
-    assert!(mem::size_of::<inet::socklen_t>() == mem::size_of::<libc::socklen_t>());
-    assert!(mem::align_of::<inet::socklen_t>() == mem::align_of::<libc::socklen_t>());
-};
-const _: () = {
-    assert!(AF::INET as c_int == ares::AF::INET);
-    assert!(AF::INET6 as c_int == ares::AF::INET6);
-};
-
 /// Fills `out` with `host`:`port` when `host` is numeric (inet_aton shorthand and `%zone` included) and returns 1, or 0 when it is a name — the one parse behind uSockets' connect paths, so a literal never reaches the resolver; `host` must be NUL-terminated and `out` writable.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
@@ -969,6 +907,29 @@ pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
     // SAFETY: caller contract — `out` is a writable `sockaddr_storage`.
     unsafe { *out = addr.into_storage() };
     1
+}
+
+/// Writes the text of an IPv6 address (`is_ipv6`, 16 `octets`) or an IPv4 one (4) to `out`, with a NUL, and returns its length; `out` must have room for 46 bytes and may follow `octets` in one buffer.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Bun__formatIpAddress(
+    octets: *const u8,
+    is_ipv6: bool,
+    out: *mut u8,
+) -> usize {
+    // SAFETY: caller contract — `octets` is readable for the family's length.
+    let text = unsafe {
+        if is_ipv6 {
+            format_v6(octets.cast::<[u8; 16]>().read_unaligned())
+        } else {
+            format_v4(octets.cast::<[u8; 4]>().read_unaligned())
+        }
+    };
+    // SAFETY: caller contract — the text is at most 45 bytes, and `text` is a copy that `out` cannot overlap.
+    unsafe {
+        core::ptr::copy_nonoverlapping(text.as_ptr(), out, text.len());
+        out.add(text.len()).write(0);
+    }
+    text.len()
 }
 
 /// A `%zone` is an interface name (`en0`) everywhere but Windows, where it is already the index.
@@ -1009,7 +970,7 @@ pub(crate) mod inet {
     pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub(crate) use ws2::AF_INET;
     pub(crate) use ws2::AF_INET6;
-    pub(crate) type socklen_t = super::ares::ares_socklen_t;
+    pub(crate) type socklen_t = core::ffi::c_int;
 }
 
 #[cfg(not(windows))]
@@ -1020,5 +981,5 @@ pub(crate) mod inet {
     pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub(crate) use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
-    pub(crate) type socklen_t = super::ares::ares_socklen_t;
+    pub(crate) type socklen_t = libc::socklen_t;
 }

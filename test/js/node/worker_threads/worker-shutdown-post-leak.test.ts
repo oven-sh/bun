@@ -47,11 +47,14 @@ describe("a Worker leaves no parse arena behind", () => {
       cmd: [bunExe(), "-e", countLeftBehind],
       env: { ...bunEnv, WORKER_KIND: kind, WORKER_SOURCE: source },
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe(JSON.stringify({ leftBehind: 0, errors }) + "\n");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ leftBehind: 0, errors }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

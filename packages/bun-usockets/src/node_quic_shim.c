@@ -251,14 +251,22 @@ static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
     if (h->max_bytes
             && h->total_bytes + hdr->name_len + hdr->val_len > h->max_bytes)
         return 0;
-    h->n_pairs++;
-    h->total_bytes += (size_t) hdr->name_len + hdr->val_len;
     const char *name = lsxpack_header_get_name(hdr);
     const char *val = lsxpack_header_get_value(hdr);
+    /* lsqpack decodes the name and then the value into one buffer, so one scan covers both. */
+    const char *field = hdr->buf + hdr->name_offset;
+    size_t field_len = (size_t) (hdr->val_offset - hdr->name_offset) + hdr->val_len;
     /* RFC 9114 4.1.2 makes such a field invalid. */
-    if ((hdr->name_len && memchr(name, 0, hdr->name_len))
-            || (hdr->val_len && memchr(val, 0, hdr->val_len)))
+    if (memchr(field, 0, field_len))
         return -1;
+    /* RFC 9114 10.3: CR or LF. The field is left out before it is counted, as
+     * nghttp3 does for a regular field it has no other rule for. A pseudo-header
+     * is still delivered: Node fails the whole session for it. */
+    if ((!hdr->name_len || name[0] != ':')
+            && (memchr(field, '\r', field_len) || memchr(field, '\n', field_len)))
+        return 0;
+    h->n_pairs++;
+    h->total_bytes += (size_t) hdr->name_len + hdr->val_len;
     size_t need = h->pairs_len + (size_t) hdr->name_len + 1
                 + (size_t) hdr->val_len + 1;
     if (need > h->pairs_cap) {

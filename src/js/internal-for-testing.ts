@@ -346,6 +346,11 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
+/** Sends `[name, value, ...]` on a node:quic stream as one header block, without the checks of `sendHeaders()`. */
+export function quicSendRawHeaders(stream: object, pairs: string[], kind: number, flags: number): boolean {
+  return require("internal/quic/quic").sendRawHeadersForTesting(stream, pairs, kind, flags);
+}
+
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.

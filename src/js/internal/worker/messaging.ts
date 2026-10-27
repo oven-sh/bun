@@ -3,14 +3,11 @@
 // control MessagePort to it, and it routes each message to the destination's port.
 // Delivery results are reported back through a SharedArrayBuffer + Atomics.
 //
-// Differences from node: thread info comes from initThreadInfo (Bun assigns threadId
+// Differences from node: thread info comes from the native binding (Bun assigns threadId
 // differently); createMainThreadPort is split into createMessagingChannel (before
 // `new Worker`) + registerMainThreadPort (after the threadId exists); and the
 // `workerMessage` listeners are invoked directly because Bun's process.emit cannot
 // report no-listeners or a throwing listener (see receiveMessageFromWorker).
-
-const { validateNumber } = require("internal/validators");
-const { SafeMap } = require("internal/primordials");
 
 const messageTypes = {
   REGISTER_MAIN_THREAD_PORT: "registerMainThreadPort",
@@ -19,20 +16,27 @@ const messageTypes = {
   RECEIVE_MESSAGE_FROM_WORKER: "receiveMessageFromWorker",
 };
 
-// Set once via initThreadInfo() when worker_threads.ts loads.
-let currentThreadId = 0;
-let isMainThread = true;
-// The intrinsic constructor from worker_threads' native binding, not
-// globalThis.MessageChannel, which user code can replace (#40268).
-let MessageChannel: typeof globalThis.MessageChannel;
+const {
+  0: currentThreadId,
+  1: isMainThread,
+  // The intrinsic constructor, not globalThis.MessageChannel, which user code can replace (#40268).
+  2: MessageChannel,
+  // Only in a worker of node:worker_threads: its port to the hub. A raw Web Worker is not connected to the hub.
+  3: mainThreadPort,
+  // Puts a 'message' listener on that port in place of the one the worker's native start sequence left there (NodeWorkerState).
+  4: listenOnMainThreadPort,
+} = $cpp("Worker.cpp", "createNodeWorkerMessagingBinding") as [
+  number,
+  boolean,
+  typeof globalThis.MessageChannel,
+  import("node:worker_threads").MessagePort | undefined,
+  ((listener: (event: MessageEvent) => void) => void) | undefined,
+];
 
-// Only populated on the main thread (the hub); always empty elsewhere.
-// SafeMap: its prototype is a frozen null-proto snapshot taken at bootstrap, so the
-// cross-thread routing table can't be broken by user code replacing Map.prototype.
-const threadsPorts: Map<number, import("node:worker_threads").MessagePort> = new SafeMap();
-
-// Only populated on child threads; always undefined on the main thread.
-let mainThreadPort: any;
+// Only the main thread (the hub) has one. There this module loads with node:worker_threads, and internal/primordials with it: a SafeMap is a frozen, null-proto snapshot of Map.prototype as it is then, so user code that replaces Map.prototype later breaks neither this table nor what loads internal/primordials after it.
+const threadsPorts: Map<number, import("node:worker_threads").MessagePort> = isMainThread
+  ? new (require("internal/primordials").SafeMap)()
+  : undefined!;
 
 // SharedArrayBuffer must always be Int32, so it's * 4.
 // One slot for the operation status (performing / performed) and one for the result.
@@ -44,12 +48,6 @@ const WORKER_MESSAGING_RESULT_INDEX = 1;
 const WORKER_MESSAGING_RESULT_DELIVERED = 0;
 const WORKER_MESSAGING_RESULT_NO_LISTENERS = 1;
 const WORKER_MESSAGING_RESULT_LISTENER_ERROR = 2;
-
-function initThreadInfo(threadId: number, mainThread: boolean, MessageChannelCtor: typeof globalThis.MessageChannel) {
-  currentThreadId = threadId;
-  isMainThread = mainThread;
-  MessageChannel = MessageChannelCtor;
-}
 
 // This event handler is always executed on the main thread only.
 function handleMessageFromThread(message) {
@@ -200,38 +198,13 @@ function destroyMainThreadPort(threadId: number) {
   }
 }
 
-// Deliveries from the main-thread hub are deferred until the entry module has
-// finished evaluating (the native side invokes the entryEvaluated hook right
-// before dispatching 'online'), matching node's bootstrap -> synchronous CJS
-// main ordering: a routed message must not observe "no listeners" while the
-// entry that registers them is still loading.
-let entryEvaluated = false;
-let pendingMainPortMessages: any[] | null = null;
-
-function handleMessageFromMainThreadGated(message) {
-  if (!entryEvaluated) {
-    (pendingMainPortMessages ??= []).push(message);
-    return;
-  }
-  handleMessageFromMainThread(message);
-}
-
-function setupMainThreadPort(port: any, setEntryEvaluatedHook: (hook: () => void) => void) {
-  mainThreadPort = port;
-  mainThreadPort.on("message", handleMessageFromMainThreadGated);
-
-  // Stored on ZigGlobalObject (WriteBarrier), not on globalThis, so user code
-  // can't observe or clobber it. WebWorker__entrySettled calls it once.
-  setEntryEvaluatedHook(() => {
-    entryEvaluated = true;
-    const pending = pendingMainPortMessages;
-    pendingMainPortMessages = null;
-    // Indexed, not for-of: Array.prototype[Symbol.iterator] is user-overridable.
-    if (pending) for (let i = 0; i < pending.length; i++) handleMessageFromMainThread(pending[i]);
+// As in node, a worker gets nothing from the hub before its entry module has evaluated: the port holds its start until then (MessagePort::holdStartUntilEntrySettled).
+if (listenOnMainThreadPort) {
+  listenOnMainThreadPort(event => {
+    // A port that comes with the message is a node MessagePort to the 'workerMessage' listener: its on() and once() come with node:worker_threads.
+    if (event.ports.length !== 0) require("node:worker_threads");
+    handleMessageFromMainThread(event.data);
   });
-
-  // Never block the process on this port.
-  mainThreadPort.unref();
 }
 
 async function postMessageToThread(threadId, value, transferList, timeout) {
@@ -245,7 +218,7 @@ async function postMessageToThread(threadId, value, transferList, timeout) {
   }
 
   if (typeof timeout !== "undefined") {
-    validateNumber(timeout, "timeout", 0);
+    require("internal/validators").validateNumber(timeout, "timeout", 0);
   }
 
   if (threadId === currentThreadId) {
@@ -292,10 +265,8 @@ async function postMessageToThread(threadId, value, transferList, timeout) {
 }
 
 export default {
-  initThreadInfo,
   createMessagingChannel,
   registerMainThreadPort,
   destroyMainThreadPort,
-  setupMainThreadPort,
   postMessageToThread,
 };

@@ -27,7 +27,6 @@
 #include "config.h"
 #include "Worker.h"
 
-#include "InternalModuleRegistry.h"
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "Event.h"
@@ -46,6 +45,7 @@
 #include "CloseEvent.h"
 #include "JSDOMConvertObject.h"
 #include "JSDOMConvertSequences.h"
+#include "JSEventListener.h"
 #include "JSMessagePort.h"
 #include "JSMessageChannel.h"
 #include "JSWorker.h"
@@ -53,6 +53,7 @@
 #include "JSBroadcastChannel.h"
 #include "JSStructuredSerializeOptions.h"
 #include "BunClientData.h"
+#include "NodeWorkerState.h"
 
 namespace WebCore {
 
@@ -147,29 +148,11 @@ void Worker::dispatchCloseEvent(Event& event)
 // The proxy of the worker whose global scope runs on `bunVM`'s thread, or null on the main thread.
 extern "C" WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
 
-// The entry module just finished (or failed) its top-level evaluation. Flush the worker_threads
-// hub's deferred cross-thread deliveries: node's bootstrap runs the synchronous CJS main before any
-// port delivery, so a routed message must not observe "no listeners" while the entry that registers
-// them is still loading. Runs on every post-evaluation path so a buffered postMessageToThread never
-// leaves its sender's Atomics.waitAsync unresolved.
+// The entry module finished (or failed) its top-level evaluation. As in node, parentPort and the postMessageToThread port of a node:worker_threads worker deliver nothing before that.
 extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
 {
-    // parentPort starts delivering now (whatever the parent posted meanwhile is buffered in the pipe).
-    globalObject->nodeWorkerEntryDidSettle();
-    auto* hook = globalObject->nodeWorkerEntryEvaluatedHook();
-    if (!hook)
-        return;
-    globalObject->setNodeWorkerEntryEvaluatedHook(nullptr);
-    auto& vm = JSC::getVM(globalObject);
-    // On failure paths (entry threw / TLA rejected) an exception may already be pending; the hook
-    // can't observe it and shutdown reports it either way.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    CLEAR_IF_EXCEPTION(scope);
-    if (vm.hasPendingTerminationException())
-        return;
-    JSC::MarkedArgumentBuffer args;
-    JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
-    CLEAR_IF_EXCEPTION(scope);
+    if (auto* nodeWorker = globalObject->nodeWorkerState())
+        nodeWorker->entryDidSettle(*globalObject);
 }
 
 extern "C" void WebWorker__workerThreadStarted(WorkerMessagingProxy* proxy)
@@ -207,9 +190,6 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
 }
-
-JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts);
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -279,11 +259,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsMarkedAsUntransferable, (JSGlobalObject * l
     return JSC::JSValue::encode(jsBoolean(object && !!object->getDirect(vm, builtinNames(vm).isUntransferablePrivateName())));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSetEntryEvaluatedHook, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+// Main thread starts at 1
+static JSValue threadIdOf(WorkerMessagingProxy* proxy)
 {
-    if (auto* hook = callFrame->argument(0).getObject())
-        defaultGlobalObject(lexicalGlobalObject)->setNodeWorkerEntryEvaluatedHook(hook);
-    return JSC::JSValue::encode(jsUndefined());
+    return jsNumber(proxy ? proxy->workerContextIdentifier() - 1 : 0);
+}
+
+// Takes [workerData, environmentData] as the parent serialized it and entangles the ports transferred with it. Returns workerData, or empty when it was taken before.
+JSValue takeWorkerDataFromParent(Zig::GlobalObject& globalObject, WorkerOptions& options, JSMap*& environmentData)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject.vm());
+    RefPtr serialized = WTF::move(options.workerDataAndEnvironmentData);
+    if (!serialized)
+        return {};
+    auto ports = MessagePort::entanglePorts(*globalObject.scriptExecutionContext(), WTF::move(options.dataMessagePorts));
+    JSValue deserialized = serialized->deserialize(globalObject, &globalObject, WTF::move(ports));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* pair = dynamicDowncast<JSArray>(deserialized);
+    ASSERT(pair && pair->length() == 2 && pair->canGetIndexQuickly(0u) && pair->canGetIndexQuickly(1u));
+    if (!pair) [[unlikely]]
+        return {};
+    // Not a Map when the parent had not loaded node:worker_threads.
+    environmentData = dynamicDowncast<JSMap>(pair->getIndexQuickly(1));
+    return pair->getIndexQuickly(0);
 }
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
@@ -292,46 +290,32 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue workerData = jsNull();
-    JSValue threadId = jsNumber(0);
     JSValue threadName = jsEmptyString(vm);
     JSMap* environmentData = nullptr;
+    JSValue parentPort = jsUndefined();
+    bool workerDataHasJSTransferables = false;
 
     auto* proxy = WebWorker__getMessagingProxy(globalObject->bunVM());
-    if (proxy) {
-        auto& options = proxy->options();
-        RefPtr<WebCore::SerializedScriptValue> serialized = WTF::move(options.workerDataAndEnvironmentData);
-        // `workerDataAndEnvironmentData` is moved-from on the first call. If
-        // this binding is created twice (lazy-init re-entry), `serialized` is
-        // null and `->deserialize` would UB → garbage → SIGTRAP at the
-        // uncheckedDowncast below (#53748 darwin). Guard both: skip the
-        // deserialize on second call (workerData stays jsUndefined), and use a
-        // checked cast so a non-Array deserialize result doesn't trap.
-        if (serialized) {
-            auto ports = MessagePort::entanglePorts(*globalObject->scriptExecutionContext(), WTF::move(options.dataMessagePorts));
-            JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
+    if (auto* nodeWorker = globalObject->nodeWorkerState()) {
+        if (JSValue taken = nodeWorker->workerData())
+            workerData = taken;
+        environmentData = globalObject->nodeWorkerEnvironmentData();
+        workerDataHasJSTransferables = proxy->options().workerDataHasJSTransferables;
+        if (auto* port = nodeWorker->port(WorkerOptions::Parent)) {
+            parentPort = toJS(globalObject, globalObject, *port);
             RETURN_IF_EXCEPTION(scope, {});
-            // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
-            if (auto* pair = dynamicDowncast<JSArray>(deserialized)) {
-                ASSERT(pair->length() == 2);
-                ASSERT(pair->canGetIndexQuickly(0u));
-                ASSERT(pair->canGetIndexQuickly(1u));
-                workerData = pair->getIndexQuickly(0);
-                RETURN_IF_EXCEPTION(scope, {});
-                auto environmentDataValue = pair->getIndexQuickly(1);
-                // it might not be a Map if the parent had not set up environmentData yet
-                environmentData = environmentDataValue ? dynamicDowncast<JSMap>(environmentDataValue) : nullptr;
-                RETURN_IF_EXCEPTION(scope, {});
-            } else {
-                ASSERT_NOT_REACHED_WITH_MESSAGE("createNodeWorkerThreadsBinding: deserialized is not JSArray");
-            }
         }
-
-        // Main thread starts at 1
-        threadId = jsNumber(proxy->workerContextIdentifier() - 1);
+    } else if (proxy) {
+        JSValue taken = takeWorkerDataFromParent(*globalObject, proxy->options(), environmentData);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (taken)
+            workerData = taken;
+    }
+    if (proxy) {
         // isolatedCopy: this JSString lives in the worker heap; it must own a
         // worker-local impl so its GC deref never races m_options.name's
         // (non-atomic) refcount on the parent thread.
-        threadName = jsString(vm, options.name.isolatedCopy());
+        threadName = jsString(vm, proxy->options().name.isolatedCopy());
     }
     if (!environmentData) {
         environmentData = JSMap::create(vm, globalObject->mapStructure());
@@ -340,13 +324,11 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
 
-    bool isNodeWorker = proxy && proxy->options().kind == WorkerOptions::Kind::Node;
-
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 17);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 15);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 1, threadId);
+    array->putDirectIndex(globalObject, 1, threadIdOf(proxy));
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
     RETURN_IF_EXCEPTION(scope, {});
@@ -362,53 +344,78 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 8, JSFunction::create(vm, globalObject, 1, "markAsUncloneable"_s, jsFunctionMarkAsUncloneable, ImplementationVisibility::Public, NoIntrinsic));
     RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
-    RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
-    RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
-    RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 12, JSFunction::create(vm, globalObject, 1, "setStdioPorts"_s, jsFunctionSetNodeWorkerStdioPorts, ImplementationVisibility::Public, NoIntrinsic));
+    // A worker of node:worker_threads' Worker: the port entangled with that Worker's public port.
+    array->putDirectIndex(globalObject, 9, parentPort);
     RETURN_IF_EXCEPTION(scope, {});
     // The intrinsic constructors, so worker_threads keeps working when user code
     // replaces globalThis.MessagePort etc. before the module loads (#40268).
-    array->putDirectIndex(globalObject, 13, JSMessagePort::getConstructor(vm, globalObject));
+    array->putDirectIndex(globalObject, 10, JSMessagePort::getConstructor(vm, globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 14, JSMessageChannel::getConstructor(vm, globalObject));
+    array->putDirectIndex(globalObject, 11, JSMessageChannel::getConstructor(vm, globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 15, JSBroadcastChannel::getConstructor(vm, globalObject));
+    array->putDirectIndex(globalObject, 12, JSBroadcastChannel::getConstructor(vm, globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 16, JSWorker::getConstructor(vm, globalObject));
+    array->putDirectIndex(globalObject, 13, JSFunction::create(vm, globalObject, 2, "createNodeWorker"_s, jsFunctionCreateNodeWorker, ImplementationVisibility::Private, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 14, jsBoolean(workerDataHasJSTransferables));
     RETURN_IF_EXCEPTION(scope, {});
     return array;
 }
 
-// worker_threads (worker side): { stdin?, stdout, stderr } ports from the parent Worker.
-// process.stdin/stdout/stderr are created over them on first access (BunProcess.cpp).
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    if (auto* ports = callFrame->argument(0).getObject())
-        defaultGlobalObject(lexicalGlobalObject)->setNodeWorkerStdioPorts(ports);
-    return JSValue::encode(jsUndefined());
-}
-
-// A node:worker_threads worker loads node:worker_threads before preloads and the entry
-// point (it rebinds process stdio and registers parentPort / the postMessageToThread
-// port), as Node runs its worker bootstrap before user code. Throws like require() would.
-extern "C" void Bun__Worker__loadNodeWorkerThreadsModule(Zig::GlobalObject* globalObject)
-{
-    globalObject->internalModuleRegistry()->requireId(globalObject, globalObject->vm(), Bun::InternalModuleRegistry::Field::NodeWorkerThreads);
-}
-
-// worker_threads (worker side): register the transferred port as this thread's parentPort.
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSetParentPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+// internal/worker/messaging in a worker of node:worker_threads: its listener takes the place of the start sequence's on the port to the hub.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionListenOnHubPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto* port = dynamicDowncast<JSMessagePort>(callFrame->argument(0));
-    if (!port)
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto* nodeWorker = globalObject->nodeWorkerState();
+    RefPtr port = nodeWorker ? nodeWorker->port(WorkerOptions::Hub) : nullptr;
+    auto* listener = callFrame->argument(0).getObject();
+    if (!port || !listener)
         return JSValue::encode(jsUndefined());
-    globalObject->setNodeParentPort(&port->wrapped());
+    JSValue wrapper = toJS(globalObject, globalObject, *port);
+    RETURN_IF_EXCEPTION(scope, {});
+    nodeWorker->listen(WorkerOptions::Hub, JSEventListener::create(*listener, *asObject(wrapper), false, globalObject->world()));
     return JSValue::encode(jsUndefined());
+}
+
+// internal/worker/messaging (postMessageToThread): [threadId, isMainThread, MessageChannel, and in a worker of node:worker_threads its port to the main thread's hub and what listens on it].
+JSValue createNodeWorkerMessagingBinding(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* proxy = WebWorker__getMessagingProxy(globalObject->bunVM());
+    JSValue hubPort = jsUndefined();
+    JSValue listenOnHubPort = jsUndefined();
+    auto* nodeWorker = globalObject->nodeWorkerState();
+    if (auto* port = nodeWorker ? nodeWorker->port(WorkerOptions::Hub) : nullptr) {
+        hubPort = toJS(globalObject, globalObject, *port);
+        RETURN_IF_EXCEPTION(scope, {});
+        listenOnHubPort = JSFunction::create(vm, globalObject, 1, "listenOnHubPort"_s, jsFunctionListenOnHubPort, ImplementationVisibility::Private, NoIntrinsic);
+    }
+
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 5);
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 0, threadIdOf(proxy));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 1, jsBoolean(globalObject->scriptExecutionContext()->isMainThread()));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 2, JSMessageChannel::getConstructor(vm, globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 3, hubPort);
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 4, listenOnHubPort);
+    RETURN_IF_EXCEPTION(scope, {});
+    return array;
+}
+
+// The start of a node:worker_threads worker, before preloads and the entry point. A Web Worker takes its workerData when it loads node:worker_threads.
+extern "C" void Bun__Worker__startNodeWorker(Zig::GlobalObject* globalObject)
+{
+    auto* proxy = WebWorker__getMessagingProxy(globalObject->bunVM());
+    auto* nodeWorker = globalObject->nodeWorkerState();
+    ASSERT(proxy && nodeWorker);
+    nodeWorker->takeFromParent(*globalObject, proxy->options());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,

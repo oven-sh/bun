@@ -137,7 +137,13 @@ EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
 };
 Object.defineProperty(EventEmitterPrototype.setMaxListeners, "name", { value: "setMaxListeners" });
 
-EventEmitterPrototype.constructor = EventEmitter;
+// Defined, not assigned: an assignment fails once user code froze Object.prototype, whose `constructor` this shadows.
+Object.defineProperty(EventEmitterPrototype, "constructor", {
+  value: EventEmitter,
+  writable: true,
+  enumerable: true,
+  configurable: true,
+});
 
 EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
   return _getMaxListeners(this);

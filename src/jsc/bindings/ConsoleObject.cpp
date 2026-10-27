@@ -35,7 +35,8 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
     Ref<ScriptArguments>&& arguments)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Not a throw scope: JSC's console.assert has a scope of its own and checks nothing after this returns. What is thrown here stays pending.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (globalObject->inspectable()) {
         if (auto client = globalObject->inspectorController().consoleClient()) {
             client->messageWithTypeAndLevel(type, level, globalObject, arguments.copyRef());
@@ -52,11 +53,16 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
     }
 
     if (type == MessageType::Table && count >= 2 && !args->argumentAt(1).isUndefined() && (!args->argumentAt(1).isCell() || args->argumentAt(1).asCell()->type() != JSC::JSType::ArrayType)) [[unlikely]] {
-        JSC::throwTypeError(globalObject, scope, "The \"properties\" argument must be an instance of Array."_s);
+        {
+            auto throwScope = DECLARE_THROW_SCOPE(vm);
+            JSC::throwTypeError(globalObject, throwScope, "The \"properties\" argument must be an instance of Array."_s);
+        }
+        (void)scope.exception();
         return;
     }
 
-    RELEASE_AND_RETURN(scope, Bun__ConsoleObject__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, jsArgs, count));
+    Bun__ConsoleObject__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, jsArgs, count);
+    (void)scope.exception();
 }
 void ConsoleObject::count(JSGlobalObject* globalObject, const String& label)
 {

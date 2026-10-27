@@ -433,7 +433,7 @@ test("on('close') before on('message') still delivers queued messages before 'cl
 
 // A 'message' handler running inside peerClosed()'s flush can transfer this port; the
 // remaining inbox belongs to the new owner and must not be popped-and-dropped by the
-// stale port. flushQueuedMessagesBeforeClose() breaks on m_isDetached to guard this.
+// stale port. deliverQueuedMessages() breaks on m_isDetached to guard this.
 test("transferring a port from inside peerClosed()'s flush preserves the remaining inbox", async () => {
   require("worker_threads");
   const { port1, port2 } = new MessageChannel();

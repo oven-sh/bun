@@ -90,4 +90,7 @@ template<> struct JSDOMWrapperConverterTraits<Worker> {
     using ToWrappedReturnType = Worker*;
 };
 
+// For node:worker_threads only, so that the Worker constructor has no hidden arguments: (filename, options, nodeWorker, channels, workerDataHasJSTransferables) => Worker.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateNodeWorker);
+
 } // namespace WebCore

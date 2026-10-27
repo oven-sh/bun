@@ -53,6 +53,7 @@
 #include "JSDOMURL.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
+#include "JSMessagePort.h"
 #include "NodeValidator.h"
 #include "StructuredSerializeOptions.h"
 #include "WorkerOptions.h"
@@ -135,16 +136,24 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWorkerPrototype, JSWorkerPrototype::Base);
 
 using JSWorkerDOMConstructor = JSDOMConstructor<JSWorker>;
 
-template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+// What node:worker_threads' Worker adds when it makes its native Worker.
+struct NodeWorkerArguments {
+    // The node:worker_threads Worker. The process 'worker' event carries it instead of the native one.
+    JSValue worker;
+    // The worker's ends of the channels it made, in WorkerOptions::NodePort order.
+    JSArray* channels;
+    bool workerDataHasJSTransferables;
+};
+
+// The Worker constructor (`node` is null) and node:worker_threads' Worker. Arguments 0 and 1 of the call are the script URL and the options.
+static __attribute__((minsize)) JSC::EncodedJSValue constructWorker(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSDOMGlobalObject& constructorGlobalObject, const NodeWorkerArguments* node)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = uncheckedDowncast<JSWorkerDOMConstructor>(callFrame->jsCallee());
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    ASSERT(castedThis);
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-    auto* context = castedThis->scriptExecutionContext();
+    auto* context = constructorGlobalObject.currentScriptExecutionContext();
     if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "Worker"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
@@ -167,10 +176,11 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     // Founding an env tree swaps the parent's process.env, so it is deferred until
     // every option has validated (below).
     bool shareEnv = false;
-    JSValue nodeWorkerObject {};
-    if (callFrame->argumentCount() == 3) {
-        nodeWorkerObject = callFrame->argument(2);
+    JSArray* nodeChannels = nullptr;
+    if (node) {
         options.kind = WorkerOptions::Kind::Node;
+        options.workerDataHasJSTransferables = node->workerDataHasJSTransferables;
+        nodeChannels = node->channels;
     }
     JSValue workerData = jsUndefined();
     Vector<JSC::Strong<JSC::JSObject>> transferList;
@@ -345,7 +355,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     }
 
     // Nothing below can be taken back: the env tree, the transfer, the thread.
-    auto* structure = structureForNewTarget<Worker>(lexicalGlobalObject, callFrame);
+    auto* structure = node ? getDOMStructure<JSWorker>(vm, constructorGlobalObject) : structureForNewTarget<Worker>(lexicalGlobalObject, callFrame);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     // Resolve the spawning thread's env tree (founding one if needed) so disjoint
@@ -358,12 +368,13 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
 
     // A worker made by script of a Bun.ModuleGraph that was already disposed is terminated at birth
     // and reports nothing (Worker::create), so nothing is sent to it. The ports node:worker_threads
-    // made for it in that context (in the transfer list, and inside workerData) were closed at
+    // made for it in that context (its channel ends, and those in the transfer list) were closed at
     // birth the same way: serializing them would throw from the constructor, into a loop that may
     // be retrying without ever yielding.
     if (context->isStopped()) {
         transferList.clear();
         workerData = jsUndefined();
+        nodeChannels = nullptr;
     }
 
     Vector<RefPtr<MessagePort>> ports;
@@ -400,27 +411,57 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     options.workerDataAndEnvironmentData = serialized.releaseReturnValue();
     options.dataMessagePorts = WTF::move(transferredPorts);
 
+    if (nodeChannels) {
+        Vector<TransferredMessagePort> nodePorts;
+        nodePorts.reserveInitialCapacity(WorkerOptions::NodePortCount);
+        for (unsigned i = 0; i < WorkerOptions::NodePortCount; i++) {
+            JSValue channel = nodeChannels->getIndex(lexicalGlobalObject, i);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            auto* port = dynamicDowncast<JSMessagePort>(channel);
+            if (!port && i == WorkerOptions::Stdin) {
+                nodePorts.append(TransferredMessagePort {});
+                continue;
+            }
+            if (!port || port->wrapped().isDetached() || port->wrapped().isClosing()) {
+                WebCore::propagateException(*lexicalGlobalObject, throwScope, Exception { DataCloneError });
+                RELEASE_AND_RETURN(throwScope, {});
+            }
+            nodePorts.append(port->wrapped().disentangle());
+        }
+        options.nodePorts = WTF::move(nodePorts);
+    }
+
     auto object = Worker::create(*context, WTF::move(scriptUrl), WTF::move(options));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<Worker>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<Worker>>(*lexicalGlobalObject, constructorGlobalObject, throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
 
-    // Emit the 'worker' event on the process. If we are constructing a `node:worker_threads`
-    // worker, we emit the event with the worker_threads Worker object instead of the Web Worker.
-    JSValue workerToEmit = jsValue;
-    if (nodeWorkerObject) {
-        workerToEmit = nodeWorkerObject;
-    }
     auto* process = globalObject->processObject();
-    process->emitOnNextTick(globalObject, "worker"_s, workerToEmit);
+    process->emitOnNextTick(globalObject, "worker"_s, node ? node->worker : jsValue);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(jsValue);
 }
+
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+{
+    auto* castedThis = uncheckedDowncast<JSWorkerDOMConstructor>(callFrame->jsCallee());
+    ASSERT(castedThis);
+    return constructWorker(lexicalGlobalObject, callFrame, *castedThis->globalObject(), nullptr);
+}
 JSC_ANNOTATE_HOST_FUNCTION(JSWorkerDOMConstructorConstruct, JSWorkerDOMConstructor::construct);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateNodeWorker, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    // The global that evaluated node:worker_threads, as the constructor it replaces was that global's.
+    auto* constructorGlobalObject = uncheckedDowncast<JSDOMGlobalObject>(callFrame->jsCallee()->globalObject());
+    NodeWorkerArguments node { callFrame->argument(2), dynamicDowncast<JSArray>(callFrame->argument(3)), callFrame->argument(4).isTrue() };
+    ASSERT(node.worker.isObject() && node.channels);
+    return constructWorker(lexicalGlobalObject, callFrame, *constructorGlobalObject, &node);
+}
 
 template<> const ClassInfo JSWorkerDOMConstructor::s_info = { "Worker"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerDOMConstructor) };
 

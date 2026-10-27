@@ -10,6 +10,8 @@ type Key = string; // do we need to allow symbols?
 let defaultHighWaterMarkBytes = process.platform === "win32" ? 16 * 1024 : 64 * 1024;
 let defaultHighWaterMarkObjectMode = 16;
 
+const initialHighWaterMarkBytes = defaultHighWaterMarkBytes;
+
 function highWaterMarkFrom(
   options: { highWaterMark?: number | null | undefined },
   isDuplex: boolean,
@@ -49,4 +51,5 @@ export default {
   getHighWaterMark,
   getDefaultHighWaterMark,
   setDefaultHighWaterMark,
+  initialHighWaterMarkBytes,
 };

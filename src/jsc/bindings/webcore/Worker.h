@@ -33,6 +33,7 @@
 
 namespace JSC {
 class JSGlobalObject;
+class JSMap;
 class JSValue;
 }
 
@@ -95,6 +96,8 @@ private:
 };
 
 JSC::JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
+JSC::JSValue createNodeWorkerMessagingBinding(Zig::GlobalObject* globalObject);
+JSC::JSValue takeWorkerDataFromParent(Zig::GlobalObject&, WorkerOptions&, JSC::JSMap*& environmentData);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
 

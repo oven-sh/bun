@@ -223,23 +223,27 @@ const ROWS: Row[] = [
 // "armed" and exits by itself two turns later; the parent never posts anything
 // the worker waits for (with the gate armed, a parent→worker post is itself a
 // cross-thread post that waits for the worker's teardown). Rows with a parent
-// side post in response to "armed".
+// side post in response to "armed". Their worker stays until the parent is
+// about to post, which the parent tells it through shared memory (not a post):
+// a worker that is gone by then gets no post at all, late or not.
 function host(row: Row, dir: string) {
   const worker = `
     const { parentPort, workerData } = require("node:worker_threads");
     parentPort.on("message", () => {});
     ${row.worker}
     parentPort.postMessage("armed");
+    ${row.parent ? "Atomics.wait(new Int32Array(workerData.posting), 0, 0);" : ""}
     setImmediate(() => setImmediate(() => process.exit(0)));
   `;
   return `
     const { Worker, MessageChannel } = require("node:worker_threads");
     const { port1, port2 } = new MessageChannel();
-    const data = { port: port2, dir: ${JSON.stringify(dir)} };
+    const posting = new Int32Array(new SharedArrayBuffer(4));
+    const data = { port: port2, dir: ${JSON.stringify(dir)}, posting: posting.buffer };
     ${row.prelude ?? ""}
     const w = new Worker(${JSON.stringify(worker)}, { eval: true, workerData: data, transferList: [port2] });
     w.on("error", e => { console.error("worker error:", e && e.message); process.exitCode = 1; });
-    w.once("message", () => { ${row.parent ?? ""} });
+    w.once("message", () => { Atomics.store(posting, 0, 1); Atomics.notify(posting, 0); ${row.parent ?? ""} });
     w.on("exit", code => { port1.close(); ${row.onExit ?? ""} if (code !== 0) { console.error("worker exit code", code); process.exitCode = 1; } });
   `;
 }

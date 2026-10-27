@@ -70,8 +70,12 @@ public:
 
     void start();
     bool hasMessageEventListener() const { return m_hasMessageEventListener; }
+    // For parentPort and the postMessageToThread port of a node:worker_threads worker: node delivers nothing to a worker before its entry module has evaluated, so start() waits for entrySettled().
+    void holdStartUntilEntrySettled() { m_startHold = StartHold::Held; }
     // The worker's entry module finished evaluating: a start() requested before that takes effect now.
     void entrySettled();
+    // Dispatches what is queued now, on the caller's stack and not from a drain task.
+    void deliverQueuedMessages();
     void close();
     // Called on the entangled peer when this side closes: dispatches a
     // 'close' event and releases the event-loop ref so the loop can idle.
@@ -123,9 +127,6 @@ private:
     void stop() final { close(); }
     bool virtualHasPendingActivity() const final;
 
-    // Deliver messages already queued when close() is called, before teardown.
-    void flushQueuedMessagesBeforeClose();
-
     bool isEntangled() const { return !m_isDetached; }
 
 public:
@@ -149,7 +150,13 @@ private:
     bool m_isDispatching { false };
     bool m_closeEventDispatched { false };
     bool m_hasMessageEventListener { false };
-    bool m_startDeferredUntilEntrySettled { false };
+    // See holdStartUntilEntrySettled().
+    enum class StartHold : uint8_t {
+        None,
+        Held,
+        HeldWithStartRequested,
+    };
+    StartHold m_startHold { StartHold::None };
     // Read from the GC thread: a port whose only listener is 'close' must survive
     // until that event is delivered, or the peer's close is lost to a collection.
     std::atomic<bool> m_hasCloseEventListener { false };

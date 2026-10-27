@@ -273,11 +273,15 @@ describe("fs.watch", () => {
         "an event arrived before a microtask of the event before it": false,
         "an event saw the enterWith() store of the event before it": false,
         "a loop of `await once(watcher, 'change')` saw every event": true,
+        ...(isLinux && {
+          "a nextTick ran between the events of a directory moved into a recursive watcher": false,
+          "the event after that directory arrived before a nextTick of its events": false,
+        }),
       },
       stderr: "",
       exitCode: 0,
     });
-    if (reference) expect(reference).toEqual(bun);
+    if (reference) expect(reference.observed).toEqual(bun.observed);
   });
 
   test("should error on invalid path", done => {

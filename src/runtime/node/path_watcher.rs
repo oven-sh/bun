@@ -305,6 +305,22 @@ impl PathWatcher {
         }
     }
 
+    /// What is emitted until `end_unit()` comes from one OS event. Caller holds `manager.mutex`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn begin_unit(&self) {
+        for &ctx in self.handlers.keys() {
+            FSWatcher::on_unit_begin(Some(ctx));
+        }
+    }
+
+    /// Caller holds `manager.mutex`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn end_unit(&self) {
+        for &ctx in self.handlers.keys() {
+            FSWatcher::on_unit_end(Some(ctx));
+        }
+    }
+
     /// Signals end-of-batch so `FSWatcher` can flush its queued events to the JS thread.
     /// Caller holds `manager.mutex`.
     fn flush(&self) {
@@ -1168,6 +1184,16 @@ impl Linux {
                         .as_bytes()
                     };
 
+                    // A new directory and what the walk below finds in it are one unit, as in node: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/recursive_watch.js#L224-L238
+                    let new_dir = watcher_recursive
+                        && is_dir_child
+                        && (ev.mask & (IN::CREATE | IN::MOVED_TO) != 0)
+                        && !name.is_empty();
+                    if new_dir {
+                        // SAFETY: owner_watcher live under manager.mutex; `begin_unit` takes `&self`.
+                        unsafe { (*owner_watcher).begin_unit() };
+                    }
+
                     // SAFETY: owner_watcher live under manager.mutex; `emit` takes `&self`.
                     unsafe {
                         (*owner_watcher).emit(
@@ -1184,11 +1210,7 @@ impl Linux {
                     // start watching it so future events inside it are delivered.
                     // This is what makes `{recursive: true}` track structure changes
                     // after the initial crawl (#15939/#15085).
-                    if watcher_recursive
-                        && is_dir_child
-                        && (ev.mask & (IN::CREATE | IN::MOVED_TO) != 0)
-                        && !name.is_empty()
-                    {
+                    if new_dir {
                         let mut abs_buf = path::path_buffer_pool::get();
                         let mut abs_spill: Vec<u8> = Vec::new();
                         let child_abs = join_z_buf_spill::<platform::Posix>(
@@ -1248,6 +1270,8 @@ impl Linux {
                             // `emit_error` takes `&self`.
                             unsafe { (*owner_watcher).emit_error(&err, false) };
                         }
+                        // SAFETY: owner_watcher live under manager.mutex; `end_unit` takes `&self`.
+                        unsafe { (*owner_watcher).end_unit() };
                     }
 
                     oi += 1;

@@ -146,6 +146,10 @@ pub(crate) struct FSWatchTaskPosix {
     /// A heap clone made by `enqueue()` holds a ref on it, which `deinit` drops.
     ctx: Option<ParentRef<FSWatcher, bun_ptr::Mut>>,
     count: u8,
+    /// Watcher thread, on `FSWatcher.current_task`: between `begin_unit()` and `end_unit()`.
+    in_unit: bool,
+    /// Watcher thread, on `FSWatcher.current_task`: the next entry continues the unit of the one before it.
+    unit_open: bool,
 
     entries: [MaybeUninit<Entry>; 8],
     concurrent_task: ConcurrentTask,
@@ -171,6 +175,8 @@ impl Taskable for FSWatchTaskPosix {
 pub(crate) struct Entry {
     event: Event,
     needs_free: bool,
+    /// From the same OS event as the entry before it: node emits those from one callback, with no checkpoint between them.
+    continues_unit: bool,
 }
 
 #[cfg(not(windows))]
@@ -189,14 +195,30 @@ impl FSWatchTaskPosix {
             let ctx = self.ctx;
             *self = Self {
                 ctx,
-                count: 0,
-                entries: [const { MaybeUninit::uninit() }; 8],
-                concurrent_task: ConcurrentTask::default(),
+                in_unit: self.in_unit,
+                ..Default::default()
             };
         }
 
-        self.entries[self.count as usize].write(Entry { event, needs_free });
+        self.entries[self.count as usize].write(Entry {
+            event,
+            needs_free,
+            continues_unit: self.unit_open,
+        });
         self.count += 1;
+        self.unit_open = self.in_unit;
+    }
+
+    /// Watcher thread: the events appended until `end_unit()` come from one OS event.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn begin_unit(&mut self) {
+        self.in_unit = true;
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn end_unit(&mut self) {
+        self.in_unit = false;
+        self.unit_open = false;
     }
 
     /// JS thread: deliver each batched event to the listener.
@@ -204,7 +226,7 @@ impl FSWatchTaskPosix {
         for i in 0..self.count as usize {
             // SAFETY: entries [0..count) were written by `append`.
             let entry = unsafe { self.entries[i].assume_init_ref() };
-            if i > 0 {
+            if i > 0 && !entry.continues_unit {
                 // Node's checkpoint after each OS event: https://github.com/nodejs/node/blob/v26.12.1/src/fs_event_wrap.cc#L239
                 let global = self.ctx().global_this;
                 let drained = global.bun_vm().event_loop_mut().drain_microtasks();
@@ -254,7 +276,7 @@ impl FSWatchTaskPosix {
                     &mut self.entries,
                     [const { MaybeUninit::uninit() }; 8],
                 ),
-                concurrent_task: ConcurrentTask::default(),
+                ..Default::default()
             }));
             self.count = 0;
             // SAFETY: `that` is a freshly-boxed task; the concurrent queue takes
@@ -611,6 +633,19 @@ impl FSWatcher {
     #[cfg(not(windows))]
     pub(crate) const ON_PATH_UPDATE: fn(Option<*mut c_void>, Event, bool) =
         Self::on_path_update_posix;
+
+    /// Watcher thread: what it reports for this watcher until `on_unit_end` comes from one OS event.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn on_unit_begin(ctx: Option<*mut c_void>) {
+        Self::from_ctx(ctx)
+            .current_task
+            .with_mut(|t| t.begin_unit());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn on_unit_end(ctx: Option<*mut c_void>) {
+        Self::from_ctx(ctx).current_task.with_mut(|t| t.end_unit());
+    }
 
     pub(crate) fn on_update_end(ctx: Option<*mut c_void>) {
         let this = Self::from_ctx(ctx);
@@ -1199,6 +1234,8 @@ impl Default for FSWatchTaskPosix {
         Self {
             ctx: None,
             count: 0,
+            in_unit: false,
+            unit_open: false,
             entries: [const { MaybeUninit::uninit() }; 8],
             concurrent_task: ConcurrentTask::default(),
         }

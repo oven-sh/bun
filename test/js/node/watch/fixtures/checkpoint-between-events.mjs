@@ -61,5 +61,42 @@ const observed = {};
   observed["a loop of `await once(watcher, 'change')` saw every event"] = seenByOnceLoop === events;
 }
 
+// Node's recursive watcher on Linux reports a new directory and the entries it finds in it from
+// one callback, so nothing runs between those events. The event after them is a callback of its own.
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/recursive_watch.js#L224-L238
+if (process.platform === "linux") {
+  const root = path.join(base, "tree");
+  const moved = path.join(base, "outside", "moved");
+  fs.mkdirSync(root);
+  fs.mkdirSync(moved, { recursive: true });
+  for (const name of ["a", "b", "c"]) fs.writeFileSync(path.join(moved, name), "x");
+  fs.writeFileSync(path.join(root, "gone"), "x");
+  const early = { inside: false, after: false };
+  let events = 0;
+  let nextTicks = 0;
+  const sawGone = Promise.withResolvers();
+  const watcher = fs.watch(root, { recursive: true }, (_eventType, filename) => {
+    if (filename === "gone") {
+      if (nextTicks !== events) early.after = true;
+      sawGone.resolve();
+    } else if (events < 4 && nextTicks !== 0) {
+      early.inside = true;
+    }
+    events++;
+    process.nextTick(() => nextTicks++);
+  });
+  watcher.once("error", sawGone.reject);
+  try {
+    fs.renameSync(moved, path.join(root, "moved"));
+    fs.unlinkSync(path.join(root, "gone"));
+    await sawGone.promise;
+  } finally {
+    watcher.close();
+  }
+
+  observed["a nextTick ran between the events of a directory moved into a recursive watcher"] = early.inside;
+  observed["the event after that directory arrived before a nextTick of its events"] = early.after;
+}
+
 fs.rmSync(base, { recursive: true, force: true });
 console.log(JSON.stringify(observed, null, 2));

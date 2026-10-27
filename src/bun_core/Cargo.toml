@@ -14,6 +14,7 @@ itoa.workspace = true
 bun_opaque.workspace = true
 bun_pod = { workspace = true, features = ["alloc"] }
 strum.workspace = true
+bitflags.workspace = true
 bstr.workspace = true
 const_format.workspace = true
 libc.workspace = true

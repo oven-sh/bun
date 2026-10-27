@@ -1081,7 +1081,7 @@ macro_rules! enum_unwrap {
 macro_rules! assert_distinct_flag_bits {
     ($Flags:ty) => {
         const _: () = {
-            let flags = <$Flags as ::bitflags::Flags>::FLAGS;
+            let flags = <$Flags as $crate::__bitflags::Flags>::FLAGS;
             let (mut taken, mut i) = (0, 0);
             while i < flags.len() {
                 let bits = flags[i].value().bits();
@@ -1094,6 +1094,9 @@ macro_rules! assert_distinct_flag_bits {
         };
     };
 }
+
+#[doc(hidden)]
+pub use bitflags as __bitflags;
 
 /// Unwrap a `Result`, calling `outOfMemory()` on **any** `Err`. The
 /// `AllocError`-only version lives in `bun_crash_handler::handle_oom` (that

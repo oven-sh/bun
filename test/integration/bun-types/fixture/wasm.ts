@@ -10,6 +10,24 @@ async () => {
   // Create a WebAssembly Table object
   const table = new WebAssembly.Table({ initial: 1, element: "anyfunc" });
 
+  // Memory64: i64-addressed memories and tables take and return bigint sizes
+  const memory64 = new WebAssembly.Memory({ address: "i64", initial: 1 });
+  const table64 = new WebAssembly.Table({ address: "i64", initial: 1, element: "anyfunc" });
+  const memory64Descriptor: Bun.WebAssembly.MemoryDescriptor = { address: "i64", initial: 1n, maximum: 4n };
+  const table64Descriptor: Bun.WebAssembly.TableDescriptor = { address: "i64", initial: 1n, element: "externref" };
+  const grown64: bigint = memory64.grow(1n);
+  const grown32: number = memory.grow(1);
+  const tableGrown64: bigint = table64.grow(1n);
+  const tableGrown32: number = table.grow(1);
+  table64.get(0n);
+  table64.set(0n, undefined);
+  memory64Descriptor;
+  table64Descriptor;
+  grown64;
+  grown32;
+  tableGrown64;
+  tableGrown32;
+
   // Instantiate the WebAssembly module
   const instance = await WebAssembly.instantiate(module, {
     js: {

@@ -169,8 +169,30 @@ pub(crate) mod compile {
     pub(crate) struct Method {
         pub(crate) name: &'static str,
         pub(crate) command: &'static str,
-        pub(crate) failed_to_send: &'static str,
         pub(crate) state: ClientStateRequirement,
+    }
+
+    impl Method {
+        pub(crate) fn send(
+            &self,
+            this: &JSValkeyClient,
+            global: &JSGlobalObject,
+            this_js: JSValue,
+            args: &[JSArgument],
+            meta: CommandMeta,
+        ) -> JsResult<JSValue> {
+            let command = Command {
+                command: self.command.as_bytes(),
+                args: CommandArgs::Args(args),
+                meta,
+            };
+            match this.send(global, this_js, &command) {
+                Ok(p) => Ok(promise_to_js(p)),
+                Err(err) => {
+                    send_err_to_js(global, &format!("Failed to send {}", self.command), &err)
+                }
+            }
+        }
     }
 }
 use compile::Method;
@@ -180,7 +202,6 @@ macro_rules! method {
         &Method {
             name: $name,
             command: $command,
-            failed_to_send: concat!("Failed to send ", $command),
             state: compile::ClientStateRequirement::$state,
         }
     };
@@ -274,14 +295,12 @@ impl JSValkeyClient {
             };
             args.push(arg);
         }
-        send_cmd(
+        method.send(
             self,
             global,
             this_value.to_js(),
-            method.command.as_bytes(),
-            CommandArgs::Args(&args),
+            &args,
             CommandMeta::default(),
-            method.failed_to_send,
         )
     }
 
@@ -318,14 +337,12 @@ impl JSValkeyClient {
             };
             args.push(another);
         }
-        send_cmd(
+        method.send(
             self,
             global,
             this_value.to_js(),
-            method.command.as_bytes(),
-            CommandArgs::Args(&args),
+            &args,
             CommandMeta::default(),
-            method.failed_to_send,
         )
     }
 
@@ -352,15 +369,7 @@ impl JSValkeyClient {
             };
             args.push(another);
         }
-        send_cmd(
-            self,
-            global,
-            this_value.to_js(),
-            method.command.as_bytes(),
-            CommandArgs::Args(&args),
-            meta,
-            method.failed_to_send,
-        )
+        method.send(self, global, this_value.to_js(), &args, meta)
     }
 
     fn cmd_key_value_varargs(
@@ -390,14 +399,12 @@ impl JSValkeyClient {
             };
             args.push(another);
         }
-        send_cmd(
+        method.send(
             self,
             global,
             this_value.to_js(),
-            method.command.as_bytes(),
-            CommandArgs::Args(&args),
+            &args,
             CommandMeta::default(),
-            method.failed_to_send,
         )
     }
 }

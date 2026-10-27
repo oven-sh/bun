@@ -214,53 +214,41 @@ fn long_call(corpus: &r#gen::Corpus) -> Result<usize, String> {
     }
     // The same for the decoders.
     let stream = crate::oom::uncompressed_stream(&data);
-    let (mut c, mut r) = (CDecoder::new(), Decoder::new());
-    let (mut a, mut b) = (vec![0u8; 1 << 24], vec![0u8; 1 << 24]);
-    let (mut pos, mut total) = (0usize, 0usize);
-    loop {
-        let (c_result, c_used, c_made) = c.stream(&stream[pos..], &mut a);
-        let mut input = &stream[pos..];
-        let mut output: &mut [u8] = &mut b;
-        let r_result = r.decompress_stream(&mut input, &mut output) as i32;
-        let (r_used, r_made) = (stream.len() - pos - input.len(), (1 << 24) - output.len());
-        if (c_result, c_used, c_made) != (r_result, r_used, r_made) || a[..c_made] != b[..c_made] || a[..c_made] != data[total..total + c_made] {
-            return Err(format!("{} bytes in one call, after {total} bytes of output: C {c_result} {c_used} {c_made}, Rust {r_result} {r_used} {r_made}", stream.len() - pos));
-        }
-        pos += c_used;
-        total += c_made;
-        if c_result != 3 {
-            if c_result != 1 || total != data.len() {
-                return Err(format!("{} bytes in one call: result {c_result} after {total}", stream.len()));
-            }
-            break;
-        }
-    }
+    decode_long(&stream, data.len(), Some(&data))?;
     drop((data, stream));
-    // More than 2 GiB, which is negative as a 32-bit number (CVE-2020-8927): what is left of the input counts while a
-    // metadata block is skipped and while an uncompressed one is copied. Of the zeros, only the second half is ever read.
+    // More than 2 GiB, which is negative as a 32-bit number (CVE-2020-8927): what is left of the input counts while an
+    // uncompressed block is copied and while a metadata block is skipped, so they take turns.
     const BLOCK: usize = 1 << 24;
     let mut stream = vec![0u8; 2 + 2 * 72 * (4 + BLOCK) + 1];
     stream[..2].copy_from_slice(&[0x21, 0x03]);
     for (i, block) in stream[2..].chunks_exact_mut(4 + BLOCK).enumerate() {
-        let header: u32 = if i < 72 { (3 << 1) | (3 << 4) | ((BLOCK as u32 - 1) << 6) } else { (2 << 1) | ((BLOCK as u32 - 1) << 3) | (1 << 27) };
+        let header: u32 = if i % 2 == 0 { (2 << 1) | ((BLOCK as u32 - 1) << 3) | (1 << 27) } else { (3 << 1) | (3 << 4) | ((BLOCK as u32 - 1) << 6) };
         block[..4].copy_from_slice(&header.to_le_bytes());
     }
     *stream.last_mut().unwrap() = 3;
+    decode_long(&stream, 72 * BLOCK, None)?;
+    Ok(5)
+}
+
+/// Gives both decoders all that is left of `stream` in every call. It decodes to `length` bytes: `data`, if given.
+fn decode_long(stream: &[u8], length: usize, data: Option<&[u8]>) -> Result<(), String> {
+    const ROOM: usize = 1 << 24;
     let (mut c, mut r) = (CDecoder::new(), Decoder::new());
+    let (mut a, mut b) = (vec![0u8; ROOM], vec![0u8; ROOM]);
     let (mut pos, mut total) = (0usize, 0usize);
     loop {
         let (c_result, c_used, c_made) = c.stream(&stream[pos..], &mut a);
         let mut input = &stream[pos..];
         let mut output: &mut [u8] = &mut b;
         let r_result = r.decompress_stream(&mut input, &mut output) as i32;
-        let (r_used, r_made) = (stream.len() - pos - input.len(), (1 << 24) - output.len());
-        if (c_result, c_used, c_made) != (r_result, r_used, r_made) || a[..c_made] != b[..c_made] {
+        let (r_used, r_made) = (stream.len() - pos - input.len(), ROOM - output.len());
+        if (c_result, c_used, c_made) != (r_result, r_used, r_made) || a[..c_made] != b[..c_made] || data.is_some_and(|data| a[..c_made] != data[total..total + c_made]) {
             return Err(format!("{} bytes in one call, after {total} bytes of output: C {c_result} {c_used} {c_made}, Rust {r_result} {r_used} {r_made}", stream.len() - pos));
         }
         pos += c_used;
         total += c_made;
         if c_result != 3 {
-            return if c_result == 1 && total == 72 * BLOCK { Ok(5) } else { Err(format!("{} bytes in one call: result {c_result} after {total}", stream.len())) };
+            return if c_result == 1 && total == length { Ok(()) } else { Err(format!("{} bytes in one call: result {c_result} after {total}", stream.len())) };
         }
     }
 }

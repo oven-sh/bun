@@ -607,8 +607,9 @@ fn extend_last_command(
     let last_processed_pos = last_processed_pos.wrapping_sub(last_copy_len);
     let max_distance = last_processed_pos.min(max_backward_distance);
     // Distances beyond this one are into the dictionary. Between the two is what an earlier encoder wrote.
-    let dictionary_start =
-        (last_processed_pos + params.stream_offset as u64).min(max_backward_distance);
+    let dictionary_start = last_processed_pos
+        .saturating_add(params.stream_offset as u64)
+        .min(max_backward_distance);
     let cmd_dist = i64::from(last_distance) as u64;
     let distance_code = last_command.restore_distance_code(&params.dist);
     let dict = &params.dictionary;

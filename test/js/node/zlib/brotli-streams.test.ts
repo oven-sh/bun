@@ -12,6 +12,7 @@ import zlib from "node:zlib";
 type Row = [name: string, stream: string, expected: string, inPieces?: string];
 
 /** From java/org/brotli/dec/SynthTest.java of google/brotli, with the names of its tests. */
+// prettier-ignore
 const synthTest: Row[] = [
   ["BaseDictWord", "1b030000000080e3b40d0000075b2631400200e04e1b4102", "= time"],
   ["BaseDictWordFinishBlockOnRingbufferWrap", "1b1f0000000080e3b40d0000075b2631400200e04e9b5832343434343434343434343434343434343434343434343434343434d400", "= aaaaaaaaaaaaaaaaaaaaaaaaaaaatime"],
@@ -61,6 +62,7 @@ const synthTest: Row[] = [
   ["PeculiarWrap", "21fc1f0000a1128204601d00cafebabedeadbeef210000000000384edb000070b0651203240000eeb4916168640c", "= 2051 bytes, acf05b17e118d351"],
 ];
 
+// prettier-ignore
 const handmade: Row[] = [
   ["an empty last meta-block", "06", "= "],
   ["the window size that is not one", "9101", "ERR__ERROR_FORMAT_WINDOW_BITS"],
@@ -176,6 +178,7 @@ const handmade: Row[] = [
 ];
 
 /** For a decoder with `BROTLI_DECODER_PARAM_LARGE_WINDOW`. */
+// prettier-ignore
 const largeWindow: Row[] = [
   ["more literals than the 16 MiB that a block type without switches lasts", "111900000241f9ffff0f00022ff00b80ffff7f", "ERR__ERROR_FORMAT_BLOCK_SWITCH"],
   ["a large window of 30 bits", "11de", "= "],
@@ -214,9 +217,11 @@ describe.each([
   ["handmade", handmade, {}],
   ["large window", largeWindow, { params: { [zlib.constants.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } }],
 ] as [string, Row[], zlib.BrotliOptions][])("%s", (_, rows, options) => {
-  test.concurrent.each(rows)("%s", async (_, hex, expected, inPieces = expected) => {
+  test.each(rows)("%s", async (_, hex, expected, inPieces = expected) => {
     const stream = Buffer.from(hex, "hex");
     expect(await observe(() => zlib.brotliDecompressSync(stream, options))).toBe(expected);
+    // Megabytes of output take a debug build half a second.
+    if (/= \d{7,} bytes, /.test(expected)) return;
     expect(await observe(() => decodeInPieces(stream, Math.ceil(stream.length / 600), options))).toBe(inPieces);
     // What is decided does not depend on what follows. Not for the longer ones: a debug build takes 2 ms for each length.
     if (stream.length > 20 || / bytes, /.test(expected)) return;

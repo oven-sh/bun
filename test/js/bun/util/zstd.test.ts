@@ -1450,6 +1450,24 @@ describe("bugs of zstd 1.5.7", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Only a streaming decoder checked that. Decoded in one call, such a block could overwrite literals it had yet to read.
+  it("a compressed block that makes more than 128 KB is an error", () => {
+    const frame = Buffer.from("28b52ffd8050c6ff030040000041424344454647487500008dfb1f7a02540103340000030058", "hex");
+    expect(() => zlib.zstdDecompressSync(frame, { chunkSize: 262086 })).toThrow(
+      expect.objectContaining({ code: "ZSTD_error_corruption_detected" }),
+    );
+    expect(() => Bun.zstdDecompressSync(frame)).toThrow();
+  });
+
+  // No decoder checked that. A streaming one keeps little more than the window, and gave whatever was there by then.
+  it("an offset beyond the window is an error once a streaming decoder has let go of what it is for", () => {
+    // A window of 1 KB, 1 KB each of "a", "b" and "c", then "xyz" and 4 bytes from 1500 bytes back.
+    const frame = Buffer.from("28b52ffd00000220006102200062022000635d00001878797a0154030a01df05", "hex");
+    expect(() => zlib.zstdDecompressSync(frame)).toThrow(
+      expect.objectContaining({ code: "ZSTD_error_corruption_detected" }),
+    );
+  });
+
   // With workers, only a frame of one job was checked. Any other came out with the wrong size in its header.
   it.each([-1, 1])("with workers, input that is %i off the pledged size is an error", async difference => {
     const c = zlib.constants;

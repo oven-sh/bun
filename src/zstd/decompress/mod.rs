@@ -798,7 +798,11 @@ impl DState {
     ) -> Result<usize> {
         let ext_dict = match self.ext {
             ExtKind::Dict => ExtDict::Dict(ddict.map_or(&[], |ddict| &*ddict.content)),
-            ExtKind::Within { end, len } => ExtDict::Within { end, len },
+            ExtKind::Within { end, len } => ExtDict::Within {
+                end,
+                len,
+                window: self.f_params.window_size as usize,
+            },
         };
         self.block.decompress_block(
             BlockOutput {
@@ -850,14 +854,19 @@ impl DState {
             let decoded_size = match properties.block_type {
                 BlockType::Compressed => {
                     let capacity = dst.len() - op;
-                    self.decompress_block(
+                    let decoded_size = self.decompress_block(
                         OutputBuffer::Whole(dst),
                         op,
                         capacity,
                         block,
                         ddict,
                         Streaming::No,
-                    )?
+                    )?;
+                    // Only a streaming decoder checks that in 1.5.7, where such a block can overwrite its own literals.
+                    if decoded_size > self.f_params.block_size_max {
+                        return Err(ErrorCode::CorruptionDetected);
+                    }
+                    decoded_size
                 }
                 BlockType::Raw => copy_raw_block(dst.sub_mut(op..)?, block)?,
                 BlockType::Rle => set_rle_block(

@@ -923,22 +923,6 @@ ZSTD_encodeSequences_bmi2                             [BMI2]
 
 
 # ----------------------------------------------------------------------------
-# libdeflate. Gate: libdeflate_init_x86_cpu_features.
-# (10 symbols)
-# ----------------------------------------------------------------------------
-adler32_x86_avx2                   [AVX, AVX2]
-adler32_x86_avx2_vnni              [AVX, AVX2, AVX_VNNI]
-adler32_x86_avx512_vl256_vnni      [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI]
-adler32_x86_avx512_vl512_vnni      [AVX, AVX2, AVX512BW, AVX512F, AVX512_VNNI]
-crc32_x86_pclmulqdq                [PCLMULQDQ]
-crc32_x86_pclmulqdq_avx            [AVX, PCLMULQDQ]
-crc32_x86_vpclmulqdq_avx2          [AVX, AVX2, PCLMULQDQ, VPCLMULQDQ]
-crc32_x86_vpclmulqdq_avx512_vl256  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]
-crc32_x86_vpclmulqdq_avx512_vl512  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]
-deflate_decompress_bmi2            [BMI2]
-
-
-# ----------------------------------------------------------------------------
 # zlib-ng. Gate: init_functable() — cpu_check_features() CPUID at first call,
 # results cached in `functable` (vendor/zlib/functable.c, arch/x86/x86_features.c).
 # chunkcopy_safe is a static-inline in inflate_p.h that may outline from any of

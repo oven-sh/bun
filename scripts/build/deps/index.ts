@@ -15,7 +15,6 @@ import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
-import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
 import { libspng } from "./libspng.ts";
 import { libuv } from "./libuv.ts";
@@ -49,7 +48,6 @@ export const allDeps: readonly Dependency[] = [
   zlib,
   zstd,
   brotli,
-  libdeflate,
   // Image codecs — libspng has fetchDeps:["zlib"], so after zlib.
   libjpegTurbo,
   libspng,
@@ -80,7 +78,6 @@ export {
   brotli,
   cares,
   highway,
-  libdeflate,
   libjpegTurbo,
   libspng,
   libuv,

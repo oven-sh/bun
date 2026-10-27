@@ -153,7 +153,6 @@ codegen-for-zig-team.tar.gz
 /src/deps/boringssl
 /src/deps/brotli
 /src/deps/c*ares
-/src/deps/libdeflate
 /src/deps/libuv
 /src/deps/lol*html
 /src/deps/ls*hpack

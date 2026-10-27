@@ -6,7 +6,7 @@ libraries/headers it provides.
 
 ## Adding a dependency
 
-1. Copy `libdeflate.ts` (the simplest direct dep) to `<name>.ts`
+1. Copy `highway.ts` (a small direct dep) to `<name>.ts`
 2. Fill in `name`, `repo`, `commit`, `sources`, `includes`, `provides.includes`
 3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
 4. Add the name to `DepName` in `../source.ts`
@@ -144,7 +144,7 @@ export const mydep: Dependency = {
 
 ## Worked examples
 
-- **libdeflate.ts** — simplest direct dep
+- **highway.ts** — small direct dep
 - **mimalloc.ts** — direct build, single unity TU compiled as C++
 - **tinycc.ts** — direct build with a build-time codegen tool
 - **zlib.ts** — direct build with per-source SIMD `-m` flags + `.h.in` substitution

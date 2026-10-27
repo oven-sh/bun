@@ -7194,24 +7194,19 @@ a.ts(9,14): error TS2322: Type 'I4' is not assignable to type 'Node'.
 `.slice(1, -1),
         ],
         [
-          "members of a union that the comparison started with, when the error is explained",
+          "created by a signature checked earlier in the file, in the order of the comparison",
           {
-            "decls.d.ts": `type Box<T> = { v: T };
-interface I1 { next: string }
+            "a.ts": `type Box<T> = { v: T };
+declare function f(a: Box<I3>, b: Box<I2>): void;
+interface I0 { next: Box<number> }
+interface I1 { next: Box<I0> }
 interface I2 { next: Box<I1> }
 interface I3 { next: Box<I2> }
-declare const x: Box<I3> | Box<I1>;
-`,
-            "a.ts": `interface Node { v?: Node; next?: Node }
-export const y: Node = x;
-`,
+interface I4 { next: Box<I3> }
+type Node = null | { next: Node } | { v: Node };
+${use}`,
           },
-          `
-a.ts(2,14): error TS2322: Type 'Box<I1> | Box<I3>' is not assignable to type 'Node'.
-  Type 'Box<I1>' is not assignable to type 'Node'.
-    The types of 'v.next' are incompatible between these types.
-      Type 'string' has no properties in common with type 'Node'.
-`.slice(1, -1),
+          "",
         ],
         [
           "nested in one another in a declaration file that isn't checked",

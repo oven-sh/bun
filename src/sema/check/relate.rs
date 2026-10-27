@@ -4407,7 +4407,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// 4. Of two on-demand entries, the one whose key mentions the other is newer. Otherwise the one pushed first
     ///    is older. Every entry has its own push number, so this is a total order.
     fn is_at_least_as_new(
-        &self,
+        &mut self,
         to: usize,
         from: usize,
         stacks: [&[(TypeId, u32)]; 2],
@@ -4466,7 +4466,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// entry at the level before, on either stack because parameters are compared with the sides swapped. A union
     /// on the stack between them is what an optional member or a member declared as a union resolves to.
     fn written_at(
-        &self,
+        &mut self,
         at: usize,
         stacks: [&[(TypeId, u32)]; 2],
         is_source: bool,
@@ -4492,12 +4492,68 @@ impl<'p, 's> Checker<'p, 's> {
         let level = push & !1;
         let other = stacks[usize::from(is_source)];
         let other_parent = other.iter().rev().find(|it| it.1 < level).map(|it| it.0);
-        let at = [Some(parent), other_parent]
+        let now = self.place_of_current(current);
+        let declared = [Some(parent), other_parent]
             .into_iter()
             .flatten()
-            .find_map(|parent| self.place_of_declaration_of(parent, &written))?;
-        let now = self.place_of_current(current);
-        (at < now).then_some(at)
+            .find_map(|parent| self.place_of_declaration_of(parent, &written))
+            .filter(|&at| at < now);
+        // An earlier type node of the file being checked may have created the type first.
+        let file = match current {
+            CurrentNode::Expr(file, _)
+            | CurrentNode::TypeNode(file, _)
+            | CurrentNode::Node(file, _) => file,
+        };
+        let earlier = self.earliest_type_node_before(file, now, &written);
+        [declared, earlier].into_iter().flatten().min()
+    }
+
+    /// The earliest place in check order, before `now`, of a type node of `file` whose type is one of `written`.
+    /// `checkSourceFile` has resolved every type node of the file that comes before `now`, so the index of the file
+    /// is filled in up to `now`.
+    fn earliest_type_node_before(
+        &mut self,
+        file: FileId,
+        now: (u32, u32, u32),
+        written: &[TypeId],
+    ) -> Option<(u32, u32, u32)> {
+        if self
+            .type_node_places
+            .as_ref()
+            .is_none_or(|index| index.file != file)
+        {
+            let hir = self.hir(file);
+            let mut nodes: Vec<((u32, u32, u32), TypeNodeId)> = (0..hir.types.len())
+                .map(|i| {
+                    let node = TypeNodeId(i as u32);
+                    (
+                        self.place_in_check_order(file, hir.node(node), hir[node].pos, false),
+                        node,
+                    )
+                })
+                .collect();
+            nodes.sort_unstable();
+            self.type_node_places = Some(TypeNodePlaces {
+                file,
+                nodes,
+                next: 0,
+                earliest: Default::default(),
+            });
+        }
+        let index = self.type_node_places.as_mut()?;
+        while let Some(&(place, node)) = index.nodes.get(index.next)
+            && place < now
+        {
+            index.next += 1;
+            if let Some(ty) = self.p.type_node_types.get(&self.task, &(file, node)) {
+                index.earliest.entry(ty).or_insert(place);
+            }
+        }
+        written
+            .iter()
+            .filter_map(|ty| index.earliest.get(ty))
+            .min()
+            .copied()
     }
 
     /// The place in check order of `parent`'s declaration, if `parent` is an uninstantiated class, interface, type

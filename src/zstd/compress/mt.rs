@@ -138,8 +138,10 @@ struct Job {
     params: CCtxParams,
     cdict: Option<Arc<CDict>>,
     full_frame_size: u64,
-    /// How many long distance matches to make room for.
+    /// How many long distance matches the C code makes room for, which is as many as a whole section can have.
     max_nb_seq: usize,
+    /// How many the input of this job can have.
+    nb_seq_bound: usize,
     /// From the previous job.
     serial_in: Receiver<Box<SerialState>>,
     /// To the next one.
@@ -174,7 +176,7 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
     let generated = if cancelled.load(Ordering::SeqCst) {
         Err(ErrorCode::Generic)
     } else {
-        reset_struct_table(&mut raw_seq_store.seq, job.max_nb_seq, false)
+        reset_struct_table(&mut raw_seq_store.seq, job.nb_seq_bound, false)
             .and_then(|()| serial.gen_sequences(&mut raw_seq_store, src, job.round_pos))
     };
     // The receiver is gone if the frame is given up.
@@ -640,6 +642,7 @@ impl MtCtx {
             cdict: if first_job { self.cdict.clone() } else { None },
             full_frame_size: self.frame_content_size,
             max_nb_seq: ldm::get_max_nb_seq(ldm_params, self.target_section_size),
+            nb_seq_bound: ldm::get_max_nb_seq(ldm_params, src_size),
             serial_in,
             serial_out,
             progress,

@@ -156,6 +156,40 @@ test.skipIf(isWindows)("--parallel: a test file that does not resolve fails alon
   expect(exitCode).toBe(1);
 });
 
+// The threshold never lets a second worker start, so one worker runs a, then m and z. `a.test.ts`
+// deletes `m.test.ts`, and its failed require() makes that worker's resolver read the directory again.
+test("--parallel: a test file that stops resolving fails alone in the worker that runs it", async () => {
+  const passing = `import {test} from "bun:test"; test("t",()=>{});`;
+  using dir = tempDir("parallel-unresolved-deleted", {
+    "a.test.ts": `
+      import { test } from "bun:test";
+      test("a", async () => {
+        await Bun.file(import.meta.dir + "/m.test.ts").delete();
+        try {
+          require("./missing-module");
+        } catch {}
+      });
+    `,
+    "m.test.ts": passing,
+    "z.test.ts": passing,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "600000" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toMatch(/error: Cannot find module '.*m\.test\.ts'/);
+  expect(stderr).not.toContain("worker crashed");
+  expect(stderr).toContain(" 2 pass\n 1 fail\n 1 error\n");
+  expect(stderr).toContain("Ran 3 tests across 3 files.");
+  expect(exitCode).toBe(1);
+});
+
 // The label must use the OS's name for the number the worker died from. Signal
 // 16 on Linux is SIGSTKFLT (it used to be labeled "SIG16"). SIGUSR2 is 31 on
 // macOS, where 31 used to be read with Linux numbering as SIGSYS, a crash

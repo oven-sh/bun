@@ -3190,16 +3190,8 @@ mod posix_impl {
         );
         Ok(n as usize)
     }
-    /// Set once `recv(2)` / `send(2)` failed with EPERM, EACCES or ENOSYS while
-    /// `read(2)` / `write(2)` on the same fd did not: a seccomp policy that
-    /// blocks the socket syscalls (to deny networking) but leaves the file
-    /// syscalls alone. libuv only uses `read`/`write` on a stream handle, so
-    /// Node keeps working on the socketpair behind a child's stdio. One flag for
-    /// the process: the fallback is valid on any socket, so a thread the filter
-    /// does not cover (a `prctl(PR_SET_SECCOMP)` without TSYNC is per thread)
-    /// only loses `MSG_NOSIGNAL`, which SIGPIPE being ignored makes moot. The
-    /// flag says "prefer read/write", not "the socket syscalls are denied".
-    /// Relaxed: each flag is a standalone hint, no data is published through it.
+    /// A seccomp policy denied `recv`/`send` but allows `read`/`write` (libuv only
+    /// uses the latter on a stream). Relaxed: a standalone hint, no data behind it.
     static SOCKET_RECV_DENIED: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
     static SOCKET_SEND_DENIED: core::sync::atomic::AtomicBool =
@@ -3209,15 +3201,13 @@ mod posix_impl {
     static SOCKET_RWF_NOWAIT_UNSUPPORTED: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    /// The errnos a sandbox answers a denied syscall with: `SECCOMP_RET_ERRNO`
-    /// (EPERM by convention, EACCES under systemd's `SystemCallErrorNumber`) and
-    /// `SECCOMP_RET_TRAP`, which bun's SIGSYS handler reports as ENOSYS.
+    /// What a seccomp policy answers: `RET_ERRNO` (EPERM, or EACCES under systemd)
+    /// or `RET_TRAP`, which bun's SIGSYS handler reports as ENOSYS.
     fn is_socket_syscall_denied(err: &Error) -> bool {
         matches!(err.get_errno(), E::EPERM | E::EACCES | E::ENOSYS)
     }
 
-    /// `poll(fd, events, 0)`. An error is an error: a sandbox that denies `poll`
-    /// too must not look like "not ready" and spin the caller.
+    /// `poll(fd, events, 0)`. A denied `poll` is an error, not "not ready".
     fn poll_now(fd: Fd, events: i16) -> Maybe<bool> {
         let mut fds = [posix::PollFd {
             fd: fd.native(),
@@ -3227,11 +3217,8 @@ mod posix_impl {
         Ok(posix::poll(&mut fds, 0).map_err(|err| err.with_fd(fd))? > 0)
     }
 
-    /// `read(2)` stands in for `recv(MSG_DONTWAIT)`, the same way the pipe path
-    /// reads: `RWF_NOWAIT` where the kernel has it, else `poll(0)` then `read(2)`.
-    /// On a kernel without `RWF_NOWAIT` on sockets, a socket that is not
-    /// `O_NONBLOCK` blocks in `read` if another process drains it between the
-    /// two calls.
+    /// `read(2)` for `recv(MSG_DONTWAIT)`, as the pipe path reads: `RWF_NOWAIT`
+    /// where the kernel has it (6.4+ on sockets), else `poll(0)` then `read`.
     fn recv_fallback(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if !SOCKET_RWF_NOWAIT_UNSUPPORTED.load(core::sync::atomic::Ordering::Relaxed) {
@@ -3248,11 +3235,8 @@ mod posix_impl {
         read(fd, buf)
     }
 
-    /// `write(2)` stands in for `send(MSG_DONTWAIT | MSG_NOSIGNAL)`, as in
-    /// `recv_fallback`. On a kernel without `RWF_NOWAIT` on sockets, a socket
-    /// that is not `O_NONBLOCK` (stdio after an `inherit` spawn) blocks a write
-    /// larger than the free space until the peer drains it. SIGPIPE is ignored
-    /// at startup, so a closed peer reports EPIPE.
+    /// `write(2)` for `send(MSG_DONTWAIT | MSG_NOSIGNAL)`, as in `recv_fallback`.
+    /// Without `RWF_NOWAIT` a blocking socket waits for the peer on a large write.
     fn send_fallback(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if !SOCKET_RWF_NOWAIT_UNSUPPORTED.load(core::sync::atomic::Ordering::Relaxed) {
@@ -3269,10 +3253,8 @@ mod posix_impl {
         write(fd, buf)
     }
 
-    /// After the socket syscall was denied: the fallback's result decides
-    /// whether the denial is syscall-wide. The file syscall denied too means the
-    /// fd is denied (a firewall rule, an LSM): report the socket error. A
-    /// "not ready" proves nothing: report it and ask again next time.
+    /// Latch only when the file syscall worked where the socket one did not. Both
+    /// denied is a denied fd (a firewall rule, an LSM). "Not ready" proves nothing.
     fn settle_denied(
         denied_flag: &core::sync::atomic::AtomicBool,
         socket_err: Error,

@@ -3359,22 +3359,28 @@ describe("default warning printer survives a failing stderr", () => {
       cmd: [
         bunExe(),
         "-e",
-        `process.stdin.once("data", () => {
-           process.emitWarning("w");
-           setImmediate(() => console.log("alive"));
-         });`,
+        `const { writeSync } = require("node:fs");
+         (function untilBroken() {
+           try {
+             writeSync(2, "x");
+           } catch (e) {
+             console.log(e.code);
+             process.emitWarning("w");
+             setImmediate(() => console.log("alive"));
+             return;
+           }
+           setImmediate(untilBroken);
+         })();`,
       ],
       env,
-      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
-    // Close our end of stderr before letting the child warn, so the print gets EPIPE.
+    // cancel() hands the close of our read end to another thread, so it can land after the
+    // child starts. The child writes to fd 2 until that fails, and only then warns.
     await proc.stderr.cancel();
-    proc.stdin.write("go");
-    await proc.stdin.end();
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "alive\n", exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({ stdout: "EPIPE\nalive\n", exitCode: 0 });
   });
 
   it.concurrent("leaves no 'error' listener behind on a healthy stderr", async () => {

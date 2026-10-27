@@ -330,7 +330,14 @@ impl DevServer {
         );
 
         let mut watch_for_route_file = false;
-        if matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound") {
+        let not_found = matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound");
+        // The `onLoad` of a plugin reads the file itself, so its error can be a file that is not there.
+        if (not_found || err.name() == "Plugin")
+            && self.holds_missing_file(abs_path, graph, not_found)
+        {
+            return Ok(());
+        }
+        if not_found {
             // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {

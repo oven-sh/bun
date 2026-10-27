@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { appendFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { Client, Dev, devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -689,5 +689,526 @@ devTest("dev.write resolves only after the new module body has run", {
     // dev.write resolves on bun:afterUpdate, i.e. after replaceModules has
     // awaited the 500ms TLA. Acking on WS receipt would see "initial" here.
     expect(await c.js`globalThis.marker`).toBe("updated");
+  },
+});
+
+// A save can take the file away before it writes the file again. Vim moves the file to a
+// backup name, writes a new file and removes the backup. Nothing is at the path in between,
+// and a build in that gap fails. The dev server holds the file until it is back. While it
+// holds a file, a watcher event starts no build, and the files that change wait.
+//
+// These tests are not run on Windows, like the other tests of this directory that unlink a file.
+
+// What the dev server did with the next watcher event.
+// 1: it saw the change and started no build. 3 or 4: a build finished.
+function nextWatchReport(dev: Dev) {
+  return new Promise<number>(resolve => dev.once("watch_synchronization", resolve));
+}
+async function takeAway(dev: Dev, file: string, how: "rename" | "unlink") {
+  const path = dev.join(file);
+  const report = nextWatchReport(dev);
+  if (how === "rename") renameSync(path, path + "~");
+  else unlinkSync(path);
+  expect(await report, `the ${how} of ${file}`).toBe(1);
+}
+// One watcher event, and no testing batch. The dev server does not watch `node_modules`,
+// so it sees only the rename into place.
+function replaceFile(dev: Dev, file: string, contents: string) {
+  const next = dev.join("node_modules/next");
+  writeFileSync(next, contents);
+  renameSync(next, dev.join(file));
+}
+// The second step of the save. The watcher event that finds the file again starts the build.
+function writeAgain(dev: Dev, file: string, how: "rename" | "unlink", contents: string) {
+  replaceFile(dev, file, contents);
+  if (how === "rename") unlinkSync(dev.join(file) + "~");
+}
+// The next hot update that the page applies. `drainAcks` first takes in the updates before it.
+async function hotUpdateAfter(c: Client, change: () => void) {
+  await c.drainAcks();
+  const applied = new Promise<void>(resolve => c.once("received-hmr-event", () => resolve()));
+  change();
+  await applied;
+}
+// A slow machine must not end the hold before the test writes the file again.
+const holdUntilTheFileIsBack = { BUN_DEBUG_TEST_DEV_SERVER_REMOVAL_HOLD_MS: String(60 * 60 * 1000) };
+
+devTest("a save that takes the file away first is a hot update", {
+  skip: ["win32"],
+  env: holdUntilTheFileIsBack,
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["styles.css"], scripts: ["index.ts"] }),
+    "index.ts": `
+      import { dep } from "./dep";
+      console.log("index 1, " + dep);
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `export const dep = "dep 1";`,
+    "styles.css": `@import "./child.css";`,
+    "child.css": `body { color: red; }`,
+    "node_modules/.keep": ``,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index 1, dep 1");
+    await c.style("body").color.expect.toBe("red");
+
+    let version = 1;
+    for (const how of ["rename", "unlink"] as const) {
+      version++;
+      // The script of the page.
+      await takeAway(dev, "index.ts", how);
+      writeAgain(
+        dev,
+        "index.ts",
+        how,
+        `import { dep } from "./dep"; console.log("index ${version}, " + dep); import.meta.hot.accept();`,
+      );
+      await c.expectMessage(`index ${version}, dep ${version - 1}`);
+
+      // A module that the script imports.
+      await takeAway(dev, "dep.ts", how);
+      writeAgain(dev, "dep.ts", how, `export const dep = "dep ${version}";`);
+      await c.expectMessage(`index ${version}, dep ${version}`);
+
+      // A stylesheet that only another stylesheet imports.
+      await takeAway(dev, "child.css", how);
+      await hotUpdateAfter(c, () =>
+        writeAgain(dev, "child.css", how, `body { color: ${version === 2 ? "blue" : "lime"}; }`),
+      );
+      await c.style("body").color.expect.toBe(version === 2 ? "#00f" : "#0f0");
+    }
+    await c.expectErrorOverlay([]);
+  },
+});
+
+devTest("a save that takes the html file or an image away first reloads the page once", {
+  skip: ["win32"],
+  env: holdUntilTheFileIsBack,
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], body: "<h1>first</h1>" }),
+    "index.ts": `
+      import image from "./image.png";
+      console.log(image);
+    `,
+    "image.png": "first",
+    "node_modules/.keep": ``,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await dev.fetch(await c.getStringMessage()).expect.toBe("first");
+
+    // An in-place write of either file reloads the page too. No build fails on the way.
+    for (const how of ["rename", "unlink"] as const) {
+      await c.expectReload(async () => {
+        await takeAway(dev, "index.html", how);
+        writeAgain(dev, "index.html", how, emptyHtmlFile({ scripts: ["index.ts"], body: `<h1>${how}</h1>` }));
+      });
+      // The script of the new page has run.
+      await c.getStringMessage();
+      expect(await c.elemText("h1")).toBe(how);
+
+      await c.expectReload(async () => {
+        await takeAway(dev, "image.png", how);
+        writeAgain(dev, "image.png", how, `image after ${how}`);
+      });
+      await dev.fetch(await c.getStringMessage()).expect.toBe(`image after ${how}`);
+    }
+  },
+});
+
+// An editor creates the new file before it writes it. A build in between reads a module with no code.
+devTest("a save that has created the file again and has not written it is not a hot update", {
+  skip: ["win32"],
+  env: holdUntilTheFileIsBack,
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { dep } from "./dep";
+      console.log(dep);
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `export const dep = "dep 1";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("dep 1");
+
+    await takeAway(dev, "dep.ts", "rename");
+    const report = nextWatchReport(dev);
+    writeFileSync(dev.join("dep.ts"), "");
+    expect(await report, "the new file with no content").toBe(1);
+    appendFileSync(dev.join("dep.ts"), `export const dep = "dep 2";`);
+    await c.expectMessage("dep 2");
+    await c.expectErrorOverlay([]);
+  },
+});
+
+devTest("a file that changes while a save has taken another file away waits for that file", {
+  skip: ["win32"],
+  env: holdUntilTheFileIsBack,
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    // The import that does not resolve makes the dev server watch the directory for it.
+    // Then each change in the directory makes the next build read the directory again,
+    // and that build does not find a file that is away.
+    "index.ts": `
+      import { dep } from "./dep";
+      try {
+        require("./optional");
+      } catch {}
+      globalThis.dep = () => dep;
+      console.log("index 1");
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `export const dep = "dep 1";`,
+    "node_modules/.keep": ``,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index 1");
+
+    // `:wa` in Vim saves two files one after the other.
+    await takeAway(dev, "dep.ts", "rename");
+    const report = nextWatchReport(dev);
+    replaceFile(
+      dev,
+      "index.ts",
+      `
+        import { dep } from "./dep";
+        try {
+          require("./optional");
+        } catch {}
+        globalThis.dep = () => dep;
+        console.log("index 2");
+        import.meta.hot.accept();
+      `,
+    );
+    expect(await report, "the change of index.ts").toBe(1);
+    await hotUpdateAfter(c, () => writeAgain(dev, "dep.ts", "rename", `export const dep = "dep 2";`));
+    // One update has both files. The page can run index.ts before it loads the new dep.ts.
+    await c.expectMessage("index 2");
+    expect(await c.js`globalThis.dep()`).toBe("dep 2");
+    await c.expectErrorOverlay([]);
+  },
+});
+
+// With a Tailwind plugin, every build reads the Tailwind stylesheets again: a class name
+// in any file can change them. The dev server goes by the name of the plugin.
+const tailwindPlugins = {
+  // A plugin like bun-plugin-tailwind, which reads the stylesheet in its own `onLoad`.
+  "a plugin reads": `
+    export default {
+      name: "reads",
+      setup(build) {
+        build.onLoad({ filter: /\\.css$/ }, async ({ path }) => ({ contents: await Bun.file(path).text(), loader: "css" }));
+      },
+    };
+  `,
+  "the bundler reads": `export default { name: "noop", setup() {} };`,
+};
+const tailwindBunfig = `
+  [serve.static]
+  plugins = ["./tailwind-plugin.ts"]
+`;
+
+devTest("a request does not read a Tailwind stylesheet that a save has taken away", {
+  skip: ["win32"],
+  env: holdUntilTheFileIsBack,
+  files: {
+    "bunfig.toml": tailwindBunfig,
+    "tailwind-plugin.ts": tailwindPlugins["the bundler reads"],
+    "index.html": emptyHtmlFile({ styles: ["styles.css"], scripts: ["index.ts"] }),
+    "index.ts": `console.log("index");`,
+    "two.html": emptyHtmlFile({ scripts: ["two.ts"] }),
+    "two.ts": `console.log("two");`,
+    "styles.css": `.tailwind { color: red; }`,
+    "node_modules/.keep": ``,
+  },
+  async test(dev) {
+    await using c = await dev.client("/index");
+    await c.expectMessage("index");
+    await c.style(".tailwind").color.expect.toBe("red");
+
+    await takeAway(dev, "styles.css", "rename");
+    // The first request for a page bundles the page.
+    await using two = await dev.client("/two");
+    await two.expectMessage("two");
+    await c.expectErrorOverlay([]);
+
+    await hotUpdateAfter(c, () => writeAgain(dev, "styles.css", "rename", `.tailwind { color: blue; }`));
+    await c.style(".tailwind").color.expect.toBe("#00f");
+  },
+});
+
+// A save of two files can start a build for the first file that reads the second one
+// before the watcher reports that the second one is away. The dev server does not watch
+// `node_modules`, so here it never gets that report.
+for (const [whoReads, plugin] of Object.entries(tailwindPlugins)) {
+  devTest(`a build goes on without a stylesheet that a save has taken away (${whoReads} the stylesheet)`, {
+    skip: ["win32"],
+    env: holdUntilTheFileIsBack,
+    files: {
+      "bunfig.toml": tailwindBunfig,
+      "tailwind-plugin.ts": plugin,
+      "index.html": emptyHtmlFile({ styles: ["./node_modules/ui/styles.css"], scripts: ["index.ts"] }),
+      "index.ts": `
+        console.log("index 1");
+        import.meta.hot.accept();
+      `,
+      "node_modules/ui/styles.css": `.tailwind { color: red; }`,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("index 1");
+      await c.style(".tailwind").color.expect.toBe("red");
+
+      const stylesheet = dev.join("node_modules/ui/styles.css");
+      renameSync(stylesheet, stylesheet + "~");
+      // No batch: a batch reports a file that is not there as deleted.
+      replaceFile(dev, "index.ts", `console.log("index 2"); import.meta.hot.accept();`);
+      await c.expectMessage("index 2");
+      await c.expectErrorOverlay([]);
+
+      // No watcher event follows. A timer of the dev server finds the stylesheet again.
+      await hotUpdateAfter(c, () => {
+        writeFileSync(stylesheet, `.tailwind { color: blue; }`);
+        unlinkSync(stylesheet + "~");
+      });
+      await c.style(".tailwind").color.expect.toBe("#00f");
+    },
+  });
+}
+
+// A plugin that reads the file itself can fail for another reason than a file that is away.
+devTest("an error of a plugin for a stylesheet that is there is reported at once", {
+  skip: ["win32"],
+  env: holdUntilTheFileIsBack,
+  files: {
+    "bunfig.toml": tailwindBunfig,
+    "tailwind-plugin.ts": `
+      export default {
+        name: "rejects",
+        setup(build) {
+          build.onLoad({ filter: /\\.css$/ }, async ({ path }) => {
+            const contents = await Bun.file(path).text();
+            if (contents.includes("rejected")) throw new Error("the plugin does not take this stylesheet");
+            return { contents, loader: "css" };
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ styles: ["styles.css"], scripts: ["index.ts"] }),
+    "index.ts": `console.log("index");`,
+    "styles.css": `.tailwind { color: red; }`,
+    "node_modules/.keep": ``,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index");
+
+    replaceFile(dev, "styles.css", `.rejected { color: red; }`);
+    await dev.output.waitForLine(/the plugin does not take this stylesheet/);
+  },
+});
+
+devTest("a file that is removed and does not come back is reported as deleted", {
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { dep } from "./dep";
+      console.log(dep);
+    `,
+    "dep.ts": `export const dep = "dep 1";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("dep 1");
+
+    // No batch and no test hook: the dev server decides by itself when the file counts as deleted.
+    const removed = performance.now();
+    unlinkSync(dev.join("dep.ts"));
+    await dev.output.waitForLine(/Could not resolve: "\.\/dep"/);
+    // The file had about 100 ms to come back.
+    expect(performance.now() - removed).toBeGreaterThan(90);
+    await c.expectErrorOverlay(['index.ts:1:21: error: Could not resolve: "./dep"']);
+
+    await c.expectReload(async () => {
+      await dev.write("dep.ts", `export const dep = "dep 2";`);
+    });
+    await c.expectMessage("dep 2");
+  },
+});
+
+// After the dev server reported the stylesheet as deleted, a build that does not find it
+// does not take it for a file in the middle of a save. A held file would keep the next save waiting.
+devTest("a deleted Tailwind stylesheet is not held when a later build does not find it", {
+  skip: ["win32"],
+  env: holdUntilTheFileIsBack,
+  files: {
+    "bunfig.toml": tailwindBunfig,
+    "tailwind-plugin.ts": tailwindPlugins["the bundler reads"],
+    "index.html": emptyHtmlFile({ styles: ["styles.css"], scripts: ["index.ts"] }),
+    "index.ts": `
+      console.log("index 1");
+      import.meta.hot.accept();
+    `,
+    "styles.css": `.tailwind { color: red; }`,
+    "node_modules/.keep": ``,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index 1");
+
+    await c.expectReload(async () => {
+      await using _wait = await dev.batchChanges();
+      unlinkSync(dev.join("styles.css"));
+      writeFileSync(dev.join("index.html"), emptyHtmlFile({ scripts: ["index.ts"] }));
+    });
+    await c.expectMessage("index 1");
+
+    for (const version of [2, 3]) {
+      replaceFile(dev, "index.ts", `console.log("index ${version}"); import.meta.hot.accept();`);
+      await c.expectMessage(`index ${version}`);
+    }
+    await c.expectErrorOverlay([]);
+  },
+});
+
+// A bundle that loads `slow.gate` does not end before `node_modules/gate-open` exists.
+// The dev server does not watch `node_modules`.
+const gatePlugin = `
+  import { existsSync } from "node:fs";
+  import { join } from "node:path";
+  export default {
+    name: "gate",
+    setup(build) {
+      build.onLoad({ filter: /slow\\.gate$/ }, async () => {
+        console.log("the bundle is at the gate");
+        while (!existsSync(join(import.meta.dir, "node_modules/gate-open"))) await Bun.sleep(5);
+        return { contents: "export default 1;", loader: "js" };
+      });
+    },
+  };
+`;
+const gateBunfig = `
+  [serve.static]
+  plugins = ["./gate-plugin.ts"]
+`;
+
+devTest("a save that the watcher reports while a bundle runs is a hot update", {
+  skip: ["win32"],
+  env: holdUntilTheFileIsBack,
+  files: {
+    "bunfig.toml": gateBunfig,
+    "gate-plugin.ts": gatePlugin,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { dep } from "./dep";
+      import { other } from "./other";
+      console.log(dep + ", " + other);
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `export const dep = "dep 1";`,
+    "other.ts": `export const other = "other 1";`,
+    "slow.gate": ``,
+    "node_modules/.keep": ``,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("dep 1, other 1");
+
+    replaceFile(dev, "other.ts", `import gate from "./slow.gate"; export const other = "other " + (gate + 1);`);
+    await dev.output.waitForLine(/the bundle is at the gate/);
+
+    // The report of the watcher waits for the bundle to end.
+    const sawTheFileGo = new Promise<void>(resolve => {
+      dev.on("watch_synchronization", function listener(report: number) {
+        if (report !== 1) return;
+        dev.off("watch_synchronization", listener);
+        resolve();
+      });
+    });
+    renameSync(dev.join("dep.ts"), dev.join("dep.ts~"));
+    writeFileSync(dev.join("node_modules/gate-open"), "");
+    await c.expectMessage("dep 1, other 2");
+    await sawTheFileGo;
+
+    writeAgain(dev, "dep.ts", "rename", `export const dep = "dep 2";`);
+    await c.expectMessage("dep 2, other 2");
+    await c.expectErrorOverlay([]);
+  },
+});
+
+// The time to come back can end while a bundle runs. The report waits for that bundle.
+devTest("a file that is removed is reported as deleted after the bundle that was in its way", {
+  skip: ["win32"],
+  env: { BUN_DEBUG_TEST_DEV_SERVER_REMOVAL_HOLD_MS: "500" },
+  files: {
+    "bunfig.toml": gateBunfig,
+    "gate-plugin.ts": gatePlugin,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { dep } from "./dep";
+      console.log(dep);
+    `,
+    "dep.ts": `export const dep = 1;`,
+    "two.html": emptyHtmlFile({ scripts: ["two.ts"] }),
+    "two.ts": `
+      import gate from "./slow.gate";
+      console.log(gate);
+    `,
+    "slow.gate": ``,
+    "node_modules/.keep": ``,
+  },
+  async test(dev) {
+    // The dev server watches the files of the page when the first bundle is done.
+    const bundled = nextWatchReport(dev);
+    await dev.fetch("/index");
+    await bundled;
+
+    await takeAway(dev, "dep.ts", "unlink");
+    const heldUntil = performance.now() + 500;
+    // The first request for a page bundles the page. A held file does not stop that bundle.
+    const two = dev.fetch("/two");
+    await dev.output.waitForLine(/the bundle is at the gate/);
+
+    // Nothing reports that the time ended, so the test waits for it.
+    await Bun.sleep(Math.max(0, heldUntil - performance.now()));
+    writeFileSync(dev.join("node_modules/gate-open"), "");
+    expect((await two).status).toBe(200);
+    await dev.output.waitForLine(/Could not resolve: "\.\/dep"/);
+  },
+});
+
+// The dev server watches no directory outside its root, so no watcher event reports
+// that the file is back. A timer of the dev server looks for the files that it holds.
+devTest("a save that takes a file outside the project root away first is a hot update", {
+  skip: ["win32"],
+  env: holdUntilTheFileIsBack,
+  files: {
+    "web/index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "web/index.ts": `
+      import { dep } from "../outside/dep";
+      console.log(dep);
+      import.meta.hot.accept();
+    `,
+    "outside/dep.ts": `export const dep = "dep 1";`,
+  },
+  cwd: "web",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("dep 1");
+
+    await takeAway(dev, "outside/dep.ts", "rename");
+    writeFileSync(dev.join("outside/dep.ts"), `export const dep = "dep 2";`);
+    unlinkSync(dev.join("outside/dep.ts~"));
+    await c.expectMessage("dep 2");
+    await c.expectErrorOverlay([]);
+
+    // The dev server watches the new file.
+    await dev.write("outside/dep.ts", `export const dep = "dep 3";`);
+    await c.expectMessage("dep 3");
   },
 });

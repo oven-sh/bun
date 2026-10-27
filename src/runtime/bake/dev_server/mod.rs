@@ -77,6 +77,7 @@ mod js_escape;
 mod lifecycle;
 pub(crate) mod memory_cost;
 mod protocol;
+mod removals;
 mod render;
 mod router_glue;
 mod server_hmr_ffi;
@@ -415,6 +416,18 @@ pub(crate) enum TestingBatchEvents {
     ReleaseAfterBundle(TestingBatch),
 }
 
+/// What starts a bundle.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum BundleTrigger {
+    /// A request for a route that has files to bundle.
+    Request,
+    /// The watcher reported changes. A bundled file that is not there can be
+    /// in the middle of a save, so the bundle holds it. See `removals.rs`.
+    Watcher,
+    /// The test harness released a testing batch. A file that is not there is deleted.
+    TestingBatch,
+}
+
 /// There is only ever one bundle executing at the same time, since all bundles
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
@@ -562,6 +575,12 @@ pub(crate) struct DevServer {
     /// `HotReloadEvent.concurrent_task` can outlive `DevServer`; see the
     /// `next_event` check in `Drop`.
     pub(crate) watcher_atomics: ::core::ptr::NonNull<WatcherAtomics>,
+    /// Files that were renamed away or deleted, and the changed files that wait
+    /// until those are back or `removal_timer` fires. See `removals.rs`.
+    pub(crate) pending_removals: removals::Removals,
+    pub(crate) removal_timer: EventLoopTimer,
+    /// What started the bundle that runs, or the one that ran last.
+    pub(crate) bundle_trigger: BundleTrigger,
     pub(crate) testing_batch_events: TestingBatchEvents,
 
     /// Number of bundles that have been executed. This is currently not read, but
@@ -613,7 +632,10 @@ pub(crate) struct DevServer {
     pub(crate) broadcast_console_log_from_browser_to_server: bool,
 }
 
-bun_event_loop::impl_timer_owner!(DevServer; from_timer_ptr => memory_visualizer_timer);
+bun_event_loop::impl_timer_owner!(DevServer;
+    from_timer_ptr => memory_visualizer_timer,
+    from_removal_timer_ptr => removal_timer,
+);
 
 const INTERNAL_PREFIX: &str = "/_bun";
 

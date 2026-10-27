@@ -109,18 +109,22 @@ impl DevServer {
                     if event.op.contains(bun_watcher::Op::DELETE)
                         || event.op.contains(bun_watcher::Op::RENAME)
                     {
-                        // TODO: audit this line heavily
+                        // inotify and kqueue watch the file that left the path,
+                        // not the path. The next parse of the path adds a watch
+                        // for the file that is there.
                         self.bun_watcher.remove_at_index::<false>(
                             bun_watcher::Kind::File,
                             event.index,
                             0,
                             &[],
                         );
+                        // SAFETY: `ev_ptr` is this thread's exclusively-acquired
+                        // slot (see above); the borrow ends with this call.
+                        unsafe { &mut *ev_ptr }.append_removed(file_path);
+                    } else {
+                        // SAFETY: see `ev_ptr` above; call-scoped borrow.
+                        unsafe { &mut *ev_ptr }.append_file(file_path);
                     }
-
-                    // SAFETY: `ev_ptr` is this thread's exclusively-acquired
-                    // slot (see above); the borrow ends with this call.
-                    unsafe { &mut *ev_ptr }.append_file(file_path);
                 }
                 bun_watcher::Kind::Directory => {
                     // Note: `target_os = "linux"` is false on Android, so
@@ -131,21 +135,27 @@ impl DevServer {
                         // INotifyWatcher stores sub paths into `changed_files`
                         let names = event.names(changed_files);
                         if !names.is_empty() {
+                            // The ops of a directory event are merged, so a
+                            // delete can be the delete of any of its names.
+                            let reports_delete = event.op.contains(bun_watcher::Op::DELETE);
                             for maybe_sub_path in names {
                                 // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                                unsafe { &mut *ev_ptr }
-                                    .append_dir(file_path, maybe_sub_path.map(|s| s.as_bytes()));
+                                unsafe { &mut *ev_ptr }.append_dir(
+                                    file_path,
+                                    maybe_sub_path.map(|s| s.as_bytes()),
+                                    reports_delete,
+                                );
                             }
                         } else {
                             // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                            unsafe { &mut *ev_ptr }.append_dir(file_path, None);
+                            unsafe { &mut *ev_ptr }.append_dir(file_path, None, false);
                         }
                     }
                     #[cfg(not(any(target_os = "linux", target_os = "android")))]
                     {
                         let _ = changed_files;
                         // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                        unsafe { &mut *ev_ptr }.append_dir(file_path, None);
+                        unsafe { &mut *ev_ptr }.append_dir(file_path, None, false);
                     }
                 }
             }

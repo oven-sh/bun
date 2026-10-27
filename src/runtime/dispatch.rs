@@ -1269,6 +1269,10 @@ pub(crate) unsafe fn __bun_fire_timer(
             DevServer::emit_memory_visualizer_message_timer(t);
             Ok(())
         }
+        EventLoopTimerTag::DevServerRemovalDeadline => {
+            DevServer::on_removal_timer(t);
+            Ok(())
+        }
         EventLoopTimerTag::BunTest => {
             let container = owner!(BunTest, timer);
             // SAFETY: container is the payload of a live `Rc<BunTestCell>`; the

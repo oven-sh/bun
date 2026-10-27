@@ -107,6 +107,12 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 .unwrap_or(bun_core::env::IS_DEBUG)
         );
         w!(testing_batch_events, TestingBatchEvents::Disabled);
+        w!(pending_removals, Default::default());
+        w!(bundle_trigger, BundleTrigger::Request);
+        w!(
+            removal_timer,
+            EventLoopTimer::init_paused(EventLoopTimerTag::DevServerRemovalDeadline)
+        );
         w!(
             broadcast_console_log_from_browser_to_server,
             options.broadcast_console_log_from_browser_to_server
@@ -574,6 +580,9 @@ impl Drop for DevServer {
                 bun_watcher: _,
                 directory_watchers: _,
                 watcher_atomics: _,
+                pending_removals: _,
+                removal_timer: _,
+                bundle_trigger: _,
                 testing_batch_events: _,
                 generation: _,
                 bundles_since_last_error: _,
@@ -618,6 +627,10 @@ impl Drop for DevServer {
 
         if self.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE {
             let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
+            self.timer_heap().remove(timer_ptr);
+        }
+        if self.removal_timer.state == EventLoopTimerState::ACTIVE {
+            let timer_ptr: *mut EventLoopTimer = &raw mut self.removal_timer;
             self.timer_heap().remove(timer_ptr);
         }
         self.graph_safety_lock.lock();
@@ -676,7 +689,9 @@ impl Drop for DevServer {
                 for event in &mut (*atomics).events {
                     event.dirs.clear_and_free();
                     event.files.clear_and_free();
+                    event.removed.clear_and_free();
                     event.extra_files.clear();
+                    event.extra_removed.clear();
                 }
                 bun_core::heap::destroy(atomics);
             }

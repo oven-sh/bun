@@ -202,6 +202,7 @@ pub enum Tag {
     SubprocessTimeout,
     DevServerSweepSourceMaps,
     DevServerMemoryVisualizerTick,
+    DevServerRemovalDeadline,
     AbortSignalTimeout,
     DateHeaderTimer,
     BunTest,

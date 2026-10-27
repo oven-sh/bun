@@ -19,9 +19,13 @@ pub(crate) struct HotReloadEvent {
     pub(crate) atomics: *mut WatcherAtomics,
     pub(crate) concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
     pub(crate) files: StringArrayHashMap<()>,
+    /// Files that were renamed away or deleted. `hold_removed_files` holds the bundled ones.
+    pub(crate) removed: StringArrayHashMap<()>,
     pub(crate) dirs: StringArrayHashMap<()>,
     /// NUL-joined absolute paths.
     pub(crate) extra_files: Vec<u8>,
+    /// Like `extra_files`, for the names of a directory event that reports a delete.
+    pub(crate) extra_removed: Vec<u8>,
     pub(crate) timer: std::time::Instant,
     /// 1 if referenced, 0 if unreferenced; see `WatcherAtomics`.
     #[cfg(debug_assertions)]
@@ -57,8 +61,10 @@ impl HotReloadEvent {
             atomics: core::ptr::null_mut(),
             concurrent_task: Default::default(),
             files: Default::default(),
+            removed: Default::default(),
             dirs: Default::default(),
             extra_files: Vec::new(),
+            extra_removed: Vec::new(),
             timer: std::time::Instant::now(),
             #[cfg(debug_assertions)]
             contention_indicator: core::sync::atomic::AtomicU32::new(0),
@@ -68,7 +74,7 @@ impl HotReloadEvent {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        (self.files.count() + self.dirs.count()) == 0
+        (self.files.count() + self.removed.count() + self.dirs.count()) == 0
     }
 
     /// Debug-asserts that the owning [`DevServer`]'s watcher thread-lock is
@@ -163,13 +169,18 @@ impl HotReloadEvent {
             }
         }
 
-        let mut rest_extra: &[u8] = &self.extra_files;
-        while let Some(str_idx) = bun_core::strings::index_of_char_usize(rest_extra, 0) {
-            bun_core::handle_oom(self.files.put(&rest_extra[0..str_idx as usize], ()));
-            rest_extra = &rest_extra[str_idx as usize + 1..];
+        put_nul_joined(&mut self.files, &self.extra_files);
+        put_nul_joined(&mut self.removed, &self.extra_removed);
+        if self.removed.count() > 0 {
+            dev.hold_removed_files(&self.removed, &mut self.files);
         }
-        if !rest_extra.is_empty() {
-            bun_core::handle_oom(self.files.put(rest_extra, ()));
+        if !dev.pending_removals.is_empty() && !dev.settle_removals(&mut self.files, false) {
+            dev.publish(
+                HmrTopic::TestingWatchSynchronization,
+                &[MessageId::TestingWatchSynchronization.char(), 1],
+                bun_uws::Opcode::BINARY,
+            );
+            return;
         }
 
         let changed_file_paths = self.files.keys();
@@ -205,24 +216,17 @@ impl HotReloadEvent {
             return;
         }
 
-        if let Some(map) = &dev.has_tailwind_plugin_hack {
-            for abs_path in map.keys() {
-                let Some(file) = dev.client_graph.bundled_files.get(abs_path) else {
-                    continue;
-                };
-                if file.file_kind() == FileKind::Css {
-                    bun_core::handle_oom(entry_points.append_css(abs_path));
-                }
-            }
-        }
+        dev.append_tailwind_stylesheets(entry_points);
     }
 
     pub(crate) fn reset(&mut self) {
         #[cfg(debug_assertions)]
         self.debug_mutex.unlock();
         self.files.clear_retaining_capacity();
+        self.removed.clear_retaining_capacity();
         self.dirs.clear_retaining_capacity();
         self.extra_files.clear();
+        self.extra_removed.clear();
     }
 
     /// Records a changed file path in the pending hot-reload event (deduplicated).
@@ -230,9 +234,22 @@ impl HotReloadEvent {
         bun_core::handle_oom(self.files.get_or_put(file_path));
     }
 
+    /// Records a file that was renamed away or deleted (deduplicated). That is
+    /// a delete, or the first step of a save that writes the file again.
+    pub(crate) fn append_removed(&mut self, file_path: &[u8]) {
+        bun_core::handle_oom(self.removed.get_or_put(file_path));
+    }
+
     /// Records a changed directory (and, when present, the changed entry
     /// within it) in the pending hot-reload event (deduplicated).
-    pub(crate) fn append_dir(&mut self, dir_path: &[u8], maybe_sub_path: Option<&[u8]>) {
+    /// `reports_delete` is true when the directory event that names the entry
+    /// also reports a delete: the entry can be the one that is gone.
+    pub(crate) fn append_dir(
+        &mut self,
+        dir_path: &[u8],
+        maybe_sub_path: Option<&[u8]>,
+        reports_delete: bool,
+    ) {
         if dir_path.is_empty() {
             return;
         }
@@ -245,15 +262,20 @@ impl HotReloadEvent {
             return;
         }
 
+        let paths = if reports_delete {
+            &mut self.extra_removed
+        } else {
+            &mut self.extra_files
+        };
         let ends_with_sep = bun_paths::Platform::AUTO.is_separator(dir_path[dir_path.len() - 1]);
-        self.extra_files.extend_from_slice(if ends_with_sep {
+        paths.extend_from_slice(if ends_with_sep {
             &dir_path[0..dir_path.len() - 1]
         } else {
             dir_path
         });
-        self.extra_files.push(bun_paths::SEP);
-        self.extra_files.extend_from_slice(sub_path);
-        self.extra_files.push(0);
+        paths.push(bun_paths::SEP);
+        paths.extend_from_slice(sub_path);
+        paths.push(0);
     }
 
     /// Main-thread side of the watcher → DevServer hand-off.
@@ -307,11 +329,6 @@ impl HotReloadEvent {
 
         let mut entry_points = EntryPointList::default();
 
-        // SAFETY: `first` is live; `&mut *dev` re-borrowed for the call only.
-        // `process_file_list` mutates graph/watcher/transpiler fields of `dev`,
-        // all disjoint from `dev.watcher_atomics.events[_]` (where `first` lives).
-        unsafe { (*first).process_file_list(&mut *dev, &mut entry_points) };
-
         // SAFETY: `first` is live; `timer` was set by
         // `WatcherAtomics::watcher_acquire_event` before submission.
         let timer = unsafe { (*first).timer };
@@ -322,8 +339,9 @@ impl HotReloadEvent {
         let mut current: *mut HotReloadEvent = first;
         loop {
             // SAFETY: `current` always points at a live event owned by
-            // `dev.watcher_atomics`; `&mut *dev` re-borrowed for the call only,
-            // disjoint per the note above.
+            // `dev.watcher_atomics`; `&mut *dev` re-borrowed for the call only.
+            // `process_file_list` mutates graph/watcher/transpiler fields of `dev`,
+            // all disjoint from `dev.watcher_atomics.events[_]` (where `current` lives).
             unsafe { (*current).process_file_list(&mut *dev, &mut entry_points) };
             // SAFETY: `dev` is valid; recycle traffics in raw `*mut HotReloadEvent`.
             match unsafe {
@@ -351,22 +369,17 @@ impl HotReloadEvent {
             return;
         }
 
-        match &mut dev_ref.testing_batch_events {
-            TestingBatchEvents::Disabled => {}
-            TestingBatchEvents::Enabled(ev) | TestingBatchEvents::ReleaseAfterBundle(ev) => {
-                bun_core::handle_oom(ev.append(&entry_points));
-                dev_ref.publish(
-                    HmrTopic::TestingWatchSynchronization,
-                    &[MessageId::TestingWatchSynchronization.char(), 1],
-                    bun_uws::Opcode::BINARY,
-                );
-                return;
-            }
-            TestingBatchEvents::EnableAfterBundle => debug_assert!(false),
-        }
+        dev_ref.start_reload_bundle(entry_points, timer);
+    }
+}
 
-        if let Err(_err) = dev_ref.start_async_bundle(entry_points, true, timer) {
-            return;
-        }
+/// Puts each path of a NUL-joined list into `paths`.
+fn put_nul_joined(paths: &mut StringArrayHashMap<()>, mut list: &[u8]) {
+    while let Some(end) = bun_core::strings::index_of_char_usize(list, 0) {
+        bun_core::handle_oom(paths.put(&list[..end], ()));
+        list = &list[end + 1..];
+    }
+    if !list.is_empty() {
+        bun_core::handle_oom(paths.put(list, ()));
     }
 }

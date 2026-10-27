@@ -67,6 +67,9 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             bun_watcher: _,
             directory_watchers: _,
             watcher_atomics: _,
+            pending_removals: _,
+            removal_timer: _,
+            bundle_trigger: _,
             testing_batch_events: _,
             generation: _,
             bundles_since_last_error: _,
@@ -93,6 +96,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // does not contain pointers
     //   .assume_perfect_incremental_bundling
     //   .bun_watcher
+    //   .bundle_trigger
     //   .bundles_since_last_error
     //   .configuration_hash_key
     //   .inspector_server_id
@@ -105,6 +109,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .magic
     //   .memory_visualizer_timer
     //   .plugin_state
+    //   .removal_timer
     //   .server_register_update_callback
     //   .server_fetch_function_callback
     //   .watcher_atomics
@@ -234,6 +239,8 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     }
     // .route_lookup
     other_bytes += memory_cost_array_hash_map(&dev.route_lookup);
+    // .pending_removals
+    other_bytes += dev.pending_removals.memory_cost();
     // .testing_batch_events
     match &dev.testing_batch_events {
         TestingBatchEvents::Disabled => {}

@@ -64,17 +64,29 @@ impl DevServer {
             }
         }
 
-        if let Some(map) = &self.has_tailwind_plugin_hack {
-            for abs_path in map.keys() {
-                let Some(file) = self.client_graph.bundled_files.get(abs_path) else {
-                    continue;
-                };
-                if file.kind == FileKind::Css {
-                    entry_points.append_css(abs_path).expect("oom");
-                }
-            }
-        }
+        self.append_tailwind_stylesheets(entry_points);
         Ok(())
+    }
+
+    /// A Tailwind stylesheet depends on every file that can hold a class name, so each
+    /// bundle reads it again. `has_tailwind_plugin_hack` has the reason.
+    pub(super) fn append_tailwind_stylesheets(&self, entry_points: &mut EntryPointList) {
+        let Some(map) = &self.has_tailwind_plugin_hack else {
+            return;
+        };
+        for abs_path in map.keys() {
+            let Some(file) = self.client_graph.bundled_files.get(abs_path) else {
+                continue;
+            };
+            if file.file_kind() != FileKind::Css {
+                continue;
+            }
+            // A stylesheet in the middle of a save is not there to read.
+            if self.pending_removals.holds(abs_path) {
+                continue;
+            }
+            bun_core::handle_oom(entry_points.append_css(abs_path));
+        }
     }
 }
 
@@ -334,12 +346,14 @@ impl DevServer {
     pub(crate) fn start_async_bundle(
         &mut self,
         entry_points: EntryPointList,
-        had_reload_event: bool,
+        trigger: BundleTrigger,
         timer: Instant,
     ) -> crate::Result<()> {
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
+        // An entry point that does not resolve fails before `current_bundle` is set.
+        self.bundle_trigger = trigger;
 
         // Notify inspector about bundle start
         if let Some(agent) = self.inspector() {
@@ -468,7 +482,7 @@ impl DevServer {
             _ast_alloc_state: ast_alloc_state,
             timer,
             start_data,
-            had_reload_event,
+            had_reload_event: trigger != BundleTrigger::Request,
             requests: ::core::mem::take(&mut self.next_bundle.requests),
             script_requests: Vec::new(),
             resolution_failure_entries: Default::default(),
@@ -477,6 +491,28 @@ impl DevServer {
         self.next_bundle.requests = deferred_request::List::default();
         self.next_bundle.route_queue.clear_retaining_capacity();
         Ok(())
+    }
+
+    /// Bundles the files a watcher event changed, or adds them to the open testing batch.
+    pub(crate) fn start_reload_bundle(&mut self, entry_points: EntryPointList, timer: Instant) {
+        debug_assert!(self.current_bundle.is_none());
+        match &mut self.testing_batch_events {
+            TestingBatchEvents::Disabled => {}
+            TestingBatchEvents::Enabled(ev) | TestingBatchEvents::ReleaseAfterBundle(ev) => {
+                bun_core::handle_oom(ev.append(&entry_points));
+                self.publish(
+                    HmrTopic::TestingWatchSynchronization,
+                    &[MessageId::TestingWatchSynchronization.char(), 1],
+                    Opcode::BINARY,
+                );
+                return;
+            }
+            TestingBatchEvents::EnableAfterBundle => debug_assert!(false),
+        }
+
+        if let Err(_err) = self.start_async_bundle(entry_points, BundleTrigger::Watcher, timer) {
+            return;
+        }
     }
 
     /// Bundle the files a testing batch collected, or report an empty batch.
@@ -491,9 +527,13 @@ impl DevServer {
             return;
         }
 
-        self.start_async_bundle(batch.entry_points, true, Instant::now())
-            // bun.handleOom(err) — Rust aborts on OOM by default
-            .expect("OOM");
+        self.start_async_bundle(
+            batch.entry_points,
+            BundleTrigger::TestingBatch,
+            Instant::now(),
+        )
+        // bun.handleOom(err) — Rust aborts on OOM by default
+        .expect("OOM");
     }
 
     pub(super) fn start_next_bundle_if_present(&mut self) {
@@ -587,7 +627,12 @@ impl DevServer {
             }
 
             if !entry_points.set.is_empty() {
-                self.start_async_bundle(entry_points, is_reload, timer)
+                let trigger = if is_reload {
+                    BundleTrigger::Watcher
+                } else {
+                    BundleTrigger::Request
+                };
+                self.start_async_bundle(entry_points, trigger, timer)
                     .expect("oom");
             }
 

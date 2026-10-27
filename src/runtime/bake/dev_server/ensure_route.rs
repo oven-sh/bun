@@ -224,7 +224,7 @@ pub(super) fn ensure_route_is_bundled(
                 dev.route_bundle_ptr(route_bundle_index).server_state =
                     route_bundle::State::Bundling;
 
-                dev.start_async_bundle(entry_points, false, Instant::now())
+                dev.start_async_bundle(entry_points, BundleTrigger::Request, Instant::now())
                     .expect("oom");
                 return Ok(());
             }

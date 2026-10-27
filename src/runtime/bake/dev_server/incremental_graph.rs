@@ -118,6 +118,9 @@ pub(crate) struct File {
     pub(crate) kind: FileKind,
     /// If the file has an error, the failure can be looked up in `dev.bundling_failures`.
     pub(crate) failed: bool,
+    /// The file is not at its path: a bundle did not find it, or the time a removed file has
+    /// to come back ended (`removals.rs`). A bundle that reads the file clears this.
+    pub(crate) deleted: bool,
     // ── server-side ────────────────────────────────────────────────────
     pub(crate) is_rsc: bool,
     pub(crate) is_ssr: bool,
@@ -161,6 +164,7 @@ impl Default for File {
         Self {
             kind: FileKind::Unknown,
             failed: false,
+            deleted: false,
             is_rsc: false,
             is_ssr: false,
             is_client_component_boundary: false,
@@ -681,6 +685,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 self.bundled_files.values_mut()[file_index.get() as usize] = File {
                     kind: new_content.kind(),
                     failed: false,
+                    deleted: false,
                     is_rsc: false,
                     is_ssr: false,
                     is_client_component_boundary: false,
@@ -723,6 +728,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     {
                         let f = &mut self.bundled_files.values_mut()[file_index.get() as usize];
                         f.kind = new_kind;
+                        f.deleted = false;
                         if is_ssr_graph {
                             f.is_ssr = true;
                         } else {
@@ -1620,6 +1626,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let Some(index) = self.get_file_index(abs_path) else {
             return Ok(());
         };
+        self.bundled_files.values_mut()[index.get() as usize].deleted = true;
 
         // Disconnect all imports.
         let mut it = self.edge_lists[index.get() as usize].first_import.take();

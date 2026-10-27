@@ -141,6 +141,67 @@ test.skipIf(!isASAN)(
   60_000,
 );
 
+// The dev server holds a file that was renamed away, and a timer inside the dev server ends the hold.
+test.skipIf(!isASAN || isWindows)(
+  "a dev server that stops while it holds a removed file leaves no timer behind",
+  async () => {
+    using dir = tempDir("bake-deinit-held-file", {
+      "index.html": `<!DOCTYPE html><html><body><script type="module" src="./entry.ts"></script></body></html>`,
+      "entry.ts": `console.log("entry");`,
+      "fixture.ts": `
+        import { getDevServerDeinitCount } from "bun:internal-for-testing";
+        import { renameSync } from "node:fs";
+        import html from "./index.html";
+
+        const deinitsBefore = getDevServerDeinitCount();
+        const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+        const text = url => fetch(new URL(url, server.url)).then(res => res.text());
+        // The dev server watches a file after it bundled it.
+        await text((await text("/")).match(/\\/_bun\\/client\\/[^"]+\\.js/)[0]);
+
+        const ws = new WebSocket(new URL("/_bun/hmr", server.url));
+        ws.binaryType = "arraybuffer";
+        const stopped = Promise.withResolvers();
+        ws.onmessage = event => {
+          const [id, report] = new Uint8Array(event.data);
+          // "V" opens the socket. "sr" subscribes to the reports of the watcher ("r"),
+          // and an empty testing batch ("H", "H") shows that the subscription is active.
+          if (id === 86) ws.send("sr"), ws.send("H");
+          else if (id !== 114) return;
+          else if (report === 0) ws.send("H");
+          else if (report === 2) renameSync("entry.ts", "entry.ts~");
+          // 3 and 4 report a build. A dev server that holds the file starts none.
+          else if (report !== 1) process.exit(1);
+          else {
+            // The dev server saw the file go and holds it.
+            server.stop(true);
+            console.log("deinitialized:", getDevServerDeinitCount() - deinitsBefore);
+            // The hold ends while no timer can run. The next timers find what the dev server left.
+            Bun.sleepSync(Number(process.env.BUN_DEBUG_TEST_DEV_SERVER_REMOVAL_HOLD_MS) + 50);
+            stopped.resolve();
+          }
+        };
+        await stopped.promise;
+        for (let i = 0; i < 10; i++) await new Promise(resolve => setTimeout(resolve, 1));
+        console.log("stopped");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_DEBUG_TEST_DEV_SERVER_REMOVAL_HOLD_MS: "200" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toEndWith("deinitialized: 1\nstopped\n");
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
+
 test.skipIf(isWindows)(
   "dev server closes the descriptor it opens to bundle an edited file again",
   async () => {

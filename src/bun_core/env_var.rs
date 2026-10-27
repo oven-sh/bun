@@ -92,6 +92,9 @@ new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 new!(pub BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: unsigned, "BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES", {});
 // How long `bun check` runs before it draws its progress line (default 300), so a test can see the line on a small project.
 new!(pub BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: unsigned, "BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS", {});
+// How long the dev server holds a file that was renamed away or deleted before it counts as deleted
+// (default 100), so a test can keep the hold open until it writes the file again.
+new!(pub BUN_DEBUG_TEST_DEV_SERVER_REMOVAL_HOLD_MS: unsigned, "BUN_DEBUG_TEST_DEV_SERVER_REMOVAL_HOLD_MS", {});
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
 // Debug-only: when set, `NumberRenamer` dumps the symbol table before
 // renaming (`src/js_printer/renamer.rs`). Presence-checked, value ignored.

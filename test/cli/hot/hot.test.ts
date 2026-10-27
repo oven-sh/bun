@@ -1332,3 +1332,47 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   expect(await stdout("still running")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
+
+// An unhandled error stops the timers of a --hot run, and the dev server ends its wait for a removed file with a timer.
+it.skipIf(isWindows)(
+  "--hot: the dev server reports a deleted file after an unhandled error",
+  async () => {
+    using dir = tempDir("hot-dev-server-unhandled", {
+      "index.html": `<script type="module" src="./main.ts"></script>`,
+      "main.ts": `import "./dep.ts";`,
+      "dep.ts": `console.log("dep");`,
+      "server.ts": `
+        import { unlinkSync } from "node:fs";
+        import html from "./index.html";
+        const server = Bun.serve({
+          port: 0,
+          development: true,
+          routes: {
+            "/": html,
+            "/unhandled": () => {
+              Promise.reject(new Error("the bug"));
+              return new Response("ok");
+            },
+          },
+        });
+        const text = async url => await (await fetch(new URL(url, server.url))).text();
+        // The dev server watches a file after it bundled it.
+        await text(/src="([^"]+)"/.exec(await text("/"))[1]);
+        await text("/unhandled");
+        unlinkSync("dep.ts");
+      `,
+    });
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "server.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stderr = follow(runner.stderr);
+    expect(await stderr("error: the bug")).toBe(true);
+    expect(await stderr('Could not resolve: "./dep.ts"')).toBe(true);
+  },
+  timeout,
+);

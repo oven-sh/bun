@@ -778,6 +778,9 @@ impl<'a> BlockEncoder<'a> {
         self.block_ix += 1;
         let block_len = self.block_lengths.at(self.block_ix)?;
         let block_type = self.block_types.at(self.block_ix)?;
+        if block_len == 0 {
+            return Err(Bug);
+        }
         self.block_len = block_len as usize;
         self.block_split_code
             .store_block_switch(block_len, block_type, false, bw)?;
@@ -790,7 +793,7 @@ impl<'a> BlockEncoder<'a> {
         if self.block_len == 0 {
             self.entropy_ix = self.next_block(bw)? * self.histogram_length;
         }
-        self.block_len = self.block_len.wrapping_sub(1);
+        self.block_len -= 1;
         let ix = self.entropy_ix + symbol;
         bw.write_bits(
             usize::from(self.depths.at(ix)?),
@@ -811,7 +814,7 @@ impl<'a> BlockEncoder<'a> {
         if self.block_len == 0 {
             self.entropy_ix = self.next_block(bw)? << context_bits;
         }
-        self.block_len = self.block_len.wrapping_sub(1);
+        self.block_len -= 1;
         let histo_ix = context_map.at(self.entropy_ix + context)? as usize;
         let ix = histo_ix * self.histogram_length + symbol;
         bw.write_bits(

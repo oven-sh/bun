@@ -35,14 +35,6 @@ fn cluster_cost_diff(size_a: usize, size_b: usize) -> f64 {
         - size_c as f64 * fast_log2(size_c)
 }
 
-/// `*dst = *src`, without a copy on the stack.
-#[inline(always)]
-pub(crate) fn copy_histogram<const N: usize>(dst: &mut Histogram<N>, src: &Histogram<N>) {
-    dst.data = src.data;
-    dst.total_count = src.total_count;
-    dst.bit_cost = src.bit_cost;
-}
-
 /// Puts the pair `(idx1, idx2)` in the queue `pairs` if merging `out[idx1]` and `out[idx2]` is cheap enough. The best
 /// pair of the queue is its first, the others are in no particular order.
 fn compare_and_push_to_queue<const N: usize>(
@@ -91,7 +83,7 @@ fn compare_and_push_to_queue<const N: usize>(
             let best = pairs.at(0)?.cost_diff;
             if 0.0 > best { 0.0 } else { best }
         };
-        copy_histogram(tmp, out1);
+        tmp.copy_from(out1);
         tmp.add_histogram(out2);
         let cost_combo = population_cost(tmp)?;
         if cost_combo < threshold - p.cost_diff {
@@ -170,7 +162,7 @@ pub(crate) fn histogram_combine<const N: usize>(
         }
         let size2 = cluster_size.at(best_idx2 as usize)?;
         let size1 = cluster_size.at_mut(best_idx1 as usize)?;
-        *size1 = size1.wrapping_add(size2);
+        *size1 += size2;
         for symbol in symbols.sub_mut(..symbols_size)? {
             if *symbol == best_idx2 {
                 *symbol = best_idx1;
@@ -233,7 +225,7 @@ pub(crate) fn histogram_bit_cost_distance<const N: usize>(
     if histogram.total_count == 0 {
         return Ok(0.0);
     }
-    copy_histogram(tmp, histogram);
+    tmp.copy_from(histogram);
     tmp.add_histogram(candidate);
     Ok(population_cost(tmp)? - candidate.bit_cost)
 }
@@ -298,7 +290,7 @@ fn histogram_reindex<const N: usize>(
         *symbol = index;
     }
     for (to, from) in out.iter_mut().zip(&tmp) {
-        copy_histogram(to, from);
+        to.copy_from(from);
     }
     Ok(tmp.len())
 }

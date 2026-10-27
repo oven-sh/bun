@@ -3,7 +3,7 @@
 use super::Fallible;
 use super::bit_cost::{bits_entropy, population_cost};
 use super::block_splitter::{BlockSplit, split_block};
-use super::cluster::{cluster_histograms, copy_histogram};
+use super::cluster::cluster_histograms;
 use super::command::{Command, prefix_encode_copy_distance};
 use super::entropy_encode::optimize_huffman_counts_for_rle;
 use super::histogram::{
@@ -14,7 +14,7 @@ use crate::common::constants::{
     DISTANCE_CONTEXT_BITS, LITERAL_CONTEXT_BITS, MAX_NPOSTFIX, MAX_NUMBER_OF_BLOCK_TYPES,
     NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS,
 };
-use crate::common::context::{ContextLut, ContextType};
+use crate::common::context::{ContextLut, ContextType, context_lut};
 use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_zeroed};
 
 pub(crate) const MAX_STATIC_CONTEXTS: usize = 13;
@@ -164,10 +164,10 @@ pub(crate) fn build_meta_block(
     )?;
 
     let mut literal_context_multiplier = 1usize;
-    let mut literal_context_modes = None;
+    let mut literal_context_lut = None;
     if !params.disable_literal_context_modeling {
         literal_context_multiplier = 1 << LITERAL_CONTEXT_BITS;
-        literal_context_modes = Some(try_vec(literal_context_mode, mb.literal_split.num_types)?);
+        literal_context_lut = Some(context_lut(literal_context_mode));
     }
 
     let literal_histograms_size = mb.literal_split.num_types * literal_context_multiplier;
@@ -188,12 +188,11 @@ pub(crate) fn build_meta_block(
         mask,
         prev_byte,
         prev_byte2,
-        literal_context_modes.as_deref(),
+        literal_context_lut,
         &mut literal_histograms,
         &mut mb.command_histograms,
         &mut distance_histograms,
     )?;
-    drop(literal_context_modes);
 
     mb.literal_context_map = try_zeroed(mb.literal_split.num_types << LITERAL_CONTEXT_BITS)?;
     mb.literal_histograms = cluster_histograms(
@@ -321,7 +320,7 @@ impl<'a, const N: usize> BlockSplitter<'a, N> {
             let mut diff = [0f64; 2];
             let combined_histos = &mut *self.combined_histo;
             for (j, combined_histo) in combined_histos.iter_mut().enumerate() {
-                copy_histogram(combined_histo, curr_histogram);
+                combined_histo.copy_from(curr_histogram);
                 combined_histo
                     .add_histogram(histograms.get(self.last_histogram_ix.at(j)?).ok_or(Bug)?);
                 let combined = bits_entropy(combined_histo.data.sub(..self.alphabet_size)?);
@@ -352,10 +351,9 @@ impl<'a, const N: usize> BlockSplitter<'a, N> {
                 let second_last_type = split.types.at(self.num_blocks.wrapping_sub(2))?;
                 split.types.put(self.num_blocks, second_last_type)?;
                 self.last_histogram_ix.swap(0, 1);
-                copy_histogram(
-                    histograms.at_mut(self.last_histogram_ix[0])?,
-                    &combined_histos[1],
-                );
+                histograms
+                    .at_mut(self.last_histogram_ix[0])?
+                    .copy_from(&combined_histos[1]);
                 self.last_entropy[1] = self.last_entropy[0];
                 self.last_entropy[0] = combined_entropy[1];
                 self.num_blocks += 1;
@@ -366,11 +364,10 @@ impl<'a, const N: usize> BlockSplitter<'a, N> {
             } else {
                 // Merge with the last block.
                 let length = split.lengths.at_mut(self.num_blocks - 1)?;
-                *length = length.wrapping_add(self.block_size as u32);
-                copy_histogram(
-                    histograms.at_mut(self.last_histogram_ix[0])?,
-                    &combined_histos[0],
-                );
+                *length += self.block_size as u32;
+                histograms
+                    .at_mut(self.last_histogram_ix[0])?
+                    .copy_from(&combined_histos[0]);
                 self.last_entropy[0] = combined_entropy[0];
                 if split.num_types == 1 {
                     self.last_entropy[1] = self.last_entropy[0];
@@ -528,7 +525,7 @@ impl<'a> ContextBlockSplitter<'a> {
                     let jx = j * num_contexts + i;
                     let last_histogram_ix = self.last_histogram_ix.at(j)? + i;
                     let combined_histo = self.combined_histo.at_mut(jx)?;
-                    copy_histogram(combined_histo, curr_histogram);
+                    combined_histo.copy_from(curr_histogram);
                     combined_histo
                         .add_histogram(self.histograms.get(last_histogram_ix).ok_or(Bug)?);
                     let combined = bits_entropy(combined_histo.data.sub(..self.alphabet_size)?);
@@ -570,10 +567,9 @@ impl<'a> ContextBlockSplitter<'a> {
                 self.split.types.put(self.num_blocks, second_last_type)?;
                 self.last_histogram_ix.swap(0, 1);
                 for i in 0..num_contexts {
-                    copy_histogram(
-                        self.histograms.at_mut(self.last_histogram_ix[0] + i)?,
-                        self.combined_histo.get(num_contexts + i).ok_or(Bug)?,
-                    );
+                    self.histograms
+                        .at_mut(self.last_histogram_ix[0] + i)?
+                        .copy_from(self.combined_histo.get(num_contexts + i).ok_or(Bug)?);
                     let last_entropy = self.last_entropy.at(i)?;
                     self.last_entropy.put(num_contexts + i, last_entropy)?;
                     self.last_entropy
@@ -587,12 +583,11 @@ impl<'a> ContextBlockSplitter<'a> {
             } else {
                 // Merge with the last block.
                 let length = self.split.lengths.at_mut(self.num_blocks - 1)?;
-                *length = length.wrapping_add(self.block_size as u32);
+                *length += self.block_size as u32;
                 for i in 0..num_contexts {
-                    copy_histogram(
-                        self.histograms.at_mut(self.last_histogram_ix[0] + i)?,
-                        self.combined_histo.get(i).ok_or(Bug)?,
-                    );
+                    self.histograms
+                        .at_mut(self.last_histogram_ix[0] + i)?
+                        .copy_from(self.combined_histo.get(i).ok_or(Bug)?);
                     let combined = combined_entropy.at(i)?;
                     self.last_entropy.put(i, combined)?;
                     if self.split.num_types == 1 {

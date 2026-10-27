@@ -5,8 +5,8 @@ use super::command::Command;
 use crate::common::constants::{
     DISTANCE_CONTEXT_BITS, LITERAL_CONTEXT_BITS, NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS,
 };
-use crate::common::context::{ContextType, context_lut};
-use crate::util::{Checked, SliceExt};
+use crate::common::context::ContextLut;
+use crate::util::{Bug, Checked, SliceExt};
 
 /// The distance symbols that a 32-bit distance can need, large window included.
 pub(crate) const NUM_HISTOGRAM_DISTANCE_SYMBOLS: usize = 544;
@@ -58,71 +58,82 @@ impl<const N: usize> Histogram<N> {
     pub(crate) fn add_histogram(&mut self, v: &Self) {
         self.total_count += v.total_count;
         for (a, b) in self.data.iter_mut().zip(&v.data) {
-            *a = a.wrapping_add(*b);
+            *a += *b;
         }
+    }
+
+    /// `*self = *src`, without a copy on the stack.
+    #[inline(always)]
+    pub(crate) fn copy_from(&mut self, src: &Self) {
+        self.data = src.data;
+        self.total_count = src.total_count;
+        self.bit_cost = src.bit_cost;
     }
 }
 
-struct BlockSplitIterator<'a> {
+/// Follows the symbols of one category through the blocks of `split`.
+struct BlockSplitCursor<'a> {
     split: &'a BlockSplit,
-    idx: usize,
-    type_: usize,
+    block: usize,
+    block_type: usize,
+    /// How many symbols of the block are left.
     length: usize,
 }
 
-impl<'a> BlockSplitIterator<'a> {
+impl<'a> BlockSplitCursor<'a> {
     fn new(split: &'a BlockSplit) -> Self {
         Self {
             split,
-            idx: 0,
-            type_: 0,
+            block: 0,
+            block_type: 0,
             length: split.lengths.first().map_or(0, |&length| length as usize),
         }
     }
 
+    /// Goes on to the next symbol and returns the type of its block.
     #[inline(always)]
-    fn next(&mut self) -> Checked {
+    fn advance(&mut self) -> Checked<usize> {
         if self.length == 0 {
-            self.idx += 1;
-            self.type_ = usize::from(self.split.types.at(self.idx)?);
-            self.length = self.split.lengths.at(self.idx)? as usize;
+            self.block += 1;
+            self.block_type = usize::from(self.split.types.at(self.block)?);
+            self.length = self.split.lengths.at(self.block)? as usize;
+            if self.length == 0 {
+                return Err(Bug);
+            }
         }
-        self.length = self.length.wrapping_sub(1);
-        Ok(())
+        self.length -= 1;
+        Ok(self.block_type)
     }
 }
 
-/// Counts the symbols of `cmds`, for each block type and context on its own. Without `context_modes` the literals are
-/// counted for each block type only.
+/// Counts the symbols of `cmds`, for each block type and context on its own. Without `literal_context_lut` the literals
+/// are counted for each block type only.
 pub(crate) fn build_histograms_with_context(
     cmds: &[Command],
     literal_split: &BlockSplit,
-    insert_and_copy_split: &BlockSplit,
-    dist_split: &BlockSplit,
+    command_split: &BlockSplit,
+    distance_split: &BlockSplit,
     ringbuffer: &[u8],
     start_pos: usize,
     mask: usize,
     mut prev_byte: u8,
     mut prev_byte2: u8,
-    context_modes: Option<&[ContextType]>,
+    literal_context_lut: Option<&ContextLut>,
     literal_histograms: &mut [HistogramLiteral],
-    insert_and_copy_histograms: &mut [HistogramCommand],
-    copy_dist_histograms: &mut [HistogramDistance],
+    command_histograms: &mut [HistogramCommand],
+    distance_histograms: &mut [HistogramDistance],
 ) -> Checked {
     let mut pos = start_pos;
-    let mut literal_it = BlockSplitIterator::new(literal_split);
-    let mut insert_and_copy_it = BlockSplitIterator::new(insert_and_copy_split);
-    let mut dist_it = BlockSplitIterator::new(dist_split);
+    let mut literal_blocks = BlockSplitCursor::new(literal_split);
+    let mut command_blocks = BlockSplitCursor::new(command_split);
+    let mut distance_blocks = BlockSplitCursor::new(distance_split);
     for cmd in cmds {
-        insert_and_copy_it.next()?;
-        insert_and_copy_histograms
-            .at_mut(insert_and_copy_it.type_)?
+        command_histograms
+            .at_mut(command_blocks.advance()?)?
             .add(usize::from(cmd.cmd_prefix))?;
         for _ in 0..cmd.insert_len {
-            literal_it.next()?;
-            let mut context = literal_it.type_;
-            if let Some(context_modes) = context_modes {
-                let lut = context_lut(context_modes.at(context)?);
+            let mut context = literal_blocks.advance()?;
+            if let Some(lut) = literal_context_lut {
                 context = (context << LITERAL_CONTEXT_BITS)
                     + usize::from(lut.context(prev_byte, prev_byte2));
             }
@@ -139,10 +150,9 @@ pub(crate) fn build_histograms_with_context(
             prev_byte2 = ringbuffer.at(pos.wrapping_sub(2) & mask)?;
             prev_byte = ringbuffer.at(pos.wrapping_sub(1) & mask)?;
             if cmd.has_distance_symbol() {
-                dist_it.next()?;
-                let context =
-                    (dist_it.type_ << DISTANCE_CONTEXT_BITS) + cmd.distance_context() as usize;
-                copy_dist_histograms
+                let context = (distance_blocks.advance()? << DISTANCE_CONTEXT_BITS)
+                    + cmd.distance_context() as usize;
+                distance_histograms
                     .at_mut(context)?
                     .add(cmd.dist_prefix.symbol())?;
             }

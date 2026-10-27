@@ -480,7 +480,7 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
     let mut block_idx = 0usize;
     let mut max_type = 0u8;
     for i in 0..num_blocks {
-        cur_length = cur_length.wrapping_add(block_lengths.at(i)?);
+        cur_length += block_lengths.at(i)?;
         let symbol = histogram_symbols.at(i)?;
         if i + 1 == num_blocks || symbol != histogram_symbols.at(i + 1)? {
             let id = new_index.at(symbol as usize)? as u8;
@@ -565,8 +565,8 @@ pub(crate) fn split_block(
     mask: usize,
     params: &EncoderParams,
     literal_split: &mut BlockSplit,
-    insert_and_copy_split: &mut BlockSplit,
-    dist_split: &mut BlockSplit,
+    command_split: &mut BlockSplit,
+    distance_split: &mut BlockSplit,
 ) -> Fallible {
     {
         let mut literals = Vec::new();
@@ -586,40 +586,40 @@ pub(crate) fn split_block(
     }
 
     {
-        let mut insert_and_copy_codes = Vec::new();
-        insert_and_copy_codes
+        let mut command_symbols = Vec::new();
+        command_symbols
             .try_reserve_exact(cmds.len())
             .map_err(|_| AllocError)?;
-        insert_and_copy_codes.extend(cmds.iter().map(|cmd| cmd.cmd_prefix));
+        command_symbols.extend(cmds.iter().map(|cmd| cmd.cmd_prefix));
         split_byte_vector::<u16, NUM_COMMAND_SYMBOLS>(
-            &insert_and_copy_codes,
+            &command_symbols,
             SYMBOLS_PER_COMMAND_HISTOGRAM,
             MAX_COMMAND_HISTOGRAMS,
             COMMAND_STRIDE_LENGTH,
             COMMAND_BLOCK_SWITCH_COST,
             params,
-            insert_and_copy_split,
+            command_split,
         )?;
     }
 
     {
-        let mut distance_prefixes = Vec::new();
-        distance_prefixes
+        let mut distance_symbols = Vec::new();
+        distance_symbols
             .try_reserve_exact(cmds.len())
             .map_err(|_| AllocError)?;
-        distance_prefixes.extend(
+        distance_symbols.extend(
             cmds.iter()
                 .filter(|cmd| cmd.has_distance_symbol())
                 .map(|cmd| cmd.dist_prefix.symbol() as u16),
         );
         split_byte_vector::<u16, NUM_HISTOGRAM_DISTANCE_SYMBOLS>(
-            &distance_prefixes,
+            &distance_symbols,
             SYMBOLS_PER_DISTANCE_HISTOGRAM,
             MAX_COMMAND_HISTOGRAMS,
             DISTANCE_STRIDE_LENGTH,
             DISTANCE_BLOCK_SWITCH_COST,
             params,
-            dist_split,
+            distance_split,
         )?;
     }
     Ok(())

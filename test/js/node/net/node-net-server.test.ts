@@ -12,15 +12,17 @@ const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path
 const socket_domain = join(realpathSync(tmpdir()), "node-net-server.sock");
 
 // Runs a command under a seccomp filter that fails socket(<family>, ...) with <errno>, as a kernel
-// without that address family does. `skip` means this host cannot do that (no cc, missing headers,
-// or a kernel or sandbox that refuses the filter). `error` is a compile failure of the helper itself.
+// without that address family does. `skip` means this host cannot do that (no C compiler, no kernel
+// headers, or a kernel or sandbox that refuses the filter). `error` is a bug in the helper itself.
 const AF_UNIX = 1;
 const AF_INET6 = 10;
 const EMFILE = 24;
 const EAFNOSUPPORT = 97;
 const denySocket: { bin: string } | { skip: true } | { error: string } = (() => {
-  if (!isLinux) return { skip: true };
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  if (!isLinux || !cc) return { skip: true };
   const dir = tempDir("deny-socket", {
+    "kernel-headers.c": "#include <linux/filter.h>\n#include <linux/seccomp.h>\n",
     "deny-socket.c": `
 #include <errno.h>
 #include <linux/filter.h>
@@ -59,18 +61,22 @@ int main(int argc, char **argv) {
     const bin = join(String(dir), "deny-socket");
     try {
       const compile = Bun.spawnSync({
-        cmd: ["cc", "-O0", "-o", bin, join(String(dir), "deny-socket.c")],
+        cmd: [cc, "-O0", "-o", bin, join(String(dir), "deny-socket.c")],
         stderr: "pipe",
       });
       if (compile.exitCode !== 0) {
-        const stderr = compile.stderr.toString();
-        // A missing header or libc means this host cannot build C. Anything else is a bug in the helper.
-        return stderr.includes("No such file or directory") ? { skip: true } : { error: stderr };
+        // A host without the kernel headers (a separate package on some distros) skips. Any other failure is a bug.
+        const headers = Bun.spawnSync({
+          cmd: [cc, "-E", join(String(dir), "kernel-headers.c")],
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        return headers.exitCode === 0 ? { error: compile.stderr.toString() } : { skip: true };
       }
       const probe = Bun.spawnSync({ cmd: [bin, String(AF_INET6), String(EAFNOSUPPORT), "--probe"] });
       return probe.exitCode === 0 ? { bin } : { skip: true };
     } catch {
-      // spawnSync throws when there is no cc, or when the host cannot run the binary it built.
+      // spawnSync throws when the host cannot run the binary it built.
       return { skip: true };
     }
   })();

@@ -3190,13 +3190,68 @@ mod posix_impl {
         );
         Ok(n as usize)
     }
-    pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-        recv(fd, buf, MSG_DONTWAIT)
+    /// Latched once `recv(2)` / `send(2)` returned EPERM or ENOSYS: a seccomp
+    /// policy that blocks the socket syscalls (to deny networking) but leaves
+    /// `read(2)` / `write(2)` alone. Node (libuv) only ever uses `read`/`write` on
+    /// a stream handle, so those keep working on the socketpair behind a child's
+    /// stdio. Process-wide because a seccomp filter is.
+    static SOCKET_RECV_DENIED: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+    static SOCKET_SEND_DENIED: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+
+    fn is_socket_syscall_denied(err: &Error) -> bool {
+        matches!(err.get_errno(), E::EPERM | E::ENOSYS)
     }
-    /// `MSG_DONTWAIT | MSG_NOSIGNAL` so a broken-pipe write
-    /// returns EPIPE instead of raising SIGPIPE.
+
+    /// `read(2)` stands in for `recv(MSG_DONTWAIT)`: `poll(0)` first so a
+    /// blocking socket with nothing to read reports EAGAIN instead of blocking.
+    fn recv_fallback(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+        match bun_core::is_readable(fd) {
+            bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
+            bun_core::Pollable::NotReady => Err(Error::retry().with_fd(fd)),
+        }
+    }
+
+    /// `write(2)` stands in for `send(MSG_DONTWAIT | MSG_NOSIGNAL)`. `poll(0)`
+    /// first, as in `recv_fallback`. SIGPIPE is ignored process-wide at startup,
+    /// so a broken pipe still reports EPIPE.
+    fn send_fallback(fd: Fd, buf: &[u8]) -> Maybe<usize> {
+        match bun_core::is_writable(fd) {
+            bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
+            bun_core::Pollable::NotReady => Err(Error::retry().with_fd(fd)),
+        }
+    }
+
+    /// `recv(MSG_DONTWAIT)`, or `poll(0)` + `read(2)` once the kernel has denied `recv`.
+    pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+        use core::sync::atomic::Ordering;
+        if SOCKET_RECV_DENIED.load(Ordering::Relaxed) {
+            return recv_fallback(fd, buf);
+        }
+        match recv(fd, buf, MSG_DONTWAIT) {
+            Err(err) if is_socket_syscall_denied(&err) => {
+                SOCKET_RECV_DENIED.store(true, Ordering::Relaxed);
+                recv_fallback(fd, buf)
+            }
+            rc => rc,
+        }
+    }
+    /// `send(MSG_DONTWAIT | MSG_NOSIGNAL)` so a broken-pipe write returns EPIPE
+    /// instead of raising SIGPIPE, or `poll(0)` + `write(2)` once the kernel has
+    /// denied `send`.
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
-        send(fd, buf, SEND_FLAGS_NONBLOCK)
+        use core::sync::atomic::Ordering;
+        if SOCKET_SEND_DENIED.load(Ordering::Relaxed) {
+            return send_fallback(fd, buf);
+        }
+        match send(fd, buf, SEND_FLAGS_NONBLOCK) {
+            Err(err) if is_socket_syscall_denied(&err) => {
+                SOCKET_SEND_DENIED.store(true, Ordering::Relaxed);
+                send_fallback(fd, buf)
+            }
+            rc => rc,
+        }
     }
     pub(crate) const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
     /// XNU's `sosend` only honours `MSG_NBIO` (private, 0x20000) for "don't wait for buffer space"; `MSG_DONTWAIT` alone still blocks there.

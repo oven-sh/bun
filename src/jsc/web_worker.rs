@@ -38,7 +38,7 @@
 //! a pointer to it.
 
 use crate::JsCell;
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -75,7 +75,6 @@ pub struct WebWorker {
     /// Created by `node:worker_threads`' `Worker` (as opposed to the Web `Worker`
     /// constructor): loads `node:worker_threads` before preloads and the entry point.
     is_node_worker: bool,
-    store_fd: bool,
     /// Borrowed from the proxy's `WorkerOptions` (alive as long as the proxy).
     argv_ptr: *const WTFStringImpl,
     argv_len: usize,
@@ -134,7 +133,7 @@ struct WorkerVmInit {
 
 enum EntryOutcome {
     Continue,
-    /// The entry module rejected and no handler took it: the worker exits.
+    /// The entry module rejected, and either no handler caught it or the handler stopped the worker.
     Stop,
 }
 
@@ -286,6 +285,7 @@ impl WebWorker {
         name_str: &BunString,
         specifier_str: &BunString,
         error_message: &mut BunString,
+        error_is_invalid_exec_argv: &mut bool,
         _parent_context_id: u32,
         this_context_id: u32,
         mini: bool,
@@ -333,10 +333,17 @@ impl WebWorker {
                 preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
                 continue;
             }
+            let dot_slash = OnceCell::new();
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
             // `resolve_entry_point_specifier` takes the raw pointer.
             if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message, temp_log)
+                resolve_entry_point_specifier(
+                    parent,
+                    utf8_slice.slice(),
+                    &dot_slash,
+                    error_message,
+                    temp_log,
+                )
             } {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
@@ -351,7 +358,6 @@ impl WebWorker {
         // its own thread; the worker never dereferences `parent`.
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ref = unsafe { &*parent };
-        let store_fd = parent_ref.transpiler.resolver.store_fd;
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
@@ -364,6 +370,16 @@ impl WebWorker {
                 ))
             };
             if let Some(flags) = parsed {
+                if let Some(invalid) = flags.invalid {
+                    use bun_core::WTFStringImplExt as _;
+                    // SAFETY: an index into the same slice, whose strings the caller keeps alive.
+                    let arg = unsafe { &**exec_argv_ptr.add(invalid) }.to_owned_slice_z();
+                    let mut message = b"Initiated Worker with invalid execArgv flags: ".to_vec();
+                    message.extend_from_slice(arg.as_bytes());
+                    *error_message = BunString::clone_utf8(&message);
+                    *error_is_invalid_exec_argv = true;
+                    return core::ptr::null_mut();
+                }
                 let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
                 transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
                 let parent_allows_ffi_cc = transform_options.allow_ffi_cc.unwrap_or(true);
@@ -406,7 +422,6 @@ impl WebWorker {
             mini,
             eval_mode,
             is_node_worker,
-            store_fd,
             argv_ptr,
             argv_len,
             exec_argv_ptr,
@@ -692,7 +707,6 @@ impl WebWorker {
             virtual_machine::Options {
                 args: transform_options,
                 env_loader: NonNull::new(loader_ptr),
-                store_fd: self.store_fd,
                 graph: crate::virtual_machine::standalone_module_graph(),
                 ..Default::default()
             },
@@ -808,11 +822,13 @@ impl WebWorker {
         // here would never run anyway.
         let mut resolve_error = BunString::EMPTY;
         let vm_log = vm.log_mut().unwrap();
+        let dot_slash = OnceCell::new();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
         let path = match unsafe {
             resolve_entry_point_specifier(
                 vm_ptr,
                 &self.unresolved_specifier,
+                &dot_slash,
                 &mut resolve_error,
                 vm_log,
             )
@@ -857,7 +873,7 @@ impl WebWorker {
         }
 
         // `path` borrows the resolver's process-lifetime string store, the
-        // standalone module graph, or `self.unresolved_specifier` — all of
+        // standalone module graph, `self.unresolved_specifier` or `dot_slash` — all of
         // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
         // (see `VirtualMachine::set_main`); no lifetime extension needed.
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
@@ -877,6 +893,11 @@ impl WebWorker {
         // so buffered postMessageToThread deliveries drain and the sender's
         // Atomics.waitAsync settles. WebWorker__entrySettled re-calls it as a no-op.
         WebWorker__entrySettled(vm.global());
+        // The hook runs JS, which can request termination. If it did, stop before the start sequence's GC.
+        if self.has_requested_terminate() {
+            self.flush_logs(vm);
+            return self.shutdown();
+        }
 
         // The entry's evaluation outcome is checked once now and then after every
         // loop turn: a rejection (immediate, or a top-level await rejecting
@@ -901,7 +922,7 @@ impl WebWorker {
                     (*promise).result(vm.jsc_vm()),
                     is_rejection,
                 );
-                if handled {
+                if handled && !self.has_requested_terminate() {
                     EntryOutcome::Continue
                 } else {
                     EntryOutcome::Stop
@@ -909,8 +930,8 @@ impl WebWorker {
             }
         };
         if let EntryOutcome::Stop = observe_entry(vm) {
-            // exit_code is already 1 from uncaught_exception; re-setting it here
-            // would clobber a process.on('exit') change to process.exitCode.
+            // exit_code is already set (1, or the handler's process.exit() code). Setting it again
+            // here would clobber a process.on('exit') change to process.exitCode.
             return self.shutdown();
         }
         // A still-pending entry promise is an unsettled top-level await: as in
@@ -1012,45 +1033,13 @@ impl WebWorker {
         drop(self.vm_handle.lock().take());
         let vm_ptr = self.vm.replace(core::ptr::null_mut());
 
-        // ---- 2. User exit handlers -----------------------------------------
+        // ---- 2–5. User exit handlers; stop, forbid script, wait, ~VM, loops, destroy
         let mut exit_code: i32 = 0;
         if !vm_ptr.is_null() {
-            // SAFETY: vm_ptr valid; no other thread holds a pointer to it (they
-            // only ever held its handle) — `&mut` is exclusive.
-            let vm = unsafe { &mut *vm_ptr };
-            vm.is_shutting_down = true;
-            vm.on_exit();
-            exit_code = i32::from(vm.exit_handler.exit_code);
-            log!(
-                "[{}] shutdown: exit handlers done",
-                self.execution_context_id
-            );
-
-            // ---- 3–5. Stop, forbid script, wait, ~VM, loops, destroy ----------
-            // SAFETY: this thread's VM; sole owner.
-            unsafe { VirtualMachine::teardown(vm_ptr, crate::virtual_machine::Teardown::Worker) };
-
-            // `destroy()` deinits the fields; reclaim the storage `init` put on
-            // the global heap (worker `init_worker` always passes `log: None`,
-            // so the log box is VM-owned here).
-            // SAFETY: sole owner; nothing past this point dereferences the VM.
-            unsafe {
-                let console = core::mem::replace(&mut (*vm_ptr).console, core::ptr::null_mut());
-                if !console.is_null() {
-                    bun_core::heap::destroy(console);
-                }
-                if let Some(log) = (*vm_ptr).log.take() {
-                    bun_core::heap::destroy(log.as_ptr());
-                }
-                virtual_machine::VMHolder::set_vm(None);
-                // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
-                // `init`, NOT `Box::new` — dealloc the raw storage directly so
-                // field `Drop`s do not re-run on already-`deinit`'d state.
-                std::alloc::dealloc(
-                    vm_ptr.cast::<u8>(),
-                    core::alloc::Layout::new::<VirtualMachine>(),
-                );
-            }
+            // SAFETY: this thread's VM, whose API lock `thread_main` took; no other
+            // thread holds a pointer to it (they only ever held its handle);
+            // `init_worker` always passes `log: None`.
+            exit_code = i32::from(unsafe { VirtualMachine::exit_and_free(vm_ptr) });
         }
         log!(
             "[{}] shutdown: VirtualMachine destroyed",
@@ -1162,7 +1151,7 @@ impl WebWorker {
 
 fn on_unhandled_rejection(
     vm: &mut VirtualMachine,
-    global_object: &JSGlobalObject,
+    _: &JSGlobalObject,
     error_instance_or_exception: JSValue,
 ) {
     // Prevent recursion
@@ -1175,6 +1164,9 @@ fn on_unhandled_rejection(
     if !vm.script_allowed() {
         return;
     }
+
+    // The realm that raised the error may be a node:vm context.
+    let global_object = vm.global();
 
     let mut error_instance = error_instance_or_exception
         .to_error()
@@ -1263,7 +1255,7 @@ fn on_unhandled_rejection(
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can
-/// consume. The returned slice is BORROWED — it aliases `str`, the
+/// consume. The returned slice is BORROWED — it aliases `str`, `dot_slash`, the
 /// standalone module graph, or the resolver's arena; the caller must NOT
 /// free it.
 ///
@@ -1275,6 +1267,7 @@ fn on_unhandled_rejection(
 unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
+    dot_slash: &'s OnceCell<Vec<u8>>,
     error_message: &mut BunString,
     log: &mut bun_ast::Log,
 ) -> Option<&'s [u8]> {
@@ -1317,7 +1310,9 @@ unsafe fn resolve_entry_point_specifier<'s>(
     let global = unsafe { (*parent).global };
     // SAFETY: same as above — `parent`'s `transpiler` is mutated only on its
     // owning thread (the caller's thread per fn contract).
-    let resolved_entry_point = match unsafe { (*parent).transpiler.resolve_entry_point(str) } {
+    let resolved_entry_point = match unsafe {
+        (*parent).transpiler.resolve_entry_point(str, dot_slash)
+    } {
         Ok(r) => r,
         Err(_) => {
             // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
@@ -1340,9 +1335,6 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     };
 
-    // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
-    // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
-    // copy the slice out and let `resolved_entry_point` drop on the stack.
     Some(
         resolved_entry_point
             .path_const()

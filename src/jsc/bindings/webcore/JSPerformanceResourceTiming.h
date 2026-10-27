@@ -29,7 +29,6 @@ namespace WebCore {
 class JSPerformanceResourceTiming : public JSPerformanceEntry {
 public:
     using Base = JSPerformanceEntry;
-    using DOMWrapped = PerformanceResourceTiming;
     static JSPerformanceResourceTiming* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceResourceTiming>&& impl)
     {
         auto& vm = JSC::getVM(globalObject);
@@ -61,8 +60,6 @@ public:
     {
         return static_cast<PerformanceResourceTiming&>(Base::wrapped());
     }
-
-    Ref<PerformanceResourceTiming> protectedWrapped() const;
 
 protected:
     JSPerformanceResourceTiming(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceResourceTiming>&&);

@@ -50,7 +50,7 @@ const socket = await Bun.connect({
     close() {},
     error() {},
     session() {},
-  },
+  } as Bun.SocketHandler,
 });
 
 await gotUncaught;

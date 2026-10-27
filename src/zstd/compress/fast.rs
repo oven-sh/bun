@@ -537,20 +537,18 @@ impl Finder {
             sink.store::<32>(start, end, off_base);
 
             // `ip0` is not past the last position that can be looked at.
-            let Some(bytes) = near.read64(ip0) else {
+            let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip0 - 2) else {
                 break 'block;
             };
-            bytes0 = bytes;
+            bytes0 = le64_at::<2, _>(around);
             if let Some(to_insert) = near.read64((current0 + 2).wrapping_sub(base_index)) {
                 hashed_put(hash_table, hasher.hash(to_insert), current0 + 2);
             }
-            if let Some(before) = near.read64(ip0 - 2) {
-                hashed_put(
-                    hash_table,
-                    hasher.hash(before),
-                    base_index.wrapping_add(ip0 - 2),
-                );
-            }
+            hashed_put(
+                hash_table,
+                hasher.hash(le64_at::<0, _>(around)),
+                base_index.wrapping_add(ip0 - 2),
+            );
 
             while rep_offset2 > 0 && sink.read32_before(ip0, rep_offset2) == Some(bytes0 as u32) {
                 let end = ip0 + 4 + sink.count_before(ip0 + 4, rep_offset2);
@@ -560,7 +558,7 @@ impl Finder {
                     hasher.hash(bytes0),
                     base_index.wrapping_add(ip0),
                 );
-                sink.store::<32>(ip0, end, REPCODE1_TO_OFFBASE);
+                sink.store_repeat(end);
                 ip0 = end;
                 let Some(bytes) = near.read64(ip0) else {
                     break 'block;

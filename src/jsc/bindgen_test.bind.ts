@@ -29,6 +29,7 @@ export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, retur
 export const utf8Owned = b.fn({ args: { text: b.string.utf8.owned }, returns: b.string.utf8 });
 export const stringEcho = b.fn({ args: { text: b.string }, returns: b.string });
 export const stringViewEcho = b.fn({ args: { text: b.string.view }, returns: b.string });
+export const stringViewCloneOutlivesBytes = b.fn({ args: { text: b.string.utf8 }, returns: b.string });
 export const stringOrObjectViewEcho = b.fn({
   args: { text: b.string.allowStringObject.view.optional },
   returns: b.string.optional,

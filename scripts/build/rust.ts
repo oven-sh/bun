@@ -767,7 +767,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   n.phony("rust-codegen-ready", inputs.codegenOrderOnly);
 
   // The shim first: bun_install embeds its executable, so every edge of that package waits for it. Its crates
-  // (bun_windows_sys, bun_opaque and the shim itself) include nothing generated, so they wait for no codegen.
+  // (bun_windows_sys, bun_opaque, bun_pod and the shim itself) include nothing generated, so they wait for no codegen.
   const packageInputs: Record<string, string[]> = {};
   if (shim?.plan !== undefined) {
     const graph = buildRustGraph(shim.plan, shim.dir);

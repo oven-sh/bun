@@ -185,6 +185,9 @@ export const npm_manifest_test_helpers = $bindgen("npm_jsc.bind.ts", "npmManifes
 
 export const readTarball = $bindgen("pack_command.bind.ts", "readTarball");
 
+export const readTar = $bindgen("ArchiveInternals.bind.ts", "readTar");
+export const writeTar = $bindgen("ArchiveInternals.bind.ts", "writeTar");
+
 export const isArchitectureMatch: (architecture: string[]) => boolean = $bindgen(
   "npm_jsc.bind.ts",
   "architectureIsMatch",

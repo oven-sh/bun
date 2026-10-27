@@ -28,6 +28,7 @@ const { SafeSet } = require("internal/primordials");
 const { kAutoDestroyed } = require("internal/shared");
 
 const ObjectDefineProperties = Object.defineProperties;
+const ObjectDefineProperty = Object.defineProperty;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
@@ -1727,6 +1728,58 @@ Readable.wrap = function (src, options?) {
     },
   }).wrap(src);
 };
+
+// Node defines the operators below in lib/stream.js. Here a user of this class may never load node:stream.
+Stream.Readable = Readable as unknown as typeof Stream.Readable;
+
+// Function.length of each operator. internal/streams/operators loads when one is first called.
+type Operators = typeof import("internal/streams/operators").default;
+const streamOperatorLengths = { drop: 1, filter: 2, flatMap: 2, map: 2, take: 1 } satisfies Record<
+  keyof Operators["streamReturningOperators"],
+  number
+>;
+const promiseOperatorLengths = { every: 1, forEach: 2, reduce: 3, toArray: 1, some: 1, find: 2 } satisfies Record<
+  keyof Operators["promiseReturningOperators"],
+  number
+>;
+let operators: Operators | undefined;
+
+function installOperator(key: string, length: number, call: (this: unknown, args: unknown[]) => unknown) {
+  function fn(...args) {
+    if (new.target) {
+      throw $ERR_ILLEGAL_CONSTRUCTOR();
+    }
+    return call.$call(this, args);
+  }
+  ObjectDefineProperty(fn, "name", { __proto__: null, value: key });
+  ObjectDefineProperty(fn, "length", { __proto__: null, value: length });
+  ObjectDefineProperty(Readable.prototype, key, {
+    __proto__: null,
+    value: fn,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+}
+
+const streamOperatorKeys = ObjectKeys(streamOperatorLengths);
+for (let i = 0; i < streamOperatorKeys.length; i++) {
+  const key = streamOperatorKeys[i];
+  let op;
+  installOperator(key, streamOperatorLengths[key], function (args) {
+    op ??= (operators ??= require("internal/streams/operators")).streamReturningOperators[key];
+    return Stream.Readable.from(op.$apply(this, args));
+  });
+}
+const promiseOperatorKeys = ObjectKeys(promiseOperatorLengths);
+for (let i = 0; i < promiseOperatorKeys.length; i++) {
+  const key = promiseOperatorKeys[i];
+  let op;
+  installOperator(key, promiseOperatorLengths[key], function (args) {
+    op ??= (operators ??= require("internal/streams/operators")).promiseReturningOperators[key];
+    return op.$apply(this, args);
+  });
+}
 
 export default Readable as unknown as typeof import("node:stream").Readable & {
   ReadableState: typeof ReadableState;

@@ -4,16 +4,18 @@ const { validateAbortSignal, validateFunction, validateInteger, validateObject }
 const { kWeakHandler, resistStopPropagation } = require("internal/shared");
 const { finished } = require("internal/streams/end-of-stream");
 
-const MathFloor = Math.floor;
-const PromiseResolve = Promise.$resolve.bind(Promise);
-const PromiseReject = Promise.$reject.bind(Promise);
 const PromisePrototypeThen = $Promise.prototype.$then;
-const ArrayPrototypePush = Array.prototype.push;
-const NumberIsNaN = Number.isNaN;
-const ObjectDefineProperty = Object.defineProperty;
 
 const kEmpty = Symbol("kEmpty");
 const kEof = Symbol("kEof");
+
+// Math.floor without a read of Math, which user code can replace before this module loads.
+function floor(value) {
+  const number = +value;
+  const fraction = number % 1;
+  if (fraction !== fraction || fraction === 0) return number;
+  return fraction < 0 ? number - fraction - 1 : number - fraction;
+}
 
 function map(fn, options) {
   validateFunction(fn, "fn");
@@ -26,12 +28,12 @@ function map(fn, options) {
 
   let concurrency = 1;
   if (options?.concurrency != null) {
-    concurrency = MathFloor(options.concurrency);
+    concurrency = floor(options.concurrency);
   }
 
   let highWaterMark = concurrency - 1;
   if (options?.highWaterMark != null) {
-    highWaterMark = MathFloor(options.highWaterMark);
+    highWaterMark = floor(options.highWaterMark);
   }
 
   validateInteger(concurrency, "options.concurrency", 1);
@@ -85,9 +87,9 @@ function map(fn, options) {
               continue;
             }
 
-            val = PromiseResolve(val);
+            val = Promise.$resolve(val);
           } catch (err) {
-            val = PromiseReject(err);
+            val = Promise.$reject(err);
           }
 
           cnt += 1;
@@ -108,7 +110,7 @@ function map(fn, options) {
         }
         queue.push(kEof);
       } catch (err) {
-        const val = PromiseReject(err);
+        const val = Promise.$reject(err);
         PromisePrototypeThen.$call(val, afterItemProcessed, onCatch);
         queue.push(val);
       } finally {
@@ -272,7 +274,7 @@ async function toArray(options) {
     if (options?.signal?.aborted) {
       throw $makeAbortError(undefined, { cause: options.signal.reason });
     }
-    ArrayPrototypePush.$call(result, val);
+    $arrayPush(result, val);
   }
   return result;
 }
@@ -291,7 +293,7 @@ function toIntegerOrInfinity(number) {
   // We coerce here to align with the spec
   // https://github.com/tc39/proposal-iterator-helpers/issues/169
   number = Number(number);
-  if (NumberIsNaN(number)) {
+  if (number !== number) {
     return 0;
   }
   if (number < 0) {
@@ -323,7 +325,6 @@ function drop(number, options?) {
     }
   }.$call(this);
 }
-ObjectDefineProperty(drop, "length", { value: 1 });
 
 function take(number, options?: { signal: AbortSignal }) {
   if (options != null) {
@@ -353,7 +354,6 @@ function take(number, options?: { signal: AbortSignal }) {
     }
   }.$call(this);
 }
-ObjectDefineProperty(take, "length", { value: 1 });
 
 export default {
   streamReturningOperators: {

@@ -584,6 +584,10 @@ JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
 
 void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
 {
+    // evaluate() of a module that a walk postponed, and that no Evaluate() has run yet, comes here a second time.
+    if (std::exchange(m_importMetaInitialized, true))
+        return;
+
     if (!m_initializeImportMeta || !m_initializeImportMeta.get().isCallable()) {
         return;
     }

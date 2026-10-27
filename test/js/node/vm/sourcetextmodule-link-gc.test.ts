@@ -99,12 +99,8 @@ test.skipIf(isWindows)(
 function evaluationErrorFixture(iterations: number) {
   return `
       import * as vm from "node:vm";
-      // Separate, pre-existing bug: the throwing top-level-await module below
-      // (shared by two importers) reports one unhandled rejection per graph even
-      // though every evaluate() is awaited and caught. Tolerate exactly that one
-      // so the crash under test stays the only way this process exits nonzero.
+      // Every evaluate() below is awaited and caught, so nothing is unhandled.
       process.on("unhandledRejection", e => {
-        if (e instanceof URIError && e.message === "tla") return;
         console.error("unexpected unhandled rejection:", e);
         process.exit(3);
       });

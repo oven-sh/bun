@@ -55,7 +55,9 @@ public:
     // Purposely not virtual. Dispatches to the correct subclass.
     AbstractModuleRecord* moduleRecord(JSC::JSGlobalObject* globalObject);
 
-    JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
+    // One evaluate() call of a program with the evaluate() calls of the dependencies below it. Defined in NodeVMModule.cpp.
+    struct DependencyWalk;
+    JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint, DependencyWalk* = nullptr);
 
     // For top-level-await modules JSC finishes evaluation asynchronously
     // (record status EvaluatingAsync -> Evaluated); pull the final state into
@@ -66,10 +68,13 @@ public:
     void propagateLinked();
 
     JSC::Exception* evaluationException() const { return m_evaluationException.get(); }
+    JSC::Exception* evaluationFailure(JSC::VM&);
 
 protected:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;
+    // Tarjan's lowlink in a DependencyWalk. Not 0 from the start of evaluate() until an Evaluate() has started the body of the module.
+    uint32_t m_walkLowest { 0 };
     WriteBarrier<JSModuleNamespaceObject> m_namespaceObject;
     WriteBarrier<JSObject> m_context;
     WriteBarrier<Unknown> m_evaluationResult;
@@ -80,7 +85,7 @@ protected:
 
     NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper);
 
-    void evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint);
+    void evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint, DependencyWalk&, uint32_t& lowest);
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

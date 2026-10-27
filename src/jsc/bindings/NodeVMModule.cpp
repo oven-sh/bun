@@ -12,7 +12,32 @@
 
 #include "../vm/NodeVMRunTermination.h"
 
+#include <wtf/Scope.h>
+
 namespace Bun {
+
+static thread_local NodeVMModule::DependencyWalk* s_innermostDependencyWalkOnThisThread = nullptr;
+
+// One evaluate() call of a program with the evaluate() calls of the dependencies below it. It finds the import cycles (Tarjan).
+struct NodeVMModule::DependencyWalk {
+    WTF_MAKE_NONCOPYABLE(DependencyWalk);
+
+public:
+    DependencyWalk()
+        : enclosing(std::exchange(s_innermostDependencyWalkOnThisThread, this))
+        , firstIndex(enclosing ? enclosing->nextIndex : 1)
+        , nextIndex(firstIndex)
+    {
+    }
+    ~DependencyWalk() { s_innermostDependencyWalkOnThisThread = enclosing; }
+
+    // Modules with their dependencies done and no Evaluate() of their own: the Evaluate() of a module entered before them runs them.
+    MarkedArgumentBuffer postponed;
+    // The walk whose module code called the evaluate() that started this one. Its numbers are all below firstIndex.
+    DependencyWalk* const enclosing;
+    const uint32_t firstIndex;
+    uint32_t nextIndex;
+};
 
 NodeVMModuleRequest::NodeVMModuleRequest(WTF::String specifier, WTF::HashMap<WTF::String, WTF::String> importAttributes)
     : m_specifier(WTF::move(specifier))
@@ -54,7 +79,9 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 {
-    if (m_status != Status::Evaluating)
+    // A walk postponed this module and the Evaluate() that runs it has started: the module is Linked until that Evaluate() reaches it.
+    bool postponed = m_status == Status::Linked && m_walkLowest;
+    if (m_status != Status::Evaluating && !postponed)
         return;
 
     auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);
@@ -63,7 +90,13 @@ void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 
     // JSModuleRecord is a CyclicModuleRecord; no downcast machinery needed.
     JSC::JSModuleRecord* cyclic = sourceTextThis->moduleRecordIfExists();
-    if (!cyclic || cyclic->status() != JSC::CyclicModuleRecord::Status::Evaluated)
+    if (!cyclic)
+        return;
+    if (postponed && cyclic->status() > JSC::CyclicModuleRecord::Status::Linked) {
+        status(Status::Evaluating);
+        m_walkLowest = 0;
+    }
+    if (cyclic->status() != JSC::CyclicModuleRecord::Status::Evaluated)
         return;
 
     if (JSValue error = cyclic->evaluationError(); error && !error.isEmpty()) {
@@ -74,7 +107,22 @@ void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
     }
 }
 
-JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint)
+// What JSC's Evaluate() throws for a module that it does not run again: its error, or the error of the import cycle it ran in.
+JSC::Exception* NodeVMModule::evaluationFailure(JSC::VM& vm)
+{
+    reconcileEvaluationState(vm);
+    if (m_status == Status::Errored)
+        return m_evaluationException.get();
+    auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);
+    if (m_status != Status::Evaluated || !sourceTextThis)
+        return nullptr;
+    JSC::JSModuleRecord* cyclic = sourceTextThis->moduleRecordIfExists();
+    JSC::CyclicModuleRecord* cycleRoot = cyclic ? cyclic->cycleRoot() : nullptr;
+    JSValue error = cycleRoot ? cycleRoot->evaluationError() : JSValue();
+    return error ? JSC::Exception::create(vm, error) : nullptr;
+}
+
+JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint, DependencyWalk* walk)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -101,7 +149,13 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             }
             RETURN_IF_EXCEPTION(scope, {});
         }
-        return m_evaluationResult.get();
+        if (JSC::Exception* failure = evaluationFailure(vm)) {
+            scope.throwException(globalObject, failure);
+            return {};
+        }
+        // A module that ran in the Evaluate() of another module has no result of its own.
+        JSValue evaluationResult = m_evaluationResult.get();
+        return evaluationResult ? evaluationResult : jsUndefined();
     }
 
     auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);
@@ -147,18 +201,74 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     VM_RETURN_IF_EXCEPTION(scope, {});
     if (nodeVmGlobalObject) globalObject = nodeVmGlobalObject;
 
+    bool isDependency = walk;
+    std::optional<DependencyWalk> ownWalk;
+    uint32_t index = 0;
+    size_t postponedBefore = 0;
+    bool postponed = false;
+    if (sourceTextThis) {
+        if (!walk)
+            walk = &ownWalk.emplace();
+        index = walk->nextIndex++;
+        postponedBefore = walk->postponed.size();
+        m_walkLowest = index;
+    } else
+        walk = nullptr;
+    // The modules postponed during this call waited for the Evaluate() of this module, unless it is postponed too.
+    auto leaveWalk = makeScopeExit([&] {
+        if (!walk || postponed)
+            return;
+        m_walkLowest = 0;
+        JSC::Exception* runError = scope.exception();
+        if (runError && vm.isTerminationException(runError))
+            runError = nullptr;
+        while (walk->postponed.size() > postponedBefore) {
+            auto* module = uncheckedDowncast<NodeVMModule>(walk->postponed.takeLast());
+            // The walk ended before that Evaluate() started: nothing ran, and a later evaluate() walks the dependencies again.
+            if (module->m_status == Status::Evaluating && module->m_walkLowest) {
+                module->m_status = Status::Linked;
+                module->m_walkLowest = 0;
+                continue;
+            }
+            module->reconcileEvaluationState(vm);
+            // JSC gave its termination value to a module that the timeout or SIGINT of this run stopped: the error of the run replaces it.
+            JSC::Exception* moduleError = module->m_evaluationException.get();
+            if (runError && moduleError && moduleError->value() == vm.ensureTerminationException()->value())
+                module->m_evaluationException.set(vm, module, runError);
+            // That Evaluate() did not reach it (it failed first, or the import is an `import defer`): it waits for no cycle now.
+            if (module->m_walkLowest)
+                module->m_walkLowest = std::numeric_limits<uint32_t>::max();
+        }
+    });
+
     auto run = [&] {
         if (sourceTextThis) {
             status(Status::Evaluating);
-            evaluateDependencies(globalObject, record, timeout, breakOnSigint);
+            uint32_t lowest = index;
+            evaluateDependencies(globalObject, record, timeout, breakOnSigint, *walk, lowest);
             RETURN_IF_EXCEPTION(scope, );
             sourceTextThis->initializeImportMeta(globalObject);
             RETURN_IF_EXCEPTION(scope, );
+            // In an import cycle with a module that the walk entered before, or entered while such a cycle is open: postponed.
+            if (lowest < index || postponedBefore) {
+                postponed = true;
+                m_walkLowest = lowest < index ? lowest : std::numeric_limits<uint32_t>::max();
+                walk->postponed.appendWithCrashOnOverflow(this);
+                return;
+            }
+            // The Evaluate() below runs each module postponed during this call when the walk of JSC reaches it: Linked until then.
+            for (size_t i = postponedBefore; i < walk->postponed.size(); ++i)
+                uncheckedDowncast<NodeVMModule>(walk->postponed.at(i))->m_status = Status::Linked;
+            JSC::JSModuleRecord* ownRecord = sourceTextThis->moduleRecordIfExists();
+            bool startsEvaluate = ownRecord && ownRecord->status() == JSC::CyclicModuleRecord::Status::Linked;
             // Spec-style Evaluate(): returns the capability promise that
             // settles when (possibly async, for top-level await) evaluation
             // finishes. Errors are stored on the record, not thrown.
             result = record->evaluate(globalObject);
             RETURN_IF_EXCEPTION(scope, );
+            // The promise of an Evaluate() that this call started for an importer needs no handler: the importer's Evaluate() gets its error.
+            if (auto* promise = isDependency && startsEvaluate ? dynamicDowncast<JSPromise>(result) : nullptr)
+                promise->markAsHandled();
         } else if (syntheticThis) {
             // Mark Evaluating before running the user's evaluation steps so a
             // re-entrant evaluate() from inside them rejects with
@@ -178,7 +288,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // in an outer-context promise and checkpoint the inner queue — still
     // inside the timeout scope so `timeout` bounds the microtask drain too.
     auto drainAfterEvaluate = [&] {
-        if (scope.exception() || vm.hasTerminationRequest())
+        if (postponed || scope.exception() || vm.hasTerminationRequest())
             return;
         if (!nodeVmGlobalObject || !nodeVmGlobalObject->hasOwnMicrotaskQueue())
             return;
@@ -228,6 +338,9 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
     VM_RETURN_IF_EXCEPTION(scope, {});
 
+    if (postponed)
+        return jsUndefined();
+
     if (sourceTextThis) {
         if (JSC::JSModuleRecord* cyclic = sourceTextThis->moduleRecordIfExists()) {
             if (JSValue error = cyclic->evaluationError(); error && !error.isEmpty()) {
@@ -267,7 +380,7 @@ NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String i
 {
 }
 
-void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint)
+void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint, DependencyWalk& walk, uint32_t& lowest)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -284,8 +397,15 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
                 }
             }
 
+            // A walk entered it and no Evaluate() has started its body. If this walk did, the two modules are in one import cycle.
+            if (uint32_t reached = dependency->m_walkLowest) {
+                if (reached >= walk.firstIndex)
+                    lowest = std::min(lowest, reached);
+                continue;
+            }
+
             if (dependency->status() == Status::Linked) {
-                JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
+                dependency->evaluate(globalObject, timeout, breakOnSigint, &walk);
                 RETURN_IF_EXCEPTION(scope, );
                 // Source text dependencies evaluate via the spec-style
                 // Evaluate() and return a capability promise. A still-pending
@@ -294,7 +414,14 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
                 // completion and the wrapper status reconciles lazily
                 // (reconcileEvaluationState), so a pending result is fine
                 // here.
-                UNUSED_PARAM(dependencyResult);
+                if (uint32_t reached = dependency->m_walkLowest)
+                    lowest = std::min(lowest, reached);
+            } else if (dynamicDowncast<NodeVMSourceTextModule>(dependency)) {
+                // The walk of JSC stops at a dependency that failed. This one stops there too, before it evaluates a later dependency.
+                if (JSC::Exception* failure = dependency->evaluationFailure(vm)) {
+                    scope.throwException(globalObject, failure);
+                    return;
+                }
             }
         }
     }

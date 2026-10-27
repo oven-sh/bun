@@ -54,6 +54,7 @@ private:
     SourceCode m_sourceCode;
     bool m_hasTopLevelAwait { false };
     bool m_linkCalled { false };
+    bool m_importMetaInitialized { false };
 
     JSModuleRecord* analyzeSourceText(JSGlobalObject* globalObject, std::unique_ptr<JSC::ModuleProgramNode>& node);
     void replaceUnlinkedRecords(JSGlobalObject* globalObject);

@@ -662,6 +662,12 @@ function _close(engine: $Node.ZlibBase) {
   engine._handle = null;
 }
 
+function validateDictionary(dictionary: View | ArrayBuffer | SharedArrayBuffer): View {
+  if (isArrayBufferView(dictionary)) return dictionary;
+  if (isAnyArrayBuffer(dictionary)) return Buffer.from(dictionary) as Buffer;
+  throw $ERR_INVALID_ARG_TYPE("options.dictionary", ["Buffer", "TypedArray", "DataView", "ArrayBuffer"], dictionary);
+}
+
 const zlibDefaultOpts = {
   flush: Z_NO_FLUSH,
   finishFlush: Z_FINISH,
@@ -701,17 +707,7 @@ function Zlib(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
     strategy = checkRangesOrGetDefault(opts.strategy, "options.strategy", Z_DEFAULT_STRATEGY, Z_FIXED, Z_DEFAULT_STRATEGY);
 
     dictionary = opts.dictionary;
-    if (dictionary !== undefined && !isArrayBufferView(dictionary)) {
-      if (isAnyArrayBuffer(dictionary)) {
-        dictionary = Buffer.from(dictionary) as Buffer;
-      } else {
-        throw $ERR_INVALID_ARG_TYPE(
-          "options.dictionary",
-          ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
-          dictionary,
-        );
-      }
-    }
+    if (dictionary !== undefined) dictionary = validateDictionary(dictionary);
   }
 
   const handle = new NativeZlib(mode);
@@ -893,17 +889,7 @@ function Brotli(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
   }
 
   let dictionary = opts?.dictionary;
-  if (dictionary !== undefined && !isArrayBufferView(dictionary)) {
-    if (isAnyArrayBuffer(dictionary)) {
-      dictionary = Buffer.from(dictionary) as Buffer;
-    } else {
-      throw $ERR_INVALID_ARG_TYPE(
-        "options.dictionary",
-        ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
-        dictionary,
-      );
-    }
-  }
+  if (dictionary !== undefined) dictionary = validateDictionary(dictionary);
 
   const handle = new NativeBrotli(mode);
 
@@ -956,17 +942,7 @@ class Zstd extends (ZlibBase as unknown as ZlibBaseConstructor) {
     }
 
     let dictionary = opts?.dictionary;
-    if (dictionary !== undefined && !isArrayBufferView(dictionary)) {
-      if (isAnyArrayBuffer(dictionary)) {
-        dictionary = Buffer.from(dictionary);
-      } else {
-        throw $ERR_INVALID_ARG_TYPE(
-          "options.dictionary",
-          ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
-          dictionary,
-        );
-      }
-    }
+    if (dictionary !== undefined) dictionary = validateDictionary(dictionary);
 
     const handle = new NativeZstd(mode);
 

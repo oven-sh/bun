@@ -575,8 +575,8 @@ pub struct Resolver<'a> {
 #[derive(Clone, Copy)]
 pub struct LookupPaths<'a> {
     pub dirs: &'a [bun_core::String],
-    /// False when the caller named no importing file, as in
-    /// `Module._resolveFilename(id, null, false, { paths })`.
+    /// [`Resolver::has_importing_file`]. Without one, the source directory of the request is
+    /// the working directory, which has no say about it.
     pub has_importer: bool,
 }
 
@@ -978,6 +978,15 @@ impl<'a> Resolver<'a> {
             prefer_module_field: true,
             custom_dir_paths: None,
         }
+    }
+
+    /// Whether a request from `source` is resolved from the directory of that file. The working
+    /// directory stands in for a name that is not an absolute path, such as the empty name of
+    /// a parent module without a file name, and for a file inside a compiled executable.
+    pub fn has_importing_file(&self, source: &[u8]) -> bool {
+        bun_paths::is_absolute(source)
+            && !(self.standalone_module_graph.is_some()
+                && ::bun_options_types::standalone_path::is_bun_standalone_file_path(source))
     }
 
     pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
@@ -2250,8 +2259,8 @@ impl<'a> Resolver<'a> {
     fn nearest_existing_dir_info(&mut self, missing_dir: &[u8]) -> Option<DirInfoRef> {
         let mut closest_dir = missing_dir;
         // `dirname` returns `None` once the entire directory tree
-        // has been visited. `None` is theoretically impossible since
-        // the drive root should always exist.
+        // has been visited. For an absolute path, `None` is theoretically
+        // impossible since the drive root should always exist.
         while let Some(current) = bun_paths::dirname(closest_dir) {
             match self.dir_info_cached(current) {
                 Err(_) => return None,
@@ -2301,6 +2310,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    // Stays inline in `check_package_path`, which every bare import goes through.
     #[inline(always)]
     fn package_path_result<'r>(&self, matched: &MatchResult) -> Result<'r> {
         let mut result = Result {

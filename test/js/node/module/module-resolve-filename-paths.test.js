@@ -230,6 +230,8 @@ module.exports = {
   "Module._resolveFilename, parent {}": (request, paths) => Module._resolveFilename(request, {}, false, { paths }),
   "Module._resolveFilename, parent { filename: '' }": (request, paths) =>
     Module._resolveFilename(request, { filename: "" }, false, { paths }),
+  "Module._resolveFilename, parent { id: 'name' }": (request, paths) =>
+    Module._resolveFilename(request, { id: "name" }, false, { paths }),
 };
 `;
 const scopeProbeSource = `
@@ -435,16 +437,23 @@ if (isBun) {
     [["-i"], `${inPlugins}\n${missing("no-deps-2")}\n`, ["/no-deps-2"]],
     [["--no-install"], `${inPlugins}\n${missing("no-deps-2")}\n`, []],
     // This mode reads no node_modules directory, so the registry's copy is the answer.
-    [["--install=force"], `cache/no-deps@2.0.0/index.js\n${missing("no-deps-2")}\n`, [...installed("2.0.0"), "/no-deps-2"]],
-  ])("options.paths: every entry is searched before a package is installed, with %j", async (args, stdout, requests) => {
-    const result = await runWithRegistry({
-      files: { "project/plugins/node_modules/no-deps/index.js": "" },
-      cwd: "project",
-      args,
-      source: searchBothEntries,
-    });
-    expect(result).toEqual({ stdout, stderr: "", exitCode: 0, requests });
-  });
+    [
+      ["--install=force"],
+      `cache/no-deps@2.0.0/index.js\n${missing("no-deps-2")}\n`,
+      [...installed("2.0.0"), "/no-deps-2"],
+    ],
+  ])(
+    "options.paths: every entry is searched before a package is installed, with %j",
+    async (args, stdout, requests) => {
+      const result = await runWithRegistry({
+        files: { "project/plugins/node_modules/no-deps/index.js": "" },
+        cwd: "project",
+        args,
+        source: searchBothEntries,
+      });
+      expect(result).toEqual({ stdout, stderr: "", exitCode: 0, requests });
+    },
+  );
 
   test("options.paths: a refusal to install comes after every entry was searched", async () => {
     // The project of the calling file has a security scanner, so auto-install is off for it.
@@ -521,6 +530,73 @@ if (isBun) {
       requests: installed("1.0.0"),
     });
   });
+
+  test("options.paths: a module inside a compiled executable has no package scope", async () => {
+    // With these flags the executable reads the package.json and the tsconfig.json of the
+    // directory where it runs. They are the user's, not the calling file's.
+    const { path: dir, cleanup } = createTempDir("resolve-paths-compiled", {
+      "src/entry.cjs": `
+        const path = require("node:path");
+        const resolve = request => {
+          try {
+            const file = require.resolve(request, { paths: [path.resolve("../other")] });
+            return path.relative(path.dirname(process.cwd()), file).split(path.sep).join("/");
+          } catch (error) {
+            return error.code;
+          }
+        };
+        console.log(JSON.stringify(["cwd-pkg", "#imp", "@alias/thing", "dep"].map(resolve)));
+      `,
+      "run/package.json": JSON.stringify({ name: "cwd-pkg", imports: { "#imp": "./imp.js" }, exports: "./main.js" }),
+      "run/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@alias/*": ["./lib/*"] } } }),
+      "run/main.js": "",
+      "run/imp.js": "",
+      "run/lib/thing.js": "",
+      "other/node_modules/cwd-pkg/index.js": "",
+      "other/node_modules/dep/index.js": "",
+    });
+    try {
+      const exe = join(dir, "run", process.platform === "win32" ? "app.exe" : "app");
+      const build = Bun.spawn({
+        cmd: [
+          childExe,
+          "build",
+          "--compile",
+          "--compile-autoload-package-json",
+          "--compile-autoload-tsconfig",
+          join(dir, "src", "entry.cjs"),
+          "--outfile",
+          exe,
+        ],
+        cwd: dir,
+        env: childEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+      expect({ buildStderr: buildExitCode === 0 ? "" : buildStderr, buildExitCode }).toEqual({
+        buildStderr: "",
+        buildExitCode: 0,
+      });
+
+      const proc = Bun.spawn({ cmd: [exe], cwd: join(dir, "run"), env: childEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout:
+          JSON.stringify([
+            "other/node_modules/cwd-pkg/index.js",
+            "MODULE_NOT_FOUND",
+            "MODULE_NOT_FOUND",
+            "other/node_modules/dep/index.js",
+          ]) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      cleanup();
+    }
+    // A debug build is large, and the executable is a copy of it.
+  }, 90_000);
 
   test("options.paths: nothing is installed without an entry or without a calling file", async () => {
     const result = await runWithRegistry({

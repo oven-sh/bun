@@ -138,7 +138,7 @@ impl Histogram {
     /// Counts everything `other` counted, each value as the lowest of its slot in `other`. All of it is refused if the
     /// count could overflow: adding a part would change the shape of the distribution.
     ///
-    /// Node.js: a value that does not fit here still adds to `count`, and not to `exceeds`.
+    /// Node.js: a value that does not fit here is dropped without adding to `exceeds`.
     pub fn add(&mut self, other: &Self) {
         self.exceeds = self.exceeds.saturating_add(other.exceeds);
         if self.count.checked_add(other.count).is_none() {
@@ -196,8 +196,6 @@ impl Histogram {
     }
 
     /// NaN if the histogram is empty.
-    ///
-    /// Node.js: the sum is an `i64` and overflows, so the mean of large values can be negative.
     pub fn mean(&self) -> f64 {
         // At most `count * (1 << 63)`.
         let sum: u128 = self

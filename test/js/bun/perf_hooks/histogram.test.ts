@@ -476,7 +476,7 @@ describe("Histogram", () => {
       assert.ok(Number.isNaN(h.stddev));
     });
 
-    test("percentiles map properties", notInNode, () => {
+    test("percentiles map properties", () => {
       const h = createHistogram();
 
       for (let i = 1; i <= 100; i++) {
@@ -879,7 +879,7 @@ describe("Histogram", () => {
       }
     });
 
-    test("each read is a new Map", notInNode, () => {
+    test("each read is a new Map", () => {
       const h = createHistogram();
       h.record(5);
       const numbers = h.percentiles;
@@ -907,7 +907,7 @@ describe("Histogram", () => {
     });
   });
 
-  test("the mean of large values does not overflow", notInNode, () => {
+  test("the mean of large values does not overflow", () => {
     const h = createHistogram();
     for (let i = 0; i < 2000; i++) h.record(Number.MAX_SAFE_INTEGER);
     assert.deepStrictEqual([h.mean, h.stddev], [9005000231485440, 0]);
@@ -1248,7 +1248,7 @@ describe("Histogram", () => {
       assert.strictEqual(monitorEventLoopDelay.length, 0);
     });
 
-    test("createHistogram with a number and a BigInt", notInNode, () => {
+    test("createHistogram with a number and a BigInt", () => {
       for (const options of [
         { lowest: 1, highest: 10n },
         { lowest: 1n, highest: 10 },

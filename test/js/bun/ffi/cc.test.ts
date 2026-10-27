@@ -69,10 +69,9 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
       expect(res.symbols.add(1, 2)).toBe(3);
     });
 
-    // FIXME: produces junk
-    it.skip("when passed arguments with incorrect types, throws an error", () => {
+    it("when passed arguments with incorrect types, throws an error", () => {
       // @ts-expect-error
-      expect(() => res.symbols.add("1", "2")).toThrow();
+      expect(() => res.symbols.add("1", "2")).toThrow("bun:ffi cannot convert argument to 'i32'");
     });
 
     it("when passed too many arguments, still works", () => {
@@ -258,6 +257,255 @@ it("pointer and 64-bit integer arguments accept what dlopen() accepts and throw 
     echo_i64: ["5", "-5", String(2 ** 40), String(-(2n ** 63n)), T, T, T, T, T],
     echo_u64: ["5", String(2 ** 40), String(2n ** 64n - 1n), T, T, T, T, T],
     with_env: ["1", T, T, T, "1"],
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Each C function is called through its cc() symbol and through CFunction, which is the path dlopen() and linkSymbols() use.
+// Runs in a subprocess because a double that is boxed wrongly can be read as a pointer.
+it("a symbol returns what dlopen() returns for the same C function", async () => {
+  using dir = tempDir("bun-ffi-cc-returns", {
+    "returns.c": /* c */ `
+      typedef unsigned long long bits64;
+      union caster { bits64 u; double d; float f; };
+      // The integer functions return all 64 bits. The declared return type says how many of them are the value.
+      bits64 r_char(bits64 v) { return v; }
+      bits64 r_i8(bits64 v) { return v; }
+      bits64 r_u8(bits64 v) { return v; }
+      bits64 r_i16(bits64 v) { return v; }
+      bits64 r_u16(bits64 v) { return v; }
+      bits64 r_i32(bits64 v) { return v; }
+      bits64 r_u32(bits64 v) { return v; }
+      bits64 r_i64(bits64 v) { return v; }
+      bits64 r_u64(bits64 v) { return v; }
+      bits64 r_i64_fast(bits64 v) { return v; }
+      bits64 r_u64_fast(bits64 v) { return v; }
+      double r_f64(bits64 v) { union caster c; c.u = v; return c.d; }
+      float r_f32(bits64 v) { union caster c; c.u = v; return c.f; }
+      // A bool is 0 or 1 in the low byte.
+      bits64 r_bool(bits64 v) { return (v & ~0xffULL) | ((v & 0xff) != 0); }
+      bits64 r_ptr(bits64 v) { return v; }
+      bits64 r_function(bits64 v) { return v; }
+      bits64 r_cstring(bits64 v) { return v; }
+      void r_void(bits64 v) {}
+      bits64 napi_u32(void* env, bits64 v) { return v; }
+      bits64 napi_i64_fast(void* env, bits64 v) { return v; }
+      bits64 napi_ptr(void* env, bits64 v) { return v; }
+    `,
+    "fixture.js": /* js */ `
+      import { cc, CFunction } from "bun:ffi";
+      import { jscDescribe } from "bun:jsc";
+      import path from "path";
+
+      const types = [
+        "char", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64",
+        "i64_fast", "u64_fast", "f64", "f32", "bool", "ptr", "function", "cstring", "void",
+      ];
+      const napiTypes = ["u32", "i64_fast", "ptr"];
+      const symbols = {};
+      for (const type of types) symbols["r_" + type] = { args: ["u64"], returns: type };
+      for (const type of napiTypes) symbols["napi_" + type] = { args: ["napi_env", "u64"], returns: type };
+      const compiled = cc({ source: path.join(import.meta.dir, "returns.c"), symbols }).symbols;
+
+      const cases = [];
+      for (const type of types) {
+        // A cstring symbol decodes the string in JS. Its .native returns the address.
+        const viaCompiled = type === "cstring" ? compiled.r_cstring.native : compiled["r_" + type];
+        const returns = type === "cstring" ? "ptr" : type;
+        cases.push([type, viaCompiled, new CFunction({ ptr: viaCompiled.ptr, args: ["u64"], returns })]);
+      }
+      for (const type of napiTypes) {
+        const viaCompiled = compiled["napi_" + type];
+        const viaEngine = new CFunction({ ptr: viaCompiled.ptr, args: ["ptr", "u64"], returns: type });
+        cases.push(["napi " + type, value => viaCompiled(null, value), value => viaEngine(null, value)]);
+      }
+
+      const boundaries = [2n ** 31n - 1n, 2n ** 31n, 2n ** 32n - 1n, 2n ** 53n - 1n, 2n ** 53n, 2n ** 53n + 1n, 2n ** 63n, 2n ** 64n - 1n];
+      const bits = [
+        0n, 1n, 0x7fn, 0x80n, 0xffn, 0x100n, 0x7fffn, 0x8000n, 0xffffn, 0x10000n, 2n ** 31n + 1n, 2n ** 32n, 2n ** 53n - 2n,
+        // As an int64: 2 ** 63 - 1, -(2 ** 53), -(2 ** 53 - 1), -(2 ** 31) - 1, -(2 ** 31)
+        2n ** 63n - 1n, 2n ** 64n - 2n ** 53n, 2n ** 64n - 2n ** 53n + 1n, 2n ** 64n - 2n ** 31n - 1n, 2n ** 64n - 2n ** 31n,
+        // 1.5, NaN and Infinity as a double; 1.5 and NaN as a float. 2 ** 63 is -0 as a double.
+        0x3ff8000000000000n, 0x7ff8000000000000n, 0x7ff0000000000000n, 0x3fc00000n, 0x7fc00000n,
+        ...boundaries,
+      ];
+      // An int32 and a double with the same value print the same. The first word of jscDescribe() tells them apart.
+      // The engine boxes an f64 or f32 return in two ways, so those rows compare the value only.
+      const show = (name, value) =>
+        (name === "f64" || name === "f32" ? typeof value : jscDescribe(value).split(/[: ]/)[0]) +
+        " " +
+        (Object.is(value, -0) ? "-0" : String(value));
+      let calls = 0;
+      const differences = [];
+      for (const [name, viaCompiled, viaEngine] of cases) {
+        for (const value of bits) {
+          calls++;
+          const fromCompiled = viaCompiled(value);
+          const fromEngine = viaEngine(value);
+          // === is false for two equal int32s when the tag bits of one are wrong.
+          const same =
+            show(name, fromCompiled) === show(name, fromEngine) &&
+            (fromCompiled === fromEngine || fromCompiled !== fromCompiled);
+          if (!same) {
+            differences.push(
+              name + " 0x" + value.toString(16) + ": cc() " + show(name, fromCompiled) + ", dlopen() " + show(name, fromEngine),
+            );
+          }
+        }
+      }
+
+      const table = type => boundaries.map(value => {
+        const result = compiled["r_" + type](value);
+        return typeof result === "bigint" ? result + "n" : result;
+      });
+      console.log(JSON.stringify({
+        calls,
+        differences,
+        u32: table("u32"),
+        i64_fast: table("i64_fast"),
+        ptr: table("ptr"),
+        function: table("function"),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const pointers = [
+    2147483647,
+    2147483648,
+    4294967295,
+    9007199254740991,
+    "9007199254740992n",
+    "9007199254740993n",
+    "9223372036854775808n",
+    "18446744073709551615n",
+  ];
+  expect(JSON.parse(stdout)).toEqual({
+    calls: 21 * 31,
+    differences: [],
+    // 2 ** 31 - 1, 2 ** 31, 2 ** 32 - 1, 2 ** 53 - 1, 2 ** 53, 2 ** 53 + 1, 2 ** 63, 2 ** 64 - 1
+    u32: [2147483647, 2147483648, 4294967295, 4294967295, 0, 1, 0, 4294967295],
+    i64_fast: [
+      2147483647,
+      2147483648,
+      4294967295,
+      9007199254740991,
+      "9007199254740992n",
+      "9007199254740993n",
+      "-9223372036854775808n",
+      -1,
+    ],
+    ptr: pointers,
+    function: pointers,
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Each C function is called through its cc() symbol and through CFunction, which is the path dlopen() and linkSymbols() use.
+it("an integer argument of 32 bits or fewer reaches C as it does through dlopen()", async () => {
+  using dir = tempDir("bun-ffi-cc-int-args", {
+    "args.c": /* c */ `
+      static int native_calls = 0;
+      int get_native_calls(void) { return native_calls; }
+      // Each a_ function returns the value that C received.
+      long long a_char(char x) { native_calls++; return x; }
+      long long a_i8(signed char x) { native_calls++; return x; }
+      long long a_u8(unsigned char x) { native_calls++; return x; }
+      long long a_i16(short x) { native_calls++; return x; }
+      long long a_u16(unsigned short x) { native_calls++; return x; }
+      long long a_i32(int x) { native_calls++; return x; }
+      long long a_u32(unsigned int x) { native_calls++; return x; }
+      unsigned int r_u32(unsigned long long v) { return (unsigned int)v; }
+    `,
+    "fixture.js": /* js */ `
+      import { cc, CFunction } from "bun:ffi";
+      import { jscDescribe } from "bun:jsc";
+      import path from "path";
+
+      const types = ["char", "i8", "u8", "i16", "u16", "i32", "u32"];
+      const symbols = { get_native_calls: { args: [], returns: "i32" }, r_u32: { args: ["u64"], returns: "u32" } };
+      for (const type of types) symbols["a_" + type] = { args: [type], returns: "i64" };
+      const compiled = cc({ source: path.join(import.meta.dir, "args.c"), symbols }).symbols;
+
+      // https://github.com/oven-sh/bun/issues/44906: an element of a Float64Array is a double, also when its value is an integer.
+      const fromFloat64Array = [...new Float64Array([7, 3, 0, -5, 1e6])];
+      const values = [
+        0, 1, -1, 127, 128, 255, 256, 32767, 32768, 65535, 65536, 2 ** 31 - 1, -(2 ** 31),
+        0.5, -0.5, 5.7, -5.7, -0, 2 ** 31, 2 ** 32 - 1, 2 ** 32 + 5, -(2 ** 31) - 1, 2 ** 53, 1e19, -1e19, NaN, Infinity, -Infinity,
+        ...fromFloat64Array,
+        undefined, null, true, false,
+        5n, -5n, 2n ** 31n, 2n ** 64n - 1n, 2n ** 64n + 7n,
+        "5", Symbol("s"),
+      ];
+      const objects = [{}, [5], new Number(5), { valueOf: () => 5 }];
+      const outcome = (fn, value) => {
+        const before = compiled.get_native_calls();
+        try {
+          return String(fn(value));
+        } catch (error) {
+          return error.name + (compiled.get_native_calls() === before ? "" : " after the call");
+        }
+      };
+      const show = value => (typeof value === "bigint" ? value + "n" : Object.is(value, -0) ? "-0" : String(value));
+
+      let calls = 0;
+      const differences = [];
+      const objectOutcomes = new Set();
+      for (const type of types) {
+        const viaCompiled = compiled["a_" + type];
+        const viaEngine = new CFunction({ ptr: viaCompiled.ptr, args: [type], returns: "i64" });
+        for (const value of values) {
+          calls++;
+          const fromCompiled = outcome(viaCompiled, value);
+          const fromEngine = outcome(viaEngine, value);
+          if (fromCompiled !== fromEngine) {
+            differences.push(type + " " + show(value) + ": cc() " + fromCompiled + ", dlopen() " + fromEngine);
+          }
+        }
+        for (const object of objects) objectOutcomes.add(outcome(viaCompiled, object));
+      }
+
+      console.log(JSON.stringify({
+        calls,
+        differences,
+        objects: [...objectOutcomes],
+        fromFloat64Array: {
+          kinds: fromFloat64Array.map(value => jscDescribe(value).split(/[: ]/)[0]),
+          i32: fromFloat64Array.map(value => Number(compiled.a_i32(value))),
+          u32: fromFloat64Array.map(value => Number(compiled.a_u32(value))),
+          i16: fromFloat64Array.map(value => Number(compiled.a_i16(value))),
+        },
+        // A u32 return of 2 ** 31 is a double.
+        returnedU32: Number(compiled.a_u32(compiled.r_u32(2n ** 31n))),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({
+    calls: 7 * 44,
+    differences: [],
+    // dlopen() converts an object with valueOf(). A cc() wrapper holds pointers into earlier arguments, so it cannot run JS.
+    objects: ["TypeError"],
+    fromFloat64Array: {
+      kinds: ["Double", "Double", "Double", "Double", "Double"],
+      i32: [7, 3, 0, -5, 1000000],
+      u32: [7, 3, 0, 4294967291, 1000000],
+      i16: [7, 3, 0, -5, 16960],
+    },
+    returnedU32: 2147483648,
   });
   expect(exitCode).toBe(0);
 });

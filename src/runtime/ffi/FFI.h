@@ -83,7 +83,8 @@ BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #define TagValueNull             (OtherTag)
 #define NotCellMask  (int64_t)(NumberTag | OtherTag)
 
-#define MAX_INT32 2147483648
+#define MAX_INT32 2147483647
+#define MIN_INT32 (-MAX_INT32 - 1)
 #define MAX_INT52 9007199254740991
 
 // If all bits in the mask are set, this indicates an integer number,
@@ -152,6 +153,9 @@ static int64_t* Bun_FFI_padArguments(int64_t* passed, int32_t passedCount, int64
 
 
 
+// True for the bits of an int32. A macro, because TinyCC does not inline a call.
+#define JSVALUE_BITS_ARE_INT32(bits) ((uint64_t)(bits) >= (uint64_t)NumberTag)
+
 static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSVALUE_IS_INT32(EncodedJSValue val) __attribute__((__always_inline__)); 
 static bool JSVALUE_IS_NUMBER(EncodedJSValue val) __attribute__((__always_inline__));
@@ -166,12 +170,13 @@ EncodedJSValue INT64_TO_JSVALUE_SLOW(void* jsGlobalObject, int64_t val);
 static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) __attribute__((__always_inline__));
 static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) __attribute__((__always_inline__));
 
+// Boxes a returned pointer the way dlopen() does: null, a number up to 2^53 - 1, a BigInt above. Returns the bits of the JSValue.
+int64_t PTR_TO_JSVALUE(void* jsGlobalObject, void* ptr);
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) __attribute__((__always_inline__));
 static EncodedJSValue DOUBLE_TO_JSVALUE(double val) __attribute__((__always_inline__));
 static EncodedJSValue FLOAT_TO_JSVALUE(float val) __attribute__((__always_inline__));
 static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) __attribute__((__always_inline__));
-static EncodedJSValue PTR_TO_JSVALUE(void* ptr) __attribute__((__always_inline__));
 
 static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));
 static void* JSVALUE_TO_BUFFER(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));
@@ -253,18 +258,6 @@ static void* JSVALUE_TO_BUFFER(void* jsGlobalObject, int32_t abiType, bool* thre
   return (void*)JSVALUE_TO_SLOT_SLOW(jsGlobalObject, abiType, threw, val.asInt64);
 }
 
-static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
-  EncodedJSValue val;
-  if (ptr == 0) {
-    val.asInt64 = TagValueNull;
-    return val;
-  }
-
-  val.asDouble = (double)(uintptr_t)ptr;
-  val.asInt64 += DoubleEncodeOffset;
-  return val;
-}
-
 static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
    EncodedJSValue res;
    res.asDouble = val;
@@ -277,16 +270,9 @@ static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
    return res;
 }
 
+// `val` must be an int32.
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
-  if (JSVALUE_IS_INT32(val)) {
-    return (int32_t)val.asInt64;
-  }
-  // Decode a double-encoded integer (JIT tier-up, Math.* provenance, etc.);
-  // int64_t intermediate keeps u32 callers (uint32_t)JSVALUE_TO_INT32(...) defined.
-  val.asInt64 -= DoubleEncodeOffset;
-  // NaN check also catches undefined/null/bool, whose decoded bits are all NaNs.
-  if (val.asDouble != val.asDouble) return 0;
-  return (int32_t)(int64_t)val.asDouble;
+  return (int32_t)val.asInt64;
 }
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
@@ -369,7 +355,7 @@ static int64_t JSVALUE_TO_INT64(void* jsGlobalObject, int32_t abiType, bool* thr
 }
 
 static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
-  if (val < MAX_INT32) {
+  if (val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 
@@ -381,7 +367,7 @@ static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
 }
 
 static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
-  if (val >= -MAX_INT32 && val <= MAX_INT32) {
+  if (val >= MIN_INT32 && val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 

@@ -13,6 +13,10 @@
  */
 declare module "bun:ffi" {
   enum FFIType {
+    /**
+     * 8-bit signed integer on every platform, also where C's plain `char` is
+     * unsigned (Linux on arm64)
+     */
     char = 0,
     /**
      * 8-bit signed integer

@@ -380,11 +380,13 @@ setOnResolve(onResolve);
 
 Bun represents [pointers](<https://en.wikipedia.org/wiki/Pointer_(computer_programming)>) as a `number` in JavaScript.
 
+A native function with `returns: "ptr"` returns `null` for a null pointer. It returns a `BigInt` for a value above `Number.MAX_SAFE_INTEGER`, because a `number` cannot hold that value exactly. `ptr()`, `read.ptr()` and `read.intptr()` always return a `number`.
+
 <Accordion title="How does a 64 bit pointer fit in a JavaScript number?">
 
 64-bit processors support up to [52 bits of addressable space](https://en.wikipedia.org/wiki/64-bit_computing#Limits_of_processors). [JavaScript numbers](https://en.wikipedia.org/wiki/Double-precision_floating-point_format#IEEE_754_double-precision_binary_floating-point_format:_binary64) support 53 bits of usable space, which leaves 1 bit of extra space.
 
-**Why not `BigInt`?** `BigInt` is slower. JavaScript engines allocate `BigInt`s separately, so they can't fit into a regular JavaScript value. If you pass a `BigInt` to a function, Bun converts it to a `number`.
+**Why not `BigInt`?** `BigInt` is slower. JavaScript engines allocate `BigInt`s separately, so they can't fit into a regular JavaScript value. A `ptr` argument accepts a `BigInt` too.
 
 **Windows Note**: The Windows API type HANDLE does not represent a virtual address, and using `ptr` for it does _not_ work as expected. Use `u64` to safely represent HANDLE values.
 

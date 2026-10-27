@@ -114,47 +114,61 @@ enum ToC {
     Infallible(&'static str),
     /// `f(JS_GLOBAL_OBJECT, <ABIType>, &threw, arg)`. Can throw from `JSVALUE_TO_SLOT_SLOW`.
     Fallible(&'static str),
+    /// The bits of an int32 reach C as they are. `JSVALUE_TO_SLOT_SLOW` converts any other value, and can throw.
+    Int32,
+}
+
+/// Selects the `FFI.h` function a generated wrapper calls to box the return value.
+enum ToJs {
+    /// Either [`ToJSFormatter`] writes the conversion inline or this isn't a return type.
+    Special,
+    /// `{prefix}return_value{suffix}.asZigRepr`. The function returns an `EncodedJSValue`.
+    Helper(&'static str, &'static str),
+    /// `f(JS_GLOBAL_OBJECT, return_value)`. The engine boxes the value, as it does for dlopen(). The function returns the bits of the JSValue.
+    Engine(&'static str),
 }
 
 struct AbiRow {
     c_type: &'static [u8],
     to_c: ToC,
-    to_js: Option<(&'static str, &'static str)>,
+    to_js: ToJs,
 }
 
 #[rustfmt::skip]
 static ABI_TABLE: [AbiRow; 22] = {
     use ToC::*;
+    use ToJs::{Engine, Helper};
     const fn r(
         c_type: &'static [u8],
         to_c: ToC,
-        to_js: Option<(&'static str, &'static str)>,
+        to_js: ToJs,
     ) -> AbiRow {
         AbiRow { c_type, to_c, to_js }
     }
     [
-    /* Char      */ r(b"char",       Infallible("JSVALUE_TO_INT32"),   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int8T     */ r(b"int8_t",     Infallible("JSVALUE_TO_INT32"),   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint8T    */ r(b"uint8_t",    Infallible("JSVALUE_TO_INT32"),   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int16T    */ r(b"int16_t",    Infallible("JSVALUE_TO_INT32"),   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint16T   */ r(b"uint16_t",   Infallible("JSVALUE_TO_INT32"),   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int32T    */ r(b"int32_t",    Infallible("JSVALUE_TO_INT32"),   Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint32T   */ r(b"uint32_t",   Infallible("JSVALUE_TO_INT32"),   Some(("UINT32_TO_JSVALUE(", ")"))),
-    /* Int64T    */ r(b"int64_t",    Fallible("JSVALUE_TO_INT64"),     Some(("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Uint64T   */ r(b"uint64_t",   Fallible("JSVALUE_TO_UINT64"),    Some(("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Double    */ r(b"double",     Infallible("JSVALUE_TO_DOUBLE"),  Some(("DOUBLE_TO_JSVALUE(", ")"))),
-    /* Float     */ r(b"float",      Infallible("JSVALUE_TO_FLOAT"),   Some(("FLOAT_TO_JSVALUE(", ")"))),
-    /* Bool      */ r(b"bool",       Infallible("JSVALUE_TO_BOOL"),    Some(("BOOLEAN_TO_JSVALUE(", ")"))),
-    /* Ptr       */ r(b"void*",      Fallible("JSVALUE_TO_PTR"),       Some(("PTR_TO_JSVALUE(", ")"))),
-    /* Void      */ r(b"void",       Special,                          None),
-    /* CString   */ r(b"void*",      Fallible("JSVALUE_TO_PTR"),       Some(("PTR_TO_JSVALUE(", ")"))),
-    /* I64Fast   */ r(b"int64_t",    Fallible("JSVALUE_TO_INT64"),     Some(("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t)", ")"))),
-    /* U64Fast   */ r(b"uint64_t",   Fallible("JSVALUE_TO_UINT64"),    Some(("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, ", ")"))),
-    /* Function  */ r(b"void*",      Fallible("JSVALUE_TO_PTR"),       Some(("PTR_TO_JSVALUE(", ")"))),
-    /* NapiEnv   */ r(b"napi_env",   Special,                          None),
-    /* NapiValue */ r(b"napi_value", Special,                          None),
-    /* Buffer    */ r(b"void*",      Fallible("JSVALUE_TO_BUFFER"),    None),
-    /* BufferLen */ r(b"uint64_t",   Special,                          None),
+    // TinyCC's `char` is unsigned on linux-aarch64. dlopen() returns an int8 on every target.
+    /* Char      */ r(b"char",       Int32,                            Helper("INT32_TO_JSVALUE((int32_t)(int8_t)", ")")),
+    /* Int8T     */ r(b"int8_t",     Int32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
+    /* Uint8T    */ r(b"uint8_t",    Int32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
+    /* Int16T    */ r(b"int16_t",    Int32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
+    /* Uint16T   */ r(b"uint16_t",   Int32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
+    /* Int32T    */ r(b"int32_t",    Int32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
+    /* Uint32T   */ r(b"uint32_t",   Int32,                            Helper("UINT32_TO_JSVALUE(", ")")),
+    /* Int64T    */ r(b"int64_t",    Fallible("JSVALUE_TO_INT64"),     Helper("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")")),
+    /* Uint64T   */ r(b"uint64_t",   Fallible("JSVALUE_TO_UINT64"),    Helper("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")")),
+    /* Double    */ r(b"double",     Infallible("JSVALUE_TO_DOUBLE"),  Helper("DOUBLE_TO_JSVALUE(", ")")),
+    /* Float     */ r(b"float",      Infallible("JSVALUE_TO_FLOAT"),   Helper("FLOAT_TO_JSVALUE(", ")")),
+    /* Bool      */ r(b"bool",       Infallible("JSVALUE_TO_BOOL"),    Helper("BOOLEAN_TO_JSVALUE(", ")")),
+    /* Ptr       */ r(b"void*",      Fallible("JSVALUE_TO_PTR"),       Engine("PTR_TO_JSVALUE")),
+    /* Void      */ r(b"void",       Special,                          ToJs::Special),
+    /* CString   */ r(b"void*",      Fallible("JSVALUE_TO_PTR"),       Engine("PTR_TO_JSVALUE")),
+    /* I64Fast   */ r(b"int64_t",    Fallible("JSVALUE_TO_INT64"),     Helper("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t)", ")")),
+    /* U64Fast   */ r(b"uint64_t",   Fallible("JSVALUE_TO_UINT64"),    Helper("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, ", ")")),
+    /* Function  */ r(b"void*",      Fallible("JSVALUE_TO_PTR"),       Engine("PTR_TO_JSVALUE")),
+    /* NapiEnv   */ r(b"napi_env",   Special,                          ToJs::Special),
+    /* NapiValue */ r(b"napi_value", Special,                          ToJs::Special),
+    /* Buffer    */ r(b"void*",      Fallible("JSVALUE_TO_BUFFER"),    ToJs::Special),
+    /* BufferLen */ r(b"uint64_t",   Special,                          ToJs::Special),
     ]
 };
 
@@ -203,25 +217,16 @@ impl ABIType {
 
     /// Types that we can directly pass through as an `int64_t`
     pub(crate) fn needs_a_cast_in_c(self) -> bool {
-        !matches!(
-            self,
-            ABIType::Char
-                | ABIType::Int8T
-                | ABIType::Uint8T
-                | ABIType::Int16T
-                | ABIType::Uint16T
-                | ABIType::Int32T
-                | ABIType::Uint32T
-        )
+        !matches!(self.row().to_c, ToC::Int32)
     }
 
     pub(crate) fn is_floating_point(self) -> bool {
         matches!(self, ABIType::Double | ABIType::Float)
     }
 
-    /// True if converting an argument of this type can throw. See [`ToC::Fallible`].
+    /// True if converting an argument of this type can throw. See [`ToC::Fallible`] and [`ToC::Int32`].
     pub(crate) fn arg_conversion_can_throw(self) -> bool {
-        matches!(self.row().to_c, ToC::Fallible(_))
+        matches!(self.row().to_c, ToC::Fallible(_) | ToC::Int32)
     }
 
     pub(crate) fn to_c(self, symbol: &[u8]) -> ToCFormatter<'_> {
@@ -257,6 +262,11 @@ impl fmt::Display for ToCFormatter<'_> {
                 "{function}(JS_GLOBAL_OBJECT, {}, &threw, {symbol})",
                 self.tag as i32
             ),
+            ToC::Int32 => write!(
+                writer,
+                "JSVALUE_TO_SLOT_SLOW(JS_GLOBAL_OBJECT, {}, &threw, {symbol})",
+                self.tag as i32
+            ),
             ToC::Special => match self.tag {
                 ABIType::Void => Ok(()),
                 ABIType::NapiEnv => writer.write_str("((napi_env)&Bun__thisFFIModuleNapiEnv)"),
@@ -274,16 +284,17 @@ pub(crate) struct ToJSFormatter<'a> {
 
 impl fmt::Display for ToJSFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let symbol = BStr::new(self.symbol);
         match self.tag.row().to_js {
-            Some((pre, suf)) => write!(writer, "{pre}{}{suf}", BStr::new(self.symbol)),
-            None => match self.tag {
+            ToJs::Helper(pre, suf) => write!(writer, "{pre}{symbol}{suf}.asZigRepr"),
+            ToJs::Engine(function) => write!(writer, "{function}(JS_GLOBAL_OBJECT, {symbol})"),
+            ToJs::Special => match self.tag {
                 ABIType::Void => Ok(()),
                 ABIType::NapiEnv => writer.write_str("((napi_env)&Bun__thisFFIModuleNapiEnv)"),
                 // NULL has the same bits as the empty JSValue. Return `undefined` like Node does.
                 ABIType::NapiValue => write!(
                     writer,
-                    "({sym} ? ((EncodedJSValue) {{.asNapiValue = {sym} }}) : ValueUndefined)",
-                    sym = BStr::new(self.symbol)
+                    "({symbol} ? ((EncodedJSValue) {{.asNapiValue = {symbol} }}) : ValueUndefined).asZigRepr"
                 ),
                 ABIType::Buffer => writer.write_str("0"),
                 _ => unreachable!(),

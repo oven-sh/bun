@@ -19,6 +19,7 @@
 #include "headers-handwritten.h"
 
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Char) == 0, "FFI::Type tag drift");
+static_assert(static_cast<uint8_t>(JSC::FFI::Type::Uint32) == 6, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Int64) == 7, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Uint64) == 8, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Pointer) == 12, "FFI::Type tag drift");
@@ -138,15 +139,23 @@ extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObjec
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
 
     // The wrapper already holds raw pointers into the buffers of earlier arguments, and JS could free those buffers.
-    // writeSlotFromJSValue only runs JS to get `ptr` from an object, so read it here without running a getter.
+    // writeSlotFromJSValue runs JS for an object: to get its `ptr`, or to convert it to an integer of 32 bits or fewer.
+    // So read `ptr` here without running a getter, and reject an object for those integers.
     bool isPointer = type == JSC::FFI::Type::Pointer || type == JSC::FFI::Type::CString || type == JSC::FFI::Type::Function;
-    if (auto* object = value.getObject(); isPointer && object && !object->inherits<JSC::JSArrayBuffer>() && !object->inherits<JSC::JSFFICallback>()) {
-        value = object->getDirect(vm, JSC::Identifier::fromString(vm, "ptr"_s));
-        if (!value || !(value.isNumber() || value.isBigInt())) {
-            JSC::throwTypeError(globalObject, scope, makeString("bun:ffi cannot convert argument to '"_s, JSC::FFI::name(type), '\''));
-            *threw = true;
-            return 0;
+    bool isSmallInteger = type <= JSC::FFI::Type::Uint32;
+    bool cannotConvert = false;
+    if (auto* object = value.getObject()) {
+        if (isSmallInteger)
+            cannotConvert = true;
+        else if (isPointer && !object->inherits<JSC::JSArrayBuffer>() && !object->inherits<JSC::JSFFICallback>()) {
+            value = object->getDirect(vm, JSC::Identifier::fromString(vm, "ptr"_s));
+            cannotConvert = !value || !(value.isNumber() || value.isBigInt());
         }
+    }
+    if (cannotConvert) {
+        JSC::throwTypeError(globalObject, scope, makeString("bun:ffi cannot convert argument to '"_s, JSC::FFI::name(type), '\''));
+        *threw = true;
+        return 0;
     }
 
     uint64_t slot = 0;
@@ -157,4 +166,12 @@ extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObjec
         return 0;
     }
     return slot;
+}
+
+// Implements PTR_TO_JSVALUE in src/runtime/ffi/FFI.h. Boxes the pointer a cc() wrapper returns the way dlopen() does.
+extern "C" JSC::EncodedJSValue Bun__FFI__pointerToJSValue(JSC::JSGlobalObject* globalObject, void* pointer)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::FFI::pointerToJSValue(globalObject, reinterpret_cast<uintptr_t>(pointer))));
 }

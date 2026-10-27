@@ -152,7 +152,7 @@ fn create_jsc_ffi_function(
 
 /// Raw extern fn pointers fed to the TCC-JIT'd C trampolines via `add_symbol`.
 mod exposed_to_ffi {
-    use super::{JSGlobalObject, JSValue};
+    use super::{JSGlobalObject, JSValue, c_void};
     unsafe extern "C" {
         /// Defined in `JSCFFIBridge.cpp`.
         #[link_name = "Bun__FFI__jsValueToSlotSlow"]
@@ -166,6 +166,9 @@ mod exposed_to_ffi {
         pub(super) fn INT64_TO_JSVALUE(global: *mut JSGlobalObject, i: i64) -> JSValue;
         #[link_name = "JSC__JSValue__fromUInt64NoTruncate"]
         pub(super) fn UINT64_TO_JSVALUE(global: *mut JSGlobalObject, i: u64) -> JSValue;
+        /// Defined in `JSCFFIBridge.cpp`.
+        #[link_name = "Bun__FFI__pointerToJSValue"]
+        pub(super) fn PTR_TO_JSVALUE(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
     }
 }
 
@@ -2166,6 +2169,14 @@ impl Function {
             }
             let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
             let arg_name = &arg_buf[0..3 + length_buf];
+            if !arg.needs_a_cast_in_c() {
+                write!(
+                    writer,
+                    "  if (!JSVALUE_BITS_ARE_INT32(arg{i})) {{\n    arg{i} = {};\n    if (threw) return 0;\n  }}\n",
+                    arg.to_c(arg_name)
+                )?;
+                continue;
+            }
             writer.write_all(b"  ")?;
             arg.typename(writer)?;
             write!(
@@ -2198,12 +2209,12 @@ impl Function {
 
             let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
             let arg_name = &arg_buf[0..3 + length_buf];
-            if arg.arg_conversion_can_throw() {
-                write!(writer, "converted{}", i)?;
-            } else if arg.needs_a_cast_in_c() {
-                write!(writer, "{}", arg.to_c(arg_name))?;
-            } else {
+            if !arg.needs_a_cast_in_c() {
                 writer.write_all(arg_name)?;
+            } else if arg.arg_conversion_can_throw() {
+                write!(writer, "converted{}", i)?;
+            } else {
+                write!(writer, "{}", arg.to_c(arg_name))?;
             }
         }
         writer.write_all(b");\n")?;
@@ -2224,11 +2235,7 @@ impl Function {
         writer.write_all(b"return ")?;
 
         if self.return_type != ABIType::Void {
-            write!(
-                writer,
-                "{}.asZigRepr",
-                self.return_type.to_js(b"return_value")
-            )?;
+            write!(writer, "{}", self.return_type.to_js(b"return_value"))?;
         } else {
             writer.write_all(b"ValueUndefined.asZigRepr")?;
         }
@@ -2611,6 +2618,12 @@ impl CompilerRT {
             .add_symbol(
                 zstr!("UINT64_TO_JSVALUE_SLOW"),
                 WORKAROUND.uint64_to_jsvalue as *const c_void,
+            )
+            .expect("unreachable");
+        state
+            .add_symbol(
+                zstr!("PTR_TO_JSVALUE"),
+                exposed_to_ffi::PTR_TO_JSVALUE as *const c_void,
             )
             .expect("unreachable");
     }

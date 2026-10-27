@@ -639,6 +639,10 @@ class WASI {
         },
       ],
     ]);
+    // fd_renumber moves entries, so the hooks and the stdin read path go with these entries, not with 0 to 2.
+    const stdinEntry = this.FD_MAP.get(WASI_STDIN_FILENO);
+    const stdoutEntry = this.FD_MAP.get(WASI_STDOUT_FILENO);
+    const stderrEntry = this.FD_MAP.get(WASI_STDERR_FILENO);
     const path = bindings.path;
     for (const [k, v] of Object.entries(preopens)) {
       const real = fs.openSync(v, nodeFsConstants.O_RDONLY);
@@ -991,8 +995,8 @@ class WASI {
       }),
       fd_write: wrap((fd, iovs, iovsLen, nwritten) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_WRITE);
-        const IS_STDOUT = fd == WASI_STDOUT_FILENO;
-        const IS_STDERR = fd == WASI_STDERR_FILENO;
+        const IS_STDOUT = stats === stdoutEntry;
+        const IS_STDERR = stats === stderrEntry;
         let written = 0;
         getiovs(iovs, iovsLen).forEach(iov => {
           if (iov.byteLength == 0) return;
@@ -1041,7 +1045,7 @@ class WASI {
       }),
       fd_read: wrap((fd, iovs, iovsLen, nread) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_READ);
-        const IS_STDIN = fd == WASI_STDIN_FILENO;
+        const IS_STDIN = stats === stdinEntry;
         let read = 0;
         outer: for (const iov of getiovs(iovs, iovsLen)) {
           let r = 0;
@@ -1165,11 +1169,16 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_renumber: wrap((from, to) => {
+        // uvwasi compares the numbers first: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/fd_table.c#L419-L436
+        if (from === to) {
+          return WASI_ESUCCESS;
+        }
         const fromEntry = CHECK_FD(from, BigInt(0));
         const toEntry = CHECK_FD(to, BigInt(0));
-        fs.closeSync(fromEntry.real);
-        this.FD_MAP.set(from, toEntry);
-        this.FD_MAP.delete(to);
+        // uvwasi closes `to` first. A close that fails has still closed the descriptor, so the table changes first.
+        this.FD_MAP.set(to, fromEntry);
+        this.FD_MAP.delete(from);
+        fs.closeSync(toEntry.real);
         return WASI_ESUCCESS;
       }),
       fd_seek: wrap((fd, offset, whence, newOffsetPtr) => {
@@ -1365,13 +1374,6 @@ class WASI {
             }
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-            if (p == "dev/tty") {
-              this.view.setUint32(fdPtr, WASI_STDIN_FILENO, true);
-              return WASI_ESUCCESS;
-            }
-            if (p.startsWith("proc/")) {
-              throw new WASIError(WASI_EBADF);
-            }
             const fullUnresolved = RESOLVE_PATH(stats, p);
             let full;
             try {
@@ -1449,7 +1451,12 @@ class WASI {
               },
               path: full,
             });
-            stat(this, newfd);
+            const entry = stat(this, newfd);
+            // uvwasi's mask for a terminal: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2131-L2143
+            if (entry.filetype === WASI_FILETYPE_CHARACTER_DEVICE && bindings.isTTY(realfd)) {
+              entry.rights.base &= RIGHTS_TTY_BASE;
+              entry.rights.inheriting &= RIGHTS_TTY_INHERITING;
+            }
             this.view.setUint32(fdPtr, newfd, true);
           } catch (e) {
             if (e instanceof WASIError) {
@@ -1582,7 +1589,7 @@ class WASI {
               sout += 1;
               sout += 5;
               nevents += 1;
-              if (fd == WASI_STDIN_FILENO && WASI_EVENTTYPE_FD_READ == type) {
+              if (this.FD_MAP.get(fd) === stdinEntry && WASI_EVENTTYPE_FD_READ == type) {
                 this.shortPause();
               }
               break;

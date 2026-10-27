@@ -1,7 +1,8 @@
 # bun_libdeflate
 
-A port of [libdeflate](https://github.com/ebiggers/libdeflate) (commit `92e6a0db`, MIT: see `LICENSE`) to safe Rust. It compresses and
-decompresses DEFLATE, zlib and gzip, always a whole buffer at a time.
+A port of [libdeflate](https://github.com/ebiggers/libdeflate) (commit `92e6a0db`, MIT: see `LICENSE`) to safe Rust. It compresses to
+DEFLATE, zlib and gzip and decompresses DEFLATE and gzip, always a whole buffer at a time. (`zlib_decompress.c` is not
+ported: nothing in Bun gives libdeflate a zlib stream.)
 
 Two rules hold for every change:
 

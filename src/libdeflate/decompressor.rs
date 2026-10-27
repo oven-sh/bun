@@ -1,13 +1,11 @@
 use bun_alloc::AllocError;
 use bun_core::strings;
-use bun_zlib::{adler32_bytes, crc32_bytes};
+use bun_zlib::crc32_bytes;
 
 use crate::decompress::{Growth, Inflate, Progress, Tables};
 use crate::error::{Error, Result};
 use crate::{
-    Encoding, GZIP_CM_DEFLATE, GZIP_FOOTER_SIZE, GZIP_ID1, GZIP_ID2, GZIP_MIN_HEADER_SIZE,
-    GZIP_MIN_OVERHEAD, ZLIB_CINFO_32K_WINDOW, ZLIB_CM_DEFLATE, ZLIB_FOOTER_SIZE,
-    ZLIB_MIN_HEADER_SIZE, ZLIB_MIN_OVERHEAD,
+    GZIP_CM_DEFLATE, GZIP_FOOTER_SIZE, GZIP_ID1, GZIP_ID2, GZIP_MIN_HEADER_SIZE, GZIP_MIN_OVERHEAD,
 };
 
 const GZIP_FHCRC: u8 = 0x02;
@@ -15,6 +13,15 @@ const GZIP_FEXTRA: u8 = 0x04;
 const GZIP_FNAME: u8 = 0x08;
 const GZIP_FCOMMENT: u8 = 0x10;
 const GZIP_FRESERVED: u8 = 0xE0;
+
+/// What the DEFLATE stream comes wrapped in. Nothing gives a [`Decompressor`] a zlib stream.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum Decoding {
+    /// Nothing (RFC 1951).
+    Deflate,
+    /// One member (RFC 1952).
+    Gzip,
+}
 
 /// Decompresses any number of streams, one after the other. It keeps no state between them.
 pub struct Decompressor(Box<Tables>);
@@ -105,9 +112,9 @@ impl Decompressor {
         &mut self,
         input: &[u8],
         mut output: &mut [u8],
-        encoding: Encoding,
+        decoding: Decoding,
     ) -> Result<Decompressed> {
-        self.decompress_into(input, &mut output, encoding)
+        self.decompress_into(input, &mut output, decoding)
     }
 
     /// Appends to `out` within its spare capacity. `out` is unchanged after an error.
@@ -115,10 +122,10 @@ impl Decompressor {
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
-        encoding: Encoding,
+        decoding: Decoding,
     ) -> Result<Decompressed> {
         let limit = out.capacity() - out.len();
-        self.decompress_to_vec_sink(input, out, encoding, limit)
+        self.decompress_to_vec_sink(input, out, decoding, limit)
     }
 
     /// Replaces the contents of `out`, which grows to at most `max_len` bytes. `out` is empty after an error.
@@ -126,18 +133,18 @@ impl Decompressor {
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
-        encoding: Encoding,
+        decoding: Decoding,
         max_len: usize,
     ) -> Result<Decompressed> {
         out.clear();
-        self.decompress_to_vec_sink(input, out, encoding, max_len)
+        self.decompress_to_vec_sink(input, out, decoding, max_len)
     }
 
     fn decompress_to_vec_sink(
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
-        encoding: Encoding,
+        decoding: Decoding,
         limit: usize,
     ) -> Result<Decompressed> {
         let start = out.len();
@@ -148,7 +155,7 @@ impl Decompressor {
         };
         let result = sink
             .grow(0)
-            .and_then(|()| self.decompress_into(input, &mut sink, encoding));
+            .and_then(|()| self.decompress_into(input, &mut sink, decoding));
         out.truncate(start + result.map_or(0, |decompressed| decompressed.written));
         result
     }
@@ -157,12 +164,11 @@ impl Decompressor {
         &mut self,
         input: &[u8],
         sink: &mut impl Sink,
-        encoding: Encoding,
+        decoding: Decoding,
     ) -> Result<Decompressed> {
-        match encoding {
-            Encoding::Deflate => self.deflate(input, sink),
-            Encoding::Zlib => self.zlib(input, sink),
-            Encoding::Gzip => self.gzip(input, sink),
+        match decoding {
+            Decoding::Deflate => self.deflate(input, sink),
+            Decoding::Gzip => self.gzip(input, sink),
         }
     }
 
@@ -175,40 +181,6 @@ impl Decompressor {
                 Progress::NeedsOutput(len) => sink.grow(len)?,
             }
         }
-    }
-
-    fn zlib(&mut self, input: &[u8], sink: &mut impl Sink) -> Result<Decompressed> {
-        if input.len() < ZLIB_MIN_OVERHEAD {
-            return Err(Error::BadData);
-        }
-        let (header, rest) = input.split_first_chunk().ok_or(Error::BadData)?;
-        let header = u16::from_be_bytes(*header);
-        let has_preset_dictionary = (header >> 5) & 1 != 0;
-        if header % 31 != 0
-            || (header >> 8) & 0xF != ZLIB_CM_DEFLATE
-            || header >> 12 > ZLIB_CINFO_32K_WINDOW
-            || has_preset_dictionary
-        {
-            return Err(Error::BadData);
-        }
-
-        let body = rest
-            .get(..rest.len() - ZLIB_FOOTER_SIZE)
-            .ok_or(Error::BadData)?;
-        let Decompressed { read, written } = self.deflate(body, sink)?;
-
-        let footer = rest
-            .get(read..)
-            .and_then(|rest| rest.first_chunk())
-            .ok_or(Error::BadData)?;
-        let output = sink.bytes().get(..written).ok_or(Error::BadData)?;
-        if adler32_bytes(1, output) != u32::from_be_bytes(*footer) {
-            return Err(Error::BadData);
-        }
-        Ok(Decompressed {
-            read: ZLIB_MIN_HEADER_SIZE + read + ZLIB_FOOTER_SIZE,
-            written,
-        })
     }
 
     /// One member. The header's optional fields are skipped, its CRC-16 unchecked.

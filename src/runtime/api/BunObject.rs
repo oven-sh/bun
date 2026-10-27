@@ -1769,14 +1769,14 @@ pub(crate) mod JSZlib {
                 heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
-                let encoding = if is_gzip {
-                    bun_libdeflate::Encoding::Gzip
+                let decoding = if is_gzip {
+                    bun_libdeflate::Decoding::Gzip
                 } else {
-                    bun_libdeflate::Encoding::Deflate
+                    bun_libdeflate::Decoding::Deflate
                 };
                 let max_output = ArrayBuffer::MAX_SIZE as usize;
                 match bun_libdeflate::Decompressor::new()
-                    .decompress_to_vec_grow(compressed, &mut list, encoding, max_output)
+                    .decompress_to_vec_grow(compressed, &mut list, decoding, max_output)
                 {
                     Ok(_) => {}
                     Err(bun_libdeflate::Error::Alloc(err)) => return Err(err.into()),

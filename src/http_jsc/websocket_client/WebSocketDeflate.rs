@@ -164,7 +164,7 @@ impl PerMessageDeflate {
             let result = decompressor.decompress_to_vec(
                 &in_with_trailer,
                 out,
-                bun_libdeflate::Encoding::Deflate,
+                bun_libdeflate::Decoding::Deflate,
             );
             if let Ok(decompressed) = result {
                 // Stopping before the appended block means the peer sent a final block of its own. That is left to zlib.

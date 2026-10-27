@@ -308,10 +308,10 @@ impl<'a> InternalState<'a> {
                     break 'libdeflate;
                 }
                 let format = match self.encoding {
-                    Encoding::Gzip => bun_libdeflate::Encoding::Gzip,
+                    Encoding::Gzip => bun_libdeflate::Decoding::Gzip,
                     // zlib-ng alone judges a zlib-wrapped body: libdeflate accepts more streams.
                     Encoding::Deflate if has_zlib_header(buffer) => break 'libdeflate,
-                    Encoding::Deflate => bun_libdeflate::Encoding::Deflate,
+                    Encoding::Deflate => bun_libdeflate::Decoding::Deflate,
                     _ => unreachable!(),
                 };
                 self.flags.is_libdeflate_fast_path_disabled = true;
@@ -344,7 +344,7 @@ impl<'a> InternalState<'a> {
                         let result = deflater.decompressor.decompress_to_vec(
                             buffer,
                             &mut self.decoded_body.list,
-                            bun_libdeflate::Encoding::Gzip,
+                            bun_libdeflate::Decoding::Gzip,
                         );
                         // libdeflate decodes a single gzip member; unconsumed
                         // input means this is a multi-member stream (RFC 1952

@@ -102,6 +102,30 @@ describe("fetch compress option", () => {
     });
   });
 
+  test.concurrent("deflate is a zlib header that tells the level, a DEFLATE stream and the Adler-32", async () => {
+    using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.arrayBuffer()) });
+    const checksum = Buffer.alloc(4);
+    checksum.writeUInt32BE(Bun.hash.adler32(payload));
+    for (const [level, header] of [
+      [1, "7801"],
+      [2, "785e"],
+      [5, "785e"],
+      [6, "789c"],
+      [7, "789c"],
+      [8, "78da"],
+      [12, "78da"],
+    ] as const) {
+      const res = await fetch(server.url, { method: "POST", body: payload, compress: { encoding: "deflate", level } });
+      expect(Buffer.from(await res.arrayBuffer())).toEqual(
+        Buffer.concat([
+          Buffer.from(header, "hex"),
+          Bun.deflateSync(payload, { library: "libdeflate", level }),
+          checksum,
+        ]),
+      );
+    }
+  });
+
   test.concurrent("compress: true defaults to gzip", async () => {
     using server = makeServer();
     const res = await fetch(server.url, {

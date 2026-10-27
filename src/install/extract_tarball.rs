@@ -324,7 +324,7 @@ impl ExtractTarball {
                         let result = bun_libdeflate::Decompressor::new().decompress_to_vec(
                             tgz_bytes,
                             &mut zlib_pool.list,
-                            bun_libdeflate::Encoding::Gzip,
+                            bun_libdeflate::Decoding::Gzip,
                         );
                         // Only the first gzip member is read, so a tarball with more is left to `extract_to_dir`.
                         decompressed_in_memory =

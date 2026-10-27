@@ -151,6 +151,371 @@ describe("zlib", () => {
     }
   });
 
+  describe("libdeflate", () => {
+    const library = "libdeflate";
+    const digest = bytes => `${bytes.length} ${Bun.SHA1.hash(bytes, "hex").slice(0, 16)}`;
+
+    const inputs = (() => {
+      let state = 0x2545f491;
+      const next = () => ((state ^= state << 13), (state ^= state >>> 17), (state ^= state << 5), state >>> 0);
+      const noise = length => Buffer.from(Uint32Array.from({ length: length / 4 }, next).buffer);
+      const word = () =>
+        next()
+          .toString(36)
+          .slice(0, 2 + (next() % 6));
+      const phrases = Array.from({ length: 300 }, () => Array.from({ length: 1 + (next() % 8) }, word).join(" "));
+      const words = length => {
+        const text = [];
+        for (let size = 0; size < length; size += text.at(-1).length + 1)
+          text.push(next() % 4 ? phrases[next() % 300] : word());
+        return Buffer.from(text.join(" ")).subarray(0, length);
+      };
+      const window = noise(32768);
+      return {
+        // More than one block of the longest kind, and ten windows.
+        words: words(330_000),
+        // More than one stored block.
+        noise: noise(70_000),
+        runs: Buffer.concat(Array.from({ length: 300 }, () => Buffer.alloc(1 + (next() % 600), next() % 7))),
+        // Blocks end where the statistics change.
+        mixed: Buffer.concat([
+          words(30_000),
+          noise(12_000),
+          Buffer.alloc(9_000),
+          words(25_000),
+          noise(4_000).map(byte => byte & 3),
+        ]),
+        // Repeats 32768 bytes back, which DEFLATE allows and libdeflate does not look for, then 32767, then 32769.
+        far: Buffer.concat([window, window, window.subarray(1), Buffer.alloc(1), window]),
+        // Few enough symbols for the static codes.
+        few: noise(3_000).map(byte => 65 + (byte & 1)),
+      };
+    })();
+
+    // What the C library wrote for each input at levels 0 to 12: the length and the start of the SHA-1.
+    const written = {
+      words: [
+        "330030 d7f84ba13a54f264",
+        "56001 279e40bd452f38b9",
+        "52945 3279ad997ad1ea08",
+        "52813 9aaf9038e77c5a63",
+        "52793 12602851035bca5a",
+        "52685 0a21221642224d4d",
+        "52599 6d4252159200797b",
+        "52595 a4f51fd89774bbac",
+        "52535 d55a02a78148ff8d",
+        "52535 d55a02a78148ff8d",
+        "51744 84a84dc45f42eadd",
+        "51659 9b29eae17ae31818",
+        "51658 84efb6a1781e3b25",
+      ],
+      noise: [
+        "70010 df587075ba18e4f0",
+        "70010 df587075ba18e4f0",
+        "70010 df587075ba18e4f0",
+        "70010 df587075ba18e4f0",
+        "70010 df587075ba18e4f0",
+        "70010 df587075ba18e4f0",
+        "70010 df587075ba18e4f0",
+        "70010 df587075ba18e4f0",
+        "70010 df587075ba18e4f0",
+        "70010 df587075ba18e4f0",
+        "70010 df587075ba18e4f0",
+        "70010 df587075ba18e4f0",
+        "70010 df587075ba18e4f0",
+      ],
+      runs: [
+        "92917 a07e5a15790a02b3",
+        "940 4cbed6a7b703ce5f",
+        "913 dcb52a7b32435b7c",
+        "938 314644e77893dbd9",
+        "987 73833771ceeaf648",
+        "589 c47eb9dce2bc7abc",
+        "592 9de508dc990de3f2",
+        "610 b920162082f236f9",
+        "729 8a43b8ea4fbaa668",
+        "737 5bd5472cbda2adf9",
+        "645 c4698c2139b65835",
+        "645 05116e858ff44aa0",
+        "646 542621c17a2d4645",
+      ],
+      mixed: [
+        "80010 8f63a5061694c715",
+        "29849 efa8f606ddf08e1d",
+        "27695 d77f1dc490c0dc7d",
+        "27674 15e8e227c94616e0",
+        "27674 b2c1a0ca842d3328",
+        "27654 93da18acc5424476",
+        "27675 54e4d189fae7299b",
+        "27674 f192dcd580ec6c62",
+        "27640 dd0987a5322b7bff",
+        "27640 dd0987a5322b7bff",
+        "27315 c79ae225382e228b",
+        "27266 eba09b7fea8fa9b4",
+        "27255 f1371a191d876c05",
+      ],
+      far: [
+        "131087 df1cfc18ae863631",
+        "98774 807f84be16dd8ebf",
+        "98751 b03c011b8d7f4d13",
+        "98751 b03c011b8d7f4d13",
+        "98751 b03c011b8d7f4d13",
+        "98755 90c8aac0b27c989a",
+        "98755 90c8aac0b27c989a",
+        "98755 90c8aac0b27c989a",
+        "98755 90c8aac0b27c989a",
+        "98755 90c8aac0b27c989a",
+        "98756 e5c672b5febbe25d",
+        "98756 e5c672b5febbe25d",
+        "98756 e5c672b5febbe25d",
+      ],
+      few: [
+        "3005 fee3b57b1f138abb",
+        "576 a72c4dd1af074143",
+        "555 95e15e610ff00f74",
+        "543 ee4249b9ef889ca7",
+        "512 dbba362e7c08580d",
+        "511 a81bbde0be47a016",
+        "522 d61319e936ac24e1",
+        "528 9bffac3b67b7eec8",
+        "528 b97982fe60f1a345",
+        "529 838ea6c49c23e01e",
+        "506 a2f53d5e78a9568c",
+        "485 909eeb66b020af9e",
+        "483 86e9105ce8c087ae",
+      ],
+      short: [
+        "3560 c856dc0aca751fee",
+        "3336 9670bcd7658c3a2c",
+        "3324 a41f274d19e02250",
+        "3300 e088ed3ab7e30f22",
+        "3276 db171951cb473732",
+        "3254 c88822b29e4d5b5f",
+        "3234 1c3f04a0b1573d0e",
+        "3214 c1fd2601df936153",
+        "3194 a1a1909998c1b33b",
+        "3182 8bdd54a1b4737b10",
+        "3181 f460bea7e788365e",
+        "3133 b3e18d69d79534b6",
+        "3121 4c15cfd06cab6322",
+      ],
+    };
+
+    it.each(Object.keys(inputs))("compresses %s to the bytes the C library wrote", name => {
+      const outputs = written[name].map((_, level) => deflateSync(inputs[name], { library, level }));
+      expect(outputs.map(digest)).toEqual(written[name]);
+      for (const output of outputs) {
+        expect(Bun.SHA1.hash(inflateSync(output, { library }), "hex")).toBe(Bun.SHA1.hash(inputs[name], "hex"));
+      }
+    });
+
+    it("compresses 0 to 79 bytes to the bytes the C library wrote", () => {
+      const outputs = written.short.map((_, level) =>
+        Array.from({ length: 80 }, (_, length) => deflateSync(inputs.words.subarray(0, length), { library, level })),
+      );
+      expect(outputs.map(output => digest(Buffer.concat(output)))).toEqual(written.short);
+    });
+
+    it("gzip is a header that tells the level, what deflate writes, the CRC-32 and the length", () => {
+      const input = inputs.few;
+      const trailer = Buffer.alloc(8);
+      trailer.writeUInt32LE(Bun.hash.crc32(input), 0);
+      trailer.writeUInt32LE(input.length, 4);
+      for (let level = 0; level <= 12; level++) {
+        const header = Buffer.from([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, level < 2 ? 4 : level < 8 ? 0 : 2, 255]);
+        expect(Buffer.from(gzipSync(input, { library, level }))).toEqual(
+          Buffer.concat([header, deflateSync(input, { library, level }), trailer]),
+        );
+      }
+    });
+
+    // What the C library made of each stream: the text, or null for "bad data".
+    describe.each([
+      [
+        inflateSync,
+        [
+          ["no input", "", null],
+          ["an empty static block", "0300", ""],
+          ["an empty stored block", "010000ffff", ""],
+          ["block type 3", "07", null],
+          ["a stored block whose lengths disagree", "010100fefe41", null],
+          ["a stored block cut short", "010300fcff4142", null],
+          ["a stored block header cut short", "010300fc", null],
+          ["no final block", "4a0400", null],
+          ["three kinds of block", "000200fdff68695228c9482d4a05148007140000000080b0a5ff2743", "hi there!!"],
+          ["bytes after the final block", "cbcf06000102030405060708090a0b0c", "ok"],
+          ["a run by a match at distance 1", "4b1c0500", "a".repeat(259)],
+          ["a match of 3 over itself at distance 2", "4b4c024200", "ababa"],
+          ["a match of 258 spelled as 227 + 31", "4b1cf90000", "a".repeat(259)],
+          ["a match from before the start", "4b044200", null],
+          ["a match as the first item", "030200", null],
+          ["a match into the block before", "4a4c4a4e494d030c420200", "abcdefabcdef"],
+          ["length symbol 286", "4b1c0300", "a".repeat(259)],
+          ["length symbol 287", "4b1c0700", "a".repeat(259)],
+          ["distance symbol 30", "4b043e00", null],
+          ["distance symbol 31", "4b047e00", null],
+          ["a static block without its end", "4b4c4a06", null],
+          ["a static block cut in a match", "4b4c4a1e00", null],
+          ["zeros", "00000000000000000000000000000000", null],
+          ["ones", "ffffffffffffffffffffffffffffffff", null],
+          [
+            "a dynamic block of 8 and 9 bits, no distances",
+            "05e001481200000000545555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555558f8425e17f",
+            "Hi!",
+          ],
+          [
+            "the same with a match, though no distance has a code",
+            "0de001481200000000545555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555d53f12fffd03",
+            "HHHH",
+          ],
+          [
+            "one distance code of 1 bit",
+            "0de0014c1200000030a8aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6ad525fefb07",
+            "HHHH",
+          ],
+          [
+            "the unused half of that code",
+            "0de0014c1200000030a8aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6ad525feff07",
+            "HHHH",
+          ],
+          [
+            "one distance code of 2 bits",
+            "05e0014c120000c000a8aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7500000000",
+            null,
+          ],
+          [
+            "two distance codes of 2 bits",
+            "05e1014c120000c000a8aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf50300000000",
+            null,
+          ],
+          [
+            "three distance codes of 1 bit",
+            "05e2014c1200000030a8aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf51f00000000",
+            null,
+          ],
+          [
+            "too few literal codes",
+            "05e001481200000000545555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555150f00000000",
+            null,
+          ],
+          [
+            "too many literal codes",
+            "05e001481200000000545555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555550d00000000",
+            null,
+          ],
+          ["only the end of block has a code, of 1 bit", "05e001050000000020fc7f1d", ""],
+          ["no literal has a code", "05e081040000000000fc6f0300000000", null],
+          ["no end of block code", "05e001050000000020d4ffd5000000000000000000", null],
+          [
+            "288 literal codes",
+            "fde0014812000000005455555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555fdffffffffffffffffffffffffffffff23f800",
+            "A",
+          ],
+          [
+            "length symbol 287 of those",
+            "fde0014812000000005455555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555fdffffffffffffffffffffffffffffff23f8ff01",
+            null,
+          ],
+          [
+            "32 distance codes",
+            "0dff014c1230000000a8aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6ad5ffffffffffffffffffffffbfc47ff00f",
+            "HHHH",
+          ],
+          [
+            "distance symbol 31 of those",
+            "0dff014c1230000000a8aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6ad5ffffffffffffffffffffffbfc4ffff0f",
+            null,
+          ],
+          ["a repeat with nothing before it", "05e0032000000000000400000000", null],
+          [
+            "a repeat past the last length",
+            "05e001491000000000a8aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa350000000000",
+            null,
+          ],
+          [
+            "a repeat from the literals into the distances",
+            "05e305410000008000a8aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5e230804",
+            "A",
+          ],
+          [
+            "a repeat of 6 lengths of 8 bits",
+            "05e005481000000000f8ffffffffffffffffffffffffffffffffffffffffaf85d67f",
+            "Z",
+          ],
+          ["too many length codes", "05e0010400000040100000000000", null],
+          ["too few length codes", "05e0010800000080200000000000", null],
+          [
+            "no length codes",
+            "05e001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            null,
+          ],
+          [
+            "a dynamic header cut short",
+            "05e0014812000000005455555555555555555555555555555555555555555555555501",
+            null,
+          ],
+          [
+            "codes of 1 to 15 bits",
+            "05e081b46ddbb66ddbb2c6944b6d7dccb5cf7ddf3f841042f841bbf7fdfefefdf7bffffb7fffdfffeffff7fffdbffffbdf7ffffe7edfbbe5ff0f",
+            "abcdefghijklmnoonmlkjihgfedcba",
+          ],
+        ],
+      ],
+      [
+        gunzipSync,
+        [
+          ["no input", "", null],
+          ["a plain member", "1f8b08000000000000ffcbc80400ac2a93d802000000", "hi"],
+          ["every optional field", "1f8b081f0000000000ff03000102036e616d65006300deadcbc80400ac2a93d802000000", "hi"],
+          ["an empty extra field, name and comment", "1f8b081c0000000000ff00000000cbc80400ac2a93d802000000", "hi"],
+          ["reserved flag 0x20", "1f8b08200000000000ffcbc80400ac2a93d802000000", null],
+          ["reserved flag 0x80", "1f8b08800000000000ffcbc80400ac2a93d802000000", null],
+          ["the wrong first byte", "1e8b08000000000000ffcbc80400ac2a93d802000000", null],
+          ["the wrong second byte", "1f8c08000000000000ffcbc80400ac2a93d802000000", null],
+          ["method 7", "1f8b07000000000000ffcbc80400ac2a93d802000000", null],
+          ["an extra field longer than the input", "1f8b08040000000000ffffffcbc80400ac2a93d802000000", null],
+          ["an extra field that leaves 7 bytes", "1f8b08040000000000ff0800cbc80400ac2a93d802000000", null],
+          ["a name without an end", "1f8b08080000000000ff010101010101010101010101", null],
+          ["a comment that ends in the trailer", "1f8b08100000000000ff010101010101010101010001", null],
+          ["the wrong checksum", "1f8b08000000000000ffcbc80400998ff03102000000", null],
+          ["the wrong length", "1f8b08000000000000ffcbc80400ac2a93d803000000", null],
+          ["half a trailer", "1f8b08000000000000ffcbc80400ac2a93d8", null],
+          ["17 bytes", "1f8b08000000000000ff0300000000000000", null],
+          ["the shortest member", "1f8b08000000000000ff03000000000000000000", ""],
+          ["a stream that runs into the trailer", "1f8b08000000000000ffcbc804ac2a93d802000000", null],
+          [
+            "two members",
+            "1f8b08000000000000ffcbc80400ac2a93d8020000001f8b08000000000000ffcbc80400ac2a93d802000000",
+            "hi",
+          ],
+          ["bytes after the member", "1f8b08000000000000ffcbc80400ac2a93d80200000000ff00", "hi"],
+        ],
+      ],
+    ])("%p", (decompress, streams) => {
+      it.each(streams)("%s", (_, hex, text) => {
+        const run = () => Buffer.from(decompress(Buffer.from(hex, "hex"), { library })).toString("latin1");
+        if (text === null) expect(run).toThrow(new Error("libdeflate returned an error: bad data"));
+        else expect(run()).toBe(text);
+      });
+    });
+
+    it("a match reaches 32768 bytes back and no further", () => {
+      const stored = length => {
+        const header = Buffer.from([0, 0, 0, 0, 0]);
+        header.writeUInt16LE(length, 1);
+        header.writeUInt16LE(~length & 0xffff, 3);
+        return Buffer.concat([header, inputs.noise.subarray(0, length)]);
+      };
+      const matchOf3At32768 = Buffer.from("03deff0f00", "hex");
+      expect(Buffer.from(inflateSync(Buffer.concat([stored(32768), matchOf3At32768]), { library }))).toEqual(
+        Buffer.concat([inputs.noise.subarray(0, 32768), inputs.noise.subarray(0, 3)]),
+      );
+      expect(() => inflateSync(Buffer.concat([stored(32767), matchOf3At32768]), { library })).toThrow(
+        new Error("libdeflate returned an error: bad data"),
+      );
+    });
+  });
+
   // libdeflate never emits a block bigger than a stored one, so output longer than the input plus
   // its overhead (5 bytes, plus 18 for gzip) means it wrote past the allocation.
   it.concurrent.each(["gzip", "deflate"])(

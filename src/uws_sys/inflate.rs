@@ -1,6 +1,6 @@
 //! `bun_libdeflate` for `uWS::ZlibContext` (packages/bun-uws/src/PerMessageDeflate.h).
 
-use bun_libdeflate::{Decompressor, Encoding};
+use bun_libdeflate::{Decoding, Decompressor};
 
 use crate::thunk::c_slice;
 
@@ -35,7 +35,7 @@ unsafe extern "C" fn Bun__Inflater__inflate(
     let input = unsafe { c_slice(input, input_len) };
     match this
         .decompressor
-        .decompress(input, &mut this.output, Encoding::Deflate)
+        .decompress(input, &mut this.output, Decoding::Deflate)
     {
         Ok(decompressed) => {
             *written = decompressed.written;

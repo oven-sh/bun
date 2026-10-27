@@ -1239,7 +1239,7 @@ static JSFunction* arrayBufferIsViewOfRealm(VM& vm, Zig::GlobalObject* globalObj
     if (!value)
         return nullptr;
     auto* function = dynamicDowncast<JSFunction>(value);
-    if (!function || function->classInfo() != JSFunction::info() || function->globalObject() != globalObject)
+    if (!function || function->classInfo() != JSFunction::info() || !function->isHostFunction() || function->globalObject() != globalObject)
         return nullptr;
     // With the JIT off JSC records NoIntrinsic for every host function, so the name of the executable identifies this one.
     if (function->name(vm) != vm.propertyNames->isView.string())

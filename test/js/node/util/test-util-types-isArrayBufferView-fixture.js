@@ -5,6 +5,8 @@ const replaceWithJSFunction = `ArrayBuffer.isView = function isView() { replacem
 
 const rows = {
   "untouched": {},
+  // The module refuses a function that is not a host function. No row can show that check alone:
+  // JSC gives a JS function a class of its own, and the check of the class refuses it first.
   "a JS function, before the first load": { before: replaceWithJSFunction },
   "deleted, before the first load": { before: `delete ArrayBuffer.isView;` },
   "an accessor, before the first load": {

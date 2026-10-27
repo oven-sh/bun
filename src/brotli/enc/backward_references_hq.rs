@@ -8,35 +8,33 @@ use super::command::{
 };
 use super::fast_log::fast_log2;
 use super::find_match_length::find_match_length_with_limit;
-use super::hash::{
-    BackwardMatch, H10, Hasher, MAX_NUM_MATCHES_H10, lookup_all_compound_dictionary_matches,
-};
+use super::hash::{BackwardMatch, H10, Hasher, HasherImpl, lookup_all_compound_dictionary_matches};
 use super::literal_cost::estimate_bit_costs_for_literals;
 use super::params::{DistanceParams, EncoderParams, LONG_COPY_QUICK_STEP};
 use crate::common::constants::{
-    COPY_LENGTH_PREFIX_CODE, INSERT_LENGTH_PREFIX_CODE, NUM_COMMAND_SYMBOLS,
-    NUM_DISTANCE_SHORT_CODES, NUM_LITERAL_SYMBOLS, max_backward_limit,
+    COPY_LENGTH_PREFIX_CODE, INSERT_LENGTH_PREFIX_CODE, MAX_ALLOWED_DISTANCE, MAX_NDIRECT,
+    MAX_NPOSTFIX, NUM_COMMAND_SYMBOLS, NUM_DISTANCE_SHORT_CODES, NUM_LITERAL_SYMBOLS,
+    calculate_distance_code_limit, max_backward_limit,
 };
 use crate::util::{Bug, Checked, SliceExt, try_vec, try_zeroed};
 use bun_core::AllocError;
 
-/// `calculate_distance_code_limit(MAX_ALLOWED_DISTANCE, 3, 120).max_alphabet_size`.
-const MAX_EFFECTIVE_DISTANCE_ALPHABET_SIZE: usize = 544;
+const MAX_EFFECTIVE_DISTANCE_ALPHABET_SIZE: usize = calculate_distance_code_limit(
+    MAX_ALLOWED_DISTANCE,
+    MAX_NPOSTFIX,
+    MAX_NDIRECT,
+)
+.max_alphabet_size as usize;
 
-/// About 2^127.
-const INFINITY: f32 = 1.7e38;
-
-/// How many bytes [`H10`] hashes.
-const HASH_TYPE_LENGTH_H10: usize = 4;
-/// How many bytes [`H10`] looks at when a position is added to it.
-const STORE_LOOKAHEAD_H10: usize = 128;
+/// The cost of a node that no command ends at yet. About 2^127.
+const UNREACHED_COST: f32 = 1.7e38;
 
 const MAX_NUM_COMPOUND_DICTIONARY_MATCHES: usize = 64;
 
 /// The best command found that ends just before a byte of the block.
 ///
-/// For each node `i > 0` with a cost below [`INFINITY`], the copy length is at least 2, the command length is at most
-/// `i`, and the cost of the node at `i` less the command length is below [`INFINITY`] too.
+/// For each node `i > 0` with a cost below [`UNREACHED_COST`], the copy length is at least 2, the command length is at
+/// most `i`, and the cost of the node at `i` less the command length is below [`UNREACHED_COST`] too.
 #[derive(Clone, Copy)]
 struct ZopfliNode {
     /// The copy length in the low 25 bits. In the high 7, 9 plus the copy length less the length code.
@@ -50,7 +48,7 @@ struct ZopfliNode {
     /// - until the forward pass gets here, the bits of the `f32` cost of getting here from the start of the block;
     /// - then the "shortcut": the last node on the way here whose command changes the last distances;
     /// - for the nodes on the path chosen, the length of the next command, or `u32::MAX` at the end.
-    u: u32,
+    cost_or_link: u32,
 }
 
 impl ZopfliNode {
@@ -58,12 +56,29 @@ impl ZopfliNode {
         length: 1,
         distance: 0,
         dcode_insert_length: 0,
-        u: INFINITY.to_bits(),
+        cost_or_link: UNREACHED_COST.to_bits(),
+    };
+
+    /// The start of a block.
+    const FIRST: Self = Self {
+        length: 0,
+        cost_or_link: 0f32.to_bits(),
+        ..Self::INIT
     };
 
     #[inline(always)]
     fn cost(&self) -> f32 {
-        f32::from_bits(self.u)
+        f32::from_bits(self.cost_or_link)
+    }
+
+    #[inline(always)]
+    fn shortcut(&self) -> u32 {
+        self.cost_or_link
+    }
+
+    #[inline(always)]
+    fn next_command_length(&self) -> u32 {
+        self.cost_or_link
     }
 
     #[inline(always)]
@@ -109,12 +124,18 @@ struct ZopfliCostModel {
     num_bytes: usize,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Alphabet {
+    Literals,
+    CommandsOrDistances,
+}
+
 /// Sets `cost` to the entropy of each symbol of `histogram`.
-fn set_cost(histogram: &[u32], literal_histogram: bool, cost: &mut [f32]) {
+fn set_cost(histogram: &[u32], alphabet: Alphabet, cost: &mut [f32]) {
     let sum: usize = histogram.iter().map(|&count| count as usize).sum();
     let log2sum = fast_log2(sum) as f32;
     let mut missing_symbol_sum = sum;
-    if !literal_histogram {
+    if alphabet != Alphabet::Literals {
         for &count in histogram {
             missing_symbol_sum += usize::from(count == 0);
         }
@@ -196,18 +217,23 @@ impl ZopfliCostModel {
             pos = pos.wrapping_add(inslength + copylength);
         }
 
-        set_cost(&histogram_literal, true, &mut cost_literal);
-        set_cost(&histogram_cmd, false, &mut self.cost_cmd);
+        set_cost(&histogram_literal, Alphabet::Literals, &mut cost_literal);
+        set_cost(
+            &histogram_cmd,
+            Alphabet::CommandsOrDistances,
+            &mut self.cost_cmd,
+        );
         set_cost(
             histogram_dist.sub(..self.cost_dist.len())?,
-            false,
+            Alphabet::CommandsOrDistances,
             &mut self.cost_dist,
         );
 
-        self.min_cost_cmd = self
-            .cost_cmd
-            .iter()
-            .fold(INFINITY, |min, &cost| if min < cost { min } else { cost });
+        self.min_cost_cmd =
+            self.cost_cmd.iter().fold(
+                UNREACHED_COST,
+                |min, &cost| if min < cost { min } else { cost },
+            );
 
         self.accumulate_literal_costs(|_, i| {
             cost_literal.at(usize::from(
@@ -259,7 +285,7 @@ impl ZopfliCostModel {
 }
 
 /// Makes a copy of `len` bytes, after the literals from `start_pos` to `pos`, the command that ends at `pos + len`.
-/// `len` is at least 2, and `cost` and the cost of the node at `start_pos` are below [`INFINITY`].
+/// `len` is at least 2, and `cost` and the cost of the node at `start_pos` are below [`UNREACHED_COST`].
 #[inline(always)]
 fn update_zopfli_node(
     nodes: &mut [ZopfliNode],
@@ -277,7 +303,7 @@ fn update_zopfli_node(
             length: (len | ((len + 9).wrapping_sub(len_code) << 25)) as u32,
             distance: dist as u32,
             dcode_insert_length: ((short_code << 27) | (pos - start_pos)) as u32,
-            u: cost.to_bits(),
+            cost_or_link: cost.to_bits(),
         },
     )
 }
@@ -376,7 +402,9 @@ fn compute_distance_shortcut(
     {
         Ok(pos as u32)
     } else {
-        Ok(nodes.at(pos.wrapping_sub(c_len).wrapping_sub(i_len))?.u)
+        Ok(nodes
+            .at(pos.wrapping_sub(c_len).wrapping_sub(i_len))?
+            .shortcut())
     }
 }
 
@@ -389,7 +417,7 @@ fn compute_distance_cache(
 ) -> Checked<[i32; 4]> {
     let mut dist_cache = [0i32; 4];
     let mut idx = 0usize;
-    let mut p = nodes.at(pos)?.u as usize;
+    let mut p = nodes.at(pos)?.shortcut() as usize;
     while idx < 4 && p > 0 {
         let node = nodes.at(p)?;
         dist_cache.put(idx, node.distance as i32)?;
@@ -398,7 +426,7 @@ fn compute_distance_cache(
             .at(p
                 .wrapping_sub(node.copy_length() as usize)
                 .wrapping_sub(node.insert_length() as usize))?
-            .u as usize;
+            .shortcut() as usize;
     }
     for (dist, &starting_dist) in dist_cache.iter_mut().skip(idx).zip(starting_dist_cache) {
         *dist = starting_dist;
@@ -419,7 +447,7 @@ fn evaluate_node(
     nodes: &mut [ZopfliNode],
 ) -> Checked {
     let node_cost = nodes.at(pos)?.cost();
-    nodes.at_mut(pos)?.u =
+    nodes.at_mut(pos)?.cost_or_link =
         compute_distance_shortcut(block_start, pos, max_backward_limit, gap, nodes)?;
     if node_cost <= model.literal_costs(0, pos)? {
         queue.push(PosData {
@@ -432,7 +460,7 @@ fn evaluate_node(
     Ok(())
 }
 
-/// 4. The distance that each short code stands for. A negative one comes out as a huge one.
+/// RFC 7932 section 4: the distance that each short code stands for. A negative one comes out as a huge one.
 #[inline(always)]
 fn short_code_distances(distance_cache: &[i32; 4]) -> [usize; NUM_DISTANCE_SHORT_CODES as usize] {
     let [last, second, third, fourth] = *distance_cache;
@@ -466,7 +494,6 @@ fn update_nodes(
     ringbuffer: &[u8],
     ringbuffer_mask: usize,
     params: &EncoderParams,
-    max_backward_limit: usize,
     starting_dist_cache: &[i32],
     matches: &[BackwardMatch],
     model: &ZopfliCostModel,
@@ -474,6 +501,7 @@ fn update_nodes(
     nodes: &mut [ZopfliNode],
 ) -> Checked<usize> {
     let stream_offset = params.stream_offset;
+    let max_backward_limit = max_backward_limit(params.lgwin as u32);
     let cur_ix = block_start + pos;
     let cur_ix_masked = cur_ix & ringbuffer_mask;
     let max_distance = cur_ix.min(max_backward_limit);
@@ -481,8 +509,8 @@ fn update_nodes(
     let max_len = num_bytes - pos;
     let max_zopfli_len = params.max_zopfli_len();
     let max_iters = params.max_zopfli_candidates();
-    let addon = &params.dictionary;
-    let gap = addon.total_size;
+    let compound = &params.dictionary;
+    let gap = compound.total_size;
     let mut result = 0usize;
 
     let current = ringbuffer.sub(cur_ix_masked..)?;
@@ -546,14 +574,15 @@ fn update_nodes(
             } else if backward > dictionary_start {
                 // That is in the compound dictionary.
                 let mut d = 0usize;
-                let mut offset = dictionary_start + 1 + addon.total_size - 1;
-                while offset >= backward + addon.chunk_offsets.at(d + 1)? {
+                let mut offset = dictionary_start + 1 + compound.total_size - 1;
+                while offset >= backward + compound.chunk_offsets.at(d + 1)? {
                     d += 1;
                 }
-                let source = &addon.chunks.get(d).ok_or(Bug)?.source;
-                offset = offset - addon.chunk_offsets.at(d)? - backward;
-                let limit = (addon.chunk_offsets.at(d + 1)? - addon.chunk_offsets.at(d)? - offset)
-                    .min(max_len);
+                let source = &compound.chunks.get(d).ok_or(Bug)?.source;
+                offset = offset - compound.chunk_offsets.at(d)? - backward;
+                let chunk_size =
+                    compound.chunk_offsets.at(d + 1)? - compound.chunk_offsets.at(d)?;
+                let limit = (chunk_size - offset).min(max_len);
                 if best_len >= limit || continuation != source.at(offset + best_len)? {
                     continue;
                 }
@@ -636,11 +665,11 @@ fn compute_shortest_path_from_nodes(num_bytes: usize, nodes: &mut [ZopfliNode]) 
         }
         index = index.wrapping_sub(1);
     }
-    nodes.at_mut(index)?.u = u32::MAX;
+    nodes.at_mut(index)?.cost_or_link = u32::MAX;
     while index != 0 {
         let len = nodes.at(index)?.command_length();
         index = index.wrapping_sub(len as usize);
-        nodes.at_mut(index)?.u = len;
+        nodes.at_mut(index)?.cost_or_link = len;
         num_commands += 1;
     }
     Ok(num_commands)
@@ -662,7 +691,7 @@ fn zopfli_create_commands(
     let max_backward_limit = max_backward_limit(params.lgwin as u32);
     let gap = params.dictionary.total_size;
     let mut pos = 0usize;
-    let mut offset = nodes.at(0)?.u;
+    let mut offset = nodes.at(0)?.next_command_length();
     let mut first = true;
     commands.try_reserve(num_commands).map_err(|_| AllocError)?;
     while offset != u32::MAX {
@@ -670,7 +699,7 @@ fn zopfli_create_commands(
         let copy_length = next.copy_length() as usize;
         let mut insert_length = next.insert_length() as usize;
         pos += insert_length;
-        offset = next.u;
+        offset = next.next_command_length();
         if first {
             insert_length += *last_insert_len;
             *last_insert_len = 0;
@@ -711,7 +740,6 @@ fn zopfli_iterate(
     ringbuffer: &[u8],
     ringbuffer_mask: usize,
     params: &EncoderParams,
-    gap: usize,
     dist_cache: &[i32],
     model: &ZopfliCostModel,
     num_matches: &[u32],
@@ -721,13 +749,12 @@ fn zopfli_iterate(
     let stream_offset = params.stream_offset;
     let max_backward_limit = max_backward_limit(params.lgwin as u32);
     let max_zopfli_len = params.max_zopfli_len();
+    let gap = params.dictionary.total_size;
     let mut queue = StartPosQueue::default();
     let mut cur_match_pos = 0usize;
-    let first = nodes.at_mut(0)?;
-    first.length = 0;
-    first.u = 0f32.to_bits();
+    nodes.put(0, ZopfliNode::FIRST)?;
     let mut i = 0usize;
-    while i + 3 < num_bytes {
+    while i + H10::HASH_TYPE_LENGTH <= num_bytes {
         let count = num_matches.at(i)? as usize;
         let cur_matches = matches.sub(cur_match_pos..cur_match_pos + count)?;
         let mut skip = update_nodes(
@@ -737,7 +764,6 @@ fn zopfli_iterate(
             ringbuffer,
             ringbuffer_mask,
             params,
-            max_backward_limit,
             dist_cache,
             cur_matches,
             model,
@@ -757,7 +783,7 @@ fn zopfli_iterate(
             skip -= 1;
             while skip != 0 {
                 i += 1;
-                if i + 3 >= num_bytes {
+                if i + H10::HASH_TYPE_LENGTH > num_bytes {
                     break;
                 }
                 evaluate_node(
@@ -816,19 +842,19 @@ fn merge_matches(
 /// Room for the matches at one position.
 struct MatchBuffers {
     /// In the window and in the static dictionary.
-    lz: [BackwardMatch; MAX_NUM_MATCHES_H10],
+    lz: [BackwardMatch; H10::MAX_NUM_MATCHES],
     /// In the compound dictionary.
     compound: [BackwardMatch; MAX_NUM_COMPOUND_DICTIONARY_MATCHES],
-    merged: [BackwardMatch; MAX_NUM_MATCHES_H10 + MAX_NUM_COMPOUND_DICTIONARY_MATCHES],
+    merged: [BackwardMatch; H10::MAX_NUM_MATCHES + MAX_NUM_COMPOUND_DICTIONARY_MATCHES],
 }
 
 impl MatchBuffers {
     fn new() -> Self {
         let none = BackwardMatch::default();
         Self {
-            lz: [none; MAX_NUM_MATCHES_H10],
+            lz: [none; H10::MAX_NUM_MATCHES],
             compound: [none; MAX_NUM_COMPOUND_DICTIONARY_MATCHES],
-            merged: [none; MAX_NUM_MATCHES_H10 + MAX_NUM_COMPOUND_DICTIONARY_MATCHES],
+            merged: [none; H10::MAX_NUM_MATCHES + MAX_NUM_COMPOUND_DICTIONARY_MATCHES],
         }
     }
 
@@ -845,8 +871,8 @@ impl MatchBuffers {
         let max_backward_limit = max_backward_limit(params.lgwin as u32);
         let max_distance = pos.min(max_backward_limit);
         let dictionary_start = (pos + params.stream_offset).min(max_backward_limit);
-        let addon = &params.dictionary;
-        let gap = addon.total_size;
+        let compound = &params.dictionary;
+        let gap = compound.total_size;
         let num_matches = hasher.find_all_matches(
             ringbuffer,
             ringbuffer_mask,
@@ -858,11 +884,11 @@ impl MatchBuffers {
             &mut self.lz,
         )?;
         let lz = self.lz.sub(..num_matches)?;
-        if addon.chunks.is_empty() {
+        if compound.chunks.is_empty() {
             return Ok(lz);
         }
         let cd_matches = lookup_all_compound_dictionary_matches(
-            addon,
+            compound,
             ringbuffer,
             ringbuffer_mask,
             pos,
@@ -879,8 +905,8 @@ impl MatchBuffers {
 
 /// Up to where the positions of a block can be added to [`H10`].
 fn store_end(position: usize, num_bytes: usize) -> usize {
-    if num_bytes >= STORE_LOOKAHEAD_H10 {
-        position + num_bytes - STORE_LOOKAHEAD_H10 + 1
+    if num_bytes >= H10::STORE_LOOKAHEAD {
+        position + num_bytes - H10::STORE_LOOKAHEAD + 1
     } else {
         position
     }
@@ -906,12 +932,10 @@ fn zopfli_compute_shortest_path(
     let store_end = store_end(position, num_bytes);
     let gap = params.dictionary.total_size;
     let mut model = ZopfliCostModel::new(&params.dist, num_bytes)?;
-    let first = nodes.at_mut(0)?;
-    first.length = 0;
-    first.u = 0f32.to_bits();
+    nodes.put(0, ZopfliNode::FIRST)?;
     model.set_from_literal_costs(position, ringbuffer, ringbuffer_mask)?;
     let mut i = 0usize;
-    while i + HASH_TYPE_LENGTH_H10 <= num_bytes {
+    while i + H10::HASH_TYPE_LENGTH <= num_bytes {
         let pos = position + i;
         let mut matches = buffers.find_all_matches(
             hasher,
@@ -936,7 +960,6 @@ fn zopfli_compute_shortest_path(
             ringbuffer,
             ringbuffer_mask,
             params,
-            max_backward_limit,
             dist_cache,
             matches,
             &model,
@@ -958,7 +981,7 @@ fn zopfli_compute_shortest_path(
             skip -= 1;
             while skip != 0 {
                 i += 1;
-                if i + HASH_TYPE_LENGTH_H10 > num_bytes {
+                if i + H10::HASH_TYPE_LENGTH > num_bytes {
                     break;
                 }
                 evaluate_node(
@@ -1038,9 +1061,8 @@ pub(crate) fn create_hq_zopfli_backward_references(
     matches.try_reserve(4 * num_bytes).map_err(|_| AllocError)?;
     let mut buffers = MatchBuffers::new();
     let store_end = store_end(position, num_bytes);
-    let gap = params.dictionary.total_size;
     let mut i = 0usize;
-    while i + HASH_TYPE_LENGTH_H10 <= num_bytes {
+    while i + H10::HASH_TYPE_LENGTH <= num_bytes {
         let pos = position + i;
         let found = buffers.find_all_matches(
             hasher,
@@ -1081,10 +1103,10 @@ pub(crate) fn create_hq_zopfli_backward_references(
     let mut nodes = try_vec(ZopfliNode::INIT, num_bytes + 1)?;
     let mut model = ZopfliCostModel::new(&params.dist, num_bytes)?;
     for pass in 0..2 {
-        nodes.fill(ZopfliNode::INIT);
         if pass == 0 {
             model.set_from_literal_costs(position, ringbuffer, ringbuffer_mask)?;
         } else {
+            nodes.fill(ZopfliNode::INIT);
             model.set_from_commands(
                 position,
                 ringbuffer,
@@ -1103,7 +1125,6 @@ pub(crate) fn create_hq_zopfli_backward_references(
             ringbuffer,
             ringbuffer_mask,
             params,
-            gap,
             dist_cache,
             &model,
             &num_matches,

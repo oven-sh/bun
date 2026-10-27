@@ -1,7 +1,7 @@
 //! The storage of the hasher that keeps the last few positions of each hash.
 
-use crate::enc::params::HasherParams;
-use crate::util::{Bug, Checked, SliceExt, try_zeroed};
+use crate::enc::Fallible;
+use crate::util::{Bug, Checked, SliceExt, try_reserve_up_to, try_zeroed};
 use bun_core::AllocError;
 
 /// Which block is the bucket's own, counted from 1, or 0 if it has none yet. Then how many positions were added to the
@@ -12,9 +12,6 @@ pub(crate) struct BucketTable {
     /// How many positions a bucket holds. Older ones are forgotten.
     pub(crate) block_size: usize,
     block_bits: u32,
-    /// What is left of a 32-bit hash after this shift is the bucket.
-    pub(crate) hash_shift: u32,
-    pub(crate) num_last_distances_to_check: usize,
     heads: Vec<Head>,
     /// Ring buffers of `block_size` positions. A bucket gets one with its first position, so that a short input does
     /// not take the room for all of them, which can be 32 MiB.
@@ -32,15 +29,16 @@ pub(crate) struct Buckets<'a> {
 }
 
 impl BucketTable {
-    pub(crate) fn new(hasher: &HasherParams) -> Result<Self, AllocError> {
-        let bucket_size = 1usize << hasher.bucket_bits;
-        let block_size = 1usize << hasher.block_bits;
+    pub(crate) fn new(bucket_bits: u32, block_bits: u32) -> Fallible<Self> {
+        let num_buckets = 1usize << bucket_bits;
+        // A `Head` has 16 bits for the number of a block.
+        if num_buckets > usize::from(u16::MAX) {
+            return Err(Bug.into());
+        }
         Ok(Self {
-            block_size,
-            block_bits: hasher.block_bits as u32,
-            hash_shift: (32 - hasher.bucket_bits) as u32,
-            num_last_distances_to_check: hasher.num_last_distances_to_check as usize,
-            heads: try_zeroed(bucket_size)?,
+            block_size: 1 << block_bits,
+            block_bits,
+            heads: try_zeroed(num_buckets)?,
             blocks: Vec::new(),
             is_clear: true,
         })
@@ -53,10 +51,11 @@ impl BucketTable {
 
     /// Makes room for a block for each of `positions` positions.
     pub(crate) fn reserve(&mut self, positions: usize) -> Result<(), AllocError> {
-        let needed = positions.min(self.heads.len()) * self.block_size;
-        self.blocks
-            .try_reserve(needed.saturating_sub(self.blocks.len()))
-            .map_err(|_| AllocError)
+        try_reserve_up_to(
+            &mut self.blocks,
+            positions.min(self.heads.len()) * self.block_size,
+            self.heads.len() * self.block_size,
+        )
     }
 
     /// Forgets all positions.

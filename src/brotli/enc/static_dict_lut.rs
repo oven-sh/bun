@@ -3,7 +3,7 @@
 use std::sync::OnceLock;
 
 use super::Fallible;
-use super::hash::HASH_MUL_32;
+use super::hash::hash_u32;
 use crate::common::dictionary::{
     DATA, MAX_DICTIONARY_WORD_LENGTH, MIN_DICTIONARY_WORD_LENGTH, OFFSETS_BY_LENGTH,
     SIZE_BITS_BY_LENGTH,
@@ -23,7 +23,8 @@ pub(crate) struct DictWord {
     pub(crate) idx: u16,
 }
 
-const NUM_BUCKETS: usize = 32768;
+const HASH_BITS: u32 = 15;
+const NUM_BUCKETS: usize = 1 << HASH_BITS;
 const NUM_ITEMS: usize = 31705;
 
 pub(crate) struct StaticDictionaryLut {
@@ -35,7 +36,7 @@ pub(crate) struct StaticDictionaryLut {
 /// A hash of the 4 bytes at `pos`.
 #[inline(always)]
 pub(crate) fn hash15(data: &[u8], pos: usize) -> Checked<usize> {
-    Ok((load_u32_le(data, pos)?.wrapping_mul(HASH_MUL_32) >> (32 - 15)) as usize)
+    Ok(hash_u32(load_u32_le(data, pos)?, HASH_BITS))
 }
 
 /// The first 4 bytes of `word`, regardless of the case of letters.
@@ -200,12 +201,7 @@ pub(crate) fn static_dictionary_lut() -> Fallible<&'static StaticDictionaryLut> 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn fnv1a(bytes: impl Iterator<Item = u8>) -> u64 {
-        bytes.fold(0xCBF2_9CE4_8422_2325, |h, b| {
-            (h ^ u64::from(b)).wrapping_mul(0x100_0000_01B3)
-        })
-    }
+    use crate::util::fnv1a;
 
     /// The checksums are those of the tables that the reference encoder embeds.
     #[test]

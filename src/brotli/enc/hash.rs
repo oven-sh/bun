@@ -15,28 +15,34 @@ use self::longest_match::HashLongestMatch;
 use self::longest_match_quickly::HashLongestMatchQuickly;
 use self::longest_match_tagged::{DenseBuckets, HashLongestMatchTagged, SparseBuckets};
 use self::rolling::HashRolling;
-pub(crate) use self::to_binary_tree::{H10, MAX_NUM_MATCHES_H10};
+use self::to_binary_tree::HashToBinaryTree;
 use super::compound_dictionary::{
     CompoundDictionary, EMPTY_BUCKET, LAST_ITEM_FLAG, PreparedDictionary, bucket_index,
 };
 use super::dictionary_hash::DictionaryHash;
 use super::fast_log::log2_floor_nonzero;
 use super::find_match_length::find_match_length_with_limit;
-use super::params::EncoderParams;
+use super::params::{EncoderParams, HasherType};
 use super::{EncoderError, Fallible};
 use crate::common::dictionary::{DATA, OFFSETS_BY_LENGTH, SIZE_BITS_BY_LENGTH};
 use crate::common::transform::CUT_OFF_TRANSFORMS;
-use crate::util::{Bug, Checked, SliceExt, load_u32_le, load_u64_le, try_box};
+use crate::util::{Bug, Checked, SliceExt, load_u32_le, load_u64_le};
 use bun_core::AllocError;
 
 /// Odd, so that the highest bit is not lost, without long runs of ones or zeros, and tuned against benchmarks.
 pub(crate) const HASH_MUL_32: u32 = 0x1E35_A7BD;
 const HASH_MUL_64: u64 = 0x1FE3_5A7B_D357_9BD3;
 
-/// The high bits of a product are the best mixed, so those are what every hash here takes.
+/// A hash of `bits` bits. The high bits of a product are the best mixed, so those are what every hash here takes.
 #[inline(always)]
-fn hash14(data: &[u8]) -> Checked<u32> {
-    Ok(load_u32_le(data, 0)?.wrapping_mul(HASH_MUL_32) >> (32 - 14))
+pub(crate) fn hash_u32(bytes: u32, bits: u32) -> usize {
+    (bytes.wrapping_mul(HASH_MUL_32) >> (32 - bits)) as usize
+}
+
+/// A hash of `bits` bits of the low `len` bytes of `bytes`.
+#[inline(always)]
+fn hash_low_bytes(bytes: u64, len: u32, bits: u32) -> usize {
+    (bytes.wrapping_mul(HASH_MUL_64 << (64 - 8 * len)) >> (64 - bits)) as usize
 }
 
 #[derive(Clone, Copy)]
@@ -95,24 +101,29 @@ fn backward_reference_penalty_using_last_distance(distance_short_code: usize) ->
     39 + ((0x1CA10 >> (distance_short_code & 0xE)) & 0xE)
 }
 
-/// What the hashers of an encoder share.
-pub(crate) struct HasherCommon {
-    dict_num_lookups: usize,
-    dict_num_matches: usize,
-    /// Whether the tables are ready for the input in the ring buffer. Not so at first and after [`Hasher::reset`].
-    is_prepared: bool,
+#[derive(Default)]
+pub(crate) struct DictionaryStats {
+    num_lookups: usize,
+    num_matches: usize,
 }
 
 /// The static dictionary, and how well looking things up in it went so far.
 pub(crate) struct StaticDictionarySearch<'a> {
-    common: &'a mut HasherCommon,
+    stats: &'a mut DictionaryStats,
     hash: &'static DictionaryHash,
 }
 
 impl<'a> StaticDictionarySearch<'a> {
-    pub(crate) fn new(common: &'a mut HasherCommon, hash: &'static DictionaryHash) -> Self {
-        Self { common, hash }
+    pub(crate) fn new(stats: &'a mut DictionaryStats, hash: &'static DictionaryHash) -> Self {
+        Self { stats, hash }
     }
+}
+
+/// Which of the two words that the static dictionary has for a hash are tried.
+#[derive(Clone, Copy)]
+enum DictionaryCandidates {
+    First = 1,
+    Both = 2,
 }
 
 /// Whether the word `word_idx` of `len` bytes, or all but its last few bytes, is a better match for the start of `data`
@@ -158,7 +169,6 @@ fn test_static_dictionary_item(
 }
 
 /// Looks the start of `data` up in the static dictionary, unless fewer than 1 in 128 lookups found something so far.
-/// There are two candidates, of which `shallow` only tries the first.
 #[inline(always)]
 fn search_in_static_dictionary(
     dictionary: &mut StaticDictionarySearch<'_>,
@@ -167,10 +177,10 @@ fn search_in_static_dictionary(
     max_backward: usize,
     max_distance: usize,
     out: &mut HasherSearchResult,
-    shallow: bool,
+    candidates: DictionaryCandidates,
 ) -> Checked {
-    let common = &*dictionary.common;
-    if common.dict_num_matches < (common.dict_num_lookups >> 7) {
+    let stats = &*dictionary.stats;
+    if stats.num_matches < (stats.num_lookups >> 7) {
         return Ok(());
     }
     // A copy, so that `out` itself can stay in registers.
@@ -182,7 +192,7 @@ fn search_in_static_dictionary(
         max_backward,
         max_distance,
         &mut result,
-        shallow,
+        candidates,
     )?;
     *out = result;
     Ok(())
@@ -197,12 +207,12 @@ fn look_up_in_static_dictionary(
     max_backward: usize,
     max_distance: usize,
     out: &mut HasherSearchResult,
-    shallow: bool,
+    candidates: DictionaryCandidates,
 ) -> Checked {
-    let common = &mut *dictionary.common;
-    let key = (hash14(data)? << 1) as usize;
-    for key in key..key + if shallow { 1 } else { 2 } {
-        common.dict_num_lookups += 1;
+    let stats = &mut *dictionary.stats;
+    let key = DictionaryHash::first_bucket(load_u32_le(data, 0)?);
+    for key in key..key + candidates as usize {
+        stats.num_lookups += 1;
         let len = dictionary.hash.lengths.at(key)?;
         if len != 0 {
             let item_matches = test_static_dictionary_item(
@@ -215,7 +225,7 @@ fn look_up_in_static_dictionary(
                 out,
             )?;
             if item_matches {
-                common.dict_num_matches += 1;
+                stats.num_matches += 1;
             }
         }
     }
@@ -223,17 +233,17 @@ fn look_up_in_static_dictionary(
 }
 
 /// The part of the ring buffer that a match has to end in to be looked at, as in the reference encoder: the positions up
-/// to `ring_buffer_mask`. All of `data` while the ring buffer is shorter than that.
+/// to `mask`. All of `data` while the ring buffer is shorter than that.
 #[inline(always)]
-fn window(data: &[u8], ring_buffer_mask: usize) -> &[u8] {
-    data.get(..=ring_buffer_mask).unwrap_or(data)
+fn window(data: &[u8], mask: usize) -> &[u8] {
+    data.get(..=mask).unwrap_or(data)
 }
 
 /// Tries the first `num_last_distances_to_check` distances of the cache. `best_len` is the length to beat.
 #[inline(always)]
 fn find_longest_match_at_last_distances(
     data: &[u8],
-    ring_buffer_mask: usize,
+    mask: usize,
     distance_cache: &[i32; 16],
     num_last_distances_to_check: usize,
     cur_ix: usize,
@@ -242,8 +252,8 @@ fn find_longest_match_at_last_distances(
     best_len: &mut usize,
     out: &mut HasherSearchResult,
 ) -> Checked {
-    let cur_ix_masked = cur_ix & ring_buffer_mask;
-    let window = window(data, ring_buffer_mask);
+    let cur_ix_masked = cur_ix & mask;
+    let window = window(data, mask);
     let mut best_score = out.score;
     for (i, &distance) in distance_cache
         .iter()
@@ -258,7 +268,7 @@ fn find_longest_match_at_last_distances(
         if backward > max_backward {
             continue;
         }
-        prev_ix &= ring_buffer_mask;
+        prev_ix &= mask;
 
         // The byte that a longer match has to include. It has to be inside the window.
         let Some(wanted) = window.get(cur_ix_masked + *best_len) else {
@@ -301,15 +311,16 @@ pub(crate) struct BackwardMatch {
 
 impl BackwardMatch {
     #[inline(always)]
-    pub(crate) fn init(dist: usize, len: usize) -> Self {
+    pub(crate) fn new(dist: usize, len: usize) -> Self {
         Self {
             distance: dist as u32,
             length_and_code: (len << 5) as u32,
         }
     }
 
+    /// A word of the static dictionary, of `len_code` bytes before its transform.
     #[inline(always)]
-    pub(crate) fn init_dictionary(dist: usize, len: usize, len_code: usize) -> Self {
+    pub(crate) fn new_dictionary(dist: usize, len: usize, len_code: usize) -> Self {
         Self {
             distance: dist as u32,
             length_and_code: ((len << 5) | if len == len_code { 0 } else { len_code }) as u32,
@@ -351,9 +362,10 @@ fn for_each_position<const N: usize>(
     Ok(())
 }
 
-/// A table of the positions of the input, by a hash of the bytes there.
+/// A table of the positions of the input, by a hash of the bytes there. `data` is the ring buffer, and `mask` its size
+/// less 1.
 pub(crate) trait HasherImpl {
-    /// How many bytes a lookup hashes.
+    /// How many bytes a lookup reads. A lookup is only made with more than this many left.
     const HASH_TYPE_LENGTH: usize;
     /// How many bytes [`Self::store`] looks at.
     const STORE_LOOKAHEAD: usize;
@@ -384,17 +396,20 @@ pub(crate) trait HasherImpl {
         &mut self,
         num_bytes: usize,
         position: usize,
-        ringbuffer: &[u8],
-        ringbuffer_mask: usize,
+        data: &[u8],
+        mask: usize,
     ) -> Checked {
         if num_bytes >= Self::HASH_TYPE_LENGTH - 1 && position >= 3 {
-            self.store(ringbuffer, ringbuffer_mask, position - 3)?;
-            self.store(ringbuffer, ringbuffer_mask, position - 2)?;
-            self.store(ringbuffer, ringbuffer_mask, position - 1)?;
+            self.store(data, mask, position - 3)?;
+            self.store(data, mask, position - 2)?;
+            self.store(data, mask, position - 1)?;
         }
         Ok(())
     }
+}
 
+/// A hasher that finds the best match for a position.
+pub(crate) trait LongestMatchHasher: HasherImpl {
     /// To be called whenever one of the first 4 distances changed, before the next lookup.
     fn prepare_distance_cache(&self, distance_cache: &mut [i32; 16]);
 
@@ -405,7 +420,7 @@ pub(crate) trait HasherImpl {
         &mut self,
         dictionary: &mut StaticDictionarySearch<'_>,
         data: &[u8],
-        ring_buffer_mask: usize,
+        mask: usize,
         distance_cache: &[i32; 16],
         cur_ix: usize,
         max_length: usize,
@@ -417,22 +432,23 @@ pub(crate) trait HasherImpl {
 }
 
 // With a sweep of 1, looking things up in the dictionary makes compression of small text a little faster and denser.
-pub(crate) type H2 = HashLongestMatchQuickly<{ 1 << 16 }, 1, 5, true>;
-pub(crate) type H3 = HashLongestMatchQuickly<{ 1 << 16 }, 2, 5, false>;
-pub(crate) type H4 = HashLongestMatchQuickly<{ 1 << 17 }, 4, 5, true>;
-pub(crate) type H5 = HashLongestMatch<false>;
-pub(crate) type H6 = HashLongestMatch<true>;
-pub(crate) type H40 = HashForgetfulChain<15, 1, 16, 4>;
-pub(crate) type H41 = HashForgetfulChain<15, 1, 16, 10>;
-pub(crate) type H42 = HashForgetfulChain<15, 512, 9, 16>;
-pub(crate) type H54 = HashLongestMatchQuickly<{ 1 << 20 }, 4, 7, false>;
-pub(crate) type H58<const N: usize> = HashLongestMatchTagged<false, N, DenseBuckets<N>>;
-pub(crate) type H58Sparse<const N: usize> = HashLongestMatchTagged<false, N, SparseBuckets<N>>;
-pub(crate) type H68<const N: usize> = HashLongestMatchTagged<true, N, DenseBuckets<N>>;
+type H2 = HashLongestMatchQuickly<{ 1 << 16 }, 1, 5, true>;
+type H3 = HashLongestMatchQuickly<{ 1 << 16 }, 2, 5, false>;
+type H4 = HashLongestMatchQuickly<{ 1 << 17 }, 4, 5, true>;
+type H5 = HashLongestMatch<false>;
+type H6 = HashLongestMatch<true>;
+pub(crate) type H10 = HashToBinaryTree;
+type H40 = HashForgetfulChain<15, 1, 16, 4>;
+type H41 = HashForgetfulChain<15, 1, 16, 10>;
+type H42 = HashForgetfulChain<15, 512, 9, 16>;
+type H54 = HashLongestMatchQuickly<{ 1 << 20 }, 4, 7, false>;
+type H58<const N: usize> = HashLongestMatchTagged<false, N, DenseBuckets<N>>;
+type H58Sparse<const N: usize> = HashLongestMatchTagged<false, N, SparseBuckets<N>>;
+type H68<const N: usize> = HashLongestMatchTagged<true, N, DenseBuckets<N>>;
 // For large windows.
-pub(crate) type H35 = HashComposite<H3, HashRolling<4>>;
-pub(crate) type H55 = HashComposite<H54, HashRolling<4>>;
-pub(crate) type H65 = HashComposite<H6, HashRolling<1>>;
+type H35 = HashComposite<H3, HashRolling<4>>;
+type H55 = HashComposite<H54, HashRolling<4>>;
+type H65 = HashComposite<H6, HashRolling<1>>;
 
 /// The hasher that [`EncoderParams::choose_hasher`] chose. Some come in two forms that find the same matches.
 pub(crate) enum HasherKind {
@@ -445,9 +461,9 @@ pub(crate) enum HasherKind {
     H6(H6),
     H10(H10),
     H35(H35),
-    H40(Box<H40>),
-    H41(Box<H41>),
-    H42(Box<H42>),
+    H40(H40),
+    H41(H41),
+    H42(H42),
     H54(H54),
     H55(H55),
     H58x16(H58<16>),
@@ -460,8 +476,10 @@ pub(crate) enum HasherKind {
 }
 
 pub(crate) struct Hasher {
-    pub(crate) common: HasherCommon,
+    pub(crate) dictionary_stats: DictionaryStats,
     pub(crate) kind: HasherKind,
+    /// Whether the tables are ready for the input in the ring buffer. Not so at first and after [`Self::reset`].
+    is_prepared: bool,
 }
 
 /// Evaluates `$body` with `$hasher` bound to the hasher in use.
@@ -495,24 +513,21 @@ macro_rules! with_hasher {
 impl Hasher {
     pub(crate) fn new() -> Self {
         Self {
-            common: HasherCommon {
-                dict_num_lookups: 0,
-                dict_num_matches: 0,
-                is_prepared: false,
-            },
+            dictionary_stats: DictionaryStats::default(),
             kind: HasherKind::NotSetUp,
+            is_prepared: false,
         }
     }
 
     /// The tables are emptied before the next use. They keep their size.
     pub(crate) fn reset(&mut self) {
-        self.common.is_prepared = false;
+        self.is_prepared = false;
     }
 
     /// On first use, chooses a hasher and allocates it. Later, replaces one that is made for less input than there is now.
     fn setup(
         &mut self,
-        params: &mut EncoderParams,
+        params: &EncoderParams,
         data: &[u8],
         position: usize,
         input_size: usize,
@@ -521,42 +536,33 @@ impl Hasher {
         let one_shot = position == 0 && is_last;
         let input_end = position + input_size;
         if matches!(self.kind, HasherKind::NotSetUp) {
-            params.hasher = params.choose_hasher();
-            self.common.dict_num_lookups = 0;
-            self.common.dict_num_matches = 0;
-            self.kind = match params.hasher.type_ {
-                2 => HasherKind::H2(H2::new()?),
-                3 => HasherKind::H3(H3::new()?),
-                4 => HasherKind::H4(H4::new()?),
-                5 => HasherKind::H5(H5::new(params)?),
-                6 => HasherKind::H6(H6::new(params)?),
-                10 => HasherKind::H10(H10::new(params, one_shot, input_size)?),
-                35 => HasherKind::H35(H35::new(H3::new()?, HashRolling::new()?)),
-                40 => HasherKind::H40(try_box(H40::new(params)?)?),
-                41 => HasherKind::H41(try_box(H41::new(params)?)?),
-                42 => HasherKind::H42(try_box(H42::new(params)?)?),
-                54 => HasherKind::H54(H54::new()?),
-                55 => HasherKind::H55(H55::new(H54::new()?, HashRolling::new()?)),
-                58 if params.hasher.block_bits == 4 => {
-                    if input_end > H58Sparse::<16>::MAX_INPUT {
-                        HasherKind::H58x16(H58::new(params)?)
-                    } else {
-                        HasherKind::H58x16Sparse(H58Sparse::new(params)?)
-                    }
+            self.kind = match params.choose_hasher() {
+                HasherType::H2 => HasherKind::H2(H2::new()?),
+                HasherType::H3 => HasherKind::H3(H3::new()?),
+                HasherType::H4 => HasherKind::H4(H4::new()?),
+                HasherType::H5(hasher_params) => HasherKind::H5(H5::new(hasher_params)?),
+                HasherType::H6(hasher_params) => HasherKind::H6(H6::new(hasher_params)?),
+                HasherType::H10 => HasherKind::H10(H10::new(params, one_shot, input_size)?),
+                HasherType::H35 => HasherKind::H35(H35::new(H3::new()?, HashRolling::new()?)),
+                HasherType::H40 => HasherKind::H40(H40::new(params)?),
+                HasherType::H41 => HasherKind::H41(H41::new(params)?),
+                HasherType::H42 => HasherKind::H42(H42::new(params)?),
+                HasherType::H54 => HasherKind::H54(H54::new()?),
+                HasherType::H55 => HasherKind::H55(H55::new(H54::new()?, HashRolling::new()?)),
+                HasherType::H58x16 if input_end > H58Sparse::<16>::MAX_INPUT => {
+                    HasherKind::H58x16(H58::new()?)
                 }
-                58 if params.hasher.block_bits == 5 => {
-                    if input_end > H58Sparse::<32>::MAX_INPUT {
-                        HasherKind::H58x32(H58::new(params)?)
-                    } else {
-                        HasherKind::H58x32Sparse(H58Sparse::new(params)?)
-                    }
+                HasherType::H58x16 => HasherKind::H58x16Sparse(H58Sparse::new()?),
+                HasherType::H58x32 if input_end > H58Sparse::<32>::MAX_INPUT => {
+                    HasherKind::H58x32(H58::new()?)
                 }
-                65 => HasherKind::H65(H65::new(H6::new(params)?, HashRolling::new()?)),
-                68 if params.hasher.block_bits == 4 => HasherKind::H68x16(H68::new(params)?),
-                68 if params.hasher.block_bits == 5 => HasherKind::H68x32(H68::new(params)?),
-                _ => return Err(Bug.into()),
+                HasherType::H58x32 => HasherKind::H58x32Sparse(H58Sparse::new()?),
+                HasherType::H65(hasher_params) => {
+                    HasherKind::H65(H65::new(H6::new(hasher_params)?, HashRolling::new()?))
+                }
+                HasherType::H68x16 => HasherKind::H68x16(H68::new()?),
+                HasherType::H68x32 => HasherKind::H68x32(H68::new()?),
             };
-            self.reset();
         }
         match &self.kind {
             HasherKind::H58x16Sparse(h) if input_end > H58Sparse::<16>::MAX_INPUT => {
@@ -570,9 +576,9 @@ impl Hasher {
 
         with_hasher!(&mut self.kind, hasher => hasher.reserve(input_end).map_err(EncoderError::from))?;
 
-        if !self.common.is_prepared {
+        if !self.is_prepared {
             with_hasher!(&mut self.kind, hasher => hasher.prepare(one_shot, input_size, data))?;
-            self.common.is_prepared = true;
+            self.is_prepared = true;
         }
         Ok(())
     }
@@ -582,7 +588,7 @@ impl Hasher {
         &mut self,
         data: &[u8],
         mask: usize,
-        params: &mut EncoderParams,
+        params: &EncoderParams,
         position: usize,
         input_size: usize,
         is_last: bool,
@@ -625,7 +631,7 @@ fn compound_dictionary_chain(
 fn find_compound_dictionary_match(
     dictionary: &PreparedDictionary,
     data: &[u8],
-    ring_buffer_mask: usize,
+    mask: usize,
     distance_cache: &[i32; 16],
     cur_ix: usize,
     max_length: usize,
@@ -636,7 +642,7 @@ fn find_compound_dictionary_match(
     let source = &*dictionary.source;
     let source_size = source.len();
     let boundary = distance_offset.wrapping_sub(source_size);
-    let cur_ix_masked = cur_ix & ring_buffer_mask;
+    let cur_ix_masked = cur_ix & mask;
     let mut best_score = out.score;
     let mut best_len = out.len;
     let chain = compound_dictionary_chain(dictionary, data, cur_ix_masked)?;
@@ -682,7 +688,7 @@ fn find_compound_dictionary_match(
         let distance = distance_offset.wrapping_sub(offset);
         let limit = source_size.wrapping_sub(offset).min(max_length);
         if distance <= max_distance
-            && cur_ix_masked + best_len <= ring_buffer_mask
+            && cur_ix_masked + best_len <= mask
             && best_len < limit
             && load_u32_le(data, cur_ix_masked + best_len - 3)?
                 == load_u32_le(source, offset + best_len - 3)?
@@ -717,7 +723,7 @@ fn find_compound_dictionary_match(
 fn find_all_compound_dictionary_matches(
     dictionary: &PreparedDictionary,
     data: &[u8],
-    ring_buffer_mask: usize,
+    mask: usize,
     cur_ix: usize,
     min_length: usize,
     max_length: usize,
@@ -727,7 +733,7 @@ fn find_all_compound_dictionary_matches(
 ) -> Checked<usize> {
     let source = &*dictionary.source;
     let source_size = source.len();
-    let cur_ix_masked = cur_ix & ring_buffer_mask;
+    let cur_ix_masked = cur_ix & mask;
     let mut best_len = min_length;
     let mut found = 0usize;
 
@@ -740,7 +746,7 @@ fn find_all_compound_dictionary_matches(
         let distance = distance_offset.wrapping_sub(offset);
         let limit = source_size.wrapping_sub(offset).min(max_length);
         if distance <= max_distance
-            && cur_ix_masked + best_len <= ring_buffer_mask
+            && cur_ix_masked + best_len <= mask
             && best_len < limit
             && data.at(cur_ix_masked + best_len)? == source.at(offset + best_len)?
         {
@@ -751,7 +757,7 @@ fn find_all_compound_dictionary_matches(
             );
             if len > best_len {
                 best_len = len;
-                matches.put(found, BackwardMatch::init(distance, len))?;
+                matches.put(found, BackwardMatch::new(distance, len))?;
                 found += 1;
                 if found == matches.len() {
                     break;
@@ -765,32 +771,32 @@ fn find_all_compound_dictionary_matches(
     Ok(found)
 }
 
-/// Looks for a match in the compound dictionary that scores better than `sr`. The dictionary ends at the distance
+/// Looks for a match in the compound dictionary that scores better than `out`. The dictionary ends at the distance
 /// `max_ring_buffer_distance + 1`.
 #[inline(always)]
 pub(crate) fn lookup_compound_dictionary_match(
-    addon: &CompoundDictionary,
+    dictionary: &CompoundDictionary,
     data: &[u8],
-    ring_buffer_mask: usize,
+    mask: usize,
     distance_cache: &[i32; 16],
     cur_ix: usize,
     max_length: usize,
     max_ring_buffer_distance: usize,
     max_distance: usize,
-    sr: &mut HasherSearchResult,
+    out: &mut HasherSearchResult,
 ) -> Checked {
-    let base_offset = max_ring_buffer_distance + 1 + addon.total_size - 1;
-    for (chunk, &chunk_offset) in addon.chunks.iter().zip(&addon.chunk_offsets) {
+    let base_offset = max_ring_buffer_distance + 1 + dictionary.total_size - 1;
+    for (chunk, &chunk_offset) in dictionary.chunks.iter().zip(&dictionary.chunk_offsets) {
         find_compound_dictionary_match(
             chunk,
             data,
-            ring_buffer_mask,
+            mask,
             distance_cache,
             cur_ix,
             max_length,
             base_offset - chunk_offset,
             max_distance,
-            sr,
+            out,
         )?;
     }
     Ok(())
@@ -800,9 +806,9 @@ pub(crate) fn lookup_compound_dictionary_match(
 /// full. Returns how many.
 #[inline(always)]
 pub(crate) fn lookup_all_compound_dictionary_matches(
-    addon: &CompoundDictionary,
+    dictionary: &CompoundDictionary,
     data: &[u8],
-    ring_buffer_mask: usize,
+    mask: usize,
     cur_ix: usize,
     mut min_length: usize,
     max_length: usize,
@@ -810,13 +816,13 @@ pub(crate) fn lookup_all_compound_dictionary_matches(
     max_distance: usize,
     matches: &mut [BackwardMatch],
 ) -> Checked<usize> {
-    let base_offset = max_ring_buffer_distance + 1 + addon.total_size - 1;
+    let base_offset = max_ring_buffer_distance + 1 + dictionary.total_size - 1;
     let mut total_found = 0usize;
-    for (chunk, &chunk_offset) in addon.chunks.iter().zip(&addon.chunk_offsets) {
+    for (chunk, &chunk_offset) in dictionary.chunks.iter().zip(&dictionary.chunk_offsets) {
         total_found += find_all_compound_dictionary_matches(
             chunk,
             data,
-            ring_buffer_mask,
+            mask,
             cur_ix,
             min_length,
             max_length,

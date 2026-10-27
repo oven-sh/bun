@@ -2,14 +2,14 @@
 //! most of the positions that do not match are skipped without looking at the input.
 
 use super::{
-    HASH_MUL_32, HASH_MUL_64, HasherImpl, HasherSearchResult, StaticDictionarySearch,
-    backward_reference_score, find_longest_match_at_last_distances, for_each_position,
-    search_in_static_dictionary, window,
+    DictionaryCandidates, HasherImpl, HasherSearchResult, LongestMatchHasher,
+    StaticDictionarySearch, backward_reference_score, find_longest_match_at_last_distances,
+    for_each_position, hash_low_bytes, hash_u32, search_in_static_dictionary, window,
 };
-use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
-use crate::enc::params::EncoderParams;
-use crate::util::{Bug, Checked, Loads, SliceExt, load_u32_le, load_u64_le, try_vec, try_zeroed};
+use crate::util::{
+    Bug, Checked, Loads, SliceExt, load_u32_le, load_u64_le, try_reserve_up_to, try_vec, try_zeroed,
+};
 use bun_core::AllocError;
 
 const TAG_HASH_BITS: u32 = 8;
@@ -160,10 +160,8 @@ impl<const N: usize> TaggedBuckets<N> for SparseBuckets<N> {
     }
 
     fn reserve(&mut self, positions: usize) -> Result<(), AllocError> {
-        let needed = positions.min(self.heads.len());
-        self.blocks
-            .try_reserve(needed.saturating_sub(self.blocks.len()))
-            .map_err(|_| AllocError)
+        let most = self.heads.len();
+        try_reserve_up_to(&mut self.blocks, positions.min(most), most)
     }
 
     fn clear(&mut self) {
@@ -182,14 +180,7 @@ pub(crate) struct HashLongestMatchTagged<const LONG: bool, const N: usize, B> {
 impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HashLongestMatchTagged<LONG, N, B> {
     const BUCKET_BITS: u32 = if LONG { 15 } else { 14 };
 
-    pub(crate) fn new(params: &EncoderParams) -> Fallible<Self> {
-        let hasher = &params.hasher;
-        if hasher.bucket_bits as u32 != Self::BUCKET_BITS
-            || 1 << hasher.block_bits != N
-            || hasher.num_last_distances_to_check as usize != NUM_LAST_DISTANCES_TO_CHECK
-        {
-            return Err(Bug.into());
-        }
+    pub(crate) fn new() -> Result<Self, AllocError> {
         Ok(Self {
             buckets: B::new(Self::BUCKET_BITS)?,
             is_clear: true,
@@ -210,13 +201,11 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HashLongestMatchTagg
     #[inline(always)]
     fn hash(bytes: u64) -> (usize, u8) {
         let hash = if LONG {
-            let h = bytes.wrapping_mul(HASH_MUL_64 << (64 - 5 * 8));
-            (h >> (64 - Self::BUCKET_BITS - TAG_HASH_BITS)) as u32
+            hash_low_bytes(bytes, 5, Self::BUCKET_BITS + TAG_HASH_BITS)
         } else {
-            let h = (bytes as u32).wrapping_mul(HASH_MUL_32);
-            h >> (32 - Self::BUCKET_BITS - TAG_HASH_BITS)
+            hash_u32(bytes as u32, Self::BUCKET_BITS + TAG_HASH_BITS)
         };
-        ((hash >> TAG_HASH_BITS) as usize, hash as u8)
+        (hash >> TAG_HASH_BITS, hash as u8)
     }
 
     #[inline(always)]
@@ -280,7 +269,11 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HasherImpl
             })
         }
     }
+}
 
+impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> LongestMatchHasher
+    for HashLongestMatchTagged<LONG, N, B>
+{
     /// Only the 4 distances that are always there are used.
     #[inline(always)]
     fn prepare_distance_cache(&self, _distance_cache: &mut [i32; 16]) {}
@@ -290,7 +283,7 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HasherImpl
         &mut self,
         dictionary: &mut StaticDictionarySearch<'_>,
         data: &[u8],
-        ring_buffer_mask: usize,
+        mask: usize,
         distance_cache: &[i32; 16],
         cur_ix: usize,
         max_length: usize,
@@ -299,9 +292,9 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HasherImpl
         max_distance: usize,
         out: &mut HasherSearchResult,
     ) -> Checked {
-        let cur_ix_masked = cur_ix & ring_buffer_mask;
+        let cur_ix_masked = cur_ix & mask;
         let current = data.sub(cur_ix_masked..)?;
-        let window = Loads::<4>::new(window(data, ring_buffer_mask))?;
+        let window = Loads::new(window(data, mask))?;
         // A short copy from far away is not accepted.
         let min_score = out.score;
         let mut best_len = out.len;
@@ -323,7 +316,7 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HasherImpl
 
         find_longest_match_at_last_distances(
             data,
-            ring_buffer_mask,
+            mask,
             distance_cache,
             NUM_LAST_DISTANCES_TO_CHECK,
             cur_ix,
@@ -350,7 +343,7 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HasherImpl
                 if backward > max_backward {
                     break;
                 }
-                prev_ix &= ring_buffer_mask;
+                prev_ix &= mask;
                 if window.u32_le(prev_ix + best_len - 3) != Some(wanted) {
                     continue;
                 }
@@ -392,7 +385,7 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HasherImpl
                 dictionary_distance,
                 max_distance,
                 out,
-                false,
+                DictionaryCandidates::Both,
             )?;
         }
         Ok(())

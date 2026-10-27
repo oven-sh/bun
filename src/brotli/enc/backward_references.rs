@@ -4,7 +4,7 @@ use super::Fallible;
 use super::command::Command;
 use super::dictionary_hash::{DictionaryHash, dictionary_hash};
 use super::hash::{
-    Hasher, HasherCommon, HasherImpl, HasherKind, HasherSearchResult, SCORE_BASE,
+    DictionaryStats, Hasher, HasherKind, HasherSearchResult, LongestMatchHasher, SCORE_BASE,
     StaticDictionarySearch, lookup_compound_dictionary_match,
 };
 use super::params::{EncoderParams, MIN_QUALITY_FOR_EXTENSIVE_REFERENCE_SEARCH};
@@ -36,23 +36,25 @@ fn compute_distance_code(distance: usize, max_distance: usize, dist_cache: &[i32
 }
 
 /// `COMPOUND` is whether to look in the compound dictionary too.
+///
+/// Not inlined: next to the code for the other hashers, that for H3 came out 3 % slower.
 #[inline(never)]
-fn create_backward_references_with<H: HasherImpl, const COMPOUND: bool>(
+fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
     num_bytes: usize,
     mut position: usize,
     ringbuffer: &[u8],
     ringbuffer_mask: usize,
     params: &EncoderParams,
     hasher: &mut H,
-    common: &mut HasherCommon,
+    dictionary_stats: &mut DictionaryStats,
     dictionary_hash: &'static DictionaryHash,
     dist_cache: &mut [i32; 16],
     last_insert_len: &mut usize,
     commands: &mut Vec<Command>,
     num_literals: &mut usize,
 ) -> Checked {
-    let mut dictionary = StaticDictionarySearch::new(common, dictionary_hash);
-    // 9.1. The largest distance.
+    let mut dictionary = StaticDictionarySearch::new(dictionary_stats, dictionary_hash);
+    // RFC 7932 section 9.1: the largest distance.
     let max_backward_limit = max_backward_limit(params.lgwin as u32);
     let position_offset = params.stream_offset;
 
@@ -243,9 +245,20 @@ pub(crate) fn create_backward_references(
     commands: &mut Vec<Command>,
     num_literals: &mut usize,
 ) -> Fallible {
-    let common = &mut hasher.common;
+    let dictionary_stats = &mut hasher.dictionary_stats;
     let dictionary_hash = dictionary_hash()?;
+    let has_compound_dictionary = !params.dictionary.chunks.is_empty();
     macro_rules! run {
+        ($hasher:expr) => {
+            run!($hasher, false)
+        };
+        ($hasher:expr, or_with_compound_dictionary) => {
+            if has_compound_dictionary {
+                run!($hasher, true)
+            } else {
+                run!($hasher, false)
+            }
+        };
         ($hasher:expr, $compound:literal) => {
             create_backward_references_with::<_, $compound>(
                 num_bytes,
@@ -254,7 +267,7 @@ pub(crate) fn create_backward_references(
                 ringbuffer_mask,
                 params,
                 $hasher,
-                common,
+                dictionary_stats,
                 dictionary_hash,
                 dist_cache,
                 last_insert_len,
@@ -264,44 +277,26 @@ pub(crate) fn create_backward_references(
             .map_err(Into::into)
         };
     }
-    if !params.dictionary.chunks.is_empty() {
-        // The hashers of the lowest qualities ignore the compound dictionary.
-        match &mut hasher.kind {
-            HasherKind::H5(h) => return run!(h, true),
-            HasherKind::H6(h) => return run!(h, true),
-            HasherKind::H58x16(h) => return run!(h, true),
-            HasherKind::H58x32(h) => return run!(h, true),
-            HasherKind::H58x16Sparse(h) => return run!(h, true),
-            HasherKind::H58x32Sparse(h) => return run!(h, true),
-            HasherKind::H68x16(h) => return run!(h, true),
-            HasherKind::H68x32(h) => return run!(h, true),
-            HasherKind::H40(h) => return run!(&mut **h, true),
-            HasherKind::H41(h) => return run!(&mut **h, true),
-            HasherKind::H42(h) => return run!(&mut **h, true),
-            HasherKind::H55(h) => return run!(h, true),
-            HasherKind::H65(h) => return run!(h, true),
-            _ => {}
-        }
-    }
+    // The hashers of the lowest qualities ignore the compound dictionary.
     match &mut hasher.kind {
-        HasherKind::H2(h) => run!(h, false),
-        HasherKind::H3(h) => run!(h, false),
-        HasherKind::H4(h) => run!(h, false),
-        HasherKind::H5(h) => run!(h, false),
-        HasherKind::H6(h) => run!(h, false),
-        HasherKind::H40(h) => run!(&mut **h, false),
-        HasherKind::H41(h) => run!(&mut **h, false),
-        HasherKind::H42(h) => run!(&mut **h, false),
-        HasherKind::H54(h) => run!(h, false),
-        HasherKind::H58x16(h) => run!(h, false),
-        HasherKind::H58x32(h) => run!(h, false),
-        HasherKind::H58x16Sparse(h) => run!(h, false),
-        HasherKind::H58x32Sparse(h) => run!(h, false),
-        HasherKind::H68x16(h) => run!(h, false),
-        HasherKind::H68x32(h) => run!(h, false),
-        HasherKind::H35(h) => run!(h, false),
-        HasherKind::H55(h) => run!(h, false),
-        HasherKind::H65(h) => run!(h, false),
+        HasherKind::H2(h) => run!(h),
+        HasherKind::H3(h) => run!(h),
+        HasherKind::H4(h) => run!(h),
+        HasherKind::H5(h) => run!(h, or_with_compound_dictionary),
+        HasherKind::H6(h) => run!(h, or_with_compound_dictionary),
+        HasherKind::H35(h) => run!(h),
+        HasherKind::H40(h) => run!(h, or_with_compound_dictionary),
+        HasherKind::H41(h) => run!(h, or_with_compound_dictionary),
+        HasherKind::H42(h) => run!(h, or_with_compound_dictionary),
+        HasherKind::H54(h) => run!(h),
+        HasherKind::H55(h) => run!(h, or_with_compound_dictionary),
+        HasherKind::H58x16(h) => run!(h, or_with_compound_dictionary),
+        HasherKind::H58x32(h) => run!(h, or_with_compound_dictionary),
+        HasherKind::H58x16Sparse(h) => run!(h, or_with_compound_dictionary),
+        HasherKind::H58x32Sparse(h) => run!(h, or_with_compound_dictionary),
+        HasherKind::H65(h) => run!(h, or_with_compound_dictionary),
+        HasherKind::H68x16(h) => run!(h, or_with_compound_dictionary),
+        HasherKind::H68x32(h) => run!(h, or_with_compound_dictionary),
         HasherKind::H10(_) | HasherKind::NotSetUp => Err(Bug.into()),
     }
 }

@@ -2,15 +2,15 @@
 //! the oldest one once the bank is full, so chains can end up sharing a tail.
 
 use super::{
-    HASH_MUL_32, HasherImpl, HasherSearchResult, StaticDictionarySearch,
-    backward_reference_penalty_using_last_distance, backward_reference_score,
-    backward_reference_score_using_last_distance, prepare_distance_cache,
-    search_in_static_dictionary,
+    DictionaryCandidates, HasherImpl, HasherSearchResult, LongestMatchHasher,
+    StaticDictionarySearch, backward_reference_penalty_using_last_distance,
+    backward_reference_score, backward_reference_score_using_last_distance, hash_u32,
+    prepare_distance_cache, search_in_static_dictionary,
 };
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
 use crate::enc::params::EncoderParams;
-use crate::util::{Checked, SliceExt, load_u32_le, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, load_u32_le, try_zeroed};
 
 /// A node of a chain: how far before its position the next one is, or 0xFFFF if that is too far, and the slot of the
 /// next one.
@@ -23,7 +23,7 @@ pub(crate) struct HashForgetfulChain<
     const NUM_LAST_DISTANCES_TO_CHECK: usize,
 > {
     /// How many slots of each bank were taken, modulo 65536.
-    free_slot_idx: [u16; NUM_BANKS],
+    free_slot_idx: Box<[u16; NUM_BANKS]>,
     /// How many nodes of a chain are looked at.
     max_hops: usize,
     /// The newest position of each bucket.
@@ -44,14 +44,15 @@ impl<
 > HashForgetfulChain<BUCKET_BITS, NUM_BANKS, BANK_BITS, NUM_LAST_DISTANCES_TO_CHECK>
 {
     const BANK_SIZE: usize = 1 << BANK_BITS;
-    const BUCKET_SIZE: usize = 1 << BUCKET_BITS;
+    const NUM_BUCKETS: usize = 1 << BUCKET_BITS;
 
     pub(crate) fn new(params: &EncoderParams) -> Fallible<Self> {
+        let free_slot_idx = try_zeroed(NUM_BANKS)?.into_boxed_slice();
         Ok(Self {
-            free_slot_idx: [0; NUM_BANKS],
+            free_slot_idx: free_slot_idx.try_into().map_err(|_| Bug)?,
             max_hops: (if params.quality > 6 { 7 } else { 8 }) << (params.quality - 4),
-            addr: try_zeroed(Self::BUCKET_SIZE)?,
-            head: try_zeroed(Self::BUCKET_SIZE)?,
+            addr: try_zeroed(Self::NUM_BUCKETS)?,
+            head: try_zeroed(Self::NUM_BUCKETS)?,
             tiny_hash: try_zeroed(65536)?,
             banks: try_zeroed(NUM_BANKS * Self::BANK_SIZE)?,
         })
@@ -59,8 +60,7 @@ impl<
 
     #[inline(always)]
     fn hash_bytes(data: &[u8], pos: usize) -> Checked<usize> {
-        let h = load_u32_le(data, pos)?.wrapping_mul(HASH_MUL_32);
-        Ok((h >> (32 - BUCKET_BITS)) as usize)
+        Ok(hash_u32(load_u32_le(data, pos)?, BUCKET_BITS))
     }
 }
 
@@ -80,7 +80,7 @@ impl<
         // after its first node.
         //
         // Clearing an entry at a time is 100 times slower for each of them.
-        let partial_prepare_threshold = Self::BUCKET_SIZE >> 6;
+        let partial_prepare_threshold = Self::NUM_BUCKETS >> 6;
         if one_shot && input_size <= partial_prepare_threshold {
             for i in 0..input_size {
                 let bucket = Self::hash_bytes(data, i)?;
@@ -113,7 +113,16 @@ impl<
         *head = idx as u16;
         Ok(())
     }
+}
 
+impl<
+    const BUCKET_BITS: u32,
+    const NUM_BANKS: usize,
+    const BANK_BITS: u32,
+    const NUM_LAST_DISTANCES_TO_CHECK: usize,
+> LongestMatchHasher
+    for HashForgetfulChain<BUCKET_BITS, NUM_BANKS, BANK_BITS, NUM_LAST_DISTANCES_TO_CHECK>
+{
     #[inline(always)]
     fn prepare_distance_cache(&self, distance_cache: &mut [i32; 16]) {
         prepare_distance_cache(distance_cache, NUM_LAST_DISTANCES_TO_CHECK);
@@ -124,7 +133,7 @@ impl<
         &mut self,
         dictionary: &mut StaticDictionarySearch<'_>,
         data: &[u8],
-        ring_buffer_mask: usize,
+        mask: usize,
         distance_cache: &[i32; 16],
         cur_ix: usize,
         max_length: usize,
@@ -133,7 +142,7 @@ impl<
         max_distance: usize,
         out: &mut HasherSearchResult,
     ) -> Checked {
-        let cur_ix_masked = cur_ix & ring_buffer_mask;
+        let cur_ix_masked = cur_ix & mask;
         let current = data.sub(cur_ix_masked..)?;
         // A short copy from far away is not accepted.
         let min_score = out.score;
@@ -158,7 +167,7 @@ impl<
             if prev_ix >= cur_ix || backward > max_backward {
                 continue;
             }
-            prev_ix &= ring_buffer_mask;
+            prev_ix &= mask;
             let len = find_match_length_with_limit(data.sub(prev_ix..)?, current, max_length);
             if len >= 2 {
                 let mut score = backward_reference_score_using_last_distance(len);
@@ -190,13 +199,13 @@ impl<
             if backward > max_backward {
                 break;
             }
-            let prev_ix = cur_ix.wrapping_sub(backward) & ring_buffer_mask;
+            let prev_ix = cur_ix.wrapping_sub(backward) & mask;
             let [node_delta, node_next] = self.banks.at((bank << BANK_BITS) + last)?;
             slot = usize::from(node_next);
             delta = usize::from(node_delta);
             // The 4 bytes up to the one that a longer match has to include.
-            if cur_ix_masked + best_len > ring_buffer_mask
-                || prev_ix + best_len > ring_buffer_mask
+            if cur_ix_masked + best_len > mask
+                || prev_ix + best_len > mask
                 || load_u32_le(current, best_len - 3)? != load_u32_le(data, prev_ix + best_len - 3)?
             {
                 continue;
@@ -213,7 +222,7 @@ impl<
                 }
             }
         }
-        self.store(data, ring_buffer_mask, cur_ix)?;
+        self.store(data, mask, cur_ix)?;
         if out.score == min_score {
             search_in_static_dictionary(
                 dictionary,
@@ -222,7 +231,7 @@ impl<
                 dictionary_distance,
                 max_distance,
                 out,
-                false,
+                DictionaryCandidates::Both,
             )?;
         }
         Ok(())

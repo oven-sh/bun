@@ -1,18 +1,21 @@
 //! A rolling hash over long chunks, to find long matches at long distances. It keeps one position for each hash.
 
-use super::{HasherImpl, HasherSearchResult, StaticDictionarySearch, backward_reference_score};
-use crate::enc::Fallible;
+use super::{
+    HasherImpl, HasherSearchResult, LongestMatchHasher, StaticDictionarySearch,
+    backward_reference_score,
+};
 use crate::enc::find_match_length::find_match_length_with_limit;
 use crate::util::{Checked, SliceExt, try_vec};
+use bun_core::AllocError;
 
-const ROLLING_HASH_MUL_32: u32 = 69069;
+const FACTOR: u32 = 69069;
 const INVALID_POS: u32 = 0xFFFF_FFFF;
 
 /// How many bytes are hashed.
 const CHUNKLEN: usize = 32;
-const NUMBUCKETS: usize = 16_777_216;
-/// `NUMBUCKETS / (MASK + 1)` of the hashes are stored and looked up.
-const MASK: u32 = (NUMBUCKETS as u32 * 64) - 1;
+const NUM_BUCKETS: usize = 16_777_216;
+/// `NUM_BUCKETS / (MASK + 1)` of the hashes are stored and looked up.
+const MASK: u32 = (NUM_BUCKETS as u32 * 64) - 1;
 
 /// What a byte adds to the hash.
 #[inline(always)]
@@ -21,16 +24,8 @@ fn hash_byte(byte: u8) -> u32 {
 }
 
 #[inline(always)]
-fn hash_rolling_function_initial(state: u32, add: u8, factor: u32) -> u32 {
-    factor.wrapping_mul(state).wrapping_add(hash_byte(add))
-}
-
-#[inline(always)]
-fn hash_rolling_function(state: u32, add: u8, rem: u8, factor: u32, factor_remove: u32) -> u32 {
-    factor
-        .wrapping_mul(state)
-        .wrapping_add(hash_byte(add))
-        .wrapping_sub(factor_remove.wrapping_mul(hash_byte(rem)))
+fn hash_rolling_function_initial(state: u32, add: u8) -> u32 {
+    FACTOR.wrapping_mul(state).wrapping_add(hash_byte(add))
 }
 
 /// Only looks at every `JUMP`th byte, and only at positions that are a multiple of `JUMP`, for speed.
@@ -39,25 +34,24 @@ pub(crate) struct HashRolling<const JUMP: usize> {
     state: u32,
     table: Vec<u32>,
     next_ix: usize,
-    factor: u32,
-    /// What the oldest byte of a chunk was multiplied by.
-    factor_remove: u32,
 }
 
 impl<const JUMP: usize> HashRolling<JUMP> {
-    pub(crate) fn new() -> Fallible<Self> {
-        let factor = ROLLING_HASH_MUL_32;
-        let mut factor_remove = 1u32;
-        for _ in (0..CHUNKLEN).step_by(JUMP) {
-            factor_remove = factor_remove.wrapping_mul(factor);
-        }
+    /// What the oldest byte of a chunk was multiplied by.
+    const FACTOR_REMOVE: u32 = FACTOR.wrapping_pow(CHUNKLEN.div_ceil(JUMP) as u32);
+
+    pub(crate) fn new() -> Result<Self, AllocError> {
         Ok(Self {
             state: 0,
-            table: try_vec(INVALID_POS, NUMBUCKETS)?,
+            table: try_vec(INVALID_POS, NUM_BUCKETS)?,
             next_ix: 0,
-            factor,
-            factor_remove,
         })
+    }
+
+    #[inline(always)]
+    fn hash_rolling_function(state: u32, add: u8, rem: u8) -> u32 {
+        hash_rolling_function_initial(state, add)
+            .wrapping_sub(Self::FACTOR_REMOVE.wrapping_mul(hash_byte(rem)))
     }
 }
 
@@ -74,7 +68,7 @@ impl<const JUMP: usize> HasherImpl for HashRolling<JUMP> {
         }
         self.state = 0;
         for &byte in data.sub(..CHUNKLEN)?.iter().step_by(JUMP) {
-            self.state = hash_rolling_function_initial(self.state, byte, self.factor);
+            self.state = hash_rolling_function_initial(self.state, byte);
         }
         Ok(())
     }
@@ -100,8 +94,8 @@ impl<const JUMP: usize> HasherImpl for HashRolling<JUMP> {
         &mut self,
         num_bytes: usize,
         mut position: usize,
-        ringbuffer: &[u8],
-        ring_buffer_mask: usize,
+        data: &[u8],
+        mask: usize,
     ) -> Checked {
         let mut available = num_bytes;
         if position & (JUMP - 1) != 0 {
@@ -109,17 +103,19 @@ impl<const JUMP: usize> HasherImpl for HashRolling<JUMP> {
             available = available.saturating_sub(diff);
             position += diff;
         }
-        let position_masked = position & ring_buffer_mask;
+        let position_masked = position & mask;
         // A chunk that wraps around the ring buffer is not handled.
-        if available > ring_buffer_mask - position_masked {
-            available = ring_buffer_mask - position_masked;
+        if available > mask - position_masked {
+            available = mask - position_masked;
         }
 
-        self.prepare(false, available, ringbuffer.sub(position_masked..)?)?;
+        self.prepare(false, available, data.sub(position_masked..)?)?;
         self.next_ix = position;
         Ok(())
     }
+}
 
+impl<const JUMP: usize> LongestMatchHasher for HashRolling<JUMP> {
     #[inline(always)]
     fn prepare_distance_cache(&self, _distance_cache: &mut [i32; 16]) {}
 
@@ -129,7 +125,7 @@ impl<const JUMP: usize> HasherImpl for HashRolling<JUMP> {
         &mut self,
         _dictionary: &mut StaticDictionarySearch<'_>,
         data: &[u8],
-        ring_buffer_mask: usize,
+        mask: usize,
         _distance_cache: &[i32; 16],
         cur_ix: usize,
         max_length: usize,
@@ -138,7 +134,7 @@ impl<const JUMP: usize> HasherImpl for HashRolling<JUMP> {
         _max_distance: usize,
         out: &mut HasherSearchResult,
     ) -> Checked {
-        let cur_ix_masked = cur_ix & ring_buffer_mask;
+        let cur_ix_masked = cur_ix & mask;
 
         if cur_ix & (JUMP - 1) != 0 {
             return Ok(());
@@ -153,13 +149,12 @@ impl<const JUMP: usize> HasherImpl for HashRolling<JUMP> {
         while pos <= cur_ix {
             let code = self.state & MASK;
 
-            let rem = data.at(pos & ring_buffer_mask)?;
-            let add = data.at((pos + CHUNKLEN) & ring_buffer_mask)?;
+            let rem = data.at(pos & mask)?;
+            let add = data.at((pos + CHUNKLEN) & mask)?;
 
-            self.state =
-                hash_rolling_function(self.state, add, rem, self.factor, self.factor_remove);
+            self.state = Self::hash_rolling_function(self.state, add, rem);
 
-            if (code as usize) < NUMBUCKETS {
+            if (code as usize) < NUM_BUCKETS {
                 let entry = self.table.at_mut(code as usize)?;
                 let found_ix = *entry;
                 *entry = pos as u32;
@@ -169,7 +164,7 @@ impl<const JUMP: usize> HasherImpl for HashRolling<JUMP> {
                     // Positions repeat every 2 GiB and the table is never cleared, so this can be `cur_ix` of the lap
                     // before. The reference encoder takes that for a match at distance 0.
                     if backward != 0 && backward <= max_backward {
-                        let found_ix_masked = found_ix as usize & ring_buffer_mask;
+                        let found_ix_masked = found_ix as usize & mask;
                         let len = find_match_length_with_limit(
                             data.sub(found_ix_masked..)?,
                             data.sub(cur_ix_masked..)?,

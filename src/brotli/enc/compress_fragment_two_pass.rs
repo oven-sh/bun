@@ -282,6 +282,8 @@ fn update_table<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
 
 /// Finds the matches in the `block_size` bytes from `input` on. All positions are indices of `all_input`. Returns how
 /// many literals and how many commands there are.
+///
+/// Not inlined: next to the code for the other table sizes, this came out 5 % slower.
 #[inline(never)]
 fn create_commands<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
     all_input: &[u8],
@@ -417,6 +419,9 @@ fn create_commands<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
     Ok((literals.len, commands.len))
 }
 
+/// Writes the prefix codes for `literals` and `commands`, and then these.
+///
+/// Not inlined: as a part of its caller, this came out 1 % slower.
 #[inline(never)]
 fn store_commands(
     s: &mut TwoPassArena,

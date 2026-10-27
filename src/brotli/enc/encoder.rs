@@ -23,8 +23,8 @@ use super::meta_block::{
 };
 use super::params::{
     DistanceParams, EncoderParams, FAST_COMPRESSION_WINDOW_BITS, FAST_ONE_PASS_COMPRESSION_QUALITY,
-    FAST_TWO_PASS_COMPRESSION_QUALITY, HQ_ZOPFLIFICATION_QUALITY, HasherParams,
-    MAX_NUM_DELAYED_SYMBOLS, MAX_QUALITY_FOR_STATIC_ENTROPY_CODES, MIN_QUALITY_FOR_BLOCK_SPLIT,
+    FAST_TWO_PASS_COMPRESSION_QUALITY, HQ_ZOPFLIFICATION_QUALITY, MAX_NUM_DELAYED_SYMBOLS,
+    MAX_QUALITY_FOR_STATIC_ENTROPY_CODES, MIN_QUALITY_FOR_BLOCK_SPLIT,
     MIN_QUALITY_FOR_CONTEXT_MODELING, MIN_QUALITY_FOR_HQ_BLOCK_SPLITTING,
     MIN_QUALITY_FOR_HQ_CONTEXT_MODELING, MIN_QUALITY_FOR_NONZERO_DISTANCE_PARAMS,
     MIN_QUALITY_FOR_OPTIMIZE_HISTOGRAMS, ZOPFLIFICATION_QUALITY, max_hash_table_size,
@@ -680,7 +680,6 @@ impl Encoder {
                 size_hint: 0,
                 disable_literal_context_modeling: false,
                 large_window: false,
-                hasher: HasherParams::default(),
                 dist: DistanceParams::default(),
                 dictionary: CompoundDictionary::default(),
             },
@@ -888,7 +887,7 @@ impl Encoder {
         self.hasher.init_or_stitch_to_previous_block(
             data,
             mask as usize,
-            &mut self.params,
+            &self.params,
             wrapped_last_processed_pos as usize,
             bytes as usize,
             is_last,

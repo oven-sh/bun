@@ -3,22 +3,31 @@
 use std::sync::OnceLock;
 
 use super::Fallible;
-use super::hash::HASH_MUL_32;
+use super::hash::hash_u32;
 use crate::common::dictionary::{
     DATA, MAX_DICTIONARY_WORD_LENGTH, MIN_DICTIONARY_WORD_LENGTH, OFFSETS_BY_LENGTH,
     SIZE_BITS_BY_LENGTH,
 };
 use crate::util::{SliceExt, load_u32_le, try_zeroed};
 
-const NUM_HASH_BUCKETS: usize = 32768;
+const HASH_BITS: u32 = 14;
+const NUM_BUCKETS: usize = 2 << HASH_BITS;
 
-/// One word for each bucket. A 14-bit hash `h` has two buckets: `2 * h` for a word of 8 bytes or more and `2 * h + 1`
-/// for a shorter one.
+/// One word for each bucket. A hash `h` has two buckets: `2 * h` for a word of 8 bytes or more and `2 * h + 1` for a
+/// shorter one.
 pub(crate) struct DictionaryHash {
     /// The index of the word among those of its length.
     pub(crate) words: Box<[u16]>,
     /// The length of the word, or 0 for an empty bucket.
     pub(crate) lengths: Box<[u8]>,
+}
+
+impl DictionaryHash {
+    /// The first of the two buckets for the words that start with `first_4_bytes`.
+    #[inline(always)]
+    pub(crate) fn first_bucket(first_4_bytes: u32) -> usize {
+        hash_u32(first_4_bytes, HASH_BITS) << 1
+    }
 }
 
 /// One bit for each word, from the last one of the longest words to the first one of the shortest: whether the word
@@ -79,15 +88,15 @@ static FROZEN: [u8; 1688] = [
 
 fn build() -> Fallible<DictionaryHash> {
     const KEEPS_BUCKET: u8 = 0x80;
-    let mut words = try_zeroed::<u16>(NUM_HASH_BUCKETS)?;
-    let mut lengths = try_zeroed::<u8>(NUM_HASH_BUCKETS)?;
+    let mut words = try_zeroed::<u16>(NUM_BUCKETS)?;
+    let mut lengths = try_zeroed::<u8>(NUM_BUCKETS)?;
     let mut global_idx = 0usize;
     for len in (MIN_DICTIONARY_WORD_LENGTH..=MAX_DICTIONARY_WORD_LENGTH).rev() {
         let n = 1usize << SIZE_BITS_BY_LENGTH.at(len)?;
         let dict_words = DATA.sub(OFFSETS_BY_LENGTH.at(len)? as usize..)?;
         for j in (0..n).rev() {
-            let key = load_u32_le(dict_words, len * j)?.wrapping_mul(HASH_MUL_32) >> (32 - 14);
-            let idx = ((key as usize) << 1) + usize::from(len < 8);
+            let first_bucket = DictionaryHash::first_bucket(load_u32_le(dict_words, len * j)?);
+            let idx = first_bucket + usize::from(len < 8);
             if lengths.at(idx)? & KEEPS_BUCKET == 0 {
                 let keeps_bucket = FROZEN.at(global_idx / 8)? & (1 << (global_idx % 8)) != 0;
                 words.put(idx, j as u16)?;
@@ -114,12 +123,7 @@ pub(crate) fn dictionary_hash() -> Fallible<&'static DictionaryHash> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn fnv1a(bytes: impl Iterator<Item = u8>) -> u64 {
-        bytes.fold(0xCBF2_9CE4_8422_2325, |h, b| {
-            (h ^ u64::from(b)).wrapping_mul(0x100_0000_01B3)
-        })
-    }
+    use crate::util::fnv1a;
 
     /// The checksums are those of the tables that the reference encoder embeds.
     #[test]

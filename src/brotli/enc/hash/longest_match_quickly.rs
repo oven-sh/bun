@@ -1,39 +1,40 @@
 //! A hash table with no more than a few candidates for each hash.
 
 use super::{
-    HASH_MUL_64, HasherImpl, HasherSearchResult, StaticDictionarySearch, backward_reference_score,
-    backward_reference_score_using_last_distance, for_each_position, search_in_static_dictionary,
+    DictionaryCandidates, HasherImpl, HasherSearchResult, LongestMatchHasher,
+    StaticDictionarySearch, backward_reference_score, backward_reference_score_using_last_distance,
+    for_each_position, hash_low_bytes, search_in_static_dictionary,
 };
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
 use crate::util::{Bug, Checked, SliceExt, load_u64_le, try_zeroed};
 
-/// `BUCKET_SIZE` positions, a power of 2. A position whose first `HASH_LEN` bytes hash to `key` is in one of the
+/// `NUM_BUCKETS` positions, a power of 2. A position whose first `HASH_LEN` bytes hash to `key` is in one of the
 /// `BUCKET_SWEEP` entries `key`, `key + 8`, `key + 16`...
 pub(crate) struct HashLongestMatchQuickly<
-    const BUCKET_SIZE: usize,
+    const NUM_BUCKETS: usize,
     const BUCKET_SWEEP: usize,
     const HASH_LEN: u32,
     const USE_DICTIONARY: bool,
 > {
-    buckets: Box<[u32; BUCKET_SIZE]>,
+    buckets: Box<[u32; NUM_BUCKETS]>,
     /// Nothing was written to `buckets` since they were made.
     is_clear: bool,
 }
 
 impl<
-    const BUCKET_SIZE: usize,
+    const NUM_BUCKETS: usize,
     const BUCKET_SWEEP: usize,
     const HASH_LEN: u32,
     const USE_DICTIONARY: bool,
-> HashLongestMatchQuickly<BUCKET_SIZE, BUCKET_SWEEP, HASH_LEN, USE_DICTIONARY>
+> HashLongestMatchQuickly<NUM_BUCKETS, BUCKET_SWEEP, HASH_LEN, USE_DICTIONARY>
 {
-    const BUCKET_BITS: u32 = BUCKET_SIZE.trailing_zeros();
-    const BUCKET_MASK: usize = BUCKET_SIZE - 1;
+    const BUCKET_BITS: u32 = NUM_BUCKETS.trailing_zeros();
+    const BUCKET_MASK: usize = NUM_BUCKETS - 1;
     const BUCKET_SWEEP_MASK: usize = (BUCKET_SWEEP - 1) << 3;
 
     pub(crate) fn new() -> Fallible<Self> {
-        let buckets = try_zeroed(BUCKET_SIZE)?.into_boxed_slice();
+        let buckets = try_zeroed(NUM_BUCKETS)?.into_boxed_slice();
         Ok(Self {
             buckets: buckets.try_into().map_err(|_| Bug)?,
             is_clear: true,
@@ -48,17 +49,16 @@ impl<
     /// A hash of the low `HASH_LEN` bytes of `bytes`.
     #[inline(always)]
     fn hash(bytes: u64) -> usize {
-        let h = (bytes << (64 - 8 * HASH_LEN)).wrapping_mul(HASH_MUL_64);
-        (h >> (64 - Self::BUCKET_BITS)) as usize
+        hash_low_bytes(bytes, HASH_LEN, Self::BUCKET_BITS)
     }
 }
 
 impl<
-    const BUCKET_SIZE: usize,
+    const NUM_BUCKETS: usize,
     const BUCKET_SWEEP: usize,
     const HASH_LEN: u32,
     const USE_DICTIONARY: bool,
-> HasherImpl for HashLongestMatchQuickly<BUCKET_SIZE, BUCKET_SWEEP, HASH_LEN, USE_DICTIONARY>
+> HasherImpl for HashLongestMatchQuickly<NUM_BUCKETS, BUCKET_SWEEP, HASH_LEN, USE_DICTIONARY>
 {
     const HASH_TYPE_LENGTH: usize = 8;
     const STORE_LOOKAHEAD: usize = 8;
@@ -86,7 +86,16 @@ impl<
             self.buckets.put((key + off) & Self::BUCKET_MASK, ix as u32)
         })
     }
+}
 
+impl<
+    const NUM_BUCKETS: usize,
+    const BUCKET_SWEEP: usize,
+    const HASH_LEN: u32,
+    const USE_DICTIONARY: bool,
+> LongestMatchHasher
+    for HashLongestMatchQuickly<NUM_BUCKETS, BUCKET_SWEEP, HASH_LEN, USE_DICTIONARY>
+{
     #[inline(always)]
     fn prepare_distance_cache(&self, _distance_cache: &mut [i32; 16]) {}
 
@@ -95,7 +104,7 @@ impl<
         &mut self,
         dictionary: &mut StaticDictionarySearch<'_>,
         data: &[u8],
-        ring_buffer_mask: usize,
+        mask: usize,
         distance_cache: &[i32; 16],
         cur_ix: usize,
         max_length: usize,
@@ -106,7 +115,7 @@ impl<
     ) -> Checked {
         let buckets = &mut *self.buckets;
         let best_len_in = out.len;
-        let cur_ix_masked = cur_ix & ring_buffer_mask;
+        let cur_ix_masked = cur_ix & mask;
         let current = data.sub(cur_ix_masked..)?;
         let mut compare_char = current.at(best_len_in)?;
         let key = Self::hash_bytes(data, cur_ix_masked)?;
@@ -118,7 +127,7 @@ impl<
 
         out.len_code_delta = 0;
         if prev_ix < cur_ix {
-            prev_ix &= ring_buffer_mask as u32 as usize;
+            prev_ix &= mask as u32 as usize;
             if compare_char == data.at(prev_ix + best_len)? {
                 let len = find_match_length_with_limit(data.sub(prev_ix..)?, current, max_length);
                 if len >= 4 {
@@ -143,7 +152,7 @@ impl<
             prev_ix = *entry as usize;
             *entry = cur_ix as u32;
             let backward = cur_ix.wrapping_sub(prev_ix);
-            prev_ix &= ring_buffer_mask as u32 as usize;
+            prev_ix &= mask as u32 as usize;
             // The reference encoder does not get to the dictionary from here, and the output depends on it.
             if compare_char != data.at(prev_ix + best_len_in)? {
                 return Ok(());
@@ -169,7 +178,7 @@ impl<
             for candidate in candidates {
                 prev_ix = candidate as usize;
                 let backward = cur_ix.wrapping_sub(prev_ix);
-                prev_ix &= ring_buffer_mask as u32 as usize;
+                prev_ix &= mask as u32 as usize;
                 if compare_char != data.at(prev_ix + best_len)? {
                     continue;
                 }
@@ -198,7 +207,7 @@ impl<
                 dictionary_distance,
                 max_distance,
                 out,
-                true,
+                DictionaryCandidates::First,
             )?;
         }
         if BUCKET_SWEEP != 1 {

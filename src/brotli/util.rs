@@ -109,37 +109,31 @@ pub(crate) fn load_u64_le(data: &[u8], pos: usize) -> Checked<u64> {
     Ok(u64::from_le_bytes(*data.array_at(pos)?))
 }
 
-/// Reads `N` bytes at a time from anywhere in a slice, at the cost of one comparison each.
+/// Reads 4 bytes at a time from anywhere in a slice, at the cost of one comparison each.
 #[derive(Clone, Copy)]
-pub(crate) struct Loads<'a, const N: usize> {
+pub(crate) struct Loads<'a> {
     data: &'a [u8],
     /// The last position that can be read.
     last: usize,
 }
 
-impl<'a, const N: usize> Loads<'a, N> {
-    /// `data` has at least `N` bytes.
+impl<'a> Loads<'a> {
+    /// `data` has at least 4 bytes.
     #[inline(always)]
     pub(crate) fn new(data: &'a [u8]) -> Checked<Self> {
-        let last = data.len().checked_sub(N).ok_or(Bug)?;
+        let last = data.len().checked_sub(4).ok_or(Bug)?;
         Ok(Self { data, last })
     }
 
-    /// The `N` bytes from `pos` on, if they are all inside.
+    /// The 4 bytes from `pos` on, if they are all inside.
     #[inline(always)]
-    pub(crate) fn at(&self, pos: usize) -> Option<&'a [u8; N]> {
+    pub(crate) fn u32_le(&self, pos: usize) -> Option<u32> {
         if pos > self.last {
             return None;
         }
         // The compiler sees that this cannot fail.
-        self.data.get(pos..).and_then(<[u8]>::first_chunk)
-    }
-}
-
-impl Loads<'_, 4> {
-    #[inline(always)]
-    pub(crate) fn u32_le(&self, pos: usize) -> Option<u32> {
-        self.at(pos).copied().map(u32::from_le_bytes)
+        let bytes = self.data.get(pos..).and_then(<[u8]>::first_chunk)?;
+        Some(u32::from_le_bytes(*bytes))
     }
 }
 
@@ -163,4 +157,27 @@ pub(crate) fn try_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>, AllocErr
     let mut vec = try_with_capacity(len)?;
     vec.resize(len, value);
     Ok(vec)
+}
+
+/// Makes room for `needed` elements in all. The capacity at least doubles when it grows, but does not go beyond `most`,
+/// which is as much as is ever needed.
+pub(crate) fn try_reserve_up_to<T>(
+    vec: &mut Vec<T>,
+    needed: usize,
+    most: usize,
+) -> Result<(), AllocError> {
+    if needed <= vec.capacity() {
+        return Ok(());
+    }
+    let capacity = needed.max((2 * vec.capacity()).min(most));
+    vec.try_reserve_exact(capacity - vec.len())
+        .map_err(|_| AllocError)
+}
+
+/// A checksum for tables that are too large to spell out in a test.
+#[cfg(test)]
+pub(crate) fn fnv1a(bytes: impl Iterator<Item = u8>) -> u64 {
+    bytes.fold(0xCBF2_9CE4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x100_0000_01B3)
+    })
 }

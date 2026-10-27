@@ -2,44 +2,45 @@
 
 use super::bucket_table::BucketTable;
 use super::{
-    HASH_MUL_32, HASH_MUL_64, HasherImpl, HasherSearchResult, StaticDictionarySearch,
-    backward_reference_score, find_longest_match_at_last_distances, prepare_distance_cache,
-    search_in_static_dictionary, window,
+    DictionaryCandidates, HasherImpl, HasherSearchResult, LongestMatchHasher,
+    StaticDictionarySearch, backward_reference_score, find_longest_match_at_last_distances,
+    hash_low_bytes, hash_u32, prepare_distance_cache, search_in_static_dictionary, window,
 };
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
-use crate::enc::params::EncoderParams;
-use crate::util::{Checked, Loads, SliceExt, load_u32_le, load_u64_le};
+use crate::enc::params::HasherParams;
+use crate::util::{Bug, Checked, Loads, SliceExt, load_u32_le, load_u64_le};
 use bun_core::AllocError;
 use core::hint::{Locality, prefetch_read};
 
-/// Hashes 5 bytes if `LONG`, which is for large inputs, else 4.
+/// Hashes 5 bytes if `LONG`, which is for large inputs and only comes with `1 << LONG_BUCKET_BITS` buckets, else 4.
 pub(crate) struct HashLongestMatch<const LONG: bool> {
     table: BucketTable,
+    bucket_bits: u32,
+    num_last_distances_to_check: usize,
 }
 
 impl<const LONG: bool> HashLongestMatch<LONG> {
-    pub(crate) fn new(params: &EncoderParams) -> Fallible<Self> {
-        debug_assert!(!LONG || params.hasher.bucket_bits == 15);
+    const LONG_BUCKET_BITS: u32 = 15;
+
+    pub(crate) fn new(params: HasherParams) -> Fallible<Self> {
+        if LONG && params.bucket_bits != Self::LONG_BUCKET_BITS {
+            return Err(Bug.into());
+        }
         Ok(Self {
-            table: BucketTable::new(&params.hasher)?,
+            table: BucketTable::new(params.bucket_bits, params.block_bits)?,
+            bucket_bits: params.bucket_bits,
+            num_last_distances_to_check: params.num_last_distances_to_check,
         })
     }
 
     #[inline(always)]
-    fn hash_bytes(&self, data: &[u8], pos: usize) -> Checked<usize> {
-        Self::hash_bytes_with(self.table.hash_shift, data, pos)
-    }
-
-    #[inline(always)]
-    fn hash_bytes_with(hash_shift: u32, data: &[u8], pos: usize) -> Checked<usize> {
-        if LONG {
-            let h = load_u64_le(data, pos)?.wrapping_mul(HASH_MUL_64 << (64 - 5 * 8));
-            Ok((h >> (64 - 15)) as usize)
+    fn hash_bytes(bucket_bits: u32, data: &[u8], pos: usize) -> Checked<usize> {
+        Ok(if LONG {
+            hash_low_bytes(load_u64_le(data, pos)?, 5, Self::LONG_BUCKET_BITS)
         } else {
-            let h = load_u32_le(data, pos)?.wrapping_mul(HASH_MUL_32);
-            Ok((h >> hash_shift) as usize)
-        }
+            hash_u32(load_u32_le(data, pos)?, bucket_bits)
+        })
     }
 }
 
@@ -60,15 +61,15 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
 
     #[inline(always)]
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) -> Checked {
-        let key = self.hash_bytes(data, ix & mask)?;
-        let (start, num) = self.table.add_to_bucket(key)?;
-        let offset = start + (usize::from(num) & (self.table.block_size - 1));
+        let key = Self::hash_bytes(self.bucket_bits, data, ix & mask)?;
+        let (start, added) = self.table.add_to_bucket(key)?;
+        let offset = start + (usize::from(added) & (self.table.block_size - 1));
         self.table.blocks.put(offset, ix as u32)
     }
 
     #[inline(always)]
     fn store_range(&mut self, data: &[u8], mask: usize, ix_start: usize, ix_end: usize) -> Checked {
-        let hash_shift = self.table.hash_shift;
+        let bucket_bits = self.bucket_bits;
         let mut ix = ix_start;
         loop {
             let mut buckets = self.table.buckets();
@@ -76,7 +77,7 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
                 if ix >= ix_end {
                     return Ok(());
                 }
-                let key = Self::hash_bytes_with(hash_shift, data, ix & mask)?;
+                let key = Self::hash_bytes(bucket_bits, data, ix & mask)?;
                 let Some((start, added)) = buckets.add(key)? else {
                     break key;
                 };
@@ -87,10 +88,12 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
             self.table.give_block(without_block)?;
         }
     }
+}
 
+impl<const LONG: bool> LongestMatchHasher for HashLongestMatch<LONG> {
     #[inline(always)]
     fn prepare_distance_cache(&self, distance_cache: &mut [i32; 16]) {
-        prepare_distance_cache(distance_cache, self.table.num_last_distances_to_check);
+        prepare_distance_cache(distance_cache, self.num_last_distances_to_check);
     }
 
     #[inline(always)]
@@ -98,7 +101,7 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
         &mut self,
         dictionary: &mut StaticDictionarySearch<'_>,
         data: &[u8],
-        ring_buffer_mask: usize,
+        mask: usize,
         distance_cache: &[i32; 16],
         cur_ix: usize,
         max_length: usize,
@@ -107,30 +110,30 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
         max_distance: usize,
         out: &mut HasherSearchResult,
     ) -> Checked {
-        let cur_ix_masked = cur_ix & ring_buffer_mask;
+        let cur_ix_masked = cur_ix & mask;
         let current = data.sub(cur_ix_masked..)?;
         // A short copy from far away is not accepted.
         let min_score = out.score;
         let mut best_len = out.len;
-        let key = self.hash_bytes(data, cur_ix_masked)?;
+        let key = Self::hash_bytes(self.bucket_bits, data, cur_ix_masked)?;
         let block_size = self.table.block_size;
-        let (start, newest) = self.table.add_to_bucket(key)?;
-        let newest = usize::from(newest);
+        let (start, added) = self.table.add_to_bucket(key)?;
+        let added = usize::from(added);
         let bucket = self.table.blocks.sub_mut(start..)?.sub_mut(..block_size)?;
         let block_mask = bucket.len().wrapping_sub(1);
         prefetch_read(bucket.as_ptr(), Locality::L1);
         if block_size > 16 {
             prefetch_read(bucket.as_ptr().wrapping_add(16), Locality::L1);
         }
-        let window = Loads::<4>::new(window(data, ring_buffer_mask))?;
+        let window = Loads::new(window(data, mask))?;
         out.len = 0;
         out.len_code_delta = 0;
 
         find_longest_match_at_last_distances(
             data,
-            ring_buffer_mask,
+            mask,
             distance_cache,
-            self.table.num_last_distances_to_check,
+            self.num_last_distances_to_check,
             cur_ix,
             max_length,
             max_backward,
@@ -142,19 +145,19 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
         if best_len < 3 {
             best_len = 3;
         }
-        let down = newest.saturating_sub(block_size);
+        let down = added.saturating_sub(block_size);
         'search: {
             // The 4 bytes up to the one that a longer match has to include. They have to be inside the window.
             let Some(mut wanted) = window.u32_le(cur_ix_masked + best_len - 3) else {
                 break 'search;
             };
-            for i in (down..newest).rev() {
+            for i in (down..added).rev() {
                 let mut prev_ix = bucket.at(i & block_mask)? as usize;
                 let backward = cur_ix.wrapping_sub(prev_ix);
                 if backward > max_backward {
                     break;
                 }
-                prev_ix &= ring_buffer_mask;
+                prev_ix &= mask;
                 if window.u32_le(prev_ix + best_len - 3) != Some(wanted) {
                     continue;
                 }
@@ -186,7 +189,7 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
                 }
             }
         }
-        bucket.put(newest & block_mask, cur_ix as u32)?;
+        bucket.put(added & block_mask, cur_ix as u32)?;
         if min_score == out.score {
             search_in_static_dictionary(
                 dictionary,
@@ -195,7 +198,7 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
                 dictionary_distance,
                 max_distance,
                 out,
-                false,
+                DictionaryCandidates::Both,
             )?;
         }
         Ok(())

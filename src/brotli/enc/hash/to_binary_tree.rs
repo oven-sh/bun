@@ -3,7 +3,7 @@
 //! A sequence is `MAX_TREE_COMP_LENGTH` bytes long and is identified by its position. A tree is sorted by the
 //! lexicographic order of the sequences, and is a max-heap with respect to their positions.
 
-use super::{BackwardMatch, HASH_MUL_32};
+use super::{BackwardMatch, HasherImpl, hash_u32};
 use crate::common::constants::WINDOW_GAP;
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
@@ -13,17 +13,13 @@ use crate::enc::static_dict::{
 };
 use crate::enc::static_dict_lut::{StaticDictionaryLut, static_dictionary_lut};
 use crate::util::{Checked, SliceExt, load_u32_le, try_zeroed};
-use bun_core::AllocError;
 
 const BUCKET_BITS: u32 = 17;
-const BUCKET_SIZE: usize = 1 << BUCKET_BITS;
+const NUM_BUCKETS: usize = 1 << BUCKET_BITS;
 const MAX_TREE_SEARCH_DEPTH: usize = 64;
 const MAX_TREE_COMP_LENGTH: usize = 128;
 
-/// How many matches [`H10::find_all_matches`] can find: 64 and `MAX_TREE_SEARCH_DEPTH`.
-pub(crate) const MAX_NUM_MATCHES_H10: usize = 128;
-
-pub(crate) struct H10 {
+pub(crate) struct HashToBinaryTree {
     /// The size of the window less 1.
     window_mask: usize,
     /// The root of the tree of each hash, which is the last position with that hash.
@@ -37,12 +33,13 @@ pub(crate) struct H10 {
 
 #[inline(always)]
 fn hash_bytes(data: &[u8], pos: usize) -> Checked<usize> {
-    let h = load_u32_le(data, pos)?.wrapping_mul(HASH_MUL_32);
-    Ok((h >> (32 - BUCKET_BITS)) as usize)
+    Ok(hash_u32(load_u32_le(data, pos)?, BUCKET_BITS))
 }
 
-impl H10 {
-    const HASH_TYPE_LENGTH: usize = 4;
+impl HashToBinaryTree {
+    /// Room for what [`Self::find_all_matches`] can find: 2 matches close by, one for each level of the tree and one for
+    /// each length of a dictionary word. That is less than this, which is what the reference encoder has.
+    pub(crate) const MAX_NUM_MATCHES: usize = 64 + MAX_TREE_SEARCH_DEPTH;
 
     pub(super) fn new(params: &EncoderParams, one_shot: bool, input_size: usize) -> Fallible<Self> {
         let mut num_nodes = 1usize << params.lgwin;
@@ -52,20 +49,11 @@ impl H10 {
         let window_mask = (1u32 << params.lgwin).wrapping_sub(1) as usize;
         Ok(Self {
             window_mask,
-            buckets: try_zeroed(BUCKET_SIZE)?,
+            buckets: try_zeroed(NUM_BUCKETS)?,
             invalid_pos: 0usize.wrapping_sub(window_mask) as u32,
             forest: try_zeroed(2 * num_nodes)?,
             static_dictionary: static_dictionary_lut()?,
         })
-    }
-
-    pub(super) fn prepare(&mut self, _one_shot: bool, _input_size: usize, _data: &[u8]) -> Checked {
-        self.buckets.fill(self.invalid_pos);
-        Ok(())
-    }
-
-    pub(super) fn reserve(&mut self, _input_end: usize) -> Result<(), AllocError> {
-        Ok(())
     }
 
     #[inline(always)]
@@ -90,14 +78,14 @@ impl H10 {
         &mut self,
         data: &[u8],
         cur_ix: usize,
-        ring_buffer_mask: usize,
+        mask: usize,
         max_length: usize,
         max_backward: usize,
         best_len: &mut usize,
         matches: &mut [BackwardMatch],
         mut num_matches: usize,
     ) -> Checked<usize> {
-        let cur_ix_masked = cur_ix & ring_buffer_mask;
+        let cur_ix_masked = cur_ix & mask;
         let max_comp_len = max_length.min(MAX_TREE_COMP_LENGTH);
         let should_reroot_tree = max_length >= MAX_TREE_COMP_LENGTH;
         let key = hash_bytes(data, cur_ix_masked)?;
@@ -115,7 +103,7 @@ impl H10 {
         let mut depth_remaining = MAX_TREE_SEARCH_DEPTH;
         loop {
             let backward = cur_ix.wrapping_sub(prev_ix);
-            let prev_ix_masked = prev_ix & ring_buffer_mask;
+            let prev_ix_masked = prev_ix & mask;
             if backward == 0 || backward > max_backward || depth_remaining == 0 {
                 if should_reroot_tree {
                     self.forest.put(node_left, self.invalid_pos)?;
@@ -133,7 +121,7 @@ impl H10 {
                 );
             if FIND && len > *best_len {
                 *best_len = len;
-                matches.put(num_matches, BackwardMatch::init(backward, len))?;
+                matches.put(num_matches, BackwardMatch::new(backward, len))?;
                 num_matches += 1;
             }
             if len >= max_comp_len {
@@ -169,13 +157,13 @@ impl H10 {
     /// `max_backward`, and adds the position `cur_ix`. Words of the static dictionary are at distances over
     /// `dictionary_distance`.
     ///
-    /// Returns how many were written to `matches`, which has room for [`MAX_NUM_MATCHES_H10`]. Their lengths increase,
+    /// Returns how many were written to `matches`, which has room for [`Self::MAX_NUM_MATCHES`]. Their lengths increase,
     /// and their distances do not decrease.
     #[inline(always)]
     pub(crate) fn find_all_matches(
         &mut self,
         data: &[u8],
-        ring_buffer_mask: usize,
+        mask: usize,
         cur_ix: usize,
         max_length: usize,
         max_backward: usize,
@@ -184,7 +172,7 @@ impl H10 {
         matches: &mut [BackwardMatch],
     ) -> Checked<usize> {
         let mut num_matches = 0usize;
-        let cur_ix_masked = cur_ix & ring_buffer_mask;
+        let cur_ix_masked = cur_ix & mask;
         let mut best_len = 1usize;
         let short_match_max_backward = if params.quality != HQ_ZOPFLIFICATION_QUALITY {
             16
@@ -199,7 +187,7 @@ impl H10 {
             if backward > max_backward {
                 break;
             }
-            prev_ix &= ring_buffer_mask;
+            prev_ix &= mask;
             i = i.wrapping_sub(1);
             if data.at(cur_ix_masked)? != data.at(prev_ix)?
                 || data.at(cur_ix_masked + 1)? != data.at(prev_ix + 1)?
@@ -213,7 +201,7 @@ impl H10 {
             );
             if len > best_len {
                 best_len = len;
-                matches.put(num_matches, BackwardMatch::init(backward, len))?;
+                matches.put(num_matches, BackwardMatch::new(backward, len))?;
                 num_matches += 1;
             }
         }
@@ -221,7 +209,7 @@ impl H10 {
             num_matches = self.store_and_find_matches::<true>(
                 data,
                 cur_ix,
-                ring_buffer_mask,
+                mask,
                 max_length,
                 max_backward,
                 &mut best_len,
@@ -246,7 +234,7 @@ impl H10 {
                     if distance <= params.dist.max_distance {
                         matches.put(
                             num_matches,
-                            BackwardMatch::init_dictionary(distance, l, (dict_id & 31) as usize),
+                            BackwardMatch::new_dictionary(distance, l, (dict_id & 31) as usize),
                         )?;
                         num_matches += 1;
                     }
@@ -255,10 +243,19 @@ impl H10 {
         }
         Ok(num_matches)
     }
+}
 
-    /// Adds the position `ix`, after which there are at least `MAX_TREE_COMP_LENGTH` bytes in the current block.
+impl HasherImpl for HashToBinaryTree {
+    const HASH_TYPE_LENGTH: usize = 4;
+    const STORE_LOOKAHEAD: usize = MAX_TREE_COMP_LENGTH;
+
+    fn prepare(&mut self, _one_shot: bool, _input_size: usize, _data: &[u8]) -> Checked {
+        self.buckets.fill(self.invalid_pos);
+        Ok(())
+    }
+
     #[inline(always)]
-    pub(crate) fn store(&mut self, data: &[u8], mask: usize, ix: usize) -> Checked {
+    fn store(&mut self, data: &[u8], mask: usize, ix: usize) -> Checked {
         let max_backward = self.window_mask - WINDOW_GAP + 1;
         self.store_and_find_matches::<false>(
             data,
@@ -275,13 +272,7 @@ impl H10 {
 
     /// Adds the last 63 positions of the range, and every 8th of the others if there are enough of them.
     #[inline(always)]
-    pub(crate) fn store_range(
-        &mut self,
-        data: &[u8],
-        mask: usize,
-        ix_start: usize,
-        ix_end: usize,
-    ) -> Checked {
+    fn store_range(&mut self, data: &[u8], mask: usize, ix_start: usize, ix_end: usize) -> Checked {
         let mut i = ix_start;
         if ix_start + 63 <= ix_end {
             i = ix_end - 63;
@@ -299,12 +290,12 @@ impl H10 {
 
     /// Adds the last `MAX_TREE_COMP_LENGTH - 1` positions of the previous block, whose sequences were not complete
     /// without the `num_bytes` that were written at `position` since.
-    pub(super) fn stitch_to_previous_block(
+    fn stitch_to_previous_block(
         &mut self,
         num_bytes: usize,
         position: usize,
-        ringbuffer: &[u8],
-        ringbuffer_mask: usize,
+        data: &[u8],
+        mask: usize,
     ) -> Checked {
         if num_bytes >= Self::HASH_TYPE_LENGTH - 1 && position >= MAX_TREE_COMP_LENGTH {
             let i_start = position - MAX_TREE_COMP_LENGTH + 1;
@@ -315,9 +306,9 @@ impl H10 {
                 let max_backward = self.window_mask - (WINDOW_GAP - 1).max(position - i);
                 // `i + MAX_TREE_COMP_LENGTH` is within the current block.
                 self.store_and_find_matches::<false>(
-                    ringbuffer,
+                    data,
                     i,
-                    ringbuffer_mask,
+                    mask,
                     MAX_TREE_COMP_LENGTH,
                     max_backward,
                     &mut 0,

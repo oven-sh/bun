@@ -11,12 +11,36 @@ use crate::common::constants::{
     calculate_distance_code_limit, distance_alphabet_size,
 };
 
-#[derive(Clone, Copy, Default)]
+/// How thorough H5 and H6 are.
+#[derive(Clone, Copy)]
 pub(crate) struct HasherParams {
-    pub(crate) type_: i32,
-    pub(crate) bucket_bits: i32,
-    pub(crate) block_bits: i32,
-    pub(crate) num_last_distances_to_check: i32,
+    /// `log2` of the number of hashes.
+    pub(crate) bucket_bits: u32,
+    /// `log2` of how many positions are kept for each hash.
+    pub(crate) block_bits: u32,
+    pub(crate) num_last_distances_to_check: usize,
+}
+
+/// See [`EncoderParams::choose_hasher`]. H58 and H68 keep 16 or 32 positions for each hash.
+#[derive(Clone, Copy)]
+pub(crate) enum HasherType {
+    H2,
+    H3,
+    H4,
+    H5(HasherParams),
+    H6(HasherParams),
+    H10,
+    H35,
+    H40,
+    H41,
+    H42,
+    H54,
+    H55,
+    H58x16,
+    H58x32,
+    H65(HasherParams),
+    H68x16,
+    H68x32,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -62,7 +86,6 @@ pub(crate) struct EncoderParams {
     pub(crate) size_hint: usize,
     pub(crate) disable_literal_context_modeling: bool,
     pub(crate) large_window: bool,
-    pub(crate) hasher: HasherParams,
     pub(crate) dist: DistanceParams,
     pub(crate) dictionary: CompoundDictionary,
 }
@@ -85,10 +108,6 @@ pub(crate) const MIN_QUALITY_FOR_HQ_BLOCK_SPLITTING: i32 = 10;
 
 /// Below [`MIN_QUALITY_FOR_BLOCK_SPLIT`] no more than this many literals and commands are buffered.
 pub(crate) const MAX_NUM_DELAYED_SYMBOLS: usize = 0x2FFF;
-
-/// The hashers that compare a byte-sized tag of each candidate before looking at it are only faster up to here. The
-/// reference encoder uses 7 when built for 64-bit x86 Windows.
-const MAX_TAGGED_HASHER_QUALITY: i32 = 6;
 
 /// The size of the hash table of qualities 0 and 1.
 pub(crate) const fn max_hash_table_size(quality: i32) -> usize {
@@ -174,61 +193,49 @@ impl EncoderParams {
 
     /// Which hasher a quality uses:
     ///
-    /// | quality | hasher | small window | large input |
-    /// | --- | --- | --- | --- |
-    /// | 2, 3 | H2, H3 | | |
-    /// | 4 | H4 | | H54 |
-    /// | 5, 6 | H58 | H40 | H68 |
-    /// | 7, 8 | H5 | H41 | H6 |
-    /// | 9 | H5 | H42 | H6 |
-    /// | 10, 11 | H10 | | |
-    pub(crate) fn choose_hasher(&self) -> HasherParams {
-        let mut hparams = self.hasher;
-        let long_match = |tagged: i32, plain: i32, bucket_bits: i32| HasherParams {
-            type_: if self.quality <= MAX_TAGGED_HASHER_QUALITY {
-                tagged
-            } else {
-                plain
-            },
-            block_bits: self.quality - 1,
-            bucket_bits,
-            num_last_distances_to_check: if self.quality < 7 {
-                4
-            } else if self.quality < 9 {
-                10
-            } else {
-                16
+    /// | quality | hasher | small window | large input | large input and window |
+    /// | --- | --- | --- | --- | --- |
+    /// | 2 | H2 | | | |
+    /// | 3 | H3 | | | H35, whatever the input |
+    /// | 4 | H4 | | H54 | H55 |
+    /// | 5, 6 | H58 | H40 | H68 | H65 |
+    /// | 7, 8 | H5 | H41 | H6 | H65 |
+    /// | 9 | H5 | H42 | H6 | H65 |
+    /// | 10, 11 | H10 | | | |
+    ///
+    /// H58 and H68 are H5 and H6 with a tag for each candidate, by which most are rejected without a look at them. That
+    /// is only faster up to quality 6. The reference encoder goes up to 7 when built for 64-bit x86 Windows.
+    pub(crate) fn choose_hasher(&self) -> HasherType {
+        let large_input = self.size_hint >= (1 << 20);
+        // Qualities up to 2 are too fast for a large window, and H10 already works well with one.
+        let large_window = self.lgwin > 24;
+        let hasher_params = HasherParams {
+            bucket_bits: 15,
+            block_bits: (self.quality - 1) as u32,
+            num_last_distances_to_check: match self.quality {
+                ..7 => 4,
+                7..9 => 10,
+                9.. => 16,
             },
         };
-        if self.quality > 9 {
-            hparams.type_ = 10;
-        } else if self.quality == 4 && self.size_hint >= (1 << 20) {
-            hparams.type_ = 54;
-        } else if self.quality < 5 {
-            hparams.type_ = self.quality;
-        } else if self.lgwin <= 16 {
-            hparams.type_ = if self.quality < 7 {
-                40
-            } else if self.quality < 9 {
-                41
-            } else {
-                42
-            };
-        } else if self.size_hint >= (1 << 20) && self.lgwin >= 19 {
-            hparams = long_match(68, 6, 15);
-        } else {
-            hparams = long_match(58, 5, if self.quality < 7 { 14 } else { 15 });
+        match self.quality {
+            ..=2 => HasherType::H2,
+            3 if large_window => HasherType::H35,
+            3 => HasherType::H3,
+            4 if large_input && large_window => HasherType::H55,
+            4 if large_input => HasherType::H54,
+            4 => HasherType::H4,
+            10.. => HasherType::H10,
+            5 | 6 if self.lgwin <= 16 => HasherType::H40,
+            7 | 8 if self.lgwin <= 16 => HasherType::H41,
+            9 if self.lgwin <= 16 => HasherType::H42,
+            5..=9 if large_input && large_window => HasherType::H65(hasher_params),
+            5 if large_input && self.lgwin >= 19 => HasherType::H68x16,
+            6 if large_input && self.lgwin >= 19 => HasherType::H68x32,
+            7..=9 if large_input && self.lgwin >= 19 => HasherType::H6(hasher_params),
+            5 => HasherType::H58x16,
+            6 => HasherType::H58x32,
+            7..=9 => HasherType::H5(hasher_params),
         }
-
-        if self.lgwin > 24 {
-            // Qualities up to 2 are too fast for a large window, and H10 already works well with one.
-            hparams.type_ = match hparams.type_ {
-                3 => 35,
-                54 => 55,
-                6 | 68 => 65,
-                other => other,
-            };
-        }
-        hparams
     }
 }

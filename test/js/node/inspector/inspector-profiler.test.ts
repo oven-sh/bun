@@ -1334,6 +1334,55 @@ console.log(JSON.stringify(scripts));
         Object.fromEntries(Object.entries(rangesInFunctions).map(([name, marked]) => [name, marked.trim()])),
       );
     });
+
+    // V8 stamps coverage with TimeTicks: the process.hrtime() clock, in seconds. So the stamps that
+    // another process takes between two hrtime readings of this process land between them.
+    test.concurrent("timestamps are on the process.hrtime() clock", async () => {
+      const fixture = /* js */ `
+        const { Session } = require("node:inspector/promises");
+        const session = new Session();
+        session.connect();
+        process.on("message", async () => {
+          process.hrtime = () => [0, 5_000_000];
+          const started = await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+          const taken = await session.post("Profiler.takePreciseCoverage");
+          process.send({ started: started.timestamp, taken: taken.timestamp });
+          process.disconnect();
+        });
+        session.post("Profiler.enable").then(() => process.send("ready"));
+      `;
+      const ready = Promise.withResolvers<void>();
+      const stamped = Promise.withResolvers<{ started: number; taken: number }>();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+        ipc(message) {
+          if (message === "ready") ready.resolve();
+          else stamped.resolve(message);
+        },
+      });
+      const orExit = <T>(promise: Promise<T>) =>
+        Promise.race([
+          promise,
+          proc.exited.then(code => Promise.reject(new Error(`the child exited (${code}) with no answer`))),
+        ]);
+      // The child is running, so the only thing between the readings below is the message hop.
+      await orExit(ready.promise);
+
+      const sent = process.hrtime.bigint() / 1000n;
+      proc.send("stamp");
+      const coverage = await orExit(stamped.promise);
+      const received = process.hrtime.bigint() / 1000n;
+
+      // The protocol carries seconds. Compare in whole microseconds, the unit of the stamp.
+      const started = BigInt(Math.round(coverage.started * 1e6));
+      const taken = BigInt(Math.round(coverage.taken * 1e6));
+      const ordered = sent <= started && started <= taken && taken <= received;
+      expect({ sent, started, taken, received, ordered }).toEqual({ sent, started, taken, received, ordered: true });
+      expect(await proc.exited).toBe(0);
+    });
   });
 
   describe("exports", () => {

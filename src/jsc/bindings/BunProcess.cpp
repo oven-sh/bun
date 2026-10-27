@@ -942,15 +942,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback, (JSC::JSGl
     return JSValue::encode(jsBoolean(true));
 }
 
-extern "C" uint64_t Bun__readOriginTimer(void*);
+extern "C" uint64_t Bun__readHRTime(void*);
 
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_process_methods.cc#L717-L732
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    uint64_t time = Bun__readOriginTimer(globalObject->bunVM());
+    uint64_t time = Bun__readHRTime(globalObject->bunVM());
     double seconds = static_cast<double>(time / 1000000000);
     double nanoseconds = static_cast<double>(time % 1000000000);
 
@@ -1003,7 +1004,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
-    return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
+    return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readHRTime(globalObject->bunVM()))));
+}
+
+// Whole microseconds, as node stamps a trace event: https://github.com/nodejs/node/blob/v26.3.0/src/tracing/agent.h#L39-L41
+JSC_DEFINE_HOST_FUNCTION(jsFunctionHRTimeMicroseconds, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return JSValue::encode(jsNumber(Bun__readHRTime(static_cast<Zig::GlobalObject*>(globalObject)->bunVM()) / 1000));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

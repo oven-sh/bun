@@ -4,6 +4,8 @@ import { heapStats } from "bun:jsc";
 import { setSystemTime } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
+import { once } from "node:events";
+import { Worker } from "node:worker_threads";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(() => vi.useRealTimers());
@@ -1019,6 +1021,55 @@ describe("performance.now() mocking", () => {
     expect(() => setSystemTime(ms)).toThrow("setSystemTime() expects a finite number or a Date");
     expect(Date.now()).toBe(5000);
     expect(performance.timeOrigin).toBe(5000);
+  });
+});
+
+describe("process.hrtime() mocking", () => {
+  test("process.hrtime() follows the fake clock, then the real clock again", () => {
+    const realBefore = process.hrtime.bigint();
+
+    vi.useFakeTimers();
+    expect({ tuple: process.hrtime(), bigint: process.hrtime.bigint() }).toEqual({ tuple: [0, 0], bigint: 0n });
+
+    vi.advanceTimersByTime(1500);
+    expect({ tuple: process.hrtime(), bigint: process.hrtime.bigint() }).toEqual({
+      tuple: [1, 500_000_000],
+      bigint: 1_500_000_000n,
+    });
+
+    vi.useRealTimers();
+    expect(process.hrtime.bigint()).toBeGreaterThanOrEqual(realBefore);
+  });
+
+  // The fake clock belongs to the thread that installed it: a worker keeps reading the real clock,
+  // so its stamp lands between two real stamps of this thread.
+  test("fake timers of one thread leave process.hrtime() of a worker on the real clock", async () => {
+    const worker = new Worker(
+      `const { parentPort } = require("node:worker_threads");
+       parentPort.on("message", () => parentPort.postMessage(process.hrtime.bigint()));
+       parentPort.postMessage("ready");`,
+      { eval: true },
+    );
+    try {
+      await once(worker, "message");
+      const before = process.hrtime.bigint();
+
+      vi.useFakeTimers();
+      vi.advanceTimersByTime(5000);
+      worker.postMessage("stamp");
+      const [inWorker] = await once(worker, "message");
+      vi.useRealTimers();
+
+      const after = process.hrtime.bigint();
+      expect({ before, inWorker, after, ordered: before <= inWorker && inWorker <= after }).toEqual({
+        before,
+        inWorker,
+        after,
+        ordered: true,
+      });
+    } finally {
+      await worker.terminate();
+    }
   });
 });
 

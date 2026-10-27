@@ -24,6 +24,7 @@ const isCPUProfilerRunning = $newCppFunction("JSInspectorProfiler.cpp", "jsFunct
 const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage", 0);
 const stopPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage", 0);
 const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage", 0);
+const hrtimeMicroseconds: () => number = $newCppFunction("BunProcess.cpp", "jsFunctionHRTimeMicroseconds", 0);
 
 // Native bindings for inspector.open(): they start Bun's debugger thread with a
 // WebSocket server that speaks the V8 Chrome DevTools Protocol (see
@@ -608,8 +609,8 @@ class Session extends EventEmitter {
         // stopPreciseCoverage — becomes the baseline the next take subtracts.
         this.#coverageBaseline.$clear();
         this.#snapshotCoverageBaseline();
-        // CDP: monotonic seconds since an arbitrary origin (V8 uses TimeTicks).
-        return { timestamp: performance.now() / 1000 };
+        // CDP: monotonic seconds. V8's TimeTicks is the process.hrtime() clock, except that on macOS it stops in sleep.
+        return { timestamp: hrtimeMicroseconds() / 1e6 };
       }
 
       case "Profiler.stopPreciseCoverage": {
@@ -634,7 +635,7 @@ class Session extends EventEmitter {
         this.#rebaseCoverage(scripts);
         return {
           result: buildScriptCoverageList(scripts, this.#preciseCoverageCallCount, this.#preciseCoverageDetailed),
-          timestamp: performance.now() / 1000,
+          timestamp: hrtimeMicroseconds() / 1e6,
         };
       }
 

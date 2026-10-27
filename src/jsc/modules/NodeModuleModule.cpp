@@ -487,10 +487,6 @@ PathResolveModule getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent
     RETURN_IF_EXCEPTION(scope, value);
     if (filename.isString()) {
         value.filename = filename.toString(global);
-        if (auto* module = dynamicDowncast<JSCommonJSModule>(parent)) {
-            value.filename = module->filenameForResolution(global, value.filename);
-            RETURN_IF_EXCEPTION(scope, value);
-        }
     }
     RELEASE_AND_RETURN(scope, value);
 }

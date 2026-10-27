@@ -52,7 +52,7 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 #endif
 }
 
-/// Length of the `<path>` of a `<path>?query` module key. Twin of `module_key_without_query` (resolver_jsc.rs).
+/// Length of the filesystem path in a legacy `<path>?query` module key.
 ALWAYS_INLINE unsigned moduleKeyPathLength(const WTF::String& key)
 {
     unsigned devicePrefixLength = 0;

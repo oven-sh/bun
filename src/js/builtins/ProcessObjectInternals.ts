@@ -96,12 +96,8 @@ export function getStdioWriteStream(
 }
 
 // NodeWorkerState::stdioStream: process.stdin (0), stdout (1) or stderr (2) of a node:worker_threads worker, over its port to the parent Worker.
-export function getNodeWorkerStdioStream(
-  fd: number,
-  port: MessagePort | undefined,
-  inFlight: Uint8Array[] | undefined,
-) {
-  return require("internal/worker/stdio").makeWorkerProcessStream(fd, port, inFlight);
+export function getNodeWorkerStdioStream(fd: number, port: MessagePort | undefined, consoleInFlight: boolean) {
+  return require("internal/worker/stdio").makeWorkerProcessStream(fd, port, consoleInFlight);
 }
 
 export function getStdinStream(

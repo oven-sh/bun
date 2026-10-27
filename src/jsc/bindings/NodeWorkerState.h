@@ -4,6 +4,7 @@
 #include "MessagePort.h"
 #include "WorkerOptions.h"
 #include <JavaScriptCore/WriteBarrier.h>
+#include <wtf/Deque.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace Zig {
@@ -59,39 +60,90 @@ public:
     template<typename Visitor> void visit(Visitor&);
 
 private:
-    // The flow control of internal/worker/stdio: one batch is in flight, and what is written meanwhile waits for the reader's ack.
-    struct ConsoleQueue {
-        // The output of the console calls that the reader has yet to ack: of the batch in flight (the first `inFlight` calls), then of what waits behind it. `ends[i]` is where the output of call `i` ends: the reader gets one chunk for each call.
-        Vector<uint8_t> bytes;
-        Vector<size_t> ends;
-        size_t inFlight { 0 };
+    // The output of consecutive console calls. The reader gets a chunk for each call.
+    struct ConsoleSegment {
+        // A segment of this weight takes no further call: it holds about a megabyte of output or 16,000 calls, and one call more. A call weighs its bytes and `callWeight` for the chunk that it becomes.
+        static constexpr size_t fullWeight = 1024 * 1024;
+        static constexpr size_t callWeight = 64;
 
+        Vector<uint8_t> bytes;
+        // `ends[i]` is where the output of call `i` ends in `bytes`.
+        Vector<size_t> ends;
+
+        size_t weight() const { return bytes.size() + ends.size() * callWeight; }
         std::span<const uint8_t> output(size_t call) const
         {
             size_t begin = call ? ends[call - 1] : 0;
             return bytes.subspan(begin, ends[call] - begin);
         }
+    };
+
+    // One message to the reader takes segments up to this weight, and one segment at least. That is far below what a Vector and the serializer hold. Short of it, an ack releases all that waits, as the writev of a stream does.
+    static constexpr size_t maxConsoleMessageWeight = 256 * ConsoleSegment::fullWeight;
+
+    // The flow control of internal/worker/stdio: one message is in flight, and what is written meanwhile waits for the reader's ack. As the Writable of a stream, the queue holds what waits without a limit.
+    struct ConsoleQueue {
+        // What the reader has yet to ack: the first `inFlight` segments are the message in flight, the others wait.
+        Deque<ConsoleSegment> segments;
+        size_t inFlight { 0 };
+
+        // Adds the output of one console call to the last segment that waits, or to a new one. False for output that a Vector cannot hold.
+        bool append(std::span<const uint8_t> callOutput)
+        {
+            if (segments.size() == inFlight || segments.last().weight() >= ConsoleSegment::fullWeight)
+                segments.append(ConsoleSegment {});
+            auto& segment = segments.last();
+            if (segment.bytes.tryAppend(callOutput)) [[likely]] {
+                if (segment.ends.tryAppend(segment.bytes.size())) [[likely]]
+                    return true;
+                segment.bytes.shrink(segment.bytes.size() - callOutput.size());
+            }
+            if (segment.ends.isEmpty())
+                segments.removeLast();
+            return false;
+        }
+        void removeInFlight()
+        {
+            for (; inFlight; inFlight--)
+                segments.removeFirst();
+        }
+        // How many of its first segments the next message takes.
+        size_t nextMessageSegments() const
+        {
+            size_t count = 0;
+            size_t weight = 0;
+            for (auto& segment : segments) {
+                weight += segment.weight();
+                if (count && weight > maxConsoleMessageWeight)
+                    break;
+                count++;
+            }
+            return count;
+        }
         void clear()
         {
-            bytes.clear();
-            ends.clear();
+            segments.clear();
             inFlight = 0;
         }
     };
 
     void stopListening(NodePort);
-    // The output of the calls from `first` up to `end`, as an array with a Uint8Array for each. Null with an exception pending.
-    JSC::JSArray* consoleChunks(Zig::GlobalObject&, const ConsoleQueue&, size_t first, size_t end);
-    // Posts what the queue holds from call `first` on. Whether the batch is with the port. Leaves no exception pending.
-    bool postConsoleOutput(Zig::GlobalObject&, unsigned fd, size_t first);
-    // Posts what waits for an ack without one, and stops waiting.
+    // The output of each call of the queue's first `count` segments, as an array with a Uint8Array for each. Null with an exception pending.
+    JSC::JSArray* consoleChunks(Zig::GlobalObject&, const ConsoleQueue&, size_t count);
+    // Posts the queue's first `count` segments as one message. Whether that is with the port. Leaves no exception pending.
+    bool postConsoleSegments(Zig::GlobalObject&, unsigned fd, size_t count);
+    // For a queue that has no message in flight: posts what waits as the message in flight. At an exit, as releaseConsoleQueue. False when nothing is in flight afterwards.
+    bool sendConsoleQueue(Zig::GlobalObject&, unsigned fd);
+    // Posts what waits for an ack without one, a message for each segment, and stops waiting.
     void releaseConsoleQueue(Zig::GlobalObject&, unsigned fd);
     void writeConsoleToStream(Zig::GlobalObject&, JSC::JSObject* write, std::span<const uint8_t>);
 
     std::array<RefPtr<WebCore::MessagePort>, NodePort::NodePortCount> m_ports;
-    // What listens on a port for this object: its own listener until the worker builds what reads the port, and on the hub port then the listener of internal/worker/messaging.
+    // What listens on a port for this object: its own listener until the worker builds what reads the port, then the listener of what was built (of the stream on a stdio port, of internal/worker/messaging on the hub port).
     std::array<RefPtr<WebCore::EventListener>, NodePort::NodePortCount> m_listeners;
     std::array<ConsoleQueue, 2> m_consoleQueues;
+    // By fd: the build of that stream is on the stack. The console reads it for stdout and stderr.
+    std::array<bool, 3> m_buildingStream {};
     bool m_entrySettled { false };
     bool m_isExiting { false };
     bool m_hasOwnEnv { false };
@@ -100,7 +152,7 @@ private:
 
     JSC::WriteBarrier<JSC::Unknown> m_workerData;
     std::array<JSC::WriteBarrier<JSC::JSObject>, 3> m_stdioStreams;
-    // Of process.stdout and stderr (internal/worker/stdio): what completes the batch in flight without the reader's ack, and what writes console output to the stream.
+    // Of process.stdout and stderr (internal/worker/stdio): the stream's listener on the port, which completes the batch in flight also without the reader's ack, and what writes console output to the stream.
     std::array<JSC::WriteBarrier<JSC::JSObject>, 2> m_stdioFlush;
     std::array<JSC::WriteBarrier<JSC::JSObject>, 2> m_consoleWrite;
 };

@@ -3542,6 +3542,44 @@ describe("node worker start sequence", () => {
     return { stdout, stderr, exitCode };
   }
 
+  const megabyte = 1 << 20;
+
+  // Resolves when `reader` holds `bytes` that nothing reads. Rejects when the worker ends first, or when that takes too long.
+  async function unread(worker: Worker, reader: Readable, bytes: number) {
+    let exitCode: number | undefined;
+    worker.once("exit", code => (exitCode = code));
+    const deadline = performance.now() + 30_000;
+    while (reader.readableLength < bytes) {
+      if (exitCode !== undefined || performance.now() > deadline) {
+        const why = exitCode === undefined ? "after 30 s" : `when the worker exited with ${exitCode}`;
+        throw new Error(`the parent holds ${reader.readableLength} of ${bytes} bytes ${why}`);
+      }
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
+
+  // What the worker says once the parent holds `bytes` of worker.stdout (or of `reader`) that nothing reads. The worker is gone when this settles.
+  async function stateWithUnread(worker: Worker, bytes: number, reader: Readable = worker.stdout) {
+    try {
+      await unread(worker, reader, bytes);
+      const reply = once(worker, "message");
+      worker.postMessage("state");
+      return (await reply)[0];
+    } finally {
+      await worker.terminate();
+    }
+  }
+
+  // A console method of the worker, and the stream of the parent's Worker and of the worker's process that it writes to.
+  const consoleStreams = [
+    ["stdout", "log"],
+    ["stderr", "error"],
+  ] as const;
+
+  // The build of a stream runs in the realm as user code left it: an EventEmitter reads this._events when it is constructed. This runs `hook` once, from inside the next build.
+  const insideTheNextBuild = (hook: string) =>
+    `Object.defineProperty(Object.prototype, "_events", { configurable: true, get() { delete Object.prototype._events; ${hook} } });`;
+
   test("compiles no more functions before the entry point than a Web Worker does", async () => {
     // A function that ran has a code block. Each entry counts them in its first statement.
     const count = `require("bun:jsc").heapStats().objectTypeCounts.FunctionCodeBlock`;
@@ -3749,7 +3787,7 @@ describe("node worker start sequence", () => {
         const errors: string[] = [];
         worker.stdout.setEncoding("utf8").on("data", chunk => stdout.push(chunk));
         worker.stderr.setEncoding("utf8").on("data", chunk => stderr.push(chunk));
-        worker.on("error", error => errors.push(String(error?.message)));
+        worker.on("error", (error: Error) => errors.push(String(error?.message)));
         const exited = once(worker, "exit");
         const message = once(worker, "message").then(([value]) => value);
         const [exitCode] = await exited;
@@ -3915,6 +3953,27 @@ describe("node worker start sequence", () => {
       expect({ first: stdout.slice(0, 6), exitCode }).toEqual({ first: "first\n", exitCode: 0 });
     });
 
+    // The console's queue holds what waits for the parent's reader in segments of about a megabyte. Each row leaves several of them waiting behind the call in flight.
+    test.each([
+      ["when the worker has nothing else to do", "", ""],
+      ["at a synchronous exit", "process.exit(0);", ""],
+      ["through process.stdout, once the worker reads that", `process.stdout.write("end\\n");`, "end\n"],
+    ])("a burst of several megabytes reaches the parent whole %s", async (_label, then, end) => {
+      const callBytes = 128 * 1024;
+      const result = await runWorker(`
+        const padding = Buffer.alloc(${callBytes - 9}, "x").toString();
+        for (let i = 0; i < 40; i++) console.log(String(i).padStart(8, "0") + padding);
+        ${then}`);
+      const lines = result.stdout.split("\n");
+      expect({
+        wrong: lines
+          .slice(0, 40)
+          .findIndex((line, i) => line.length !== callBytes - 1 || Number(line.slice(0, 8)) !== i),
+        rest: lines.slice(40).join("\n"),
+        exitCode: result.exitCode,
+      }).toEqual({ wrong: -1, rest: end, exitCode: 0 });
+    });
+
     // Node evaluates its builtins before user code. The console of a worker needs none here.
     test.each([
       ["Object.prototype is frozen", `Object.freeze(Object.prototype);`],
@@ -4048,21 +4107,10 @@ describe("node worker start sequence", () => {
   });
 
   // node's flow control (lib/internal/worker/io.js): a write completes when the parent's reader asks for more.
-  describe("process.stdout waits for the parent's reader", () => {
-    const megabyte = 1 << 20;
+  describe("a stdio stream waits for the parent's reader", () => {
     const report = `parentPort.postMessage({ wrote, drained, waiting: process.stdout.writableLength >= ${megabyte} })`;
 
-    // What the worker says once the parent holds `bytes` of worker.stdout that nothing reads.
-    async function stateWithUnread(worker: Worker, bytes: number) {
-      while (worker.stdout.readableLength < bytes) await new Promise(resolve => setImmediate(resolve));
-      const reply = once(worker, "message");
-      worker.postMessage("state");
-      const [state] = await reply;
-      await worker.terminate();
-      return state;
-    }
-
-    // The stream takes over the batch that the console has in flight, and what the console has waiting behind it.
+    // The console has a call in flight, and calls that wait behind it. The stream waits for the ack of the one, and writes the others first.
     test.each([1, 2, 3])("after %d console calls and a first read of process.stdout", async calls => {
       const worker = new Worker(
         `const { parentPort } = require("node:worker_threads");
@@ -4077,6 +4125,67 @@ describe("node worker start sequence", () => {
         wrote: false,
         drained: false,
         waiting: true,
+      });
+    });
+
+    // As the writev of a stream: the reader's ack is for all that waited. Less for each ack leaves the output of a busy worker behind, and the worker alive when the reader stops in the middle.
+    test.each(consoleStreams)(
+      "the ack of worker.%s releases all that the console has waiting",
+      async (name, method) => {
+        const callBytes = megabyte / 8;
+        await using worker = new Worker(
+          `const { parentPort } = require("node:worker_threads");
+         const call = Buffer.alloc(${callBytes - 1}, "x").toString();
+         for (let i = 0; i < 25; i++) console.${method}(call);
+         parentPort.on("message", () => parentPort.postMessage("reply"));`,
+          { eval: true, stdout: true, stderr: true },
+        );
+        const reader = worker[name];
+        // The first call is in flight, and it fills the reader. Taking it is the ack.
+        await unread(worker, reader, callBytes);
+        const first: Buffer = reader.read();
+        await stateWithUnread(worker, 24 * callBytes, reader);
+        expect({ first: first.length, unread: reader.readableLength }).toEqual({
+          first: callBytes,
+          unread: 24 * callBytes,
+        });
+      },
+    );
+
+    // A stream that is made while the console has a call in flight waits for the ack of that call ahead of its first write.
+    describe.each(consoleStreams)("process.%s behind a console call in flight", (name, method) => {
+      test("a write fails when the stream is destroyed first", async () => {
+        const worker = new Worker(
+          `console.${method}("in flight");
+           process.${name}.write("not written", error => {
+             require("node:worker_threads").parentPort.postMessage(error?.code ?? "written");
+           });
+           process.${name}.destroy();`,
+          { eval: true, stdout: true, stderr: true },
+        );
+        let output = "";
+        worker[name].setEncoding("utf8").on("data", chunk => (output += chunk));
+        const [[code], [exitCode]] = await Promise.all([once(worker, "message"), once(worker, "exit")]);
+        expect({ code, output, exitCode }).toEqual({
+          code: "ERR_STREAM_DESTROYED",
+          output: "in flight\n",
+          exitCode: 0,
+        });
+      });
+
+      test("end() ends the parent's stream after the call and the last write", async () => {
+        const worker = new Worker(`console.${method}("in flight"); process.${name}.end("last\\n");`, {
+          eval: true,
+          stdout: true,
+          stderr: true,
+        });
+        const seen: string[] = [];
+        worker[name]
+          .setEncoding("utf8")
+          .on("data", chunk => seen.push(chunk))
+          .on("end", () => seen.push("end"));
+        const [exitCode] = await once(worker, "exit");
+        expect({ seen, exitCode }).toEqual({ seen: ["in flight\n", "last\n", "end"], exitCode: 0 });
       });
     });
 
@@ -4099,6 +4208,168 @@ describe("node worker start sequence", () => {
       worker.stdout.on("readable", () => {});
       if (!inEntryPoint) worker.postMessage("write");
       expect(await stateWithUnread(worker, megabyte)).toEqual({ wrote: false, drained: false, waiting: true });
+    });
+  });
+
+  // Node makes the streams before user code runs. Here a stream is made at its first read. The build calls no method of the port or of the stream, so a method that user code replaced does not run inside it. An accessor on Object.prototype that a stream constructor hits still does.
+  describe("user code and the build of a stdio stream", () => {
+    test.each([
+      ["", {}],
+      [" with { stdin: true }", { stdin: true }],
+    ])("MessagePort methods that user code replaced can read the streams%s", async (_label, options) => {
+      const worker = new Worker(
+        `for (const name of ["addEventListener", "removeEventListener", "ref", "unref"]) {
+           const method = MessagePort.prototype[name];
+           MessagePort.prototype[name] = function (...args) {
+             void [process.stdin, process.stdout, process.stderr];
+             return method.apply(this, args);
+           };
+         }
+         process.stdout.write("stdout\\n");
+         process.stderr.write("stderr\\n");
+         process.stdin.on("data", () => {}).on("end", () => console.log("stdin end"));`,
+        { eval: true, stdout: true, stderr: true, ...options },
+      );
+      let stdout = "";
+      let stderr = "";
+      // The entry point has run when its output is here. An end of stdin that arrives ahead of it builds process.stdin before the methods are replaced.
+      worker.stdout.setEncoding("utf8").on("data", chunk => {
+        if (stdout === "") worker.stdin?.end();
+        stdout += chunk;
+      });
+      worker.stderr.setEncoding("utf8").on("data", chunk => (stderr += chunk));
+      const [exitCode] = await once(worker, "exit");
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "stdout\nstdin end\n", stderr: "stderr\n", exitCode: 0 });
+    });
+
+    // A wrapper that looks at process.stdout, as one that tees output does. The console has a call in flight when the stream is made.
+    test.each(["write", "cork", "uncork"])(
+      "a Writable.prototype.%s that user code replaced can read process.stdout",
+      async method => {
+        const result = await runWorker(`
+          const { Writable } = require("node:stream");
+          const original = Writable.prototype.${method};
+          let forStdout = 0;
+          Writable.prototype.${method} = function (...args) {
+            if (this === process.stdout) forStdout++;
+            return original.apply(this, args);
+          };
+          console.log("first");
+          process.stdout.write("second\\n");
+          setImmediate(() => {
+            process.stdout.cork();
+            process.stdout.write("third\\n");
+            process.stdout.uncork();
+            console.log("fourth " + (forStdout > 0));
+          });`);
+        expect(result).toEqual({ stdout: "first\nsecond\nthird\nfourth true\n", stderr: "", exitCode: 0 });
+      },
+    );
+
+    // A console call from inside the build posts no message of its own: the stream would take the ack of that message for the ack of its first write. The second row makes the call from a build that throws while the first build is on the stack.
+    describe.each(consoleStreams)("after a console call from inside the build of process.%s", (name, method) => {
+      const megabyteCall = `console.${method}(Buffer.alloc(${megabyte - 1}, "x").toString());`;
+      test.each([
+        ["", insideTheNextBuild(megabyteCall)],
+        [
+          ", in a build that throws inside it",
+          insideTheNextBuild(
+            `${insideTheNextBuild(`${megabyteCall} throw new Error("not now");`)} try { process.${name}; } catch {}`,
+          ),
+        ],
+      ])("the stream waits for the ack of that call%s", async (_label, hook) => {
+        const worker = new Worker(
+          `const { parentPort } = require("node:worker_threads");
+           ${hook}
+           let wrote = false;
+           process.${name}.write("after", () => { wrote = true; });
+           parentPort.on("message", () => parentPort.postMessage({ wrote, waiting: process.${name}.writableLength }));`,
+          { eval: true, stdout: true, stderr: true },
+        );
+        const reader = worker[name];
+        const state = await stateWithUnread(worker, megabyte, reader);
+        expect({ state, unread: reader.readableLength }).toEqual({
+          state: { wrote: false, waiting: megabyte + 5 },
+          unread: megabyte,
+        });
+      });
+    });
+
+    test.each(consoleStreams)(
+      "a console call from inside a build of process.%s that throws reaches the parent",
+      async (name, method) => {
+        await using worker = new Worker(
+          `const { parentPort } = require("node:worker_threads");
+           ${insideTheNextBuild(`console.${method}("from the build"); throw new Error("not now");`)}
+           let threw;
+           try { process.${name}; } catch (error) { threw = error.message; }
+           parentPort.once("message", () => process.${name}.write("then " + threw + "\\n"));`,
+          { eval: true, stdout: true, stderr: true },
+        );
+        const chunks: string[] = [];
+        worker[name].setEncoding("utf8").on("data", chunk => {
+          if (chunks.push(chunk) === 1) worker.postMessage("go on");
+        });
+        const [exitCode] = await once(worker, "exit");
+        expect({ chunks, exitCode }).toEqual({ chunks: ["from the build\n", "then not now\n"], exitCode: 0 });
+      },
+    );
+
+    // process.exit() runs the 'exit' listeners before it returns, so here inside the build. Nothing waits for an ack at an exit.
+    test.each(consoleStreams)(
+      "process.exit() inside the build of process.%s, with a console call in flight, keeps what an 'exit' listener logs",
+      async (name, method) => {
+        const result = await runWorker(`
+          process.on("exit", () => console.${method}("exit listener"));
+          console.${method}("in flight");
+          ${insideTheNextBuild("process.exit(0);")}
+          process.${name};`);
+        expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0, [name]: "in flight\nexit listener\n" });
+      },
+    );
+
+    // The stream that the inner read makes is the stream. The outer build's gets no listener on the port.
+    test.each(consoleStreams)(
+      "a read of process.%s from inside its build gives the one stream",
+      async (name, method) => {
+        const worker = new Worker(
+          `const { parentPort } = require("node:worker_threads");
+         console.${method}("first");
+         let inner;
+         ${insideTheNextBuild(`inner = process.${name}; inner.write("from the build\\n");`)}
+         const outer = process.${name};
+         outer.write("after\\n");
+         parentPort.postMessage(inner === outer);`,
+          { eval: true, stdout: true, stderr: true },
+        );
+        const chunks: string[] = [];
+        worker[name].setEncoding("utf8").on("data", chunk => chunks.push(chunk));
+        const [[same], [exitCode]] = await Promise.all([once(worker, "message"), once(worker, "exit")]);
+        expect({ same, chunks, exitCode }).toEqual({
+          same: true,
+          chunks: ["first\n", "from the build\n", "after\n"],
+          exitCode: 0,
+        });
+      },
+    );
+
+    test("a read of process.stdin from inside its build gives the one stream", async () => {
+      await using worker = new Worker(
+        `const { parentPort } = require("node:worker_threads");
+         let inner;
+         ${insideTheNextBuild("inner = process.stdin;")}
+         const outer = process.stdin;
+         let data = "";
+         outer.setEncoding("utf8").on("data", chunk => (data += chunk));
+         outer.on("end", () => parentPort.postMessage({ same: inner === outer, data }));
+         parentPort.postMessage("the entry point ran");`,
+        { eval: true, stdin: true },
+      );
+      // A chunk that arrives ahead of the entry point builds process.stdin before the hook exists.
+      await once(worker, "message");
+      const result = once(worker, "message");
+      worker.stdin!.end("one chunk");
+      expect((await result)[0]).toEqual({ same: true, data: "one chunk" });
     });
   });
 

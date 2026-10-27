@@ -7,6 +7,7 @@
 #include "EventNames.h"
 #include "InternalModuleRegistry.h"
 #include "JSBuffer.h"
+#include "JSEventListener.h"
 #include "JSMessagePort.h"
 #include "MessagePortPipe.h"
 #include "ScriptExecutionContext.h"
@@ -18,6 +19,7 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSMap.h>
+#include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 
 extern "C" void Bun__ConsoleObject__useWorkerStdio(JSC::JSGlobalObject*, bool hasOwnEnv, bool ownEnvNamesForceColor);
@@ -151,22 +153,13 @@ void NodeWorkerState::didReceiveMessage(Zig::GlobalObject& globalObject, NodePor
 {
     RefPtr port = m_ports[which];
     if (which == NodePort::Stdout || which == NodePort::Stderr) {
-        // The reader's ack of the batch in flight.
+        // The reader's ack of the message in flight releases what waits.
         auto& queue = m_consoleQueues[which - 1];
         if (!queue.inFlight)
             return;
-        size_t acked = queue.ends[queue.inFlight - 1];
-        queue.bytes.removeAt(0, acked);
-        queue.ends.removeAt(0, queue.inFlight);
-        for (auto& end : queue.ends)
-            end -= acked;
-        queue.inFlight = 0;
-        if (queue.ends.isEmpty() || !postConsoleOutput(globalObject, which, 0)) {
-            queue.clear();
+        queue.removeInFlight();
+        if (queue.segments.isEmpty() || !sendConsoleQueue(globalObject, which))
             port->jsUnref(&globalObject);
-            return;
-        }
-        queue.inFlight = queue.ends.size();
         return;
     }
 
@@ -211,65 +204,84 @@ JSValue NodeWorkerState::stdioStream(Zig::GlobalObject& globalObject, unsigned f
         return jsUndefined();
     auto* queue = fd ? &m_consoleQueues[fd - 1] : nullptr;
 
-    // A termination (node:vm's timeout) in the middle would leave half of a stream on the port, or drop what the console has waiting for it.
+    // A termination (node:vm's timeout) in the middle would drop what the console has waiting for the stream.
     DeferTerminationForAWhile deferTermination { vm };
     auto* build = JSFunction::create(vm, &globalObject, processObjectInternalsGetNodeWorkerStdioStreamCodeGenerator(vm), &globalObject);
+    JSValue portWrapper = port ? toJS(&globalObject, &globalObject, *port) : jsUndefined();
     MarkedArgumentBuffer args;
     args.append(jsNumber(fd));
-    args.append(port ? toJS(&globalObject, &globalObject, *port) : jsUndefined());
-    // The stream takes over the batch that the console has in flight: that is its first writev, which the reader's ack completes.
-    size_t inFlight = queue ? queue->inFlight : 0;
-    if (inFlight) {
-        args.append(consoleChunks(globalObject, *queue, 0, inFlight));
-        RETURN_IF_EXCEPTION(scope, {});
+    args.append(portWrapper);
+    // The next ack of the reader is for the message that the console has in flight. The stream waits for it ahead of its first writev.
+    args.append(jsBoolean(queue && queue->inFlight));
+    // A loop ref that a stream of an earlier build took is not the new stream's. What the new one takes while it is built stays.
+    if (!fd && port)
+        port->jsUnref(&globalObject);
+    JSValue result;
+    {
+        // A console call from inside the build waits in the queue for the stream. It posts no message: the stream would not know of it, and would take its ack for the ack of a write of its own.
+        SetForScope building { m_buildingStream[fd], true };
+        result = JSC::profiledCall(&globalObject, ProfilingReason::API, build, JSC::getCallData(build), globalObject.globalThis(), args);
     }
-    JSValue result = JSC::profiledCall(&globalObject, ProfilingReason::API, build, JSC::getCallData(build), globalObject.globalThis(), args);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (!fd) {
-        JSObject* stream = result.getObject();
-        RELEASE_ASSERT(stream);
-        if (port)
-            stopListening(NodePort::Stdin);
-        m_stdioStreams[0].set(vm, &globalObject, stream);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        // No stream takes what such a call left waiting.
+        if (queue && !m_buildingStream[fd] && !queue->inFlight && !queue->segments.isEmpty() && scope.tryClearException()) {
+            sendConsoleQueue(globalObject, fd);
+            throwException(&globalObject, scope, exception);
+        }
+        return {};
+    }
+    // A read of the stream from inside its build made it first. What this build made gets no listener: a write to it is not acked, and a read of it gets no data.
+    if (auto* stream = m_stdioStreams[fd].get()) [[unlikely]]
         return stream;
-    }
 
     auto* built = dynamicDowncast<JSArray>(result);
     RELEASE_ASSERT(built && built->length() == 3);
     JSObject* stream = built->getIndexQuickly(0).getObject();
-    JSObject* flush = built->getIndexQuickly(1).getObject();
+    JSObject* listener = built->getIndexQuickly(1).getObject();
     JSObject* write = built->getIndexQuickly(2).getObject();
-    RELEASE_ASSERT(stream && flush && flush->isCallable() && write && write->isCallable());
+    RELEASE_ASSERT(stream && (!port || (listener && listener->isCallable())) && (!fd || (write && write->isCallable())));
 
-    // The stream has the port from here on, with the loop ref that the console held for the batch. A batch that a console call posted from inside the build is not the stream's: its loop ref goes here.
-    stopListening(static_cast<NodePort>(fd));
-    if (queue->inFlight && !inFlight)
-        port->jsUnref(&globalObject);
+    // The stream's listener takes the place of this object's on the port. Native code puts it there, so that the build calls no method of the port: user code can replace those.
+    if (port)
+        listen(static_cast<NodePort>(fd), JSEventListener::create(*listener, *asObject(portWrapper), false, globalObject.world()));
     m_stdioStreams[fd].set(vm, &globalObject, stream);
-    m_stdioFlush[fd - 1].set(vm, &globalObject, flush);
+    if (!fd)
+        return stream;
+
+    // The stream has the loop ref that the console held for a message in flight. Without one, its listener does not hold the loop.
+    if (!queue->inFlight)
+        port->jsUnref(&globalObject);
+    m_stdioFlush[fd - 1].set(vm, &globalObject, listener);
     m_consoleWrite[fd - 1].set(vm, &globalObject, write);
 
-    // What the console wrote behind that batch goes through the stream, ahead of what the caller is about to write.
+    // What the console wrote behind that message goes through the stream, ahead of what the caller is about to write.
     ConsoleQueue waiting = std::exchange(*queue, {});
-    for (size_t call = waiting.inFlight; call < waiting.ends.size(); call++) {
-        writeConsoleToStream(globalObject, write, waiting.output(call));
-        RETURN_IF_EXCEPTION(scope, {});
+    waiting.removeInFlight();
+    while (!waiting.segments.isEmpty()) {
+        ConsoleSegment segment = waiting.segments.takeFirst();
+        for (size_t call = 0; call < segment.ends.size(); call++) {
+            writeConsoleToStream(globalObject, write, segment.output(call));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
     return stream;
 }
 
-JSArray* NodeWorkerState::consoleChunks(Zig::GlobalObject& globalObject, const ConsoleQueue& queue, size_t first, size_t end)
+JSArray* NodeWorkerState::consoleChunks(Zig::GlobalObject& globalObject, const ConsoleQueue& queue, size_t count)
 {
     auto& vm = globalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer chunks;
-    for (size_t call = first; call < end; call++) {
-        auto output = queue.output(call);
-        auto* chunk = JSUint8Array::createUninitialized(&globalObject, globalObject.typedArrayStructure(TypeUint8, false), output.size());
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        memcpySpan(chunk->typedSpan(), output);
-        chunks.append(chunk);
+    for (auto& segment : queue.segments) {
+        if (!count--)
+            break;
+        for (size_t call = 0; call < segment.ends.size(); call++) {
+            auto output = segment.output(call);
+            auto* chunk = JSUint8Array::createUninitialized(&globalObject, globalObject.typedArrayStructure(TypeUint8, false), output.size());
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            memcpySpan(chunk->typedSpan(), output);
+            chunks.append(chunk);
+        }
     }
     if (chunks.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(&globalObject, scope);
@@ -278,17 +290,16 @@ JSArray* NodeWorkerState::consoleChunks(Zig::GlobalObject& globalObject, const C
     RELEASE_AND_RETURN(scope, constructArray(&globalObject, static_cast<ArrayAllocationProfile*>(nullptr), chunks));
 }
 
-bool NodeWorkerState::postConsoleOutput(Zig::GlobalObject& globalObject, unsigned fd, size_t first)
+bool NodeWorkerState::postConsoleSegments(Zig::GlobalObject& globalObject, unsigned fd, size_t count)
 {
     auto& vm = globalObject.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    // Nothing here runs script. A termination that lands in it (node:vm's timeout) waits, so the caller knows whether the batch left.
+    // Nothing here runs script. A termination that lands in it (node:vm's timeout) waits, so the caller knows whether the message left.
     DeferTerminationForAWhile deferTermination { vm };
 
     // The reader (makePortReadable in internal/worker/stdio) takes an array of chunks.
-    auto& queue = m_consoleQueues[fd - 1];
     bool posted = false;
-    JSArray* payload = consoleChunks(globalObject, queue, first, queue.ends.size());
+    JSArray* payload = consoleChunks(globalObject, m_consoleQueues[fd - 1], count);
     if (!scope.exception()) [[likely]] {
         posted = !m_ports[fd]->postMessage(globalObject, payload, {}).hasException();
         (void)scope.exception();
@@ -301,11 +312,12 @@ bool NodeWorkerState::postConsoleOutput(Zig::GlobalObject& globalObject, unsigne
 void NodeWorkerState::releaseConsoleQueue(Zig::GlobalObject& globalObject, unsigned fd)
 {
     auto& queue = m_consoleQueues[fd - 1];
-    if (queue.ends.size() > queue.inFlight)
-        postConsoleOutput(globalObject, fd, queue.inFlight);
-    if (queue.inFlight)
+    if (queue.inFlight) {
+        queue.removeInFlight();
         m_ports[fd]->jsUnref(&globalObject);
-    queue.clear();
+    }
+    for (; !queue.segments.isEmpty(); queue.segments.removeFirst())
+        postConsoleSegments(globalObject, fd, 1);
 }
 
 void NodeWorkerState::writeConsoleToStream(Zig::GlobalObject& globalObject, JSObject* write, std::span<const uint8_t> bytes)
@@ -325,24 +337,38 @@ void NodeWorkerState::writeConsole(Zig::GlobalObject& globalObject, unsigned fd,
     if (JSObject* write = m_consoleWrite[fd - 1].get())
         return writeConsoleToStream(globalObject, write, bytes);
 
-    RefPtr port = m_ports[fd];
-    if (!port) [[unlikely]]
+    if (!m_ports[fd]) [[unlikely]]
         return;
     auto& queue = m_consoleQueues[fd - 1];
-    queue.bytes.append(bytes);
-    queue.ends.append(queue.bytes.size());
-    if (queue.inFlight)
+    // Dropped when no segment can hold it, as when a message cannot be posted.
+    if (!queue.append(bytes)) [[unlikely]]
         return;
-    if (!postConsoleOutput(globalObject, fd, 0) || m_isExiting) {
+    // A stream that is being built takes what waits. Not at an exit: nothing waits for an ack then.
+    if (!queue.inFlight && (!m_buildingStream[fd] || m_isExiting))
+        sendConsoleQueue(globalObject, fd);
+}
+
+bool NodeWorkerState::sendConsoleQueue(Zig::GlobalObject& globalObject, unsigned fd)
+{
+    auto& queue = m_consoleQueues[fd - 1];
+    ASSERT(!queue.inFlight && !queue.segments.isEmpty());
+    // No ack comes at an exit.
+    if (m_isExiting) {
+        releaseConsoleQueue(globalObject, fd);
+        return false;
+    }
+    size_t count = queue.nextMessageSegments();
+    if (!postConsoleSegments(globalObject, fd, count)) {
         queue.clear();
-        return;
+        return false;
     }
 
-    // The port holds the loop while the batch is in flight, so what waits behind it is not lost to an idle exit.
-    queue.inFlight = queue.ends.size();
+    // The port holds the loop while the message is in flight, so what waits behind it is not lost to an idle exit.
+    queue.inFlight = count;
     if (!m_listeners[fd])
         listen(static_cast<NodePort>(fd), NodeWorkerPortListener::create(static_cast<NodePort>(fd)));
-    port->jsRef(&globalObject);
+    m_ports[fd]->jsRef(&globalObject);
+    return true;
 }
 
 void NodeWorkerState::flushStdioForExit(Zig::GlobalObject& globalObject)

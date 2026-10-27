@@ -12,12 +12,14 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
 
   test("set() validates syscall", () => {
     expect(() => fault.set({ syscall: "bogus" as any, action: "errno", errno: "ECONNRESET" })).toThrow(
-      /rule\.syscall must be one of/,
+      /^rule\.syscall must be "recv", "send", /,
     );
   });
 
   test("set() validates action", () => {
-    expect(() => fault.set({ syscall: "recv", action: "bogus" as any })).toThrow(/rule\.action must be one of/);
+    expect(() => fault.set({ syscall: "recv", action: "bogus" as any })).toThrow(
+      'rule.action must be "errno", "short", "zero", "excess", or "none"',
+    );
   });
 
   // Only recv/send/writev have a byte count to clamp; arming "short" on any other
@@ -66,7 +68,7 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
 
   test("set() rejects unknown errno name", () => {
     expect(() => fault.set({ syscall: "recv", action: "errno", errno: "ENOSUCHERR" as any })).toThrow(
-      /unknown errno name/,
+      /^rule\.errno must be "ECONNRESET", "EPIPE", /,
     );
   });
 
@@ -118,7 +120,9 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
   // and then never fire.
   test("set() rejects syscalls that have no fault hook", () => {
     for (const sc of ["socket", "close", "shutdown"]) {
-      expect(() => fault.set({ syscall: sc as any, action: "none" })).toThrow(/rule\.syscall must be one of/);
+      expect(() => fault.set({ syscall: sc as any, action: "none" })).toThrow(
+        /^rule\.syscall must be "recv", "send", /,
+      );
     }
   });
 

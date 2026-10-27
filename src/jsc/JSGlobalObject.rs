@@ -13,10 +13,9 @@ use crate::{
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
 };
 use bun_core::EncodedSlice;
-use bun_core::StringView;
 
-use bun_core::String as BunString;
 use bun_core::{Output, fmt as bun_fmt};
+use bun_core::{String as BunString, StringView};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
@@ -95,9 +94,8 @@ impl JSGlobalObject {
 
     pub fn throw_stack_overflow(&self) -> JsError {
         // Wrap the raw FFI throw in a validation scope (mirrors `VM::throw_error`).
-        // The Rust `#[bun_jsc::host_fn]` thunk inserts an `ExceptionValidationScope`
-        // one frame above us; with that scope
-        // present `~ThrowScope` inside `JSGlobalObject__throwStackOverflow` no
+        // The generated C++ host function has a `ThrowScope` above us; with that
+        // scope present `~ThrowScope` inside `JSGlobalObject__throwStackOverflow` no
         // longer sees its previous scope as above `topEntryFrame`, so it
         // `simulateThrow()`s and leaves `m_needExceptionCheck` set. Observe the
         // exception here so the caller's scope dtor doesn't assert "unchecked
@@ -348,15 +346,6 @@ impl JSGlobalObject {
     pub fn throw_invalid_arguments(&self, args: Arguments<'_>) -> JsError {
         let err = self.to_invalid_arguments(args);
         self.throw_value(err)
-    }
-
-    /// Throw `TypeError: Illegal constructor` with
-    /// `.code = "ERR_ILLEGAL_CONSTRUCTOR"`.
-    #[cold]
-    pub fn throw_illegal_constructor(&self) -> JsError {
-        self.throw_value(
-            crate::ErrorCode::ILLEGAL_CONSTRUCTOR.fmt(self, format_args!("Illegal constructor")),
-        )
     }
 
     #[inline]
@@ -666,31 +655,6 @@ impl JSGlobalObject {
         .throw()
     }
 
-    pub(crate) fn create_not_enough_arguments(
-        &self,
-        name_: &'static str,
-        expected: usize,
-        got: usize,
-    ) -> JSValue {
-        self.to_type_error(
-            JscError::MISSING_ARGS,
-            format_args!(
-                "Not enough arguments to '{}'. Expected {}, got {}.",
-                name_, expected, got
-            ),
-        )
-    }
-
-    /// Not enough arguments passed to function named `name_`
-    pub fn throw_not_enough_arguments(
-        &self,
-        name_: &'static str,
-        expected: usize,
-        got: usize,
-    ) -> JsError {
-        self.throw_value(self.create_not_enough_arguments(name_, expected, got))
-    }
-
     pub(crate) fn reload(&self) -> JsResult<()> {
         self.vm().drain_microtasks();
         self.vm().collect_async(false);
@@ -753,10 +717,10 @@ impl JSGlobalObject {
         let Some((namespace_, path)) = crate::module_loader::plugin_namespace_and_path(key) else {
             return Ok(false);
         };
-        let namespace_ = BunString::from_bytes(namespace_);
-        let ns = (namespace_.length() > 0).then_some(&namespace_);
+        let namespace_ = StringView::from_bytes(namespace_);
+        let ns = (namespace_.length() > 0).then_some(&*namespace_);
         crate::from_js_host_call_generic(self, || {
-            Bun__hasOnLoad(self, ns, &BunString::from_bytes(path))
+            Bun__hasOnLoad(self, ns, &StringView::from_bytes(path))
         })
     }
 

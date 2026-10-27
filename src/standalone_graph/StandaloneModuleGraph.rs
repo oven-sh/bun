@@ -841,9 +841,7 @@ impl File {
                             self.source_hash,
                         );
                     }
-                    Encoding::Latin1 => {
-                        BunString::create_static_external(self.contents.as_bytes(), true)
-                    }
+                    Encoding::Latin1 => BunString::create_static_external(self.contents.as_bytes()),
                     Encoding::Utf16 => {
                         let units = self.utf16_units();
                         if self.source_hash != 0 {

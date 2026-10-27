@@ -72,6 +72,7 @@ impl<R> ScopeRule<R> {
         // so clear our style context while printing them to avoid replacing & ourselves.
         // https://drafts.csswg.org/css-cascade-6/#scoped-rules
         dest.with_cleared_context(&self.rules, |rules, d: &mut Printer| rules.to_css(d))?;
+        dest.pending_semicolon = false;
         dest.dedent();
         dest.newline()?;
         dest.write_char(b'}')?;

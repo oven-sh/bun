@@ -2706,7 +2706,7 @@ export default <>hi</>
   // The automatic JSX runtime passes a lone spread object directly as props.
   describe("define with an object value", () => {
     it("prints the full object at every use after JSX spreads it", () => {
-      const transpiler = new Bun.Transpiler({ loader: "jsx", define: { OBJ: '{"a":1}' } });
+      const transpiler = new Bun.Transpiler({ loader: "jsx", define: { OBJ: '{"a":1}' }, autoImportJSX: false });
       const source = [
         `export const before = OBJ;`,
         `export const spread = <div {...OBJ} />;`,

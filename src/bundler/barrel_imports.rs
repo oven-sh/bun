@@ -87,7 +87,7 @@ fn resolve_barrel_export(
 /// import records as is_unused so they won't be resolved. Runs BEFORE resolution.
 ///
 /// A file qualifies as a barrel if:
-/// 1. It has `sideEffects: false` or is in `optimize_imports`, AND
+/// 1. It has `sideEffects: false` (without `--ignore-dce-annotations`) or is in `optimize_imports`, AND
 /// 2. All named exports are re-exports (no local definitions), AND
 /// 3. It is not an export star target of another barrel.
 ///
@@ -115,9 +115,13 @@ fn apply_barrel_optimization_impl<'a>(
     } else {
         false
     };
-    let is_side_effects_false =
-        result.side_effects == bun_ast::SideEffects::NoSideEffectsPackageJson;
+    let is_side_effects_false = result.side_effects
+        == bun_ast::SideEffects::NoSideEffectsPackageJson
+        && !this.linker.options.ignore_dce_annotations;
     if !is_explicit && !is_side_effects_false {
+        return Ok(());
+    }
+    if !this.is_barrel_optimization_enabled() {
         return Ok(());
     }
     // An entry point's exports are the public interface of the build. No file

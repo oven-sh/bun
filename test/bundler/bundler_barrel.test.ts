@@ -59,6 +59,72 @@ describe("bundler", () => {
     },
   });
 
+  // An import of a package with "module" and "main" bundles the "module" file.
+  // Its package name comes from the package.json that encloses that file. A
+  // package.json that encloses only the "main" file does not name it.
+  itBundled("barrel/ModuleMainPairPackageNameFromModuleFile", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from './pkg';
+        console.log(a);
+      `,
+      "/pkg/package.json": JSON.stringify({ module: "./esm/index.js", main: "./cjs/index.js" }),
+      "/pkg/esm/index.js": /* js */ `
+        export { a } from './a.js';
+        export { b } from './b.js';
+      `,
+      "/pkg/esm/a.js": /* js */ `
+        console.log("a.js");
+        export const a = "a";
+      `,
+      "/pkg/esm/b.js": /* js */ `
+        console.log("b.js");
+        export const b = "b";
+      `,
+      "/pkg/cjs/package.json": JSON.stringify({ name: "pkg-cjs", version: "1.0.0" }),
+      "/pkg/cjs/index.js": /* js */ `
+        exports.a = "main file";
+        exports.b = "main file";
+      `,
+    },
+    optimizeImports: ["pkg-cjs"],
+    outdir: "/out",
+    run: { stdout: "a.js\nb.js\na" },
+  });
+
+  // The package name of a file is that of the nearest package.json with a
+  // "name" above the file, for an import of the directory and for an import of
+  // the file by its path. Card.js has a syntax error: the build succeeds only
+  // when "mylib-icons" matches the barrel and the unused re-export is skipped.
+  for (const [route, specifier] of [
+    ["Directory", "mylib/icons"],
+    ["Path", "mylib/icons/index.js"],
+  ] as const) {
+    itBundled(`barrel/OptimizeImportsPackageNameOf${route}Import`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { Button } from '${specifier}';
+          console.log(Button);
+        `,
+        "/node_modules/mylib/package.json": JSON.stringify({ name: "mylib", version: "1.0.0" }),
+        "/node_modules/mylib/icons/package.json": JSON.stringify({ name: "mylib-icons", main: "./index.js" }),
+        "/node_modules/mylib/icons/index.js": /* js */ `
+          export { Button } from './Button.js';
+          export { Card } from './Card.js';
+        `,
+        "/node_modules/mylib/icons/Button.js": /* js */ `
+          export const Button = "button";
+        `,
+        "/node_modules/mylib/icons/Card.js": /* js */ `
+          export const Card = <<<SYNTAX_ERROR>>>;
+        `,
+      },
+      optimizeImports: ["mylib-icons"],
+      outdir: "/out",
+      run: { stdout: "button" },
+    });
+  }
+
   // --- Automatic mode (sideEffects: false) ---
 
   itBundled("barrel/SkipUnusedWithSideEffectsFalse", {
@@ -89,6 +155,51 @@ describe("bundler", () => {
       api.expectFile("/out/entry.js").toContain("alpha");
     },
   });
+
+  // "autolib/icons" is a barrel below a package.json that has no "name" and
+  // says `"sideEffects": false`.
+  const autolibIconsFiles = (beta: string) => ({
+    "/node_modules/autolib/package.json": JSON.stringify({ name: "autolib", version: "1.0.0" }),
+    "/node_modules/autolib/icons/package.json": JSON.stringify({ main: "./index.js", sideEffects: false }),
+    "/node_modules/autolib/icons/index.js": /* js */ `
+      export { Alpha } from './Alpha.js';
+      export { Beta } from './Beta.js';
+    `,
+    "/node_modules/autolib/icons/Alpha.js": /* js */ `
+      export const Alpha = "alpha";
+    `,
+    "/node_modules/autolib/icons/Beta.js": beta,
+  });
+  const betaWithSyntaxError = `export const Beta = <<<SYNTAX_ERROR>>>;`;
+
+  for (const [route, specifier] of [
+    ["Directory", "autolib/icons"],
+    ["Path", "autolib/icons/index.js"],
+  ] as const) {
+    const entry = /* js */ `
+      import { Alpha } from '${specifier}';
+      console.log(Alpha);
+    `;
+    // The `"sideEffects": false` of the nearest package.json makes the file a
+    // barrel, for an import of the directory and for an import of the file by
+    // its path. The build succeeds only when the unused re-export is skipped.
+    itBundled(`barrel/SideEffectsFalseOfNearestPackageJson${route}Import`, {
+      files: { "/entry.js": entry, ...autolibIconsFiles(betaWithSyntaxError) },
+      outdir: "/out",
+      run: { stdout: "alpha" },
+    });
+    // With `ignoreDCEAnnotations` that package.json does not make the file a
+    // barrel, so every re-export loads.
+    itBundled(`barrel/IgnoreDCEAnnotationsOfNearestPackageJson${route}Import`, {
+      files: {
+        "/entry.js": entry,
+        ...autolibIconsFiles(`console.log("Beta.js"); export const Beta = "beta";`),
+      },
+      ignoreDCEAnnotations: true,
+      outdir: "/out",
+      run: { stdout: "Beta.js\nalpha" },
+    });
+  }
 
   // A "sideEffects" array must not enable barrel deferral: a deferred
   // re-export target may itself be listed in the array. See #40650.
@@ -2195,6 +2306,33 @@ describe("bundler", () => {
     },
   });
 
+  // One file has one "sideEffects" answer, so the barrel decision for it does
+  // not depend on which import reaches it first: the import of the directory
+  // or the import of the file by its path. The bundler resolves the imports of
+  // entry.js before it parses late.js, so the import in entry.js creates the
+  // module. The build fails when that import does not make the file a barrel.
+  for (const [first, early, late] of [
+    ["Directory", "autolib/icons", "autolib/icons/index.js"],
+    ["Path", "autolib/icons/index.js", "autolib/icons"],
+  ] as const) {
+    itBundled(`barrel/SideEffectsFalseOfNearestPackageJson${first}ImportArrivesFirst`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { Alpha } from '${early}';
+          import { late } from './late.js';
+          console.log(Alpha, late);
+        `,
+        "/late.js": /* js */ `
+          import { Alpha } from '${late}';
+          export const late = Alpha;
+        `,
+        ...autolibIconsFiles(betaWithSyntaxError),
+      },
+      outdir: "/out",
+      run: { stdout: "alpha alpha" },
+    });
+  }
+
   // The barrel deferral must produce the same output no matter in which order
   // the parse tasks finish. When a request un-defers a barrel record, every
   // alias the barrel imports through that record has to propagate to the next
@@ -2270,5 +2408,116 @@ describe("bundler", () => {
     const b = await build(String(dirB));
     expect(a).toContain("used value");
     expect(a).toBe(b);
+  });
+
+  // --- ignoreDCEAnnotations turns automatic mode off ---
+  // "sideEffects": false is an annotation, and the flag says not to trust it.
+  // A barrel then defers nothing on the word of its package.json: the linker
+  // keeps every import with the flag, so each re-export has to load.
+
+  const annotatedBarrel = (reExport: string) => ({
+    "/entry.js": /* js */ `
+      import { a } from 'barrel-pkg';
+      console.log(a, globalThis.b, globalThis.other);
+    `,
+    "/node_modules/barrel-pkg/package.json": JSON.stringify({
+      name: "barrel-pkg",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "/node_modules/barrel-pkg/index.js": /* js */ `
+      export { a } from './a.js';
+      export { b } from './b.js';
+      ${reExport}
+    `,
+    "/node_modules/barrel-pkg/a.js": /* js */ `
+      export const a = "a";
+    `,
+    "/node_modules/barrel-pkg/b.js": /* js */ `
+      globalThis.b = "b ran";
+      export const b = 1;
+    `,
+    "/node_modules/other-pkg/package.json": JSON.stringify({
+      name: "other-pkg",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "/node_modules/other-pkg/index.js": /* js */ `
+      globalThis.other = "other-pkg ran";
+      export const other = 1;
+    `,
+  });
+
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`barrel/IgnoreDCEAnnotationsLoadsEveryReExport/${backend}`, {
+      files: annotatedBarrel(`export { other } from 'other-pkg';`),
+      ignoreDCEAnnotations: true,
+      backend,
+      outdir: "/out",
+      run: { stdout: "a b ran other-pkg ran" },
+    });
+
+    // Without the flag nothing asks for this name, and nothing resolves it.
+    // With the flag it is an import like any other.
+    itBundled(`barrel/IgnoreDCEAnnotationsReportsUnresolvableReExport/${backend}`, {
+      files: annotatedBarrel(`export { gone } from 'not-installed-pkg';`),
+      ignoreDCEAnnotations: true,
+      backend,
+      outdir: "/out",
+      bundleErrors: {
+        "/node_modules/barrel-pkg/index.js": ['Could not resolve: "not-installed-pkg"'],
+      },
+    });
+  }
+
+  // The same barrel without the flag: b.js and other-pkg stay unloaded.
+  itBundled("barrel/WithoutIgnoreDCEAnnotationsSkipsUnusedReExports", {
+    files: annotatedBarrel(`export { other } from 'other-pkg';`),
+    outdir: "/out",
+    run: { stdout: "a undefined undefined" },
+  });
+
+  // Only the plugin can resolve "virtual-dep". With the flag the plugin is
+  // asked, and the module it names loads.
+  itBundled("barrel/IgnoreDCEAnnotationsAsksResolvePlugin", ({ root }) => {
+    const resolved: string[] = [];
+    return {
+      files: {
+        ...annotatedBarrel(`export { virtual } from 'virtual-dep';`),
+        "/virtual-dep.js": /* js */ `
+          globalThis.other = "virtual-dep ran";
+          export const virtual = 1;
+        `,
+      },
+      ignoreDCEAnnotations: true,
+      outdir: "/out",
+      plugins(builder) {
+        resolved.length = 0;
+        builder.onResolve({ filter: /^virtual-dep$/ }, args => {
+          resolved.push(args.path);
+          return { path: join(root, "virtual-dep.js") };
+        });
+      },
+      run: { stdout: "a b ran virtual-dep ran" },
+      onAfterBundle() {
+        expect(resolved).toEqual(["virtual-dep"]);
+      },
+    };
+  });
+
+  // optimizeImports is the user's word, not an annotation of the package: a
+  // listed package stays optimized with the flag. b.js would fail the build.
+  itBundled("barrel/IgnoreDCEAnnotationsKeepsOptimizeImports", {
+    files: {
+      ...annotatedBarrel(`export { other } from 'other-pkg';`),
+      "/node_modules/barrel-pkg/package.json": JSON.stringify({ name: "barrel-pkg", main: "./index.js" }),
+      "/node_modules/barrel-pkg/b.js": /* js */ `
+        export const b = <<<SYNTAX_ERROR>>>;
+      `,
+    },
+    optimizeImports: ["barrel-pkg"],
+    ignoreDCEAnnotations: true,
+    outdir: "/out",
+    run: { stdout: "a undefined undefined" },
   });
 });

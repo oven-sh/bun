@@ -1402,9 +1402,11 @@ This works for **pure barrel files** — files where every named export is a re-
 
 The bundler always loads `export *` re-exports (it never defers them) to avoid circular resolution issues. It defers only named re-exports (`export { X } from './x'`) that no importer uses.
 
-**Automatic mode:** Packages with `"sideEffects": false` in their `package.json` get barrel optimization automatically — no `optimizeImports` config needed. Use `optimizeImports` for packages that don't have this field.
+**Automatic mode:** Packages with `"sideEffects": false` in their `package.json` get barrel optimization automatically — no `optimizeImports` config needed. Use `optimizeImports` for packages that don't have this field. `ignoreDCEAnnotations` (`--ignore-dce-annotations`) turns automatic mode off: the bundler then loads every re-export of such a barrel.
 
 **Plugins:** Resolve and load plugins work with barrel optimization. Deferred submodules go through the plugin pipeline when they are eventually loaded.
+
+**Which `package.json` counts:** for a file that the resolver finds on disk, the bundler reads `sideEffects` from the nearest `package.json` above the file that has a `name` or a `sideEffects` field. An import by the package name, by a subpath or by a relative path gets the same answer. A nested `package.json` with neither field, such as `{ "type": "module" }`, does not hide the one above it. The lookup uses the path before symlinks are followed. `optimizeImports` matches the `name` of the nearest `package.json` above the file that has one.
 
 ### Re-exported namespaces
 

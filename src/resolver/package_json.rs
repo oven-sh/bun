@@ -209,6 +209,11 @@ impl PackageJSON {
         })
     }
 
+    /// A package.json with a "name" or a "sideEffects" field decides "sideEffects" for the files below it.
+    pub(crate) fn decides_side_effects(&self) -> bool {
+        !self.name.is_empty() || !matches!(self.side_effects, SideEffects::Unspecified)
+    }
+
     /// Normalize path separators to forward slashes for glob matching
     /// This is needed because glob patterns use forward slashes but Windows uses backslashes
     fn normalize_path_for_glob(path: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
@@ -220,10 +225,11 @@ impl PackageJSON {
 
 #[derive(Default)]
 pub enum SideEffects {
-    /// either `package.json` is missing "sideEffects", it is true, or some
-    /// other unsupported value. Treat all files as side effects
+    /// `package.json` has no "sideEffects". Treat all files as side effects.
     #[default]
     Unspecified,
+    /// "sideEffects": true, or a value that is not a boolean or an array. Treat all files as side effects.
+    True,
     /// "sideEffects": false
     False,
     /// "sideEffects": ["file.js", "other.js"]
@@ -246,7 +252,7 @@ pub struct MixedPatterns {
 impl SideEffects {
     pub(crate) fn has_side_effects(&self, path: &[u8]) -> bool {
         match self {
-            SideEffects::Unspecified => true,
+            SideEffects::Unspecified | SideEffects::True => true,
             SideEffects::False => false,
             SideEffects::Map(map) => map.contains_key(&StringHashMapUnownedKey::init(path)),
             SideEffects::Glob(glob_list) => {
@@ -698,6 +704,7 @@ impl PackageJSON {
         }
 
         if let Some(side_effects_field) = json.get(b"sideEffects") {
+            package_json.side_effects = SideEffects::True;
             if let Some(boolean) = side_effects_field.as_bool() {
                 if !boolean {
                     package_json.side_effects = SideEffects::False;

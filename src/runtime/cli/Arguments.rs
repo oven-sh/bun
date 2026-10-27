@@ -146,7 +146,7 @@ const TRANSPILER_PARAMS_: &[ParamType] = &[
         "--jsx-side-effects                Treat JSX elements as having side effects (disable pure annotations)"
     ),
     parse_param!(
-        "--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__"
+        "--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__ and \"sideEffects\" in package.json"
     ),
 ];
 

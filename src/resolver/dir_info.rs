@@ -127,6 +127,9 @@ pub struct DirInfo {
     /// skips a nameless package.json.
     pub package_json_for_module_type: Option<&'static PackageJSON>,
 
+    /// The nearest package.json at or above this directory with a "name" or a "sideEffects" field.
+    pub package_json_for_side_effects: Option<&'static PackageJSON>,
+
     // `NonNull` (not `&'static`) so `enqueue_dependency_to_resolve` can write
     // `package_manager_package_id` back through it without a const→mut
     // provenance cast. Read via `.package_json_for_dependencies()`.
@@ -157,6 +160,7 @@ impl Default for DirInfo {
             enclosing_tsconfig_json: None,
             enclosing_package_json: None,
             package_json_for_module_type: None,
+            package_json_for_side_effects: None,
             package_json_for_dependencies: None,
             abs_path: b"",
             entries: Index::default(),

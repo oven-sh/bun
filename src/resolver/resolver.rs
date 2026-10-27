@@ -1592,37 +1592,16 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            let mut needs_side_effects = true;
-            if let Some(existing) = Result::deref_package_json(result.package_json) {
-                // if we don't have it here, they might put it in a sideEfffects
-                // map of the parent package.json
-                // TODO: check if webpack also does this parent lookup
-                use crate::package_json::SideEffects as PJSideEffects;
-                needs_side_effects = matches!(
-                    existing.side_effects,
-                    PJSideEffects::Unspecified | PJSideEffects::Glob(_) | PJSideEffects::Mixed(_)
-                );
-
-                result.primary_side_effects_data =
-                    primary_side_effects(&existing.side_effects, path.text());
-
-                if existing.name.is_empty() || self.care_about_bin_folder {
-                    result.package_json = None;
-                }
-            }
-
-            result.package_json = result
-                .package_json
-                .or_else(|| dir.enclosing_package_json.map(std::ptr::from_ref));
-
-            if needs_side_effects {
-                if let Some(package_json) = Result::deref_package_json(result.package_json) {
+            // Only `Result::path()` takes attributes, by its spelling before the symlink rewrite below.
+            if primary {
+                if let Some(pkg) = dir.package_json_for_side_effects {
                     result.primary_side_effects_data =
-                        primary_side_effects(&package_json.side_effects, path.text());
+                        primary_side_effects(&pkg.side_effects, path.text());
                 }
+                result.package_json = dir.enclosing_package_json.map(std::ptr::from_ref);
             }
 
-            if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
+            if primary && let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
@@ -6491,6 +6470,10 @@ impl<'a> Resolver<'a> {
         info.package_json_for_module_type = info
             .package_json()
             .or_else(|| parent.and_then(|parent_| parent_.package_json_for_module_type));
+        info.package_json_for_side_effects = info
+            .package_json()
+            .filter(|pkg| pkg.decides_side_effects())
+            .or_else(|| parent.and_then(|parent_| parent_.package_json_for_side_effects));
 
         // Record if this directory has a tsconfig.json or jsconfig.json file
         if self.opts.load_tsconfig_json {

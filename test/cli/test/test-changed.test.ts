@@ -171,6 +171,44 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The test runtime loads every file that a barrel re-exports, so a change
+  // to one of them can change the test. The bundler would skip b.ts here: the
+  // package is "sideEffects": false and nothing asks for `b`.
+  test("change behind an unused re-export of a barrel selects the importing test", async () => {
+    using dir = tempDir("test-changed-barrel", {
+      "package.json": JSON.stringify({ name: "barrel", type: "module", sideEffects: false }),
+      "src/index.ts": `export { a } from "./a";\nexport { b } from "./b";\n`,
+      "src/a.ts": `export const a = 1;\n`,
+      "src/b.ts": `export const b = 2;\n`,
+      "barrel.test.ts": `import { test, expect } from "bun:test";\nimport { a } from "./src/index";\ntest("barrel", () => expect(a).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "src", "b.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["barrel.test.ts"])).toEqual(["barrel.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The script of the page is bundled for the browser, so comp.ts is in the
+  // module graph twice: as an import of the test, and as an import of front.ts.
+  test("change to a file that the test and the script of a page both import selects the test", async () => {
+    using dir = tempDir("test-changed-page", {
+      "package.json": JSON.stringify({ name: "page", type: "module" }),
+      "src/server.ts": `import page from "./page.html";\nexport const routes = { "/": page };\n`,
+      "src/page.html": `<!doctype html><script type="module" src="./front.ts"></script>\n`,
+      "src/front.ts": `import { c } from "./comp";\nconsole.log(c);\n`,
+      "src/comp.ts": `export const c = 3;\n`,
+      "app.test.ts": `import { test, expect } from "bun:test";\nimport { c } from "./src/comp";\nimport { routes } from "./src/server";\ntest("app", () => expect([c, typeof routes]).toEqual([3, "object"]));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "src", "comp.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["app.test.ts"])).toEqual(["app.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("staged changes are picked up", async () => {
     using dir = tempDir("test-changed-staged", fixture);
     initRepo(String(dir));
@@ -391,6 +429,42 @@ describe.concurrent("bun test --changed", () => {
     const { stderr, exitCode } = await runTestChanged(String(dir));
     const testNames = ["alias.test.ts", "relative.test.ts", "unrelated.test.ts"];
     expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "relative.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The test runtime loads every file that a barrel re-exports. The scan does
+  // not skip `b.ts` because the package.json above the barrel says
+  // `"sideEffects": false`, with or without a "name", by a relative import or
+  // by a tsconfig `paths` alias.
+  test("change behind an unused re-export of a sideEffects: false barrel selects the importing tests", async () => {
+    const barrel = {
+      "index.ts": `export { a } from "./a";\nexport { b } from "./b";\n`,
+      "a.ts": `export const a = 1;\n`,
+      "b.ts": `export const b = 2;\n`,
+    };
+    const importsA = (specifier: string) =>
+      `import { test, expect } from "bun:test";\nimport { a } from "${specifier}";\ntest("a", () => expect(a).toBe(1));\n`;
+    using dir = tempDir("test-changed-barrel-side-effects", {
+      "package.json": JSON.stringify({ name: "barrels", type: "module" }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@nameless": ["./nameless/index.ts"] } },
+      }),
+      "named/package.json": JSON.stringify({ name: "named", sideEffects: false }),
+      ...Object.fromEntries(Object.entries(barrel).map(([file, text]) => [`named/${file}`, text])),
+      "nameless/package.json": JSON.stringify({ sideEffects: false }),
+      ...Object.fromEntries(Object.entries(barrel).map(([file, text]) => [`nameless/${file}`, text])),
+      "tests/named.test.ts": importsA("../named/index"),
+      "tests/nameless.test.ts": importsA("../nameless/index"),
+      "tests/alias.test.ts": importsA("@nameless"),
+      "tests/unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "named", "b.ts"), "// touched\n");
+    appendFileSync(join(String(dir), "nameless", "b.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    const testNames = ["alias.test.ts", "named.test.ts", "nameless.test.ts", "unrelated.test.ts"];
+    expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "named.test.ts", "nameless.test.ts"]);
     expect(exitCode).toBe(0);
   });
 

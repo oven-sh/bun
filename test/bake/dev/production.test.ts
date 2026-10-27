@@ -1114,4 +1114,54 @@ export default function Client() {
     const html = await Bun.file(path.join(String(dir), "dist", "index.html")).text();
     expect(html).toContain(`<link rel="stylesheet" href="/${normalizePath(cssFiles[0])}">`);
   });
+
+  test("json imported by a client entry point and a route stays in both bundles", async () => {
+    // Only a stylesheet is one module for every graph. A JSON module is
+    // JavaScript, and a copy that only the server bundle has is missing from
+    // the client bundle.
+    using dir = tempDir("bake-production-custom-framework-json", {
+      "client.ts": `
+        import data from "./data.json";
+        console.log("client " + data.name);
+      `,
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+          return { files: { "index.html": "<body>" + meta.pageModule.default() + scripts + "</body>" } };
+        }
+      `,
+      "routes/index.ts": `
+        import data from "../data.json";
+        export default () => "page " + data.name;
+      `,
+      "data.json": `{ "name": "shared" }`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
+
+    const built = await Bun.$`${bunExe()} build --app ./app.ts`.cwd(String(dir)).env(bunEnv).throws(false);
+    const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
+      .text()
+      .catch(() => built.stderr.toString());
+    expect(html).toContain("page shared");
+    const script = html.match(/<script type="module" src="\/([^"]*_bun[^"]*\.js)"><\/script>/);
+    expect(script).toBeTruthy();
+    expect(built.exitCode).toBe(0);
+
+    // The client bundle runs as written, with no import of a file that the build did not write.
+    await using client = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "dist", script![1])],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
+    expect(stdout).toBe("client shared\n");
+    expect(exitCode).toBe(0);
+  });
 });

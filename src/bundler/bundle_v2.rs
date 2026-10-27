@@ -238,25 +238,21 @@ impl<'a> BundleV2<'a> {
         self.graph.path_to_source_index_map(target)
     }
 
-    /// In bake builds, register a non-JavaScript file's source index in every
-    /// graph's path map so client, server, and SSR imports of the same
-    /// stylesheet or asset resolve to one copy: per-graph copies emit
-    /// duplicate chunks, and with `css_target()` forcing identical minify
-    /// output they collide on the content-hashed output path, so this gate
-    /// must match `css_target()`'s. JS stays per-graph because the target
-    /// affects DCE; HTML stays per-graph because server-side HTML imports
-    /// become per-target manifest modules.
-    pub(crate) fn share_non_js_source_index_across_graphs(
+    /// In bake builds, register a stylesheet's source index in every graph's
+    /// path map so client, server, and SSR imports of it resolve to one copy:
+    /// per-graph copies emit duplicate chunks, and with `css_target()` forcing
+    /// identical minify output they collide on the content-hashed output
+    /// path, so this gate must match `css_target()`'s. Every other loader
+    /// stays per-graph: its module is JavaScript that each graph's bundle
+    /// needs its own copy of.
+    pub(crate) fn share_css_source_index_across_graphs(
         &mut self,
         target: options::Target,
         loader: options::Loader,
         path_text: &[u8],
         source_index: IndexInt,
     ) {
-        if !self.transpiler.options.is_bake_build()
-            || loader.is_javascript_like()
-            || loader == options::Loader::Html
-        {
+        if !loader.is_css() || !self.transpiler.options.is_bake_build() {
             return;
         }
         let main_target = self.transpiler.options.target;
@@ -3029,7 +3025,7 @@ pub mod bv2_impl {
                 }
 
                 // It is silly to bundle index.css depended on by client+server twice.
-                self.share_non_js_source_index_across_graphs(target, loader, path.text, idx);
+                self.share_css_source_index_across_graphs(target, loader, path.text, idx);
             }
 
             if let Some(source_index) = out_source_index {
@@ -5365,7 +5361,7 @@ pub mod bv2_impl {
                                     ..Default::default()
                                 })
                                 .expect("unreachable");
-                            this.share_non_js_source_index_across_graphs(
+                            this.share_css_source_index_across_graphs(
                                 resolve.import_record.original_target,
                                 loader,
                                 path.text,
@@ -7387,7 +7383,7 @@ pub mod bv2_impl {
                         *value_ptr = new_task.source_index.get();
                     }
 
-                    self.share_non_js_source_index_across_graphs(
+                    self.share_css_source_index_across_graphs(
                         target,
                         loader,
                         new_task.path.text,

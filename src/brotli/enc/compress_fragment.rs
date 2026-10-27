@@ -17,19 +17,13 @@ use crate::common::constants::{
 use crate::util::{Bug, Checked, SliceExt, load_u64_le, try_box};
 use bun_core::AllocError;
 
-const MAX_DISTANCE: usize = max_backward_limit(18);
+pub(crate) const MAX_DISTANCE: usize = max_backward_limit(18);
 
 pub(crate) struct OnePassArena {
     lit_depth: [u8; 256],
     lit_bits: [u16; 256],
 
-    /// The prefix codes for commands and for distances of the next block, of 64 symbols each. The symbols for commands
-    /// are a part of the full alphabet, in an order of their own:
-    /// - 0 to 15: insert length code 0, copy length code 0 to 15, same distance
-    /// - 16 to 39: insert length code 0, copy length code 0 to 23
-    /// - 40 to 63: insert length code 0 to 23, copy length code 0
-    ///
-    /// 16 and 40 stand for the same symbol of the full alphabet. Neither is used.
+    /// The prefix codes for commands and for distances of the next block, of 64 symbols each.
     cmd_depth: [u8; 128],
     cmd_bits: [u16; 128],
     cmd_histo: [u32; 128],
@@ -40,8 +34,6 @@ pub(crate) struct OnePassArena {
 
     tree: [HuffmanTree; 2 * NUM_LITERAL_SYMBOLS + 1],
     histogram: [u32; 256],
-    tmp_depth: [u8; NUM_COMMAND_SYMBOLS],
-    tmp_bits: [u16; 64],
 }
 
 impl OnePassArena {
@@ -97,22 +89,44 @@ impl OnePassArena {
             cmd_code_numbits: DEFAULT_COMMAND_CODE_NUM_BITS,
             tree: [HuffmanTree::new(0, 0, 0); 2 * NUM_LITERAL_SYMBOLS + 1],
             histogram: [0; 256],
-            tmp_depth: [0; NUM_COMMAND_SYMBOLS],
-            tmp_bits: [0; 64],
         })
+    }
+
+    fn build_and_store_command_prefix_code(&mut self, bw: &mut BitWriter<'_>) -> Checked {
+        build_and_store_command_prefix_code(
+            &self.cmd_histo,
+            &mut self.cmd_depth,
+            &mut self.cmd_bits,
+            CommandWriter::FIRST_INSERT_SYMBOL,
+            &mut self.tree,
+            bw,
+        )
     }
 }
 
-/// A hash of `TABLE_BITS` bits of the low 5 bytes of `v`.
+/// The shortest copy that is looked for.
+const MIN_MATCH: usize = 5;
+
+/// A hash of `bits` bits of the low `len` bytes of `v`.
 #[inline(always)]
-fn hash<const TABLE_BITS: u32>(v: u64) -> usize {
-    ((v << 24).wrapping_mul(u64::from(HASH_MUL_32)) >> (64 - TABLE_BITS)) as usize
+pub(crate) fn hash_low_bytes(v: u64, len: usize, bits: u32) -> usize {
+    ((v << ((8 - len) * 8)).wrapping_mul(u64::from(HASH_MUL_32)) >> (64 - bits)) as usize
 }
 
-/// Whether the low 5 bytes of `a` and of `b` are the same.
+/// Whether the low `len` bytes of `a` and of `b` are the same.
+#[inline(always)]
+pub(crate) fn same_low_bytes(a: u64, b: u64, len: usize) -> bool {
+    (a ^ b) << ((8 - len) * 8) == 0
+}
+
+#[inline(always)]
+fn hash<const TABLE_BITS: u32>(v: u64) -> usize {
+    hash_low_bytes(v, MIN_MATCH, TABLE_BITS)
+}
+
 #[inline(always)]
 fn is_match(a: u64, b: u64) -> bool {
-    (a ^ b) << 24 == 0
+    same_low_bytes(a, b, MIN_MATCH)
 }
 
 /// Builds a prefix code for literals from `input`, which only approximates the literals that are left once the matches
@@ -167,180 +181,173 @@ fn build_and_store_literal_prefix_code(
     Ok(literal_ratio * 125 / histogram_total)
 }
 
-/// Builds the prefix codes for commands and for distances from `s.cmd_histo` and writes them. A symbol that does not
-/// occur keeps the depth it had.
-fn build_and_store_command_prefix_code(s: &mut OnePassArena, bw: &mut BitWriter<'_>) -> Checked {
-    let (cmd_histo, dist_histo) = s.cmd_histo.split_at(64);
-    let (cmd_depth, dist_depth) = s.cmd_depth.split_at_mut(64);
-    let (cmd_bits, dist_bits) = s.cmd_bits.split_at_mut(64);
-    let tmp_depth = &mut s.tmp_depth;
-    let tmp_bits = &mut s.tmp_bits;
-    tmp_depth.fill(0);
+/// Builds the prefix codes for commands and for distances from `histo` and writes them. A symbol that does not occur
+/// keeps the depth it had.
+///
+/// Each code has 64 symbols. Those for commands are a part of the full alphabet, in an order of their own that saves a
+/// few branches when a command is made. It goes around from `first_insert_symbol` on:
+/// - 24 symbols for insert length code 0 to 23 and copy length code 0,
+/// - 16 for insert length code 0 and copy length code 0 to 15 at the last distance,
+/// - 24 for insert length code 0 and copy length code 0 to 23.
+///
+/// The first symbols of the first and of the last group stand for the same symbol of the full alphabet. Neither is used.
+pub(crate) fn build_and_store_command_prefix_code(
+    histo: &[u32; 128],
+    depth: &mut [u8; 128],
+    bits: &mut [u16; 128],
+    first_insert_symbol: usize,
+    tree: &mut [HuffmanTree],
+    bw: &mut BitWriter<'_>,
+) -> Checked {
+    /// The groups of 8 symbols, counted from `first_insert_symbol`, in the order of the full alphabet.
+    const GROUPS: [usize; 8] = [3, 4, 5, 0, 6, 1, 7, 2];
+    let (cmd_histo, dist_histo) = histo.split_at(64);
+    let (cmd_depth, dist_depth) = depth.split_at_mut(64);
+    let (cmd_bits, dist_bits) = bits.split_at_mut(64);
+    let start_of_group = |group: usize| (first_insert_symbol + 8 * group) % 64;
 
-    create_huffman_tree(cmd_histo, 15, &mut s.tree, cmd_depth)?;
-    create_huffman_tree(dist_histo, 14, &mut s.tree, dist_depth)?;
-    // The codes depend on the order of the symbols in the full alphabet, which is another one. The order here saves a
-    // few branches when commands are written.
-    for (to, from, len) in [
-        (0, 0, 24),
-        (24, 40, 8),
-        (32, 24, 8),
-        (40, 48, 8),
-        (48, 32, 8),
-        (56, 56, 8),
-    ] {
-        tmp_depth.write_at(to, cmd_depth.sub(from..from + len)?)?;
+    create_huffman_tree(cmd_histo, 15, tree, cmd_depth)?;
+    create_huffman_tree(dist_histo, 14, tree, dist_depth)?;
+    // The codes depend on the order of the symbols.
+    let mut ordered_depth = [0u8; 64];
+    let mut ordered_bits = [0u16; 64];
+    for (ordered, &group) in ordered_depth.as_chunks_mut::<8>().0.iter_mut().zip(&GROUPS) {
+        *ordered = *cmd_depth.array_at(start_of_group(group))?;
     }
-    convert_bit_depths_to_symbols(tmp_depth.sub(..64)?, tmp_bits)?;
-    for (to, from, len) in [
-        (0, 0, 24),
-        (24, 32, 8),
-        (32, 48, 8),
-        (40, 24, 8),
-        (48, 40, 8),
-        (56, 56, 8),
-    ] {
-        cmd_bits.write_at(to, tmp_bits.sub(from..from + len)?)?;
+    convert_bit_depths_to_symbols(&ordered_depth, &mut ordered_bits)?;
+    for (ordered, &group) in ordered_bits.as_chunks::<8>().0.iter().zip(&GROUPS) {
+        *cmd_bits.array_at_mut(start_of_group(group))? = *ordered;
     }
     convert_bit_depths_to_symbols(dist_depth, dist_bits)?;
-    // The code lengths of the full alphabet.
-    tmp_depth.sub_mut(..64)?.fill(0);
-    for (to, from) in [(0, 0), (64, 8), (128, 16), (192, 24), (384, 32)] {
-        tmp_depth.write_at(to, cmd_depth.sub(from..from + 8)?)?;
+
+    let mut full_depth = [0u8; NUM_COMMAND_SYMBOLS];
+    for (to, group) in [(0, 3), (64, 4), (128, 5), (192, 6), (384, 7)] {
+        full_depth.write_at(to, cmd_depth.array_at::<8>(start_of_group(group))?)?;
     }
-    for i in 0..8 {
-        tmp_depth.put(128 + 8 * i, cmd_depth.at(40 + i)?)?;
-        tmp_depth.put(256 + 8 * i, cmd_depth.at(48 + i)?)?;
-        tmp_depth.put(448 + 8 * i, cmd_depth.at(56 + i)?)?;
+    for (to, group) in [(128, 0), (256, 1), (448, 2)] {
+        for (i, &depth) in cmd_depth
+            .array_at::<8>(start_of_group(group))?
+            .iter()
+            .enumerate()
+        {
+            full_depth.put(to + 8 * i, depth)?;
+        }
     }
-    store_huffman_tree(tmp_depth, bw)?;
+    store_huffman_tree(&full_depth, bw)?;
     store_huffman_tree(dist_depth, bw)
 }
 
-/// Writes commands and distances and counts them.
-struct CommandWriter<'a> {
-    depth: &'a [u8; 128],
-    bits: &'a [u16; 128],
-    histo: &'a mut [u32; 128],
-}
+/// Takes the symbols for commands and distances.
+pub(crate) trait CommandSink {
+    /// See [`build_and_store_command_prefix_code`].
+    const FIRST_INSERT_SYMBOL: usize;
+    const FIRST_COPY_AT_LAST_DISTANCE_SYMBOL: usize = (Self::FIRST_INSERT_SYMBOL + 24) % 64;
+    const FIRST_COPY_SYMBOL: usize = (Self::FIRST_INSERT_SYMBOL + 40) % 64;
 
-impl CommandWriter<'_> {
-    #[inline(always)]
-    fn emit(&mut self, code: usize, bw: &mut BitWriter<'_>) -> Checked {
-        self.emit_with_extra(code, 0, 0, bw)
-    }
+    /// `symbol` and then the low `n_extra` bits of `extra`, at most 24. The others are 0.
+    fn emit(&mut self, symbol: usize, n_extra: usize, extra: usize) -> Checked;
 
-    /// `code` and then the low `n_extra` bits of `extra`, at most 24. The others are 0.
     #[inline(always)]
-    fn emit_with_extra(
-        &mut self,
-        code: usize,
-        n_extra: usize,
-        extra: usize,
-        bw: &mut BitWriter<'_>,
-    ) -> Checked {
-        let depth = usize::from(self.depth.at(code)?);
-        bw.write_bits(
-            depth + n_extra,
-            u64::from(self.bits.at(code)?) | ((extra as u64) << depth),
-        )?;
-        *self.histo.at_mut(code)? += 1;
-        Ok(())
-    }
-
-    /// `insertlen` is less than 6210.
-    #[inline(always)]
-    fn emit_insert_len(&mut self, insertlen: usize, bw: &mut BitWriter<'_>) -> Checked {
+    fn emit_insert_len(&mut self, insertlen: usize) -> Checked {
+        let first = Self::FIRST_INSERT_SYMBOL;
         if insertlen < 6 {
-            self.emit(insertlen + 40, bw)
+            self.emit(first + insertlen, 0, 0)
         } else if insertlen < 130 {
             let tail = insertlen - 2;
             let nbits = log2_floor_nonzero(tail) as usize - 1;
             let prefix = tail >> nbits;
-            self.emit_with_extra(
-                (nbits << 1) + prefix + 42,
-                nbits,
-                tail - (prefix << nbits),
-                bw,
-            )
+            let code = (nbits << 1) + prefix + 2;
+            self.emit(first + code, nbits, tail - (prefix << nbits))
         } else if insertlen < 2114 {
             let tail = insertlen - 66;
             let nbits = log2_floor_nonzero(tail) as usize;
-            self.emit_with_extra(nbits + 50, nbits, tail - (1 << nbits), bw)
+            self.emit(first + nbits + 10, nbits, tail - (1 << nbits))
+        } else if insertlen < 6210 {
+            self.emit(first + 21, 12, insertlen - 2114)
+        } else if insertlen < 22594 {
+            self.emit(first + 22, 14, insertlen - 6210)
         } else {
-            self.emit_with_extra(61, 12, insertlen - 2114, bw)
+            self.emit(first + 23, 24, insertlen - 22594)
         }
     }
 
     #[inline(always)]
-    fn emit_long_insert_len(&mut self, insertlen: usize, bw: &mut BitWriter<'_>) -> Checked {
-        if insertlen < 22594 {
-            self.emit_with_extra(62, 14, insertlen - 6210, bw)
-        } else {
-            self.emit_with_extra(63, 24, insertlen - 22594, bw)
-        }
-    }
-
-    #[inline(always)]
-    fn emit_copy_len(&mut self, copylen: usize, bw: &mut BitWriter<'_>) -> Checked {
+    fn emit_copy_len(&mut self, copylen: usize) -> Checked {
+        let first = Self::FIRST_COPY_SYMBOL;
         if copylen < 10 {
-            self.emit(copylen + 14, bw)
+            self.emit(first + copylen - 2, 0, 0)
         } else if copylen < 134 {
             let tail = copylen - 6;
             let nbits = log2_floor_nonzero(tail) as usize - 1;
             let prefix = tail >> nbits;
-            self.emit_with_extra(
-                (nbits << 1) + prefix + 20,
-                nbits,
-                tail - (prefix << nbits),
-                bw,
-            )
+            let code = (nbits << 1) + prefix + 4;
+            self.emit(first + code, nbits, tail - (prefix << nbits))
         } else if copylen < 2118 {
             let tail = copylen - 70;
             let nbits = log2_floor_nonzero(tail) as usize;
-            self.emit_with_extra(nbits + 28, nbits, tail - (1 << nbits), bw)
+            self.emit(first + nbits + 12, nbits, tail - (1 << nbits))
         } else {
-            self.emit_with_extra(39, 24, copylen - 2118, bw)
+            self.emit(first + 23, 24, copylen - 2118)
         }
     }
 
     /// A copy at the distance of the command before, which had copy length 2 and is made longer by this.
     #[inline(always)]
-    fn emit_copy_len_last_distance(&mut self, copylen: usize, bw: &mut BitWriter<'_>) -> Checked {
+    fn emit_copy_len_last_distance(&mut self, copylen: usize) -> Checked {
         if copylen < 12 {
-            self.emit(copylen - 4, bw)
+            self.emit(Self::FIRST_COPY_AT_LAST_DISTANCE_SYMBOL + copylen - 4, 0, 0)
         } else if copylen < 72 {
             let tail = copylen - 8;
             let nbits = log2_floor_nonzero(tail) as usize - 1;
             let prefix = tail >> nbits;
-            self.emit_with_extra(
-                (nbits << 1) + prefix + 4,
+            let code = (nbits << 1) + prefix + 4;
+            self.emit(
+                Self::FIRST_COPY_AT_LAST_DISTANCE_SYMBOL + code,
                 nbits,
                 tail - (prefix << nbits),
-                bw,
             )
-        } else if copylen < 136 {
-            let tail = copylen - 8;
-            self.emit_with_extra((tail >> 5) + 30, 5, tail & 31, bw)?;
-            self.emit(64, bw)
-        } else if copylen < 2120 {
-            let tail = copylen - 72;
-            let nbits = log2_floor_nonzero(tail) as usize;
-            self.emit_with_extra(nbits + 28, nbits, tail - (1 << nbits), bw)?;
-            self.emit(64, bw)
         } else {
-            self.emit_with_extra(39, 24, copylen - 2120, bw)?;
-            self.emit(64, bw)
+            // There is no symbol for so long a copy at the last distance.
+            self.emit_copy_len(copylen - 2)?;
+            self.emit_last_distance()
         }
     }
 
     #[inline(always)]
-    fn emit_distance(&mut self, distance: usize, bw: &mut BitWriter<'_>) -> Checked {
+    fn emit_last_distance(&mut self) -> Checked {
+        self.emit(64, 0, 0)
+    }
+
+    #[inline(always)]
+    fn emit_distance(&mut self, distance: usize) -> Checked {
         let d = distance + 3;
         let nbits = log2_floor_nonzero(d) as usize - 1;
         let prefix = (d >> nbits) & 1;
         let offset = (2 + prefix) << nbits;
-        self.emit_with_extra(2 * (nbits - 1) + prefix + 80, nbits, d - offset, bw)
+        self.emit(2 * (nbits - 1) + prefix + 80, nbits, d - offset)
+    }
+}
+
+/// Writes commands and distances and counts them.
+struct CommandWriter<'a, 'b> {
+    depth: &'a [u8; 128],
+    bits: &'a [u16; 128],
+    histo: &'a mut [u32; 128],
+    bw: &'a mut BitWriter<'b>,
+}
+
+impl CommandSink for CommandWriter<'_, '_> {
+    const FIRST_INSERT_SYMBOL: usize = 40;
+
+    #[inline(always)]
+    fn emit(&mut self, symbol: usize, n_extra: usize, extra: usize) -> Checked {
+        let depth = usize::from(self.depth.at(symbol)?);
+        self.bw.write_bits(
+            depth + n_extra,
+            u64::from(self.bits.at(symbol)?) | ((extra as u64) << depth),
+        )?;
+        *self.histo.at_mut(symbol)? += 1;
+        Ok(())
     }
 }
 
@@ -367,6 +374,14 @@ pub(crate) fn emit_literals(
         bw.write_bits(usize::from(depth.at(lit)?), u64::from(bits.at(lit)?))?;
     }
     Ok(())
+}
+
+pub(crate) fn write_empty_last_meta_block(bw: &mut BitWriter<'_>) -> Checked {
+    // ISLAST
+    bw.write_bits(1, 1)?;
+    // ISLASTEMPTY
+    bw.write_bits(1, 1)?;
+    bw.jump_to_byte_boundary()
 }
 
 /// Overwrites the `n_bits` bits from bit `pos` of `array` on.
@@ -443,7 +458,7 @@ static CMD_HISTO_SEED: [u32; 128] = [
 /// How the search for matches in a block ended.
 enum Scan {
     /// At the end of the block.
-    EmitRemainder,
+    EndOfBlock,
     /// At `end`, with so many literals before it that the meta-block is better not compressed.
     Uncompressed { end: usize },
 }
@@ -458,7 +473,6 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
     const FIRST_BLOCK_SIZE: usize = 3 << 15;
     const MERGE_BLOCK_SIZE: usize = 1 << 16;
     const INPUT_MARGIN_BYTES: usize = WINDOW_GAP;
-    const MIN_MATCH_LEN: usize = 5;
 
     // All positions are indices of `all_input`. `input` is where the current block starts and `input_size` how much there
     // is from there on.
@@ -497,6 +511,7 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
             depth: &s.cmd_depth,
             bits: &s.cmd_bits,
             histo: &mut s.cmd_histo,
+            bw,
         };
         let (lit_depth, lit_bits) = (&s.lit_depth, &s.lit_bits);
 
@@ -506,17 +521,17 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
 
         let scan = 'scan: {
             if block_size < INPUT_MARGIN_BYTES {
-                break 'scan Scan::EmitRemainder;
+                break 'scan Scan::EndOfBlock;
             }
             // The last block keeps a margin of 16 bytes, so that no distance is more than the window size - 16. For the
             // others 5 bytes are enough to keep a copy from going past the end of the block.
-            let len_limit = (block_size - MIN_MATCH_LEN).min(input_size - INPUT_MARGIN_BYTES);
+            let len_limit = (block_size - MIN_MATCH).min(input_size - INPUT_MARGIN_BYTES);
             let ip_limit = input + len_limit;
 
             ip += 1;
             let mut next_bytes = load_u64_le(all_input, ip)?;
             loop {
-                // Step 1: look for a match of 5 bytes.
+                // Step 1: look for a match of `MIN_MATCH` bytes.
                 //
                 // After 32 bytes without one only every other byte is looked at, after 32 more every third, and so on.
                 // This costs little on data that compresses and saves a lot of time on data that does not.
@@ -532,7 +547,7 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
                     ip = next_ip;
                     next_ip = ip + bytes_between_hash_lookups;
                     if next_ip > ip_limit {
-                        break 'scan Scan::EmitRemainder;
+                        break 'scan Scan::EndOfBlock;
                     }
                     next_bytes = load_u64_le(all_input, next_ip)?;
                     candidate = ip.wrapping_sub(last_distance as isize as usize);
@@ -554,16 +569,17 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
                 // follows the other.
                 {
                     let base = ip;
-                    let matched = 5 + find_match_length_with_limit(
-                        all_input.sub(candidate + 5..)?,
-                        all_input.sub(ip + 5..)?,
-                        ip_end - ip - 5,
-                    );
+                    let matched = MIN_MATCH
+                        + find_match_length_with_limit(
+                            all_input.sub(candidate + MIN_MATCH..)?,
+                            all_input.sub(ip + MIN_MATCH..)?,
+                            ip_end - ip - MIN_MATCH,
+                        );
                     let distance = (base - candidate) as i32;
                     let insert = base - next_emit;
                     ip += matched;
                     if insert < 6210 {
-                        cmd.emit_insert_len(insert, bw)?;
+                        cmd.emit_insert_len(insert)?;
                     } else if should_use_uncompressed_mode(
                         next_emit - meta_block_start,
                         insert,
@@ -571,25 +587,25 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
                     ) {
                         break 'scan Scan::Uncompressed { end: base };
                     } else {
-                        cmd.emit_long_insert_len(insert, bw)?;
+                        cmd.emit_insert_len(insert)?;
                     }
                     emit_literals(
                         all_input.sub(next_emit..next_emit + insert)?,
                         lit_depth,
                         lit_bits,
-                        bw,
+                        cmd.bw,
                     )?;
                     if distance == last_distance {
-                        cmd.emit(64, bw)?;
+                        cmd.emit_last_distance()?;
                     } else {
-                        cmd.emit_distance(distance as usize, bw)?;
+                        cmd.emit_distance(distance as usize)?;
                         last_distance = distance;
                     }
-                    cmd.emit_copy_len_last_distance(matched, bw)?;
+                    cmd.emit_copy_len_last_distance(matched)?;
 
                     next_emit = ip;
                     if ip >= ip_limit {
-                        break 'scan Scan::EmitRemainder;
+                        break 'scan Scan::EndOfBlock;
                     }
                 }
                 loop {
@@ -607,22 +623,23 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
                     }
                     // A match right after the last one, with no literals in between.
                     let base = ip;
-                    let matched = 5 + find_match_length_with_limit(
-                        all_input.sub(candidate + 5..)?,
-                        all_input.sub(ip + 5..)?,
-                        ip_end - ip - 5,
-                    );
+                    let matched = MIN_MATCH
+                        + find_match_length_with_limit(
+                            all_input.sub(candidate + MIN_MATCH..)?,
+                            all_input.sub(ip + MIN_MATCH..)?,
+                            ip_end - ip - MIN_MATCH,
+                        );
                     if ip - candidate > MAX_DISTANCE {
                         break;
                     }
                     ip += matched;
                     last_distance = (base - candidate) as i32;
-                    cmd.emit_copy_len(matched, bw)?;
-                    cmd.emit_distance(last_distance as usize, bw)?;
+                    cmd.emit_copy_len(matched)?;
+                    cmd.emit_distance(last_distance as usize)?;
 
                     next_emit = ip;
                     if ip >= ip_limit {
-                        break 'scan Scan::EmitRemainder;
+                        break 'scan Scan::EndOfBlock;
                     }
                 }
 
@@ -635,7 +652,7 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
             emit_uncompressed_meta_block(
                 all_input.sub(meta_block_start..end)?,
                 mlen_storage_ix - 3,
-                bw,
+                cmd.bw,
             )?;
             input_size -= end - input;
             input = end;
@@ -660,7 +677,7 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
                     20,
                     (total_block_size - 1) as u32,
                     mlen_storage_ix,
-                    bw.storage(),
+                    cmd.bw.storage(),
                 )?;
                 continue;
             }
@@ -668,8 +685,13 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
             if next_emit < ip_end {
                 let insert = ip_end - next_emit;
                 if insert < 6210 {
-                    cmd.emit_insert_len(insert, bw)?;
-                    emit_literals(all_input.sub(next_emit..ip_end)?, lit_depth, lit_bits, bw)?;
+                    cmd.emit_insert_len(insert)?;
+                    emit_literals(
+                        all_input.sub(next_emit..ip_end)?,
+                        lit_depth,
+                        lit_bits,
+                        cmd.bw,
+                    )?;
                 } else if should_use_uncompressed_mode(
                     next_emit - meta_block_start,
                     insert,
@@ -678,11 +700,16 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
                     emit_uncompressed_meta_block(
                         all_input.sub(meta_block_start..ip_end)?,
                         mlen_storage_ix - 3,
-                        bw,
+                        cmd.bw,
                     )?;
                 } else {
-                    cmd.emit_long_insert_len(insert, bw)?;
-                    emit_literals(all_input.sub(next_emit..ip_end)?, lit_depth, lit_bits, bw)?;
+                    cmd.emit_insert_len(insert)?;
+                    emit_literals(
+                        all_input.sub(next_emit..ip_end)?,
+                        lit_depth,
+                        lit_bits,
+                        cmd.bw,
+                    )?;
                 }
             }
             next_emit = ip_end;
@@ -701,14 +728,14 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
         bw.write_bits(13, 0)?;
         literal_ratio =
             build_and_store_literal_prefix_code(s, all_input.sub(input..input + block_size)?, bw)?;
-        build_and_store_command_prefix_code(s, bw)?;
+        s.build_and_store_command_prefix_code(bw)?;
     }
 
     if !is_last {
         // The codes for commands and distances of the next call.
         let mut cmd_code = [0u8; 512];
         let mut cmd_code_writer = BitWriter::new(&mut cmd_code, 0)?;
-        build_and_store_command_prefix_code(s, &mut cmd_code_writer)?;
+        s.build_and_store_command_prefix_code(&mut cmd_code_writer)?;
         s.cmd_code_numbits = cmd_code_writer.pos();
         s.cmd_code = cmd_code;
     }
@@ -730,12 +757,7 @@ pub(crate) fn compress_fragment_fast(
 
     if input.is_empty() {
         debug_assert!(is_last);
-        // ISLAST
-        bw.write_bits(1, 1)?;
-        // ISLASTEMPTY
-        bw.write_bits(1, 1)?;
-        bw.jump_to_byte_boundary()?;
-        return Ok(());
+        return write_empty_last_meta_block(bw);
     }
 
     macro_rules! run {
@@ -763,11 +785,7 @@ pub(crate) fn compress_fragment_fast(
     }
 
     if is_last {
-        // ISLAST
-        bw.write_bits(1, 1)?;
-        // ISLASTEMPTY
-        bw.write_bits(1, 1)?;
-        bw.jump_to_byte_boundary()?;
+        write_empty_last_meta_block(bw)?;
     }
     Ok(())
 }

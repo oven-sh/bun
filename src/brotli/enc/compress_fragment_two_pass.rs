@@ -3,21 +3,18 @@
 
 use super::bit_cost::bits_entropy;
 use super::bit_stream::{
-    MetaBlockKind, build_and_store_huffman_tree_fast, store_huffman_tree, store_meta_block_header,
+    MetaBlockKind, build_and_store_huffman_tree_fast, store_meta_block_header,
 };
 use super::bit_writer::BitWriter;
-use super::compress_fragment::emit_literals;
-use super::entropy_encode::{HuffmanTree, convert_bit_depths_to_symbols, create_huffman_tree};
-use super::fast_log::log2_floor_nonzero;
-use super::find_match_length::find_match_length_with_limit;
-use super::hash::HASH_MUL_32;
-use crate::common::constants::{
-    NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, WINDOW_GAP, max_backward_limit,
+use super::compress_fragment::{
+    CommandSink, MAX_DISTANCE, build_and_store_command_prefix_code, emit_literals, hash_low_bytes,
+    same_low_bytes, write_empty_last_meta_block,
 };
+use super::entropy_encode::HuffmanTree;
+use super::find_match_length::find_match_length_with_limit;
+use crate::common::constants::{NUM_LITERAL_SYMBOLS, WINDOW_GAP};
 use crate::util::{Bug, Checked, SliceExt, load_u64_le, try_box};
 use bun_core::AllocError;
-
-const MAX_DISTANCE: usize = max_backward_limit(18);
 
 pub(crate) const COMPRESS_FRAGMENT_TWO_PASS_BLOCK_SIZE: usize = 1 << 17;
 
@@ -25,14 +22,12 @@ pub(crate) struct TwoPassArena {
     lit_histo: [u32; 256],
     lit_depth: [u8; 256],
     lit_bits: [u16; 256],
-    /// 64 symbols for commands, in an order of their own, and 64 for distances.
+    /// 64 symbols for commands and 64 for distances.
     cmd_histo: [u32; 128],
     cmd_depth: [u8; 128],
     cmd_bits: [u16; 128],
 
     tmp_tree: [HuffmanTree; 2 * NUM_LITERAL_SYMBOLS + 1],
-    tmp_depth: [u8; NUM_COMMAND_SYMBOLS],
-    tmp_bits: [u16; 64],
 }
 
 impl TwoPassArena {
@@ -45,8 +40,6 @@ impl TwoPassArena {
             cmd_depth: [0; 128],
             cmd_bits: [0; 128],
             tmp_tree: [HuffmanTree::new(0, 0, 0); 2 * NUM_LITERAL_SYMBOLS + 1],
-            tmp_depth: [0; NUM_COMMAND_SYMBOLS],
-            tmp_bits: [0; 64],
         })
     }
 }
@@ -56,66 +49,14 @@ const fn min_match(table_bits: u32) -> usize {
     if table_bits <= 15 { 4 } else { 6 }
 }
 
-/// A hash of `TABLE_BITS` bits of the low `min_match(TABLE_BITS)` bytes of `v`.
 #[inline(always)]
 fn hash<const TABLE_BITS: u32>(v: u64) -> usize {
-    let h = (v << ((8 - min_match(TABLE_BITS)) * 8)).wrapping_mul(u64::from(HASH_MUL_32));
-    (h >> (64 - TABLE_BITS)) as usize
+    hash_low_bytes(v, min_match(TABLE_BITS), TABLE_BITS)
 }
 
-/// Whether the low `min_match(TABLE_BITS)` bytes of `a` and of `b` are the same.
 #[inline(always)]
 fn is_match<const TABLE_BITS: u32>(a: u64, b: u64) -> bool {
-    (a ^ b) << ((8 - min_match(TABLE_BITS)) * 8) == 0
-}
-
-/// Builds the prefix codes for commands and for distances from `s.cmd_histo` and writes them.
-fn build_and_store_command_prefix_code(s: &mut TwoPassArena, bw: &mut BitWriter<'_>) -> Checked {
-    let (cmd_histo, dist_histo) = s.cmd_histo.split_at(64);
-    let (cmd_depth, dist_depth) = s.cmd_depth.split_at_mut(64);
-    let (cmd_bits, dist_bits) = s.cmd_bits.split_at_mut(64);
-    let tmp_depth = &mut s.tmp_depth;
-    let tmp_bits = &mut s.tmp_bits;
-    tmp_depth.fill(0);
-
-    create_huffman_tree(cmd_histo, 15, &mut s.tmp_tree, cmd_depth)?;
-    create_huffman_tree(dist_histo, 14, &mut s.tmp_tree, dist_depth)?;
-    // The codes depend on the order of the symbols in the full alphabet, which is another one. The order here saves a
-    // few branches when commands are created.
-    for (to, from, len) in [
-        (0, 24, 24),
-        (24, 0, 8),
-        (32, 48, 8),
-        (40, 8, 8),
-        (48, 56, 8),
-        (56, 16, 8),
-    ] {
-        tmp_depth.write_at(to, cmd_depth.sub(from..from + len)?)?;
-    }
-    convert_bit_depths_to_symbols(tmp_depth.sub(..64)?, tmp_bits)?;
-    for (to, from, len) in [
-        (0, 24, 8),
-        (8, 40, 8),
-        (16, 56, 8),
-        (24, 0, 24),
-        (48, 32, 8),
-        (56, 48, 8),
-    ] {
-        cmd_bits.write_at(to, tmp_bits.sub(from..from + len)?)?;
-    }
-    convert_bit_depths_to_symbols(dist_depth, dist_bits)?;
-    // The code lengths of the full alphabet.
-    tmp_depth.sub_mut(..64)?.fill(0);
-    for (to, from) in [(0, 24), (64, 32), (128, 40), (192, 48), (384, 56)] {
-        tmp_depth.write_at(to, cmd_depth.sub(from..from + 8)?)?;
-    }
-    for i in 0..8 {
-        tmp_depth.put(128 + 8 * i, cmd_depth.at(i)?)?;
-        tmp_depth.put(256 + 8 * i, cmd_depth.at(8 + i)?)?;
-        tmp_depth.put(448 + 8 * i, cmd_depth.at(16 + i)?)?;
-    }
-    store_huffman_tree(tmp_depth, bw)?;
-    store_huffman_tree(dist_depth, bw)
+    same_low_bytes(a, b, min_match(TABLE_BITS))
 }
 
 /// A buffer that is filled from the start.
@@ -144,96 +85,21 @@ impl<'a, T: Copy> Filling<'a, T> {
     }
 }
 
-// A command is kept as its symbol in the low 8 bits and its extra bits above.
+/// A command is kept as its symbol in the low 8 bits and its extra bits above.
+impl CommandSink for Filling<'_, u32> {
+    const FIRST_INSERT_SYMBOL: usize = 0;
 
-#[inline(always)]
-fn emit_insert_len(insertlen: u32, commands: &mut Filling<'_, u32>) -> Checked {
-    commands.push(if insertlen < 6 {
-        insertlen
-    } else if insertlen < 130 {
-        let tail = insertlen - 2;
-        let nbits = log2_floor_nonzero(tail as usize) - 1;
-        let prefix = tail >> nbits;
-        let inscode = (nbits << 1) + prefix + 2;
-        let extra = tail - (prefix << nbits);
-        inscode | (extra << 8)
-    } else if insertlen < 2114 {
-        let tail = insertlen - 66;
-        let nbits = log2_floor_nonzero(tail as usize);
-        let code = nbits + 10;
-        let extra = tail - (1 << nbits);
-        code | (extra << 8)
-    } else if insertlen < 6210 {
-        21 | ((insertlen - 2114) << 8)
-    } else if insertlen < 22594 {
-        22 | ((insertlen - 6210) << 8)
-    } else {
-        23 | ((insertlen - 22594) << 8)
-    })
-}
-
-#[inline(always)]
-fn emit_copy_len(copylen: usize, commands: &mut Filling<'_, u32>) -> Checked {
-    commands.push(if copylen < 10 {
-        copylen + 38
-    } else if copylen < 134 {
-        let tail = copylen - 6;
-        let nbits = log2_floor_nonzero(tail) as usize - 1;
-        let prefix = tail >> nbits;
-        let code = (nbits << 1) + prefix + 44;
-        let extra = tail - (prefix << nbits);
-        code | (extra << 8)
-    } else if copylen < 2118 {
-        let tail = copylen - 70;
-        let nbits = log2_floor_nonzero(tail) as usize;
-        let code = nbits + 52;
-        let extra = tail - (1 << nbits);
-        code | (extra << 8)
-    } else {
-        63 | ((copylen - 2118) << 8)
-    } as u32)
-}
-
-/// A copy at the distance of the command before, which had copy length 2 and is made longer by this.
-#[inline(always)]
-fn emit_copy_len_last_distance(copylen: usize, commands: &mut Filling<'_, u32>) -> Checked {
-    if copylen < 12 {
-        commands.push((copylen + 20) as u32)
-    } else if copylen < 72 {
-        let tail = copylen - 8;
-        let nbits = log2_floor_nonzero(tail) as usize - 1;
-        let prefix = tail >> nbits;
-        let code = (nbits << 1) + prefix + 28;
-        let extra = tail - (prefix << nbits);
-        commands.push((code | (extra << 8)) as u32)
-    } else if copylen < 136 {
-        let tail = copylen - 8;
-        let code = (tail >> 5) + 54;
-        let extra = tail & 31;
-        commands.push((code | (extra << 8)) as u32)?;
-        commands.push(64)
-    } else if copylen < 2120 {
-        let tail = copylen - 72;
-        let nbits = log2_floor_nonzero(tail) as usize;
-        let code = nbits + 52;
-        let extra = tail - (1 << nbits);
-        commands.push((code | (extra << 8)) as u32)?;
-        commands.push(64)
-    } else {
-        commands.push((63 | ((copylen - 2120) << 8)) as u32)?;
-        commands.push(64)
+    #[inline(always)]
+    fn emit(&mut self, symbol: usize, _n_extra: usize, extra: usize) -> Checked {
+        self.push((symbol | (extra << 8)) as u32)
     }
 }
 
-#[inline(always)]
-fn emit_distance(distance: u32, commands: &mut Filling<'_, u32>) -> Checked {
-    let d = distance + 3;
-    let nbits = log2_floor_nonzero(d as usize) - 1;
-    let prefix = (d >> nbits) & 1;
-    let offset = (2 + prefix) << nbits;
-    let distcode = 2 * (nbits - 1) + prefix + 80;
-    let extra = d - offset;
-    commands.push(distcode | (extra << 8))
+/// Which copy of a series of copies with no literals in between.
+#[derive(Clone, Copy, PartialEq)]
+enum CopyInSeries {
+    First,
+    Later,
 }
 
 /// Puts some positions within the copy that ended at `ip` into the table, which helps compression, and `ip` itself.
@@ -246,7 +112,7 @@ fn update_table<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
     input: &[u8],
     ip: usize,
     table: &mut [i32; TABLE_SIZE],
-    first_copy: bool,
+    copy: CopyInSeries,
 ) -> Checked<(usize, u64)> {
     let hash = hash::<TABLE_BITS>;
     let bytes;
@@ -256,7 +122,7 @@ fn update_table<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
         table.put(hash(input_bytes), (ip - 3) as i32)?;
         table.put(hash(input_bytes >> 8), (ip - 2) as i32)?;
         table.put(
-            hash(if first_copy {
+            hash(if copy == CopyInSeries::First {
                 input_bytes
             } else {
                 input_bytes >> 16
@@ -365,22 +231,26 @@ fn create_commands<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
                     );
                 let distance = (base - candidate) as i32;
                 ip += matched;
-                emit_insert_len((base - next_emit) as u32, &mut commands)?;
+                commands.emit_insert_len(base - next_emit)?;
                 literals.extend(all_input.sub(next_emit..base)?)?;
                 if distance == last_distance {
-                    commands.push(64)?;
+                    commands.emit_last_distance()?;
                 } else {
-                    emit_distance(distance as u32, &mut commands)?;
+                    commands.emit_distance(distance as usize)?;
                     last_distance = distance;
                 }
-                emit_copy_len_last_distance(matched, &mut commands)?;
+                commands.emit_copy_len_last_distance(matched)?;
 
                 next_emit = ip;
                 if ip >= ip_limit {
                     break 'scan;
                 }
-                (candidate, bytes_at_ip) =
-                    update_table::<TABLE_BITS, TABLE_SIZE>(all_input, ip, table, true)?;
+                (candidate, bytes_at_ip) = update_table::<TABLE_BITS, TABLE_SIZE>(
+                    all_input,
+                    ip,
+                    table,
+                    CopyInSeries::First,
+                )?;
             }
 
             while ip - candidate <= MAX_DISTANCE
@@ -396,15 +266,19 @@ fn create_commands<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
                     );
                 ip += matched;
                 last_distance = (base - candidate) as i32;
-                emit_copy_len(matched, &mut commands)?;
-                emit_distance(last_distance as u32, &mut commands)?;
+                commands.emit_copy_len(matched)?;
+                commands.emit_distance(last_distance as usize)?;
 
                 next_emit = ip;
                 if ip >= ip_limit {
                     break 'scan;
                 }
-                (candidate, bytes_at_ip) =
-                    update_table::<TABLE_BITS, TABLE_SIZE>(all_input, ip, table, false)?;
+                (candidate, bytes_at_ip) = update_table::<TABLE_BITS, TABLE_SIZE>(
+                    all_input,
+                    ip,
+                    table,
+                    CopyInSeries::Later,
+                )?;
             }
 
             ip += 1;
@@ -413,7 +287,7 @@ fn create_commands<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
     }
 
     if next_emit < ip_end {
-        emit_insert_len((ip_end - next_emit) as u32, &mut commands)?;
+        commands.emit_insert_len(ip_end - next_emit)?;
         literals.extend(all_input.sub(next_emit..ip_end)?)?;
     }
     Ok((literals.len, commands.len))
@@ -469,7 +343,14 @@ fn store_commands(
     s.cmd_histo[2] += 1;
     s.cmd_histo[64] += 1;
     s.cmd_histo[84] += 1;
-    build_and_store_command_prefix_code(s, bw)?;
+    build_and_store_command_prefix_code(
+        &s.cmd_histo,
+        &mut s.cmd_depth,
+        &mut s.cmd_bits,
+        Filling::FIRST_INSERT_SYMBOL,
+        &mut s.tmp_tree,
+        bw,
+    )?;
 
     let mut literals = literals;
     for &command in commands {
@@ -584,11 +465,7 @@ pub(crate) fn compress_fragment_two_pass(
     }
 
     if is_last {
-        // ISLAST
-        bw.write_bits(1, 1)?;
-        // ISLASTEMPTY
-        bw.write_bits(1, 1)?;
-        bw.jump_to_byte_boundary()?;
+        write_empty_last_meta_block(bw)?;
     }
     Ok(())
 }

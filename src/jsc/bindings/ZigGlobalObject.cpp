@@ -3523,6 +3523,29 @@ extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject*);
+
+// A static import's referrer is the importer's key `<path>?<query>`: its directory is the loader's `<path>`, not a `/` of the query.
+static void useLoadedPathOfImporter(JSC::JSGlobalObject* globalObject, JSC::JSModuleLoader* loader, JSC::JSString* referrer, WTF::String& referrerString)
+{
+    size_t queryStart = referrerString.find('?');
+    if (queryStart == WTF::notFound) [[likely]]
+        return;
+    if (referrerString.find([](char16_t character) { return character == '/' || character == '\\'; }, queryStart + 1) == WTF::notFound)
+        return;
+
+    // A string that is not an atom already is no module's key.
+    auto atom = referrer->toExistingAtomString(globalObject);
+    if (!atom.data)
+        return;
+    auto* entry = loader->registryEntry(JSC::Identifier::fromUid(globalObject->vm(), atom.data));
+    auto* record = entry ? dynamicDowncast<JSC::JSModuleRecord>(entry->record()) : nullptr;
+    if (!record)
+        return;
+    const WTF::String& path = record->sourceCode().provider()->sourceURL();
+    if (path.length() < referrerString.length() && referrerString[path.length()] == '?' && referrerString.startsWith(path))
+        referrerString = path;
+}
+
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap)
@@ -3570,6 +3593,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     WTF::String referrerString;
     if (referrer && referrer.isString()) {
         referrerString = referrer.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        useLoadedPathOfImporter(globalObject, loader, asString(referrer), referrerString);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

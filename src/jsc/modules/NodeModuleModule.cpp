@@ -308,7 +308,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             if (
                 // fast path: it's a real CommonJS module object.
                 auto* cjs = dynamicDowncast<Bun::JSCommonJSModule>(fromValue)) {
-                fromValue = cjs->filename();
+                fromValue = cjs->filenamePath(vm);
             } else if (fromValue.isObject()) {
                 // slow path: userland code did something weird. Try filename first, then id
                 auto* obj = fromValue.getObject();
@@ -479,6 +479,8 @@ PathResolveModule getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent
 
     JSValue filename = parent->get(global, builtinNames.filenamePublicName());
     RETURN_IF_EXCEPTION(scope, value);
+    if (auto* module = dynamicDowncast<Bun::JSCommonJSModule>(parent))
+        filename = module->filenamePath(vm, filename);
     if (filename.isString()) {
         value.filename = filename.toString(global);
     }

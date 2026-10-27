@@ -46,12 +46,20 @@ public:
 
     // `module.id` Initialized eagerly; can be overridden.
     mutable JSC::WriteBarrier<JSString> m_id;
-    // Initialized eagerly; can be overridden.
+
+private:
+    // Initialized eagerly; overridden through setFilename(), which keeps m_filenamePathLength in step.
     mutable JSC::WriteBarrier<Unknown> m_filename;
+
+public:
     // Initialized eagerly; can be overridden.
     mutable JSC::WriteBarrier<JSString> m_dirname;
-    // Initialized lazily; can be overridden.
+
+private:
+    // Initialized lazily through setDerivedPaths(), which setLoadedPath() can undo; overridden through setPaths().
     mutable JSC::WriteBarrier<Unknown> m_paths;
+
+public:
     // Children must always be tracked in case the script decides to access
     // `module.children`. In that case, all children may also need their
     // children fields to exist, recursively. To avoid allocating a *JSArray for
@@ -83,6 +91,16 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+
+private:
+    // m_paths is the list that the getter derived from filenamePath(), not one that JS assigned.
+    bool m_pathsAreDerived { false };
+    // Length of `<path>` in m_filename when that is the loader's key `<path>?<query>` with a separator in the query, else 0.
+    uint32_t m_filenamePathLength { 0 };
+    JSValue loadedPath(JSC::VM&);
+    bool isFilename(JSValue);
+
+public:
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
@@ -132,6 +150,28 @@ public:
     }
     void setExportsObject(JSC::JSValue exportsObject);
     JSValue filename() { return m_filename.get(); }
+    void setFilename(JSC::VM& vm, JSValue filename)
+    {
+        m_filename.set(vm, this, filename);
+        m_filenamePathLength = 0;
+    }
+    // filename() without the `?query` of the loader's key: a directory is taken from this, never from filename().
+    JSValue filenamePath(JSC::VM& vm) { return m_filenamePathLength ? loadedPath(vm) : m_filename.get(); }
+    // Same for a `filename` that JS passes back: only a string with the text of the module's own filename() is a key.
+    JSValue filenamePath(JSC::VM& vm, JSValue filename) { return m_filenamePathLength && isFilename(filename) ? loadedPath(vm) : filename; }
+    // The loader read this module from `path`.
+    void setLoadedPath(JSC::VM&, const WTF::String& path);
+    JSValue paths() { return m_paths.get(); }
+    void setPaths(JSC::VM& vm, JSValue paths)
+    {
+        m_paths.set(vm, this, paths);
+        m_pathsAreDerived = false;
+    }
+    void setDerivedPaths(JSC::VM& vm, JSValue paths)
+    {
+        m_paths.set(vm, this, paths);
+        m_pathsAreDerived = true;
+    }
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
 

@@ -796,9 +796,21 @@ pub(crate) struct FrameCompressor {
     ldm_state: LdmState,
     ldm_sequences: RawSeqStore,
     extern_seq_store: RawSeqStore,
-    prev_c_block: Box<CompressedBlockState>,
-    next_c_block: Box<CompressedBlockState>,
+    /// `None` stands for [`INITIAL_BLOCK_STATE`].
+    prev_c_block: Option<Box<CompressedBlockState>>,
+    /// Made when the first block needs it.
+    next_c_block: Option<Box<CompressedBlockState>>,
     match_state: MatchState,
+}
+
+static INITIAL_BLOCK_STATE: CompressedBlockState = CompressedBlockState::new();
+
+fn block_state(state: &Option<Box<CompressedBlockState>>) -> &CompressedBlockState {
+    state.as_deref().unwrap_or(&INITIAL_BLOCK_STATE)
+}
+
+fn block_state_mut(state: &mut Option<Box<CompressedBlockState>>) -> &mut CompressedBlockState {
+    state.get_or_insert_with(|| Box::new(CompressedBlockState::new()))
 }
 
 const fn empty_raw_seq_store() -> RawSeqStore {
@@ -831,8 +843,8 @@ impl FrameCompressor {
             ldm_state: LdmState::new(),
             ldm_sequences: empty_raw_seq_store(),
             extern_seq_store: empty_raw_seq_store(),
-            prev_c_block: Box::new(CompressedBlockState::new()),
-            next_c_block: Box::new(CompressedBlockState::new()),
+            prev_c_block: None,
+            next_c_block: None,
             match_state: MatchState::new(),
         }
     }
@@ -919,7 +931,9 @@ impl FrameCompressor {
         self.dict_id = 0;
         self.dict_content_size = 0;
 
-        self.prev_c_block.reset();
+        if let Some(prev_c_block) = &mut self.prev_c_block {
+            prev_c_block.reset();
+        }
 
         reset_match_state(
             &mut self.match_state,
@@ -957,7 +971,7 @@ impl FrameCompressor {
 
     /// `ZSTD_invalidateRepCodes`
     pub(crate) fn invalidate_rep_codes(&mut self) {
-        self.prev_c_block.rep = [0; ZSTD_REP_NUM];
+        block_state_mut(&mut self.prev_c_block).rep = [0; ZSTD_REP_NUM];
     }
 
     /// `ZSTD_resetCCtx_byAttachingCDict`
@@ -1003,7 +1017,7 @@ impl FrameCompressor {
 
         self.dict_id = cdict.dict_id;
         self.dict_content_size = cdict.dict_content.len();
-        self.prev_c_block.clone_from(&cdict.c_block_state);
+        block_state_mut(&mut self.prev_c_block).clone_from(&cdict.c_block_state);
         Ok(sizes)
     }
 
@@ -1057,7 +1071,7 @@ impl FrameCompressor {
 
         self.dict_id = cdict.dict_id;
         self.dict_content_size = cdict.dict_content.len();
-        self.prev_c_block.clone_from(&cdict.c_block_state);
+        block_state_mut(&mut self.prev_c_block).clone_from(&cdict.c_block_state);
         Ok(sizes)
     }
 
@@ -1091,16 +1105,19 @@ impl FrameCompressor {
             CompResetPolicy::MakeClean,
             buffered,
         )?;
-        self.dict_id = compress_insert_dictionary(
-            &mut self.prev_c_block,
-            &mut self.match_state,
-            &self.applied_params,
-            &input.bufs,
-            dict,
-            dict_content_type,
-            dtlm,
-            TableFillPurpose::ForCCtx,
-        )?;
+        self.dict_id = match dict {
+            Some(_) => compress_insert_dictionary(
+                block_state_mut(&mut self.prev_c_block),
+                &mut self.match_state,
+                &self.applied_params,
+                &input.bufs,
+                dict,
+                dict_content_type,
+                dtlm,
+                TableFillPurpose::ForCCtx,
+            )?,
+            None => 0,
+        };
         self.dict_content_size = dict_content_size;
         Ok(sizes)
     }
@@ -1128,9 +1145,11 @@ impl FrameCompressor {
 
     /// A table for offsets that comes from a dictionary is only known to be valid for the first block.
     fn downgrade_offcode_repeat_mode(&mut self) {
-        let mode = &mut self.prev_c_block.entropy.fse.offcode_repeat_mode;
-        if *mode == FseRepeat::Valid {
-            *mode = FseRepeat::Check;
+        if let Some(prev_c_block) = &mut self.prev_c_block {
+            let mode = &mut prev_c_block.entropy.fse.offcode_repeat_mode;
+            if *mode == FseRepeat::Valid {
+                *mode = FseRepeat::Check;
+            }
         }
     }
 
@@ -1175,13 +1194,13 @@ impl FrameCompressor {
                 Some(cdict) if ms.has_dict_match_state => Some(cdict.dict_match_state()),
                 _ => None,
             },
-            symbol_costs: &self.prev_c_block.entropy,
+            symbol_costs: &block_state(&self.prev_c_block).entropy,
             ldm_seq_store: None,
         };
         let dict_mode = ms.dict_mode(block.dms.as_ref());
         let use_row_match_finder = params.use_row_match_finder == ParamSwitch::Enable;
-        self.next_c_block.rep = self.prev_c_block.rep;
-        let rep = &mut self.next_c_block.rep;
+        let rep = &mut block_state_mut(&mut self.next_c_block).rep;
+        *rep = block_state(&self.prev_c_block).rep;
 
         let last_ll_size = if self.extern_seq_store.pos < self.extern_seq_store.size {
             ldm::block_compress(
@@ -1252,8 +1271,8 @@ impl FrameCompressor {
         let mut c_seqs_size = entropy_compress_seq_store(
             &mut self.seq_store,
             chunk,
-            &self.prev_c_block.entropy,
-            &mut self.next_c_block.entropy,
+            &block_state(&self.prev_c_block).entropy,
+            &mut block_state_mut(&mut self.next_c_block).entropy,
             &self.applied_params,
             dst.sub_mut(ZSTD_BLOCKHEADERSIZE..)?,
             src.len(),
@@ -1306,8 +1325,8 @@ impl FrameCompressor {
             Ok(build_entropy_statistics_and_estimate_sub_block_size(
                 &mut self.seq_store,
                 &chunk,
-                &self.prev_c_block.entropy,
-                &mut self.next_c_block.entropy,
+                &block_state(&self.prev_c_block).entropy,
+                &mut block_state_mut(&mut self.next_c_block).entropy,
                 &self.applied_params,
                 entropy_metadata,
             ))
@@ -1357,8 +1376,8 @@ impl FrameCompressor {
         let num_splits = splits.idx;
         let partitions = &splits.split_locations;
 
-        let mut d_rep = self.prev_c_block.rep;
-        let mut c_rep = self.prev_c_block.rep;
+        let mut d_rep = block_state(&self.prev_c_block).rep;
+        let mut c_rep = d_rep;
 
         if num_splits == 0 {
             let whole = self.seq_store.whole();
@@ -1404,7 +1423,7 @@ impl FrameCompressor {
             curr_seq_store = next_seq_store;
         }
         // What the decoder ends up with, which is not what the sequences were found with if a part is uncompressed.
-        self.prev_c_block.rep = d_rep;
+        block_state_mut(&mut self.prev_c_block).rep = d_rep;
         Ok(c_size)
     }
 
@@ -1442,8 +1461,8 @@ impl FrameCompressor {
                 let mut c_size = entropy_compress_seq_store(
                     &mut self.seq_store,
                     &whole,
-                    &self.prev_c_block.entropy,
-                    &mut self.next_c_block.entropy,
+                    &block_state(&self.prev_c_block).entropy,
+                    &mut block_state_mut(&mut self.next_c_block).entropy,
                     &self.applied_params,
                     dst,
                     bytes.len(),
@@ -1495,8 +1514,8 @@ impl FrameCompressor {
             }
             match compress_super_block(
                 &mut self.seq_store,
-                &self.prev_c_block,
-                &mut self.next_c_block,
+                block_state(&self.prev_c_block),
+                block_state_mut(&mut self.next_c_block),
                 &self.applied_params,
                 dst,
                 src,

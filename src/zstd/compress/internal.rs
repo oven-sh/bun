@@ -113,6 +113,16 @@ pub(crate) struct HufCTables {
     pub(crate) repeat_mode: HufRepeat,
 }
 
+impl HufCTables {
+    /// `*self = from.clone()`, but for a table that cannot be used again, which nothing reads.
+    pub(crate) fn copy_from(&mut self, from: &Self) {
+        self.repeat_mode = from.repeat_mode;
+        if from.repeat_mode != HufRepeat::None {
+            self.c_table.clone_from(&from.c_table);
+        }
+    }
+}
+
 /// `ZSTD_fseCTables_t`
 #[derive(Clone)]
 pub(crate) struct FseCTables {
@@ -122,6 +132,24 @@ pub(crate) struct FseCTables {
     pub(crate) offcode_repeat_mode: FseRepeat,
     pub(crate) matchlength_repeat_mode: FseRepeat,
     pub(crate) litlength_repeat_mode: FseRepeat,
+}
+
+impl FseCTables {
+    /// `*self = from.clone()`, but for the tables that cannot be used again, which nothing reads.
+    pub(crate) fn copy_from(&mut self, from: &Self) {
+        self.offcode_repeat_mode = from.offcode_repeat_mode;
+        if from.offcode_repeat_mode != FseRepeat::None {
+            self.offcode_c_table.clone_from(&from.offcode_c_table);
+        }
+        self.matchlength_repeat_mode = from.matchlength_repeat_mode;
+        if from.matchlength_repeat_mode != FseRepeat::None {
+            (self.matchlength_c_table).clone_from(&from.matchlength_c_table);
+        }
+        self.litlength_repeat_mode = from.litlength_repeat_mode;
+        if from.litlength_repeat_mode != FseRepeat::None {
+            self.litlength_c_table.clone_from(&from.litlength_c_table);
+        }
+    }
 }
 
 /// `ZSTD_entropyCTables_t`
@@ -140,7 +168,7 @@ pub(crate) struct CompressedBlockState {
 
 impl CompressedBlockState {
     /// `ZSTD_reset_compressedBlockState`, on tables that are all zeros.
-    pub(crate) fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             entropy: EntropyCTables {
                 huf: HufCTables {
@@ -242,7 +270,7 @@ pub(crate) struct SeqStore {
     pub(crate) lit_buffer: Vec<u8>,
     /// How much of `lit_buffer` is literals.
     pub(crate) lit_len: usize,
-    /// Room for the codes of `max_nb_seq` sequences.
+    /// As many as the most sequences that a block had so far, with room for `max_nb_seq`.
     pub(crate) codes: Vec<SeqCodes>,
     pub(crate) max_nb_seq: usize,
     pub(crate) max_nb_lit: usize,
@@ -329,16 +357,15 @@ impl SeqStore {
 
     /// Room for `max_nb_seq` sequences and `max_nb_lit` bytes of literals.
     pub(crate) fn reserve(&mut self, max_nb_seq: usize, max_nb_lit: usize) -> Result<()> {
-        fn grow<T: Clone + Default>(vec: &mut Vec<T>, len: usize) -> Result<()> {
+        fn room<T>(vec: &mut Vec<T>, len: usize) -> Result<()> {
             vec.clear();
             vec.try_reserve_exact(len)
-                .map_err(|_| ErrorCode::MemoryAllocation)?;
-            vec.resize(len, T::default());
-            Ok(())
+                .map_err(|_| ErrorCode::MemoryAllocation)
         }
-        grow(&mut self.sequences, max_nb_seq)?;
-        grow(&mut self.lit_buffer, max_nb_lit + WILDCOPY_OVERLENGTH)?;
-        grow(&mut self.codes, max_nb_seq)?;
+        room(&mut self.sequences, max_nb_seq)?;
+        room(&mut self.codes, max_nb_seq)?;
+        room(&mut self.lit_buffer, max_nb_lit + WILDCOPY_OVERLENGTH)?;
+        self.lit_buffer.resize(max_nb_lit + WILDCOPY_OVERLENGTH, 0);
         self.max_nb_seq = max_nb_seq;
         self.max_nb_lit = max_nb_lit;
         self.reset();

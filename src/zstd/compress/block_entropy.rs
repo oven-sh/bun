@@ -29,6 +29,9 @@ pub(crate) fn literals_compression_is_disabled(cctx_params: &CCtxParams) -> bool
 /// `ZSTD_seqToCodes`, and the distributions of the codes.
 fn seq_to_codes(store: &mut SeqStore, chunk: &SeqChunk) -> Result<SeqHistograms> {
     let range = chunk.seq_start..chunk.seq_end;
+    if store.codes.len() < store.sequences.len() {
+        (store.codes).resize(store.sequences.len(), SeqCodes::default());
+    }
     Ok(sequences::seq_to_codes(
         store.codes.sub_mut(range.clone())?,
         store.sequences.sub(range)?,
@@ -222,7 +225,7 @@ fn entropy_compress_seq_store_internal(
     }
     op += write_nb_seq(dst.sub_mut(op..)?, nb_seq)?;
     if nb_seq == 0 {
-        next_entropy.fse.clone_from(&prev_entropy.fse);
+        next_entropy.fse.copy_from(&prev_entropy.fse);
         return Ok(op);
     }
     let last_count_size = {
@@ -314,7 +317,7 @@ fn build_block_entropy_stats_literals(
     let mut max_symbol_value = HUF_SYMBOLVALUE_MAX;
     let mut repeat = prev_huf.repeat_mode;
 
-    next_huf.clone_from(prev_huf);
+    next_huf.copy_from(prev_huf);
 
     if literals_compression_is_disabled {
         huf_metadata.h_type = SymbolEncodingType::Basic;
@@ -373,13 +376,13 @@ fn build_block_entropy_stats_literals(
             && (old_c_size <= h_size.wrapping_add(new_c_size)
                 || h_size.wrapping_add(12) >= src_size)
         {
-            next_huf.clone_from(prev_huf);
+            next_huf.copy_from(prev_huf);
             huf_metadata.h_type = SymbolEncodingType::Repeat;
             return Ok(0);
         }
     }
     if new_c_size.wrapping_add(h_size) >= src_size {
-        next_huf.clone_from(prev_huf);
+        next_huf.copy_from(prev_huf);
         huf_metadata.h_type = SymbolEncodingType::Basic;
         return Ok(0);
     }

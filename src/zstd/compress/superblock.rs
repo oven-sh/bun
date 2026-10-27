@@ -522,7 +522,7 @@ fn compress_sub_block_multi(
         next_c_block
             .entropy
             .huf
-            .clone_from(&prev_c_block.entropy.huf);
+            .copy_from(&prev_c_block.entropy.huf);
     }
     if write_seq_entropy && need_sequence_entropy_tables(&entropy_metadata.fse_metadata) {
         // Neither were these, and there is no going back to the previous ones.

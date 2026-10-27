@@ -62,7 +62,7 @@ pub(crate) fn compress_literals(
     let mut single_stream = src_size < 256;
     let mut h_type = SymbolEncodingType::Compressed;
 
-    next_huf.clone_from(prev_huf);
+    next_huf.copy_from(prev_huf);
 
     if disable_literal_compression {
         return no_compress_literals(dst, src);
@@ -108,7 +108,7 @@ pub(crate) fn compress_literals(
     let c_lit_size = match c_lit_size {
         Ok(size) if size != 0 && size < src_size.wrapping_sub(min_gain) => size,
         _ => {
-            next_huf.clone_from(prev_huf);
+            next_huf.copy_from(prev_huf);
             return no_compress_literals(dst, src);
         }
     };
@@ -116,7 +116,7 @@ pub(crate) fn compress_literals(
         // With few literals, a size of 1 can also be that of a Huffman stream.
         let first = src.at(0)?;
         if src_size >= 8 || src.iter().all(|&b| b == first) {
-            next_huf.clone_from(prev_huf);
+            next_huf.copy_from(prev_huf);
             return compress_rle_literals_block(dst, src);
         }
     }

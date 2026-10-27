@@ -26,7 +26,7 @@ use crate::chunk::{Content, CssImportOrderKind};
 // materializing aliased Rust references.
 pub(crate) struct PrepareCssAstTask {
     pub(crate) task: ThreadPoolLib::CountedTask,
-    pub(crate) chunk: *mut Chunk,
+    pub(crate) chunk: *mut Chunk<'static>,
     pub(crate) linker: *mut LinkerContext<'static>,
 }
 
@@ -199,7 +199,9 @@ pub(crate) fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chu
                                 source_map_urls: Default::default(),
                                 rules: {
                                     let mut import_rule = ImportRule {
-                                        url: p.pretty,
+                                        // SAFETY: `bun_css` types its strings `'static`. This
+                                        // stylesheet is printed and dropped with the chunk.
+                                        url: unsafe { bun_ptr::detach_lifetime(p.pretty) },
                                         import_record_idx: entry.condition_import_records.len()
                                             as u32,
                                         loc: Location::dummy(),
@@ -304,7 +306,8 @@ pub(crate) fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chu
                     css_chunk.asts[i] = BundlerStyleSheet {
                         rules: {
                             let mut import_rule = ImportRule::from_url_and_import_record_idx(
-                                p.pretty,
+                                // SAFETY: as for the `ImportRule` above.
+                                unsafe { bun_ptr::detach_lifetime(p.pretty) },
                                 entry.condition_import_records.len() as u32,
                             );
                             // SAFETY: shallow struct copy. The duplicate lives in an

@@ -245,7 +245,7 @@ fn render_css_module_script(
                 } else {
                     None
                 };
-                c.log_mut().add_error(
+                c.log_disjoint().add_error(
                     source,
                     bun_ast::Loc::EMPTY,
                     std::borrow::Cow::Owned(

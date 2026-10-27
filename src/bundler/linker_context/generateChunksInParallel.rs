@@ -41,9 +41,9 @@ use crate::linker_context_mod::debug;
 
 // Const generics cannot vary the return type, so we always return
 // `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec.
-pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
-    c: &mut LinkerContext,
-    chunks: &mut [Chunk],
+pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
+    c: &mut LinkerContext<'a>,
+    chunks: &mut [Chunk<'a>],
 ) -> crate::Result<Vec<options::OutputFile>> {
     let _trace = bun_core::perf::trace("Bundler.generateChunksInParallel");
 
@@ -146,9 +146,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 if chunk.content.is_css() {
                     tasks.push(PrepareCssAstTask {
                         task: ThreadPoolLib::CountedTask::new(prepare_css_asts_for_chunk, &group),
-                        chunk: std::ptr::from_mut::<Chunk>(chunk),
-                        // `PrepareCssAstTask.linker` is `*mut LinkerContext<'static>`
-                        // (raw ptr is invariant); `.cast()` erases the inner `'a` to satisfy it.
+                        // `.cast()` erases the inner `'a`: the task's pointers are to `'static` types.
+                        chunk: std::ptr::from_mut::<Chunk>(chunk).cast(),
                         linker: std::ptr::from_mut::<LinkerContext>(c).cast(),
                     });
                     // Capacity pre-reserved → push never reallocates → ptr stays stable.
@@ -346,7 +345,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     } else {
                         None
                     };
-                    c.log_mut().add_error(source, bun_ast::Loc::EMPTY, message);
+                    c.log_disjoint()
+                        .add_error(source, bun_ast::Loc::EMPTY, message);
                 }
             }
             if had_print_error {
@@ -395,11 +395,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let mut path_names_map: StringHashMap<u32> = StringHashMap::default();
 
         #[derive(Default)]
-        struct DuplicateEntry {
+        struct DuplicateEntry<'a> {
             // `BackRef` (not `*mut`) — entries point at elements of the
             // stack-owned `chunks: &mut [Chunk]` above, which outlives the
             // `duplicates_map`; reads go through safe `Deref`.
-            sources: Vec<bun_ptr::BackRef<Chunk>>,
+            sources: Vec<bun_ptr::BackRef<Chunk<'a>>>,
         }
         let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
         let mut has_unusable_output_path = false;

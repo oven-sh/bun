@@ -183,9 +183,7 @@ pub struct BundleOptions {
     // projects this from its own `Option<NonNull<api::BunInstall>>` field
     // (CLI-owned `Box<BunInstall>`, process-lifetime).
     pub install: Option<core::ptr::NonNull<bun_options_types::schema::api::BunInstall>>,
-    /// Read the `package.json` of a directory outside `node_modules`. A package inside
-    /// `node_modules` is read either way: a standalone executable turns this off and still
-    /// resolves a dependency from disk by its `main` and `exports`.
+    /// Read the `package.json` of a directory outside `node_modules`. One inside is always read.
     pub load_package_json: bool,
     pub load_tsconfig_json: bool,
     pub main_field_extension_order: Box<[Box<[u8]>]>,

@@ -6427,9 +6427,8 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Record if this directory has a package.json file. A package inside `node_modules` is
-        // read with `load_package_json` off: its `main` and `exports` are the resolution
-        // algorithm, not a config file of the runtime environment.
+        // Record if this directory has a package.json file. A package inside node_modules is
+        // read either way: its `main` and `exports` are resolution, not project config.
         if self.opts.load_package_json || info.is_inside_node_modules() {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
                 // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,

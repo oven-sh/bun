@@ -734,3 +734,31 @@ pub(crate) fn block_compress(
         dict_mode,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_hash_rate_above_the_window_makes_for_the_smallest_table() {
+        let c_params = CompressionParameters {
+            window_log: 10,
+            chain_log: 10,
+            hash_log: 10,
+            search_log: 1,
+            min_match: 4,
+            target_length: 0,
+            strategy: Some(Strategy::Fast),
+        };
+        let mut params = LdmParams {
+            enable_ldm: ParamSwitch::Enable,
+            hash_log: 0,
+            bucket_size_log: 0,
+            min_match_length: 0,
+            hash_rate_log: 11,
+            window_log: 0,
+        };
+        adjust_parameters(&mut params, &c_params);
+        assert_eq!(params.hash_log, ZSTD_HASHLOG_MIN as u32);
+    }
+}

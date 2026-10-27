@@ -2904,9 +2904,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_toJSON, (JSGlobalObject * lex
         return {};
     }
 
-    JSObject* result = constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 2);
-    result->putDirect(vm, vm.propertyNames->type, Bun::commonStrings(vm).BufferString());
-    result->putDirect(vm, WebCore::builtinNames(vm).dataPublicName(), data);
+    // The structure is `{ type, data }`.
+    JSObject* result = constructEmptyObject(vm, uncheckedDowncast<Bun::GlobalScope>(lexicalGlobalObject)->bufferToJSONObjectStructure());
+    result->putDirectOffset(vm, 0, Bun::commonStrings(vm).BufferString());
+    result->putDirectOffset(vm, 1, data);
     return JSValue::encode(result);
 }
 

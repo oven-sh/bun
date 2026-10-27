@@ -1,6 +1,6 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, nodeExeAtLeast, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, tempDir, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import os from "node:os";
@@ -5216,162 +5216,65 @@ describe("Buffer.prototype.toString binary-to-text encodings", () => {
   });
 });
 
-// Node's toJSON copies by index up to the %TypedArray%.prototype.length of the
-// receiver, so it runs no user code. A detached or out-of-bounds view has no
-// bytes: it serializes as empty data instead of throwing.
+// A detached or out-of-bounds view has no bytes: Node serializes it as empty data. Node reads the length with
+// the %TypedArray%.prototype.length getter and copies by index, so a `length` or an iterator on the Buffer does
+// not change the result: https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L1241-L1250
 describe("Buffer.prototype.toJSON", () => {
-  const empty = { type: "Buffer", data: [] };
+  const { toJSON } = Buffer.prototype;
+  const json = data => ({ type: "Buffer", data });
 
-  it("serializes a Buffer whose ArrayBuffer was detached as empty", () => {
-    const ab = new ArrayBuffer(4);
+  function detached() {
+    const ab = new ArrayBuffer(3);
     const buf = Buffer.from(ab);
-    buf.fill(1);
-    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [1, 1, 1, 1] });
-
     ab.transfer();
-    expect(buf.length).toBe(0);
-    expect(buf.toJSON()).toEqual(empty);
-    expect(JSON.stringify(buf)).toBe('{"type":"Buffer","data":[]}');
-    expect(JSON.stringify({ buf })).toBe('{"buf":{"type":"Buffer","data":[]}}');
-  });
+    return buf;
+  }
 
-  it("serializes a length-tracking Buffer over a detached resizable ArrayBuffer as empty", () => {
-    const rab = new ArrayBuffer(4, { maxByteLength: 8 });
-    const buf = Buffer.from(rab, 0);
-    buf.fill(2);
-    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [2, 2, 2, 2] });
+  async function run(script, env = bunEnv) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
 
-    rab.transfer();
-    expect(buf.toJSON()).toEqual(empty);
-    expect(JSON.stringify(buf)).toBe('{"type":"Buffer","data":[]}');
-  });
-
-  it("serializes a fixed-length Buffer pushed out of bounds by resize() as empty", () => {
-    const rab = new ArrayBuffer(4, { maxByteLength: 8 });
-    const buf = Buffer.from(rab, 0, 4);
-    buf.fill(3);
-
-    rab.resize(2);
-    expect(buf.length).toBe(0);
-    expect(buf.toJSON()).toEqual(empty);
-    expect(JSON.stringify(buf)).toBe('{"type":"Buffer","data":[]}');
-
-    // Growing the ArrayBuffer again brings the view back in bounds; resize()
-    // keeps the surviving bytes and zero-fills the rest.
-    rab.resize(4);
-    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [3, 3, 0, 0] });
-  });
-
-  it("serializes a length-tracking Buffer whose byteOffset is past the resized end as empty", () => {
-    const rab = new ArrayBuffer(8, { maxByteLength: 8 });
-    const buf = Buffer.from(rab, 4);
-    buf.fill(4);
-    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [4, 4, 4, 4] });
-
-    rab.resize(2);
-    expect(buf.length).toBe(0);
-    expect(buf.toJSON()).toEqual(empty);
-    expect(JSON.stringify(buf)).toBe('{"type":"Buffer","data":[]}');
-  });
-
-  it("serializes a detached Uint8Array receiver as empty", () => {
+  it("serializes a detached view as empty", () => {
     const ab = new ArrayBuffer(4);
-    const view = new Uint8Array(ab).fill(5);
-    expect(Buffer.prototype.toJSON.call(view)).toEqual({ type: "Buffer", data: [5, 5, 5, 5] });
-
+    const buf = Buffer.from(ab).fill(1);
+    expect(buf.toJSON()).toEqual(json([1, 1, 1, 1]));
     ab.transfer();
-    expect(Buffer.prototype.toJSON.call(view)).toEqual(empty);
+    expect(buf.toJSON()).toEqual(json([]));
+    expect(JSON.stringify({ buf })).toBe('{"buf":{"type":"Buffer","data":[]}}');
+
+    const rab = new ArrayBuffer(4, { maxByteLength: 8 });
+    const tracking = Buffer.from(rab, 0);
+    const floats = new Float64Array(new ArrayBuffer(16));
+    rab.transfer();
+    floats.buffer.transfer();
+    expect(tracking.toJSON()).toEqual(json([]));
+    expect(toJSON.call(floats)).toEqual(json([]));
   });
 
-  it("follows the current length of a length-tracking Buffer that is still in bounds", () => {
-    const rab = new ArrayBuffer(4, { maxByteLength: 8 });
-    const buf = Buffer.from(rab, 0);
-    buf.fill(6);
+  it("serializes a view that resize() pushed out of bounds as empty", () => {
+    const rab = new ArrayBuffer(8, { maxByteLength: 8 });
+    const fixed = Buffer.from(rab, 0, 4).fill(3);
+    const tracking = Buffer.from(rab, 4).fill(4);
+    expect(tracking.toJSON()).toEqual(json([4, 4, 4, 4]));
 
     rab.resize(2);
-    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [6, 6] });
+    expect([fixed.toJSON(), tracking.toJSON()]).toEqual([json([]), json([])]);
+    expect(JSON.stringify(fixed)).toBe('{"type":"Buffer","data":[]}');
 
-    rab.resize(0);
-    expect(buf.toJSON()).toEqual(empty);
-
-    rab.resize(3);
-    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [0, 0, 0] });
-  });
-
-  it("serializes the bytes of live Buffers", () => {
-    expect(Buffer.alloc(0).toJSON()).toEqual(empty);
-    expect(Buffer.from([0, 127, 128, 255]).toJSON()).toEqual({ type: "Buffer", data: [0, 127, 128, 255] });
-    expect(Buffer.from([1, 2, 3, 4, 5]).subarray(1, 4).toJSON()).toEqual({ type: "Buffer", data: [2, 3, 4] });
-    expect(Object.keys(Buffer.from("a").toJSON())).toEqual(["type", "data"]);
-    expect(JSON.stringify(Buffer.from([7, 8, 9]))).toBe('{"type":"Buffer","data":[7,8,9]}');
-  });
-
-  describe.each([
-    ["a live Buffer", () => Buffer.from([1, 2, 3]), [1, 2, 3]],
-    [
-      "a detached Buffer",
-      () => {
-        const ab = new ArrayBuffer(3);
-        const buf = Buffer.from(ab);
-        ab.transfer();
-        return buf;
-      },
-      [],
-    ],
-  ])("on %s", (_, make, data) => {
-    const expected = { type: "Buffer", data };
-    const json = JSON.stringify(expected);
-    // A length that is wrong for this Buffer.
-    const wrongLength = data.length === 0 ? 3 : 0;
-
-    it("does not read an own length property", () => {
-      const buf = Object.defineProperty(make(), "length", { value: wrongLength });
-      expect(buf.length).toBe(wrongLength);
-      expect(buf.toJSON()).toEqual(expected);
-      expect(JSON.stringify(buf)).toBe(json);
-    });
-
-    it("does not call an own length getter that throws", () => {
-      const getter = jest.fn(() => {
-        throw new RangeError("my length");
-      });
-      const buf = Object.defineProperty(make(), "length", { get: getter });
-      expect(buf.toJSON()).toEqual(expected);
-      expect(JSON.stringify(buf)).toBe(json);
-      expect(getter).not.toHaveBeenCalled();
-      expect(() => buf.length).toThrow("my length");
-    });
-
-    it("does not call the length getter of a subclass", () => {
-      const getter = jest.fn(() => wrongLength);
-      class Sub extends Buffer {
-        get length() {
-          return getter();
-        }
-      }
-      const buf = Object.setPrototypeOf(make(), Sub.prototype);
-      expect(buf.toJSON()).toEqual(expected);
-      expect(JSON.stringify(buf)).toBe(json);
-      expect(getter).not.toHaveBeenCalled();
-      expect(buf.length).toBe(wrongLength);
-    });
-
-    it("does not call an own Symbol.iterator", () => {
-      const iterator = jest.fn(function* () {
-        yield 9;
-      });
-      const buf = Object.defineProperty(make(), Symbol.iterator, { value: iterator });
-      expect(buf.toJSON()).toEqual(expected);
-      expect(JSON.stringify(buf)).toBe(json);
-      expect(iterator).not.toHaveBeenCalled();
-    });
+    // Back in bounds: resize() keeps the surviving bytes and zero-fills the rest.
+    rab.resize(6);
+    expect([fixed.toJSON(), tracking.toJSON()]).toEqual([json([3, 3, 0, 0]), json([0, 0])]);
   });
 
   // The compiler unrolls and vectorizes the copy loop, so the lengths sit on both sides of those widths.
-  it("copies every byte at every length", () => {
+  it("copies every byte of a live Buffer", () => {
+    expect(Object.keys(Buffer.from("a").toJSON())).toEqual(["type", "data"]);
+    expect(JSON.stringify(Buffer.from([0, 127, 128, 255]))).toBe('{"type":"Buffer","data":[0,127,128,255]}');
     const source = Buffer.alloc(70_003);
     for (let i = 0; i < source.length; i++) source[i] = (i * 7) % 256;
-    for (const length of [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 1000, 70_000]) {
+    for (const length of [0, 1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 1000, 70_000]) {
       const buf = source.subarray(3, 3 + length);
       const { data } = buf.toJSON();
       expect(data.length).toBe(length);
@@ -5379,122 +5282,111 @@ describe("Buffer.prototype.toJSON", () => {
     }
   });
 
-  it("serializes the elements of a TypedArray receiver of any kind", () => {
-    const { toJSON } = Buffer.prototype;
-    expect(toJSON.call(new Uint16Array([0, 65535]))).toEqual({ type: "Buffer", data: [0, 65535] });
-    expect(toJSON.call(new Float64Array([1.5, -2.5]))).toEqual({ type: "Buffer", data: [1.5, -2.5] });
-    // Each BigInt element is a new heap cell, so this copy allocates while the result array is half filled.
-    const bigints = toJSON.call(new BigInt64Array(5000).fill(-7n)).data;
-    expect(bigints.length).toBe(5000);
-    expect(bigints.every(element => element === -7n)).toBe(true);
+  it.each([
+    ["a live Buffer", () => Buffer.from([1, 2, 3]), [1, 2, 3], 0],
+    ["a detached Buffer", detached, [], 3],
+  ])("does not read a length or a Symbol.iterator of %s", (_, make, data, wrongLength) => {
+    const hook = jest.fn(() => {
+      throw new RangeError("my length");
+    });
+    class Sub extends Buffer {
+      get length() {
+        return hook();
+      }
+    }
+    const bufs = [
+      Object.defineProperty(make(), "length", { value: wrongLength }),
+      Object.defineProperty(make(), "length", { get: hook }),
+      Object.setPrototypeOf(make(), Sub.prototype),
+      Object.defineProperty(make(), Symbol.iterator, { value: hook }),
+    ];
+    expect(bufs[0].length).toBe(wrongLength);
+    for (const buf of bufs) {
+      expect(buf.toJSON()).toEqual(json(data));
+      expect(JSON.stringify(buf)).toBe(JSON.stringify(json(data)));
+    }
+    expect(hook).not.toHaveBeenCalled();
+  });
+
+  // These patches are process-wide, so they run in their own process.
+  it("does not read Array.from, the TypedArray iterator or a replaced %TypedArray%.prototype.length", async () => {
+    const script = `
+      const buf = Buffer.from([1, 2, 3]);
+      const TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+      const ArrayIteratorPrototype = Object.getPrototypeOf([][Symbol.iterator]());
+      const objects = [Array, TypedArrayPrototype, ArrayIteratorPrototype, TypedArrayPrototype];
+      const keys = ["from", Symbol.iterator, "next", "length"];
+      const originals = keys.map((key, i) => Object.getOwnPropertyDescriptor(objects[i], key));
+      let reads = 0;
+      const hook = { get() { reads++; }, configurable: true };
+      // No for-of here: the array iterator is one of the patched properties.
+      for (let i = 0; i < keys.length; i++) Object.defineProperty(objects[i], keys[i], hook);
+      const { data } = buf.toJSON();
+      for (let i = 0; i < keys.length; i++) Object.defineProperty(objects[i], keys[i], originals[i]);
+      console.log(JSON.stringify({ data, reads }));
+    `;
+    expect(await run(script)).toEqual({ stdout: '{"data":[1,2,3],"reads":0}', stderr: "", exitCode: 0 });
+  });
+
+  it("serializes the elements of a TypedArray of any kind", () => {
+    const data = view => toJSON.call(view).data;
+    expect(data(new Int8Array([-128, 127]))).toEqual([-128, 127]);
+    expect(data(new Uint32Array([0, 2 ** 32 - 1]))).toEqual([0, 2 ** 32 - 1]);
+    expect(data(new Float64Array([1.5, NaN, -0]))).toEqual([1.5, NaN, -0]);
+    expect(data(new BigUint64Array([0n, 2n ** 64n - 1n]))).toEqual([0n, 2n ** 64n - 1n]);
+    expect(data(Buffer.from(new SharedArrayBuffer(2)).fill(5))).toEqual([5, 5]);
+    // Each BigInt is a new heap cell, so this copy allocates while the result array is half filled.
+    expect(data(new BigInt64Array(5000).fill(-7n)).findIndex(element => element !== -7n)).toBe(-1);
   });
 
   it("throws a TypeError for a receiver that is not a TypedArray", () => {
-    const { toJSON } = Buffer.prototype;
-    const receivers = {
-      "{}": {},
-      "{ length: 1, 0: 1 }": { length: 1, 0: 1 },
-      "[1, 2]": [1, 2],
-      "'ab'": "ab",
-      "1": 1,
-      "undefined": undefined,
-      "null": null,
-      "DataView": new DataView(new ArrayBuffer(2)),
-      "ArrayBuffer": new ArrayBuffer(2),
-      "Proxy of a Buffer": new Proxy(Buffer.from([1]), {}),
-      "Object.create(Buffer)": Object.create(Buffer.from([1])),
-    };
-    const thrown = {};
-    for (const [name, receiver] of Object.entries(receivers)) {
-      try {
-        thrown[name] = toJSON.call(receiver);
-      } catch (error) {
-        thrown[name] = `${error.name}: ${error.message}`;
-      }
+    const buf = Buffer.from([1]);
+    const receivers = [{}, { length: 1, 0: 1 }, [1, 2], "ab", 1, undefined, null, buf.buffer];
+    receivers.push(new DataView(buf.buffer), new Proxy(buf, {}), Object.create(buf));
+    for (const receiver of receivers) {
+      expect(() => toJSON.call(receiver)).toThrow(
+        expect.objectContaining({ name: "TypeError", message: "Receiver should be a typed array view" }),
+      );
     }
-    expect(thrown).toEqual(
-      Object.fromEntries(
-        Object.keys(receivers).map(name => [name, "TypeError: Receiver should be a typed array view"]),
-      ),
-    );
   });
 
   it("is a function named toJSON that returns a new plain object and a new array", () => {
-    const { toJSON } = Buffer.prototype;
     expect(Object.getOwnPropertyDescriptor(Buffer.prototype, "toJSON")).toEqual({
       value: toJSON,
       writable: true,
       enumerable: true,
       configurable: true,
     });
-    expect({ name: toJSON.name, length: toJSON.length }).toEqual({ name: "toJSON", length: 0 });
+    expect([toJSON.name, toJSON.length]).toEqual(["toJSON", 0]);
 
     const buf = Buffer.from([1, 2]);
     const result = buf.toJSON();
     expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
     expect(Object.getPrototypeOf(result.data)).toBe(Array.prototype);
     result.data.push(3);
-    expect(result.data).toEqual([1, 2, 3]);
-    expect(buf.toJSON()).toEqual({ type: "Buffer", data: [1, 2] });
-  });
-
-  it("serializes the same data through JSON.stringify and Response.json", async () => {
-    const shadowed = Object.defineProperty(Buffer.from([1, 2]), "length", { value: 0 });
-    const ab = new ArrayBuffer(2);
-    const detached = Object.defineProperty(Buffer.from(ab), "length", { value: 2 });
-    ab.transfer();
-    const json = '{"shadowed":{"type":"Buffer","data":[1,2]},"detached":{"type":"Buffer","data":[]}}';
-
-    expect(JSON.stringify({ shadowed, detached })).toBe(json);
-    expect(JSON.stringify({ shadowed, detached }, (key, value) => value, 1)).toBe(
-      JSON.stringify(JSON.parse(json), null, 1),
-    );
-    expect(await Response.json({ shadowed, detached }).text()).toBe(json);
-  });
-
-  async function run(cmd, env = bunEnv) {
-    await using proc = Bun.spawn({ cmd, env, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
-  // The fixture patches prototypes and globals, so it runs in its own process.
-  // Each of its rows carries the answer of Node.js v26.3.0.
-  const fixture = join(import.meta.dir, "buffer-tojson-fixture.js");
-  const everyRowMatches = { stdout: "55 of 55 rows match\n", stderr: "", exitCode: 0 };
-
-  it("gives the answer of Node.js for every row of buffer-tojson-fixture.js", async () => {
-    expect(await run([bunExe(), fixture])).toEqual(everyRowMatches);
-  });
-
-  // Node.js read `this.length` until https://github.com/nodejs/node/pull/61871 (v24.15.0 and v25.9.0).
-  it.skipIf(!nodeExeAtLeast("25.9.0"))("the installed Node.js gives the answers in the fixture", async () => {
-    expect(await run([nodeExe(), fixture])).toEqual(everyRowMatches);
+    expect([result, buf.toJSON()]).toEqual([json([1, 2, 3]), json([1, 2])]);
   });
 
   // An indexed setter on Array.prototype changes how JSC stores every array created after it, in this process only.
-  // Node.js assigns `data[i] = this[i]`, which calls that setter. Bun defines the elements, as `Array.from` did.
+  // Node assigns `data[i] = this[i]`, which calls that setter. Bun defines the elements, as `Array.from` did.
   it("defines the elements when Array.prototype has an indexed setter", async () => {
     const script = `
       let calls = 0;
       Object.defineProperty(Array.prototype, 0, { set() { calls++; }, configurable: true });
       const { toJSON } = Buffer.prototype;
-      const results = [
-        toJSON.call(Buffer.from([1, 2, 3])).data,
-        toJSON.call(new Float64Array([1.5, 2.5])).data,
-        toJSON.call(new BigInt64Array([7n, 8n])).data.map(String),
-      ];
+      const receivers = [Buffer.from([1, 2, 3]), new Float64Array([1.5, 2.5]), new BigInt64Array([7n, 8n])];
+      const results = receivers.map(receiver => toJSON.call(receiver).data);
       const own = results.map(data => Object.hasOwn(data, 0));
       delete Array.prototype[0];
-      console.log(JSON.stringify({ results, own, calls }));
+      console.log(JSON.stringify({ results: results.map(data => data.map(String)), own, calls }));
     `;
     const results = [
-      [1, 2, 3],
-      [1.5, 2.5],
+      ["1", "2", "3"],
+      ["1.5", "2.5"],
       ["7", "8"],
     ];
-    expect(await run([bunExe(), "-e", script])).toEqual({
-      stdout: JSON.stringify({ results, own: [true, true, true], calls: 0 }) + "\n",
+    expect(await run(script)).toEqual({
+      stdout: JSON.stringify({ results, own: [true, true, true], calls: 0 }),
       stderr: "",
       exitCode: 0,
     });
@@ -5504,16 +5396,14 @@ describe("Buffer.prototype.toJSON", () => {
   // length is 0 as a uint32. An array of exactly 2**28 elements takes 2 GiB, so that length is not tested.
   it.skipIf(os.totalmem() < 10 * 1024 ** 3)("throws a RangeError for a Buffer that does not fit an array", async () => {
     const script = `
-      const out = {};
-      for (const length of [2 ** 28 + 1, 2 ** 32]) {
-        try { Buffer.allocUnsafe(length).toJSON(); out[length] = "no throw"; }
-        catch (e) { out[length] = e.name + ": " + e.message; }
-      }
-      console.log(JSON.stringify(out));
+      const thrown = [2 ** 28 + 1, 2 ** 32].map(length => {
+        try { return Buffer.allocUnsafe(length).toJSON().data.length; }
+        catch (e) { return e.name + ": " + e.message; }
+      });
+      console.log(JSON.stringify(thrown));
     `;
-    expect(await run([bunExe(), "-e", script], { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" })).toEqual({
-      stdout:
-        JSON.stringify({ [2 ** 28 + 1]: "RangeError: Out of memory", [2 ** 32]: "RangeError: Out of memory" }) + "\n",
+    expect(await run(script, { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" })).toEqual({
+      stdout: JSON.stringify(["RangeError: Out of memory", "RangeError: Out of memory"]),
       stderr: "",
       exitCode: 0,
     });

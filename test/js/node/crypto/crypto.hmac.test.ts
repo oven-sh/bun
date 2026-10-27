@@ -441,7 +441,7 @@ describe("crypto.Hmac", () => {
 
   describe("digest(encoding) when converting the encoding finalizes the Hmac", () => {
     // HMAC of "x" with the key "k".
-    const hmacs = {
+    const hmacs: Record<string, string> = {
       sha512:
         "38fbcb094b99f9a73d862d0cb2b01f9882259c562fbae7f3e39fe05ebf1dcb7a" +
         "67580d8ca23dd2a0de710c3563d988018ae1424e5b2d2de34dd4f4ede3c7fc4c",
@@ -468,34 +468,37 @@ describe("crypto.Hmac", () => {
       "digest()": h => h.digest("hex"),
       "end()": h => (h.end(), h.read().toString("hex")),
     };
-    const emptyResults = { hex: "", latin1: "", base64: "", buffer: Buffer.alloc(0) };
+    const emptyResults: Record<string, string | Buffer> = { hex: "", latin1: "", base64: "", buffer: Buffer.alloc(0) };
 
-    test("the outer call returns an empty result", () => {
-      for (const [algorithm, hmac] of Object.entries(hmacs)) {
-        for (const [hook, makeEncoding] of Object.entries(hooks)) {
-          for (const [finalizer, finalize] of Object.entries(finalizers)) {
-            for (const [encoding, empty] of Object.entries(emptyResults)) {
-              const row = `${algorithm}, ${hook} calls ${finalizer} and returns "${encoding}"`;
-              const h = createHmac(algorithm, "k").update("x");
-              let conversions = 0;
-              let inner: string | undefined;
-              const encodingArgument = makeEncoding(() => {
-                conversions++;
-                inner = finalize(h);
-                return encoding;
-              });
+    const rows = Object.keys(hmacs).flatMap(algorithm =>
+      Object.keys(hooks).flatMap(hook =>
+        Object.keys(finalizers).flatMap(finalizer =>
+          Object.keys(emptyResults).map(encoding => [algorithm, hook, finalizer, encoding]),
+        ),
+      ),
+    );
 
-              const outer = (h as any).digest(encodingArgument);
-              expect({ row, outer, inner, conversions }).toEqual({ row, outer: empty, inner: hmac, conversions: 1 });
+    test.each(rows)('%s: %s calls %s and returns "%s"', (algorithm, hook, finalizer, encoding) => {
+      const h = createHmac(algorithm, "k").update("x");
+      let conversions = 0;
+      let inner: string | undefined;
+      const encodingArgument = hooks[hook](() => {
+        conversions++;
+        inner = finalizers[finalizer](h);
+        return encoding;
+      });
 
-              // The Hmac is finalized: digest() does not convert the encoding again.
-              (h as any).digest(encodingArgument);
-              expect({ row, digest: h.digest("hex"), conversions }).toEqual({ row, digest: "", conversions: 1 });
-              expect(() => h.update("y")).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_HASH_FINALIZED" }));
-            }
-          }
-        }
-      }
+      const outer = (h as any).digest(encodingArgument);
+      expect({ outer, inner, conversions }).toEqual({
+        outer: emptyResults[encoding],
+        inner: hmacs[algorithm],
+        conversions: 1,
+      });
+
+      // The Hmac is finalized: digest() does not convert the encoding again.
+      (h as any).digest(encodingArgument);
+      expect({ digest: h.digest("hex"), conversions }).toEqual({ digest: "", conversions: 1 });
+      expect(() => h.update("y")).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_HASH_FINALIZED" }));
     });
 
     test("every outer call of a nested conversion returns an empty result", () => {

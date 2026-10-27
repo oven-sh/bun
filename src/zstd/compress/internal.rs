@@ -1333,11 +1333,9 @@ impl<T> Table<T> {
 }
 
 impl<T: bun_pod::Zeroable + Copy + Default> Table<T> {
-    /// Gives it the length `len`. What it holds is 0, or if `clean` is false possibly what it held before.
-    ///
-    /// `read_first` tells that most of it is to be read before it is written. New memory is then written to right away:
-    /// else the system would provide each page twice, once to be read and once to be written.
-    pub(crate) fn reset(&mut self, len: usize, clean: bool, read_first: bool) -> Result<()> {
+    /// Gives it the length `len`. What it holds is 0, or if `clean` is false possibly what it held before. Returns
+    /// whether it is new memory.
+    pub(crate) fn reset(&mut self, len: usize, clean: bool) -> Result<bool> {
         let is_new = self.len != len;
         if is_new {
             // First, so that both are not allocated at once.
@@ -1351,10 +1349,10 @@ impl<T: bun_pod::Zeroable + Copy + Default> Table<T> {
                 len,
             };
         }
-        if if is_new { read_first } else { clean } {
+        if clean && !is_new {
             self.fill(T::default());
         }
-        Ok(())
+        Ok(is_new)
     }
 }
 

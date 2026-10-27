@@ -194,8 +194,7 @@ fn reset_match_state(
     // As long as indices go on, the ones in the tables are too low to be valid.
     let clean = force_reset_index == IndexResetPolicy::Reset && crp != CompResetPolicy::LeaveDirty;
     let use_rows = row_match_finder_used(c_params.strat(), use_row_match_finder);
-    // An entry of a row is written before it is read.
-    ms.hash_table.reset(sizes.h_size, clean, !use_rows)?;
+    ms.hash_table.reset(sizes.h_size, clean)?;
     reset_table(&mut ms.chain_table, sizes.chain_size, clean)?;
     reset_table(&mut ms.hash_table3, sizes.h3_size, clean)?;
 
@@ -205,14 +204,17 @@ fn reset_match_state(
             ResetTarget::CDict => RowTags::Flat,
         };
         let tag_table_size = lazy::row_tag_table_size(ms.row_tags, sizes.h_size);
-        if for_who == ResetTarget::CCtx {
-            // A new salt instead of erasing the tags.
-            ms.tag_table.reset(tag_table_size, false, true)?;
-            ms.hash_salt = bitmix(ms.hash_salt, 8) ^ bitmix(u64::from(ms.hash_salt_entropy), 4);
-        } else {
-            ms.tag_table.reset(tag_table_size, true, true)?;
-            ms.hash_salt = 0;
+        // In a context, a new salt instead of erasing the tags.
+        if (ms.tag_table).reset(tag_table_size, for_who == ResetTarget::CDict)? {
+            // Most of it is read before it is written, for which the system would provide each page twice.
+            ms.tag_table.fill(0);
         }
+        ms.hash_salt = match for_who {
+            ResetTarget::CCtx => {
+                bitmix(ms.hash_salt, 8) ^ bitmix(u64::from(ms.hash_salt_entropy), 4)
+            }
+            ResetTarget::CDict => 0,
+        };
         let row_log = c_params.search_log.clamp(4, 6);
         ms.row_hash_log = c_params.hash_log - row_log;
     } else {

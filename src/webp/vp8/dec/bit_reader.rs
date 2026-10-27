@@ -53,7 +53,7 @@ impl<'a> BitReader<'a> {
 
     #[inline(always)]
     fn load_new_bytes(&mut self) {
-        // Only when 8 bytes are left, although 7 are taken: when `eof` is set depends on it.
+        // Only when 8 bytes are left, as in libwebp, although 7 are taken: damaged streams decode differently otherwise.
         if let (Some(&bytes), Some(rest)) = (self.buf.first_chunk::<8>(), self.buf.get(7..)) {
             self.buf = rest;
             self.value = (u64::from_be_bytes(bytes) >> 8) | (self.value << BITS);
@@ -136,5 +136,14 @@ impl<'a> BitReader<'a> {
     pub(super) fn get_signed_value(&mut self, bits: u32) -> i32 {
         let value = self.get_value(bits) as i32;
         if self.get() { -value } else { value }
+    }
+
+    /// A flag, then `get_signed_value(bits)` if it is set. Otherwise 0.
+    pub(super) fn get_optional_signed_value(&mut self, bits: u32) -> i32 {
+        if self.get() {
+            self.get_signed_value(bits)
+        } else {
+            0
+        }
     }
 }

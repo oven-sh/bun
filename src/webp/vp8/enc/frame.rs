@@ -6,7 +6,10 @@ use super::cost::{Proba, TYPE_CHROMA_A, TYPE_I4_AC, TYPE_I16_AC, TYPE_I16_DC, bi
 use super::filter::adjust_filter_strength;
 use super::iterator::EncIterator;
 use super::quant::{ModeScore, decimate, set_segment_params};
-use super::tables::{COEFFS_PROBA0, COEFFS_UPDATE_PROBA, NUM_MB_SEGMENTS, flatten, flatten_mut};
+use super::tables::{
+    COEFFS_PROBA0, COEFFS_UPDATE_PROBA, MB_FEATURE_TREE_PROBS, NUM_MB_SEGMENTS, flatten,
+    flatten_mut,
+};
 use super::token::TokenBuffer;
 use crate::Result;
 use crate::util::Checked;
@@ -75,7 +78,7 @@ fn set_segment_probas(enc: &mut Encoder<'_>) -> Checked {
         get_proba(p2, p3),
     ];
     enc.proba.segments = probas;
-    enc.segment_hdr.update_map = probas != [255; 3];
+    enc.segment_hdr.update_map = probas != [255; MB_FEATURE_TREE_PROBS];
     if !enc.segment_hdr.update_map {
         for mb in &mut enc.mb_info {
             mb.segment = 0;

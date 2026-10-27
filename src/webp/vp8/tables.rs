@@ -1,12 +1,9 @@
 //! Constant tables of the VP8 format (RFC 6386), which libwebp has once for the decoder and once for the encoder.
 
-use super::common::{NUM_BANDS, NUM_BMODES, NUM_CTX, NUM_PROBAS, NUM_TYPES};
-
-/// Where the coefficients of a block are, in the order of the bitstream.
-pub(crate) const ZIGZAG: [u8; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
+use super::common::{NUM_BMODES, NUM_POSITIONS, Probas};
 
 /// The band of each coefficient. The last entry stands for the position after the last coefficient.
-pub(crate) const BANDS: [u8; 16 + 1] = [0, 1, 2, 3, 6, 4, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 0];
+pub(crate) const BANDS: [u8; NUM_POSITIONS] = [0, 1, 2, 3, 6, 4, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 0];
 
 /// Paragraph 13.2: the probabilities of the extra bits of the large coefficients.
 pub(crate) const CAT3: [u8; 3] = [173, 148, 140];
@@ -34,7 +31,7 @@ pub(crate) static AC_TABLE: [u16; 128] = [
 ];
 
 /// Paragraph 13.5
-pub(crate) static COEFFS_PROBA0: [[[[u8; NUM_PROBAS]; NUM_CTX]; NUM_BANDS]; NUM_TYPES] = [
+pub(crate) static COEFFS_PROBA0: Probas<u8> = [
     [
         [
             [128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128],
@@ -206,7 +203,7 @@ pub(crate) static COEFFS_PROBA0: [[[[u8; NUM_PROBAS]; NUM_CTX]; NUM_BANDS]; NUM_
 ];
 
 /// Paragraph 13.4
-pub(crate) static COEFFS_UPDATE_PROBA: [[[[u8; NUM_PROBAS]; NUM_CTX]; NUM_BANDS]; NUM_TYPES] = [
+pub(crate) static COEFFS_UPDATE_PROBA: Probas<u8> = [
     [
         [
             [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],

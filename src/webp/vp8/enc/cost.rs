@@ -4,7 +4,7 @@ use super::dsp::{self, Coeffs, Lanes};
 use super::iterator::EncIterator;
 use super::tables::{
     COEFFS_PROBA0, ENC_BANDS, ENTROPY_COST, LEVEL_CODES, LEVEL_FIXED_COSTS, MAX_VARIABLE_LEVEL,
-    NUM_BANDS, NUM_CTX, NUM_PROBAS, NUM_TYPES, Probas,
+    MB_FEATURE_TREE_PROBS, NUM_BANDS, NUM_CTX, NUM_PROBAS, NUM_TYPES, Probas,
 };
 use crate::util::{Checked, SliceExt};
 
@@ -18,7 +18,7 @@ type LevelCosts = [u16; MAX_VARIABLE_LEVEL + 1];
 /// The probabilities of the frame.
 pub(super) struct Proba {
     /// For the tree of the segments.
-    pub(super) segments: [u8; 3],
+    pub(super) segments: [u8; MB_FEATURE_TREE_PROBS],
     pub(super) coeffs: Probas<u8>,
     /// How often each of `coeffs` was used, in the high 16 bits, and how often for a 1, in the low ones.
     pub(super) stats: Probas<u32>,
@@ -50,7 +50,7 @@ fn variable_level_cost(level: usize, probas: &[u8; NUM_PROBAS]) -> Checked<i32> 
 impl Proba {
     pub(super) fn new() -> Self {
         Self {
-            segments: [255; 3],
+            segments: [255; MB_FEATURE_TREE_PROBS],
             coeffs: COEFFS_PROBA0,
             stats: [[[[0; NUM_PROBAS]; NUM_CTX]; NUM_BANDS]; NUM_TYPES],
             level_cost: [[[[0; MAX_VARIABLE_LEVEL + 1]; NUM_CTX]; NUM_BANDS]; NUM_TYPES],

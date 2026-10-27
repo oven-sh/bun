@@ -2,59 +2,53 @@
 
 use super::dsp::{self, BPS, Edges, Thresholds, U_OFF, V_OFF, Y_OFF, YUV_SIZE, YuvB};
 use super::io::{Emitter, Rows};
-use super::{Decoder, FilterType, MbContext, MbData};
+use super::{Decoder, FilterType, MbData};
 use crate::util::{Checked, SliceExt, try_vec};
-use crate::vp8::common::{IntraMode, NUM_MB_SEGMENTS};
-use crate::{Output, Result, alpha};
+use crate::vp8::common::NUM_MB_SEGMENTS;
+use crate::{Output, Result};
 
-/// How a macroblock is filtered.
+/// `VP8FInfo`: how a macroblock is filtered.
 #[derive(Clone, Copy, Default)]
-pub(super) struct FInfo {
+pub(super) struct FilterInfo {
     /// 3 to 189, or 0 for no filtering.
-    f_limit: u8,
+    limit: u8,
     /// 1 to 63
-    f_ilevel: u8,
+    interior_limit: u8,
     /// Whether the edges inside the macroblock are filtered too.
-    pub(super) f_inner: bool,
+    pub(super) inner_edges: bool,
     /// 0 to 2
     hev_thresh: u8,
 }
 
 /// The last row of a macroblock, for the prediction of the one below.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct TopSamples {
     y: [u8; 16],
     u: [u8; 8],
     v: [u8; 8],
 }
 
-pub(super) struct Frame<'a> {
+pub(super) struct Frame {
     height: usize,
     mb_w: usize,
     mb_h: usize,
     pub(super) filter_type: FilterType,
     /// By segment, then by whether the macroblock is predicted in 4x4 blocks.
-    pub(super) fstrengths: [[FInfo; 2]; NUM_MB_SEGMENTS],
+    pub(super) filter_strengths: [[FilterInfo; 2]; NUM_MB_SEGMENTS],
 
-    /// The modes of the 4x4 blocks above the current row of macroblocks, and to the left of the current macroblock.
-    pub(super) intra_t: Vec<[IntraMode; 4]>,
-    pub(super) intra_l: [IntraMode; 4],
-    pub(super) mb_info: Vec<MbContext>,
-    pub(super) left_info: MbContext,
-    /// Empty without filtering.
-    pub(super) f_info: Vec<FInfo>,
+    /// The current row of macroblocks. `filter_info` is empty without filtering.
+    pub(super) filter_info: Vec<FilterInfo>,
     pub(super) mb_data: Vec<MbData>,
 
     yuv_t: Vec<TopSamples>,
     yuv_b: YuvB,
-    /// A row of macroblocks below `extra_y_rows` rows still to be filtered. Each element is one row of one macroblock.
+    /// A row of macroblocks below `FilterType::extra_rows` rows of the one above. An element is a row of a macroblock.
     cache_y: Vec<[u8; 16]>,
-    /// The same with half as many rows.
+    /// The chroma planes have half as many rows as `cache_y`.
     cache_u: Vec<[u8; 8]>,
     cache_v: Vec<[u8; 8]>,
 
-    alpha_data: Option<&'a [u8]>,
-    emitter: Emitter,
+    pub(super) emitter: Emitter,
 }
 
 /// Where the 4x4 blocks are in the work buffer.
@@ -93,33 +87,18 @@ fn do_uv_transform(bits: u32, src: &[[i16; 16]], yuv_b: &mut YuvB, off: usize) -
     Ok(())
 }
 
-/// How many rows above a macroblock its filtering can change, or read in the case of the simple filter.
-fn filter_extra_rows(filter_type: FilterType) -> usize {
-    match filter_type {
-        FilterType::Off => 0,
-        FilterType::Simple => 2,
-        FilterType::Complex => 8,
-    }
-}
-
-fn precompute_filter_strengths(dec: &Decoder<'_>) -> [[FInfo; 2]; NUM_MB_SEGMENTS] {
+fn precompute_filter_strengths(dec: &Decoder<'_>) -> [[FilterInfo; 2]; NUM_MB_SEGMENTS] {
     let hdr = &dec.filter_hdr;
-    let mut fstrengths = [[FInfo::default(); 2]; NUM_MB_SEGMENTS];
-    for (infos, &strength) in fstrengths.iter_mut().zip(&dec.segment_hdr.filter_strength) {
+    let mut strengths = [[FilterInfo::default(); 2]; NUM_MB_SEGMENTS];
+    for (infos, &strength) in strengths.iter_mut().zip(&dec.segment_hdr.filter_strength) {
         let base_level = match (dec.segment_hdr.use_segment, dec.segment_hdr.absolute_delta) {
             (false, _) => hdr.level,
             (true, true) => i32::from(strength),
             (true, false) => i32::from(strength) + hdr.level,
         };
         for (info, i4x4) in infos.iter_mut().zip([false, true]) {
-            let mut level = base_level;
-            if hdr.use_lf_delta {
-                level += hdr.ref_lf_delta[0];
-                if i4x4 {
-                    level += hdr.mode_lf_delta[0];
-                }
-            }
-            let level = level.clamp(0, 63);
+            let mode_lf_delta = if i4x4 { hdr.mode_lf_delta } else { 0 };
+            let level = (base_level + hdr.ref_lf_delta + mode_lf_delta).clamp(0, 63);
             if level > 0 {
                 let mut ilevel = level;
                 if hdr.sharpness > 0 {
@@ -127,65 +106,49 @@ fn precompute_filter_strengths(dec: &Decoder<'_>) -> [[FInfo; 2]; NUM_MB_SEGMENT
                     ilevel = ilevel.min(9 - hdr.sharpness);
                 }
                 let ilevel = ilevel.max(1);
-                info.f_ilevel = ilevel as u8;
-                info.f_limit = (2 * level + ilevel) as u8;
+                info.interior_limit = ilevel as u8;
+                info.limit = (2 * level + ilevel) as u8;
                 info.hev_thresh = match level {
                     40.. => 2,
                     15.. => 1,
                     _ => 0,
                 };
             }
-            info.f_inner = i4x4;
+            info.inner_edges = i4x4;
         }
     }
-    fstrengths
+    strengths
 }
 
-impl<'a> Frame<'a> {
+impl Frame {
     /// `VP8EnterCritical` and `VP8InitFrame`
-    pub(super) fn new(dec: &Decoder<'_>, alpha_data: Option<&'a [u8]>) -> Result<Self> {
+    pub(super) fn new(dec: &Decoder<'_>) -> Result<Self> {
         let emitter = Emitter::new(dec.width, dec.height)?;
         let mb_w = dec.mb_w;
         let filter_type = dec.filter_hdr.filter_type;
-        let extra_rows = filter_extra_rows(filter_type);
-        let top = TopSamples {
-            y: [0; 16],
-            u: [0; 8],
-            v: [0; 8],
-        };
+        let extra_rows = filter_type.extra_rows();
         Ok(Self {
             height: dec.height,
             mb_w,
             mb_h: dec.mb_h,
             filter_type,
-            fstrengths: precompute_filter_strengths(dec),
-            intra_t: try_vec([IntraMode::Dc; 4], mb_w)?,
-            intra_l: [IntraMode::Dc; 4],
-            mb_info: try_vec(MbContext::default(), mb_w)?,
-            left_info: MbContext::default(),
-            f_info: match filter_type {
+            filter_strengths: precompute_filter_strengths(dec),
+            filter_info: match filter_type {
                 FilterType::Off => Vec::new(),
-                _ => try_vec(FInfo::default(), mb_w)?,
+                _ => try_vec(FilterInfo::default(), mb_w)?,
             },
-            mb_data: try_vec(MbData::EMPTY, mb_w)?,
-            yuv_t: try_vec(top, mb_w)?,
+            mb_data: try_vec(MbData::default(), mb_w)?,
+            yuv_t: try_vec(TopSamples::default(), mb_w)?,
             yuv_b: [0; YUV_SIZE],
             cache_y: try_vec([0; 16], (16 + extra_rows) * mb_w)?,
             cache_u: try_vec([0; 8], (8 + extra_rows / 2) * mb_w)?,
             cache_v: try_vec([0; 8], (8 + extra_rows / 2) * mb_w)?,
-            alpha_data,
             emitter,
         })
     }
 
-    /// `VP8InitScanline`
-    pub(super) fn init_scanline(&mut self) {
-        self.left_info = MbContext::default();
-        self.intra_l = [IntraMode::Dc; 4];
-    }
-
-    fn reconstruct_row(&mut self, mb_y: usize) -> Checked {
-        let extra_rows = filter_extra_rows(self.filter_type);
+    pub(super) fn reconstruct_row(&mut self, mb_y: usize) -> Checked {
+        let extra_rows = self.filter_type.extra_rows();
         let yuv_b = &mut self.yuv_b;
 
         // There is nothing to the left of the first macroblock.
@@ -201,22 +164,13 @@ impl<'a> Frame<'a> {
             yuv_b[U_OFF - 1 - BPS] = 129;
             yuv_b[V_OFF - 1 - BPS] = 129;
         } else {
-            // Nor above the first row. It stays as it is for the whole row.
-            yuv_b
-                .sub_mut(Y_OFF - BPS - 1..)?
-                .sub_mut(..16 + 4 + 1)?
-                .fill(127);
-            yuv_b
-                .sub_mut(U_OFF - BPS - 1..)?
-                .sub_mut(..8 + 1)?
-                .fill(127);
-            yuv_b
-                .sub_mut(V_OFF - BPS - 1..)?
-                .sub_mut(..8 + 1)?
-                .fill(127);
+            // There is nothing above the first row of macroblocks. No macroblock of the row overwrites this.
+            *yuv_b.array_at_mut(Y_OFF - BPS - 1)? = [127; 1 + 16 + 4];
+            *yuv_b.array_at_mut(U_OFF - BPS - 1)? = [127; 1 + 8];
+            *yuv_b.array_at_mut(V_OFF - BPS - 1)? = [127; 1 + 8];
         }
 
-        for (mb_x, block) in self.mb_data.iter().enumerate() {
+        for (mb_x, mb) in self.mb_data.iter().enumerate() {
             // The last columns of the previous macroblock become the left samples, with the top left one.
             if mb_x > 0 {
                 for j in 0..17 {
@@ -234,8 +188,8 @@ impl<'a> Frame<'a> {
                 yuv_b.write_at(V_OFF - BPS, &top_yuv.v)?;
             }
 
-            let mut bits = block.non_zero_y;
-            if block.is_i4x4 {
+            let mut bits = mb.non_zero_y;
+            if mb.is_i4x4 {
                 const TOP_RIGHT: usize = Y_OFF - BPS + 16;
                 if mb_y > 0 {
                     let top_right = match self.yuv_t.get(mb_x + 1) {
@@ -248,26 +202,26 @@ impl<'a> Frame<'a> {
                 for j in 1..4 {
                     yuv_b.move_within(TOP_RIGHT, TOP_RIGHT + j * 4 * BPS, 4)?;
                 }
-                for ((&mode, coeffs), at) in block.imodes.iter().zip(&block.coeffs).zip(SCAN) {
+                for ((&mode, coeffs), at) in mb.imodes.iter().zip(&mb.coeffs).zip(SCAN) {
                     dsp::predict_luma4(mode, yuv_b.array_at_mut(Y_OFF + at - BPS - 1)?);
                     do_transform(bits, coeffs, yuv_b.array_at_mut(Y_OFF + at)?);
                     bits <<= 2;
                 }
             } else {
-                dsp::predict_block::<16>(block.imodes[0], mb_y > 0, mb_x > 0, yuv_b, Y_OFF)?;
+                dsp::predict_block::<16>(mb.imodes[0], mb_y > 0, mb_x > 0, yuv_b, Y_OFF)?;
                 if bits != 0 {
-                    for (coeffs, at) in block.coeffs.iter().zip(SCAN) {
+                    for (coeffs, at) in mb.coeffs.iter().zip(SCAN) {
                         do_transform(bits, coeffs, yuv_b.array_at_mut(Y_OFF + at)?);
                         bits <<= 2;
                     }
                 }
             }
 
-            let bits_uv = block.non_zero_uv;
-            dsp::predict_block::<8>(block.uvmode, mb_y > 0, mb_x > 0, yuv_b, U_OFF)?;
-            dsp::predict_block::<8>(block.uvmode, mb_y > 0, mb_x > 0, yuv_b, V_OFF)?;
-            do_uv_transform(bits_uv, block.coeffs.sub(16..20)?, yuv_b, U_OFF)?;
-            do_uv_transform(bits_uv >> 8, block.coeffs.sub(20..24)?, yuv_b, V_OFF)?;
+            let bits_uv = mb.non_zero_uv;
+            dsp::predict_block::<8>(mb.uvmode, mb_y > 0, mb_x > 0, yuv_b, U_OFF)?;
+            dsp::predict_block::<8>(mb.uvmode, mb_y > 0, mb_x > 0, yuv_b, V_OFF)?;
+            do_uv_transform(bits_uv, mb.coeffs.sub(16..20)?, yuv_b, U_OFF)?;
+            do_uv_transform(bits_uv >> 8, mb.coeffs.sub(20..24)?, yuv_b, V_OFF)?;
 
             if mb_y + 1 < self.mb_h {
                 let top_yuv = self.yuv_t.at_mut(mb_x)?;
@@ -293,18 +247,17 @@ impl<'a> Frame<'a> {
 
     fn do_filter(&mut self, mb_x: usize, mb_y: usize) -> Checked {
         let stride = self.mb_w;
-        let extra_rows = filter_extra_rows(self.filter_type);
-        let f_info = self.f_info.at(mb_x)?;
+        let extra_rows = self.filter_type.extra_rows();
+        let info = self.filter_info.at(mb_x)?;
         let y_dst = &mut self.cache_y;
         let y_at = extra_rows * stride + mb_x;
-        let ilevel = f_info.f_ilevel;
-        let limit = f_info.f_limit;
+        let limit = info.limit;
         if limit == 0 {
             return Ok(());
         }
         // The vertical edges first, and in each direction the edge of the macroblock before those inside it.
         if self.filter_type == FilterType::Simple {
-            let inner = f_info.f_inner.then_some(limit);
+            let inner = info.inner_edges.then_some(limit);
             let outer = (mb_x > 0).then_some(limit + 4);
             dsp::simple_h_filter16(y_dst, y_at, stride, Edges { outer, inner })?;
             let outer = (mb_y > 0).then_some(limit + 4);
@@ -315,10 +268,10 @@ impl<'a> Frame<'a> {
             let uv_at = extra_rows / 2 * stride + mb_x;
             let thresholds = |thresh| Thresholds {
                 thresh,
-                ithresh: ilevel,
-                hev_thresh: f_info.hev_thresh,
+                ithresh: info.interior_limit,
+                hev_thresh: info.hev_thresh,
             };
-            let inner = f_info.f_inner.then(|| thresholds(limit));
+            let inner = info.inner_edges.then(|| thresholds(limit));
             let outer = (mb_x > 0).then(|| thresholds(limit + 4));
             dsp::h_filter16(y_dst, y_at, stride, Edges { outer, inner })?;
             dsp::h_filter8(u_dst, v_dst, uv_at, stride, Edges { outer, inner })?;
@@ -330,62 +283,45 @@ impl<'a> Frame<'a> {
     }
 
     /// Filters the row and writes what no later filtering changes.
-    fn finish_row(&mut self, mb_y: usize, output: &mut Output<'_>) -> Result<()> {
-        let y_stride = 16 * self.mb_w;
-        let uv_stride = 8 * self.mb_w;
-        let extra_y_rows = filter_extra_rows(self.filter_type);
-        let ysize = extra_y_rows * y_stride;
-        let uvsize = extra_y_rows / 2 * uv_stride;
-        let is_first_row = mb_y == 0;
+    pub(super) fn finish_row(&mut self, mb_y: usize, output: &mut Output<'_>) -> Result<()> {
+        let mb_w = self.mb_w;
+        let (y_stride, uv_stride) = (16 * mb_w, 8 * mb_w);
+        let extra_rows = self.filter_type.extra_rows();
         let is_last_row = mb_y + 1 >= self.mb_h;
 
         if self.filter_type != FilterType::Off {
-            for mb_x in 0..self.mb_w {
+            for mb_x in 0..mb_w {
                 self.do_filter(mb_x, mb_y)?;
             }
         }
 
-        let mut y_start = mb_y * 16;
-        let mut y_end = (mb_y + 1) * 16;
-        let (mut y_offset, mut uv_offset) = (ysize, uvsize);
-        if !is_first_row {
-            y_start -= extra_y_rows;
-            (y_offset, uv_offset) = (0, 0);
-        }
-        if !is_last_row {
-            y_end -= extra_y_rows;
-        }
-        let y_end = y_end.min(self.height);
-        // libwebp does this a few rows at a time unless the levels are pre-processed, and fails the same images.
-        if let Some(alpha_data) = self.alpha_data.take() {
-            let plane = alpha::dec::decode(alpha_data, self.emitter.width(), self.height)?;
-            self.emitter.set_alpha(plane);
-        }
+        let (y_start, y_offset, uv_offset) = if mb_y == 0 {
+            (0, extra_rows * y_stride, extra_rows / 2 * uv_stride)
+        } else {
+            (16 * mb_y - extra_rows, 0, 0)
+        };
+        let y_end = if is_last_row {
+            self.height
+        } else {
+            16 * (mb_y + 1) - extra_rows
+        };
         let rows = Rows {
             y: self.cache_y.as_flattened().sub(y_offset..)?,
             u: self.cache_u.as_flattened().sub(uv_offset..)?,
             v: self.cache_v.as_flattened().sub(uv_offset..)?,
             y_stride,
             uv_stride,
-            mb_y: y_start,
-            mb_h: y_end - y_start,
+            first_row: y_start,
+            num_rows: y_end - y_start,
         };
         self.emitter.put(&rows, output)?;
         if !is_last_row {
-            let (mb_w, extra_uv_rows) = (self.mb_w, extra_y_rows / 2);
-            self.cache_y
-                .move_within(16 * mb_w, 0, extra_y_rows * mb_w)?;
+            self.cache_y.move_within(16 * mb_w, 0, extra_rows * mb_w)?;
             self.cache_u
-                .move_within(8 * mb_w, 0, extra_uv_rows * mb_w)?;
+                .move_within(8 * mb_w, 0, extra_rows / 2 * mb_w)?;
             self.cache_v
-                .move_within(8 * mb_w, 0, extra_uv_rows * mb_w)?;
+                .move_within(8 * mb_w, 0, extra_rows / 2 * mb_w)?;
         }
         Ok(())
-    }
-
-    /// `VP8ProcessRow`
-    pub(super) fn process_row(&mut self, mb_y: usize, output: &mut Output<'_>) -> Result<()> {
-        self.reconstruct_row(mb_y)?;
-        self.finish_row(mb_y, output)
     }
 }

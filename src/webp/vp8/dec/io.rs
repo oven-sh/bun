@@ -12,10 +12,9 @@ pub(super) struct Rows<'a> {
     pub(super) v: &'a [u8],
     pub(super) y_stride: usize,
     pub(super) uv_stride: usize,
-    /// The position of the first row, which is even.
-    pub(super) mb_y: usize,
-    /// How many rows there are.
-    pub(super) mb_h: usize,
+    /// The position of the first row in the image, which is even.
+    pub(super) first_row: usize,
+    pub(super) num_rows: usize,
 }
 
 pub(super) struct Emitter {
@@ -47,10 +46,6 @@ impl Emitter {
         })
     }
 
-    pub(super) fn width(&self) -> usize {
-        self.width
-    }
-
     /// `plane` has `width * height` samples.
     pub(super) fn set_alpha(&mut self, plane: Vec<u8>) {
         self.alpha = plane;
@@ -58,7 +53,7 @@ impl Emitter {
     }
 
     /// `CustomPut`, that is `EmitFancyRGB` and `EmitAlphaRGB`.
-    pub(super) fn put(&mut self, io: &Rows<'_>, output: &mut Output<'_>) -> Checked {
+    pub(super) fn put(&mut self, rows: &Rows<'_>, output: &mut Output<'_>) -> Checked {
         let Self {
             width,
             height,
@@ -70,22 +65,22 @@ impl Emitter {
             alpha_stride,
         } = self;
         let (width, height) = (*width, *height);
-        let uv_w = width.div_ceil(2);
-        let y_row = |j: usize| io.y.sub(j * io.y_stride..)?.sub(..width);
+        let uv_width = width.div_ceil(2);
+        let y_row = |j: usize| rows.y.sub(j * rows.y_stride..)?.sub(..width);
         let uv_row = |j: usize| -> Checked<[&[u8]; 2]> {
-            let start = j * io.uv_stride;
+            let start = j * rows.uv_stride;
             Ok([
-                io.u.sub(start..)?.sub(..uv_w)?,
-                io.v.sub(start..)?.sub(..uv_w)?,
+                rows.u.sub(start..)?.sub(..uv_width)?,
+                rows.v.sub(start..)?.sub(..uv_width)?,
             ])
         };
 
         // `WebPUpsampleLinePairFunc`: writes row `y` of the image, and the next one if there is a `bottom_y`.
-        let mut upsample = |top_y: &[u8],
-                            bottom_y: Option<&[u8]>,
-                            top_uv: [&[u8]; 2],
-                            cur_uv: [&[u8]; 2],
-                            y: usize|
+        let mut emit_pair = |top_y: &[u8],
+                             bottom_y: Option<&[u8]>,
+                             top_uv: [&[u8]; 2],
+                             cur_uv: [&[u8]; 2],
+                             y: usize|
          -> Checked {
             upsampler.upsample(top_uv, cur_uv)?;
             for (lower, luma) in [(false, Some(top_y)), (true, bottom_y)] {
@@ -97,20 +92,27 @@ impl Emitter {
             Ok(())
         };
 
-        let y_end = io.mb_y + io.mb_h;
+        let (first_row, num_rows) = (rows.first_row, rows.num_rows);
+        let y_end = first_row + num_rows;
         let cur_uv = uv_row(0)?;
-        if io.mb_y == 0 {
+        if first_row == 0 {
             // The chroma samples are mirrored at the top of the image.
-            upsample(y_row(0)?, None, cur_uv, cur_uv, 0)?;
+            emit_pair(y_row(0)?, None, cur_uv, cur_uv, 0)?;
         } else {
-            upsample(tmp_y, Some(y_row(0)?), [tmp_u, tmp_v], cur_uv, io.mb_y - 1)?;
+            emit_pair(
+                tmp_y,
+                Some(y_row(0)?),
+                [tmp_u, tmp_v],
+                cur_uv,
+                first_row - 1,
+            )?;
         }
         // `j` is relative to the first row.
         let mut j = 0;
-        while j + 2 < io.mb_h {
+        while j + 2 < num_rows {
             let (top_y, bottom_y) = (y_row(j + 1)?, y_row(j + 2)?);
             let (top_uv, cur_uv) = (uv_row(j / 2)?, uv_row(j / 2 + 1)?);
-            upsample(top_y, Some(bottom_y), top_uv, cur_uv, io.mb_y + j + 1)?;
+            emit_pair(top_y, Some(bottom_y), top_uv, cur_uv, first_row + j + 1)?;
             j += 2;
         }
         let cur_uv = uv_row(j / 2)?;
@@ -119,8 +121,8 @@ impl Emitter {
             tmp_u.write_at(0, cur_uv[0])?;
             tmp_v.write_at(0, cur_uv[1])?;
         } else if y_end.is_multiple_of(2) {
-            // And at the bottom.
-            upsample(y_row(j + 1)?, None, cur_uv, cur_uv, y_end - 1)?;
+            // The chroma samples are mirrored at the bottom of the image.
+            emit_pair(y_row(j + 1)?, None, cur_uv, cur_uv, y_end - 1)?;
         }
         Ok(())
     }

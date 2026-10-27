@@ -1,7 +1,8 @@
 //! Constant tables from `tree_enc.c`, `cost_enc.c`, `quant_enc.c`, `frame_enc.c`, `dsp/cost.c`, `picture_csp_enc.c`.
 
 pub(super) use crate::vp8::common::{
-    NUM_BANDS, NUM_BMODES, NUM_CTX, NUM_MB_SEGMENTS, NUM_PROBAS, NUM_TYPES,
+    MB_FEATURE_TREE_PROBS, NUM_BANDS, NUM_BMODES, NUM_CTX, NUM_MB_SEGMENTS, NUM_PROBAS, NUM_TYPES,
+    Probas,
 };
 pub(super) use crate::vp8::tables::{
     AC_TABLE, BANDS as ENC_BANDS, BMODES_PROBA, CAT3, CAT4, CAT5, CAT6, COEFFS_PROBA0,
@@ -11,8 +12,6 @@ pub(super) use crate::vp8::tables::{
 /// The last level with a variable cost.
 pub(super) const MAX_VARIABLE_LEVEL: usize = 67;
 pub(super) const MAX_LEVEL: usize = 2047;
-
-pub(super) type Probas<T> = [[[[T; NUM_PROBAS]; NUM_CTX]; NUM_BANDS]; NUM_TYPES];
 
 pub(super) fn flatten<T>(probas: &Probas<T>) -> &[T] {
     probas.as_flattened().as_flattened().as_flattened()

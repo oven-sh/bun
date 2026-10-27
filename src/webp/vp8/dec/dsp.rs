@@ -1,7 +1,7 @@
 //! `dsp/dec.c`: the inverse transforms, the intra predictions and the loop filters.
 
 use crate::util::{Bug, Checked, SliceExt};
-use crate::vp8::common::IntraMode;
+use crate::vp8::common::{IntraMode, KC1, KC2, clip_8b};
 
 /// The stride of the work buffer.
 pub(super) const BPS: usize = 32;
@@ -24,25 +24,20 @@ pub(super) const Y_OFF: usize = BPS + 8;
 pub(super) const U_OFF: usize = Y_OFF + BPS * 16 + BPS;
 pub(super) const V_OFF: usize = U_OFF + 16;
 
-#[inline(always)]
-fn clip_8b(v: i32) -> u8 {
-    v.clamp(0, 255) as u8
-}
-
 // Transforms (paragraph 14.4), in 32 bits like libwebp's C code. Its SSE2 code wraps at 16, which damaged files show.
 
 /// Four rows of four samples in the work buffer, from the first sample to the last.
 pub(super) type Block4 = [u8; 3 * BPS + 4];
 
-// Coefficients that no encoder produces overflow these products in libwebp too.
+// Damaged files have coefficients so large that these products overflow, in libwebp too.
 #[inline(always)]
 fn mul1(a: i32) -> i32 {
-    (a.wrapping_mul(20091) >> 16) + a
+    (a.wrapping_mul(KC1) >> 16) + a
 }
 
 #[inline(always)]
 fn mul2(a: i32) -> i32 {
-    a.wrapping_mul(35468) >> 16
+    a.wrapping_mul(KC2) >> 16
 }
 
 #[inline(always)]
@@ -112,56 +107,6 @@ pub(super) fn transform_ac3(input: &[i16; 16], dst: &mut Block4) {
 
 pub(super) fn transform_dc(input: &[i16; 16], dst: &mut Block4) {
     store(dst, [[i32::from(input[0]) + 4; 4]; 4]);
-}
-
-/// Paragraph 14.3: from the block of the DCs to the DC of each of the 16 blocks of `out`.
-pub(super) fn transform_wht(input: &[i16; 16], out: &mut [[i16; 16]]) {
-    let [
-        i0,
-        i1,
-        i2,
-        i3,
-        i4,
-        i5,
-        i6,
-        i7,
-        i8,
-        i9,
-        i10,
-        i11,
-        i12,
-        i13,
-        i14,
-        i15,
-    ] = input.map(i32::from);
-    let vertical = |in0: i32, in4: i32, in8: i32, in12: i32| {
-        let a0 = in0 + in12;
-        let a1 = in4 + in8;
-        let a2 = in4 - in8;
-        let a3 = in0 - in12;
-        [a0 + a1, a3 + a2, a0 - a1, a3 - a2]
-    };
-    let [a0, a1, a2, a3] = vertical(i0, i4, i8, i12);
-    let [b0, b1, b2, b3] = vertical(i1, i5, i9, i13);
-    let [c0, c1, c2, c3] = vertical(i2, i6, i10, i14);
-    let [d0, d1, d2, d3] = vertical(i3, i7, i11, i15);
-    let horizontal = |t0: i32, t1: i32, t2: i32, t3: i32| {
-        let dc = t0 + 3;
-        let a0 = dc + t3;
-        let a1 = t1 + t2;
-        let a2 = t1 - t2;
-        let a3 = dc - t3;
-        [a0 + a1, a3 + a2, a0 - a1, a3 - a2].map(|v| (v >> 3) as i16)
-    };
-    let dcs = [
-        horizontal(a0, b0, c0, d0),
-        horizontal(a1, b1, c1, d1),
-        horizontal(a2, b2, c2, d2),
-        horizontal(a3, b3, c3, d3),
-    ];
-    for (out, dc) in out.iter_mut().zip(dcs.as_flattened()) {
-        out[0] = *dc;
-    }
 }
 
 // Intra predictions
@@ -325,6 +270,7 @@ pub(super) fn predict_luma4(mode: IntraMode, dst: &mut Luma4) {
 /// Sixteen samples next to each other along an edge: of one row for a horizontal edge, of one column for a vertical one.
 type Line = [u8; 16];
 
+/// Not `u8::abs_diff`: its maximum, minimum and subtraction make a whole decode about 1% slower on x86-64.
 #[inline(always)]
 fn abs_diff(a: u8, b: u8) -> u8 {
     a.saturating_sub(b) | b.saturating_sub(a)
@@ -403,11 +349,11 @@ fn complex_filter(inner: bool, lines: &mut [Line; 8], t: Thresholds) {
         } else {
             let a = base_delta(outer, p0s, q0s);
             let a = if mask { a } else { 0 };
-            // `DoFilter2` with high edge variance. Without, these are 0.
+            // `DoFilter2`, for high edge variance: these are 0 unless `hev`.
             let simple = if hev { a } else { 0 };
             let s1 = simple.saturating_add(4) >> 3;
             let s2 = simple.saturating_add(3) >> 3;
-            // Else `DoFilter6`. With, these are 0.
+            // `DoFilter6`, for the rest: these are 0 if `hev`.
             let a = i16::from(if hev { 0 } else { a });
             let a1 = ((27 * a + 63) >> 7) as i8;
             let a2 = ((18 * a + 63) >> 7) as i8;
@@ -437,7 +383,7 @@ impl<T> Edges<T> {
     }
 }
 
-/// `lines` is what `Edges::span` says.
+/// `lines` are those in the range that `Edges::span` returns.
 fn simple_filter_lines(lines: &mut [Line], edges: Edges<u8>) -> Checked {
     let mut at = 2;
     if let Some(thresh) = edges.outer {
@@ -453,7 +399,7 @@ fn simple_filter_lines(lines: &mut [Line], edges: Edges<u8>) -> Checked {
     Ok(())
 }
 
-/// `lines` is what `Edges::span` says.
+/// `lines` are those in the range that `Edges::span` returns.
 fn complex_filter_lines(lines: &mut [Line], edges: Edges<Thresholds>) -> Checked {
     let mut at = 0;
     if let Some(t) = edges.outer {
@@ -505,7 +451,7 @@ fn transpose<const G: usize>(tile: &[[Quad; G]; 16], columns: &mut [[Line; 4]; G
     Ok(())
 }
 
-/// From 4 columns to 16 rows of a quad. Not inlined, for the same reason.
+/// From 4 columns to 16 rows of a quad. Not inlined: next to what copies `rows` out, LLVM moves each byte alone.
 #[inline(never)]
 fn interleave(columns: &[Line; 4], rows: &mut [Quad; 16]) {
     let [a, b, c, d] = columns;

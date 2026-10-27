@@ -1,4 +1,4 @@
-//! The lossy format: a VP8 key frame.
+//! The lossy format: a VP8 key frame. The paragraphs that comments cite are sections of RFC 6386.
 
 pub(crate) mod common;
 pub(crate) mod dec;

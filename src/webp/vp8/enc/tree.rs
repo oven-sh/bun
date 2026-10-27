@@ -4,7 +4,9 @@ use super::Encoder;
 use super::bit_writer::BitWriter;
 use super::cost::Proba;
 use super::dsp::{DC_PRED, H_PRED, TM_PRED, V_PRED};
-use super::tables::{BMODES_PROBA, COEFFS_PROBA0, COEFFS_UPDATE_PROBA, NUM_BMODES, flatten};
+use super::tables::{
+    BMODES_PROBA, COEFFS_PROBA0, COEFFS_UPDATE_PROBA, MB_FEATURE_TREE_PROBS, NUM_BMODES, flatten,
+};
 use crate::util::{Checked, SliceExt};
 use crate::vp8::common::IntraMode;
 
@@ -46,7 +48,7 @@ fn put_uv_mode(bw: &mut BitWriter, uv_mode: usize) {
     }
 }
 
-fn put_segment(bw: &mut BitWriter, s: u8, p: [u8; 3]) {
+fn put_segment(bw: &mut BitWriter, s: u8, p: [u8; MB_FEATURE_TREE_PROBS]) {
     let p = if bw.put_bit(s >= 2, p[0]) { p[2] } else { p[1] };
     bw.put_bit(s & 1 != 0, p);
 }

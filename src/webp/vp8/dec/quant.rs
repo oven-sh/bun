@@ -25,17 +25,13 @@ fn ac(q: i32) -> Checked<i32> {
 }
 
 /// `VP8ParseQuant`, paragraph 9.6.
-pub(super) fn parse_quant(
+pub(super) fn parse(
     br: &mut BitReader<'_>,
     hdr: &SegmentHeader,
 ) -> Checked<[QuantMatrix; NUM_MB_SEGMENTS]> {
     let base_q0 = br.get_value(7) as i32;
-    let mut delta = || if br.get() { br.get_signed_value(4) } else { 0 };
-    let dqy1_dc = delta();
-    let dqy2_dc = delta();
-    let dqy2_ac = delta();
-    let dquv_dc = delta();
-    let dquv_ac = delta();
+    let [dqy1_dc, dqy2_dc, dqy2_ac, dquv_dc, dquv_ac] =
+        core::array::from_fn(|_| br.get_optional_signed_value(4));
 
     let matrix = |q: i32| -> Checked<QuantMatrix> {
         Ok(QuantMatrix {

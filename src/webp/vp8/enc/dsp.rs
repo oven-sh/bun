@@ -5,7 +5,7 @@ use core::ops::{Add, Sub};
 
 use super::tables::MAX_LEVEL;
 use crate::util::{Bug, Checked};
-use crate::vp8::common::IntraMode;
+use crate::vp8::common::{IntraMode, KC1, KC2, clip_8b, inverse_wht};
 
 pub(super) type Matrix4x4<T> = [[T; 4]; 4];
 /// 4x4 samples.
@@ -200,11 +200,6 @@ fn values_of<T: Copy + Default>(m: &Matrix4x4<T>) -> [T; 16] {
     values
 }
 
-#[inline(always)]
-fn clip_8b(v: i32) -> u8 {
-    v.clamp(0, 255) as u8
-}
-
 // Transforms (paragraph 14.4), on 16 bits wherever the values fit, like libwebp's SIMD code.
 
 /// `(a * k) >> 16`
@@ -213,16 +208,16 @@ fn mulhi(a: i16, k: i16) -> i16 {
     ((i32::from(a) * i32::from(k)) >> 16) as i16
 }
 
-/// `(a * 85627) >> 16`: `a * sqrt(2) * cos(pi / 8)`.
+/// `(a * (65536 + KC1)) >> 16`: `a * sqrt(2) * cos(pi / 8)`.
 #[inline(always)]
 fn mul1(a: i16) -> i16 {
-    mulhi(a, 20091) + a
+    mulhi(a, KC1 as i16) + a
 }
 
-/// `(a * 35468) >> 16`: `a * sqrt(2) * sin(pi / 8)`.
+/// `(a * KC2) >> 16`: `a * sqrt(2) * sin(pi / 8)`.
 #[inline(always)]
 fn mul2(a: i16) -> i16 {
-    mulhi(a, (35468 - 65536) as i16) + a
+    mulhi(a, (KC2 - 65536) as i16) + a
 }
 
 /// `pred` plus the inverse transform of `coeffs`. 16 bits do: twice 8 * 255 plus 14.8 * 880 of quantization error.
@@ -319,18 +314,9 @@ pub(super) fn ftransform_wht(dc: &[i16; 16]) -> Coeffs {
     })
 }
 
-/// The inverse of `ftransform_wht` (`TransformWHT_C` of `dsp/dec.c`).
+/// The inverse of `ftransform_wht`.
 pub(super) fn transform_wht(coeffs: &Coeffs) -> [i16; 16] {
-    let pass = |[in0, in1, in2, in3]: [i32; 4]| {
-        let a0 = in0 + in3;
-        let a1 = in1 + in2;
-        let a2 = in1 - in2;
-        let a3 = in0 - in3;
-        [a0 + a1, a3 + a2, a0 - a1, a3 - a2]
-    };
-    let tmp = cols(map(*coeffs, i32::from), pass);
-    let dc = rows(tmp, |[dc, in1, in2, in3]| pass([dc + 3, in1, in2, in3]));
-    values_of(&map(dc, |v| (v >> 3) as i16))
+    inverse_wht(&values_of(coeffs))
 }
 
 // Intra predictions

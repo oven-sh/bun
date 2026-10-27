@@ -12,15 +12,15 @@ fn wide(v: u8) -> Wide {
 }
 
 /// The upsampled samples of one chroma plane for one row of the image.
-struct Plane {
+struct ChromaRow {
     first: Wide,
     odd: Vec<Wide>,
     even: Vec<Wide>,
-    /// Of an even width.
+    /// The last pixel when the width is even.
     last: Wide,
 }
 
-impl Plane {
+impl ChromaRow {
     fn new(pairs: usize) -> Result<Self> {
         Ok(Self {
             first: 0,
@@ -39,11 +39,16 @@ impl Plane {
 /// ```
 /// the four in between are
 /// ```text
-///   ([9*a + 3*b + 3*c +   d    3*a + 9*b + 3*c +   d] + [8 8]) / 16
-///   ([3*a +   b + 9*c + 3*d      a + 3*b + 3*c + 9*d]   [8 8]) / 16
+///   ([9*a + 3*b + 3*c +   d    3*a + 9*b +   c + 3*d] + [8 8]) / 16
+///   ([3*a +   b + 9*c + 3*d      a + 3*b + 3*c + 9*d] + [8 8]) / 16
 /// ```
 /// rounded in two steps.
-fn upsample(top: &[u8], cur: &[u8], out_top: &mut Plane, out_bottom: &mut Plane) -> Checked {
+fn upsample_plane(
+    top: &[u8],
+    cur: &[u8],
+    out_top: &mut ChromaRow,
+    out_bottom: &mut ChromaRow,
+) -> Checked {
     let edge = |near: u8, far: u8| wide(((3 * u16::from(near) + u16::from(far) + 2) >> 2) as u8);
     let (&t, &c) = (top.first().ok_or(Bug)?, cur.first().ok_or(Bug)?);
     out_top.first = edge(t, c);
@@ -55,17 +60,17 @@ fn upsample(top: &[u8], cur: &[u8], out_top: &mut Plane, out_bottom: &mut Plane)
     let samples = top.iter().zip(top.sub(1..)?).zip(cur).zip(cur.sub(1..)?);
     let out_top = out_top.odd.iter_mut().zip(&mut out_top.even);
     let out_bottom = out_bottom.odd.iter_mut().zip(&mut out_bottom.even);
-    for ((((&tl, &t), &l), &uv), ((top_odd, top_even), (bottom_odd, bottom_even))) in
+    for ((((&a, &b), &c), &d), ((top_odd, top_even), (bottom_odd, bottom_even))) in
         samples.zip(out_top.zip(out_bottom))
     {
-        let [tl, t, l, uv] = [tl, t, l, uv].map(u16::from);
-        let avg = tl + t + l + uv + 8;
-        let diag_12 = (avg + 2 * (t + l)) >> 3;
-        let diag_03 = (avg + 2 * (tl + uv)) >> 3;
-        *top_odd = ((diag_12 + tl) >> 1) << 8;
-        *top_even = ((diag_03 + t) >> 1) << 8;
-        *bottom_odd = ((diag_03 + l) >> 1) << 8;
-        *bottom_even = ((diag_12 + uv) >> 1) << 8;
+        let [a, b, c, d] = [a, b, c, d].map(u16::from);
+        let avg = a + b + c + d + 8;
+        let diag_bc = (avg + 2 * (b + c)) >> 3;
+        let diag_ad = (avg + 2 * (a + d)) >> 3;
+        *top_odd = ((diag_bc + a) >> 1) << 8;
+        *top_even = ((diag_ad + b) >> 1) << 8;
+        *bottom_odd = ((diag_ad + c) >> 1) << 8;
+        *bottom_even = ((diag_bc + d) >> 1) << 8;
     }
     Ok(())
 }
@@ -96,8 +101,8 @@ fn yuv_to_rgb(y: Wide, u: Wide, v: Wide) -> [u8; 3] {
 /// The working memory of the conversion of two rows.
 pub(super) struct Upsampler {
     /// U and V of the upper row, then of the lower.
-    chroma: [[Plane; 2]; 2],
-    /// One row.
+    chroma: [[ChromaRow; 2]; 2],
+    /// One row of each color.
     r: Vec<u8>,
     g: Vec<u8>,
     b: Vec<u8>,
@@ -105,9 +110,9 @@ pub(super) struct Upsampler {
 
 impl Upsampler {
     pub(super) fn new(width: usize) -> Result<Self> {
-        let plane = || Plane::new(width.saturating_sub(1) / 2);
+        let row = || ChromaRow::new(width.saturating_sub(1) / 2);
         Ok(Self {
-            chroma: [[plane()?, plane()?], [plane()?, plane()?]],
+            chroma: [[row()?, row()?], [row()?, row()?]],
             r: try_vec(0, width)?,
             g: try_vec(0, width)?,
             b: try_vec(0, width)?,
@@ -117,11 +122,11 @@ impl Upsampler {
     /// The first half of `UpsampleRgbaLinePair`: `top` and `cur` are U and V of two chroma rows.
     pub(super) fn upsample(&mut self, top: [&[u8]; 2], cur: [&[u8]; 2]) -> Checked {
         let [[top_u, top_v], [bottom_u, bottom_v]] = &mut self.chroma;
-        upsample(top[0], cur[0], top_u, bottom_u)?;
-        upsample(top[1], cur[1], top_v, bottom_v)
+        upsample_plane(top[0], cur[0], top_u, bottom_u)?;
+        upsample_plane(top[1], cur[1], top_v, bottom_v)
     }
 
-    /// The second half, for the upper or `lower` row between the chroma rows. `y`, `alpha`, `dst` are one row.
+    /// The second half of `UpsampleRgbaLinePair`, for the upper or the `lower` row. `y`, `alpha`, `dst` are one row.
     pub(super) fn convert(
         &mut self,
         lower: bool,

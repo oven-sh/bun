@@ -31,7 +31,7 @@ extern "C" bool Bun__standaloneInternalModuleBytecode(void* bunVM, uint32_t id, 
 namespace Bun {
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
-extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID);
+extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
 
 static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 {
@@ -42,7 +42,7 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
     if (shouldGenerateCodeCoverage) {
         WTF::String sourceString = code.provider()->source().toStringWithoutCopying();
         BunString source = Bun::toString(sourceString);
-        ByteRangeMapping__generate(&sourceURL, &source, code.provider()->asID());
+        ByteRangeMapping__generate(&sourceURL, &source, code.provider()->asID(), false);
     }
 #endif
 }
@@ -61,7 +61,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInternalModulesLoadedFromBytecode, (JSC::JSGlobalObje
 
 static SourceCode makeInternalModuleSource(const String& text, const String& moduleName, const String& urlString)
 {
-    return JSC::makeSource(text, SourceOrigin(WTF::URL(urlString)), JSC::SourceTaintedOrigin::Untainted, moduleName);
+    return JSC::makeSource(text, SourceOrigin(WTF::URL(urlString)), JSC::SourceTaintedOrigin::Untainted, moduleName, TextPosition(), JSC::SourceProviderSourceType::Program, JSC::SourceProvenance::Static);
 }
 
 static UnlinkedFunctionExecutable* createInternalModuleExecutable(JSC::VM& vm, const SourceCode& source, const String& moduleName)

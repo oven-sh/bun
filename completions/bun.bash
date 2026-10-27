@@ -89,28 +89,28 @@ _bun_completions() {
     declare -A PACKAGE_OPTIONS;
     declare -A PM_OPTIONS;
 
-    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated link unlink build check";
+    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated publish link unlink build check lint fmt";
 
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
 
-    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer --catalog --filter";
+    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer --save-prod --catalog --filter";
     PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d -F";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="--filter";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="-F";
     PACKAGE_OPTIONS[UPDATE_OPTIONS_LONG]="--latest --interactive --recursive --filter --dev --development --prod --no-optional --exact";
     PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]="-L -i -r -F -d -D -P -E";
 
-    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
+    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --help";
     PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
 
     PACKAGE_OPTIONS[DEDUPE_OPTIONS_LONG]="--check";
-    PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]="--production --prod --omit --filter --dry-run --os --cpu --linker --silent --cwd --help";
+    PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]="--production --prod --omit --filter --dry-run --check --os --cpu --libc --linker --silent --cwd --help";
     PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]="-p -P -F -h";
     PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]="--json --audit-level --ignore --prod --production --omit --dry-run --latest --cwd --help";
     PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]="-L";
 
-    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --json --help"
+    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --json --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
@@ -138,6 +138,9 @@ _bun_completions() {
             ;;
         --linker)
             COMPREPLY=( $(compgen -W "isolated hoisted" -- "${cur_word}") );
+            return;;
+        --libc)
+            COMPREPLY=( $(compgen -W "glibc musl" -- "${cur_word}") );
             return;;
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
@@ -191,8 +194,20 @@ _bun_completions() {
         audit)
             COMPREPLY=( $(compgen -W "fix ${PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]} ${PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]}" -- "${cur_word}") );
             return;;
+        publish)
+            COMPREPLY=( $(compgen -f -W "--recursive --filter --access --tag --otp --auth-type --gzip-level --tolerate-republish --dry-run --ignore-scripts --registry --config --silent --verbose --cwd --help -r -F -c -h" -- "${cur_word}") );
+            return;;
+        x)
+            COMPREPLY=( $(compgen -W "--bun --package --no-install --cwd --env-file --minimum-release-age --trust --verbose --silent --help -p -h" -- "${cur_word}") );
+            return;;
         check)
-            COMPREPLY=( $(compgen -f -W "--project --pretty --no-pretty --all --threads --timing --cwd --help -p -h" -- "${cur_word}") );
+            COMPREPLY=( $(compgen -f -W "--project --pretty --build --no-pretty --all --threads --timing --cwd --no-script --help -p -b -h" -- "${cur_word}") );
+            return;;
+        lint)
+            COMPREPLY=( $(compgen -f -W "--config --no-config-lookup --rule --rules --explain --init --global --no-inline-config --report-unused-disable-directives --print-config --doctor --allow-unsupported --staged --changed --ignore-pattern --ignore-path --no-ignore --ext --stdin --stdin-filename --list-files --no-error-on-unmatched-pattern --cwd --format --all --output-file --quiet --max-warnings --color --no-color --timing --fix --fix-dry-run --fix-type --fix-suggestions --fix-dangerously --type-aware --no-type-aware --tsconfig --type-check --infer-globals --no-infer-globals --threads --no-script --version --help --help-all --flavor --project --parser-options --parser --plugin --native-plugin-rules --no-native-plugin-rules --report-unused-disable-directives-severity --report-unused-inline-configs --no-warn-ignored --suppress-all --suppress-rule --suppressions-location --prune-suppressions --pass-on-unpruned-suppressions --pass-on-no-patterns --exit-on-fatal-error --concurrency --env-info --no-eslintrc --env --rulesdir --resolve-plugins-relative-to --allow --warn --deny --deny-warnings --silent --disable-nested-config --import-plugin --react-plugin --jsdoc-plugin --jest-plugin --vitest-plugin --jsx-a11y-plugin --nextjs-plugin --react-perf-plugin --promise-plugin --node-plugin --vue-plugin --disable-unicorn-plugin --disable-oxc-plugin --disable-typescript-plugin -c -f -o -v -h -p -A -W -D" -- "${cur_word}") );
+            return;;
+        fmt)
+            COMPREPLY=( $(compgen -f -W "--config --no-config --no-editorconfig --init --doctor --print-width --tab-width --use-tabs --no-semi --single-quote --jsx-single-quote --quote-props --trailing-comma --no-bracket-spacing --bracket-same-line --arrow-parens --object-wrap --single-attribute-per-line --html-whitespace-sensitivity --vue-indent-script-and-style --prose-wrap --embedded-language-formatting --end-of-line --no-insert-final-newline --sort-imports --sort-tailwindcss --sort-package-json --jsdoc --svelte --no-svelte --staged --changed --stdin-filepath --ignore-path --ignore-pattern --with-node-modules --no-error-on-unmatched-pattern --ignore-unknown --allow-unsupported --list-files --cwd --check --list-different --log-level --format --color --no-color --timing --threads --debug-check --no-script --version --help --all --help-all --write --config-precedence --find-config-path --parser --plugin --require-pragma --check-ignore-pragma --insert-pragma --range-start --range-end --cursor-offset --experimental-ternaries --experimental-operator-position --jsx-bracket-same-line --flavor --disable-nested-config -u -c -l -f -v -h -w" -- "${cur_word}") );
             return;;
         create|c)
             COMPREPLY=( $(compgen -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}") );

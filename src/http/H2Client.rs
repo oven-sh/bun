@@ -39,7 +39,7 @@ pub(crate) const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
 
 /// Live-object counters for the leak test in fetch-http2-leak.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
-/// via TestingAPIs.liveCounts so they must be atomic.
+/// via `bun_http_jsc`'s `h2_live_counts` so they must be atomic.
 // Lower-case names kept so cross-crate readers (`bun_http_jsc`) and the gated
 // submodules share one identifier; SCREAMING_SNAKE alias preserved for the
 // existing internal reference.

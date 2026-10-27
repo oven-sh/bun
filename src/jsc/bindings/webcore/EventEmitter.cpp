@@ -218,6 +218,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
     data->isFiringEventListeners = true;
     auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
     data->isFiringEventListeners = prevFiringEventListeners;
+    data->eventListenerMap.releaseListenersRemovedWhileFiring();
     return fired;
 }
 

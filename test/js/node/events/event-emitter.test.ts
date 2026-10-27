@@ -1,4 +1,5 @@
 import { sleep } from "bun";
+import { heapStats } from "bun:jsc";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { createRequire } from "module";
@@ -1269,6 +1270,8 @@ test("emit() itself calls each of several listeners", () => {
 describe("native EventEmitter", () => {
   const nativeProto = Object.getPrototypeOf(process);
   const NativeEventEmitter = nativeProto.constructor;
+  const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
+  const functions = () => heapStats().objectTypeCounts.Function ?? 0;
 
   let nextName = 0;
   const receivers: Array<[string, () => any]> = [
@@ -1316,6 +1319,132 @@ describe("native EventEmitter", () => {
         });
       });
     });
+
+    // The first listener removes the third one and the second listener collects. After the removal, only the emit in
+    // flight holds the registration, and only the registration holds the listener.
+    test("a listener that an earlier listener removes during the emit still runs after a collection", async () => {
+      const type = track(`native-emitter-${nextName++}`);
+      let calls = 0;
+      target.on(type, () => target.removeListener(type, target.listeners(type)[2]));
+      target.on(type, () => Bun.gc(true));
+      target.on(type, () => calls++);
+      // From the next turn on, nothing but the registration holds the listener.
+      await nextTurn();
+
+      target.emit(type);
+      expect(calls).toBe(1);
+    });
+  });
+
+  // The same three listeners, for each way to remove a listener and each kind of listener.
+  describe("a listener that is removed during the emit still runs after a collection", () => {
+    const removers: Array<[string, (emitter: any) => void]> = [
+      ["removeListener(type, listener)", emitter => emitter.removeListener("x", emitter.listeners("x")[2])],
+      ["removeAllListeners(type)", emitter => emitter.removeAllListeners("x")],
+      ["removeAllListeners()", emitter => emitter.removeAllListeners()],
+    ];
+    const listeners: Array<[string, (emitter: any, listener: () => void) => void]> = [
+      ["an on() listener", (emitter, listener) => emitter.on("x", listener)],
+      ["a once() listener", (emitter, listener) => emitter.once("x", listener)],
+    ];
+
+    describe.each(removers)("%s", (_remover, remove) => {
+      test.each(listeners)("%s", async (_listener, add) => {
+        const emitter = new NativeEventEmitter();
+        let calls = 0;
+        emitter.on("x", () => remove(emitter));
+        emitter.on("x", () => Bun.gc(true));
+        add(emitter, () => calls++);
+        await nextTurn();
+
+        emitter.emit("x");
+        expect(calls).toBe(1);
+      });
+    });
+
+    test("and after a nested emit returned", async () => {
+      const emitter = new NativeEventEmitter();
+      let calls = 0;
+      emitter.on("nested", () => {});
+      emitter.on("x", () => {
+        emitter.removeAllListeners("x");
+        // The return of this emit must not release what the emit in flight holds.
+        emitter.emit("nested");
+      });
+      emitter.on("x", () => Bun.gc(true));
+      emitter.on("x", () => calls++);
+      await nextTurn();
+
+      emitter.emit("x");
+      expect(calls).toBe(1);
+    });
+  });
+
+  // The emitter keeps a registration that is removed while an emit holds it. It keeps no other one, and none after
+  // that emit returned.
+  test.each<[string, (emitter: any) => void]>([
+    [
+      "no emit holds them",
+      emitter => {
+        const listener = () => {};
+        emitter.on("other", listener);
+        emitter.removeListener("other", listener);
+        emitter.once("other", () => {});
+        emitter.removeAllListeners("other");
+      },
+    ],
+    [
+      "a nested emit holds them",
+      emitter => {
+        emitter.on("other", () => emitter.removeAllListeners("other"));
+        emitter.once("other", () => {});
+        emitter.emit("other");
+      },
+    ],
+  ])("listeners that are removed during a long emit do not stay until it returns (%s)", (_holder, round) => {
+    const emitter = new NativeEventEmitter();
+    const total = 200;
+    // Each round makes two listeners.
+    let kept = total * 2;
+    emitter.on("long", () => {
+      Bun.gc(true);
+      const before = functions();
+      for (let i = 0; i < total; i++) round(emitter);
+      Bun.gc(true);
+      kept = functions() - before;
+    });
+
+    emitter.emit("long");
+    expect(kept).toBeLessThan(total);
+  });
+
+  test.each<[string, () => any]>([
+    ["process", () => process],
+    ["an emitter that stays alive", () => new NativeEventEmitter()],
+  ])("listeners that are removed during an emit are collected after it returns (%s)", async (_receiver, makeTarget) => {
+    const target = makeTarget();
+    const type = `native-emitter-${nextName++}`;
+    const total = 200;
+    const listeners: Array<WeakRef<() => void>> = [];
+    target.on(type, () => target.removeAllListeners(type));
+    (() => {
+      for (let i = 0; i < total; i++) {
+        const listener = () => {};
+        listeners.push(new WeakRef(listener));
+        target.on(type, listener);
+      }
+    })();
+    target.emit(type);
+
+    let alive = total;
+    for (let i = 0; i < 50 && alive >= total / 4; i++) {
+      // deref() keeps its result until the turn ends, so each count has its own turn.
+      await nextTurn();
+      Bun.gc(true);
+      alive = listeners.filter(listener => listener.deref() !== undefined).length;
+    }
+    expect(alive).toBeLessThan(total / 4);
+    expect(target.listenerCount(type)).toBe(0);
   });
 
   // The native 'exit' emit holds the once() listener in its copy of the listeners while the first listener emits.

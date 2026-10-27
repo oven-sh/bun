@@ -25,10 +25,9 @@ public:
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
     bool isEmpty() const { return m_entries.isEmpty(); }
-    // For a read that only its caller asked for. Entries enter at the end and never move up, so the queue is longer after
-    // the read only if its newest entry entered during it. Makes room first: an append to a full queue can drop handled entries.
+    // The size, after room is made for one append: an append to a full queue can drop handled entries.
     size_t sizeBeforeRead(JSC::JSCell* owner);
-    // If the queue is longer than `sizeBefore` and its newest entry holds `returned`, that promise is marked as handled.
+    // Entries enter at the end and never move up: if the queue is longer than `sizeBefore`, its newest entry entered since. Marks that promise as handled if it is `returned`.
     void handleRejectionOfRead(size_t sizeBefore, JSC::JSValue returned);
 
 private:
@@ -41,8 +40,7 @@ private:
     void makeRoom();
     void makeRoomBeforeRead(JSC::JSCell* owner);
 
-    // In rejection order. A promise that gets a handler stays until it is at the end, makeRoom() runs, or the drain.
-    // One that native code only marks as handled stays at the end too.
+    // In rejection order. A handled promise stays until makeRoom() runs or the drain. One that got its handler through didHandle() also leaves at the end.
     WTF::Vector<Entry> m_entries;
     // Promises reported as unhandled. Weak: a reported promise that dies leaves it.
     JSC::WriteBarrier<JSC::JSWeakSet> m_reported;

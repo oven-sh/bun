@@ -52,6 +52,38 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
     return array;
 }
 
+NodeVMModule::Status NodeVMModule::status() const
+{
+    if (m_status != Status::Unlinked)
+        return m_status;
+
+    auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);
+    JSC::JSModuleRecord* record = sourceTextThis ? sourceTextThis->moduleRecordIfExists() : nullptr;
+    if (!record)
+        return Status::Unlinked;
+
+    switch (record->status()) {
+    case JSC::CyclicModuleRecord::Status::New:
+    case JSC::CyclicModuleRecord::Status::Unlinked:
+    case JSC::CyclicModuleRecord::Status::Linking:
+        return Status::Unlinked;
+    case JSC::CyclicModuleRecord::Status::Evaluating:
+        return Status::Evaluating;
+    case JSC::CyclicModuleRecord::Status::Linked:
+    // Node says "evaluated" or "errored" for the next two (#46004). evaluate() of this module has not run yet, and it takes a linked module.
+    case JSC::CyclicModuleRecord::Status::EvaluatingAsync:
+    case JSC::CyclicModuleRecord::Status::Evaluated:
+        return Status::Linked;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void NodeVMModule::status(Status value)
+{
+    ASSERT(value != Status::Linked || !inherits<NodeVMSourceTextModule>());
+    m_status = value;
+}
+
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 {
     if (m_status != Status::Evaluating)
@@ -82,12 +114,13 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
     reconcileEvaluationState(vm);
 
-    if (m_status != Status::Linked && m_status != Status::Evaluated && m_status != Status::Errored) {
+    const Status statusBeforeEvaluate = status();
+    if (statusBeforeEvaluate != Status::Linked && statusBeforeEvaluate != Status::Evaluated && statusBeforeEvaluate != Status::Errored) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be linked, evaluated or errored before evaluating"_s);
         return {};
     }
 
-    if (m_status == Status::Evaluated) {
+    if (statusBeforeEvaluate == Status::Evaluated) {
         // Node re-enters ModuleWrap::Evaluate even for already-evaluated
         // modules; for microtaskMode "afterEvaluate" contexts that performs a
         // microtask checkpoint on the context's own queue.
@@ -109,7 +142,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
     // Evaluating an errored module must reject with the same error instance
     // every time, not re-run the module body.
-    if (m_status == Status::Errored) {
+    if (statusBeforeEvaluate == Status::Errored) {
         if (JSC::Exception* exception = m_evaluationException.get()) {
             scope.throwException(globalObject, exception);
             return {};
@@ -683,38 +716,6 @@ bool NodeVMModule::hasAsyncGraph() const
     }
 
     return false;
-}
-
-// After record->link() succeeds, every reachable record in the graph is
-// linked, but only the root wrapper's status was updated. Mirror the record
-// state onto the dependency wrappers (Node's module status reflects the V8
-// record status, so dependencies read "linked" after the root instantiates).
-void NodeVMModule::propagateLinked()
-{
-    WTF::HashSet<NodeVMModule*> visited;
-    WTF::Vector<NodeVMModule*, 16> worklist;
-    worklist.append(this);
-
-    while (!worklist.isEmpty()) {
-        NodeVMModule* module = worklist.takeLast();
-        if (!visited.add(module).isNewEntry)
-            continue;
-
-        // An importer that got its modules before replaceUnlinkedRecords() links the replaced records, not this one.
-        if (auto* sourceTextModule = dynamicDowncast<NodeVMSourceTextModule>(module)) {
-            JSC::JSModuleRecord* record = sourceTextModule->moduleRecordIfExists();
-            if (!record || record->status() < JSC::CyclicModuleRecord::Status::Linked)
-                continue;
-        }
-
-        if (module->status() == Status::Unlinked)
-            module->status(Status::Linked);
-
-        for (const auto& dependency : module->m_resolveCache.values()) {
-            if (auto* dependencyModule = dynamicDowncast<NodeVMModule>(dependency.get()))
-                worklist.append(dependencyModule);
-        }
-    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleHasTopLevelAwait, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

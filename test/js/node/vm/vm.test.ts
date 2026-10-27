@@ -2715,6 +2715,118 @@ test("node:vm SourceTextModule link() with other modules after a link() that fai
   expect(exitCode).toBe(0);
 });
 
+// The body of a module calls back into node:vm while the evaluate() of an importer runs it. In a subprocess: an
+// evaluate() or an instantiate() that went on from there ended in an assertion of JavaScriptCore. The status tests
+// that Node.js runs too are in vm-module-link-status.test.ts.
+describe.concurrent("node:vm SourceTextModule that the evaluate() of an importer is running", () => {
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    return { result: JSON.parse(stdout), exitCode };
+  }
+
+  // Calls instantiate(), evaluate() and link() of `module`, and records its status and the error code of each call.
+  const reenter = `
+    const seen = {};
+    const code = error => error.code ?? error.name;
+    const reenter = (module, linker) => {
+      seen.status = module.status;
+      try {
+        module.instantiate();
+        seen.instantiate = "no error";
+      } catch (error) {
+        seen.instantiate = code(error);
+      }
+      module.evaluate().then(() => (seen.evaluate = "no error"), error => (seen.evaluate = code(error)));
+      module.link(linker).then(() => (seen.link = "no error"), error => (seen.link = code(error)));
+    };
+  `;
+  const rejected = {
+    status: "evaluating",
+    instantiate: "ERR_VM_MODULE_STATUS",
+    evaluate: "ERR_VM_MODULE_STATUS",
+    link: "ERR_VM_MODULE_STATUS",
+  };
+
+  test("a module of a cycle is evaluating, and cannot be evaluated or linked from its body", async () => {
+    const { result, exitCode } = await run(`
+      import vm from "node:vm";
+      ${reenter}
+      let D, W, Z;
+      const linker = specifier => ({ D, W, Z })[specifier];
+      globalThis.inBodyOfZ = () => reenter(Z, linker);
+      D = new vm.SourceTextModule('import "W"; import "Z";', { identifier: "D" });
+      W = new vm.SourceTextModule('import "D";', { identifier: "W" });
+      Z = new vm.SourceTextModule("inBodyOfZ();", { identifier: "Z" });
+      await D.link(linker);
+      await D.evaluate();
+      console.log(JSON.stringify({ ...seen, after: [D.status, W.status, Z.status] }));
+    `);
+    expect(result).toEqual({ ...rejected, after: ["evaluated", "evaluated", "evaluated"] });
+    expect(exitCode).toBe(0);
+  });
+
+  test("the first of two modules for one specifier is evaluating, and cannot be evaluated or linked from its body", async () => {
+    const { result, exitCode } = await run(`
+      import vm from "node:vm";
+      ${reenter}
+      let a, b;
+      const linker = (specifier, referrer, extra) => (extra.attributes.type === "json" ? b : a);
+      globalThis.inBodyOfA = () => reenter(a, linker);
+      a = new vm.SourceTextModule("inBodyOfA(); export default 1;", { identifier: "a" });
+      b = new vm.SourceTextModule("export default 2;", { identifier: "b" });
+      const root = new vm.SourceTextModule('import x from "dep"; import y from "dep" with { type: "json" };', {
+        identifier: "root",
+      });
+      await root.link(linker);
+      await root.evaluate();
+      console.log(JSON.stringify({ ...seen, after: root.status }));
+    `);
+    expect(result).toEqual({ ...rejected, after: "evaluated" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a link() that ends while the module runs changes nothing", async () => {
+    // c.link() waits in its linker. An importer links the record of c and evaluates it. The body of c lets c.link() end.
+    const { result, exitCode } = await run(`
+      import { drainMicrotasks } from "bun:jsc";
+      import vm from "node:vm";
+      const gate = Promise.withResolvers();
+      let late = "pending";
+      globalThis.inBodyOfC = () => {
+        gate.resolve();
+        drainMicrotasks();
+        return [late, c.status];
+      };
+      const e1 = new vm.SourceTextModule("export const e = 1;", { identifier: "e1" });
+      const e2 = new vm.SourceTextModule("export const e = 2;", { identifier: "e2" });
+      const c = new vm.SourceTextModule('import { e } from "e"; export const seen = inBodyOfC(); export const c = e;', {
+        identifier: "c",
+      });
+      const a = new vm.SourceTextModule('import "c";', { identifier: "a" });
+      e1.linkRequests([]);
+      c.linkRequests([e1]);
+      c.link(async () => (await gate.promise, e2)).then(
+        () => (late = "no error"),
+        error => (late = error.code ?? error.name),
+      );
+      a.linkRequests([c]);
+      a.instantiate();
+      a.evaluate();
+      console.log(
+        JSON.stringify({ inBodyOfC: c.namespace.seen, c: c.namespace.c, statuses: [a.status, c.status, e1.status, e2.status] }),
+      );
+    `);
+    expect(result).toEqual({
+      inBodyOfC: ["no error", "evaluating"],
+      c: 1,
+      statuses: ["evaluated", "evaluated", "evaluated", "unlinked"],
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("node:vm Object.defineProperty on the context global when the sandbox is an uncacheable dictionary holding an accessor for a built-in", async () => {
   // Regression: NodeVMGlobalObject::defineOwnProperty used a single PropertySlot
   // for both the global-object lookup and the sandbox lookup. When the first

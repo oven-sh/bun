@@ -1239,6 +1239,8 @@ impl Valid {
         Self::no_null_bytes(slice, "path", "a string, Uint8Array, or URL", global)
     }
 
+    /// Inlined down to the scan: the `fs` functions run it on every path.
+    #[inline]
     pub(crate) fn no_null_bytes(
         slice: &[u8],
         name: &str,
@@ -1248,15 +1250,31 @@ impl Valid {
         if strings::index_of_char(slice, 0).is_none() {
             return Ok(());
         }
-        Err(global
+        Err(Self::throw_null_bytes(slice, name, accepts, global))
+    }
+
+    #[cold]
+    fn throw_null_bytes(
+        slice: &[u8],
+        name: &str,
+        accepts: &str,
+        global: &JSGlobalObject,
+    ) -> jsc::JsError {
+        // Like Node's ERR_INVALID_ARG_VALUE: a dotted name is a property.
+        let kind = if strings::contains_char(name.as_bytes(), b'.') {
+            "property"
+        } else {
+            "argument"
+        };
+        global
             .err(
                 jsc::ErrorCode::INVALID_ARG_VALUE,
                 format_args!(
-                    "The argument '{name}' must be {accepts} without null bytes. Received {}",
+                    "The {kind} '{name}' must be {accepts} without null bytes. Received {}",
                     bun_fmt::quote(slice)
                 ),
             )
-            .throw())
+            .throw()
     }
 }
 

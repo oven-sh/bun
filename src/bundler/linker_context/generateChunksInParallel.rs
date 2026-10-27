@@ -433,13 +433,29 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 [chunk.entry_point.source_index() as usize]
                 .path
                 .pretty;
-            if opens_output_paths
-                && !chunk
+            if opens_output_paths {
+                // Inlined and embedded chunks are not opened, but their `.map` files are: an executable's by basename.
+                let has_map = chunk
+                    .content
+                    .sourcemap(c.options.source_maps)
+                    .has_external_files();
+                let opened: &[u8] = match c.options.compile_mode {
+                    options::CompileMode::None => &rel_path,
+                    options::CompileMode::StandaloneHtml
+                        if has_map || matches!(chunk.content, crate::chunk::Content::Html) =>
+                    {
+                        &rel_path
+                    }
+                    options::CompileMode::Executable if has_map => path::basename(&rel_path),
+                    options::CompileMode::StandaloneHtml | options::CompileMode::Executable => b"",
+                };
+                if !chunk
                     .template
-                    .check_output_path(c.log_disjoint(), input, &rel_path)
-            {
-                has_unusable_output_path = true;
-                continue;
+                    .check_output_path(c.log_disjoint(), input, &rel_path, opened)
+                {
+                    has_unusable_output_path = true;
+                    continue;
+                }
             }
 
             let claimed = path_names_map.get_or_put(&rel_path)?;

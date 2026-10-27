@@ -4815,6 +4815,12 @@ pub mod bv2_impl {
                                 self.transpiler.log_mut(),
                                 source.path.pretty,
                                 &output_path,
+                                match self.transpiler.options.compile_mode {
+                                    options::CompileMode::None => &output_path,
+                                    // An executable embeds its assets and a standalone HTML build inlines them.
+                                    options::CompileMode::Executable
+                                    | options::CompileMode::StandaloneHtml => b"",
+                                },
                             )
                         {
                             has_unusable_output_path = true;

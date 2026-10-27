@@ -27,11 +27,33 @@ use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_s
 
 pub(crate) mod js_bundler {
     use super::*;
+    use crate::node::types::Valid;
     use bun_core::Utf8Bytes;
 
     use bun_sys::FdExt;
 
     type OwnedString = MutableString;
+
+    /// Throws if `value`, which comes from `entrypoints` unless `option` is set, has a NUL byte.
+    fn derived_no_null_bytes(
+        global: &JSGlobalObject,
+        what: &str,
+        value: &[u8],
+        option: &str,
+    ) -> JsResult<()> {
+        if !bun_core::strings::contains_char(value, 0) {
+            return Ok(());
+        }
+        Err(global
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "The {what} {}, taken from 'entrypoints', must not contain null bytes. Set '{option}' to override it.",
+                    bun_core::fmt::quote(value)
+                ),
+            )
+            .throw())
+    }
 
     /// `options::JSX::Runtime` → `api::JsxRuntime` (only the reverse `From`
     /// exists upstream).
@@ -341,6 +363,12 @@ pub(crate) mod js_bundler {
                 object.get_own(global_this, &BunString::static_("executablePath"))?
             {
                 let slice = executable_path.to_utf8(global_this)?;
+                Valid::no_null_bytes(
+                    slice.slice(),
+                    "compile.executablePath",
+                    "a string",
+                    global_this,
+                )?;
                 let path_z = bun_core::ZBox::from_bytes(slice.slice());
                 if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                     .unwrap_or(bun_sys::ExistsAtType::Directory)
@@ -370,6 +398,12 @@ pub(crate) mod js_bundler {
                     windows.get_own(global_this, &BunString::static_("icon"))?
                 {
                     let slice = windows_icon_path.to_utf8(global_this)?;
+                    Valid::no_null_bytes(
+                        slice.slice(),
+                        "compile.windows.icon",
+                        "a string",
+                        global_this,
+                    )?;
                     let path_z = bun_core::ZBox::from_bytes(slice.slice());
                     if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                         .unwrap_or(bun_sys::ExistsAtType::Directory)
@@ -421,6 +455,7 @@ pub(crate) mod js_bundler {
 
             if let Some(outfile) = object.get_own(global_this, &BunString::static_("outfile"))? {
                 let slice = outfile.to_utf8(global_this)?;
+                Valid::no_null_bytes(slice.slice(), "compile.outfile", "a string", global_this)?;
                 this.outfile.append_slice_exact(slice.slice())?;
             }
 
@@ -475,6 +510,12 @@ pub(crate) mod js_bundler {
                             "compile.bytecodeOrder must not contain an empty path"
                         )));
                     }
+                    Valid::no_null_bytes(
+                        slice.slice(),
+                        "compile.bytecodeOrder",
+                        "a string",
+                        global_this,
+                    )?;
                     this.bytecode_order.push(Box::from(slice.slice()));
                     Ok(())
                 };
@@ -742,12 +783,14 @@ pub(crate) mod js_bundler {
 
             let mut has_out_dir = false;
             if let Some(slice) = config.get_optional_slice(global_this, b"outdir")? {
+                Valid::no_null_bytes(slice.slice(), "outdir", "a string", global_this)?;
                 this.outdir.append_slice_exact(slice.slice())?;
                 has_out_dir = true;
                 drop(slice);
             }
 
             if let Some(slice) = config.get_optional_slice(global_this, b"tsconfig")? {
+                Valid::no_null_bytes(slice.slice(), "tsconfig", "a string", global_this)?;
                 this.tsconfig_override.append_slice_exact(slice.slice())?;
                 drop(slice);
             }
@@ -1004,8 +1047,11 @@ pub(crate) mod js_bundler {
             }
 
             {
+                let given = config.get_optional_slice(global_this, b"root")?;
+                let is_default = given.is_none();
                 let path: Utf8Bytes = 'brk: {
-                    if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
+                    if let Some(slice) = given {
+                        Valid::no_null_bytes(slice.slice(), "root", "a string", global_this)?;
                         break 'brk slice;
                     }
 
@@ -1041,6 +1087,9 @@ pub(crate) mod js_bundler {
                             .unwrap_or(b"."),
                     );
                 };
+                if is_default {
+                    derived_no_null_bytes(global_this, "root directory", path.slice(), "root")?;
+                }
 
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
                     Ok(d) => d,
@@ -1291,18 +1340,31 @@ pub(crate) mod js_bundler {
                     // metafile: "path/to/meta.json" - shorthand for { json: "..." }
                     this.metafile = true;
                     let slice = metafile_value.to_utf8(global_this)?;
+                    Valid::no_null_bytes(slice.slice(), "metafile", "a string", global_this)?;
                     this.metafile_json_path.append_slice_exact(slice.slice())?;
                     drop(slice);
                 } else if metafile_value.is_object() {
                     // metafile: { json?: string, markdown?: string }
                     this.metafile = true;
                     if let Some(slice) = metafile_value.get_optional_slice(global_this, b"json")? {
+                        Valid::no_null_bytes(
+                            slice.slice(),
+                            "metafile.json",
+                            "a string",
+                            global_this,
+                        )?;
                         this.metafile_json_path.append_slice_exact(slice.slice())?;
                         drop(slice);
                     }
                     if let Some(slice) =
                         metafile_value.get_optional_slice(global_this, b"markdown")?
                     {
+                        Valid::no_null_bytes(
+                            slice.slice(),
+                            "metafile.markdown",
+                            "a string",
+                            global_this,
+                        )?;
                         this.metafile_markdown_path
                             .append_slice_exact(slice.slice())?;
                         drop(slice);
@@ -1384,6 +1446,12 @@ pub(crate) mod js_bundler {
                             return Err(global_this.throw_invalid_arguments(format_args!("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile")));
                         }
 
+                        derived_no_null_bytes(
+                            global_this,
+                            "executable name",
+                            outfile,
+                            "compile.outfile",
+                        )?;
                         compile.outfile.append_slice_exact(outfile)?;
                     }
                 }

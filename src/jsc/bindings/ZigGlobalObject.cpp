@@ -209,7 +209,6 @@
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "webcore/JSMIMEParams.h"
-#include "JSNodePerformanceHooksHistogram.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -2232,9 +2231,6 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPParserClassStructure), [](LazyClassStructure::Initializer& init) {
              setupHTTPParserClassStructure(init);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSNodePerformanceHooksHistogramClassStructure), [](LazyClassStructure::Initializer& init) {
-             Bun::setupJSNodePerformanceHooksHistogramClassStructure(init);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatsClassStructure), [](LazyClassStructure::Initializer& init) {
              Bun::initJSStatsClassStructure(init);

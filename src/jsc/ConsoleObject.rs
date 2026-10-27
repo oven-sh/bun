@@ -1131,11 +1131,10 @@ impl<'a> DynWriteAdapter<'a> {
 }
 
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
+    let mut source_code = bun_core::Utf8Bytes::EMPTY;
     let mut holder = crate::zig_exception::Holder::init();
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
-
-    let mut source_code_slice: Option<bun_core::Utf8Bytes> = None;
 
     let err = global.create_error_instance(format_args!("trace output"));
     // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
@@ -1148,7 +1147,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         err,
         None,
         &mut need_to_clear,
-        &mut source_code_slice,
+        &mut source_code,
         false,
     );
     holder.need_to_clear_parser_arena_on_deinit = need_to_clear;
@@ -1160,7 +1159,6 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         Output::enable_ansi_colors_stderr(),
     );
 
-    drop(source_code_slice);
     holder.deinit(vm);
 }
 
@@ -5515,32 +5513,17 @@ pub mod formatter {
             writer.print(format_args!("({}) [ ", array_buffer.len));
 
             use jsc::JSType as T;
-            // `slice` comes from a typed array whose backing storage is aligned for its
-            // element type (JS spec: typed-array byteOffset is always a multiple of
-            // element size, and ArrayBuffer storage is mimalloc-aligned), so the safe
-            // `bytemuck::cast_slice` alignment/size checks always pass.
-            use bytemuck::cast_slice;
             match js_type {
-                T::Int8Array => Self::write_typed_array::<i8, C>(&mut writer, cast_slice(slice)),
-                T::Int16Array => Self::write_typed_array::<i16, C>(&mut writer, cast_slice(slice)),
-                T::Uint16Array => Self::write_typed_array::<u16, C>(&mut writer, cast_slice(slice)),
-                T::Int32Array => Self::write_typed_array::<i32, C>(&mut writer, cast_slice(slice)),
-                T::Uint32Array => Self::write_typed_array::<u32, C>(&mut writer, cast_slice(slice)),
-                T::Float16Array => {
-                    Self::write_typed_array::<bun_core::f16, C>(&mut writer, cast_slice(slice))
-                }
-                T::Float32Array => {
-                    Self::write_typed_array::<f32, C>(&mut writer, cast_slice(slice))
-                }
-                T::Float64Array => {
-                    Self::write_typed_array::<f64, C>(&mut writer, cast_slice(slice))
-                }
-                T::BigInt64Array => {
-                    Self::write_typed_array::<i64, C>(&mut writer, cast_slice(slice))
-                }
-                T::BigUint64Array => {
-                    Self::write_typed_array::<u64, C>(&mut writer, cast_slice(slice))
-                }
+                T::Int8Array => Self::write_typed_array::<i8, C>(&mut writer, slice),
+                T::Int16Array => Self::write_typed_array::<i16, C>(&mut writer, slice),
+                T::Uint16Array => Self::write_typed_array::<u16, C>(&mut writer, slice),
+                T::Int32Array => Self::write_typed_array::<i32, C>(&mut writer, slice),
+                T::Uint32Array => Self::write_typed_array::<u32, C>(&mut writer, slice),
+                T::Float16Array => Self::write_typed_array::<bun_core::f16, C>(&mut writer, slice),
+                T::Float32Array => Self::write_typed_array::<f32, C>(&mut writer, slice),
+                T::Float64Array => Self::write_typed_array::<f64, C>(&mut writer, slice),
+                T::BigInt64Array => Self::write_typed_array::<i64, C>(&mut writer, slice),
+                T::BigUint64Array => Self::write_typed_array::<u64, C>(&mut writer, slice),
                 // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
                 _ => Self::write_typed_array::<u8, C>(&mut writer, slice),
             }
@@ -5558,14 +5541,16 @@ pub mod formatter {
         // `WrappedWriter` mirrors.
         fn write_typed_array<N: TypedArrayElement, const C: bool>(
             writer: &mut WrappedWriter<'_>,
-            slice: &[N],
+            bytes: &[u8],
         ) {
+            // `Unaligned`: an ArrayBuffer over foreign memory (bun:ffi, N-API) starts anywhere.
+            let slice = bun_core::Unaligned::<N>::slice_of(bytes);
             // Only the per-element `Display` differs by `N`; the loop is shared.
             Self::write_typed_array_elements::<C>(
                 writer,
                 slice.len(),
                 N::IS_BIGINT,
-                &mut |w, i| w.print(format_args!("{}", N::display(slice[i]))),
+                &mut |w, i| w.print(format_args!("{}", N::display(slice[i].get()))),
             );
         }
 
@@ -5644,7 +5629,7 @@ pub mod formatter {
     }
 
     /// Abstracts over `{d}` vs `{f}` and `n`-suffix for `write_typed_array`.
-    trait TypedArrayElement: Copy {
+    trait TypedArrayElement: bun_core::AnyBitPattern {
         const IS_BIGINT: bool;
         type Display: core::fmt::Display;
         fn display(self) -> Self::Display;

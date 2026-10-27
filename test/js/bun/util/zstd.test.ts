@@ -1431,3 +1431,22 @@ describe("frames that no encoder makes decode as with zstd 1.5.7", () => {
     }
   });
 });
+
+describe("bugs that zstd fixed after 1.5.7", () => {
+  // facebook/zstd cef5a5611: `windowLog - ldmHashRateLog` wrapped around, which made for a table of 8 GiB.
+  it("a hash rate above the window does not make for the largest table of long distance matches", async () => {
+    const script = `
+      const zlib = require("node:zlib");
+      const c = zlib.constants;
+      const input = Buffer.alloc(1024, "long distance ");
+      const output = zlib.zstdCompressSync(input, {
+        params: { [c.ZSTD_c_enableLongDistanceMatching]: 1, [c.ZSTD_c_ldmHashRateLog]: 11 },
+      });
+      console.log(input.equals(zlib.zstdDecompressSync(output)), process.resourceUsage().maxRSS < 4 * 1024 * 1024);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.slice(0, 2000) }).toEqual({ stdout: "true true\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});

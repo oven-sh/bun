@@ -9350,6 +9350,11 @@ describe("rules", () => {
           "@supports (color:lab(0% 0 0)) or (top:0){.b{color:lab(40% 56.6 39)}}",
           "@supports (color:lab(0% 0 0)) or (top:0){.b{color:#b32323;color:lab(40% 56.6 39)}}",
         ],
+        // Any value is valid for a custom property, so this holds in browsers without lab().
+        [
+          "@supports (--x:lab(0% 0 0)){.b{color:lab(40% 56.6 39)}}",
+          "@supports (--x:lab(0% 0 0)){.b{color:#b32323;color:lab(40% 56.6 39)}}",
+        ],
       ]);
       test("output that is minified again does not grow", () => {
         const first = cssInternals.minifyTest(".a{color:var(--a,lab(50% 20 30))}", "", chrome80);
@@ -10138,9 +10143,8 @@ describe("rounding to 6 digits only cuts a fraction short", () => {
     "a{--x:1234567.5}",
     "a{--ts:1700000000.25}",
     "a{--x:123456.78}",
-    // Typed values are f32: its shortest digits print.
+    // Typed values are f32: every integer digit prints, and one digit of the fraction.
     "a{width:1234567.5px}",
-    "a{width:123456.78px}",
     "a{max-width:9999999px}",
     "a{margin:-1000001px}",
     "a{flex-grow:1234567}",
@@ -10160,6 +10164,10 @@ describe("rounding to 6 digits only cuts a fraction short", () => {
   minify_test("a{--x:241.8301435407}", "a{--x:241.83}");
   minify_test("a{opacity:.123456789}", "a{opacity:.123457}");
   minify_test("a{width:12345.678px}", "a{width:12345.7px}");
+  minify_test("a{width:123456.78px}", "a{width:123456.8px}");
+  // 100000 * 1.3 is 129999.99 as an f32.
+  minify_test("a{width:calc(100000px * 1.3)}", "a{width:130000px}");
+  minify_test("a{--x:0000001;--y:000000.5}", "a{--x:1;--y:.5}");
 });
 
 describe("consecutive nested declarations are one rule", () => {

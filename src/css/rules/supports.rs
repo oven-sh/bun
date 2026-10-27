@@ -113,6 +113,12 @@ impl SupportsCondition {
                         features | condition.tested_color_features(arena)
                     });
             }
+            // Any value is valid for a custom property, so that tests nothing.
+            Self::Declaration(declaration)
+                if matches!(declaration.property_id, PropertyId::Custom(_)) =>
+            {
+                return css::Features::empty();
+            }
             Self::Declaration(declaration) => {
                 css::parse_utility::parse_string(arena, declaration.value, CssColor::parse)
             }
@@ -120,7 +126,9 @@ impl SupportsCondition {
             Self::Unknown(group) => css::parse_utility::parse_string(arena, group, |input| {
                 input.expect_parenthesis_block()?;
                 input.parse_nested_block(|input| {
-                    input.expect_ident()?;
+                    if input.expect_ident()?.starts_with(b"--") {
+                        return Err(input.new_custom_error(css::ParserError::invalid_value));
+                    }
                     input.expect_colon()?;
                     CssColor::parse(input)
                 })

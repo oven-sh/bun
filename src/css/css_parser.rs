@@ -3709,6 +3709,7 @@ impl<'a> Parser<'a> {
             || text.starts_with(b"+")
             || (text.starts_with(b".") && before.last().is_some_and(u8::is_ascii_digit));
         let digits = text.strip_prefix(b"-").unwrap_or(text);
+        let digits = &digits[digits.iter().take_while(|b| **b == b'0').count()..];
         let integer_digits = digits.iter().take_while(|b| b.is_ascii_digit()).count();
         let is_long = integer_digits > 6 || (integer_digits == 6 && digits.get(6) == Some(&b'.'));
         (is_long || touches_a_number).then_some(text)
@@ -6229,14 +6230,21 @@ pub(crate) fn dtoa_short_impl(buf: &mut [u8; 129], value: f32, precision: u8) ->
     debug_assert!(value.is_finite());
     // Format the f32, not `value as f64`: `restrict_prec` rounds its shortest round-trip digits.
     let magnitude = value.abs();
-    // Rounding only cuts a fraction short: from 6 integer digits on, all 9 digits of an f32 print.
-    let precision = if magnitude >= 1e5 { 9 } else { precision };
-    let len = if magnitude == 0.0 || (1e-6..1e21).contains(&magnitude) {
-        bun_core::fmt::buf_print_infallible(&mut buf[1..], format_args!("{value}")).len()
-    } else {
-        bun_core::fmt::buf_print_infallible(&mut buf[1..], format_args!("{value:e}")).len()
-    };
-    restrict_prec(&mut buf[..len + 1], precision)
+    if magnitude != 0.0 && !(1e-6..1e21).contains(&magnitude) {
+        let len =
+            bun_core::fmt::buf_print_infallible(&mut buf[1..], format_args!("{value:e}")).len();
+        return restrict_prec(&mut buf[..len + 1], precision);
+    }
+    let len = bun_core::fmt::buf_print_infallible(&mut buf[1..], format_args!("{value}")).len();
+    // Rounding only cuts a fraction short. One digit of it stays: the rest is f32 noise by then.
+    let digits = &buf[1..=len];
+    let integer_digits = digits
+        .strip_prefix(b"-")
+        .unwrap_or(digits)
+        .iter()
+        .take_while(|b| b.is_ascii_digit())
+        .count();
+    restrict_prec(&mut buf[..len + 1], precision.max(integer_digits as u8 + 1))
 }
 
 fn restrict_prec(buf: &mut [u8], prec: u8) -> (&[u8], Notation) {

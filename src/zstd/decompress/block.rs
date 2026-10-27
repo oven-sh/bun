@@ -2,8 +2,8 @@
 
 use super::huf::{self, HufDTable};
 use super::seq_table::{
-    Cell, Codes, LL_CODES, ML_CODES, OF_CODES, OffsetTable, SeqTable, SeqTableSources, SeqTables,
-    TableSource,
+    Cell, Codes, LL_CODES, ML_CODES, OF_CODES, OffsetTable, SeqTable, SeqTableRefs,
+    SeqTableSources, SeqTables, TableSource,
 };
 use core::cell::{self, OnceCell};
 use core::hint::{Locality, prefetch_read};
@@ -589,13 +589,17 @@ impl BlockDecoder {
             batch,
         } = &mut **scratch;
         let dict_tables = dict_entropy.map(|dict| &dict.seq);
-        let tables = entropy.seq.gather(&mut self.seq_sources, dict_tables);
+        let tables = if nb_seq <= MAX_ONE_BY_ONE {
+            entropy.seq.pick(self.seq_sources, dict_tables)
+        } else {
+            entropy.seq.gather(&mut self.seq_sources, dict_tables)
+        };
 
         // With matches far back in a long history, it pays to know the sequences ahead of time. Nothing is prefetched
         // here, but which of two problems in a damaged block is reported depends on the order.
         if !use_prefetch_decoder && total_history_size > (1 << 24) && nb_seq > 8 {
             const MIN_SHARE: u32 = 7;
-            use_prefetch_decoder = long_offset_share(&tables.of) >= MIN_SHARE;
+            use_prefetch_decoder = long_offset_share(tables.of) >= MIN_SHARE;
         }
         self.ddict_is_cold = false;
         if nb_seq > 0 {
@@ -811,6 +815,9 @@ impl PaddedStart {
     }
 }
 
+/// Up to how many sequences it is not worth it to decode them by the batch.
+const MAX_ONE_BY_ONE: usize = 8;
+
 /// `seqState_t`
 #[derive(Clone, Copy)]
 struct SeqState<'a> {
@@ -818,12 +825,12 @@ struct SeqState<'a> {
     state_ll: usize,
     state_off: usize,
     state_ml: usize,
-    tables: &'a SeqTables,
+    tables: SeqTableRefs<'a>,
     prev_offset: [usize; ZSTD_REP_NUM],
 }
 
 impl<'a> SeqState<'a> {
-    fn new(src: &'a [u8], tables: &'a SeqTables, rep: &[u32; ZSTD_REP_NUM]) -> Result<Self> {
+    fn new(src: &'a [u8], tables: SeqTableRefs<'a>, rep: &[u32; ZSTD_REP_NUM]) -> Result<Self> {
         let mut bit_d = BitDStream::new(src).map_err(|_| ErrorCode::CorruptionDetected)?;
         // `ZSTD_initFseState`
         let mut init = |table_log: u32| {
@@ -891,7 +898,9 @@ impl<'a> SeqState<'a> {
         // How many bits are left to read, and 7.
         let mut position = src.len() as u32 * 8 + 7 - self.bit_d.bits_consumed;
         let containers = src.get(FAR - 8..).unwrap_or_default();
-        let tables = self.tables;
+        let Some(tables) = self.tables.side_by_side else {
+            return Ok(0);
+        };
         let mut state_ll = self.state_ll as u32 & 511;
         let mut state_ml = self.state_ml as u32 & 511;
         let mut state_off = self.state_off as u32 & 255;
@@ -1538,7 +1547,7 @@ impl<'a> Executor<'_, 'a> {
         let mut remaining = nb_seq;
         // Long copies go on while the next sequences are decoded, if that is what comes next. And a batch of a few
         // sequences is not worth it.
-        if (tables.ml.with_more_bits > 512 / 2 || nb_seq <= 8) && !self.split {
+        if (tables.ml.with_more_bits > 512 / 2 || nb_seq <= MAX_ONE_BY_ONE) && !self.split {
             let mut exec = self.fork();
             while remaining > ahead.len() {
                 let sequence = seq_state.decode_sequence(remaining == 1);

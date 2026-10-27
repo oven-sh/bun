@@ -460,20 +460,39 @@ impl SeqTables {
         }
     }
 
-    /// The three tables that `sources` designates, side by side. If they are not, those that are not in `self` are
-    /// copied there, which `sources` then says.
+    /// The three tables that `sources` designates, where they are.
+    pub(crate) fn pick<'a>(
+        &'a self,
+        sources: SeqTableSources,
+        dict: Option<&'a Self>,
+    ) -> SeqTableRefs<'a> {
+        let from = |source| match (source, dict) {
+            (TableSource::Predefined, _) => &DEFAULT_TABLES,
+            (TableSource::Dict, Some(dict)) => dict,
+            _ => self,
+        };
+        SeqTableRefs {
+            ll: &from(sources.ll).ll,
+            of: &from(sources.of).of,
+            ml: &from(sources.ml).ml,
+            side_by_side: (sources == SeqTableSources::all(sources.ll)).then(|| from(sources.ll)),
+        }
+    }
+
+    /// The same side by side. If they are not, those that are not in `self` are copied there, which `sources` then
+    /// says.
     pub(crate) fn gather<'a>(
         &'a mut self,
         sources: &mut SeqTableSources,
         dict: Option<&'a Self>,
-    ) -> &'a Self {
+    ) -> SeqTableRefs<'a> {
         let from = |source| match (source, dict) {
             (TableSource::Predefined, _) => Some(&DEFAULT_TABLES),
             (TableSource::Dict, Some(dict)) => Some(dict),
             _ => None,
         };
         if *sources == SeqTableSources::all(sources.ll) {
-            return from(sources.ll).unwrap_or(self);
+            return self.pick(*sources, dict);
         }
         if let Some(other) = from(sources.ll) {
             self.ll.copy_from(&other.ll);
@@ -485,6 +504,16 @@ impl SeqTables {
             self.ml.copy_from(&other.ml);
         }
         *sources = SeqTableSources::all(TableSource::Local);
-        self
+        self.pick(*sources, dict)
     }
+}
+
+/// Three tables to decode sequences with.
+#[derive(Clone, Copy)]
+pub(crate) struct SeqTableRefs<'a> {
+    pub(crate) ll: &'a LengthTable,
+    pub(crate) of: &'a OffsetTable,
+    pub(crate) ml: &'a LengthTable,
+    /// What the three are in, if that is one thing.
+    pub(crate) side_by_side: Option<&'a SeqTables>,
 }

@@ -494,3 +494,98 @@ describe("oddBlocks", () => {
     expect(() => hw("oddBlocks", new Uint8Array(4097), new Uint8Array(8))).toThrow(RangeError);
   });
 });
+
+// src/jsc/bindings/highway_hpack.cpp
+describe("hpackHuffmanDecodeShort", () => {
+  const hasKernel = hw("hpackHuffmanDecodeShort", new Uint8Array(0), new Uint8Array(1)) !== -1;
+
+  // The codes of 5, 6, 7 and 8 bits in RFC 7541 Appendix B, which count up in this order.
+  const SYMBOLS = "012aceiost| %-./3456789=A_bdfghlmnpru|:BCDEFGHIJKLMNOPQRSTUVWYjkqvwxyz|&*,;XZ".split("|");
+  const codes = new Map<string, string>();
+  let next = 0;
+  SYMBOLS.forEach((symbols, i) => {
+    for (const symbol of symbols) {
+      codes.set(
+        symbol,
+        next
+          .toString(2)
+          .padStart(8, "0")
+          .slice(0, 5 + i),
+      );
+      next += 1 << (3 - i);
+    }
+  });
+  const all = SYMBOLS.join("");
+  const textOf = (length: number, seed: number) =>
+    Array.from({ length }, (_, i) => all[(i * 31 + seed * 7) % all.length]).join("");
+
+  /** Bytes from a string of "0" and "1", filled up with ones. */
+  function pack(bits: string, off = 0) {
+    const bytes = bits.padEnd(Math.ceil(bits.length / 8) * 8, "1").match(/.{8}/g) ?? [];
+    const backing = new Uint8Array(off + bytes.length);
+    backing.set(
+      bytes.map(byte => parseInt(byte, 2)),
+      off,
+    );
+    return backing.subarray(off);
+  }
+
+  /**
+   * Decodes `skipped + code of text + rest` from after `skipped`. Returns how many symbols came out,
+   * having checked that they are the start of `text` and that nothing is written past `room`.
+   */
+  function decode(skipped: string, text: string, rest: string, at: string, room = text.length + 16, off = 0) {
+    const out = new Uint8Array(room + 1).fill(0xaa);
+    out[0] = skipped.length;
+    const src = pack(skipped + Array.from(text, symbol => codes.get(symbol)).join("") + rest, off);
+    const stopped = hw("hpackHuffmanDecodeShort", src, out.subarray(0, room));
+    let count = 0;
+    let bit = skipped.length;
+    while (bit < stopped) bit += codes.get(text[count++])!.length;
+    expect(bit, at).toBe(stopped);
+    expect(Buffer.from(out.subarray(0, count)).toString(), at).toBe(text.slice(0, count));
+    expect(out[room], at).toBe(0xaa);
+    return count;
+  }
+
+  it.skipIf(!hasKernel)("every symbol, from every bit of a byte", () => {
+    for (const symbol of all) {
+      for (let skipped = 0; skipped < 8; skipped++) {
+        const at = `symbol=${symbol} skipped=${skipped}`;
+        expect(decode("0".repeat(skipped), symbol, "", at), at).toBe(1);
+      }
+    }
+  });
+
+  it.skipIf(!hasKernel)("text of every length, up to the padding or a longer code", () => {
+    for (let length = 0; length <= 130; length++) {
+      // "!" and the longest there is, then something that would decode.
+      for (const rest of ["", "1111111000" + "00000", "111111111111111111111111111100" + "00000"]) {
+        const at = `length=${length} rest=${rest}`;
+        const off = OFFSETS[length % OFFSETS.length];
+        expect(decode("1".repeat(length % 8), textOf(length, length), rest, at, undefined, off), at).toBe(length);
+      }
+    }
+  });
+
+  it.skipIf(!hasKernel)("leaves out a code that the input ends in the middle of", () => {
+    for (let length = 0; length <= 40; length++) {
+      const text = textOf(length, 3);
+      const bits = Array.from(text, symbol => codes.get(symbol)).join("").length;
+      // With ones after it, this would be "1", "9" or "Y".
+      const rest = "0".repeat(8 - (bits % 8));
+      if (rest.length > 4) continue;
+      expect(decode("", text, rest, `length=${length}`)).toBeLessThanOrEqual(length);
+    }
+  });
+
+  it.skipIf(!hasKernel)("stops when there is no room for 16 symbols", () => {
+    const text = textOf(200, 1);
+    for (let room = 1; room <= 60; room++) {
+      const count = decode("", text, "", `room=${room}`, room);
+      expect(count, `room=${room}`).toBeLessThanOrEqual(Math.max(0, room - 4));
+      if (room < 16) expect(count, `room=${room}`).toBe(0);
+      else expect(count, `room=${room}`).toBeGreaterThan(room - 16);
+    }
+  });
+});

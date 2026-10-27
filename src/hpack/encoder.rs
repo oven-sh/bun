@@ -407,10 +407,24 @@ fn unlink_first(chain: &mut Chain, next: Option<Id>) {
 
 /// A string literal (§5.2), Huffman coded unless that makes it longer.
 fn string(out: &mut Vec<u8>, bytes: &[u8]) {
+    // A length under 127 takes one byte, which can be filled in afterwards.
+    if bytes.len() < 127 {
+        let at = out.len();
+        out.push(bytes.len() as u8);
+        if !bytes.is_empty() && huffman::encode(bytes, out, bytes.len()) {
+            let huffman_len = out.len() - at - 1;
+            if let Some(len) = out.get_mut(at) {
+                *len = 0x80 | huffman_len as u8;
+            }
+        } else {
+            out.extend_from_slice(bytes);
+        }
+        return;
+    }
     let huffman_len = huffman::encoded_len(bytes);
-    if huffman_len > 0 && huffman_len <= bytes.len() {
+    if huffman_len <= bytes.len() {
         integer::encode(out, 0x80, 7, huffman_len as u32);
-        huffman::encode(bytes, out);
+        huffman::encode(bytes, out, huffman_len);
     } else {
         integer::encode(out, 0x00, 7, bytes.len() as u32);
         out.extend_from_slice(bytes);

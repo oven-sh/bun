@@ -83,27 +83,75 @@ pub(crate) fn encoded_len(src: &[u8]) -> usize {
     bits.div_ceil(8)
 }
 
-pub(crate) fn encode(src: &[u8], out: &mut Vec<u8>) {
-    // The low `pending` bits are not written yet: under 32 here, and a code has at most 30.
-    let mut bits: u64 = 0;
-    let mut pending: u32 = 0;
-    for &byte in src {
-        let (code, len) = code(byte);
-        bits = (bits << len) | u64::from(code);
-        pending += u32::from(len);
-        if pending >= 32 {
-            pending -= 32;
-            out.extend_from_slice(&((bits >> pending) as u32).to_be_bytes());
+struct Writer<'a> {
+    /// The low `pending` bits are not written yet: under 8 between calls.
+    bits: u64,
+    pending: u32,
+    out: &'a mut [u8],
+    written: usize,
+}
+
+impl Writer<'_> {
+    /// `len` is at most 56. `None` if there is no room.
+    #[inline(always)]
+    fn put(&mut self, code: u64, len: u32) -> Option<()> {
+        self.bits = (self.bits << len) | code;
+        self.pending += len;
+        // All of them are written, and those that do not fill a byte yet are written again.
+        self.out
+            .get_mut(self.written..self.written + 8)?
+            .copy_from_slice(&(self.bits << (64 - self.pending)).to_be_bytes());
+        self.written += (self.pending / 8) as usize;
+        self.pending %= 8;
+        Some(())
+    }
+
+    fn put_all(&mut self, src: &[u8]) -> Option<()> {
+        let code = |byte| {
+            let (code, len) = code(byte);
+            (u64::from(code), u32::from(len))
+        };
+        let (groups, rest) = src.as_chunks::<4>();
+        for group in groups {
+            let [a, b, c, d] = group.map(code);
+            let len = a.1 + b.1 + c.1 + d.1;
+            if len <= 56 {
+                // Put together as two pairs, neither of which waits for the other.
+                let (ab, cd) = ((a.0 << b.1) | b.0, (c.0 << d.1) | d.0);
+                self.put((ab << (c.1 + d.1)) | cd, len)?;
+            } else {
+                for (code, len) in [a, b, c, d] {
+                    self.put(code, len)?;
+                }
+            }
         }
+        for (code, len) in rest.iter().copied().map(code) {
+            self.put(code, len)?;
+        }
+        if self.pending > 0 {
+            // The last byte is filled up with the start of EOS, which is all ones.
+            let padding = 8 - self.pending;
+            self.put((1 << padding) - 1, padding)?;
+        }
+        Some(())
     }
-    // The last byte is filled up with the start of EOS, which is all ones.
-    let padding = pending.wrapping_neg() & 7;
-    bits = (bits << padding) | ((1 << padding) - 1);
-    pending += padding;
-    while pending > 0 {
-        pending -= 8;
-        out.push((bits >> pending) as u8);
-    }
+}
+
+/// Appends the code of `src` if that is at most `max_len` bytes. If not, `out` stays as it is.
+pub(crate) fn encode(src: &[u8], out: &mut Vec<u8>, max_len: usize) -> bool {
+    let start = out.len();
+    // A write is 8 bytes, however many of them count.
+    out.resize(start + max_len + 8, 0);
+    let mut writer = Writer {
+        bits: 0,
+        pending: 0,
+        out: out.get_mut(start..).unwrap_or_default(),
+        written: 0,
+    };
+    let fits = writer.put_all(src).is_some() && writer.written <= max_len;
+    let written = if fits { writer.written } else { 0 };
+    out.truncate(start + written);
+    fits
 }
 
 /// The code has 257 leaves, so its tree has 256 inner nodes and a node fits a `u8`.
@@ -150,8 +198,10 @@ const PREFIX_BITS: u32 = 13;
 struct Prefix {
     /// One or two whole symbols. If not even one fits, `symbols[0]` is the node the bits lead to.
     symbols: [u8; 2],
-    /// The length of each symbol's code, 0 for none.
-    bits: [u8; 2],
+    /// How many symbols.
+    count: u8,
+    /// The length of their codes together.
+    bits: u8,
 }
 
 static PREFIXES: [Prefix; 1 << PREFIX_BITS] = build_prefixes();
@@ -159,36 +209,31 @@ static PREFIXES: [Prefix; 1 << PREFIX_BITS] = build_prefixes();
 #[allow(clippy::indexing_slicing, reason = "evaluated at compile time")]
 const fn build_prefixes() -> [Prefix; 1 << PREFIX_BITS] {
     let children = build_children();
-    let mut prefixes = [Prefix {
+    let none = Prefix {
         symbols: [0; 2],
-        bits: [0; 2],
-    }; 1 << PREFIX_BITS];
+        count: 0,
+        bits: 0,
+    };
+    let mut prefixes = [none; 1 << PREFIX_BITS];
     let mut input = 0;
     while input < prefixes.len() {
-        let mut prefix = Prefix {
-            symbols: [0; 2],
-            bits: [0; 2],
-        };
-        let mut found = 0;
+        let mut prefix = none;
         let mut node = 0;
-        let mut since_symbol = 0;
         let mut bit = PREFIX_BITS;
-        while bit > 0 && found < 2 {
+        while bit > 0 && prefix.count < 2 {
             bit -= 1;
-            since_symbol += 1;
             let child = children[node][(input >> bit) & 1];
             if child < LEAF {
                 node = child as usize;
             } else {
                 // Not EOS, which is longer than `PREFIX_BITS`.
-                prefix.symbols[found] = (child - LEAF) as u8;
-                prefix.bits[found] = since_symbol;
-                found += 1;
+                prefix.symbols[prefix.count as usize] = (child - LEAF) as u8;
+                prefix.count += 1;
+                prefix.bits = (PREFIX_BITS - bit) as u8;
                 node = 0;
-                since_symbol = 0;
             }
         }
-        if found == 0 {
+        if prefix.count == 0 {
             prefix.symbols[0] = node as u8;
         }
         prefixes[input] = prefix;
@@ -197,73 +242,131 @@ const fn build_prefixes() -> [Prefix; 1 << PREFIX_BITS] {
     prefixes
 }
 
+/// How many lookups the 57 bits of a window are good for.
+const STEPS: u32 = (64 - 7) / PREFIX_BITS;
+
+/// What [`Decoder::out`] has beyond what may come out, so that symbols can be written in groups.
+const SPARE_OUT: usize = 16;
+
 struct Decoder<'a> {
-    /// The low `pending` bits are input that is not decoded yet.
-    bits: u64,
-    pending: u32,
-    /// Two bytes longer than what may come out, so that a step can always write two.
+    src: &'a [u8],
+    /// How many bits of `src` are decoded.
+    pos: usize,
     out: &'a mut [u8],
     written: usize,
 }
 
 impl Decoder<'_> {
-    /// `Ok(false)` if no whole symbol is pending. `whole_prefix`: the longest code (30 bits) fits.
     #[inline(always)]
-    fn step(&mut self, whole_prefix: bool) -> Result<bool> {
-        let next = if whole_prefix || self.pending >= PREFIX_BITS {
-            self.bits >> (self.pending - PREFIX_BITS)
-        } else {
-            // Filled up with ones, like the input itself.
-            let missing = PREFIX_BITS - self.pending;
-            (self.bits << missing) | ((1 << missing) - 1)
-        };
-        let Some(&prefix) = PREFIXES.get(next as usize & (PREFIXES.len() - 1)) else {
-            return Err(Error::Invalid);
-        };
-        let [first, second] = prefix.bits.map(u32::from);
-        if first == 0 {
-            return self.long_symbol(prefix.symbols[0]);
-        }
-        let (count, used) = if whole_prefix || first + second <= self.pending {
-            (1 + usize::from(second != 0), first + second)
-        } else {
-            return Ok(false);
-        };
+    fn prefix(window: u64) -> Prefix {
+        let index = (window >> (64 - PREFIX_BITS)) as usize;
+        PREFIXES.get(index).copied().unwrap_or(Prefix {
+            symbols: [0; 2],
+            count: 0,
+            bits: 0,
+        })
+    }
+
+    #[inline(always)]
+    fn write(&mut self, prefix: Prefix) -> Result<()> {
         self.out
             .get_mut(self.written..self.written + 2)
             .ok_or(Error::TooLarge)?
             .copy_from_slice(&prefix.symbols);
-        self.written += count;
-        self.pending -= used;
-        Ok(true)
+        self.written += usize::from(prefix.count);
+        self.pos += usize::from(prefix.bits);
+        Ok(())
     }
 
-    /// A symbol whose code is longer than [`PREFIX_BITS`], the first of which lead to `node`.
-    #[cold]
-    fn long_symbol(&mut self, node: u8) -> Result<bool> {
-        let mut node = u16::from(node);
-        let Some(mut left) = self.pending.checked_sub(PREFIX_BITS) else {
-            return Ok(false);
-        };
-        while left > 0 {
-            left -= 1;
-            let side = usize::from(self.bits >> left & 1 != 0);
-            node = CHILDREN
-                .get(usize::from(node))
-                .and_then(|children| children.get(side))
-                .copied()
-                .ok_or(Error::Invalid)?;
-            if node >= LEAF {
-                // EOS does not fit a `u8`. It is a decoding error to find it in the input.
-                let symbol = u8::try_from(node - LEAF).map_err(|_| Error::Invalid)?;
-                *self.out.get_mut(self.written).ok_or(Error::TooLarge)? = symbol;
-                self.written += 1;
-                self.pending = left;
-                return Ok(true);
+    /// All but the last 7 bytes or less of `src`, if not all.
+    #[inline(always)]
+    fn decode_most(&mut self) -> Result<()> {
+        let has_kernel = bun_highway::has_hpack_huffman_kernel();
+        loop {
+            if has_kernel {
+                let out = self.out.get_mut(self.written..).unwrap_or_default();
+                let (pos, written) =
+                    bun_highway::hpack_huffman_decode_short(self.src, self.pos, out);
+                self.pos = pos;
+                self.written += written;
+            }
+            let Some(bytes) = self.src.get(self.pos / 8..).and_then(<[u8]>::first_chunk) else {
+                return Ok(());
+            };
+            // 57 bits or more, from the top.
+            let mut window = u64::from_be_bytes(*bytes) << (self.pos % 8);
+            for step in 0..STEPS {
+                let prefix = Self::prefix(window);
+                if prefix.count == 0 {
+                    // The longest code has 30 bits, so it takes a window that is whole.
+                    if step == 0 {
+                        self.write(long_symbol(prefix.symbols[0], window)?)?;
+                    }
+                    break;
+                }
+                self.write(prefix)?;
+                window <<= prefix.bits;
             }
         }
-        Ok(false)
     }
+
+    /// The last 7 bytes or less of `src`.
+    #[inline(always)]
+    fn decode_rest(&mut self) -> Result<()> {
+        let end = self.src.len() * 8;
+        let last = match self.src.last_chunk() {
+            Some(bytes) => u64::from_be_bytes(*bytes),
+            None => self
+                .src
+                .iter()
+                .fold(0, |last, &byte| last << 8 | u64::from(byte)),
+        };
+        // All that is left, from the top, then ones, like the padding.
+        let mut window = (!last)
+            .checked_shl((64 - (end - self.pos)) as u32)
+            .map_or(u64::MAX, |rest| !rest);
+        // What is left at the end is padding: under 8 bits, all ones (the start of EOS).
+        while window != u64::MAX {
+            let mut prefix = Self::prefix(window);
+            if prefix.count == 0 {
+                prefix = long_symbol(prefix.symbols[0], window)?;
+            }
+            if self.pos + usize::from(prefix.bits) > end {
+                return Err(Error::Invalid);
+            }
+            self.write(prefix)?;
+            window = !(!window << prefix.bits);
+        }
+        if end - self.pos > 7 {
+            return Err(Error::Invalid);
+        }
+        Ok(())
+    }
+}
+
+/// A symbol whose code is longer than [`PREFIX_BITS`], the first of which lead to `node`.
+#[cold]
+fn long_symbol(node: u8, window: u64) -> Result<Prefix> {
+    let mut node = u16::from(node);
+    let mut rest = window << PREFIX_BITS;
+    let mut bits = PREFIX_BITS as u8;
+    while node < LEAF {
+        let side = usize::from(rest >> 63 != 0);
+        node = CHILDREN
+            .get(usize::from(node))
+            .and_then(|children| children.get(side))
+            .copied()
+            .ok_or(Error::Invalid)?;
+        rest <<= 1;
+        bits += 1;
+    }
+    // EOS does not fit a `u8`. It is a decoding error to find it in the input.
+    let symbol = u8::try_from(node - LEAF).map_err(|_| Error::Invalid)?;
+    Ok(Prefix {
+        symbols: [symbol, 0],
+        count: 1,
+        bits,
+    })
 }
 
 /// Appends what `src` decodes to, at most `max_len` bytes.
@@ -271,37 +374,16 @@ pub(crate) fn decode(src: &[u8], out: &mut Vec<u8>, max_len: usize) -> Result<()
     let start = out.len();
     // The shortest code has 5 bits.
     let most = (src.len().saturating_mul(8) / 5).min(max_len.saturating_add(1));
-    out.resize(start + most + 2, 0);
+    out.resize(start + most + SPARE_OUT, 0);
     let mut decoder = Decoder {
-        bits: 0,
-        pending: 0,
+        src,
+        pos: 0,
         out: out.get_mut(start..).unwrap_or_default(),
         written: 0,
     };
-
-    let mut rest = src;
-    while let Some((chunk, tail)) = rest.split_first_chunk::<4>() {
-        // At most 32 bits are pending here.
-        decoder.bits = (decoder.bits << 32) | u64::from(u32::from_be_bytes(*chunk));
-        decoder.pending += 32;
-        rest = tail;
-        while decoder.pending > 32 {
-            if !decoder.step(true)? {
-                return Err(Error::Invalid);
-            }
-        }
-    }
-    for &byte in rest {
-        decoder.bits = (decoder.bits << 8) | u64::from(byte);
-        decoder.pending += 8;
-    }
-    while decoder.step(false)? {}
-
-    // What is left is padding: under 8 bits, all ones (the start of EOS).
-    let (bits, pending, written) = (decoder.bits, decoder.pending, decoder.written);
-    if pending > 7 || bits & ((1 << pending) - 1) != (1 << pending) - 1 {
-        return Err(Error::Invalid);
-    }
+    decoder.decode_most()?;
+    decoder.decode_rest()?;
+    let written = decoder.written;
     if written > max_len {
         return Err(Error::TooLarge);
     }

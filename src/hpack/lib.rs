@@ -335,29 +335,69 @@ mod tests {
             ("~", "017e"),
             // 8 codes of 5 bits, the shortest there are.
             ("aaaaaaaa", "8518c6318c63"),
+            // Codes of 8 bits: as long either way.
+            ("&&&&&", "85f8f8f8f8f8"),
+            // Longer by the 5 bits that "~" has more.
+            ("&&&&&&&~", "08262626262626267e"),
         ] {
             let block = encode(&mut Encoder::new(), "x-a", value, Indexing::Skip);
             assert_eq!(block[block.len() - coded.len() / 2..], hex(coded));
             let field = (b"x-a".to_vec(), value.as_bytes().to_vec(), false);
             assert_eq!(decode(&mut decoder, &block), Ok(vec![field]));
         }
-        // A length that does not fit the prefix.
-        let value = "a".repeat(208);
-        let block = encode(&mut Encoder::new(), "x-a", &value, Indexing::Skip);
-        assert_eq!(block[block.len() - 132..][..2], hex("ff03"));
-        let field = (b"x-a".to_vec(), value.into_bytes(), false);
-        assert_eq!(decode(&mut decoder, &block), Ok(vec![field]));
+        // Up to a length that does not fit the prefix, of the string and then of its code.
+        for (value, len, coded_len) in [
+            ("a".repeat(126), "cf", 79),
+            ("a".repeat(127), "d0", 80),
+            ("a".repeat(208), "ff03", 130),
+            ("~".repeat(126), "7e", 126),
+            ("~".repeat(127), "7f00", 127),
+        ] {
+            let block = encode(&mut Encoder::new(), "x-a", &value, Indexing::Skip);
+            let string = &block[block.len() - coded_len - len.len() / 2..];
+            assert_eq!(string[..len.len() / 2], hex(len));
+            let field = (b"x-a".to_vec(), value.into_bytes(), false);
+            assert_eq!(decode(&mut decoder, &block), Ok(vec![field]));
+        }
+    }
+
+    fn check_huffman(string: &[u8]) {
+        let len = huffman::encoded_len(string);
+        let (mut coded, mut decoded) = (vec![1], vec![2]);
+        assert!(huffman::encode(string, &mut coded, len));
+        assert_eq!(coded.len(), 1 + len);
+        assert_eq!(
+            huffman::decode(&coded[1..], &mut decoded, string.len()),
+            Ok(())
+        );
+        assert_eq!(decoded[1..], *string);
+        if len > 0 {
+            assert!(!huffman::encode(string, &mut coded, len - 1));
+            assert_eq!(coded.len(), 1 + len);
+            let too_large = huffman::decode(&coded[1..], &mut decoded, string.len() - 1);
+            assert_eq!(too_large, Err(Error::TooLarge));
+        }
     }
 
     #[test]
     fn huffman_codes_of_every_byte() {
         let every_byte: Vec<u8> = (0..=255).collect();
         for string in every_byte.chunks(1).chain([&every_byte[..]]) {
-            let (mut coded, mut decoded) = (Vec::new(), Vec::new());
-            huffman::encode(string, &mut coded);
-            assert_eq!(coded.len(), huffman::encoded_len(string));
-            assert_eq!(huffman::decode(&coded, &mut decoded, string.len()), Ok(()));
-            assert_eq!(decoded, string);
+            check_huffman(string);
+        }
+    }
+
+    #[test]
+    fn huffman_codes_of_every_length_next_to_each_other() {
+        // Codes of 5, 6, 7, 8, 10, 13, 15, 19, 26 and 30 bits.
+        let bytes = b"a-:&!~{\\\xff\x0a";
+        for len in 0..40 {
+            for step in 0..bytes.len() {
+                let string: Vec<u8> = (0..len)
+                    .map(|i| bytes[i * step % 7 * (i + step) % bytes.len()])
+                    .collect();
+                check_huffman(&string);
+            }
         }
     }
 

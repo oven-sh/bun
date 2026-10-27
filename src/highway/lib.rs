@@ -164,6 +164,18 @@ unsafe extern "C" {
         out_indices: *mut u32,
         inout_state: *mut u64,
     ) -> usize;
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    safe fn highway_hpack_huffman_has_kernel() -> bool;
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn highway_hpack_huffman_decode_short(
+        src: *const u8,
+        src_len: usize,
+        bit_pos: *mut usize,
+        out: *mut u8,
+        out_len: usize,
+    ) -> usize;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -1121,6 +1133,44 @@ pub fn xml_structural_index16_chunk(
             out.as_mut_ptr().cast::<u32>(),
             state.as_mut_ptr(),
         )
+    }
+}
+
+/// Whether [`hpack_huffman_decode_short`] does anything on this CPU: it takes AVX-512 VBMI.
+#[inline(always)]
+pub fn has_hpack_huffman_kernel() -> bool {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        static HAS_KERNEL: std::sync::LazyLock<bool> =
+            std::sync::LazyLock::new(|| highway_hpack_huffman_has_kernel());
+        *HAS_KERNEL
+    }
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    false
+}
+
+/// Returns the bit it stopped at and how many bytes of `out` it filled. See `src/hpack/huffman_simd.md`.
+#[inline(always)]
+pub fn hpack_huffman_decode_short(src: &[u8], bit_pos: usize, out: &mut [u8]) -> (usize, usize) {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        let mut bit_pos = bit_pos;
+        // SAFETY: the kernel reads within `src` and writes within `out`, whatever `bit_pos` is.
+        let written = unsafe {
+            highway_hpack_huffman_decode_short(
+                src.as_ptr(),
+                src.len(),
+                &raw mut bit_pos,
+                out.as_mut_ptr(),
+                out.len(),
+            )
+        };
+        (bit_pos, written)
+    }
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    {
+        let _ = (src, out);
+        (bit_pos, 0)
     }
 }
 

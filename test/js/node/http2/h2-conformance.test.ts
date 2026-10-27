@@ -3183,6 +3183,32 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
+  test("values of every length survive Huffman coding", async () => {
+    const { srv, seen, port } = await listen();
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+    try {
+      // Codes of 5 to 8 bits, which most text is made of, and of 10 to 19 bits.
+      const short = "012aceiost%-./3456789=A_bdfghlmnpru:BCDEFGHIJKLMNOPQRSTUVWYjkqvwxyz&*,;XZ";
+      const long = "!\"()?'+|#>$@[]~^}<`{\\";
+      for (const every of [1000, 29, 5]) {
+        const headers: Record<string, string> = {};
+        for (let length = 0; length <= 110; length++) {
+          let value = "";
+          for (let i = 0; i < length; i++) {
+            const n = i * 31 + length * 7;
+            value += n % every === every - 1 ? long[n % long.length] : short[n % short.length];
+          }
+          headers[`x-${length}`] = value;
+        }
+        await get(client, { ":path": "/", ...headers });
+        expect(seen.pop()).toMatchObject(headers);
+      }
+    } finally {
+      client.destroy();
+      srv.close();
+    }
+  });
+
   const hex = (s: string) => Buffer.from(s.replace(/\s/g, ""), "hex");
 
   // RFC 7541 Appendix C.3 and C.4: three requests on one connection, without and with Huffman coding.

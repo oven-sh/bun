@@ -26,6 +26,8 @@ extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len
 extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" void highway_scanner_run_stops(const uint8_t* text, size_t text_len, uint8_t* out, size_t plane_len);
 extern "C" void highway_odd_blocks(const uint8_t* text, size_t text_len, uint64_t* out);
+extern "C" bool highway_hpack_huffman_has_kernel();
+extern "C" size_t highway_hpack_huffman_decode_short(const uint8_t* src, size_t src_len, size_t* bit_pos, uint8_t* out, size_t out_len);
 
 namespace Bun {
 
@@ -38,6 +40,7 @@ namespace Bun {
 // writes its three bitmaps into `arg`, a third of the view each, and returns 0.
 // lineStarts writes uint32 offsets into `arg` and returns how many.
 // oddBlocks writes its uint64 words into `arg` and returns 0.
+// hpackHuffmanDecodeShort starts at bit `arg[0]`, fills `arg`, returns the bit it stopped at, -1 = no kernel.
 BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -122,6 +125,15 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
         }
         highway_odd_blocks(haystack, len, reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(needle)));
         result = 0;
+    } else if (op == "hpackHuffmanDecodeShort"_s) {
+        if (!highway_hpack_huffman_has_kernel())
+            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(-1)));
+        if (!needle_len) {
+            throwRangeError(globalObject, scope, "needs the bit to start at"_s);
+            return {};
+        }
+        result = needle[0];
+        highway_hpack_huffman_decode_short(haystack, len, &result, const_cast<uint8_t*>(needle), needle_len);
     } else {
         throwTypeError(globalObject, scope, "unknown op"_s);
         return {};

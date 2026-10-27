@@ -39,6 +39,7 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
 // fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
 // with uint64 words and returns 0.
+// hpackHuffmanDecodeShort starts at bit `arg[0]`, fills `arg`, returns the bit it stopped at, -1 = no kernel.
 export const highwayStringsForTesting: (
   op:
     | "indexOfChar"
@@ -53,7 +54,8 @@ export const highwayStringsForTesting: (
     | "memrmem16"
     | "scannerRunStops"
     | "lineStarts"
-    | "oddBlocks",
+    | "oddBlocks"
+    | "hpackHuffmanDecodeShort",
   haystack: Uint8Array,
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);

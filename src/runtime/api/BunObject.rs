@@ -72,7 +72,7 @@ use bun_jsc::{
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
-use bun_core::{EncodedSlice, String as BunString, strings};
+use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
@@ -253,7 +253,7 @@ pub(crate) fn braces(
         // the JSON shape (`[{"<tag>": <payload>|{}} , …]`) by hand so the
         // debug-only `Bun.braces(str, {tokenize:true})` round-trips.
         let str = Braces::tokens_to_json(&lexer_output.tokens[..]);
-        let bun_str = BunString::from_bytes(&str);
+        let bun_str = StringView::from_bytes(&str);
         return bun_str.to_js(global);
     }
     if opts.parse {
@@ -266,7 +266,7 @@ pub(crate) fn braces(
         };
         // NOTE: see `tokenize` arm — manual JSON encoder for the AST.
         let str = Braces::ast_to_json(&ast_node);
-        let bun_str = BunString::from_bytes(&str);
+        let bun_str = StringView::from_bytes(&str);
         return bun_str.to_js(global);
     }
 
@@ -307,12 +307,12 @@ pub(crate) fn braces(
         }
     }
 
-    let mut out_strings: Vec<BunString> = Vec::with_capacity(expansion_count);
+    let mut out_strings: Vec<StringView<'_>> = Vec::with_capacity(expansion_count);
     for i in 0..expansion_count {
-        out_strings.push(BunString::from_bytes(&expanded_strings[i][..]));
+        out_strings.push(StringView::from_bytes(&expanded_strings[i][..]));
     }
 
-    bun_string_jsc::to_js_array(global, &out_strings[..])
+    bun_string_jsc::to_js_array(global, StringView::as_strings(&out_strings))
 }
 
 pub(crate) fn which<'a>(
@@ -1075,7 +1075,7 @@ pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
 pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
     let global_object = cx.global();
     // The server is the calling script's.
-    let context = global_object.bun_vm().context_of_caller_no_frame();
+    let context = global_object.bun_vm().context_of_caller();
     let mut config = crate::server::ServerConfig::from_js(
         global_object,
         options.to_js(),

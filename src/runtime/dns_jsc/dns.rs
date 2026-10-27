@@ -4928,7 +4928,7 @@ impl Resolver {
         record: Option<&[u8]>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let context = global_this.bun_vm().context_of_caller_no_frame().id();
+        let context = global_this.bun_vm().context_of_caller().id();
         let record_type: RecordType = match record {
             None | Some(b"") => RecordType::DEFAULT,
             Some(label) => match RECORD_TYPE_MAP.get(label) {
@@ -4989,7 +4989,7 @@ impl Resolver {
 
     pub(crate) fn reverse(&self, cx: &mut JsScope<'_>, ip: &[u8]) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let context = global_this.bun_vm().context_of_caller_no_frame().id();
+        let context = global_this.bun_vm().context_of_caller().id();
         if ip.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "reverse",
@@ -5053,7 +5053,7 @@ impl Resolver {
         options_object: &LookupOptions<'_>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let context = global_this.bun_vm().context_of_caller_no_frame().id();
+        let context = global_this.bun_vm().context_of_caller().id();
         if name.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookup",
@@ -5167,7 +5167,7 @@ macro_rules! resolve_record_fn {
 
         pub(crate) fn $method(&self, cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
             let global_this = cx.global();
-            let context = global_this.bun_vm().context_of_caller_no_frame().id();
+            let context = global_this.bun_vm().context_of_caller().id();
             if !$allow_empty && name.is_empty() {
                 return Err(global_this.throw_invalid_argument_type(
                     $jsname,
@@ -5456,7 +5456,6 @@ impl Resolver {
 
             // size = strlen(buf+1) + 1
             let size = ip.len() + 1;
-            use jsc::StringJsc as _;
             if port == IANA_DNS_PORT {
                 values.put_index(
                     global_this,
@@ -5476,8 +5475,7 @@ impl Resolver {
                 values.put_index(
                     global_this,
                     i,
-                    bun_core::String::borrow_utf8(&buf[0..size + 1 + port_len])
-                        .to_js(global_this)?,
+                    bun_string_jsc::create_utf8_for_js(global_this, &buf[0..size + 1 + port_len])?,
                 )?;
             } else {
                 use std::io::Write;
@@ -5742,7 +5740,7 @@ impl Resolver {
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         let resolver = Resolver::init(
             global_this.bun_vm(),
-            Some(global_this.bun_vm().context_of_caller_no_frame().id()),
+            Some(global_this.bun_vm().context_of_caller().id()),
         );
 
         // SAFETY: `resolver` is the heap allocation from `init`; not yet
@@ -5774,7 +5772,7 @@ impl Resolver {
         port_value: f64,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let context = global_this.bun_vm().context_of_caller_no_frame().id();
+        let context = global_this.bun_vm().context_of_caller().id();
         if addr_s.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookupService",

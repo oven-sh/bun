@@ -56,6 +56,14 @@ impl<'a> JsHeap<'a> {
         self.global_object().as_mut_ptr()
     }
 
+    /// For code that has the global object and no capability.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub fn from_global(global: &JSGlobalObject) -> &JsHeap<'_> {
+        // SAFETY: a `JsHeap` is the global object.
+        unsafe { &*core::ptr::from_ref(global).cast() }
+    }
+
     /// Debug check: an empty result means an exception is pending. Any other means none is, except a termination.
     fn exception_presence_matches(&self, should_have_exception: bool) -> bool {
         // SAFETY: the global object is live.
@@ -65,6 +73,15 @@ impl<'a> JsHeap<'a> {
                 should_have_exception,
             )
         }
+    }
+
+    /// `owner` has come to own `size` more bytes since it was created. From `estimated_size` alone the GC learns that
+    /// only when it next marks `owner`, which it has no reason to do soon. This can collect.
+    #[inline]
+    pub fn report_extra_memory<T>(&self, owner: JsLocal<'a, T>, size: usize) {
+        self.global_object()
+            .vm()
+            .report_extra_memory_allocated(owner.0, size);
     }
 
     /// An array of what `convert`, a function of [`to_js`], makes of each item.
@@ -243,7 +260,7 @@ impl<'a> JsScope<'a> {
     /// For the APIs that take the tree's own proof of being on the JS thread.
     #[inline]
     pub fn js_thread(&mut self) -> JsThread<'_> {
-        self.heap.global_object().js_thread_of_caller_no_frame()
+        self.heap.global_object().js_thread_of_caller()
     }
 }
 
@@ -459,8 +476,9 @@ impl<'a> JsLocal<'a, BufferSource> {
     /// The bytes as they are now. A detached or out-of-bounds view is empty.
     #[inline]
     pub fn with_bytes<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&[u8]) -> R) -> R {
-        let array_buffer = self.0.as_array_buffer(heap.global_object());
-        let result = f(array_buffer.as_ref().map_or(&[], ArrayBuffer::byte_slice));
+        // SAFETY: `self` holds the buffer until `f` returns, and only JavaScript moves its bytes, which takes the `&mut JsScope` that `heap` borrows.
+        let result =
+            f(unsafe { extern_types::Bun__Bindgen__bytesOfBlobOrBuffer(self.0).get(heap) });
         self.0.ensure_still_alive();
         result
     }
@@ -703,8 +721,17 @@ pub unsafe trait JsPayload: Sized + 'static {
     /// As [`into_js`](Self::into_js), for code that has the global object and no capability.
     #[inline]
     fn into_js_wrapper(self, global: &JSGlobalObject) -> JsWrapper<'_, Self> {
-        // SAFETY: a `JsHeap` is the global object.
-        self.into_js(unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() })
+        self.into_js(JsHeap::from_global(global))
+    }
+
+    /// The JS object that owns `self`. In `Drop` the cell is dead: compare it by identity only.
+    ///
+    /// # Safety
+    /// `self` was given to [`into_js`](Self::into_js).
+    #[inline]
+    unsafe fn wrapper_value(&self) -> JSValue {
+        // SAFETY: the payload is at this offset in its cell.
+        JSValue::from_cell(unsafe { core::ptr::from_ref(self).byte_sub(Self::PAYLOAD_OFFSET) })
     }
 }
 
@@ -833,9 +860,22 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         structure: *mut c_void,
         payload: T,
     ) -> Self {
+        // SAFETY: forwarded.
+        unsafe { Self::create_with(heap, |global| T::create_cell(global, structure), payload) }
+    }
+
+    /// # Safety
+    /// `create_cell` only allocates a cell of `T`'s cell class or of a subclass of it.
+    #[doc(hidden)]
+    #[inline]
+    pub unsafe fn create_with(
+        heap: &JsHeap<'a>,
+        create_cell: impl FnOnce(*mut JSGlobalObject) -> NonNull<c_void>,
+        payload: T,
+    ) -> Self {
         // SAFETY: nothing runs between the allocation and the write, which cannot panic.
         unsafe {
-            let this = Self::from_extern(T::create_cell(heap.global_ptr(), structure), heap);
+            let this = Self::from_extern(create_cell(heap.global_ptr()), heap);
             this.payload().write(payload);
             // Marking threads read such a payload, so a fence follows the write.
             if let Some(size) = (*this.payload()).extra_memory_size() {

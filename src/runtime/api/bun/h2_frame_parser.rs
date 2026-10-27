@@ -7616,7 +7616,7 @@ impl H2FrameParser {
             .strong_this
             .with_mut(|s| s.set_strong(js_value, global_object));
         let vm = global_object.bun_vm();
-        if let Some(context) = vm.as_graph_context(vm.context_of_caller_no_frame()) {
+        if let Some(context) = vm.as_graph_context(vm.context_of_caller()) {
             // SAFETY: `this` is heap-pinned (pool slot or Box); it leaves its context in
             // `release_from_js` or when it drops.
             unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };

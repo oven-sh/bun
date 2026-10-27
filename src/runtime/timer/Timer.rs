@@ -70,13 +70,10 @@ impl All {
                     ))
                 } else {
                     // -Infinity is handled by TimeoutNegativeWarning
-                    BunString::ascii(
-                        const_format::concatcp!(
-                            "Infinity does not fit into a 32-bit signed integer",
-                            SUFFIX
-                        )
-                        .as_bytes(),
-                    )
+                    BunString::static_(const_format::concatcp!(
+                        "Infinity does not fit into a 32-bit signed integer",
+                        SUFFIX
+                    ))
                 }
             }
             TimeoutWarning::TimeoutNegativeWarning => {
@@ -85,15 +82,15 @@ impl All {
                         "{countdown} is a negative number{SUFFIX}"
                     ))
                 } else {
-                    BunString::ascii(
-                        const_format::concatcp!("-Infinity is a negative number", SUFFIX)
-                            .as_bytes(),
-                    )
+                    BunString::static_(const_format::concatcp!(
+                        "-Infinity is a negative number",
+                        SUFFIX
+                    ))
                 }
             }
             TimeoutWarning::TimeoutNaNWarning => {
                 debug_assert!(countdown.is_nan());
-                BunString::ascii(const_format::concatcp!("NaN is not a number", SUFFIX).as_bytes())
+                BunString::static_(const_format::concatcp!("NaN is not a number", SUFFIX))
             }
         };
         let warning_type_string =
@@ -317,7 +314,7 @@ impl All {
 
         let vm = global_this.bun_vm_ptr();
         // `clearTimeout` / `clearInterval` / `clearImmediate`, C++ host functions, call this.
-        let context = global_this.bun_vm().context_of_caller_no_frame();
+        let context = global_this.bun_vm().context_of_caller();
         let all = timer_all_mut();
 
         let timer: Option<*mut TimerObjectInternals> = 'brk: {
@@ -506,7 +503,7 @@ pub(crate) fn set_immediate_export(
     callback: JSValue,
     arguments: JSValue,
 ) -> JsResult<JSValue> {
-    let context = global.bun_vm().context_of_caller_no_frame();
+    let context = global.bun_vm().context_of_caller();
     All::set_immediate(&global.js_thread(context), callback, arguments)
 }
 
@@ -516,7 +513,7 @@ pub(crate) fn sleep_export(
     promise: JSValue,
     countdown: JSValue,
 ) -> JsResult<JSValue> {
-    let context = global.bun_vm().context_of_caller_no_frame();
+    let context = global.bun_vm().context_of_caller();
     All::sleep(&global.js_thread(context), promise, countdown)
 }
 
@@ -527,7 +524,7 @@ pub(crate) fn set_timeout_export(
     arguments: JSValue,
     countdown: JSValue,
 ) -> JsResult<JSValue> {
-    let context = global.bun_vm().context_of_caller_no_frame();
+    let context = global.bun_vm().context_of_caller();
     All::set_timeout(&global.js_thread(context), callback, arguments, countdown)
 }
 
@@ -538,7 +535,7 @@ pub(crate) fn set_interval_export(
     arguments: JSValue,
     countdown: JSValue,
 ) -> JsResult<JSValue> {
-    let context = global.bun_vm().context_of_caller_no_frame();
+    let context = global.bun_vm().context_of_caller();
     All::set_interval(&global.js_thread(context), callback, arguments, countdown)
 }
 

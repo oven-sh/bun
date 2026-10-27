@@ -1,5 +1,5 @@
 [package]
-name = "bun_libarchive"
+name = "bun_archive"
 version.workspace = true
 edition.workspace = true
 
@@ -11,8 +11,7 @@ workspace = true
 
 [dependencies]
 thiserror.workspace = true
-bun_opaque.workspace = true
-bstr.workspace = true
+bun_tar.workspace = true
 scopeguard.workspace = true
 bun_core.workspace = true
 bun_alloc.workspace = true

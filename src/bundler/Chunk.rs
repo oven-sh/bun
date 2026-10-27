@@ -112,7 +112,7 @@ impl Default for Content<'_> {
 
 // SAFETY: `Chunk` is processed across the bundler thread pool (see
 // `computeCrossChunkDependencies`, `generateChunksInParallel`). Raw-pointer
-// fields (`Layers::Borrowed`, `ChunkRenamer` arena)
+// fields (`Layers::Borrowed`, `Layers::PreImport`, `ChunkRenamer` arena)
 // point into bundler-arena storage that outlives the
 // pool join and is only mutated by the owning task; this mirrors
 // `InputFile`'s blanket impls (bundle_v2.rs).

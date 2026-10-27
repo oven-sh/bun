@@ -1,12 +1,19 @@
 #include "root.h"
+#include "Bindgen/ExternTraits.h"
 #include "Bindgen/SchemaStrings.h"
 #include "helpers.h"
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
 namespace Bun::Bindgen {
 using namespace JSC;
+
+EncodedJSValue createFunction(JSGlobalObject* globalObject, unsigned length, ASCIILiteral name, NativeFunction function)
+{
+    return JSValue::encode(JSFunction::create(getVM(globalObject), globalObject, length, name, function, ImplementationVisibility::Public));
+}
 
 // The members are named by Tables::memberNames, from `firstMemberNameIndex`. An empty value is a member that is absent.
 static EncodedJSValue putMembers(VM& vm, JSObject* object, unsigned firstMemberNameIndex, const JSValue* values, size_t count)

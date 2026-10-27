@@ -240,21 +240,22 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildHeadersObject(JSC::JSGlobalObject*
 
     size_t index = 0;
     for (size_t offset = 0; nextCapturedHeader(data, length, offset, nameBytes, valueBytes); index++) {
-        Identifier identifier;
+        Identifier otherIdentifier;
+        const Identifier* identifier = &otherIdentifier;
         JSValue value;
         if (names[index] == otherName) {
-            identifier = Identifier::fromString(vm, StringView(nameBytes).convertToASCIILowercaseAtom());
-            if (parseIndex(identifier) || headers->getDirect(vm, identifier))
+            otherIdentifier = Identifier::fromString(vm, StringView(nameBytes).convertToASCIILowercaseAtom());
+            if (parseIndex(otherIdentifier) || headers->getDirect(vm, otherIdentifier))
                 return JSValue::encode(jsUndefined());
             value = jsString(vm, String(valueBytes));
         } else {
             HTTPHeaderName name = static_cast<HTTPHeaderName>(names[index]);
-            identifier = identifiers.identifierFor(vm, name);
+            identifier = &identifiers.identifierFor(vm, name);
             value = jsString(vm, headerValueString(remembered, name, valueBytes));
         }
-        if (objectPrototype->getDirect(vm, identifier)) [[unlikely]]
+        if (objectPrototype->getDirect(vm, *identifier)) [[unlikely]]
             return JSValue::encode(jsUndefined());
-        headers->putDirect(vm, identifier, value, 0);
+        headers->putDirect(vm, *identifier, value, 0);
     }
 
     return JSValue::encode(headers);
@@ -740,18 +741,15 @@ static void NodeHTTPServer__writeHead(
                     continue;
                 }
 
-                WebCore::HTTPHeaderName headerName;
-                if (WebCore::findHTTPHeaderName(StringView(name), headerName)) {
-                    if (headerName == WebCore::HTTPHeaderName::ContentLength) {
-                        if (!(httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                            httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                            response->writeMark();
-                        }
-                    } else if (headerName == WebCore::HTTPHeaderName::Date) {
-                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
-                    } else if (headerName == WebCore::HTTPHeaderName::TransferEncoding) {
+                switch (name.length()) {
+                case 14:
+                    if (equalIgnoringASCIICase(name, "content-length"_s))
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                    break;
+                case 17:
+                    if (equalIgnoringASCIICase(name, "transfer-encoding"_s))
                         httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
-                    }
+                    break;
                 }
 
                 writeResponseHeader<isSSL>(response, name, value);

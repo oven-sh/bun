@@ -7583,6 +7583,242 @@ describe("req.headers and req.rawHeaders", () => {
       delete (Object.prototype as any)["x-inherited"];
     }
   });
+
+  it("headers folds what an accessor of the request's own returns for rawHeaders", async () => {
+    const seen = await seenByServer([["Host: a", "X-Secret: s3cret", "Accept: */*"]], req => {
+      Object.defineProperty(req, "rawHeaders", {
+        configurable: true,
+        get(this: IncomingMessage) {
+          const raw: string[] = Reflect.get(IncomingMessage.prototype, "rawHeaders", this) ?? [];
+          return raw.map((entry, i) => (i % 2 === 1 && raw[i - 1] === "X-Secret" ? "redacted" : entry));
+        },
+      });
+      return Object.entries(req.headers);
+    });
+    // Node has read headers before the listener runs.
+    expect(seen).toEqual([
+      [
+        ["host", "a"],
+        ["x-secret", "bun" in process.versions ? "redacted" : "s3cret"],
+        ["accept", "*/*"],
+      ],
+    ]);
+  });
+
+  it("hold the names of each request, whatever the one before it named", async () => {
+    const long = (length: number) => `X-${Buffer.alloc(length - 2, "n")}`;
+    const shapes = [
+      ["Host", "Accept", "User-Agent"],
+      // Its first names, those and one more, those in another case, in another order, and others as long.
+      ["Host"],
+      ["Host", "Accept"],
+      ["Host", "Accept", "User-Agent", "X-More"],
+      ["host", "accept", "user-agent"],
+      ["HOST", "ACCEPT", "USER-AGENT"],
+      ["Host", "User-Agent", "Accept"],
+      ["Host", "Accepu", "User-Agenu"],
+      ["Host", "X-One", "X-Two"],
+      ["Host", "X-One", "x-one"],
+      ["Host", "Accept", "Accept"],
+      // As long as the longest name with a slot of its own, and longer.
+      ["Host", long(40), long(41), long(256)],
+      ["Host", ...Array.from({ length: 40 }, (_, i) => `X-Header-Number-${i}`)],
+    ];
+    const cases = shapes.map((names, at) => {
+      const headers = new Map<string, string>();
+      names.forEach((name, index) => {
+        const key = name.toLowerCase();
+        headers.set(key, headers.has(key) ? `${headers.get(key)}, ${at}.${index}` : `${at}.${index}`);
+      });
+      return { lines: names.map((name, index) => `${name}: ${at}.${index}`), headers: [...headers] as Entries };
+    });
+    expect(
+      await seenByServer(
+        cases.map(({ lines }) => lines),
+        req => bothOf(req, false),
+      ),
+    ).toEqual(cases.map(expectedOf));
+  });
+});
+
+describe("the head of a response", () => {
+  const persist = "Connection: keep-alive\r\nKeep-Alive: timeout=5\r\n";
+
+  // What the server writes for each path, requested one after the other on one connection.
+  async function written(paths: string[], listener: http.RequestListener, setUp?: (server: Server) => void) {
+    const server = createServer(listener);
+    setUp?.(server);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      const responses: string[] = [];
+      let received = "";
+      let wake = () => {};
+      let ended = false;
+      let failure: Error | undefined;
+      socket.setEncoding("latin1");
+      socket.on("data", chunk => ((received += chunk), wake()));
+      socket.on("error", error => ((failure = error), wake()));
+      socket.on("close", () => ((ended = true), wake()));
+      for (const path of paths) {
+        socket.write(`GET ${path} HTTP/1.1\r\nHost: a\r\n\r\n`);
+        // Every body here is "<end>".
+        while (!received.endsWith(path === "/chunked" ? "<end>\r\n0\r\n\r\n" : "<end>")) {
+          if (failure) throw failure;
+          if (ended) throw new Error(`the connection closed after ${JSON.stringify(received)}`);
+          await new Promise<void>(resolve => (wake = resolve));
+        }
+        responses.push(received);
+        received = "";
+      }
+      return responses;
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  }
+
+  it("frames the body by its headers whatever the case of their names", async () => {
+    const heads: Record<string, http.OutgoingHttpHeaders> = {
+      "/lower": { "content-length": "5", date: "then" },
+      "/upper": { "CONTENT-LENGTH": "5", DATE: "then" },
+      "/mixed": { "cOnTeNt-LeNgTh": "5", dAtE: "then" },
+      "/chunked": { "TRANSFER-encoding": "chunked", Date: "then" },
+      // As long as those, and not those.
+      "/others": { "content-lengt_": "5", "Dat_": "then", "transfer-encodin_": "chunked", date: "then" },
+    };
+    expect(
+      await written(Object.keys(heads), (req, res) => {
+        for (const [name, value] of Object.entries(heads[req.url!])) res.setHeader(name, value!);
+        res.end("<end>");
+      }),
+    ).toEqual([
+      `HTTP/1.1 200 OK\r\ncontent-length: 5\r\ndate: then\r\n${persist}\r\n<end>`,
+      `HTTP/1.1 200 OK\r\nCONTENT-LENGTH: 5\r\nDATE: then\r\n${persist}\r\n<end>`,
+      `HTTP/1.1 200 OK\r\ncOnTeNt-LeNgTh: 5\r\ndAtE: then\r\n${persist}\r\n<end>`,
+      `HTTP/1.1 200 OK\r\nTRANSFER-encoding: chunked\r\nDate: then\r\n${persist}\r\n5\r\n<end>\r\n0\r\n\r\n`,
+      `HTTP/1.1 200 OK\r\ncontent-lengt_: 5\r\nDat_: then\r\ntransfer-encodin_: chunked\r\ndate: then\r\n${persist}Content-Length: 5\r\n\r\n<end>`,
+    ]);
+  });
+
+  it.each([
+    { contentLength: "the listener's", own: true },
+    { contentLength: "the server's", own: false },
+  ])(
+    "holds values and names of any length, and any number of them, before $contentLength Content-Length",
+    async ({ own }) => {
+      const filled = (length: number, fill: string) => Buffer.alloc(length, fill).toString();
+      const heads: Record<string, [string, string][]> = {
+        "/empty": [["X-Empty", ""]],
+        "/long-value": [
+          ["X-Before", "1"],
+          ["X-Long", filled(20_000, "v")],
+          ["X-After", "2"],
+        ],
+        "/long-name": [
+          ["X-Before", "1"],
+          [filled(20_000, "n"), "value"],
+          ["X-After", "2"],
+        ],
+        // A line of as many bytes as are copied at once (LoopData::CORK_COPY_MAX), and of one more.
+        "/limit": [["X-Edge", filled(16 * 1024 - "X-Edge: \r\n".length, "e")]],
+        "/past-limit": [["X-Edge", filled(16 * 1024 - "X-Edge: \r\n".length + 1, "e")]],
+        "/many": Array.from({ length: 24 }, (_, i): [string, string] => [`X-Many-${i}`, filled(9_000 + i, "m")]),
+        "/short-again": [["X-Short", "3"]],
+      };
+      expect(
+        await written(Object.keys(heads), (req, res) => {
+          res.sendDate = false;
+          for (const [name, value] of heads[req.url!]) res.setHeader(name, value);
+          if (own) res.setHeader("Content-Length", "5");
+          res.end("<end>");
+        }),
+      ).toEqual(
+        Object.values(heads).map(
+          head =>
+            `HTTP/1.1 200 OK\r\n${head.map(([name, value]) => `${name}: ${value}\r\n`).join("")}` +
+            `${own ? "Content-Length: 5\r\n" : ""}${persist}${own ? "" : "Content-Length: 5\r\n"}\r\n<end>`,
+        ),
+      );
+    },
+  );
+
+  it("names the requests a connection still takes when there is a limit", async () => {
+    const limits: Record<string, unknown> = {
+      "/server": undefined,
+      "/number": 7,
+      "/fraction": 2.5,
+      "/string": "4",
+      "/below-one": 0.5,
+      "/zero": 0,
+      "/negative": -1,
+      "/null": null,
+      "/not-a-number": "many",
+    };
+    const keepAlive = (
+      await written(
+        Object.keys(limits),
+        (req, res) => {
+          if (req.url !== "/server") (res as any)._maxRequestsPerSocket = limits[req.url!];
+          res.end("<end>");
+        },
+        server => void (server.maxRequestsPerSocket = 100),
+      )
+    ).map(response => /^Keep-Alive: (.*)\r$/m.exec(response)?.[1]);
+    expect(Object.fromEntries(Object.keys(limits).map((path, i) => [path, keepAlive[i]]))).toEqual({
+      "/server": "timeout=5, max=100",
+      "/number": "timeout=5, max=7",
+      "/fraction": "timeout=5, max=2.5",
+      "/string": "timeout=5, max=4",
+      "/below-one": "timeout=5",
+      "/zero": "timeout=5",
+      "/negative": "timeout=5",
+      "/null": "timeout=5",
+      "/not-a-number": "timeout=5",
+    });
+  });
+
+  // An exit from optimized code that JSC does not learn from sends the function back to the baseline JIT again and again.
+  // A debug build takes seconds for the requests this needs.
+  it.skipIf(isDebug)("is rendered by code that stays optimized", async () => {
+    const script = `
+      const { createServer } = require("node:http");
+      const { once } = require("node:events");
+      (async () => {
+        const server = createServer((req, res) => {
+          res.setHeader("Content-Type", "text/plain");
+          res.end("ok");
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const url = "http://127.0.0.1:" + server.address().port + "/";
+        for (let i = 0; i < 200; i++) await (await fetch(url)).text();
+        server.closeAllConnections();
+        server.close();
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        // Tiers up, and gives up on what it compiled, after a few calls instead of hundreds.
+        // JSC checks after each option that a "soon" threshold is not above its "after warm-up" one.
+        BUN_JSC_useConcurrentJIT: "0",
+        BUN_JSC_useFTLJIT: "0",
+        BUN_JSC_thresholdForJITSoon: "10",
+        BUN_JSC_thresholdForJITAfterWarmUp: "10",
+        BUN_JSC_thresholdForOptimizeSoon: "50",
+        BUN_JSC_thresholdForOptimizeAfterWarmUp: "50",
+        BUN_JSC_osrExitCountForReoptimization: "5",
+        BUN_JSC_dfgAllowlist: "renderNativeHeaders",
+        BUN_JSC_reportDFGCompileTimes: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const compiled = stderr.split("\n").filter(line => line.startsWith("Optimized renderNativeHeaders#"));
+    expect({ stdout, compiled: compiled.length, exitCode }).toEqual({ stdout: "", compiled: 1, exitCode: 0 });
+  });
 });
 
 it("setHeader and appendHeader check a name however often names were set before", () => {

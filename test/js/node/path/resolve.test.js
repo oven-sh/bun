@@ -95,6 +95,9 @@ describe("path.resolve", () => {
     try {
       expect(path.posix.resolve("child")).toBe("/virtual/cwd/child");
       expect(getterCalls).toBe(1);
+      getterCalls = 0;
+      expect(path.posix.resolve("/virtual/世界", "..", "é")).toBe("/virtual/é");
+      expect(getterCalls).toBe(0);
     } finally {
       Object.defineProperty(process, "cwd", original);
     }

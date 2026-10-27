@@ -2062,10 +2062,17 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
     buf: &'a mut [T],
     buf2: &mut [T],
 ) -> MaybeSlice<'a, T> {
-    resolve_posix_with_cwd(paths, buf, buf2, MAX_PATH_SIZE_UPPER, posix_cwd_t::<T>)
+    resolve_posix_with_cwd::<T, _, _, false>(
+        paths,
+        buf,
+        buf2,
+        MAX_PATH_SIZE_UPPER,
+        posix_cwd_t::<T>,
+    )
 }
 
-pub fn resolve_posix_with_cwd<'a, T: PathCharCwd, E, F>(
+// Keep dynamic cwd allocation out of the native resolver instantiation.
+pub fn resolve_posix_with_cwd<'a, T: PathCharCwd, E, F, const ALLOW_LONG_CWD: bool>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],
@@ -2097,7 +2104,7 @@ where
         let mut tmp_spill: Vec<T>;
         let path: &[T] = if i_i64 >= 0 {
             paths[usize::try_from(i_i64).expect("int cast")]
-        } else if cwd_buffer_capacity > MAX_PATH_SIZE_UPPER {
+        } else if ALLOW_LONG_CWD && cwd_buffer_capacity > MAX_PATH_SIZE_UPPER {
             tmp_spill = vec![T::default(); cwd_buffer_capacity];
             &*get_cwd(&mut tmp_spill)?
         } else {
@@ -2180,10 +2187,16 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     buf: &'a mut [T],
     buf2: &mut [T],
 ) -> MaybeSlice<'a, T> {
-    resolve_windows_with_cwd(paths, buf, buf2, MAX_PATH_SIZE_UPPER, get_cwd_t::<T>)
+    resolve_windows_with_cwd::<T, _, _, false>(
+        paths,
+        buf,
+        buf2,
+        MAX_PATH_SIZE_UPPER,
+        get_cwd_t::<T>,
+    )
 }
 
-pub fn resolve_windows_with_cwd<'a, T: PathCharCwd, E, F>(
+pub fn resolve_windows_with_cwd<'a, T: PathCharCwd, E, F, const ALLOW_LONG_CWD: bool>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],
@@ -2198,7 +2211,7 @@ where
     // Sized to the larger of the two T variants.
     let mut tmp_stack = [T::default(); MAX_PATH_SIZE_UPPER + 3];
     let mut tmp_spill;
-    let tmp_buf: &mut [T] = if cwd_buffer_capacity > MAX_PATH_SIZE_UPPER {
+    let tmp_buf: &mut [T] = if ALLOW_LONG_CWD && cwd_buffer_capacity > MAX_PATH_SIZE_UPPER {
         tmp_spill = vec![T::default(); cwd_buffer_capacity + 3];
         &mut tmp_spill
     } else {

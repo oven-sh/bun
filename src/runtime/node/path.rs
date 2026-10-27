@@ -813,6 +813,7 @@ fn create_wtf8_path_string(global_object: &JSGlobalObject, bytes: &[u8]) -> JsRe
     }
 }
 
+#[inline]
 fn resolve_native(
     global_object: &JSGlobalObject,
     is_windows: bool,
@@ -860,11 +861,11 @@ fn resolve_js(
             let mut scratch = PathScratch::<u8>::new(pool, (buf_len + 2) * 2);
             let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 2);
             let path = if is_windows {
-                resolve_windows_with_cwd(paths, buf, buf2, cwd_capacity, |cwd| {
+                resolve_windows_with_cwd::<u8, _, _, true>(paths, buf, buf2, cwd_capacity, |cwd| {
                     copy_cached_cwd(&cached_cwd, cwd, cwd_capacity)
                 })
             } else {
-                resolve_posix_with_cwd(paths, buf, buf2, cwd_capacity, |cwd| {
+                resolve_posix_with_cwd::<u8, _, _, true>(paths, buf, buf2, cwd_capacity, |cwd| {
                     copy_cached_cwd(&cached_cwd, cwd, cwd_capacity)
                 })
             };
@@ -956,6 +957,17 @@ fn resolve(
         return resolve_native(global_object, is_windows, &paths);
     }
 
+    resolve_observable_cwd(global_object, is_windows, args_len, &paths)
+}
+
+#[cold]
+#[inline(never)]
+fn resolve_observable_cwd(
+    global_object: &JSGlobalObject,
+    is_windows: bool,
+    args_len: usize,
+    paths: &[&[u8]],
+) -> JsResult<JSValue> {
     let current_directory_arg =
         args_len == 0 || (args_len == 1 && (paths.is_empty() || paths[0] == b"."));
     let mut cached_cwd = None;
@@ -992,7 +1004,7 @@ fn resolve(
         }
     }
 
-    resolve_js(global_object, is_windows, &paths, cached_cwd)
+    resolve_js(global_object, is_windows, paths, cached_cwd)
 }
 
 fn to_namespaced_path_windows_js_t<T: PathCharCwd>(

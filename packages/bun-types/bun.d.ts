@@ -6991,6 +6991,9 @@ declare module "bun" {
      *
      * Before a handshake has completed, this value is always `null`.
      * When a handshake has completed but no ALPN protocol was selected, this is `false`.
+     *
+     * The string has one code unit for each byte of the protocol, like
+     * `tlsSocket.alpnProtocol` in `node:tls`.
      */
     readonly alpnProtocol: string | false | null;
 

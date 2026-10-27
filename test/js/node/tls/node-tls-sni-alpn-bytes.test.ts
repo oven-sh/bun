@@ -1,8 +1,9 @@
 /**
- * The SNI name of a TLS handshake, as the JS of a server reads it.
+ * The SNI name of a TLS handshake, as the JS of a server reads it, and the ALPN protocol, as both ends read it.
  *
- * Node makes a one-byte string from the bytes of the name: one code unit for each byte, and no decoding.
- * https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1359-L1373
+ * Node makes a one-byte string from the bytes of each: one code unit for each byte, and no decoding.
+ * https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1359-L1373 (servername)
+ * https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L2100-L2124 (alpnProtocol)
  *
  * The expected values are what Node.js v26.3.0 gives. All tests in this file run in both Bun and Node.js:
  * `bun test` runs them here, and the last test runs this same file under Node.js.
@@ -222,6 +223,39 @@ describe("servername of a tls.Server socket has one code unit for each byte of t
       server.close();
     }
   });
+});
+
+describe("alpnProtocol of a TLS socket has one code unit for each byte of the protocol", () => {
+  const protocols: [string, number[], string][] = [
+    ["not UTF-8", [0xff], "ff"],
+    ["not ASCII", [0xc3, 0xa9], "c3 a9"],
+    ["ASCII", [0x78, 0x2f, 0x31], "78 2f 31"],
+  ];
+  for (const [label, protocol, expected] of protocols) {
+    test(`a protocol that is ${label}, on both ends`, async () => {
+      // Each protocol of the list follows its length.
+      const ALPNProtocols = Buffer.from([protocol.length, ...protocol]);
+      const accepted = Promise.withResolvers<unknown>();
+      const server = tls.createServer({ key, cert, ALPNProtocols }, socket => accepted.resolve(socket.alpnProtocol));
+      server.on("tlsClientError", accepted.reject);
+      const client = tls.connect({
+        port: await listen(server),
+        host: "127.0.0.1",
+        ALPNProtocols,
+        rejectUnauthorized: false,
+      });
+      try {
+        const [serverSide] = await Promise.all([accepted.promise, once(client, "secureConnect")]);
+        assert.deepStrictEqual(
+          { server: units(serverSide), client: units(client.alpnProtocol) },
+          { server: expected, client: expected },
+        );
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+  }
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.

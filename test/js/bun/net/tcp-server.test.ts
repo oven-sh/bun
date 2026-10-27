@@ -296,7 +296,7 @@ describe("tcp socket binaryType", () => {
   }
 });
 
-describe("TLS socket: the SNI name", () => {
+describe("TLS socket: the SNI name and the ALPN protocol", () => {
   const units = (name: unknown) =>
     typeof name === "string" ? Array.from(name, unit => unit.charCodeAt(0).toString(16)).join(" ") : name;
 
@@ -347,6 +347,17 @@ describe("TLS socket: the SNI name", () => {
       socket => socket.setServername(name),
     );
     expect(seen).toEqual({ server: "c3 bc 2e 65 78 61 6d 70 6c 65", client: units(name) });
+  });
+
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L2100-L2124
+  it.each([
+    ["not UTF-8", [0xff], "ff"],
+    ["not ASCII", [0xc3, 0xa9], "c3 a9"],
+  ])("alpnProtocol has one code unit for each byte of a protocol that is %s", async (_label, protocol, expected) => {
+    // Each protocol of the list follows its length.
+    const ALPNProtocols = Buffer.from([protocol.length, ...protocol]);
+    const seen = await bothEnds({ ...tls, ALPNProtocols }, { ALPNProtocols }, socket => socket.alpnProtocol);
+    expect(seen).toEqual({ server: expected, client: expected });
   });
 });
 

@@ -1009,7 +1009,8 @@ impl TLSSocket {
         if strings::eql(slice, b"http/1.1") {
             return Ok(global.common_strings().alpn_http11());
         }
-        bun_string_jsc::create_utf8_for_js(global, slice)
+        // One code unit per byte: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L2100-L2124
+        BunString::clone_latin1(slice).into_js(global)
     }
 
     /// The session Node's `getSession()`/`getTLSTicket()` read: the one most

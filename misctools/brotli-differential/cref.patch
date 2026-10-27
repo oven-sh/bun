@@ -1,5 +1,34 @@
 --- a/c/enc/encode.c
 +++ b/c/enc/encode.c
+@@ -890,6 +890,13 @@
+   uint64_t last_processed_pos = s->last_processed_pos_ - last_copy_len;
+   uint64_t max_distance = last_processed_pos < max_backward_distance ?
+       last_processed_pos : max_backward_distance;
++  /* Upstream takes max_distance for the start of the dictionary. With a stream
++     offset the distances into the dictionary start later, as in
++     backward_references_inc.h, so it went on with the copy at the wrong place
++     in the dictionary. */
++  uint64_t dictionary_start =
++      last_processed_pos + s->params.stream_offset < max_backward_distance ?
++      last_processed_pos + s->params.stream_offset : max_backward_distance;
+   uint64_t cmd_dist = (uint64_t)s->dist_cache_[0];
+   uint32_t distance_code = CommandRestoreDistanceCode(last_command,
+                                                       &s->params.dist);
+@@ -905,10 +912,11 @@
+         (*wrapped_last_processed_pos)++;
+       }
+     } else {
+-      if ((cmd_dist - max_distance - 1) < compound_dictionary_size &&
+-          last_copy_len < cmd_dist - max_distance) {
++      if (cmd_dist > dictionary_start &&
++          (cmd_dist - dictionary_start - 1) < compound_dictionary_size &&
++          last_copy_len < cmd_dist - dictionary_start) {
+         size_t address =
+-            compound_dictionary_size - (size_t)(cmd_dist - max_distance) +
++            compound_dictionary_size - (size_t)(cmd_dist - dictionary_start) +
+             (size_t)last_copy_len;
+         size_t br_index = 0;
+         size_t br_offset;
 @@ -1499,6 +1499,11 @@
          *next_out += out_bytes;
          *available_out -= out_bytes;

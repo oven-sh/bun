@@ -12,8 +12,8 @@ target/debug/harness enc-fuzz 1 1000 4194304 4095
 ```
 
 The reference is built with `-ffp-contract=off`, and with `cref.patch`, which fixes an out of bounds write in the encoder
-(memory corruption is not something safe Rust can imitate) and takes one fix from upstream's master, for streams that do not
-decode to the input (`enc-far-dict`).
+(memory corruption is not something safe Rust can imitate) and two bugs that make streams which do not decode to the input
+(`enc-far-dict`, fixed on upstream's master, and `enc-offset-dict`).
 
 Every iteration is derived from its seed, so `<subcommand> <seed> 1 ...` reproduces a failure, as long as the files that some
 of the data is taken from are the same: brotli's test data and sources, `src/js/node` and `docs/runtime` of this repository.
@@ -39,6 +39,7 @@ quality `q`: `0xFFF` for all of them.
 | `enc-lengths <seed> <iterations> <max length> <mask>` | runs of literals, copies and distances whose lengths are at the edges of the ranges of their codes |
 | `enc-dict <seed> <iterations> <max length> <mask>` | compound dictionaries: long copies from them, copies that go on in the next dictionary or in the next block of input, more matches than a search has room for |
 | `enc-far-dict <seed> <mask>` | 36 MiB with a window of 32 MiB: a copy from an attached dictionary, then what is as far back in the input as that copy's distance. Version 1.2.1 of the C encoder takes that for a match at the last distance at quality 4 (H55) |
+| `enc-offset-dict <seed> <iterations> <mask>` | a stream offset and a dictionary: a copy from the dictionary that ends with a block of input, and then what the dictionary has that many bytes earlier. The C encoder goes on with the copy. Qualities 5 and up |
 | `enc-blocks <seed> <iterations> <max length> <mask>` | stretches of many different kinds: many blocks, block types and histograms to cluster |
 | `enc-states <seed> <iterations> <mask>` | calls in any order, with any amount of input and room, whether or not the call before was completed or refused |
 | `enc-select <seed> <length>` | every quality with every window size and size hints on both sides of 1 MiB: all that decides which hasher is used |

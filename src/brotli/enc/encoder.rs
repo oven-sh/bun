@@ -606,6 +606,9 @@ fn extend_last_command(
     let last_copy_len = u64::from(last_command.copy_len());
     let last_processed_pos = last_processed_pos.wrapping_sub(last_copy_len);
     let max_distance = last_processed_pos.min(max_backward_distance);
+    // Distances beyond this one are into the dictionary. Between the two is what an earlier encoder wrote.
+    let dictionary_start =
+        (last_processed_pos + params.stream_offset as u64).min(max_backward_distance);
     let cmd_dist = i64::from(last_distance) as u64;
     let distance_code = last_command.restore_distance_code(&params.dist);
     let dict = &params.dictionary;
@@ -625,11 +628,12 @@ fn extend_last_command(
             *bytes -= 1;
             *wrapped_last_processed_pos = wrapped_last_processed_pos.wrapping_add(1);
         }
-    } else if cmd_dist - max_distance - 1 < compound_dictionary_size
-        && last_copy_len < cmd_dist - max_distance
+    } else if cmd_dist > dictionary_start
+        && cmd_dist - dictionary_start <= compound_dictionary_size
+        && last_copy_len < cmd_dist - dictionary_start
     {
         let address =
-            (compound_dictionary_size - (cmd_dist - max_distance) + last_copy_len) as usize;
+            (compound_dictionary_size - (cmd_dist - dictionary_start) + last_copy_len) as usize;
         let mut br_index = 0;
         while address >= dict.chunk_offsets.at(br_index + 1)? {
             br_index += 1;

@@ -5,7 +5,7 @@ use crate::rng::Rng;
 use bun_brotli::{Encoder, EncoderOperation, EncoderParameter, PreparedDictionary};
 
 /// Without the reference.
-fn rust_stream(data: &[u8], params: &[(i32, u32)], dicts: &[Vec<u8>]) -> Result<Vec<u8>, String> {
+fn rust_stream(data: &[u8], params: &[(i32, u32)], dicts: &[Vec<u8>], op: EncoderOperation) -> Result<Vec<u8>, String> {
     let mut e = Encoder::new();
     for &(k, v) in params {
         if !e.set_parameter(EncoderParameter::from_raw(k as u32).unwrap(), v) {
@@ -18,13 +18,15 @@ fn rust_stream(data: &[u8], params: &[(i32, u32)], dicts: &[Vec<u8>]) -> Result<
         }
     }
     let (mut out, mut buf, mut input) = (Vec::new(), vec![0u8; 1 << 16], data);
-    while !e.is_finished() {
+    loop {
         let mut room: &mut [u8] = &mut buf;
-        e.compress_stream(EncoderOperation::Finish, &mut input, &mut room).map_err(|e| format!("Rust: {e}"))?;
+        e.compress_stream(op, &mut input, &mut room).map_err(|e| format!("Rust: {e}"))?;
         let made = (1 << 16) - room.len();
         out.extend_from_slice(&buf[..made]);
+        if input.is_empty() && !e.has_more_output() {
+            return Ok(out);
+        }
     }
-    Ok(out)
 }
 
 fn check(name: &str, seed: u64, rng: &mut Rng, data: &[u8], params: &[(i32, u32)], dicts: &[Vec<u8>], totals: &mut (usize, usize)) {
@@ -32,7 +34,7 @@ fn check(name: &str, seed: u64, rng: &mut Rng, data: &[u8], params: &[(i32, u32)
     for k in 0..2 {
         let case = EncCase { data: data.to_vec(), params: params.to_vec(), dicts: dicts.to_vec(), schedule: if k == 0 { 0 } else { rng.next() | 1 }, misuse: false };
         // When a copy goes on into an empty dictionary, the reference reads past its end.
-        let stream = if dicts.iter().any(Vec::is_empty) { rust_stream(data, params, dicts) } else { enc::compare(&case) };
+        let stream = if dicts.iter().any(Vec::is_empty) { rust_stream(data, params, dicts, EncoderOperation::Finish) } else { enc::compare(&case) };
         match stream.and_then(|out| enc::round_trip(&out, data, dicts, large, rng.next()).map(|()| out)) {
             Ok(out) => {
                 totals.0 += data.len();
@@ -375,4 +377,32 @@ pub fn run_states(seed0: u64, iters: u64, qualities: u64) {
         }
     }
     println!("ok: {iters} iterations, {calls} calls, {refused} refused, {decoded} streams decoded");
+}
+
+/// The second part of a stream, made with a stream offset and a dictionary. Distances into the dictionary start after
+/// both parts, although the encoder only has the second.
+pub fn run_offset_dict(seed0: u64, iters: u64, qualities: u64) {
+    let qs = crate::args::qualities(qualities, 5..12);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let mut noise = |n: usize| -> Vec<u8> { (0..n).map(|_| rng.next() as u8).collect() };
+        let dictionary = noise(400_000);
+        let (first, tail) = (noise(1 + seed as usize % 3000), noise(500));
+        let q = qs[it as usize % qs.len()];
+        // The first two bytes get a block of their own.
+        let block = 2 + if q < 9 { 1 << 16 } else { 1 << 18 };
+        let address = 5000;
+        let wrong = address + block - first.len();
+        let second = [&dictionary[address..address + block], &dictionary[wrong..wrong + 3000], &tail[..]].concat();
+        let dicts = vec![dictionary];
+        let params = vec![(1, q), (2, 22)];
+        let fail = |e: String| -> ! { panic!("seed {seed} quality {q}: {e}") };
+        let mut stream = rust_stream(&first, &params, &dicts, EncoderOperation::Flush).unwrap_or_else(|e| fail(e));
+        let params = [&params[..], &[(9, first.len() as u32)]].concat();
+        let case = EncCase { data: second.clone(), params, dicts: dicts.clone(), schedule: 0, misuse: false };
+        stream.extend(enc::compare(&case).unwrap_or_else(|e| fail(e)));
+        enc::round_trip(&stream, &[first, second].concat(), &dicts, false, 0).unwrap_or_else(|e| fail(e));
+    }
+    println!("ok: {iters} iterations");
 }

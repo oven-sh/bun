@@ -542,6 +542,9 @@ function cppSourceForDictionary(type: DictionaryType): string {
     return `    {\n${indent(lines.join("\n"), 8)}\n    }`;
   });
   const count = type.names.length;
+  const throwNotObject = type.validateObject
+    ? `Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, ${asciiLiteral(type.reportedAs || type.name)}, "object"_s, value);`
+    : "ctx.throwNotObject(*globalObject, scope);";
   return `
 template<> bool Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ${type.cpp}& result)
 {
@@ -556,8 +559,8 @@ ${
 ${indent(type.cppAssign("result", {}), 8)}
         return true;
     }`
-    : `    if (!object) [[unlikely]] {
-        ctx.throwNotObject(*globalObject, scope);
+    : `    if (!object${type.validateObject ? " || object->isCallable()" : ""}) [[unlikely]] {
+        ${throwNotObject}
         return false;
     }`
 }
@@ -567,7 +570,7 @@ ${
     : `    bool isArray = JSC::isArray(globalObject, value);
     RETURN_IF_EXCEPTION(scope, false);
     if (isArray) [[unlikely]] {
-        ctx.throwNotObject(*globalObject, scope);
+        ${throwNotObject}
         return false;
     }
 `

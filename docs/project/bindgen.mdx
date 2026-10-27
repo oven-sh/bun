@@ -374,6 +374,7 @@ The second argument of `b.dictionary` takes:
 | `fromJS`           | also generates `Name::from_js(global, value)`, for a body that has a `JSValue`; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                                      |
 | `reportedAs`       | what an error calls the dictionary, which defaults to the name of the type: `"options"` makes a member `options.level`, and `""` makes it `level`, for a Node function that validates under the bare name (`validateUint32(N, "N")`) |
 | `nullPrototype`    | as a result, the object has no prototype, and the inline room of `Object.create(null)`                                                                                                                                               |
+| `validateObject`   | Node's `validateObject(value, reportedAs)`: a function is refused too, and what is refused is reported as `The "options" argument must be of type object. Received ..`                                                               |
 
 ### Enumerations
 

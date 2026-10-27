@@ -62,6 +62,9 @@ pub struct Histogram {
     /// The first and the last slot that is not zero. `first > last` while the histogram is empty.
     first: usize,
     last: usize,
+    /// How far HdrHistogram would have the counts rotated: the count of a slot is this many places before it. Only
+    /// [`Self::import`] sets it, and only [`Self::export`] and [`Self::diff`] look at it.
+    normalizing_index_offset: usize,
     /// How many times values were removed.
     reset_count: u64,
     ewma: Ewma,
@@ -175,6 +178,7 @@ impl Histogram {
             exceeds: 0,
             first: usize::MAX,
             last: 0,
+            normalizing_index_offset: 0,
             reset_count: 0,
             ewma: Ewma::default(),
         })
@@ -331,7 +335,9 @@ impl Histogram {
 
     /// What was recorded here since `other`, which is an earlier copy of this histogram, was made.
     pub fn diff(&self, other: &Self) -> Result<Self, DiffError> {
-        if !self.is_compatible(other) {
+        if !self.is_compatible(other)
+            || self.normalizing_index_offset != other.normalizing_index_offset
+        {
             return Err(DiffError::Incompatible);
         }
         if self.reset_count != other.reset_count {

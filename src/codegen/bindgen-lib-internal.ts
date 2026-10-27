@@ -1982,6 +1982,8 @@ export interface DictionaryOptions {
   nonObjectAsEmpty?: boolean | "typeof";
   /** As a result, the object has no prototype. */
   nullPrototype?: boolean;
+  /** Node's `validateObject(value, reportedAs)`: a function is refused too, and every refusal is Node's `ERR_INVALID_ARG_TYPE`. */
+  validateObject?: boolean;
   /** What an error calls the dictionary: `"options"` makes a member `options.level`, and `""` makes it `level`. Defaults to the name of the type. */
   reportedAs?: string;
 }
@@ -2036,6 +2038,9 @@ export class DictionaryType extends NamedType {
   }
   get allowArray(): boolean {
     return !!this.options.allowArray;
+  }
+  get validateObject(): boolean {
+    return !!this.options.validateObject;
   }
   get nonObjectAsEmpty(): boolean | "typeof" {
     return this.options.nonObjectAsEmpty ?? false;

@@ -36,7 +36,7 @@ export const HistogramJSON = b.dictionary({
 
 export const ConfidenceOptions = b.dictionary(
   { confidence: { type: b.f64.default(0.95), expected: ["number"] } },
-  { reportedAs: "options" },
+  { reportedAs: "options", validateObject: true },
 );
 export const MeanCI = b.dictionary({ mean: b.f64, lower: b.f64, upper: b.f64 }, { nullPrototype: true });
 export const PercentileCI = b.dictionary({ value: b.u64, lower: b.u64, upper: b.u64 }, { nullPrototype: true });
@@ -70,7 +70,6 @@ export const Histogram = b.class({
     mean: { getter: b.f64 },
     meanCI: {
       args: { options: ConfidenceOptions.default({}) },
-      expected: { options: ["object"] },
       length: 0,
       returns: MeanCI,
       capability: "heap",
@@ -92,7 +91,7 @@ export const Histogram = b.class({
     ksTest: { ...comparison, returns: b.f64 },
     welchTest: {
       args: { other: b.self, options: ConfidenceOptions.default({}) },
-      expected: { ...comparison.expected, options: ["object"] },
+      expected: comparison.expected,
       length: 1,
       returns: WelchTest,
       capability: "heap",
@@ -122,7 +121,7 @@ export const Histogram = b.class({
     percentileBigInt: { ...percentile, returns: b.u64.asBigInt, rustName: "percentile" },
     percentileCI: {
       args: { percentile: b.f64, options: ConfidenceOptions.default({}) },
-      expected: { ...percentile.expected, options: ["object"] },
+      expected: percentile.expected,
       length: 1,
       returns: PercentileCI,
       capability: "heap",

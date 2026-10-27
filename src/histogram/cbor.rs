@@ -167,6 +167,7 @@ impl Histogram {
             counts.filter(|&(&n, _)| n != 0)
         };
         let has_ewma = self.ewma.alpha > 0.0;
+        let offset = self.normalizing_index_offset;
         // The first slot is that of 0, which HdrHistogram does not take for a minimum.
         let min = in_use().find(|&(_, index)| index != 0);
 
@@ -182,13 +183,17 @@ impl Histogram {
             min.map_or(EMPTY_MIN, |(_, index)| self.slot(index).lowest),
         );
         out.uint(key::MAX, self.max());
-        out.uint(key::NORMALIZING_INDEX_OFFSET, 0);
+        out.uint(key::NORMALIZING_INDEX_OFFSET, offset as u64);
         out.float(key::CONVERSION_RATIO, 1.0);
         out.uint(key::COUNTS_LEN, self.slot_count() as u64);
         out.head(major::UINT, key::COUNTS);
         out.head(major::ARRAY, in_use().count() as u64 * 2);
         let mut previous = 0;
-        for (&n, index) in in_use() {
+        let not_wrapped = in_use().filter(|&(_, index)| index >= offset);
+        let wrapped = in_use().filter(|&(_, index)| index < offset);
+        let wrapped = wrapped.map(|(n, index)| (n, index + self.slot_count()));
+        for (&n, index) in not_wrapped.chain(wrapped) {
+            let index = index - offset;
             out.uint((index - previous) as u64, n);
             previous = index;
         }
@@ -215,7 +220,6 @@ impl Histogram {
         let (mut lowest, mut highest, mut figures) = (1, MAX_I64, 3);
         let mut total_count = None;
         let mut counts_len = 0;
-        // How far the counts are rotated: the count of a slot is this many places before it. Nothing writes one but 0.
         let mut offset = 0;
         let mut counts = Vec::new();
         let mut ewma = Ewma::default();
@@ -307,6 +311,7 @@ impl Histogram {
                 return None;
             }
         }
+        histogram.normalizing_index_offset = offset as usize;
         if total_count.is_some_and(|total_count| total_count != histogram.count) {
             return None;
         }

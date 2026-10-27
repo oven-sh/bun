@@ -208,7 +208,7 @@ mod _impl {
                 .with_mut(|s| s.init(pledged_src_size, dictionary));
             if err.is_error() {
                 self.emit_error(global, this_value, err);
-                return Ok(false);
+                return Err(Self::throw_initialization_failed(global, err));
             }
 
             let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {
@@ -237,18 +237,23 @@ mod _impl {
                     // The Context is torn down (`mode` is `NONE`); reject any
                     // further operation the way `close()` does.
                     self.closed.set(true);
-                    // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
-                    let msg = unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes();
-                    return Err(global
-                        .err(
-                            jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
-                            format_args!("{}", bstr::BStr::new(msg)),
-                        )
-                        .throw());
+                    return Err(Self::throw_initialization_failed(global, err_));
                 }
             }
 
             Ok(true)
+        }
+
+        /// Node's `THROW_ERR_ZLIB_INITIALIZATION_FAILED(env, err.message)`.
+        fn throw_initialization_failed(global: &JSGlobalObject, err: Error) -> jsc::JsError {
+            // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
+            let msg = unsafe { bun_core::ffi::cstr(err.msg) }.to_bytes();
+            global
+                .err(
+                    jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
+                    format_args!("{}", bstr::BStr::new(msg)),
+                )
+                .throw()
         }
 
         pub(crate) fn params(&self) {

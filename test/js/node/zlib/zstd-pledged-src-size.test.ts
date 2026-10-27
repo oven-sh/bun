@@ -1,6 +1,9 @@
 /**
  * All tests in this file run in both Bun and Node.js: `bun test` runs them
- * here, and the last test runs this same file under Node.js.
+ * here, and the last test runs this same file under Node.js. So the file uses
+ * `node:test` and `node:assert`, not `bun:test`. It loads the harness only in
+ * Bun, and it starts a child process with `process.execPath`, which is the
+ * runtime that runs the file.
  *
  * `pledgedSrcSize` of the zstd compressor, as Node.js v26.12.1 has it:
  * - The input of the first frame is compared with the pledge when that frame
@@ -10,6 +13,8 @@
  *   v26.7.0).
  * - zlib.zstdCompress() pledges the size of its input (nodejs/node#66358,
  *   v26.11.0).
+ * - An ArrayBuffer `dictionary` is loaded (nodejs/node#64599), so a dictionary
+ *   that zstd rejects fails the constructor for it too.
  */
 import assert from "node:assert";
 import { execFile } from "node:child_process";
@@ -23,8 +28,12 @@ const { ZSTD_e_flush, ZSTD_e_end, ZSTD_c_nbWorkers, ZSTD_c_jobSize } = zlib.cons
 // Only in Bun: Node.js cannot load the harness.
 const harness = typeof Bun !== "undefined" ? await import("harness") : null;
 
-// @types/node does not declare `pledgedSrcSize`, and the validation tests pass values of every type.
-type Options = zlib.ZstdOptions & { pledgedSrcSize?: unknown; defaultEncoding?: string };
+// @types/node declares no `pledgedSrcSize` and no ArrayBuffer `dictionary`, and the validation tests pass values of every type.
+type Options = Omit<zlib.ZstdOptions, "dictionary"> & {
+  pledgedSrcSize?: unknown;
+  defaultEncoding?: string;
+  dictionary?: unknown;
+};
 // The stream methods that these tests call and @types/node does not declare.
 type Compressor = zlib.ZstdCompress & { reset(): void; _processChunk(chunk: Buffer, flushFlag: number): Buffer };
 
@@ -60,6 +69,14 @@ for (let i = 0, state = 0x12345678; i < noise.length; i++) {
   state = (Math.imul(state, 1664525) + 1013904223) | 0;
   noise[i] = state >>> 24;
 }
+// The magic number of a zstd dictionary, with no valid tables after it. zstd rejects it.
+const rejectedDictionary = Buffer.alloc(64, "A");
+rejectedDictionary.writeUInt32LE(0xec30a437, 0);
+const loadFailed = {
+  name: "Error",
+  code: "ERR_ZLIB_INITIALIZATION_FAILED",
+  message: "Failed to load zstd dictionary",
+};
 
 // https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md#frame_header
 // magic(4) | frame header descriptor(1) | [window descriptor(1)] | [dictionary id] | [frame content size]
@@ -329,7 +346,7 @@ describe("zstd pledgedSrcSize is validated", () => {
     assert.deepStrictEqual(
       [
         outcome(() => createCompress({ pledgedSrcSize, params: { 99999: 1 } })),
-        outcome(() => createCompress({ pledgedSrcSize, dictionary: null } as Options)),
+        outcome(() => createCompress({ pledgedSrcSize, dictionary: null })),
         outcome(() => createCompress({ pledgedSrcSize, chunkSize: 1 })),
         outcome(() => createCompress({ pledgedSrcSize, flush: 99 })),
         outcome(() => createCompress({ pledgedSrcSize, finishFlush: 99 })),
@@ -422,8 +439,24 @@ describe("zlib.zstdCompress pledges the size of its input", () => {
   });
 });
 
+describe("a dictionary that zstd rejects", () => {
+  const frame = zlib.zstdCompressSync(data);
+  const { buffer, byteOffset, byteLength } = rejectedDictionary;
+
+  for (const [kind, dictionary] of [
+    ["Buffer", rejectedDictionary],
+    ["ArrayBuffer", buffer.slice(byteOffset, byteOffset + byteLength)],
+  ] as const) {
+    test(`fails the decompressor when it is constructed (${kind})`, () => {
+      const options = { dictionary } as zlib.ZstdOptions;
+      assert.throws(() => zlib.createZstdDecompress(options), loadFailed);
+      assert.throws(() => zlib.zstdDecompressSync(frame, options), loadFailed);
+    });
+  }
+});
+
 // node:zlib/iter exists only with --experimental-stream-iter, so these run in one child process.
-describe("node:zlib/iter zstd pledgedSrcSize", () => {
+describe("node:zlib/iter zstd", () => {
   const script = `
     const { compressZstd, compressZstdSync, decompressZstd, decompressZstdSync } = require("node:zlib/iter");
     const { pull, pullSync, bytes, bytesSync } = require("node:stream/iter");
@@ -465,15 +498,21 @@ describe("node:zlib/iter zstd pledgedSrcSize", () => {
           await viaSync(decompressSync, []),
         ];
       }
-      console.log(JSON.stringify({ compared, validated }));
+
+      const dictionary = Buffer.from("${rejectedDictionary.toString("hex")}", "hex");
+      const rejected = [
+        await viaAsync(decompressZstd({ dictionary }), []),
+        await viaSync(decompressZstdSync({ dictionary }), []),
+      ];
+      console.log(JSON.stringify({ compared, validated, rejected }));
     })();`;
-  let child: Promise<{ compared: object; validated: object }> | undefined;
+  let child: Promise<{ compared: object; validated: object; rejected: string[] }> | undefined;
   const results = () =>
     (child ??= promisify(execFile)(process.execPath, ["--experimental-stream-iter", "--no-warnings", "-e", script], {
       env: harness?.bunEnv ?? process.env,
     }).then(({ stdout }) => JSON.parse(stdout)));
 
-  test("is compared with the input of the frame", async () => {
+  test("pledgedSrcSize is compared with the input of the frame", async () => {
     const wrong = `${srcSizeWrong.name} ${srcSizeWrong.code}: ${srcSizeWrong.message}`;
     // A number is the size of the decompressed output.
     assert.deepStrictEqual((await results()).compared, {
@@ -487,7 +526,7 @@ describe("node:zlib/iter zstd pledgedSrcSize", () => {
     });
   });
 
-  test("is validated when the transform is first pulled", async () => {
+  test("pledgedSrcSize is validated when the transform is first pulled", async () => {
     assert.deepStrictEqual((await results()).validated, {
       string: new Array(4).fill(notANumber),
       null: new Array(4).fill(notANumber),
@@ -496,12 +535,17 @@ describe("node:zlib/iter zstd pledgedSrcSize", () => {
       "-1": new Array(4).fill(negative),
     });
   });
+
+  test("a dictionary that zstd rejects fails the decompressor when the transform is first pulled", async () => {
+    const failed = `${loadFailed.name} ${loadFailed.code}: ${loadFailed.message}`;
+    assert.deepStrictEqual((await results()).rejected, [failed, failed]);
+  });
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (harness) {
   const { bunEnv, nodeExeAtLeast } = harness;
-  // The version of nodejs/node#66358, the last of the three changes above.
+  // The version of nodejs/node#66358, the newest of the changes above.
   const node = nodeExeAtLeast("26.11.0");
 
   describe("Node.js compatibility", () => {

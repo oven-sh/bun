@@ -582,6 +582,12 @@ export const rows: Row[] = [
   ["aot/trimmed-is-whole/environment", 3, "./trimmed-is-whole/environment-in-parts", "testEnvironments"],
   ["aot/trimmed-matches-untrimmed", 4, "./trimmed-is-whole/run", "testTrimmedMatchesUntrimmed"],
   ["aot/what-is-moved-ahead-of-a-loop", 3, "./what-is-moved-ahead-of-a-loop-cases", "whatIsMovedAheadOfALoop"],
+  [
+    "aot/workers-within-address-space-limit",
+    6,
+    "./workers-within-address-space-limit-cases",
+    "workersWithinAddressSpaceLimit",
+  ],
 
   [
     "bundler/compile-trim-never-exits",

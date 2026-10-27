@@ -10,12 +10,12 @@ const turns = 2000;
 const numberOfKinds = 12;
 
 // One constructor at the root of twelve kinds of objects. Between its stores by name stands one under a key that only the run knows, so the object keeps that property beside its fields.
-const program = (key: string, atTheEnd: string) => `
+const program = (key: string, atTheEnd: string, storeUnderKey = "this[key] = false;") => `
 var key = ${key};
 function Root(limit) {
   this.events = null;
   this.eventsCount = 0;
-  this[key] = false;
+  ${storeUnderKey}
   this.maxListeners = limit;
 }
 const library = { Root: function Unused() {} };
@@ -42,6 +42,7 @@ const text = `JSON.parse('"mode"')`;
 const programs: Record<string, { source: string; answer: string }> = {
   "a-symbol.mjs": { source: program(symbol, ""), answer: "" },
   "a-text.mjs": { source: program(text, ""), answer: "" },
+  "no-such-key.mjs": { source: program(text, "", ""), answer: "" },
   "a-symbol-and-the-keys-are-listed.mjs": {
     source: program(symbol, `, Reflect.ownKeys(last).map(String).join()`),
     answer: " early,events,eventsCount,maxListeners,late,Symbol(first)",
@@ -71,7 +72,9 @@ test.each(Object.keys(programs))(
       const [times, what] = line.split("\t");
       if (what?.startsWith("operation:operationAOTDidCreateField")) timesAsked += Number(times);
     }
-    expect(timesAsked).toBeLessThan(turns / 10);
+    // Where nobody lists the keys there is no order to keep, so not even the first object of a kind asks.
+    if (programs[entry].answer === "") expect(timesAsked).toBe(0);
+    else expect(timesAsked).toBeLessThan(turns / 10);
   },
   240_000,
 );

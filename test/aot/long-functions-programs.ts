@@ -81,6 +81,108 @@ export function writeMethodsStoredIntoPrototype(methodCount: number): Program {
   };
 }
 
+// Every thousandth call throws.
+export function writeTryBlocksInARow(blockCount: number): Program {
+  const indexes = indexesUpTo(blockCount);
+  return {
+    source: [
+      'function step(index) { if (index % 1000 === 7) throw new Error("thrown"); return index; }',
+      "function run() {",
+      "let sum = 0;",
+      ...indexes.map(index => `try { sum += step(${index}); } catch { sum -= 1; }`),
+      "return sum;",
+      "}",
+      "console.log(run());",
+    ].join("\n"),
+    output: `${indexes.reduce((sum, index) => sum + (index % 1000 === 7 ? -1 : index), 0)}\n`,
+  };
+}
+
+export function writeCasesOfOneSwitch(caseCount: number): Program {
+  return {
+    source: [
+      "function find(key) {",
+      "switch (key) {",
+      ...indexesUpTo(caseCount).map(index => `case ${index}: return ${index} + 1;`),
+      "}",
+      "return -1;",
+      "}",
+      `console.log(find(7), find(${caseCount - 1}), find(-5));`,
+    ].join("\n"),
+    output: `8 ${caseCount} -1\n`,
+  };
+}
+
+export function writeOperandsOfOneLogicalChain(operandCount: number): Program {
+  return {
+    source: [
+      "function isListed(key) {",
+      "return (",
+      ...indexesUpTo(operandCount).map(index => `key === ${index} ||`),
+      "false",
+      ");",
+      "}",
+      "console.log(isListed(7), isListed(-1));",
+    ].join("\n"),
+    output: "true false\n",
+  };
+}
+
+export function writeParametersOfOneFunction(parameterCount: number): Program {
+  const indexes = indexesUpTo(parameterCount);
+  return {
+    source: [
+      `function add(${indexes.map(index => `p${index}`).join(", ")}) { return p7 + p${parameterCount - 1}; }`,
+      `console.log(add(${indexes.join(", ")}));`,
+    ].join("\n"),
+    output: `${7 + parameterCount - 1}\n`,
+  };
+}
+
+export function writeCountedLoopsInARow(loopCount: number): Program {
+  const indexes = indexesUpTo(loopCount);
+  return {
+    source: [
+      "function run() {",
+      "let sum = 0;",
+      ...indexes.map(index => `for (let step = 0; step < 2; step++) { if (step) break; sum += step + ${index}; }`),
+      "return sum;",
+      "}",
+      "console.log(run());",
+    ].join("\n"),
+    output: `${indexes.reduce((sum, index) => sum + index, 0)}\n`,
+  };
+}
+
+export function writeLoopsOverOneArrayInARow(loopCount: number): Program {
+  const indexes = indexesUpTo(loopCount);
+  return {
+    source: [
+      "function run(list) {",
+      "let sum = 0;",
+      ...indexes.map(index => `for (const item of list) sum += item + ${index};`),
+      "return sum;",
+      "}",
+      "console.log(run([1, 2]));",
+    ].join("\n"),
+    output: `${indexes.reduce((sum, index) => sum + 3 + 2 * index, 0)}\n`,
+  };
+}
+
+export function writeNewObjectsStoredIntoFields(fieldCount: number): Program {
+  return {
+    source: [
+      "class Point { constructor(x) { this.x = x; } }",
+      "class Table { constructor() {",
+      ...indexesUpTo(fieldCount).map(index => `this.k${index} = new Point(${index});`),
+      "} }",
+      "const table = new Table();",
+      `console.log(table.k7.x, table.k${fieldCount - 1}.x);`,
+    ].join("\n"),
+    output: `7 ${fieldCount - 1}\n`,
+  };
+}
+
 // The `try` block stores to every local, the `catch` block reads every local, and the second call throws halfway.
 function writeTryThatStoresToLocals(
   localCount: number,

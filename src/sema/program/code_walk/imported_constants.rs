@@ -8,8 +8,7 @@ use crate::hir::ExprFlags;
 use crate::module_format::ModuleFormat;
 use crate::resolve::{CodeResolution, SiteResolution};
 use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Export {
@@ -76,8 +75,9 @@ struct Exports<'w, 's, 'r> {
     files: &'w [WalkedFile<'s, 'r>],
     replacements: &'w FxHashMap<u32, u32>,
     resolved: FxHashMap<(u32, Atom), Option<Export>>,
-    /// By file. `Some(None)`: they are being looked at.
-    stars: Vec<Option<Option<Rc<Stars>>>>,
+    /// By file. Every thread computes the same value for a file.
+    stars: &'w [OnceLock<Arc<Stars>>],
+    files_with_stars_in_progress: Vec<u32>,
     first_targets_of_sites: RefCell<FxHashMap<u32, Vec<u32>>>,
     /// The files whose variables the names of the file in hand lead to.
     files_read: Vec<u32>,
@@ -228,15 +228,18 @@ impl<'s> Exports<'_, 's, '_> {
     }
 
     /// `None`: the statements of the file are being looked at.
-    fn stars_of(&mut self, file: u32) -> Option<Rc<Stars>> {
-        if let Some(known) = &self.stars[file as usize] {
-            return known.clone();
+    fn stars_of(&mut self, file: u32) -> Option<Arc<Stars>> {
+        if let Some(known) = self.stars[file as usize].get() {
+            return Some(Arc::clone(known));
+        }
+        if self.files_with_stars_in_progress.contains(&file) {
+            return None;
         }
         let files = self.files;
         let Some(parsed) = &files[file as usize].parsed else {
-            return Some(Rc::default());
+            return Some(Arc::default());
         };
-        self.stars[file as usize] = Some(None);
+        self.files_with_stars_in_progress.push(file);
         let hir = &parsed.parse.hir;
         let mut stars = Stars::default();
         for statement in hir.ids(hir.body) {
@@ -262,9 +265,9 @@ impl<'s> Exports<'_, 's, '_> {
                 }
             }
         }
-        let stars = Rc::new(stars);
-        self.stars[file as usize] = Some(Some(Rc::clone(&stars)));
-        Some(stars)
+        self.files_with_stars_in_progress.pop();
+        let stars = self.stars[file as usize].get_or_init(|| Arc::new(stars));
+        Some(Arc::clone(stars))
     }
 
     fn resolve_through_stars(&mut self, file: u32, name: Atom) -> Export {
@@ -407,43 +410,6 @@ const MOST_FOLDINGS_OF_ONE_FILE: u32 = 64;
 
 const FILES_OF_ONE_SHARE: usize = 128;
 
-/// The answers in the order of the shares.
-fn for_each_share<T: Send>(
-    threads: usize,
-    shares: &[&[u32]],
-    look_up: &(dyn Fn(&[u32]) -> T + Sync),
-) -> Vec<T> {
-    let helpers = threads.min(shares.len()).saturating_sub(1);
-    if helpers == 0 {
-        return shares.iter().map(|share| look_up(share)).collect();
-    }
-    let next = AtomicUsize::new(0);
-    let answers: Vec<Guarded<Option<T>>> = shares.iter().map(|_| Guarded::new(None)).collect();
-    let work = || {
-        loop {
-            let index = next.fetch_add(1, Ordering::Relaxed);
-            let Some(share) = shares.get(index) else {
-                return;
-            };
-            *answers[index].lock() = Some(look_up(share));
-        }
-    };
-    std::thread::scope(|scope| {
-        for _ in 0..helpers {
-            let thread = std::thread::Builder::new()
-                .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize);
-            let _ = thread.spawn_scoped(scope, work);
-        }
-        work();
-    });
-    let answers = answers
-        .into_iter()
-        .map(|mut answer| answer.get_mut().take());
-    answers
-        .map(|answer| answer.expect("every share was taken"))
-        .collect()
-}
-
 pub(super) fn fold_files_that_import_constants_again<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     state: &mut WalkState<'_, 'r>,
@@ -467,12 +433,14 @@ pub(super) fn fold_files_that_import_constants_again<'r>(
     };
     asked.shared_sort_unstable();
     asked.dedup();
+    let stars: Vec<OnceLock<Arc<Stars>>> = state.files.iter().map(|_| OnceLock::new()).collect();
     let look_up = |share: &[u32]| {
         let mut exports = Exports {
             files: &state.files,
             replacements: &looked_up.replacements,
             resolved: FxHashMap::default(),
-            stars: vec![None; state.files.len()],
+            stars: &stars,
+            files_with_stars_in_progress: Vec::new(),
             first_targets_of_sites: RefCell::default(),
             files_read: Vec::new(),
         };
@@ -492,12 +460,17 @@ pub(super) fn fold_files_that_import_constants_again<'r>(
         }
         (importers, reads)
     };
-    // The other threads of the walk wait for this one. A share is as long whatever their number, so a build says the same on any machine.
+    // The share size doesn't depend on the thread count, so every machine gets the same result.
     let shares: Vec<&[u32]> = asked.chunks(FILES_OF_ONE_SHARE).collect();
-    let answers = for_each_share(context.host.threads(), &shares, &look_up);
+    let answers: Vec<Guarded<_>> = shares.iter().map(|_| Guarded::new(None)).collect();
+    context.host.parallel(shares.len(), &|share| {
+        *answers[share].lock() = Some(look_up(shares[share]));
+    });
     let mut importers: Vec<(u32, Vec<ImportedConstant>)> = Vec::new();
     let mut reads: Vec<(u32, u32)> = Vec::new();
-    for (importers_of_share, reads_of_share) in answers {
+    for mut answer in answers {
+        let answer = answer.get_mut().take();
+        let (importers_of_share, reads_of_share) = answer.expect("every share was looked up");
         importers.extend(importers_of_share);
         reads.extend(reads_of_share);
     }

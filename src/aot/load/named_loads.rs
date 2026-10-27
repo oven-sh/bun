@@ -15,6 +15,7 @@ use bun_sema::util::SharedSort;
 use smallvec::{SmallVec, smallvec};
 
 use crate::builtins::{BuiltinId, ResolvedBuiltins, RuntimeModule};
+use crate::ir::parallel::InParallel;
 use crate::load::loader_aliases::{
     LoaderAlias, resolve_exported_loader_alias, resolve_loader_alias,
 };
@@ -176,8 +177,11 @@ fn imports_loader(files: &Files<'_>, mut file: FileId, mut symbol: SymbolId) -> 
 
 pub(crate) fn gives_unknown_name_to_imported_loader(application: &Files<'_>, file: FileId) -> bool {
     parsed_source(application, file).is_some_and(|source| {
-        let mut callees = source.imports_given_unknown_names.iter();
-        callees.any(|&callee| imports_loader(application, file, callee))
+        let answer = &source.gives_unknown_name_to_imported_loader;
+        *answer.get_or_init(|| {
+            let mut callees = source.imports_given_unknown_names.iter();
+            callees.any(|&callee| imports_loader(application, file, callee))
+        })
     })
 }
 
@@ -216,11 +220,17 @@ pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
 }
 
 // esbuild exports `__require` from a shared chunk, so whether `__require("node:fs")` loads a module is only known once the exporting file is loaded.
-pub(crate) fn resolve_loads_through_imported_loaders(application: &Files<'_>) {
-    for &file in application.compiled_files() {
+pub(crate) fn resolve_loads_through_imported_loaders(
+    application: &Files<'_>,
+    in_parallel: InParallel<'_>,
+) {
+    let files = application.compiled_files();
+    in_parallel(files.len(), &|index| {
+        let file = files[index];
         let Some(source) = parsed_source(application, file) else {
-            continue;
+            return;
         };
+        gives_unknown_name_to_imported_loader(application, file);
         let mut loaders: Vec<(SymbolId, bool)> = Vec::new();
         let mut named = Vec::new();
         for &(callee, module) in &source.library_names_passed_to_imports {
@@ -241,7 +251,7 @@ pub(crate) fn resolve_loads_through_imported_loaders(application: &Files<'_>) {
             sort_named_modules(&mut named);
             source.set_named_modules(named);
         }
-    }
+    });
 }
 
 fn way_into_pattern(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId, held: Held) -> Way {

@@ -81,6 +81,7 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   Each commit draws other files and programs, so in time every lane has run all of them. A step is written with its sample, so a retry of a job makes the same draw, and the runner
   prints it first (`Sample: ..`). `scripts/runner.node.ts --include=aot/ --one-in=<n> --aot-sample=<sample>+<k>` makes the draw again, and with `AOT_SAMPLE=<sample>` in the environment
   `getAotStepArguments()` gives the steps of that commit.
+  A test whose next result on one system is waited for stands in `testsAwaitedOn`: the lanes of that system run it on every commit until the entry is taken out.
 - **A test file that runs no test is red on Debian x64** (`--must-run`), which is told to run every file. A file whose tests all skip themselves there goes into one of the lists of
   `scripts/aot-tests.ts`: what needs a sanitizer or a hardened Bun is always run by the step that has one and left out by the others, what comes as units of `parts.mts` or reads the
   engine's sources is run elsewhere, and `testsOutsideCi` has what no step can run, each with the reason. `every-test-runs-in-ci.test.ts` checks the lists against the steps.

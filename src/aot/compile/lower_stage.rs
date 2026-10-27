@@ -945,7 +945,10 @@ impl Build<'_> {
         let compiled = files.compiled_files().iter().copied();
         let mut files_of_dependencies: Vec<FileId> = compiled.filter(is_in_dependency).collect();
         files_of_dependencies.sort_unstable();
-        let transpiler = RuntimeTranspiler::default();
+        let transpiler = RuntimeTranspiler::new(&match project {
+            ProjectId::Application => self.provider.enabled_features(),
+            ProjectId::Runtime => Vec::new(),
+        });
         then(&LoweringInputs {
             roles: &lowering_roles,
             checked_elsewhere: match project {

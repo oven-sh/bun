@@ -1807,6 +1807,14 @@
     "typed": 977,
     "untyped": 977
   },
+  "everyday-patterns-out-of-run-time-text/a-greedy-run-from-every-bracket-without-a-match": {
+    "typed": 1492617.3,
+    "untyped": 1492616.4
+  },
+  "everyday-patterns-out-of-run-time-text/a-lazy-run-from-every-bracket-without-a-match": {
+    "typed": 1841592.1,
+    "untyped": 1841590.9
+  },
   "everyday-patterns-out-of-run-time-text/a-name-and-its-number-far-behind-the-start-of-a-line": {
     "typed": 5208.6,
     "untyped": 5208.5
@@ -1815,15 +1823,7 @@
     "typed": 1851.1,
     "untyped": 1851
   },
-  "everyday-patterns-out-of-run-time-text/as-little-as-possible-from-every-bracket-of-a-line": {
-    "typed": 1841592.1,
-    "untyped": 1841590.9
-  },
-  "everyday-patterns-out-of-run-time-text/as-much-as-possible-from-every-bracket-of-a-line": {
-    "typed": 1492617.3,
-    "untyped": 1492616.4
-  },
-  "everyday-patterns-out-of-run-time-text/four-lookaheads-each-with-a-group-and-its-reference-that-find-nothing": {
+  "everyday-patterns-out-of-run-time-text/four-emulated-atomic-groups-without-a-match": {
     "typed": 2337802.1,
     "untyped": 2337800.2
   },
@@ -2266,6 +2266,18 @@
   "everyday-texts-that-every-match-holds/trim-by-a-written-out-class": {
     "typed": 756.6,
     "untyped": 756.5
+  },
+  "everyday-patterns-out-of-run-time-text/as-little-as-possible-from-every-bracket-of-a-line": {
+    "typed": 1841592.1,
+    "untyped": 1841590.9
+  },
+  "everyday-patterns-out-of-run-time-text/as-much-as-possible-from-every-bracket-of-a-line": {
+    "typed": 1492617.3,
+    "untyped": 1492616.4
+  },
+  "everyday-patterns-out-of-run-time-text/four-lookaheads-each-with-a-group-and-its-reference-that-find-nothing": {
+    "typed": 2337802.1,
+    "untyped": 2337800.2
   },
   "everyday-downleveled/derived.object-create-prototype": {
     "typed": 7.1,

@@ -441,10 +441,29 @@ impl ResolutionGraph<'_> {
         for (node, &(_, entry)) in (table.nodes.start..).zip(&module.own) {
             self.add_own_name(node, entry);
         }
-        for node in table.star_nodes() {
-            let (_, name) = self.nodes.keys[node as usize];
-            for target in star_targets(self.scans, module) {
-                self.follow(node, NodeKind::Star, target, name);
+        let nodes = self.nodes;
+        let star_nodes = table.star_nodes();
+        for target in star_targets(self.scans, module) {
+            let target_table = find_table(self.files, target).map(|table| &nodes.tables[table]);
+            match target_table {
+                // Only the target's names can match, so visit those instead of every star name.
+                Some(target_table)
+                    if matches!(target_table.dynamic_targets, DynamicStarTargets::Empty) =>
+                {
+                    for target_node in target_table.nodes.clone() {
+                        let (_, name) = nodes.keys[target_node as usize];
+                        let node = nodes.index.get(&(module.file, name));
+                        if let Some(&node) = node.filter(|node| star_nodes.contains(node)) {
+                            self.edges[node as usize].push(target_node);
+                        }
+                    }
+                }
+                Some(_) | None => {
+                    for node in star_nodes.clone() {
+                        let (_, name) = nodes.keys[node as usize];
+                        self.follow(node, NodeKind::Star, target, name);
+                    }
+                }
             }
         }
     }

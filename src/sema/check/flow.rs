@@ -225,6 +225,8 @@ pub(super) struct FlowMemo {
     runs: FlowRuns,
     /// See `parent_of_whole_expression`.
     pub(super) parents_of_long_expressions: FxHashMap<(FileId, Node), Node>,
+    /// See `check_testing_known_truthy_left_operand`.
+    pub(super) parents_of_logical_chains: FxHashMap<(FileId, ExprId), Parent>,
 }
 
 /// Not in tsgo. The runs of a file's flow graph: assignments, call statements and array mutations,
@@ -254,6 +256,9 @@ struct FlowRuns {
     first_compound_assignment: Vec<u32>,
     /// The assignments at which a walk resolves the name of a key, in ascending order.
     computed_key_nodes: Vec<u32>,
+    /// The array mutations, in ascending order. A walk for a reference of an automatic type may have
+    /// something to do at each.
+    array_mutations: Vec<u32>,
     /// Indexed like `Bound::flow_edges`: where the stretch of edges from this one on ends, in which
     /// each edge is a later node of the same run than the edge before it.
     ascending_edges_end: Vec<u32>,
@@ -7950,18 +7955,21 @@ impl<'p, 's> Checker<'p, 's> {
         };
         antecedent(flow.0)?;
         let root = root_key(reference.root);
-        if root == 0
-            || reference.unresolved.get() != 0
-            || self.task.file != Some(file)
-            || self.is_automatic_type(walk.declared)
-        {
+        if root == 0 || reference.unresolved.get() != 0 || self.task.file != Some(file) {
             return None;
         }
+        let is_automatic = self.is_automatic_type(walk.declared);
         if self.flow_memo.runs.file != Some(file) {
             self.index_flow_runs(file);
         }
         let runs = &self.flow_memo.runs;
-        let (last_related, _) = runs.nodes_about(root, reference, flow);
+        let (mut last_related, _) = runs.nodes_about(root, reference, flow);
+        if is_automatic {
+            let after = (runs.array_mutations).partition_point(|&node| node <= flow.0);
+            if let Some(&node) = runs.array_mutations[..after].last() {
+                last_related = last_related.max(node);
+            }
+        }
         let position = runs.position[flow.idx()];
         let start = runs.nodes[position as usize].run_start;
         let up_to_here = &runs.nodes[start as usize..=position as usize];
@@ -8146,6 +8154,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut assignments = Vec::new();
         let mut deep_assignments = Vec::new();
         let mut computed_key_nodes = Vec::new();
+        let mut array_mutations = Vec::new();
         for (i, &node) in bound.flow.iter().enumerate() {
             let (Flow::Assign { before, .. }
             | Flow::Call { before, .. }
@@ -8167,6 +8176,9 @@ impl<'p, 's> Checker<'p, 's> {
             };
             position[i] = run;
             lengths[run as usize] += 1;
+            if let Flow::ArrayMutation { .. } = node {
+                array_mutations.push(i as u32);
+            }
             let Flow::Assign { target, .. } = node else {
                 continue;
             };
@@ -8297,6 +8309,7 @@ impl<'p, 's> Checker<'p, 's> {
             deep_assignments,
             first_compound_assignment,
             computed_key_nodes,
+            array_mutations,
         };
     }
 

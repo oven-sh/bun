@@ -4,11 +4,18 @@ import { expectLinearInstructionCount } from "./long-functions-instructions";
 import {
   indexesUpTo,
   mix,
+  writeCasesOfOneSwitch,
   writeClassWithFields,
   writeClassWithMethods,
   writeClassWithStaticFields,
+  writeCountedLoopsInARow,
   writeLocalsReadInCatch,
+  writeLoopsOverOneArrayInARow,
   writeMethodsStoredIntoPrototype,
+  writeNewObjectsStoredIntoFields,
+  writeOperandsOfOneLogicalChain,
+  writeParametersOfOneFunction,
+  writeTryBlocksInARow,
   type Program,
 } from "./long-functions-programs";
 import { test } from "./supported";
@@ -138,6 +145,63 @@ test.skipIf(isSlowBuild || isWindows)(
   "the instructions of a build are linear in the number of methods stored into a prototype object",
   async () => {
     await expectLinearInstructionCount(15_000, writeMethodsStoredIntoPrototype, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of try blocks in a row",
+  async () => {
+    await expectLinearInstructionCount(5_000, writeTryBlocksInARow, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of cases of one switch",
+  async () => {
+    await expectLinearInstructionCount(5_000, writeCasesOfOneSwitch, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of operands of one logical chain",
+  async () => {
+    await expectLinearInstructionCount(5_000, writeOperandsOfOneLogicalChain, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of parameters of one function",
+  async () => {
+    await expectLinearInstructionCount(5_000, writeParametersOfOneFunction, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of counted loops in a row",
+  async () => {
+    await expectLinearInstructionCount(5_000, writeCountedLoopsInARow, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of loops over one array in a row",
+  async () => {
+    await expectLinearInstructionCount(2_000, writeLoopsOverOneArrayInARow, 4.5);
+  },
+  240_000,
+);
+
+// A square would be sixteen. What is left above four: sets of objects that are as wide as the function has objects, and a block that is cut and joined again at each call.
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are far from the square of the number of new objects that a constructor stores into fields",
+  async () => {
+    await expectLinearInstructionCount(3_000, writeNewObjectsStoredIntoFields, 9);
   },
   240_000,
 );

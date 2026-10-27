@@ -198,9 +198,28 @@ export function getAotAlwaysDrawn(
   ];
 }
 
+// The tests whose next result on a system is waited for. The lanes of that system run them on every commit, whatever they draw. An entry is taken out when the result is in.
+export const testsAwaitedOn: Record<string, string[]> = {
+  windows: [
+    "aot/a-descriptor-that-is-written-out-is-no-object-whatever-it-describes-a-property-of",
+    "aot/an-operation-without-a-value-stops-the-build",
+    "aot/code-nested-in-itself",
+    "aot/engine-tests-ir",
+    "aot/every-program-28.",
+    "aot/every-program-alone-82.",
+    "aot/pointers-into-what-a-cell-owns",
+    "aot/programs-in-every-run-18.",
+    "aot/programs-in-every-run-29.",
+    "aot/programs-in-every-run-46.",
+    "aot/programs-in-every-run-49.",
+    "aot/programs-in-every-run-59.",
+  ],
+};
+
 // What the step that holds up nothing runs whatever the lane draws.
 export function getAotAlwaysInDrawnStep({ os, profile }: AotLane, aot: AotTests): string[] {
   return [
+    ...(testsAwaitedOn[os] ?? []),
     // A mark for this lane alone can only be found stale on this lane.
     ...(aot === "all" ? ["aot/programs-marked-as-failing"] : []),
     // Each system has its own way to tell a process its time zone, and its own folders above a temporary one. They go to the other step once they have been green here.

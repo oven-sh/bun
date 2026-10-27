@@ -28,6 +28,13 @@ pub(in crate::lower) enum Rewrite {
     JoinedWithLeftOperand,
 }
 
+#[derive(Default)]
+pub(super) struct Rewrites {
+    pub(super) expressions: FxHashMap<ExprId, Rewrite>,
+    /// The initializers that are evaluated as the value of a `return`, each with the position of that `return`.
+    pub(super) returned_initializers: FxHashMap<ExprId, u32>,
+}
+
 pub(super) struct PrintedTree<'a> {
     pub(super) identifiers: &'a PositionSet,
     pub(super) statements: &'a [(u32, Stmt)],
@@ -47,6 +54,7 @@ pub(super) struct Alignment<'a, 's> {
     max_steps: u64,
     printed: PrintedTree<'a>,
     rewrites: FxHashMap<ExprId, Rewrite>,
+    returned_initializers: FxHashMap<ExprId, u32>,
     pending: Vec<(ExprId, Expr)>,
     /// One bit for each expression that has been held against what is printed for it.
     aligned: Vec<u64>,
@@ -209,12 +217,13 @@ impl<'a, 's> Alignment<'a, 's> {
             max_steps: parsed.max_steps,
             printed,
             rewrites: FxHashMap::default(),
+            returned_initializers: FxHashMap::default(),
             pending: Vec::new(),
             aligned: vec![0; parsed.hir.exprs.len() / 64 + 1],
         }
     }
 
-    pub(super) fn find_rewrites(mut self) -> FxHashMap<ExprId, Rewrite> {
+    pub(super) fn find_rewrites(mut self) -> Rewrites {
         for statement in (0..self.hir.stmts.len() as u32).map(StmtId) {
             self.align_statement(statement);
             self.align_pending();
@@ -238,7 +247,10 @@ impl<'a, 's> Alignment<'a, 's> {
         for expression in (0..self.hir.exprs.len() as u32).map(ExprId) {
             self.align_call(expression);
         }
-        self.rewrites
+        Rewrites {
+            expressions: self.rewrites,
+            returned_initializers: self.returned_initializers,
+        }
     }
 
     fn align_pending(&mut self) {
@@ -331,7 +343,9 @@ impl<'a, 's> Alignment<'a, 's> {
         match (stmt.kind, printed.data) {
             (StmtKind::Expr(value), StmtData::SExpr(printed)) => self.push(value, printed.value),
             (StmtKind::Return(value), StmtData::SReturn(printed)) => {
-                self.push_optional(value, printed.value);
+                if let (Some(value), Some(printed)) = (value.some(), printed.value) {
+                    self.align_returned_value(value, printed, stmt.start);
+                }
             }
             (StmtKind::Throw(value), StmtData::SThrow(printed)) => self.push(value, printed.value),
             (StmtKind::If { test, .. }, StmtData::SIf(printed)) => self.push(test, printed.test),
@@ -372,6 +386,22 @@ impl<'a, 's> Alignment<'a, 's> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// `const a = f(); const b = a; return b;` is printed `return f();`: both initializers are evaluated there.
+    /// Of `const c = 1; g(); return c;` the `return` has the value alone.
+    fn align_returned_value(&mut self, value: ExprId, printed: Expr, position: u32) {
+        if !self.align_expression(value, printed) {
+            return;
+        }
+        let hir = self.hir;
+        let mut current = hir.skip_type_assertions(value);
+        while let Some(&Rewrite::Operand(operand)) = self.rewrites.get(&current) {
+            if let ExprKind::Ident(_) = hir[current].kind {
+                self.returned_initializers.insert(operand, position);
+            }
+            current = hir.skip_type_assertions(operand);
         }
     }
 
@@ -569,13 +599,14 @@ impl<'a, 's> Alignment<'a, 's> {
         }
     }
 
-    fn align_expression(&mut self, expression: ExprId, printed: Expr) {
+    /// True: what is printed evaluates the expression, or what stands for it. False: its value is printed, or it has been aligned before.
+    fn align_expression(&mut self, expression: ExprId, printed: Expr) -> bool {
         let printed = match printed.data {
             ExprData::EInlinedEnum(member) => member.value,
             _ => printed,
         };
         let literal = self.find_literal_value(printed);
-        self.align_with(expression, Some(printed), literal, printed.loc);
+        self.align_with(expression, Some(printed), literal, printed.loc)
     }
 
     fn align_literal(&mut self, expression: ExprId, text: &[u8], position: Loc) {
@@ -589,24 +620,24 @@ impl<'a, 's> Alignment<'a, 's> {
         printed: Option<Expr>,
         literal: Option<Constant>,
         position: Loc,
-    ) {
+    ) -> bool {
         let hir = self.hir;
         let mut current = hir.skip_type_assertions(expression);
         if self.is_aligned(current) {
-            return;
+            return false;
         }
         for _ in 0..self.max_steps {
             self.aligned[current.idx() / 64] |= 1 << (current.idx() % 64);
             if let Some(printed) = printed
                 && self.align_operands(current, printed)
             {
-                return;
+                return true;
             }
             let written = find_written_literal(hir, self.bound, current);
             if let (Some(written), Some(printed)) = (written, literal)
                 && is_same_literal(written, printed)
             {
-                return;
+                return false;
             }
             if let (
                 ExprKind::Binary {
@@ -632,9 +663,12 @@ impl<'a, 's> Alignment<'a, 's> {
         if let (Some(value), Some(position)) = (literal, position_of(position)) {
             self.rewrites
                 .insert(current, Rewrite::Literal { position, value });
-        } else if let Some(printed) = printed {
+            return false;
+        }
+        if let Some(printed) = printed {
             self.align_beneath(current, printed);
         }
+        printed.is_some()
     }
 
     /// The expression is printed in a form that this walk does not know. What stands beneath it is looked for beneath what is printed, by position.

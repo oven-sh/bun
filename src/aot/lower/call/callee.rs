@@ -641,27 +641,6 @@ impl FileLowering<'_, '_, '_, '_> {
         position
     }
 
-    // Bun's parser gives an expression the position of its first operand, without the parentheses around it.
-    pub(in crate::lower) fn parsed_position(&self, expression: ExprId) -> u32 {
-        let hir = self.hir;
-        let mut first = self.skip_type_syntax(expression);
-        loop {
-            let next = match hir.written_kind(first) {
-                ExprKind::Binary { left, .. } => left,
-                ExprKind::Cond { test, .. } => test,
-                ExprKind::Assign { target, .. } => target,
-                ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } => obj,
-                ExprKind::Call(site) | ExprKind::TaggedTemplate(site) => hir[site].callee,
-                ExprKind::Unary {
-                    op: UnOp::PostInc | UnOp::PostDec,
-                    operand,
-                } => operand,
-                _ => return hir[first].pos,
-            };
-            first = self.skip_type_syntax(next);
-        }
-    }
-
     // Whether the text that Bun's transpiler prints for the operand of a `...` begins with a parenthesis, which its source map does not know.
     pub(in crate::lower) fn begins_with_parenthesis(&self, operand: ExprId) -> bool {
         self.begins_with_parenthesis_in(operand, Around::Spread)
@@ -1051,6 +1030,7 @@ impl FileLowering<'_, '_, '_, '_> {
             ExprKind::Ident(name) => self.append_identifier(inner, name, path),
             ExprKind::This => path.extend_from_slice(b"this"),
             ExprKind::Super => path.extend_from_slice(b"super"),
+            ExprKind::ImportMeta => path.extend_from_slice(b"import.meta"),
             ExprKind::Dot {
                 obj, name, chain, ..
             } => {

@@ -156,17 +156,22 @@ pub(super) fn is_finished_later(analysis: &FileAnalysis<'_>) -> bool {
     analysis.module_format == ModuleFormat::Esm && !analysis.imported_names.is_empty()
 }
 
+/// Returns whether the host implied more files to load.
 pub(super) fn finish_code_file<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     target: CodeTarget<'r>,
-    mut loaded: ParsedCodeFile<'s, 'r>,
-) -> ParsedCodeFile<'s, 'r> {
+    loaded: &mut ParsedCodeFile<'s, 'r>,
+) -> bool {
     let key = target.key;
     let (hir, bound) = (&loaded.parse.hir, &loaded.parse.bound);
     let code = &mut loaded.code;
+    let target_count = code.targets.len();
     code.add_implied(context, key, hir, bound, &mut loaded.payload);
+    if code.targets.len() == target_count {
+        return false;
+    }
     code.requests = summarize_requests(context, key, hir, bound, code);
-    loaded
+    true
 }
 
 /// The tree and its bindings stay. `None`: the file is to be loaded anew.

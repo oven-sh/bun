@@ -2,7 +2,7 @@ use bun_sema::fold::Constant;
 use bun_sema::hir::{BinOp, ExprId, ExprKind, PropId, PropKey, PropKind, Span, UnOp};
 use smallvec::SmallVec;
 
-use crate::builtins::{BuiltinId, Resolved, table};
+use crate::builtins::{BuiltinId, Mutability, Resolved, table};
 use crate::compile::removable::is_read_left_out_by_bun_run;
 use crate::lower::expression::find_constant;
 use crate::lower::{FileLowering, FunctionLowering, operator};
@@ -78,21 +78,53 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.lower_member_reads(left);
                 self.lower_member_reads(right);
             }
+            ExprKind::Template { exprs } => {
+                for substitution in hir.ids(exprs) {
+                    self.lower_member_reads(substitution);
+                }
+            }
             ExprKind::Cond { test, branches } => {
                 let branches = hir.branches(branches);
                 self.lower_member_reads(test);
                 self.lower_member_reads(branches.yes);
                 self.lower_member_reads(branches.no);
             }
-            _ => {
-                if let Some(Resolved::Builtin(path)) = self.file.builtins.of_pure_expr(expression)
-                    && path.locked_builtin().is_some()
-                {
-                    self.emit_locked_builtin(path.id);
-                }
-            }
+            _ => self.lower_read_of_locked_path(expression),
         }
         self.leave_nesting();
+    }
+
+    fn lower_read_of_locked_path(&mut self, path: ExprId) {
+        let member = match self.file.builtins.of_pure_expr(path) {
+            Some(Resolved::Builtin(member)) => member,
+            Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) => return,
+            // The table ends above this name: `process.versions.bun`. The host makes such an object whole, so only the reads on the way to it show.
+            None => {
+                if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } =
+                    self.file.hir[path].kind
+                {
+                    self.lower_member_reads(obj);
+                }
+                return;
+            }
+        };
+        if member.locked_builtin().is_some() {
+            self.emit_locked_builtin(member.id);
+            return;
+        }
+        // No operation names a locked data property. Its read stays, and the engine takes from it what nobody can see.
+        // The way to its holder may be one that a program can change, as `globalThis.process` is: the build knows the answer all the same, so it knows the holder.
+        let entry = table::entry(member.id);
+        if let Some(holder) = entry.holder
+            && entry.mutability == Mutability::AlwaysLocked
+            && !table::is_legal_builtin_constant(member.id)
+            && table::is_legal_builtin_constant(holder)
+            && !table::is_symbol_name(entry.name)
+        {
+            let object = self.emit_locked_builtin(holder);
+            let key = self.file.text_key_of_name(entry.name);
+            self.builder.prop_get(object, key, false, false);
+        }
     }
 
     fn lower_properties_for_effect(&mut self, properties: Span<PropId>) {

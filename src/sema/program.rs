@@ -141,6 +141,20 @@ fn each_module<'s>(
     host.parallel(modules.len(), &|at| work(at, &mut modules[at].lock()));
 }
 
+/// Like `Host::parallel` with one task per entry of `sizes`, but starts the largest tasks first so that none of them is left for the end.
+fn parallel_largest_first(host: &dyn Host, sizes: &[usize], work: &(dyn Fn(usize) + Sync)) {
+    /// Up to this count `Host::parallel` hands out one index at a time.
+    const MOST_SHARES: usize = 1024;
+    let mut order: Vec<u32> = (0..sizes.len() as u32).collect();
+    order.shared_sort_unstable_by_key(|&task| (std::cmp::Reverse(sizes[task as usize]), task));
+    let shares = order.len().min(MOST_SHARES);
+    host.parallel(shares, &|share| {
+        for &task in order[share..].iter().step_by(shares) {
+            work(task as usize);
+        }
+    });
+}
+
 /// Moves `list` into `arena` at its final size.
 fn few_in<T>(list: Vec<T>, arena: &Arena) -> ArenaFew<'_, T> {
     ArenaFew::from_iter_in(list.into_iter(), arena)
@@ -6490,7 +6504,16 @@ impl<'s> Files<'s> {
         .filter(|((module, _), _)| module.bound.is_unbound)
         .map(|((module, summary), is_read)| Guarded::new((is_read, module, summary)))
         .collect();
-        host.parallel(unbound.len(), &|at| {
+        let text_to_parse =
+            |unbound: &Guarded<(bool, &mut ModuleCell<'s>, &mut ModuleSummary<'s>)>| {
+                let unbound = unbound.lock();
+                match unbound.0 {
+                    true => unbound.1.hir.text.len(),
+                    false => 0,
+                }
+            };
+        let sizes: Vec<usize> = unbound.iter().map(text_to_parse).collect();
+        parallel_largest_first(host, &sizes, &|at| {
             let mut unbound = unbound[at].lock();
             let (is_read, module, summary) = &mut *unbound;
             if !*is_read {

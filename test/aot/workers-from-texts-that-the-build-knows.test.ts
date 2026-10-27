@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { cpSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { compileCommand, runtimeEnvironment } from "./harness/flags";
-import { built, slot, spawned, withoutDebugInformation } from "./run-programs";
+import { built, slot, spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./run-programs";
 import { describe, test } from "./supported";
 
 const timeout = 600_000;
@@ -77,7 +77,10 @@ describe.concurrent("compile/aot/workers from texts that the build knows", () =>
           stdout: expect.stringMatching(/^message [12]\n$/),
           exitCode: 0,
         });
-        const stopped = await spawned([compiled.executable], String(dir), compiledOnly);
+        const stopped = await spawned(withoutCoreDump([compiled.executable]), String(dir), {
+          ...compiledOnly,
+          ...withoutCrashReport,
+        });
         expect(stopped.stderr).toContain("crashIfInterpreterIsUsed");
       }),
     timeout,

@@ -16,14 +16,9 @@ const [few, many] = [100_000, 400_000];
 
 // What is further apart today, with what was last measured: at the top level | in main().
 const today: Record<string, string> = {
-  "a-callback-over-a-short-list, typed": "815 | 263",
-  "a-list-that-is-filled-and-summed, typed": "72 | 58",
-  "a-list-that-is-filled-and-summed, untyped": "68 | 59",
-  "a-small-function-declared-beside-the-loop, typed": "13.4 | 10.4",
-  "arithmetic-on-numbers-out-of-a-function, typed": "113 | 104",
-  "fields-of-parsed-objects-out-of-an-array, typed": "55 | 48",
-  "patterns-replace-in-a-short-label, typed": "2,408 | 790",
-  "patterns-replace-in-a-short-label, untyped": "2,409 | 798",
+  "a-list-that-is-filled-and-summed, typed": "85 | 58",
+  "a-list-that-is-filled-and-summed, untyped": "81 | 56",
+  "arithmetic-on-numbers-out-of-a-function, typed": "107 | 104",
 };
 
 const indented = (text: string) => text.replace(/^(?=.)/gm, "  ");

@@ -3173,6 +3173,129 @@ class Scenes {
     this.emit(1, `printValue("types ${number}", out);`);
     this.lines.push("}");
   }
+
+  /**
+   * A constant at the top of a block whose value a transpiler can work out, because everything in it is written out: `"abcdef".charCodeAt(3)`. Then a statement that does something, then the
+   * constant is answered, directly, in a list, out of an inner function or through a second constant. What the statement did is printed beside the answer.
+   */
+  sceneOfConstantsWorkedOutAheadOfEffects() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "function" ? "function" : JSON.stringify(value) ?? String(value)) + ";"; }`,
+    );
+    for (let index = this.pick([2, 3, 3, 4]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const written = () =>
+        this.pick([
+          `"abcdef".charCodeAt(3)`,
+          `"abcdef".charCodeAt(3)`,
+          `"abcdef".charCodeAt(9)`,
+          `"abcdef".charAt(1)`,
+          `"abcdef".codePointAt(2)`,
+          `"abcdef".at(-1)`,
+          `"abcdef"[2]`,
+          `"abcdef".length`,
+          `"abcdef".indexOf("d")`,
+          `"abcdef".slice(1, 3)`,
+          `"abcdef".substring(2)`,
+          `"abcdef".includes("cd")`,
+          `"abcdef".startsWith("ab")`,
+          `"abc".concat("def")`,
+          `"abc".toUpperCase()`,
+          `" abc ".trim()`,
+          `"ab".repeat(2)`,
+          `"a,b".split(",")`,
+          `"abc" + "def"`,
+          "`a${1}b`",
+          `1 + 2 * 3`,
+          `7 % 4`,
+          `2 ** 10`,
+          `1 << 4`,
+          `-"3"`,
+          `+"12"`,
+          `typeof "x"`,
+          `typeof 1n`,
+          `!0`,
+          `void 0`,
+          `"a" === "a"`,
+          `1 < 2`,
+          `null ?? 5`,
+          `"" || "z"`,
+          `0 && 1`,
+          `true ? "yes" : "no"`,
+          `[1, 2, 3].length`,
+          `[1, 2, 3][1]`,
+          `({ a: 1 }).a`,
+          `Math.max(1, 2)`,
+          `Number("3")`,
+          `String(4)`,
+          `Boolean("")`,
+          `10n * 2n === 20n`,
+        ]);
+      const ahead = this.several(0, 2, () =>
+        this.pick([
+          `const ahead${this.count++} = 1;`,
+          `const ahead${this.count++} = "t";`,
+          `const ahead${this.count++} = null;`,
+        ]),
+      ).join(" ");
+      const effect = this.pick([
+        `n${id}++;`,
+        `n${id}++;`,
+        `n${id} += 2;`,
+        `list${id}.push(n${id}++);`,
+        `note("in"); n${id}++;`,
+        `held${id}.x = ++n${id};`,
+        `if (n${id} >= 0) n${id}++;`,
+        `for (let i = 0; i < 2; i++) n${id}++;`,
+        `try { n${id}++; } finally { n${id}++; }`,
+        `bump${id}();`,
+        `n${id} = n${id} + (c === c ? 1 : 2);`,
+      ]);
+      const answer = this.pick([
+        `return c;`,
+        `return c;`,
+        `return c;`,
+        `return [c, n${id}];`,
+        `return () => c;`,
+        `return function () { return c; };`,
+        `{ return c; }`,
+        `const d = c; n${id}++; return d;`,
+        `return { c };`,
+        `return c ?? "none";`,
+      ]);
+      const body = `${ahead} const c = ${written()}; ${effect} ${answer}`;
+      const [declared, called] = this.pick<[string, string]>([
+        [`function f${id}()${any} { ${body} }`, `f${id}()`],
+        [`function f${id}()${any} { ${body} }`, `f${id}()`],
+        [`const f${id} = ()${any} => { ${body} };`, `f${id}()`],
+        [`const o${id} = { m()${any} { ${body} } };`, `o${id}.m()`],
+        [`const o${id} = { get m()${any} { ${body} } };`, `o${id}.m`],
+        [`class C${id} { m()${any} { ${body} } }`, `new C${id}().m()`],
+        [`class C${id} { static m()${any} { ${body} } }`, `C${id}.m()`],
+        [
+          `function f${id}(given${any} = 0)${any} { if (given) { ${body} } ${body.replaceAll("const ahead", "const below")} }`,
+          `f${id}(1)`,
+        ],
+        [`function* f${id}()${any} { ${body} }`, `f${id}().next().value`],
+      ]);
+      this.emit(
+        1,
+        `let n${id} = 0; const list${id}${any} = []; const held${id}${any} = {}; function bump${id}()${this.typed("void")} { n${id}++; }`,
+        declared,
+      );
+      this.emit(
+        1,
+        `try { for (let turn = 0; turn < 2; turn++) { let got${any} = ${called}; if (typeof got === "function") got = got(); note(got); note(n${id}); } note(list${id}); note(held${id}); } catch (error) { note("threw"); }`,
+      );
+    }
+    this.emit(1, `printValue("constants ${number}", out);`);
+    this.lines.push("}");
+  }
 }
 
 /**
@@ -3194,6 +3317,11 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfIdioms(),
+        () => scenes.sceneOfConstantsWorkedOutAheadOfEffects(),
+        () => scenes.sceneOfConstantsWorkedOutAheadOfEffects(),
+        () => scenes.sceneOfConstantsWorkedOutAheadOfEffects(),
+        () => scenes.sceneOfConstantsWorkedOutAheadOfEffects(),
+        () => scenes.sceneOfConstantsWorkedOutAheadOfEffects(),
         () => scenes.sceneOfElementsStoredAndReadAgain(),
         () => scenes.sceneOfElementsStoredAndReadAgain(),
         () => scenes.sceneOfElementsStoredAndReadAgain(),

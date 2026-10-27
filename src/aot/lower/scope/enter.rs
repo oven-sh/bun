@@ -1,22 +1,42 @@
 use bun_sema::bind::{Binding, InitialState, ScopeId, ScopeKind, SymbolId};
 use bun_sema::hir::{FnId, FnKind, StmtId, StmtKind};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::analysis::find_by_key;
 use super::state::EnteredScope;
 use super::{
     BindingRef, DeadZone, LocalBinding, ScopeSlot, Storage, bindings, dead_zone, environments,
-    find_entry,
 };
 use crate::ir::{BlockId, LocalVariable, PositionFlags, Type, TypeTable, ValueId};
 use crate::lower::captures::Capture;
 use crate::lower::{FunctionLowering, convert, function};
 
-struct ScopeEntry<'i> {
+struct ScopeEntry {
     scope: ScopeId,
-    initial: &'i [(BindingRef, ValueId)],
+    /// The first entry of each binding.
+    initial: FxHashMap<BindingRef, ValueId>,
     undefined: Option<ValueId>,
     absent: Option<ValueId>,
+}
+
+impl ScopeEntry {
+    fn new(scope: ScopeId, initial_values: &[(BindingRef, ValueId)]) -> ScopeEntry {
+        let mut initial = FxHashMap::default();
+        for &(binding, value) in initial_values {
+            initial.entry(binding).or_insert(value);
+        }
+        ScopeEntry {
+            scope,
+            initial,
+            undefined: None,
+            absent: None,
+        }
+    }
+
+    fn find_initial(&self, binding: BindingRef) -> Option<ValueId> {
+        self.initial.get(&binding).copied()
+    }
 }
 
 type EntryValues = SmallVec<[(BindingRef, Option<ValueId>); 8]>;
@@ -49,12 +69,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.scopes.innermost_scope().is_none() {
             self.bind_captures();
         }
-        let mut entry = ScopeEntry {
-            scope,
-            initial,
-            undefined: None,
-            absent: None,
-        };
+        let mut entry = ScopeEntry::new(scope, initial);
         let bindings = self.file.scopes.bindings(scope);
         let bindings: SmallVec<[BindingRef; 8]> = SmallVec::from_slice(bindings);
         let mut values = EntryValues::new();
@@ -81,7 +96,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 Storage::Variable(key) => {
                     let variable = self.file.ensure_variable(key);
                     let is_stored_at_entry = match binding {
-                        BindingRef::Symbol(_) => find_entry(entry.initial, binding).is_some(),
+                        BindingRef::Symbol(_) => entry.find_initial(binding).is_some(),
                         BindingRef::Slot(..) => true,
                     };
                     if let Some(value) = value
@@ -142,17 +157,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.write_variable(variable, copy);
     }
 
-    fn get_entry_undefined(&mut self, entry: &mut ScopeEntry<'_>) -> ValueId {
+    fn get_entry_undefined(&mut self, entry: &mut ScopeEntry) -> ValueId {
         *entry
             .undefined
             .get_or_insert_with(|| self.builder.undefined())
     }
 
-    fn get_entry_absent(&mut self, entry: &mut ScopeEntry<'_>) -> ValueId {
+    fn get_entry_absent(&mut self, entry: &mut ScopeEntry) -> ValueId {
         *entry.absent.get_or_insert_with(|| self.builder.absent())
     }
 
-    fn create_entry_this(&mut self, entry: &mut ScopeEntry<'_>) -> Option<ValueId> {
+    fn create_entry_this(&mut self, entry: &mut ScopeEntry) -> Option<ValueId> {
         let function = match self.file.bound.scopes[entry.scope.idx()].kind {
             ScopeKind::Fn(function) => Some(function),
             ScopeKind::FieldInitializer(_) => return Some(self.get_this()),
@@ -185,7 +200,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn allocate_environment(
         &mut self,
-        entry: &ScopeEntry<'_>,
+        entry: &ScopeEntry,
         values: &EntryValues,
     ) -> Option<LocalVariable> {
         if !self.file.scopes.has_environment(entry.scope) {
@@ -221,7 +236,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn create_local(
         &mut self,
-        entry: &mut ScopeEntry<'_>,
+        entry: &mut ScopeEntry,
         binding: BindingRef,
         value: Option<ValueId>,
     ) {
@@ -274,10 +289,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
 fn emit_entry_value(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    entry: &mut ScopeEntry<'_>,
+    entry: &mut ScopeEntry,
     binding: BindingRef,
 ) -> Option<ValueId> {
-    if let Some(value) = find_entry(entry.initial, binding) {
+    if let Some(value) = entry.find_initial(binding) {
         return Some(value);
     }
     match binding {
@@ -291,7 +306,7 @@ fn emit_entry_value(
             ScopeSlot::Callee => lowering.builder.callee(),
             ScopeSlot::HomeObject => lowering.find_captured_value(Capture::Value(binding)),
             ScopeSlot::ArgumentsBinding => {
-                find_entry(entry.initial, BindingRef::Slot(scope, ScopeSlot::Arguments))
+                entry.find_initial(BindingRef::Slot(scope, ScopeSlot::Arguments))
             }
             ScopeSlot::EvalVariables | ScopeSlot::ParameterEvalVariables => {
                 let layout = lowering.file.untyped_layout(&[]);

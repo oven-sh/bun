@@ -37,7 +37,7 @@ A row that moved is measured a second time on both sides. It is printed only if 
 | No servers, or some | `--servers none`, `--servers koa,fastify` |
 | No network | `--modules <node_modules>`: what `bun install` made of `../servers/app/package.json` |
 | A baseline that is measured once | `--out <folder>` on the first run, then `--before <folder>/before` |
-| What a compiler flag costs | the same Bun on both sides and `--build-flag=--aot-disable=<pass>` |
+| What a compiler flag costs | the same Bun on both sides and `--build-flag=--aot-disable=<pass>`. A server whose executable the flag leaves as it is has the same code on both sides: it is named and not measured |
 | Another threshold | `--threshold 0.5` |
 
 ### The three program sizes

@@ -1,5 +1,5 @@
 // Patterns whose text the build cannot know: names, globs turned into patterns, words looked for in a command. Eight go back over the same places again and again.
-// In the last three a run begins at every bracket of one long line and finds nothing behind it.
+// The last three start an unbounded run at every bracket of one long line and never match.
 //// globstar-that-matches
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("^(?:.*/)?src/.*\\.tsx?$" + nothing);
@@ -249,21 +249,21 @@ const subjects: string[] = ["2026-01-02 10:11:12 info worker-7 finished job 8123
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }
-//// four-lookaheads-each-with-a-group-and-its-reference-that-find-nothing
+//// four-emulated-atomic-groups-without-a-match
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp(["#", "!", "%", "&"].map((mark, index) => "\\[(?=(.+?\\]\\(" + mark + "))\\" + (index + 1)).join("|") + nothing);
 const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(300) + "y" + nothing];
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }
-//// as-little-as-possible-from-every-bracket-of-a-line
+//// a-lazy-run-from-every-bracket-without-a-match
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("\\[.+?\\]\\(#" + nothing);
 const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(300) + "y" + nothing];
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }
-//// as-much-as-possible-from-every-bracket-of-a-line
+//// a-greedy-run-from-every-bracket-without-a-match
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("\\[.*\\]\\(#" + nothing);
 const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(300) + "y" + nothing];

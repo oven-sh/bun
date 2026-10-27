@@ -10,6 +10,8 @@
 // --before and --after each take a Bun executable, or a folder that an earlier run wrote with --out: measure a baseline once, compare many builds with it.
 // --out <folder> keeps `<folder>/before` and `<folder>/after`, one `rows.tsv` each.
 // --build-flag goes to every `bun build --compile --aot` of --after only: with the same Bun on both sides, that is what a compiler flag costs.
+// There each server is first built three times, twice alike and once with the flags. Where the flags leave the executable as it is, but for what tells any two builds apart,
+// the server has the same code on both sides and is not measured: two readings of one program differ by more than many a change costs.
 //
 // Needs Linux and user-mode hardware counters (`kernel.perf_event_paranoid` at 2 or below). Instructions are counted in user mode over the whole process, so the
 // numbers are the same on a busy machine. The servers need their packages: npm once for each side, or --modules <an installed node_modules of ../servers/app>.
@@ -108,6 +110,40 @@ export function prepareServers(bun: string, folder: string, modules?: string) {
     const install = Bun.spawnSync({ cmd: [bun, "install", "--ignore-scripts"], cwd: folder, stdout: "pipe", stderr: "pipe" });
     if (install.exitCode !== 0) throw new Error(`bun install failed in ${folder}:\n${install.stderr}`);
   }
+}
+
+/** How many bytes of two files differ. Nothing where one is longer. */
+export function countDifferingBytes(first: string, second: string): number | undefined {
+  const [a, b] = [readFileSync(first), readFileSync(second)];
+  if (a.length !== b.length) return undefined;
+  let count = 0;
+  for (let start = 0; start < a.length; start += 65536) {
+    const end = Math.min(start + 65536, a.length);
+    if (a.compare(b, start, end, start, end) === 0) continue;
+    for (let index = start; index < end; index++) count += Number(a[index] !== b[index]);
+  }
+  return count;
+}
+
+/** Whether the flags move any code of the server. A build writes down its flags, which takes a few bytes. */
+export function flagsMoveCodeOfServer(bun: string, folder: string, server: string, buildFlags: string[]): boolean {
+  const build = (name: string, flags: string[]) => {
+    const executable = join(folder, `${server}-${name}`);
+    const built = Bun.spawnSync({
+      cmd: [bun, "build", "--compile", "--aot", ...flags, `./${server}.ts`, "--outfile", executable],
+      cwd: folder,
+      env: { PATH: process.env.PATH, HOME: folder, TMPDIR: folder, ...steadyEnvironment },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (built.exitCode !== 0) throw new Error(`${server} does not build:\n${built.stderr}${built.stdout}`);
+    return executable;
+  };
+  // An executable holds its own name.
+  const [first, alike, flagged] = [build("1", []), build("2", []), build("3", buildFlags)];
+  const [betweenBuildsAlike, withFlags] = [countDifferingBytes(first, alike), countDifferingBytes(first, flagged)];
+  for (const executable of [first, alike, flagged]) rmSync(executable, { force: true });
+  return betweenBuildsAlike === undefined || withFlags === undefined || withFlags > betweenBuildsAlike + 8 * buildFlags.length;
 }
 
 /**
@@ -304,6 +340,18 @@ if (import.meta.main) {
   }
 
   const only = new RegExp(options.only);
+  const bothAreExecutables = [options.before, options.after].every(path => !statSync(resolve(path!)).isDirectory());
+  if (bothAreExecutables && resolve(options.before) === resolve(options.after) && options["build-flag"].length && servers.length) {
+    const folder = join(work, "servers-with-and-without-the-flags");
+    prepareServers(resolve(options.before), folder, options.modules);
+    const withSameCode: string[] = [];
+    await inParallel(jobs, [...servers], async server => {
+      if (!flagsMoveCodeOfServer(resolve(options.before!), folder, server, options["build-flag"])) withSameCode.push(server);
+    });
+    rmSync(folder, { recursive: true, force: true });
+    for (const server of withSameCode) servers.splice(servers.indexOf(server), 1);
+    console.log(`${withSameCode.length} servers have the same code with and without the flags and are not measured: ${withSameCode.sort().join(", ")}`);
+  }
   const before = await measureAll("before", only, servers, "first");
   const after = await measureAll("after", only, servers, "first");
   if (options.out) {
@@ -317,14 +365,14 @@ if (import.meta.main) {
   // both readings of one side lie beyond both readings of the other by more than the threshold.
   let changes = compare(before, after, threshold);
   let unsteady: string[] = [];
-  const bothAreExecutables = [options.before, options.after].every(path => !statSync(resolve(path!)).isDirectory());
   if (changes.length && bothAreExecutables) {
     const benchmarkNames = new Set(changes.filter(change => !change.name.startsWith("server ")).map(change => change.name.split(" ")[2]));
     const again = new RegExp(`^(${[...benchmarkNames].map(name => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") || "(?!)"})$`);
     const serversAgain = [...new Set(changes.filter(change => change.name.startsWith("server ")).map(change => change.name.split(" ")[1]))];
     console.error(`${changes.length} rows moved: measuring them again`);
-    const beforeAgain = await measureAll("before", again, serversAgain, "again");
+    // The other way round, so that what drifts while this runs does not lean to one side.
     const afterAgain = await measureAll("after", again, serversAgain, "again");
+    const beforeAgain = await measureAll("before", again, serversAgain, "again");
     const isConfirmed = ({ name, percent }: Change) => {
       const [first, second] = [beforeAgain.get(name), afterAgain.get(name)];
       if (!first || !second) return false;

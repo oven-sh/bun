@@ -59,9 +59,14 @@ test.concurrent.each([
   120_000,
 );
 
-// What `reason` answers is any value to the compiler. It does not take a method called on such a value for one of `process`.
+// What `reason` answers is any value to the compiler, and `process` has gone into a built-in that keeps it.
+test("the channel works where process comes back out of a built-in that kept it", async () => {
+  expect(await startWithChannel("kept", "AbortSignal.abort(process).reason")).toEqual(received);
+}, 120_000);
+
+// What text put together at run time answers is any value to the compiler. It does not take a method called on such a value for one of `process`.
 test("a listener added through a value that the compiler can't follow leaves the channel's JavaScript out, and the error says so", async () => {
-  expect(await startWithChannel("lost", "AbortSignal.abort(process).reason")).toEqual({
+  expect(await startWithChannel("lost", `(0, eval)(["pro", "cess"].join(""))`)).toEqual({
     stdout: "",
     error:
       "error: None of Bun.spawn, process.channel, process.disconnect or process.send was compiled into this executable because your code never uses them. " +

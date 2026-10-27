@@ -10,7 +10,7 @@ import { Random } from "./fuzz/random";
 import { generated } from "./generated/run-generated";
 
 /** A pattern takes the name from a file with getters, and an ES module without side effects stands between that file and another one with getters. */
-const throughAnEsModuleBetweenGetters = [1257, 1275, 1613, 1614, 1621, 1693, 1697, 1775];
+const throughAnEsModuleBetweenGetters = [1257, 1275, 1613, 1614, 1621, 1693, 1775];
 
 generated(
   "names taken out of a require through chains of files that hand them on",

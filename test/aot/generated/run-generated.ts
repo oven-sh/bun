@@ -68,6 +68,8 @@ export type Generated = {
   isOnlyCompiled?: true;
   /** It starts its executable again, with arguments of its own, so it shares its executable with no other program. */
   startsItself?: true;
+  /** What it prints hangs on what else its executable holds, so it shares its executable with no other program. */
+  isBuiltAlone?: true;
   /** What it prints hangs on when a collection runs, so it takes no collections inside its calls. */
   hangsOnCollections?: true;
   /** It leaves an error that nobody catches: plain Bun goes on and exits with 1, and so does the executable. */
@@ -90,6 +92,8 @@ export type Generated = {
   keepsItsText?: true;
   /** More flags for the build of this program. */
   flags?: string[];
+  /** Flags of `bun build` that decide what the program is, such as --feature and --define. The reference is built with them too, so it is compiled. */
+  flagsOfBothBuilds?: string[];
   /** What it prints differs in a build with --aot-validate, and docs/compiler/internals.mdx says why. */
   isNeverValidated?: true;
   /** The executable runs once more under each of these and prints the same. */
@@ -151,6 +155,7 @@ const sharesAnExecutable = (program: Generated) =>
   !isDebug &&
   !!program.isOnlyCompiled &&
   !program.startsItself &&
+  !program.isBuiltAlone &&
   !(program.wasOnceWrong && takesWhatIsFixed) &&
   !program.mayBeRefused &&
   !program.groupsMayBeRefused &&
@@ -618,6 +623,7 @@ export function generated(title: string, given: Generated[]) {
                   "--aot",
                   ...moreFlags,
                   ...(program.flags ?? []),
+                  ...(program.flagsOfBothBuilds ?? []),
                   file,
                   ...entryPoints,
                   "--outfile",
@@ -648,7 +654,16 @@ export function generated(title: string, given: Generated[]) {
               if (program.referenceIsCompiled)
                 built(
                   await spawned(
-                    [bunExe(), "build", "--compile", file, ...entryPoints, "--outfile", reference],
+                    [
+                      bunExe(),
+                      "build",
+                      "--compile",
+                      ...(program.flagsOfBothBuilds ?? []),
+                      file,
+                      ...entryPoints,
+                      "--outfile",
+                      reference,
+                    ],
                     folder,
                     bunEnv,
                   ),

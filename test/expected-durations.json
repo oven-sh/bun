@@ -8336,6 +8336,36 @@
     "musl": 1244,
     "windows": 1747
   },
+  "aot/workers-within-address-space-limit-1.test.ts": {
+    "default": 66500,
+    "asan": 1000,
+    "windows": 1000
+  },
+  "aot/workers-within-address-space-limit-2.test.ts": {
+    "default": 76800,
+    "asan": 1000,
+    "windows": 1000
+  },
+  "aot/workers-within-address-space-limit-3.test.ts": {
+    "default": 77100,
+    "asan": 1000,
+    "windows": 1000
+  },
+  "aot/workers-within-address-space-limit-4.test.ts": {
+    "default": 77800,
+    "asan": 1000,
+    "windows": 1000
+  },
+  "aot/workers-within-address-space-limit-5.test.ts": {
+    "default": 79200,
+    "asan": 1000,
+    "windows": 1000
+  },
+  "aot/workers-within-address-space-limit-6.test.ts": {
+    "default": 50700,
+    "asan": 1000,
+    "windows": 1000
+  },
   "aot/workers.test.ts": {
     "default": 36970
   },

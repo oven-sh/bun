@@ -11,28 +11,33 @@ use bun_ast::{
     ASTMemoryAllocator, Binding, E, Expr, G, Kind, Loader, Loc, Log, Ref, Source, Stmt, StmtOrExpr,
     Symbol, SymbolKind,
 };
+use bun_collections::StringSet;
+use bun_core::handle_oom;
+use bun_js_parser::Runtime::Features;
 use bun_js_parser::{Define, Parser, ParserOptions, Result as Parsed};
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
 use bun_sema::hir::{self, ExprId};
 use bun_threading::Guarded;
-use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 
-use self::alignment::{Alignment, PrintedTree};
+use self::alignment::{Alignment, PrintedTree, Rewrites};
 pub(super) use self::alignment::{Rewrite, find_written_literal};
 
-/// Bun's transpiler with the options `bun run` gives it.
+/// Bun's transpiler with the options `bun run` gives it, and the flags of the build.
 pub struct RuntimeTranspiler {
     define: Box<Define>,
+    enabled_features: Option<Box<StringSet>>,
     /// The arena of each thread that is not asking now. They are given back with the transpiler.
     arenas: Guarded<Vec<(ThreadId, Arena)>>,
 }
 
-impl Default for RuntimeTranspiler {
-    fn default() -> RuntimeTranspiler {
+impl RuntimeTranspiler {
+    /// `enabled_features`: the flags for which `feature()` of "bun:bundle" answers true.
+    pub fn new(enabled_features: &[&[u8]]) -> RuntimeTranspiler {
         RuntimeTranspiler {
             define: Define::with_pure_globals(false, true),
+            enabled_features: Features::init_bundler_feature_flags(enabled_features),
             arenas: Guarded::new(Vec::new()),
         }
     }
@@ -131,6 +136,9 @@ impl RuntimeTranspiler {
         features.minify_syntax = true;
         features.dead_code_elimination = true;
         features.top_level_await = true;
+        let enabled_features = self.enabled_features.as_deref();
+        features.bundler_feature_flags =
+            enabled_features.map(|flags| Box::new(handle_oom(flags.clone())));
         let mut log = Log::init();
         let parsed = Parser::init(options, &mut log, &source, &self.define, arena)
             .and_then(|parser| parser.parse());
@@ -166,7 +174,6 @@ impl RuntimeTranspiler {
             bindings: walker.bindings,
             statements,
             accessed_constructions: walker.accessed_constructions,
-            moved_return_values: walker.moved_return_values,
             regexp_literals: walker.regexp_literals,
             require_main_positions: walker.require_main_positions,
             joined_declarators: walker.joined_declarators,
@@ -212,18 +219,16 @@ pub(super) struct TranspiledFile {
     statements: PositionSet,
     // `new` expressions that are called or that a property is read from.
     accessed_constructions: Vec<u32>,
-    // The values of `return` statements that were moved there from an earlier statement, each with its `return`.
-    moved_return_values: Vec<(u32, u32)>,
     regexp_literals: Vec<u32>,
     require_main_positions: Vec<u32>,
     // `a = o.x, b = o.y` is printed `{ x: a, y: b } = o`: the `o` of each declarator of such a run.
     joined_declarators: Vec<JoinedDeclarator>,
-    rewrites: FxHashMap<ExprId, Rewrite>,
+    rewrites: Rewrites,
 }
 
 impl TranspiledFile {
     pub(super) fn find_rewrite(&self, expression: ExprId) -> Option<Rewrite> {
-        self.rewrites.get(&expression).copied()
+        self.rewrites.expressions.get(&expression).copied()
     }
 
     pub(super) fn has_statement_at(&self, position: u32) -> bool {
@@ -257,10 +262,9 @@ impl TranspiledFile {
         index.ok().map(|index| joined[index])
     }
 
-    pub(super) fn find_return_of_moved_value_at(&self, position: u32) -> Option<u32> {
-        let values = &self.moved_return_values;
-        let index = values.binary_search_by_key(&position, |value| value.0);
-        index.ok().map(|index| values[index].1)
+    pub(super) fn find_return_that_evaluates(&self, initializer: ExprId) -> Option<u32> {
+        let returned = &self.rewrites.returned_initializers;
+        returned.get(&initializer).copied()
     }
 }
 
@@ -269,7 +273,6 @@ struct Walker<'a> {
     identifiers: PositionSet,
     bindings: PositionSet,
     accessed_constructions: Vec<u32>,
-    moved_return_values: Vec<(u32, u32)>,
     regexp_literals: Vec<u32>,
     require_main_positions: Vec<u32>,
     joined_declarators: Vec<JoinedDeclarator>,
@@ -310,7 +313,6 @@ impl<'a> Walker<'a> {
             identifiers: PositionSet::new(text_length),
             bindings: PositionSet::new(text_length),
             accessed_constructions: Vec::new(),
-            moved_return_values: Vec::new(),
             regexp_literals: Vec::new(),
             require_main_positions: Vec::new(),
             joined_declarators: Vec::new(),
@@ -337,7 +339,6 @@ impl<'a> Walker<'a> {
             }
         }
         self.accessed_constructions.sort_unstable();
-        self.moved_return_values.sort_unstable();
         self.regexp_literals.sort_unstable();
         self.require_main_positions.sort_unstable();
         self.joined_declarators.sort_unstable();
@@ -603,18 +604,7 @@ impl<'a> Walker<'a> {
                     self.push_initializer(declaration.binding, declaration.value);
                 }
             }
-            StmtData::SReturn(returned) => {
-                if let Some(value) = returned.value {
-                    if let (Ok(from), Ok(to)) = (
-                        u32::try_from(value.loc.start),
-                        u32::try_from(statement.loc.start),
-                    ) && from < to
-                    {
-                        self.moved_return_values.push((from, to));
-                    }
-                    self.pending_expressions.push(value);
-                }
-            }
+            StmtData::SReturn(returned) => self.pending_expressions.extend(returned.value),
             StmtData::SThrow(statement) => self.pending_expressions.push(statement.value),
             StmtData::SIf(statement) => {
                 self.pending_expressions.push(statement.test);

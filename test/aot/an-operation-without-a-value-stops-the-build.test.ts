@@ -5,7 +5,7 @@
 //
 // `--aot-sabotage=StoredValuesAreNeverRead` (hidden) loses values on purpose: a read no longer finds what was stored.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { registry } from "./harness/registry";
@@ -71,7 +71,7 @@ type Builder = keyof typeof environments;
 
 async function build(builder: Builder, source: string, ...flags: string[]) {
   using folder = tempDir("aot-an-operation-without-a-value", { "main.ts": source });
-  const executable = join(String(folder), "main");
+  const executable = join(String(folder), isWindows ? "main.exe" : "main");
   const result = await slot(() =>
     spawned(
       [bunExe(), "build", "--compile", "--aot", ...flags, "./main.ts", "--outfile", executable],

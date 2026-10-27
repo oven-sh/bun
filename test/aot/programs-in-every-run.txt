@@ -390,6 +390,11 @@ builtin-modules/the-process-object-is-whole-at-the-first-statement
 builtin-modules/the-runtime-fills-lists-and-objects-that-it-has-made-itself
 builtin-modules/the-text-of-a-buffer-with-every-kind-of-receiver-encoding-and-bound
 builtin-modules/unused-next-tick-read-beside-other-entry-points
+bundler-features/a-flag-that-is-on-chooses-the-value-of-a-variable-that-is-returned-later
+bundler-features/a-flag-that-is-on-chooses-what-a-return-makes-of-a-variable
+bundler-features/a-flag-that-is-on-guards-a-refusal-between-a-declaration-and-its-return
+bundler-features/a-flag-that-is-on-guards-what-stands-between-a-declaration-and-its-return
+bundler-features/a-name-that-the-build-defines-guards-what-stands-between-a-declaration-and-its-return
 bundler-features/build-constants-across-modules
 bundler-features/names-the-build-replaces-read-in-brackets
 bundler-features/namespace-import-of-primitive-module
@@ -875,6 +880,7 @@ closed-world/import-of-text-refused
 closed-world/match-all-constructs-the-function-constructor-as-the-species-of-a-regexp
 closed-world/members-of-built-in-objects-are-redefined-by-closures-handed-on-through-a-spread-beside-evaluated-text
 closed-world/members-of-console-are-replaced-through-a-list-after-built-in-prototypes-took-their-own-descriptors
+closed-world/members-of-process-are-listed-once-a-built-in-that-kept-it-hands-it-back
 closed-world/members-of-process-are-listed-once-a-value-has-carried-it-out
 closed-world/members-of-process-are-listed-through-a-proxy-of-process
 closed-world/members-of-process-are-read-through-a-proxy-of-an-instance-that-inherits-from-process
@@ -1179,12 +1185,23 @@ constructor-functions/a-constructor-function-with-more-comment-than-code-is-cons
 constructor-functions/a-factory-makes-a-constructor-below-another-and-the-chain-changes
 constructor-functions/a-factory-makes-two-constructors-of-one-text
 constructor-functions/a-function-constructed-for-a-class-below-a-built-in-makes-an-ordinary-object
+constructor-functions/a-function-is-put-below-another-after-its-first-object
 constructor-functions/a-function-that-constructs-itself-when-called-plainly
 constructor-functions/a-function-that-constructs-itself-when-called-plainly-finds-the-global-object-to-be-its-instance
+constructor-functions/a-literal-is-assigned-as-the-prototype-and-then-another-object
+constructor-functions/a-method-is-called-after-the-prototype-was-replaced-by-object-assign
+constructor-functions/a-method-is-called-after-the-prototype-was-replaced-by-reflect-set
+constructor-functions/a-method-is-called-after-the-prototype-was-replaced-under-a-computed-key
+constructor-functions/a-method-is-called-after-the-prototype-was-replaced-under-a-key-nobody-knows
+constructor-functions/a-method-is-called-after-the-prototype-was-replaced-under-a-name-out-of-the-own-names
+constructor-functions/a-method-is-inherited-by-the-object-that-replaces-the-prototype
+constructor-functions/a-method-is-inherited-by-the-object-that-replaces-the-prototype-for-a-while
 constructor-functions/an-object-keeps-the-prototype-that-its-constructor-had-when-it-was-made
+constructor-functions/an-object-made-before-the-function-is-put-below-another-inherits-nothing
 constructor-functions/constructor-functions-store-through-this-in-code-that-is-not-strict
 constructor-functions/methods-defined-under-keys-that-a-helper-reads-out-of-a-list
 constructor-functions/objects-are-made-late-or-never-while-the-prototypes-of-their-constructors-change
+constructor-functions/the-second-object-of-a-typed-constructor-function-has-the-prototype-of-its-moment
 constructor-functions/this-is-a-mapped-type-over-an-interface
 constructor-functions/this-of-a-callback-that-is-not-strict
 constructor-functions/this-of-a-function-that-is-not-strict-is-a-primitive-or-nothing
@@ -1358,6 +1375,7 @@ effects/a-split-that-nobody-reads-still-converts-and-throws
 effects/an-array-of-strings-made-at-run-time-is-read-and-written-around-every-touch
 effects/closures-that-hold-a-value-outside-its-type-store-to-variables-read-behind-their-calls
 effects/literals-with-elements-name-a-prototype-that-answers-for-indices-validated
+effects/statements-between-the-declaration-of-a-constant-and-its-return
 effects/things-read-right-where-they-are-made
 enums/a-const-enum-is-replaced-by-its-values-by-whatever-path-it-is-read
 enums/a-function-that-is-handed-an-enum-of-another-file-stores-to-a-member
@@ -1432,6 +1450,7 @@ errors/a-read-of-an-accessor-of-a-web-class-on-its-prototype-leaves-no-frame
 errors/a-read-of-an-accessor-without-a-function-object-leaves-no-frame
 errors/a-read-through-super-under-a-null-prototype-quotes-the-expression
 errors/a-refused-apply-names-the-member-that-was-called
+errors/a-refused-call-names-a-member-of-import-meta
 errors/a-refused-call-names-the-member-that-was-called
 errors/an-error-with-a-joined-message-is-thrown-into-a-catch-that-reads-nothing-and-every-pass-is-verified
 errors/call-sites-and-frames-of-text-that-eval-is-given-as-a-constant
@@ -1494,6 +1513,8 @@ errors/stack-frames-of-a-require-that-stands-behind-operands-that-are-dropped
 errors/stack-frames-of-async-functions-and-generators-that-take-their-names-from-where-they-are-stored
 errors/stack-frames-of-async-functions-that-are-made-once-and-renamed
 errors/stack-frames-of-built-in-functions-above-their-callers
+errors/stack-frames-of-built-in-functions-that-ask-a-proxy-made-where-it-is-asked
+errors/stack-frames-of-built-in-functions-that-ask-a-proxy-made-where-it-is-asked-in-hot-code
 errors/stack-frames-of-built-in-functions-that-ask-a-proxy-or-convert-a-key
 errors/stack-frames-of-built-in-functions-that-call-a-mapper-or-a-trap
 errors/stack-frames-of-built-in-functions-that-convert-alike
@@ -3470,6 +3491,7 @@ workers/a-worker-of-text-asks-for-the-module-of-bun-s-own-tests
 workers/a-worker-of-text-loads-the-modules-of-bun
 workers/a-worker-of-text-runs-beside-compiled-workers
 workers/a-worker-that-parsed-a-text-ends
+workers/an-await-behind-an-error-that-nobody-catches-in-a-microtask
 workers/channels-between-workers
 workers/commonjs-worker-calls-really-exit-last
 workers/data-urls-that-the-build-knows-start-workers
@@ -3504,6 +3526,7 @@ workers/the-main-module-of-a-worker
 workers/what-a-text-finds-that-a-worker-starts-from
 workers/what-a-worker-printed-before-it-exits-is-printed
 workers/what-a-worker-sees-that-started-from-a-data-url
+workers/what-waits-when-a-thread-meets-its-end
 workers/workers-that-nobody-holds
 writes-to-host-objects/a-default-is-put-on-node-module-with-a-create-require
 writes-to-host-objects/a-default-is-put-on-the-default-of-the-namespace-of-node-module

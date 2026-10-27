@@ -13,7 +13,7 @@ use crate::session::vec_from_iter_in;
 use crate::types::{
     MapperId, Prop, PropFlags, PropSource, Shape, SigId, SigParam, TypeData, TypeId,
 };
-use crate::util::FxHashSet;
+use crate::util::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::rc::Rc;
 
@@ -695,27 +695,30 @@ fn find_name_of_function(
 fn find_argument_of_call(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
+    first_spread_arguments: &mut FxHashMap<ExprId, u32>,
     callee: ExprId,
     index: usize,
 ) -> Option<ExprId> {
     let Parent::Expr(call) = bound.parent_of_expr(callee) else {
         return None;
     };
-    let ExprKind::Call(site) = hir[call.some()?].kind else {
+    let call = call.some()?;
+    let ExprKind::Call(site) = hir[call].kind else {
         return None;
     };
     let node = hir[site];
     if node.callee != callee {
         return None;
     }
-    let mut arguments = hir.ids(node.args).take(index + 1);
-    if arguments
-        .clone()
-        .any(|it| matches!(hir[it].kind, ExprKind::Spread(_)))
-    {
+    let first_spread = *first_spread_arguments.entry(call).or_insert_with(|| {
+        let mut arguments = hir.ids(node.args);
+        let spread = arguments.position(|it| matches!(hir[it].kind, ExprKind::Spread(_)));
+        spread.map_or(u32::MAX, |position| position as u32)
+    });
+    if first_spread as usize <= index {
         return None;
     }
-    Some(arguments.nth(index).unwrap_or(ExprId::NONE))
+    Some(hir.ids(node.args).nth(index).unwrap_or(ExprId::NONE))
 }
 
 fn find_parameter(parameters: &[SigParam], index: usize) -> Option<SigParam> {
@@ -1025,7 +1028,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let mut parts = TypeParts::new();
         for &(_, reference) in references {
-            let Some(argument) = find_argument_of_call(hir, bound, reference, index) else {
+            let first_spreads = &mut self.memo.first_spread_arguments;
+            let argument = find_argument_of_call(hir, bound, first_spreads, reference, index);
+            let Some(argument) = argument else {
                 return TypeId::ANY;
             };
             let given = match argument.some() {

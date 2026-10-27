@@ -12,7 +12,8 @@ use crate::resolve::{
     CodeRead, DeclaredSideEffects, EnclosingPackage, HostPayload, TranspileSettings,
     is_declaration_file_name,
 };
-use bun_threading::Condvar;
+use bun_threading::guarded::GuardedLock;
+use bun_threading::{Condvar, Mutex};
 use std::collections::VecDeque;
 use std::sync::OnceLock;
 
@@ -22,19 +23,23 @@ const MAX_PLUGIN_READERS: usize = 64;
 
 type ParsedSlot<'s, 'r> = Guarded<Option<Box<ParsedCodeFile<'s, 'r>>>>;
 type EntryUpdate<'r> = (Option<HostPayload>, Vec<(&'r [u8], bool)>);
+type LockedState<'w, 's, 'r> = GuardedLock<'w, WalkState<'s, 'r>, Mutex>;
 
 struct WalkedFile<'s, 'r> {
     target: CodeTarget<'r>,
     parsed: Option<Box<ParsedCodeFile<'s, 'r>>>,
-    /// What is to be folded once more.
-    folded_before: Option<Box<ParsedCodeFile<'s, 'r>>>,
-    /// It stays as it is folded, and the host looks at it.
-    is_only_finished: bool,
     targets: Vec<u32>,
     is_called_before_it_runs: bool,
     imported_requires: Vec<ImportedRequire>,
     imported_constants: Vec<ImportedConstant>,
     foldings_with_constants: u32,
+}
+
+struct FileToRevisit<'s, 'r> {
+    index: u32,
+    loaded: Box<ParsedCodeFile<'s, 'r>>,
+    /// It stays as it is folded, and the host looks at it.
+    is_only_finished: bool,
 }
 
 impl<'r> WalkedFile<'_, 'r> {
@@ -59,10 +64,13 @@ struct WalkState<'s, 'r> {
     background_reads_disabled: bool,
     early_loaders: usize,
     has_plugin_reader: bool,
+    /// Every found file is parsed.
+    is_drained: bool,
     is_finished: bool,
     ready: Vec<(u32, Cow<'static, [u8]>)>,
     deferred: Vec<u32>,
     in_progress: usize,
+    to_revisit: Vec<FileToRevisit<'s, 'r>>,
     barrels: BarrelRequests,
     has_exported_requires: bool,
     names_looked_up: NamesLookedUp,
@@ -139,7 +147,14 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         let updates: Vec<Guarded<EntryUpdate<'r>>> = (entries.iter())
             .map(|_| Guarded::new((None, Vec::new())))
             .collect();
-        self.host.parallel(entries.len(), &|index| {
+        let names_to_resolve = |parsed: &ParsedSlot<'s, 'r>| {
+            let parsed = parsed.lock();
+            parsed
+                .as_ref()
+                .map_or(0, |it| it.parse.bound.specifiers.len())
+        };
+        let sizes: Vec<usize> = parsed.iter().map(names_to_resolve).collect();
+        parallel_largest_first(self.host, &sizes, &|index| {
             let Some(parsed) = parsed[index].lock().take() else {
                 return;
             };
@@ -219,8 +234,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         state.files.push(WalkedFile {
             target,
             parsed: None,
-            folded_before: None,
-            is_only_finished: false,
             targets: Vec::new(),
             is_called_before_it_runs: false,
             imported_requires: Vec::new(),
@@ -264,8 +277,16 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         state.barrels = barrels;
     }
 
-    fn queue_found_files(&self, start_plugin_reader: StartPluginReader<'_>) -> bool {
-        let mut state = self.state.lock();
+    /// Returns whether there are files to read. Releases the lock while it asks the host who reads the new files.
+    fn queue_found_files<'w>(
+        &'w self,
+        mut state: LockedState<'w, 's, 'r>,
+        start_plugin_reader: StartPluginReader<'_>,
+    ) -> (LockedState<'w, 's, 'r>, bool) {
+        if state.found.is_empty() {
+            let has_more = !state.to_read.is_empty();
+            return (state, has_more);
+        }
         let found = std::mem::take(&mut state.found);
         let path_of = |&index: &u32| state.files[index as usize].target.key.path;
         let paths: Vec<&'r [u8]> = found.iter().map(path_of).collect();
@@ -297,7 +318,8 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 self.has_to_read_by_plugin.notify_one();
             }
         }
-        !state.to_read.is_empty()
+        let has_more = !state.to_read.is_empty();
+        (state, has_more)
     }
 
     fn run(&self, meanwhile: &mut dyn FnMut()) {
@@ -334,10 +356,17 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 plugin_reader: &start_plugin_reader,
                 early_loader: &start_early_loader,
             };
-            self.queue_found_files(start.plugin_reader);
+            drop(self.queue_found_files(self.state.lock(), start.plugin_reader));
             let mut meanwhile = || {
                 meanwhile();
                 self.allow_early_load(&mut self.state.lock(), start.early_loader);
+            };
+            let mut process = |steps: LoadSteps| {
+                let work = |_| self.work(steps, start);
+                host.parallel_while(threads, &work, &mut meanwhile);
+                while self.starts_next_round(start.plugin_reader) {
+                    host.parallel(threads, &work);
+                }
             };
             match self.context.io_pool() {
                 Some(io) => {
@@ -346,18 +375,131 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                         (),
                         |(), (), _| self.work(LoadSteps::Read, start),
                         &mut vec![(); io.max_threads()],
-                        || {
-                            let work = |_| self.work(LoadSteps::Process, start);
-                            host.parallel_while(threads, &work, &mut meanwhile);
-                        },
+                        || process(LoadSteps::Process),
                     );
                 }
-                None => {
-                    let work = |_| self.work(LoadSteps::ReadAndProcess, start);
-                    host.parallel_while(threads, &work, &mut meanwhile);
-                }
+                None => process(LoadSteps::ReadAndProcess),
             }
         });
+    }
+
+    /// Runs on the thread that started the walk, once the workers have left. Returns false when the walk is done.
+    fn starts_next_round(&self, start_plugin_reader: StartPluginReader<'_>) -> bool {
+        let context = self.context;
+        let mut state = self.state.lock();
+        debug_assert!(state.is_drained && state.in_progress == 0);
+        loop {
+            let goes_on = fold_files_that_import_constants_again(context, &mut state)
+                || forget_files_called_before_they_run(&mut state)
+                || forget_files_that_import_requires(&context.atoms, &mut state)
+                || finish_files(&mut state);
+            if !goes_on {
+                state.is_finished = true;
+                self.has_to_read.notify_all();
+                self.has_to_read_by_plugin.notify_all();
+                self.may_load_early.notify_all();
+                if let Some(prefetch) = self.early_prefetch.get() {
+                    prefetch.pause();
+                }
+                return false;
+            }
+            self.revisit_files(&mut state);
+            if state.found.is_empty() {
+                continue;
+            }
+            state.in_progress += 1;
+            (state, _) = self.queue_found_files(state, start_plugin_reader);
+            state.in_progress -= 1;
+            state.is_drained = false;
+            self.has_to_read.notify_all();
+            return true;
+        }
+    }
+
+    fn revisit_files(&self, state: &mut WalkState<'s, 'r>) {
+        struct Task<'s, 'r> {
+            file: FileToRevisit<'s, 'r>,
+            target: CodeTarget<'r>,
+            is_called_early: bool,
+            constants: Vec<ImportedConstant>,
+        }
+        enum Outcome<'s, 'r> {
+            /// The file asks the same of the same files as before.
+            Unchanged(Box<ParsedCodeFile<'s, 'r>>),
+            Changed(Box<ParsedCodeFile<'s, 'r>>),
+            MustBeLoadedAgain,
+        }
+        if state.to_revisit.is_empty() {
+            return;
+        }
+        let context = self.context;
+        let mut files = std::mem::take(&mut state.to_revisit);
+        files.shared_sort_unstable_by_key(|file| file.index);
+        let sizes: Vec<usize> = (files.iter())
+            .map(|file| file.loaded.parse.hir.exprs.len())
+            .collect();
+        let tasks = files.into_iter().map(|file| {
+            let walked = &state.files[file.index as usize];
+            let constants = match file.is_only_finished {
+                true => Vec::new(),
+                false => walked.imported_constants.clone(),
+            };
+            Guarded::new(Some(Task {
+                target: walked.target,
+                is_called_early: walked.is_called_before_it_runs,
+                constants,
+                file,
+            }))
+        });
+        let tasks: Vec<Guarded<Option<Task<'s, 'r>>>> = tasks.collect();
+        let outcomes: Vec<Guarded<Option<(u32, bool, Outcome<'s, 'r>)>>> =
+            tasks.iter().map(|_| Guarded::new(None)).collect();
+        parallel_largest_first(context.host, &sizes, &|at| {
+            let task = tasks[at].lock().take().expect("a task is taken once");
+            let FileToRevisit {
+                index,
+                mut loaded,
+                is_only_finished,
+            } = task.file;
+            let outcome = if is_only_finished {
+                match finish_code_file(context, task.target, &mut loaded) {
+                    true => Outcome::Changed(loaded),
+                    false => Outcome::Unchanged(loaded),
+                }
+            } else {
+                let folded = fold_code_file_again(
+                    context,
+                    context.session.arena(),
+                    task.target,
+                    *loaded,
+                    task.is_called_early,
+                    &task.constants,
+                );
+                match folded {
+                    Some(folded) => Outcome::Changed(Box::new(folded)),
+                    None => Outcome::MustBeLoadedAgain,
+                }
+            };
+            *outcomes[at].lock() = Some((index, is_only_finished, outcome));
+        });
+        let outcomes = outcomes.into_iter().map(|mut it| it.get_mut().take());
+        let mut changed = Vec::new();
+        for outcome in outcomes {
+            let (index, is_only_finished, outcome) = outcome.expect("every task was taken");
+            match outcome {
+                Outcome::Unchanged(parsed) => state.files[index as usize].parsed = Some(parsed),
+                Outcome::Changed(parsed) => {
+                    if is_only_finished {
+                        forget_targets(state, index);
+                    }
+                    changed.push((index, is_only_finished, parsed));
+                }
+                Outcome::MustBeLoadedAgain => state.found.push(index),
+            }
+        }
+        for (index, is_only_finished, parsed) in changed {
+            self.add_parsed_file(state, index, parsed, is_only_finished);
+        }
     }
 
     fn allow_early_load(&self, state: &mut WalkState<'s, 'r>, start: StartEarlyLoader<'_>) {
@@ -464,45 +606,25 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 if state.ready.len() == MAX_READY_TEXTS {
                     self.has_to_read.notify_all();
                 }
-                let file = &mut state.files[index as usize];
+                let file = &state.files[index as usize];
                 let (target, is_called_early) = (file.target, file.is_called_before_it_runs);
-                let folded_before = file.folded_before.take();
-                let is_only_finished = std::mem::take(&mut file.is_only_finished);
                 let requires = file.imported_requires.clone();
                 let constants = file.imported_constants.clone();
                 drop(state);
                 let arena = *arena.get_or_insert_with(|| context.session.arena());
-                let parsed = match folded_before {
-                    Some(loaded) if is_only_finished => {
-                        Some(finish_code_file(context, target, *loaded))
-                    }
-                    Some(loaded) => fold_code_file_again(
-                        context,
-                        arena,
-                        target,
-                        *loaded,
-                        is_called_early,
-                        &constants,
-                    ),
-                    None => Some(load_code_file(
-                        context,
-                        arena,
-                        target,
-                        text,
-                        is_called_early,
-                        &requires,
-                        &constants,
-                    )),
-                };
-                match parsed {
-                    Some(parsed) => {
-                        let mut state = self.state.lock();
-                        self.add_parsed_file(&mut state, index, Box::new(parsed), is_only_finished);
-                    }
-                    None => self.state.lock().found.push(index),
-                }
-                let has_more = self.queue_found_files(start.plugin_reader);
+                let parsed = Box::new(load_code_file(
+                    context,
+                    arena,
+                    target,
+                    text,
+                    is_called_early,
+                    &requires,
+                    &constants,
+                ));
                 state = self.state.lock();
+                self.add_parsed_file(&mut state, index, parsed, false);
+                let has_more;
+                (state, has_more) = self.queue_found_files(state, start.plugin_reader);
                 state.in_progress -= 1;
                 if has_more || state.in_progress == 0 {
                     self.has_to_read.notify_all();
@@ -527,37 +649,21 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     state = self.state.lock();
                     continue;
                 }
-                if state.deferred.is_empty()
-                    && (fold_files_that_import_constants_again(context, &mut state)
-                        || forget_files_called_before_they_run(&mut state)
-                        || forget_files_that_import_requires(&context.atoms, &mut state)
-                        || finish_files(&mut state))
-                {
-                    state.in_progress += 1;
+                if !state.deferred.is_empty() {
+                    let deferred = std::mem::take(&mut state.deferred);
+                    state.in_progress += deferred.len();
                     drop(state);
-                    self.queue_found_files(start.plugin_reader);
+                    self.read_deferred(deferred);
                     state = self.state.lock();
-                    state.in_progress -= 1;
-                    self.has_to_read.notify_all();
-                    self.has_changed.notify_all();
                     continue;
                 }
-                if state.deferred.is_empty() {
-                    state.is_finished = true;
+                if !std::mem::replace(&mut state.is_drained, true) {
                     self.has_changed.notify_all();
-                    self.has_to_read.notify_all();
-                    self.has_to_read_by_plugin.notify_all();
-                    self.may_load_early.notify_all();
-                    if let Some(prefetch) = self.early_prefetch.get() {
-                        prefetch.pause();
-                    }
+                }
+                if processes || state.is_finished {
                     return;
                 }
-                let deferred = std::mem::take(&mut state.deferred);
-                state.in_progress += deferred.len();
-                drop(state);
-                self.read_deferred(deferred);
-                state = self.state.lock();
+                self.has_to_read.wait_guarded(&mut state);
             } else {
                 self.allow_early_load(&mut state, start.early_loader);
                 match processes {
@@ -592,9 +698,8 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             state.background_reads_disabled = true;
             let count = pending_assets.len();
             state.found.extend(pending_assets);
-            drop(state);
-            self.queue_found_files(start_plugin_reader);
-            self.state.lock().in_progress -= count;
+            (state, _) = self.queue_found_files(state, start_plugin_reader);
+            state.in_progress -= count;
             self.has_to_read.notify_all();
         }
         self.has_changed.notify_all();
@@ -689,13 +794,23 @@ fn forget_parsed_file(state: &mut WalkState<'_, '_>, index: u32) {
     state.found.push(index);
 }
 
-fn fold_parsed_file_again(state: &mut WalkState<'_, '_>, index: u32) {
-    let file = &mut state.files[index as usize];
-    file.folded_before = file.parsed.take();
-    file.targets.clear();
+fn forget_targets(state: &mut WalkState<'_, '_>, index: u32) {
+    state.files[index as usize].targets.clear();
     state.barrels.forget_folded_file(index);
-    state.ready.push((index, Cow::Borrowed(&[])));
-    state.in_progress += 1;
+}
+
+fn revisit_file(state: &mut WalkState<'_, '_>, index: u32, is_only_finished: bool) {
+    let loaded = state.files[index as usize].parsed.take();
+    state.to_revisit.push(FileToRevisit {
+        index,
+        loaded: loaded.expect("the file is parsed"),
+        is_only_finished,
+    });
+}
+
+fn fold_parsed_file_again(state: &mut WalkState<'_, '_>, index: u32) {
+    forget_targets(state, index);
+    revisit_file(state, index, false);
 }
 
 // Nothing is left that folds or parses one of them again.
@@ -704,8 +819,7 @@ fn finish_files(state: &mut WalkState<'_, '_>) -> bool {
     unfinished.shared_sort_unstable();
     unfinished.dedup();
     for &index in &unfinished {
-        fold_parsed_file_again(state, index);
-        state.files[index as usize].is_only_finished = true;
+        revisit_file(state, index, true);
     }
     !unfinished.is_empty()
 }

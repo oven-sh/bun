@@ -2065,11 +2065,7 @@ impl<'a, 's> Walk<'a, 's> {
         let can_read_this = self.reach_stored_name(export.module, export.name);
         // The copy is taken of what the getter returns.
         let commonjs = graph.commonjs();
-        let returned = commonjs.member_behind_getter(export.module, export.name);
-        if let Some(returned) = returned {
-            self.reach_files_behind(export.module, returned);
-        }
-        match returned {
+        match commonjs.member_behind_getter(export.module, export.name) {
             Some(Member::Variable(returned)) => self.reach_name(returned),
             Some(Member::Binding(returned)) => self.reach_binding(returned),
             _ => can_read_this,

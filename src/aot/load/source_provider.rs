@@ -92,6 +92,11 @@ pub trait SourceProvider: Sync {
         log: &mut Log,
     ) -> FoldOptions<'s>;
 
+    /// The flags for which `feature()` of "bun:bundle" answers true, as `fold_options` lists them.
+    fn enabled_features(&self) -> Vec<&[u8]> {
+        Vec::new()
+    }
+
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed>;
 
     /// Which file runs for an import that no plugin has resolved.

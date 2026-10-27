@@ -262,6 +262,14 @@ impl SourceProvider for BundlerServices {
         defines::fold_options(self.context.options(), arena, atoms, log)
     }
 
+    fn enabled_features(&self) -> Vec<&[u8]> {
+        let flags = self.context.options().bundler_feature_flags.iter();
+        flags
+            .flat_map(|flags| flags.keys())
+            .map(|name| &**name)
+            .collect()
+    }
+
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
         match &self.plugins {
             Some(plugins) => plugins.resolve(request, log),

@@ -43,6 +43,7 @@ import { bunExe, isASAN, isCI, isDebug, isGlibc, makeTreeSync, runCommandMaxRSS 
 import { tmpdir } from "os";
 import { basename, dirname, join } from "path";
 import { measureUntilWithinBounds } from "../harness/measure-again";
+import { withoutInstallingPackages } from "../harness/without-installing-packages";
 import { measureStart, startEnvironment, steppedStart, type Until } from "./start/measure-start";
 
 type Cost = { thousandInstructions: number; pageFaults: number; peakKilobytes?: number };
@@ -213,7 +214,7 @@ test.skipIf(!measurable)(
   "a program that never asks for the compiler costs what it did",
   async () => {
     const { folder, entries: entriesAboveThePrograms } = folderWithTheFewestEntriesAbove();
-    const dir = mkdtempSync(join(folder, "plain-bun-costs_"));
+    const dir = withoutInstallingPackages(mkdtempSync(join(folder, "plain-bun-costs_")));
     using removed = { [Symbol.dispose]: () => rmSync(dir, { recursive: true, force: true }) };
     makeTreeSync(dir, { ...startFiles, ...toolFiles });
     const bun = join(String(dir), "bun");

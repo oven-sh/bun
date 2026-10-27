@@ -101,7 +101,8 @@ fn names_directory_below_node_modules(specifier: &[u8], host: Platform) -> bool 
 /// The name of the package whose `exports` `bun run` reads for the specifier.
 fn find_name_of_package_with_exports(specifier: &[u8]) -> Option<&[u8]> {
     let name = Package::parse_name(specifier)?;
-    let is_name = !name.starts_with(b".") && !name.iter().any(|byte| matches!(byte, b'\\' | b'%'));
+    let is_name =
+        !name.starts_with(b".") && bun_core::strings::index_of_any(name, b"\\%").is_none();
     is_name.then_some(name)
 }
 
@@ -135,7 +136,7 @@ fn segments_below_public_root<'p>(
     let mut segments = split_path(base).peekable();
     let root = root.strip_suffix(b"/").unwrap_or(root);
     let (above_root, name_of_root) =
-        root.split_at(root.iter().rposition(|&byte| byte == b'/')? + 1);
+        root.split_at(bun_core::strings::last_index_of_char(root, b'/')? + 1);
     for segment in bun_core::strings::split(above_root.strip_suffix(b"/")?, b"/") {
         if segments.next() != Some(segment) {
             return None;

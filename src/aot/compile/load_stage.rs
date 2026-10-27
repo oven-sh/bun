@@ -372,7 +372,7 @@ impl<'a> Build<'a> {
         if options.aot.checks_only && options.entry_points.len() > 1 {
             self.import_graph = Some(ImportGraph::of(application.files()));
         }
-        resolve_loads_through_imported_loaders(application.files());
+        resolve_loads_through_imported_loaders(application.files(), &self.parallel_runner());
 
         let files = application.files();
         self.started_workers = Default::default();

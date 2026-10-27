@@ -232,7 +232,9 @@ impl<'s> Folder<'_, 's> {
                 folded
             }
             DefineValue::RuntimeConstant(_) if self.is_delete_operand(e) => return None,
-            DefineValue::RuntimeConstant(constant) => Folded::constant(constant),
+            DefineValue::RuntimeConstant(constant) => {
+                Folded::new(Value::from(constant), self.effects_of_path(e))
+            }
         })
     }
 

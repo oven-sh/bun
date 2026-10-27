@@ -299,7 +299,10 @@ const noticedBy: Record<string, Row | Row[]> = {
   },
 };
 /** What no program can show, and the test of the engine that shows it (./engine-tests.test.ts runs those). */
-const noticedByTheEngineTestsAlone: Record<string, string> = {};
+const noticedByTheEngineTestsAlone: Record<string, string> = {
+  // Between the read of a word and two tests of its bits nothing that a program is compiled to writes that word.
+  WordsReadAgainOutlastWrites: "merged-tests-of-bits-tell-the-log-of-the-word-read-again",
+};
 /** What stops the build itself, which then says where it stood: ./a-build-that-stops-says-where.test.ts holds each to its line. */
 const stopTheBuild = [
   "FunctionPassFailsAssertion",

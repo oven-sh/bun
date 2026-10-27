@@ -8,7 +8,8 @@
 //                         a spread, `module.exports = require(..)`, stores, a pattern and stores; or by an ES module: `export { } from`, `export * from`, an import that is exported, constants made of a namespace
 //   package.json          (`sideEffects`) says nothing of side effects, `false`, `true`, an empty list, a list with the last file, with the first file of the chain, with every second file, or a pattern for
 //                         the CommonJS files. It is the package.json of the project, or that of a package in node_modules that holds the chain
-//   the last file         CommonJS (stores, a literal) or an ES module (`const`, `let`, `var`); the name holds a text, an integer, a fraction, an object or a function
+//   the last file         CommonJS (stores, a literal) or an ES module (`const`, `let`, `var`); the name holds a text, an integer, a fraction, an object or a function; in some programs a function
+//                         of the file that nobody takes would give it another value
 //   where it is taken     at the top of the file, in a block, in a `try`, in a function
 //   the first file        is what runs, or is loaded by what runs: by a `require` under a condition or in a timer, or by `import()`
 //   beside it             a second file below one of the files, whose name nobody takes; a function that requires the last file and that nobody calls, or that is called at the end
@@ -323,6 +324,8 @@ export function generate(
         [1, "it is changed and taken anew"],
       ] as const);
   const isChanged = more === "it is changed and taken anew";
+  // Nobody takes the function there: the name may get another value, and never does.
+  const hasChange = isChanged || random.chance(0.3);
 
   // The chain, from the file next to the last one to the file that the program names.
   const names = [`owner.${last.ending}`, ...drawn.map((link, index) => `h${index + 1}.${links[link].ending}`)];
@@ -369,7 +372,7 @@ export function generate(
       version: "1.0.0",
       ...(said !== undefined && { sideEffects: said }),
     }) + "\n";
-  files[folder + names[0]] = telling(names[0], last.text(value.first, isChanged ? value.next : undefined));
+  files[folder + names[0]] = telling(names[0], last.text(value.first, hasChange ? value.next : undefined));
   drawn.forEach((link, index) => {
     const sources: Source[] = [
       { holder: "dep", names: isChanged ? ["x", "change"] : ["x"], below: JSON.stringify(`./${names[index]}`) },

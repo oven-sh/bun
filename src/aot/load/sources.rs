@@ -100,6 +100,7 @@ pub(crate) struct ParsedSource {
     pub unknown_names_at: Vec<u32>,
     pub imports_given_unknown_names: Vec<SymbolId>,
     pub(super) named_modules: OnceLock<Vec<NamedModule>>,
+    pub(super) gives_unknown_name_to_imported_loader: OnceLock<bool>,
     pub diagnostics: Vec<FileDiagnostic>,
 }
 
@@ -126,6 +127,7 @@ impl ParsedSource {
             unknown_names_at: Vec::new(),
             imports_given_unknown_names: Vec::new(),
             named_modules: OnceLock::new(),
+            gives_unknown_name_to_imported_loader: OnceLock::new(),
             diagnostics: Vec::new(),
         }
     }

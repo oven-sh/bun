@@ -398,49 +398,34 @@ fn find_files_left_out(main: (&str, &str), owner: &str) -> Vec<String> {
     lines.filter(|line| line.ends_with(": left out")).collect()
 }
 
+const STORED_ONCE: &str = "exports.x = 'five';";
+const STORED_AGAIN: &str =
+    "exports.x = 'five'; exports.change = function () { exports.x = 'six'; };";
+
 #[test]
-fn files_that_hand_a_name_on_run_for_a_pattern_that_takes_it_from_a_package_without_side_effects() {
+fn files_that_hand_a_name_on_run_for_whoever_takes_it_from_a_package_without_side_effects() {
     let nothing: [&str; 0] = [];
-    let owner = "exports.x = 'five';";
-    for main in [
+    let required = [
         "var { x } = require('lib/h3.cjs'); console.log(x);",
         "var { x: y = 1 } = require('lib/h3.cjs'); console.log(y);",
         "console.log(require('lib/h3.cjs').x);",
         "var h = require('lib/h3.cjs'); console.log(h.x);",
-    ] {
-        assert_eq!(
-            find_files_left_out(("main.cjs", main), owner),
-            nothing,
-            "{main}"
-        );
-    }
-    for main in [
+    ];
+    let imported = [
         "const { x } = await import('lib/h3.cjs'); console.log(x);",
         "console.log((await import('lib/h3.cjs')).x);",
         "import * as h from 'lib/h3.cjs'; console.log(h.x);",
         "import { x } from 'lib/h3.cjs'; console.log(x);",
-    ] {
-        assert_eq!(
-            find_files_left_out(("main.mjs", main), owner),
-            nothing,
-            "{main}"
-        );
-    }
-}
-
-#[test]
-fn files_that_hand_a_name_on_run_for_the_copy_that_an_importer_has_of_it() {
-    let nothing: [&str; 0] = [];
-    let owner = "exports.x = 'five'; exports.change = function () { exports.x = 'six'; };";
-    for main in [
-        "import { x } from 'lib/h3.cjs'; console.log(x);",
-        "import * as h from 'lib/h3.cjs'; console.log(h.x);",
         "export { x } from 'lib/h3.cjs';",
-    ] {
-        assert_eq!(
-            find_files_left_out(("main.mjs", main), owner),
-            nothing,
-            "{main}"
-        );
+    ];
+    for owner in [STORED_ONCE, STORED_AGAIN] {
+        let mains = required.iter().map(|&main| ("main.cjs", main));
+        for main in mains.chain(imported.iter().map(|&main| ("main.mjs", main))) {
+            assert_eq!(
+                find_files_left_out(main, owner),
+                nothing,
+                "{main:?} {owner}"
+            );
+        }
     }
 }

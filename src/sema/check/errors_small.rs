@@ -128,8 +128,13 @@ impl<'p> Checker<'p, '_> {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Walks up out of the chain it's part of.
+        // Walks up out of the chain it's part of. FOR SPEED, as in `parent_of_whole_expression`: a
+        // long walk notes where it ends for every `LONG`th node it passes. Without this, the n
+        // operands of a chain take n * n steps.
+        const LONG: u32 = 32;
         let mut parent = bound.parent_of_expr(e);
+        let mut steps = 0;
+        let mut passed = smallvec::SmallVec::<[ExprId; 4]>::new();
         while let Parent::Expr(p) = parent
             && matches!(
                 hir[p].kind,
@@ -139,7 +144,21 @@ impl<'p> Checker<'p, '_> {
                 }
             )
         {
+            steps += 1;
+            if steps >= LONG {
+                let known = &self.flow_memo.parents_of_logical_chains;
+                if let Some(&above) = known.get(&(file, p)) {
+                    parent = above;
+                    break;
+                }
+                if steps % LONG == 0 {
+                    passed.push(p);
+                }
+            }
             parent = bound.parent_of_expr(p);
+        }
+        for below in passed {
+            (self.flow_memo.parents_of_logical_chains).insert((file, below), parent);
         }
         let body = match parent {
             Parent::Stmt(s) if s.is_some() => match hir[s].kind {

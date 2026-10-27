@@ -256,8 +256,8 @@ if (Bun.isMainThread) {
 }
 `;
 
-// Workers start one by one until the constructor has thrown three times in a row. The first is held up for two seconds on its way out, and another is constructed meanwhile: it waits for that room.
-// When the first has closed, its listener takes what room there is: it constructs Workers until the constructor throws.
+// Starts Workers until the constructor throws three times in a row, then holds one up for two seconds while it ends and constructs another, which waits for that room.
+// When the first closes, its listener constructs Workers until the constructor throws. The waiting Worker can still fit where a new one doesn't, so the program repeats this until it doesn't.
 const takesRoomThatWorkerWaitsFor = `import { Worker as NodeWorker, parentPort } from "node:worker_threads";
 declare var self: Worker;
 const isNode = process.argv[2] === "node";
@@ -282,31 +282,40 @@ function construct() {
   return { worker, heard, isHeldUp, whenClosed: (listener: () => void) => worker.addEventListener("close", listener) };
 }
 if (Bun.isMainThread) {
-  const heldUp = construct();
-  await heldUp.heard;
+  const workers: ReturnType<typeof construct>[] = [];
   for (let thrownInARow = 0; thrownInARow < 3; ) {
     try {
-      if ((await construct().heard) !== "started") break;
+      const worker = construct();
+      if ((await worker.heard) !== "started") break;
+      workers.push(worker);
       thrownInARow = 0;
     } catch (error) {
       if (!(error instanceof TypeError)) throw error;
       thrownInARow++;
     }
   }
-  let taken = 0;
-  heldUp.whenClosed(() => {
-    try {
-      for (; taken < 64; taken++) construct();
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
-    }
-  });
-  heldUp.worker.postMessage("block");
-  await heldUp.isHeldUp;
-  await Bun.sleep(200);
-  heldUp.worker.terminate();
-  console.log(await construct().heard);
-  console.log("the listener constructed Workers until the constructor threw:", taken < 64);
+  let heard = "started";
+  for (let round = 0; round < 12 && heard === "started"; round++) {
+    const heldUp = workers.shift()!;
+    let taken = 0;
+    heldUp.whenClosed(() => {
+      try {
+        for (; taken < 64; taken++) workers.push(construct());
+      } catch (error) {
+        if (!(error instanceof TypeError)) throw error;
+      }
+    });
+    heldUp.worker.postMessage("block");
+    await heldUp.isHeldUp;
+    await Bun.sleep(200);
+    heldUp.worker.terminate();
+    const waits = construct();
+    heard = await waits.heard;
+    workers.push(waits);
+    if (taken === 64) heard = "the constructor never threw";
+    await Promise.all(workers.map(worker => worker.heard));
+  }
+  console.log(heard);
   process.exit(0);
 } else {
   const post = (message: string) => (isNode ? parentPort!.postMessage(message) : postMessage(message));
@@ -357,9 +366,9 @@ const constructsWorkersBeforeItHearsThatOthersEnded = `if (Bun.isMainThread) {
 }
 `;
 
-// A thread starts Workers until the constructor throws. One of them is held up for eight seconds on its way out, and one more is constructed meanwhile. Then the thread ends:
-// the main thread exits, or a Worker is terminated. The Worker that was constructed last would write a line.
-const endsThreadWhoseWorkerWaits = `import { writeSync } from "node:fs";
+// A thread starts Workers until the constructor throws. One of them is held up for eight seconds on its way out, and more are constructed meanwhile until the constructor throws again: one of them waits.
+// Then the thread ends: the main thread exits, or a Worker is terminated. A Worker that starts after that writes a line.
+const endsThreadWhoseWorkerWaits = `import { existsSync, writeFileSync, writeSync } from "node:fs";
 declare var self: Worker;
 const start = async () => {
   const worker = new Worker(new URL(import.meta.url));
@@ -380,10 +389,28 @@ async function constructWorkerThatWaits() {
   await new Promise(resolve => (heldUp.onmessage = resolve));
   await Bun.sleep(200);
   heldUp.terminate();
-  new Worker(new URL(import.meta.url), { argv: ["waited"] });
+  // Only one Worker can wait for the one that is ending, so once the constructor throws, all but one have started.
+  let constructed = 0;
+  let settled = 0;
+  try {
+    for (; constructed < 64; constructed++) {
+      const worker = new Worker(new URL(import.meta.url), { argv: ["late"] });
+      const settle = () => {
+        settled++;
+        worker.onmessage = null;
+        worker.removeEventListener("close", settle);
+      };
+      worker.onmessage = settle;
+      worker.addEventListener("close", settle);
+    }
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+  }
+  while (settled < constructed - 1) await Bun.sleep(10);
+  writeFileSync("the-thread-ends", "");
 }
 if (!Bun.isMainThread) {
-  if (process.argv[2] === "waited") writeSync(1, "the one that waited has started\\n");
+  if (process.argv[2] === "late" && existsSync("the-thread-ends")) writeSync(1, "the one that waited has started\\n");
   self.onmessage = async event => {
     if (event.data === "a call that blocks") {
       postMessage("held up");
@@ -712,316 +739,340 @@ async function runWithin(limitInKB: number | undefined, program: string, ...args
 
 const GB = 1024 * 1024;
 
-describe.concurrent("Workers of a compiled program within a limit on the address space", () => {
-  test.skipIf(!isLinux || isASAN).each([
-    [8, 4 * GB],
-    [32, 4 * GB],
-    [8, 2 * GB],
-    [32, 2 * GB],
-    [8, GB],
-  ])(
-    "%d start within %d kB",
-    async (count, limit) => {
-      expect(await runWithin(limit, startsWorkers, String(count))).toEqual({
-        stdout: `started ${count} refused 0\n`,
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    120_000,
-  );
+/** Every `parts`-th case from the `part`-th, one at a time: many fill the address space that they are given, and a file has five minutes. */
+export function workersWithinAddressSpaceLimit(part: number, parts: number) {
+  let cases = 0;
+  const isInPart = () => cases++ % parts === part - 1;
+  const dealt = <Row>(rows: Row[]) => rows.filter(isInPart);
+  const inPart = (define: typeof test) => (name: string, body: () => Promise<void>, timeout: number) => {
+    if (isInPart()) define(name, body, timeout);
+  };
 
-  test.skipIf(!isLinux || isASAN).each([
-    [128, 4 * GB],
-    [64, 2 * GB],
-    [128, 2 * GB],
-  ])(
-    "of %d started one by one within %d kB some start and the constructor throws for the rest",
-    async (count, limit) => {
-      const { stdout, stderr, exitCode } = await runWithin(limit, startsWorkersOneByOne, String(count));
-      const [, started, refused] = /^started (\d+) refused (\d+)\n$/.exec(stdout) ?? [];
-      expect({ stdout, stderr, exitCode, all: Number(started) + Number(refused), many: Number(started) >= 16 }).toEqual(
-        {
+  describe("Workers of a compiled program within a limit on the address space", () => {
+    test.skipIf(!isLinux || isASAN).each(
+      dealt([
+        [8, 4 * GB],
+        [32, 4 * GB],
+        [8, 2 * GB],
+        [32, 2 * GB],
+        [8, GB],
+      ]),
+    )(
+      "%d start within %d kB",
+      async (count, limit) => {
+        expect(await runWithin(limit, startsWorkers, String(count))).toEqual({
+          stdout: `started ${count} refused 0\n`,
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      120_000,
+    );
+
+    test.skipIf(!isLinux || isASAN).each(
+      dealt([
+        [128, 4 * GB],
+        [64, 2 * GB],
+        [128, 2 * GB],
+      ]),
+    )(
+      "of %d started one by one within %d kB some start and the constructor throws for the rest",
+      async (count, limit) => {
+        const { stdout, stderr, exitCode } = await runWithin(limit, startsWorkersOneByOne, String(count));
+        const [, started, refused] = /^started (\d+) refused (\d+)\n$/.exec(stdout) ?? [];
+        expect({
+          stdout,
+          stderr,
+          exitCode,
+          all: Number(started) + Number(refused),
+          many: Number(started) >= 16,
+        }).toEqual({
           stdout,
           stderr: "",
           exitCode: 0,
           all: count,
           many: true,
-        },
-      );
-    },
-    120_000,
-  );
+        });
+      },
+      120_000,
+    );
 
-  test.skipIf(!isLinux || isASAN)(
-    "those of node:worker_threads start",
-    async () => {
-      expect(await runWithin(2 * GB, startsNodeWorkers)).toEqual({ stdout: "started 8\n", stderr: "", exitCode: 0 });
-    },
-    120_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "those of node:worker_threads start",
+      async () => {
+        expect(await runWithin(2 * GB, startsNodeWorkers)).toEqual({ stdout: "started 8\n", stderr: "", exitCode: 0 });
+      },
+      120_000,
+    );
 
-  test.skipIf(!isLinux || isASAN)(
-    "Workers start Workers",
-    async () => {
-      const leaf = "3(4,4)";
-      const two = (depth: number, inner: string) => `${depth}(${inner},${inner})`;
-      expect(await runWithin(2 * GB, startsWorkersInWorkers)).toEqual({
-        stdout: two(0, two(1, two(2, leaf))) + "\n",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    120_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "Workers start Workers",
+      async () => {
+        const leaf = "3(4,4)";
+        const two = (depth: number, inner: string) => `${depth}(${inner},${inner})`;
+        expect(await runWithin(2 * GB, startsWorkersInWorkers)).toEqual({
+          stdout: two(0, two(1, two(2, leaf))) + "\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      120_000,
+    );
 
-  test.skipIf(!isLinux || isASAN)(
-    "a thousand start one after another, four at a time",
-    async () => {
-      expect(await runWithin(GB, startsWorkersAgainAndAgain)).toEqual({
-        stdout: "ended 1000\n",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    240_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "a thousand start one after another, four at a time",
+      async () => {
+        expect(await runWithin(GB, startsWorkersAgainAndAgain)).toEqual({
+          stdout: "ended 1000\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      240_000,
+    );
 
-  test.skipIf(!isLinux || isASAN)(
-    "a Worker starts in the room of Workers that were just terminated",
-    async () => {
-      expect(await runWithin(GB, startsWorkerRightAfterTerminating)).toEqual({
-        stdout: "at least 8 run: true\n",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    240_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "a Worker starts in the room of Workers that were just terminated",
+      async () => {
+        expect(await runWithin(GB, startsWorkerRightAfterTerminating)).toEqual({
+          stdout: "at least 8 run: true\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      240_000,
+    );
 
-  test.skipIf(!isLinux || isASAN)(
-    "a Worker starts in the room of Workers that were just terminated within each of 40 limits",
-    async () => {
-      const limits = Array.from({ length: 40 }, (_, i) => (896 + 13 * i) * 1024);
-      const results = await runWithinEach(limits, startsWorkerRightAfterTerminating);
-      expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
-        limits.map(limit => ({ limit, stdout: "at least 8 run: true\n", stderr: "", exitCode: 0 })),
-      );
-    },
-    240_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "a Worker starts in the room of Workers that were just terminated within each of 40 limits",
+      async () => {
+        const limits = Array.from({ length: 40 }, (_, i) => (896 + 13 * i) * 1024);
+        const results = await runWithinEach(limits, startsWorkerRightAfterTerminating);
+        expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
+          limits.map(limit => ({ limit, stdout: "at least 8 run: true\n", stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
+    );
 
-  test.skipIf(!isLinux || isASAN)(
-    "a Worker starts in the room of Workers that were just terminated at each of the 128 places where the cells begin",
-    async () => {
-      const places = Array.from({ length: 128 }, (_, i) => String(i + 1));
-      const results = await runEach(
-        places.map(place => ({ limitInKB: 1104 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
-        startsWorkerRightAfterTerminating,
-      );
-      expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
-        places.map(place => ({ place, stdout: "at least 8 run: true\n", stderr: "", exitCode: 0 })),
-      );
-    },
-    240_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "a Worker starts in the room of Workers that were just terminated at each of the 128 places where the cells begin",
+      async () => {
+        const places = Array.from({ length: 128 }, (_, i) => String(i + 1));
+        const results = await runEach(
+          places.map(place => ({ limitInKB: 1104 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
+          startsWorkerRightAfterTerminating,
+        );
+        expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
+          places.map(place => ({ place, stdout: "at least 8 run: true\n", stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
+    );
 
-  test.skipIf(!isLinux || isASAN).each(["a call that blocks", "its exit handler", "its own Worker"])(
-    "the constructor returns at once while %s holds up a Worker that is ending",
-    async how => {
-      expect(await runWithin(GB, constructsWorkersWhileAnotherIsHeldUp, how)).toEqual({
-        stdout:
-          "two are constructed, and the constructor throws, within 4 s: true\n" +
-          "the one that is terminated closes within 4 s: true\n" +
-          "the other starts, or finds no room: true\n" +
-          "the one that is held up takes over 4 s to close: true\n" +
-          "a timer fired at least every 4 s: true\n",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    240_000,
-  );
+    test.skipIf(!isLinux || isASAN).each(dealt(["a call that blocks", "its exit handler", "its own Worker"]))(
+      "the constructor returns at once while %s holds up a Worker that is ending",
+      async how => {
+        expect(await runWithin(GB, constructsWorkersWhileAnotherIsHeldUp, how)).toEqual({
+          stdout:
+            "two are constructed, and the constructor throws, within 4 s: true\n" +
+            "the one that is terminated closes within 4 s: true\n" +
+            "the other starts, or finds no room: true\n" +
+            "the one that is held up takes over 4 s to close: true\n" +
+            "a timer fired at least every 4 s: true\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      240_000,
+    );
 
-  // On arm64 a Worker of node:worker_threads may start in less room than it then takes.
-  test.skipIf(!isLinux || isASAN).each(isArm64 ? ["web"] : ["web", "node"])(
-    "a Worker that waits for room that others take first gets an error (%s)",
-    async kind => {
-      expect(await runWithin(GB, takesRoomThatWorkerWaitsFor, kind)).toEqual({
-        stdout:
-          "TypeError: Failed to spawn worker thread, code 1\n" +
-          "the listener constructed Workers until the constructor threw: true\n",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    240_000,
-  );
+    // On arm64 a Worker of node:worker_threads may start in less room than it then takes.
+    test.skipIf(!isLinux || isASAN).each(dealt(isArm64 ? ["web"] : ["web", "node"]))(
+      "a Worker that waits for room that others take first gets an error (%s)",
+      async kind => {
+        expect(await runWithin(GB, takesRoomThatWorkerWaitsFor, kind)).toEqual({
+          stdout: "TypeError: Failed to spawn worker thread, code 1\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      240_000,
+    );
 
-  test.skipIf(!isLinux || isASAN)(
-    "the constructor throws in the turn in which there is no room, though the thread has not heard yet that Workers have ended",
-    async () => {
-      expect(await runWithin(GB, constructsWorkersBeforeItHearsThatOthersEnded)).toEqual({
-        stdout: "some are constructed, and then the constructor throws: true\neach of them starts\n",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    240_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "the constructor throws in the turn in which there is no room, though the thread has not heard yet that Workers have ended",
+      async () => {
+        expect(await runWithin(GB, constructsWorkersBeforeItHearsThatOthersEnded)).toEqual({
+          stdout: "some are constructed, and then the constructor throws: true\neach of them starts\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      240_000,
+    );
 
-  test.skipIf(!isLinux || isASAN)(
-    "a Worker that is terminated while a Worker of its own waits for room ends, and that one never starts",
-    async () => {
-      expect(await runWithin(GB, endsThreadWhoseWorkerWaits, "a Worker is terminated")).toEqual({
-        stdout: "closed with code 0\n",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    240_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "a Worker that is terminated while a Worker of its own waits for room ends, and that one never starts",
+      async () => {
+        expect(await runWithin(GB, endsThreadWhoseWorkerWaits, "a Worker is terminated")).toEqual({
+          stdout: "closed with code 0\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      240_000,
+    );
 
-  test.skipIf(!isLinux || isASAN)(
-    "the main thread exits at once while a Worker of its own waits for room, and that one never starts",
-    async () => {
-      const { stdout, stderr, exitCode } = await runWithin(GB, endsThreadWhoseWorkerWaits, "the main thread exits");
-      const ended = Date.now();
-      const [, exits] = /^exits at (\d+)\n$/.exec(stdout) ?? [];
-      expect({ stdout, stderr, exitCode, within4Seconds: ended - Number(exits) < 4000 }).toEqual({
-        stdout,
-        stderr: "",
-        exitCode: 0,
-        within4Seconds: true,
-      });
-    },
-    240_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "the main thread exits at once while a Worker of its own waits for room, and that one never starts",
+      async () => {
+        const { stdout, stderr, exitCode } = await runWithin(GB, endsThreadWhoseWorkerWaits, "the main thread exits");
+        const ended = Date.now();
+        const [, exits] = /^exits at (\d+)\n$/.exec(stdout) ?? [];
+        expect({ stdout, stderr, exitCode, within4Seconds: ended - Number(exits) < 4000 }).toEqual({
+          stdout,
+          stderr: "",
+          exitCode: 0,
+          within4Seconds: true,
+        });
+      },
+      240_000,
+    );
 
-  test.skipIf(!isLinux || isASAN)(
-    "the main thread exits while a Worker of its own waits for room, and that one never starts, where the exit waits for every thread",
-    async () => {
-      const [result] = await runEach(
-        [{ limitInKB: GB, env: { BUN_DESTRUCT_VM_ON_EXIT: "1" } }],
-        endsThreadWhoseWorkerWaits,
-        "the main thread exits",
-      );
-      expect(result).toEqual({ stdout: expect.stringMatching(/^exits at \d+\n$/), stderr: "", exitCode: 0 });
-    },
-    240_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "the main thread exits while a Worker of its own waits for room, and that one never starts, where the exit waits for every thread",
+      async () => {
+        const [result] = await runEach(
+          [{ limitInKB: GB, env: { BUN_DESTRUCT_VM_ON_EXIT: "1" } }],
+          endsThreadWhoseWorkerWaits,
+          "the main thread exits",
+        );
+        expect(result).toEqual({ stdout: expect.stringMatching(/^exits at \d+\n$/), stderr: "", exitCode: 0 });
+      },
+      240_000,
+    );
 
-  test.skipIf(!isLinux || isASAN).each([0, 48])(
-    "Workers with few objects end one by one where another Worker has taken all the room, and the program goes on (the main thread keeps %d MB first)",
-    async megabytesKeptFirst => {
-      const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
-      const results = await runEach(
-        places.map(place => ({ limitInKB: 768 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
-        workersWithFewObjectsRunOutOfRoom,
-        String(megabytesKeptFirst),
-      );
-      const stdout = "RangeError: Out of memory, code 1\n".repeat(4);
-      expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
-        places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
-      );
-    },
-    240_000,
-  );
+    test.skipIf(!isLinux || isASAN).each(dealt([0, 48]))(
+      "Workers with few objects end one by one where another Worker has taken all the room, and the program goes on (the main thread keeps %d MB first)",
+      async megabytesKeptFirst => {
+        const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
+        const results = await runEach(
+          places.map(place => ({ limitInKB: 768 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
+          workersWithFewObjectsRunOutOfRoom,
+          String(megabytesKeptFirst),
+        );
+        const stdout = "RangeError: Out of memory, code 1\n".repeat(4);
+        expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
+          places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
+    );
 
-  test.skipIf(!isLinux || isASAN)(
-    "wave after wave of Workers ends where no room is left, and the program goes on",
-    async () => {
-      const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
-      const results = await runEach(
-        places.map(place => ({ limitInKB: 1536 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
-        wavesOfWorkersRunOutOfRoom,
-      );
-      const stdout = [0, 1, 2].map(wave => `wave ${wave} ended with codes 1 1 1 1\n`).join("");
-      expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
-        places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
-      );
-    },
-    240_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "wave after wave of Workers ends where no room is left, and the program goes on",
+      async () => {
+        const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
+        const results = await runEach(
+          places.map(place => ({ limitInKB: 1536 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
+          wavesOfWorkersRunOutOfRoom,
+        );
+        const stdout = [0, 1, 2].map(wave => `wave ${wave} ended with codes 1 1 1 1\n`).join("");
+        expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
+          places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
+    );
 
-  test
-    .skipIf(!isLinux || isASAN)
-    .each(["lists", "lists that built-ins make", "objects with many properties", "typed arrays", "long texts"])(
-    "Workers that keep %s end one by one where another Worker has taken all the room, and the program goes on",
-    async kind => {
-      const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
-      const results = await runEach(
-        places.map(place => ({ limitInKB: 896 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
-        workersThatKeepListsRunOutOfRoom,
-        kind,
-      );
-      const stdout = "RangeError: Out of memory, code 1\n".repeat(4);
-      expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
-        places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
-      );
-    },
-    240_000,
-  );
+    test
+      .skipIf(!isLinux || isASAN)
+      .each(
+        dealt(["lists", "lists that built-ins make", "objects with many properties", "typed arrays", "long texts"]),
+      )(
+      "Workers that keep %s end one by one where another Worker has taken all the room, and the program goes on",
+      async kind => {
+        const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
+        const results = await runEach(
+          places.map(place => ({ limitInKB: 896 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
+          workersThatKeepListsRunOutOfRoom,
+          kind,
+        );
+        const stdout = "RangeError: Out of memory, code 1\n".repeat(4);
+        expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
+          places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
+    );
 
-  test
-    .skipIf(!isLinux || isASAN)
-    .each([
-      "lists",
-      "lists that built-ins make",
-      "typed arrays",
-      "long texts",
-      "maps and sets",
-      "buffers",
-      "copies of what a text holds",
-      "lists of arguments and of keys",
-    ])(
-    "24 Workers that keep %s find no room at once, each gets its error, and the program goes on",
-    async kind => {
-      const places = ["1", "33", "65", "97"];
-      const results = await runEach(
-        places.map(place => ({ limitInKB: 2048 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
-        workersThatKeepListsRunOutOfRoom,
-        kind,
-        "24",
-      );
-      const stdout = "RangeError: Out of memory, code 1\n".repeat(24);
-      expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
-        places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
-      );
-    },
-    240_000,
-  );
+    test
+      .skipIf(!isLinux || isASAN)
+      .each(
+        dealt([
+          "lists",
+          "lists that built-ins make",
+          "typed arrays",
+          "long texts",
+          "maps and sets",
+          "buffers",
+          "copies of what a text holds",
+          "lists of arguments and of keys",
+        ]),
+      )(
+      "24 Workers that keep %s find no room at once, each gets its error, and the program goes on",
+      async kind => {
+        const places = ["1", "33", "65", "97"];
+        const results = await runEach(
+          places.map(place => ({ limitInKB: 2048 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
+          workersThatKeepListsRunOutOfRoom,
+          kind,
+          "24",
+        );
+        const stdout = "RangeError: Out of memory, code 1\n".repeat(24);
+        expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
+          places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
+    );
 
-  test.skipIf(!isLinux || isASAN)(
-    "a program that keeps lists until there is no room catches a RangeError, twice",
-    async () => {
-      // What the program first needs when it ends, it needs where no room is left. Whether there is some left differs from run to run.
-      const limits = [512, 768, 1024, 2048].flatMap(megabytes => Array.from({ length: 3 }, () => megabytes * 1024));
-      const results = await runWithinEach(limits, keepsListsUntilThereIsNoRoom);
-      expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
-        limits.map(limit => ({ limit, stdout: "[ true, true ] [ true, true ]\n", stderr: "", exitCode: 0 })),
-      );
-    },
-    240_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "a program that keeps lists until there is no room catches a RangeError, twice",
+      async () => {
+        // What the program first needs when it ends, it needs where no room is left. Whether there is some left differs from run to run.
+        const limits = [512, 768, 1024, 2048].flatMap(megabytes => Array.from({ length: 3 }, () => megabytes * 1024));
+        const results = await runWithinEach(limits, keepsListsUntilThereIsNoRoom);
+        expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
+          limits.map(limit => ({ limit, stdout: "[ true, true ] [ true, true ]\n", stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
+    );
 
-  test.skipIf(!isLinux || isASAN || isDebug)(
-    "a small program runs within 416 MB",
-    async () => {
-      expect(await runWithin(416 * 1024, `console.log("runs", 1 + 1);\n`)).toEqual({
-        stdout: "runs 2\n",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    120_000,
-  );
+    inPart(test.skipIf(!isLinux || isASAN || isDebug))(
+      "a small program runs within 416 MB",
+      async () => {
+        expect(await runWithin(416 * 1024, `console.log("runs", 1 + 1);\n`)).toEqual({
+          stdout: "runs 2\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      120_000,
+    );
 
-  test("properties are found by name in more shapes than the table has rows for at first", async () => {
-    expect(await runWithin(undefined, readsManyShapesByName)).toEqual({
-      stdout: "21599820000 21599820000\n14400000000\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  }, 120_000);
-});
+    inPart(test)(
+      "properties are found by name in more shapes than the table has rows for at first",
+      async () => {
+        expect(await runWithin(undefined, readsManyShapesByName)).toEqual({
+          stdout: "21599820000 21599820000\n14400000000\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      120_000,
+    );
+  });
+}

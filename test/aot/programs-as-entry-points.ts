@@ -117,6 +117,15 @@ function refusedBy(stderr: string, programs: string[]): Map<string, string> {
   return refused;
 }
 
+/** The first error of a build, or else where the compiler stopped and the last three lines. A crash report ends in a link, and what stopped the build stands above it. */
+function lastWordsOf(stderr: string) {
+  const error = /^error\b.*(?:\r?\n\s+at .*)?$/m.exec(stderr)?.[0].replace(/\r?\n\s+/, " ");
+  if (error) return error;
+  const lines = stderr.trim().split(/\r?\n/);
+  const last = lines.slice(-3);
+  return [...lines.filter(line => /^(panic:|ASSERTION FAILED:|Stopped while compiling )/.test(line) && !last.includes(line)), ...last].join(" | ");
+}
+
 const textOf = ({ stdout, stderr, exitCode }: RunResult) => stdout + (exitCode ? `exit code ${exitCode}\n${stderr}\n` : stderr);
 
 function firstDifference(result: RunResult, expected: RunResult | string): string {
@@ -169,7 +178,7 @@ class Way {
     }
     rmSync(executable, { force: true });
     const refused = refusedBy(ran.stderr, programs);
-    const said = `${ran.signal ?? `exit code ${ran.exitCode}`}: ${(/^error\b.*(?:\r?\n\s+at .*)?$/m.exec(ran.stderr)?.[0].replace(/\r?\n\s+/, " ") ?? ran.stderr.trim().split("\n").slice(-3).join(" | ")).slice(0, 600)}`;
+    const said = `${ran.signal ?? `exit code ${ran.exitCode}`}: ${lastWordsOf(ran.stderr).slice(0, 600)}`;
     if (programs.length === 1) return void this.refused.set(programs[0], refused.get(programs[0]) ?? said);
     if (refused.size === 0 || refused.size === programs.length) {
       console.error(`IN HALVES: the build of ${programs.length} programs, ${this.name}, ended with ${said}`);

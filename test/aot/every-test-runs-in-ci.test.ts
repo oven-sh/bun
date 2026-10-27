@@ -18,6 +18,7 @@ import {
   parseStepArguments,
   pickTestsOfStep,
   spellSample,
+  testsAwaitedOn,
   testsOfEngineSources,
   testsOutsideCi,
   testsThatComeInParts,
@@ -106,6 +107,11 @@ test("no two lanes take the same tenth of a folder of programs", () => {
 
 test("each entry of the lists names a test", () => {
   expect(listedElsewhere.filter(group => !tests.some(path => path.includes(group)))).toEqual([]);
+  expect(
+    Object.values(testsAwaitedOn)
+      .flat()
+      .filter(group => !tests.some(path => path.includes(group))),
+  ).toEqual([]);
 });
 
 test("what comes in parts has a unit", () => {

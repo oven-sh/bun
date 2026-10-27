@@ -88,6 +88,9 @@ export const mimalloc: Dependency = {
     "patches/mimalloc/keep-pieces-of-the-arenas-aside.patch",
     "patches/mimalloc/no-thread-locals-for-address-space-kept-aside.patch",
     "patches/mimalloc/tell-who-takes-small-pages.patch",
+    "patches/mimalloc/look-in-every-bin-for-what-was-kept-aside.patch",
+    "patches/mimalloc/give-a-thread-its-records-out-of-what-was-kept-aside.patch",
+    "patches/mimalloc/look-in-every-bin-of-an-exclusive-arena.patch",
     ...(cfg.lockEnvironment ? ["patches/mimalloc/environment-sets-sizes-and-pace-only.patch"] : []),
   ],
 

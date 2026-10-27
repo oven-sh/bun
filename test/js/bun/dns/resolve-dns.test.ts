@@ -315,6 +315,102 @@ describe("dns", () => {
     });
   });
 
+  describe.concurrent("c-ares backend and a local server", () => {
+    type Lookup = [name: string, options?: { family?: 4 | 6 }];
+
+    async function lookups(env: Record<string, string>, ...lookups: Lookup[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "lookup-local-server-fixture.ts"), JSON.stringify(lookups)],
+        // Whatever the machine's resolv.conf says. Only the first domain of LOCALDOMAIN counts.
+        env: { ...bunEnv, LOCALDOMAIN: "corp.test other.test", RES_OPTIONS: "ndots:1", ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    test("both families are asked for, or the one wanted", async () => {
+      expect(
+        await lookups(
+          {},
+          ["host.corp.test"],
+          ["host.corp.test", { family: 4 }],
+          ["host.corp.test", { family: 6 }],
+          ["v6.test"],
+          ["v6.test", { family: 4 }],
+        ),
+      ).toEqual([
+        ["host.corp.test", ["10.0.0.1 4", "2001:db8::1 6"], ["host.corp.test 1", "host.corp.test 28"]],
+        ["host.corp.test", ["10.0.0.1 4"], []],
+        ["host.corp.test", ["2001:db8::1 6"], []],
+        ["v6.test", ["2001:db8::6 6"], ["v6.test 1", "v6.test 28"]],
+        // That it has no A record was remembered.
+        ["v6.test", "DNS_ENOTFOUND", ["v6.test.corp.test 1"]],
+      ]);
+    });
+
+    test("an alias is followed", async () => {
+      expect(await lookups({}, ["alias.test"])).toEqual([
+        ["alias.test", ["10.0.0.4 4", "10.0.0.5 4"], ["alias.test 1", "alias.test 28"]],
+      ]);
+    });
+
+    test("a name with fewer dots than ndots goes through the search list first", async () => {
+      expect(await lookups({}, ["host", { family: 4 }], ["missing", { family: 4 }])).toEqual([
+        ["host", ["10.0.0.1 4"], ["host.corp.test 1"]],
+        ["missing", "DNS_ENOTFOUND", ["missing.corp.test 1", "missing 1"]],
+      ]);
+    });
+
+    test("a name with as many dots as ndots is tried as it is first", async () => {
+      expect(await lookups({}, ["host.other.test", { family: 4 }], ["missing.test", { family: 4 }])).toEqual([
+        ["host.other.test", ["10.0.0.2 4"], ["host.other.test 1"]],
+        ["missing.test", "DNS_ENOTFOUND", ["missing.test 1", "missing.test.corp.test 1"]],
+      ]);
+      expect(await lookups({ RES_OPTIONS: "ndots:3" }, ["host.other.test", { family: 4 }])).toEqual([
+        ["host.other.test", ["10.0.0.2 4"], ["host.other.test.corp.test 1", "host.other.test 1"]],
+      ]);
+    });
+
+    test("a name that ends with a dot is complete", async () => {
+      expect(await lookups({}, ["missing.", { family: 4 }], ["host.corp.test.", { family: 4 }])).toEqual([
+        ["missing.", "DNS_ENOTFOUND", ["missing 1"]],
+        ["host.corp.test.", ["10.0.0.1 4"], ["host.corp.test 1"]],
+      ]);
+    });
+
+    test("HOSTALIASES names a file of short names", async () => {
+      using dir = tempDir("dns-hostaliases", {
+        aliases: "# short names\nother host.corp.test\nSHORT   host.other.test\n",
+      });
+      expect(
+        await lookups(
+          { HOSTALIASES: join(String(dir), "aliases") },
+          ["short", { family: 4 }],
+          ["short.x", { family: 4 }],
+        ),
+      ).toEqual([
+        ["short", ["10.0.0.2 4"], ["host.other.test 1"]],
+        ["short.x", "DNS_ENOTFOUND", ["short.x 1", "short.x.corp.test 1"]],
+      ]);
+    });
+
+    test("an address and localhost take no question", async () => {
+      const [[, v4, askedV4], [, v6, askedV6], [, localhost, askedLocalhost], [, sub, askedSub]] = await lookups(
+        {},
+        ["192.0.2.7"],
+        ["2001:db8::7"],
+        ["localhost", { family: 4 }],
+        ["a.localhost", { family: 4 }],
+      );
+      expect([v4, v6, localhost, sub]).toEqual([["192.0.2.7 4"], ["2001:db8::7 6"], ["127.0.0.1 4"], ["127.0.0.1 4"]]);
+      expect([askedV4, askedV6, askedLocalhost, askedSub]).toEqual([[], [], [], []]);
+    });
+  });
+
   // On macOS the system backend talks to mDNSResponder over a unix socket. These put a scripted responder
   // behind that socket, so each test sees the requests Bun makes and chooses the replies Bun gets.
   describe.skipIf(!isMacOS || !cc)("system backend over the mDNSResponder socket", () => {

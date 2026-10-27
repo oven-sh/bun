@@ -1592,6 +1592,8 @@ fn parse_paren_block<C: QueryCondition>(
     options: &css::ParserOptions,
 ) -> Result<C> {
     input.parse_nested_block(|i| {
+        // `( <media-condition> )` allows `or` even after a media type: `screen and ((a) or (b))`.
+        let flags = flags | QueryConditionFlags::ALLOW_OR;
         if let Ok(inner) =
             i.try_parse(|i2| parse_query_condition_with_options::<C>(i2, flags, options))
         {

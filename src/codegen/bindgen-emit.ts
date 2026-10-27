@@ -457,7 +457,7 @@ ${held.some(a => type.cppStoresAsBits(a.type)) ? "        uint64_t bits;\n" : ""
 struct Extern${name} {
     uint8_t tag;
     union {
-${type.externFields ? "        uint64_t bits;\n" : ""}${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
+${type.externParameterFields ? "        uint64_t bits;\n" : ""}${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
     } data;
 };
 ${layoutAssert(`Extern${name}`, type)}
@@ -864,7 +864,7 @@ function passedByPointer(args: readonly { type: Type }[], leading: number): bool
 const cppExternParameters = (type: Type, byPointer: boolean): string[] =>
   byPointer
     ? [`${externType(type)}*`]
-    : (type.externFields?.map(field => `decltype(${externType(type)}::${field.name})`) ?? [externType(type)]);
+    : (type.externParameterFields?.map(field => `decltype(${externType(type)}::${field.name})`) ?? [externType(type)]);
 
 /**
  * The arguments for `cppExternParameters`. `converted`: the C++ value. `extern`: the expression that makes its extern value.
@@ -879,9 +879,9 @@ function cppExternArguments(
   lines: string[],
 ): string[] {
   if (byPointer && type.cppCanBitCastToExtern) return [`Bun::Bindgen::asExtern(${converted})`];
-  if (!byPointer && !type.externFields) return [extern];
+  if (!byPointer && !type.externParameterFields) return [extern];
   lines.push(`auto ${variable} = ${extern};`);
-  return byPointer ? [`&${variable}`] : type.externFields!.map(field => `${variable}.${field.name}`);
+  return byPointer ? [`&${variable}`] : type.externParameterFields!.map(field => `${variable}.${field.name}`);
 }
 
 /**
@@ -1922,7 +1922,7 @@ function rustThunkArguments(
   const parameters = args.flatMap((arg, i) =>
     byPointer[i]
       ? [`${rustArgumentName(arg)}: *mut ${arg.type.rustExternType(scope)}`]
-      : (arg.type.externFields?.map(field => `${fieldName(arg, field)}: ${field.rustType(scope)}`) ?? [
+      : (arg.type.externParameterFields?.map(field => `${fieldName(arg, field)}: ${field.rustType(scope)}`) ?? [
           `${rustArgumentName(arg)}: ${arg.type.rustExternType(scope)}`,
         ]),
   );
@@ -1932,7 +1932,7 @@ function rustThunkArguments(
     .toSorted((a, b) => +a.arg.type.rustFromExternThrows - +b.arg.type.rustFromExternThrows)
     .flatMap(({ arg, byPointer }) => {
       const name = rustArgumentName(arg);
-      const fields = byPointer ? null : arg.type.externFields;
+      const fields = byPointer ? null : arg.type.externParameterFields;
       const rebuilt = fields
         ? [
             `let ${name} = ${arg.type.rustExternType(scope).replace("<", "::<")} { ${fields.map(field => `${field.name}: ${fieldName(arg, field)}`).join(", ")} };\n`,
@@ -2048,7 +2048,7 @@ pub struct Extern${type.name} {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union Extern${type.name}Data {
-${type.externFields ? "    bits: u64,\n" : ""}${type.alternatives.map(a => `    ${rustIdent(snakeCase(a.name))}: ${a.type.rustExternType(scope)},`).join("\n")}
+${type.externParameterFields ? "    bits: u64,\n" : ""}${type.alternatives.map(a => `    ${rustIdent(snakeCase(a.name))}: ${a.type.rustExternType(scope)},`).join("\n")}
 }
 ${rustLayoutAssert(`Extern${type.name}`, type)}
 impl${lifetime} ${type.name}${lifetime} {

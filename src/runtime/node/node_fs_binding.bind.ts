@@ -49,7 +49,7 @@ const signal = {
   type: b.abortSignal.shared.emptyStringAsNull,
   expected: ["AbortSignal"],
 };
-const encodingOr = (options: b.Type) => b.union({ encoding: b.stringLike, options, other: b.ignored });
+const encodingOr = (options: b.Type) => b.union({ string: b.stringLike, options, other: b.ignored });
 
 export const EncodingOptions = b.dictionary({ encoding }, options);
 export const EncodingOrOptions = encodingOr(EncodingOptions);

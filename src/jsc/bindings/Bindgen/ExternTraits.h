@@ -58,10 +58,11 @@ ALWAYS_INLINE auto* asExtern(T& value)
     return reinterpret_cast<ExternType*>(&value);
 }
 
-// A generated union whose alternatives fit a register has a first member `uint64_t bits`.
-// In `Extern<Name>::data` nothing reads it: clang then gives a parameter of that type the LLVM type `i64`, as rustc
-// does. It gives a union whose first member is a pointer `ptr`.
-// In `<Name>` a converter stores a narrow alternative through it, in one store as wide as the load that follows.
+// `uint64_t bits`, the first member of a generated union whose `data` is 8 bytes and so is a parameter of its own.
+// Nothing reads it in `Extern<Name>::data`. With it clang gives that parameter the LLVM type `i64`, as rustc does.
+// Without it the type is `ptr` when the first member is a pointer.
+// `<Name>` has it when `toExtern` is a bit-cast and an alternative is narrower than `data`. The converter stores that
+// alternative through it, in one store as wide as the load that follows.
 
 // The bytes of `value`, then zeros.
 template<typename T>

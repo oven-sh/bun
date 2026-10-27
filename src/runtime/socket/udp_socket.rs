@@ -1329,14 +1329,14 @@ impl UDPSocket {
                 array_buffer = bytes.as_array_buffer(global_this);
                 array_buffer.slice()
             }
-            UDPPayload::String(text) => {
+            UDPPayload::String(string) => {
                 // A boxed `StringObject`/`DerivedStringObject` is resolved
                 // via `toPrimitive` — safe here:
                 // `parseAddr` already ran, there is only one payload so
                 // `toPrimitive` cannot invalidate an earlier captured pointer,
                 // and `this.socket orelse throw` below handles a
                 // close-during-`toPrimitive`.
-                payload_view = text.to_js_string_view(global_this)?;
+                payload_view = string.to_js_string_view(global_this)?;
                 payload_str = payload_view.to_utf8();
                 payload_str.slice()
             }

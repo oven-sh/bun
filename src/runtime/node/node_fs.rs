@@ -3190,8 +3190,8 @@ pub(crate) mod args {
         default: Encoding,
     ) -> JsResult<Encoding> {
         Ok(match options.convert(ctx)? {
-            generated::EncodingOrOptions::Encoding(name) => {
-                Encoding::from_name_with_default_on_empty(name, ctx, default)?
+            generated::EncodingOrOptions::String(name) => {
+                Encoding::from_name_with_default_on_empty(name.to_js(), ctx, default)?
             }
             generated::EncodingOrOptions::Options(options) => {
                 Encoding::assert(options.encoding, ctx, default)?
@@ -3393,8 +3393,9 @@ pub(crate) mod args {
             let mut with_file_types = false;
             let mut recursive = false;
             match options {
-                generated::EncodingOrReaddirOptions::Encoding(name) => {
-                    encoding = Encoding::from_name_with_default_on_empty(name, ctx, encoding)?;
+                generated::EncodingOrReaddirOptions::String(name) => {
+                    encoding =
+                        Encoding::from_name_with_default_on_empty(name.to_js(), ctx, encoding)?;
                 }
                 generated::EncodingOrReaddirOptions::Options(val) => {
                     encoding = Encoding::assert(val.encoding(ctx)?, ctx, encoding)?;
@@ -3618,7 +3619,9 @@ pub(crate) mod args {
             encoding: Option<JsLocal<'_, StringLike>>,
         ) -> JsResult<Self> {
             let encoding = match encoding {
-                Some(name) => Encoding::from_name_with_default_on_empty(name, ctx, Encoding::Utf8)?,
+                Some(name) => {
+                    Encoding::from_name_with_default_on_empty(name.to_js(), ctx, Encoding::Utf8)?
+                }
                 None => Encoding::Utf8,
             };
             let buffer = StringOrBuffer::from_bun_string(
@@ -3881,8 +3884,9 @@ pub(crate) mod args {
                 }
             });
             match options {
-                generated::EncodingOrReadFileOptions::Encoding(name) => {
-                    encoding = Encoding::from_name_with_default_on_empty(name, ctx, encoding)?;
+                generated::EncodingOrReadFileOptions::String(name) => {
+                    encoding =
+                        Encoding::from_name_with_default_on_empty(name.to_js(), ctx, encoding)?;
                 }
                 generated::EncodingOrReadFileOptions::Options(arg) => {
                     encoding = Encoding::assert(arg.encoding(ctx)?, ctx, encoding)?;
@@ -3973,8 +3977,9 @@ pub(crate) mod args {
                 encoding = Encoding::Utf8;
             }
             match options {
-                generated::EncodingOrWriteFileOptions::Encoding(name) => {
-                    encoding = Encoding::from_name_with_default_on_empty(name, ctx, encoding)?;
+                generated::EncodingOrWriteFileOptions::String(name) => {
+                    encoding =
+                        Encoding::from_name_with_default_on_empty(name.to_js(), ctx, encoding)?;
                 }
                 generated::EncodingOrWriteFileOptions::Options(arg) => {
                     encoding = Encoding::assert(arg.encoding(ctx)?, ctx, encoding)?;

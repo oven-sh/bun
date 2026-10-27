@@ -10,7 +10,7 @@ use core::mem;
 
 use bun_cares_sys::c_ares as ares;
 use bun_core::{String as BunString, ZStr, strings};
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, StringLike};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CommonString, JSGlobalObject, JSObject, JSString, JSValue, JsClass, JsError, JsResult,
@@ -299,12 +299,12 @@ impl SocketAddress {
     /// `family` defaults to IPv4.
     pub(crate) fn init_from_addr_family(
         global: &JSGlobalObject,
-        address_js: JsLocal<'_, StringLike>,
-        family_js: Option<JsLocal<'_, StringLike>>,
+        address_js: JSValue,
+        family_js: Option<JSValue>,
     ) -> JsResult<SocketAddress> {
-        let address_: BunString = BunString::from_js(address_js.to_js(), global)?;
+        let address_: BunString = BunString::from_js(address_js, global)?;
         let family_: AF = match family_js {
-            Some(family_js) => AF::from_name(global, family_js.to_js())?,
+            Some(family_js) => AF::from_name(global, family_js)?,
             None => AF::INET,
         };
         Self::init_js(

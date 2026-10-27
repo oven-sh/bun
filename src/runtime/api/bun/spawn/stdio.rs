@@ -436,7 +436,7 @@ impl Stdio {
                 }
                 return Ok(());
             }
-            StdioValue::Fd(value) => {
+            StdioValue::Number(value) => {
                 let value = value.to_js();
                 // `bun.FD.fromUV(this.toInt32())` inlined here since the
                 // upstream `bun_jsc::JSValue` doesn't expose a wrapper.

@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -5477,11 +5477,15 @@ describe("fs.write", () => {
     const fd = fs.openSync(join(String(dir), "a.txt"), "w");
     try {
       const data = new String("bun");
-      let conversions = 0;
-      data.toString = () => (conversions++, "bun");
+      data.toString = mock(() => "bun");
       // @ts-expect-error
-      await expect(_promises.write(fd, data)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
-      expect(conversions).toBe(0);
+      await expect(_promises.write(fd, data)).rejects.toMatchObject({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "buffer" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received an instance of String',
+      });
+      expect(data.toString).not.toHaveBeenCalled();
     } finally {
       closeSync(fd);
     }

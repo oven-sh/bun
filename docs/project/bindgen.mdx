@@ -424,6 +424,9 @@ double nearest to it. `b.f64.allowDate` also takes a `Date`, as its time value, 
 
 The two that validate name the value in their errors: the argument or the member, or what `.reportedAs("fd")` says.
 
+`b.jsNumber` is for a body that stores or reports the number, or converts it with a method of `JSValue` (`to_int64`,
+`to_u32`, `coerce::<i32>`), which reads an int32 without going through a double. A body that wants the double takes `b.f64`.
+
 ### Strings
 
 `b.string.utf8` is the one to reach for. When the JS string is 8-bit and ASCII the
@@ -448,6 +451,9 @@ one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.ut
 characters, in Latin-1 or UTF-16: a `bun_core::StringView<'a>`, and a `&bun_core::StringView<'_>` as an argument of this type alone. It takes no reference to the
 storage, and `text.slice(..)` is read in place, where `b.string` would copy it into a new string. The frame holds the JS string, so it is for an argument, alone, in a union or
 with a modifier, and not in an array.
+
+`b.stringLike` is the handle of a string or a `String` object. Nothing is converted until the body calls
+`string.to_js_string_view(global)?`, which runs the `toString` of a `String` object and borrows the characters.
 
 A [class](#classes) is a type too: import it from its `.bind.ts` file. As an argument it is a `&'a` of the struct.
 The argument's slot in the frame holds the instance, so it is only for an argument, alone, in a union, or with one of the modifiers above except `.default()`.
@@ -543,6 +549,9 @@ in play apart:
 | the type byte in the cell's header | string, BigInt, array, `ArrayBuffer`, typed array, `DataView`, `String` object |
 | `JSCell::isCallable`               | a function, or a proxy of one                                                  |
 | the cell's `ClassInfo`             | an instance of a class, a `Date`                                               |
+
+An alternative is named for what the value is: `string` and `number` for the handles `b.stringLike` and `b.jsNumber`,
+`text` for a converted `b.string`, `missing` for `undefined` or `null`, `other` for the rest.
 
 A strict type takes the kinds its row under [Types](#types) says. A `b.cell` of the JSC class of a kind takes that kind:
 `b.cell("JSC::JSDataView", ..)` before `b.bufferSource` gets the `DataView`s. A type that coerces or

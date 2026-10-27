@@ -48,7 +48,7 @@ impl TimeoutObject {
         value: IdleStart<'_>,
     ) {
         let value = match value {
-            IdleStart::Ms(ms) => {
+            IdleStart::Number(ms) => {
                 this.internals.set_idle_start(ms.to_js().as_number());
                 ms.to_js()
             }

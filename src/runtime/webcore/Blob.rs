@@ -1757,14 +1757,14 @@ impl BlobExt for Blob {
 
         // A string in place of `start` or `end` is the content type.
         let (start, end, content_type) = match (start, end, content_type) {
-            (start @ BlobSliceBound::ContentType(_), _, _) => {
+            (start @ BlobSliceBound::String(_), _, _) => {
                 (BlobSliceBound::Other, BlobSliceBound::Other, start)
             }
-            (start, end @ BlobSliceBound::ContentType(_), _) => (start, BlobSliceBound::Other, end),
+            (start, end @ BlobSliceBound::String(_), _) => (start, BlobSliceBound::Other, end),
             args => args,
         };
 
-        if let BlobSliceBound::Offset(start) = start {
+        if let BlobSliceBound::Number(start) = start {
             let start = start.to_js().to_int64();
             if start < 0 {
                 relative_start = start.saturating_add(size_i64).max(0);
@@ -1773,7 +1773,7 @@ impl BlobExt for Blob {
             }
         }
 
-        if let BlobSliceBound::Offset(end) = end {
+        if let BlobSliceBound::Number(end) = end {
             let end = end.to_js().to_int64();
             if end < 0 {
                 relative_end = end.saturating_add(size_i64).max(0);
@@ -1783,7 +1783,7 @@ impl BlobExt for Blob {
         }
 
         let blob_content_type = match content_type {
-            BlobSliceBound::ContentType(content_type) => {
+            BlobSliceBound::String(content_type) => {
                 let content_type_view = content_type.to_js_string_view(global_this)?;
                 let slicer = content_type_view.to_utf8();
                 let slice = slicer.slice();

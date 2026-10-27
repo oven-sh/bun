@@ -6,7 +6,7 @@ use crate::jsc::{self, JSGlobalObject, JSValue, JsResult};
 use bun_core::WStr;
 use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
-use bun_jsc::bindgen::{JsLocal, JsScope, StringLike, StringOrJsBytes};
+use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
@@ -603,7 +603,7 @@ impl Encoding {
         match value {
             None => Ok(default),
             Some(generated::EncodingName::String(name)) => {
-                Self::from_name_with_default_on_empty(name, global_object, default)
+                Self::from_name_with_default_on_empty(name.to_js(), global_object, default)
             }
             Some(generated::EncodingName::Other(value)) => {
                 Err(Self::throw_encoding_error(global_object, value.to_js()))
@@ -612,11 +612,10 @@ impl Encoding {
     }
 
     pub(crate) fn from_name_with_default_on_empty(
-        name: JsLocal<'_, StringLike>,
+        value: JSValue,
         global_object: &JSGlobalObject,
         default: Encoding,
     ) -> JsResult<Encoding> {
-        let value = name.to_js();
         match Self::from_js_with_default_on_empty(value, global_object, default)? {
             Some(e) => Ok(e),
             None => Err(Self::throw_encoding_error(global_object, value)),
@@ -766,7 +765,7 @@ pub(crate) trait PathLikeExt {
         Self: Sized;
 }
 
-/// What the error shows, after [`PathLikeExt::from_js`] returned `None` for `path`.
+/// The value that [`PathLikeExt::from_js`] returned `None` for, which the caller's error reports as received.
 pub(crate) fn refused_value(path: generated::PathLike<'_>) -> JSValue {
     match path {
         generated::PathLike::Buffer(buffer) => buffer.to_js(),

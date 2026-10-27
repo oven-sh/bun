@@ -99,3 +99,7 @@ tsd
 
 tsd.expectType(Bun.mmap("./data.bin", { offset: 4096 })).is<Uint8Array<ArrayBuffer>>();
 tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer>>();
+
+declare const webview: Bun.WebView;
+tsd.expectType(webview.goBack()).is<Promise<void>>();
+tsd.expectType(webview.goForward()).is<Promise<void>>();

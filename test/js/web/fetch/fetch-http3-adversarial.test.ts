@@ -5,7 +5,7 @@ import { tls } from "harness";
 // Adversarial fuzzer-style coverage for the HTTP/3 large-body path. The server
 // binds UDP only (`http1: false`) so a fetch that silently fell back to HTTP/1.1
 // would ECONNREFUSED — every pass here proves the QUIC path carried the bytes.
-let server: Server;
+let server: Server<undefined>;
 let base: string;
 
 beforeAll(() => {

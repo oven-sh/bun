@@ -9,204 +9,6 @@ use bun_core::{self as bun, Global, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
 
 // ─── compiling submodules ────────────────────────────────────────────────────
-#[path = "ci_info.rs"]
-pub(crate) mod ci_info;
-/// CI-provider detection table, copied from watson/ci-info@4.0.0; maintained by
-/// hand. Keep in sync with the vendors.json upstream.
-pub(crate) mod ci_info_generated {
-    use bun_core::{getenv_z, zstr};
-
-    macro_rules! env_set {
-        ($k:literal) => {
-            getenv_z(zstr!($k)).is_some()
-        };
-    }
-    macro_rules! env_eq {
-        ($k:literal, $v:literal) => {
-            getenv_z(zstr!($k)).map_or(false, |v| v == $v.as_bytes())
-        };
-    }
-    macro_rules! env_contains {
-        ($k:literal, $needle:literal) => {
-            getenv_z(zstr!($k)).map_or(false, |v| {
-                bun_core::strings::index_of(v, $needle.as_bytes()).is_some()
-            })
-        };
-    }
-
-    pub(crate) fn is_ci_uncached_generated() -> bool {
-        env_set!("BUILD_ID")
-            || env_set!("BUILD_NUMBER")
-            || env_set!("CI")
-            || env_set!("CI_APP_ID")
-            || env_set!("CI_BUILD_ID")
-            || env_set!("CI_BUILD_NUMBER")
-            || env_set!("CI_NAME")
-            || env_set!("CONTINUOUS_INTEGRATION")
-            || env_set!("RUN_ID")
-    }
-
-    pub(crate) fn detect_uncached_generated() -> Option<&'static [u8]> {
-        if env_set!("AGOLA_GIT_REF") {
-            return Some(b"agola-ci");
-        }
-        if env_set!("AC_APPCIRCLE") {
-            return Some(b"appcircle");
-        }
-        if env_set!("APPVEYOR") {
-            return Some(b"appveyor");
-        }
-        if env_set!("CODEBUILD_BUILD_ARN") {
-            return Some(b"aws-codebuild");
-        }
-        if env_set!("TF_BUILD") {
-            return Some(b"azure-pipelines");
-        }
-        if env_set!("bamboo_planKey") {
-            return Some(b"bamboo");
-        }
-        if env_set!("BITBUCKET_COMMIT") {
-            return Some(b"bitbucket-pipelines");
-        }
-        if env_set!("BITRISE_IO") {
-            return Some(b"bitrise");
-        }
-        if env_set!("BUDDY_WORKSPACE_ID") {
-            return Some(b"buddy");
-        }
-        if env_set!("BUILDKITE") {
-            return Some(b"buildkite");
-        }
-        if env_set!("CIRCLECI") {
-            return Some(b"circleci");
-        }
-        if env_set!("CIRRUS_CI") {
-            return Some(b"cirrus-ci");
-        }
-        if env_set!("CF_PAGES") {
-            return Some(b"cloudflare-pages");
-        }
-        if env_set!("WORKERS_CI") {
-            return Some(b"cloudflare-workers");
-        }
-        if env_set!("CF_BUILD_ID") {
-            return Some(b"codefresh");
-        }
-        if env_set!("CM_BUILD_ID") {
-            return Some(b"codemagic");
-        }
-        if env_eq!("CI_NAME", "codeship") {
-            return Some(b"codeship");
-        }
-        if env_set!("DRONE") {
-            return Some(b"drone");
-        }
-        if env_set!("DSARI") {
-            return Some(b"dsari");
-        }
-        if env_set!("EARTHLY_CI") {
-            return Some(b"earthly");
-        }
-        if env_set!("EAS_BUILD") {
-            return Some(b"expo-application-services");
-        }
-        if env_set!("GERRIT_PROJECT") {
-            return Some(b"gerrit");
-        }
-        if env_set!("GITEA_ACTIONS") {
-            return Some(b"gitea-actions");
-        }
-        if env_set!("GITHUB_ACTIONS") {
-            return Some(b"github-actions");
-        }
-        if env_set!("GITLAB_CI") {
-            return Some(b"gitlab-ci");
-        }
-        if env_set!("GO_PIPELINE_LABEL") {
-            return Some(b"gocd");
-        }
-        if env_set!("BUILDER_OUTPUT") {
-            return Some(b"google-cloud-build");
-        }
-        if env_set!("HARNESS_BUILD_ID") {
-            return Some(b"harness-ci");
-        }
-        if env_contains!("NODE", "/app/.heroku/node/bin/node") {
-            return Some(b"heroku");
-        }
-        if env_set!("HUDSON_URL") {
-            return Some(b"hudson");
-        }
-        if env_set!("JENKINS_URL") && env_set!("BUILD_ID") {
-            return Some(b"jenkins");
-        }
-        if env_set!("LAYERCI") {
-            return Some(b"layerci");
-        }
-        if env_set!("MAGNUM") {
-            return Some(b"magnum-ci");
-        }
-        if env_set!("NETLIFY") {
-            return Some(b"netlify-ci");
-        }
-        if env_set!("NEVERCODE") {
-            return Some(b"nevercode");
-        }
-        if env_set!("PROW_JOB_ID") {
-            return Some(b"prow");
-        }
-        if env_set!("RELEASE_BUILD_ID") {
-            return Some(b"releasehub");
-        }
-        if env_set!("RENDER") {
-            return Some(b"render");
-        }
-        if env_set!("SAILCI") {
-            return Some(b"sail-ci");
-        }
-        if env_set!("SCREWDRIVER") {
-            return Some(b"screwdriver");
-        }
-        if env_set!("SEMAPHORE") {
-            return Some(b"semaphore");
-        }
-        if env_eq!("CI_NAME", "sourcehut") {
-            return Some(b"sourcehut");
-        }
-        if env_set!("STRIDER") {
-            return Some(b"strider-cd");
-        }
-        if env_set!("TASK_ID") && env_set!("RUN_ID") {
-            return Some(b"taskcluster");
-        }
-        if env_set!("TEAMCITY_VERSION") {
-            return Some(b"teamcity");
-        }
-        if env_set!("TRAVIS") {
-            return Some(b"travis-ci");
-        }
-        if env_set!("VELA") {
-            return Some(b"vela");
-        }
-        if env_set!("NOW_BUILDER") || env_set!("VERCEL") {
-            return Some(b"vercel");
-        }
-        if env_set!("APPCENTER_BUILD_ID") {
-            return Some(b"visual-studio-app-center");
-        }
-        if env_eq!("CI", "woodpecker") {
-            return Some(b"woodpecker");
-        }
-        if env_set!("CI_XCODE_PROJECT") {
-            return Some(b"xcode-cloud");
-        }
-        if env_set!("XCS") {
-            return Some(b"xcode-server");
-        }
-        None
-    }
-}
-
 #[path = "add_completions.rs"]
 pub(crate) mod add_completions;
 #[path = "colon_list_type.rs"]
@@ -215,8 +17,6 @@ pub(crate) mod colon_list_type;
 pub(crate) mod discord_command;
 #[path = "shell_completions.rs"]
 pub(crate) mod shell_completions;
-#[path = "which_npm_client.rs"]
-pub(crate) mod which_npm_client;
 
 // ─── open (open_url wrapper; Editor/EditorContext live in open.rs) ───────────
 #[path = "open.rs"]
@@ -336,14 +136,22 @@ pub(crate) mod upgrade_command;
 pub(crate) mod add_command;
 #[path = "audit_command.rs"]
 pub(crate) mod audit_command;
+#[path = "check_command.rs"]
+pub(crate) mod check_command;
 #[path = "dedupe_command.rs"]
 pub(crate) mod dedupe_command;
 #[path = "filter_arg.rs"]
 pub(crate) mod filter_arg;
 #[path = "filter_run.rs"]
 pub(crate) mod filter_run;
+#[path = "format_command.rs"]
+pub(crate) mod format_command;
 #[path = "link_command.rs"]
 pub(crate) mod link_command;
+#[path = "lint_command.rs"]
+pub(crate) mod lint_command;
+#[path = "lint_js.rs"]
+pub(crate) mod lint_js;
 #[path = "multi_run.rs"]
 pub(crate) mod multi_run;
 #[path = "outdated_command.rs"]
@@ -354,12 +162,14 @@ pub(crate) mod pack_command;
 pub(crate) mod patch_command;
 #[path = "patch_commit_command.rs"]
 pub(crate) mod patch_commit_command;
+pub(crate) mod pm_cache_prune_command;
 #[path = "pm_diff_command.rs"]
 pub(crate) mod pm_diff_command;
 pub(crate) mod pm_diff_normalize;
 pub(crate) mod pm_diff_profile;
 pub(crate) mod pm_diff_relayout;
 pub(crate) mod pm_diff_semantic;
+pub(crate) mod pm_fetch_command;
 #[path = "pm_licenses_command.rs"]
 pub(crate) mod pm_licenses_command;
 #[path = "pm_pkg_command.rs"]
@@ -371,8 +181,6 @@ pub(crate) mod pm_update_package_json;
 pub(crate) mod pm_version_command;
 #[path = "pm_view_command.rs"]
 pub(crate) mod pm_view_command;
-#[path = "pm_why_command.rs"]
-pub(crate) mod pm_why_command;
 #[path = "prune_command.rs"]
 pub(crate) mod prune_command;
 #[path = "publish_command.rs"]
@@ -381,6 +189,9 @@ pub(crate) mod publish_command;
 pub(crate) mod remove_command;
 #[path = "scan_command.rs"]
 pub(crate) mod scan_command;
+#[path = "script_or_command.rs"]
+pub(crate) mod script_or_command;
+mod typescript_libs;
 #[path = "unlink_command.rs"]
 pub(crate) mod unlink_command;
 #[path = "update_command.rs"]
@@ -642,8 +453,11 @@ pub(crate) mod help_command {
 
 <b>Commands:<r>
   <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
-            <d>lint<r>                 Run a package.json script
+            <d>dev<r>                  Run a package.json script
   <b><magenta>test<r>                           Run unit tests with Bun
+  <b><magenta>check<r>                          Type check a TypeScript project
+  <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint
+  <b><magenta>fmt<r>                            Format JavaScript and TypeScript, like Prettier
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -909,15 +723,19 @@ pub(crate) mod command {
         if is_bun_x(argv0) {
             if let Some(next) = argv.get(1) {
                 let next_bytes = next.as_bytes();
-                if next_bytes == b"add"
-                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()
-                        == Some(true)
-                {
-                    return Tag::AddCommand;
+                // To install a package, `bunx` runs its own executable again as `bunx add`, with
+                // the directory it installs into as the working directory.
+                if next_bytes == b"add" {
+                    use bun_install::package_manager_real::run_tasks::is_bunx_tree;
+                    let mut cwd = bun_paths::path_buffer_pool::get();
+                    if bun_sys::getcwd(&mut *cwd).is_ok_and(|len| is_bunx_tree(&cwd[..len])) {
+                        return Tag::AddCommand;
+                    }
                 }
+                // Without a POSIX shell, that install runs each lifecycle script by running this
+                // executable again as `bunx exec --no-env-file`. See `ScriptArgv`.
                 if next_bytes == b"exec"
-                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()
-                        == Some(true)
+                    && (argv.get(2)).is_some_and(|flag| flag.as_bytes() == b"--no-env-file")
                 {
                     return Tag::ExecCommand;
                 }
@@ -950,6 +768,12 @@ pub(crate) mod command {
                 Some(n) => first_arg_name = n,
                 None => return Tag::AutoCommand,
             }
+        }
+
+        // `bun --cwd <dir> lint`: `<dir>` is the value of a flag.
+        let starts_with_flag = argv.get(1).is_some_and(|it| it.starts_with(b"-"));
+        if starts_with_flag && let Some(it) = super::script_or_command::command_after_flags() {
+            first_arg_name = it;
         }
 
         type RootCommandMatcher = strings::ExactSizeMatcher<12>;
@@ -1043,6 +867,24 @@ pub(crate) mod command {
         if x == RootCommandMatcher::case(b"audit") {
             return Tag::AuditCommand;
         }
+        if x == RootCommandMatcher::case(b"check") {
+            return match super::script_or_command::is_of_the_project(b"check") {
+                true => Tag::AutoCommand,
+                false => Tag::CheckCommand,
+            };
+        }
+        if x == RootCommandMatcher::case(b"lint") {
+            return match super::script_or_command::is_of_the_project(b"lint") {
+                true => Tag::AutoCommand,
+                false => Tag::LintCommand,
+            };
+        }
+        if x == RootCommandMatcher::case(b"fmt") {
+            return match super::script_or_command::is_of_the_project(b"fmt") {
+                true => Tag::AutoCommand,
+                false => Tag::FormatCommand,
+            };
+        }
         if x == RootCommandMatcher::case(b"info") {
             return Tag::InfoCommand;
         }
@@ -1131,18 +973,7 @@ pub(crate) mod command {
             ctx.args = arguments::parse(cmd, ctx)?;
         }
 
-        #[cfg(windows)]
-        {
-            if ctx.debug.hot_reload == HotReload::Watch {
-                {
-                    if !bun_sys::windows::is_watcher_child() {
-                        bun_sys::windows::become_watcher_manager();
-                    } else {
-                        bun_core::set_auto_reload_on_crash(true);
-                    }
-                }
-            }
-        }
+        super::set_up_watch_restarts(ctx);
 
         Ok(ctx)
     }
@@ -1303,6 +1134,9 @@ pub(crate) mod command {
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
+            Tag::CheckCommand => exec_check(log),
+            Tag::LintCommand => exec_lint(log),
+            Tag::FormatCommand => exec_format(log),
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
@@ -1420,6 +1254,16 @@ pub(crate) mod command {
         let ctx = init(tag, log)?;
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
+        // Scripts have no entry point to start from: the project is checked, as by `bun check`.
+        let runs_several =
+            ctx.parallel || ctx.sequential || !ctx.filters.is_empty() || ctx.workspaces;
+        if runs_several
+            && ctx.runtime_options.check
+            && !super::check_command::check_project_before(None)
+        {
+            Global::exit(1);
+        }
+
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.
             let Err(err) = super::multi_run::run(ctx);
@@ -1438,22 +1282,22 @@ pub(crate) mod command {
         // REPL (via process._eval). `-i -p` is not yet threaded through the
         // bootstrap (Node prints AND enters the REPL), so `-p` currently
         // bypasses the REPL. RunCommand's positionals carry a leading "run".
-        if ctx.runtime_options.interactive && !ctx.runtime_options.eval.eval_and_print {
-            let no_target = match tag {
-                Tag::AutoCommand => ctx.positionals.is_empty(),
-                Tag::RunCommand => match ctx.positionals.as_slice() {
-                    [] => true,
-                    [r] => r.as_ref() == b"run",
-                    _ => false,
-                },
+        let no_target = match tag {
+            Tag::AutoCommand => ctx.positionals.is_empty(),
+            Tag::RunCommand => match ctx.positionals.as_slice() {
+                [] => true,
+                [r] => r.as_ref() == b"run",
                 _ => false,
-            };
-            if no_target {
-                return run_command::RunCommand::exec_node_repl(ctx);
-            }
+            },
+            _ => false,
+        };
+        if ctx.runtime_options.interactive && !ctx.runtime_options.eval.eval_and_print && no_target
+        {
+            return run_command::RunCommand::exec_node_repl(ctx);
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
+            lint_command::read_program_from_stdin(ctx);
             return run_command::RunCommand::exec_eval(ctx);
         }
 
@@ -1462,6 +1306,11 @@ pub(crate) mod command {
             if extension == b".lockb" {
                 return bun_lockb(ctx);
             }
+        }
+
+        // `bun --check` and `bun run --check` are `bun check`, also where that is a script.
+        if no_target && ctx.runtime_options.check && ctx.runtime_options.eval.script.is_empty() {
+            super::check_command::CheckCommand::exec_without_arguments();
         }
 
         if !ctx.positionals.is_empty() {
@@ -1545,6 +1394,81 @@ pub(crate) mod command {
         let ctx = init(Tag::BuildCommand, log)?;
         super::build_command::BuildCommand::exec(ctx, None)?;
         Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_check(log: &mut bun_ast::Log) -> CmdResult {
+        // CheckCommand parses its own argv.
+        init(Tag::CheckCommand, log)?;
+        let argv = argv_zslice();
+        super::check_command::CheckCommand::exec(after_command(&argv, b"check"))
+    }
+
+    /// What follows `command`, which stands after the flags of `bun` and those of `BUN_OPTIONS`.
+    fn after_command<'a>(
+        argv: &'a [&'static bun_core::ZStr],
+        command: &[u8],
+    ) -> &'a [&'static bun_core::ZStr] {
+        let at = super::script_or_command::place_of_command(command);
+        at.and_then(|at| argv.get(at + 1..)).unwrap_or_default()
+    }
+
+    /// The flags of `command` that stand before it, as in `bun --check format` or `bun -c format`, and then what follows it. If
+    /// they were dropped, `--check` would write. `knows` tells whether `command` has a flag. The others are for `bun`, or come
+    /// from `BUN_OPTIONS`.
+    fn with_own_flags_before(
+        argv: &[&'static bun_core::ZStr],
+        command: &[u8],
+        knows: fn(&[u8]) -> bool,
+    ) -> Vec<&'static bun_core::ZStr> {
+        let is_of_bun = |arg: &[u8]| match strings::split_once_char(arg, b'=') {
+            // `bun -c=bunfig.toml lint`. Without a value it's `--check` of `bun fmt`.
+            Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
+            None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
+        };
+        let at = super::script_or_command::place_of_command(command).unwrap_or(argv.len());
+        let mut args: Vec<_> = (argv.iter().take(at).skip(1))
+            .filter(|arg| arg.as_bytes().starts_with(b"-"))
+            .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
+            .copied()
+            .collect();
+        args.extend_from_slice(after_command(argv, command));
+        args
+    }
+
+    /// `bun --help lint`: prints the help of `command` and exits if `--help` or `-h` is among the flags of `bun`, which precede it.
+    fn print_help_if_asked_before(command: &[u8], tag: Tag) {
+        let before = super::script_or_command::arguments_before(command);
+        if before.iter().any(|arg| matches!(*arg, b"--help" | b"-h")) {
+            tag_print_help(tag, false);
+            Global::exit(0);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_lint(log: &mut bun_ast::Log) -> CmdResult {
+        // LintCommand parses its own argv.
+        let ctx = init(Tag::LintCommand, log)?;
+        let argv = argv_zslice();
+        print_help_if_asked_before(b"lint", Tag::LintCommand);
+        let knows = super::lint_command::LintCommand::has_flag;
+        super::lint_command::LintCommand::exec(ctx, &with_own_flags_before(&argv, b"lint", knows))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_format(log: &mut bun_ast::Log) -> CmdResult {
+        // FormatCommand parses its own argv.
+        let ctx = init(Tag::FormatCommand, log)?;
+        let argv = argv_zslice();
+        print_help_if_asked_before(b"fmt", Tag::FormatCommand);
+        let knows = super::format_command::FormatCommand::has_flag;
+        super::format_command::FormatCommand::exec(
+            ctx,
+            &with_own_flags_before(&argv, b"fmt", knows),
+        )
     }
 
     #[cold]
@@ -1825,13 +1749,20 @@ pub(crate) mod command {
         // if template_name is "react" — deprecated; redirect to react-app/vite.
         if template_name == b"react" {
             pretty_errorln!(
-                "The \"react\" template has been deprecated.\n\
-It is recommended to use \"react-app\" or \"vite\" instead.\n\n\
-To create a project using Create React App, run\n\n\
-  <d>bun create react-app<r>\n\n\
-To create a React project using Vite, run\n\n\
-  <d>bun create vite<r>\n\n\
-Then select \"React\" from the list of frameworks.\n"
+                "\
+The \"react\" template has been deprecated.
+It is recommended to use \"react-app\" or \"vite\" instead.
+
+To create a project using Create React App, run
+
+  <d>bun create react-app<r>
+
+To create a React project using Vite, run
+
+  <d>bun create vite<r>
+
+Then select \"React\" from the list of frameworks.
+"
             );
             Global::exit(1);
         }
@@ -1839,14 +1770,15 @@ Then select \"React\" from the list of frameworks.\n"
         // if template_name is "next" — redirect to next-app.
         if template_name == b"next" {
             pretty_errorln!(
-                "<yellow>warn: No template <b>create-next<r> found.\n\
-To create a project with the official Next.js scaffolding tool, run\n\
+                "\
+<yellow>warn: No template <b>create-next<r> found.
+To create a project with the official Next.js scaffolding tool, run
   <b>bun create next-app <cyan>[destination]<r>"
             );
             Global::exit(1);
         }
 
-        let create_command_info = CreateCommand::extract_info(&ctx)?;
+        let create_command_info = CreateCommand::extract_info()?;
         let template = create_command_info.template;
         let example_tag = create_command_info.example_tag;
 
@@ -1857,11 +1789,12 @@ To create a project with the official Next.js scaffolding tool, run\n\
 
         if use_bunx {
             let mut bunx_args: Vec<&ZStr> =
-                Vec::with_capacity(2 + args.len() - template_name_start + (dash_dash_bun as usize));
+                Vec::with_capacity(3 + args.len() - template_name_start + (dash_dash_bun as usize));
             bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
                 bunx_args.push(bun_core::zstr!("--bun"));
             }
+            bunx_args.extend(Global::ca_store_flag());
             // `add_create_prefix` returns an owned NUL-terminated buffer.
             // `bun create` is a one-shot CLI subcommand (ends in exec/exit), so
             // the prefixed package name is a process singleton — park the owning
@@ -1876,24 +1809,29 @@ To create a project with the official Next.js scaffolding tool, run\n\
             return BunxCommand::exec(ctx, &bunx_args);
         }
 
-        CreateCommand::exec(&ctx, example_tag, template)
+        CreateCommand::exec(ctx, example_tag, template)
     }
 
     /// `bun ./bun.lockb` — print lockfile as yarn.lock (or its hash with `--hash`).
     #[cold]
     #[inline(never)]
     fn bun_lockb(ctx: &mut ContextData) -> crate::Result<()> {
-        use bun_install::lockfile::{Printer, PrinterFormat};
+        use bun_install::lockfile::Printer;
+
+        // SAFETY: single-threaded CLI dispatch; `ctx.log` was populated by
+        // `create_context_data` and no other `&mut Log` borrow is live for the
+        // rest of this function.
+        let log = unsafe { ctx.log_mut() };
+        let entry = &ctx.args.entry_points[0];
 
         for arg in bun::argv() {
             if arg == b"--hash" {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                let entry = &ctx.args.entry_points[0];
-                path_buf[..entry.len()].copy_from_slice(entry);
-                path_buf[entry.len()] = 0;
-                // SAFETY: NUL terminator written at `path_buf[entry.len()]` above.
-                let lockfile_path = bun_core::ZStr::from_buf(&path_buf[..], entry.len());
-                let file = match bun_sys::File::open(lockfile_path, bun_sys::O::RDONLY, 0) {
+                let file = match bun_sys::File::openat(
+                    bun_sys::Fd::cwd(),
+                    &entry[..],
+                    bun_sys::O::RDONLY,
+                    0,
+                ) {
                     Ok(f) => f,
                     Err(err) => {
                         Output::err(err, "failed to open lockfile", ());
@@ -1901,16 +1839,12 @@ To create a project with the official Next.js scaffolding tool, run\n\
                     }
                 };
                 return super::package_manager_command::PackageManagerCommand::print_hash(
-                    ctx, &file,
+                    log, &file,
                 );
             }
         }
 
-        let entry = ctx.args.entry_points[0].clone();
-        // SAFETY: single-threaded CLI dispatch; `ctx.log` was populated by
-        // `create_context_data` and no other `&mut Log` borrow is live for the
-        // duration of this `Printer::print` call.
-        Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn).map_err(Into::into)
+        Printer::print(log, entry).map_err(Into::into)
     }
 
     #[cold]
@@ -1919,34 +1853,47 @@ To create a project with the official Next.js scaffolding tool, run\n\
         use bun_install::package_manager_real::{CommandLineArguments, Subcommand as PmSubcommand};
         use bun_install::{PackageManager, Subcommand};
 
-        // Parse arguments manually since the standard flow doesn't work for standalone commands
         let cli = CommandLineArguments::parse(PmSubcommand::Info)?;
-        let json_output = cli.json_output;
         let ctx = init(Tag::InfoCommand, log)?;
-        let (pm, _) = PackageManager::init(ctx, cli, Subcommand::Info)?;
+        let (pm, _) = PackageManager::init(ctx, &cli, Subcommand::Info)?;
 
-        // Handle arguments correctly for standalone info command
-        let mut package_name: &[u8] = b"";
-        let mut property_path: Option<&[u8]> = None;
-
-        // Find non-flag arguments starting from argv[2] (after "bun info").
-        let mut found_package = false;
-        let argv = bun::argv();
-        for arg in argv.iter().skip(2) {
-            // Skip flags
-            if !arg.is_empty() && arg[0] == b'-' {
-                continue;
-            }
-            if !found_package {
-                package_name = arg;
-                found_package = true;
-            } else {
-                property_path = Some(arg);
-                break;
-            }
+        // `["info", "<spec>", "<field>"...]`
+        let mut positionals: &'static [&'static [u8]] = pm.options.positionals;
+        if positionals.first().is_some_and(|p| *p == b"info") {
+            positionals = &positionals[1..];
         }
+        let package_name: &[u8] = positionals.first().copied().unwrap_or(b"");
+        let fields: &[&[u8]] = positionals.get(1..).unwrap_or(&[]);
 
-        super::pm_view_command::view(pm, package_name, property_path, json_output)
+        super::pm_view_command::view(pm, package_name, fields, cli.json_output)
+    }
+
+    /// Prints the flags for `bun lint --help` and `bun fmt --help`: the common ones, or with `all`, every flag by group.
+    fn print_flags(help: &bun_lint_driver::cli::Help, all: bool) {
+        if all {
+            for group in help.groups {
+                pretty!("\n<b>{}:<r>", group.title);
+                bun_clap::simple_help(group.params);
+                pretty!("\n");
+            }
+            return;
+        }
+        pretty!("\n<b>Flags:<r>");
+        bun_clap::simple_help(&help.common());
+        pretty!("\n");
+    }
+
+    /// Printed at the end of `bun <command> --help` if the project has a script with the same name.
+    fn print_note_about_script(command: &str) {
+        use crate::cli::script_or_command::{Runs, runs};
+        if matches!(runs(command.as_bytes()), Ok(Runs::Script)) {
+            pretty!(
+                "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command, or pass <b>--no-script<r>\n",
+                command,
+                command,
+                command,
+            );
+        }
     }
 
     pub(crate) fn tag_print_help(cmd: Tag, show_all_flags: bool) {
@@ -1976,6 +1923,14 @@ Flags:
   <cyan>--bun<r>                  Force the command to run with Bun instead of Node.js
   <cyan>-p, --package <blue>\\<package\\><r>    Specify package to install when binary name differs from package name
   <cyan>--no-install<r>           Skip installation if package is not already installed
+  <cyan>--cwd <blue>\\<path\\><r>            Set the working directory
+  <cyan>--env-file <blue>\\<file\\><r>       Load environment variables from the specified file(s)
+  <cyan>--minimum-release-age <blue>\\<seconds\\><r>  Only install packages published at least N seconds ago (security feature)
+  <cyan>--registry <blue>\\<url\\><r>        Install from a specific registry
+  <cyan>--ca <blue>\\<cert\\><r>, <cyan>--cafile <blue>\\<path\\><r>  Trust a Certificate Authority signing certificate during installation
+  <cyan>--use-system-ca<r>, <cyan>--use-openssl-ca<r>, <cyan>--use-bundled-ca<r>  Choose the CA store to trust during installation
+  <cyan>--trust<r>                Run the lifecycle scripts of the package and of ALL of its dependencies during installation
+  <cyan>--ignore-scripts<r>       Run no lifecycle scripts during installation
   <cyan>--verbose<r>              Enable verbose output during installation
   <cyan>--silent<r>               Suppress output during installation
 
@@ -2040,6 +1995,9 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   <d>Run all test files, only including tests whose names includes \"baz\"<r>
   <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
+
+  <d>Type check the test files and what they import, then run them<r>
+  <b><green>bun test<r> <cyan>--check<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "
@@ -2160,6 +2118,94 @@ Execute a shell script directly from Bun.
             Tag::AuditCommand => {
                 pm_print_help(PmSubcommand::Audit);
             }
+            Tag::CheckCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun check<r> <cyan>[flags]<r> <blue>[...files or directories]<r>
+  Type check a TypeScript project.
+
+  Uses the nearest <b>tsconfig.json<r> and reports the same errors as <b>tsc<r>, using all CPU cores.
+  Pass files or directories to check only those and their imports.
+  Project <b>references<r> are followed, like <b>tsc -b<r>, and nothing has to be built first.
+
+<b>Flags:<r>"
+                );
+                Output::flush();
+                bun_clap::simple_help(crate::cli::check_command::PARAMS);
+                pretty!(
+                    "
+      <cyan>--strict<r>, <cyan>--target<r><d><cyan>=\\<val\\><r>, ...  Any compiler option, as for <b>tsc<r>. Overrides tsconfig.json
+
+<b>Examples:<r>
+  <d>Check the current project<r>
+  <b><green>bun check<r>
+
+  <d>Check one file and everything it imports<r>
+  <b><green>bun check<r> <blue>src/index.ts<r>
+
+  <d>Check another project<r>
+  <b><green>bun check<r> <cyan>-p<r> <blue>packages/server<r>
+
+  <d>Try a stricter option without editing tsconfig.json<r>
+  <b><green>bun check<r> <cyan>--noUncheckedIndexedAccess<r>
+
+  <d>Check a file, then run it<r>
+  <b><green>bun<r> <cyan>--check<r> <blue>src/index.ts<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r>
+"
+                );
+                print_note_about_script("check");
+                Output::flush();
+            }
+            Tag::FormatCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun fmt<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
+  Format JavaScript, TypeScript, CSS, HTML, JSON, YAML, Markdown and more.
+"
+                );
+                print_flags(&crate::cli::format_command::HELP, show_all_flags);
+                pretty!(
+                    "
+<b>Examples:<r>
+  <b><green>bun fmt<r>
+  <b><green>bun fmt<r> <blue>src test/a.test.ts<r>
+  <b><green>bun fmt<r> <cyan>--check<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/format<r>
+"
+                );
+                if !show_all_flags {
+                    pretty!("See every flag with <b><green>bun fmt<r> <cyan>--help --all<r>\n");
+                }
+                print_note_about_script("fmt");
+                Output::flush();
+            }
+            Tag::LintCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun lint<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
+  Find and fix problems in JavaScript and TypeScript.
+"
+                );
+                print_flags(&crate::cli::lint_command::HELP, show_all_flags);
+                pretty!(
+                    "
+<b>Examples:<r>
+  <b><green>bun lint<r>
+  <b><green>bun lint<r> <cyan>--fix<r> <blue>src<r>
+  <b><green>bun lint<r> <cyan>--rule<r> <blue>'no-console: error'<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/lint<r>
+"
+                );
+                if !show_all_flags {
+                    pretty!("See every flag with <b><green>bun lint<r> <cyan>--help --all<r>\n");
+                }
+                print_note_about_script("lint");
+                Output::flush();
+            }
             Tag::DedupeCommand => {
                 pm_print_help(PmSubcommand::Dedupe);
             }
@@ -2167,50 +2213,10 @@ Execute a shell script directly from Bun.
                 pm_print_help(PmSubcommand::Prune);
             }
             Tag::InfoCommand => {
-                pretty!(
-                    "\
-<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
-  Display package metadata from the registry.
-
-<b>Examples:<r>
-  <d>View basic information about a package<r>
-  <b><green>bun info<r> <blue>react<r>
-
-  <d>View specific version<r>
-  <b><green>bun info<r> <blue>react@18.0.0<r>
-
-  <d>View specific property<r>
-  <b><green>bun info<r> <blue>react<r> version
-  <b><green>bun info<r> <blue>react<r> dependencies
-  <b><green>bun info<r> <blue>react<r> versions
-
-Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
-"
-                );
-                Output::flush();
+                pm_print_help(PmSubcommand::Info);
             }
             Tag::WhyCommand => {
-                pretty!(
-                    "\
-<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
-Explain why a package is installed
-
-<b>Arguments:<r>
-  <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>
-
-<b>Options:<r>
-  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
-  <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>
-
-<b>Examples:<r>
-  <d>$<r> <b><green>bun why<r> <blue>react<r>
-  <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>
-  <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>
-
-Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
-"
-                );
-                Output::flush();
+                pm_print_help(PmSubcommand::Why);
             }
             Tag::InitCommand => {
                 pretty!(
@@ -2226,6 +2232,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
   <cyan>-r, --react<r>            Initialize a React project
       <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS
       <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
+      <cyan>--use-system-ca<r>    Use the system's trusted certificate authorities during installation
+      <cyan>--use-openssl-ca<r>   Use OpenSSL's default CA store instead of the bundled one during installation
+      <cyan>--use-bundled-ca<r>   Use bundled CA store during installation
 
 <b>Examples:<r>
   <b><green>bun init<r>
@@ -2245,23 +2254,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                 Output::flush();
             }
             Tag::PackageManagerCommand => {
-                pretty!(
-                    "\
-<b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>
-  Run package manager utilities.
-
-<b>Commands:<r>
-  <b><green>bun pm<r> <blue>bin<r>              print the path to bin folder
-  <b><green>bun pm<r> <blue>ls<r>               list the dependency tree according to the current lockfile
-  <b><green>bun pm<r> <blue>whoami<r>           print the current npm username
-  <b><green>bun pm<r> <blue>hash<r>             generate & print the hash of the current lockfile
-  <b><green>bun pm<r> <blue>cache<r>            print the path to the cache folder
-  <b><green>bun pm<r> <blue>cache rm<r>         clear the cache
-
-Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>
-"
-                );
-                Output::flush();
+                pm_print_help(PmSubcommand::Pm);
             }
             _ => HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, false),
         }
@@ -2301,4 +2294,62 @@ pub(crate) fn print_revision_and_exit() -> ! {
     let _ = w.write_all(b"\n");
     Output::flush();
     Global::exit(0);
+}
+
+/// `--check` with `--hot`: nothing runs unchecked, so the process starts again, as under `--watch`.
+/// Call it before `set_up_watch_restarts`.
+pub(crate) fn watch_instead_of_hot_for_check(ctx: &mut command::ContextData) {
+    if ctx.debug.hot_reload == command::HotReload::Hot {
+        ctx.debug.hot_reload = command::HotReload::Watch;
+        #[cfg(not(windows))]
+        {
+            bun_core::set_auto_reload_on_crash(true);
+        }
+    }
+}
+
+/// Under `--watch` on Windows, a manager process starts this one again after each change.
+pub(crate) fn set_up_watch_restarts(ctx: &command::ContextData) {
+    #[cfg(windows)]
+    {
+        if ctx.debug.hot_reload == command::HotReload::Watch {
+            if !bun_sys::windows::is_watcher_child() {
+                bun_sys::windows::become_watcher_manager();
+            } else {
+                bun_core::set_auto_reload_on_crash(true);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = ctx;
+}
+
+/// `--no-clear-screen` and `--watch-kill-signal`, once the watch mode is final. Node reads
+/// `--watch-kill-signal` only in watch mode; elsewhere it is accepted and ignored. Matching is
+/// case-insensitive (node uppercases).
+///
+/// `restarts`: the process can start again on a change, so the kill signal applies. True in watch
+/// mode, and for `bun bake`, which starts again when `bake.config.ts` changes.
+pub(crate) fn apply_watch_mode_flags(ctx: &mut command::ContextData, restarts: bool) {
+    if ctx.debug.no_clear_screen && ctx.debug.hot_reload != command::HotReload::None {
+        let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
+    }
+    if !restarts {
+        return;
+    }
+    let Some(kill_signal) = ctx.debug.watch_kill_signal_arg.as_deref() else {
+        return;
+    };
+    let upper = kill_signal.to_ascii_uppercase();
+    match bun_core::SignalCode::from_name(&upper) {
+        Some(sig) => ctx.debug.watch_kill_signal = sig,
+        None => {
+            Output::print_errorln(format_args!(
+                "TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: {}",
+                bstr::BStr::new(kill_signal)
+            ));
+            Output::flush();
+            Global::exit(1);
+        }
+    }
 }

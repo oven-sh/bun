@@ -1,7 +1,8 @@
 //! Building prefix codes.
 
 use crate::common::constants::{
-    INITIAL_REPEATED_CODE_LENGTH, REPEAT_PREVIOUS_CODE_LENGTH, REPEAT_ZERO_CODE_LENGTH,
+    INITIAL_REPEATED_CODE_LENGTH, NUM_COMMAND_SYMBOLS, REPEAT_PREVIOUS_CODE_LENGTH,
+    REPEAT_ZERO_CODE_LENGTH,
 };
 use crate::util::{Bug, Checked, SliceExt};
 
@@ -30,7 +31,7 @@ static SHELL_GAPS: [usize; 6] = [132, 57, 23, 10, 4, 1];
 /// Sorts so that `comparator(a, b)` holds for no `b` before `a`. Where the comparator leaves the order of two items open,
 /// the output depends on it, so this has to be the very algorithm of the reference encoder.
 #[inline(always)]
-pub(crate) fn sort_huffman_tree_items(
+fn sort_huffman_tree_items(
     items: &mut [HuffmanTree],
     comparator: impl Fn(&HuffmanTree, &HuffmanTree) -> bool,
 ) -> Checked {
@@ -72,12 +73,7 @@ pub(crate) fn sort_huffman_tree_items(
 }
 
 /// Stores the depth of every leaf below node `p0`. `false` if one is deeper than `max_depth`.
-pub(crate) fn set_depth(
-    p0: usize,
-    pool: &[HuffmanTree],
-    depth: &mut [u8],
-    max_depth: usize,
-) -> Checked<bool> {
+fn set_depth(p0: usize, pool: &[HuffmanTree], depth: &mut [u8], max_depth: usize) -> Checked<bool> {
     let mut stack = [-1i32; 16];
     let mut level = 0usize;
     let mut p = p0;
@@ -104,15 +100,6 @@ pub(crate) fn set_depth(
     }
 }
 
-/// The least frequent first.
-#[inline(always)]
-fn sort_huffman_tree(v0: &HuffmanTree, v1: &HuffmanTree) -> bool {
-    if v0.total_count != v1.total_count {
-        return v0.total_count < v1.total_count;
-    }
-    v0.index_right_or_value > v1.index_right_or_value
-}
-
 /// Stores in `depth` the code length of every symbol that occurs in the histogram `data`, none of them over
 /// `tree_limit`. `tree` is scratch space of `2 * data.len() + 1` nodes.
 ///
@@ -122,6 +109,35 @@ pub(crate) fn create_huffman_tree(
     tree_limit: usize,
     tree: &mut [HuffmanTree],
     depth: &mut [u8],
+) -> Checked {
+    create_huffman_tree_sorted_by(data, tree_limit, tree, depth, |v0, v1| {
+        if v0.total_count != v1.total_count {
+            return v0.total_count < v1.total_count;
+        }
+        v0.index_right_or_value > v1.index_right_or_value
+    })
+}
+
+/// [`create_huffman_tree`] with nothing to tell symbols of the same count apart, which can give other code lengths.
+pub(crate) fn create_huffman_tree_fast(
+    data: &[u32],
+    tree_limit: usize,
+    tree: &mut [HuffmanTree],
+    depth: &mut [u8],
+) -> Checked {
+    create_huffman_tree_sorted_by(data, tree_limit, tree, depth, |v0, v1| {
+        v0.total_count < v1.total_count
+    })
+}
+
+/// `comes_first` puts the leaves in the order of their counts.
+#[inline(always)]
+fn create_huffman_tree_sorted_by(
+    data: &[u32],
+    tree_limit: usize,
+    tree: &mut [HuffmanTree],
+    depth: &mut [u8],
+    comes_first: impl Fn(&HuffmanTree, &HuffmanTree) -> bool,
 ) -> Checked {
     let sentinel = HuffmanTree::new(u32::MAX, -1, -1);
     let mut count_limit = 1u32;
@@ -139,7 +155,7 @@ pub(crate) fn create_huffman_tree(
             return Ok(());
         }
 
-        sort_huffman_tree_items(tree.sub_mut(..n)?, sort_huffman_tree)?;
+        sort_huffman_tree_items(tree.sub_mut(..n)?, &comes_first)?;
 
         // [0, n) are the sorted leaves, [n] is a sentinel, parents are added from n + 1 on, in ascending order, and are
         // followed by a sentinel too.
@@ -179,24 +195,43 @@ pub(crate) fn create_huffman_tree(
 }
 
 /// The code lengths of a prefix code as they are written: with runs replaced by repeat codes.
-pub(crate) struct HuffmanTreeCode<'a> {
-    pub(crate) size: usize,
-    pub(crate) tree: &'a mut [u8],
-    pub(crate) extra_bits_data: &'a mut [u8],
+pub(crate) struct CodeLengthSymbols {
+    len: usize,
+    symbols: [u8; Self::MAX_LEN],
+    extra_bits: [u8; Self::MAX_LEN],
 }
 
-impl HuffmanTreeCode<'_> {
-    #[inline(always)]
-    fn push(&mut self, code: u8, extra_bits: u8) -> Checked {
-        self.tree.put(self.size, code)?;
-        self.extra_bits_data.put(self.size, extra_bits)?;
-        self.size += 1;
+impl CodeLengthSymbols {
+    /// The distance alphabet can be larger than that of the commands, but no more than
+    /// [`super::histogram::NUM_HISTOGRAM_DISTANCE_SYMBOLS`] of it are in use.
+    const MAX_LEN: usize = NUM_COMMAND_SYMBOLS;
+
+    pub(crate) const fn new() -> Self {
+        Self {
+            len: 0,
+            symbols: [0; Self::MAX_LEN],
+            extra_bits: [0; Self::MAX_LEN],
+        }
+    }
+
+    /// The symbols, and the extra bits of each.
+    pub(crate) fn get(&self) -> Checked<(&[u8], &[u8])> {
+        Ok((
+            self.symbols.sub(..self.len)?,
+            self.extra_bits.sub(..self.len)?,
+        ))
+    }
+
+    fn push(&mut self, symbol: u8, extra_bits: u8) -> Checked {
+        self.symbols.put(self.len, symbol)?;
+        self.extra_bits.put(self.len, extra_bits)?;
+        self.len += 1;
         Ok(())
     }
 
     fn reverse_from(&mut self, start: usize) -> Checked {
-        self.tree.sub_mut(start..self.size)?.reverse();
-        self.extra_bits_data.sub_mut(start..self.size)?.reverse();
+        self.symbols.sub_mut(start..self.len)?.reverse();
+        self.extra_bits.sub_mut(start..self.len)?.reverse();
         Ok(())
     }
 
@@ -219,7 +254,7 @@ impl HuffmanTreeCode<'_> {
                 self.push(value, 0)?;
             }
         } else {
-            let start = self.size;
+            let start = self.len;
             repetitions -= 3;
             loop {
                 self.push(REPEAT_PREVIOUS_CODE_LENGTH as u8, (repetitions & 3) as u8)?;
@@ -244,7 +279,7 @@ impl HuffmanTreeCode<'_> {
                 self.push(0, 0)?;
             }
         } else {
-            let start = self.size;
+            let start = self.len;
             repetitions -= 3;
             loop {
                 self.push(REPEAT_ZERO_CODE_LENGTH as u8, (repetitions & 7) as u8)?;
@@ -260,7 +295,7 @@ impl HuffmanTreeCode<'_> {
     }
 
     /// Appends the code lengths `depth`.
-    pub(crate) fn write_huffman_tree(&mut self, depth: &[u8]) -> Checked {
+    pub(crate) fn append(&mut self, depth: &[u8]) -> Checked {
         let length = depth.len();
         let new_length = length - depth.iter().rev().take_while(|&&d| d == 0).count();
         let depth = depth.sub(..new_length)?;
@@ -293,63 +328,42 @@ impl HuffmanTreeCode<'_> {
 }
 
 /// How many elements at the start of `values` equal the first.
-#[inline(always)]
 fn run_length(values: &[u8]) -> usize {
     values.first().map_or(0, |first| {
         values.iter().take_while(|&value| value == first).count()
     })
 }
 
-/// Changes the histogram `counts` so that the code lengths of its prefix code have longer runs, which take less room.
-/// `good_for_rle` is scratch space as long as `counts`.
-pub(crate) fn optimize_huffman_counts_for_rle(
-    counts: &mut [u32],
-    good_for_rle: &mut [u8],
-) -> Checked {
+/// Changes the histogram `counts`, of at most [`NUM_COMMAND_SYMBOLS`], so that the code lengths of its prefix code have
+/// longer runs, which take less room.
+pub(crate) fn optimize_huffman_counts_for_rle(counts: &mut [u32]) -> Checked {
     const STREAK_LIMIT: usize = 1240;
-    if counts.iter().filter(|&&count| count != 0).count() < 16 {
+    let nonzeros = counts.iter().filter(|&&count| count != 0).count();
+    if nonzeros < 16 {
         return Ok(());
     }
     let length = counts.len() - counts.iter().rev().take_while(|&&count| count == 0).count();
-    if length == 0 {
-        return Ok(());
-    }
     let counts = counts.sub_mut(..length)?;
-    {
-        let nonzeros = counts.iter().filter(|&&count| count != 0).count();
-        let smallest_nonzero = counts
-            .iter()
-            .copied()
-            .filter(|&count| count != 0)
-            .min()
-            .map_or(1 << 30, |m| m.min(1 << 30));
-        if nonzeros < 5 {
-            return Ok(());
-        }
-        if smallest_nonzero < 4 {
-            let zeros = length - nonzeros;
-            if zeros < 6 {
-                for i in 1..length - 1 {
-                    if counts.at(i - 1)? != 0 && counts.at(i)? == 0 && counts.at(i + 1)? != 0 {
-                        counts.put(i, 1)?;
-                    }
-                }
+    if length - nonzeros < 6 && counts.iter().any(|&count| count != 0 && count < 4) {
+        for i in 1..length - 1 {
+            if counts.at(i - 1)? != 0 && counts.at(i)? == 0 && counts.at(i + 1)? != 0 {
+                counts.put(i, 1)?;
             }
         }
-        if nonzeros < 28 {
-            return Ok(());
-        }
+    }
+    if nonzeros < 28 {
+        return Ok(());
     }
     // Mark the runs that are already good, so as not to spoil them: 5 zeros or more, or 7 equal counts or more.
+    let mut good_for_rle = [false; NUM_COMMAND_SYMBOLS];
     let good_for_rle = good_for_rle.sub_mut(..length)?;
-    good_for_rle.fill(0);
     {
         let mut symbol = counts.at(0)?;
         let mut step = 0usize;
         for i in 0..=length {
             if i == length || counts.at(i)? != symbol {
                 if (symbol == 0 && step >= 5) || (symbol != 0 && step >= 7) {
-                    good_for_rle.sub_mut(i - step..i)?.fill(1);
+                    good_for_rle.sub_mut(i - step..i)?.fill(true);
                 }
                 step = 1;
                 if i != length {
@@ -369,8 +383,8 @@ pub(crate) fn optimize_huffman_counts_for_rle(
     let mut sum = 0usize;
     for i in 0..=length {
         if i == length
-            || good_for_rle.at(i)? != 0
-            || (i != 0 && good_for_rle.at(i - 1)? != 0)
+            || good_for_rle.at(i)?
+            || (i != 0 && good_for_rle.at(i - 1)?)
             || (256u32.wrapping_mul(counts.at(i)?) as usize)
                 .wrapping_sub(limit)
                 .wrapping_add(STREAK_LIMIT)
@@ -435,7 +449,6 @@ fn decide_over_rle_use(depth: &[u8]) -> (bool, bool) {
 }
 
 /// The low `num_bits` of `bits` in reverse order.
-#[inline(always)]
 fn reverse_bits(num_bits: u32, bits: u16) -> u16 {
     bits.reverse_bits() >> (16 - num_bits)
 }

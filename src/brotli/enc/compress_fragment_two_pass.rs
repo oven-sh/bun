@@ -112,8 +112,8 @@ fn build_and_store_command_prefix_code(s: &mut TwoPassArena, bw: &mut BitWriter<
         tmp_depth.put(256 + 8 * i, cmd_depth.at(8 + i)?)?;
         tmp_depth.put(448 + 8 * i, cmd_depth.at(16 + i)?)?;
     }
-    store_huffman_tree(tmp_depth, &mut s.tmp_tree, bw)?;
-    store_huffman_tree(dist_depth, &mut s.tmp_tree, bw)
+    store_huffman_tree(tmp_depth, bw)?;
+    store_huffman_tree(dist_depth, bw)
 }
 
 /// A buffer that is filled from the start.

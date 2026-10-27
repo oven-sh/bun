@@ -5,8 +5,8 @@ use super::bit_writer::BitWriter;
 use super::block_splitter::BlockSplit;
 use super::command::{Command, get_copy_length_code, get_insert_length_code};
 use super::entropy_encode::{
-    HuffmanTree, HuffmanTreeCode, convert_bit_depths_to_symbols, create_huffman_tree, set_depth,
-    sort_huffman_tree_items,
+    CodeLengthSymbols, HuffmanTree, convert_bit_depths_to_symbols, create_huffman_tree,
+    create_huffman_tree_fast,
 };
 use super::entropy_encode_static::{
     CODE_LENGTH_BITS, CODE_LENGTH_DEPTH, NON_ZERO_REPS, STATIC_COMMAND_CODE_BITS,
@@ -20,10 +20,10 @@ use super::meta_block::MetaBlockSplit;
 use super::params::DistanceParams;
 use crate::common::constants::{
     BLOCK_LENGTH_PREFIX_CODE, CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES, COPY_LENGTH_PREFIX_CODE,
-    DISTANCE_CONTEXT_BITS, INSERT_LENGTH_PREFIX_CODE, LARGE_MAX_DISTANCE_BITS,
-    LITERAL_CONTEXT_BITS, MAX_BLOCK_TYPE_SYMBOLS, MAX_CONTEXT_MAP_SYMBOLS, NUM_BLOCK_LEN_SYMBOLS,
-    NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, REPEAT_PREVIOUS_CODE_LENGTH, REPEAT_ZERO_CODE_LENGTH,
-    distance_alphabet_size,
+    DISTANCE_CONTEXT_BITS, INITIAL_REPEATED_CODE_LENGTH, INSERT_LENGTH_PREFIX_CODE,
+    LARGE_MAX_DISTANCE_BITS, LITERAL_CONTEXT_BITS, MAX_BLOCK_TYPE_SYMBOLS, MAX_CONTEXT_MAP_SYMBOLS,
+    NUM_BLOCK_LEN_SYMBOLS, NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, REPEAT_PREVIOUS_CODE_LENGTH,
+    REPEAT_ZERO_CODE_LENGTH, distance_alphabet_size,
 };
 use crate::common::context::{ContextType, context_lut};
 use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_zeroed};
@@ -167,20 +167,21 @@ fn store_uncompressed_meta_block_header(length: usize, bw: &mut BitWriter<'_>) -
     bw.write_bits(1, 1)
 }
 
-fn store_huffman_tree_of_huffman_tree_to_bit_mask(
-    num_codes: i32,
-    code_length_bitdepth: &[u8; CODE_LENGTH_CODES],
+/// Writes the code lengths `depths` of the code that code lengths are written in. The zeros at the end are left out if
+/// `trim` is set.
+fn store_code_length_code(
+    depths: &[u8; CODE_LENGTH_CODES],
+    trim: bool,
     bw: &mut BitWriter<'_>,
 ) -> Checked {
-    // The fixed code that the code lengths 0 to 5 are written in: 00, 1110, 110, 01, 10, 1111.
-    static HUFFMAN_BIT_LENGTH_HUFFMAN_CODE_SYMBOLS: [u8; 6] = [0, 7, 3, 2, 1, 15];
-    static HUFFMAN_BIT_LENGTH_HUFFMAN_CODE_BIT_LENGTHS: [u8; 6] = [2, 4, 3, 2, 2, 4];
+    // The fixed code for the lengths 0 to 5: 00, 1110, 110, 01, 10, 1111.
+    static FIXED_CODE_BITS: [u8; 6] = [0, 7, 3, 2, 1, 15];
+    static FIXED_CODE_DEPTHS: [u8; 6] = [2, 4, 3, 2, 2, 4];
 
-    let in_order = |i: usize| code_length_bitdepth.at(usize::from(CODE_LENGTH_CODE_ORDER.at(i)?));
+    let in_order = |i: usize| depths.at(usize::from(CODE_LENGTH_CODE_ORDER.at(i)?));
 
-    // The zeros at the end are not written.
     let mut codes_to_store = CODE_LENGTH_CODES;
-    if num_codes > 1 {
+    if trim {
         while codes_to_store > 0 && in_order(codes_to_store - 1)? == 0 {
             codes_to_store -= 1;
         }
@@ -196,27 +197,25 @@ fn store_huffman_tree_of_huffman_tree_to_bit_mask(
     for i in skip_some..codes_to_store {
         let l = usize::from(in_order(i)?);
         bw.write_bits(
-            usize::from(HUFFMAN_BIT_LENGTH_HUFFMAN_CODE_BIT_LENGTHS.at(l)?),
-            u64::from(HUFFMAN_BIT_LENGTH_HUFFMAN_CODE_SYMBOLS.at(l)?),
+            usize::from(FIXED_CODE_DEPTHS.at(l)?),
+            u64::from(FIXED_CODE_BITS.at(l)?),
         )?;
     }
     Ok(())
 }
 
-fn store_huffman_tree_to_bit_mask(
-    huffman_tree: &[u8],
-    huffman_tree_extra_bits: &[u8],
-    code_length_bitdepth: &[u8; CODE_LENGTH_CODES],
-    code_length_bitdepth_symbols: &[u16; CODE_LENGTH_CODES],
+/// Writes `code_lengths` in the code given by `depths` and `bits`.
+fn store_code_lengths(
+    code_lengths: &CodeLengthSymbols,
+    depths: &[u8; CODE_LENGTH_CODES],
+    bits: &[u16; CODE_LENGTH_CODES],
     bw: &mut BitWriter<'_>,
 ) -> Checked {
-    for (&code, &extra_bits) in huffman_tree.iter().zip(huffman_tree_extra_bits) {
-        let ix = usize::from(code);
-        bw.write_bits(
-            usize::from(code_length_bitdepth.at(ix)?),
-            u64::from(code_length_bitdepth_symbols.at(ix)?),
-        )?;
-        match ix {
+    let (symbols, extra_bits) = code_lengths.get()?;
+    for (&symbol, &extra_bits) in symbols.iter().zip(extra_bits) {
+        let symbol = usize::from(symbol);
+        bw.write_bits(usize::from(depths.at(symbol)?), u64::from(bits.at(symbol)?))?;
+        match symbol {
             REPEAT_PREVIOUS_CODE_LENGTH => bw.write_bits(2, u64::from(extra_bits))?,
             REPEAT_ZERO_CODE_LENGTH => bw.write_bits(3, u64::from(extra_bits))?,
             _ => {}
@@ -262,55 +261,30 @@ fn store_simple_huffman_tree(
 }
 
 /// 3.5. Complex prefix codes. `depths` are the code lengths of all symbols of the alphabet.
-pub(crate) fn store_huffman_tree(
-    depths: &[u8],
-    tree: &mut [HuffmanTree],
-    bw: &mut BitWriter<'_>,
-) -> Checked {
-    // No alphabet is larger than that of the commands.
-    let mut huffman_tree = [0u8; NUM_COMMAND_SYMBOLS];
-    let mut huffman_tree_extra_bits = [0u8; NUM_COMMAND_SYMBOLS];
-    let mut code_length_bitdepth = [0u8; CODE_LENGTH_CODES];
-    let mut code_length_bitdepth_symbols = [0u16; CODE_LENGTH_CODES];
-    let mut huffman_tree_histogram = [0u32; CODE_LENGTH_CODES];
+pub(crate) fn store_huffman_tree(depths: &[u8], bw: &mut BitWriter<'_>) -> Checked {
+    let mut code_lengths = CodeLengthSymbols::new();
+    code_lengths.append(depths)?;
 
-    let mut code = HuffmanTreeCode {
-        size: 0,
-        tree: &mut huffman_tree,
-        extra_bits_data: &mut huffman_tree_extra_bits,
-    };
-    code.write_huffman_tree(depths)?;
-    let huffman_tree_size = code.size;
-    let huffman_tree = huffman_tree.sub(..huffman_tree_size)?;
-
-    for &code in huffman_tree {
-        *huffman_tree_histogram.at_mut(usize::from(code))? += 1;
+    let mut histogram = [0u32; CODE_LENGTH_CODES];
+    for &symbol in code_lengths.get()?.0 {
+        *histogram.at_mut(usize::from(symbol))? += 1;
     }
-
-    let mut used = huffman_tree_histogram
-        .iter()
-        .enumerate()
-        .filter(|&(_, &count)| count != 0);
-    let first_code = used.next().map(|(i, _)| i);
-    let num_codes = i32::from(first_code.is_some()) + i32::from(used.next().is_some());
+    let mut used = (0..CODE_LENGTH_CODES).filter(|&i| histogram.get(i) != Some(&0));
+    let only_symbol = used.next().filter(|_| used.next().is_none());
 
     // The code that the code lengths are written in.
-    create_huffman_tree(&huffman_tree_histogram, 5, tree, &mut code_length_bitdepth)?;
-    convert_bit_depths_to_symbols(&code_length_bitdepth, &mut code_length_bitdepth_symbols)?;
+    let mut tree = [HuffmanTree::default(); 2 * CODE_LENGTH_CODES + 1];
+    let mut code_depths = [0u8; CODE_LENGTH_CODES];
+    let mut code_bits = [0u16; CODE_LENGTH_CODES];
+    create_huffman_tree(&histogram, 5, &mut tree, &mut code_depths)?;
+    convert_bit_depths_to_symbols(&code_depths, &mut code_bits)?;
 
-    store_huffman_tree_of_huffman_tree_to_bit_mask(num_codes, &code_length_bitdepth, bw)?;
+    store_code_length_code(&code_depths, only_symbol.is_none(), bw)?;
 
-    if num_codes == 1 {
-        code_length_bitdepth.put(first_code.ok_or(Bug)?, 0)?;
+    if let Some(symbol) = only_symbol {
+        code_depths.put(symbol, 0)?;
     }
-
-    store_huffman_tree_to_bit_mask(
-        huffman_tree,
-        &huffman_tree_extra_bits,
-        &code_length_bitdepth,
-        &code_length_bitdepth_symbols,
-        bw,
-    )
+    store_code_lengths(&code_lengths, &code_depths, &code_bits, bw)
 }
 
 /// Builds a prefix code for `histogram`, stores its code lengths in `depth` and its codes in `bits`, and writes it.
@@ -324,9 +298,9 @@ fn build_and_store_huffman_tree(
 ) -> Checked {
     let histogram_length = histogram.len();
     let mut count = 0usize;
-    let mut s4 = [0usize; 4];
+    let mut symbols = [0usize; 4];
     for (i, _) in histogram.iter().enumerate().filter(|&(_, &n)| n != 0) {
-        if let Some(slot) = s4.get_mut(count) {
+        if let Some(slot) = symbols.get_mut(count) {
             *slot = i;
         } else if count > 4 {
             break;
@@ -338,9 +312,9 @@ fn build_and_store_huffman_tree(
 
     if count <= 1 {
         bw.write_bits(4, 1)?;
-        bw.write_bits(max_bits, s4[0] as u64)?;
-        depth.put(s4[0], 0)?;
-        bits.put(s4[0], 0)?;
+        bw.write_bits(max_bits, symbols[0] as u64)?;
+        depth.put(symbols[0], 0)?;
+        bits.put(symbols[0], 0)?;
         return Ok(());
     }
 
@@ -350,9 +324,9 @@ fn build_and_store_huffman_tree(
     convert_bit_depths_to_symbols(depth, bits)?;
 
     if count <= 4 {
-        store_simple_huffman_tree(depth, &mut s4, count, max_bits, bw)
+        store_simple_huffman_tree(depth, &mut symbols, count, max_bits, bw)
     } else {
-        store_huffman_tree(depth, tree, bw)
+        store_huffman_tree(depth, bw)
     }
 }
 
@@ -394,49 +368,7 @@ pub(crate) fn build_and_store_huffman_tree_fast(
     let histogram = histogram.sub(..length)?;
     let depth = depth.sub_mut(..length)?;
     depth.fill(0);
-    let sentinel = HuffmanTree::new(u32::MAX, -1, -1);
-    let mut count_limit = 1u32;
-    loop {
-        let mut n = 0usize;
-        for (l, &count) in histogram.iter().enumerate().rev() {
-            if count != 0 {
-                tree.put(n, HuffmanTree::new(count.max(count_limit), -1, l as i16))?;
-                n += 1;
-            }
-        }
-        sort_huffman_tree_items(tree.sub_mut(..n)?, |v0, v1| v0.total_count < v1.total_count)?;
-        // See `create_huffman_tree`.
-        tree.put(n, sentinel)?;
-        tree.put(n + 1, sentinel)?;
-        let mut i = 0usize;
-        let mut j = n + 1;
-        for node in n + 2..2 * n + 1 {
-            let mut take_smaller = |tree: &[HuffmanTree]| -> Checked<usize> {
-                if tree.at(i)?.total_count <= tree.at(j)?.total_count {
-                    i += 1;
-                    Ok(i - 1)
-                } else {
-                    j += 1;
-                    Ok(j - 1)
-                }
-            };
-            let left = take_smaller(tree)?;
-            let right = take_smaller(tree)?;
-            let total_count = tree
-                .at(left)?
-                .total_count
-                .wrapping_add(tree.at(right)?.total_count);
-            tree.put(
-                node - 1,
-                HuffmanTree::new(total_count, left as i16, right as i16),
-            )?;
-            tree.put(node, sentinel)?;
-        }
-        if set_depth(2 * n - 1, tree, depth, 14)? {
-            break;
-        }
-        count_limit = count_limit.wrapping_mul(2);
-    }
+    create_huffman_tree_fast(histogram, 14, tree, depth)?;
     convert_bit_depths_to_symbols(depth, bits)?;
     if count <= 4 {
         return store_simple_huffman_tree(depth, &mut symbols, count, max_bits, bw);
@@ -450,7 +382,7 @@ pub(crate) fn build_and_store_huffman_tree_fast(
             u64::from(CODE_LENGTH_BITS.at(value)?),
         )
     };
-    let mut previous_value = 8u8;
+    let mut previous_value = INITIAL_REPEATED_CODE_LENGTH as u8;
     let mut i = 0;
     while i < length {
         let value = depth.at(i)?;

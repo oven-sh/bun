@@ -211,8 +211,8 @@ fn build_and_store_command_prefix_code(s: &mut OnePassArena, bw: &mut BitWriter<
         tmp_depth.put(256 + 8 * i, cmd_depth.at(48 + i)?)?;
         tmp_depth.put(448 + 8 * i, cmd_depth.at(56 + i)?)?;
     }
-    store_huffman_tree(tmp_depth, &mut s.tree, bw)?;
-    store_huffman_tree(dist_depth, &mut s.tree, bw)
+    store_huffman_tree(tmp_depth, bw)?;
+    store_huffman_tree(dist_depth, bw)
 }
 
 /// Writes commands and distances and counts them.

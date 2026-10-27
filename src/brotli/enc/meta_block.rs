@@ -31,7 +31,6 @@ pub(crate) struct MetaBlockSplit {
     pub(crate) distance_histograms: Vec<HistogramDistance>,
 }
 
-#[inline(always)]
 fn same_distance_codes(a: &DistanceParams, b: &DistanceParams) -> bool {
     a.distance_postfix_bits == b.distance_postfix_bits
         && a.num_direct_distance_codes == b.num_direct_distance_codes
@@ -529,18 +528,14 @@ pub(crate) fn build_meta_block_greedy(
 /// Changes the histograms so that their prefix codes take less room. `num_distance_codes` is how many distance symbols
 /// are in use.
 pub(crate) fn optimize_histograms(num_distance_codes: u32, mb: &mut MetaBlockSplit) -> Checked {
-    let mut good_for_rle = [0u8; NUM_COMMAND_SYMBOLS];
     for histogram in &mut mb.literal_histograms {
-        optimize_huffman_counts_for_rle(&mut histogram.data, &mut good_for_rle)?;
+        optimize_huffman_counts_for_rle(&mut histogram.data)?;
     }
     for histogram in &mut mb.command_histograms {
-        optimize_huffman_counts_for_rle(&mut histogram.data, &mut good_for_rle)?;
+        optimize_huffman_counts_for_rle(&mut histogram.data)?;
     }
     for histogram in &mut mb.distance_histograms {
-        optimize_huffman_counts_for_rle(
-            histogram.data.sub_mut(..num_distance_codes as usize)?,
-            &mut good_for_rle,
-        )?;
+        optimize_huffman_counts_for_rle(histogram.data.sub_mut(..num_distance_codes as usize)?)?;
     }
     Ok(())
 }

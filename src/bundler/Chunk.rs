@@ -37,13 +37,8 @@ pub struct ChunkImport {
     pub(crate) import_kind: ImportKind,
 }
 
-// Lifetime note: string/slice fields below conceptually borrow from the
-// bundler arena. The borrow is erased to
-// `&'static [u8]` (the arena is owned by `BundleV2` and outlives every
-// `Chunk`; see the lifetime-erasure note on `LinkerGraph::bump`) or owns a
-// `Box<[T]>` instead of threading a `'bump` lifetime through the chunk
-// pipeline.
-pub struct Chunk {
+// `'a` is the bundler arena. The keys' borrow of it is still erased (see `LinkerGraph::bump`).
+pub struct Chunk<'a> {
     /// This is a random string and is used to represent the output path of this
     /// chunk before the final output path has been computed. See OutputPiece
     /// for more info on this technique.
@@ -73,7 +68,7 @@ pub struct Chunk {
     /// For code splitting
     pub(crate) cross_chunk_imports: Vec<ChunkImport>,
 
-    pub content: Content,
+    pub content: Content<'a>,
 
     pub entry_point: EntryPoint,
 
@@ -112,7 +107,7 @@ bitflags::bitflags! {
     }
 }
 
-impl Default for Content {
+impl Default for Content<'_> {
     fn default() -> Self {
         Content::Javascript(JavaScriptChunk::default())
     }
@@ -137,7 +132,7 @@ impl Default for Content {
 // Caveat: `Renamer<'r>` still borrows `&'r mut {Number,Minify}Renamer`,
 // so the per-chunk renamer is reborrowed mutably from each part-range task;
 // the printer never writes through it, but the borrow should become `&'r`.
-unsafe impl Send for Chunk {}
+unsafe impl Send for Chunk<'_> {}
 // SAFETY: shared `&Chunk` access during the worker fan-out touches only
 // `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices) and
 // `files_with_parts_in_chunk` atomic counters; the remaining fields are
@@ -148,7 +143,7 @@ unsafe impl Send for Chunk {}
 // the matching split-borrow in `generate_compile_result_for_js_chunk`) goes
 // away. Pre-existing; this impl mirrors `unsafe impl Send for Chunk` and
 // the single-pointer fan-out the workers use.
-unsafe impl Sync for Chunk {}
+unsafe impl Sync for Chunk<'_> {}
 
 /// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
 ///
@@ -196,7 +191,7 @@ impl CompileResultSlots {
     }
 }
 
-impl Default for Chunk {
+impl Default for Chunk<'_> {
     fn default() -> Self {
         Chunk {
             unique_key: b"",
@@ -221,7 +216,7 @@ impl Default for Chunk {
     }
 }
 
-impl Chunk {
+impl<'a> Chunk<'a> {
     /// Write `result` into `compile_results_for_chunk[i]` through a raw
     /// `*mut Chunk`, for the `generate_compile_result_for_*_chunk` worker
     /// callbacks.
@@ -324,7 +319,10 @@ impl Chunk {
         }
     }
 
-    pub(crate) fn get_js_chunk_for_html<'a>(&self, chunks: &'a [Chunk]) -> Option<&'a Chunk> {
+    pub(crate) fn get_js_chunk_for_html<'c>(
+        &self,
+        chunks: &'c [Chunk<'a>],
+    ) -> Option<&'c Chunk<'a>> {
         self.get_js_chunk_index_for_html(chunks).map(|i| &chunks[i])
     }
 
@@ -340,7 +338,10 @@ impl Chunk {
         })
     }
 
-    pub(crate) fn get_css_chunk_for_html<'a>(&self, chunks: &'a [Chunk]) -> Option<&'a Chunk> {
+    pub(crate) fn get_css_chunk_for_html<'c>(
+        &self,
+        chunks: &'c [Chunk<'a>],
+    ) -> Option<&'c Chunk<'a>> {
         // Look up the CSS chunk via the JS chunk's css_chunks indices.
         // This correctly handles deduplicated CSS chunks that are shared
         // across multiple HTML entry points (see issue #23668).
@@ -1348,8 +1349,8 @@ pub struct JavaScriptChunk {
     pub(crate) module_info: Option<Box<analyze_transpiled_module::ModuleInfo>>,
 }
 
-pub struct CssChunk {
-    pub(crate) imports_in_chunk_in_order: Vec<CssImportOrder>,
+pub struct CssChunk<'a> {
+    pub(crate) imports_in_chunk_in_order: Vec<CssImportOrder<'a>>,
     /// When creating a chunk, this is to be an uninitialized slice with
     /// length of `imports_in_chunk_in_order`
     ///
@@ -1361,7 +1362,7 @@ pub struct CssChunk {
     pub(crate) asts: Box<[bun_css::BundlerStyleSheet]>,
 }
 
-impl Drop for CssChunk {
+impl Drop for CssChunk<'_> {
     fn drop(&mut self) {
         // `asts` is a slice of bitwise shallow
         // copies (see `prepareCssAstsForChunk` `ptr::read`). Multiple slots may
@@ -1373,14 +1374,14 @@ impl Drop for CssChunk {
     }
 }
 
-pub struct CssImportOrder {
+pub struct CssImportOrder<'a> {
     pub(crate) conditions: Vec<bun_css::ImportConditions>,
-    pub(crate) condition_import_records: Vec<ImportRecord>,
+    pub(crate) condition_import_records: Vec<ImportRecord<'a>>,
 
-    pub(crate) kind: CssImportOrderKind,
+    pub(crate) kind: CssImportOrderKind<'a>,
 }
 
-impl Drop for CssImportOrder {
+impl Drop for CssImportOrder<'_> {
     fn drop(&mut self) {
         // `conditions`: bitwise-shared across multiple order entries by
         // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
@@ -1395,7 +1396,7 @@ impl Drop for CssImportOrder {
 }
 
 #[derive(strum::IntoStaticStr)]
-pub enum CssImportOrderKind {
+pub enum CssImportOrderKind<'a> {
     /// Represents earlier imports that have been made redundant by later ones (see `isConditionalImportRedundant`)
     /// We don't want to redundantly print the rules of these redundant imports
     /// BUT, the imports may include layers.
@@ -1403,7 +1404,7 @@ pub enum CssImportOrderKind {
     #[strum(serialize = "layers")]
     Layers(Layers),
     #[strum(serialize = "external_path")]
-    ExternalPath(bun_fs::Path<'static>),
+    ExternalPath(bun_fs::Path<'a>),
     #[strum(serialize = "source_index")]
     SourceIndex(Index),
 }
@@ -1462,7 +1463,7 @@ impl Layers {
     }
 }
 
-impl CssImportOrder {
+impl CssImportOrder<'_> {
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         // TODO: conditions, condition_import_records
 
@@ -1508,7 +1509,7 @@ impl CssImportOrder {
 
 #[cfg(debug_assertions)]
 pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
-    inner: &'a CssImportOrder,
+    inner: &'a CssImportOrder<'a>,
     // Note: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
     // so coupling the borrow lifetime to the struct param (`&'a LinkerContext<'a>`)
     // forces every caller's `&CssImportOrder` and `&LinkerContext` to share one
@@ -1628,13 +1629,13 @@ impl CrossChunkImport {
 // `Chunk` is bump-arena-allocated (no Drop on free); boxing the large arm
 // would leak. The CSS/JS chunk size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
-pub enum Content {
+pub enum Content<'a> {
     Javascript(JavaScriptChunk),
-    Css(CssChunk),
+    Css(CssChunk<'a>),
     Html,
 }
 
-impl Content {
+impl<'a> Content<'a> {
     #[inline]
     pub(crate) fn is_javascript(&self) -> bool {
         matches!(self, Content::Javascript(_))
@@ -1644,7 +1645,7 @@ impl Content {
         matches!(self, Content::Css(_))
     }
     bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk);
-    bun_core::enum_unwrap!(pub Content, Css        => fn css        / css_mut        -> CssChunk);
+    bun_core::enum_unwrap!(pub Content, Css        => fn css        / css_mut        -> CssChunk<'a>);
 
     pub(crate) fn sourcemap(&self, default: options::SourceMapOption) -> options::SourceMapOption {
         match self {

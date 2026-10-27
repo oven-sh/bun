@@ -36,13 +36,13 @@ import {
   type RustScope,
   Signature,
   snakeCase,
+  symbolDescription,
+  symbolExpression,
   type Type,
   UnionType,
   UnitType,
   type ValueKind,
   VariadicType,
-  symbolDescription,
-  symbolExpression,
   wellKnownSymbol,
 } from "./bindgen-lib-internal.ts";
 import { cap, low } from "./helpers.ts";

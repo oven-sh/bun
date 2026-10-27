@@ -6,7 +6,7 @@
 use crate::common::constants::LARGE_MAX_WBITS;
 use crate::util::{Bug, Checked, SliceExt, load_u32_le, load_u64_le};
 
-/// With this many bytes of input left, everything read between two checks of [`BitReader::check_input_amount`] is
+/// With this many bytes of input left, everything read between two checks of [`BitReader::has_fast_input`] is
 /// there: 162 bits + 7 bytes.
 const FAST_INPUT_SLACK: usize = 28;
 
@@ -29,13 +29,6 @@ pub(crate) struct BitReader {
     last_in: usize,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct BitReaderState {
-    val: u64,
-    bit_pos: u32,
-    next_in: usize,
-}
-
 impl BitReader {
     #[inline(always)]
     pub(crate) fn avail_in(&self) -> usize {
@@ -45,22 +38,6 @@ impl BitReader {
     #[inline(always)]
     pub(crate) fn next_in(&self) -> usize {
         self.next_in
-    }
-
-    #[inline(always)]
-    pub(crate) fn save_state(&self) -> BitReaderState {
-        BitReaderState {
-            val: self.val,
-            bit_pos: self.bit_pos,
-            next_in: self.next_in,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn restore_state(&mut self, from: BitReaderState) {
-        self.val = from.val;
-        self.bit_pos = from.bit_pos;
-        self.next_in = from.next_in;
     }
 
     /// Continues at `next_in` of an input of `len` bytes.
@@ -88,34 +65,23 @@ impl BitReader {
 
     /// Whether the reads that do not check for the end of the input can be used.
     #[inline(always)]
-    pub(crate) fn check_input_amount(&self) -> bool {
+    pub(crate) fn has_fast_input(&self) -> bool {
         self.next_in < self.guard_in
     }
 
-    /// How many bytes can be loaded before [`Self::check_input_amount`] turns false.
+    /// How many bytes can be loaded before [`Self::has_fast_input`] turns false.
     #[inline(always)]
     pub(crate) fn bytes_before_guard(&self) -> usize {
         self.guard_in.saturating_sub(self.next_in)
     }
 
-    /// Makes sure there are more than 8 bits.
+    /// Makes sure there are more than `N` bits, which is a multiple of 8.
     #[inline(always)]
-    pub(crate) fn fill_bit_window_8(&mut self, input: &[u8]) -> Checked {
-        if self.bit_pos <= 8 {
+    fn fill_bit_window<const N: u32>(&mut self, input: &[u8]) -> Checked {
+        if self.bit_pos <= N {
             self.val |= load_u64_le(input, self.next_in)? << self.bit_pos;
-            self.bit_pos += 56;
-            self.next_in += 7;
-        }
-        Ok(())
-    }
-
-    /// Makes sure there are more than 16 bits.
-    #[inline(always)]
-    pub(crate) fn fill_bit_window_16(&mut self, input: &[u8]) -> Checked {
-        if self.bit_pos <= 16 {
-            self.val |= load_u64_le(input, self.next_in)? << self.bit_pos;
-            self.bit_pos += 48;
-            self.next_in += 6;
+            self.bit_pos += 64 - N;
+            self.next_in += (64 - N as usize) / 8;
         }
         Ok(())
     }
@@ -155,14 +121,14 @@ impl BitReader {
     /// At least 16 bits, without advancing.
     #[inline(always)]
     pub(crate) fn get_16_bits_unmasked(&mut self, input: &[u8]) -> Checked<u64> {
-        self.fill_bit_window_16(input)?;
+        self.fill_bit_window::<16>(input)?;
         Ok(self.val)
     }
 
     /// 8 bits, without advancing.
     #[inline(always)]
     pub(crate) fn get_8_bits(&mut self, input: &[u8]) -> Checked<u64> {
-        self.fill_bit_window_8(input)?;
+        self.fill_bit_window::<8>(input)?;
         Ok(self.val & 0xFF)
     }
 
@@ -221,12 +187,9 @@ impl BitReader {
     #[inline(always)]
     pub(crate) fn safe_read_bits(&mut self, input: &[u8], n_bits: u32) -> Option<u64> {
         debug_assert!(n_bits <= 32);
-        while self.bit_pos < n_bits {
-            if !self.pull_byte(input) {
-                return None;
-            }
-        }
-        Some(self.take_bits(n_bits))
+        let bits = self.safe_get_bits(input, n_bits)?;
+        self.drop_bits(n_bits);
+        Some(bits)
     }
 
     /// Makes sure the accumulator is not empty, unless the input has ended.
@@ -253,9 +216,21 @@ impl BitReader {
     }
 
     /// The accumulator has to be empty.
-    pub(crate) fn drop_bytes(&mut self, num: usize) {
+    fn drop_bytes(&mut self, num: usize) {
         debug_assert!(self.bit_pos == 0 && self.val == 0);
         self.next_in += num;
+    }
+
+    /// Skips `num` bytes, which is no more than [`Self::remaining_bytes`]. The position has to be at a byte boundary.
+    pub(crate) fn skip_bytes(&mut self, mut num: usize) {
+        while self.bit_pos >= 8 && num > 0 {
+            self.drop_bits(8);
+            num -= 1;
+        }
+        self.normalize();
+        if num > 0 {
+            self.drop_bytes(num);
+        }
     }
 
     /// Fills `dest`, which is no longer than [`Self::remaining_bytes`]. The position has to be at a byte boundary.

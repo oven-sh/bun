@@ -1,9 +1,10 @@
 //! Appendix B. List of Word Transformations.
 
+use super::dictionary::MAX_DICTIONARY_WORD_LENGTH;
 use crate::util::{Bug, Checked, SliceExt};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Kind {
+#[derive(Clone, Copy)]
+enum Kind {
     Identity,
     OmitLast(u8),
     UppercaseFirst,
@@ -13,12 +14,12 @@ pub(crate) enum Kind {
 use Kind::{Identity, OmitFirst, OmitLast, UppercaseAll, UppercaseFirst};
 
 #[derive(Clone, Copy)]
-pub(crate) struct Transform {
+struct Transform {
     /// Index in [`AFFIXES`].
-    pub(crate) prefix: u8,
-    pub(crate) kind: Kind,
+    prefix: u8,
+    kind: Kind,
     /// Index in [`AFFIXES`].
-    pub(crate) suffix: u8,
+    suffix: u8,
 }
 
 const fn t(prefix: u8, kind: Kind, suffix: u8) -> Transform {
@@ -30,6 +31,9 @@ const fn t(prefix: u8, kind: Kind, suffix: u8) -> Transform {
 }
 
 pub(crate) const NUM_TRANSFORMS: usize = 121;
+
+/// No transformed word is longer than this. An affix has up to 8 bytes.
+pub(crate) const MAX_TRANSFORMED_LENGTH: usize = 8 + MAX_DICTIONARY_WORD_LENGTH + 8;
 
 /// `CUT_OFF_TRANSFORMS[n]` is the transform that only omits the last `n` bytes.
 pub(crate) static CUT_OFF_TRANSFORMS: [u8; 10] = [0, 12, 27, 23, 42, 63, 56, 48, 59, 64];
@@ -49,7 +53,7 @@ static AFFIXES: [&[u8]; 50] = [
 ];
 
 #[rustfmt::skip]
-pub(crate) static TRANSFORMS: [Transform; NUM_TRANSFORMS] = [
+static TRANSFORMS: [Transform; NUM_TRANSFORMS] = [
     t(49, Identity, 49),
     t(49, Identity, 0),
     t(0, Identity, 0),

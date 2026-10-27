@@ -21,12 +21,12 @@ impl ContextType {
 }
 
 /// What the last byte (`.0`) and the one before it (`.1`) each add to the context ID.
-pub(crate) struct ContextLut(pub(crate) [u8; 256], pub(crate) [u8; 256]);
+pub(crate) struct ContextLut([u8; 256], [u8; 256]);
 
 impl ContextLut {
     #[inline(always)]
+    #[allow(clippy::indexing_slicing, reason = "a u8 is in range of 256 elements")]
     pub(crate) fn context(&self, p1: u8, p2: u8) -> u8 {
-        #![allow(clippy::indexing_slicing, reason = "a u8 is in range of 256 elements")]
         self.0[p1 as usize] | self.1[p2 as usize]
     }
 }

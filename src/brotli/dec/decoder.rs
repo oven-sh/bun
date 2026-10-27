@@ -12,14 +12,14 @@ use super::{DecoderErrorCode as E, DecoderParameter, DecoderResult};
 use crate::common::constants::{
     BLOCK_LENGTH_PREFIX_CODE, CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES, DISTANCE_CONTEXT_BITS,
     INITIAL_REPEATED_CODE_LENGTH, LARGE_MAX_DISTANCE_BITS, LARGE_MAX_WBITS, LARGE_MIN_WBITS,
-    LITERAL_CONTEXT_BITS, MAX_ALLOWED_DISTANCE, MAX_DISTANCE_BITS, NUM_BLOCK_LEN_SYMBOLS,
-    NUM_COMMAND_SYMBOLS, NUM_DISTANCE_SHORT_CODES, NUM_LITERAL_SYMBOLS,
+    LITERAL_CONTEXT_BITS, MAX_ALLOWED_DISTANCE, MAX_DISTANCE_BITS, MAX_NDIRECT, MAX_NPOSTFIX,
+    NUM_BLOCK_LEN_SYMBOLS, NUM_COMMAND_SYMBOLS, NUM_DISTANCE_SHORT_CODES, NUM_LITERAL_SYMBOLS,
     REPEAT_PREVIOUS_CODE_LENGTH, calculate_distance_code_limit, distance_alphabet_size,
     max_backward_limit,
 };
 use crate::common::context::{ContextLut, ContextType, context_lut};
 use crate::common::dictionary::{self, MAX_DICTIONARY_WORD_LENGTH, MIN_DICTIONARY_WORD_LENGTH};
-use crate::common::transform::{NUM_TRANSFORMS, transform_dictionary_word};
+use crate::common::transform::{MAX_TRANSFORMED_LENGTH, NUM_TRANSFORMS, transform_dictionary_word};
 use crate::io::Output;
 use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_with_capacity, try_zeroed};
 
@@ -31,12 +31,18 @@ const HUFFMAN_TABLE_MASK: u64 = 0xFF;
 
 /// What the ring buffer has room for past its end: two copies of 16 bytes, or a transformed dictionary word.
 const RING_BUFFER_WRITE_AHEAD_SLACK: usize = 542;
+const _: () = assert!(RING_BUFFER_WRITE_AHEAD_SLACK >= MAX_TRANSFORMED_LENGTH + 2);
 
 /// The length of a block when there is only one block type. No meta-block is longer.
 const BLOCK_SIZE_CAP: u32 = 1 << 24;
 
-/// More distance symbols than any alphabet that is accepted has.
-const MAX_DISTANCE_SYMBOLS: usize = 544;
+/// The largest distance alphabet that is accepted, which takes a large window.
+const MAX_DISTANCE_SYMBOLS: usize = calculate_distance_code_limit(
+    MAX_ALLOWED_DISTANCE,
+    MAX_NPOSTFIX,
+    MAX_NDIRECT,
+)
+.max_alphabet_size as usize;
 
 const MAX_COMPOUND_DICTIONARY_CHUNKS: usize = 15;
 
@@ -44,7 +50,7 @@ const MAX_COMPOUND_DICTIONARY_CHUNKS: usize = 15;
 static CODE_LENGTH_PREFIX_LENGTH: [u8; 16] = [2, 2, 2, 3, 2, 2, 2, 4, 2, 2, 2, 3, 2, 2, 2, 4];
 static CODE_LENGTH_PREFIX_VALUE: [u8; 16] = [0, 4, 3, 2, 0, 4, 3, 1, 0, 4, 3, 2, 0, 4, 3, 5];
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
     Uninited,
     LargeWindowBits,
@@ -492,7 +498,7 @@ fn copy_preloaded_symbols_to_u8(
     }
     let mut copies = unchecked;
     for slot in tail {
-        if !br.check_input_amount() {
+        if !br.has_fast_input() {
             break;
         }
         *slot = read_preloaded_symbol(table, br, input, preloaded)? as u8;
@@ -503,7 +509,7 @@ fn copy_preloaded_symbols_to_u8(
 
 /// The number of bits it takes to write `x`.
 #[inline(always)]
-fn log2_floor(x: u32) -> u32 {
+fn bit_width(x: u32) -> u32 {
     32 - x.leading_zeros()
 }
 
@@ -570,7 +576,7 @@ impl HeaderArena {
         alphabet_size_max: u32,
         alphabet_size_limit: u32,
     ) -> Step {
-        let max_bits = log2_floor(alphabet_size_max - 1);
+        let max_bits = bit_width(alphabet_size_max - 1);
         let num_symbols = self.symbol as usize;
         let mut i = self.sub_loop_counter as usize;
         while i <= num_symbols {
@@ -673,7 +679,7 @@ impl HeaderArena {
             return Err(E::NeedsMoreInput);
         }
         while self.symbol < alphabet_size && self.space > 0 {
-            if !br.check_input_amount() {
+            if !br.has_fast_input() {
                 return Err(E::NeedsMoreInput);
             }
             br.fill_bit_window_32(input)?;
@@ -1433,7 +1439,7 @@ impl Decoder {
             self.block_length
                 .put(tree_type, read_block_length(len_tree, br, input)?)?;
         } else {
-            let memento = br.save_state();
+            let memento = *br;
             block_type = safe_read_symbol(type_tree, br, input)?.ok_or(E::NeedsMoreInput)?;
             let Some(block_length) = safe_read_block_length(
                 &mut self.substate_read_block_length,
@@ -1444,7 +1450,7 @@ impl Decoder {
             )?
             else {
                 self.substate_read_block_length = ReadBlockLengthState::None;
-                br.restore_state(memento);
+                *br = memento;
                 return Err(E::NeedsMoreInput);
             };
             self.block_length.put(tree_type, block_length)?;
@@ -1607,35 +1613,13 @@ impl Decoder {
 
     #[inline(never)]
     fn skip_metadata_block(&mut self) -> Step {
-        let br = &mut self.br;
-        if self.meta_block_remaining_len == 0 {
-            return Ok(());
+        let nbytes = (self.br.remaining_bytes() as i32).min(self.meta_block_remaining_len);
+        self.br.skip_bytes(nbytes as usize);
+        self.meta_block_remaining_len -= nbytes;
+        if self.meta_block_remaining_len != 0 {
+            return Err(E::NeedsMoreInput);
         }
-
-        // The bytes in the accumulator.
-        if br.available_bits() >= 8 {
-            let nbytes = ((br.available_bits() >> 3) as i32).min(self.meta_block_remaining_len);
-            for _ in 0..nbytes {
-                br.drop_bits(8);
-            }
-            self.meta_block_remaining_len -= nbytes;
-            if self.meta_block_remaining_len == 0 {
-                return Ok(());
-            }
-        }
-
-        // The bytes in the input.
-        let nbytes = (br.remaining_bytes() as i32).min(self.meta_block_remaining_len);
-        if nbytes > 0 {
-            br.jump_to_byte_boundary();
-            br.drop_bytes(nbytes as usize);
-            self.meta_block_remaining_len -= nbytes;
-            if self.meta_block_remaining_len == 0 {
-                return Ok(());
-            }
-        }
-
-        Err(E::NeedsMoreInput)
+        Ok(())
     }
 
     #[inline(never)]
@@ -1829,7 +1813,7 @@ impl Decoder {
     #[inline(always)]
     fn read_distance<const SAFE: bool>(&mut self, br: &mut BitReader, input: &[u8]) -> Step {
         let distance_tree = Tree::new(&self.distance_hgroup.codes, self.dist_htree as usize);
-        let memento = br.save_state();
+        let memento = *br;
         let code = read_symbol_maybe_safe::<SAFE>(distance_tree, br, input)?;
         self.block_length[2] = self.block_length[2].wrapping_sub(1);
         self.distance_context = 0;
@@ -1845,7 +1829,7 @@ impl Decoder {
         } else {
             let Some(bits) = br.safe_read_bits(input, nbits) else {
                 self.block_length[2] = self.block_length[2].wrapping_add(1);
-                br.restore_state(memento);
+                *br = memento;
                 return Err(E::NeedsMoreInput);
             };
             bits
@@ -1859,7 +1843,7 @@ impl Decoder {
     #[inline(always)]
     fn read_command<const SAFE: bool>(&mut self, br: &mut BitReader, input: &[u8]) -> Step<i32> {
         let htree_command = Tree::new(&self.insert_copy_hgroup.codes, self.htree_command);
-        let memento = br.save_state();
+        let memento = *br;
         let cmd_code = read_symbol_maybe_safe::<SAFE>(htree_command, br, input)?;
         let v = CMD_LUT.at(cmd_code as usize)?;
         self.distance_code = i32::from(v.distance_code);
@@ -1884,7 +1868,7 @@ impl Decoder {
                     ))
                 });
             let Some(extra) = extra else {
-                br.restore_state(memento);
+                *br = memento;
                 return Err(E::NeedsMoreInput);
             };
             (insert_len_extra, copy_length) = extra;
@@ -1966,7 +1950,7 @@ impl Decoder {
             }};
         }
 
-        if !(SAFE || br.check_input_amount()) {
+        if !(SAFE || br.has_fast_input()) {
             return Err(E::NeedsMoreInput);
         }
         if !SAFE {
@@ -1987,7 +1971,7 @@ impl Decoder {
                     if SAFE {
                         s.state = State::CommandBegin;
                     }
-                    if !(SAFE || br.check_input_amount()) {
+                    if !(SAFE || br.has_fast_input()) {
                         s.state = State::CommandBegin;
                         return Err(E::NeedsMoreInput);
                     }
@@ -2035,7 +2019,7 @@ impl Decoder {
                             s.block_length[0] -= num_steps as u32;
                             *i -= num_steps;
                             loop {
-                                if !br.check_input_amount() {
+                                if !br.has_fast_input() {
                                     s.state = State::CommandInner;
                                     return Err(E::NeedsMoreInput);
                                 }
@@ -2091,7 +2075,7 @@ impl Decoder {
                         let context_map_slice: &[u8; 1 << LITERAL_CONTEXT_BITS] =
                             s.context_map.array_at(s.context_map_slice)?;
                         loop {
-                            if !SAFE && !br.check_input_amount() {
+                            if !SAFE && !br.has_fast_input() {
                                 s.state = State::CommandInner;
                                 return Err(E::NeedsMoreInput);
                             }

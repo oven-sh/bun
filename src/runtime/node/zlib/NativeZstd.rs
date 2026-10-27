@@ -293,8 +293,15 @@ mod _impl {
                 .stream
                 .with_mut(|s| s.init(pledged_src_size, dictionary));
             if err.is_error() {
+                // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
+                let msg = unsafe { bun_core::ffi::cstr(err.msg) }.to_bytes();
                 self.emit_error(global, this_value, err);
-                return Ok(false);
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
+                        format_args!("{}", bstr::BStr::new(msg)),
+                    )
+                    .throw());
             }
 
             let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {

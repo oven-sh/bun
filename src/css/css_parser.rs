@@ -1919,11 +1919,7 @@ mod rule_parsers {
                         let CssRule::NestedDeclarations(run) = rule else {
                             return true;
                         };
-                        let run = &mut run.declarations;
-                        declarations.declarations.append(&mut run.declarations);
-                        declarations
-                            .important_declarations
-                            .append(&mut run.important_declarations);
+                        declarations.append(&mut run.declarations);
                         false
                     });
                     this.rules

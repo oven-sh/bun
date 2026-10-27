@@ -9201,7 +9201,7 @@ describe("rules", () => {
         ],
         [
           ".a{@media (min-width:1px){inset-inline-start:1px}@media (min-width:1px){inset-inline-end:2px}}",
-          "@media (min-width:1px){.a:dir(ltr){left:1px}.a:dir(rtl){right:1px}.a:dir(ltr){right:2px}.a:dir(rtl){left:2px}}",
+          "@media (min-width:1px){.a:dir(ltr){left:1px;right:2px}.a:dir(rtl){left:2px;right:1px}}",
         ],
       ]);
     });
@@ -10160,4 +10160,32 @@ describe("rounding to 6 digits only cuts a fraction short", () => {
   minify_test("a{--x:241.8301435407}", "a{--x:241.83}");
   minify_test("a{opacity:.123456789}", "a{opacity:.123457}");
   minify_test("a{width:12345.678px}", "a{width:12345.7px}");
+});
+
+describe("consecutive nested declarations are one rule", () => {
+  // Rows are [source, nesting kept, nesting compiled away].
+  test.each([
+    // The three @media rules merge, which puts their declarations side by side.
+    [
+      ".a,.b{@media print{color:red}@media print{color:red}@media print{top:0}}",
+      ".a,.b{@media print{color:red;top:0}}",
+      "@media print{.a,.b{color:red;top:0}}",
+    ],
+    [
+      ".a{@media print{top:0!important}@media print{color:red}@media print{left:0!important}}",
+      ".a{@media print{color:red;top:0!important;left:0!important}}",
+      "@media print{.a{color:red;top:0!important;left:0!important}}",
+    ],
+    // `.c{}` prints nothing.
+    [".a{.b{top:0}color:red;.c{}color:blue}", ".a{& .b{top:0}color:#00f}", ".a .b{top:0}.a{color:#00f}"],
+    // A nested rule between them keeps them apart.
+    [
+      ".a{@media print{color:red}@media print{.b{top:0}}@media print{color:blue}}",
+      ".a{@media print{color:red;& .b{top:0}color:#00f}}",
+      "@media print{.a{color:red}.a .b{top:0}.a{color:#00f}}",
+    ],
+  ])("%s", (source, kept, compiled) => {
+    expect(cssInternals.minifyTest(source, "")).toBe(kept);
+    expect(cssInternals.minifyTest(source, "", { chrome: 80 << 16 })).toBe(compiled);
+  });
 });

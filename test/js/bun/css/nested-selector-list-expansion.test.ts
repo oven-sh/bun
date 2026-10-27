@@ -264,3 +264,10 @@ test("declarations directly in a nested at-rule count against the limit", () => 
   const src = nestedAcrossAtRule("@media print", ".a, .b", 15, 0);
   expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(LIMIT_ERROR);
 });
+
+// The empty `@supports` rules are dropped, so each `@media` rule merges into the one before it and
+// the merged body is minified again. Its declarations are one rule, which counts once per pass.
+test("merged at-rules that hold only declarations stay far from the limit", () => {
+  const src = `.a,.b{${"@media print{color:red}@supports (x:y){}".repeat(512)}}`;
+  expect(minifyTest(src, "", OLD_TARGETS)).toBe("@media print{.a,.b{color:red}}");
+});

@@ -590,6 +590,17 @@ impl<R> CssRuleList<R> {
                             &mut merge_state,
                             context,
                         );
+                        // Consecutive declarations are one rule, also across a dropped rule.
+                        if let Some(CssRule::NestedDeclarations(last)) = rules.last_mut() {
+                            core::mem::swap(last, nested);
+                            nested.declarations.append(&mut last.declarations);
+                            rules.pop();
+                        }
+                        while let Some(CssRule::NestedDeclarations(next)) =
+                            source.next_if(|next| matches!(next, CssRule::NestedDeclarations(_)))
+                        {
+                            nested.declarations.append(&mut next.declarations);
+                        }
                         let is_first = rules.is_empty();
                         let (dir, fallbacks) =
                             nested.minify::<R>(context, enclosing.as_deref_mut())?;

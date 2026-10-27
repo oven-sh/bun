@@ -46,6 +46,12 @@ impl<'bump> DeclarationBlock<'bump> {
         self.declarations.len() + self.important_declarations.len()
     }
 
+    pub(crate) fn append(&mut self, other: &mut Self) {
+        self.declarations.append(&mut other.declarations);
+        self.important_declarations
+            .append(&mut other.important_declarations);
+    }
+
     pub(crate) fn new_in(bump: &'bump Bump) -> Self {
         Self {
             important_declarations: DeclarationList::new_in(bump),

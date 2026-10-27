@@ -712,6 +712,22 @@ mod tests {
     }
 
     #[test]
+    fn requested_locales_alone_are_planned() {
+        let request = wanting(&["de"], TrimRequest::default());
+        let input = TrimInput {
+            used: &UsedFeatures::with_cause(UnseenCodeCause::ProgramNotCompiled),
+            settings: &ExecutableSettings::default(),
+            request: &request,
+        };
+        let planned = plan_encoded_input(&table_with_three_languages(), &input);
+        assert!(planned.removed().is_empty());
+        assert_eq!(
+            planned.icu_packages,
+            planned_icu_items(Vec::new(), vec![1..3])
+        );
+    }
+
+    #[test]
     fn requested_locale_without_data_fails() {
         let request = wanting(&["xx"], removing_unused());
         let input = TrimInput {
@@ -904,7 +920,6 @@ mod tests {
                 logs: true,
                 ..TrimRequest::default()
             },
-            wanting(&["de"], TrimRequest::default()),
         ];
         for request in &requests {
             let mut read = |_: usize, _: &mut [u8]| -> bool {

@@ -3440,7 +3440,10 @@ console.log(<div {...obj} key="after" />);`),
         `export { default as sheet } from "./foo.css" with { type: "css" };`,
         `export { default as sheet } from "./foo.css" with { type: "css" }`,
       );
-      expectPrinted_(`export * from "./foo.css" with { type: "css" };`, `export * from "./foo.css" with { type: "css" }`);
+      expectPrinted_(
+        `export * from "./foo.css" with { type: "css" };`,
+        `export * from "./foo.css" with { type: "css" }`,
+      );
     });
 
     it("import with unicode", () => {

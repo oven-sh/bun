@@ -661,7 +661,7 @@ test.concurrent.skipIf(isWindows).each(["?", "#"])(
 
 test.concurrent("CommonJS query referrers resolve relative children before the suffix", async () => {
   using dir = tempDir("cjs-query-referrer", {
-    "main.cjs": `module.exports = require("./child.cjs");`,
+    "main.cjs": `module.exports = { child: require("./child.cjs"), filename: __filename, dirname: __dirname };`,
     "child.cjs": `module.exports = { value: 42 };`,
   });
   const url = Bun.pathToFileURL(path.join(String(dir), "main.cjs")).href;
@@ -675,7 +675,9 @@ test.concurrent("CommonJS query referrers resolve relative children before the s
         const url = ${JSON.stringify(url)} + suffix;
         const first = require(url);
         assert.equal(first, require(url));
-        assert.equal(first.value, 42);
+        assert.equal(first.child.value, 42);
+        assert.equal(first.filename, ${JSON.stringify(path.join(String(dir), "main.cjs"))});
+        assert.equal(first.dirname, ${JSON.stringify(String(dir))});
         assert.equal((await import(url)).default, first);
       }
       console.log("ok");

@@ -418,21 +418,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     RELEASE_AND_RETURN(throwScope, JSValue::encode(returnValue));
 }
 
-JSString* JSCommonJSModule::filenameForResolution(JSGlobalObject* globalObject, JSString* filename)
-{
-    // Only an unchanged module key carries a query suffix. A decoded or replaced
-    // filename is a filesystem path and can contain a literal question mark.
-    if (!m_filenameIsModuleKey || filename != m_filename.get())
-        return filename;
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto value = filename->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    unsigned pathLength = moduleKeyPathLength(value);
-    if (pathLength == value->length())
-        return filename;
-    return JSC::jsSubstring(globalObject, filename, 0, pathLength);
-}
-
 JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -471,7 +456,6 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
     if (!filename) [[unlikely]] {
         RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, 0)));
     }
-    filename = boundModule->filenameForResolution(globalObject, filename);
     RETURN_IF_EXCEPTION(scope, {});
     Bun::PathResolveModule parent = { .paths = nullptr, .filename = filename, .pathsArrayLazy = true };
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::resolveLookupPaths(globalObject, requestStr, parent)));
@@ -718,8 +702,6 @@ JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::
         ASSERT(filename);
         auto* filenameString = filename.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        filenameString = thisObject->filenameForResolution(globalObject, filenameString);
-        RETURN_IF_EXCEPTION(scope, {});
         auto filenameWtfStr = filenameString->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         BunString filenameStr = Bun::toString(filenameWtfStr);
@@ -838,7 +820,6 @@ JSC_DEFINE_CUSTOM_SETTER(setterFilename,
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     thisObject->m_filename.set(globalObject->vm(), thisObject, string);
-    thisObject->m_filenameIsModuleKey = false;
     return true;
 }
 
@@ -1083,7 +1064,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globa
 struct CommonJSModulePaths {
     JSString* filename;
     JSString* dirname;
-    bool filenameIsModuleKey;
 };
 
 static CommonJSModulePaths pathsForCommonJSModule(Zig::GlobalObject* globalObject, JSString* requireMapKey)
@@ -1092,22 +1072,15 @@ static CommonJSModulePaths pathsForCommonJSModule(Zig::GlobalObject* globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String key = requireMapKey->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto filenameString = key;
-    bool decodedFileURLKey = false;
+    // Keep cache identity separate from the filesystem paths exposed by CommonJS.
+    auto filenameString = key.left(moduleKeyPathLength(key));
     if (key.startsWith("file://"_s)) {
         auto url = WTF::URL(key);
-        if (url.isValid() && !url.isEmpty()) {
-            auto path = url.fileSystemPath();
-            if (path.find('?') != WTF::notFound) {
-                filenameString = path;
-                decodedFileURLKey = true;
-            }
-        }
+        if (url.isValid() && !url.isEmpty())
+            filenameString = url.fileSystemPath();
     }
     auto* filename = filenameString == key ? requireMapKey : jsString(vm, filenameString);
-    auto index = filenameString.reverseFind(
-        PLATFORM_SEP,
-        decodedFileURLKey ? filenameString.length() : moduleKeyPathLength(filenameString));
+    auto index = filenameString.reverseFind(PLATFORM_SEP, filenameString.length());
 
     JSString* dirname;
     if (index != WTF::notFound) {
@@ -1117,7 +1090,7 @@ static CommonJSModulePaths pathsForCommonJSModule(Zig::GlobalObject* globalObjec
         dirname = jsEmptyString(vm);
     }
 
-    return { filename, dirname, filename == requireMapKey };
+    return { filename, dirname };
 }
 
 JSCommonJSModule* JSCommonJSModule::create(
@@ -1136,7 +1109,6 @@ JSCommonJSModule* JSCommonJSModule::create(
         vm,
         globalObject->CommonJSModuleObjectStructure(),
         requireMapKey, paths.filename, paths.dirname, SourceCode());
-    out->m_filenameIsModuleKey = paths.filenameIsModuleKey;
 
     if (exportsObject) {
         out->putDirect(
@@ -1747,7 +1719,6 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
             requireMapKey, paths.filename, paths.dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
-        moduleObject->m_filenameIsModuleKey = paths.filenameIsModuleKey;
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
@@ -1859,7 +1830,6 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
             requireMapKey, paths.filename, paths.dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
-        moduleObject->m_filenameIsModuleKey = paths.filenameIsModuleKey;
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),

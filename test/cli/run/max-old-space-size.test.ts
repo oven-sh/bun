@@ -83,6 +83,10 @@ test.concurrent(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("FATAL ERROR");
+    // The worker must actually reach the over-limit allocation, by completing
+    // it (Bun today) or failing worker-scoped (Node). Either proves the
+    // precondition held; an unrelated worker startup failure fails here.
+    expect(stdout).toMatch(/worker reached 96MB|worker error ERR_WORKER_OUT_OF_MEMORY/);
     expect(stdout).toContain("worker exited");
     expect(exitCode).toBe(0);
   },

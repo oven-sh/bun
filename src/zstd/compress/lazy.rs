@@ -5,10 +5,12 @@ use core::num::NonZeroU32;
 use core::ops::Range;
 
 use super::internal::{
-    BlockSrc, CompressionParameters, DictMatchState, DictMode, Hash8, K_SEARCH_STRENGTH,
-    MatchState, Near, Prefix, REPCODE1_TO_OFFBASE, RowTags, SecondTagStats, SeqSink, SeqStore,
-    Strategy, ZSTD_DUBT_UNSORTED_MARK, ZSTD_ROW_HASH_CACHE_SIZE, count, count_2segments, hash_ptr,
-    index_overlap_check, offbase_is_offset, offbase_to_offset, offset_to_offbase, table_get,
+    BlockSrc, CompressionParameters, Descent, DictMatchState, DictMode, DictTree, Hash8, Hasher,
+    K_SEARCH_STRENGTH, MatchState, Near, Nodes, Prefix, REPCODE1_TO_OFFBASE, RowTags,
+    SecondTagStats, SeqSink, SeqStore, Strategy, TreeInput, ZSTD_DUBT_UNSORTED_MARK,
+    ZSTD_ROW_HASH_CACHE_SIZE, bt_children, bt_look_ahead, bt_low, bt_nodes, bt_set_children,
+    bt_walk, count_2segments, hash_ptr, index_overlap_check, offbase_is_offset, offbase_to_offset,
+    offset_to_offbase, table_get, table_put,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
@@ -35,424 +37,371 @@ const fn dms_end_index(dms: &DictMatchState<'_>) -> u32 {
 
 // ── binary tree search ────────────────────────────────────────────────────
 
-/// `ZSTD_updateDUBT`: adds the positions from `ms.next_to_update` up to `ip` to the trees, as unsorted chains.
-#[inline(always)]
-fn update_dubt(ms: &mut MatchState, prefix: Prefix<'_>, ip: usize, mls: u32) -> Result<()> {
-    let hash_log = ms.c_params.hash_log;
-    let bt_log = ms.c_params.chain_log - 1;
-    let bt_mask = (1u32 << bt_log) - 1;
-    let target = prefix.index_of(ip);
-    let hash_table = ms.hash_table.as_mut_slice();
-    let bt = ms.chain_table.as_mut_slice();
-
-    for idx in ms.next_to_update..target {
-        let h = hash_ptr(prefix.buf, prefix.pos_of(idx), hash_log, mls)?;
-        let match_index = core::mem::replace(hash_table.at_mut(h)?, idx);
-        *bt.array_at_mut(2 * (idx & bt_mask) as usize)? = [match_index, ZSTD_DUBT_UNSORTED_MARK];
-    }
-    ms.next_to_update = target;
-    Ok(())
+/// What the searches in the binary trees work on for the time of a block: the tables of a [`MatchState`], and what does
+/// not change of it.
+struct Dubt<'a> {
+    hash_table: &'a mut [u32],
+    bt: &'a mut Nodes,
+    input: TreeInput<'a>,
+    /// The dictionary, if searches go on in it.
+    dms: Option<&'a DictMatchState<'a>>,
+    hasher: Hasher,
+    /// `window.lowLimit`
+    low_limit: u32,
+    max_distance: u32,
+    /// How far a match can be, if that is not down to `low_limit`.
+    reach: u32,
+    nb_compares: u32,
+    next_to_update: &'a mut u32,
 }
 
-/// What [`insert_dubt1`] works out about the position it sorts.
-struct Unsorted<'a> {
-    bt_mask: u32,
-    /// Where its two slots are in the table.
-    slot: usize,
-    /// The next sorted candidate, which is in the first slot. The other one has the previous unsorted candidate.
-    next_sorted: u32,
-    dict_limit: u32,
-    dict_end: usize,
-    prefix_start: usize,
-    /// The buffer that the position is in, where it is in it, and where its segment ends.
-    ip_buf: &'a [u8],
-    ip: usize,
-    iend: usize,
-    window_low: u32,
-}
-
-impl<'a> Unsorted<'a> {
-    fn new(ms: &MatchState, src: &BlockSrc<'a>, curr: u32, input_end: usize) -> Result<Self> {
-        let bt_mask = (1u32 << (ms.c_params.chain_log - 1)) - 1;
-        let slot = 2 * (curr & bt_mask) as usize;
-        let dict_limit = ms.window.dict_limit;
-        let dict_end = src.dict_pos_of(dict_limit);
-        let (ip_buf, ip, iend) = if curr >= dict_limit {
-            (src.buf, src.pos_of(curr), input_end)
-        } else {
-            (src.dict_buf, src.dict_pos_of(curr), dict_end)
+impl<'a> Dubt<'a> {
+    fn new(ms: &'a mut MatchState, src: &'a BlockSrc<'a>, search_dms: bool) -> Result<Self> {
+        let MatchState {
+            hash_table,
+            chain_table,
+            next_to_update,
+            window,
+            c_params,
+            loaded_dict_end,
+            ..
+        } = ms;
+        if hash_table.len() != 1usize.wrapping_shl(c_params.hash_log)
+            || chain_table.len() != 1usize.wrapping_shl(c_params.chain_log)
+        {
+            return Err(BUG);
+        }
+        let dict = Prefix {
+            buf: src.dict_buf,
+            base: src.dict_base,
         };
-        let window_valid = ms.window.low_limit;
-        let max_distance = 1u32 << ms.c_params.window_log;
+        let max_distance = 1u32.wrapping_shl(c_params.window_log);
         Ok(Self {
-            bt_mask,
-            slot,
-            next_sorted: ms.chain_table.at(slot)?,
-            dict_limit,
-            dict_end,
-            prefix_start: src.pos_of(dict_limit),
-            ip_buf,
-            ip,
-            iend,
-            window_low: if curr.wrapping_sub(window_valid) > max_distance {
-                curr - max_distance
+            hash_table: hash_table.as_mut_slice(),
+            bt: bt_nodes(chain_table),
+            input: TreeInput::new(src.prefix(), dict, window.dict_limit, src.end)?,
+            dms: src.dms.as_ref().filter(|_| search_dms),
+            hasher: Hasher::new(c_params.hash_log, c_params.min_match.clamp(4, 6)),
+            low_limit: window.low_limit,
+            max_distance,
+            // A dictionary is valid as a whole until it is invalidated as a whole.
+            reach: if *loaded_dict_end != 0 {
+                u32::MAX
             } else {
-                window_valid
+                max_distance
             },
+            nb_compares: 1u32.wrapping_shl(c_params.search_log),
+            next_to_update,
+        })
+    }
+
+    /// `ZSTD_updateDUBT`: adds the positions from `next_to_update` up to `curr` to the trees, as unsorted chains.
+    #[inline(always)]
+    fn update(&mut self, curr: u32) -> Result<()> {
+        let near = self.input.near;
+        let next_to_update = *self.next_to_update;
+        if curr.saturating_sub(next_to_update) >= LONG_UPDATE {
+            let first = next_to_update..curr;
+            let dict_limit = self.input.dict_limit;
+            return update_many(
+                self.hash_table,
+                self.bt,
+                near,
+                self.hasher,
+                first,
+                dict_limit,
+            );
+        }
+        for idx in next_to_update..curr {
+            let bytes = near.read64(idx.wrapping_sub(self.input.dict_limit));
+            let h = self.hasher.hash(bytes.ok_or(BUG)?);
+            let match_index = table_get(self.hash_table, h);
+            table_put(self.hash_table, h, idx);
+            bt_set_children(self.bt, idx, [match_index, ZSTD_DUBT_UNSORTED_MARK]);
+            let ahead = idx.wrapping_sub(self.input.dict_limit).wrapping_add(8);
+            if self.input.far
+                && let Some(bytes) = near.read64(ahead)
+            {
+                prefetch_l1(self.hash_table, self.hasher.hash(bytes));
+            }
+        }
+        Ok(())
+    }
+
+    /// `ZSTD_insertDUBT1`: sorts the position `curr`, which is in a tree but unsorted. `curr` is at least `bt_low`.
+    #[inline(always)]
+    fn insert_dubt1(&mut self, curr: u32, nb_compares: u32, bt_low: u32) -> Result<()> {
+        let window_low = if curr.wrapping_sub(self.low_limit) > self.max_distance {
+            curr.wrapping_sub(self.max_distance)
+        } else {
+            self.low_limit
+        };
+        if curr < self.input.dict_limit {
+            return sort_dubt1_in_dict(
+                self.bt,
+                self.input,
+                self.low_limit,
+                curr,
+                nb_compares,
+                bt_low,
+                window_low,
+            );
+        }
+        sort_dubt1(self.bt, &self.input, curr, nb_compares, bt_low, window_low)
+    }
+
+    /// `ZSTD_DUBT_findBestMatch` for the position `ip` of `input.near`, but for the dictionary. Returns the length of the
+    /// best match, or 0, and how many more positions could have been compared if the dictionary is to be searched.
+    #[inline(always)]
+    fn find_best_match(&mut self, ip: u32, off_base_ptr: &mut u32) -> Result<DubtFound> {
+        let curr = ip.wrapping_add(self.input.dict_limit);
+        // `ZSTD_getLowestMatchIndex`
+        let window_low = if curr.wrapping_sub(self.low_limit) > self.reach {
+            curr.wrapping_sub(self.reach)
+        } else {
+            self.low_limit
+        };
+        let h = self.hasher.hash(self.input.near.read64(ip).ok_or(BUG)?);
+        let mut match_index = table_get(self.hash_table, h);
+        bt_look_ahead::<2, 1>(self.hash_table, self.bt, &self.input, self.hasher, ip);
+
+        let unsort_limit = bt_low(self.bt, curr).max(window_low);
+        let mut nb_candidates = self.nb_compares;
+        let mut previous_candidate = 0u32;
+
+        // Reach the end of the list of unsorted candidates. The marks become a chain back to where it starts.
+        let mut slots = bt_children(self.bt, match_index);
+        while let [next_candidate, ZSTD_DUBT_UNSORTED_MARK] = slots
+            && match_index > unsort_limit
+        {
+            if nb_candidates <= 1 {
+                // The last candidate is still unsorted: cut the list there.
+                bt_set_children(self.bt, match_index, [0, 0]);
+                break;
+            }
+            bt_set_children(self.bt, match_index, [next_candidate, previous_candidate]);
+            previous_candidate = match_index;
+            match_index = next_candidate;
+            slots = bt_children(self.bt, match_index);
+            nb_candidates -= 1;
+        }
+
+        // Sort the candidates, the oldest first.
+        match_index = previous_candidate;
+        while match_index != 0 {
+            let [_, next_candidate_idx] = bt_children(self.bt, match_index);
+            self.insert_dubt1(match_index, nb_candidates, unsort_limit)?;
+            match_index = next_candidate_idx;
+            nb_candidates += 1;
+        }
+
+        // Find the longest match.
+        let mut match_end_idx = curr.wrapping_add(8 + 1);
+        let mut best_length = 0u32;
+        let mut search_dict = true;
+        match_index = table_get(self.hash_table, h);
+        table_put(self.hash_table, h, curr);
+        let nb_compares = bt_walk(
+            self.bt,
+            &self.input,
+            ip,
+            match_index,
+            window_low.saturating_add(1),
+            self.nb_compares,
+            Descent::new(self.bt, curr),
+            |match_index, common| {
+                if common.len > best_length {
+                    if common.len > match_end_idx.wrapping_sub(match_index) {
+                        match_end_idx = match_index.wrapping_add(common.len);
+                    }
+                    if 4 * (common.len - best_length) as i32
+                        > highbit32(curr.wrapping_sub(match_index).wrapping_add(1)) as i32
+                            - highbit32(*off_base_ptr) as i32
+                    {
+                        best_length = common.len;
+                        *off_base_ptr = offset_to_offbase(curr.wrapping_sub(match_index));
+                    }
+                    if common.match_is_smaller.is_none() {
+                        // Equal: no way to know which is smaller. Nothing in the dictionary can be longer.
+                        search_dict = false;
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            },
+        )?;
+
+        // Skip repetitive patterns.
+        *self.next_to_update = match_end_idx.wrapping_sub(8);
+        Ok(DubtFound {
+            best_length,
+            nb_compares: if search_dict { nb_compares } else { 0 },
         })
     }
 }
 
-/// `ZSTD_insertDUBT1`: sorts the position `curr`, which is in a tree but unsorted. `curr` is at least `bt_low`.
-fn insert_dubt1<const DICT_MODE: u8>(
-    ms: &mut MatchState,
-    src: &BlockSrc<'_>,
-    curr: u32,
-    input_end: usize,
-    mut nb_compares: u32,
-    bt_low: u32,
-) -> Result<()> {
-    let at = Unsorted::new(ms, src, curr, input_end)?;
-    let mut common_length_smaller = 0usize;
-    let mut common_length_larger = 0usize;
-    let bt = ms.chain_table.as_mut_slice();
-    let mut smaller_ptr = at.slot;
-    let mut larger_ptr = smaller_ptr + 1;
-    let mut match_index = at.next_sorted;
-
-    while nb_compares != 0 && match_index > at.window_low {
-        let next_ptr = 2 * (match_index & at.bt_mask) as usize;
-        let mut match_length = common_length_smaller.min(common_length_larger);
-        let in_prefix =
-            DICT_MODE != EXT_DICT || match_index as usize + match_length >= at.dict_limit as usize;
-        // In `src.buf`, `match_pos` may be before the start: only its sum with `match_length` is a position.
-        let (mut match_buf, mut match_pos) = if in_prefix {
-            (src.buf, src.pos_of(match_index))
+impl Dubt<'_> {
+    /// `ZSTD_BtFindBestMatch`: updates the trees up to the position `ip` of `input.near` and returns the best match there.
+    /// Its length is 0 if there is none.
+    #[inline(never)]
+    fn search(&mut self, ip: u32) -> Result<Found> {
+        let mut off_base = 999_999_999u32;
+        let curr = ip.wrapping_add(self.input.dict_limit);
+        let len = if curr < *self.next_to_update {
+            // In an area that is skipped.
+            0
         } else {
-            (src.dict_buf, src.dict_pos_of(match_index))
+            let dict_root = match self.dms {
+                Some(dms) => self.dict_root(dms, ip)?,
+                None => 0,
+            };
+            self.update(curr)?;
+            let found = self.find_best_match(ip, &mut off_base)?;
+            match self.dms {
+                Some(dms) if dict_root != 0 && found.nb_compares != 0 => find_better_dict_match(
+                    dms,
+                    self.input,
+                    self.low_limit,
+                    ip,
+                    dict_root,
+                    found,
+                    &mut off_base,
+                )?,
+                _ => found.best_length,
+            }
         };
-
-        if in_prefix || curr < at.dict_limit {
-            // Both are in the same segment.
-            match_length += count(
-                at.ip_buf,
-                at.ip + match_length,
-                match_buf,
-                match_pos.wrapping_add(match_length),
-                at.iend,
-            )?;
-        } else {
-            match_length += count_2segments(
-                at.ip_buf,
-                at.ip + match_length,
-                match_buf,
-                match_pos + match_length,
-                at.iend,
-                at.dict_end,
-                at.prefix_start,
-            )?;
-            if match_index as usize + match_length >= at.dict_limit as usize {
-                (match_buf, match_pos) = (src.buf, src.pos_of(match_index));
-            }
-        }
-
-        if at.ip + match_length == at.iend {
-            // Equal: no way to know which is smaller. Dropped, to keep the tree consistent.
-            break;
-        }
-
-        if match_buf.at(match_pos.wrapping_add(match_length))?
-            < at.ip_buf.at(at.ip + match_length)?
-        {
-            bt.put(smaller_ptr, match_index)?;
-            common_length_smaller = match_length;
-            if match_index <= bt_low {
-                // Beyond the tree. This slot keeps its value: only the other one is cleared.
-                smaller_ptr = larger_ptr;
-                break;
-            }
-            smaller_ptr = next_ptr + 1;
-            match_index = bt.at(next_ptr + 1)?;
-        } else {
-            bt.put(larger_ptr, match_index)?;
-            common_length_larger = match_length;
-            if match_index <= bt_low {
-                larger_ptr = smaller_ptr;
-                break;
-            }
-            larger_ptr = next_ptr;
-            match_index = bt.at(next_ptr)?;
-        }
-        nb_compares -= 1;
+        Ok(Found {
+            len,
+            off_base: NonZeroU32::new(off_base).ok_or(BUG)?,
+        })
     }
 
-    bt.put(smaller_ptr, 0)?;
-    bt.put(larger_ptr, 0)
+    /// [`DictTree::root`] for the position `ip` of `input.near`.
+    #[inline(always)]
+    fn dict_root(&self, dms: &DictMatchState<'_>, ip: u32) -> Result<u32> {
+        let bytes = self.input.near.read64(ip).ok_or(BUG)?;
+        let hasher = self.hasher.with_log(dms.ms.c_params.hash_log);
+        DictTree::root(*dms, hasher.hash(bytes))
+    }
 }
 
-/// `ZSTD_DUBT_findBetterDictMatch`: goes on, in the tree of the dictionary, with a search that found `best_length`.
-fn dubt_find_better_dict_match(
-    ms: &MatchState,
-    src: &BlockSrc<'_>,
-    ip: usize,
-    iend: usize,
-    offset_ptr: &mut u32,
-    mut best_length: usize,
-    mut nb_compares: u32,
-    mls: u32,
-) -> Result<usize> {
-    let dms = src.dms.ok_or(BUG)?;
-    let h = hash_ptr(src.buf, ip, dms.ms.c_params.hash_log, mls)?;
-    let mut dict_match_index = dms.ms.hash_table.at(h)?;
+/// From that many positions on, [`Dubt::update`] leaves them to [`update_many`].
+const LONG_UPDATE: u32 = 32;
 
-    let prefix_start = src.pos_of(ms.window.dict_limit);
-    let curr = src.index_of(ip);
-    let dict_high_limit = dms_end_index(&dms);
-    let dict_low_limit = dms.ms.window.low_limit;
-    let dict_index_delta = ms.window.low_limit.wrapping_sub(dict_high_limit);
-
-    let dict_bt = dms.ms.chain_table.as_slice();
-    let bt_log = dms.ms.c_params.chain_log - 1;
-    let bt_mask = (1u32 << bt_log) - 1;
-    let bt_low = if bt_mask >= dict_high_limit.wrapping_sub(dict_low_limit) {
-        dict_low_limit
-    } else {
-        dict_high_limit - bt_mask
-    };
-
-    let mut common_length_smaller = 0usize;
-    let mut common_length_larger = 0usize;
-
-    while nb_compares != 0 && dict_match_index > dict_low_limit {
-        let next_ptr = 2 * (dict_match_index & bt_mask) as usize;
-        let mut match_length = common_length_smaller.min(common_length_larger);
-        let match_index = dict_match_index.wrapping_add(dict_index_delta);
-        match_length += count_2segments(
-            src.buf,
-            ip + match_length,
-            dms.buf,
-            dms.pos_of(dict_match_index) + match_length,
-            iend,
-            dms.end,
-            prefix_start,
-        )?;
-
-        if match_length > best_length {
-            if 4 * (match_length - best_length) as i32
-                > highbit32(curr.wrapping_sub(match_index).wrapping_add(1)) as i32
-                    - highbit32(offset_ptr.wrapping_add(1)) as i32
-            {
-                best_length = match_length;
-                *offset_ptr = offset_to_offbase(curr.wrapping_sub(match_index));
-            }
-            if ip + match_length == iend {
-                // No way to know which is smaller.
-                break;
-            }
-        }
-
-        if dict_match_index <= bt_low {
-            // Beyond the tree.
-            break;
-        }
-        let match_byte = if dict_match_index as usize + match_length >= dict_high_limit as usize {
-            let match_pos = src.pos_of(match_index);
-            src.buf.at(match_pos.wrapping_add(match_length))?
-        } else {
-            dms.buf.at(dms.pos_of(dict_match_index) + match_length)?
-        };
-        if match_byte < src.buf.at(ip + match_length)? {
-            common_length_smaller = match_length;
-            dict_match_index = dict_bt.at(next_ptr + 1)?;
-        } else {
-            common_length_larger = match_length;
-            dict_match_index = dict_bt.at(next_ptr)?;
-        }
-        nb_compares -= 1;
-    }
-
-    Ok(best_length)
-}
-
-/// `ZSTD_DUBT_findBestMatch`
-#[inline(always)]
-fn dubt_find_best_match<const DICT_MODE: u8>(
-    ms: &mut MatchState,
-    src: &BlockSrc<'_>,
-    ip: usize,
-    iend: usize,
-    off_base_ptr: &mut u32,
-    mls: u32,
-) -> Result<usize> {
-    let h = hash_ptr(src.buf, ip, ms.c_params.hash_log, mls)?;
-    let mut match_index = ms.hash_table.at(h)?;
-
-    let curr = src.index_of(ip);
-    let window_low = ms.get_lowest_match_index(curr, ms.c_params.window_log);
-
-    let bt_log = ms.c_params.chain_log - 1;
-    let bt_mask = (1u32 << bt_log) - 1;
-    let bt_low = curr.saturating_sub(bt_mask);
-    let unsort_limit = bt_low.max(window_low);
-    let mut nb_compares = 1u32 << ms.c_params.search_log;
-    let mut nb_candidates = nb_compares;
-    let mut previous_candidate = 0u32;
-
-    // Reach the end of the list of unsorted candidates. The marks become a chain back to where it starts.
-    let bt = ms.chain_table.as_mut_slice();
-    let mut next_candidate = 2 * (match_index & bt_mask) as usize;
-    while match_index > unsort_limit
-        && bt.at(next_candidate + 1)? == ZSTD_DUBT_UNSORTED_MARK
-        && nb_candidates > 1
-    {
-        bt.put(next_candidate + 1, previous_candidate)?;
-        previous_candidate = match_index;
-        match_index = bt.at(next_candidate)?;
-        next_candidate = 2 * (match_index & bt_mask) as usize;
-        nb_candidates -= 1;
-    }
-
-    // If the last candidate is still unsorted, cut the list there.
-    if match_index > unsort_limit && bt.at(next_candidate + 1)? == ZSTD_DUBT_UNSORTED_MARK {
-        *bt.array_at_mut(next_candidate)? = [0, 0];
-    }
-
-    // Sort the candidates, the oldest first.
-    match_index = previous_candidate;
-    while match_index != 0 {
-        let next_candidate_idx = ms
-            .chain_table
-            .at(2 * (match_index & bt_mask) as usize + 1)?;
-        insert_dubt1::<DICT_MODE>(ms, src, match_index, iend, nb_candidates, unsort_limit)?;
-        match_index = next_candidate_idx;
-        nb_candidates += 1;
-    }
-
-    // Find the longest match.
-    let mut common_length_smaller = 0usize;
-    let mut common_length_larger = 0usize;
-    let dict_limit = ms.window.dict_limit;
-    let dict_end = src.dict_pos_of(dict_limit);
-    let prefix_start = src.pos_of(dict_limit);
-    let bt = ms.chain_table.as_mut_slice();
-    let mut smaller_ptr = 2 * (curr & bt_mask) as usize;
-    let mut larger_ptr = smaller_ptr + 1;
-    let mut match_end_idx = curr + 8 + 1;
-    let mut best_length = 0usize;
-
-    match_index = core::mem::replace(ms.hash_table.at_mut(h)?, curr);
-
-    while nb_compares != 0 && match_index > window_low {
-        let next_ptr = 2 * (match_index & bt_mask) as usize;
-        let mut match_length = common_length_smaller.min(common_length_larger);
-        // `match_pos` may be before the start of the buffer: only its sum with `match_length` is a position.
-        let (mut match_buf, mut match_pos) = (src.buf, src.pos_of(match_index));
-
-        if DICT_MODE != EXT_DICT || match_index as usize + match_length >= dict_limit as usize {
-            match_length += count(
-                src.buf,
-                ip + match_length,
-                match_buf,
-                match_pos.wrapping_add(match_length),
-                iend,
-            )?;
-        } else {
-            let dict_match_pos = src.dict_pos_of(match_index);
-            match_length += count_2segments(
-                src.buf,
-                ip + match_length,
-                src.dict_buf,
-                dict_match_pos + match_length,
-                iend,
-                dict_end,
-                prefix_start,
-            )?;
-            if (match_index as usize + match_length) < dict_limit as usize {
-                (match_buf, match_pos) = (src.dict_buf, dict_match_pos);
-            }
-        }
-
-        if match_length > best_length {
-            if match_length > match_end_idx.wrapping_sub(match_index) as usize {
-                match_end_idx = match_index + match_length as u32;
-            }
-            if 4 * (match_length - best_length) as i32
-                > highbit32(curr.wrapping_sub(match_index).wrapping_add(1)) as i32
-                    - highbit32(*off_base_ptr) as i32
-            {
-                best_length = match_length;
-                *off_base_ptr = offset_to_offbase(curr.wrapping_sub(match_index));
-            }
-            if ip + match_length == iend {
-                // Equal: no way to know which is smaller.
-                if DICT_MODE == DICT_MATCH_STATE {
-                    // Nothing in the dictionary can be longer.
-                    nb_compares = 0;
-                }
-                break;
-            }
-        }
-
-        if match_buf.at(match_pos.wrapping_add(match_length))? < src.buf.at(ip + match_length)? {
-            bt.put(smaller_ptr, match_index)?;
-            common_length_smaller = match_length;
-            if match_index <= bt_low {
-                // Beyond the tree. This slot keeps its value: only the other one is cleared.
-                smaller_ptr = larger_ptr;
-                break;
-            }
-            smaller_ptr = next_ptr + 1;
-            match_index = bt.at(next_ptr + 1)?;
-        } else {
-            bt.put(larger_ptr, match_index)?;
-            common_length_larger = match_length;
-            if match_index <= bt_low {
-                larger_ptr = smaller_ptr;
-                break;
-            }
-            larger_ptr = next_ptr;
-            match_index = bt.at(next_ptr)?;
-        }
-        nb_compares -= 1;
-    }
-
-    bt.put(smaller_ptr, 0)?;
-    bt.put(larger_ptr, 0)?;
-
-    if DICT_MODE == DICT_MATCH_STATE && nb_compares != 0 {
-        best_length = dubt_find_better_dict_match(
-            ms,
-            src,
-            ip,
-            iend,
-            off_base_ptr,
-            best_length,
-            nb_compares,
-            mls,
-        )?;
-    }
-
-    // Skip repetitive patterns.
-    ms.next_to_update = match_end_idx - 8;
-    Ok(best_length)
-}
-
-/// `ZSTD_BtFindBestMatch`: updates the trees up to `ip` and returns the length of the best match there, or 0.
-/// `off_base_ptr` is written to if there is one.
+/// `ZSTD_updateDUBT` of the indices `indices`, which are in `near`, whose first index is `dict_limit`. There are enough
+/// of them not to wait for memory.
+#[cold]
 #[inline(never)]
-fn bt_find_best_match<const MLS: u32, const DICT_MODE: u8>(
-    ms: &mut MatchState,
-    src: &BlockSrc<'_>,
-    ip: usize,
-    i_limit: usize,
-    off_base_ptr: &mut u32,
-) -> Result<usize> {
-    if ip < src.pos_of(ms.next_to_update) {
-        // In an area that is skipped.
-        return Ok(0);
+fn update_many(
+    hash_table: &mut [u32],
+    bt: &mut Nodes,
+    near: Near<'_>,
+    hasher: Hasher,
+    indices: core::ops::Range<u32>,
+    dict_limit: u32,
+) -> Result<()> {
+    let first = indices.start.wrapping_sub(dict_limit) as usize;
+    let last = indices.end.wrapping_sub(dict_limit) as usize;
+    let bytes = near.bytes().sub(first..last + 7)?;
+    for (idx, bytes) in indices.zip(bytes.array_windows()) {
+        let h = hasher.hash(u64::from_le_bytes(*bytes));
+        let match_index = table_get(hash_table, h);
+        table_put(hash_table, h, idx);
+        bt_set_children(bt, idx, [match_index, ZSTD_DUBT_UNSORTED_MARK]);
     }
-    update_dubt(ms, src.prefix(), ip, MLS)?;
-    dubt_find_best_match::<DICT_MODE>(ms, src, ip, i_limit, off_base_ptr, MLS)
+    Ok(())
+}
+
+/// `ZSTD_DUBT_findBetterDictMatch`: goes on, in the tree of the dictionary whose root is `root`, with a search for the
+/// position `ip` of `input.near` that found `found`. `low_limit` is `window.lowLimit`. Returns the length of the best
+/// match.
+#[inline(never)]
+fn find_better_dict_match(
+    dms: &DictMatchState<'_>,
+    input: TreeInput<'_>,
+    low_limit: u32,
+    ip: u32,
+    root: u32,
+    found: DubtFound,
+    offset_ptr: &mut u32,
+) -> Result<u32> {
+    let tree = DictTree::new(*dms, low_limit)?;
+    let curr = ip.wrapping_add(input.dict_limit);
+    let mut best_length = found.best_length;
+    tree.walk(
+        &input,
+        ip,
+        root,
+        found.nb_compares,
+        |dict_match_index, common| {
+            if common.len > best_length {
+                let match_index = dict_match_index.wrapping_add(tree.index_delta);
+                if 4 * (common.len - best_length) as i32
+                    > highbit32(curr.wrapping_sub(match_index).wrapping_add(1)) as i32
+                        - highbit32(offset_ptr.wrapping_add(1)) as i32
+                {
+                    best_length = common.len;
+                    *offset_ptr = offset_to_offbase(curr.wrapping_sub(match_index));
+                }
+                // At the end, there is no way to know which is smaller.
+                return Ok(common.match_is_smaller.is_some());
+            }
+            Ok(true)
+        },
+    )?;
+    Ok(best_length)
+}
+
+/// [`sort_dubt1`] of a position of the older segment of `input`, which starts at the index `low_limit`. All that is
+/// before the position is in that segment too.
+#[cold]
+#[inline(never)]
+fn sort_dubt1_in_dict(
+    bt: &mut Nodes,
+    input: TreeInput<'_>,
+    low_limit: u32,
+    curr: u32,
+    nb_compares: u32,
+    bt_low: u32,
+    window_low: u32,
+) -> Result<()> {
+    let older = input.dict;
+    let nothing = Prefix { buf: &[], base: 0 };
+    let older = TreeInput::new(older, nothing, low_limit, older.pos_of(input.dict_limit))?;
+    sort_dubt1(bt, &older, curr, nb_compares, bt_low, window_low)
+}
+
+/// The body of `ZSTD_insertDUBT1`, for a position of `input.near`.
+#[inline(always)]
+fn sort_dubt1(
+    bt: &mut Nodes,
+    input: &TreeInput<'_>,
+    curr: u32,
+    nb_compares: u32,
+    bt_low: u32,
+    window_low: u32,
+) -> Result<()> {
+    // The next sorted candidate is in the first slot. The other one has the previous unsorted candidate.
+    let [next_sorted, _] = bt_children(bt, curr);
+    bt_walk(
+        bt,
+        input,
+        curr.wrapping_sub(input.dict_limit),
+        next_sorted,
+        window_low.saturating_add(1),
+        nb_compares,
+        Descent::down_to(curr, bt_low),
+        // If they are equal, there is no way to know which is smaller. Dropped, to keep the tree consistent.
+        |_, common| Ok(common.match_is_smaller.is_some()),
+    )?;
+    Ok(())
+}
+
+/// What [`Dubt::find_best_match`] returns.
+#[derive(Clone, Copy)]
+struct DubtFound {
+    best_length: u32,
+    nb_compares: u32,
 }
 
 // ── what the match finders share ──────────────────────────────────────────
@@ -767,25 +716,14 @@ trait Finder<'a>: Sized {
 
 // ── binary trees, for the parser ──────────────────────────────────────────
 
-struct TreeFinder<'a, const DICT_MODE: u8> {
-    ms: &'a mut MatchState,
-    src: &'a BlockSrc<'a>,
-    /// Where the position 0 is in `src.buf`.
-    prefix_start: usize,
-    mls: u32,
-}
+struct TreeFinder<'a, const DICT_MODE: u8>(Dubt<'a>);
 
 impl<'a, const DICT_MODE: u8> Finder<'a> for TreeFinder<'a, DICT_MODE> {
     const MARGIN: u32 = 8;
 
     #[inline(always)]
-    fn new(ms: &'a mut MatchState, src: &'a BlockSrc<'a>, block: LazyBlock<'a>) -> Result<Self> {
-        Ok(Self {
-            mls: ms.c_params.min_match.clamp(4, 6),
-            prefix_start: src.pos_of(block.base_index),
-            ms,
-            src,
-        })
+    fn new(ms: &'a mut MatchState, src: &'a BlockSrc<'a>, _block: LazyBlock<'a>) -> Result<Self> {
+        Ok(Self(Dubt::new(ms, src, DICT_MODE == DICT_MATCH_STATE)?))
     }
 
     #[inline(always)]
@@ -795,18 +733,8 @@ impl<'a, const DICT_MODE: u8> Finder<'a> for TreeFinder<'a, DICT_MODE> {
         wanted: Wanted,
         _skipping: bool,
     ) -> Result<Option<Found>> {
-        let ip = self.prefix_start + ip as usize;
-        let iend = self.src.end;
-        let mut off_base = 999_999_999u32;
-        let len = match self.mls {
-            4 => bt_find_best_match::<4, DICT_MODE>(self.ms, self.src, ip, iend, &mut off_base),
-            5 => bt_find_best_match::<5, DICT_MODE>(self.ms, self.src, ip, iend, &mut off_base),
-            _ => bt_find_best_match::<6, DICT_MODE>(self.ms, self.src, ip, iend, &mut off_base),
-        }? as u32;
-        if len <= wanted.longer_than {
-            return Ok(None);
-        }
-        Ok(NonZeroU32::new(off_base).map(|off_base| Found { len, off_base }))
+        let found = self.0.search(ip)?;
+        Ok(Some(found).filter(|found| found.len > wanted.longer_than))
     }
 
     #[inline(always)]

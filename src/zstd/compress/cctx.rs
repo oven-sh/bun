@@ -12,11 +12,10 @@ use super::huf::{self, HufRepeat};
 use super::internal::{
     BlockSrc, BufId, Buffers, CompressedBlockState, CompressionParameters, DictMatchState,
     DictTableLoadMethod, EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType, Match,
-    MatchState, Optimal, ParamSwitch, Prefix, RawSeq, RawSeqStore, RowTags, SeqChunk, SeqStore,
-    Strategy, Table, TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX,
-    ZSTD_DUBT_UNSORTED_MARK, ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX,
-    min_gain, no_compress_block, offbase_is_repcode, offset_to_offbase, rle_compress_block,
-    update_rep,
+    MatchState, ParamSwitch, Prefix, RawSeq, RawSeqStore, RowTags, SeqChunk, SeqStore, Strategy,
+    Table, TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
+    ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX, min_gain, no_compress_block,
+    offbase_is_repcode, offset_to_offbase, rle_compress_block, update_rep,
 };
 use super::literals::min_literals_to_compress;
 use super::params::{
@@ -226,12 +225,15 @@ fn reset_match_state(
         reset_table(&mut ms.opt.match_length_freq, MAX_ML as usize + 1, false)?;
         reset_table(&mut ms.opt.off_code_freq, MAX_OFF as usize + 1, false)?;
         reset_table(&mut ms.opt.match_table, ZSTD_OPT_SIZE, false)?;
-        reset_table(&mut ms.opt.price_table, ZSTD_OPT_SIZE, false)?;
+        ms.opt.price_table.resize(ZSTD_OPT_SIZE)?;
     }
 
     ms.c_params = *c_params;
     Ok(())
 }
+
+/// What the tables of the optimal parser take for a position: a `Match`, and 7 numbers in the `PriceTable`.
+const OPT_POSITION_SIZE: usize = size_of::<Match>() + 7 * size_of::<u32>();
 
 /// How many bytes the tables of a context take.
 fn tables_size(c_params: &CompressionParameters, use_row_match_finder: ParamSwitch) -> usize {
@@ -241,7 +243,7 @@ fn tables_size(c_params: &CompressionParameters, use_row_match_finder: ParamSwit
         size += sizes.h_size;
     }
     if c_params.strat() >= Strategy::BtOpt {
-        size += ZSTD_OPT_SIZE * (size_of::<Match>() + size_of::<Optimal>());
+        size += ZSTD_OPT_SIZE * OPT_POSITION_SIZE;
     }
     size
 }
@@ -251,8 +253,7 @@ fn tables_capacity(ms: &MatchState) -> usize {
     (ms.hash_table.capacity() + ms.chain_table.capacity() + ms.hash_table3.capacity())
         * size_of::<u32>()
         + ms.tag_table.capacity()
-        + ms.opt.match_table.capacity() * size_of::<Match>()
-        + ms.opt.price_table.capacity() * size_of::<Optimal>()
+        + ms.opt.match_table.capacity() * OPT_POSITION_SIZE
 }
 
 /// `ZSTD_indexTooCloseToMax`: starting a frame this close to the limit would mean bringing indices down during it.
@@ -939,7 +940,7 @@ impl FrameCompressor {
             ms.hash_table3 = Table::new();
             ms.tag_table = Table::new();
             ms.opt.match_table = Vec::new();
-            ms.opt.price_table = Vec::new();
+            ms.opt.price_table.resize(0)?;
         }
 
         self.match_state.c_params = params.c_params;

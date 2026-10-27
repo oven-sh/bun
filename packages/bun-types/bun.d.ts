@@ -10423,8 +10423,9 @@ declare module "bun" {
      * Creates the target directory and any necessary parent directories if they don't exist.
      * Existing files are overwritten.
      *
-     * On Linux and macOS, nothing is written through a symlink in the target directory that leads out of it.
+     * On Linux and macOS, nothing is written through a symlink in the target directory that is absolute or leads out of it.
      * The promise rejects when a file entry needs such a symlink, unless `options.glob` is set, which skips the entry.
+     * The `code` of the error is `"EXDEV"`, and its `path` is the path of the entry relative to the target directory.
      *
      * @param path - The directory path to extract to
      * @param options - Optional extraction options

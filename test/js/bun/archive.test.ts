@@ -1212,37 +1212,39 @@ describe("Bun.Archive", () => {
         /** Extracted one after the other. */
         archives: Buffer[][];
       };
-      /** What each `extract()` resolves to, or the message it rejects with. */
+      /** What each `extract()` resolves to, or the message it rejects with, after its `code` and `path` if it has them. */
       type Expected = { plain: (number | string)[]; glob: (number | string)[] };
+      const refused = (path: string) =>
+        `EXDEV ${path}: A symlink in the destination is absolute or leads outside of it`;
       const leaving: Record<string, Case & Expected> = {
         "a file through a symlink": {
           links: [["out", "../outside"]],
           archives: [[file("out/new.txt")]],
-          plain: ["ReadError"],
+          plain: [refused("out/new.txt")],
           glob: [0],
         },
         "a file through an absolute symlink": {
           links: [["out", "$/outside"]],
           archives: [[file("out/new.txt")]],
-          plain: ["ReadError"],
+          plain: [refused("out/new.txt")],
           glob: [0],
         },
         "a file and its parents through a symlink": {
           links: [["out", "../outside"]],
           archives: [[file("out/a/b/new.txt")]],
-          plain: ["ReadError"],
+          plain: [refused("out/a/b/new.txt")],
           glob: [0],
         },
         "a file through a symlink below a directory": {
           links: [["deep/er/out", "../../../outside"]],
           archives: [[file("deep/er/out/new.txt")]],
-          plain: ["ReadError"],
+          plain: [refused("deep/er/out/new.txt")],
           glob: [0],
         },
         "a file through a symlink that comes back": {
           links: [["back", "../dest/real"]],
           archives: [[directory("real"), file("back/new.txt")]],
-          plain: ["ReadError"],
+          plain: [refused("back/new.txt")],
           glob: [1],
         },
         "a file through a symlink that goes down first": {
@@ -1251,7 +1253,7 @@ describe("Bun.Archive", () => {
             ["deep/out", "er/../../../outside"],
           ],
           archives: [[file("deep/out/new.txt")]],
-          plain: ["ReadError"],
+          plain: [refused("deep/out/new.txt")],
           glob: [0],
         },
         "a file through a symlink through a symlink": {
@@ -1260,19 +1262,19 @@ describe("Bun.Archive", () => {
             ["out", "a/up/../outside"],
           ],
           archives: [[file("out/new.txt")]],
-          plain: ["ReadError"],
+          plain: [refused("out/new.txt")],
           glob: [0],
         },
         "a file over a symlink": {
           links: [["victim.txt", "../outside/victim.txt"]],
           archives: [[file("victim.txt")]],
-          plain: ["ReadError"],
+          plain: [refused("victim.txt")],
           glob: [0],
         },
         "a file over a dangling symlink": {
           links: [["new.txt", "../outside/new.txt"]],
           archives: [[file("new.txt")]],
-          plain: ["ReadError"],
+          plain: [refused("new.txt")],
           glob: [0],
         },
         "a directory through a symlink": {
@@ -1351,7 +1353,11 @@ describe("Bun.Archive", () => {
           for (const { name, dest, archives } of cases) {
             results[name] = [];
             for (const path of archives) {
-              results[name].push(await new Bun.Archive(readFileSync(path)).extract(dest, options).catch(e => e.message));
+              results[name].push(
+                await new Bun.Archive(readFileSync(path))
+                  .extract(dest, options)
+                  .catch(e => (e.code ? e.code + " " + e.path + ": " : "") + e.message),
+              );
             }
           }
           console.log(JSON.stringify(results));
@@ -1435,7 +1441,7 @@ describe("Bun.Archive", () => {
 
         test.concurrent.each(["plain", "glob"] as const)("one that stays inside (%s)", async mode => {
           using dir = tempDir("archive-symlinks", fixture);
-          const cases: Record<string, Case & { followed: boolean }> = {
+          const cases: Record<string, Case & { followed: boolean; message?: string }> = {
             "file": {
               followed: true,
               links: [["alias", "real"]],
@@ -1475,6 +1481,7 @@ describe("Bun.Archive", () => {
             // The kernels refuse every absolute one.
             "absolute": {
               followed: false,
+              message: refused("alias/new.txt"),
               links: [["alias", "$/dest/real"]],
               archives: [[directory("real"), file("alias/new.txt")]],
             },
@@ -1495,7 +1502,7 @@ describe("Bun.Archive", () => {
               list.map(({ name, root }) => [
                 name,
                 {
-                  results: [cases[name].followed ? 2 : mode === "plain" ? "ReadError" : 1],
+                  results: [cases[name].followed ? 2 : mode === "plain" ? (cases[name].message ?? "ReadError") : 1],
                   tree: {
                     ...before(root, cases[name].links!),
                     "real": "directory",

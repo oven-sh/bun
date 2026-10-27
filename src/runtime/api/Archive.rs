@@ -8,7 +8,7 @@ use bun_core::{self, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult};
-use bun_jsc::{StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{StringJsc as _, SysErrorJsc};
 use bun_ptr::RefPtr;
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
@@ -584,6 +584,7 @@ pub enum ExtractError {
 pub(crate) enum ExtractResult {
     Success(u32),
     Err(ExtractError),
+    LeavesDestination(bun_sys::Error),
 }
 
 pub(crate) struct ExtractContext {
@@ -606,6 +607,14 @@ impl TaskContext for ExtractContext {
             ExtractResult::Err(e) => PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(e))),
             ),
+            ExtractResult::LeavesDestination(e) => {
+                let mut e = SysErrorJsc::to_system_error(e);
+                // Not formatted, so that it has no bytes of the archive in it.
+                e.message = bun_core::String::static_(
+                    "A symlink in the destination is absolute or leads outside of it",
+                );
+                PromiseResult::Reject(e.to_error_instance(global))
+            }
         })
     }
 }
@@ -641,6 +650,9 @@ impl ExtractContext {
             },
         ) {
             Ok(c) => c,
+            Err(bun_archive::Error::LeavesDestination(e)) => {
+                return ExtractResult::LeavesDestination(e);
+            }
             Err(_) => return ExtractResult::Err(ExtractError::ReadError),
         };
         ExtractResult::Success(count)

@@ -146,7 +146,7 @@ console.log(`Extracted ${count} entries`);
 
 On Linux and macOS, `extract()` also stays inside the target directory when that directory already contains symlinks, including symlinks from an archive you extracted there earlier:
 
-- Bun does not write through a symlink that leads out of the target directory, or through one with an absolute target. When a file entry needs such a symlink, `extract()` rejects, or skips the entry if you pass a glob. `extract()` skips a directory entry that needs one.
+- Bun does not write through a symlink that leads out of the target directory, or through one with an absolute target. When a file entry needs such a symlink, `extract()` rejects, or skips the entry if you pass a glob. The `code` of the error is `"EXDEV"`, and its `path` is where Bun would have written the entry, relative to the target directory. Extraction stops at that entry, and what Bun has already written stays. A symlink that Bun cannot resolve at all, such as a loop, is a `ReadError` without a `code`. `extract()` skips a directory entry that needs one.
 - Bun follows a relative symlink that stays inside the target directory.
 - Bun creates a symlink entry only in a directory that it reaches without following a symlink, and skips the entry otherwise.
 

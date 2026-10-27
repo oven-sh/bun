@@ -265,13 +265,13 @@ pub(crate) enum LongLengthType {
 
 /// `SeqStore_t`: the sequences and the literals of a block.
 pub(crate) struct SeqStore {
-    /// Never grows beyond the capacity it is given by [`Self::reserve`].
+    /// Never grows beyond the capacity it is given by [`Self::start_block`].
     pub(crate) sequences: Vec<SeqDef>,
-    /// As long as the longest block so far, and [`WILDCOPY_OVERLENGTH`] to copy in chunks, with room for `max_nb_lit`.
+    /// As long as the longest block so far, and [`WILDCOPY_OVERLENGTH`] to copy in chunks.
     pub(crate) lit_buffer: Vec<u8>,
     /// How much of `lit_buffer` is literals.
     pub(crate) lit_len: usize,
-    /// As many as the most sequences that a block had so far, with room for `max_nb_seq`.
+    /// As many as the most sequences that a block had so far.
     pub(crate) codes: Vec<SeqCodes>,
     pub(crate) max_nb_seq: usize,
     pub(crate) max_nb_lit: usize,
@@ -356,29 +356,52 @@ impl SeqStore {
         }
     }
 
-    /// Room for `max_nb_seq` sequences and `max_nb_lit` bytes of literals.
-    pub(crate) fn reserve(&mut self, max_nb_seq: usize, max_nb_lit: usize) -> Result<()> {
-        fn room<T>(vec: &mut Vec<T>, len: usize) -> Result<()> {
-            vec.clear();
+    /// A block has at most `max_nb_seq` sequences and `max_nb_lit` bytes.
+    pub(crate) fn set_limits(&mut self, max_nb_seq: usize, max_nb_lit: usize) {
+        self.max_nb_seq = max_nb_seq;
+        self.max_nb_lit = max_nb_lit;
+    }
+
+    /// `ZSTD_resetSeqStore`, with room for the sequences and the literals of a block of `block_size` bytes.
+    pub(crate) fn start_block(&mut self, block_size: usize) -> Result<()> {
+        fn room<T>(vec: &mut Vec<T>, len: usize, max: usize) -> Result<()> {
+            if len <= vec.capacity() {
+                return Ok(());
+            }
+            let len = len.max(2 * vec.capacity()).min(max);
+            // What it holds is not worth a copy.
+            *vec = Vec::new();
             vec.try_reserve_exact(len)
                 .map_err(|_| ErrorCode::MemoryAllocation)
         }
-        room(&mut self.sequences, max_nb_seq)?;
-        room(&mut self.codes, max_nb_seq)?;
-        room(&mut self.lit_buffer, max_nb_lit + WILDCOPY_OVERLENGTH)?;
-        self.max_nb_seq = max_nb_seq;
-        self.max_nb_lit = max_nb_lit;
         self.reset();
-        Ok(())
-    }
-
-    /// `ZSTD_resetSeqStore`, for a block of `block_size` bytes.
-    pub(crate) fn start_block(&mut self, block_size: usize) {
-        let len = block_size.min(self.max_nb_lit) + WILDCOPY_OVERLENGTH;
+        let block_size = block_size.min(self.max_nb_lit);
+        let nb_seq = (block_size / MINMATCH as usize).min(self.max_nb_seq);
+        room(&mut self.sequences, nb_seq, self.max_nb_seq)?;
+        let len = block_size + WILDCOPY_OVERLENGTH;
+        room(
+            &mut self.lit_buffer,
+            len,
+            self.max_nb_lit + WILDCOPY_OVERLENGTH,
+        )?;
         if self.lit_buffer.len() < len {
             self.lit_buffer.resize(len, 0);
         }
-        self.reset();
+        Ok(())
+    }
+
+    /// Makes `codes` at least as long as `sequences`.
+    pub(crate) fn make_room_for_codes(&mut self) -> Result<()> {
+        let len = self.sequences.len();
+        if self.codes.capacity() < len {
+            self.codes = Vec::new();
+            (self.codes.try_reserve_exact(self.sequences.capacity()))
+                .map_err(|_| ErrorCode::MemoryAllocation)?;
+        }
+        if self.codes.len() < len {
+            self.codes.resize(len, SeqCodes::default());
+        }
+        Ok(())
     }
 
     /// `ZSTD_resetSeqStore`

@@ -29,9 +29,7 @@ pub(crate) fn literals_compression_is_disabled(cctx_params: &CCtxParams) -> bool
 /// `ZSTD_seqToCodes`, and the distributions of the codes.
 fn seq_to_codes(store: &mut SeqStore, chunk: &SeqChunk) -> Result<SeqHistograms> {
     let range = chunk.seq_start..chunk.seq_end;
-    if store.codes.len() < store.sequences.len() {
-        (store.codes).resize(store.sequences.len(), SeqCodes::default());
-    }
+    store.make_room_for_codes()?;
     Ok(sequences::seq_to_codes(
         store.codes.sub_mut(range.clone())?,
         store.sequences.sub(range)?,

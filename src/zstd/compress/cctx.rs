@@ -971,9 +971,7 @@ impl FrameCompressor {
             self.ldm_sequences = empty_raw_seq_store();
         }
 
-        if self.seq_store.max_nb_seq != max_nb_seq || self.seq_store.max_nb_lit != block_size {
-            self.seq_store.reserve(max_nb_seq, block_size)?;
-        }
+        self.seq_store.set_limits(max_nb_seq, block_size);
         self.reference_external_sequences(Vec::new());
 
         self.initialized = true;
@@ -1182,7 +1180,7 @@ impl FrameCompressor {
             }
             return Ok(BuildSeqStore::NoCompress);
         }
-        self.seq_store.start_block(src_size);
+        self.seq_store.start_block(src_size)?;
         ms.opt.literal_compression_mode = ParamSwitch::Auto;
 
         {

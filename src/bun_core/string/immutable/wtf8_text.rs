@@ -92,7 +92,7 @@ pub fn wtf8_len_utf16(text: &[u8]) -> u32 {
 
 /// (code point's byte offset, UTF-16 unit) pairs. Ends before an ill-formed byte: see `ill_formed`.
 #[inline]
-pub fn wtf8_checked_units(text: &[u8]) -> Wtf8CheckedUnits<'_> {
+pub(super) fn wtf8_checked_units(text: &[u8]) -> Wtf8CheckedUnits<'_> {
     Wtf8CheckedUnits {
         text,
         at: 0,
@@ -101,7 +101,7 @@ pub fn wtf8_checked_units(text: &[u8]) -> Wtf8CheckedUnits<'_> {
     }
 }
 
-pub struct Wtf8CheckedUnits<'t> {
+pub(super) struct Wtf8CheckedUnits<'t> {
     text: &'t [u8],
     at: usize,
     /// The second half of the pair whose first half was the last unit, with the offset of the pair.
@@ -112,7 +112,7 @@ pub struct Wtf8CheckedUnits<'t> {
 impl Wtf8CheckedUnits<'_> {
     /// Whether the walk ended at a byte that is part of no sequence.
     #[inline]
-    pub fn ill_formed(&self) -> bool {
+    pub(super) fn ill_formed(&self) -> bool {
         self.ill_formed
     }
 }

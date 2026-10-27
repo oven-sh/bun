@@ -1728,7 +1728,9 @@ impl EString {
             ..Default::default()
         }
     }
-    /// Stores text as the lexer does: UTF-16 unless ASCII. UTF-16 has fewer folds than 8-bit.
+    /// E.String containing non-ascii characters may not fully work.
+    /// https://github.com/oven-sh/bun/issues/11963
+    /// More investigation is needed.
     pub fn init_re_encode_utf8(utf8: &[u8], bump: &Bump) -> EString {
         if strings::first_non_ascii(utf8).is_none() {
             Self::init(utf8)

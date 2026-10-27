@@ -517,6 +517,63 @@ describe("bundler", () => {
     capture: ['"d"', "99", '"abcd"[4]', '"ab".charCodeAt(2)'],
     minifySyntax: true,
   });
+  // `.length` of a string is not folded where it is assigned to, updated or deleted: `1 = 1` does not parse.
+  itBundled("minify/StringLengthFoldNotOnAssignTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        X.length = 1;
+        A.length++;
+        delete X.length;
+        console.log(X.length, A.length);
+      `,
+    },
+    define: { X: '"é"', A: '"abc"' },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('"é".length = 1');
+      expect(out).toContain('"abc".length++');
+      expect(out).toContain('delete "é".length');
+      expect(out).toContain("console.log(1, 3)");
+    },
+  });
+  // An index that is negative, not whole, or 2**32 and more is left for run time. -0 is index 0.
+  itBundled("minify/StringIndexFoldingBounds", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(C[-1]);
+        capture(C[1.5]);
+        capture(C[4294967295]);
+        capture(C[4294967296]);
+        capture(C[4294967297]);
+        capture(C[-0]);
+        capture(C.charCodeAt(-1));
+        capture(C.charCodeAt(-0));
+        capture(C.charCodeAt(1.5));
+        capture(C.charCodeAt(4294967296));
+        capture(["p", "q"][-1]);
+        capture(["p", "q"][1.5]);
+        capture(["p", "q"][4294967297]);
+      `,
+    },
+    define: { C: '"€a"' },
+    minifySyntax: true,
+    capture: [
+      '"€a"[-1]',
+      '"€a"[1.5]',
+      '"€a"[4294967295]',
+      '"€a"[4294967296]',
+      '"€a"[4294967297]',
+      '"€"',
+      '"€a".charCodeAt(-1)',
+      "8364",
+      '"€a".charCodeAt(1.5)',
+      '"€a".charCodeAt(4294967296)',
+      '["p", "q"][-1]',
+      '["p", "q"][1.5]',
+      '["p", "q"][4294967297]',
+    ],
+  });
   // `import.meta.file`/`dir` (cjs output) and `module.filename` are inlined from the file path,
   // which is 8-bit and can be non-ASCII. Its folds have to read it per UTF-16 code unit, and
   // `require(import.meta.dir + "/m.js")` still has to resolve at build time.
@@ -2355,6 +2412,40 @@ test.each(["transformSync", "transform"] as const)(
   },
 );
 
+// Some string folds need no minify flag: `.charCodeAt(n)` and unary `+` and `-` always run, and `~`, `<` and a join run
+// in an enum initializer. A `define` string is stored as 8-bit WTF-8, and they have to read it per UTF-16 code unit.
+describe("bundler", () => {
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`minify/DefineNonAsciiFoldsWithoutMinifyFlag${backend === "cli" ? "Cli" : "Api"}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          declare const A: string, N: string, D: string, P: string, Z: string;
+          enum E {
+            Code = A.charCodeAt(2) === 97 ? 1 : 2,
+            Not = ~N,
+            Joined = (A + "x").charCodeAt(2),
+            Order = P < Z ? 1 : 2,
+          }
+          console.log(JSON.stringify([A.charCodeAt(2), A.charCodeAt(1), A.charCodeAt(0), +N, -N, +D]));
+          console.log(JSON.stringify([E.Code, E.Not, E.Joined, E.Order]));
+          if (+N === 1) console.log("one"); else require("./missing-number.js");
+        `,
+      },
+      define: {
+        A: '"éa"',
+        // U+00A0 and U+2028 are white space for a number
+        N: '"\u00a01"',
+        D: '"\u2028 12 "',
+        // U+FF5E is after U+1F600 in UTF-16 code units, and before it in bytes
+        P: '"\uff5e"',
+        Z: '"😀"',
+      },
+      backend,
+      run: { stdout: "[null,97,233,1,-1,12]\n[2,-2,120,2]\none" },
+    });
+  }
+});
+
 // Seeded differential of the string folds against the engine: every value is a `define`, which is
 // stored as 8-bit WTF-8 and not by the lexer. The folded bundle has to compute what this process
 // computes for the same expressions, and nothing that can fold may be left in its text: a fold
@@ -2362,6 +2453,7 @@ test.each(["transformSync", "transform"] as const)(
 const DEFINE_FOLD_SEED =
   process.env.BUN_DEFINE_FOLD_SEED !== undefined ? Number(process.env.BUN_DEFINE_FOLD_SEED) >>> 0 : 0x9e3779b9;
 const DEFINE_FOLD_CASES = Number(process.env.BUN_DEFINE_FOLD_CASES ?? 200);
+const DEFINE_FOLD_LONG_CASES = Number(process.env.BUN_DEFINE_FOLD_LONG_CASES ?? 8);
 
 test(`folds of non-ASCII define strings are what the engine computes (seed=${DEFINE_FOLD_SEED})`, async () => {
   let seed = DEFINE_FOLD_SEED;
@@ -2389,10 +2481,25 @@ test(`folds of non-ASCII define strings are what the engine computes (seed=${DEF
   const want: unknown[][] = [];
   // A read at or past the end is left for run time, and so is everything that is made of one.
   const left = { index: 0, charCodeAt: 0, booleans: 0 };
-  for (let k = 0; k < DEFINE_FOLD_CASES; k++) {
-    const x = str(),
-      y = rnd() < 0.15 ? x : str(),
+  // A long text reaches the SIMD paths of the readers, which the Rust unit tests under Miri cannot call.
+  const long = () => {
+    let text = "";
+    for (let runs = 2 + Math.floor(rnd() * 6); runs > 0; runs--)
+      text += pick(atoms).repeat(Math.floor(rnd() * pick([8, 40, 400])));
+    return text;
+  };
+  for (let k = 0; k < DEFINE_FOLD_CASES + DEFINE_FOLD_LONG_CASES; k++) {
+    let x: string, y: string, z: string;
+    if (k < DEFINE_FOLD_CASES) {
+      x = str();
+      y = rnd() < 0.15 ? x : str();
       z = rnd() < 0.6 ? x + y : str();
+    } else {
+      x = long();
+      const cut = Math.floor(rnd() * (x.length + 1));
+      y = x.slice(0, cut) + pick(atoms) + x.slice(cut + 1);
+      z = rnd() < 0.6 ? x + y : y + x;
+    }
     const i = Math.floor(rnd() * (x.length + 2)),
       j = Math.floor(rnd() * (x.length + y.length + 2));
     const [X, Y, Z] = [`X${k}`, `Y${k}`, `Z${k}`];
@@ -2435,7 +2542,7 @@ test(`folds of non-ASCII define strings are what the engine computes (seed=${DEF
     for (let c = 0; c < want[k].length; c++)
       if (!Object.is(want[k][c], got[k]?.[c])) differ.push({ k, cell: c, want: want[k][c], got: got[k]?.[c] });
   expect({ rows: got.length, differ: differ.length, first: differ.slice(0, 5) }).toEqual({
-    rows: DEFINE_FOLD_CASES,
+    rows: DEFINE_FOLD_CASES + DEFINE_FOLD_LONG_CASES,
     differ: 0,
     first: [],
   });

@@ -53,15 +53,14 @@ pub const fn is_regexp_word_byte(byte: u8) -> bool {
 }
 #[path = "immutable/wtf8_text.rs"]
 mod wtf8_text;
-use wtf8_text::wtf8_decoded_units;
 pub use wtf8_text::{
-    Wtf8CheckedUnits, Wtf8CodeUnitAt, Wtf8Codepoints, codepoint_len_utf16,
-    push_codepoint_wtf8_joined, push_wtf8, push_wtf8_well_formed, utf8_decoded_len_utf16,
-    utf8_lossy_len_utf16, wtf8_checked_len_utf16, wtf8_checked_units, wtf8_code_unit_at,
-    wtf8_codepoint_at, wtf8_codepoint_count, wtf8_codepoints, wtf8_first_codepoint,
-    wtf8_has_surrogate, wtf8_len_utf16, wtf8_offset_of_utf16_index, wtf8_pair_across,
-    wtf8_slice_by_utf16, wtf8_to_utf16, wtf16_to_wtf8,
+    Wtf8CodeUnitAt, Wtf8Codepoints, codepoint_len_utf16, push_codepoint_wtf8_joined, push_wtf8,
+    push_wtf8_well_formed, utf8_decoded_len_utf16, utf8_lossy_len_utf16, wtf8_checked_len_utf16,
+    wtf8_code_unit_at, wtf8_codepoint_at, wtf8_codepoint_count, wtf8_codepoints,
+    wtf8_first_codepoint, wtf8_has_surrogate, wtf8_len_utf16, wtf8_offset_of_utf16_index,
+    wtf8_pair_across, wtf8_slice_by_utf16, wtf8_to_utf16, wtf16_to_wtf8,
 };
+use wtf8_text::{wtf8_checked_units, wtf8_decoded_units};
 
 // UTF-16 surrogate primitives. The single implementation lives in the
 // tier-0 `crate::strings_impl`; re-exported here as part of `bun.strings`.
@@ -2000,28 +1999,27 @@ pub fn order_t<T: Ord>(a: &[T], b: &[T]) -> Ordering {
 /// units, which is not [`order`] where a character outside the BMP meets one from U+D800. Other
 /// bytes are what `TextDecoder` makes of them, so it is a total order of all texts.
 pub fn order_utf16(a: &[u8], b: &[u8]) -> Ordering {
-    match first_difference(a, b) {
-        (_, Some(order)) => order,
-        (common, None) => {
-            let start = sequence_start(a, common);
-            wtf8_decoded_units(&a[start..]).cmp(wtf8_decoded_units(&b[start..]))
-        }
+    let common = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let (x, y) = (a.get(common), b.get(common));
+    let is_ascii = |byte: Option<&u8>| byte.is_none_or(u8::is_ascii);
+    if is_ascii(x) && is_ascii(y) && is_ascii(a[..common].last()) {
+        return x.cmp(&y);
     }
+    // From the start of the sequence that the first difference may be part of: a lead byte starts one in every text.
+    let before = &a[common.saturating_sub(3)..common];
+    let start = match before.iter().rposition(|byte| !(0x80..0xC0).contains(byte)) {
+        Some(at) if before[at] >= 0xC0 => common - (before.len() - at),
+        _ => common,
+    };
+    wtf8_decoded_units(&a[start..]).cmp(wtf8_decoded_units(&b[start..]))
 }
 
 /// [`order_utf16`], or `None` if an ill-formed byte is at or before the first difference.
 pub fn checked_order_utf16(a: &[u8], b: &[u8]) -> Option<Ordering> {
-    let (common, order) = first_difference(a, b);
-    // A shared non-ASCII prefix is decoded too: an ill-formed byte in it shifts what a printer reads.
-    let start = match (first_non_ascii(&a[..common]), order) {
-        (None, Some(order)) => return Some(order),
-        (None, None) => sequence_start(a, common),
-        (Some(at), _) => at as usize,
-    };
-    let (mut left, mut right) = (
-        wtf8_checked_units(&a[start..]),
-        wtf8_checked_units(&b[start..]),
-    );
+    if first_non_ascii(a).is_none() && first_non_ascii(b).is_none() {
+        return Some(a.cmp(b));
+    }
+    let (mut left, mut right) = (wtf8_checked_units(a), wtf8_checked_units(b));
     loop {
         let (x, y) = (left.next().map(|it| it.1), right.next().map(|it| it.1));
         if left.ill_formed() || right.ill_formed() {
@@ -2046,24 +2044,6 @@ pub fn checked_order_wtf8_utf16(text: &[u8], units: &[u16]) -> Option<Ordering> 
         if x != y || x.is_none() {
             return Some(x.cmp(&y));
         }
-    }
-}
-
-/// Length of the common prefix, and the order if the first difference is between ASCII or an end.
-fn first_difference(a: &[u8], b: &[u8]) -> (usize, Option<Ordering>) {
-    let common = a.iter().zip(b).take_while(|(x, y)| x == y).count();
-    let (x, y) = (a.get(common), b.get(common));
-    let is_ascii = |byte: Option<&u8>| byte.is_none_or(u8::is_ascii);
-    let order = (is_ascii(x) && is_ascii(y) && is_ascii(a[..common].last())).then(|| x.cmp(&y));
-    (common, order)
-}
-
-/// Start of the sequence that the byte at `common` may be part of. A lead byte always starts one.
-fn sequence_start(a: &[u8], common: usize) -> usize {
-    let before = &a[common.saturating_sub(3)..common];
-    match before.iter().rposition(|byte| !(0x80..0xC0).contains(byte)) {
-        Some(at) if before[at] >= 0xC0 => common - (before.len() - at),
-        _ => common,
     }
 }
 

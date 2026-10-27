@@ -872,7 +872,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn fold_constant_index(
         p: &mut Self,
         e: &mut Expr,
-        target: Expr,
+        target: &Expr,
         number: E::Number,
         is_call_target: bool,
     ) -> bool {
@@ -892,7 +892,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let inlined = if array.items.len_u32() == 1 && int == 0 {
                 Some(*array.items.at(0))
             } else if int < array.items.len_u32() as usize
-                && p.expr_can_be_removed_if_unused(&target)
+                && p.expr_can_be_removed_if_unused(target)
             {
                 Some(*array.items.at(int))
             } else {
@@ -1119,7 +1119,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && number.value() < (usize::MAX as f64)
                     && number.value() % 1.0 == 0.0
                     && matches!(target.data, Data::EString(..) | Data::EArray(..))
-                    && Self::fold_constant_index(p, e, target, number, is_call_target)
+                    && Self::fold_constant_index(p, e, &target, number, is_call_target)
                 {
                     return;
                 }

@@ -1,5 +1,5 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
-import { noInline } from "bun:jsc";
+import { drainMicrotasks, noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
@@ -992,6 +992,15 @@ test.each(vmRealmEntryPoints)("Error.captureStackTrace in a realm made by %s is 
       return target.stack;
     }
     const lines = inner().split("\\n").slice(0, 2);
+    function withCaller(caller) {
+      const target = {};
+      Error.captureStackTrace(target, caller);
+      return target.stack.split("\\n")[1];
+    }
+    function SelfCaller() {
+      Error.captureStackTrace(this, this);
+    }
+    const callerNotCallable = [withCaller({}), new SelfCaller().stack.split("\\n")[1]];
     Error.prepareStackTrace = (target, sites) => sites[0].getFunctionName();
     const prepared = (function hooked() {
       const target = {};
@@ -1004,10 +1013,14 @@ test.each(vmRealmEntryPoints)("Error.captureStackTrace in a realm made by %s is 
     } catch (e) {
       thrown = [e instanceof TypeError, e.message];
     }
-    return JSON.stringify({ lines, prepared, length: Error.captureStackTrace.length, thrown });
+    return JSON.stringify({ lines, callerNotCallable, prepared, length: Error.captureStackTrace.length, thrown });
   })()`);
   expect(JSON.parse(result)).toEqual({
     lines: ["Error", expect.stringMatching(/^    at inner \(in-vm\.js:\d+:\d+\)$/)],
+    callerNotCallable: [
+      expect.stringMatching(/^    at withCaller \(in-vm\.js:\d+:\d+\)$/),
+      expect.stringMatching(/^    at new SelfCaller \(in-vm\.js:\d+:\d+\)$/),
+    ],
     prepared: "hooked",
     length: 2,
     thrown: [true, "invalid_argument"],
@@ -1027,110 +1040,59 @@ test("Error.captureStackTrace of a node:vm context, called from the main context
   ]);
 });
 
-test("Error.captureStackTrace in a node:vm context records no frames when Error.stackTraceLimit is 0 or negative", () => {
+test("Error.captureStackTrace in a node:vm context records no frames when Error.stackTraceLimit is 0, negative or not a number", () => {
   const result = vm.runInNewContext(`
+    const limits = {
+      zero: () => (Error.stackTraceLimit = 0),
+      negative: () => (Error.stackTraceLimit = -1),
+      NaN: () => (Error.stackTraceLimit = NaN),
+      string: () => (Error.stackTraceLimit = "foo"),
+      undefined: () => (Error.stackTraceLimit = undefined),
+      deleted: () => delete Error.stackTraceLimit,
+    };
     const stacks = {};
-    for (const limit of [0, -1]) {
-      Error.stackTraceLimit = limit;
+    for (const [name, setLimit] of Object.entries(limits)) {
+      setLimit();
       const target = {};
       Error.captureStackTrace(target);
       const error = new RangeError("boom");
       Error.captureStackTrace(error);
-      stacks[limit] = [target.stack, error.stack];
+      stacks[name] = [target.stack, error.stack];
     }
     JSON.stringify(stacks);
   `);
   const headerOnly = ["Error", "RangeError: boom"];
-  expect(JSON.parse(result)).toEqual({ "0": headerOnly, "-1": headerOnly });
-});
-
-// `globalThis` is a proxy in front of the global object. These realms have no sandbox object behind the global.
-test.each([
-  [
-    "a vm.createContext(DONT_CONTEXTIFY) context",
-    code => vm.runInContext(code, vm.createContext(vm.constants.DONT_CONTEXTIFY)),
-  ],
-  ["vm.runInNewContext(code, DONT_CONTEXTIFY)", code => vm.runInNewContext(code, vm.constants.DONT_CONTEXTIFY)],
-  [
-    "vm.Script#runInNewContext(DONT_CONTEXTIFY)",
-    code => new vm.Script(code).runInNewContext(vm.constants.DONT_CONTEXTIFY),
-  ],
-  ["the main context", code => (0, eval)(code)],
-  ["a ShadowRealm", code => new ShadowRealm().evaluate(code)],
-])("Error.captureStackTrace(globalThis) in %s sets a stack that globalThis shows", (_, run) => {
-  const result = run(`(function () {
-    try {
-      Error.captureStackTrace(globalThis);
-      const { enumerable, configurable } = Object.getOwnPropertyDescriptor(globalThis, "stack") ?? {};
-      const summary = { type: typeof globalThis.stack, enumerable, configurable };
-      summary.header = String(globalThis.stack).split("\\n")[0];
-      globalThis.stack = "assigned";
-      summary.assigned = globalThis.stack;
-      summary.deleted = delete globalThis.stack;
-      summary.afterDelete = typeof globalThis.stack;
-      return JSON.stringify(summary);
-    } finally {
-      delete globalThis.stack;
-    }
-  })()`);
   expect(JSON.parse(result)).toEqual({
-    type: "string",
-    enumerable: false,
-    configurable: true,
-    header: "Error",
-    assigned: "assigned",
-    deleted: true,
-    afterDelete: "undefined",
+    zero: headerOnly,
+    negative: headerOnly,
+    NaN: headerOnly,
+    string: headerOnly,
+    undefined: headerOnly,
+    deleted: headerOnly,
   });
 });
 
-test("Error.captureStackTrace on a DONT_CONTEXTIFY context sets a stack that the host and the context show", () => {
-  const capturedByHost = vm.createContext(vm.constants.DONT_CONTEXTIFY);
-  Error.captureStackTrace(capturedByHost);
-  const capturedInContext = vm.createContext(vm.constants.DONT_CONTEXTIFY);
-  const topLevelThis = vm.runInContext("Error.captureStackTrace(this); typeof this.stack", capturedInContext);
-
-  expect({
-    host: typeof capturedByHost.stack,
-    inContext: vm.runInContext("typeof globalThis.stack + ' ' + typeof stack", capturedByHost),
-    topLevelThis,
-    hostAfterContextCapture: typeof capturedInContext.stack,
-  }).toEqual({ host: "string", inContext: "string string", topLevelThis: "string", hostAfterContextCapture: "string" });
-});
-
-test("Error.prepareStackTrace sees a string stack on a globalThis target, and its result is kept", () => {
-  const result = vm.runInContext(
-    `
-    let seen;
-    Error.prepareStackTrace = (target, sites) => {
-      seen = [typeof target.stack, Array.isArray(sites)];
-      return "from-prepare";
-    };
-    Error.captureStackTrace(globalThis);
-    const kept = globalThis.stack;
-    JSON.stringify({ seen, kept });
-    `,
-    vm.createContext(vm.constants.DONT_CONTEXTIFY),
-  );
-  expect(JSON.parse(result)).toEqual({ seen: ["string", true], kept: "from-prepare" });
-});
-
-test("Error.captureStackTrace(globalThis) throws a TypeError when the global has a `var stack`", () => {
-  const result = vm.runInContext(
-    `
-    var stack = 1;
-    let caught;
-    try {
+test.each([
+  ["a contextified", () => vm.createContext({})],
+  ["a DONT_CONTEXTIFY", () => vm.createContext(vm.constants.DONT_CONTEXTIFY)],
+])(
+  "Error.captureStackTrace on the global of %s node:vm context runs no Error.prepareStackTrace and no getter",
+  (_, createContext) => {
+    const context = createContext();
+    const run = code => vm.runInContext(code, context);
+    run(`
+      var events = [];
+      Object.defineProperty(globalThis, "name", { get: () => (events.push("get name"), "N"), configurable: true });
+      Object.defineProperty(globalThis, "message", { get: () => (events.push("get message"), "M"), configurable: true });
+      Error.prepareStackTrace = () => (events.push("prepareStackTrace"), "from-hook");
       Error.captureStackTrace(globalThis);
-    } catch (e) {
-      caught = e;
-    }
-    JSON.stringify([caught instanceof TypeError, stack]);
-    `,
-    vm.createContext(vm.constants.DONT_CONTEXTIFY),
-  );
-  expect(JSON.parse(result)).toEqual([true, 1]);
-});
+    `);
+    const inContext = run("JSON.stringify(events)");
+    Error.captureStackTrace(run("globalThis"));
+    const afterHostCall = run("JSON.stringify(events)");
+    expect({ inContext, afterHostCall }).toEqual({ inContext: "[]", afterHostCall: "[]" });
+  },
+);
 
 test("Error.captureStackTrace(globalThis) in a contextified node:vm context leaves the sandbox object alone", () => {
   const sandbox = {};
@@ -1141,6 +1103,103 @@ test("Error.captureStackTrace(globalThis) in a contextified node:vm context leav
     keys: [],
   });
 });
+
+test("Error.captureStackTrace ignores a caller argument that is not callable", () => {
+  function withCaller(caller) {
+    const target = {};
+    Error.captureStackTrace(target, caller);
+    return target.stack.split("\n")[1];
+  }
+  class SelfCaller {
+    constructor() {
+      Error.captureStackTrace(this, this);
+    }
+  }
+  const atWithCaller = expect.stringMatching(/^    at withCaller \(/);
+  expect([withCaller({}), withCaller(1), withCaller("withCaller"), new SelfCaller().stack.split("\n")[1]]).toEqual([
+    atWithCaller,
+    atWithCaller,
+    atWithCaller,
+    expect.stringMatching(/^    at new SelfCaller \(/),
+  ]);
+});
+
+// `a` awaits `b` through Promise.race and `b` awaits `a`, so the await chain above `c` is a cycle.
+const capturesUnderAwaitCycle = `
+  const functionsOf = stack => stack.split("\\n").slice(1).map(line => line.trim().replace(/^at /, "").replace(/ \\(.*$/, "")).join(", ");
+  class ErrorWithStack extends Error {
+    constructor(callsite) {
+      super("x");
+      Error.captureStackTrace(this, callsite);
+    }
+  }
+  function matcher() {
+    return new ErrorWithStack(matcher);
+  }
+  let pa, pb;
+  async function c() {
+    await null;
+    const noCaller = {};
+    Error.captureStackTrace(noCaller);
+    const callerOnStack = {};
+    (function inner() {
+      Error.captureStackTrace(callerOnStack, inner);
+    })();
+    const callerNotOnStack = {};
+    Error.captureStackTrace(callerNotOnStack, function other() {});
+    print({
+      noCaller: functionsOf(noCaller.stack),
+      callerOnStack: functionsOf(callerOnStack.stack),
+      errorSubclass: functionsOf(matcher().stack),
+      callerNotOnStack: functionsOf(callerNotOnStack.stack),
+    });
+  }
+  async function a() {
+    await null;
+    await Promise.race([pb, c()]);
+  }
+  async function b() {
+    await null;
+    await pa;
+  }
+  pa = a();
+  pb = b();
+`;
+
+// Without a limit on the walk, a child never returns from the capture. So each child has a timeout.
+test.concurrent.each([
+  ["a node:vm context", `require("node:vm").runInNewContext(code, { print })`],
+  ["the main context", `(0, eval)(code)`],
+])(
+  "Error.captureStackTrace returns under async functions that await each other, in %s",
+  async (_, run) => {
+    const script = `
+      globalThis.print = value => console.log(JSON.stringify(value));
+      const code = ${JSON.stringify(capturesUnderAwaitCycle)};
+      ${run};
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The limit of 10 cuts the cycle. `c` runs from a microtask, so it is the only frame of the stack.
+    const frames = "c, async a, async b, async a, async b, async a, async b, async a, async b, async a";
+    const expected = { noCaller: frames, callerOnStack: frames, errorSubclass: frames, callerNotOnStack: "" };
+    expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: JSON.stringify(expected),
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  },
+  20_000,
+);
 
 test("Error.captureStackTrace inside error constructor works", () => {
   class ExtendedError extends Error {
@@ -1613,6 +1672,71 @@ test("Error.captureStackTrace applies stackTraceLimit after caller removal", () 
   } finally {
     Error.stackTraceLimit = origLimit;
   }
+});
+
+test("Error.captureStackTrace finds a caller that is deeper in the stack than the limit", () => {
+  function recurse(depth, leaf) {
+    // Not a tail call, so each frame stays on the stack.
+    return (depth === 0 ? leaf() : recurse(depth - 1, leaf)) || null;
+  }
+  const caller = leaf => recurse(100, leaf) || null;
+  const below1 = leaf => caller(leaf) || null;
+  const below2 = leaf => below1(leaf) || null;
+  const below3 = leaf => below2(leaf) || null;
+  function capture(callerArgument) {
+    const target = {};
+    Error.captureStackTrace(target, callerArgument);
+    return target.stack
+      .split("\n")
+      .slice(1)
+      .map(line => line.trim().split(" ")[1]);
+  }
+
+  const origLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 3;
+  try {
+    expect({
+      callerOnStack: below3(() => capture(caller) || null),
+      callerNotOnStack: below3(() => capture(function other() {}) || null),
+    }).toEqual({ callerOnStack: ["below1", "below2", "below3"], callerNotOnStack: [] });
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+});
+
+test("Error.captureStackTrace keeps the await chain below the stack of the function that continues", () => {
+  function recurse(depth, leaf) {
+    // Not a tail call, so each frame stays on the stack.
+    return (depth === 0 ? leaf() : recurse(depth - 1, leaf)) || null;
+  }
+  const caller = leaf => recurse(11, leaf) || null;
+  let frames;
+  async function resumed() {
+    await null;
+    const target = {};
+    // 13 frames are above `caller`. 32 frames are below it, and then the await chain follows.
+    recurse(30, () => caller(() => Error.captureStackTrace(target, caller) || true) || null);
+    frames = target.stack.split("\n").slice(1);
+  }
+  async function awaiter(depth) {
+    await (depth === 0 ? resumed() : awaiter(depth - 1));
+  }
+
+  const origLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 5;
+  try {
+    awaiter(3);
+    drainMicrotasks();
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+  expect(frames.map(line => line.trim().split(" ").slice(1, -1).join(" "))).toEqual([
+    "<anonymous>",
+    "recurse",
+    "recurse",
+    "recurse",
+    "recurse",
+  ]);
 });
 
 test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () => {

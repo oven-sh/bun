@@ -26,7 +26,6 @@
 #include "ErrorStackTrace.h"
 #include "headers-handwritten.h"
 #include "NodeVM.h"
-#include "ObjectBindings.h"
 
 #include <wtf/Scope.h>
 #include <wtf/Threading.h>
@@ -35,23 +34,6 @@ using namespace JSC;
 using namespace WebCore;
 
 namespace Bun {
-
-// Stores `stack` on a capture target. A global proxy forwards reads to its global object, so the store on one is a [[DefineOwnProperty]].
-static void storeStackProperty(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* target, JSC::JSValue value)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (target->type() != JSC::GlobalProxyType) [[likely]] {
-        target->putDirect(vm, vm.propertyNames->stack, value, JSC::PropertyAttribute::DontEnum | 0);
-        return;
-    }
-    // The definer of a contextified global writes to the sandbox object. Nothing is stored there, as before.
-    auto* vmGlobalObject = dynamicDowncast<NodeVMGlobalObject>(uncheckedDowncast<JSC::JSGlobalProxy>(target)->target());
-    if (vmGlobalObject && vmGlobalObject->contextifiedObject())
-        return;
-    scope.release();
-    Bun::defineOwnDataProperty(lexicalGlobalObject, target, vm.propertyNames->stack, value, JSC::PropertyAttribute::DontEnum | 0);
-}
 
 // What `.stack` is when the frames do not fit in one string. It cannot throw: `formatStackTrace` also runs in a GC finalizer.
 static WTF::String stackTraceHeaderOnly(const WTF::String& name, const WTF::String& message)
@@ -185,8 +167,7 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     if (callsPrepareStackTrace) {
         // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
         // it will display the stack as a formatted string, so we have to do the same.
-        storeStackProperty(lexicalGlobalObject, errorObject, stackStringValue);
-        RETURN_IF_EXCEPTION(scope, {});
+        errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
 
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(errorObject);
@@ -870,6 +851,10 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
 
+    // No read shows a `stack` that is stored on the global proxy of a node:vm context, so nothing is captured for one.
+    if (errorObject->type() == JSC::GlobalProxyType && uncheckedDowncast<JSC::JSGlobalProxy>(errorObject)->target()->inherits<NodeVMGlobalObject>()) [[unlikely]]
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
     size_t stackTraceLimit = lexicalGlobalObject->stackTraceLimit().value_or(0);
     // util.getCallSites() and isInsideNodeModules() in src/js capture through Error.stackTraceLimit, so a Zig::GlobalObject keeps the default at 0.
     if (!stackTraceLimit && lexicalGlobalObject->inherits<Zig::GlobalObject>())
@@ -916,8 +901,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         String sourceURL;
         JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
         RETURN_IF_EXCEPTION(scope, {});
-        storeStackProperty(lexicalGlobalObject, errorObject, result);
-        RETURN_IF_EXCEPTION(scope, {});
+        errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

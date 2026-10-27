@@ -87,7 +87,6 @@ pub use self::catalog_map::CatalogMap;
 pub use self::override_map::OverrideMap;
 pub use self::package::Package;
 pub use self::tree::Tree;
-pub use crate::padding_checker::assert_no_uninitialized_padding;
 // Bring the derive-generated `items_*` column accessors (`PackageColumns` for
 // `MultiArrayList<Package>`, `PackageColumns` for `Slice<Package>`) into scope.
 use self::package::PackageColumns as _;
@@ -1045,14 +1044,16 @@ impl Lockfile {
     /// that one of them depends on or overrides to. This is checked rather than assumed, because a
     /// migrated lockfile can have dependencies for a folder that a registry package shipped.
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
-        let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
-            return false;
-        };
-        match self.packages.items_resolution()[parent_id as usize].tag {
+        self.get_parent_pkg_of_dependency(id)
+            .is_some_and(|parent_id| self.is_local_declarer(parent_id))
+    }
+
+    /// See `is_dependency_of_local_package`.
+    pub(crate) fn is_local_declarer(&self, id: PackageID) -> bool {
+        match self.packages.items_resolution()[id as usize].tag {
             ResolutionTag::Root | ResolutionTag::Workspace => true,
             ResolutionTag::Folder => {
-                self.is_workspace_declared_package(parent_id)
-                    || self.is_override_selected_package(parent_id)
+                self.is_workspace_declared_package(id) || self.is_override_selected_package(id)
             }
             _ => false,
         }
@@ -2448,13 +2449,38 @@ impl Lockfile {
 
     /// Binds a dependency that `Package::parse` tagged as a workspace link to that workspace.
     /// Returns true if it was bound to another package before.
-    pub(crate) fn bind_workspace_link(&mut self, dep_id: DependencyID) -> bool {
-        let version = &self.buffers.dependencies[dep_id as usize].version;
+    pub(crate) fn bind_workspace_link(
+        &mut self,
+        dep_id: DependencyID,
+        link_workspace_packages: bool,
+    ) -> bool {
+        let dependency = &self.buffers.dependencies[dep_id as usize];
+        let version = &dependency.version;
         if version.tag != dependency::Tag::Workspace {
             return false;
         }
         let buf = self.buffers.string_bytes.as_slice();
         let path = version.workspace().slice(buf);
+        // The resolver asks for the version of an override, and that links this workspace or not.
+        if self.is_overridden_dependency(dep_id) {
+            let links = (crate::dedupe::effective_npm_range(self, dep_id, dependency)).is_some_and(
+                |asked| {
+                    let npm = asked.npm();
+                    linked_workspace_path(
+                        link_workspace_packages,
+                        &self.workspace_paths,
+                        &self.workspace_versions,
+                        Semver::string::Builder::string_hash(npm.name.slice(buf)),
+                        &npm.version,
+                        buf,
+                    )
+                    .is_some_and(|linked| linked.slice(buf) == path)
+                },
+            );
+            if !links {
+                return false;
+            }
+        }
         let Some(id) = (self.packages.items_resolution().iter()).position(|res| {
             res.tag == ResolutionTag::Workspace && res.workspace().slice(buf) == path
         }) else {
@@ -2513,6 +2539,71 @@ impl Lockfile {
         self.scratch
             .unplaced_subtree
             .is_set_allow_out_of_bound(id as usize, false)
+    }
+
+    /// See `Scratch::refreshing`.
+    pub(crate) fn mark_refreshing(&mut self, id: DependencyID) {
+        let rows = self.buffers.dependencies.len();
+        let refreshing = &mut self.scratch.refreshing;
+        if refreshing.bit_length() < rows {
+            bun_core::handle_oom(refreshing.resize(rows, false));
+        }
+        refreshing.set(id as usize);
+    }
+
+    #[inline]
+    pub(crate) fn is_refreshing(&self, id: DependencyID) -> bool {
+        self.scratch
+            .refreshing
+            .is_set_allow_out_of_bound(id as usize, false)
+    }
+
+    /// The resolve has an answer for `id`. Returns false if `id` was not being refreshed.
+    #[inline]
+    pub(crate) fn take_refreshing(&mut self, id: DependencyID) -> bool {
+        let was_refreshing = self.is_refreshing(id);
+        if was_refreshing {
+            self.scratch.refreshing.unset(id as usize);
+        }
+        was_refreshing
+    }
+
+    /// Returns true if `id` has no package, or keeps the one of bun.lock only until it is resolved.
+    #[inline]
+    pub(crate) fn awaits_resolve(&self, id: DependencyID) -> bool {
+        self.buffers.resolutions[id as usize] == invalid_package_id || self.is_refreshing(id)
+    }
+
+    /// The source of `id` was read, and it has no package for it: the one of bun.lock goes.
+    pub(crate) fn unbind_refreshing(&mut self, id: DependencyID) {
+        if self.take_refreshing(id) {
+            self.buffers.resolutions[id as usize] = invalid_package_id;
+        }
+    }
+
+    /// Once everything is resolved: the packages that stay only because a source could not be read.
+    pub(crate) fn kept_without_refresh(&self) -> Vec<PackageID> {
+        let mut kept = Vec::new();
+        if self.scratch.refreshing.count() == 0 {
+            return kept;
+        }
+        let resolutions = self.buffers.resolutions.as_slice();
+        let stays = reachable::packages(self, resolutions, reachable::Options::all(0));
+        for (declarer, rows) in self.packages.items_dependencies().iter().enumerate() {
+            if !stays.is_set(declarer) {
+                continue;
+            }
+            for row in rows.begin()..rows.end() {
+                let package_id = resolutions[row as usize];
+                if self.is_refreshing(row)
+                    && (package_id as usize) < self.packages.len()
+                    && !kept.contains(&package_id)
+                {
+                    kept.push(package_id);
+                }
+            }
+        }
+        kept
     }
 
     pub(crate) fn get_package_id(
@@ -2724,6 +2815,8 @@ pub struct Scratch {
     pub(crate) dependency_list_queue: DependencyQueue,
     /// `bit[dependency_id]`: this resolve reached it below a dependency that the installers filter.
     pub(crate) unplaced_subtree: DynamicBitSet,
+    /// `bit[dependency_id]`: it keeps its bun.lock package until its source is read again.
+    pub(crate) refreshing: DynamicBitSet,
 }
 
 pub(crate) type DuplicateCheckerMap =
@@ -2916,6 +3009,7 @@ impl Scratch {
             dependency_list_queue: DependencyQueue::init(),
             duplicate_checker_map: DuplicateCheckerMap::default(),
             unplaced_subtree: DynamicBitSet::default(),
+            refreshing: DynamicBitSet::default(),
         }
     }
 }
@@ -3781,6 +3875,7 @@ pub struct PatchedDep {
     /// the hash of the patch file contents
     __patchfile_hash: u64,
 }
+bun_core::impl_no_uninit!(PatchedDep);
 
 impl Default for PatchedDep {
     fn default() -> Self {

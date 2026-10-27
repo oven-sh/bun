@@ -1,4 +1,4 @@
-const clusterRawBind = $newRustFunction("node_cluster_binding.rs", "clusterRawBind", 4);
+const clusterRawBind = $bindgen("node_cluster_binding.bind.ts", "clusterRawBind");
 const closeRawHandle = $bindgen("node_cluster_binding.bind.ts", "clusterCloseHandle");
 const validateFd = $bindgen("node_cluster_binding.bind.ts", "clusterValidateFd");
 

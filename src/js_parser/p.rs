@@ -49,7 +49,7 @@ pub(crate) trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
     fn log_ptr(&self) -> core::ptr::NonNull<bun_ast::Log>;
     fn bump(&self) -> &'a Bump;
-    fn source(&self) -> &'a bun_ast::Source;
+    fn source(&self) -> &'a bun_ast::Source<'a>;
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: bun_ast::Loc) -> Expr;
     fn store_name_in_ref(&mut self, name: &'a [u8]) -> Ref;
 }
@@ -69,7 +69,7 @@ impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
         self.arena
     }
     #[inline]
-    fn source(&self) -> &'a bun_ast::Source {
+    fn source(&self) -> &'a bun_ast::Source<'a> {
         self.source
     }
     #[inline]
@@ -86,43 +86,44 @@ impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
 // Rust const generics cannot select a type, so we
 // store both variants behind an enum and gate access in methods.
 pub enum ImportRecordList<'a> {
-    Owned(BumpVec<'a, ImportRecord>),
-    Borrowed(&'a mut Vec<ImportRecord>),
+    Owned(BumpVec<'a, ImportRecord<'a>>),
+    /// The list of a [`crate::ScanPassResult`], which gets it back after the scan.
+    Scan(Vec<ImportRecord<'a>>),
 }
 impl<'a> ImportRecordList<'a> {
     #[inline]
-    pub(crate) fn items(&self) -> &[ImportRecord] {
+    pub(crate) fn items(&self) -> &[ImportRecord<'a>] {
         match self {
             Self::Owned(v) => v.as_slice(),
-            Self::Borrowed(v) => v.as_slice(),
+            Self::Scan(v) => v.as_slice(),
         }
     }
     #[inline]
-    pub(crate) fn items_mut(&mut self) -> &mut [ImportRecord] {
+    pub(crate) fn items_mut(&mut self) -> &mut [ImportRecord<'a>] {
         match self {
             Self::Owned(v) => v.as_mut_slice(),
-            Self::Borrowed(v) => v.as_mut_slice(),
+            Self::Scan(v) => v.as_mut_slice(),
         }
     }
     #[inline]
-    fn push(&mut self, record: ImportRecord) {
+    fn push(&mut self, record: ImportRecord<'a>) {
         match self {
             Self::Owned(v) => v.push(record),
-            Self::Borrowed(v) => v.push(record),
+            Self::Scan(v) => v.push(record),
         }
     }
     #[inline]
     pub(crate) fn len(&self) -> usize {
         match self {
             Self::Owned(v) => v.len(),
-            Self::Borrowed(v) => v.len(),
+            Self::Scan(v) => v.len(),
         }
     }
     #[inline]
     fn truncate(&mut self, len: usize) {
         match self {
             Self::Owned(v) => v.truncate(len),
-            Self::Borrowed(v) => v.truncate(len),
+            Self::Scan(v) => v.truncate(len),
         }
     }
 
@@ -132,34 +133,20 @@ impl<'a> ImportRecordList<'a> {
     /// printer now own). Move-and-zero semantics: if `to_ast` merely borrowed
     /// the live BumpVec slice, the BumpVec's Drop would then run element
     /// destructors on records the returned `Ast` still points at.
-    pub(crate) fn move_to_baby_list(&mut self, arena: &'a Bump) -> BumpVec<'a, ImportRecord> {
+    pub(crate) fn move_to_baby_list(&mut self, arena: &'a Bump) -> BumpVec<'a, ImportRecord<'a>> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
             Self::Owned(v) => v,
-            // SCAN_ONLY path never reaches `to_ast`, so `Borrowed` never hits
+            // SCAN_ONLY path never reaches `to_ast`, so `Scan` never hits
             // this arm at runtime; the copy keeps the type checker happy.
-            Self::Borrowed(v) => bun_alloc::vec_from_iter_in(v.drain(..), arena),
+            Self::Scan(v) => bun_alloc::vec_from_iter_in(v, arena),
         }
     }
-}
 
-pub enum NamedImportsType<'a> {
-    Owned(bun_ast::ast_result::NamedImports),
-    Borrowed(&'a mut bun_ast::ast_result::NamedImports),
-}
-impl<'a> core::ops::Deref for NamedImportsType<'a> {
-    type Target = bun_ast::ast_result::NamedImports;
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Owned(v) => v,
-            Self::Borrowed(v) => *v,
-        }
-    }
-}
-impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Self::Owned(v) => v,
-            Self::Borrowed(v) => *v,
+    /// The list a scan was given, to hand back.
+    pub(crate) fn take_scan(&mut self, arena: &'a Bump) -> Vec<ImportRecord<'a>> {
+        match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
+            Self::Owned(v) => v.into_iter().collect(),
+            Self::Scan(v) => v,
         }
     }
 }
@@ -193,7 +180,7 @@ pub(crate) struct ParserSnapshot<'a> {
 }
 
 pub(crate) type NeedsJSXType = bool;
-pub(crate) type ParsePassSymbolUsageType<'a> = Option<&'a mut crate::ParsePassSymbolUsageMap>;
+pub(crate) type ParsePassSymbolUsageType = Option<crate::ParsePassSymbolUsageMap>;
 pub(crate) type MacroCallCountType = u32;
 
 // ─── Re-exports of sibling-module impls ───
@@ -254,7 +241,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// via `P::log()`. The pointee outlives `'a` (enforced by `Parser::init`).
     pub(crate) log: core::ptr::NonNull<bun_ast::Log>,
     pub(crate) define: &'a Define,
-    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) source: &'a bun_ast::Source<'a>,
     pub lexer: js_lexer::Lexer<'a>,
     pub(crate) allow_in: bool,
     pub(crate) allow_private_identifiers: bool,
@@ -361,7 +348,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// How many `this` expressions the visit pass has seen.
     pub(crate) this_expr_count: u32,
 
-    pub(crate) parse_pass_symbol_uses: ParsePassSymbolUsageType<'a>,
+    pub(crate) parse_pass_symbol_uses: ParsePassSymbolUsageType,
 
     /// Used by commonjs_at_runtime
     pub(crate) has_commonjs_export_names: bool,
@@ -493,7 +480,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) is_import_item: RefMap,
     /// See `Ast::export_default_alias_of_import`.
     pub(crate) export_default_alias_of_import: Ref,
-    pub(crate) named_imports: NamedImportsType<'a>,
+    pub(crate) named_imports: bun_ast::ast_result::NamedImports,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
 
     // When we're only scanning the imports
@@ -647,6 +634,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Temporary variables used for lowering
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
+
+    /// `(inner_class_ref, class name)` of each enclosing class whose body
+    /// reads the class through `inner_class_ref`. A write to the name targets
+    /// the class's own binding, which throws as the immutable binding does.
+    pub(crate) decorated_class_names: List<'a, (Ref, Ref)>,
 
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
@@ -5223,13 +5215,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> u32 {
         let path = *path;
         let index = self.import_records.len();
-        // `ImportRecord.path` is `fs::Path<'static>` (PORTING.md: no struct
-        // lifetime params yet). The parser-supplied path borrows arena-owned 'a bytes
-        // which outlive the import_records list (both dropped with the parser arena),
-        // so the lifetime extension is sound here. Removing the erasure requires
-        // threading `'a` through `bun_ast::ImportRecord`.
-        // SAFETY: see above — arena 'a outlives every ImportRecord stored in self.import_records.
-        let path: fs::Path<'static> = unsafe { path.into_static() };
         // No `impl Default for ImportRecord` (range/path/kind have no defaults) —
         // spell out the optional fields explicitly.
         self.import_records.push(ImportRecord {
@@ -9356,7 +9341,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ),
             approximate_newline_count: self.lexer.approximate_newline_count,
             exports_kind,
-            named_imports: core::mem::take(&mut *self.named_imports),
+            named_imports: core::mem::take(&mut self.named_imports),
             named_exports: core::mem::take(&mut self.named_exports),
             dynamic_import_aliases: core::mem::take(&mut self.dynamic_import_aliases),
             export_keyword: self.esm_export_keyword,
@@ -9559,7 +9544,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         out: &mut core::mem::MaybeUninit<Self>,
         arena: &'a Bump,
         log: core::ptr::NonNull<bun_ast::Log>,
-        source: &'a bun_ast::Source,
+        source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         mut lexer: js_lexer::Lexer<'a>,
         mut opts: ParserOptions<'a>,
@@ -9670,7 +9655,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loop_body: null_stmt_data(),
             define,
             import_records: ImportRecordList::Owned(BumpVec::new_in(arena)), // overwritten below for !SCAN_ONLY
-            named_imports: NamedImportsType::Owned(Default::default()), // overwritten below for !SCAN_ONLY
+            named_imports: Default::default(),
             named_exports: Default::default(),
             log,
             stack_check: bun_core::StackCheck::init(),
@@ -9795,6 +9780,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
+            decorated_class_names: BumpVec::new_in(arena),
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),
@@ -9824,11 +9810,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // receives its `*mut P` per-call from the live `&mut P` at the call
         // site — `prepare_for_visit_pass` only wires the arena/trampoline.
         //
-        // For SCAN_ONLY, the caller (Parser) assigns the borrowed
-        // `import_records` / `named_imports` variants after construction; for
-        // !SCAN_ONLY the literal's `Owned(..)` defaults are already correct
-        // (the previous post-init `if !SCAN_ONLY { .. }` rewrites were
-        // redundant with the literal and have been dropped).
+        // For SCAN_ONLY, the caller (Parser) moves the `ScanPassResult`'s containers in afterwards.
 
         Ok(())
     }

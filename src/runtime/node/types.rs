@@ -289,31 +289,6 @@ impl StringOrBuffer<'static> {
         unsafe { ThreadIsolated::new(Self::owned(bytes)) }
     }
 
-    /// Copies a `Sync`-parsed buffer's current bytes, or isolates a string, for a work-pool job.
-    pub(crate) fn make_thread_isolated_copy(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        match self {
-            Self::Buffer(buffer) => {
-                buffer.buffer = jsc::ArrayBuffer::from_typed_array(global, buffer.buffer.value);
-                let mut bytes = Vec::new();
-                if bytes.try_reserve_exact(buffer.slice().len()).is_err() {
-                    return Err(global.throw_out_of_memory());
-                }
-                bytes.extend_from_slice(buffer.slice());
-                global.vm().report_extra_memory(bytes.len());
-                *self = Self::owned(bytes);
-            }
-            Self::String(str) => {
-                str.make_thread_isolated();
-                *self = Self::ThreadIsolatedString(core::mem::take(str));
-            }
-            Self::ThreadIsolatedString(_) | Self::Utf8(_) => {}
-            Self::PinnedBuffer(_) => {
-                unreachable!("make_thread_isolated_copy on a value parsed with Flavor::Async")
-            }
-        }
-        Ok(())
-    }
-
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
     /// [`PinnedArrayBuffer::root_read_only`] for `Async`.
     pub(crate) fn buffer_from_js(
@@ -1013,11 +988,8 @@ impl PathLikeExt for PathLike<'_> {
                 if !strings::fits_in_wide_path_buffer(s) {
                     return Err(NameTooLong);
                 }
-                // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — 2-byte
-                // alignment is runtime-asserted inside `bytes_as_slice_mut`;
-                // see PathBuffer doc comment for
-                // why the buffer is always sufficiently aligned in practice.
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                // The PathBuffer doc comment says why the buffer is aligned in practice.
+                let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
                 return Ok(strings::to_kernel32_path(buf_u16, s));
             }
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
@@ -1049,14 +1021,12 @@ impl PathLikeExt for PathLike<'_> {
                     return Err(NameTooLong);
                 }
                 // `resolve`'s borrow of `buf` ended at the line above (NLL).
-                // SAFETY: same alignment note as above.
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
                 return Ok(strings::to_kernel32_path(buf_u16, normal));
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if s.len() == 1 && s[0] == b'.' {
-                // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
                 return Ok(strings::to_kernel32_path(buf_u16, b"."));
             }
             let normal = bun_paths::resolve_path::normalize_string_buf::<
@@ -1067,8 +1037,7 @@ impl PathLikeExt for PathLike<'_> {
             if !strings::fits_in_wide_path_buffer(normal) {
                 return Err(NameTooLong);
             }
-            // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-            let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+            let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
             return Ok(strings::to_kernel32_path(buf_u16, normal));
         }
 

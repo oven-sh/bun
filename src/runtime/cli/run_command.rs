@@ -850,6 +850,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         b.options.global_cache = ctx.debug.global_cache;
         b.options.install_preference = offline;
         b.resolver.env_loader = ::core::ptr::NonNull::new(b.env);
+        if ctx.runtime_options.eval.reads_configuration {
+            b.resolver.opts.packages_require_like_node();
+        }
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
@@ -1469,7 +1472,7 @@ impl Run<'_> {
                 else {
                     return Ok(());
                 };
-                // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
+                // SAFETY: `as_` returns a live payload pointer owned by the JS
                 // wrapper; accessed here under the API lock.
                 unsafe { &*client }.do_connect(global, redis)?;
                 Ok(())
@@ -1664,15 +1667,11 @@ impl Run<'_> {
                     if let Some(promise) = result.as_any_promise() {
                         match promise.status() {
                             PromiseStatus::Pending => {
-                                // C-ABI shims are emitted by
-                                // `generate-host-exports.ts` into
-                                // `crate::generated_host_exports` under their
-                                // link name (`Bun__on…EntryPointResult`).
                                 result.then2(
                                     vm.global(),
                                     JSValue::UNDEFINED,
-                                    crate::generated_host_exports::Bun__onResolveEntryPointResult,
-                                    crate::generated_host_exports::Bun__onRejectEntryPointResult,
+                                    crate::generated_bindgen::hw_exports::Bun__onResolveEntryPointResult,
+                                    crate::generated_bindgen::hw_exports::Bun__onRejectEntryPointResult,
                                 );
                                 vm.tick();
                                 vm.auto_tick_active();
@@ -2630,6 +2629,7 @@ impl RunCommand {
         );
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve.
+        let prefixed: Vec<u8>;
         let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
             let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
             this_transpiler.resolver.opts.preserve_symlinks =
@@ -2647,7 +2647,7 @@ impl RunCommand {
                 ok @ Ok(_) => ok,
                 Err(_) => {
                     // Retry with explicit `./` prefix.
-                    let prefixed: Vec<u8> = [b"./".as_slice(), target_name].concat();
+                    prefixed = [b"./".as_slice(), target_name].concat();
                     this_transpiler.resolver.resolve(
                         top_level_dir,
                         &prefixed,

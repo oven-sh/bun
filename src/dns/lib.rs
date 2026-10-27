@@ -394,11 +394,7 @@ pub fn address_to_string(address: &Address) -> BunString {
             // included), so no cfg.
             // SAFETY: family() == AF_UNIX; sockaddr_storage is >= sizeof(sockaddr_un).
             let un = unsafe { &*address.as_sockaddr().cast::<sock::sockaddr_un>() };
-            // SAFETY: reinterpreting [c_char; N] as [u8; N] (same size/align).
-            let path: &[u8] = unsafe {
-                core::slice::from_raw_parts(un.sun_path.as_ptr().cast::<u8>(), un.sun_path.len())
-            };
-            BunString::clone_latin1(path)
+            BunString::clone_latin1(bun_core::slice_as_bytes(&un.sun_path))
         }
         _ => BunString::EMPTY,
     }

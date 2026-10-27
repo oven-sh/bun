@@ -166,6 +166,18 @@ impl<'a> Dubt<'a> {
         let mut match_index = table_get(self.hash_table, h);
         bt_look_ahead::<2, 1>(self.hash_table, self.bt, &self.input, self.hasher, ip);
 
+        let low = window_low.saturating_add(1);
+        if match_index < low {
+            // There is no candidate: the position is the whole of its tree.
+            table_put(self.hash_table, h, curr);
+            bt_set_children(self.bt, curr, [0, 0]);
+            *self.next_to_update = curr.wrapping_add(1);
+            return Ok(DubtFound {
+                best_length: 0,
+                nb_compares: self.nb_compares,
+            });
+        }
+
         let unsort_limit = bt_low(self.bt, curr).max(window_low);
         let mut nb_candidates = self.nb_compares;
         let mut previous_candidate = 0u32;
@@ -207,7 +219,7 @@ impl<'a> Dubt<'a> {
             &self.input,
             ip,
             match_index,
-            window_low.saturating_add(1),
+            low,
             self.nb_compares,
             Descent::new(self.bt, curr),
             |match_index, common| {

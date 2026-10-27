@@ -104,6 +104,166 @@ describe("Intl.DateTimeFormat", () => {
     }
     expect(out).toMatchSnapshot();
   });
+
+  // ICU's islamic calendars have one era: a date before the Hijra is era AH with a year of 0 or less. ICU's coptic
+  // calendar gives a date before its epoch an era with no name. JavaScriptCore once replaced that era and year with
+  // its own English text ("1054 Before Hijra", "685 Anno Martyrum") in format() and formatToParts(), and not in
+  // formatRangeToParts() or in a range of two dates, from a fixed instant that ignored the time zone.
+  // Every method prints ICU's era and year.
+  describe("a date before the epoch of an islamic or the coptic calendar", () => {
+    const CALENDARS = ["islamic-civil", "islamic-tbla", "islamic-umalqura", "coptic"] as const;
+    // Every calendar and three aliases, not only those four: a rewrite of ICU's text in another calendar fails here.
+    const EVERY_CALENDAR = [...Intl.supportedValuesOf("calendar"), "islamic", "islamicc", "islamic-rgsa"];
+    const SHAPES: Intl.DateTimeFormatOptions[] = [
+      { era: "long", year: "numeric", month: "short", day: "numeric" },
+      { era: "short", year: "numeric", month: "short", day: "numeric" },
+      { era: "narrow", year: "numeric", month: "short", day: "numeric" },
+      // No era option: the CLDR patterns of these calendars have an era next to a year.
+      { year: "numeric", month: "short", day: "numeric" },
+      { dateStyle: "full" },
+    ];
+    // Before the coptic epoch (ISO 284) and the islamic one (ISO 622).
+    const BEFORE = [Date.UTC(-400, 0, 15), Date.UTC(200, 0, 1), Date.UTC(283, 7, 1)];
+    const MODERN = Date.UTC(2026, 9, 27);
+    const HOUR = 3_600_000;
+    const DAY = 24 * HOUR;
+    const join = (parts: { value: string }[]) => parts.map(part => part.value).join("");
+    // An error is an outcome too: a text from one method next to an error from another is two outcomes.
+    const outcome = (call: () => string) => {
+      try {
+        return call();
+      } catch (error) {
+        return `throws ${(error as Error).name}`;
+      }
+    };
+
+    test.each(EVERY_CALENDAR)("%s: every method prints one text", calendar => {
+      const differing: string[] = [];
+      for (const locale of ["en", "sv", "ar", "ja"]) {
+        for (const shape of SHAPES) {
+          const options = { calendar, timeZone: "UTC", ...shape };
+          const format = new Intl.DateTimeFormat(locale, options);
+          for (const date of [...BEFORE, MODERN]) {
+            const texts = new Set([
+              outcome(() => format.format(date)),
+              outcome(() => join(format.formatToParts(date))),
+              outcome(() => format.formatRange(date, date)),
+              outcome(() => join(format.formatRangeToParts(date, date))),
+              outcome(() => new Date(date).toLocaleDateString(locale, options)),
+            ]);
+            if (texts.size !== 1) differing.push(`${locale} ${JSON.stringify(shape)}: ${[...texts].join(" | ")}`);
+          }
+        }
+      }
+      expect(differing).toEqual([]);
+    });
+
+    test("the era is in the formatter's language", () => {
+      const english: string[] = [];
+      for (const calendar of CALENDARS) {
+        for (const locale of ["sv", "ar", "ja"]) {
+          for (const shape of SHAPES) {
+            const text = new Intl.DateTimeFormat(locale, { calendar, timeZone: "UTC", ...shape }).format(BEFORE[0]);
+            if (/Before Hijra|Anno Martyrum/.test(text)) english.push(`${locale} ${calendar}: ${text}`);
+          }
+        }
+      }
+      expect(english).toEqual([]);
+    });
+
+    test("the year has the digits of the numbering system", () => {
+      const format = new Intl.DateTimeFormat("ar-u-nu-arab", {
+        calendar: "islamic-civil",
+        timeZone: "UTC",
+        era: "long",
+      });
+      const year = format.formatToParts(BEFORE[0]).find(part => part.type === "year")!.value;
+      expect(year).toMatch(/[\u0660-\u0669]/);
+      expect(year).not.toMatch(/[0-9]/);
+    });
+
+    test.each([
+      ["islamic-civil", "UTC", Date.UTC(622, 6, 19)],
+      ["islamic-umalqura", "UTC", Date.UTC(622, 6, 19)],
+      ["islamic-tbla", "UTC", Date.UTC(622, 6, 18)],
+      ["coptic", "UTC", Date.UTC(284, 7, 29)],
+      // Midnight of the same day three hours east of UTC.
+      ["islamic-civil", "+03:00", Date.UTC(622, 6, 18, 21)],
+    ] as const)(
+      "%s in %s: every instant of the first day of the calendar is that day",
+      (calendar, timeZone, midnight) => {
+        for (const era of ["long", "short"] as const) {
+          const format = new Intl.DateTimeFormat("en", {
+            calendar,
+            timeZone,
+            era,
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          });
+          const day = format.format(midnight);
+          const hours = Array.from({ length: 24 }, (_, hour) => format.format(midnight + hour * HOUR));
+          expect(new Set(hours)).toEqual(new Set([day]));
+          // A range of two instants of one day is that day, in either order.
+          expect({
+            range: format.formatRange(midnight + 3 * HOUR, midnight + 12 * HOUR),
+            reversed: format.formatRange(midnight + 12 * HOUR, midnight + 3 * HOUR),
+          }).toEqual({ range: day, reversed: day });
+        }
+      },
+    );
+
+    // Not coptic: its year before the epoch never differed between the methods.
+    const ISLAMIC = ["islamic-civil", "islamic-tbla", "islamic-umalqura"] as const;
+    test.each(ISLAMIC)("%s: each end of a range has the year that the date has alone", calendar => {
+      const [start, end] = [BEFORE[0], BEFORE[0] + 366 * DAY];
+      const year = (parts: Intl.DateTimeFormatPart[]) => parts.find(part => part.type === "year")!.value;
+      for (const locale of ["en", "sv", "ar", "ja"]) {
+        for (const shape of SHAPES) {
+          const format = new Intl.DateTimeFormat(locale, { calendar, timeZone: "UTC", ...shape });
+          const range = format.formatRangeToParts(start, end);
+          expect({
+            start: year(range.filter(part => part.source === "startRange")),
+            end: year(range.filter(part => part.source === "endRange")),
+          }).toEqual({ start: year(format.formatToParts(start)), end: year(format.formatToParts(end)) });
+        }
+      }
+    });
+
+    // The text of the bundled ICU 78.3 (CLDR 48). node 26.3.0 prints the same on that ICU, with U+2009 around the
+    // dash of the range.
+    snapshotIf("ICU's text", () => {
+      const options = { timeZone: "UTC", era: "long", year: "numeric", month: "short", day: "numeric" } as const;
+      const text = (locale: string, calendar: string, date = BEFORE[0], more: Intl.DateTimeFormatOptions = {}) =>
+        new Intl.DateTimeFormat(locale, { ...options, calendar, ...more }).format(date);
+      expect({
+        "sv islamic-tbla": text("sv", "islamic-tbla"),
+        "en islamic-civil": text("en", "islamic-civil"),
+        "ar islamic-umalqura": text("ar", "islamic-umalqura"),
+        "ja islamic-civil": text("ja", "islamic-civil"),
+        "en coptic": text("en", "coptic"),
+        "en islamic-civil, era short": text("en", "islamic-civil", BEFORE[0], { era: "short" }),
+        "en islamic-civil, no era option": text("en", "islamic-civil", BEFORE[0], { era: undefined }),
+        "en islamic-civil, the first hour of 1 AH": text("en", "islamic-civil", Date.UTC(622, 6, 19)),
+        "en islamic-civil, the hour before": text("en", "islamic-civil", Date.UTC(622, 6, 18, 23)),
+        "en islamic-civil, a range": new Intl.DateTimeFormat("en", {
+          ...options,
+          calendar: "islamic-civil",
+        }).formatRange(BEFORE[0], BEFORE[0] + 366 * DAY),
+      }).toEqual({
+        "sv islamic-tbla": "11 Saf. \u22121053 efter Hirja",
+        "en islamic-civil": "Saf. 10, -1053 Anno Hegirae",
+        "ar islamic-umalqura": "10 \u0635\u0641\u0631 \u200e-1053 \u0647\u0640",
+        "ja islamic-civil": "AH-1053\u5e742\u670810\u65e5",
+        "en coptic": "Toba 24, 685 ",
+        "en islamic-civil, era short": "Saf. 10, -1053 AH",
+        "en islamic-civil, no era option": "Saf. 10, -1053 AH",
+        "en islamic-civil, the first hour of 1 AH": "Muh. 1, 1 Anno Hegirae",
+        "en islamic-civil, the hour before": "Dhu\u02bbl-H. 29, 0 Anno Hegirae",
+        "en islamic-civil, a range": "Saf. 10, -1053 \u2013 Saf. 22, -1052 Anno Hegirae",
+      });
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

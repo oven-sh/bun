@@ -81,6 +81,47 @@ describe("Temporal core operations", () => {
     expect(d.toLocaleString("en-US")).toBe("6/15/2024");
   });
 
+  // ICU's islamic calendars have one era: a date before the Hijra is era AH with a year of 0 or less. For a Temporal
+  // value JavaScriptCore once replaced that era and year with its own English text ("1054 Before Hijra") in format(),
+  // formatToParts() and toLocaleString(), and not in formatRange() or formatRangeToParts(). It added that era to a
+  // month and a day too. test/js/web/intl/intl.test.ts has the same checks for a Number and a Date.
+  test.each(["islamic-civil", "islamic-tbla", "islamic-umalqura", "coptic"])(
+    "every method prints one text for a Temporal value before the epoch of %s",
+    calendar => {
+      const date = Temporal.PlainDate.from("-000400-01-15").withCalendar(calendar);
+      const zoned = date.toZonedDateTime("UTC");
+      const values = {
+        PlainDate: date,
+        PlainDateTime: date.toPlainDateTime("12:00"),
+        PlainYearMonth: date.toPlainYearMonth(),
+        // The reference year is before the epoch too.
+        PlainMonthDay: new Temporal.PlainMonthDay(1, 15, calendar, 200),
+        Instant: zoned.toInstant(),
+      };
+      const join = (parts: { value: string }[]) => parts.map(part => part.value).join("");
+      const differing: string[] = [];
+      for (const locale of ["en", "sv"]) {
+        const fields = { calendar, era: "long", year: "numeric", month: "short", day: "numeric" } as const;
+        const options = { ...fields, timeZone: "UTC" };
+        const format = new Intl.DateTimeFormat(locale, options);
+        for (const [kind, value] of Object.entries(values)) {
+          const texts = new Set([
+            format.format(value),
+            join(format.formatToParts(value)),
+            format.formatRange(value, value),
+            join(format.formatRangeToParts(value, value)),
+            value.toLocaleString(locale, options),
+          ]);
+          if (texts.size !== 1) differing.push(`${locale} ${kind}: ${[...texts].join(" | ")}`);
+        }
+        // A ZonedDateTime has its own time zone. It prints the text of its instant in that zone.
+        const texts = new Set([zoned.toLocaleString(locale, fields), format.format(zoned.toInstant())]);
+        if (texts.size !== 1) differing.push(`${locale} ZonedDateTime: ${[...texts].join(" | ")}`);
+      }
+      expect(differing).toEqual([]);
+    },
+  );
+
   test("structuredClone rejects Temporal objects", () => {
     expect(() => structuredClone(Temporal.PlainDate.from("2024-06-15"))).toThrow(DOMException);
     expect(() => structuredClone(Temporal.Instant.from("2024-06-15T00:00Z"))).toThrow(DOMException);

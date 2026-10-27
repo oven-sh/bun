@@ -30,7 +30,7 @@ for (const [realm, evaluate] of [
   ["", code => (0, eval)(code)],
   [" in a node:vm context", code => vm.runInNewContext(code)],
 ]) {
-  for (const [name, fn] of Object.entries(evaluate(cases))) bench(name + realm, fn);
+  for (const [name, fn] of Object.entries(evaluate(cases))) bench(name + realm, () => fn());
 }
 
 await run();

@@ -1601,6 +1601,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn is_type_script_arrow_return_type_after_question_and_before_colon(
         &mut self,
         arrow_data: &FnOrArrowDataParse,
+        flags: bun_ast::expr::EFlags,
     ) -> Result<bool, Error> {
         self.mark_type_script_only();
         debug_assert!(
@@ -1608,7 +1609,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             "the memo key has no `allow_in`: the \"?\" sets it before the branch"
         );
         // The same ":" can be reached in another state: a discarded `async (a) :` attempt reads `await /x/` in its body as a regular expression, the real parse reads a division.
-        let memo_key = (self.lexer.start as u64) << 2 | arrow_data.allow_await as u64;
+        let memo_key = (self.lexer.start as u64) << 3
+            | (flags.is_after_question_and_before_colon() as u64) << 2
+            | arrow_data.allow_await as u64;
         if let Ok(i) = self
             .ts_conditional_arrow_attempts
             .binary_search_by_key(&memo_key, |&packed| packed >> 1)
@@ -1616,13 +1619,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let is_arrow_fn = self.ts_conditional_arrow_attempts[i] & 1 == 1;
             debug_assert!(
                 self.lexer.is_log_disabled
-                    || self.attempt_arrow_fn_before_colon(arrow_data).ok() != Some(!is_arrow_fn),
+                    || self.attempt_arrow_fn_before_colon(arrow_data, flags).ok()
+                        != Some(!is_arrow_fn),
                 "the memo holds the outcome of another parser state"
             );
             return Ok(is_arrow_fn);
         }
 
-        let is_arrow_fn = self.attempt_arrow_fn_before_colon(arrow_data)?;
+        let is_arrow_fn = self.attempt_arrow_fn_before_colon(arrow_data, flags)?;
 
         // Search again for the insertion point: attempts nested inside this one may have added entries of their own.
         if let Err(insert_at) = self
@@ -1640,6 +1644,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn attempt_arrow_fn_before_colon(
         &mut self,
         arrow_data: &FnOrArrowDataParse,
+        flags: bun_ast::expr::EFlags,
     ) -> Result<bool, Error> {
         let snapshot = self.parser_snapshot();
         self.lexer.is_log_disabled = true;
@@ -1653,7 +1658,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let result: Result<(), Error> = (|| {
             self.lexer.expect(T::TColon)?;
             self.skip_typescript_return_type()?;
-            self.parse_arrow_body(&mut [], &mut data)?;
+            self.parse_arrow_body(&mut [], &mut data, flags)?;
             // The ":" that pairs with the "?"
             self.lexer.expect(T::TColon)?;
             Ok(())

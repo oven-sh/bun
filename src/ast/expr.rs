@@ -584,12 +584,27 @@ impl Expr {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum EFlags {
+    #[default]
     None,
     TsDecorator,
     /// Between the `?` and `:` of a conditional, where an arrow return type is ambiguous.
     AfterQuestionAndBeforeColon,
+    /// The same, in the body of an arrow function whose own return type is ambiguous.
+    AfterQuestionAndBeforeColonInTypedArrow,
+    /// The operand of a TypeScript `<T>` cast. tsc reads a unary expression there, so a `:` behind its parentheses is not a return type.
+    TsCastOperand,
+}
+
+impl EFlags {
+    #[inline]
+    pub fn is_after_question_and_before_colon(self) -> bool {
+        matches!(
+            self,
+            Self::AfterQuestionAndBeforeColon | Self::AfterQuestionAndBeforeColonInTypedArrow
+        )
+    }
 }
 
 // `is_missing` lives in the `init`/`allocate` impl block below.

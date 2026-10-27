@@ -1232,7 +1232,10 @@ impl<'arena> ScopeOrder<'arena> {
 pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
-    pub(crate) is_after_question_and_before_colon: bool,
+    /// Of the expression that starts with these parentheses.
+    pub(crate) flags: js_ast::expr::EFlags,
+    /// `<T>(`: tsc never decides this head at first sight.
+    pub(crate) after_type_parameters: bool,
 }
 
 #[repr(u8)]

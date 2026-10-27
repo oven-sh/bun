@@ -521,6 +521,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         args: &'a mut [G::Arg],
         data: &mut FnOrArrowDataParse,
+        flags: js_ast::expr::EFlags,
     ) -> Result<E::Arrow, Error> {
         let p = self;
         let arrow_loc = p.lexer.loc();
@@ -576,8 +577,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse = data.clone();
-        let expr = match p.parse_expr(Level::Comma) {
-            Ok(e) => e,
+        let mut expr = Expr::EMPTY;
+        // The body of an arrow function between "?" and ":" is still between them.
+        let flags = Self::carried_flags(flags);
+        let expr = match p.parse_expr_with_flags(Level::Comma, flags, &mut expr) {
+            Ok(()) => expr,
             Err(err) => {
                 // The error path returns without restoring fn_or_arrow_data_parse;
                 // only the scope pop runs.

@@ -499,9 +499,9 @@ describe.each(linkers)("%s linker", linker => {
         "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
       "a-dep-1.0.1": "sha512-6nmTaPgO2U/uOODqOhbjbnaB4xHuZ+UB7AjKUA3g2dT4WRWeNxgp0dC8Db4swXSnO5/uLLUdFmUJKINNBO/3wg==",
     };
-    // "" is the registry the install is configured with, the form bun writes for it.
+    // 1.4.3 wrote the tarball URL of a registry other than the default one.
     const fromRegistry = (key: string, name: string, version: string) =>
-      `"${key}": ["${name}@${version}", "", {}, "${integrity[`${name}-${version}`]}"],`;
+      `"${key}": ["${name}@${version}", "${registry.registryUrl()}${name}/-/${name}-${version}.tgz", {}, "${integrity[`${name}-${version}`]}"],`;
     const memberEntry = `
     "packages/no-deps": {
       "name": "no-deps",
@@ -584,8 +584,9 @@ ${packages.map(row => `    ${row}\n`).join("\n")}  }
           ),
       ],
       [
+        // The save after the first install writes "" for the configured registry's tarball URL.
         "in dependencies and in optionalDependencies",
-        "kept",
+        "repaired",
         { dependencies: { "no-deps": "1.0.0" }, optionalDependencies: { "no-deps": "^1.0.0" } },
         "no-deps@1.1.0",
         () =>

@@ -49,13 +49,14 @@ fn is_private(prop: &G::Property) -> bool {
     )
 }
 
-/// A class has its own `name` and `length`, and `this.name = value` throws because they are read-only.
-fn initializes_name_or_length_of_class(prop: &G::Property) -> bool {
+/// `this.name = value` throws in a class, as for the other names of `checkClassForStaticPropertyNameConflicts`.
+fn initializes_function_property(prop: &G::Property) -> bool {
+    let names: [&[u8]; 4] = [b"name", b"length", b"caller", b"arguments"];
     is_static(prop)
         && prop.initializer.is_some()
         && matches!(
             prop.key.map(|key| key.data),
-            Some(js_ast::ExprData::EString(s)) if s.eql_comptime(b"name") || s.eql_comptime(b"length")
+            Some(js_ast::ExprData::EString(s)) if names.iter().any(|name| s.eql_bytes(name))
         )
 }
 
@@ -260,7 +261,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
         let can_lower_field = |prop: &G::Property| {
             is_field(prop)
-                && !initializes_name_or_length_of_class(prop)
+                && !initializes_function_property(prop)
                 && (!is_private(prop) || (!is_static(prop) && has_initialized_public_field))
         };
         let key_to_hoist = |prop: &G::Property| {

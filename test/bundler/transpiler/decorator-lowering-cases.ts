@@ -436,12 +436,25 @@ class A { @seen static a = 1; @seen static b?: number; @seen c = 2; @seen m() {}
       "static fields named like those of a function",
       `try { class A { @d static name = "n"; } show(A.name, Object.getOwnPropertyDescriptor(A, "name")?.writable); } catch (e: any) { log(e.name); }
 try { class A { static length = 2; } show(A.length); } catch (e: any) { log(e.name); }
+try { class A { static caller = 3; @d static arguments = [4]; } show(A.caller, A.arguments); } catch (e: any) { log(e.name); }
 class Base { static set other(v: string) { log("set other " + v); } }
 class B extends Base { static name = "b"; static other = B.name; }
 class C { static name: string; static length?: number; }
 show(C.name, C.length);`,
     ),
-    { assign: [`n["name"] design:type = Object`, `n["name"] @d`, `"n" true`, "2", "set other b", `"C" 0`] },
+    {
+      assign: [
+        `n["name"] design:type = Object`,
+        `n["name"] @d`,
+        `"n" true`,
+        "2",
+        `A["arguments"] design:type = Object`,
+        `A["arguments"] @d`,
+        "3 [4]",
+        "set other b",
+        `"C" 0`,
+      ],
+    },
   ),
   ...defineAndAssign(
     "class without a name",

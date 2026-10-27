@@ -1782,18 +1782,21 @@ impl BlobExt for Blob {
             }
         }
 
-        let mut blob_content_type = BlobContentType::default();
-        if let BlobSliceBound::ContentType(content_type) = content_type {
-            let content_type_view = content_type.to_js_string_view(global_this)?;
-            let slicer = content_type_view.to_utf8();
-            let slice = slicer.slice();
-            if is_valid_blob_type(slice) {
-                blob_content_type = match global_this.bun_vm().as_mut().mime_type(slice) {
-                    Some(mime) => BlobContentType::from(mime),
-                    None => BlobContentType::from_lowercased(slice),
-                };
+        let blob_content_type = match content_type {
+            BlobSliceBound::ContentType(content_type) => {
+                let content_type_view = content_type.to_js_string_view(global_this)?;
+                let slicer = content_type_view.to_utf8();
+                let slice = slicer.slice();
+                if !is_valid_blob_type(slice) {
+                    BlobContentType::default()
+                } else if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
+                    BlobContentType::from(mime)
+                } else {
+                    BlobContentType::from_lowercased(slice)
+                }
             }
-        }
+            _ => BlobContentType::default(),
+        };
 
         Ok(self.get_slice_from(global_this, relative_start, relative_end, blob_content_type))
     }

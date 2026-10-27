@@ -1369,6 +1369,7 @@ pub struct Options<'a> {
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
     /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
+    /// An external import in a file whose target is bun never takes the `1`.
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
 
@@ -2992,10 +2993,8 @@ pub(crate) mod __gated_printer {
                 }
 
                 if wrap_with_to_esm {
-                    // Only Bun loads a `bun:` module, and its loader makes an own
-                    // `default` of the exports the ES default for every importer.
-                    // `isNodeMode` would make it the whole exports object.
-                    if strings::has_prefix_comptime(record.path.text, b"bun:") {
+                    // Bun's `require()` marks an ES module with `__esModule`; `__toESM` reads it at load.
+                    if IS_BUN_PLATFORM {
                         self.print(b")");
                     } else {
                         self.print_to_esm_suffix();

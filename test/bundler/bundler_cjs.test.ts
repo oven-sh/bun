@@ -836,10 +836,11 @@ describe("bundler", () => {
     },
   });
 
-  // A `bun:` module never gets `isNodeMode`, whatever the importer's type.
-  // Bun's loader makes an own `default` of a builtin's exports the ES default
-  // export (`import Database from "bun:sqlite"` is the class), and
-  // `require("bun:sqlite")` carries `__esModule` so that `__toESM` agrees.
+  // ============================================================================
+  // External imports in a file whose target is bun never take isNodeMode.
+  // `__toESM` reads `__esModule` off the value that Bun's `require()` returns.
+  // ============================================================================
+
   const bunBuiltinDefaultImport = /* js */ `
     import Database from "bun:sqlite";
     import * as ns from "bun:sqlite";
@@ -875,18 +876,96 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("cjs/__toESM_bun_builtin_mts_importer_target_node", {
+  // `require()` of an ES module returns its namespace.
+  itBundled("cjs/__toESM_external_es_module_target_bun", {
     files: {
-      "/entry.mts": bunBuiltinDefaultImport,
+      "/entry.mjs": /* js */ `
+        import d, { named } from "esm-ext";
+        console.log(typeof d, named);
+      `,
     },
-    target: "node",
+    runtimeFiles: {
+      "/node_modules/esm-ext/package.json": `{ "name": "esm-ext", "type": "module", "main": "index.js" }`,
+      "/node_modules/esm-ext/index.js": /* js */ `
+        export default function hello() {}
+        export const named = 1;
+      `,
+    },
+    external: ["esm-ext"],
+    target: "bun",
     format: "cjs",
     onAfterBundle(api) {
-      api.expectFile("/out.js").toContain('__toESM(require("bun:sqlite"))');
-      api.expectFile("/out.js").toContain('__toESM(require("node:fs"), 1)');
+      api.expectFile("/out.js").toContain('__toESM(require("esm-ext"))');
     },
     run: {
-      stdout: "function true true function",
+      stdout: "function 1",
+    },
+  });
+
+  // `require()` of a text file returns the namespace of a module that Bun makes.
+  itBundled("cjs/__toESM_external_text_file_target_bun", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import text from "./message.txt";
+        console.log(typeof text, text);
+      `,
+    },
+    runtimeFiles: {
+      "/message.txt": "hello",
+    },
+    external: ["./message.txt"],
+    target: "bun",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("./message.txt"))');
+    },
+    run: {
+      stdout: "string hello",
+    },
+  });
+
+  // The same files as Test 41, for target bun. `bun run` gives `exports.default`
+  // here. Node gives the whole `module.exports`, and so does target node.
+  itBundled("cjs/__toESM_external_require_mjs_importer_target_bun", {
+    files: {
+      "/entry.mjs": externalImportLog,
+    },
+    runtimeFiles: externalRuntimeFiles,
+    external: ["ext"],
+    target: "bun",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("ext"))');
+    },
+    run: {
+      stdout: "function 1",
+    },
+  });
+
+  // Importers of different module types get one view of an external module.
+  itBundled("cjs/__toESM_external_one_view_for_ts_and_mjs_importers_target_bun", {
+    files: {
+      "/entry.ts": /* js */ `
+        import d from "ext";
+        import * as ns from "ext";
+        import { d as mjsDefault, ns as mjsNamespace } from "./other.mjs";
+        console.log(typeof d, typeof mjsDefault, d === mjsDefault, ns === mjsNamespace);
+      `,
+      "/other.mjs": /* js */ `
+        import d from "ext";
+        import * as ns from "ext";
+        export { d, ns };
+      `,
+    },
+    runtimeFiles: externalRuntimeFiles,
+    external: ["ext"],
+    target: "bun",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain('require("ext"), 1)');
+    },
+    run: {
+      stdout: "function function true true",
     },
   });
 

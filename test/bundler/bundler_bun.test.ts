@@ -113,6 +113,42 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  // CommonJS output loads an external import with `__toESM(require())`.
+  itBundled("bun/sqlite-file-format-cjs", {
+    target: "bun",
+    format: "cjs",
+    files: {
+      "/entry.mts": /* js */ `
+        import db from './db.sqlite' with {type: "sqlite"};
+        console.log(db.query("select message from messages LIMIT 1").get().message);
+      `,
+    },
+    runtimeFiles: {
+      "/db.sqlite": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    run: { stdout: "Hello, world!", setCwd: true },
+  });
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`bun/default-import-bun-sqlite-format-cjs-${backend}`, {
+      backend,
+      target: "bun",
+      format: "cjs",
+      files: {
+        "/entry.ts": /* js */ `
+          import Database from "bun:sqlite";
+          const db = new Database(":memory:");
+          console.log(db.query("select 'Hello, world!' as message").get().message);
+        `,
+        "/package.json": `{ "name": "app", "type": "module" }`,
+      },
+      run: { stdout: "Hello, world!" },
+    });
+  }
   itBundled("bun/TargetBunNoSourcemapMessage", {
     target: "bun",
     files: {

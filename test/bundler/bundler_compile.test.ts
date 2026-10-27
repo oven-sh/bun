@@ -1154,6 +1154,20 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  // `bytecode` selects CommonJS output, which loads `bun:sqlite` with `__toESM(require())`.
+  itBundled("compile/BytecodeDefaultImportBunSqliteTypeModule", {
+    compile: true,
+    bytecode: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import Database from "bun:sqlite";
+        const db = new Database(":memory:");
+        console.log(db.query("select 'Hello, world!' as message").get().message);
+      `,
+      "/package.json": `{ "name": "app", "type": "module" }`,
+    },
+    run: { stdout: "Hello, world!" },
+  });
 
   // A text import in a compiled executable is embedded as a string body
   // (8-bit when ASCII, UTF-16LE otherwise) that the runtime hands back without

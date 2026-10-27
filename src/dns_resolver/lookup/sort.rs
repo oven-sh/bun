@@ -108,7 +108,7 @@ fn merge_sort(list: Vec<Candidate>) -> Vec<Candidate> {
 }
 
 /// Leaves the order alone if the system fails to say where packets would leave from.
-pub(super) fn sort_addresses<I: Io>(io: &mut I, nodes: &mut Vec<Node>) {
+pub(super) fn sort_addresses(io: &mut dyn Io, nodes: &mut Vec<Node>) {
     let mut candidates = Vec::with_capacity(nodes.len());
     for node in nodes.iter() {
         let Ok(source) = io.source_address(SocketAddr::new(node.address, node.port)) else {

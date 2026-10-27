@@ -93,6 +93,8 @@ describe("where the servers come from", () => {
             "nameserver fe80::3%7",
             "nameserver fe80::4%nope",
             "nameserver fe80::5%9",
+            "nameserver 10.0.0.8%fifteen-letters",
+            "nameserver 10.0.0.9%sixteen--letters",
             "nameserverx 10.9.9.9",
             "NAMESERVER 10.9.9.8",
           ].join("\n"),
@@ -101,7 +103,7 @@ describe("where the servers come from", () => {
         "interface 7 eth1",
       ),
     ).toMatchInlineSnapshot(
-      `"servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0 10.0.0.3#5353#5353#0 10.0.0.4#54#54#0 2001:db8::1#53#53#0 2001:db8::2#5353#5353#0 10.0.0.5#53#53#0 10.0.0.6#53#53#0 10.0.0.7#53#53#0 fe80::2#53#53#3 fe80::3#53#53#7"`,
+      `"servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0 10.0.0.3#5353#5353#0 10.0.0.4#54#54#0 2001:db8::1#53#53#0 2001:db8::2#5353#5353#0 10.0.0.5#53#53#0 10.0.0.6#53#53#0 10.0.0.7#53#53#0 fe80::2#53#53#3 fe80::3#53#53#7 10.0.0.8#53#53#0"`,
     );
   });
 
@@ -610,6 +612,12 @@ describe("timeouts and servers", () => {
     `);
   });
 
+  test("an error after a datagram that was ignored is not lost", () => {
+    const it = new World(oneServer);
+    it.run("query A a.test");
+    expect(it.run("queue 1 -", "break 1").slice(0, 2)).toEqual(["open 2 udp 10.0.0.1#53#0", "watch 2 r-"]);
+  });
+
   test("setServers() moves the queries of a server that is dropped to another", () => {
     const it = new World(twoServers);
     it.run("query A a.test");
@@ -745,6 +753,13 @@ describe("TCP", () => {
         "timer none",
       ]
     `);
+  });
+
+  test("a connection that ends in the middle of an answer is made again at once", () => {
+    const it = new World(oneServer, "env RES_OPTIONS use-vc");
+    it.run("query A a.test", "writable 1");
+    expect(it.run("deliver 1 00")).toEqual([]);
+    expect(it.run("deliver 1 -").slice(0, 3)).toEqual(["open 2 tcp 10.0.0.1#53#0", "watch 2 rw", "close 1"]);
   });
 
   test("`options use-vc` never uses UDP", () => {

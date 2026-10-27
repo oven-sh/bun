@@ -6,8 +6,8 @@ use std::io::Write as _;
 use bun_core::strings;
 
 use super::{Host, NameInfo};
-use crate::channel::{Answer, Channel, LookupId, Owner, Status};
-use crate::io::{Io, Time};
+use crate::channel::{Answer, Channel, LookupId, Owner, Status, Token};
+use crate::io::Time;
 use crate::record::{Record, rr_type};
 use crate::sysconfig::{Source, load_etc_file};
 use crate::text::{take_while, trim_start, word};
@@ -22,8 +22,8 @@ enum Wanted {
     NameInfo(u16),
 }
 
-pub(crate) struct HostLookup<T> {
-    token: T,
+pub(crate) struct HostLookup {
+    token: Token,
     wanted: Wanted,
     address: IpAddr,
     sources: Vec<Source>,
@@ -101,18 +101,18 @@ fn tcp_service_name(services: &[u8], port: u16) -> Option<&[u8]> {
     })
 }
 
-impl<I: Io, T> Channel<I, T> {
+impl Channel {
     /// `dns.reverse()`.
-    pub fn host_of_address(&mut self, now: Time, address: IpAddr, token: T) {
+    pub fn host_of_address(&mut self, now: Time, address: IpAddr, token: Token) {
         self.start_host_lookup(now, address, Wanted::Host, token);
     }
 
     /// `dns.lookupService()`: fails if the address has no name.
-    pub fn name_info(&mut self, now: Time, address: SocketAddr, token: T) {
+    pub fn name_info(&mut self, now: Time, address: SocketAddr, token: Token) {
         self.start_host_lookup(now, address.ip(), Wanted::NameInfo(address.port()), token);
     }
 
-    fn start_host_lookup(&mut self, now: Time, address: IpAddr, wanted: Wanted, token: T) {
+    fn start_host_lookup(&mut self, now: Time, address: IpAddr, wanted: Wanted, token: Token) {
         self.next_lookup_id += 1;
         let id = self.next_lookup_id;
         self.host_lookups.insert(
@@ -198,7 +198,7 @@ impl<I: Io, T> Channel<I, T> {
         if port == 0 {
             return None;
         }
-        let name = load_etc_file(&mut self.io, "services")
+        let name = load_etc_file(&mut *self.io, "services")
             .ok()
             .and_then(|services| tcp_service_name(&services, port).map(<[u8]>::to_vec))
             .unwrap_or_else(|| port.to_string().into_bytes());

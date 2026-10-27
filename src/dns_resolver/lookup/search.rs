@@ -4,19 +4,19 @@ use bun_core::strings;
 
 use crate::buf::is_hostname_byte;
 use crate::channel::Channel;
-use crate::io::{Io, Variable};
+use crate::io::Variable;
 use crate::sysconfig::load_file;
 use crate::text::{fits, split, trim_start, word};
 use crate::{Error, Result};
 
-impl<I: Io, T> Channel<I, T> {
+impl Channel {
     /// hostname(7): the file `HOSTALIASES` names has a line `alias name` for each alias, which has no dot.
     fn host_alias(&mut self, name: &[u8]) -> Result<Vec<u8>> {
         if strings::contains_char(name, b'.') {
             return Err(Error::ENOTFOUND);
         }
         let path = self.io.env(Variable::HostAliases).ok_or(Error::ENOTFOUND)?;
-        let text = load_file(&mut self.io, &path)?;
+        let text = load_file(&mut *self.io, &path)?;
         for line in split(&text, b"\n", true, None) {
             let (alias, rest) = word(line);
             let (target, _) = word(trim_start(rest));

@@ -5,12 +5,12 @@ use std::collections::BTreeSet;
 use super::server::ServerId;
 use super::{Channel, Serial, Status};
 use crate::Error;
-use crate::io::{Io, IoError, Time, Transport};
+use crate::io::{IoError, Socket, Time, Transport};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(crate) struct ConnId(pub(super) u64);
 
-pub(crate) struct Conn<Socket> {
+pub(crate) struct Conn {
     pub(crate) socket: Socket,
     pub(crate) server: ServerId,
     pub(crate) transport: Transport,
@@ -38,7 +38,7 @@ pub(super) enum Read {
     Closed,
 }
 
-impl<Socket> Conn<Socket> {
+impl Conn {
     pub(super) fn became_writable(&mut self) {
         if !self.fast_open_pending {
             self.connected = true;
@@ -46,8 +46,8 @@ impl<Socket> Conn<Socket> {
     }
 }
 
-impl<I: Io, T> Channel<I, T> {
-    pub(super) fn conn_of_socket(&self, socket: I::Socket) -> Option<ConnId> {
+impl Channel {
+    pub(super) fn conn_of_socket(&self, socket: Socket) -> Option<ConnId> {
         let (id, _) = self.conns.iter().find(|(_, conn)| conn.socket == socket)?;
         Some(*id)
     }

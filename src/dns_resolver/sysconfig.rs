@@ -47,19 +47,19 @@ impl Default for SysConfig {
     }
 }
 
-pub(crate) fn load_file<I: Io>(io: &mut I, path: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn load_file(io: &mut dyn Io, path: &[u8]) -> Result<Vec<u8>> {
     io.read_file(path).map_err(|error| match error {
         FileError::NotFound => Error::ENOTFOUND,
         FileError::Other => Error::EFILE,
     })
 }
 
-pub(crate) fn load_etc_file<I: Io>(io: &mut I, name: &str) -> Result<Vec<u8>> {
+pub(crate) fn load_etc_file(io: &mut dyn Io, name: &str) -> Result<Vec<u8>> {
     let path = io.etc_path(name).ok_or(Error::ENOTFOUND)?;
     load_file(io, &path)
 }
 
-pub(crate) fn read<I: Io>(io: &mut I) -> Result<SysConfig> {
+pub(crate) fn read(io: &mut dyn Io) -> Result<SysConfig> {
     let mut config = SysConfig::default();
     match io.settings() {
         Settings::Files => config.read_files(io)?,
@@ -88,7 +88,7 @@ pub(crate) fn read<I: Io>(io: &mut I) -> Result<SysConfig> {
 }
 
 /// The search list of a system that configures none.
-pub(crate) fn domain_of_hostname<I: Io>(io: &mut I) -> Option<Vec<u8>> {
+pub(crate) fn domain_of_hostname(io: &mut dyn Io) -> Option<Vec<u8>> {
     let hostname = io.hostname()?;
     let (_, domain) = strings::split_once_char(&hostname, b'.')?;
     Some(domain.to_vec())
@@ -96,9 +96,9 @@ pub(crate) fn domain_of_hostname<I: Io>(io: &mut I) -> Option<Vec<u8>> {
 
 impl SysConfig {
     /// A file that is there and cannot be read is an error. One that is not there says nothing.
-    fn read_files<I: Io>(&mut self, io: &mut I) -> Result<()> {
-        type ParseLine<I> = fn(&mut SysConfig, &mut I, &[u8]);
-        let files: [(&str, ParseLine<I>); 2] = [
+    fn read_files(&mut self, io: &mut dyn Io) -> Result<()> {
+        type ParseLine = fn(&mut SysConfig, &mut dyn Io, &[u8]);
+        let files: [(&str, ParseLine); 2] = [
             ("resolv.conf", SysConfig::parse_resolv_conf_line),
             ("nsswitch.conf", SysConfig::parse_nsswitch_line),
         ];
@@ -116,7 +116,7 @@ impl SysConfig {
         Ok(())
     }
 
-    fn read_windows<I: Io>(&mut self, io: &mut I, settings: WindowsSettings) {
+    fn read_windows(&mut self, io: &mut dyn Io, settings: WindowsSettings) {
         // Windows routes packets by these metrics and does not order the servers by them.
         let mut servers: Vec<(u32, SocketAddr, u32)> = Vec::new();
         for server in settings.servers {
@@ -154,7 +154,7 @@ impl SysConfig {
         }
     }
 
-    fn read_mac_resolver<I: Io>(&mut self, io: &mut I, resolver: &MacResolver) {
+    fn read_mac_resolver(&mut self, io: &mut dyn Io, resolver: &MacResolver) {
         /// `kSCNetworkFlagsReachable | kSCNetworkReachabilityFlagsConnectionOnTraffic`
         const CAN_BE_REACHED: u32 = 1 << 1 | 1 << 3;
         if resolver.for_one_domain
@@ -248,7 +248,7 @@ impl SysConfig {
         }
     }
 
-    fn add_servers<I: Io>(&mut self, io: &mut I, list: &[u8]) {
+    fn add_servers(&mut self, io: &mut dyn Io, list: &[u8]) {
         for text in split(list, b" ,", false, None) {
             if let Some((address, port, interface)) = parse_server(text) {
                 let interface = interface_index(io, interface);
@@ -258,13 +258,7 @@ impl SysConfig {
     }
 
     /// `interface` matters to a link-local address only, which is of no use without one.
-    fn add_server<I: Io>(
-        &mut self,
-        io: &mut I,
-        address: IpAddr,
-        port: u16,
-        interface: Option<u32>,
-    ) {
+    fn add_server(&mut self, io: &mut dyn Io, address: IpAddr, port: u16, interface: Option<u32>) {
         let mut scope_id = 0;
         if let IpAddr::V6(v6) = address {
             match v6.segments() {
@@ -285,7 +279,7 @@ impl SysConfig {
         });
     }
 
-    fn parse_resolv_conf_line<I: Io>(&mut self, io: &mut I, line: &[u8]) {
+    fn parse_resolv_conf_line(&mut self, io: &mut dyn Io, line: &[u8]) {
         if let [b'#' | b';', ..] = line {
             return;
         }
@@ -313,14 +307,14 @@ impl SysConfig {
         }
     }
 
-    fn parse_nsswitch_line<I: Io>(&mut self, _: &mut I, line: &[u8]) {
+    fn parse_nsswitch_line(&mut self, _: &mut dyn Io, line: &[u8]) {
         if let [b"hosts", sources] = split(line, b":", true, Some(2)).as_slice() {
             self.set_sources(sources, b" \t");
         }
     }
 }
 
-fn interface_index<I: Io>(io: &mut I, interface: &[u8]) -> Option<u32> {
+fn interface_index(io: &mut dyn Io, interface: &[u8]) -> Option<u32> {
     if interface.is_empty() {
         return None;
     }
@@ -329,6 +323,9 @@ fn interface_index<I: Io>(io: &mut I, interface: &[u8]) -> Option<u32> {
     }
     io.interface_index(interface)
 }
+
+/// `IF_NAMESIZE` wherever servers are read from text.
+const INTERFACE_NAME_SIZE: usize = 16;
 
 /// `address`, `v4:port`, `[address]` or `[address]:port`, then `%interface` if any. No port is 0.
 fn parse_server(text: &[u8]) -> Option<(IpAddr, u16, &[u8])> {
@@ -357,7 +354,7 @@ fn parse_server(text: &[u8]) -> Option<(IpAddr, u16, &[u8])> {
             byte.is_ascii_alphanumeric()
                 || matches!(byte, b'.' | b'-' | b'_' | b'\\' | b':' | b'{' | b'}')
         });
-        interface = fits(name, 64).filter(|it| !it.is_empty())?;
+        interface = fits(name, INTERFACE_NAME_SIZE).filter(|it| !it.is_empty())?;
         rest = after;
     }
     trim_start(rest)

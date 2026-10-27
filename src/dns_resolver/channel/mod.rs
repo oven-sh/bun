@@ -50,19 +50,23 @@ pub enum Answer {
     NameInfo(NameInfo),
 }
 
+/// Whatever number the caller knows a request by.
+pub type Token = u64;
+
 /// The end of one request.
 #[derive(Debug)]
-pub struct Completion<T> {
+pub struct Completion {
     /// What the request was made with.
-    pub token: T,
+    pub token: Token,
     pub result: Result<Answer>,
 }
 
 /// Who is told of a query's end.
-pub(crate) enum Owner<T> {
+#[derive(Clone, Copy)]
+pub(crate) enum Owner {
     Caller {
         kind: Kind,
-        token: T,
+        token: Token,
     },
     AddrInfo {
         lookup: LookupId,
@@ -77,11 +81,11 @@ pub(crate) enum Owner<T> {
     },
 }
 
-pub(crate) struct Query<T> {
+pub(crate) struct Query {
     qid: u16,
     record: Record,
     cache_key: Vec<u8>,
-    owner: Owner<T>,
+    owner: Owner,
     using_tcp: bool,
     pub(crate) no_retries: bool,
     try_count: usize,
@@ -101,11 +105,9 @@ pub(crate) struct SendFlags {
     no_retry: bool,
 }
 
-/// `T` is whatever the caller wants back in the [`Completion`] of a request.
-///
 /// Nothing here calls the caller. A request that ends, even before the method that made it returns, waits in a queue for [`Channel::next_completion`].
-pub struct Channel<I: Io, T> {
-    pub(crate) io: I,
+pub struct Channel {
+    pub(crate) io: Box<dyn Io>,
 
     timeout_ms: u64,
     tries: usize,
@@ -121,10 +123,11 @@ pub struct Channel<I: Io, T> {
     /// Best first: [`Server::sort_key`].
     servers: Vec<Server>,
     next_server_id: u64,
-    conns: BTreeMap<ConnId, Conn<I::Socket>>,
+    server_keys_set: u64,
+    conns: BTreeMap<ConnId, Conn>,
     next_conn_id: u64,
     sends: u64,
-    pub(crate) queries: BTreeMap<Serial, Query<T>>,
+    pub(crate) queries: BTreeMap<Serial, Query>,
     next_serial: Serial,
     serial_of_qid: BTreeMap<u16, Serial>,
     /// Of those due at one time, the one sent last comes first, as in c-ares's skip list.
@@ -133,16 +136,16 @@ pub struct Channel<I: Io, T> {
     read_buffer: Vec<u8>,
 
     pub(crate) hosts: Option<HostsFile>,
-    pub(crate) addr_info_lookups: BTreeMap<LookupId, AddrInfoLookup<T>>,
-    pub(crate) host_lookups: BTreeMap<LookupId, HostLookup<T>>,
+    pub(crate) addr_info_lookups: BTreeMap<LookupId, AddrInfoLookup>,
+    pub(crate) host_lookups: BTreeMap<LookupId, HostLookup>,
     pub(crate) next_lookup_id: LookupId,
 
-    completed: VecDeque<Completion<T>>,
+    completed: VecDeque<Completion>,
 }
 
-impl<I: Io, T> Channel<I, T> {
-    pub fn new(mut io: I, options: Options) -> Self {
-        let system = sysconfig::read(&mut io).unwrap_or_default();
+impl Channel {
+    pub fn new(mut io: Box<dyn Io>, options: Options) -> Self {
+        let system = sysconfig::read(&mut *io).unwrap_or_default();
         let or_system = |option: Option<u32>, system: Option<u32>| option.or(system);
         let mut channel = Channel {
             timeout_ms: or_system(options.timeout_ms, system.timeout_ms)
@@ -160,6 +163,7 @@ impl<I: Io, T> Channel<I, T> {
             shut_down: false,
             servers: Vec::new(),
             next_server_id: 0,
+            server_keys_set: 0,
             conns: BTreeMap::new(),
             next_conn_id: 0,
             sends: 0,
@@ -179,7 +183,7 @@ impl<I: Io, T> Channel<I, T> {
         if channel.domains.is_empty() {
             channel
                 .domains
-                .extend(sysconfig::domain_of_hostname(&mut channel.io));
+                .extend(sysconfig::domain_of_hostname(&mut *channel.io));
         }
         let loopback = [ServerConfig {
             address: Ipv4Addr::LOCALHOST.into(),
@@ -197,21 +201,17 @@ impl<I: Io, T> Channel<I, T> {
         channel
     }
 
-    pub fn io(&mut self) -> &mut I {
-        &mut self.io
-    }
-
     /// Requests that have ended, in the order they did.
-    pub fn next_completion(&mut self) -> Option<Completion<T>> {
+    pub fn next_completion(&mut self) -> Option<Completion> {
         self.completed.pop_front()
     }
 
     /// Ends a request that is found wanting before it gets here, in its turn.
-    pub fn fail(&mut self, token: T, error: Error) {
+    pub fn fail(&mut self, token: Token, error: Error) {
         self.complete(token, Err(error));
     }
 
-    pub(crate) fn complete(&mut self, token: T, result: Result<Answer>) {
+    pub(crate) fn complete(&mut self, token: Token, result: Result<Answer>) {
         self.completed.push_back(Completion { token, result });
     }
 
@@ -243,7 +243,13 @@ impl<I: Io, T> Channel<I, T> {
         self.servers.iter_mut().find(|server| server.id == id)
     }
 
-    fn sort_servers(&mut self) {
+    /// After a change to the `sort_key` of `changed`.
+    fn sort_servers(&mut self, changed: ServerId) {
+        self.server_keys_set += 1;
+        let keyed = self.server_keys_set;
+        if let Some(server) = self.server_mut(changed) {
+            server.keyed = keyed;
+        }
         self.servers.sort_by_key(Server::sort_key);
     }
 
@@ -274,18 +280,22 @@ impl<I: Io, T> Channel<I, T> {
                     if config.scope_id != 0 {
                         server.scope_id = config.scope_id;
                     }
-                    server.index = index;
+                    if server.index != index {
+                        server.index = index;
+                        let id = server.id;
+                        self.sort_servers(id);
+                    }
                 }
                 None => {
                     self.next_server_id += 1;
                     let id = ServerId(self.next_server_id);
                     self.servers.push(Server::new(id, index, config));
+                    self.sort_servers(id);
                     changed = true;
                 }
             }
             index += 1;
         }
-        self.sort_servers();
 
         let is_stale = |server: &Server| !list.iter().any(|config| server.is(config));
         while let Some(position) = self.servers.iter().position(is_stale) {
@@ -303,7 +313,7 @@ impl<I: Io, T> Channel<I, T> {
     fn count_server_failure(&mut self, now: Time, id: ServerId) {
         if let Some(server) = self.server_mut(id) {
             server.count_failure(now, SERVER_RETRY_DELAY_MS);
-            self.sort_servers();
+            self.sort_servers(id);
         }
     }
 
@@ -313,7 +323,7 @@ impl<I: Io, T> Channel<I, T> {
         {
             server.consecutive_failures = 0;
             server.next_retry_time = Time::ZERO;
-            self.sort_servers();
+            self.sort_servers(id);
         }
     }
 
@@ -324,7 +334,7 @@ impl<I: Io, T> Channel<I, T> {
     }
 
     /// `dns.resolve*()`: asks the servers for `name` as it is, without the search list or the hosts file.
-    pub fn query(&mut self, now: Time, kind: Kind, name: &[u8], token: T) {
+    pub fn query(&mut self, now: Time, kind: Kind, name: &[u8], token: Token) {
         self.send_question(now, name, kind.rr_type(), Owner::Caller { kind, token });
     }
 
@@ -334,7 +344,7 @@ impl<I: Io, T> Channel<I, T> {
         now: Time,
         name: &[u8],
         qtype: u16,
-        owner: Owner<T>,
+        owner: Owner,
     ) -> Option<Serial> {
         // RFC 7686.
         if crate::lookup::is_onion_domain(name) {
@@ -351,7 +361,7 @@ impl<I: Io, T> Channel<I, T> {
         server: Option<ServerId>,
         flags: SendFlags,
         request: &Record,
-        owner: Owner<T>,
+        owner: Owner,
     ) -> Option<Serial> {
         if self.serial_of_qid.len() > usize::from(u16::MAX) {
             self.finish(now, owner, Err(Error::ENOMEM), None);
@@ -421,7 +431,7 @@ impl<I: Io, T> Channel<I, T> {
     }
 
     /// Tells `owner` how its query ended. `answer` is there if `status` is `Ok`, and with some errors.
-    fn finish(&mut self, now: Time, owner: Owner<T>, status: Status, answer: Option<Record>) {
+    fn finish(&mut self, now: Time, owner: Owner, status: Status, answer: Option<Record>) {
         let status = status.and_then(|()| match &answer {
             Some(answer) => status_of_answer(answer),
             None => Err(Error::EBADRESP),

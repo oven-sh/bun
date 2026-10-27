@@ -404,7 +404,13 @@ describe("dns", () => {
         ["localhost", { family: 4 }],
         ["a.localhost", { family: 4 }],
       );
-      expect([v4, v6, localhost, sub]).toEqual([["192.0.2.7 4"], ["2001:db8::7 6"], ["127.0.0.1 4"], ["127.0.0.1 4"]]);
+      // The system is asked for localhost, and gives an address once for each line of its hosts file.
+      expect([v4, v6, [...new Set(localhost)], [...new Set(sub)]]).toEqual([
+        ["192.0.2.7 4"],
+        ["2001:db8::7 6"],
+        ["127.0.0.1 4"],
+        ["127.0.0.1 4"],
+      ]);
       expect([askedV4, askedV6, askedLocalhost, askedSub]).toEqual([[], [], [], []]);
     });
   });

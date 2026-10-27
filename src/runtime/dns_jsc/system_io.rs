@@ -4,7 +4,7 @@ use core::net::{IpAddr, SocketAddr};
 
 use bun_collections::ArrayHashMap;
 use bun_core::env_var;
-use bun_dns_resolver::io::{FileError, Io, IoError, Opened, Settings, Transport, Variable};
+use bun_dns_resolver::io::{FileError, Io, IoError, Opened, Settings, Socket, Transport, Variable};
 #[cfg(not(windows))]
 use bun_io as Async;
 #[cfg(not(windows))]
@@ -27,6 +27,14 @@ pub(crate) struct SystemIo {
     resolver: *mut Resolver,
     vm: bun_ptr::BackRef<VirtualMachine>,
     polls: ArrayHashMap<Fd, *mut PollType>,
+}
+
+pub(super) fn socket_of(fd: Fd) -> Socket {
+    Socket(fd.0 as u64)
+}
+
+fn fd_of(socket: Socket) -> Fd {
+    Fd(socket.0 as _)
 }
 
 fn io_error(error: &sys::Error) -> IoError {
@@ -90,14 +98,12 @@ impl SystemIo {
 }
 
 impl Io for SystemIo {
-    type Socket = Fd;
-
     fn open(
         &mut self,
         transport: Transport,
         server: SocketAddr,
         local: Option<IpAddr>,
-    ) -> Result<Opened<Fd>, IoError> {
+    ) -> Result<Opened, IoError> {
         let server = Address::from(server);
         let kind = match transport {
             Transport::Udp => socket::Kind::Datagram,
@@ -106,7 +112,7 @@ impl Io for SystemIo {
         let fd = socket::open(&server, kind).map_err(|_| IoError::Failed)?;
         match Self::configure(fd, transport, &server, local) {
             Ok(fast_open) => Ok(Opened {
-                socket: fd,
+                socket: socket_of(fd),
                 fast_open,
             }),
             Err(_) => {
@@ -116,7 +122,8 @@ impl Io for SystemIo {
         }
     }
 
-    fn send(&mut self, socket: Fd, data: &[u8]) -> Result<usize, IoError> {
+    fn send(&mut self, socket: Socket, data: &[u8]) -> Result<usize, IoError> {
+        let socket = fd_of(socket);
         match sys::send_non_block(socket, data) {
             Ok(0) => Err(IoError::Failed),
             Ok(sent) => Ok(sent),
@@ -124,13 +131,19 @@ impl Io for SystemIo {
         }
     }
 
-    fn recv_from(&mut self, socket: Fd, buffer: &mut [u8]) -> Result<(usize, SocketAddr), IoError> {
+    fn recv_from(
+        &mut self,
+        socket: Socket,
+        buffer: &mut [u8],
+    ) -> Result<(usize, SocketAddr), IoError> {
+        let socket = fd_of(socket);
         let (received, from) =
             socket::recv_from(socket, buffer).map_err(|error| io_error(&error))?;
         Ok((received, from.to_socket_addr().ok_or(IoError::Failed)?))
     }
 
-    fn recv(&mut self, socket: Fd, buffer: &mut [u8]) -> Result<usize, IoError> {
+    fn recv(&mut self, socket: Socket, buffer: &mut [u8]) -> Result<usize, IoError> {
+        let socket = fd_of(socket);
         match sys::recv_non_block(socket, buffer) {
             Ok(0) => Err(IoError::Failed),
             Ok(received) => Ok(received),
@@ -139,7 +152,8 @@ impl Io for SystemIo {
     }
 
     #[cfg(not(windows))]
-    fn watch(&mut self, socket: Fd, readable: bool, writable: bool) {
+    fn watch(&mut self, socket: Socket, readable: bool, writable: bool) {
+        let socket = fd_of(socket);
         let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
         let owner = Async::Owner::new(
             Async::posix_event_loop::poll_tag::DNS_RESOLVER,
@@ -176,7 +190,8 @@ impl Io for SystemIo {
     }
 
     #[cfg(windows)]
-    fn watch(&mut self, socket: Fd, readable: bool, writable: bool) {
+    fn watch(&mut self, socket: Socket, readable: bool, writable: bool) {
+        let socket = fd_of(socket);
         use bun_sys::windows::libuv as uv;
         let poll: *mut UvDnsPoll = match self.polls.get(&socket) {
             Some(poll) => *poll,
@@ -215,7 +230,8 @@ impl Io for SystemIo {
         }
     }
 
-    fn close(&mut self, socket: Fd) {
+    fn close(&mut self, socket: Socket) {
+        let socket = fd_of(socket);
         if let Some(poll) = self.polls.remove(&socket) {
             // SAFETY: the live poll `watch` made for this socket, which nothing refers to any more.
             #[cfg(not(windows))]

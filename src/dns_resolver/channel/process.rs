@@ -6,7 +6,7 @@ use super::conn::{ConnId, Read};
 use super::server::ServerId;
 use super::{Channel, Owner, Query, SERVER_RETRY_CHANCE, SendFlags, Serial, Status};
 use crate::Error;
-use crate::io::{Io, Time, Transport};
+use crate::io::{Socket, Time, Transport};
 use crate::record::{RData, Record, flag, rcode};
 
 const COOKIE_OPTION: u16 = 10;
@@ -20,9 +20,9 @@ pub(super) enum Deferred {
 
 pub(super) type DeferredList = Vec<(Serial, Deferred)>;
 
-impl<I: Io, T> Channel<I, T> {
+impl Channel {
     /// To be called when a socket [`Io::watch`] named is ready, and at [`Channel::next_timeout`] with no socket.
-    pub fn process(&mut self, now: Time, readable: Option<I::Socket>, writable: Option<I::Socket>) {
+    pub fn process(&mut self, now: Time, readable: Option<Socket>, writable: Option<Socket>) {
         if let Some(id) = writable.and_then(|socket| self.conn_of_socket(socket)) {
             self.process_write(now, id);
         }
@@ -166,7 +166,7 @@ impl<I: Io, T> Channel<I, T> {
         }
     }
 
-    pub(super) fn detach_query(&mut self, serial: Serial) -> Option<Query<T>> {
+    pub(super) fn detach_query(&mut self, serial: Serial) -> Option<Query> {
         self.remove_from_connection(serial);
         let query = self.queries.remove(&serial)?;
         self.serial_of_qid.remove(&query.qid);

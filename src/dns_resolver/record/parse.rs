@@ -84,6 +84,32 @@ fn class_is_valid(value: u16, rtype: u16, is_question: bool) -> bool {
     }
 }
 
+/// Whether [`parse_rdata`] makes more of it than [`RData::Raw`].
+fn is_known_type(rtype: u16) -> bool {
+    use rr_type::*;
+    matches!(
+        rtype,
+        A | NS
+            | CNAME
+            | SOA
+            | PTR
+            | HINFO
+            | MX
+            | TXT
+            | SIG
+            | AAAA
+            | SRV
+            | NAPTR
+            | OPT
+            | TLSA
+            | SVCB
+            | HTTPS
+            | ANY
+            | URI
+            | CAA
+    )
+}
+
 fn parse_rdata(
     rdata: &mut RDataReader<'_, '_>,
     rtype: u16,
@@ -174,7 +200,7 @@ fn parse_rdata(
             let (priority, weight) = (rdata.reader.be16()?, rdata.reader.be16()?);
             let target = rdata.rest()?;
             if !all_print(target) {
-                return Err(Error::EBADRESP);
+                return Err(Error::EBADSTR);
             }
             RData::Uri {
                 priority,
@@ -214,6 +240,15 @@ fn parse_rr(reader: &mut Reader<'_>, extended_rcode: &mut u16) -> Result<Rr> {
         return Err(Error::EBADRESP);
     }
 
+    let (class, ttl) = match rtype {
+        rr_type::OPT => (class::IN, 0),
+        _ => (raw_class, raw_ttl),
+    };
+    // What the class of a type unheard of means is not known either.
+    if is_known_type(rtype) && !class_is_valid(class, rtype, false) {
+        return Err(Error::EFORMERR);
+    }
+
     let start_len = reader.len();
     let mut rdata = RDataReader {
         reader,
@@ -221,13 +256,6 @@ fn parse_rr(reader: &mut Reader<'_>, extended_rcode: &mut u16) -> Result<Rr> {
         rdlength,
     };
     let data = parse_rdata(&mut rdata, rtype, raw_class, raw_ttl, extended_rcode)?;
-    let (class, ttl) = match data {
-        RData::Opt { .. } => (class::IN, 0),
-        _ => (raw_class, raw_ttl),
-    };
-    if !matches!(data, RData::Raw { .. }) && !class_is_valid(class, rtype, false) {
-        return Err(Error::EFORMERR);
-    }
 
     // A name may end past the RDATA it began in. Bytes the type has no use for are passed over.
     let used = start_len - reader.len();

@@ -1,5 +1,6 @@
 //! The name servers of a channel, and how long each one takes to answer.
 
+use core::cmp::Reverse;
 use core::net::{IpAddr, SocketAddr, SocketAddrV6};
 use std::collections::VecDeque;
 
@@ -72,6 +73,8 @@ pub(crate) struct Server {
     pub(crate) id: ServerId,
     /// Place in the configuration.
     pub(crate) index: usize,
+    /// Counts up over the channel whenever a server's `sort_key` is set.
+    pub(crate) keyed: u64,
     pub(crate) address: IpAddr,
     pub(crate) udp_port: u16,
     pub(crate) tcp_port: u16,
@@ -91,6 +94,7 @@ impl Server {
         Server {
             id,
             index,
+            keyed: 0,
             address: config.address,
             udp_port,
             tcp_port,
@@ -109,8 +113,14 @@ impl Server {
     }
 
     /// Fewest failures first, then the one that failed longest ago, then configuration order.
-    pub(crate) fn sort_key(&self) -> (usize, Time, usize) {
-        (self.consecutive_failures, self.next_retry_time, self.index)
+    /// While servers are replaced, one that goes may have the place of one that comes. As in c-ares's skip list, the last to be put there is first.
+    pub(crate) fn sort_key(&self) -> (usize, Time, usize, Reverse<u64>) {
+        (
+            self.consecutive_failures,
+            self.next_retry_time,
+            self.index,
+            Reverse(self.keyed),
+        )
     }
 
     pub(crate) fn socket_address(&self, transport: Transport) -> SocketAddr {

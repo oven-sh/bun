@@ -48,17 +48,19 @@
 //! The log has a line for each call into the world that changes it, `done REQUEST ...` for each request that ends, and
 //! `timer MS|none` whenever the next timeout is another than before, in milliseconds since the start.
 
+use core::cell::RefCell;
 use core::fmt::Write as _;
 use core::net::{IpAddr, SocketAddr};
 use std::collections::{BTreeMap, VecDeque};
+use std::rc::Rc;
 
 use crate::addrinfo::Family;
 use crate::io::{
-    FileError, Io, IoError, MacResolver, Opened, Settings, Time, Transport, Variable,
+    FileError, Io, IoError, MacResolver, Opened, Settings, Socket, Time, Transport, Variable,
     WindowsServer, WindowsSettings,
 };
 use crate::reply::{Addresses, Caa, Kind, Mx, Naptr, Reply, Soa, Srv};
-use crate::{Answer, Channel, Options, Result, ServerConfig};
+use crate::{Answer, Channel, Options, Result, ServerConfig, Token};
 
 type Words<'a> = &'a [&'a [u8]];
 
@@ -74,7 +76,7 @@ enum Send {
     Fail,
 }
 
-struct Socket {
+struct FakeSocket {
     transport: Transport,
     arrivals: VecDeque<Arrival>,
     sends: VecDeque<Send>,
@@ -120,8 +122,8 @@ struct World {
     random: u64,
     fast_open: bool,
     elapsed_ms: u64,
-    sockets: BTreeMap<u32, Socket>,
-    last_socket: u32,
+    sockets: BTreeMap<u64, FakeSocket>,
+    last_socket: u64,
     opens: VecDeque<bool>,
 }
 
@@ -375,7 +377,7 @@ impl World {
         Some(())
     }
 
-    fn receive(&mut self, id: u32, buffer: &mut [u8]) -> Result<(usize, SocketAddr), IoError> {
+    fn receive(&mut self, id: u64, buffer: &mut [u8]) -> Result<(usize, SocketAddr), IoError> {
         let socket = self.sockets.get_mut(&id).ok_or(IoError::Failed)?;
         match socket.arrivals.pop_front() {
             None => Err(IoError::WouldBlock),
@@ -397,14 +399,12 @@ impl World {
 }
 
 impl Io for World {
-    type Socket = u32;
-
     fn open(
         &mut self,
         transport: Transport,
         server: SocketAddr,
         local: Option<IpAddr>,
-    ) -> Result<Opened<u32>, IoError> {
+    ) -> Result<Opened, IoError> {
         let kind = match transport {
             Transport::Udp => "udp",
             Transport::Tcp => "tcp",
@@ -427,7 +427,7 @@ impl Io for World {
         self.log.push('\n');
         self.sockets.insert(
             socket,
-            Socket {
+            FakeSocket {
                 transport,
                 arrivals: VecDeque::new(),
                 sends: VecDeque::new(),
@@ -435,10 +435,13 @@ impl Io for World {
             },
         );
         let fast_open = self.fast_open && transport == Transport::Tcp;
-        Ok(Opened { socket, fast_open })
+        Ok(Opened {
+            socket: Socket(socket),
+            fast_open,
+        })
     }
 
-    fn send(&mut self, id: u32, data: &[u8]) -> Result<usize, IoError> {
+    fn send(&mut self, Socket(id): Socket, data: &[u8]) -> Result<usize, IoError> {
         let socket = self.sockets.get_mut(&id).ok_or(IoError::Failed)?;
         let sent = match socket.sends.pop_front() {
             None => data,
@@ -458,18 +461,22 @@ impl Io for World {
         Ok(sent.len())
     }
 
-    fn recv_from(&mut self, id: u32, buffer: &mut [u8]) -> Result<(usize, SocketAddr), IoError> {
+    fn recv_from(
+        &mut self,
+        Socket(id): Socket,
+        buffer: &mut [u8],
+    ) -> Result<(usize, SocketAddr), IoError> {
         self.receive(id, buffer)
     }
 
-    fn recv(&mut self, id: u32, buffer: &mut [u8]) -> Result<usize, IoError> {
+    fn recv(&mut self, Socket(id): Socket, buffer: &mut [u8]) -> Result<usize, IoError> {
         match self.receive(id, buffer)? {
             (0, _) => Err(IoError::Failed),
             (count, _) => Ok(count),
         }
     }
 
-    fn watch(&mut self, id: u32, readable: bool, writable: bool) {
+    fn watch(&mut self, Socket(id): Socket, readable: bool, writable: bool) {
         let (r, w) = (
             if readable { 'r' } else { '-' },
             if writable { 'w' } else { '-' },
@@ -477,7 +484,7 @@ impl Io for World {
         _ = writeln!(self.log, "watch {id} {r}{w}");
     }
 
-    fn close(&mut self, id: u32) {
+    fn close(&mut self, Socket(id): Socket) {
         self.sockets.remove(&id);
         _ = writeln!(self.log, "close {id}");
     }
@@ -554,6 +561,40 @@ impl Io for World {
     fn loopback_addresses(&mut self) -> Option<Vec<IpAddr>> {
         self.loopback.clone()
     }
+}
+
+/// The channel's hold on a world the simulation also has.
+struct Shared(Rc<RefCell<World>>);
+
+macro_rules! forward_to_the_world {
+    ($(fn $name:ident($($argument:ident: $type:ty),*) $(-> $result:ty)?;)*) => {
+        impl Io for Shared {
+            $(fn $name(&mut self, $($argument: $type),*) $(-> $result)? {
+                self.0.borrow_mut().$name($($argument),*)
+            })*
+        }
+    };
+}
+
+forward_to_the_world! {
+    fn open(transport: Transport, server: SocketAddr, local: Option<IpAddr>) -> Result<Opened, IoError>;
+    fn send(socket: Socket, data: &[u8]) -> Result<usize, IoError>;
+    fn recv_from(socket: Socket, buffer: &mut [u8]) -> Result<(usize, SocketAddr), IoError>;
+    fn recv(socket: Socket, buffer: &mut [u8]) -> Result<usize, IoError>;
+    fn watch(socket: Socket, readable: bool, writable: bool);
+    fn close(socket: Socket);
+    fn random(bytes: &mut [u8]);
+    fn unix_time() -> i64;
+    fn read_file(path: &[u8]) -> Result<Vec<u8>, FileError>;
+    fn modified_time(path: &[u8]) -> Option<i64>;
+    fn env(variable: Variable) -> Option<Vec<u8>>;
+    fn hostname() -> Option<Vec<u8>>;
+    fn settings() -> Settings;
+    fn etc_path(name: &str) -> Option<Vec<u8>>;
+    fn interface_index(name: &[u8]) -> Option<u32>;
+    fn has_interface(index: u32) -> bool;
+    fn source_address(destination: SocketAddr) -> Result<Option<IpAddr>, IoError>;
+    fn loopback_addresses() -> Option<Vec<IpAddr>>;
 }
 
 fn kind_of(word: &[u8]) -> Option<Kind> {
@@ -705,16 +746,18 @@ fn write_answer(out: &mut String, answer: &Answer) {
 }
 
 struct Simulation {
-    channel: Channel<World, u32>,
-    requests: u32,
+    world: Rc<RefCell<World>>,
+    channel: Channel,
+    requests: Token,
     timer: Option<Time>,
 }
 
 impl Simulation {
-    fn new(mut world: World, options: Options) -> Simulation {
-        world.log.push_str("start\n");
+    fn new(world: Rc<RefCell<World>>, options: Options) -> Simulation {
+        world.borrow_mut().log.push_str("start\n");
         let mut simulation = Simulation {
-            channel: Channel::new(world, options),
+            channel: Channel::new(Box::new(Shared(Rc::clone(&world))), options),
+            world,
             requests: 0,
             timer: None,
         };
@@ -729,17 +772,17 @@ impl Simulation {
             _ = write!(line, " {address}#{udp}#{tcp}#{}", it.scope_id);
         }
         line.push('\n');
-        self.channel.io().log.push_str(&line);
+        self.world.borrow_mut().log.push_str(&line);
     }
 
-    fn request(&mut self) -> u32 {
+    fn request(&mut self) -> Token {
         self.requests += 1;
         self.requests - 1
     }
 
     /// `None`: the line cannot be read.
     fn act(&mut self, command: &[u8], words: Words) -> Option<()> {
-        let now = self.channel.io().now();
+        let now = self.world.borrow_mut().now();
         match (command, words) {
             (b"query", [kind, name]) => {
                 let (kind, name, token) = (kind_of(kind)?, text(name)?, self.request());
@@ -793,24 +836,30 @@ impl Simulation {
             }
             (b"readable" | b"deliver" | b"break", [socket, ..]) => {
                 if command != b"readable" {
-                    self.channel.io().configure(command, words)?;
+                    self.world.borrow_mut().configure(command, words)?;
                 }
-                self.channel.process(now, Some(parsed(socket)?), None);
+                self.channel
+                    .process(now, Some(Socket(parsed(socket)?)), None);
             }
-            (b"writable", [socket]) => self.channel.process(now, None, Some(parsed(socket)?)),
+            (b"writable", [socket]) => {
+                self.channel
+                    .process(now, None, Some(Socket(parsed(socket)?)));
+            }
             (b"both", [socket]) => {
-                let socket = Some(parsed(socket)?);
+                let socket = Some(Socket(parsed(socket)?));
                 self.channel.process(now, socket, socket);
             }
-            _ => self.channel.io().configure(command, words)?,
+            _ => self.world.borrow_mut().configure(command, words)?,
         }
         Some(())
     }
 
     fn advance(&mut self, ms: u64) {
-        let world = self.channel.io();
-        world.elapsed_ms = world.elapsed_ms.saturating_add(ms).min(u64::from(u32::MAX));
-        let now = world.now();
+        let now = {
+            let mut world = self.world.borrow_mut();
+            world.elapsed_ms = world.elapsed_ms.saturating_add(ms).min(u64::from(u32::MAX));
+            world.now()
+        };
         self.channel.process(now, None, None);
     }
 
@@ -822,12 +871,12 @@ impl Simulation {
                 Err(error) => _ = write!(line, " error {error:?}"),
             }
             line.push('\n');
-            self.channel.io().log.push_str(&line);
+            self.world.borrow_mut().log.push_str(&line);
         }
         let timer = self.channel.next_timeout();
         if timer != self.timer {
             self.timer = timer;
-            let log = &mut self.channel.io().log;
+            let log = &mut self.world.borrow_mut().log;
             match timer {
                 Some(due) => _ = writeln!(log, "timer {}", due.ms_since(START)),
                 None => log.push_str("timer none\n"),
@@ -850,7 +899,7 @@ const MAKES_THE_CHANNEL: [&[u8]; 8] = [
 /// See the module's documentation.
 pub fn run(script: &[u8]) -> String {
     let mut options = Options::default();
-    let mut world = Some(World::new());
+    let world = Rc::new(RefCell::new(World::new()));
     let mut simulation: Option<Simulation> = None;
 
     for line in bun_core::strings::split(script, b"\n") {
@@ -862,38 +911,24 @@ pub fn run(script: &[u8]) -> String {
         if command.is_empty() || command.starts_with(b"#") {
             continue;
         }
-        let understood = match (&mut world, *command, words) {
-            (Some(_), b"timeout", [ms]) => parsed(ms).map(|ms| options.timeout_ms = Some(ms)),
-            (Some(_), b"tries", [tries]) => parsed(tries).map(|tries| options.tries = Some(tries)),
-            (Some(world), ..) if !MAKES_THE_CHANNEL.contains(command) => {
-                world.configure(command, words)
+        let understood = match (&simulation, *command, words) {
+            (None, b"timeout", [ms]) => parsed(ms).map(|ms| options.timeout_ms = Some(ms)),
+            (None, b"tries", [tries]) => parsed(tries).map(|tries| options.tries = Some(tries)),
+            (None, ..) if !MAKES_THE_CHANNEL.contains(command) => {
+                world.borrow_mut().configure(command, words)
             }
             _ => {
-                let simulation = match world.take() {
-                    Some(world) => simulation.insert(Simulation::new(world, options)),
-                    None => match &mut simulation {
-                        Some(simulation) => simulation,
-                        None => continue,
-                    },
-                };
+                let simulation =
+                    simulation.get_or_insert_with(|| Simulation::new(Rc::clone(&world), options));
                 let understood = simulation.act(command, words);
                 simulation.log_what_changed();
                 understood
             }
         };
         if understood.is_none() {
-            let log = match (&mut world, &mut simulation) {
-                (Some(world), _) => &mut world.log,
-                (None, Some(simulation)) => &mut simulation.channel.io().log,
-                (None, None) => continue,
-            };
-            _ = writeln!(log, "? {}", Text(line));
+            _ = writeln!(world.borrow_mut().log, "? {}", Text(line));
         }
     }
 
-    match (world, simulation) {
-        (Some(world), _) => world.log,
-        (None, Some(mut simulation)) => core::mem::take(&mut simulation.channel.io().log),
-        (None, None) => String::new(),
-    }
+    core::mem::take(&mut world.borrow_mut().log)
 }

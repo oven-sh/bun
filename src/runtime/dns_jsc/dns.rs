@@ -6,7 +6,7 @@ use core::mem::MaybeUninit;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
-use std::collections::{BTreeMap, btree_map};
+use std::collections::BTreeMap;
 
 use bun_collections::HiveArray;
 #[cfg(not(windows))]
@@ -42,7 +42,7 @@ use bun_dns::Error as DnsError;
 use bun_dns_resolver::addrinfo::Family;
 use bun_dns_resolver::io::Time;
 use bun_dns_resolver::reply::Kind;
-use bun_dns_resolver::{Channel, Completion, ServerConfig};
+use bun_dns_resolver::{Channel, Completion, ServerConfig, Token};
 
 use super::system_io::SystemIo;
 
@@ -2279,8 +2279,6 @@ pub(crate) mod internal {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) type PendingCache = HiveArray<get_addr_info_request::PendingCacheKey, 32>;
-type DnsChannel = Channel<SystemIo, RequestKey>;
-
 /// What makes two requests of a resolver's channel one: whoever asks for what is already in flight waits for the same answer.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RequestKey {
@@ -2363,6 +2361,38 @@ fn monotonic_now() -> Time {
     }
 }
 
+/// Who waits for each request the channel is working on.
+#[derive(Default)]
+struct Requests {
+    in_flight: BTreeMap<Token, (RequestKey, Vec<Waiter>)>,
+    tokens: BTreeMap<RequestKey, Token>,
+    last_token: Token,
+}
+
+impl Requests {
+    /// The token to ask the channel with, unless it is being asked already.
+    fn add(&mut self, key: RequestKey, waiter: Waiter) -> Option<Token> {
+        if let Some((_, waiters)) = self
+            .tokens
+            .get(&key)
+            .and_then(|token| self.in_flight.get_mut(token))
+        {
+            waiters.push(waiter);
+            return None;
+        }
+        self.last_token += 1;
+        self.tokens.insert(key.clone(), self.last_token);
+        self.in_flight.insert(self.last_token, (key, vec![waiter]));
+        Some(self.last_token)
+    }
+
+    fn remove(&mut self, token: Token) -> Option<(RequestKey, Vec<Waiter>)> {
+        let request = self.in_flight.remove(&token)?;
+        self.tokens.remove(&request.0);
+        Some(request)
+    }
+}
+
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. Settling a
 // promise can run script that calls back into this resolver, so no borrow of
 // `channel` or `requests` is held across `settle`.
@@ -2371,9 +2401,8 @@ fn monotonic_now() -> Time {
 pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
     /// Opened by the first request.
-    channel: RefCell<Option<DnsChannel>>,
-    /// Who waits for each request the channel is working on.
-    requests: RefCell<BTreeMap<RequestKey, Vec<Waiter>>>,
+    channel: RefCell<Option<Channel>>,
+    requests: RefCell<Requests>,
     /// The context whose script made the resolver: its channel is that context's, whoever is first
     /// to query. `None`: the VM-global one, which is the realm's whatever the realm's context is
     /// called by then (`bun test --isolate` renews it for every file).
@@ -2530,7 +2559,7 @@ impl Resolver {
         Self {
             ref_count: bun_ptr::RefCount::init(),
             channel: RefCell::new(None),
-            requests: RefCell::new(BTreeMap::new()),
+            requests: RefCell::new(Requests::default()),
             made_in,
             vm: bun_ptr::BackRef::new(vm),
             options: Cell::new(bun_dns_resolver::Options {
@@ -2761,7 +2790,7 @@ impl Resolver {
 
     // ───────────── the channel ─────────────
 
-    fn open_channel(&self) -> DnsChannel {
+    fn open_channel(&self) -> Channel {
         let context = match self.made_in {
             Some(made_in) => self.vm.context_of(made_in),
             None => self.vm.root_context(),
@@ -2770,13 +2799,13 @@ impl Resolver {
         // channel's polls hold it); it leaves its context in `destroy_channel`.
         unsafe { bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context) };
         Channel::new(
-            SystemIo::new(self.as_ctx_ptr(), self.vm()),
+            Box::new(SystemIo::new(self.as_ctx_ptr(), self.vm())),
             self.options.get(),
         )
     }
 
     /// Runs `f` on the channel, opening it first if need be. Then settles what has finished, which can run script.
-    fn with_channel<R>(&self, f: impl FnOnce(&mut DnsChannel, Time) -> R) -> R {
+    fn with_channel<R>(&self, f: impl FnOnce(&mut Channel, Time) -> R) -> R {
         let _guard = self.ref_guard();
         let result = {
             let mut channel = self.channel.borrow_mut();
@@ -2813,9 +2842,8 @@ impl Resolver {
     }
 
     /// Ends every waiter of a request. The caller holds a ref: theirs go.
-    fn settle(&self, completion: Completion<RequestKey>) {
-        let key = completion.token;
-        let Some(waiters) = self.requests.borrow_mut().remove(&key) else {
+    fn settle(&self, completion: Completion) {
+        let Some((key, waiters)) = self.requests.borrow_mut().remove(completion.token) else {
             return;
         };
         let answer = match completion.result {
@@ -2862,20 +2890,14 @@ impl Resolver {
         key: RequestKey,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
-        start: impl FnOnce(&mut DnsChannel, Time, RequestKey),
+        start: impl FnOnce(&mut Channel, Time, Token),
     ) -> JSValue {
         let waiter = Waiter::new(self, global_this, context);
         let promise = waiter.promise.value();
-        match self.requests.borrow_mut().entry(key.clone()) {
-            btree_map::Entry::Occupied(mut in_flight) => {
-                in_flight.get_mut().push(waiter);
-                return promise;
-            }
-            btree_map::Entry::Vacant(vacant) => {
-                vacant.insert(vec![waiter]);
-            }
+        let new = self.requests.borrow_mut().add(key, waiter);
+        if let Some(token) = new {
+            self.with_channel(|channel, now| start(channel, now, token));
         }
-        self.with_channel(|channel, now| start(channel, now, key));
         promise
     }
 
@@ -2903,7 +2925,7 @@ impl Resolver {
                 let _exit = vm.enter_event_loop_scope();
                 // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
                 let _guard = RefPtr::init_ref(parent);
-                let socket = (*poll).socket;
+                let socket = super::system_io::socket_of((*poll).socket);
                 // An error is reported as a socket both readable and writable.
                 // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
                 let readable = status < 0 || events & libuv::UV_READABLE != 0;
@@ -2955,7 +2977,7 @@ impl Resolver {
         let writable =
             poll.is_writable() || (failed && poll.flags.contains(bun_io::PollFlag::PollWritable));
         // The channel may close the socket, which frees `poll`.
-        let socket = poll.fd;
+        let socket = super::system_io::socket_of(poll.fd);
         self.with_channel(|channel, now| {
             channel.process(now, readable.then_some(socket), writable.then_some(socket))
         });

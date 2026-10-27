@@ -23,7 +23,7 @@ pub mod simulation;
 mod sysconfig;
 mod text;
 
-pub use channel::{Answer, Channel, Completion, Options, ServerConfig};
+pub use channel::{Answer, Channel, Completion, Options, ServerConfig, Token};
 pub use error::{Error, Result};
 pub use lookup::{Host, NameInfo};
 pub use record::Record;

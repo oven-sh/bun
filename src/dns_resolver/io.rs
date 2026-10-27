@@ -45,7 +45,11 @@ pub enum IoError {
     Failed,
 }
 
-pub struct Opened<Socket> {
+/// Whatever number the [`Io`] knows a socket by.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct Socket(pub u64);
+
+pub struct Opened {
     pub socket: Socket,
     /// TCP Fast Open: what is sent before the connection is made goes out with the SYN.
     pub fast_open: bool,
@@ -115,28 +119,26 @@ pub enum Variable {
 }
 
 pub trait Io {
-    type Socket: Copy + Eq;
-
     /// A non-blocking socket, bound to `local` if there is one and connected (or connecting) to `server`.
     fn open(
         &mut self,
         transport: Transport,
         server: SocketAddr,
         local: Option<IpAddr>,
-    ) -> Result<Opened<Self::Socket>, IoError>;
-    fn send(&mut self, socket: Self::Socket, data: &[u8]) -> Result<usize, IoError>;
+    ) -> Result<Opened, IoError>;
+    fn send(&mut self, socket: Socket, data: &[u8]) -> Result<usize, IoError>;
     /// One datagram and who sent it.
     fn recv_from(
         &mut self,
-        socket: Self::Socket,
+        socket: Socket,
         buffer: &mut [u8],
     ) -> Result<(usize, SocketAddr), IoError>;
     /// Bytes of a TCP stream, whose end is `Failed`.
-    fn recv(&mut self, socket: Self::Socket, buffer: &mut [u8]) -> Result<usize, IoError>;
+    fn recv(&mut self, socket: Socket, buffer: &mut [u8]) -> Result<usize, IoError>;
     /// Which events [`crate::Channel::process`] is to be called for from now on.
-    fn watch(&mut self, socket: Self::Socket, readable: bool, writable: bool);
+    fn watch(&mut self, socket: Socket, readable: bool, writable: bool);
     /// Also ends the watch.
-    fn close(&mut self, socket: Self::Socket);
+    fn close(&mut self, socket: Socket);
 
     fn random(&mut self, bytes: &mut [u8]);
     /// Seconds since the epoch.

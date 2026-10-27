@@ -1096,7 +1096,7 @@ mod tests {
     #[test]
     fn hive_bitset_iteration() {
         let a = HiveArray::<u8, 8>::init();
-        assert_eq!(a.used.find_first_set(), None);
+        assert_eq!(a.used.iter_set().next(), None);
         assert_eq!(a.used.find_first_unset(), Some(0));
 
         // Claim slots 0..3, then free 0 and 2 so the set is {1, 3}.
@@ -1109,7 +1109,6 @@ mod tests {
         // SAFETY: only token for its slot.
         assert!(unsafe { a.put_raw(s2.as_ptr()) });
 
-        assert_eq!(a.used.find_first_set(), Some(1));
         assert_eq!(a.used.find_first_unset(), Some(0));
 
         let mut it = a.used.iter_set();
@@ -1131,7 +1130,7 @@ mod tests {
         unsafe {
             HiveArray::init_in_place(a.as_mut_ptr());
             let a = &*a.as_ptr();
-            assert_eq!(a.used.find_first_set(), None);
+            assert_eq!(a.used.iter_set().next(), None);
             let p = a.get_init(7).unwrap();
             assert_eq!(*p.as_ptr(), 7);
             // `p` is the only token for its slot; already inside the outer

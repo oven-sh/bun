@@ -8,7 +8,6 @@ use bun_core::ip_address::{format, parse_ares};
 use crate::addrinfo::{AddrInfo, Family};
 use crate::buf::is_hostname_byte;
 use crate::channel::Channel;
-use crate::io::Io;
 use crate::lookup::Host;
 use crate::sysconfig::load_file;
 use crate::text::{fits, is_space, take_while, word};
@@ -170,7 +169,7 @@ impl Entry {
     }
 }
 
-impl<I: Io, T> Channel<I, T> {
+impl Channel {
     pub(crate) fn hosts_file(&mut self) -> Result<&HostsFile> {
         let path = self.io.etc_path("hosts").ok_or(Error::ENOTFOUND)?;
         // Without a time to go by, a minute.
@@ -184,7 +183,7 @@ impl<I: Io, T> Channel<I, T> {
             .is_none_or(|file| file.read_at <= modified_at)
         {
             self.hosts = None;
-            let text = load_file(&mut self.io, &path)?;
+            let text = load_file(&mut *self.io, &path)?;
             self.hosts = Some(HostsFile::parse(&text, self.io.unix_time()));
         }
         self.hosts.as_ref().ok_or(Error::ENOTFOUND)

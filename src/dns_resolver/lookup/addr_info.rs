@@ -8,14 +8,14 @@ use bun_core::strings;
 use super::sort::sort_addresses;
 use super::{is_localhost, is_onion_domain};
 use crate::addrinfo::{AddrInfo, Family};
-use crate::channel::{Answer, Channel, LookupId, Owner, Serial, Status};
-use crate::io::{Io, Time};
+use crate::channel::{Answer, Channel, LookupId, Owner, Serial, Status, Token};
+use crate::io::Time;
 use crate::record::{Record, rr_type};
 use crate::sysconfig::Source;
 use crate::{Error, Result};
 
-pub(crate) struct AddrInfoLookup<T> {
-    token: T,
+pub(crate) struct AddrInfoLookup {
+    token: Token,
     name: Vec<u8>,
     port: u16,
     family: Family,
@@ -48,8 +48,8 @@ fn literal_address(name: &[u8], family: Family) -> Option<IpAddr> {
     parse_ares_v6(name).map(Into::into)
 }
 
-impl<I: Io, T> Channel<I, T> {
-    pub fn addr_info(&mut self, now: Time, name: &[u8], port: u16, family: Family, token: T) {
+impl Channel {
+    pub fn addr_info(&mut self, now: Time, name: &[u8], port: u16, family: Family, token: Token) {
         if is_onion_domain(name) {
             return self.complete(token, Err(Error::ENOTFOUND));
         }
@@ -90,7 +90,7 @@ impl<I: Io, T> Channel<I, T> {
             return;
         };
         let result = status.map(|()| {
-            sort_addresses(&mut self.io, &mut lookup.found.nodes);
+            sort_addresses(&mut *self.io, &mut lookup.found.nodes);
             Answer::AddrInfo(lookup.found)
         });
         self.complete(lookup.token, result);

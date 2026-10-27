@@ -6280,6 +6280,24 @@ describe("write() reads offset, length and position whatever the others are", ()
     expect(fs.readFileSync(join(String(dir), "file.txt"), "latin1")).toBe(file);
   });
 
+  it("a null offset does not read the options from Object.prototype", async () => {
+    const polluted = Object.prototype as any;
+    const unpolluted = <T>(run: () => T) => {
+      polluted.position = 5;
+      try {
+        return run();
+      } finally {
+        delete polluted.position;
+      }
+    };
+    expect(await withFile(fd => unpolluted(() => fs.writeSync(fd, abcd, null)))).toEqual([4, "abcd456789"]);
+    const write = (fd: number) => unpolluted(() => promisify(fs.write)(fd, abcd, null as any));
+    expect(await withFile(async fd => (await write(fd)).bytesWritten)).toEqual([4, "abcd456789"]);
+    const read = Buffer.alloc(4);
+    await withFile(fd => unpolluted(() => fs.readSync(fd, read, null as any)));
+    expect(read.toString()).toBe("0123");
+  });
+
   it("only write() takes a function for the offset, which is its callback", async () => {
     const invalid = (received: string) =>
       expect.objectContaining({

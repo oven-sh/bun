@@ -261,7 +261,7 @@ var access = function access(path, mode, callback?) {
         if (!types.isArrayBufferView(buffer)) {
           // fs.read(fd, bufferOrParams, callback)
           params = buffer;
-          ({ buffer = Buffer.alloc(16384) } = params ?? {});
+          ({ buffer = Buffer.alloc(16384) } = params ?? kEmptyObject);
         }
         callback = offsetOrOptions;
       } else {
@@ -276,7 +276,7 @@ var access = function access(path, mode, callback?) {
           throw $ERR_INVALID_ARG_TYPE("options", "object", params);
         }
       }
-      ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
+      ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? kEmptyObject);
     }
     if (!callback) {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
@@ -308,7 +308,7 @@ var access = function access(path, mode, callback?) {
           offset: offsetOrOptions = 0,
           length = buffer.byteLength - offsetOrOptions,
           position = null,
-        } = offsetOrOptions ?? {});
+        } = offsetOrOptions ?? kEmptyObject);
       }
       if (typeof offsetOrOptions === "function") offsetOrOptions = 0;
 
@@ -503,7 +503,7 @@ var access = function access(path, mode, callback?) {
         }
       }
 
-      ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? {});
+      ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? kEmptyObject);
     }
 
     return fs.readSync(fd, buffer, offset, length, position);
@@ -513,7 +513,7 @@ var access = function access(path, mode, callback?) {
       if (types.isArrayBufferView(buffer)) {
         let offset = offsetOrOptions;
         if (typeof offset === "object") {
-          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? {});
+          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? kEmptyObject);
           return fs.writeSync(fd, buffer, offset, length, position);
         }
         return arguments.length <= 2 ? fs.writeSync(fd, buffer) : fs.writeSync(fd, buffer, offset, length, position);

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { describe, test } from "node:test";
 import { inspect } from "node:util";
 import { serialize } from "node:v8";
-import { MessageChannel, Worker } from "node:worker_threads";
+import { BroadcastChannel, MessageChannel, Worker } from "node:worker_threads";
 import { createHistogram, monitorEventLoopDelay } from "perf_hooks";
 
 // This file also runs under Node.js (`node --test`), which is where the expected values come from.
@@ -133,6 +133,14 @@ describe("Histogram", () => {
     h.recordDelta();
 
     assert.strictEqual(h.count, 1);
+  });
+
+  test("reset() forgets the last recordDelta", () => {
+    const h = createHistogram();
+    h.recordDelta();
+    h.reset();
+    h.recordDelta();
+    assert.strictEqual(h.count, 0);
   });
 
   test("recordDelta measures less than a microsecond", () => {
@@ -1538,6 +1546,66 @@ describe("Histogram", () => {
       const { status, signal } = spawnSync(process.execPath, ["-e", script], { stdio: "ignore", timeout: 30_000 });
       assert.deepStrictEqual({ status, signal }, { status: 0, signal: null });
     });
+
+    test("enabling one leaves the others enabled", async ({ signal }) => {
+      const a = monitorEventLoopDelay({ resolution: 1 });
+      const b = monitorEventLoopDelay({ resolution: 1 });
+      a.enable();
+      b.enable();
+      await samples(a, 2, signal);
+      await samples(b, 2, signal);
+      a.disable();
+      b.disable();
+    });
+
+    test("disabling one leaves the others enabled", async ({ signal }) => {
+      const a = monitorEventLoopDelay({ resolution: 1 });
+      const b = monitorEventLoopDelay({ resolution: 1 });
+      a.enable();
+      b.enable();
+      a.disable();
+      await samples(b, 2, signal);
+      b.disable();
+    });
+
+    test("a slow timer does not bring the next sample forward", async ({ signal }) => {
+      const resolution = 20;
+      const block = (ms: number) => {
+        const end = performance.now() + ms;
+        while (performance.now() < end);
+      };
+      const h = monitorEventLoopDelay({ resolution });
+      h.enable();
+      // Both are due in the next turn of the event loop, and this one comes first.
+      setTimeout(block, 1, 3 * resolution);
+      block(2 * resolution);
+      await samples(h, 1, signal);
+      h.disable();
+      // A timer is never early, so no sample is less than the resolution after the one before.
+      assert.ok(h.min > (resolution / 2) * 1e6, `min is ${h.min}`);
+    });
+
+    const neverCollected = { skip: typeof Bun === "undefined" && "Node.js does not collect one that is enabled" };
+    // In a child, because what this guards against blocks the thread.
+    test("one that is collected while enabled does not stop the event loop", neverCollected, () => {
+      const script = `
+        let collected = false;
+        const registry = new FinalizationRegistry(() => (collected = true));
+        (() => {
+          const h = require("node:perf_hooks").monitorEventLoopDelay({ resolution: 1 });
+          h.enable();
+          registry.register(h, 0);
+        })();
+        (function poll(turnsAfter) {
+          gc();
+          if (!collected || turnsAfter-- > 0) setTimeout(poll, 2, turnsAfter);
+        })(3);`;
+      const { status, signal } = spawnSync(process.execPath, ["--expose-gc", "-e", script], {
+        stdio: "ignore",
+        timeout: 30_000,
+      });
+      assert.deepStrictEqual({ status, signal }, { status: 0, signal: null });
+    });
   });
 
   describe("structured clone", () => {
@@ -1598,6 +1666,27 @@ describe("Histogram", () => {
       }
     });
 
+    // Node.js throws "Message could not be posted." when there are two receivers.
+    test("through a BroadcastChannel with two receivers", notInNode, async () => {
+      const h = createHistogram();
+      const channels = Array.from({ length: 3 }, () => new BroadcastChannel("histogram.test.ts"));
+      try {
+        const received = channels.slice(1).map(
+          channel =>
+            new Promise<any>((resolve, reject) => {
+              channel.onmessage = (event: any) => resolve(event.data);
+              channel.onmessageerror = reject;
+            }),
+        );
+        channels[0].postMessage(h);
+        const clones = await Promise.all(received);
+        clones.forEach((clone, i) => clone.record(i + 1));
+        assert.deepStrictEqual([h.count, h.min, h.max], [2, 1, 2]);
+      } finally {
+        for (const channel of channels) channel.close();
+      }
+    });
+
     // Runs `inWorker` in each of some workers and `here` in this thread, 20,000 times each, all at the same time.
     // Returns the nanoseconds that took.
     async function inThreads(workers, h, inWorker, here) {
@@ -1639,7 +1728,7 @@ describe("Histogram", () => {
         Atomics.store(flags, 1, 1);
         Atomics.notify(flags, 1);
         for (let i = 0; i < 20000; i++) here();
-        assert.deepStrictEqual(await done, Array(workers).fill("RecordableHistogram"));
+        assert.deepStrictEqual(await done, Array(workers).fill(h.constructor.name));
         return Number(process.hrtime.bigint() - start);
       } finally {
         await Promise.all(threads.map(worker => worker.terminate()));
@@ -1650,6 +1739,14 @@ describe("Histogram", () => {
       const h = createHistogram();
       await inThreads(1, h, "h.record(2)", () => h.record(1));
       assert.deepStrictEqual([h.count, h.min, h.max, h.mean], [40000, 1, 2, 1.5]);
+    });
+
+    // Both threads would wait for each other for ever if each locked its own histogram first.
+    test("to a worker that adds two histograms the other way around", async () => {
+      const a = createHistogram();
+      const b = createHistogram();
+      await inThreads(1, [a, b], "h[1].add(h[0])", () => a.add(b));
+      assert.deepStrictEqual([a.count, b.count], [0, 0]);
     });
 
     test("to workers that call recordDelta while this thread does", async () => {

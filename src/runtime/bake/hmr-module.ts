@@ -863,10 +863,13 @@ function keepsBarrel(mod: HMRModule, definition: UnloadedModule): boolean | null
   }
   let copies = false;
   try {
+    // A read of a CommonJS export can run code of that module. Both evaluations get one object that throws instead.
+    let unreadable: object | undefined;
+    const imports = deps.map(dep => (dep.esm ? dep.exports : (unreadable ??= revokedProxy())));
     // A value that is the same in two evaluations is a copy of an export. Any other is an object of the definition.
     const [first, second] = [0, 1].map(() => {
       const evaluated = new HMRModule(mod.id, false);
-      evaluated.imports = deps.map(getEsmExports);
+      evaluated.imports = imports;
       definition[ESMProps.load](evaluated);
       return Object.getOwnPropertyDescriptors(evaluated.exports);
     });
@@ -881,6 +884,13 @@ function keepsBarrel(mod: HMRModule, definition: UnloadedModule): boolean | null
     return null;
   }
   return copies;
+}
+
+/** An object that throws on each operation on it. */
+function revokedProxy(): object {
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  return proxy;
 }
 
 function patchImporters(mod: HMRModule) {

@@ -492,7 +492,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         } else {
                             &record.path
                         };
-                        !path.is_file() || path.is_node_module()
+                        path.is_node_module()
                     }));
         if !is_barrel {
             if self.barrel_prints.count() > 0 {

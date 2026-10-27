@@ -2205,6 +2205,110 @@ devTest("barrel optimization: a barrel with two imports of one file is a changed
   },
 });
 
+// value.cjs logs each read of its export. first.ts accepts an update, so the page stays. When
+// the barrel is a changed module, first.ts runs again and the page has one more read of the
+// export. To compare a barrel with its new definition, a page evaluates the definition. There it
+// gets a revoked Proxy in place of the exports of a CommonJS module, because a read of one can run
+// code of that module. A copy of an export throws on the Proxy, and the Proxy is not the namespace
+// that the barrel has. So a barrel in node_modules with a CommonJS import is a changed module.
+const loggedExport = (value: string) => `
+  let reads = 0;
+  Object.defineProperty(exports, "value", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      console.log("read " + ++reads);
+      return "${value}";
+    },
+  });
+`;
+const barrelOfCommonJS = (reexport: string, name: string, use: string) => ({
+  "first.html": emptyHtmlFile({ scripts: ["first.ts"] }),
+  "third.html": emptyHtmlFile({ scripts: ["third.ts"] }),
+  "first.ts": `import { ${name} } from 'cjs-lib'; console.log('first: ' + ${use}); import.meta.hot.accept();`,
+  "third.ts": `import { ${name} } from 'cjs-lib'; console.log('third: ' + ${use});`,
+  ...deferringBarrel("cjs-lib", ["spare"]),
+  "node_modules/cjs-lib/index.js": `${reexport}\nexport { spare } from './spare.js';`,
+  "node_modules/cjs-lib/value.cjs": loggedExport("V"),
+});
+const loadsOneTime = async (dev: Dev) => {
+  await using first = await dev.client("/first");
+  await first.expectMessage("read 1", "first: V");
+  await firstBuild(dev, "/third");
+  await first.expectMessage("read 2", "first: V");
+};
+for (const [what, reexport, name, use] of [
+  ["a copy of an export", `export { value } from './value.cjs';`, "value", "value"],
+  ["a copy of each export", `export * from './value.cjs';`, "value", "value"],
+  ["the namespace", `export * as ns from './value.cjs';`, "ns", "ns.value"],
+] as const) {
+  devTest(`barrel optimization: a barrel in node_modules with ${what} of a CommonJS module is a changed module`, {
+    files: barrelOfCommonJS(reexport, name, use),
+    test: loadsOneTime,
+  });
+}
+
+// The module of the plugin is no file in node_modules, so its re-export of value.cjs is a getter.
+// A barrel in node_modules has a copy of that export. A read of it for a check runs the getter,
+// and with it the code of value.cjs. The dev server does not list such a barrel.
+devTest("barrel optimization: a barrel with a copy of an export of a plugin module is a changed module", {
+  files: {
+    ...barrelOfCommonJS(`export { value } from 'virtual:value';`, "value", "value"),
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./virtual-plugin.ts"]
+    `,
+    "virtual-plugin.ts": `
+      import path from "node:path";
+      const target = path.join(import.meta.dirname, "node_modules/cjs-lib/value.cjs");
+      export default {
+        name: "virtual",
+        setup(build) {
+          build.onResolve({ filter: /^virtual:value$/ }, () => ({ path: "value", namespace: "virtual" }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+            contents: "export { value } from " + JSON.stringify(target) + ";",
+            loader: "js",
+          }));
+        },
+      };
+    `,
+  },
+  test: loadsOneTime,
+});
+
+// A barrel that the dev server lists outside node_modules has a getter for each export, and reads
+// none when it evaluates.
+devTest("barrel optimization: a page keeps a barrel with a getter for an export of a CommonJS module", {
+  files: {
+    "first.html": emptyHtmlFile({ scripts: ["first.ts"] }),
+    "third.html": emptyHtmlFile({ scripts: ["third.ts"] }),
+    "first.ts": `
+      import { value } from './lib';
+      globalThis.read = () => value;
+      console.log('first: ' + value);
+      import.meta.hot.accept();
+    `,
+    "third.ts": `import { value } from './lib'; console.log('third: ' + value);`,
+    ...appBarrel,
+    "lib/index.ts": `export { value } from './value.cjs'; export { b } from './b';`,
+    "lib/value.cjs": loggedExport("V"),
+  },
+  async test(dev) {
+    await using first = await dev.client("/first");
+    await first.expectMessage("read 1", "first: V");
+    await firstBuild(dev, "/third");
+    // The update read no export of value.cjs, and first.ts did not run again.
+    await expectNoReload(first);
+    expect(await first.js<string>`read()`).toBe("V");
+    await first.expectMessage("read 2");
+    // The barrel that the page kept reads the module that a save loads again.
+    await dev.write("lib/value.cjs", loggedExport("saved"));
+    await first.expectMessage("read 1", "first: saved");
+    expect(await first.js<string>`read()`).toBe("saved");
+    await first.expectMessage("read 2");
+  },
+});
+
 // outer-lib has a copy of the export of mid-lib, which has a copy of the one of two-lib. A file
 // in node_modules has no watcher, and a build that reaches a barrel there reads its file again.
 const copyingBarrel = (name: string, inner: string) => ({

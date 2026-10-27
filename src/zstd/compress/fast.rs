@@ -3,160 +3,14 @@
 use super::internal::{
     BlockSrc, CompressionParameters, DictTableLoadMethod, HASH_READ_SIZE, K_SEARCH_STRENGTH,
     MatchState, Near, Prefix, REPCODE1_TO_OFFBASE, SeqSink, SeqStore, TableFillPurpose,
-    ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, count, count_2segments, hash_of, hash_ptr,
-    index_overlap_check, le32_at, le64_at, offset_to_offbase, table_get, table_put, table_swap,
-    write_tagged_index,
+    ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, hash_of, hash_ptr, le32_at, le64_at,
+    offset_to_offbase, table_get, table_put, table_swap, write_tagged_index,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
-use crate::util::{BUG, SliceExt, read_le32};
+use crate::util::{BUG, SliceExt};
 
 pub(super) const FAST_HASH_FILL_STEP: u32 = 3;
-
-/// Where an index leads, when it can be in one of two segments.
-#[derive(Clone, Copy)]
-pub(super) struct Located<'a> {
-    /// The buffer that the segment is in.
-    pub(super) buf: &'a [u8],
-    /// The position of the index in `buf`.
-    pub(super) pos: usize,
-    /// Where the segment starts in `buf`.
-    pub(super) start: usize,
-    /// Where it ends.
-    pub(super) end: usize,
-}
-
-/// What `fast` and `dfast` work out before they look for matches in a block, when indices lead to two segments: the
-/// current one, and below `prefix_start_index` either the older one of the window or the dictionary's.
-pub(super) struct TwoSegments<'a> {
-    /// The buffer of the current segment, up to the end of the block.
-    pub(super) buf: &'a [u8],
-    base: usize,
-    pub(super) istart: usize,
-    pub(super) iend: usize,
-    /// The last position that [`HASH_READ_SIZE`] bytes can be read at.
-    pub(super) ilimit: usize,
-    pub(super) prefix_start_index: u32,
-    pub(super) prefix_start: usize,
-    pub(super) dict_buf: &'a [u8],
-    dict_base: usize,
-    /// What to subtract from an index below `prefix_start_index` to get an index of the other segment.
-    pub(super) dict_index_delta: u32,
-    pub(super) dict_start_index: u32,
-    pub(super) dict_start: usize,
-    pub(super) dict_end: usize,
-}
-
-impl<'a> TwoSegments<'a> {
-    /// The other segment is the dictionary's, which has its own match state. `None` if the block is too short to look
-    /// for anything.
-    pub(super) fn with_dict_match_state(
-        src: &BlockSrc<'a>,
-        prefix_start_index: u32,
-    ) -> Result<Option<Self>> {
-        let dms = src.dms.as_ref().ok_or(BUG)?;
-        let dict_start_index = dms.ms.window.dict_limit;
-        let Some(ilimit) = src.end.checked_sub(HASH_READ_SIZE) else {
-            return Ok(None);
-        };
-        Ok(Some(Self {
-            buf: src.buf.sub(..src.end)?,
-            base: src.base,
-            istart: src.start,
-            iend: src.end,
-            ilimit,
-            prefix_start_index,
-            prefix_start: src.pos_of(prefix_start_index),
-            dict_buf: dms.buf,
-            dict_base: dms.base,
-            dict_index_delta: prefix_start_index
-                .wrapping_sub(dms.end.wrapping_sub(dms.base) as u32),
-            dict_start_index,
-            dict_start: dms.pos_of(dict_start_index),
-            dict_end: dms.end,
-        }))
-    }
-
-    /// The other segment is the older one of the window, as far as it is within reach. `None` if the block is too short
-    /// to look for anything.
-    pub(super) fn with_ext_dict(ms: &MatchState, src: &BlockSrc<'a>) -> Result<Option<Self>> {
-        let low_limit = ms.get_lowest_match_index(src.index_of(src.end), ms.c_params.window_log);
-        let prefix_start_index = ms.window.dict_limit.max(low_limit);
-        let Some(ilimit) = src.end.checked_sub(HASH_READ_SIZE) else {
-            return Ok(None);
-        };
-        Ok(Some(Self {
-            buf: src.buf.sub(..src.end)?,
-            base: src.base,
-            istart: src.start,
-            iend: src.end,
-            ilimit,
-            prefix_start_index,
-            prefix_start: src.pos_of(prefix_start_index),
-            dict_buf: src.dict_buf,
-            dict_base: src.dict_base,
-            dict_index_delta: 0,
-            dict_start_index: low_limit,
-            dict_start: src.dict_pos_of(low_limit),
-            dict_end: src.dict_pos_of(prefix_start_index),
-        }))
-    }
-
-    /// The first position to look at, with a dictionary: not `istart` if there is nothing before it to match.
-    pub(super) const fn first(&self) -> usize {
-        let dict_and_prefix_length = self
-            .istart
-            .wrapping_sub(self.prefix_start)
-            .wrapping_add(self.dict_end)
-            .wrapping_sub(self.dict_start) as u32;
-        self.istart + (dict_and_prefix_length == 0) as usize
-    }
-
-    /// The position in `dict_buf` of an index of the other segment.
-    #[inline(always)]
-    pub(super) const fn dict_pos_of(&self, index: u32) -> usize {
-        self.dict_base.wrapping_add(index as usize)
-    }
-
-    #[inline(always)]
-    pub(super) const fn locate(&self, index: u32) -> Located<'a> {
-        if index < self.prefix_start_index {
-            Located {
-                buf: self.dict_buf,
-                pos: self.dict_pos_of(index.wrapping_sub(self.dict_index_delta)),
-                start: self.dict_start,
-                end: self.dict_end,
-            }
-        } else {
-            Located {
-                buf: self.buf,
-                pos: self.base.wrapping_add(index as usize),
-                start: self.prefix_start,
-                end: self.iend,
-            }
-        }
-    }
-}
-
-/// How many bytes before `ip`, down to `anchor`, are the same as those before `match_pos`, down to `match_low`.
-#[inline(always)]
-pub(super) fn count_backwards(
-    buf: &[u8],
-    ip: usize,
-    anchor: usize,
-    match_buf: &[u8],
-    match_pos: usize,
-    match_low: usize,
-) -> usize {
-    let before_ip = buf.get(anchor..ip).unwrap_or_default();
-    let before_match = match_buf.get(match_low..match_pos).unwrap_or_default();
-    before_ip
-        .iter()
-        .rev()
-        .zip(before_match.iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count()
-}
 
 /// The repeat offsets at the start of a block. Those that reach further than `max_rep` are 0, and saved.
 pub(super) struct SavedRep {
@@ -184,12 +38,6 @@ impl SavedRep {
             offset_saved1,
             offset_saved2,
         }
-    }
-
-    fn with_ext_dict(rep: &[u32; ZSTD_REP_NUM], src: &BlockSrc<'_>, seg: &TwoSegments<'_>) -> Self {
-        let max_rep = src.index_of(seg.istart).wrapping_sub(seg.dict_start_index);
-        // As far as `max_rep` is too far too.
-        Self::new(rep, max_rep.saturating_sub(1))
     }
 }
 
@@ -288,19 +136,6 @@ pub(crate) fn fill_hash_table(
     }
 }
 
-/// `ZSTD_match4Found_branch`, and `ZSTD_match4Found_cmov`, which only differs in how it avoids reading at an index that
-/// is not valid.
-#[inline(always)]
-fn match4_found(
-    buf: &[u8],
-    current: usize,
-    match_pos: usize,
-    match_idx: u32,
-    idx_low_limit: u32,
-) -> Result<bool> {
-    Ok(match_idx >= idx_low_limit && read_le32(buf, current)? == read_le32(buf, match_pos)?)
-}
-
 /// `targetLength + !targetLength`: how far `fast` goes from one position to the next, before it speeds up.
 const fn least_step(c_params: &CompressionParameters) -> u32 {
     c_params.target_length + (c_params.target_length == 0) as u32
@@ -309,67 +144,45 @@ const fn least_step(c_params: &CompressionParameters) -> u32 {
 /// What `fast` and `dfast` work out before they look for matches in a block, when there is no dictionary and the window
 /// is one segment.
 pub(super) struct NoDictBlock<'a> {
-    /// The input from `base_index`, the lowest index that is read, up to the end of the block. Positions are in this.
-    pub(super) near: Near<'a>,
-    pub(super) base_index: u32,
-    /// The part of it where matches can be, which starts at `prefix_lowest_index`. A lower index, less that one, wraps
-    /// around to a position past the end.
-    pub(super) candidates: Near<'a>,
+    /// The input from `prefix_lowest_index`, the lowest index a match can be at, up to the end of the block. Positions
+    /// are in this: a lower index, less that one, wraps around to a position past the end.
+    near: Near<'a>,
     pub(super) prefix_lowest_index: u32,
-    pub(super) prefix_lowest: u32,
-    pub(super) istart: u32,
+    /// The same with what is before it, as far as a repeat offset reaches: where the window started at the start of the
+    /// block.
+    older: Near<'a>,
+    /// How much that is.
+    older_len: u32,
+    istart: u32,
     /// The first position to look at.
     pub(super) first: u32,
-    /// The last position that [`HASH_READ_SIZE`] bytes can be read at.
-    pub(super) ilimit: usize,
-    pub(super) offset_1: u32,
-    pub(super) offset_2: u32,
-    /// The repeat offsets that reach too far, which are 0 above.
-    pub(super) offset_saved1: u32,
-    pub(super) offset_saved2: u32,
+    pub(super) rep: SavedRep,
 }
 
 impl<'a> NoDictBlock<'a> {
-    /// `None` if the block is too short to look for anything.
     pub(super) fn new(
         ms: &MatchState,
         rep: &[u32; ZSTD_REP_NUM],
         src: &BlockSrc<'a>,
-    ) -> Result<Option<Self>> {
+    ) -> Result<Self> {
         let window_log = ms.c_params.window_log;
         let start_index = src.index_of(src.start);
         let prefix_lowest_index = ms.get_lowest_prefix_index(src.index_of(src.end), window_log);
         let first_index = start_index + u32::from(start_index == prefix_lowest_index);
         let window_low = ms.get_lowest_prefix_index(first_index, window_log);
 
-        // A repeat offset reaches as far as the window did at the start of the block.
-        let base_index = window_low.min(prefix_lowest_index);
-        let near = Near::new(src.buf.sub(src.pos_of(base_index)..src.end)?)?;
-        let prefix_lowest = prefix_lowest_index - base_index;
-        let Some(ilimit) = near.bytes().len().checked_sub(HASH_READ_SIZE) else {
-            return Ok(None);
-        };
-
-        let SavedRep {
-            offset_1,
-            offset_2,
-            offset_saved1,
-            offset_saved2,
-        } = SavedRep::new(rep, first_index.wrapping_sub(window_low));
-        Ok(Some(Self {
-            near,
-            base_index,
-            candidates: Near::new(near.bytes().sub(prefix_lowest as usize..)?)?,
+        let older_index = window_low.min(prefix_lowest_index);
+        let older = src.buf.sub(src.pos_of(older_index)..src.end)?;
+        let older_len = prefix_lowest_index - older_index;
+        Ok(Self {
+            near: Near::new(older.sub(older_len as usize..)?)?,
             prefix_lowest_index,
-            prefix_lowest,
-            istart: start_index - base_index,
-            first: first_index - base_index,
-            ilimit,
-            offset_1,
-            offset_2,
-            offset_saved1,
-            offset_saved2,
-        }))
+            older: Near::new(older)?,
+            older_len,
+            istart: start_index - prefix_lowest_index,
+            first: first_index - prefix_lowest_index,
+            rep: SavedRep::new(rep, first_index.wrapping_sub(window_low)),
+        })
     }
 }
 
@@ -432,10 +245,10 @@ impl<'a, 'b> MatchSink<'a, 'b> {
     pub(super) fn new(seq_store: &'b mut SeqStore, block: &NoDictBlock<'a>) -> Self {
         Self {
             seq_store: SeqSink::new(seq_store),
-            near: block.candidates,
-            older: block.near,
-            older_len: block.prefix_lowest,
-            anchor: block.istart - block.prefix_lowest,
+            near: block.near,
+            older: block.older,
+            older_len: block.older_len,
+            anchor: block.istart,
             failed: false,
         }
     }
@@ -453,7 +266,7 @@ impl<'a, 'b> MatchSink<'a, 'b> {
     }
 
     /// How many bytes there are after the last match.
-    pub(super) fn finish(self) -> Result<usize> {
+    pub(super) fn last_literals(&self) -> Result<usize> {
         if self.failed {
             return Err(BUG);
         }
@@ -873,18 +686,16 @@ pub(crate) fn compress_block_fast(
     rep: &mut [u32; ZSTD_REP_NUM],
     src: &BlockSrc<'_>,
 ) -> Result<usize> {
-    let Some(block) = NoDictBlock::new(ms, rep, src)? else {
-        return Ok(src.end - src.start);
-    };
+    let block = NoDictBlock::new(ms, rep, src)?;
     let hlog = ms.c_params.hash_log;
     let mut finder = Finder {
         base_index: block.prefix_lowest_index,
         // The least step is 2, as two positions are looked at per turn.
         step_size: least_step(&ms.c_params) + 1,
         hlog,
-        first: block.first - block.prefix_lowest,
-        rep_offset1: block.offset_1,
-        rep_offset2: block.offset_2,
+        first: block.first,
+        rep_offset1: block.rep.offset_1,
+        rep_offset2: block.rep.offset_2,
     };
     let mut sink = MatchSink::new(seq_store, &block);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
@@ -894,13 +705,13 @@ pub(crate) fn compress_block_fast(
         7 => finder.find_matches::<7>(hash_table, &mut sink),
         _ => finder.find_matches::<4>(hash_table, &mut sink),
     }
-    let last_literals = sink.finish()?;
+    let last_literals = sink.last_literals()?;
     restore_rep(
         rep,
         finder.rep_offset1,
         finder.rep_offset2,
-        block.offset_saved1,
-        block.offset_saved2,
+        block.rep.offset_saved1,
+        block.rep.offset_saved2,
     );
     Ok(last_literals)
 }
@@ -1120,7 +931,7 @@ pub(crate) fn compress_block_fast_dict_match_state(
         7 => finder.find_matches_dict::<7>(hash_table, &mut sink, block.window, dict_table),
         _ => finder.find_matches_dict::<4>(hash_table, &mut sink, block.window, dict_table),
     }
-    let last_literals = sink.finish()?;
+    let last_literals = sink.last_literals()?;
     let [rep0, rep1, _] = rep;
     *rep0 = finder.rep_offset1;
     *rep1 = finder.rep_offset2;
@@ -1155,7 +966,7 @@ pub(crate) fn compress_block_fast_ext_dict(
         7 => finder.find_matches_ext_dict::<7>(hash_table, &mut sink, block.window),
         _ => finder.find_matches_ext_dict::<4>(hash_table, &mut sink, block.window),
     }
-    let last_literals = sink.finish()?;
+    let last_literals = sink.last_literals()?;
     restore_rep(
         rep,
         finder.rep_offset1,

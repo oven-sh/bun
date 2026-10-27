@@ -7,8 +7,6 @@ use crate::common::{
     ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
 };
 use crate::error::{ErrorCode, Result};
-use core::hint::{Locality, prefetch_read};
-
 use crate::util::{BUG, SliceExt, highbit32, read_le32, read_le64, write_le24};
 
 pub(crate) const K_SEARCH_STRENGTH: u32 = 8;
@@ -709,12 +707,6 @@ impl<'a> Near<'a> {
     pub(crate) fn window<const N: usize>(self, pos: u32) -> Option<&'a [u8; N]> {
         let pos = pos as usize;
         self.0.get(pos..pos + N)?.first_chunk()
-    }
-
-    /// A hint that `pos`, which may be anything, is about to be read.
-    #[inline(always)]
-    pub(crate) fn prefetch(self, pos: u32) {
-        prefetch_read(self.0.as_ptr().wrapping_add(pos as usize), Locality::L1);
     }
 
     #[inline(always)]

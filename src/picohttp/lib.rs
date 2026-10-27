@@ -129,6 +129,8 @@ impl fmt::Display for Header {
     }
 }
 
+const _: () = assert!(core::mem::size_of::<Header>() == 4 * core::mem::size_of::<usize>());
+
 impl From<bun_http1::Header<'_>> for Header {
     /// As with `new`, the caller keeps the parsed buffer alive.
     #[inline]

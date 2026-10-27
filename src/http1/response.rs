@@ -164,8 +164,10 @@ fn is_token(byte: u8) -> bool {
 /// The bytes up to the end of the line, and the bytes of the next lines. The only control character a line may hold
 /// is a tab.
 fn line(buf: &[u8]) -> Result<(&[u8], &[u8]), ParseError> {
-    let len = index_of(buf, |byte| (byte < b' ') & (byte != b'\t') | (byte == 0x7f))
-        .ok_or(ParseError::Incomplete)?;
+    let len = index_of(buf, |byte| {
+        ((byte < b' ') & (byte != b'\t')) | (byte == 0x7f)
+    })
+    .ok_or(ParseError::Incomplete)?;
     match buf.split_at_checked(len) {
         Some((line, [b'\r', b'\n', rest @ ..] | [b'\n', rest @ ..])) => Ok((line, rest)),
         Some((_, [b'\r'])) => Err(ParseError::Incomplete),

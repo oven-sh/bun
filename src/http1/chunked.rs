@@ -66,7 +66,7 @@ impl ChunkedDecoder {
                         self.size_digits += 1;
                         src += 1;
                     }
-                    None if self.size_digits != 0 && matches!(byte, b';' | b'\r' | b'\n') => {
+                    None if self.size_digits != 0 && matches!(byte, b';' | b'\r') => {
                         self.size_digits = 0;
                         self.state = State::Extension;
                     }

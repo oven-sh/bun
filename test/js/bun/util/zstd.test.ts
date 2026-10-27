@@ -1318,6 +1318,7 @@ describe("the output is that of zstd 1.5.7", () => {
     stream.on("data", chunk => chunks.push(chunk));
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     stream.on("end", resolve).on("error", reject);
+    stream.on("close", () => reject(new Error("closed before the end")));
     for (let at = 0, n = 1; at < corpus.length; at += n, n = (n * 7) % 90_001) {
       stream.write(corpus.subarray(at, at + n));
       if (flushes && n % 3 === 0) stream.flush();
@@ -1365,6 +1366,7 @@ describe("the output is that of zstd 1.5.7", () => {
     stream.on("data", chunk => chunks.push(chunk));
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     stream.on("end", resolve).on("error", reject);
+    stream.on("close", () => reject(new Error("closed before the end")));
     let at = 0;
     for (const size of sizes) {
       stream.write(corpus.subarray(at, at + size));
@@ -1477,7 +1479,7 @@ describe("bugs of zstd 1.5.7", () => {
       params: { [c.ZSTD_c_nbWorkers]: 2, [c.ZSTD_c_jobSize]: 1 << 20 },
     });
     const { promise, resolve } = Promise.withResolvers();
-    stream.on("error", resolve).on("end", resolve).resume();
+    stream.on("error", resolve).on("end", resolve).on("close", resolve).resume();
     stream.write(input.subarray(0, 1000));
     stream.end(input.subarray(1000));
     expect(await promise).toMatchObject({ code: "ZSTD_error_srcSize_wrong" });
@@ -1723,6 +1725,7 @@ describe("bugs that zstd has had", () => {
     const stream = zlib.createZstdDecompress();
     const { promise, resolve, reject } = Promise.withResolvers<number>();
     stream.once("data", chunk => resolve(chunk.length)).on("error", reject);
+    stream.on("close", () => reject(new Error("closed before any data")));
     stream.write(frame.subarray(0, 5000), () => stream.flush());
     expect(await promise).toBeWithin(4000, 5000);
     stream.destroy();

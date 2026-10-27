@@ -12,9 +12,9 @@ use crate::generated_bindgen::bindgen_test::{
     Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
     TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestNames,
     TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOtherAsNullOptions,
-    TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestMemberFunctions,
-    js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote, js_TestShape,
-    js_TestSquare,
+    TestOuter, TestTextOrBytes, TestValidatedOptions, TestValue, js_TestCounter, js_TestError,
+    js_TestMemberFunctions, js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote,
+    js_TestShape, js_TestSquare,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
@@ -967,6 +967,10 @@ pub(crate) fn node_options_size(options: &TestNodeOptions) -> Option<u32> {
     options.size.filter(|_| !options.flag)
 }
 
+pub(crate) fn validated_options_size(options: &TestValidatedOptions) -> Option<u32> {
+    options.size
+}
+
 pub(crate) fn bare_options_size(options: &TestBareOptions) -> Option<u32> {
     options.size
 }
@@ -1109,6 +1113,22 @@ impl TestReadOnly {
     }
 
     pub(crate) fn dispose(&self) {}
+}
+
+pub(crate) struct TestNodeThis;
+
+impl TestNodeThis {
+    pub(crate) fn constructor() -> Self {
+        Self
+    }
+
+    pub(crate) fn answer(&self) -> i32 {
+        42
+    }
+
+    pub(crate) fn get_value(&self) -> i32 {
+        42
+    }
 }
 
 #[derive(Default)]

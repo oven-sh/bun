@@ -325,8 +325,9 @@ pub(crate) fn create_recordable<'a>(
     half_life: f64,
     threshold: f64,
 ) -> bindgen::Result<'a, JsWrapper<'a, Histogram>> {
-    // `as` saturates.
-    let counts = new_counts(heap, lowest, highest, figures)?.with_ewma(half_life, threshold as u64);
+    // `as` saturates. Node.js: one that an `i64` does not hold is exported as what `importHistogram()` refuses.
+    let threshold = threshold as i64 as u64;
+    let counts = new_counts(heap, lowest, highest, figures)?.with_ewma(half_life, threshold);
     Ok(js_RecordableHistogram::create(heap, Histogram::new(counts)))
 }
 
@@ -458,23 +459,6 @@ impl Histogram {
         })
     }
 
-    pub(crate) fn percentile_ci<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-        percentile: f64,
-        options: &ConfidenceOptions,
-    ) -> bindgen::Result<'a, PercentileCI> {
-        valid_percentile(heap, percentile)?;
-        between_0_and_1(heap, b"options.confidence", options.confidence)?;
-        let interval =
-            self.read(|histogram| histogram.percentile_ci(percentile, options.confidence));
-        Ok(PercentileCI {
-            value: interval.estimate,
-            lower: interval.lower,
-            upper: interval.upper,
-        })
-    }
-
     pub(crate) fn ks_test(&self, other: &Self) -> f64 {
         self.read_both(other, |this, other| this.ks_test(other))
             .unwrap_or(0.0)
@@ -543,7 +527,7 @@ impl Histogram {
         base: f64,
     ) -> bindgen::Result<'a, JSValue> {
         // Node.js takes NaN, and makes one bucket of everything.
-        if !(base > 1.0) {
+        if base.is_nan() || base <= 1.0 {
             return Err(out_of_range_error(&cx.heap, b"base", b"> 1", base));
         }
         let buckets = self.read(|histogram| histogram.log_buckets(first_bucket, base));
@@ -825,25 +809,32 @@ pub(crate) fn percentiles_at<'a>(
     map_of(cx, percentiles.into_iter().zip(values), number)
 }
 
+pub(crate) fn percentile_ci<'a>(
+    heap: &JsHeap<'a>,
+    histogram: &Histogram,
+    percentile: f64,
+    options: &ConfidenceOptions,
+) -> bindgen::Result<'a, PercentileCI> {
+    between_0_and_1(heap, b"options.confidence", options.confidence)?;
+    let interval =
+        histogram.read(|histogram| histogram.percentile_ci(percentile, options.confidence));
+    Ok(PercentileCI {
+        value: interval.estimate,
+        lower: interval.lower,
+        upper: interval.upper,
+    })
+}
+
 /// The density estimate of a histogram, as it was when `qrde()` was called.
 struct QrdeJob {
     slots: RecordedSlots,
     probabilities: Vec<f64>,
     dequantize: Dequantize,
-    result: Option<bun_histogram::Qrde>,
+    result: bun_histogram::Qrde,
 }
 
-impl bun_jsc::JobContext for QrdeJob {
-    type OffThread = Self;
-    type Js = JSPromiseStrong;
-
-    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        this.result = Some(this.slots.qrde(&this.probabilities, this.dequantize));
-        Some(done)
-    }
-
-    fn then(this: Self, mut promise: JSPromiseStrong, cx: &bun_jsc::JsThread<'_>) -> JsResult<()> {
-        let global = cx.global();
+impl QrdeJob {
+    fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let float64_array = |values: &[f64]| {
             let bytes: Vec<u8> = values
                 .iter()
@@ -851,10 +842,7 @@ impl bun_jsc::JobContext for QrdeJob {
                 .collect();
             BinaryType::Float64Array.to_js(&bytes, global)
         };
-        let Some(result) = this.result else {
-            return Ok(());
-        };
-        let dequantize = match this.dequantize {
+        let dequantize = match self.dequantize {
             Dequantize::None => "none",
             Dequantize::Hdr => "hdr",
             Dequantize::All => "all",
@@ -863,20 +851,38 @@ impl bun_jsc::JobContext for QrdeJob {
         let put = |key: &'static str, property: JSValue| {
             value.put(global, &bun_core::String::static_(key), property);
         };
-        put("probabilities", float64_array(&this.probabilities)?);
-        put("quantiles", float64_array(&result.quantiles)?);
-        put("densities", float64_array(&result.densities)?);
+        put("probabilities", float64_array(&self.probabilities)?);
+        put("quantiles", float64_array(&self.result.quantiles)?);
+        put("densities", float64_array(&self.result.densities)?);
         put(
             "count",
-            JSValue::from_uint64_no_truncate(global, this.slots.count())?,
+            JSValue::from_uint64_no_truncate(global, self.slots.count())?,
         );
-        put("bucketCount", JSValue::js_number(this.slots.len() as f64));
-        put("corrections", JSValue::js_number(result.corrections as f64));
+        put("bucketCount", JSValue::js_number(self.slots.len() as f64));
+        put(
+            "corrections",
+            JSValue::js_number(self.result.corrections as f64),
+        );
         put(
             "dequantize",
             bun_jsc::bun_string_jsc::create_utf8_for_js(global, dequantize.as_bytes())?,
         );
-        promise.resolve(global, value)
+        Ok(value)
+    }
+}
+
+impl bun_jsc::JobContext for QrdeJob {
+    type OffThread = Self;
+    type Js = JSPromiseStrong;
+
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        this.result = this.slots.qrde(&this.probabilities, this.dequantize);
+        Some(done)
+    }
+
+    fn then(this: Self, mut promise: JSPromiseStrong, cx: &bun_jsc::JsThread<'_>) -> JsResult<()> {
+        let global = cx.global();
+        promise.settle(global, this.to_js(global))
     }
 }
 
@@ -894,7 +900,7 @@ pub(crate) fn qrde(
             1 => Dequantize::Hdr,
             _ => Dequantize::All,
         },
-        result: None,
+        result: bun_histogram::Qrde::default(),
     };
     let promise = JSPromiseStrong::init(cx.global());
     let value = promise.value();

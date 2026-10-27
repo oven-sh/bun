@@ -119,14 +119,7 @@ export const Histogram = b.class({
     stddev: { getter: b.f64 },
     percentile: { ...percentile, returns: b.u64 },
     percentileBigInt: { ...percentile, returns: b.u64.asBigInt, rustName: "percentile" },
-    percentileCI: {
-      args: { percentile: b.f64, options: ConfidenceOptions.default({}) },
-      expected: percentile.expected,
-      length: 1,
-      returns: PercentileCI,
-      capability: "heap",
-      throws: true,
-    },
+    percentileCI: { builtin: true, length: 1 },
     percentiles: { getter: b.any, capability: "js", throws: true },
     percentilesBigInt: { getter: b.any, capability: "js", throws: true },
     percentilesAt: { builtin: true, length: 1 },
@@ -215,6 +208,13 @@ export const percentilesAt = b.fn({
   args: { histogram: Histogram, percentiles: b.array(b.f64) },
   returns: b.any,
   capability: "js",
+  throws: true,
+});
+/** `percentile` is above 0 and at most 100. */
+export const percentileCI = b.fn({
+  args: { histogram: Histogram, percentile: b.f64, options: ConfidenceOptions.default({}) },
+  returns: PercentileCI,
+  capability: "heap",
   throws: true,
 });
 /** A promise. `dequantize` is the index of the mode. */

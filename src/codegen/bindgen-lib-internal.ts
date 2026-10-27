@@ -3089,8 +3089,11 @@ export class ClassType extends NamedType {
     this.writable = options.writable ?? true;
     this.nodeInvalidThis = options.invalidThis === "node";
     assert(
-      !this.nodeInvalidThis || (!this.forBind && getters.every(getter => !getter.hasSetter && !getter.writable)),
-      'invalidThis: "node" is for a class without forBind and without setters',
+      !this.nodeInvalidThis ||
+        (!this.forBind &&
+          this.internalFieldAccessors.length === 0 &&
+          getters.every(getter => !getter.hasSetter && !getter.writable)),
+      'invalidThis: "node" is for a class without forBind, setters and accessors of internal fields',
     );
     this.prototypeBase = options.prototypeBase;
   }

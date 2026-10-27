@@ -27,6 +27,7 @@ pub enum Dequantize {
     All,
 }
 
+#[derive(Default)]
 pub struct Qrde {
     /// One for each probability, or none if the histogram is empty.
     pub quantiles: Vec<f64>,
@@ -66,10 +67,6 @@ impl RecordedSlots {
 
     pub fn len(&self) -> usize {
         self.slots.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.slots.is_empty()
     }
 
     /// What the values of `slot`, which is at `index`, are spread over.

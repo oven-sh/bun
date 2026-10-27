@@ -354,6 +354,7 @@ pub(crate) struct EventLoopDelayMonitor {
 struct EnabledInterval {
     /// Weak, so a histogram that is collected while enabled stops being sampled. It holds no JS value.
     interval: std::rc::Weak<Interval>,
+    resolution_ms: u32,
     next: Timespec,
 }
 
@@ -381,6 +382,7 @@ impl EventLoopDelayMonitor {
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
         self.enabled.push(EnabledInterval {
             interval: Rc::downgrade(interval),
+            resolution_ms,
             next: now.add_ms(i64::from(resolution_ms)),
         });
         self.schedule();
@@ -455,14 +457,12 @@ impl EventLoopDelayMonitor {
             let Some(interval) = enabled.interval.upgrade() else {
                 return false;
             };
-            if let Some(resolution_ms) = interval.resolution_ms
-                && enabled.next.order(&now).is_le()
-            {
+            if enabled.next.order(&now).is_le() {
                 // From the time of the sample, which is later than `now` if a timer before this one was slow: the
                 // next sample is then no sooner than the resolution. `All::drain_timers` pops every node due at
                 // or before `now`.
                 let (sampled_at, grown) = interval.sample();
-                enabled.next = sampled_at.add_ms(i64::from(resolution_ms));
+                enabled.next = sampled_at.add_ms(i64::from(enabled.resolution_ms));
                 allocated += grown;
             }
             true

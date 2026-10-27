@@ -65,6 +65,8 @@ pub struct Histogram {
     /// How far HdrHistogram would have the counts rotated: the count of a slot is this many places before it. Only
     /// [`Self::import`] sets it, and only [`Self::export`] and [`Self::diff`] look at it.
     normalizing_index_offset: usize,
+    /// Only [`Self::import`] sets it, and only [`Self::export`] looks at it.
+    conversion_ratio: f64,
     /// How many times values were removed.
     reset_count: u64,
     ewma: Ewma,
@@ -179,6 +181,7 @@ impl Histogram {
             first: usize::MAX,
             last: 0,
             normalizing_index_offset: 0,
+            conversion_ratio: 1.0,
             reset_count: 0,
             ewma: Ewma::default(),
         })
@@ -321,15 +324,9 @@ impl Histogram {
     fn recount(&mut self) {
         self.first = 0;
         self.last = (self.chunks.len() * CHUNK_LEN).saturating_sub(1);
-        let in_use = || {
-            let counts = self
-                .existing_chunks()
-                .flat_map(|(index, chunk)| chunk.iter().zip(index..));
-            counts.filter(|&(&n, _)| n != 0)
-        };
-        let first = in_use().next().map_or(usize::MAX, |(_, index)| index);
-        let last = in_use().last().map_or(0, |(_, index)| index);
-        let count = in_use().map(|(&n, _)| n).sum();
+        let first = self.counts().next().map_or(usize::MAX, |(index, _)| index);
+        let last = self.counts().last().map_or(0, |(index, _)| index);
+        let count = self.counts().map(|(_, n)| n).sum();
         (self.first, self.last, self.count) = (first, last, count);
     }
 
@@ -352,22 +349,20 @@ impl Histogram {
             .exceeds
             .checked_sub(other.exceeds)
             .ok_or(DiffError::NotEarlier)?;
-        for (index, chunk) in other.existing_chunks() {
-            for (&n, index) in chunk.iter().zip(index..).filter(|&(&n, _)| n != 0) {
-                let count = match diff.chunks.get_mut(index / CHUNK_LEN) {
-                    Some(Some(chunk)) => chunk.get_mut(index % CHUNK_LEN),
-                    _ => None,
-                };
-                let count = count.ok_or(DiffError::NotEarlier)?;
-                *count = count.checked_sub(n).ok_or(DiffError::NotEarlier)?;
-            }
+        for (index, n) in other.counts() {
+            let count = match diff.chunks.get_mut(index / CHUNK_LEN) {
+                Some(Some(chunk)) => chunk.get_mut(index % CHUNK_LEN),
+                _ => None,
+            };
+            let count = count.ok_or(DiffError::NotEarlier)?;
+            *count = count.checked_sub(n).ok_or(DiffError::NotEarlier)?;
         }
         diff.recount();
         Ok(diff)
     }
 
     /// Whether the two have the same range and precision.
-    pub fn is_compatible(&self, other: &Self) -> bool {
+    fn is_compatible(&self, other: &Self) -> bool {
         self.lowest_discernible_value == other.lowest_discernible_value
             && self.highest_trackable_value == other.highest_trackable_value
             && self.significant_figures == other.significant_figures
@@ -510,12 +505,8 @@ impl Histogram {
             return 0.0;
         }
         let up_to = self.index_of(value);
-        let below: u64 = self
-            .existing_chunks()
-            .flat_map(|(index, chunk)| chunk.iter().zip(index..))
-            .take_while(|&(_, index)| index <= up_to)
-            .map(|(&n, _)| n)
-            .sum();
+        let below = self.counts().take_while(|&(index, _)| index <= up_to);
+        let below: u64 = below.map(|(_, n)| n).sum();
         below as f64 / self.count as f64
     }
 
@@ -704,10 +695,14 @@ impl Histogram {
 
     /// The slots in use and their counts, from the lowest.
     fn slots(&self) -> impl Iterator<Item = (Slot, u64)> {
+        self.counts().map(|(index, n)| (self.slot(index), n))
+    }
+
+    /// The same, by the indexes of the slots.
+    fn counts(&self) -> impl Iterator<Item = (usize, u64)> {
         self.existing_chunks()
-            .flat_map(|(index, chunk)| chunk.iter().zip(index..))
-            .filter(|&(&n, _)| n != 0)
-            .map(|(&n, index)| (self.slot(index), n))
+            .flat_map(|(index, chunk)| (index..).zip(chunk.iter().copied()))
+            .filter(|&(_, n)| n != 0)
     }
 
     /// Each with the index of its first slot, from the lowest.

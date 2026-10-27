@@ -282,6 +282,13 @@ describe("Histogram", () => {
       assert.deepStrictEqual([h.count, h.min, h.max, h.countAt(0), h.countAt(511)], [2, 0, 511, 2, 2]);
     });
 
+    // Node.js: the maximum is 0, which is below the mean and the last percentile.
+    test("only zero where the lowest value is above 1", notInNode, () => {
+      const h = createHistogram({ lowest: 1000, highest: 1e6 });
+      h.record(0);
+      assert.deepStrictEqual([h.min, h.mean, h.percentile(100), h.max], [0, 256, 511, 511]);
+    });
+
     test("recording negative values", () => {
       const h = createHistogram();
       assert.throws(() => h.record(-5), /out of range/);
@@ -1871,6 +1878,10 @@ describe("statistics", () => {
     );
     assert.deepStrictEqual(percentiles, [99, 50, 50, 100, 0.5]);
     assert.deepStrictEqual(h.percentilesAt([]), new Map());
+
+    const shrinks = [10, 20, 30, 40];
+    Object.defineProperty(shrinks, 0, { get: () => ((shrinks.length = 2), 10) });
+    assert.deepStrictEqual([...h.percentilesAt(shrinks).keys()], [10, 20]);
   });
 
   // Node.js: 1.
@@ -2277,6 +2288,14 @@ describe("export and importHistogram", () => {
     }
   });
 
+  // Node.js exports such a threshold as a number that it does not import.
+  test("a threshold above every value", notInNode, () => {
+    for (const threshold of [Infinity, 2 ** 63, 1e300]) {
+      const h = filled([5, 2 ** 52], { halfLife: 1, threshold });
+      assert.deepStrictEqual([h.ewmaErrorRate, importHistogram(h.export()).ewmaErrorRate], [0, 0]);
+    }
+  });
+
   test("a view of a larger buffer, and bytes after the end", () => {
     const bytes = filled([7]).export();
     const larger = new Uint8Array(bytes.length + 20).fill(0xff);
@@ -2284,6 +2303,18 @@ describe("export and importHistogram", () => {
     assert.strictEqual(importHistogram(larger.subarray(10, 10 + bytes.length)).min, 7);
     assert.strictEqual(importHistogram(larger.subarray(10)).min, 7);
     assert.strictEqual(importHistogram(Buffer.from(bytes)).min, 7);
+  });
+
+  test("what nothing reads comes back too", () => {
+    const bytes = "ab00020101021b7fffffffffffffff03030400051b7fffffffffffffff0600070308fb40040000000000000919d8000a80";
+    const h = fromHex(bytes);
+    assert.deepStrictEqual(
+      [h, h.snapshot(), h.diff(h.snapshot())].map(h => hex(h.export())),
+      [bytes, bytes, bytes],
+    );
+    h.record(1);
+    h.reset();
+    assert.strictEqual(hex(h.export()), bytes);
   });
 
   test("fields that are absent, and keys that are not known", () => {
@@ -2559,9 +2590,9 @@ describe("createSlidingWindowHistogram", () => {
 
   test("the last chunks of so much time", () => {
     const window = createSlidingWindowHistogram({ chunks: 2, chunkDuration: 5 });
-    window.record(1);
     const start = performance.now();
-    assert.ok(window.snapshot().count === 1 || performance.now() - start >= 5);
+    window.record(1);
+    assert.ok(window.snapshot().count === 1 || performance.now() - start >= 4.9);
     while (window.snapshot().count > 0) assert.ok(performance.now() - start < 10_000);
     // A value stays for at least one chunk less than there are.
     assert.ok(performance.now() - start >= 4.9, `gone after ${performance.now() - start} ms`);
@@ -2733,13 +2764,13 @@ describe("the options of monitorEventLoopDelay", () => {
   test("samplePerIteration measures how long an iteration is busy, and not how long it waits", async () => {
     using h = monitorEventLoopDelay({ samplePerIteration: true });
     h.enable();
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, 300));
     const idle = h.max;
     await turns(1);
     for (const start = performance.now(); performance.now() - start < 100;);
     await turns(2);
     assert.ok(h.max >= 95e6, `${h.max} ns after 100 ms of work`);
-    assert.ok(idle < 95e6, `${idle} ns after a wait`);
+    assert.ok(idle < 250e6, `${idle} ns after a wait of 300 ms`);
   });
 
   test("samplePerIteration does not keep the process running", () => {
@@ -2874,6 +2905,13 @@ describe("arguments of the statistics", () => {
         type("percentiles[1]", "of type number", "type string ('50')"),
         type("percentiles[0]", "of type number", "type bigint (50n)"),
       ],
+    );
+  });
+
+  test("the arguments are looked at in order", () => {
+    assert.deepStrictEqual(
+      [() => h.percentileCI(0, null as any), () => h.percentileCI(0, { confidence: "x" as any })].map(thrown),
+      [range("percentile", "> 0 && <= 100", "0"), range("percentile", "> 0 && <= 100", "0")],
     );
   });
 

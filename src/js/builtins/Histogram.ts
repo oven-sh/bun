@@ -1,8 +1,6 @@
-type Histogram = $Bindgen.Histogram;
-
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/histogram.js#L77
 $overriddenName = "[nodejs.util.inspect.custom]";
-export function inspectCustom(this: Histogram, depth: number, options) {
+export function inspectCustom(this: $Bindgen.Histogram, depth: number, options) {
   // What inherits from a histogram: `Object.create(histogram)`, or a prototype, which `console.log()` calls this for.
   if (!$bindgen("histogram.bind.ts", "isHistogram")(this)) return this;
   // Node returns `this`, which is then printed like this because it has own properties.
@@ -26,11 +24,11 @@ export function inspectCustom(this: Histogram, depth: number, options) {
 
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/histogram.js#L589
 $overriddenName = "percentilesAt";
-export function percentilesAt(this: Histogram, percentiles: number[]) {
+export function percentilesAt(this: $Bindgen.Histogram, percentiles: number[]) {
   if (!$bindgen("histogram.bind.ts", "isHistogram")(this)) throw $ERR_INVALID_THIS("Histogram");
   const { validateArray, validateNumber } = require("internal/validators");
   validateArray(percentiles, "percentiles");
-  const copy = $newArrayWithSize<number>(percentiles.length);
+  const copy: number[] = [];
   for (let i = 0; i < percentiles.length; i++) {
     const percentile = percentiles[i];
     validateNumber(percentile, `percentiles[${i}]`);
@@ -42,9 +40,18 @@ export function percentilesAt(this: Histogram, percentiles: number[]) {
   return $bindgen("histogram.bind.ts", "percentilesAt")(this, copy);
 }
 
+// The range of `percentile` is checked before `options` is looked at.
+$overriddenName = "percentileCI";
+export function percentileCI(this: $Bindgen.Histogram, percentile: number) {
+  if (!$bindgen("histogram.bind.ts", "isHistogram")(this)) throw $ERR_INVALID_THIS("Histogram");
+  require("internal/validators").validateNumber(percentile, "percentile");
+  if (!(percentile > 0 && percentile <= 100)) throw $ERR_OUT_OF_RANGE("percentile", "> 0 && <= 100", percentile);
+  return $bindgen("histogram.bind.ts", "percentileCI")(this, percentile, $argument(1));
+}
+
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/histogram.js#L630
 $overriddenName = "qrde";
-export function qrde(this: Histogram) {
+export function qrde(this: $Bindgen.Histogram) {
   let options: { bins?: number; probabilities?: number[]; dequantize?: string; cache?: boolean } = $argument(0);
   if (!$bindgen("histogram.bind.ts", "isHistogram")(this)) throw $ERR_INVALID_THIS("Histogram");
   const {
@@ -93,9 +100,12 @@ export function qrde(this: Histogram) {
     }
   }
 
-  const modes = ["none", "hdr", "all"];
-  validateOneOf(dequantize, "options.dequantize", modes);
+  validateOneOf(dequantize, "options.dequantize", ["none", "hdr", "all"]);
   // In Node.js it keeps the list of the slots in use. Here the counts are sparse, and making that list costs little.
   validateBoolean(cache, "options.cache");
-  return $bindgen("histogram.bind.ts", "qrde")(this, boundaries, modes.indexOf(dequantize));
+  return $bindgen("histogram.bind.ts", "qrde")(
+    this,
+    boundaries,
+    dequantize === "none" ? 0 : dequantize === "hdr" ? 1 : 2,
+  );
 }

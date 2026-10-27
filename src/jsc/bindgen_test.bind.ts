@@ -343,6 +343,17 @@ export const TestReadOnly = b.class({
   },
 });
 
+/** `invalidThis: "node"`. */
+export const TestNodeThis = b.class({
+  rustPath: "crate::bindgen_test::TestNodeThis",
+  invalidThis: "node",
+  construct: {},
+  proto: {
+    answer: { returns: b.i32 },
+    value: { getter: b.i32 },
+  },
+});
+
 /** `calledFromCpp` and `calledFromRust`. `BindgenTest.cpp` has the C++. */
 export const TestMemberFunctions = b.class({
   rustPath: "crate::bindgen_test::TestMemberFunctions",
@@ -501,6 +512,11 @@ export const TestNodeOptions = b.dictionary(
   { reportedAs: "options" },
 );
 export const TestBareOptions = b.dictionary({ size: b.u32.validateInteger(1, 10).optional }, { reportedAs: "" });
+export const TestValidatedOptions = b.dictionary(
+  { size: b.u32.optional },
+  { reportedAs: "options", validateObject: true },
+);
+export const validatedOptionsSize = b.fn({ args: { options: TestValidatedOptions }, returns: b.u32.optional });
 export const nodeOptionsSize = b.fn({ args: { options: TestNodeOptions }, returns: b.u32.optional });
 export const bareOptionsSize = b.fn({ args: { options: TestBareOptions }, returns: b.u32.optional });
 

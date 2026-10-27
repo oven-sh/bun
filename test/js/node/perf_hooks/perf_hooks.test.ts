@@ -253,7 +253,7 @@ test("timerify is exposed on both performance and as a top-level export (Node v2
 
 // Captured from the real node v26.3.0 binary:
 // `node -p "Object.keys(require('perf_hooks')).sort()"`.
-test("export surface matches Node v26.3.0", () => {
+test("export surface matches Node v26.12.1", () => {
   const nodeExports = [
     "Performance",
     "PerformanceEntry",
@@ -264,7 +264,9 @@ test("export surface matches Node v26.3.0", () => {
     "PerformanceResourceTiming",
     "constants",
     "createHistogram",
+    "createSlidingWindowHistogram",
     "eventLoopUtilization",
+    "importHistogram",
     "monitorEventLoopDelay",
     "performance",
     "timerify",

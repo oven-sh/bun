@@ -390,6 +390,15 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", forBind: true, prototypeBase: "Error" })).toThrow(
     "forBind has no prototypeBase: the prototype inherits from Function.prototype",
   );
+  for (const options of [
+    { forBind: true },
+    { proto: { x: { getter: b.i32, setter: true } } },
+    { proto: { x: { getter: b.i32, cache: true, writable: true } } },
+    { internalFields: ["x"], proto: { x: { internalField: "x" } } },
+  ] as const)
+    expect(() => b.class({ rustPath: "T", invalidThis: "node", ...options })).toThrow(
+      'invalidThis: "node" is for a class without forBind, setters and accessors of internal fields',
+    );
   expect(() => b.class({ rustPath: "T", forBind: true, proto: { x: { getter: b.i32, setter: true } } })).toThrow(
     "forBind: a member is a function or a getter without a setter",
   );
@@ -1084,6 +1093,27 @@ describe("the members of a dictionary", () => {
     expect(() => bindgen.bareOptionsSize({ size: null })).toThrow(
       `The "size" argument must be of type number. Received null`,
     );
+  });
+
+  it("validateObject refuses what Node's validateObject() refuses, as it does", () => {
+    expect(bindgen.validatedOptionsSize({ size: 3 })).toBe(3);
+    expect(bindgen.validatedOptionsSize(new (class Options {})())).toBe(undefined);
+    for (const [value, received] of [
+      [undefined, "undefined"],
+      [null, "null"],
+      [1, "type number (1)"],
+      [[], "an instance of Array"],
+      [function size() {}, "function size"],
+    ] as const) {
+      expect(() => bindgen.validatedOptionsSize(value)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "options" argument must be of type object. Received ${received}`,
+        }),
+      );
+    }
+    expect(bindgen.nodeOptionsSize(Object.assign(() => {}, { size: 3 }))).toBe(3);
   });
 });
 
@@ -2612,6 +2642,33 @@ describe("classes", () => {
         configurable: true,
       });
       expect(Object.getOwnPropertyDescriptor(TestCounter.prototype, "increment")!.writable).toBe(true);
+    });
+
+    it('invalidThis: "node" throws the ERR_INVALID_THIS of Node, from a getter too', () => {
+      const { TestNodeThis } = bindgen;
+      const { answer } = TestNodeThis.prototype;
+      const value = Object.getOwnPropertyDescriptor(TestNodeThis.prototype, "value")!.get!;
+      const object = new TestNodeThis();
+      expect([object.answer(), object.value, value.call(object)]).toEqual([42, 42, 42]);
+      for (const receiver of [
+        undefined,
+        null,
+        1,
+        {},
+        TestNodeThis.prototype,
+        Object.create(object),
+        new TestCounter(),
+      ]) {
+        for (const fn of [answer, value]) {
+          expect(() => fn.call(receiver)).toThrow(
+            expect.objectContaining({
+              name: "TypeError",
+              code: "ERR_INVALID_THIS",
+              message: 'Value of "this" must be of type TestNodeThis',
+            }),
+          );
+        }
+      }
     });
 
     it("a constant is a read-only number of the prototype", () => {

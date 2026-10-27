@@ -160,16 +160,10 @@ impl Histogram {
     /// Node.js: the minimum and the maximum are the values as they were recorded. Here they are the edges of their slots,
     /// which is what both report after an import.
     pub fn export(&self) -> Vec<u8> {
-        let in_use = || {
-            let counts = self
-                .existing_chunks()
-                .flat_map(|(index, chunk)| chunk.iter().zip(index..));
-            counts.filter(|&(&n, _)| n != 0)
-        };
         let has_ewma = self.ewma.alpha > 0.0;
         let offset = self.normalizing_index_offset;
         // The first slot is that of 0, which HdrHistogram does not take for a minimum.
-        let min = in_use().find(|&(_, index)| index != 0);
+        let min = self.counts().find(|&(index, _)| index != 0);
 
         let mut out = Writer(Vec::new());
         out.head(major::MAP, if has_ewma { 12 } else { 11 });
@@ -180,19 +174,19 @@ impl Histogram {
         out.uint(key::TOTAL_COUNT, self.count);
         out.uint(
             key::MIN,
-            min.map_or(EMPTY_MIN, |(_, index)| self.slot(index).lowest),
+            min.map_or(EMPTY_MIN, |(index, _)| self.slot(index).lowest),
         );
         out.uint(key::MAX, self.max());
         out.uint(key::NORMALIZING_INDEX_OFFSET, offset as u64);
-        out.float(key::CONVERSION_RATIO, 1.0);
+        out.float(key::CONVERSION_RATIO, self.conversion_ratio);
         out.uint(key::COUNTS_LEN, self.slot_count() as u64);
         out.head(major::UINT, key::COUNTS);
-        out.head(major::ARRAY, in_use().count() as u64 * 2);
+        out.head(major::ARRAY, self.counts().count() as u64 * 2);
         let mut previous = 0;
-        let not_wrapped = in_use().filter(|&(_, index)| index >= offset);
-        let wrapped = in_use().filter(|&(_, index)| index < offset);
-        let wrapped = wrapped.map(|(n, index)| (n, index + self.slot_count()));
-        for (&n, index) in not_wrapped.chain(wrapped) {
+        let not_wrapped = self.counts().filter(|&(index, _)| index >= offset);
+        let wrapped = self.counts().filter(|&(index, _)| index < offset);
+        let wrapped = wrapped.map(|(index, n)| (index + self.slot_count(), n));
+        for (index, n) in not_wrapped.chain(wrapped) {
             let index = index - offset;
             out.uint((index - previous) as u64, n);
             previous = index;
@@ -221,6 +215,7 @@ impl Histogram {
         let mut total_count = None;
         let mut counts_len = 0;
         let mut offset = 0;
+        let mut conversion_ratio = 1.0;
         let mut counts = Vec::new();
         let mut ewma = Ewma::default();
         let (mut seen, mut seen_of_ewma) = (0, 0);
@@ -249,7 +244,7 @@ impl Histogram {
                 key::TOTAL_COUNT => total_count = Some(reader.uint(MAX_I64)?),
                 key::MIN | key::MAX => _ = reader.uint(MAX_I64)?,
                 key::NORMALIZING_INDEX_OFFSET => offset = reader.uint(MAX_I32)?,
-                key::CONVERSION_RATIO => _ = reader.number()?,
+                key::CONVERSION_RATIO => conversion_ratio = reader.number()?,
                 key::COUNTS_LEN => counts_len = reader.uint(MAX_I32)?,
                 key::COUNTS => {
                     let len = reader.len_of(major::ARRAY)?;
@@ -312,6 +307,7 @@ impl Histogram {
             }
         }
         histogram.normalizing_index_offset = offset as usize;
+        histogram.conversion_ratio = conversion_ratio;
         if total_count.is_some_and(|total_count| total_count != histogram.count) {
             return None;
         }

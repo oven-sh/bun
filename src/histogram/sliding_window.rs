@@ -17,6 +17,8 @@ pub struct SlidingWindow {
     /// Each with which part it has the values of, counting from the start. That is checked before it is read, so a part
     /// that is out of date needs no reset.
     parts: Vec<Option<(u64, Histogram)>>,
+    /// The sum of [`Histogram::memory_size`] over `parts`.
+    size_of_parts: usize,
     rotation: Rotation,
     /// When the first part started.
     origin_ns: u64,
@@ -31,6 +33,7 @@ impl SlidingWindow {
         Self {
             empty,
             parts: vec![None; parts],
+            size_of_parts: 0,
             rotation,
             origin_ns: now_ns,
             current_part: 0,
@@ -60,6 +63,11 @@ impl SlidingWindow {
         let Some(slot) = self.parts.get_mut(index) else {
             return;
         };
+        let size = |slot: &Option<(u64, Histogram)>| {
+            slot.as_ref()
+                .map_or(0, |(_, histogram)| histogram.memory_size())
+        };
+        let before = size(slot);
         match slot {
             Some((of, histogram)) if *of == part => _ = histogram.record(value),
             _ => {
@@ -68,6 +76,7 @@ impl SlidingWindow {
                 *slot = Some((part, histogram));
             }
         }
+        self.size_of_parts = self.size_of_parts + size(slot) - before;
     }
 
     /// Everything in the window.
@@ -87,6 +96,7 @@ impl SlidingWindow {
 
     pub fn reset(&mut self, now_ns: u64) {
         self.parts.fill(None);
+        self.size_of_parts = 0;
         self.origin_ns = now_ns;
         self.current_part = 0;
         self.records_in_current_part = 0;
@@ -94,13 +104,8 @@ impl SlidingWindow {
 
     /// The bytes this window occupies. Recording a value can change it.
     pub fn memory_size(&self) -> usize {
-        let parts = self
-            .parts
-            .iter()
-            .flatten()
-            .map(|(_, histogram)| histogram.memory_size());
         size_of::<Self>()
             + self.parts.capacity() * size_of::<Option<(u64, Histogram)>>()
-            + parts.sum::<usize>()
+            + self.size_of_parts
     }
 }

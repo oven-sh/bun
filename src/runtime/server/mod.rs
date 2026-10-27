@@ -114,7 +114,7 @@ macro_rules! for_each_mux_app {
 // route setup, …) split out to keep this module declaration file readable.
 
 #[path = "server_body.rs"]
-mod server_body;
+pub(crate) mod server_body;
 pub(crate) use server_body::{GetOrStartLoadResult, ServePluginsCallback};
 
 // ─── write_status ────────────────────────────────────────────────────────────
@@ -1491,14 +1491,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 &mut strong_promise,
                                 jsc::StrongOptional::empty(),
                             ));
-                            // `#[host_fn(export = …)]` emits its
-                            // C-ABI shim as `__jsc_host_<fn>`; the export name
-                            // is link-only.
                             result.then2(
                                 global,
                                 strong_self,
-                                node_http_response::__jsc_host_node_http_request_on_resolve,
-                                node_http_response::__jsc_host_node_http_request_on_reject,
+                                crate::generated_bindgen::node_http_response::Bun__NodeHTTPRequest__onResolve,
+                                crate::generated_bindgen::node_http_response::Bun__NodeHTTPRequest__onReject,
                             );
                             is_async = true;
                         }
@@ -4149,10 +4146,6 @@ impl AnyServer {
     pub(crate) fn set_max_headers_count(&self, max_headers_count: u32) {
         any_server_dispatch!(self, |s| s.set_max_headers_count(max_headers_count))
     }
-
-    pub(crate) fn get_all_closed_promise(&self, global: &JSGlobalObject) -> JSValue {
-        any_server_dispatch!(self, |s| s.get_all_closed_promise(global))
-    }
 }
 
 // ─── http_server_agent ───────────────────────────────────────────────────────
@@ -4163,7 +4156,7 @@ impl AnyServer {
 pub(crate) mod http_server_agent {
     use super::{AnyRoute, AnyServer, AnyServerTag};
 
-    use bun_core::String as BunString;
+    use bun_core::StringView;
     use bun_jsc::debugger::DebuggerId;
     use bun_jsc::http_server_agent::{HTTPServerAgent, InspectorHTTPServerAgent, Route, RouteType};
 
@@ -4211,7 +4204,7 @@ pub(crate) mod http_server_agent {
             return Ok(());
         };
         let config = server.config();
-        let mut routes: Vec<Route> = Vec::new();
+        let mut routes: Vec<Route<'_>> = Vec::new();
         let mut max_id: u32 = 0;
 
         // Monomorphized over the four `UserRoute<SSL,DEBUG>` slice types.
@@ -4224,7 +4217,7 @@ pub(crate) mod http_server_agent {
                 max_id = max_id.max(user_route.id);
                 routes.push(Route {
                     route_id: user_route.id as i32,
-                    path: BunString::from_bytes(user_route.route.path.as_bytes()),
+                    path: StringView::from_bytes(user_route.route.path.as_bytes()),
                     r#type: RouteType::Api,
                     ..Default::default()
                 });
@@ -4235,15 +4228,15 @@ pub(crate) mod http_server_agent {
             max_id += 1;
             routes.push(Route {
                 route_id: max_id as i32,
-                path: BunString::from_bytes(&entry.path),
+                path: StringView::from_bytes(&entry.path),
                 r#type: match &entry.route {
                     AnyRoute::Html(_) => RouteType::Html,
                     AnyRoute::Static(_) => RouteType::Static,
                     _ => RouteType::Default,
                 },
                 file_path: match &entry.route {
-                    AnyRoute::Html(r) => BunString::from_bytes(&r.bundle.path),
-                    _ => BunString::EMPTY,
+                    AnyRoute::Html(r) => StringView::from_bytes(&r.bundle.path),
+                    _ => StringView::EMPTY,
                 },
                 ..Default::default()
             });
@@ -4255,7 +4248,6 @@ pub(crate) mod http_server_agent {
             server.vm().hot_reload_counter as i32,
             &mut routes,
         );
-        // `Vec<Route>` drops → each `Route` drops (derefs path/file_path/etc.).
         Ok(())
     }
 }

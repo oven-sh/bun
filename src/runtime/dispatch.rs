@@ -19,12 +19,6 @@
 //!   3. a `run_task` arm and a `release_task_unrun` arm here;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
-// Flat re-export landing pad for `generated_js2native.rs` thunks. Kept in a
-// sibling file so this hot-path module stays focused on the task/timer/poll
-// match loops.
-#[path = "dispatch_js2native.rs"]
-pub(crate) mod js2native;
-
 use bun_event_loop::{Task, task_tag};
 
 // `FilePoll::on_update` dispatch is POSIX-only (the symbol is declared

@@ -107,6 +107,203 @@ describe("Bun.Transpiler", () => {
     }).toThrow("Unexpected hi");
   });
 
+  // The constructor parses `tsconfig`, `macro` and `define` values as JSON and frees each tree
+  // before it returns. The two tests below read what it reports and keeps from those trees.
+  it("the constructor reports `tsconfig` and `macro` diagnostics with their positions in the option text", () => {
+    let error;
+    try {
+      new Bun.Transpiler({
+        logLevel: "warn",
+        macro: '{\n  "./rel\\"ative\\\\x": { "a": "b" },\n  "pkg": 1\n}',
+        tsconfig: '{"compilerOptions": {',
+      });
+    } catch (e) {
+      error = e;
+    }
+    expect(error?.errors?.map(({ level, message, position }) => ({ level, message, position }))).toEqual([
+      {
+        level: "error",
+        message: 'Expected "}" but found end of file',
+        position: {
+          lineText: '{"compilerOptions": {',
+          file: "tsconfig.json",
+          namespace: "file",
+          line: 1,
+          column: 21,
+          length: 0,
+          offset: 21,
+        },
+      },
+      {
+        level: "warn",
+        message: '"./rel"ative\\x" is not a package path. "macros" remaps package paths to macros. Skipping.',
+        position: {
+          lineText: '  "./rel\\"ative\\\\x": { "a": "b" },',
+          file: "macros.json",
+          namespace: "file",
+          line: 2,
+          column: 3,
+          length: 17,
+          offset: 4,
+        },
+      },
+      {
+        level: "warn",
+        message:
+          'Invalid macro remapping in "pkg": expected object where the keys are import names and the value is a string path to replace',
+        position: {
+          lineText: '  "pkg": 1',
+          file: "macros.json",
+          namespace: "file",
+          line: 3,
+          column: 10,
+          length: 0,
+          offset: 46,
+        },
+      },
+    ]);
+  });
+
+  it("`macro` and `tsconfig` apply after the constructor returns, also when a macro calls the constructor", async () => {
+    using dir = tempDir("transpiler-constructor-json-options", {
+      "inner-macro.ts": `export function inner() { return "inner-value"; }`,
+      "construct.ts": `
+        import { join } from "node:path";
+        export function construct(expandMacro) {
+          const innerPath = join(import.meta.dir, "inner-macro.ts");
+          const transpiler = new Bun.Transpiler({
+            loader: "tsx",
+            macro: {
+              remapped: { inner: innerPath },
+              // JSON.stringify escapes the backslash, so the parser decodes this path into a new string.
+              escaped: { name: "./macro\\\\path.ts" },
+            },
+            tsconfig: { compilerOptions: { jsx: "react", jsxFactory: "h" } },
+          });
+          Bun.gc(true);
+          const unused =
+            'import { inner } from "remapped";\\nimport { name } from "escaped";\\nexport const el = <div />;\\n';
+          const called = 'import { inner } from "remapped";\\nexport const v = inner();\\n';
+          return {
+            imports: transpiler.scan(unused).imports.map(({ path }) => (path === innerPath ? "<inner-macro.ts>" : path)),
+            code: transpiler.transformSync(unused),
+            expanded: expandMacro ? transpiler.transformSync(called) : null,
+          };
+        }
+      `,
+      "construct-macro.ts": `
+        import { construct } from "./construct.ts";
+        export function constructInMacro() {
+          return construct(false);
+        }
+      `,
+      "index.ts": `
+        import { construct } from "./construct.ts";
+        import { constructInMacro } from "./construct-macro.ts" with { type: "macro" };
+        const before = [1, 2, 3].map(n => n * 2);
+        const inMacro = constructInMacro();
+        const after = ["a", "b"].join("-");
+        console.log(JSON.stringify({ direct: construct(true), before, inMacro, after }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const constructed = {
+      imports: ["remapped", "<inner-macro.ts>", "escaped", "./macro\\path.ts"],
+      code: 'export const el = h("div", null);\n',
+    };
+    // Debug builds log each macro call to stdout first.
+    expect({ result: stdout.trim().split("\n").at(-1), stderr, exitCode }).toEqual({
+      result: JSON.stringify({
+        direct: { ...constructed, expanded: 'export const v = "inner-value";\n' },
+        before: [2, 4, 6],
+        inMacro: { ...constructed, expanded: null },
+        after: "a-b",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  describe.concurrent("after GC, new Bun.Transpiler() keeps nothing from the JSON it parsed for", () => {
+    // mimalloc keeps some blocks of the last destroyed heaps. The warm-up brings that count to its steady value.
+    const warmup = 60;
+    const calls = 100;
+    // Prints the bytes of live mimalloc blocks that each constructor call leaves behind.
+    const fixture = `
+      const { heapStats } = require("bun:jsc");
+      function liveBytes() {
+        let bytes = 0;
+        for (const heap of heapStats({ dump: true }).mimallocDump.heaps)
+          for (const page of heap.pages) bytes += page.block_size * page.used;
+        return bytes;
+      }
+
+      const macro = {};
+      for (let p = 0; p < 8; p++) {
+        const imports = (macro["package-" + p] = {});
+        // JSON.stringify escapes the backslashes, so the parser decodes each path into a new string.
+        for (let i = 0; i < 4; i++) imports["import" + i] = "macros\\\\package-" + p + "\\\\import" + i + ".ts";
+      }
+      const paths = {};
+      for (let i = 0; i < 128; i++) paths["alias-" + i + "/*"] = ["./src/alias-" + i + "/*"];
+      const define = {};
+      for (let i = 0; i < 32; i++) define["DEFINED_" + i] = JSON.stringify("value-" + i);
+      const options = {
+        "macro object": { macro },
+        "macro text": { macro: JSON.stringify(macro) },
+        "macro and error": { macro, tsconfig: '{"compilerOptions": {' },
+        "tsconfig": { tsconfig: { compilerOptions: { baseUrl: ".", paths } } },
+        "define": { define },
+      }[process.argv[1]];
+
+      let threw = 0;
+      function construct(count) {
+        for (let i = 1; i <= count; i++) {
+          try {
+            new Bun.Transpiler(options);
+          } catch {
+            threw++;
+          }
+          if (i % 20 === 0) Bun.gc(true);
+        }
+      }
+      construct(${warmup});
+      const before = liveBytes();
+      construct(${calls});
+      console.log(JSON.stringify({ keptPerCall: (liveBytes() - before) / ${calls}, threw }));
+    `;
+
+    it.each([
+      { option: "a `macro` object", which: "macro object", throws: false },
+      { option: "`macro` JSON text", which: "macro text", throws: false },
+      { option: "a `macro` object beside a `tsconfig` syntax error", which: "macro and error", throws: true },
+      // The trees of the next two cases are only nodes in the AST store. An ASAN build takes the blocks
+      // of that store from the system allocator, so there these cases pass with and without the fix.
+      { option: "a `tsconfig` object", which: "tsconfig", throws: false },
+      { option: "`define` values", which: "define", throws: false },
+    ])("$option", async ({ which, throws }) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture, which],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { keptPerCall, threw } = JSON.parse(stdout);
+      expect(threw).toBe(throws ? warmup + calls : 0);
+      // A tree that is not freed keeps 3 KB to 10 KB per call. A freed tree measures under 150 bytes.
+      expect(keptPerCall).toBeLessThan(1024);
+    });
+  });
+
   it("normalizes \\r\\n", () => {
     ts.expectPrinted_("console.log(`\r\n\r\n\r\n`)", "console.log(`\n\n\n`);\n");
   });

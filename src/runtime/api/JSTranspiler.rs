@@ -328,13 +328,13 @@ impl Config {
                 self.macros_buf = out.to_owned_slice().into();
                 let source =
                     bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
-                // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
-                let vm = VirtualMachine::get().as_mut();
-                let Ok(Some(json)) = vm.transpiler.resolver.caches.json.parse_json(
-                    &mut self.log,
-                    &source,
-                    bun_resolver::tsconfig_json::JsonMode::Json,
-                ) else {
+                // `parse_macros_json` copies what it keeps, so the tree dies with this block. Its
+                // lists and decoded strings are outside the AST store, so they need this owner.
+                let scratch = Arena::new();
+                let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&scratch);
+                let _ast_scope = ast_memory_allocator.enter();
+                let Ok(json) = bun_parsers::json::parse_utf8(&source, &mut self.log, &scratch)
+                else {
                     break 'macros;
                 };
                 self.macro_map = PackageJSON::parse_macros_json(json, &mut self.log, &source);
@@ -897,6 +897,9 @@ impl JSTranspiler {
         config_arg: Option<&TranspilerOptions<'_>>,
     ) -> JsResult<*mut JSTranspiler> {
         let global = cx.global();
+        // The `tsconfig` and `define` parses below leave dead nodes in the thread-local AST store.
+        // Only a module parse on this thread would reset it.
+        let _store_reset = bun_ast::StoreResetGuard::new();
         // NOTE: a non-POD field cannot be left uninitialized in a live Box
         // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
         // stack first, then move both into the Box. Nothing observes the

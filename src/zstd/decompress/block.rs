@@ -1117,6 +1117,8 @@ fn copy_16(buf: &mut [u8], src: usize, dst: usize) -> bool {
 
 /// `buf[dst + i] = buf[src + i]`, one after the other, so that a match repeats itself where it overlaps its copy.
 /// `src` is less than `dst`.
+#[cold]
+#[inline(never)]
 fn copy_match_exact(buf: &mut [u8], src: usize, dst: usize, len: usize) -> Result<()> {
     let offset = dst - src;
     if offset >= len {
@@ -1488,8 +1490,7 @@ impl<'a> Executor<'_, 'a> {
             if o_match_end + WILDCOPY_OVERLENGTH > buf.len()
                 || lit_end + WILDCOPY_OVERLENGTH > lits.len()
                 || lit_length > 32
-                || match_length > 64
-                || EXT == NO_EXT && offset_value as usize > o_lit_end + 3
+                || (EXT == NO_EXT || match_length > 64) && offset_value as usize > o_lit_end + 3
             {
                 break;
             }
@@ -1537,14 +1538,16 @@ impl<'a> Executor<'_, 'a> {
             }
             to.copy_from_slice(from);
             let match_pos = match_end - offset_value as usize;
-            if !copy_16(buf, match_pos, o_lit_end) || !copy_16(buf, match_pos + 16, o_lit_end + 16)
-            {
-                break;
-            }
-            if match_length > 32
-                && (!copy_16(buf, match_pos + 32, o_lit_end + 32)
-                    || !copy_16(buf, match_pos + 48, o_lit_end + 48))
-            {
+            let is_copied = if match_length > 64 {
+                copy_match_exact(buf, match_pos, o_lit_end, match_length).is_ok()
+            } else {
+                copy_16(buf, match_pos, o_lit_end)
+                    && copy_16(buf, match_pos + 16, o_lit_end + 16)
+                    && (match_length <= 32
+                        || copy_16(buf, match_pos + 32, o_lit_end + 32)
+                            && copy_16(buf, match_pos + 48, o_lit_end + 48))
+            };
+            if !is_copied {
                 break;
             }
 
@@ -1569,11 +1572,7 @@ impl<'a> Executor<'_, 'a> {
             if (1..=3).contains(&offset_value) {
                 offset_value = resolve_offset(sequences, index);
             }
-            if index != first
-                && raw.lit_length <= 32
-                && raw.match_length <= 64 - MINMATCH
-                && offset_value >= 16 + 3
-            {
+            if index != first && raw.lit_length <= 32 && offset_value >= 16 + 3 {
                 break;
             }
             exec.exec_sequence::<false>(Sequence {

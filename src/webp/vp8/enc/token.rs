@@ -1,9 +1,11 @@
 //! `token_enc.c`: the bits of the coefficients, kept until the probabilities to code them with are known.
 
+use core::mem::replace;
+
 use super::bit_writer::BitWriter;
 use super::dsp::{Coeffs, num_levels_block};
 use crate::Result;
-use crate::util::{Checked, SliceExt};
+use crate::util::{Checked, SliceExt, try_with_capacity};
 use crate::vp8::common::{NUM_BANDS, NUM_CTX, NUM_PROBAS};
 use crate::vp8::tables::{BANDS, CAT3, CAT4, CAT5, CAT6};
 
@@ -15,9 +17,15 @@ const FIXED_PROBA_BIT: u16 = 1 << 14;
 /// One for "any coefficient?", then for each 6 for its range, 11 for its place in it, the sign, and "is it the last?".
 const MAX_TOKENS_PER_BLOCK: usize = 1 + 16 * (6 + 11 + 1 + 1);
 
-#[derive(Default)]
+/// The least number of tokens in a page.
+const MIN_PAGE_SIZE: usize = 8192;
+
+/// `VP8TBuffer`: pages rather than one vector, which would hold up to twice the memory when it grows.
 pub(super) struct TokenBuffer {
-    tokens: Vec<Token>,
+    /// The pages that have too little room left for a block.
+    full_pages: Vec<Vec<Token>>,
+    /// The page that the next block goes to.
+    page: Vec<Token>,
 }
 
 /// `TOKEN_ID`: the index of the first probability of a type, band and context.
@@ -67,20 +75,32 @@ impl BlockTokens<'_> {
 }
 
 impl TokenBuffer {
+    pub(super) fn new(page_size: usize) -> Result<Self> {
+        Ok(Self {
+            full_pages: Vec::new(),
+            page: try_with_capacity(page_size.max(MIN_PAGE_SIZE))?,
+        })
+    }
+
     pub(super) fn clear(&mut self) {
-        self.tokens.clear();
+        self.full_pages.clear();
+        self.page.clear();
     }
 
     pub(super) fn len(&self) -> usize {
-        self.tokens.len()
+        self.full_pages.iter().map(Vec::len).sum::<usize>() + self.page.len()
     }
 
-    /// Makes room for the tokens of `blocks` more blocks.
-    pub(super) fn reserve(&mut self, blocks: usize) -> Result<()> {
-        Ok(self.tokens.try_reserve(blocks * MAX_TOKENS_PER_BLOCK)?)
+    #[cold]
+    #[inline(never)]
+    fn new_page(&mut self) -> Result<()> {
+        self.full_pages.try_reserve(1)?;
+        let page = try_with_capacity(self.page.capacity())?;
+        self.full_pages.push(replace(&mut self.page, page));
+        Ok(())
     }
 
-    /// Records the levels of a block from `first` on, for which `reserve` made room. Returns whether there are any.
+    /// Records the levels of a block from `first` on. Returns whether there are any.
     pub(super) fn record_coeff_tokens(
         &mut self,
         coeff_type: usize,
@@ -88,10 +108,13 @@ impl TokenBuffer {
         ctx: u8,
         levels: &Coeffs,
         stats: &mut [u32],
-    ) -> Checked<bool> {
+    ) -> Result<bool> {
+        if self.page.capacity() - self.page.len() < MAX_TOKENS_PER_BLOCK {
+            self.new_page()?;
+        }
         // `first` is 0 or 1, which are their own bands.
         let mut t = BlockTokens {
-            tokens: &mut self.tokens,
+            tokens: &mut self.page,
             stats,
             base_id: base_id(coeff_type, first, usize::from(ctx)),
         };
@@ -157,17 +180,26 @@ impl TokenBuffer {
         Ok(true)
     }
 
-    /// Codes the tokens, with `probas` for those that have an index.
-    pub(super) fn emit_tokens(&self, bw: &mut BitWriter, probas: &[u8]) -> Checked {
-        for &token in &self.tokens {
-            let bit = token >> 15 != 0;
-            let proba = if token & FIXED_PROBA_BIT != 0 {
-                token as u8
-            } else {
-                probas.at(usize::from(token & 0x3fff))?
-            };
-            bw.put_bit(bit, proba);
+    /// Codes the tokens, with `probas` for those that have an index, and frees each page once it is coded.
+    pub(super) fn emit_tokens(self, bw: &mut BitWriter, probas: &[u8]) -> Checked {
+        for page in self.full_pages.into_iter().chain([self.page]) {
+            emit_page(&page, bw, probas)?;
         }
         Ok(())
     }
+}
+
+/// Out of line: within the loop over the pages, this loop compiles to more instructions per token.
+#[inline(never)]
+fn emit_page(page: &[Token], bw: &mut BitWriter, probas: &[u8]) -> Checked {
+    for &token in page {
+        let bit = token >> 15 != 0;
+        let proba = if token & FIXED_PROBA_BIT != 0 {
+            token as u8
+        } else {
+            probas.at(usize::from(token & 0x3fff))?
+        };
+        bw.put_bit(bit, proba);
+    }
+    Ok(())
 }

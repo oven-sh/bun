@@ -96,7 +96,6 @@ fn record_tokens(
     tokens: &mut TokenBuffer,
 ) -> Result<()> {
     let stats = flatten_mut(&mut proba.stats);
-    tokens.reserve(1 + 16 + 8)?;
     it.nz_to_bytes()?;
     let (first, coeff_type) = if rd.is_i16 {
         let ctx = it.top_nz[8] + it.left_nz[8];
@@ -149,7 +148,10 @@ pub(super) fn token_loop(enc: &mut Encoder<'_>) -> Result<Vec<u8>> {
     // Refresh the probabilities about eight times.
     let max_count = ((enc.mb_w * enc.mb_h) >> 3).max(MIN_COUNT);
     let mut it = EncIterator::new(enc)?;
-    let mut tokens = TokenBuffer::default();
+    // A page holds 4 to 24 tokens a macroblock: the lower the quality, the fewer the tokens.
+    let scale = 1.0 + enc.quality * 5.0 / 100.0;
+    let page_size = ((enc.mb_w * enc.mb_h * 4) as f32 * scale) as usize;
+    let mut tokens = TokenBuffer::new(page_size)?;
 
     loop {
         let mut size_p0 = 0u64;

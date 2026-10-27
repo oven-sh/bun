@@ -447,7 +447,7 @@ describe("bytecode cache portability", () => {
       {
         "builtin corpus": {
           "bytes": 5120,
-          "sha256": "592a2ec0c42958a8796f2d1b9c53afa2a85cc832f2d737b58b5bf3d8b5d6bc34",
+          "sha256": "ea7e5025c3a46cef7c11970fd82eed71eb21b0469c62969716ee431c4cf4b734",
         },
         "builtin corpus strings": {
           "bytes": 1044,
@@ -506,7 +506,7 @@ describe("bytecode cache portability", () => {
           "js": "e85fcb6a885833a8e7cc0055a395772e1bf75a675cf6a728eaf381b80f0cab35",
           "jsc": {
             "bytes": 2218792,
-            "sha256": "418ff72dc4766f39e39f97567690516afc9c3fe9b13d66d04b29d837d0384438",
+            "sha256": "1858a737c5f06bbdd4ab06fbef0516703c76f84632170bf1b8548697401a180d",
           },
         },
         "bun build --bytecode immutable/dist/immutable.es.js": {
@@ -520,7 +520,7 @@ describe("bytecode cache portability", () => {
           "js": "899572e5e132d677c0507a4792f1b932e5c0d8873aa4000ea2fcd64d45d1856a",
           "jsc": {
             "bytes": 21177888,
-            "sha256": "9a86ac8b76cf37ef3f5912a521d7ac598ba8a56bd613af34c10d260a1f0271f1",
+            "sha256": "570a919774947e9949caaa63121f2e6c5974f0db89972a152215ac5fd3a64f3d",
           },
         },
         "bun build --bytecode lodash/lodash.js": {
@@ -562,7 +562,7 @@ describe("bytecode cache portability", () => {
           "js": "e1c4f1494711ecaae57a6d63dfb8ac6096629582f55cc42530ff5a156b70c9de",
           "jsc": {
             "bytes": 852224,
-            "sha256": "6c1d0d0f716eaf468e7f2eeac1ad6e71056f715fb8e5a628c446e768c8491e13",
+            "sha256": "15229e57891bed61d1bd75019489463f312554df2108db792429bd0ec87ed7a3",
           },
         },
         "vm.Script big.js": {
@@ -590,8 +590,8 @@ describe("bytecode cache portability", () => {
           "sha256": "6b01942bf091814c4d2936d578e7c669b42ac0405df2e030b9466b479a9d28ae",
         },
         "vm.Script typescript.js": {
-          "bytes": 11325464,
-          "sha256": "75f120bf0955eed50bdb86ec71a75f28d9b369b384668b12c65f6ff1b9dab3c0",
+          "bytes": 11325480,
+          "sha256": "718ec7c8494edc35afc870ca29550879cdc9d1683d7c04f2bc5db4ab24566a37",
         },
         "vm.SourceTextModule acorn.mjs": {
           "bytes": 255184,

@@ -383,7 +383,7 @@ mod _impl {
         } else {
             let exe_path = bun_core::self_exe_path().ok();
             args_list.push(match exe_path {
-                Some(str_) => BunString::borrow_utf8(str_.as_bytes()),
+                Some(str_) => BunString::clone_utf8(str_.as_bytes()),
                 None => BunString::static_("bun"),
             });
         }
@@ -406,7 +406,7 @@ mod _impl {
             if worker.is_some_and(|w| w.eval_mode()) {
                 args_list.push(BunString::static_("[worker eval]"));
             } else {
-                args_list.push(BunString::borrow_utf8(main));
+                args_list.push(BunString::clone_utf8(main));
             }
         }
 
@@ -419,9 +419,8 @@ mod _impl {
             );
         } else {
             for arg in &vm.argv {
-                let str_ = BunString::borrow_utf8(arg);
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
-                args_list.push(str_);
+                args_list.push(BunString::clone_utf8(arg));
             }
         }
 

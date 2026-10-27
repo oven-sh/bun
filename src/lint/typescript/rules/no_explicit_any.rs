@@ -76,7 +76,7 @@ impl NoExplicitAny {
             return;
         }
         let parent = ty.parent();
-        let report = cx.report(ty, UNEXPECTED_ANY).hint("unknown is the safe choice where the type is not known.");
+        let report = cx.report(ty, UNEXPECTED_ANY).hint("Use unknown if the type isn't known.");
         // oxlint has no suggestions, and doesn't know `PropertyKey`.
         if cx.language().is_oxlint {
             if self.fixes_to_unknown {

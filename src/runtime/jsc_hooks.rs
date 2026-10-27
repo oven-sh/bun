@@ -1875,9 +1875,9 @@ pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> Sw
 fn stop_active_handles(vm: &mut VirtualMachine, reason: bun_jsc::StopReason) -> SweepResult {
     let all = timer_all();
     if !all.is_null() {
-        // SAFETY: single JS thread; `disable` borrows only `event_loop_delay` and
+        // SAFETY: single JS thread; `disable_all` borrows only `event_loop_delay` and
         // reaches the heap through `timer_all()` (disjoint-field access).
-        unsafe { (*all).event_loop_delay.disable() };
+        unsafe { (*all).event_loop_delay.disable_all() };
     }
     vm.stop_context_handles(reason)
 }

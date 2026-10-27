@@ -6285,6 +6285,12 @@ it("lchown succeeds on every platform", async () => {
   }
 });
 
+it("an id beyond 2 ** 32 is printed as in Node.js", () => {
+  expect(() => fs.fchownSync(0, 2 ** 53, 0)).toThrow(
+    RangeError(`The value of "uid" is out of range. It must be >= -1 && <= 4294967295. Received 9_007_199_254_740_992`),
+  );
+});
+
 it("open flags verification", async () => {
   const invalid = 4_294_967_296;
   expect(() => fs.open(__filename, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");

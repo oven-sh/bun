@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createSecretKey, type webcrypto } from "node:crypto";
+import { createSecretKey, getRandomValues as nodeGetRandomValues, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -1448,9 +1448,28 @@ describe("CryptoKey.usages ordering", () => {
   });
 });
 
-// getRandomValues takes integer-typed views only; every other ArrayBufferView-ish
-// argument raises TypeMismatchError rather than being filled.
+// The IDL argument of getRandomValues is an ArrayBufferView. As for every WebIDL operation, a
+// call without it and a value that is not a view are a TypeError. The method's own steps then
+// raise TypeMismatchError for a view that is not an integer typed array.
 describe("crypto.getRandomValues argument types", () => {
+  /** What `call` throws, or `undefined` when it returns. */
+  const thrownBy = (call: () => unknown) => {
+    try {
+      call();
+    } catch (error: any) {
+      return { class: error.constructor.name, code: error.code, message: error.message };
+    }
+  };
+  const notAView = {
+    class: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: 'The "array" argument must be an instance of ArrayBufferView',
+  };
+  const typeMismatch = expect.objectContaining({
+    name: "TypeMismatchError",
+    message: "The data argument must be an integer-type TypedArray",
+  });
+
   const integerViews = [
     ["Int8Array", () => new Int8Array(4)],
     ["Uint8Array", () => new Uint8Array(4)],
@@ -1470,26 +1489,81 @@ describe("crypto.getRandomValues argument types", () => {
     });
   }
 
-  const rejected = [
+  const otherViews = [
     ["Float16Array", () => new Float16Array(4)],
     ["Float32Array", () => new Float32Array(4)],
     ["Float64Array", () => new Float64Array(4)],
     ["DataView", () => new DataView(new ArrayBuffer(4))],
-    ["ArrayBuffer", () => new ArrayBuffer(4)],
-    ["SharedArrayBuffer", () => new SharedArrayBuffer(4)],
-    ["plain object", () => ({})],
   ] as const;
 
-  for (const [name, make] of rejected) {
+  for (const [name, make] of otherViews) {
     it(`rejects ${name} with TypeMismatchError`, () => {
-      expect(() => crypto.getRandomValues(make() as any)).toThrow(
-        expect.objectContaining({
-          name: "TypeMismatchError",
-          message: "The data argument must be an integer-type TypedArray",
-        }),
-      );
+      expect(() => crypto.getRandomValues(make() as any)).toThrow(typeMismatch);
     });
   }
+
+  // Bun deviates from the IDL here on purpose. The argument has no [AllowShared] or
+  // [AllowResizable], so WebIDL and Node.js refuse every view on these buffers with a TypeError.
+  // Bun takes the view: a call that worked keeps working, and a view of another type gets the
+  // same TypeMismatchError as on a plain buffer.
+  const otherBuffers = [
+    ["a SharedArrayBuffer", () => new SharedArrayBuffer(32)],
+    ["a resizable ArrayBuffer", () => new ArrayBuffer(32, { maxByteLength: 64 })],
+  ] as const;
+
+  for (const [name, make] of otherBuffers) {
+    it(`fills a Uint8Array on ${name}`, () => {
+      const view = new Uint8Array(make());
+      expect(crypto.getRandomValues(view)).toBe(view);
+      expect(view.some(byte => byte !== 0)).toBe(true);
+    });
+
+    it(`rejects a Float32Array and a DataView on ${name} with TypeMismatchError`, () => {
+      expect(() => crypto.getRandomValues(new Float32Array(make()))).toThrow(typeMismatch);
+      expect(() => crypto.getRandomValues(new DataView(make()))).toThrow(typeMismatch);
+    });
+  }
+
+  const notViews = [
+    ["undefined", () => undefined],
+    ["null", () => null],
+    ["a string", () => ""],
+    ["a number", () => 1],
+    ["a plain object", () => ({})],
+    ["an array", () => []],
+    ["ArrayBuffer", () => new ArrayBuffer(4)],
+    ["SharedArrayBuffer", () => new SharedArrayBuffer(4)],
+    ["a Proxy of a Uint8Array", () => new Proxy(new Uint8Array(4), {})],
+  ] as const;
+
+  for (const [name, make] of notViews) {
+    it(`rejects ${name} with a TypeError`, () => {
+      expect(thrownBy(() => crypto.getRandomValues(make() as any))).toEqual(notAView);
+    });
+  }
+
+  it("rejects a call without an argument with a TypeError", () => {
+    // @ts-expect-error
+    expect(thrownBy(() => crypto.getRandomValues())).toEqual({
+      class: "TypeError",
+      code: "ERR_MISSING_ARGS",
+      message: 'The "array" argument must be specified',
+    });
+  });
+
+  it("checks `this` before the arguments", () => {
+    // @ts-expect-error
+    expect(thrownBy(() => crypto.getRandomValues.call({}))).toMatchObject({
+      class: "TypeError",
+      code: "ERR_INVALID_THIS",
+    });
+  });
+
+  // It passes its one parameter on, so the argument is never missing.
+  it("node:crypto's getRandomValues() without an argument is a TypeError", () => {
+    // @ts-expect-error
+    expect(thrownBy(() => nodeGetRandomValues())).toEqual(notAView);
+  });
 });
 
 describe("exception scope discipline", () => {

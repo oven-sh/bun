@@ -2,7 +2,7 @@ use bun_core::String as BunString;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSType, JSValue, JsClass as _};
+use bun_jsc::{JSGlobalObject, JSType, JSValue, JsClass as _, JsError};
 
 use crate::generated_bindgen::crypto::{EncodedUUID, UUIDEncodingOrTimestamp, UUIDTimestamp};
 use crate::node::Encoding;
@@ -18,7 +18,7 @@ impl Crypto {
         let global = cx.global();
         // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only
         // integer-typed views. This is an allow-list: DataView, ArrayBuffer and SharedArrayBuffer
-        // all pass `as_array_buffer` but must still raise TypeMismatchError.
+        // all pass `as_array_buffer` but are refused.
         let array_buffer = array.to_js().as_array_buffer(global).filter(|_| {
             matches!(
                 array.to_js().js_type(),
@@ -34,12 +34,7 @@ impl Crypto {
             )
         });
         let Some(mut array_buffer) = array_buffer else {
-            return Err(global
-                .throw_dom_exception(
-                    bun_jsc::DOMExceptionCode::TypeMismatchError,
-                    format_args!("The data argument must be an integer-type TypedArray"),
-                )
-                .into());
+            return Err(throw_not_integer_view(global, array.to_js()).into());
         };
 
         random_data(global, array_buffer.byte_slice_mut());
@@ -68,6 +63,26 @@ impl Crypto {
     ) -> bindgen::Result<'a, bool> {
         timing_safe_equal(heap, buf1, buf2)
     }
+}
+
+/// What is not a view fails the WebIDL conversion to `ArrayBufferView`, a `TypeError`. A view of
+/// another type is the `TypeMismatchError` of the method's own steps. The IDL also refuses a view
+/// on a shared or resizable buffer. Bun takes it as a view on any other buffer: `node:wasi` fills
+/// shared memory through one.
+#[cold]
+fn throw_not_integer_view(global: &JSGlobalObject, value: JSValue) -> JsError {
+    if matches!(
+        value.js_type(),
+        JSType::Float16Array | JSType::Float32Array | JSType::Float64Array | JSType::DataView
+    ) {
+        return global.throw_dom_exception(
+            bun_jsc::DOMExceptionCode::TypeMismatchError,
+            format_args!("The data argument must be an integer-type TypedArray"),
+        );
+    }
+    global.throw_invalid_arguments(format_args!(
+        "The \"array\" argument must be an instance of ArrayBufferView"
+    ))
 }
 
 pub(crate) fn timing_safe_equal<'a>(

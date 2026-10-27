@@ -466,7 +466,7 @@ impl Parser<'_> {
                             let code_beg =
                                 base + beg + ticks + (whole.len() - code_content.len()) / 2;
                             self.at(code_beg, code_beg + code_content.len());
-                            self.emit_code_text(TextType::Code, code_content)?;
+                            self.emit_code_text(code_content)?;
                             self.at(base + end - ticks, base + end);
                             self.leave_span(SpanType::Code)?;
                         }
@@ -743,41 +743,39 @@ impl Parser<'_> {
         text_type: TextType,
         content: &[u8],
     ) -> crate::types::JsResult<()> {
-        // `emit_code_text` hands these on.
-        debug_assert!(!matches!(text_type, TextType::Code | TextType::Latexmath));
+        // `emit_code_text` hands on the text of a code span.
+        debug_assert!(text_type != TextType::Code);
         self.renderer.text(text_type, content)
     }
 
     /// Hands on the text of a code span: a line ending in it is a space (CommonMark 6.1), or `\n` for who wants the source.
-    fn emit_code_text(
-        &mut self,
-        text_type: TextType,
-        written: &[u8],
-    ) -> crate::types::JsResult<()> {
+    fn emit_code_text(&mut self, written: &[u8]) -> crate::types::JsResult<()> {
         if self.marks_seen & MARK_LINE_END != 0
             && !self.track
             && let Some(first) = bun_core::strings::index_of_char_usize(written, b'\n')
         {
-            return self.emit_code_text_with_spaces(text_type, written, first);
+            return self.emit_code_text_with_spaces(written, first);
         }
-        self.renderer.text(text_type, written)
+        self.renderer.text(TextType::Code, written)
     }
 
     #[cold]
     fn emit_code_text_with_spaces(
         &mut self,
-        text_type: TextType,
         written: &[u8],
         first: usize,
     ) -> crate::types::JsResult<()> {
         self.code_text.clear();
+        if self.code_text.try_reserve(written.len()).is_err() {
+            return Err(parser::Error::OutOfMemory);
+        }
         self.code_text.extend_from_slice(written);
         let mut line_end = Some(first);
         while let Some(at) = line_end {
             self.code_text[at] = b' ';
             line_end = bun_core::strings::index_of_char_pos(&self.code_text, b'\n', at + 1);
         }
-        self.renderer.text(text_type, &self.code_text)
+        self.renderer.text(TextType::Code, &self.code_text)
     }
 
     /// Fills `marks` for `content`.

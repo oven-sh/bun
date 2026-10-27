@@ -71,9 +71,21 @@ it("should support net.isIPv6()", () => {
 });
 
 describe("net.BlockList subnet rules", () => {
-  it("prints a prefix beyond 2 ** 32 as Node.js does", () => {
+  it("words the errors about a prefix as Node.js does", () => {
     expect(() => new BlockList().addSubnet("1.1.1.0", 2 ** 40, "ipv4")).toThrow(
-      RangeError('The value of "prefix" is out of range. It must be >= 0 && <= 32. Received 1_099_511_627_776'),
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "prefix" is out of range. It must be >= 0 && <= 32. Received 1_099_511_627_776',
+      }),
+    );
+    // @ts-expect-error
+    expect(() => new BlockList().addSubnet("1.1.1.0", "x", "ipv4")).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "prefix" argument must be of type number. Received type string ('x')`,
+      }),
     );
   });
 

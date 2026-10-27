@@ -42,11 +42,6 @@ pub(crate) fn throw_err_invalid_arg_type(
     )
 }
 
-#[cold]
-fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
-    global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
-}
-
 #[inline]
 fn throw_range_error_msg(
     global_this: &JSGlobalObject,
@@ -120,90 +115,52 @@ pub(crate) fn validate_integer(
 pub(crate) fn validate_int32(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: impl fmt::Display + Copy,
+    name: &str,
     min_value: Option<i32>,
     max_value: Option<i32>,
 ) -> JsResult<i32> {
+    // The defaults for min and max correspond to the limits of 32-bit integers.
     let min = min_value.unwrap_or(i32::MIN);
     let max = max_value.unwrap_or(i32::MAX);
-    // The defaults for min and max correspond to the limits of 32-bit integers.
-    if !value.is_number() {
-        return Err(throw_err_invalid_arg_type(
-            global_this,
-            name,
-            "number",
-            value,
-        ));
-    }
-    let num = value.as_number();
-    // Number.isInteger semantics like Node's validateInt32: -0 and integral doubles
-    // outside the int52 range are integers; the range check below rejects out-of-range.
-    if !num.is_finite() || num.fract() != 0.0 {
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be an integer. Received {}",
-                name,
-                bun_core::fmt::NodeNumber(num)
-            ),
-        ));
-    }
-    // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
-    if num < (min as f64) || num > (max as f64) {
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                name,
-                min,
-                max,
-                bun_core::fmt::NodeNumber(num)
-            ),
-        ));
-    }
-    Ok(num as i32)
+    validate_integral(global_this, value, name, f64::from(min), f64::from(max))
+        .map(|num| num as i32)
 }
 
 pub(crate) fn validate_uint32(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: impl fmt::Display + Copy,
+    name: &str,
     greater_than_zero: bool,
 ) -> JsResult<u32> {
+    let min = if greater_than_zero { 1.0 } else { 0.0 };
+    validate_integral(global_this, value, name, min, f64::from(u32::MAX)).map(|num| num as u32)
+}
+
+/// `Number.isInteger`, so -0 and integers beyond 2 ** 53 are integers, which the range then rejects.
+fn validate_integral(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    name: &str,
+    min: f64,
+    max: f64,
+) -> JsResult<f64> {
     if !value.is_number() {
-        return Err(throw_err_invalid_arg_type(
-            global_this,
-            name,
-            "number",
-            value,
-        ));
+        return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
     }
     let num = value.as_number();
     if !num.is_finite() || num.fract() != 0.0 {
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be an integer. Received {}",
-                name,
-                bun_core::fmt::NodeNumber(num)
-            ),
-        ));
+        return Err(throw_range_error_msg(global_this, num, name, b"an integer"));
     }
-    let min: f64 = if greater_than_zero { 1.0 } else { 0.0 };
-    let max: f64 = f64::from(u32::MAX);
     if num < min || num > max {
-        return Err(throw_range_error(
+        let range = format!(">= {min} && <= {max}");
+        return Err(throw_range_error_msg(
             global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                name,
-                min,
-                max,
-                bun_core::fmt::NodeNumber(num)
-            ),
+            num,
+            name,
+            range.as_bytes(),
         ));
     }
-    Ok(num as u32)
+    Ok(num)
 }
 
 pub(crate) fn validate_string(

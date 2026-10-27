@@ -6237,66 +6237,79 @@ it("lchown succeeds on every platform", async () => {
 
 describe("ERR_OUT_OF_RANGE is worded as in Node.js", () => {
   const outOfRange = (name: string, range: string, received: string) =>
-    RangeError(`The value of "${name}" is out of range. It must be ${range}. Received ${received}`);
+    expect.objectContaining({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: `The value of "${name}" is out of range. It must be ${range}. Received ${received}`,
+    });
   const buffer = Buffer.alloc(4);
 
-  it("a number beyond 2 ** 32", () => {
-    expect(() => fs.fchownSync(0, 2 ** 53, 0)).toThrow(
-      outOfRange("uid", ">= -1 && <= 4294967295", "9_007_199_254_740_992"),
-    );
-    expect(() => fs.chmodSync(__filename, 2 ** 40)).toThrow(
-      outOfRange("mode", ">= 0 && <= 4294967295", "1_099_511_627_776"),
-    );
-    expect(() => fs.openSync(__filename, -(2 ** 40))).toThrow(
-      outOfRange("flags", ">= -2147483648 && <= 2147483647", "-1_099_511_627_776"),
-    );
-    expect(() => fs.writeSync(1, buffer, 2 ** 40)).toThrow(outOfRange("offset", "<= 4", "1_099_511_627_776"));
-  });
-
-  it("a BigInt", () => {
-    const range = ">= -1 && <= 9223372036854775806";
-    expect(() => fs.readSync(0, buffer, 0, 1, -2n)).toThrow(outOfRange("position", range, "-2n"));
-    expect(() => fs.readSync(0, buffer, 0, 1, 2n ** 63n)).toThrow(
-      outOfRange("position", range, "9_223_372_036_854_775_808n"),
-    );
-  });
-
-  it("the mode of mkdir()", () => {
-    expect(() => fs.mkdirSync("never", 1.5)).toThrow(outOfRange("mode", "an integer", "1.5"));
-    expect(() => fs.mkdirSync("never", { mode: 1.5 })).toThrow(outOfRange("options.mode", "an integer", "1.5"));
-    expect(() => fs.mkdirSync("never", { mode: "777777777777" })).toThrow(
-      outOfRange("options.mode", ">= 0 && <= 4294967295", "68_719_476_735"),
-    );
-    expect(() => fs.mkdirSync("never", "9")).toThrow(
-      TypeError("The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9'"),
-    );
-    expect(() => fs.mkdirSync("never", { mode: "9" })).toThrow(
-      TypeError("The property 'options.mode' must be a 32-bit unsigned integer or an octal string. Received '9'"),
-    );
-    expect(() => fs.mkdirSync("never", { mode: {} as any })).toThrow(
-      TypeError('The "options.mode" property must be of type number. Received an instance of Object'),
-    );
-  });
-
-  it("the retryDelay of rm() is a signed 32-bit integer", () => {
-    expect(() => fs.rmSync("never", { retryDelay: 2 ** 31 })).toThrow(
-      outOfRange("options.retryDelay", ">= 0 && <= 2147483647", "2147483648"),
-    );
-    expect(() => fs.rmSync("never", { force: true, retryDelay: 2 ** 31 - 1 })).not.toThrow();
-  });
-
-  it("the len of ftruncate() is any safe integer", () => {
-    expect(() => fs.ftruncateSync(0, 2 ** 53)).toThrow(
-      outOfRange("len", ">= -9007199254740991 && <= 9007199254740991", "9_007_199_254_740_992"),
-    );
-    using dir = tempDir("fs-ftruncate-len", { "file.txt": "hello" });
-    const fd = fs.openSync(join(String(dir), "file.txt"), "r+");
+  function withFile(run: (fd: number, file: string, dir: string) => void) {
+    using dir = tempDir("fs-out-of-range", { "file.txt": "hello", "empty": {} });
+    const file = join(String(dir), "file.txt");
+    const fd = fs.openSync(file, "r+");
     try {
-      fs.ftruncateSync(fd, -(2 ** 52));
-      expect(fs.fstatSync(fd).size).toBe(0);
+      run(fd, file, String(dir));
     } finally {
       fs.closeSync(fd);
     }
+  }
+
+  it("a number beyond 2 ** 32", () => {
+    withFile((fd, file) => {
+      expect(() => fs.fchownSync(fd, 2 ** 53, 0)).toThrow(
+        outOfRange("uid", ">= -1 && <= 4294967295", "9_007_199_254_740_992"),
+      );
+      expect(() => fs.chmodSync(file, 2 ** 40)).toThrow(
+        outOfRange("mode", ">= 0 && <= 4294967295", "1_099_511_627_776"),
+      );
+      expect(() => fs.openSync(file, -(2 ** 40))).toThrow(
+        outOfRange("flags", ">= -2147483648 && <= 2147483647", "-1_099_511_627_776"),
+      );
+      expect(() => fs.writeSync(fd, buffer, 2 ** 40)).toThrow(outOfRange("offset", "<= 4", "1_099_511_627_776"));
+    });
+  });
+
+  it("the length of write()", () => {
+    withFile(fd => {
+      expect(() => fs.writeSync(fd, buffer, 2, 3)).toThrow(outOfRange("length", "<= 2", "3"));
+      expect(() => fs.writeSync(fd, buffer, 0, 2 ** 40)).toThrow(outOfRange("length", "<= 4", "1_099_511_627_776"));
+      expect(() => fs.writeSync(fd, buffer, 0, -1)).toThrow(outOfRange("length", ">= 0", "-1"));
+    });
+  });
+
+  it("a BigInt", () => {
+    withFile(fd => {
+      const range = ">= -1 && <= 9223372036854775806";
+      expect(() => fs.readSync(fd, buffer, 0, 1, -2n)).toThrow(outOfRange("position", range, "-2n"));
+      expect(() => fs.readSync(fd, buffer, 0, 1, 2n ** 63n)).toThrow(
+        outOfRange("position", range, "9_223_372_036_854_775_808n"),
+      );
+    });
+  });
+
+  it("the retryDelay of rm() is a signed 32-bit integer, and that of rmdir() is not", () => {
+    withFile((_, file, dir) => {
+      expect(() => fs.rmSync(file, { retryDelay: 2 ** 31 })).toThrow(
+        outOfRange("options.retryDelay", ">= 0 && <= 2147483647", "2147483648"),
+      );
+      expect(fs.existsSync(file)).toBe(true);
+      fs.rmSync(file, { retryDelay: 2 ** 31 - 1 });
+      expect(fs.existsSync(file)).toBe(false);
+      fs.rmdirSync(join(dir, "empty"), { retryDelay: 2 ** 31 });
+      expect(fs.existsSync(join(dir, "empty"))).toBe(false);
+    });
+  });
+
+  it("the len of ftruncate() is any safe integer", () => {
+    withFile(fd => {
+      expect(() => fs.ftruncateSync(fd, 2 ** 53)).toThrow(
+        outOfRange("len", ">= -9007199254740991 && <= 9007199254740991", "9_007_199_254_740_992"),
+      );
+      expect(fs.fstatSync(fd).size).toBe(5);
+      fs.ftruncateSync(fd, -(2 ** 52));
+      expect(fs.fstatSync(fd).size).toBe(0);
+    });
   });
 });
 

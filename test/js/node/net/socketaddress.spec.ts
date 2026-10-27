@@ -92,15 +92,28 @@ describe("SocketAddress constructor", () => {
     },
   );
 
-  it("calls an option of the wrong type a property, as Node.js does", () => {
+  it("words the errors about an option as Node.js does", () => {
+    const invalidType = (message: string) =>
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+    const outOfRange = (range: string, received: string) =>
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "options.flowlabel" is out of range. It must be ${range}. Received ${received}`,
+      });
     // @ts-expect-error
     expect(() => new SocketAddress({ address: 1 })).toThrow(
-      TypeError('The "options.address" property must be of type string. Received type number (1)'),
+      invalidType('The "options.address" property must be of type string. Received type number (1)'),
     );
     // @ts-expect-error
     expect(() => new SocketAddress({ flowlabel: "x" })).toThrow(
-      TypeError(`The "options.flowlabel" property must be of type number. Received type string ('x')`),
+      invalidType(`The "options.flowlabel" property must be of type number. Received type string ('x')`),
     );
+    expect(() => new SocketAddress({ flowlabel: 1.5 })).toThrow(outOfRange("an integer", "1.5"));
+    expect(() => new SocketAddress({ flowlabel: 2 ** 40 })).toThrow(
+      outOfRange(">= 0 && <= 4294967295", "1_099_511_627_776"),
+    );
+    expect(new SocketAddress({ flowlabel: -0 }).flowlabel).toBe(0);
   });
 
   // ===========================================================================

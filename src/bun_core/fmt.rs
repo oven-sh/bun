@@ -3750,7 +3750,7 @@ impl OutOfRangeValue for NodeBigInt<'_> {
         write!(f, " Received {self}")
     }
     fn type_name() -> &'static str {
-        "[]const u8"
+        "bigint"
     }
 }
 impl OutOfRangeValue for i64 {

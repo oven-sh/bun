@@ -172,7 +172,7 @@ impl BlockList {
             prefix = u8::try_from(validators::validate_int32(
                 global,
                 prefix_js,
-                format_args!("prefix"),
+                "prefix",
                 Some(0),
                 Some(32),
             )?)
@@ -181,7 +181,7 @@ impl BlockList {
             prefix = u8::try_from(validators::validate_int32(
                 global,
                 prefix_js,
-                format_args!("prefix"),
+                "prefix",
                 Some(0),
                 Some(128),
             )?)

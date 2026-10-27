@@ -84,9 +84,9 @@ impl core::fmt::Debug for GlobalRef {
 
 bun_core::declare_scope!(TerminationTaken, hidden);
 
-/// What Node's `ERR_INVALID_ARG_TYPE` and `ERR_INVALID_ARG_VALUE` call `name`.
-pub fn argument_or_property(name: &[u8]) -> &'static str {
-    if name.contains(&b'.') {
+/// What Node's `ERR_INVALID_ARG_TYPE` calls `name`.
+fn argument_or_property(name: &[u8]) -> &'static str {
+    if bun_core::strings::contains_char(name, b'.') {
         "property"
     } else {
         "argument"
@@ -553,7 +553,7 @@ impl JSGlobalObject {
         .throw()
     }
 
-    /// "The {argname} argument must be of type {typename}. Received {value}"
+    /// "The {argname} argument (or property) must be of type {typename}. Received {value}"
     ///
     /// Accepts `&str`, `&[u8]`, or `b"..."` for `argname`/`typename`.
     pub fn throw_invalid_argument_type_value(
@@ -624,7 +624,7 @@ impl JSGlobalObject {
         .throw()
     }
 
-    /// "The <argname> argument must be one of type <typename>. Received <value>"
+    /// "The <argname> argument (or property) must be one of type <typename>. Received <value>"
     pub fn throw_invalid_argument_type_value_one_of(
         &self,
         argname: impl AsRef<[u8]>,

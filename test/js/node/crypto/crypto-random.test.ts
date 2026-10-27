@@ -46,9 +46,11 @@ describe("randomInt args validation", () => {
 
   it("max is printed as in Node.js", () => {
     const outOfRange = (min: number, received: string) =>
-      RangeError(
-        `The value of "max" is out of range. It must be greater than the value of "min" (${min}). Received ${received}`,
-      );
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "max" is out of range. It must be greater than the value of "min" (${min}). Received ${received}`,
+      });
     expect(() => randomInt(-0)).toThrow(outOfRange(0, "-0"));
     expect(() => randomInt(0, -(2 ** 40))).toThrow(outOfRange(0, "-1_099_511_627_776"));
     expect(() => randomInt(2 ** 40, 2 ** 40)).toThrow(outOfRange(2 ** 40, "1_099_511_627_776"));
@@ -132,6 +134,21 @@ describe("randomBytes", () => {
 });
 
 describe("randomFill bounds checking", () => {
+  it("offset and size are printed as in Node.js", () => {
+    const outOfRange = (name: string, range: string, received: string) =>
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "${name}" is out of range. It must be ${range}. Received ${received}`,
+      });
+    const buffer = Buffer.alloc(4);
+    expect(() => randomFillSync(buffer, 2 ** 40)).toThrow(outOfRange("offset", ">= 0 && <= 4", "1_099_511_627_776"));
+    expect(() => randomFillSync(buffer, 0, 2 ** 40)).toThrow(
+      outOfRange("size", ">= 0 && <= 2147483647", "1_099_511_627_776"),
+    );
+    expect(() => randomFillSync(buffer, 2, 3)).toThrow(outOfRange("size + offset", "<= 4", "5"));
+  });
+
   // f32 can only represent integers exactly up to 2**24 (16777216). Previously the
   // bounds check in assertSize cast the u32 offset to f32 before adding, so an offset
   // of 16777217 rounded down to 16777216 and `size + offset > length` passed when the

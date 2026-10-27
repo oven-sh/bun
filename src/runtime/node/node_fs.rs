@@ -171,7 +171,7 @@ mod node {
         ctx: &bun_jsc::JSGlobalObject,
         value: bun_jsc::JSValue,
     ) -> bun_jsc::JsResult<Option<bun_sys::Mode>> {
-        super::super::types::mode_from_js(ctx, value, "mode")
+        super::super::types::mode_from_js(ctx, value)
     }
 }
 
@@ -2879,7 +2879,7 @@ pub(crate) mod args {
             )?;
             let position: Option<u64> = arguments
                 .next_eat()
-                .and_then(i52::offset_from_js)
+                .and_then(offset_from_js)
                 .and_then(|p| u64::try_from(p).ok());
             Ok(Self {
                 fd,
@@ -2893,7 +2893,7 @@ pub(crate) mod args {
 
     pub(crate) struct FTruncate {
         pub(crate) fd: FD,
-        pub(crate) len: Option<BlobSizeType>,
+        pub(crate) len: Option<u64>,
     }
     impl FTruncate {
         pub(crate) fn from_js(
@@ -2903,7 +2903,7 @@ pub(crate) mod args {
             let fd = FD::from_js_required(ctx, arguments)?;
             // Node treats an explicit `undefined` len the same as a missing one: 0.
             let len_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-            let len: BlobSizeType = if len_value.is_undefined() {
+            let len: u64 = if len_value.is_undefined() {
                 0
             } else {
                 validators::validate_integer(ctx, len_value, "len", None, None)?.max(0) as u64
@@ -3440,7 +3440,7 @@ pub(crate) mod args {
         }
         /// `strict_booleans` selects node's `validateRmOptions` behavior (used by
         /// `fs.rm`): a present-but-`undefined` `recursive`/`force` is a type
-        /// error. `fs.rmdir` treats `undefined` as absent.
+        /// error, and `retryDelay` is an int32. `fs.rmdir` treats `undefined` as absent.
         fn from_js_impl(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
@@ -3486,7 +3486,11 @@ pub(crate) mod args {
                             delay,
                             "options.retryDelay",
                             Some(0),
-                            Some(i32::MAX as i64),
+                            Some(if strict_booleans {
+                                i32::MAX as i64
+                            } else {
+                                c_uint::MAX as i64
+                            }),
                         )?)
                         .expect("infallible: validated range");
                     }
@@ -3556,8 +3560,7 @@ pub(crate) mod args {
                         recursive = b;
                     }
                     if let Some(mode_) = val.get(ctx, "mode")? {
-                        mode = super::super::types::mode_from_js(ctx, mode_, "options.mode")?
-                            .unwrap_or(mode);
+                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
                 }
                 // Node branches on `typeof options === 'object'`, so a `String`
@@ -3880,12 +3883,19 @@ pub(crate) mod args {
                         let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
                         if length > max_len || length < 0 {
                             return Err(ctx.throw_range_error(
-                                length as f64,
-                                bun_jsc::RangeErrorOptions {
-                                    field_name: b"length",
-                                    min: 0,
-                                    max: max_len,
-                                    ..Default::default()
+                                bun_core::fmt::NodeNumber(length as f64),
+                                if length < 0 {
+                                    bun_jsc::RangeErrorOptions {
+                                        field_name: b"length",
+                                        min: 0,
+                                        ..Default::default()
+                                    }
+                                } else {
+                                    bun_jsc::RangeErrorOptions {
+                                        field_name: b"length",
+                                        max: max_len,
+                                        ..Default::default()
+                                    }
                                 },
                             ));
                         }
@@ -3898,14 +3908,14 @@ pub(crate) mod args {
                         if !(current.is_number() || current.is_big_int()) {
                             break 'parse;
                         }
-                        if let Some(position @ 0..) = i52::offset_from_js(current) {
+                        if let Some(position @ 0..) = offset_from_js(current) {
                             args.position = Some(position);
                         }
                         arguments.eat();
                     }
                     // fs.write(fd, string[, position[, encoding]], callback)
                     _ => {
-                        if let Some(position @ 0..) = i52::offset_from_js(current) {
+                        if let Some(position @ 0..) = offset_from_js(current) {
                             args.position = Some(position);
                         }
                         // Node consumes the position slot whatever its type
@@ -10195,15 +10205,10 @@ impl NodeFSFunctionEnum {
     }
 }
 
-/// `i52` — 52-bit integer used for `ReadPosition` coercion bounds.
-#[allow(non_camel_case_types)]
-struct i52;
-impl i52 {
-    /// Node's `GetOffset`: only a safe JS integer selects positional I/O.
-    #[inline]
-    fn offset_from_js(v: JSValue) -> Option<i64> {
-        let n = v.get_number()?;
-        (n.is_finite() && n.trunc() == n && n.abs() <= bun_jsc::MAX_SAFE_INTEGER as f64)
-            .then_some(n as i64)
-    }
+/// Node's `GetOffset`: only a safe JS integer selects positional I/O.
+#[inline]
+fn offset_from_js(v: JSValue) -> Option<i64> {
+    let n = v.get_number()?;
+    (n.is_finite() && n.trunc() == n && n.abs() <= bun_jsc::MAX_SAFE_INTEGER as f64)
+        .then_some(n as i64)
 }

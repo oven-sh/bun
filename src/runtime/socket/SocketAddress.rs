@@ -17,6 +17,8 @@ use bun_jsc::{
 };
 use bun_ptr::JsCell;
 
+use crate::node::validators;
+
 pub(crate) struct SocketAddress {
     // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
     // but sockaddr_storage is 128 bytes.
@@ -97,25 +99,12 @@ impl Options {
         };
 
         let _flowlabel = if let Some(fl) = obj.get(global, "flowlabel")? {
-            if !fl.is_number() {
-                return Err(global.throw_invalid_argument_type_value(
-                    b"options.flowlabel",
-                    b"number",
-                    fl,
-                ));
-            }
-            if !fl.is_uint32_as_any_int() {
-                return Err(global.throw_range_error(
-                    fl.as_number(),
-                    bun_jsc::RangeErrorOptions {
-                        field_name: b"options.flowlabel",
-                        min: 0,
-                        max: i64::from(u32::MAX),
-                        msg: b"",
-                    },
-                ));
-            }
-            Some(fl.to_u32())
+            Some(validators::validate_uint32(
+                global,
+                fl,
+                "options.flowlabel",
+                false,
+            )?)
         } else {
             None
         };

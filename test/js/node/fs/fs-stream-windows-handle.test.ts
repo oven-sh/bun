@@ -1,8 +1,8 @@
 import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
-import fs from "node:fs";
 import { once } from "node:events";
+import fs from "node:fs";
 
 // Node's validation test is ported to test/js/node/test/parallel/test-fs-stream-windows-handle.js.
 // These cover what its native addon test does, plus who closes the HANDLE.

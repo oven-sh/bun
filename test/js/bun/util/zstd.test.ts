@@ -1432,8 +1432,8 @@ describe("frames that no encoder makes decode as with zstd 1.5.7", () => {
   });
 });
 
-describe("bugs that zstd fixed after 1.5.7", () => {
-  // facebook/zstd cef5a5611: `windowLog - ldmHashRateLog` wrapped around, which made for a table of 8 GiB.
+describe("bugs of zstd 1.5.7", () => {
+  // Fixed by facebook/zstd cef5a5611: `windowLog - ldmHashRateLog` wrapped around, which made for a table of 8 GiB.
   it("a hash rate above the window does not make for the largest table of long distance matches", async () => {
     const script = `
       const zlib = require("node:zlib");
@@ -1448,5 +1448,29 @@ describe("bugs that zstd fixed after 1.5.7", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr: stderr.slice(0, 2000) }).toEqual({ stdout: "true true\n", stderr: "" });
     expect(exitCode).toBe(0);
+  });
+
+  // Only a streaming decoder checked that. Decoded in one call, such a block could overwrite literals it had yet to read.
+  it("a compressed block that makes more than 128 KB is an error", () => {
+    const frame = Buffer.from("28b52ffd8050c6ff030040000041424344454647487500008dfb1f7a02540103340000030058", "hex");
+    expect(() => zlib.zstdDecompressSync(frame, { chunkSize: 262086 })).toThrow(
+      expect.objectContaining({ code: "ZSTD_error_corruption_detected" }),
+    );
+    expect(() => Bun.zstdDecompressSync(frame)).toThrow();
+  });
+
+  // With workers, only a frame of one job was checked. Any other came out with the wrong size in its header.
+  it.each([-1, 1])("with workers, input that is %i off the pledged size is an error", async difference => {
+    const c = zlib.constants;
+    const input = Buffer.alloc(3 << 20, "several jobs ");
+    const stream = zlib.createZstdCompress({
+      pledgedSrcSize: input.length - difference,
+      params: { [c.ZSTD_c_nbWorkers]: 2, [c.ZSTD_c_jobSize]: 1 << 20 },
+    });
+    const { promise, resolve } = Promise.withResolvers();
+    stream.on("error", resolve).on("end", resolve).resume();
+    stream.write(input.subarray(0, 1000));
+    stream.end(input.subarray(1000));
+    expect(await promise).toMatchObject({ code: "ZSTD_error_srcSize_wrong" });
   });
 });

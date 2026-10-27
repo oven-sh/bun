@@ -55,7 +55,7 @@ fn throw_range_error_msg(
     msg: &[u8],
 ) -> JsError {
     global_this.throw_range_error(
-        value,
+        bun_core::fmt::NodeNumber(value),
         jsc::RangeErrorOptions {
             field_name: name.as_bytes(),
             msg,
@@ -77,11 +77,13 @@ pub(crate) fn validate_integer(
         return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
     }
 
-    let num = value.as_number();
-
-    // `Number.isInteger`, which is true of an integer beyond 2 ** 53.
-    if !num.is_finite() || num.fract() != 0.0 {
-        return Err(throw_range_error_msg(global_this, num, name, b"an integer"));
+    if !value.is_integer() {
+        return Err(throw_range_error_msg(
+            global_this,
+            value.as_number(),
+            name,
+            b"an integer",
+        ));
     }
 
     if let Some(min) = min_value {
@@ -99,6 +101,8 @@ pub(crate) fn validate_integer(
 
     let min: f64 = min_value.unwrap_or(jsc::MIN_SAFE_INTEGER) as f64;
     let max: f64 = max_value.unwrap_or(jsc::MAX_SAFE_INTEGER) as f64;
+
+    let num = value.as_number();
 
     if num < min || num > max {
         let range = format!(">= {min} && <= {max}");

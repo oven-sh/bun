@@ -3690,29 +3690,36 @@ pub trait OutOfRangeValue {
     fn type_name() -> &'static str;
 }
 
-/// `is_large`: with Node's `addNumericalSeparator`, as `ERR_OUT_OF_RANGE` prints an integer beyond 2 ** 32.
-fn write_received_number(f: &mut Formatter<'_>, digits: &str, is_large: bool) -> fmt::Result {
-    f.write_str(" Received ")?;
-    let sign = usize::from(digits.starts_with('-'));
-    let ungrouped = match digits.len() - sign {
-        length if is_large && length > 3 => sign + (length - 1) % 3 + 1,
-        _ => digits.len(),
-    };
-    f.write_str(&digits[..ungrouped])?;
-    for group in digits.as_bytes()[ungrouped..].chunks(3) {
-        f.write_char('_')?;
-        write_bytes(f, group)?;
-    }
-    Ok(())
-}
-
 impl OutOfRangeValue for f64 {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if *self == 0.0 && self.is_sign_negative() {
+        write!(f, " Received {}", double(*self))
+    }
+    fn type_name() -> &'static str {
+        "f64"
+    }
+}
+/// A number as Node's `ERR_OUT_OF_RANGE` prints it: `-0`, and an integer beyond 2 ** 32 with `addNumericalSeparator`.
+pub struct NodeNumber(pub f64);
+impl OutOfRangeValue for NodeNumber {
+    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let Self(number) = *self;
+        if number == 0.0 && number.is_sign_negative() {
             return f.write_str(" Received -0");
         }
-        let is_large = self.is_finite() && self.fract() == 0.0 && self.abs() > 4294967296.0;
-        write_received_number(f, &double(*self).to_string(), is_large)
+        let digits = double(number).to_string();
+        let sign = usize::from(number < 0.0);
+        let is_large = number.is_finite() && number.fract() == 0.0 && number.abs() > 4294967296.0;
+        let ungrouped = if is_large {
+            sign + (digits.len() - sign - 1) % 3 + 1
+        } else {
+            digits.len()
+        };
+        write!(f, " Received {}", &digits[..ungrouped])?;
+        for group in digits.as_bytes()[ungrouped..].chunks(3) {
+            f.write_char('_')?;
+            write_bytes(f, group)?;
+        }
+        Ok(())
     }
     fn type_name() -> &'static str {
         "f64"
@@ -3720,7 +3727,7 @@ impl OutOfRangeValue for f64 {
 }
 impl OutOfRangeValue for i64 {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write_received_number(f, &self.to_string(), self.unsigned_abs() > 4294967296)
+        write!(f, " Received {}", self)
     }
     fn type_name() -> &'static str {
         "i64"

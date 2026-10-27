@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use bun_core::fmt::{OutOfRangeOptions, double, out_of_range};
+use bun_core::fmt::{NodeNumber, OutOfRangeOptions, double, out_of_range};
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
 use bun_jsc::{ErrorCode, JSBigInt, JSGlobalObject, JSMap, JSValue, JsResult, MAX_SAFE_INTEGER};
@@ -255,7 +255,7 @@ impl Histogram {
             };
             return Err(heap.error_with_code(
                 ErrorCode::OUT_OF_RANGE,
-                format_args!("{}", out_of_range(percentile, options)),
+                format_args!("{}", out_of_range(NodeNumber(percentile), options)),
             ));
         }
         Ok(self.read(|histogram| histogram.value_at_percentile(percentile)))

@@ -33,6 +33,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
    * sink = FileSink
    */
   [kWriteStreamFastPath]?: undefined | true | FileSink;
+  [kFlushFileSinkOnWrite]?: boolean;
 };
 type FD = number;
 
@@ -43,6 +44,7 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+const kFlushFileSinkOnWrite = Symbol("kFlushFileSinkOnWrite");
 const kFs = Symbol("kFs");
 
 const {
@@ -682,7 +684,19 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
 
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(data);
+    let maybePromise;
+    try {
+      maybePromise = fileSink.write(data);
+      if (this[kFlushFileSinkOnWrite]) {
+        maybePromise = $isPromise(maybePromise) ? maybePromise.then(() => fileSink.flush()) : fileSink.flush();
+      }
+    } catch (err) {
+      process.nextTick(cb, err);
+      // Node's Writable reports synchronous _write failures through both the
+      // write callback and the stream's error event.
+      require("internal/streams/destroy").errorOrDestroy(this, err, true);
+      return false;
+    }
     if ($isPromise(maybePromise)) {
       // Two-arg then(): a throw from the fulfillment handler must not be
       // mistaken for a write failure.
@@ -834,6 +848,7 @@ function writableFromFileSink(fileSink: any) {
   const w = new WriteStream("", { $fastPath: true });
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
+  w[kFlushFileSinkOnWrite] = true;
   w.path = undefined;
   return w;
 }

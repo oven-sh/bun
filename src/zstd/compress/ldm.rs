@@ -182,9 +182,10 @@ pub(crate) fn adjust_parameters(params: &mut LdmParams, c_params: &CompressionPa
         }
     }
     if params.hash_log == 0 {
+        // Not as in 1.5.7, where the difference wraps around and the table is then of the largest size there is.
         params.hash_log = params
             .window_log
-            .wrapping_sub(params.hash_rate_log)
+            .saturating_sub(params.hash_rate_log)
             .clamp(ZSTD_HASHLOG_MIN as u32, ZSTD_HASHLOG_MAX as u32);
     }
     if params.min_match_length == 0 {

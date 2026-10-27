@@ -609,6 +609,10 @@ impl CompressionStreamCoder {
             Backend::ZstdDecode(dctx) => {
                 // After a frame completes, whatever follows must be another frame
                 // magic (see `zstd_head`); `step` has already re-attached a split one.
+                if input.is_empty() && !finish && !continuing {
+                    // The decoder gives up after 16 calls in a row that get it nowhere.
+                    return Ok(Progress::Done);
+                }
                 let mut input_buf = zstd::InBuffer { src: input, pos: 0 };
                 let mut out = zstd::VecOutput::new(out);
                 loop {

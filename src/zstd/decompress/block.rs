@@ -221,8 +221,8 @@ struct Scratch {
 }
 
 thread_local! {
-    /// That of the last decoder that was dropped, for the next one. Nothing depends on what is in it, and it takes
-    /// longer to clear a new one than to decode a small frame.
+    /// That of the last decoder that was dropped, without its literals, for the next one. Nothing depends on what is
+    /// in the tables, and it takes longer to clear new ones than to decode a small frame.
     static SPARE_SCRATCH: cell::Cell<Option<Box<Scratch>>> = const { cell::Cell::new(None) };
 }
 
@@ -239,6 +239,8 @@ impl Scratch {
                 .map_err(|_| ErrorCode::MemoryAllocation)?;
             self.lit_buffer.resize(needed, 0);
         }
+        // Literals are copied by more than there are: this much can be read along with the last ones.
+        self.lit_buffer.sub_mut(lit_size..needed)?.fill(0);
         self.lit_buffer.sub_mut(..lit_size)
     }
 }
@@ -246,6 +248,7 @@ impl Scratch {
 impl Drop for BlockDecoder {
     fn drop(&mut self) {
         if let Some(mut scratch) = self.scratch.take() {
+            scratch.lit_buffer.clear();
             if scratch.lit_buffer.capacity() > Scratch::MAX_SPARE_LIT_BUFFER {
                 scratch.lit_buffer = Vec::new();
             }
@@ -1525,7 +1528,8 @@ impl<'a> Executor<'_, 'a> {
             let mut match_end = o_lit_end + 3;
             if EXT == EXT_WITHIN && offset_value as usize > o_lit_end + 3 {
                 let back = offset_value as usize - 3 - o_lit_end;
-                if back > within.len() || match_length > back {
+                // All that gets copied is of the older part, which is more than the match.
+                if back > within.len() || back < 64 {
                     break;
                 }
                 match_end += within.end;

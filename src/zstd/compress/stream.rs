@@ -409,9 +409,16 @@ impl CCtx {
             loop {
                 let ipos = input.pos;
                 let opos = output.pos;
-                let flush_min = mtctx.compress_stream_generic(output, input, end_op);
+                let mut flush_min = mtctx.compress_stream_generic(output, input, end_op);
                 self.frame.consumed_src_size += (input.pos - ipos) as u64;
                 self.frame.produced_c_size += (output.pos - opos) as u64;
+                // Not in 1.5.7, where only a frame of one job is checked, and any other is one that cannot be decoded.
+                let pledged = self.frame.pledged_src_size_plus_one;
+                let consumed = self.frame.consumed_src_size + 1;
+                let is_complete = end_op == EndDirective::End && flush_min == Ok(0);
+                if pledged != 0 && (consumed > pledged || (is_complete && consumed != pledged)) {
+                    flush_min = flush_min.and(Err(ErrorCode::SrcSizeWrong));
+                }
                 if flush_min.is_err() || (end_op == EndDirective::End && flush_min == Ok(0)) {
                     // `reset_session`, but `mtctx` is borrowed.
                     self.stream_stage = StreamStage::Init;

@@ -98,6 +98,9 @@ pub struct PackageJSON {
     /// parses the row it looks up. Each range is where a group's rows are in `json_tape`.
     pub(crate) installed_dependency_rows:
         [core::ops::Range<u32>; INSTALLED_DEPENDENCY_GROUPS.len()],
+    /// Where `packageManager` and `engines.bun` are in `json_tape`. Empty: missing, or no scripts.
+    pub(crate) package_manager_row: core::ops::Range<u32>,
+    pub(crate) engines_bun_row: core::ops::Range<u32>,
 
     pub(crate) side_effects: SideEffects,
 
@@ -152,6 +155,8 @@ impl Default for PackageJSON {
             package_manager_package_id: INVALID_PACKAGE_ID,
             dependencies: DependencyMap::default(),
             installed_dependency_rows: Default::default(),
+            package_manager_row: Default::default(),
+            engines_bun_row: Default::default(),
             side_effects: SideEffects::default(),
             browser_map: BrowserMap::default(),
             exports: None,
@@ -207,6 +212,19 @@ impl PackageJSON {
                 .filter(move |row| row.key.slice() == name)
                 .filter_map(move |row| Some((row.value.as_str()?, group.behavior)))
         })
+    }
+
+    /// The range `packageManager` or `engines.bun` declares for bun. Set by an `IncludeScripts` parse.
+    pub fn declared_bun_range(&self) -> Option<&[u8]> {
+        let tape = self.json_tape.as_deref()?;
+        let string_at = |rows: &core::ops::Range<u32>| {
+            let row = tape.properties(rows.clone()).first()?;
+            row.value.as_str()
+        };
+        bun_semver::running_bun::declared_bun_range(
+            string_at(&self.package_manager_row),
+            string_at(&self.engines_bun_row),
+        )
     }
 
     /// Normalize path separators to forward slashes for glob matching
@@ -529,6 +547,8 @@ impl PackageJSON {
             package_manager_package_id: INVALID_PACKAGE_ID,
             dependencies: DependencyMap::default(),
             installed_dependency_rows: Default::default(),
+            package_manager_row: Default::default(),
+            engines_bun_row: Default::default(),
             side_effects: SideEffects::Unspecified,
             exports: None,
             imports: None,
@@ -1039,6 +1059,10 @@ impl PackageJSON {
             if let Some(config) = property_string_map(b"config") {
                 package_json.config = Some(config);
             }
+            package_json.package_manager_row = property_row(&json, b"packageManager");
+            if let Some(engines) = json.get(b"engines") {
+                package_json.engines_bun_row = property_row(&engines, b"bun");
+            }
         }
         let _ = (include_scripts, package_id);
 
@@ -1058,6 +1082,19 @@ impl PackageJSON {
         package_json.json_tape = parsed_json.tape;
         Some(package_json)
     }
+}
+
+/// The tape row of `object[name]`. Empty when there is none.
+fn property_row(object: &js_ast::Expr, name: &[u8]) -> core::ops::Range<u32> {
+    let js_ast::ExprData::EObjectJSON(obj) = &object.data else {
+        return 0..0;
+    };
+    let obj = obj.get();
+    let Some(i) = obj.properties().iter().position(|p| p.key.slice() == name) else {
+        return 0..0;
+    };
+    let row = obj.rows().start + i as u32;
+    row..row + 1
 }
 
 pub struct ExportsMap {

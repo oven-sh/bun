@@ -411,6 +411,7 @@ Environment variables take priority over `bunfig.toml`.
 | `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don’t install any packages                                |
 | `BUN_CONFIG_HTTP_RETRY_COUNT`      | How often a failed request is retried (default: 5)        |
 | `BUN_CONFIG_HTTP_RETRY_BACKOFF`    | Wait before the first retry, in ms (default: 50)          |
+| `BUN_CONFIG_IGNORE_ENGINES`        | Skip the [bun version check](#bun-version-check)          |
 
 A request is retried after a connection failure or a 5xx, 429 or 408 response. The wait doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` retries immediately. `bun info`, `bun pm whoami`, `bun pm diff` and `bun audit` follow the same rule, but give up after one timeout or a 501. `bun publish` uploads a package once and never retries the upload.
 
@@ -423,6 +424,27 @@ When the `node_modules` folder exists, Bun decides whether to install a package 
 When a `bun.lock` doesn’t exist or `package.json` has changed dependencies, Bun downloads and extracts tarballs eagerly while resolving.
 
 When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` and `version` already exists in the expected location within `node_modules`, Bun doesn’t attempt to download the tarball.
+
+## Bun version check
+
+`package.json` can declare the version of Bun that a project expects. Every command that installs packages (`bun install`, `bun add`, `bun remove`, `bun update`, `bun link`, `bun patch`, `bun dedupe`) and `bun run <script>` compare it with the running version and print a warning when it does not match:
+
+```json package.json icon="file-code"
+{
+  "packageManager": "bun@1.3.0"
+}
+```
+
+```bash terminal icon="terminal"
+bun install
+warn: /home/me/app/package.json expects bun@1.3.0, running 1.4.3
+```
+
+The check reads `packageManager` first. If it names another package manager, or is missing, the check reads `engines.bun`. Both accept a semver range, like `^1.3.0` or `1.x`. A value that is not a range, like `latest` or `canary`, is skipped. The [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) action reads the same fields to pick the version it installs.
+
+`bun install` reads the root `package.json` of the workspace. `bun run <script>` reads the `package.json` that holds the script, so in a workspace member it can check a different file. `bun run` checks only `package.json` scripts, not an executable from `node_modules/.bin`, and each `bun` process checks once, so a script that runs `bun` again prints the warning again.
+
+The warning does not change the exit code, and `engines` of dependencies are not checked. To silence it, set `BUN_CONFIG_IGNORE_ENGINES=1` in the environment, or pass `--silent`. The install commands also accept `--ignore-engines`, which takes no value: `--ignore-engines=true` is an error.
 
 ## CI/CD
 
@@ -626,7 +648,6 @@ Command lines written for npm, Yarn or pnpm keep working. `bun install`, `bun ci
 | `--loglevel=notice`, `--loglevel=http`, `--loglevel=info`      | Nothing: the default output                     |
 | `--no-audit`, `--no-fund`, `--no-update-notifier`              | Nothing: an install does none of these          |
 | `--legacy-peer-deps`                                           | Nothing: peers that conflict are not an error   |
-| `--ignore-engines`                                             | Nothing: `engines` is not checked               |
 | `--unsafe-perm`                                                | Nothing: scripts run as the current user        |
 | `--non-interactive`                                            | Nothing: an install asks no questions           |
 | `--prefer-frozen-lockfile`                                     | Nothing: the default                            |

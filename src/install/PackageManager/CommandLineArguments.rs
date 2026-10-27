@@ -138,6 +138,9 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
         "--ignore-scripts                      Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies"
     ),
     clap::param!(
+        "--ignore-engines                      Do not warn when the bun version in package.json (packageManager or engines.bun) does not match"
+    ),
+    clap::param!(
         "--trust                               Add to trustedDependencies in the project's package.json and install the package(s)"
     ),
     clap::param!("-g, --global                          Install globally"),
@@ -425,10 +428,8 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--fund=false", Satisfied),
     (b"--no-update-notifier", Satisfied),
     (b"--update-notifier=false", Satisfied),
-    // Bun only warns about conflicting peer dependencies, does not check `engines`, runs scripts as
-    // the current user, and never prompts.
+    // Bun only warns about conflicting peers, runs scripts as the current user, and never prompts.
     (b"--legacy-peer-deps", Satisfied),
-    (b"--ignore-engines", Satisfied),
     (b"--unsafe-perm", Satisfied),
     (b"--non-interactive", Satisfied),
     (b"--prefer-frozen-lockfile", Satisfied),
@@ -470,7 +471,7 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"use-store-server", b"verify-store-integrity", b"workspace-root", b"workspaces-update", b"ws",
     b"yes",
     // These are in `FOREIGN_FLAGS` too, which doesn't match them if they have a value.
-    b"ignore-engines", b"ignore-optional", b"immutable", b"legacy-peer-deps", b"non-interactive",
+    b"ignore-optional", b"immutable", b"legacy-peer-deps", b"non-interactive",
     b"package-lock-only", b"prefer-frozen-lockfile", b"save-catalog", b"save-dev", b"save-exact",
     b"save-optional", b"save-peer", b"save-prod", b"shamefully-hoist", b"unsafe-perm",
     ],
@@ -832,6 +833,7 @@ pub struct CommandLineArguments {
     pub(crate) offline: bool,
     pub(crate) prefer_offline: bool,
     pub(crate) ignore_scripts: bool,
+    pub(crate) ignore_engines: bool,
     pub(crate) trusted: bool,
     pub(crate) no_summary: bool,
     pub(crate) latest: bool,
@@ -1586,6 +1588,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Options::LogLevel::Default
         };
         cli.ignore_scripts = args.flag(b"--ignore-scripts");
+        cli.ignore_engines = args.flag(b"--ignore-engines");
         cli.trusted = args.flag(b"--trust");
         cli.no_summary = args.flag(b"--no-summary");
         cli.ca = args.options(b"--ca");

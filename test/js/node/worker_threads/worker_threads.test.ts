@@ -597,6 +597,178 @@ describe("stdio is flushed when the worker exits synchronously", () => {
   });
 });
 
+// Without { stdin: true } a worker's process.stdin is an ended stream. It is built on its
+// first read, so a worker that never reads it does not load internal/streams/readable.
+// The stream has the defaults of worker start, not those of the moment it is read.
+describe("process.stdin of a worker without { stdin: true }", () => {
+  // Resolves with the worker's first message and its exit code. Rejects when the worker
+  // fails, or exits without a message.
+  async function run(source: string) {
+    await using worker = new Worker(source, { eval: true });
+    const exited = once(worker, "exit");
+    const [message] = await Promise.race([
+      once(worker, "message"),
+      exited.then(([code]) => {
+        throw new Error(`the worker exited with code ${code} and no message`);
+      }),
+    ]);
+    const [exitCode] = await exited;
+    return { message, exitCode };
+  }
+
+  // Appended to a worker source: reports `result` together with what the stream emits.
+  const postWhenClosed = `
+    const emitted = [];
+    for (const name of ["data", "error", "end"]) process.stdin.on(name, () => emitted.push(name));
+    process.stdin.on("close", () => {
+      require("node:worker_threads").parentPort.postMessage({ ...result, emitted: [...emitted, "close"] });
+    });`;
+
+  test.concurrent("is built on the first read, not at worker start", async () => {
+    const { message, exitCode } = await run(`
+      const { loadedInternalModules } = require("bun:internal-for-testing");
+      const readableLoaded = () => loadedInternalModules().includes("internal:streams/readable");
+      const loadedAtStart = readableLoaded();
+      const stdin = process.stdin;
+      const result = {
+        loadedAtStart,
+        loadedByFirstRead: readableLoaded(),
+        sameObject: stdin === process.stdin,
+        isReadable: stdin instanceof require("node:stream").Readable,
+        read: stdin.read(),
+      };
+      ${postWhenClosed}`);
+    expect(message).toEqual({
+      loadedAtStart: false,
+      loadedByFirstRead: true,
+      sameObject: true,
+      isReadable: true,
+      read: null,
+      emitted: ["end", "close"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("keeps the default highWaterMark of worker start", async () => {
+    const { message, exitCode } = await run(`
+      const stream = require("node:stream");
+      const initial = stream.getDefaultHighWaterMark(false);
+      stream.setDefaultHighWaterMark(false, 1234);
+      const stdin = process.stdin;
+      const result = {
+        highWaterMark: stdin.readableHighWaterMark === initial ? "initial" : stdin.readableHighWaterMark,
+        defaultHighWaterMark: stream.getDefaultHighWaterMark(false),
+      };
+      ${postWhenClosed}`);
+    expect(message).toEqual({ highWaterMark: "initial", defaultHighWaterMark: 1234, emitted: ["end", "close"] });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("does not capture rejections when the worker turned that on before the first read", async () => {
+    const { message, exitCode } = await run(`
+      const events = require("node:events");
+      events.captureRejections = true;
+      const stdin = process.stdin;
+      const result = { listenerPromiseTaken: false, captureRejections: events.captureRejections };
+      // emit() calls then() on the promise a listener returns only if the emitter captures rejections.
+      stdin.on("end", () => {
+        const promise = Promise.resolve();
+        promise.then = function (...args) {
+          result.listenerPromiseTaken = true;
+          return Promise.prototype.then.apply(this, args);
+        };
+        return promise;
+      });
+      ${postWhenClosed}`);
+    expect(message).toEqual({ listenerPromiseTaken: false, captureRejections: true, emitted: ["end", "close"] });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("is not steered by Object.prototype at the first read", async () => {
+    const { message, exitCode } = await run(`
+      const stream = require("node:stream");
+      const initial = stream.getDefaultHighWaterMark(false);
+      const polluted = {
+        stdin: new MessageChannel().port1,
+        signal: AbortSignal.abort(),
+        highWaterMark: 7,
+        objectMode: true,
+      };
+      Object.assign(Object.prototype, polluted);
+      const stdin = process.stdin;
+      for (const key in polluted) delete Object.prototype[key];
+      const result = {
+        isReadable: stdin instanceof stream.Readable,
+        objectMode: stdin.readableObjectMode,
+        highWaterMark: stdin.readableHighWaterMark === initial ? "initial" : stdin.readableHighWaterMark,
+      };
+      ${postWhenClosed}`);
+    expect(message).toEqual({
+      isReadable: true,
+      objectMode: false,
+      highWaterMark: "initial",
+      emitted: ["end", "close"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The stream cannot be built in the frame that caught the stack overflow. That read
+  // throws, as the getter does in node, and the next read builds the stream.
+  test.concurrent("a first read at the stack limit throws and the next read works", async () => {
+    const { message, exitCode } = await run(`
+      function readAtStackLimit() {
+        try {
+          return readAtStackLimit();
+        } catch {
+          try {
+            return typeof process.stdin;
+          } catch (error) {
+            return error.name;
+          }
+        }
+      }
+      const result = { atStackLimit: readAtStackLimit() };
+      ${postWhenClosed}`);
+    expect(message).toEqual({ atStackLimit: "RangeError", emitted: ["end", "close"] });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// The worker's stream takes what the parent writes even if the worker never reads it,
+// and that is what completes the parent's write (node's flow control, as for stdout above).
+test.concurrent("a write to worker.stdin completes when the worker never reads process.stdin", async () => {
+  const script = `
+    const { Worker } = require("node:worker_threads");
+    const { once } = require("node:events");
+    const w = new Worker('require("node:worker_threads").parentPort.once("message", () => process.exit(0));', {
+      eval: true,
+      stdin: true,
+    });
+    // A lost ack has no event: the write stays pending and the worker stays alive. The
+    // watchdog turns that hang into a fast, distinguishable failure.
+    w.on("online", () => setTimeout(() => process.exit(42), ${isDebug ? 20_000 : 5_000}).unref());
+    w.stdin.write("never read", error => {
+      console.log(error ? "write failed: " + error : "written");
+      w.postMessage("written");
+    });
+    const [code] = await once(w, "exit");
+    console.log("exit " + code);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout,
+    stderr: exitCode === 0 ? "" : stderr,
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "written\nexit 0\n", stderr: "", exitCode: 0, signalCode: null });
+});
+
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
     const { promise, resolve } = Promise.withResolvers();

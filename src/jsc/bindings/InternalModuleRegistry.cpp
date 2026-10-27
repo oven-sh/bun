@@ -364,6 +364,27 @@ extern "C" bool Bun__BytecodeOrder__digestInternalModule(JSC::VM* vm, uint32_t i
 
 namespace Bun {
 
+// bun:internal-for-testing: the names of the internal JS modules this global has evaluated, such as "internal:streams/readable".
+JSC_DEFINE_HOST_FUNCTION(jsLoadedInternalModules, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* registry = defaultGlobalObject(lexicalGlobalObject)->internalModuleRegistry();
+    JSC::MarkedArgumentBuffer names;
+    for (uint32_t id = 0; id < bun_internal_modules_header.moduleCount; id++) {
+        JSValue value = registry->internalField(static_cast<InternalModuleRegistry::Field>(id)).get();
+        if (!value || value.isUndefined())
+            continue;
+        const auto& m = internalModuleRecord(id);
+        names.append(jsString(vm, internalModuleString(m.nameOffset, m.nameLength)));
+    }
+    if (names.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), names)));
+}
+
 // bun:internal-for-testing: the bytecode `bun build --compile --bytecode` would embed for a builtin module, and the
 // external string table it would embed beside it -- either for internal module number `index` (null past the last
 // one), or for `source` written in builtin syntax under `name`.

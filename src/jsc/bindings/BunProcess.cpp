@@ -3028,6 +3028,7 @@ extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGl
 static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, JSObject* ports, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
+    // Returning empty with an exception pending skips reification, so this read throws and the next read retries.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetNodeWorkerStdioStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -3035,12 +3036,7 @@ static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject,
     args.append(JSC::jsNumber(fd));
     args.append(ports);
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStream, JSC::getCallData(getStream), globalObject->globalThis(), args);
-    if (auto* exception = scope.exception()) {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, jsUndefined());
-        return jsUndefined();
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 

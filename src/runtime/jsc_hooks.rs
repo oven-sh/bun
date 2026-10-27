@@ -1947,6 +1947,18 @@ unsafe fn retroactively_report_discovered_tests(
 /// `Jest.runner.?.bun_test_root.onBeforePrint()` — flush the test reporter's
 /// line state before user `console.log` output interleaves with it.
 fn console_on_before_print() {
+    if crate::test_runner::jest::Jest::runner_ptr().is_some() {
+        console_on_before_print_in_test();
+    }
+}
+
+/// The console call of a Worker comes here on its own thread. The hook reads a
+/// flag, prints, then clears the flag: one caller at a time. Not inlined, so
+/// that a console call outside `bun test` pays for the check alone.
+#[inline(never)]
+fn console_on_before_print_in_test() {
+    static LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
+    let _lock = LOCK.lock_guard();
     if let Some(runner) = crate::test_runner::jest::Jest::runner() {
         runner.bun_test_root.on_before_print();
     }

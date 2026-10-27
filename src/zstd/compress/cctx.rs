@@ -218,10 +218,10 @@ fn reset_match_state(
         reset_table(&mut ms.opt.match_length_freq, MAX_ML as usize + 1, false)?;
         reset_table(&mut ms.opt.off_code_freq, MAX_OFF as usize + 1, false)?;
         reset_struct_table(&mut ms.opt.match_table, ZSTD_OPT_SIZE, false)?;
-        reset_struct_table(&mut ms.opt.price_table, ZSTD_OPT_SIZE, false)?;
+        ms.opt.price_table.resize(ZSTD_OPT_SIZE)?;
     } else {
         ms.opt.match_table = Vec::new();
-        ms.opt.price_table = Vec::new();
+        ms.opt.price_table.resize(0)?;
     }
 
     ms.c_params = *c_params;

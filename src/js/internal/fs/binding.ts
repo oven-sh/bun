@@ -95,12 +95,12 @@ interface FsBinding
   realpathNativeSync: NodeFS["realpathSync"]["native"];
   rmdir(path: import("node:fs").PathLike, options?: import("node:fs").RmOptions): Promise<void>;
   rmdirSync(path: import("node:fs").PathLike, options?: import("node:fs").RmOptions): void;
-  watch(path: string, options: import("node:fs").WatchOptions, listener: WatchListener): $ZigGeneratedClasses.FSWatcher;
+  watch(path: string, options: import("node:fs").WatchOptions, listener: WatchListener): $Bindgen.FSWatcher;
   watchFile(
     path: string,
     options: import("node:fs").WatchFileOptions | undefined,
     listener: WatchFileListener,
-  ): $ZigGeneratedClasses.StatWatcher;
+  ): $Bindgen.StatWatcher;
   write(
     fd: number,
     buffer: NodeJS.ArrayBufferView,
@@ -120,4 +120,4 @@ type FsCallbackArm<T> = {
   ) => void;
 };
 
-export default $rust("node_fs_binding.rs", "createBinding") as FsBinding & FsCallbackArm<FsBinding>;
+export default $bindgen("node_fs_binding.bind.ts", "binding") as FsBinding & FsCallbackArm<FsBinding>;

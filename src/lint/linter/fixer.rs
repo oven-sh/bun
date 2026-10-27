@@ -1,16 +1,16 @@
-//! Applies the fixes of messages: ESLint's `SourceCodeFixer.applyFixes` and `Linter.verifyAndFix`.
+//! Applies messages' fixes: ESLint's `SourceCodeFixer.applyFixes` and `Linter.verifyAndFix`.
 
 use super::{LintMessage, LintResult, RuleId};
 
 /// ESLint's `MAX_AUTOFIX_PASSES`.
 pub const MAX_AUTOFIX_PASSES: usize = 10;
 
-/// What [`apply_fixes`] returns.
+/// The result of [`apply_fixes`].
 pub struct Fixed {
-    /// Whether any message had a fix that was to be applied.
+    /// True if any message had a fix that should be applied.
     pub is_fixed: bool,
     pub output: Vec<u8>,
-    /// The messages that are not fixed, sorted by position.
+    /// The messages that weren't fixed, sorted by position.
     pub remaining: Vec<LintMessage>,
     /// The rules whose fixes are in `output`.
     pub applied: Vec<RuleId>,
@@ -19,10 +19,11 @@ pub struct Fixed {
 }
 
 /// The byte order mark.
-const MARK: &[u8] = b"\xEF\xBB\xBF";
+const BYTE_ORDER_MARK: &[u8] = b"\xEF\xBB\xBF";
 
-/// ESLint's `SourceCodeFixer.applyFixes`. A fix that overlaps or touches one that is applied before
-/// it is left for the next pass. `should_fix`: ESLint's `fix` option as a function.
+/// ESLint's `SourceCodeFixer.applyFixes`. A fix that overlaps or touches an already applied fix
+/// waits for the next pass. `should_fix` is ESLint's `fix` option as a function. Unlike ESLint,
+/// this doesn't count a no-op fix as a fix.
 pub fn apply_fixes(
     text: &[u8],
     messages: Vec<LintMessage>,
@@ -52,16 +53,24 @@ pub fn apply_fixes(
             remaining.push(message);
             continue;
         };
-        is_fixed = true;
         let (start, end) = (fix.span.start as usize, fix.span.end as usize);
+        // The fix is a no-op, so the next run would report the same message again.
+        if text.get(start..end) == Some(&fix.text[..]) {
+            remaining.push(message);
+            continue;
+        }
+        is_fixed = true;
         if last.is_some_and(|last| last >= start) || start > end {
             remaining.push(message);
             continue;
         }
-        // A range can go beyond the text, as for `String.prototype.slice`.
+        // A range can extend past the text, as with `String.prototype.slice`.
         output.extend_from_slice(&text[last.unwrap_or(0).min(text.len())..start.min(text.len())]);
-        // ESLint's "Remove BOM": the mark that the fix brings replaces the one that is there.
-        if start == MARK.len() && text.starts_with(MARK) && fix.text.starts_with(MARK) {
+        // ESLint's "Remove BOM": the mark in the fix replaces the existing one.
+        if start == BYTE_ORDER_MARK.len()
+            && text.starts_with(BYTE_ORDER_MARK)
+            && fix.text.starts_with(BYTE_ORDER_MARK)
+        {
             output.clear();
         }
         output.extend_from_slice(&fix.text);
@@ -84,18 +93,19 @@ pub fn apply_fixes(
     }
 }
 
-/// What [`verify_and_fix`] returns.
+/// The result of [`verify_and_fix`].
 pub struct FixReport {
-    /// Whether the text has changed.
+    /// True if the text changed.
     pub is_fixed: bool,
     /// Number of fixes applied to produce `output`, over all passes.
     pub fixes: usize,
     pub output: Vec<u8>,
-    /// What is left to report, about `output`.
+    /// The remaining messages, which are about `output`.
     pub result: LintResult,
-    /// The fixes undo each other, so fixing was given up. ESLint warns about it.
+    /// The fixes undo each other, so fixing stopped. ESLint warns about it.
     pub is_circular: bool,
-    /// The rules whose fixes, all in one pass, made a text that cannot be parsed. `output` is the text before that pass.
+    /// Rules whose fixes were applied in the pass that [broke the syntax](breaks_syntax). `output` is the text before
+    /// that pass.
     pub broken_by: Option<Vec<RuleId>>,
 }
 
@@ -103,58 +113,70 @@ fn is_fatal(result: &LintResult) -> bool {
     !result.messages.is_empty() && result.messages.iter().all(|it| it.is_fatal)
 }
 
-/// The text cannot be parsed. What is said about a comment with a configuration that cannot be read is fatal, too.
+/// True if the text can't be parsed. The message about an unreadable config comment is fatal too, but isn't a parse
+/// error.
 pub fn is_parse_error(message: &LintMessage) -> bool {
     message.is_fatal && message.message.starts_with(b"Parsing error: ")
 }
 
-/// oxlint's error for a name that is declared twice. It isn't from oxc's parser, which takes such a text.
+/// True if the fixes that produced the text that `result` describes must be rolled back. Either the text doesn't parse,
+/// or it has more [errors that the parser tolerates](LintResult::tolerated_errors) than the text before the fixes,
+/// which had `tolerated_before`. Otherwise the next pass would run on broken code, and rolling back only that pass
+/// would keep the broken code.
+pub fn breaks_syntax(result: &LintResult, tolerated_before: usize) -> bool {
+    is_fatal(result) && result.messages.iter().all(is_parse_error)
+        || result.tolerated_errors > tolerated_before
+}
+
+/// oxlint's error for a name that's declared twice. It doesn't come from oxc's parser, which accepts such code.
 pub fn is_redeclaration(message: &LintMessage) -> bool {
     message.message.starts_with(b"Parsing error: Identifier `")
         && message.message.ends_with(b"` has already been declared")
 }
 
-/// The report to return when a pass's fixes are rolled back. `before` is the text before that pass. `was_fixed` says whether
-/// earlier passes had already changed it, and `fixes` is how many fixes they applied.
-fn without_the_last_pass(
+/// The report to return when a pass's fixes are rolled back. `before` is the text before that pass. `was_fixed` tells
+/// whether earlier passes had already changed it, and `fixes` is how many fixes they applied.
+fn rolled_back_report(
     before: Vec<u8>,
     (rules, was_fixed, fixes): (Vec<RuleId>, bool, usize),
-    lint: &mut dyn FnMut(&[u8]) -> LintResult,
+    lint: &mut dyn FnMut(&[u8], bool) -> LintResult,
 ) -> FixReport {
     FixReport {
         is_fixed: was_fixed,
         fixes,
-        result: lint(&before),
+        result: lint(&before, false),
         output: before,
         is_circular: false,
         broken_by: Some(rules),
     }
 }
 
-/// ESLint's `Linter.verifyAndFix`: lints and fixes until nothing is left to fix, ten times at most.
-/// `lint` parses and lints the text that it is given. Unlike ESLint, it takes back the fixes of a pass after which the text cannot
-/// be parsed.
+/// ESLint's `Linter.verifyAndFix`: lints and fixes until nothing is left to fix, at most ten times. `lint` parses and
+/// lints the given text. Its second argument is `true` if fixes have just produced that text. Unlike ESLint, this rolls
+/// back a pass whose fixes [break the syntax](breaks_syntax).
 pub fn verify_and_fix(
     text: &[u8],
     should_fix: &dyn Fn(&LintMessage) -> bool,
-    lint: &mut dyn FnMut(&[u8]) -> LintResult,
+    lint: &mut dyn FnMut(&[u8], bool) -> LintResult,
 ) -> FixReport {
     let mut current = text.to_vec();
     let mut previous: Option<Vec<u8>> = None;
     let (mut is_fixed, mut is_circular, mut fixes) = (false, false, 0);
     // About the previous pass: the rules whose fixes it applied, then `is_fixed` and `fixes` as they were before it.
     let mut last_pass: Option<(Vec<RuleId>, bool, usize)> = None;
+    // [`LintResult::tolerated_errors`] for `previous`.
+    let mut tolerated_before = 0;
     let mut passes = 0;
     loop {
         passes += 1;
-        let mut result = lint(&current);
+        let mut result = lint(&current, passes > 1);
         let is_fatal = is_fatal(&result);
-        if is_fatal
-            && result.messages.iter().all(is_parse_error)
+        if breaks_syntax(&result, tolerated_before)
             && let (Some(before), Some(pass)) = (previous.take(), last_pass.take())
         {
-            return without_the_last_pass(before, pass, lint);
+            return rolled_back_report(before, pass, lint);
         }
+        tolerated_before = result.tolerated_errors;
         let fixed = apply_fixes(&current, std::mem::take(&mut result.messages), should_fix);
         result.messages = fixed.remaining;
         if is_fatal {
@@ -178,12 +200,11 @@ pub fn verify_and_fix(
         if is_circular || !fixed.is_fixed || passes >= MAX_AUTOFIX_PASSES {
             // The messages are about the text before the last fixes.
             if fixed.is_fixed {
-                result = lint(&current);
-                if self::is_fatal(&result)
-                    && result.messages.iter().all(is_parse_error)
+                result = lint(&current, true);
+                if breaks_syntax(&result, tolerated_before)
                     && let (Some(before), Some(pass)) = (previous.take(), last_pass.take())
                 {
-                    return without_the_last_pass(before, pass, lint);
+                    return rolled_back_report(before, pass, lint);
                 }
             }
             return FixReport {

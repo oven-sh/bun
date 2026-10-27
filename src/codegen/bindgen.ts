@@ -6,6 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   analyze,
+  cppClasses,
   cppCounts,
   cppHeader,
   cppSource,
@@ -53,13 +54,19 @@ async function load(source: string): Promise<SchemaFile> {
     } else if (value instanceof NamedType) {
       // Re-exporting an import is fine; the first file to export a type owns it.
       if (value.origin) continue;
-      assert(/^[A-Z][A-Za-z0-9]*$/.test(name), `${stem}.bind.ts: type names are PascalCase: ${name}`);
+      // As rustc's lint has it, digits can be separated: SHA512_256.
+      assert(/^[A-Z][A-Za-z0-9]*(?:(?<=\d)_\d+)*$/.test(name), `${stem}.bind.ts: type names are PascalCase: ${name}`);
       value.name = name;
       value.origin = origin;
       result.types.push(value);
     } else {
       throw new TypeError(`${stem}.bind.ts: export ${name} is not a type, a function, a namespace or b.module()`);
     }
+  }
+  const names = new Set<string>();
+  for (const { name } of [...result.functions, ...result.namespaces]) {
+    assert(!names.has(name), `${stem}.bind.ts: two of its functions and namespaces are named ${name}`);
+    names.add(name);
   }
   return result;
 }
@@ -95,6 +102,14 @@ for (const file of files) {
     assert(!owners.has(name), `${owners.get(name)}.bind.ts and ${file.origin.stem}.bind.ts both export a type ${name}`);
     owners.set(name, file.origin.stem);
   }
+  for (const { exportName } of file.functions) {
+    if (!exportName) continue;
+    assert(
+      !owners.has(exportName),
+      `export: ${exportName} is in ${owners.get(exportName)}.bind.ts and ${file.origin.stem}.bind.ts`,
+    );
+    owners.set(exportName, file.origin.stem);
+  }
 }
 const tables = analyze(files);
 
@@ -112,6 +127,7 @@ for (const file of files) {
 }
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Tables.h"), cppTables(tables));
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Counts.h"), cppCounts(tables));
+writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Classes.h"), cppClasses(tables));
 for (const [crate, crateFiles] of Map.groupBy(files, file => file.origin.crate)) {
   writeIfNotChanged(path.join(codegenPath, `generated_bindgen_${crate}.rs`), rustForCrate(crateFiles));
 }

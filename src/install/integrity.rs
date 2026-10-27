@@ -18,9 +18,7 @@ pub struct Integrity {
     /// We transform it though.
     pub value: [u8; DIGEST_BUF_LEN],
 }
-// SAFETY: `#[repr(C)]` with a `#[repr(transparent)] u8` tag + `[u8; 64]` →
-// size 65, align 1, no padding bytes, `Copy + 'static`. Every byte initialized.
-unsafe impl bytemuck::NoUninit for Integrity {}
+bun_core::impl_no_uninit!(Integrity);
 
 impl Default for Integrity {
     fn default() -> Self {
@@ -187,7 +185,7 @@ impl Integrity {
         }
     }
 
-    /// As bun.lock has it. An extracted `file:` / URL tarball carries it in `.bun-tag`.
+    /// Formats it the way bun.lock does. An extracted `file:` or URL tarball has it in `.bun-tag`.
     pub(crate) fn sri<'a>(&self, buf: &'a mut [u8; Self::MAX_SRI_LEN]) -> &'a [u8] {
         bun_core::fmt::buf_print_infallible(buf, format_args!("{self}"))
     }
@@ -272,9 +270,6 @@ impl fmt::Display for Integrity {
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Tag(pub u8);
-// SAFETY: `#[repr(transparent)]` newtype over `u8` — same layout as `u8`,
-// no padding, `Copy + 'static`.
-unsafe impl bytemuck::NoUninit for Tag {}
 
 impl Tag {
     pub(crate) const UNKNOWN: Tag = Tag(0);
@@ -292,7 +287,8 @@ impl Tag {
         self.0 >= Tag::SHA1.0 && self.0 <= Tag::SHA512.0
     }
 
-    /// The algorithm part of the SRI string (`sha512` in `sha512-...`); `None` for `UNKNOWN`.
+    /// Returns the algorithm part of the SRI string (`sha512` in `sha512-...`), or `None` for
+    /// `UNKNOWN`.
     pub(crate) fn name(self) -> Option<&'static str> {
         Some(match self {
             Tag::SHA1 => "sha1",

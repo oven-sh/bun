@@ -72,6 +72,11 @@ pub(crate) struct ProcessHandle<'a> {
     remaining_dependencies: usize,
     dependents: Vec<*mut ProcessHandle<'a>>,
     visit_state: VisitState,
+    /// True if the previous handle is the script that runs right before this one in the same
+    /// package's `pre`/main/`post` chain.
+    follows_previous: bool,
+    /// True if the previous script in the chain failed or was skipped, so this one never runs.
+    skipped: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -325,7 +330,7 @@ struct State<'a> {
     draw_buf: Vec<u8>,
     last_lines_written: usize,
     pretty_output: bool,
-    /// POSIX shell the scripts run under; `None` on Windows (see `ScriptArgv`).
+    /// The POSIX shell that the scripts run under. `None` on Windows (see `ScriptArgv`).
     shell_bin: Option<&'static ZStr>,
     aborted: bool,
     // Raw `*mut` — process-lifetime singleton owned
@@ -390,6 +395,47 @@ impl<'a> State<'a> {
         Ok(())
     }
 
+    /// Marks `handle` as finished and starts the scripts that were waiting only on it. If it failed
+    /// or was skipped, the next script in its `pre`/main/`post` chain is skipped too, like
+    /// `bun run` without `--filter`. Scripts in other packages that were waiting on it still run.
+    fn finish(&mut self, handle: &mut ProcessHandle<'a>) {
+        handle.finished = true;
+        if self.aborted {
+            return;
+        }
+        let succeeded = matches!(
+            &handle.process,
+            Some(ProcessInfo { status: Status::Exited(exited), .. }) if exited.code == 0
+        );
+        let next = std::ptr::from_mut(handle).wrapping_add(1);
+        for &dependent in &handle.dependents {
+            let is_next = std::ptr::eq(dependent, next);
+            // SAFETY: dependent points into self.handles, valid for the run loop lifetime.
+            let dependent = unsafe { &mut *dependent };
+            dependent.remaining_dependencies -= 1;
+            dependent.skipped |= !succeeded && is_next && dependent.follows_previous;
+            if dependent.remaining_dependencies != 0 {
+                continue;
+            }
+            if dependent.skipped {
+                if !self.pretty_output {
+                    self.draw_buf.clear();
+                    let _ = writeln!(
+                        &mut self.draw_buf,
+                        "{} {}: Skipped",
+                        bun_core::fmt::escape_control_chars(&dependent.config.package_name),
+                        bun_core::fmt::escape_control_chars(&dependent.config.script_name),
+                    );
+                    self.flush_draw_buf();
+                }
+                self.finish(dependent);
+            } else if dependent.start().is_err() {
+                bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
+                Global::exit(1);
+            }
+        }
+    }
+
     /// A script is finished once its process has exited *and* both pipes have
     /// ended; finishing on exit alone can drop output the exit notification
     /// beat. The exit path force-ends pipes a leftover child holds open
@@ -399,28 +445,7 @@ impl<'a> State<'a> {
         if handle.finished || !exited || (handle.remaining_fds != 0 && !self.aborted) {
             return Ok(());
         }
-        handle.finished = true;
-        self.remaining_scripts -= 1;
-        if !self.aborted {
-            for &dependent in &handle.dependents {
-                // SAFETY: dependent points into self.handles, valid for the run loop lifetime.
-                let dependent = unsafe { &mut *dependent };
-                dependent.remaining_dependencies -= 1;
-                if dependent.remaining_dependencies == 0 {
-                    if dependent.start().is_err() {
-                        bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
-                        Global::exit(1);
-                    }
-                }
-            }
-        }
-        if self.pretty_output {
-            // On abort `finalize` draws the last frame; drawing it here too
-            // would print everything twice once it no longer fits the screen.
-            if !self.aborted {
-                let _ = self.redraw(false);
-            }
-        } else {
+        if !self.pretty_output {
             self.draw_buf.clear();
             // flush any remaining buffer
             if !handle.buffer.is_empty() {
@@ -455,6 +480,14 @@ impl<'a> State<'a> {
                 _ => {}
             }
             self.flush_draw_buf();
+        }
+        // `start` incremented this. Skipped scripts never start, so `finish` doesn't decrement it.
+        self.remaining_scripts -= 1;
+        self.finish(handle);
+        // On abort, `finalize` draws the last frame. Drawing it here too would print everything
+        // twice once it no longer fits on the screen.
+        if self.pretty_output && !self.aborted {
+            let _ = self.redraw(false);
         }
         Ok(())
     }
@@ -630,6 +663,9 @@ impl<'a> State<'a> {
                             .extend_from_slice(fmt!("<red>Error<r>\n").as_bytes());
                     }
                 }
+            } else if handle.skipped {
+                self.draw_buf
+                    .extend_from_slice(fmt!("<d>Skipped<r>\n").as_bytes());
             } else {
                 write!(
                     &mut self.draw_buf,
@@ -823,7 +859,7 @@ pub(crate) fn run_scripts_with_filter(
     let selected = FilterArg::select_packages(
         &*ctx,
         &mut this_transpiler.resolver,
-        fsinstance.top_level_dir,
+        fsinstance.top_level_dir(),
     )?;
 
     let mut scripts: Vec<ScriptConfig> = Vec::new();
@@ -933,7 +969,7 @@ pub(crate) fn run_scripts_with_filter(
     let shell_bin: Option<&'static ZStr> = if cfg!(unix) {
         // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
         let path = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
-        let top_level_dir = fsinstance.top_level_dir;
+        let top_level_dir = fsinstance.top_level_dir();
         Some(RunCommand::find_shell(path, top_level_dir).ok_or(crate::Error::MissingShell)?)
     } else {
         None
@@ -1015,6 +1051,8 @@ pub(crate) fn run_scripts_with_filter(
             remaining_dependencies: 0,
             dependents: Vec::new(),
             visit_state: VisitState::Unvisited,
+            follows_previous: false,
+            skipped: false,
         });
     }
     state.handles = handles_vec.into_boxed_slice();
@@ -1069,6 +1107,9 @@ pub(crate) fn run_scripts_with_filter(
             let next_ptr: *mut ProcessHandle = &raw mut state.handles[i + 1];
             state.handles[i].dependents.push(next_ptr);
             state.handles[i + 1].remaining_dependencies += 1;
+            // Compare paths, because package names can be missing or duplicated.
+            state.handles[i + 1].follows_previous = state.handles[i].config.package_json_path
+                == state.handles[i + 1].config.package_json_path;
         }
     }
 

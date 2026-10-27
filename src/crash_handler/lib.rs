@@ -604,7 +604,7 @@ mod draft {
         /// Some of these are enabled in release builds, which may encourage users to
         /// attach the affected files to crash report. Others, which may have low crash
         /// rate or only crash due to assertion failures, are debug-only. See `Action`.
-        static CURRENT_ACTION: Cell<Option<Action>> = const { Cell::new(None) };
+        static CURRENT_ACTION: Cell<Option<Action<'static>>> = const { Cell::new(None) };
     }
 
     /// Prevents crash reports from being uploaded to any server. Reports will still be printed and
@@ -697,21 +697,15 @@ mod draft {
     }
 
     #[derive(Clone, Copy)]
-    pub enum Action {
-        // These slices are stored in the `CURRENT_ACTION` thread-local, so they
-        // are typed `'static`. Callers pass `Source.path` data whose
-        // `Path<'static>` is itself an upstream `into_static()` lifetime
-        // erasure of arena-owned bytes (see paths/lib.rs); the data is not
-        // truly `'static`. Correctness relies on the `scoped_action` RAII
-        // guard restoring the thread-local before the owning arena is freed.
-        Parse(&'static [u8]),
-        Visit(&'static [u8]),
-        Print(&'static [u8]),
+    pub enum Action<'a> {
+        Parse(&'a [u8]),
+        Visit(&'a [u8]),
+        Print(&'a [u8]),
         Resolver,
-        Dlopen(&'static [u8]),
+        Dlopen(&'a [u8]),
     }
 
-    impl fmt::Display for Action {
+    impl fmt::Display for Action<'_> {
         fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self {
                 Action::Parse(path) => write!(writer, "parsing {}", bstr::BStr::new(path)),
@@ -725,46 +719,42 @@ mod draft {
         }
     }
 
-    /// Snapshot the thread-local `CURRENT_ACTION` for save/restore around a scoped
-    /// operation (e.g. `js_printer::print_with_writer_and_platform`).
-    #[inline]
-    pub(crate) fn current_action() -> Option<Action> {
-        CURRENT_ACTION.with(|c| c.get())
+    /// Restores the previous `CURRENT_ACTION` on drop. Made by [`scoped_action!`](crate::scoped_action).
+    pub struct ActionGuard<'a> {
+        previous: Option<Action<'static>>,
+        borrows: core::marker::PhantomData<Action<'a>>,
     }
 
-    /// Set (or clear) the thread-local `CURRENT_ACTION`. Paired with
-    /// [`current_action`] for scoped restore via `scopeguard`.
-    #[inline]
-    fn set_current_action(action: Option<Action>) {
-        CURRENT_ACTION.with(|c| c.set(action));
-    }
-
-    /// RAII guard returned by [`scoped_action`] / [`set_current_action_resolver`].
-    /// Restores the previous `CURRENT_ACTION` on drop.
-    pub struct ActionGuard(Option<Action>);
-    impl Drop for ActionGuard {
+    impl<'a> ActionGuard<'a> {
+        /// # Safety: the guard must be dropped, not leaked; until then the crash handler reads `action`.
         #[inline]
-        fn drop(&mut self) {
-            set_current_action(self.0);
+        #[must_use]
+        pub unsafe fn new(action: Action<'a>) -> ActionGuard<'a> {
+            // SAFETY: `drop` takes it out again, within `'a`.
+            let action = unsafe { core::mem::transmute::<Action<'a>, Action<'static>>(action) };
+            ActionGuard {
+                previous: CURRENT_ACTION.with(|c| c.replace(Some(action))),
+                borrows: core::marker::PhantomData,
+            }
         }
     }
 
-    /// Scoped `CURRENT_ACTION = action`. Snapshots the previous value, installs
-    /// `action`, and returns an [`ActionGuard`] that restores the previous value
-    /// on drop.
-    #[inline]
-    #[must_use]
-    pub fn scoped_action(action: Action) -> ActionGuard {
-        let prev = current_action();
-        set_current_action(Some(action));
-        ActionGuard(prev)
+    impl Drop for ActionGuard<'_> {
+        #[inline]
+        fn drop(&mut self) {
+            CURRENT_ACTION.with(|c| c.set(self.previous));
+        }
     }
 
-    /// Scoped `CURRENT_ACTION = Resolver`.
-    #[inline]
-    #[cfg(debug_assertions)]
-    pub fn set_current_action_resolver() -> ActionGuard {
-        scoped_action(Action::Resolver)
+    /// Sets the action the crash handler reports for this thread until the enclosing block ends.
+    #[macro_export]
+    macro_rules! scoped_action {
+        ($action:expr) => {
+            let action = $action;
+            // SAFETY: hygiene keeps this local out of the caller's reach, so it is dropped at
+            // the end of the block. Not for an `async` block, whose locals leak with the future.
+            let _guard = unsafe { $crate::ActionGuard::new(action) };
+        };
     }
 
     /// Where the crash trace is seeded from. Each call site has exactly one.
@@ -2473,19 +2463,17 @@ mod draft {
                     // SAFETY: header points to a valid mach_header_64
                     let header_ref = unsafe { &*header };
                     // SAFETY: load commands follow the mach header in memory; the
-                    // dyld-mapped image stays live for the process lifetime, so the
-                    // iterator's no-realloc/no-free contract is trivially upheld.
-                    let mut it =
-                        bun_sys::macho::LoadCommandIterator::new(header_ref.ncmds, unsafe {
-                            core::slice::from_raw_parts(
-                                header
-                                    .cast::<u8>()
-                                    .add(core::mem::size_of::<bun_sys::macho::mach_header_64>()),
-                                header_ref.sizeofcmds as usize,
-                            )
-                        });
+                    // dyld-mapped image stays live for the process lifetime.
+                    let it = bun_sys::macho::LoadCommandIterator::new(header_ref.ncmds, unsafe {
+                        core::slice::from_raw_parts(
+                            header
+                                .cast::<u8>()
+                                .add(core::mem::size_of::<bun_sys::macho::mach_header_64>()),
+                            header_ref.sizeofcmds as usize,
+                        )
+                    });
 
-                    while let Some(cmd) = it.next() {
+                    for cmd in it {
                         match cmd.cmd() {
                             bun_sys::macho::LC_SEGMENT_64 => {
                                 let segment_cmd =
@@ -3647,24 +3635,26 @@ mod draft {
         );
     }
 
+    /// Sets the thread's action to `Dlopen(path)`. `CrashHandler__endDlOpenAction` restores the previous action.
     /// # Safety
-    /// `action` must be null or a valid NUL-terminated C string that outlives the dlopen call.
+    /// `path` must be a valid NUL-terminated C string that outlives the returned guard.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
-        if !action.is_null() {
-            debug_assert!(CURRENT_ACTION.with(|c| c.get()).is_none());
-            // SAFETY: action is a valid NUL-terminated C string for the duration of the dlopen call
-            let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
-            // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
-            let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
-            CURRENT_ACTION.with(|c| c.set(Some(Action::Dlopen(s))));
-        } else {
-            debug_assert!(matches!(
-                CURRENT_ACTION.with(|c| c.get()),
-                Some(Action::Dlopen(_))
-            ));
-            CURRENT_ACTION.with(|c| c.set(None));
-        }
+    unsafe extern "C" fn CrashHandler__beginDlOpenAction(
+        path: *const c_char,
+    ) -> *mut ActionGuard<'static> {
+        // SAFETY: path is a valid NUL-terminated C string (caller contract)
+        let s = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
+        // SAFETY: the C string outlives the guard (caller contract)
+        let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
+        // SAFETY: `CrashHandler__endDlOpenAction` drops it (caller contract)
+        bun_core::heap::into_raw(Box::new(unsafe { ActionGuard::new(Action::Dlopen(s)) }))
+    }
+
+    /// SAFETY: `guard` must come from `CrashHandler__beginDlOpenAction`, on this thread, and must not be used again.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn CrashHandler__endDlOpenAction(guard: *mut ActionGuard<'static>) {
+        // SAFETY: guard is a live Box from CrashHandler__beginDlOpenAction (caller contract)
+        unsafe { bun_core::heap::destroy(guard) };
     }
 
     pub fn fix_dead_code_elimination() {

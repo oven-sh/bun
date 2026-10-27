@@ -3,6 +3,7 @@ use std::io::Write as _;
 
 use crate::Error;
 use bun_alloc::AllocError;
+use bun_archive::tar;
 use bun_ast::{E, Expr, G};
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
@@ -12,7 +13,6 @@ use bun_http as http;
 use bun_install::package_manager::options::PublishTarget;
 use bun_install::package_manager::workspace_manifests;
 use bun_install::{self as install, Npm, PackageManager, Subcommand};
-use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
 use bun_paths as path;
 use bun_paths::resolve_path::{join_abs_string_buf_checked, normalize_buf_z_spill};
@@ -62,7 +62,8 @@ impl PackageFiles<'_> {
     }
 }
 
-/// npm's `{README,README.*}` glob, case-insensitive; tar entry names are UTF-16 on Windows.
+/// Matches npm's `{README,README.*}` glob, case-insensitively. Tar entry names are UTF-16 on
+/// Windows.
 fn is_readme_filename<T: bun_core::NoUninit + Into<u32>>(name: &[T]) -> bool {
     const README: &[u8] = b"README";
     name.len() >= README.len()
@@ -70,20 +71,14 @@ fn is_readme_filename<T: bun_core::NoUninit + Into<u32>>(name: &[T]) -> bool {
         && (name.len() == README.len() || name[README.len()].into() == u32::from(b'.'))
 }
 
-fn archive_ok<T>(result: ArchiveIterResult<T>) -> T {
-    match result {
-        ArchiveIterResult::Result(value) => value,
-        ArchiveIterResult::Err { archive, message } => {
-            Output::err_generic(
-                "{}: {}",
-                (
-                    bstr::BStr::new(message),
-                    bstr::BStr::new(Archive::opaque_ref(archive).error_string()),
-                ),
-            );
-            Global::crash();
+fn archive_ok<T>(result: Result<T, tar::Error>, message: &str) -> Result<T, PackError> {
+    result.map_err(|err| {
+        if matches!(err, tar::Error::Alloc(_)) {
+            return PackError::OutOfMemory;
         }
-    }
+        Output::err_generic("{}: {}", (message, err));
+        Global::crash();
+    })
 }
 
 /// `E::String` erases the lifetime of its bytes, so these have to outlive the printing of the AST.
@@ -127,7 +122,8 @@ static WEB_LOGIN: bun_core::Mutex<WebLogin> = bun_core::Mutex::new(WebLogin {
     waits_for_enter: false,
 });
 
-/// What `bun publish` sends. The scripts are `None` for a tarball publish, which runs none.
+/// What `bun publish` sends. The scripts are `None` when publishing a tarball, which doesn't run
+/// any.
 pub(crate) struct Context {
     pub(crate) package_name: Box<[u8]>,
     pub(crate) package_version: Box<[u8]>,
@@ -170,25 +166,26 @@ impl Context {
         let mut maybe_readme: Option<ReadmeInfo> = None;
         let mut files: Vec<Vec<u8>> = Vec::new();
 
-        let mut iter = archive_ok(ArchiveIterator::init(&tarball_bytes));
+        let mut reader = archive_ok(
+            bun_archive::open_memory(&tarball_bytes, tar::Dialect::General),
+            "failed to read tarball",
+        )?;
+        let mut os_path_buf: Vec<OSPathChar> = Vec::new();
 
         let mut unpacked_size: usize = 0;
         let mut total_files: usize = 0;
 
         Output::print(format_args!("\n"));
 
-        while let Some(next) = archive_ok(iter.next()) {
-            // SAFETY: `next.entry` is valid until the next `iter.next()` call.
-            let entry = unsafe { &*next.entry };
-            #[cfg(windows)]
-            let pathname: &[OSPathChar] = entry.pathname_w().as_slice();
-            #[cfg(not(windows))]
-            let pathname: &[OSPathChar] = entry.pathname().as_bytes();
+        while let Some(entry) = archive_ok(reader.next_entry(), "failed to read archive header")? {
+            let pathname: &[OSPathChar] = bun_archive::os_path(entry, &mut os_path_buf)
+                .map_err(|_| PackError::OutOfMemory)?;
+            let kind = entry.kind();
 
             let size = usize::try_from(entry.size().max(0)).expect("int cast");
 
             unpacked_size += size;
-            total_files += usize::from(next.kind == FileKind::File);
+            total_files += usize::from(kind == FileKind::File);
 
             // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
             let stripped = (pathname.iter().position(|&c| bun_paths::is_sep_any_t(c)))
@@ -212,7 +209,7 @@ impl Context {
             );
 
             let Some(filename) = stripped else { continue };
-            if next.kind != FileKind::File {
+            if kind != FileKind::File {
                 continue;
             }
             #[cfg(not(windows))]
@@ -226,18 +223,25 @@ impl Context {
             if maybe_package_json_contents.is_none()
                 && strings::eql_case_insensitive_t(filename, b"package.json")
             {
-                maybe_package_json_contents = Some(archive_ok(iter.read_entry_data(&next)?));
+                let mut contents = Vec::new();
+                archive_ok(
+                    reader.read_data(size, &mut contents),
+                    "failed to read archive data",
+                )?;
+                maybe_package_json_contents = Some(contents.into_boxed_slice());
             } else if maybe_readme.is_none() && is_readme_filename(filename) {
-                let contents = archive_ok(iter.read_entry_data(&next)?).into_vec();
                 #[cfg(not(windows))]
                 let filename: Vec<u8> = filename.to_vec();
                 #[cfg(windows)]
                 let filename: Vec<u8> = strings::to_utf8_alloc(filename);
+                let mut contents = Vec::new();
+                archive_ok(
+                    reader.read_data(size, &mut contents),
+                    "failed to read archive data",
+                )?;
                 maybe_readme = Some(ReadmeInfo { filename, contents });
             }
         }
-
-        archive_ok(iter.close());
 
         let Some(package_json_contents) = maybe_package_json_contents else {
             Output::err_generic(
@@ -336,7 +340,7 @@ impl Context {
         })
     }
 
-    /// `bun publish` without a tarball path: packs the package of `abs_package_json_path`.
+    /// For `bun publish` without a tarball path. Packs the package at `abs_package_json_path`.
     pub(crate) fn from_workspace(
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
@@ -405,6 +409,26 @@ impl PublishCommand {
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
 
+        // `bun --filter='*' publish` means "run every workspace's `publish` script", not "publish
+        // every workspace".
+        let mut args_before_publish =
+            (bun_core::argv().into_iter().skip(1)).take_while(|arg| *arg != b"publish");
+        if let Some(flag) = args_before_publish.find(|arg| {
+            matches!(*arg, b"-r" | b"--recursive" | b"--filter")
+                || arg.starts_with(b"--filter=")
+                || arg.starts_with(b"-F")
+        }) {
+            Output::err_generic(
+                "refusing to publish: {} must come after \"publish\"",
+                (bun_fmt::escape_control_chars(flag),),
+            );
+            bun_core::note!(
+                "use <b>bun publish {}<r>, or <b>bun run --filter='*' publish<r> to run \"publish\" scripts",
+                bun_fmt::escape_control_chars(flag)
+            );
+            Global::crash();
+        }
+
         let (manager, original_cwd) =
             match PackageManager::init(&mut *ctx, &cli, Subcommand::Publish) {
                 Ok(v) => v,
@@ -418,7 +442,6 @@ impl PublishCommand {
                     Global::crash();
                 }
             };
-        manager.refuse_unreadable_config(ctx, "publish");
 
         if cli.positionals.len() > 1 {
             if Self::is_workspace_publish(manager) {
@@ -477,7 +500,8 @@ impl PublishCommand {
         Global::crash();
     }
 
-    /// `-r` / `--filter`: packs every selected workspace, then publishes them, dependencies first.
+    /// For `-r` and `--filter`. Packs every selected workspace, then publishes them, dependencies
+    /// first.
     fn exec_workspaces(
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
@@ -490,7 +514,8 @@ impl PublishCommand {
             workspace_manifests::selected_in_dependency_order(manager, original_cwd)
         {
             let abs_package_json_path = bun_core::ZBox::from_bytes(&abs_package_json_path);
-            // Copied out: the scripts `pack()` runs invalidate the cache this points into.
+            // Copied, because the scripts that `pack()` runs invalidate the cache that this points
+            // into.
             let root = pack::package_json_entry(manager, &abs_package_json_path).root;
             let string_field = |key: &[u8]| -> Box<[u8]> {
                 let value = root.get(key);
@@ -722,7 +747,8 @@ impl PublishCommand {
         }
     }
 
-    /// `false`: `--tolerate-republish`, and the registry already had this `name@version`, so nothing was sent.
+    /// Returns false if `--tolerate-republish` is set and the registry already had this
+    /// `name@version`, so nothing was sent.
     fn publish(manager: &PackageManager, ctx: &Context) -> Result<bool, AllocError> {
         let registry = manager.scope_for_package_name(&ctx.package_name);
         let registry_url = registry.url.url();
@@ -1071,7 +1097,8 @@ impl PublishCommand {
 
         let version_without_build_tag = dependency::without_build_tag(package_version);
 
-        // `E::String` erases the lifetime of its bytes: `cli_dupe` keeps them alive through printing.
+        // `E::String` erases the lifetime of its bytes, so `cli_dupe` keeps them alive through
+        // printing.
         Expr::set_string(json, &bump, b"version", cli_dupe(version_without_build_tag))?;
 
         let integrity_fmt = cli_dupe(
@@ -1099,7 +1126,7 @@ impl PublishCommand {
         Expr::set_string(json, &bump, b"integrity", integrity_fmt)?;
         Expr::set_string(json, &bump, b"shasum", shasum_fmt)?;
 
-        // As `npm publish` does. A `readme` in package.json wins.
+        // Like `npm publish` does. A `readme` in package.json takes precedence.
         if let Some(r) = readme {
             if json.get(b"readme").is_none() {
                 Expr::set_string(json, &bump, b"readme", cli_dupe(&r.contents))?;
@@ -1251,7 +1278,7 @@ impl PublishCommand {
                         );
                     }
                 }
-                // Not empty either, so "directories" is not looked at.
+                // It isn't empty either, so "directories" isn't checked.
                 _ => return Ok(()),
             }
 
@@ -1308,7 +1335,7 @@ impl PublishCommand {
             }
         };
 
-        // The rule pack has for it: what is not in the tarball is not listed either.
+        // The same rule as in pack: a file that isn't in the tarball isn't listed either.
         let not_packed = match pack::bin_kind_without_following_symlinks(
             abs_workspace_path,
             normalized_bin_dir.as_bytes(),

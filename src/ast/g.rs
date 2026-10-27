@@ -63,6 +63,10 @@ pub struct Class {
     pub properties: StoreSlice<Property>,
     pub has_decorators: bool,
     pub should_lower_standard_decorators: bool,
+    /// What the body reads the class name as when standard (TC39) class
+    /// decorators are lowered: the lowering assigns the decorated class to it.
+    /// `Ref::NONE` otherwise, including for TypeScript experimental decorators.
+    pub inner_class_ref: Ref,
 }
 
 impl Default for Class {
@@ -77,6 +81,7 @@ impl Default for Class {
             properties: StoreSlice::EMPTY,
             has_decorators: false,
             should_lower_standard_decorators: false,
+            inner_class_ref: Ref::NONE,
         }
     }
 }
@@ -193,6 +198,20 @@ impl Property {
     #[inline]
     pub fn class_static_block_mut(&mut self) -> Option<&mut ClassStaticBlock> {
         self.class_static_block.as_deref_mut()
+    }
+
+    /// Copies the property. The copy's expressions and static block still point to `self`'s nodes.
+    pub fn shallow_clone(&self) -> Property {
+        Property {
+            initializer: self.initializer,
+            kind: self.kind,
+            flags: self.flags,
+            class_static_block: self.class_static_block,
+            ts_decorators: bun_alloc::AstAlloc::vec_from_slice(self.ts_decorators.slice()),
+            key: self.key,
+            value: self.value,
+            ts_metadata: self.ts_metadata.clone(),
+        }
     }
 
     pub(crate) fn deep_clone(

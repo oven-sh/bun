@@ -1,4 +1,4 @@
-//! The four rules of `react-perf`, with oxlint's `utils/react_perf.rs`.
+//! The four `react-perf` rules, along with oxlint's `utils/react_perf.rs`.
 
 use bun_lint_oxlint::ast_util::{get_inner_expression, is_method_call, static_property_name};
 use bun_lint_oxlint::import::is_in_root_scope;
@@ -10,8 +10,8 @@ use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use smallvec::{SmallVec, smallvec};
 
-/// Prevent JSX elements, arrays, functions or objects that are local to the current method from being used as values of JSX
-/// props.
+/// Prevent JSX elements, arrays, functions or objects that are local to the current method from being used as values of
+/// JSX props.
 pub struct JsxNoNewAsProp<const WHAT: usize = JSX>(NativeAllowList);
 
 const JSX: usize = 0;
@@ -19,7 +19,7 @@ const ARRAY: usize = 1;
 const FUNCTION: usize = 2;
 const OBJECT: usize = 3;
 
-/// The rule, the constructor.
+/// Each rule's name and the constructor it flags.
 const TEXTS: [[&str; 2]; 4] = [
     ["jsx-no-jsx-as-prop", ""],
     ["jsx-no-new-array-as-prop", "Array"],
@@ -33,7 +33,7 @@ const MESSAGES: [Message; 4] = [
     Message::new("", "JSX attribute values should not contain objects created in the same scope."),
 ];
 
-/// `nativeAllowList`: the attributes of elements such as `<div>` that are not looked at.
+/// `nativeAllowList`: attributes that aren't checked on native elements such as `<div>`.
 enum NativeAllowList {
     All,
     List(Vec<Box<[u8]>>),
@@ -42,9 +42,9 @@ enum NativeAllowList {
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// For [`is_in_root_scope`].
+    /// Cache for [`is_in_root_scope`].
     in_root_scope: AncestorMemo<'a, ()>,
-    /// Where a variable is declared, if that is with a violation.
+    /// Cached result of `declaration_with_violation` for each variable.
     declared_with_violation: IdMap<Symbol<'a>, Option<(Span, Option<Span>)>>,
 }
 
@@ -74,13 +74,14 @@ impl<const WHAT: usize> Rule for JsxNoNewAsProp<WHAT> {
     }
 }
 
-/// `callee`: of a call or a `new`.
+/// `callee` is the callee of a call or a `new`.
 fn is_constructor_matching_name(callee: Expr, name: &str) -> bool {
     callee.is_ident(name) && !callee.is_parenthesized()
 }
 
 impl<const WHAT: usize> JsxNoNewAsProp<WHAT> {
-    /// Whether `expr` makes something new each time. It is neither `a || b` nor `a ? b : c`.
+    /// True if `expr` creates a new value on every evaluation. The caller has already split up `a || b` and
+    /// `a ? b : c`.
     fn is_violation(expr: Expr) -> bool {
         let constructor = TEXTS[WHAT][1];
         match expr.kind() {
@@ -106,13 +107,13 @@ impl<const WHAT: usize> JsxNoNewAsProp<WHAT> {
         }
     }
 
-    /// `check_expression` of each of the rules: the first operand of the `||`, `&&`, `??` and `? :` that `expr` is made of which
-    /// is a violation.
+    /// Each rule's `check_expression`. Splits `expr` at `||`, `&&`, `??` and `? :` and returns the first operand that's
+    /// a violation.
     fn check_expression(expr: Expr) -> Option<Span> {
-        // The next is the last.
+        // A stack: the next expression to check is the last one.
         let mut pending: SmallVec<[Expr; 8]> = smallvec![expr];
         while let Some(expr) = pending.pop() {
-            // Only that of the objects looks through `as T` and the like.
+            // Only the object rule looks through `as T` and the like.
             let expr = if WHAT == OBJECT { get_inner_expression(expr) } else { expr };
             match expr.kind() {
                 ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, left, right } => pending.extend([right, left]),
@@ -148,7 +149,7 @@ impl<const WHAT: usize> JsxNoNewAsProp<WHAT> {
             return;
         };
         if let Some(attr_span) = Self::check_expression(expr) {
-            // What is made at the top level is made once.
+            // A value created at the top level is only created once.
             if !self.is_allowed_on_native_element(jsx, attr)
                 && !is_in_root_scope(Node::Prop(attr), &mut cx.state.in_root_scope)
             {
@@ -156,7 +157,7 @@ impl<const WHAT: usize> JsxNoNewAsProp<WHAT> {
             }
             return;
         }
-        // What is declared in the function that renders is as new as what is written in the attribute.
+        // A variable declared in the rendering function is as new on every render as an inline value.
         let Some(symbol) = expr.symbol() else {
             return;
         };
@@ -176,7 +177,7 @@ impl<const WHAT: usize> JsxNoNewAsProp<WHAT> {
         }
     }
 
-    /// Where it is declared, and the new value, which oxlint does not show if it is a function.
+    /// Span of the declaration and span of the new value. oxlint doesn't label the value if it's a function.
     fn declaration_with_violation(symbol: Symbol) -> Option<(Span, Option<Span>)> {
         match symbol.declarations().next()? {
             declaration @ Declaration::Var(_) => match declaration.node() {
@@ -184,9 +185,9 @@ impl<const WHAT: usize> JsxNoNewAsProp<WHAT> {
                     .map(|init| (decl.pat().span(), (WHAT != FUNCTION).then_some(init))),
                 _ => None,
             },
-            // An array or an object is as good as the default value in a destructured parameter.
+            // An array or object as a default value in a destructured parameter counts too.
             Declaration::Param(id) if WHAT == ARRAY || WHAT == OBJECT => {
-                // `find_initialized_binding`. The default of the parameter itself is not looked at.
+                // `find_initialized_binding`. The parameter's own default isn't checked.
                 let init = match id.parent() {
                     Node::PatProp(property) => property.default(),
                     Node::PatElem(element) => element.default(),

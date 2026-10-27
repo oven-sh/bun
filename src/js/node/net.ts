@@ -4102,7 +4102,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       contexts,
       onListen,
     );
-  } catch (err) {
+  } catch (err: any) {
     const isUnix = path != null;
     // Bun.listen reports the address it tried. After the IPv4 fallback that is not `hostname`.
     const address = isUnix ? path : typeof err?.address === "string" && err.address ? err.address : hostname;
@@ -4194,7 +4194,7 @@ Server.prototype[kRealListen] = function (
     };
     try {
       this._handle = Bun.listen(listenOptions);
-    } catch (err) {
+    } catch (err: any) {
       // Node binds "::" when no host is given and falls back to "0.0.0.0" on a kernel without IPv6.
       if (!hostDefaulted || err?.code !== "EAFNOSUPPORT") throw err;
       listenOptions.hostname = "0.0.0.0";

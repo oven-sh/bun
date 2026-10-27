@@ -3,6 +3,7 @@ import { drainMicrotasks, noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import { getCallSites } from "node:util";
 import vm, { runInNewContext } from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
@@ -1167,7 +1168,7 @@ const capturesUnderAwaitCycle = `
 `;
 
 // Without a limit on the walk, a child never returns from the capture. So each child has a timeout.
-test.concurrent.each([
+test.each([
   ["a node:vm context", `require("node:vm").runInNewContext(code, { print })`],
   ["the main context", `(0, eval)(code)`],
 ])(
@@ -1737,6 +1738,17 @@ test("Error.captureStackTrace keeps the await chain below the stack of the funct
     "recurse",
     "recurse",
   ]);
+});
+
+// util.getCallSites() captures through Error.stackTraceLimit, which it cannot set here.
+test("util.getCallSites() returns call sites when Error.stackTraceLimit is a non-writable 0", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+  try {
+    Object.defineProperty(Error, "stackTraceLimit", { value: 0, writable: false, configurable: true });
+    expect(getCallSites(5)[0]?.scriptName).toEndWith("capture-stack-trace.test.js");
+  } finally {
+    Object.defineProperty(Error, "stackTraceLimit", descriptor);
+  }
 });
 
 test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () => {

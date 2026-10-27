@@ -566,16 +566,6 @@ describe("util", () => {
       }
     });
 
-    it("returns call sites when stackTraceLimit is a non-writable 0", () => {
-      const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
-      try {
-        Object.defineProperty(Error, "stackTraceLimit", { value: 0, writable: false, configurable: true });
-        expect(util.getCallSites(5)[0]?.scriptName).toEndWith("util.test.js");
-      } finally {
-        Object.defineProperty(Error, "stackTraceLimit", desc);
-      }
-    });
-
     it("each frame has the node v26 shape", () => {
       const sites = util.getCallSites(3);
       expect(sites.length).toBeGreaterThan(0);

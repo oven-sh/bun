@@ -8,6 +8,12 @@ export interface Layout {
   align: number;
 }
 
+export interface ExternField {
+  /** In the C++ struct and in the Rust one. */
+  name: string;
+  rustType(scope: RustScope): string;
+}
+
 /** Where a named type or function was declared. */
 export interface Origin {
   /** `node_os` for `node_os.bind.ts`. */
@@ -425,6 +431,13 @@ export abstract class Type {
   /** A Rust expression (inside `unsafe`) that consumes `expr`, a `rustExternType`. What has a lifetime takes it from `heap`, in scope there. */
   rustFromExtern(expr: string, scope: RustScope): string {
     return expr;
+  }
+  /**
+   * The fields of the extern type, a struct that takes two registers. An argument is passed as the two: clang and rustc
+   * give a struct parameter of that size different LLVM types, and LLVM does not inline a call whose type is not the callee's.
+   */
+  get externFields(): readonly ExternField[] | null {
+    return null;
   }
   /** `Bun::Bindgen::toExtern` is a `std::bit_cast`: the C++ value is trivially copyable and is represented as its extern type. */
   get cppCanBitCastToExtern(): boolean {
@@ -1962,6 +1975,9 @@ export class OptionalType extends Type {
       ? `bindgen::extern_types::ExternOptional<${this.inner.rustExternType(scope)}>`
       : this.inner.rustExternType(scope);
   }
+  get externFields(): readonly ExternField[] | null {
+    return this.inner.nullRepresentation === "optional" ? null : this.inner.externFields;
+  }
   rustType(scope: RustScope): string {
     return `Option<${this.inner.rustType(scope)}>`;
   }
@@ -2164,6 +2180,9 @@ ${indent(this.inner.cppConvertInto(target, value, ctx, name, failure), 4)}
   }
   rustExternType(scope: RustScope): string {
     return this.inner.rustExternType(scope);
+  }
+  get externFields(): readonly ExternField[] | null {
+    return this.inner.externFields;
   }
   rustType(scope: RustScope): string {
     return this.inner.rustType(scope);
@@ -2826,6 +2845,15 @@ export class UnionType extends NamedType {
   }
   rustExternType(scope: RustScope): string {
     return this.path(scope, `Extern${this.name}`);
+  }
+  /** `data` then has a member `bits`: on its own, a union of pointers is a pointer to clang and an integer to rustc. */
+  get externFields(): readonly ExternField[] | null {
+    const { size, align } = this.layout();
+    if (size !== 16 || align !== 8) return null;
+    return [
+      { name: "tag", rustType: () => "u8" },
+      { name: "data", rustType: scope => this.path(scope, `Extern${this.name}Data`) },
+    ];
   }
   rustFromExtern(expr: string, scope: RustScope): string {
     return `${this.path(scope, this.name)}::from_extern(&${expr}${this.needsLifetime ? ", heap" : ""})`;

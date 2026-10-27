@@ -18,6 +18,7 @@ import {
   DeferredDictionaryType,
   DictionaryType,
   EnumerationType,
+  ExternField,
   FunctionDefinition,
   Getter,
   indent,
@@ -450,7 +451,7 @@ ${held.map(a => `        ${a.type.convertsInPlace ? `std::optional<${implementat
 struct Extern${name} {
     uint8_t tag;
     union {
-${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
+${type.externFields ? "        uint64_t bits;\n" : ""}${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
     } data;
 };
 ${layoutAssert(`Extern${name}`, type)}
@@ -853,6 +854,18 @@ function passedByPointer(args: readonly { type: Type }[], leading: number): bool
   });
 }
 
+const cppExternParameters = (type: Type, byPointer: boolean): string[] =>
+  byPointer
+    ? [`${externType(type)}*`]
+    : (type.externFields?.map(field => `decltype(${externType(type)}::${field.name})`) ?? [externType(type)]);
+
+/** The arguments that pass `extern`, an extern value of `type`, in registers. `lines` gets a declaration of `variable` if they read it. */
+function cppExternArguments(type: Type, extern: string, variable: string, lines: string[]): string[] {
+  if (!type.externFields) return [extern];
+  lines.push(`auto ${variable} = ${extern};`);
+  return type.externFields.map(field => `${variable}.${field.name}`);
+}
+
 /**
  * Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns, or ends with the lines `finish` makes from that call.
  * `fromParameters`: the arguments are the function's `JSValue` parameters `parameter0`.., not the call frame's, and a failed conversion returns `failure`.
@@ -887,11 +900,11 @@ function cppCallBody(
   });
   lines.push(...readLast);
   const byPointer = passedByPointer(signature.args, leading.length);
-  const args = signature.args.map(({ type }, i) => {
+  const args = signature.args.flatMap(({ type }, i) => {
     const extern = type.passesValue
       ? `${externType(type)} { ${toExtern(`converted${i}`)}, JSC::JSValue::encode(argument${i}.value()) }`
       : toExtern(`converted${i}`);
-    if (!byPointer[i]) return extern;
+    if (!byPointer[i]) return cppExternArguments(type, extern, `extern${i}`, lines);
     if (type.cppCanBitCastToExtern && !type.passesValue) return `Bun::Bindgen::asExtern(converted${i})`;
     lines.push(`auto extern${i} = ${extern};`);
     return `&extern${i}`;
@@ -976,7 +989,7 @@ const cppExtern = (
   returns = "JSC::EncodedJSValue",
 ) => {
   const byPointer = passedByPointer(signature.args, leading.length);
-  return `extern "C" ${returns} ${symbol}(${["JSC::JSGlobalObject*", ...leading, ...signature.args.map((arg, i) => externType(arg.type) + (byPointer[i] ? "*" : ""))].join(", ")});`;
+  return `extern "C" ${returns} ${symbol}(${["JSC::JSGlobalObject*", ...leading, ...signature.args.flatMap((arg, i) => cppExternParameters(arg.type, byPointer[i]))].join(", ")});`;
 };
 
 // ───────────────────────────── C++: classes ─────────────────────────────
@@ -1291,17 +1304,18 @@ ${cppCallBody(
 `;
   const isPrimitive = method.returns instanceof PrimitiveType;
   assert(!passedByPointer(method.args, 1).includes(true), `${type.name}.${method.name}: its arguments go in registers`);
+  const lines: string[] = [];
   const call = `${symbol}(${[
     signature.takesGlobalObject ? "globalObject" : "globalObject()",
     "this",
-    ...method.args.map((arg, i) => toExtern(`parameter${i}`)),
+    ...method.args.flatMap((arg, i) => cppExternArguments(arg.type, toExtern(`parameter${i}`), `extern${i}`, lines)),
   ].join(", ")})`;
   return `
 ${cppExtern(symbol, method, ["JSC::JSCell*"], isPrimitive ? signature.returns : undefined)}
 ${cppMemberFunction(signature, type)}
 {
     JSC::EnsureStillAliveScope ensureThisStillAlive { this };
-    ${returnsNothing ? call : `return ${isPrimitive ? call : `JSC::JSValue::decode(${call})`}`};
+    ${[...lines, `${returnsNothing ? call : `return ${isPrimitive ? call : `JSC::JSValue::decode(${call})`}`};`].join("\n    ")}
 }
 `;
 }
@@ -1382,8 +1396,10 @@ function cppSetter(type: ClassType, getter: Getter): string {
   const set = setterHostFunctionName(type, getter);
   const setSymbol = setterSymbolName(type, getter);
   const { holder, value } = cppHeldValue(getter.setterType, "assigned");
+  const lines = cppDeclareConverted(getter.setterType, "value", value, "ctx", getter.name, "false");
+  const args = cppExternArguments(getter.setterType, toExtern("value"), "externValue", lines);
   return `
-extern "C" bool ${setSymbol}(JSC::JSGlobalObject*, ${getter.isStatic ? "" : "JSC::JSCell*, "}${externType(getter.setterType)});
+extern "C" bool ${setSymbol}(${["JSC::JSGlobalObject*", ...(getter.isStatic ? [] : ["JSC::JSCell*"]), ...cppExternParameters(getter.setterType, false)].join(", ")});
 static JSC_DECLARE_CUSTOM_SETTER(${set});
 JSC_DEFINE_CUSTOM_SETTER(${set}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue${getter.isStatic ? "" : " thisValue"}, JSC::EncodedJSValue encodedValue, JSC::PropertyName${getter.isStatic ? "" : " attributeName"}))
 {
@@ -1395,8 +1411,8 @@ ${
 }
     ${holder} assigned { JSC::JSValue::decode(encodedValue) };
     ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(`${type.name}.${getter.name}`)} }`)}
-    ${cppDeclareConverted(getter.setterType, "value", value, "ctx", getter.name, "false").join("\n    ")}
-    RELEASE_AND_RETURN(scope, ${setSymbol}(globalObject, ${getter.isStatic ? "" : "thisObject, "}${toExtern("value")}));
+    ${lines.join("\n    ")}
+    RELEASE_AND_RETURN(scope, ${setSymbol}(${["globalObject", ...(getter.isStatic ? [] : ["thisObject"]), ...args].join(", ")}));
 }
 `;
 }
@@ -1885,8 +1901,13 @@ function rustThunkArguments(
   leading: readonly string[],
 ): { parameters: string[]; take: string } {
   const byPointer = passedByPointer(args, leading.length);
-  const parameters = args.map(
-    (arg, i) => `${rustArgumentName(arg)}: ${byPointer[i] ? "*mut " : ""}${arg.type.rustExternType(scope)}`,
+  const fieldName = (arg: { name: string }, field: ExternField) => `${rustArgumentName(arg)}_${field.name}`;
+  const parameters = args.flatMap((arg, i) =>
+    byPointer[i]
+      ? [`${rustArgumentName(arg)}: *mut ${arg.type.rustExternType(scope)}`]
+      : (arg.type.externFields?.map(field => `${fieldName(arg, field)}: ${field.rustType(scope)}`) ?? [
+          `${rustArgumentName(arg)}: ${arg.type.rustExternType(scope)}`,
+        ]),
   );
   // What can return early comes last: by then Rust owns whatever the other arguments hand over.
   const taken = args
@@ -1894,7 +1915,12 @@ function rustThunkArguments(
     .toSorted((a, b) => +a.arg.type.rustFromExternThrows - +b.arg.type.rustFromExternThrows)
     .flatMap(({ arg, byPointer }) => {
       const name = rustArgumentName(arg);
-      const converted = arg.type.rustFromExtern(byPointer ? `${name}.read()` : name, scope);
+      const extern = byPointer
+        ? `${name}.read()`
+        : arg.type.externFields
+          ? `${arg.type.rustExternType(scope)} { ${arg.type.externFields.map(field => `${field.name}: ${fieldName(arg, field)}`).join(", ")} }`
+          : name;
+      const converted = arg.type.rustFromExtern(extern, scope);
       if (arg.type.rustFromExternThrows)
         return [
           `let ${name} = match ${converted} {\n    Ok(value) => value,\n    Err(error) => return error.into_host_fn_return(cx),\n};\n`,
@@ -1998,13 +2024,13 @@ ${variants.map(a => (a.type instanceof UnitType ? `    ${a.variant},` : `    ${a
     text += `#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Extern${type.name} {
-    tag: u8,
-    data: Extern${type.name}Data,
+    pub tag: u8,
+    pub data: Extern${type.name}Data,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
-union Extern${type.name}Data {
-${type.alternatives.map(a => `    ${rustIdent(snakeCase(a.name))}: ${a.type.rustExternType(scope)},`).join("\n")}
+pub union Extern${type.name}Data {
+${type.externFields ? "    bits: u64,\n" : ""}${type.alternatives.map(a => `    ${rustIdent(snakeCase(a.name))}: ${a.type.rustExternType(scope)},`).join("\n")}
 }
 ${rustLayoutAssert(`Extern${type.name}`, type)}
 impl${lifetime} ${type.name}${lifetime} {

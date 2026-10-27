@@ -7,6 +7,7 @@ use super::seq_table::{
 };
 use core::cell::{self, OnceCell};
 use core::hint::{Locality, prefetch_read};
+use core::ops::Range;
 
 use crate::common::bitstream::BitDStream;
 use crate::common::entropy::read_ncount;
@@ -1036,6 +1037,10 @@ impl<'a> SeqState<'a> {
     }
 }
 
+const NO_EXT: u8 = 0;
+const EXT_DICT: u8 = 1;
+const EXT_WITHIN: u8 = 2;
+
 /// Copies 16 bytes within `buf`, between positions that do not overflow. Whether they are in `buf`.
 #[inline(always)]
 fn copy_16(buf: &mut [u8], src: usize, dst: usize) -> bool {
@@ -1344,7 +1349,7 @@ impl<'a> Executor<'_, 'a> {
     /// The last offsets are those of the 3 sequences before, which are rewritten for that where it takes it.
     #[inline(never)]
     fn exec_batch(&mut self, sequences: &mut [RawSequence], index: usize) -> usize {
-        self.exec_batch_with::<false>(sequences, index, &[])
+        self.exec_batch_with::<NO_EXT>(sequences, index, &[], 0..0)
     }
 
     /// The same where matches in `dict`, which comes before the output, are of the common kind too.
@@ -1355,23 +1360,36 @@ impl<'a> Executor<'_, 'a> {
         index: usize,
         dict: &[u8],
     ) -> usize {
-        self.exec_batch_with::<true>(sequences, index, dict)
+        self.exec_batch_with::<EXT_DICT>(sequences, index, dict, 0..0)
     }
 
+    /// The same for `within` of the buffer that the output goes to.
+    #[inline(never)]
+    fn exec_batch_after_wrap(
+        &mut self,
+        sequences: &mut [RawSequence],
+        index: usize,
+        within: Range<usize>,
+    ) -> usize {
+        self.exec_batch_with::<EXT_WITHIN>(sequences, index, &[], within)
+    }
+
+    /// What comes before the output is nothing of the common kind, `dict` or `within`, as `EXT` tells.
     #[inline(always)]
-    fn exec_batch_with<const DICT: bool>(
+    fn exec_batch_with<const EXT: u8>(
         &mut self,
         sequences: &mut [RawSequence],
         mut index: usize,
         dict: &[u8],
+        within: Range<usize>,
     ) -> usize {
         // Positions fit in 32 bits, so that the compiler sees that nothing added to them overflows.
         const MAX_BACK: usize = 3 << 30;
         let start = self.prefix_start.max(self.op.saturating_sub(MAX_BACK));
-        let dict = if start == self.prefix_start {
-            dict
+        let (dict, within) = if start == self.prefix_start && within.start >= start {
+            (dict, within.start - start..within.end - start)
         } else {
-            &[]
+            (&[][..], 0..0)
         };
         let buf = self.out.bytes();
         let end = buf.len().min(start + u32::MAX as usize);
@@ -1400,7 +1418,7 @@ impl<'a> Executor<'_, 'a> {
                 || lit_end + WILDCOPY_OVERLENGTH > lits.len()
                 || lit_length > 32
                 || match_length > 64
-                || !DICT && offset_value as usize > o_lit_end + 3
+                || EXT == NO_EXT && offset_value as usize > o_lit_end + 3
             {
                 break;
             }
@@ -1410,7 +1428,7 @@ impl<'a> Executor<'_, 'a> {
             ) else {
                 break;
             };
-            if DICT && offset_value as usize > o_lit_end + 3 {
+            if EXT == EXT_DICT && offset_value as usize > o_lit_end + 3 {
                 let back = offset_value as usize - 3 - o_lit_end;
                 let Some(match_pos) = dict.len().checked_sub(back) else {
                     break;
@@ -1437,8 +1455,16 @@ impl<'a> Executor<'_, 'a> {
                 index += 1;
                 continue;
             }
+            let mut match_end = o_lit_end + 3;
+            if EXT == EXT_WITHIN && offset_value as usize > o_lit_end + 3 {
+                let back = offset_value as usize - 3 - o_lit_end;
+                if back > within.len() || match_length > back {
+                    break;
+                }
+                match_end += within.end;
+            }
             to.copy_from_slice(from);
-            let match_pos = o_lit_end + 3 - offset_value as usize;
+            let match_pos = match_end - offset_value as usize;
             if !copy_16(buf, match_pos, o_lit_end) || !copy_16(buf, match_pos + 16, o_lit_end + 16)
             {
                 break;
@@ -1611,6 +1637,9 @@ impl<'a> Executor<'_, 'a> {
             index = match self.ext_dict {
                 ExtDict::Dict(dict) if !dict.is_empty() => {
                     self.exec_batch_after_dict(sequences, index, dict)
+                }
+                ExtDict::Within { end, len } if len != 0 => {
+                    self.exec_batch_after_wrap(sequences, index, end - len..end)
                 }
                 _ => self.exec_batch(sequences, index),
             };

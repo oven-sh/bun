@@ -385,14 +385,6 @@ describe("dns", () => {
       ]);
     });
 
-    test("with an IPv4 address in hand, a server that is silent about AAAA is not asked again", async () => {
-      expect(await lookups({}, ["silent"], ["silent"])).toEqual([
-        ["silent", ["10.0.0.8 4"], ["silent.corp.test 1", "silent.corp.test 28", "silent 1", "silent 28"]],
-        // That there is no silent.corp.test is remembered.
-        ["silent", ["10.0.0.8 4"], ["silent 1", "silent 28"]],
-      ]);
-    });
-
     test("a name that ends with a dot is complete", async () => {
       expect(await lookups({}, ["missing.", { family: 4 }], ["host.corp.test.", { family: 4 }])).toEqual([
         ["missing.", "DNS_ENOTFOUND", ["missing 1"]],

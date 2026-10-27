@@ -205,7 +205,7 @@ export async function dnsServer(handler: Handler): Promise<DnsServer> {
             socket.remoteAddress!,
             reply => socket.write(Buffer.concat([u16(reply.length), reply])),
             () => socket.destroy(),
-          );
+          ).catch(error => (failure ??= error));
         }
       });
       socket.on("error", () => {});
@@ -242,7 +242,7 @@ export async function dnsServer(handler: Handler): Promise<DnsServer> {
     udp.on("message", (message, from) => {
       answer(message, "udp", from.address, reply => {
         sent = sent.then(() => send(reply, from));
-      });
+      }).catch(error => (failure ??= error));
     });
     return server;
   }

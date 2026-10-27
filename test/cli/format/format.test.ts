@@ -2541,6 +2541,57 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
+  // What reads a style sheet looks ahead from some openers for their closer. Where it goes on after an opener without
+  // one shows in what is printed. Each row is the file extension, the code and what Prettier 3.9.9 prints for it, which
+  // stays as it is when it is formatted again.
+  test("an opener without its closer in a style sheet doesn't hide the one after it", async () => {
+    const rows: [string, string, string][] = [
+      // `/(\s*)(!default).*$/`: `.` matches no line break, so only a directive on the last line is one.
+      ["scss", "$a: 1   !default\n  2   3;\n", "$a: 1 !default 2 3;\n"],
+      ["scss", "$a: 1   !default\n  2   3   !default   4;\n", "$a: 1 !default 2 3 !default   4;\n"],
+      ["scss", "$a: 1   !default\n  2   !global   !default   3;\n", "$a: 1 !default 2 !default   3 !global;\n"],
+      [
+        "scss",
+        "$a: 1   !default\n 2   3   !default\u2028 4   5   !default   6;\n",
+        "$a: 1 !default 2 3 !default\u2028 4 5 !default   6;\n",
+      ],
+      [
+        "scss",
+        "$a: 1   !default\u2028 2   3   !default\n 4   5   !default   6;\n",
+        "$a: 1 !default\u2028 2 3 !default 4 5 !default   6;\n",
+      ],
+      // `.replace(/\/\*.*?\*\//, "")`: the first `/*` has no `*/` on its line, so the comment on the next line is the
+      // one that is taken out, and what is left ends in a colon: a nested property, which is printed in lower case.
+      ["scss", "a {\n  B/*:\n/* C */\u00a0{\n    d: e;\n  }\n}\n", "a {\n  b/*:\n/* c */ {\n    d: e;\n  }\n}\n"],
+      // `/extend\(.+\)/i`: the `)` is on the line of the `extend(`, and not directly after it. A value that has one
+      // is printed without the space after the colon.
+      ["less", '.a {\n  b: "extend(" "extend(\\\n" c(d);\n}\n', '.a {\n  b: "extend(" "extend(\\\n" c(d);\n}\n'],
+      [
+        "less",
+        '.a {\n  b: "extend(" "extend(\\\n" extend(d);\n}\n',
+        '.a {\n  b:"extend(" "extend(\\\n" extend(d);\n}\n',
+      ],
+      ["less", ".a {\n  b: extend() d;\n}\n", ".a {\n  b: extend() d;\n}\n"],
+      ["less", ".a {\n  b: c EXTEND(d) e;\n}\n", ".a {\n  b:c EXTEND(d) e;\n}\n"],
+      // `/(["'])(?:(?!\1)[^\\]|\\.)*\1/s`: a quote without its match starts no string, and a quote of the other kind
+      // after it still does. A number in a string stays as it is. In the second row the `"` that is printed for the
+      // `'` closes the one before it, and `2.50` is in no string from then on.
+      ["css", '@media (min-width:1.50\\\'"2.50"3.50) {\n}\n', '@media (min-width: 1.5\\\'"2.50"3.5) {\n}\n'],
+      ["css", "@media (min-width:1.50\\\"'2.50'3.50) {\n}\n", '@media (min-width: 1.5\\""2.5"3.5) {\n}\n'],
+    ];
+    const files = rows.flatMap(([extension, code, printed], index) => [
+      [`${index}.${extension}`, code],
+      [`${index}-printed.${extension}`, printed],
+    ]);
+    const result = await format(Object.fromEntries(files), [], { reads: files.map(([name]) => name) });
+    const expected = rows.flatMap(([extension, , printed], index) => [
+      [`${index}.${extension}`, printed],
+      [`${index}-printed.${extension}`, printed],
+    ]);
+    expect(result.files).toEqual(Object.fromEntries(expected));
+    expect(result.exitCode).toBe(0);
+  });
+
   describe("YAML whose values Prettier changes", () => {
     // Each row is the text, Bun's output and Prettier 3.9.9's output, which has a key with an extra line break, a
     // scalar that became a marker, a byte order mark that was the start of a key, or a key that can't be parsed.
@@ -7587,6 +7638,43 @@ try {
     // 3 when all is well, 1,189 without the fix.
     expect(slowdown(odd, plain)).toBeLessThan(60);
   }, 120_000);
+
+  // The same for an opener that is repeated and has no closer. What looked for the closer did so once for each opener,
+  // through the rest of the line or of the text. Each row is the file extension, a prefix, the unit with the opener,
+  // the same unit with another character in the opener's place, a suffix and a configuration. One text is compared
+  // with the other.
+  test.each<[string, string, string, string, string, Record<string, string>]>([
+    ["scss", "$a: ", "!default", "!defaulx", "\nb;\n", {}],
+    ["scss", "$a: ", "!global\u2028", "!globax\u2028", "b;\n", {}],
+    ["scss", 'a[b="', "/* ", "/x ", '"] {}\n', {}],
+    ["less", 'a {\n  b: "', "extend(", "extenx(", '";\n}\n', {}],
+    ["css", "[a=", "\\\"\\'", "\\x\\y", "] {}\n", {}],
+    ["css", ".a1", '\\"', "\\x", " {}\n", {}],
+    ["css", "a {\n  --a: b/* ", "url(", "urx(", " */c;\n}\n", { ".oxfmtrc.json": "{}\n" }],
+    ["less", "// ", "url(\\)", "urx(\\)", "\na {}\n", {}],
+    // No line break at the end: with one, the quotes of the comment are replaced before the text is parsed.
+    ["less", "// '", "\\'", "\\x", "", {}],
+  ])(
+    "an opener that is repeated without its closer takes linear time: .%s %j %j",
+    async (extension, before, opener, other, after, configuration) => {
+      // An optimized build needs the larger size: at 256 KB its first two rows stay below 6 without the fix.
+      const size = (isDebug ? 256 : 2048) * 1024;
+      const run = (unit: string) => {
+        const units = Buffer.alloc(size - (size % Buffer.byteLength(unit)), unit).toString();
+        return format({ ...configuration, [`a.${extension}`]: before + units + after }, ["--check"]);
+      };
+      // The least of three runs each, in turns: the tests that run at the same time can make one run take several
+      // times as long.
+      let [odd, plain] = [Infinity, Infinity];
+      for (let turn = 0; turn < 3; turn++) {
+        odd = Math.min(odd, (await run(opener)).cpu);
+        plain = Math.min(plain, (await run(other)).cpu);
+      }
+      // 0.8 to 1.7 when all is well, and up to 3.9 on a busy machine. 24 or more without the fix.
+      expect(slowdown({ cpu: odd }, { cpu: plain })).toBeLessThan(6);
+    },
+    120_000,
+  );
 
   // Inputs that some part of parsing or printing Markdown once rescanned for each repetition, or took a thousand times
   // too long for, and similar ones. Their CPU time is compared with that of the same number of bytes of prose, which

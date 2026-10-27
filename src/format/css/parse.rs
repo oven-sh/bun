@@ -129,16 +129,20 @@ fn trim<'a>(text: &Cow<'a, [u8]>) -> Cow<'a, [u8]> {
 
 /// Matches `/(\s*)(!default).*$/`, or the same with `!global`, and returns the match's start.
 fn find_directive(value: &[u8], directive: &[u8]) -> Option<usize> {
-    let mut from = 0;
-    while let Some(at) = text::index_of_from(value, directive, from) {
-        if bun_core::strings::index_of_any(&value[at..], b"\n\r").is_none()
-            && !bun_core::strings::contains(&value[at..], "\u{2028}".as_bytes())
-        {
-            return Some(bun_core::strings::trim_js_whitespace_end(&value[..at]).len());
-        }
-        from = at + 1;
+    let separator = "\u{2028}".as_bytes();
+    let mut at = bun_core::strings::index_of(value, directive)?;
+    let rest = &value[at..];
+    if bun_core::strings::index_of_any(rest, b"\n\r").is_some()
+        || bun_core::strings::contains(rest, separator)
+    {
+        // `.` matches no line break, so the directive of a match is behind the last one.
+        let after_line_break =
+            bun_core::strings::last_index_of_any(rest, b"\n\r").map_or(0, |it| it + 1);
+        let after_separator =
+            bun_core::strings::last_index_of(rest, separator).map_or(0, |it| it + separator.len());
+        at = text::index_of_from(value, directive, at + after_line_break.max(after_separator))?;
     }
-    None
+    Some(bun_core::strings::trim_js_whitespace_end(&value[..at]).len())
 }
 
 /// Returns the length of the `/^\s*:?\s*/` match.
@@ -274,7 +278,8 @@ fn is_scss_nested_property(selector: &[u8]) -> bool {
             selector.to_mut().drain(start..end + 2);
             break;
         }
-        from = start + 1;
+        // A later `/*` on this line would look for its `*/` in the same bytes and fail too, so skip the line.
+        from = line_end;
     }
     // `.replace(/\/\/.*\n/, "")`
     let mut from = 0;

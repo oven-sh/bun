@@ -1,5 +1,7 @@
 //! `zstd_compress_sequences.c`: how the sequences of a block are encoded.
 
+use core::num::NonZero;
+
 use super::fse::{
     self, FSE_NCOUNTBOUND, FseCTable, FseRepeat, FseSymbolTransform, PredefinedCTable,
 };
@@ -464,21 +466,17 @@ pub(crate) struct SeqCodes {
     pub(crate) ll: Code,
     pub(crate) of: Code,
     pub(crate) ml: Code,
-    /// How many `extra_bits` are, or [`Self::TOO_MANY`].
-    nb_extra_bits: u8,
 }
 
 impl SeqCodes {
     /// With more than this on top of the bits that leave the three states, a sequence may not fit the container.
     const MAX_EXTRA_BITS: u32 = 64 - 7 - (LL_FSE_LOG + ML_FSE_LOG + OFF_FSE_LOG) - 1;
-    const TOO_MANY: u8 = 0x80;
 
     /// `None` if there are too many extra bits.
     #[inline(always)]
     fn new(ll: LengthCode, ml: LengthCode, off_base: u32) -> Option<Self> {
         let of = highbit32(off_base);
-        let nb_extra_bits = ll.nb_bits + ml.nb_bits + of;
-        if nb_extra_bits > Self::MAX_EXTRA_BITS {
+        if ll.nb_bits + ml.nb_bits + of > Self::MAX_EXTRA_BITS {
             return None;
         }
         // The highest bit of `off_base`, which the code stands for, is the bit set above the others.
@@ -488,17 +486,6 @@ impl SeqCodes {
             ll: ll.code,
             of: Code::new(of),
             ml: ml.code,
-            nb_extra_bits: nb_extra_bits as u8,
-        })
-    }
-
-    fn new_any(ll: LengthCode, ml: LengthCode, off_base: u32) -> Self {
-        Self::new(ll, ml, off_base).unwrap_or_else(|| Self {
-            extra_bits: 1,
-            ll: ll.code,
-            of: Code::new(highbit32(off_base)),
-            ml: ml.code,
-            nb_extra_bits: Self::TOO_MANY,
         })
     }
 
@@ -509,7 +496,20 @@ impl SeqCodes {
         self.ll = codes.ll;
         self.of = codes.of;
         self.ml = codes.ml;
-        self.nb_extra_bits = codes.nb_extra_bits;
+    }
+
+    fn ll_bits(self) -> u32 {
+        u32::from(LL_BITS.get(self.ll as usize).copied().unwrap_or(0))
+    }
+
+    fn ml_bits(self) -> u32 {
+        u32::from(ML_BITS.get(self.ml as usize).copied().unwrap_or(0))
+    }
+
+    /// Whether `extra_bits` lacks the extra bits.
+    fn has_many_bits(self) -> bool {
+        self.extra_bits == 1
+            && self.ll_bits() + self.ml_bits() + self.of as u32 > Self::MAX_EXTRA_BITS
     }
 }
 
@@ -542,6 +542,8 @@ pub(crate) struct SeqHistograms {
     pub(crate) ll: CodeCounts,
     pub(crate) of: CodeCounts,
     pub(crate) ml: CodeCounts,
+    /// Whether some sequence has too many extra bits to be written at once.
+    pub(crate) many_bits: bool,
 }
 
 impl SeqHistograms {
@@ -552,11 +554,24 @@ impl SeqHistograms {
         count_code(&mut self.ml, codes.ml, 1);
     }
 
+    /// The codes of any sequence, which are not counted.
+    fn codes_of(&mut self, ll: LengthCode, ml: LengthCode, off_base: u32) -> SeqCodes {
+        SeqCodes::new(ll, ml, off_base).unwrap_or_else(|| {
+            self.many_bits = true;
+            SeqCodes {
+                extra_bits: 1,
+                ll: ll.code,
+                of: Code::new(highbit32(off_base)),
+                ml: ml.code,
+            }
+        })
+    }
+
     /// For a sequence that takes more than the tables of [`seq_to_codes`].
     #[cold]
     #[inline(never)]
     fn add_unusual(&mut self, seq: SeqDef) -> SeqCodes {
-        let codes = SeqCodes::new_any(
+        let codes = self.codes_of(
             LL_CODES.get_any(seq.lit_length, LL_DELTA_CODE),
             ML_CODES.get_any(seq.ml_base, ML_DELTA_CODE),
             seq.off_base,
@@ -578,6 +593,7 @@ pub(crate) fn seq_to_codes(
         ll: [0; 64],
         of: [0; 64],
         ml: [0; 64],
+        many_bits: false,
     };
     for (codes, seq) in codes.iter_mut().zip(sequences) {
         if let (Some(ll), Some(ml)) = (LL_CODES.get(seq.lit_length), ML_CODES.get(seq.ml_base))
@@ -609,19 +625,23 @@ pub(crate) fn seq_to_codes(
             bits: u32::from(bits),
         };
         count_code(counts, length.code, 1);
-        *codes = SeqCodes::new_any(ll, ml, seq.off_base);
+        *codes = histograms.codes_of(ll, ml, seq.off_base);
     }
     histograms
 }
 
-/// Bits on their way to the stream: the first to be written are the lowest.
+/// Bits on their way to the stream, with a bit set above them: the first to be written are the lowest.
 #[derive(Clone, Copy)]
-struct SeqBits {
-    bits: u64,
-    nb_bits: u32,
-}
+struct SeqBits(u64);
 
 impl SeqBits {
+    /// The lowest `nb_bits` of `bits`, which is less than 32.
+    #[inline(always)]
+    fn new(bits: u32, nb_bits: u32) -> Self {
+        let above = 1 << (nb_bits & 31);
+        Self((u64::from(bits) & (above - 1)) | above)
+    }
+
     /// `FSE_encodeSymbol`: the bits that leave the state go below the others.
     #[inline(always)]
     fn encode_below(&mut self, table: &FseCTable, state: &mut u32, code: Code) {
@@ -629,10 +649,9 @@ impl SeqBits {
         let nb_bits = state.wrapping_add(transform.delta_nb_bits) >> 16;
         let kept = state.wrapping_shr(nb_bits);
         // Taking `kept` from what comes above the state cancels the bits that stay in it.
-        self.bits = (self.bits.wrapping_sub(u64::from(kept)))
+        self.0 = (self.0.wrapping_sub(u64::from(kept)))
             .wrapping_shl(nb_bits)
             .wrapping_add(u64::from(*state));
-        self.nb_bits += nb_bits;
         let next = kept.wrapping_add_signed(transform.delta_find_state) as usize;
         let state_table = &table.state_table;
         *state = u32::from((state_table.get(next & (state_table.len() - 1)).copied()).unwrap_or(0));
@@ -655,8 +674,8 @@ struct SeqStream<'a> {
 }
 
 impl SeqStream<'_> {
-    /// `BIT_addBits` and `BIT_flushBits`: `seq` makes at most 56 bits, with a bit set above them. `None` if the output is
-    /// too small, which is found out first so that there is less to keep while `seq` is at work.
+    /// `BIT_addBits` and `BIT_flushBits`: `seq` makes at most 56 bits. `None` if the output is too small, which is found
+    /// out first so that there is less to keep while `seq` is at work.
     #[inline(always)]
     fn write_with(&mut self, seq: impl FnOnce() -> SeqBits) -> Option<()> {
         let pos = self.bit_pos >> 3;
@@ -664,25 +683,18 @@ impl SeqStream<'_> {
             return None;
         }
         let out: &mut [u8; 8] = self.dst.get_mut(pos..)?.first_chunk_mut()?;
-        let seq = seq();
+        let seq = NonZero::new(seq().0)?;
         let [partial, ..] = *out;
         // The lowest of the new bits replaces the bit set.
-        let bits = seq
-            .bits
-            .wrapping_sub(1)
-            .wrapping_shl(self.bit_pos as u32 & 7);
+        let bits = (seq.get() - 1).wrapping_shl(self.bit_pos as u32 & 7);
         *out = bits.wrapping_add(u64::from(partial)).to_le_bytes();
-        self.bit_pos += seq.nb_bits as usize;
+        self.bit_pos += seq.ilog2() as usize;
         Some(())
     }
 
     #[inline(always)]
     fn write(&mut self, bits: u32, nb_bits: u32) -> Option<()> {
-        let above = 1 << (nb_bits & 31);
-        self.write_with(|| SeqBits {
-            bits: (u64::from(bits) & (above - 1)) | above,
-            nb_bits,
-        })
+        self.write_with(|| SeqBits::new(bits, nb_bits))
     }
 }
 
@@ -690,12 +702,9 @@ impl SeqStream<'_> {
 struct Encoded {
     states: SeqStates,
     bit_pos: usize,
-    /// How many sequences are left.
-    nb_left: usize,
 }
 
-/// From the last of `codes` towards the first. It stops after one whose extra bits are too many, with
-/// [`SeqCodes::TOO_MANY`] bits too many in the position. `None` if the output is too small.
+/// From the last of `codes` to the first. `None` if the output is too small.
 ///
 /// On its own, so that nothing else competes for the registers.
 #[inline(never)]
@@ -712,13 +721,9 @@ fn encode_run(
         match_length: states.match_length,
         offset_bits: states.offset_bits,
     };
-    let mut codes = codes.iter();
-    while let Some(seq_codes) = codes.next_back() {
+    for seq_codes in codes.iter().rev() {
         stream.write_with(|| {
-            let mut seq = SeqBits {
-                bits: u64::from(seq_codes.extra_bits),
-                nb_bits: u32::from(seq_codes.nb_extra_bits),
-            };
+            let mut seq = SeqBits(u64::from(seq_codes.extra_bits));
             seq.encode_below(
                 &tables.litlength_c_table,
                 &mut states.lit_length,
@@ -736,14 +741,10 @@ fn encode_run(
             );
             seq
         })?;
-        if seq_codes.nb_extra_bits == SeqCodes::TOO_MANY {
-            break;
-        }
     }
     Some(Encoded {
         states,
         bit_pos: stream.bit_pos,
-        nb_left: codes.len(),
     })
 }
 
@@ -753,6 +754,7 @@ fn encode_sequences_into(
     tables: &FseCTables,
     codes: &[SeqCodes],
     sequences: &[SeqDef],
+    many_bits: bool,
 ) -> Option<usize> {
     *dst.first_mut()? = 1;
     let mut stream = SeqStream { dst, bit_pos: 0 };
@@ -762,31 +764,34 @@ fn encode_sequences_into(
         match_length: (tables.matchlength_c_table).first_state(last_codes.ml as u8),
         offset_bits: tables.offcode_c_table.first_state(last_codes.of as u8),
     };
-    let mut nb_left = codes.len() - 1;
+    // The sequence whose extra bits are to be written: the last one, which has nothing else to write,
+    let mut apart = codes.len() - 1;
     loop {
-        // The extra bits of the last sequence, which has nothing else to write, or of the one that the run stopped at.
-        let (seq_codes, seq) = (codes.get(nb_left)?, sequences.get(nb_left)?);
-        let ll_bits = LL_BITS.get(seq_codes.ll as usize).copied()?;
-        let ml_bits = ML_BITS.get(seq_codes.ml as usize).copied()?;
-        stream.write(u32::from(seq.lit_length), u32::from(ll_bits))?;
-        stream.write(u32::from(seq.ml_base), u32::from(ml_bits))?;
+        let (seq_codes, seq) = (codes.get(apart)?, sequences.get(apart)?);
+        stream.write(u32::from(seq.lit_length), seq_codes.ll_bits())?;
+        stream.write(u32::from(seq.ml_base), seq_codes.ml_bits())?;
         stream.write(seq.off_base, seq_codes.of as u32)?;
 
-        let before = nb_left;
+        // then each that has too many.
+        let left = codes.get(..apart)?;
+        let next = if many_bits {
+            left.iter().rposition(|codes| codes.has_many_bits())
+        } else {
+            None
+        };
         let run = encode_run(
             stream.dst,
             stream.bit_pos,
             tables,
             states,
-            codes.get(..nb_left)?,
+            left.get(next.unwrap_or(0)..)?,
         )?;
         states = run.states;
         stream.bit_pos = run.bit_pos;
-        nb_left = run.nb_left;
-        if nb_left == before || codes.get(nb_left)?.nb_extra_bits != SeqCodes::TOO_MANY {
-            break;
+        match next {
+            Some(next) => apart = next,
+            None => break,
         }
-        stream.bit_pos -= usize::from(SeqCodes::TOO_MANY);
     }
 
     // `FSE_flushCState`
@@ -797,15 +802,17 @@ fn encode_sequences_into(
     Some(stream.bit_pos + 1)
 }
 
-/// `ZSTD_encodeSequences`: `codes` are those of `sequences`, of which there is at least one.
+/// `ZSTD_encodeSequences`: `codes` are those of `sequences`, of which there is at least one. Without `many_bits`, none
+/// has too many extra bits to be written at once.
 pub(crate) fn encode_sequences(
     dst: &mut [u8],
     tables: &FseCTables,
     codes: &[SeqCodes],
     sequences: &[SeqDef],
+    many_bits: bool,
 ) -> Result<usize> {
     let capacity = dst.len();
-    encode_sequences_into(dst, tables, codes, sequences)
+    encode_sequences_into(dst, tables, codes, sequences, many_bits)
         // The stream has to end before the last position that a container can be written to.
         .filter(|nb_bits| (nb_bits >> 3) + size_of::<u64>() < capacity)
         .map(|nb_bits| nb_bits.div_ceil(8))

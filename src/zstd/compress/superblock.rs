@@ -161,7 +161,7 @@ fn compress_sub_block_sequences(
         )?;
     }
 
-    let bitstream_size = encode_sequences(dst.sub_mut(op..)?, fse_tables, codes, sequences)?;
+    let bitstream_size = encode_sequences(dst.sub_mut(op..)?, fse_tables, codes, sequences, true)?;
     op += bitstream_size;
     // Decoders up to 1.3.4 fail on a table header with fewer than 4 bytes after it,
     if write_entropy

@@ -228,7 +228,7 @@ fn entropy_compress_seq_store_internal(
         next_entropy.fse.copy_from(&prev_entropy.fse);
         return Ok(op);
     }
-    let last_count_size = {
+    let (last_count_size, many_bits) = {
         let seq_head = op;
         op += 1;
         let mut histograms = seq_to_codes(store, chunk)?;
@@ -248,7 +248,7 @@ fn entropy_compress_seq_store_internal(
                 + ((stats.ml_type as u32) << 2)) as u8,
         )?;
         op += stats.size;
-        stats.last_count_size
+        (stats.last_count_size, histograms.many_bits)
     };
 
     let range = chunk.seq_start..chunk.seq_end;
@@ -257,6 +257,7 @@ fn entropy_compress_seq_store_internal(
         &next_entropy.fse,
         store.codes.sub(range.clone())?,
         store.sequences.sub(range)?,
+        many_bits,
     )?;
     op += bitstream_size;
     // Decoders up to 1.3.4 fail on a table header with fewer than 4 bytes after it.

@@ -231,6 +231,8 @@ struct Encoder<'a> {
     luma_extent: Extent,
     chroma_extent: Extent,
     quant: [[u16; 64]; 2],
+    luma_divisors: Divisors,
+    chroma_divisors: Divisors,
     samples: McuRowSamples,
 }
 
@@ -243,9 +245,7 @@ impl Encoder<'_> {
         cb: &mut BlockRows,
         cr: &mut BlockRows,
     ) -> Result<()> {
-        let [luma_quant, chroma_quant] = &self.quant;
-        let luma_divisors = Divisors::new(luma_quant);
-        let chroma_divisors = Divisors::new(chroma_quant);
+        let (luma_divisors, chroma_divisors) = (&self.luma_divisors, &self.chroma_divisors);
         let width = usize::from(self.width);
         for (((mcu_row, y), cb), cr) in (first_mcu_row..)
             .zip(y.blocks.chunks_exact_mut(self.mcus_per_row * 4))
@@ -260,7 +260,7 @@ impl Encoder<'_> {
             let samples = &self.samples;
             transform_rows(
                 &samples.y,
-                &luma_divisors,
+                luma_divisors,
                 self.luma_extent,
                 2,
                 mcu_row * 2,
@@ -268,7 +268,7 @@ impl Encoder<'_> {
             )?;
             transform_rows(
                 &samples.cb,
-                &chroma_divisors,
+                chroma_divisors,
                 self.chroma_extent,
                 1,
                 mcu_row,
@@ -276,7 +276,7 @@ impl Encoder<'_> {
             )?;
             transform_rows(
                 &samples.cr,
-                &chroma_divisors,
+                chroma_divisors,
                 self.chroma_extent,
                 1,
                 mcu_row,
@@ -429,6 +429,11 @@ pub fn encode(rgba: &[u8], width: u32, height: u32, options: &EncodeOptions) -> 
         .ok_or(Error::InvalidArgument)?;
 
     let mcus_per_row = w.div_ceil(MCU_SIZE);
+    let quant = [
+        scaled_quant_table(&tables::STD_LUMINANCE_QUANT, options.quality),
+        scaled_quant_table(&tables::STD_CHROMINANCE_QUANT, options.quality),
+    ];
+    let [luma_quant, chroma_quant] = &quant;
     let mut encoder = Encoder {
         rgba,
         width: width as u16,
@@ -443,10 +448,9 @@ pub fn encode(rgba: &[u8], width: u32, height: u32, options: &EncodeOptions) -> 
             width_in_blocks: w.div_ceil(16),
             height_in_blocks: h.div_ceil(16),
         },
-        quant: [
-            scaled_quant_table(&tables::STD_LUMINANCE_QUANT, options.quality),
-            scaled_quant_table(&tables::STD_CHROMINANCE_QUANT, options.quality),
-        ],
+        luma_divisors: Divisors::new(luma_quant),
+        chroma_divisors: Divisors::new(chroma_quant),
+        quant,
         samples: McuRowSamples::new(mcus_per_row)?,
     };
 

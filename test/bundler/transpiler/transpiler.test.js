@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  hideFromStackTrace,
+  integersThatNeedRounding,
+  isASAN,
+  isDebug,
+  tempDir,
+} from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -107,8 +116,8 @@ describe("Bun.Transpiler", () => {
     }).toThrow("Unexpected hi");
   });
 
-  // The constructor parses `tsconfig`, `macro` and `define` values as JSON and frees each tree
-  // before it returns. The two tests below read what it reports and keeps from those trees.
+  // The constructor parses `tsconfig` and `macro` as JSON and frees both trees before it returns.
+  // The two tests below read what it reports and keeps from those trees.
   it("the constructor reports `tsconfig` and `macro` diagnostics with their positions in the option text", () => {
     let error;
     try {
@@ -280,15 +289,7 @@ describe("Bun.Transpiler", () => {
       console.log(JSON.stringify({ keptPerCall: (liveBytes() - before) / ${calls}, threw }));
     `;
 
-    it.each([
-      { option: "a `macro` object", which: "macro object", throws: false },
-      { option: "`macro` JSON text", which: "macro text", throws: false },
-      { option: "a `macro` object beside a `tsconfig` syntax error", which: "macro and error", throws: true },
-      // The trees of the next two cases are only nodes in the AST store. An ASAN build takes the blocks
-      // of that store from the system allocator, so there these cases pass with and without the fix.
-      { option: "a `tsconfig` object", which: "tsconfig", throws: false },
-      { option: "`define` values", which: "define", throws: false },
-    ])("$option", async ({ which, throws }) => {
+    async function expectNothingKept(which, throws) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture, which],
         env: bunEnv,
@@ -301,7 +302,20 @@ describe("Bun.Transpiler", () => {
       expect(threw).toBe(throws ? warmup + calls : 0);
       // A tree that is not freed keeps 3 KB to 10 KB per call. A freed tree measures under 150 bytes.
       expect(keptPerCall).toBeLessThan(1024);
-    });
+    }
+
+    it.each([
+      { option: "a `macro` object", which: "macro object", throws: false },
+      { option: "`macro` JSON text", which: "macro text", throws: false },
+      { option: "a `macro` object beside a `tsconfig` syntax error", which: "macro and error", throws: true },
+    ])("$option", ({ which, throws }) => expectNothingKept(which, throws));
+
+    // These trees are only nodes in the AST store. An ASAN build takes the blocks of that store from
+    // the system allocator, so mimalloc cannot show whether they are kept.
+    it.skipIf(isASAN).each([
+      { option: "a `tsconfig` object", which: "tsconfig" },
+      { option: "`define` string values", which: "define" },
+    ])("$option", ({ which }) => expectNothingKept(which, false));
   });
 
   it("normalizes \\r\\n", () => {

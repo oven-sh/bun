@@ -669,16 +669,16 @@ export function createOnWarning(process, redirectPath, disabledArr) {
       if (guarded) {
         if (stream.listenerCount("error") === 0) stream.once("error", noop);
         stream.write(message + "\n", err => {
-          // Leave a listener only if errorOrDestroy() emits 'error' after this callback: never on
-          // a destroyed stream, always with autoDestroy (stdio is revived after each destroy, and
-          // errorEmitted is then stale), otherwise for the first error only.
+          // Leave a listener only if an 'error' is still owed for this failure. errorOrDestroy()
+          // runs before this callback for a write after end(): the stream is then destroyed with
+          // the error, and the event is queued. A stream destroyed earlier emits nothing. When
+          // errorOrDestroy() runs after this callback it always emits with autoDestroy (stdio is
+          // revived after each destroy, so errorEmitted is stale), and else only the first error.
           const state = stream._writableState;
-          if (
-            err !== null &&
-            !state.destroyed &&
-            (state.autoDestroy || !state.errorEmitted) &&
-            stream.listenerCount("error") === 0
-          ) {
+          const owed = state.destroyed
+            ? state.errored !== null && !state.errorEmitted
+            : state.autoDestroy || !state.errorEmitted;
+          if (err !== null && owed && stream.listenerCount("error") === 0) {
             stream.once("error", noop);
           }
         });

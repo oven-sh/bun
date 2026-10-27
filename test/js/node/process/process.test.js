@@ -3409,6 +3409,36 @@ describe("default warning printer survives a failing stderr", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "ENOSPC\nalive 0\n", exitCode: 0 });
   });
 
+  // "a" is written after end(): the stream is destroyed with the error before the write
+  // callback runs, and the 'error' follows. "b" is written to a stream destroyed without an
+  // error, which emits nothing, so no listener may stay on it.
+  it.concurrent("process.stderr replaced by a Writable that has ended or is destroyed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Writable } = require("node:stream");
+         const make = () => new Writable({ write(chunk, encoding, cb) { cb(); } });
+         const ended = (process.stderr = make());
+         process.emitWarning("a");
+         ended.end();
+         setImmediate(() => {
+           const destroyed = (process.stderr = make());
+           destroyed.destroy();
+           process.emitWarning("b");
+           process.on("beforeExit", () =>
+             console.log("alive", ended.destroyed, ended.listenerCount("error"), destroyed.listenerCount("error")),
+           );
+         });`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "alive true 0 0\n", stderr: "", exitCode: 0 });
+  });
+
   it.concurrent("leaves no 'error' listener behind on a healthy stderr", async () => {
     await using proc = Bun.spawn({
       cmd: [

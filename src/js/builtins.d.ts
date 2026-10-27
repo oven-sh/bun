@@ -424,6 +424,7 @@ interface Map {
 }
 
 declare var $Array: ArrayConstructor;
+declare var $Map: MapConstructor;
 declare var $Buffer: {
   byteLength: typeof Buffer.byteLength;
   new (array: Array): Buffer;

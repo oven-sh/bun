@@ -73,7 +73,7 @@ pub struct WebWorker {
     mini: bool,
     eval_mode: bool,
     /// Created by `node:worker_threads`' `Worker` (as opposed to the Web `Worker`
-    /// constructor): loads `node:worker_threads` before preloads and the entry point.
+    /// constructor): takes what that `Worker` sent before preloads and the entry point.
     is_node_worker: bool,
     /// Borrowed from the proxy's `WorkerOptions` (alive as long as the proxy).
     argv_ptr: *const WTFStringImpl,
@@ -163,9 +163,8 @@ unsafe extern "C" {
     );
     safe fn WebWorker__parentContextWillDestroy(proxy: *mut c_void);
     safe fn WebWorker__entrySettled(global: &JSGlobalObject);
-    /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
-    /// registers parentPort). May leave an exception pending.
-    safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
+    /// Takes what the parent's `node:worker_threads` `Worker` sent to this VM. May leave an exception pending.
+    safe fn Bun__Worker__startNodeWorker(global: &JSGlobalObject);
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         proxy: *mut c_void,
@@ -854,12 +853,11 @@ impl WebWorker {
             return self.shutdown();
         }
 
-        // Node runs its worker bootstrap (parentPort, stdio, process overrides)
-        // ahead of user code; ours is node:worker_threads' module body.
+        // Node runs its worker bootstrap ahead of user code. Ours is native and evaluates no builtin module (NodeWorkerState.h).
         if self.is_node_worker {
             let global = vm.global();
             if let Err(err) = jsc::host_fn::from_js_host_call_generic(global, || {
-                Bun__Worker__loadNodeWorkerThreadsModule(global)
+                Bun__Worker__startNodeWorker(global)
             }) {
                 let exception = global.take_exception(err);
                 let _ = vm.as_mut().uncaught_exception(global, exception, false);
@@ -889,11 +887,9 @@ impl WebWorker {
             }
         };
 
-        // Fire (and clear) the entryEvaluated hook on EVERY post-evaluation path
-        // so buffered postMessageToThread deliveries drain and the sender's
-        // Atomics.waitAsync settles. WebWorker__entrySettled re-calls it as a no-op.
+        // On every post-evaluation path: what postMessageToThread() sent to a node worker meanwhile is delivered here while script may still run, so its sender's Atomics.waitAsync settles also when the entry threw.
         WebWorker__entrySettled(vm.global());
-        // The hook runs JS, which can request termination. If it did, stop before the start sequence's GC.
+        // That delivery runs JS, which can request termination. If it did, stop before the start sequence's GC.
         if self.has_requested_terminate() {
             self.flush_logs(vm);
             return self.shutdown();

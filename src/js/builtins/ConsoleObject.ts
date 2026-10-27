@@ -151,6 +151,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const { isMapIterator, isSetIterator } = require("node:util/types");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
+  const { write: writeIgnoringErrors, ignoreWriteError } = require("internal/console_write");
   const kMaxGroupIndentation = 1000;
 
   const StringPrototypeIncludes = String.prototype.includes;
@@ -449,28 +450,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
         if (ignoreErrors === false) return stream.write(string);
 
-        // There may be an error occurring synchronously (e.g. for files or TTYs
-        // on POSIX systems) or asynchronously (e.g. pipes on POSIX systems), so
-        // handle both situations.
-        try {
-          // Add and later remove a noop error handler to catch synchronous
-          // errors.
-          if (stream.listenerCount("error") === 0) stream.once("error", noop);
-          stream.write(string, errorHandler);
-        } catch (e) {
-          // Console is a debugging utility, so it swallowing errors is not
-          // desirable even in edge cases such as low stack space.
-          if (
-            e != null &&
-            typeof e === "object" &&
-            (e as Partial<Error>).name === "RangeError" &&
-            (e as Partial<Error>).message === "Maximum call stack size exceeded."
-          )
-            throw e;
-          // Sorry, there's no proper way to pass along the error here.
-        } finally {
-          stream.removeListener("error", noop);
-        }
+        writeIgnoringErrors(stream, string, errorHandler);
       },
     },
     [kGetInspectOptions]: {
@@ -515,22 +495,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
   // Make a function that can serve as the callback passed to `stream.write()`.
   function createWriteErrorHandler(instance, streamSymbol) {
-    return err => {
-      // This conditional evaluates to true if and only if there was an error
-      // that was not already emitted (which happens when the _write callback
-      // is invoked asynchronously).
-      const stream = streamSymbol === kUseStdout ? instance._stdout : instance._stderr;
-      if (err !== null && !stream._writableState.errorEmitted) {
-        // If there was an error, it will be emitted on `stream` as
-        // an `error` event. Adding a `once` listener will keep that error
-        // from becoming an uncaught exception, but since the handler is
-        // removed after the event, non-console.* writes won't be affected.
-        // we are only adding noop if there is no one else listening for 'error'
-        if (stream.listenerCount("error") === 0) {
-          stream.once("error", noop);
-        }
-      }
-    };
+    return err => ignoreWriteError(streamSymbol === kUseStdout ? instance._stdout : instance._stderr, err);
   }
 
   const consoleMethods: any = {
@@ -768,8 +733,6 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const iterKey = "(iteration index)";
 
   const isArray = v => $isJSArray(v) || $isTypedArrayView(v) || isBuffer(v);
-
-  function noop() {}
 
   for (const method of Reflect.ownKeys(consoleMethods)) Console.prototype[method] = consoleMethods[method];
 

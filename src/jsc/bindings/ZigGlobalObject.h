@@ -20,7 +20,6 @@ enum class JSPromiseRejectionOperation : unsigned;
 } // namespace JSC
 
 namespace WebCore {
-class MessagePort;
 class ScriptExecutionContext;
 class DOMGuardedObject;
 class EventLoopTask;
@@ -39,6 +38,7 @@ class JSNextTickQueue;
 class Process;
 class SecureContextCache;
 class GCProfilerObserver;
+class NodeWorkerState;
 
 struct ModuleGraphState;
 } // namespace Bun
@@ -332,8 +332,6 @@ public:
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<Bun::GlobalEventScope> globalEventScope;
-    RefPtr<WebCore::MessagePort> m_nodeParentPort;
-    bool m_nodeWorkerEntrySettled { false };
 
     void resetOnEachMicrotaskTick();
 
@@ -497,14 +495,10 @@ public:
     V(public, JSC::WriteBarrier<Bun::HandleScopeImpl>, m_currentHandleScopeImpl)                             \
                                                                                                              \
     /* Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created */           \
-    /* Workers. Initialized in createNodeWorkerThreadsBinding. */                                            \
+    /* Workers. Set by a node worker's start sequence, else in createNodeWorkerThreadsBinding. */            \
     V(private, WriteBarrier<JSMap>, m_nodeWorkerEnvironmentData)                                             \
-    /* setupMainThreadPort's drain callback; run once by WebWorker__entrySettled */                          \
-    /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
-    V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
-    /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
-    /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
-    V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
+    /* The default global of a worker that node:worker_threads made; null on every other global. */          \
+    V(private, std::unique_ptr<Bun::NodeWorkerState>, m_nodeWorkerState)                                     \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_moduleGraphFrameStructure)                           \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
@@ -719,20 +713,8 @@ public:
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
-    JSObject* nodeWorkerStdioPorts() { return m_nodeWorkerStdioPorts.get(); }
-    void setNodeWorkerStdioPorts(JSObject* ports);
     void setNodeWorkerEnvironmentData(JSMap* data);
-    // node:worker_threads parentPort — the transferred MessagePort entangled with the parent
-    // Worker's public port. Messages it dispatches are mirrored onto globalEventScope so the
-    // Web Worker style (`self.onmessage` / global addEventListener) keeps working under a node Worker.
-    void setNodeParentPort(WebCore::MessagePort*);
-    WebCore::MessagePort* nodeParentPort() const { return m_nodeParentPort.get(); }
-    // A node worker's parentPort delivers nothing until the entry module has evaluated (node's
-    // ordering; a message must not run — or throw — while the entry that handles it is loading).
-    bool nodeWorkerEntrySettled() const { return m_nodeWorkerEntrySettled; }
-    void nodeWorkerEntryDidSettle();
-    JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
-    void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
+    Bun::NodeWorkerState* nodeWorkerState() const { return m_nodeWorkerState.get(); }
 
     Bun::MarkdownTagStrings& markdownTagStrings() { return m_markdownTagStrings; }
 

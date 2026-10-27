@@ -32,7 +32,9 @@
 #include "JavaScriptCore/PutPropertySlot.h"
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
+#include <JavaScriptCore/JSNativeStdFunction.h>
 #include "ZigGlobalObject.h"
+#include "NodeWorkerState.h"
 #include "ModuleGraph.h"
 #include "FormatStackTraceForJS.h"
 #include "headers.h"
@@ -347,6 +349,9 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
         return;
 
     putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
+    // Node does this from a process 'exit' listener of the worker (flushSync), which is the first one.
+    if (auto* nodeWorker = defaultGlobalObject(globalObject)->nodeWorkerState())
+        nodeWorker->flushStdioForExit(*defaultGlobalObject(globalObject));
     auto event = Identifier::fromString(vm, "exit"_s);
     if (!emitter.hasEventListeners(event)) {
         return;
@@ -865,6 +870,9 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
 extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
 {
     if (!globalObject->hasProcessObject()) {
+        // Console output of a node:worker_threads worker can wait for the parent's ack without a `process`.
+        if (auto* nodeWorker = globalObject->nodeWorkerState())
+            nodeWorker->flushStdioForExit(*globalObject);
         return;
     }
 
@@ -1850,7 +1858,7 @@ static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
 
 // Lazy PropertyCallback builders that enter JS. reifyAllStaticProperties wraps these in
 // DeferTerminationForAWhile; a non-termination throw is cleared+reported so the worker's
-// reifyAllStaticProperties (node:worker_threads preload) doesn't leave a pending exception.
+// reifyAllStaticProperties doesn't leave a pending exception.
 static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject, JSC::BuiltinCode (*generator)(VM&), const JSC::ArgList& args)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -3023,33 +3031,9 @@ enum class BunProcessStdinFdType : int32_t {
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
-// node:worker_threads worker: process.stdout/stderr forward to the parent Worker's
-// worker.stdout/stderr over a MessagePort; process.stdin is port-fed for { stdin: true }
-// and otherwise an already-ended Readable (never the process-wide fd 0). fd 0/1/2 selects the port.
-static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, JSObject* ports, int fd)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSC::JSFunction* getStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetNodeWorkerStdioStreamCodeGenerator(vm), globalObject);
-    JSC::MarkedArgumentBuffer args;
-    args.append(processObject);
-    args.append(JSC::jsNumber(fd));
-    args.append(ports);
-    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStream, JSC::getCallData(getStream), globalObject->globalThis(), args);
-    if (auto* exception = scope.exception()) {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, jsUndefined());
-        return jsUndefined();
-    }
-    return result;
-}
-
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (auto* ports = defaultGlobalObject(globalObject)->nodeWorkerStdioPorts())
-        return constructNodeWorkerStdioStream(globalObject, processObject, ports, fd);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
@@ -3118,8 +3102,6 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    if (auto* ports = defaultGlobalObject(globalObject)->nodeWorkerStdioPorts())
-        return constructNodeWorkerStdioStream(globalObject, processObject, ports, 0);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -5172,6 +5154,103 @@ const JSC::ClassInfo Process::s_info
     = { "Process"_s, &Base::s_info, &processObjectTable, nullptr,
           CREATE_METHOD_TABLE(Process) };
 
+// Node's lib/internal/process/worker_thread_only.js: what acts on the whole process is not a worker's to call.
+static JSC::EncodedJSValue throwUnsupportedInWorker(JSGlobalObject* globalObject, ASCIILiteral name, ASCIILiteral call)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    return throwError(globalObject, scope, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, makeString("process."_s, name, call, " is not supported in workers"_s));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionUmaskInWorker, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    if (callFrame->argument(0).isUndefined())
+        return Process_functionUmask(globalObject, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    return throwError(globalObject, scope, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "Setting process.umask() is not supported in workers"_s);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processChannelInWorker, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return throwUnsupportedInWorker(globalObject, "channel"_s, ""_s);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processConnectedInWorker, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return throwUnsupportedInWorker(globalObject, "connected"_s, ""_s);
+}
+
+// `process.stdin` / `stdout` / `stderr` of a node:worker_threads worker. The first read builds the stream over the parent's port (node's lazyWorkerStdio). The slot stays a getter, so a read never changes the structure of `process`.
+static JSC::EncodedJSValue nodeWorkerStdio(JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue, unsigned fd)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+    auto* process = dynamicDowncast<Process>(JSValue::decode(thisValue));
+    auto* globalObject = process ? defaultGlobalObject(process->globalObject()) : nullptr;
+    auto* nodeWorker = globalObject ? globalObject->nodeWorkerState() : nullptr;
+    if (!nodeWorker) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    RELEASE_AND_RETURN(scope, JSValue::encode(nodeWorker->stdioStream(*globalObject, fd)));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(nodeWorkerStdin, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    return nodeWorkerStdio(globalObject, thisValue, 0);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(nodeWorkerStdout, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    return nodeWorkerStdio(globalObject, thisValue, 1);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(nodeWorkerStderr, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    return nodeWorkerStdio(globalObject, thisValue, 2);
+}
+
+// The `process` of a node:worker_threads worker as Node's worker bootstrap leaves it before user code. Installed with the object, so the worker runs no script for it.
+static void installNodeWorkerProcessSurface(JSC::VM& vm, Process* process)
+{
+    auto* globalObject = defaultGlobalObject(process->globalObject());
+    auto* nodeWorker = globalObject->nodeWorkerState();
+
+    // A worker with no channels to a parent Worker (NodeWorkerState::takeFromParent) keeps the stdio of the process.
+    if (nodeWorker->port(WebCore::WorkerOptions::Stdout)) {
+        process->putDirectCustomAccessor(vm, Identifier::fromString(vm, "stdin"_s), JSC::CustomGetterSetter::create(vm, nodeWorkerStdin, nullptr), PropertyAttribute::CustomValue | 0);
+        process->putDirectCustomAccessor(vm, Identifier::fromString(vm, "stdout"_s), JSC::CustomGetterSetter::create(vm, nodeWorkerStdout, nullptr), PropertyAttribute::CustomValue | 0);
+        process->putDirectCustomAccessor(vm, Identifier::fromString(vm, "stderr"_s), JSC::CustomGetterSetter::create(vm, nodeWorkerStderr, nullptr), PropertyAttribute::CustomValue | 0);
+    }
+
+    // An own property: the accessor's setter writes a process-global shared across threads.
+    process->putDirect(vm, Identifier::fromString(vm, "debugPort"_s), jsNumber(9229), 0);
+    process->putDirect(vm, Identifier::fromString(vm, "umask"_s), JSFunction::create(vm, globalObject, 1, "umask"_s, Process_functionUmaskInWorker, ImplementationVisibility::Public), 0);
+
+    auto disabled = Identifier::fromString(vm, "disabled"_s);
+    auto disable = [&](ASCIILiteral name) {
+        auto* stub = JSC::JSNativeStdFunction::create(vm, globalObject, 0, "stub"_s, [name](JSGlobalObject* globalObject, CallFrame*) {
+            return throwUnsupportedInWorker(globalObject, name, "()"_s);
+        });
+        stub->putDirect(vm, disabled, jsBoolean(true), 0);
+        process->putDirect(vm, Identifier::fromString(vm, name), stub, 0);
+    };
+    disable("abort"_s);
+    disable("chdir"_s);
+#if !OS(WINDOWS)
+    disable("setuid"_s);
+    disable("seteuid"_s);
+    disable("setgid"_s);
+    disable("setegid"_s);
+    disable("setgroups"_s);
+    disable("initgroups"_s);
+#endif
+
+    // Node disables the IPC surface only in a worker whose env names a channel. Decided when the worker started: this runs on the first use of `process`, which can be inside user code.
+    if (!nodeWorker->envNamesIpcChannel())
+        return;
+    disable("send"_s);
+    disable("disconnect"_s);
+    process->putDirectCustomAccessor(vm, Identifier::fromString(vm, "channel"_s), JSC::CustomGetterSetter::create(vm, processChannelInWorker, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomAccessor);
+    process->putDirectCustomAccessor(vm, Identifier::fromString(vm, "connected"_s), JSC::CustomGetterSetter::create(vm, processConnectedInWorker, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomAccessor);
+}
+
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -5204,6 +5283,11 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
+
+    // Its default global only: a ShadowRealm's `process` in such a worker is a plain one.
+    bool isNodeWorker = !!defaultGlobalObject(globalObject())->nodeWorkerState();
+    if (isNodeWorker)
+        installNodeWorkerProcessSurface(vm, this);
 
     // No-op stubs Node only has on the main thread; a worker_threads Worker's process lacks them.
     if (!WebCore::clientData(vm)->isNodeWorkerVM()) {

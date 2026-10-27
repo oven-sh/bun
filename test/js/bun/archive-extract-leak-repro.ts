@@ -14,7 +14,7 @@ const files = {
   "b.txt": "world",
 };
 
-const archive = Bun.Archive.from(files);
+const archive = new Bun.Archive(files);
 
 function formatMB(bytes: number) {
   return (bytes / 1024 / 1024).toFixed(0) + " MB";

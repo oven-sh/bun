@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+type P1 = import(/* prettier-ignore */ 'b').C<D>;
+type P2 = import("b" /* prettier-ignore */).C<D>;
+type P3 = typeof /* prettier-ignore */ import('b');
+type P4 = import("b", /* prettier-ignore */ { with: { 'c':   'd' } }).C;
+type P5 = import("b", { /* prettier-ignore */ with: { 'c':   'd' } }).C;
+type P6 = import(
+  // prettier-ignore
+  'b'
+).C<D>;
+type P7 = import("b", { with: /* prettier-ignore */ { 'c':   'd' } }).C;
+type P8 = import("b", { with: { c: "d" } /* prettier-ignore */ }).C;
+type P9 = import("b", { with: { c: "d" } } /* prettier-ignore */).C;
+type P10 = import("b", { with /* prettier-ignore */: { c: "d" } }).C;
+type P11 = import("b" /* prettier-ignore */, { with: { c: "d" } }).C;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type P1 = import(/* prettier-ignore */ 'b').C<D>;
+type P2 = import("b" /* prettier-ignore */).C<D>;
+type P3 = typeof /* prettier-ignore */ import('b');
+type P4 = import("b", /* prettier-ignore */ { with: { 'c':   'd' } }).C;
+type P5 = import("b", { /* prettier-ignore */ with: { 'c':   'd' } }).C;
+type P6 = import(
+  // prettier-ignore
+  'b'
+).C<D>;
+type P7 = import("b", { with: /* prettier-ignore */ { 'c':   'd' } }).C;
+type P8 = import("b", { with: { c: "d" } /* prettier-ignore */ }).C;
+type P9 = import("b", { with: { c: "d" } } /* prettier-ignore */).C;
+type P10 = import("b", { with /* prettier-ignore */: { c: "d" } }).C;
+type P11 = import("b" /* prettier-ignore */, { with: { c: "d" } }).C;
+
+===================== End =====================

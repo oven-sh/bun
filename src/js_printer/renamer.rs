@@ -86,11 +86,11 @@ pub struct NoOpRenamer<'a> {
     // leak the output source code" — `await import()` re-transpiles each
     // iteration, so the leak compounds to OOM).
     pub(crate) symbols: symbol::Map,
-    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) source: &'a bun_ast::Source<'a>,
 }
 
 impl<'a> NoOpRenamer<'a> {
-    pub(crate) fn init(symbols: symbol::Map, source: &'a bun_ast::Source) -> NoOpRenamer<'a> {
+    pub(crate) fn init(symbols: symbol::Map, source: &'a bun_ast::Source<'a>) -> NoOpRenamer<'a> {
         NoOpRenamer { symbols, source }
     }
 
@@ -1480,12 +1480,11 @@ pub fn compute_reserved_names_for_scope(
         }
     }
 
-    // If there's a direct "eval" somewhere inside the current scope, continue
-    // traversing down the scope tree until we find it to get all reserved names
-    if scope.contains_direct_eval {
+    // Keep traversing down the scope tree toward a direct "eval" or a "with" to get all reserved names
+    if scope.contains_direct_eval || scope.contains_with {
         for child in scope.children.slice() {
             // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
-            if child.contains_direct_eval {
+            if child.contains_direct_eval || child.contains_with {
                 compute_reserved_names_for_scope(child, symbols, names);
             }
         }

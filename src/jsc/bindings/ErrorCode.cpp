@@ -600,6 +600,10 @@ static void appendOutOfRangeReceived(JSC::JSGlobalObject* globalObject, MessageB
             builder.append(addNumericalSeparator(input.toWTFString(globalObject)));
             return;
         }
+        if (JSC::isNegativeZero(d)) {
+            builder.append("-0"_s);
+            return;
+        }
     } else if (input.isBigInt()) {
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1895,6 +1899,7 @@ static constexpr SimpleErrorMessage simpleErrorMessages[] = {
     { ErrorCode::ERR_INVALID_STATE_TypeError, 1, { "Invalid state: "_s, ""_s, ""_s } },
     { ErrorCode::ERR_INVALID_STATE_RangeError, 1, { "Invalid state: "_s, ""_s, ""_s } },
     { ErrorCode::ERR_INVALID_PROTOCOL, 2, { "Protocol \""_s, "\" not supported. Expected \""_s, "\""_s } },
+    { ErrorCode::ERR_INVALID_URL_SCHEME, 1, { "The URL must be of scheme "_s, ""_s, ""_s } },
     { ErrorCode::ERR_BROTLI_INVALID_PARAM, 1, { ""_s, " is not a valid Brotli parameter"_s, ""_s } },
     { ErrorCode::ERR_BUFFER_TOO_LARGE, 1, { "Cannot create a Buffer larger than "_s, " bytes"_s, ""_s } },
     { ErrorCode::ERR_INVALID_THIS, 1, { "Value of \"this\" must be of type "_s, ""_s, ""_s } },
@@ -1913,6 +1918,7 @@ static constexpr SimpleErrorMessage simpleErrorMessages[] = {
     { ErrorCode::ERR_HTTP_HEADERS_SENT, 1, { "Cannot "_s, " headers after they are sent to the client"_s, ""_s } },
     { ErrorCode::ERR_UNESCAPED_CHARACTERS, 1, { ""_s, " contains unescaped characters"_s, ""_s } },
     { ErrorCode::ERR_HTTP_INVALID_STATUS_CODE, 1, { "Invalid status code: "_s, ""_s, ""_s } },
+    { ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH, 2, { "Response body's content-length of "_s, " byte(s) does not match the content-length of "_s, " byte(s) set in header"_s } },
     { ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, 2, { "Invalid key object type "_s, ", expected "_s, "."_s } },
     { ErrorCode::ERR_CRYPTO_INCOMPATIBLE_KEY, 2, { "Incompatible "_s, ": "_s, ""_s } },
     { ErrorCode::ERR_CHILD_PROCESS_IPC_REQUIRED, 1, { "Forked processes must have an IPC channel, missing value 'ipc' in "_s, ""_s, ""_s } },
@@ -2302,7 +2308,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_NOT_RUNNING, "Server is not running."_s));
     case ErrorCode::ERR_IPC_CHANNEL_CLOSED:
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_CHANNEL_CLOSED, "Channel closed."_s));
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_CHANNEL_CLOSED, "Channel closed"_s));
     case ErrorCode::ERR_SOCKET_BAD_TYPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6"_s));
     case ErrorCode::ERR_ZLIB_INITIALIZATION_FAILED:
@@ -2321,6 +2327,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING, "Not running"_s));
     case ErrorCode::ERR_INVALID_CURSOR_POS:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_CURSOR_POS, "Cannot set cursor row without setting its column"_s));
+    case ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s));
     case ErrorCode::ERR_INVALID_HANDLE_TYPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_HANDLE_TYPE, "This handle type cannot be sent"_s));
     case ErrorCode::ERR_MULTIPLE_CALLBACK:
@@ -2376,6 +2384,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNAVAILABLE_DURING_EXIT, "Cannot call function in process exit handler"_s));
     case ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT, "Invalid subject alternative name string"_s));
+    case ErrorCode::ERR_TLS_REQUIRED_SERVER_NAME:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_REQUIRED_SERVER_NAME, "\"servername\" is required parameter for Server.addContext"_s));
     case ErrorCode::ERR_TLS_SNI_FROM_SERVER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_SNI_FROM_SERVER, "Cannot issue SNI from a TLS server-side socket"_s));
     case ErrorCode::ERR_TLS_INVALID_STATE:
@@ -2426,8 +2436,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_GOAWAY_SESSION, "New streams cannot be created after receiving a GOAWAY"_s));
     case ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED, "Adding content for this request method or response status is not allowed."_s));
+    case ErrorCode::ERR_HTTP_TRAILER_INVALID:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_TRAILER_INVALID, "Trailers are invalid with this transfer encoding"_s));
     case ErrorCode::ERR_HTTP_SOCKET_ASSIGNED:
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "ServerResponse has an already assigned socket"_s));
     case ErrorCode::ERR_STREAM_RELEASE_LOCK:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_RELEASE_LOCK, "Stream reader cancelled via releaseLock()"_s));
     case ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT:

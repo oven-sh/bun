@@ -1,11 +1,12 @@
 /**
- * Filesystem utilities used at configure time.
+ * Filesystem utilities used at configure time and by the build-time scripts.
  *
  * Separate from shell.ts because "quote a shell argument" and "write a
  * file idempotently" share nothing except being utility functions.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 /**
  * Write `content` to `path` only if different (or file doesn't exist).
@@ -17,6 +18,10 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
  * actually cheap: ninja sees no changes, does nothing. Without this,
  * every configure touches everything and ninja at minimum re-stats.
  *
+ * The write goes through a sibling temp file and a rename, so a reader
+ * (ninja, a concurrently running edge, configure reading plan.json) never
+ * sees a partial file, and creates the parent directory if needed.
+ *
  * Synchronous because configure is single-threaded and the files are
  * small. Async would add await noise for no concurrency benefit.
  */
@@ -26,7 +31,10 @@ export function writeIfChanged(path: string, content: string): boolean {
   } catch {
     // File doesn't exist (or unreadable) — fall through to write.
   }
-  writeFileSync(path, content);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp.${process.pid}`;
+  writeFileSync(tmp, content);
+  renameSync(tmp, path);
   return true;
 }
 

@@ -1,7 +1,7 @@
 export const config = {
   installDir: "/usr/local/share/darwin-ci",
   tokenFile: process.env.DARWIN_CI_TOKEN_FILE ?? "/var/root/buildkite-agent-token",
-  buildkiteAgent: { version: "3.114.0", bin: "/usr/local/bin/buildkite-agent" },
+  buildkiteAgent: { version: "4.7.0", bin: "/usr/local/bin/buildkite-agent" },
   queue: "test-darwin",
   ciUser: "ci",
   bun: { repo: "https://github.com/oven-sh/bun.git", ref: "main" },
@@ -19,7 +19,7 @@ export const config = {
 
 export const toolchain = ["bun", "node", "cmake", "ninja", "ccache", "cargo", "go", "clang-23"];
 
-// Keep in step with darwinReleaseTier in scripts/agent.mjs.
+// Keep in step with darwinReleaseTier in scripts/agent.ts.
 export function releaseTier(release: number): "beta" | "latest" | "previous" | "oldest" {
   if (release > 26) return "beta";
   if (release >= 26) return "latest";

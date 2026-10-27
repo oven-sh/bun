@@ -192,6 +192,8 @@ pub struct ThreadPool {
     /// `Config { max_threads, stack_size }` literals keep compiling; callers
     /// flip it after [`ThreadPool::init`].
     pub(crate) needs_stack_bounds: bool,
+    /// What its threads are called, before their number.
+    name: &'static str,
     pub(crate) stack_size: u32,
     pub(crate) max_threads: u32,
     sync: AtomicSync,
@@ -224,6 +226,7 @@ impl ThreadPool {
     pub fn init(config: Config) -> ThreadPool {
         ThreadPool {
             needs_stack_bounds: true,
+            name: "Bun Pool",
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
             sync: AtomicSync::new(Sync::zero()),
@@ -239,6 +242,12 @@ impl ThreadPool {
                 ..PoolStats::default()
             },
         }
+    }
+
+    /// The same pool, whose threads are called `name` and a number. Before any is started.
+    pub fn named(mut self, name: &'static str) -> ThreadPool {
+        self.name = name;
+        self
     }
 
     /// Dump aggregate worker idle/busy stats to stderr. No-op unless
@@ -289,6 +298,20 @@ impl ThreadPool {
     pub fn wake_for_idle_events(&self) {
         // Wake all the threads to check for idle events.
         self.idle_event.wake_all();
+    }
+
+    /// Queues a task from `new_task` for every thread the pool has spawned, to run on that thread
+    /// when it is next idle, and wakes them. Does not wait for any of them.
+    pub fn push_idle_task_to_each_thread(&self, mut new_task: impl FnMut() -> *mut Task) {
+        let mut next = self.threads.load(Ordering::Acquire);
+        while let Some(thread) = NonNull::new(next) {
+            // A registered worker stays in the list, and alive, until the pool shuts down:
+            // `Thread::pop` walks the same links.
+            let thread = bun_ptr::BackRef::from(thread);
+            thread.push_idle_task(new_task());
+            next = thread.next;
+        }
+        self.wake_for_idle_events();
     }
 }
 
@@ -516,7 +539,28 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByValue(run_fn), values);
+        self.each_impl(ctx, ByValue(run_fn), values, || {});
+    }
+
+    /// Like `each`, but calls `on_calling_thread` once the tasks are scheduled, and waits for them
+    /// after it has returned.
+    pub fn each_while<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        values: &mut [V],
+        on_calling_thread: impl FnOnce(),
+    ) where
+        F: Fn(&Ctx, V, usize) + core::marker::Sync,
+        Ctx: core::marker::Sync,
+        V: Copy + core::marker::Sync + core::marker::Send,
+    {
+        self.each_impl(ctx, ByValue(run_fn), values, on_calling_thread);
+    }
+
+    /// The most threads that this pool starts.
+    pub fn max_threads(&self) -> usize {
+        self.max_threads as usize
     }
 
     /// Like `each`, but calls `run_fn` with a pointer to the value.
@@ -529,17 +573,22 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByPtr(run_fn), values);
+        self.each_impl(ctx, ByPtr(run_fn), values, || {});
     }
 
-    fn each_impl<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
-    where
+    fn each_impl<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        values: &mut [V],
+        on_calling_thread: impl FnOnce(),
+    ) where
         F: EachCall<Ctx, V>,
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
         if values.is_empty() {
-            return;
+            return on_calling_thread();
         }
 
         struct WaitContext<Ctx, V, F> {
@@ -598,6 +647,7 @@ impl ThreadPool {
             batch.push(Batch::from(&raw mut runner_task.task.task));
         }
         self.schedule(batch);
+        on_calling_thread();
         group.wait();
         // `tasks` drops here after all worker threads have finished touching it.
     }
@@ -656,6 +706,11 @@ impl ThreadPool {
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
         self.schedule_impl(&batch, true);
+    }
+
+    /// False: the OS refused the first worker (or nothing was scheduled), and what is queued never runs.
+    pub fn has_workers(&self) -> bool {
+        self.sync.load(Ordering::Relaxed).spawned() > 0
     }
 
     fn force_spawn(&self) {
@@ -1159,7 +1214,7 @@ impl Thread {
             let len = {
                 let mut cur: &mut [u8] = &mut counter_buf[..99];
                 let before = cur.len();
-                match write!(&mut cur, "Bun Pool {}", int) {
+                match write!(&mut cur, "{} {}", thread_pool.get().name, int) {
                     Ok(()) => before - cur.len(),
                     Err(_) => 0,
                 }

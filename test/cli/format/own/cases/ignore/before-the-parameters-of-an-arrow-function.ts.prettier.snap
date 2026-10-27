@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = async (/* prettier-ignore */ b) => b;
+const c = async (/* prettier-ignore */ d) => d;
+const e = async () => /* prettier-ignore */ {
+  await f;
+};
+const g = <T>(/* prettier-ignore */ h: T) => h;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = async (/* prettier-ignore */ b) => b;
+const c = async (/* prettier-ignore */ d) => d;
+const e = async () => /* prettier-ignore */ {
+  await f;
+};
+const g = <T>(/* prettier-ignore */ h: T) => h;
+
+===================== End =====================

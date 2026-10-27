@@ -2,10 +2,10 @@
 
 const BufferModule = require("node:buffer");
 
-const crc32 = $newRustFunction("node_zlib_binding.rs", "crc32", 1);
-const NativeZlib = $rust("node_zlib_binding.rs", "NativeZlib");
-const NativeBrotli = $rust("node_zlib_binding.rs", "NativeBrotli");
-const NativeZstd = $rust("node_zlib_binding.rs", "NativeZstd");
+const crc32 = $bindgen("node_zlib_binding.bind.ts", "crc32");
+const NativeZlib = $bindgen("node_zlib_binding.bind.ts", "NativeZlib");
+const NativeBrotli = $bindgen("node_zlib_binding.bind.ts", "NativeBrotli");
+const NativeZstd = $bindgen("node_zlib_binding.bind.ts", "NativeZstd");
 
 const ObjectKeys = Object.keys;
 const ArrayPrototypePush = Array.prototype.push;
@@ -27,7 +27,9 @@ const owner_symbol = Symbol("owner_symbol");
 const { checkRangesOrGetDefault, validateFunction, validateFiniteNumber } = require("internal/validators");
 
 const kFlushFlag = Symbol("kFlushFlag");
+const kAfterFlush = Symbol("kAfterFlush");
 const kError = Symbol("kError");
+const kFlushBound = Symbol("kFlushBound");
 
 const { zlib: constants } = process.binding("constants");
 // prettier-ignore
@@ -126,7 +128,7 @@ function zlibBufferSync(engine, buffer) {
 function zlibOnError(message, errno, code) {
   const self = this[owner_symbol];
   // There is no way to cleanly recover. Continuing only obscures problems.
-  const error = new Error(message);
+  const error: ZlibError = new Error(message);
   error.errno = errno;
   error.code = code;
   self.destroy(error);
@@ -141,6 +143,43 @@ const FLUSH_BOUND = [
 const FLUSH_BOUND_IDX_NORMAL = 0;
 const FLUSH_BOUND_IDX_BROTLI = 1;
 const FLUSH_BOUND_IDX_ZSTD = 2;
+
+interface ZlibError extends Error {
+  errno?: number;
+}
+
+interface FlushOptions {
+  flush: number;
+  finishFlush: number;
+  fullFlush: number;
+}
+
+interface ZlibHandle {
+  [owner_symbol]?: ZlibBase;
+  onerror: typeof zlibOnError;
+  reset(): void;
+  close(): void;
+}
+
+declare class ZlibBase extends Transform {
+  constructor(opts, mode: number, handle: ZlibHandle, flushOptions: FlushOptions);
+  [kError]: ZlibError | null;
+  [kFlushBound]: number[];
+  bytesWritten: number;
+  _handle: ZlibHandle | null;
+  _outBuffer: Buffer;
+  _outOffset: number;
+  _chunkSize: number;
+  _defaultFlushFlag: number;
+  _finishFlushFlag: number;
+  _defaultFullFlushFlag: number;
+  _info: boolean | undefined;
+  _maxOutputLength: number;
+  reset(): void;
+  flush(kind?, callback?): void;
+  close(callback?: () => void): void;
+  _processChunk(chunk: Buffer, flushFlag: number, cb?: () => void): Buffer | undefined;
+}
 
 // The base class for all Zlib-style streams.
 function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
@@ -200,6 +239,7 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._maxOutputLength = maxOutputLength;
 }
 $toClass(ZlibBase, "ZlibBase", Transform);
+ZlibBase.prototype[kFlushBound] = FLUSH_BOUND[FLUSH_BOUND_IDX_NORMAL];
 
 ObjectDefineProperty(ZlibBase.prototype, "_closed", {
   configurable: true,
@@ -255,7 +295,7 @@ function maxFlush(a, b) {
 // Set up a list of 'special' buffers that can be written using .write()
 // from the .flush() code as a way of introducing flushing operations into the
 // write sequence.
-const kFlushBuffers: (typeof Buffer)[] = [];
+const kFlushBuffers: (Buffer & { [kFlushFlag]?: number })[] = [];
 {
   const dummyArrayBuffer = new ArrayBuffer();
   for (const flushFlag of kFlushFlagList) {
@@ -274,6 +314,12 @@ ZlibBase.prototype.flush = function (kind, callback) {
   } else if (this.writableEnded) {
     if (callback) this.once("end", callback);
   } else {
+    if (!this.destroyed) {
+      // "2" and 2n index the same flush buffer as 2.
+      kind = kFlushBuffers[kind]?.[kFlushFlag] ?? kind;
+      const flushBound = this[kFlushBound];
+      kind = checkRangesOrGetDefault(kind, "kind", flushBound[0], flushBound[1], this._defaultFullFlushFlag);
+    }
     this.write(kFlushBuffers[kind], "", callback);
   }
 };
@@ -464,6 +510,12 @@ function processCallback() {
     $assert(have === 0, "have should not go down");
   }
 
+  const afterWrite = handle.afterWrite;
+  if (afterWrite) {
+    handle.afterWrite = null;
+    afterWrite();
+  }
+
   if (self.destroyed) {
     this.cb();
     return;
@@ -498,11 +550,15 @@ function processCallback() {
       );
     } else {
       const oldRead = self._read;
+      // `buffer` is set only while a write is on the threadpool.
+      const buffer = this.buffer;
+      this.buffer = null;
       self._read = n => {
         self._read = oldRead;
+        this.buffer = buffer;
         this.write(
           handle.flushFlag, // flush
-          this.buffer, // in
+          buffer, // in
           handle.inOff, // in_off
           handle.availInBefore, // in_len
           self._outBuffer, // out
@@ -527,7 +583,10 @@ function processCallback() {
   }
 
   // Finished with the chunk.
+  const afterFlush = this.buffer[kAfterFlush];
   this.buffer = null;
+  // The handle is idle until this.cb() gives it the next buffered chunk.
+  if (afterFlush) afterFlush();
   this.cb();
 }
 
@@ -603,8 +662,8 @@ $toClass(Zlib, "Zlib", ZlibBase);
 // This callback is used by `.params()` to wait until a full flush happened before adjusting the parameters.
 // In particular, the call to the native `params()` function should not happen while a write is currently in progress on the threadpool.
 function paramsAfterFlushCallback(level, strategy, callback) {
-  $assert(this._handle, "zlib binding closed");
-  this._handle.params(level, strategy);
+  if (!this._handle) return;
+  this._handle.params(level | 0, strategy | 0);
   if (!this.destroyed) {
     this._level = level;
     this._strategy = strategy;
@@ -617,7 +676,25 @@ Zlib.prototype.params = function params(level, strategy, callback) {
   checkRangesOrGetDefault(strategy, "strategy", Z_DEFAULT_STRATEGY, Z_FIXED);
 
   if (this._level !== level || this._strategy !== strategy) {
-    this.flush(Z_SYNC_FLUSH, paramsAfterFlushCallback.bind(this, level, strategy, callback));
+    if (this.writableEnded) {
+      const apply = paramsAfterFlushCallback.bind(this, level, strategy, callback);
+      const handle = this._handle;
+      if (!this.writableFinished) {
+        this.once("end", apply);
+      } else if (handle?.buffer) {
+        // 'finish' comes while the last chunk is still on the threadpool.
+        const afterWrite = handle.afterWrite;
+        handle.afterWrite = afterWrite ? () => (afterWrite(), apply()) : apply;
+      } else {
+        process.nextTick(apply);
+      }
+    } else {
+      // A write callback runs after the next buffered chunk went to the handle, so processCallback() changes the parameters.
+      const flush: Buffer & { [kFlushFlag]?: number; [kAfterFlush]?: () => void } = Buffer.alloc(0);
+      flush[kFlushFlag] = Z_SYNC_FLUSH;
+      flush[kAfterFlush] = paramsAfterFlushCallback.bind(this, level, strategy, undefined);
+      this.write(flush, "", callback && (() => this.destroyed || callback()));
+    }
   } else {
     process.nextTick(callback);
   }
@@ -666,7 +743,7 @@ function Unzip(opts): void {
 }
 $toClass(Unzip, "Unzip", Zlib);
 
-function createConvenienceMethod(ctor, sync, methodName, isZstd) {
+function createConvenienceMethod(ctor, sync, methodName, isZstd?) {
   if (sync) {
     const fn = function (buffer, opts) {
       return zlibBufferSync(new ctor(opts), buffer);
@@ -729,7 +806,7 @@ function Brotli(opts, mode) {
       if (typeof value !== "number" && typeof value !== "boolean") {
         throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
       }
-      brotliInitParamsArray[key] = value;
+      brotliInitParamsArray[key] = +value;
     });
   }
 
@@ -756,6 +833,7 @@ function Brotli(opts, mode) {
   ZlibBase.$apply(this, [opts, mode, handle, brotliDefaultOpts]);
 }
 $toClass(Brotli, "Brotli", Zlib);
+Brotli.prototype[kFlushBound] = FLUSH_BOUND[FLUSH_BOUND_IDX_BROTLI];
 
 function BrotliCompress(opts): void {
   if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
@@ -776,6 +854,8 @@ const zstdDefaultOpts = {
 };
 
 class Zstd extends ZlibBase {
+  declare _writeState: Uint32Array;
+
   constructor(opts, mode, initParamsArray, maxParam) {
     $assert(mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS);
 
@@ -814,6 +894,7 @@ class Zstd extends ZlibBase {
     this._writeState = writeState;
   }
 }
+Zstd.prototype[kFlushBound] = FLUSH_BOUND[FLUSH_BOUND_IDX_ZSTD];
 
 const kMaxZstdCParam = MathMax(...ObjectKeys(constants).map(key => (key.startsWith("ZSTD_c_") ? constants[key] : 0)));
 

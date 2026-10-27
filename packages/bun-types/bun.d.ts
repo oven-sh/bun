@@ -7262,6 +7262,13 @@ declare module "bun" {
     /**
      * Returns the servername of the socket.
      *
+     * On a client socket, this is the name that the socket sends as SNI.
+     *
+     * On a socket that a TLS server accepted, this is the SNI name that the
+     * client sent. The string has one code unit for each byte of the name,
+     * like `tlsSocket.servername` in `node:tls`.
+     * `Buffer.from(name, "latin1")` gives the bytes.
+     *
      * @see {@link setServername}
      */
     getServername(): string;

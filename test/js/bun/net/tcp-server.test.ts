@@ -1,6 +1,6 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tls } from "harness";
 import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
@@ -294,6 +294,60 @@ describe("tcp socket binaryType", () => {
       })();
     });
   }
+});
+
+describe("TLS socket: the SNI name", () => {
+  const units = (name: unknown) =>
+    typeof name === "string" ? Array.from(name, unit => unit.charCodeAt(0).toString(16)).join(" ") : name;
+
+  // What `read` gives for the socket of each end, when both handshakes are done.
+  async function bothEnds(
+    serverTLS: object,
+    clientTLS: object,
+    read: (socket: any) => unknown,
+    onClientOpen?: (socket: any) => void,
+  ) {
+    const seen: Record<string, unknown> = {};
+    const both = Promise.withResolvers<void>();
+    const handlers = (end: string): SocketHandler => ({
+      open: socket => (end === "client" ? onClientOpen?.(socket) : undefined),
+      handshake(socket) {
+        seen[end] = units(read(socket));
+        if ("server" in seen && "client" in seen) both.resolve();
+      },
+      data() {},
+      error: (_socket, err) => both.reject(err),
+      connectError: (_socket, err) => both.reject(err),
+    });
+    using server = listen({ hostname: "127.0.0.1", port: 0, tls: serverTLS, socket: handlers("server") });
+    using _client = await connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: { ...clientTLS, rejectUnauthorized: false },
+      socket: handlers("client"),
+    });
+    await both.promise;
+    return seen;
+  }
+
+  // A client sends its name as UTF-8. The server has the bytes, one code unit each, as in Node:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1359-L1373
+  // The client has the string that it set.
+  it("getServername() of the server has one code unit for each byte that the client sent", async () => {
+    const seen = await bothEnds(tls, { serverName: "\u00e9.example" }, socket => socket.getServername());
+    expect(seen).toEqual({ server: "c3 a9 2e 65 78 61 6d 70 6c 65", client: "e9 2e 65 78 61 6d 70 6c 65" });
+  });
+
+  it("setServername() gives the client the same string back, and the server its UTF-8 bytes", async () => {
+    const name = "\u00fc.example";
+    const seen = await bothEnds(
+      tls,
+      {},
+      socket => socket.getServername(),
+      socket => socket.setServername(name),
+    );
+    expect(seen).toEqual({ server: "c3 bc 2e 65 78 61 6d 70 6c 65", client: units(name) });
+  });
 });
 
 it.skipIf(isWindows)("stop(true) between ticks closes every socket when a close handler ticks the loop", async () => {

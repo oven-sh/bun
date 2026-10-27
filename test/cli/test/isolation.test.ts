@@ -1710,9 +1710,9 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
           try {
             if (${collect}) {
               // Left when that file's realm is gone: this file's global and a-park.test.ts's (its reads are in flight).
-              for (let turns = 0; turns < 10 && (Bun.gc(true), heapStats().objectTypeCounts.GlobalObject > 2); turns++) {
-                await new Promise(resolve => setImmediate(resolve));
-              }
+              const globals = () => (Bun.gc(true), heapStats().objectTypeCounts.GlobalObject);
+              for (let turns = 0; turns < 100 && globals() > 2; turns++) await new Promise(resolve => setImmediate(resolve));
+              expect(globals()).toBe(2);
             }
           } finally {
             for (const fd of JSON.parse(fs.readFileSync(import.meta.dir + "/writers.json", "utf8"))) fs.closeSync(fd);

@@ -6200,6 +6200,10 @@ impl VirtualMachine {
             unsafe { (hooks.cancel_timers)(core::ptr::from_mut(self), None) };
         }
 
+        // SAFETY: the VM owns its console until `exit_and_free`, and no console
+        // call is running on this thread during the swap.
+        unsafe { (*self.console).reset_for_test_isolation() };
+
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;

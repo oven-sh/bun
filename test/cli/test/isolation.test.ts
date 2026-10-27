@@ -236,6 +236,143 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The console keeps its group depth, count totals and timers per VM, past
+  // the file's global. Every line that a fixture prints through the console
+  // carries "[console]". The fixtures print to stdout only (a timer line goes
+  // to stderr): a --parallel worker has one pipe per stream, and the order
+  // between the two is not fixed.
+  const consoleLines = ({ stdout, stderr }: { stdout: string; stderr: string }) =>
+    (stdout + stderr).split(/\r?\n/).filter(line => line.includes("[console]"));
+  const consoleLeaker = `
+    import { test } from "bun:test";
+    test("a", () => {
+      console.count("[console] count");
+      console.time("[console] timer");
+      console.group("[console] group left open");
+    });
+  `;
+  const consoleObserver = `
+    import { test } from "bun:test";
+    test("b", () => {
+      console.log("[console] log");
+      console.count("[console] count");
+      console.timeEnd("[console] timer");
+      console.log("[console] after timeEnd");
+    });
+  `;
+
+  test.each([
+    ["bun test", [], {}],
+    // One worker takes both files (scale-up gated) and keeps one global for them.
+    ["--parallel --no-isolate worker", ["--parallel=2", "--no-isolate"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
+  ])("without isolation, the next file continues the console of the shared global (%s)", async (_, args, env) => {
+    using dir = tempDir("isolate-console-off", { "a.test.ts": consoleLeaker, "b.test.ts": consoleObserver });
+    const result = await runTests(String(dir), args, ["./a.test.ts", "./b.test.ts"], { ...bunEnv, ...env });
+    const lines = consoleLines(result);
+    expect({
+      stdout: lines.filter(line => !line.includes("[console] timer")),
+      stderr: lines.filter(line => line.includes("[console] timer")),
+    }).toEqual({
+      stdout: [
+        "[console] count: 1",
+        "[console] group left open",
+        "  [console] log",
+        expect.stringContaining("[console] count: 2"),
+        "  [console] after timeEnd",
+      ],
+      stderr: [expect.stringContaining("[console] timer")],
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  describe.each([
+    ["--isolate", ["--isolate"], {}],
+    // One worker takes both files (scale-up gated), so the second comes after the worker's own swap.
+    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
+  ])("each file starts with a fresh console (%s)", (_, args, env) => {
+    const files = ["./a.test.ts", "./b.test.ts"];
+
+    test("after a file that leaves a count, a running timer and an open group", async () => {
+      using dir = tempDir("isolate-console", { "a.test.ts": consoleLeaker, "b.test.ts": consoleObserver });
+      const result = await runTests(String(dir), args, files, { ...bunEnv, ...env });
+      expect(consoleLines(result)).toEqual([
+        "[console] count: 1",
+        "[console] group left open",
+        "[console] log",
+        "[console] count: 1",
+        "[console] after timeEnd",
+      ]);
+      expect(result.exitCode).toBe(0);
+    });
+
+    // The swap closes the client socket, so its close handler runs inside the swap.
+    test("after a file whose close handler uses the console while the runner closes its sockets", async () => {
+      using dir = tempDir("isolate-console-close-handler", {
+        "a.test.ts": `
+          import { test } from "bun:test";
+          test("a", async () => {
+            const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+            await Bun.connect({
+              hostname: "127.0.0.1",
+              port: listener.port,
+              socket: {
+                data() {},
+                close() {
+                  console.count("[console] count");
+                  console.time("[console] timer");
+                  console.group("[console] group opened by the close handler");
+                },
+              },
+            });
+            // intentionally leaving both open
+          });
+        `,
+        "b.test.ts": consoleObserver,
+      });
+      const result = await runTests(String(dir), args, files, { ...bunEnv, ...env });
+      expect(consoleLines(result)).toEqual([
+        "[console] count: 1",
+        "[console] group opened by the close handler",
+        "[console] log",
+        "[console] count: 1",
+        "[console] after timeEnd",
+      ]);
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("with a --preload that counts and opens a group", async () => {
+      using dir = tempDir("isolate-console-preload", {
+        "preload.ts": `
+          console.count("[console] preload");
+          console.group("[console] preload group");
+        `,
+        "a.test.ts": `
+          import { test } from "bun:test";
+          test("a", () => {
+            console.log("[console] a");
+          });
+        `,
+        "b.test.ts": `
+          import { test } from "bun:test";
+          test("b", () => {
+            console.log("[console] b");
+          });
+        `,
+      });
+      const result = await runTests(String(dir), [...args, "--preload", "./preload.ts"], files, { ...bunEnv, ...env });
+      // The preload runs again in each file's global, so each file is one group deep.
+      expect(consoleLines(result)).toEqual([
+        "[console] preload: 1",
+        "[console] preload group",
+        "  [console] a",
+        "[console] preload: 1",
+        "[console] preload group",
+        "  [console] b",
+      ]);
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
   test("with --isolate, --preload re-runs in each file's fresh global", async () => {
     using dir = tempDir("isolate-preload", {
       "preload.ts": `

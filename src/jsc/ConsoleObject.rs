@@ -156,6 +156,15 @@ impl ConsoleObject {
     pub(crate) fn writer(&mut self) -> &mut bun_core::io::Writer {
         self.writer_backing.new_interface()
     }
+
+    /// `bun test --isolate`: the next test file starts with no open group, no counts and no timers.
+    pub(crate) fn reset_for_test_isolation(&mut self) {
+        self.default_indent = 0;
+        self.counts.deinit();
+        if PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
+            PENDING_TIME_LOGS.with_borrow_mut(|timers| timers.deinit());
+        }
+    }
 }
 
 #[repr(u32)]

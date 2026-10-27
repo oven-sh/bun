@@ -1,5 +1,7 @@
 // Implementation for `require('node:module')._initPaths`. Exists only as a
 // compatibility stub. Calling this does not affect the actual CommonJS loader.
+// Anonymous in node, so no name: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L2122
+$overriddenName = "";
 export function _initPaths() {
   const homeDir = process.platform === "win32" ? process.env.USERPROFILE : Bun.env.HOME;
   const nodePath = process.platform === "win32" ? process.env.NODE_PATH : Bun.env.NODE_PATH;

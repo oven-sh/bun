@@ -121,10 +121,9 @@ describe("functions implemented in src/js/builtins", () => {
     expect({
       // A HashTableValue row of type BuiltinGeneratorType (JSBuffer.cpp)
       "Buffer.prototype.toJSON": Buffer.prototype.toJSON.name,
-      // JSBuiltin rows of a .lut.h table (JSBuffer.cpp, NodeModuleModule.cpp)
+      // JSBuiltin rows of a .lut.h table (JSBuffer.cpp)
       "Buffer.from": Buffer.from.name,
       "Buffer.isBuffer": Buffer.isBuffer.name,
-      "Module._initPaths": Module._initPaths.name,
       // `builtin: true` in a .bind.ts class (Glob.bind.ts)
       "Glob.prototype.scan": Bun.Glob.prototype.scan.name,
       "Glob.prototype.scanSync": Bun.Glob.prototype.scanSync.name,
@@ -137,7 +136,6 @@ describe("functions implemented in src/js/builtins", () => {
       "Buffer.prototype.toJSON": "toJSON",
       "Buffer.from": "from",
       "Buffer.isBuffer": "isBuffer",
-      "Module._initPaths": "_initPaths",
       "Glob.prototype.scan": "scan",
       "Glob.prototype.scanSync": "scanSync",
       "Bun.peek": "peek",
@@ -146,7 +144,7 @@ describe("functions implemented in src/js/builtins", () => {
     });
   });
 
-  test("use $overriddenName when the exposed key differs from the export", () => {
+  test("use $overriddenName in place of the export's name", () => {
     // UtilInspect.ts stylizeWithNoColor is the `stylize` Bun.inspect hands to inspect.custom.
     let stylizeName: string | undefined;
     Bun.inspect({
@@ -162,6 +160,8 @@ describe("functions implemented in src/js/builtins", () => {
       "Bun.peek.status": Bun.peek.status.name,
       // ProcessObjectInternals.ts rawDebug
       "process._rawDebug": process._rawDebug.name,
+      // NodeModuleObject.ts _initPaths sets "": no name, like the anonymous function node assigns
+      "Module._initPaths": Module._initPaths.name,
       // CommonJS.ts overridableRequire
       "Module.prototype.require": Module.prototype.require.name,
       // CommonJS.ts requireResolve. `require.resolve` itself is a bound function that
@@ -175,6 +175,7 @@ describe("functions implemented in src/js/builtins", () => {
       "Bun.inspect stylize": "stylizeNoColor",
       "Bun.peek.status": "status",
       "process._rawDebug": "_rawDebug",
+      "Module._initPaths": "",
       "Module.prototype.require": "require",
       "Object.getPrototypeOf(require).resolve": "resolve",
       "console[Symbol.asyncIterator]": "[Symbol.asyncIterator]",

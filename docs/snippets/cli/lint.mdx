@@ -1,0 +1,99 @@
+# CLI Usage
+
+```bash
+bun lint [flags] [files, directories, or globs]
+```
+
+### Rules
+
+<ParamField path="--rule" type="string">
+  Set a rule for this run: <code>--rule 'eqeqeq: [error, smart]'</code>. Turn off a plugin:{" "}
+  <code>--rule 'unicorn/*: off'</code>
+</ParamField>
+
+<ParamField path="--type-aware" type="boolean">
+  Also run the rules that need type information
+</ParamField>
+
+<ParamField path="--rules" type="boolean">
+  List every built-in rule. Add <code>-f json</code> for machine-readable output
+</ParamField>
+
+<ParamField path="--explain" type="string">
+  Print the documentation for a rule
+</ParamField>
+
+<ParamField path="--init" type="boolean">
+  Add a <code>[lint]</code> section to <code>bunfig.toml</code>
+</ParamField>
+
+### Fixing
+
+<ParamField path="--fix" type="boolean">
+  Apply fixes and write the files
+</ParamField>
+
+<ParamField path="--fix-suggestions" type="boolean">
+  Also apply suggestions, which may change what the code does
+</ParamField>
+
+<ParamField path="--fix-dry-run" type="boolean">
+  Compute fixes without writing them. The <code>json</code> format includes the fixed code
+</ParamField>
+
+### Files
+
+<ParamField path="--staged" type="boolean">
+  Lint only the files staged in Git
+</ParamField>
+
+<ParamField path="--changed" type="string">
+  Lint only the files that differ from a Git ref. Defaults to the default branch
+</ParamField>
+
+<ParamField path="--ignore-pattern" type="string">
+  Skip files that match this glob. Can be repeated
+</ParamField>
+
+<ParamField path="--no-ignore" type="boolean">
+  Lint ignored files too
+</ParamField>
+
+### Output
+
+<ParamField path="-f, --format" type="string" default="pretty">
+  <code>pretty</code>, <code>stylish</code>, <code>json</code>, <code>unix</code>, <code>github</code>,{" "}
+  <code>junit</code>, <code>checkstyle</code>, <code>gitlab</code>, <code>sarif</code>, or <code>agent</code>
+</ParamField>
+
+<ParamField path="-o, --output-file" type="string">
+  Write the report to a file
+</ParamField>
+
+<ParamField path="--quiet" type="boolean">
+  Report errors only
+</ParamField>
+
+<ParamField path="--max-warnings" type="number">
+  Exit with code 1 if there are more warnings than this
+</ParamField>
+
+<ParamField path="--all" type="boolean">
+  Show every problem. By default, more than 50 identical problems are grouped
+</ParamField>
+
+### Tools
+
+<ParamField path="--doctor" type="boolean">
+  Show which rules of your ESLint or oxlint config run natively, and which packages you can remove
+</ParamField>
+
+<ParamField path="--print-config" type="string">
+  Print the resolved config for a file
+</ParamField>
+
+<ParamField path="--no-script" type="boolean">
+  Run the linter even if the project has a <code>lint</code> script
+</ParamField>
+
+`bun lint` also accepts the flags of ESLint and oxlint. Run `bun lint --help --all` to see them.

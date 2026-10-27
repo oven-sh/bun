@@ -526,12 +526,6 @@ impl<R> CssRuleList<R> {
                         }
                     }
                     CssRule::Supports(supp) => {
-                        if let Some(CssRule::Supports(last_rule)) = rules.last_mut()
-                            && last_rule.condition.eql(&supp.condition)
-                        {
-                            // Drop the duplicate-condition rule outright.
-                            break 'arm;
-                        }
                         supp.minify(context, parent_is_unused)?;
                         if supp.rules.v.is_empty() {
                             break 'arm;
@@ -548,7 +542,8 @@ impl<R> CssRuleList<R> {
                     }
                     CssRule::LayerBlock(lay) => {
                         lay.rules.minify(context, parent_is_unused)?;
-                        if lay.rules.v.is_empty() {
+                        // An empty named block still declares its layer's place in the order.
+                        if lay.rules.v.is_empty() && lay.name.is_none() {
                             break 'arm;
                         }
                     }

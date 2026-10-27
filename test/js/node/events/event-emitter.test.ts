@@ -1,10 +1,26 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { createRequire } from "module";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { builtinModules, createRequire } from "module";
+import assert from "node:assert";
+import cluster from "node:cluster";
+import { Console } from "node:console";
+import crypto from "node:crypto";
+import dgram from "node:dgram";
+import fs from "node:fs";
+import http from "node:http";
+import https from "node:https";
+import net from "node:net";
+import readline from "node:readline";
+import stream from "node:stream";
+import tls from "node:tls";
+import tty from "node:tty";
+import url from "node:url";
+import zlib from "node:zlib";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
+import * as eventsNamespace from "node:events";
 import EventEmitter, {
   captureRejectionSymbol,
   getEventListeners,
@@ -1204,5 +1220,260 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
     nativeProto.on.call(obj, "x", () => fired++);
     nativeProto.emit.call(obj, "x");
     expect(fired).toBe(1);
+  });
+});
+
+// A program that guards against prototype pollution changes Object.prototype before it loads
+// anything else. The built-in modules load and work after that, as they do in Node.js.
+describe("Object.prototype is hardened before node:events loads", () => {
+  async function run(args: string[], cwd?: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  // No variable in these scripts has the name of a built-in module: `bun -e` imports a module
+  // that the script names that way before the first statement runs.
+  const freeze = `Object.freeze(Object.prototype);`;
+  const useStream = `
+    const through = new PassThrough();
+    through.on("data", chunk => console.log(String(chunk)));
+    through.end("hello");
+  `;
+
+  test.concurrent.each([
+    ["require()", `const { PassThrough } = require("node:stream"); ${useStream}`],
+    ["import()", `const { PassThrough } = await import("node:stream"); ${useStream}`],
+    ["process.getBuiltinModule()", `const { PassThrough } = process.getBuiltinModule("node:stream"); ${useStream}`],
+    [
+      "createRequire()",
+      `const { PassThrough } = require("node:module").createRequire(process.execPath)("node:stream"); ${useStream}`,
+    ],
+    ["process.stdout with no import", `process.stdout.write("hello\\n");`],
+  ])("Object.freeze(Object.prototype), then %s", async (_wayIn, script) => {
+    expect(await run(["-e", `${freeze} ${script}`])).toEqual({ stdout: "hello", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("Object.freeze(Object.prototype) in a --preload file, then a static import", async () => {
+    using dir = tempDir("events-frozen-object-prototype", {
+      "harden.mjs": freeze,
+      "app.mjs": `import { PassThrough } from "node:stream"; ${useStream}`,
+    });
+    expect(await run(["--preload", "./harden.mjs", "app.mjs"], String(dir))).toEqual({
+      stdout: "hello",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Three children share the list of modules, one after the other: a child that loads this much
+  // is slow beside other children. stderr is not compared: three of the modules print a
+  // deprecation warning.
+  test.each([1, 2, 3])(
+    "Object.freeze(Object.prototype), then each built-in module loads (part %d of 3)",
+    async part => {
+      const size = Math.ceil(builtinModules.length / 3);
+      const names = builtinModules.slice((part - 1) * size, part * size);
+      const { stdout, exitCode } = await run([
+        "-e",
+        `${freeze}
+        const failed = [];
+        for (const name of ${JSON.stringify(names)}) {
+          try {
+            require(name);
+          } catch (error) {
+            failed.push(name + ": " + error);
+          }
+        }
+        console.log(JSON.stringify(failed));`,
+      ]);
+      expect({ failed: JSON.parse(stdout), exitCode }).toEqual({ failed: [], exitCode: 0 });
+    },
+  );
+
+  // `node --disable-proto=delete` does this. Every stream gives the EventEmitter constructor a
+  // `this` that has `_events` already, and only then does the constructor read the prototype.
+  const deleteAccessor = `delete Object.prototype.__proto__;`;
+  const load = `
+    const EventEmitter = require("node:events");
+    const { PassThrough } = require("node:stream");
+    const { Socket } = require("node:net");
+    const { createReadStream } = require("node:fs");
+  `;
+  const useEmitters = `
+    function Child() {
+      EventEmitter.call(this);
+    }
+    Child.prototype = new EventEmitter();
+    const child = new Child();
+    child.on("x", () => {});
+
+    const emitter = new EventEmitter();
+    emitter.on("x", () => {});
+    EventEmitter.call(emitter);
+
+    new PassThrough().destroy();
+    new Socket().destroy();
+    createReadStream(process.execPath).destroy();
+    process.stdout.write(
+      JSON.stringify({
+        // An emitter whose prototype carries _events gets its own.
+        child: child.listenerCount("x"),
+        childPrototype: Child.prototype.listenerCount("x"),
+        // A second call of the constructor keeps the listeners.
+        emitter: emitter.listenerCount("x"),
+      }) + "\\n",
+    );
+  `;
+
+  test.concurrent.each([
+    ["before the modules load", `${deleteAccessor} ${load} ${useEmitters}`],
+    ["after the modules load", `${load} ${deleteAccessor} ${useEmitters}`],
+  ])("delete Object.prototype.__proto__ %s", async (_when, script) => {
+    expect(await run(["-e", script])).toEqual({
+      stdout: JSON.stringify({ child: 1, childPrototype: 0, emitter: 1 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/32160
+describe("built-in constructors have the own properties of a function declaration", () => {
+  test("EventEmitter.prototype.constructor is not enumerable", () => {
+    expect(Reflect.ownKeys(EventEmitter.prototype)[0]).toBe("constructor");
+    const keys: string[] = [];
+    for (const key in new EventEmitter()) keys.push(key);
+    expect(keys).not.toContain("constructor");
+  });
+
+  test("a constructor that mixes in EventEmitter.prototype keeps its own `constructor`", () => {
+    function Mixed() {}
+    Object.assign(Mixed.prototype, EventEmitter.prototype);
+    expect(new Mixed().constructor).toBe(Mixed);
+  });
+
+  test("the node:events module namespace has no `prototype` export", () => {
+    expect(Object.keys(eventsNamespace)).not.toContain("prototype");
+  });
+
+  // Each of these is a function in a built-in module. The label ends with the function's name.
+  const constructors: [label: string, constructor: Function][] = [
+    ["events.EventEmitter", EventEmitter],
+    ["stream.Stream", stream.Stream],
+    ["stream.Readable", stream.Readable],
+    ["stream.Writable", stream.Writable],
+    ["stream.Duplex", stream.Duplex],
+    ["stream.Transform", stream.Transform],
+    ["stream.PassThrough", stream.PassThrough],
+    ["stream.ReadableState", new stream.Readable()._readableState.constructor],
+    ["stream.WritableState", new stream.Writable()._writableState.constructor],
+    ["fs.ReadStream", fs.ReadStream],
+    ["fs.WriteStream", fs.WriteStream],
+    ["net.Socket", net.Socket],
+    ["net.Server", net.Server],
+    ["tls.TLSSocket", tls.TLSSocket],
+    ["tls.Server", tls.Server],
+    ["tls.SecureContext", tls.SecureContext],
+    ["http.Agent", http.Agent],
+    ["http.Server", http.Server],
+    ["http.IncomingMessage", http.IncomingMessage],
+    ["http.OutgoingMessage", http.OutgoingMessage],
+    ["http.ServerResponse", http.ServerResponse],
+    ["http.ClientRequest", http.ClientRequest],
+    ["https.Agent", https.Agent],
+    ["https.Server", https.Server],
+    ["zlib.Gzip", zlib.Gzip],
+    ["zlib.BrotliCompress", zlib.BrotliCompress],
+    ["crypto.Sign", crypto.Sign],
+    ["crypto.Verify", crypto.Verify],
+    ["crypto.Cipheriv", crypto.Cipheriv],
+    ["crypto.Decipheriv", crypto.Decipheriv],
+    ["crypto.Certificate", crypto.Certificate],
+    ["dgram.Socket", dgram.Socket],
+    ["readline.Interface", readline.Interface],
+    ["cluster.Worker", cluster.Worker],
+    ["tty.ReadStream", tty.ReadStream],
+    ["url.Url", url.Url],
+    ["assert.Assert", assert.Assert],
+    ["console.Console", Console],
+  ];
+
+  test.each(constructors)("%s", (label, constructor) => {
+    // The copy that #32160 reports: it throws when `prototype` is configurable.
+    Object.defineProperties(function () {}, Object.getOwnPropertyDescriptors(constructor));
+
+    expect(Reflect.ownKeys(constructor).slice(0, 3)).toEqual(["length", "name", "prototype"]);
+    const prototype = constructor.prototype;
+    expect(Object.getOwnPropertyDescriptor(constructor, "prototype")).toEqual({
+      value: prototype,
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
+    expect(Object.getOwnPropertyDescriptor(constructor, "name")).toEqual({
+      value: label.slice(label.lastIndexOf(".") + 1),
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+    expect(Object.getOwnPropertyDescriptor(prototype, "constructor")).toEqual({
+      value: constructor,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
+  // The copy that #32160 reports, for each function that a built-in module exports. It throws when
+  // `prototype` is configurable or an accessor. tty.WriteStream has an accessor until the first
+  // read of `prototype`.
+  test("each function of a built-in module can be copied onto another function", () => {
+    expect(tty.WriteStream.prototype).toBeObject();
+    const failed: string[] = [];
+    const seen = new Set<unknown>();
+    function visit(label: string, value: unknown, depth: number) {
+      if (value === null || (typeof value !== "object" && typeof value !== "function") || seen.has(value)) return;
+      seen.add(value);
+      if (typeof value === "function") {
+        try {
+          Object.defineProperties(function () {}, Object.getOwnPropertyDescriptors(value));
+        } catch {
+          failed.push(label);
+        }
+      }
+      if (depth === 2) return;
+      for (const key of Object.getOwnPropertyNames(value)) {
+        let member: unknown;
+        try {
+          member = (value as Record<string, unknown>)[key];
+        } catch {
+          continue;
+        }
+        visit(`${label}.${key}`, member, depth + 1);
+      }
+    }
+    for (const name of builtinModules) {
+      let loaded: unknown;
+      try {
+        loaded = require(name);
+      } catch {
+        continue;
+      }
+      visit(name, loaded, 0);
+    }
+    expect(failed.sort()).toEqual([]);
+  });
+
+  // Bun.$.Shell shares the prototype object of an internal class, which keeps its `constructor`.
+  test("Bun.$.Shell", () => {
+    const { Shell } = Bun.$;
+    expect(Object.getOwnPropertyDescriptor(Shell, "prototype")).toEqual({
+      value: Shell.prototype,
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
+    expect(new Shell()).toBeInstanceOf(Shell);
   });
 });

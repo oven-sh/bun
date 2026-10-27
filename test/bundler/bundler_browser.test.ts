@@ -166,6 +166,68 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
+  // A program that guards against prototype pollution changes Object.prototype before
+  // anything else is evaluated. The polyfill loads and works after that.
+  itBundled("browser/NodeEventsAfterObjectPrototypeIsFrozen", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./harden.js";
+        import { EventEmitter } from "node:events";
+        const emitter = new EventEmitter();
+        emitter.on("greeting", value => console.log(value));
+        emitter.emit("greeting", "hello");
+        const { value, enumerable } = Object.getOwnPropertyDescriptor(EventEmitter.prototype, "constructor");
+        console.log(value === EventEmitter, enumerable);
+      `,
+      "/harden.js": /* js */ `
+        Object.freeze(Object.prototype);
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "hello\ntrue false",
+    },
+  });
+  itBundled("browser/NodeEventsPrototypeHasTheShapeOfNode", {
+    files: {
+      "/entry.js": /* js */ `
+        import { EventEmitter } from "node:events";
+        const keys = [];
+        for (const key in new EventEmitter()) keys.push(key);
+        function Mixed() {}
+        Object.assign(Mixed.prototype, EventEmitter.prototype);
+        console.log(
+          new EventEmitter().constructor === EventEmitter,
+          keys.includes("constructor"),
+          new Mixed().constructor === Mixed,
+        );
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "true false true",
+    },
+  });
+  itBundled("browser/NodeEventsWithoutProtoAccessor", {
+    files: {
+      "/entry.js": /* js */ `
+        import { EventEmitter } from "node:events";
+        delete Object.prototype.__proto__;
+        // The constructor reads the prototype only when its receiver has _events already.
+        function Child() {
+          EventEmitter.call(this);
+        }
+        Child.prototype = new EventEmitter();
+        const child = new Child();
+        child.on("x", () => {});
+        console.log(child.listenerCount("x"), Child.prototype.listenerCount("x"));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "1 0",
+    },
+  });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {
       "/entry.js": /* js */ `

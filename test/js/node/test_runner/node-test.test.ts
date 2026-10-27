@@ -436,6 +436,11 @@ describe("node:test mock", () => {
     mock.restoreAll();
     expect(fn()).toBe("original");
   });
+
+  test("the prototype of a mock.fn with no original has its own `constructor`", () => {
+    const { writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(mock.fn().prototype, "constructor")!;
+    expect({ writable, enumerable, configurable }).toEqual({ writable: true, enumerable: false, configurable: true });
+  });
 });
 
 describe("node:test mock tracker semantics", () => {

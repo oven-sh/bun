@@ -28,87 +28,68 @@ function ReadStream(fd): void {
   this.isTTY = isatty(fd);
 }
 $toClass(ReadStream, "ReadStream", fs.ReadStream);
+const ReadStreamPrototype = ReadStream.prototype;
 
-Object.defineProperty(ReadStream, "prototype", {
-  get() {
-    const Prototype = Object.create(fs.ReadStream.prototype);
+// In Node.js a TTY stream has ref() and unref(), like a socket.
+ReadStreamPrototype.ref = function () {
+  // Get the underlying native stream source if available
+  const source = this.$bunNativePtr;
+  if (source?.updateRef) {
+    source.updateRef(true);
+  }
+  return this;
+};
 
-    // Add ref/unref methods to make tty.ReadStream behave like Node.js
-    // where TTY streams have socket-like behavior
-    Prototype.ref = function () {
-      // Get the underlying native stream source if available
-      const source = this.$bunNativePtr;
-      if (source?.updateRef) {
-        source.updateRef(true);
+ReadStreamPrototype.unref = function () {
+  // Get the underlying native stream source if available
+  const source = this.$bunNativePtr;
+  if (source?.updateRef) {
+    source.updateRef(false);
+  }
+  return this;
+};
+
+ReadStreamPrototype.setRawMode = function (flag) {
+  flag = !!flag;
+
+  // Windows calls uv_tty_set_mode on the stream's uv_tty_t. POSIX uses termios on the fd: the handle was not reliable there.
+  if (process.platform === "win32") {
+    // stdin has a shared uv_tty handle, and its stream is constructed differently.
+    if (this.fd === 0) {
+      const err = ttySetMode(flag);
+      if (err) {
+        this.emit("error", new Error("setRawMode failed with errno: " + err));
+        return this;
       }
-      return this;
-    };
-
-    Prototype.unref = function () {
-      // Get the underlying native stream source if available
-      const source = this.$bunNativePtr;
-      if (source?.updateRef) {
-        source.updateRef(false);
-      }
-      return this;
-    };
-
-    Prototype.setRawMode = function (flag) {
-      flag = !!flag;
-
-      // On windows, this goes through the stream handle itself, as it must call
-      // uv_tty_set_mode on the uv_tty_t.
-      //
-      // On POSIX, I tried to use the same approach, but it didn't work reliably,
-      // so we just use the file descriptor and use termios APIs directly.
-      if (process.platform === "win32") {
-        // Special case for stdin, as it has a shared uv_tty handle
-        // and it's stream is constructed differently
-        if (this.fd === 0) {
-          const err = ttySetMode(flag);
-          if (err) {
-            this.emit("error", new Error("setRawMode failed with errno: " + err));
-            return this;
-          }
-        } else {
-          const handle = this.$bunNativePtr;
-          if (!handle) {
-            this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
-            return this;
-          }
-
-          // If you call setRawMode before you call on('data'), the stream will
-          // not be constructed, leading to EBADF
-          // This corresponds to the `ensureConstructed` function in `native-readable.ts`
-          this.$start();
-
-          const err = handle.setRawMode(flag);
-          if (err) {
-            this.emit("error", err);
-            return this;
-          }
-        }
-      } else {
-        const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
-        const err = ttySetMode(this.fd, flag, state);
-        if (err) {
-          this.emit("error", new Error("setRawMode failed with errno: " + err));
-          return this;
-        }
+    } else {
+      const handle = this.$bunNativePtr;
+      if (!handle) {
+        this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
+        return this;
       }
 
-      this.isRaw = flag;
+      // setRawMode before on('data') finds the stream not constructed (EBADF). See ensureConstructed in native-readable.ts.
+      this.$start();
 
+      const err = handle.setRawMode(flag);
+      if (err) {
+        this.emit("error", err);
+        return this;
+      }
+    }
+  } else {
+    const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
+    const err = ttySetMode(this.fd, flag, state);
+    if (err) {
+      this.emit("error", new Error("setRawMode failed with errno: " + err));
       return this;
-    };
+    }
+  }
 
-    Object.defineProperty(ReadStream, "prototype", { value: Prototype });
+  this.isRaw = flag;
 
-    return Prototype;
-  },
-  enumerable: true,
-  configurable: true,
-});
+  return this;
+};
 
 function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
@@ -132,7 +113,13 @@ function WriteStream(fd): void {
 Object.defineProperty(WriteStream, "prototype", {
   get() {
     const Real = fs.WriteStream.prototype;
-    Object.defineProperty(WriteStream, "prototype", { value: Real });
+    // $toClass takes a function that has no `prototype` yet, and this one has the accessor.
+    Object.defineProperty(WriteStream, "prototype", {
+      value: Real,
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
 
     WriteStream.prototype._refreshSize = function () {
       const oldCols = this.columns;
@@ -197,7 +184,7 @@ Object.defineProperty(WriteStream, "prototype", {
 
     return Real;
   },
-  enumerable: true,
+  enumerable: false,
   configurable: true,
 });
 

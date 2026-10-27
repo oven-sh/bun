@@ -128,7 +128,7 @@ function ReadableState(options, stream, isDuplex) {
     this.encoding = options.encoding;
   }
 }
-ReadableState.prototype = {};
+$toClass(ReadableState, "ReadableState");
 ObjectDefineProperties(ReadableState.prototype, {
   objectMode: makeBitMapDescriptor(kObjectMode),
   ended: makeBitMapDescriptor(kEnded),

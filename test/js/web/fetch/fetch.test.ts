@@ -3120,6 +3120,78 @@ it("rejects a response with an unparseable Content-Length instead of treating it
   expect(await ok.text()).toBe("hello");
 });
 
+it("rejects a response that carries both Transfer-Encoding and Content-Length", async () => {
+  // RFC 9112 section 6.3 item 3: a message with both fields is an ambiguous
+  // framing (response splitting). Node rejects it. The values do not matter,
+  // and neither does the order, the method, nor the status code. The socket
+  // must not go back to the keep-alive pool.
+  const CHUNKED_BODY = "5\r\nHELLO\r\n0\r\n\r\n";
+  const responses: Record<string, string> = {
+    "/te-then-cl": "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\n" + CHUNKED_BODY,
+    "/cl-then-te": "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n" + CHUNKED_BODY,
+    "/cl-matches-body": "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n" + CHUNKED_BODY,
+    "/cl-zero": "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 0\r\n\r\n" + CHUNKED_BODY,
+    "/identity": "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nContent-Length: 5\r\n\r\nHELLO",
+    "/head": "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\n",
+    "/204": "HTTP/1.1 204 No Content\r\nTransfer-Encoding: chunked\r\nContent-Length: 0\r\n\r\n",
+    "/304": "HTTP/1.1 304 Not Modified\r\nTransfer-Encoding: chunked\r\nContent-Length: 0\r\n\r\n",
+    "/http10": "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\n" + CHUNKED_BODY,
+    "/chunked-only": "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + CHUNKED_BODY,
+    "/valid": "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+  };
+  let connections = 0;
+  const sockets = new Set<net.Socket>();
+  await using server = net.createServer(socket => {
+    connections++;
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => {});
+    let buffered = "";
+    socket.on("data", chunk => {
+      buffered += chunk.toString("latin1");
+      let end: number;
+      while ((end = buffered.indexOf("\r\n\r\n")) >= 0) {
+        const path = buffered.slice(0, end).split("\r\n")[0].split(" ")[1];
+        buffered = buffered.slice(end + 4);
+        socket.write(responses[path]);
+      }
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+  // The server keeps every socket open so that pooling stays observable.
+  using _ = { [Symbol.dispose]: () => sockets.forEach(socket => socket.destroy()) };
+
+  for (const path of [
+    "/te-then-cl",
+    "/cl-then-te",
+    "/cl-matches-body",
+    "/cl-zero",
+    "/identity",
+    "/head",
+    "/204",
+    "/304",
+    "/http10",
+  ]) {
+    const method = path === "/head" ? "HEAD" : "GET";
+    const result = await fetch(`http://localhost:${port}${path}`, { method })
+      .then(res => res.text())
+      .catch(e => e);
+    expect([path, result]).toEqual([path, expect.any(Error)]);
+    expect([path, (result as any).code]).toEqual([path, "ConflictingFraming"]);
+
+    // The rejected connection is closed, so the next request opens a new one.
+    const before = connections;
+    const ok = await fetch(`http://localhost:${port}/valid`);
+    expect(await ok.text()).toBe("hello");
+    expect([path, connections]).toEqual([path, before + 1]);
+  }
+
+  // A chunked response with no Content-Length is still delivered normally.
+  const chunked = await fetch(`http://localhost:${port}/chunked-only`);
+  expect(await chunked.text()).toBe("HELLO");
+});
+
 it("never sends the URL fragment in the request-target", async () => {
   // The request-target is `new URL(s).pathname + search`. A fragment is never
   // sent, even one that contains a `?`.

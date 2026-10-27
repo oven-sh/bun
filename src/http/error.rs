@@ -61,6 +61,8 @@ pub enum Error {
     InvalidContentLength,
     #[error("UnsupportedTransferEncoding")]
     UnsupportedTransferEncoding,
+    #[error("ConflictingFraming")]
+    ConflictingFraming,
     #[error("RequestBodyNotReusable")]
     RequestBodyNotReusable,
     #[error("RequestBodyLengthMismatch")]
@@ -296,6 +298,7 @@ impl Error {
             Self::InvalidHTTPResponse => "InvalidHTTPResponse",
             Self::InvalidContentLength => "InvalidContentLength",
             Self::UnsupportedTransferEncoding => "UnsupportedTransferEncoding",
+            Self::ConflictingFraming => "ConflictingFraming",
             Self::RequestBodyNotReusable => "RequestBodyNotReusable",
             Self::RequestBodyLengthMismatch => "RequestBodyLengthMismatch",
             Self::UnsupportedRedirectProtocol => "UnsupportedRedirectProtocol",

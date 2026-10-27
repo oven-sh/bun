@@ -288,7 +288,12 @@ impl TLSSocket {
         }
         // SAFETY: SSL_get_servername returns a NUL-terminated C string owned by the SSL session.
         let slice = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-        bun_string_jsc::create_utf8_for_js(cx.global(), slice)
+        // A client reads back the name that it set, which it encoded as UTF-8.
+        if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) == 0 {
+            return bun_string_jsc::create_utf8_for_js(cx.global(), slice);
+        }
+        // The peer's bytes, one code unit each: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1359-L1373
+        BunString::clone_latin1(slice).into_js(cx.global())
     }
 
     pub(crate) fn set_servername(&self, cx: &mut JsScope<'_>, name: JsLocal<'_>) -> JsResult<()> {

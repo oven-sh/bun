@@ -32,16 +32,6 @@ ALWAYS_INLINE auto toExtern(T& value)
     return ExternTraits<T>::convertToExtern(WTF::move(value));
 }
 
-// `value` as what Rust is passed a pointer to, where `toExtern` is a std::bit_cast. A copy would load in one piece
-// what the conversion has just stored in several, which waits for the stores to retire.
-template<typename T>
-ALWAYS_INLINE auto* asExtern(T& value)
-{
-    using ExternType = typename ExternTraits<T>::ExternType;
-    static_assert(std::is_trivially_copyable_v<T> && sizeof(T) == sizeof(ExternType) && alignof(T) == alignof(ExternType));
-    return reinterpret_cast<ExternType*>(&value);
-}
-
 template<typename T>
 struct TrivialExtern {
     using ExternType = T;
@@ -55,6 +45,17 @@ struct TrivialExtern {
 // `convertToExtern` of a `T` is a std::bit_cast: `T` is trivially copyable and is represented as its ExternType.
 template<typename T>
 inline constexpr bool canBitCastToExtern = std::derived_from<ExternTraits<T>, TrivialExtern<T>>;
+
+// For an argument that Rust takes by pointer: a pointer to `value` itself. A pointer to `toExtern(value)` costs a
+// store-forwarding stall, since the copy loads in one piece what the conversion has just stored in several.
+template<typename T>
+    requires canBitCastToExtern<T>
+ALWAYS_INLINE auto* asExtern(T& value)
+{
+    using ExternType = typename ExternTraits<T>::ExternType;
+    static_assert(alignof(T) == alignof(ExternType));
+    return reinterpret_cast<ExternType*>(&value);
+}
 
 template<> struct ExternTraits<bool> : TrivialExtern<bool> {};
 template<> struct ExternTraits<uint8_t> : TrivialExtern<uint8_t> {};

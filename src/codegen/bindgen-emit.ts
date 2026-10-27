@@ -451,12 +451,12 @@ ${held.map(a => `        ${a.type.convertsInPlace ? `std::optional<${implementat
 struct Extern${name} {
     uint8_t tag;
     union {
-${type.externFields ? "        uint64_t bits;\n" : ""}${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
+${type.externFields ? `        ${externUnionBits}\n        uint64_t bits;\n` : ""}${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
     } data;
 };
 ${layoutAssert(`Extern${name}`, type)}
 }
-template<> struct Bun::Bindgen::ExternTraits<${type.cpp}> {
+${type.cppCanBitCastToExtern ? `template<> inline constexpr bool Bun::Bindgen::canBitCastToExtern<${type.cpp}> = true;\n` : ""}template<> struct Bun::Bindgen::ExternTraits<${type.cpp}> {
     using ExternType = Bun::Bindgen::Generated::Extern${name};
     static ExternType convertToExtern(${type.cpp}&& value)
     {
@@ -854,6 +854,11 @@ function passedByPointer(args: readonly { type: Type }[], leading: number): bool
   });
 }
 
+/** Above the member `bits` of the `data` of a union that has `externFields`. Nothing reads the member. */
+const externUnionBits =
+  "// As a parameter, a union whose first member is a pointer is a pointer to clang and an integer to rustc.";
+
+/** The types of the parameters that take an extern value of `type`. */
 const cppExternParameters = (type: Type, byPointer: boolean): string[] =>
   byPointer
     ? [`${externType(type)}*`]
@@ -905,7 +910,7 @@ function cppCallBody(
       ? `${externType(type)} { ${toExtern(`converted${i}`)}, JSC::JSValue::encode(argument${i}.value()) }`
       : toExtern(`converted${i}`);
     if (!byPointer[i]) return cppExternArguments(type, extern, `extern${i}`, lines);
-    if (type.cppCanBitCastToExtern && !type.passesValue) return `Bun::Bindgen::asExtern(converted${i})`;
+    if (type.cppCanBitCastToExtern) return `Bun::Bindgen::asExtern(converted${i})`;
     lines.push(`auto extern${i} = ${extern};`);
     return `&extern${i}`;
   });
@@ -984,7 +989,7 @@ ${indent(lines.join("\n"), 4)}
 
 const cppExtern = (
   symbol: string,
-  signature: Signature,
+  signature: Pick<Signature, "args">,
   leading: readonly string[] = [],
   returns = "JSC::EncodedJSValue",
 ) => {
@@ -1399,7 +1404,7 @@ function cppSetter(type: ClassType, getter: Getter): string {
   const lines = cppDeclareConverted(getter.setterType, "value", value, "ctx", getter.name, "false");
   const args = cppExternArguments(getter.setterType, toExtern("value"), "externValue", lines);
   return `
-extern "C" bool ${setSymbol}(${["JSC::JSGlobalObject*", ...(getter.isStatic ? [] : ["JSC::JSCell*"]), ...cppExternParameters(getter.setterType, false)].join(", ")});
+${cppExtern(setSymbol, { args: [{ name: getter.name, type: getter.setterType }] }, getter.isStatic ? [] : ["JSC::JSCell*"], "bool")}
 static JSC_DECLARE_CUSTOM_SETTER(${set});
 JSC_DEFINE_CUSTOM_SETTER(${set}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue${getter.isStatic ? "" : " thisValue"}, JSC::EncodedJSValue encodedValue, JSC::PropertyName${getter.isStatic ? "" : " attributeName"}))
 {
@@ -1915,17 +1920,19 @@ function rustThunkArguments(
     .toSorted((a, b) => +a.arg.type.rustFromExternThrows - +b.arg.type.rustFromExternThrows)
     .flatMap(({ arg, byPointer }) => {
       const name = rustArgumentName(arg);
-      const extern = byPointer
-        ? `${name}.read()`
-        : arg.type.externFields
-          ? `${arg.type.rustExternType(scope)} { ${arg.type.externFields.map(field => `${field.name}: ${fieldName(arg, field)}`).join(", ")} }`
-          : name;
-      const converted = arg.type.rustFromExtern(extern, scope);
+      const fields = byPointer ? null : arg.type.externFields;
+      const whole = fields
+        ? [
+            `let ${name} = ${arg.type.rustExternType(scope).replace(/<.*$/, "")} { ${fields.map(field => `${field.name}: ${fieldName(arg, field)}`).join(", ")} };\n`,
+          ]
+        : [];
+      const converted = arg.type.rustFromExtern(byPointer ? `${name}.read()` : name, scope);
       if (arg.type.rustFromExternThrows)
         return [
+          ...whole,
           `let ${name} = match ${converted} {\n    Ok(value) => value,\n    Err(error) => return error.into_host_fn_return(cx),\n};\n`,
         ];
-      return converted === name ? [] : [`let ${name} = ${converted};\n`];
+      return converted === name ? whole : [...whole, `let ${name} = ${converted};\n`];
     });
   if (taken.some(line => /\bheap\b/.test(line))) taken.unshift("let heap = &cx.heap;\n");
   return { parameters: [...leading, ...parameters], take: taken.join("") };
@@ -1959,8 +1966,7 @@ function rustForConversion(
 ): string {
   const converted = type.rustFromExtern("result.assume_init()", scope);
   const ofUndefined = member ? null : type.rustOfUndefined(scope);
-  // Out of line, so that its callers share one copy. A member's that nothing shares has one caller.
-  const declaration = `${member && !sharedWith ? "" : "#[inline(never)]\n"}fn ${exported ? "convert_" : ""}${rustName}<'a>(cx: &mut bindgen::JsScope<'a>, value: JSValue${sharedWith ? ", index: u32" : ""})`;
+  const declaration = `fn ${exported ? "convert_" : ""}${rustName}<'a>(cx: &mut bindgen::JsScope<'a>, value: JSValue${sharedWith ? ", index: u32" : ""})`;
   return `${
     exported
       ? `
@@ -2030,7 +2036,7 @@ pub struct Extern${type.name} {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union Extern${type.name}Data {
-${type.externFields ? "    bits: u64,\n" : ""}${type.alternatives.map(a => `    ${rustIdent(snakeCase(a.name))}: ${a.type.rustExternType(scope)},`).join("\n")}
+${type.externFields ? `    ${externUnionBits}\n    bits: u64,\n` : ""}${type.alternatives.map(a => `    ${rustIdent(snakeCase(a.name))}: ${a.type.rustExternType(scope)},`).join("\n")}
 }
 ${rustLayoutAssert(`Extern${type.name}`, type)}
 impl${lifetime} ${type.name}${lifetime} {
@@ -2119,12 +2125,14 @@ fn ${convert}(global: &JSGlobalObject, value: JSValue) -> bun_jsc::JsResult<${ex
     ) -> bun_jsc::JsResult<R> {
         let result = ${convert}(global, value)?;
         // SAFETY: C++ made it; the scope only names the time until \`f\` returns.
-        unsafe {
+        let returned = unsafe {
             bindgen::JsScope::with(global.as_mut_ptr(), |cx| {
                 let heap = &cx.heap;
                 f(${converted})
             })
-        }
+        };
+        value.ensure_still_alive();
+        returned
     }
 }
 impl<'a> ${type.name}<'a> {

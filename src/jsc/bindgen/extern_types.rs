@@ -35,12 +35,12 @@ impl ExternStringView {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExternOptional<T: Copy> {
-    data: ExternOptionalData<T>,
-    tag: u8,
+    pub data: ExternOptionalData<T>,
+    pub tag: u8,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
-union ExternOptionalData<T: Copy> {
+pub union ExternOptionalData<T: Copy> {
     none: u8,
     some: T,
 }
@@ -100,8 +100,8 @@ impl<T: Copy> ExternVector<T> {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExternBytes {
-    data: *const u8,
-    length: usize,
+    pub data: *const u8,
+    pub length: usize,
 }
 impl ExternBytes {
     /// # Safety
@@ -127,8 +127,8 @@ impl ExternBytes {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExternVariadicArguments {
-    data: *const JSValue,
-    length: usize,
+    pub data: *const JSValue,
+    pub length: usize,
 }
 impl ExternVariadicArguments {
     /// # Safety

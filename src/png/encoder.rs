@@ -4,7 +4,7 @@ use bun_zlib::{DeflateEncoder, FlushValue, ReturnCode};
 
 use crate::chunk;
 use crate::error::{Error, Result};
-use crate::filter::{self, Lines};
+use crate::filter::{self, CandidateLines};
 use crate::header::{ColorType, Header, MAX_U31};
 
 // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L31
@@ -18,8 +18,8 @@ const Z_FILTERED: i32 = 1;
 const ICC_PROFILE_NAME: &[u8] = b"ICC Profile";
 
 pub struct Palette<'a> {
-    /// 1 to 256 colors.
-    pub rgba: &'a [[u8; 4]],
+    /// 1 to 256 of them, as RGBA.
+    pub colors: &'a [[u8; 4]],
     /// Without it the colors' alpha is not written and they are all opaque.
     pub has_alpha: bool,
 }
@@ -41,7 +41,7 @@ pub fn encode(
     let header = Header::new(width, height, 8, color_type, false)?;
     let row_bytes = header.width as usize * header.bytes_per_pixel();
     if row_bytes.checked_mul(header.height as usize) != Some(image.len()) {
-        return Err(Error::BufferSize);
+        return Err(Error::InvalidBufferSize);
     }
 
     let mut out = Vec::new();
@@ -64,27 +64,27 @@ pub fn encode(
     }
 
     // Neither stored bytes nor palette indices get smaller by filtering.
-    let filtering = level != 0 && palette.is_none();
-    let strategy = if filtering {
+    let worth_filtering = level != 0 && palette.is_none();
+    let strategy = if worth_filtering {
         Z_FILTERED
     } else {
         Z_DEFAULT_STRATEGY
     };
     let mut idat = Idat {
-        zlib: DeflateEncoder::new(level.into(), bun_zlib::MAX_WBITS, MEM_LEVEL, strategy)?,
+        deflater: DeflateEncoder::new(level.into(), bun_zlib::MAX_WBITS, MEM_LEVEL, strategy)?,
         start: chunk::begin(&mut out, chunk::IDAT)?,
         out,
     };
 
     // libspng does not add up a row longer than this, and so leaves it as it is.
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1608
-    let choosing = filtering && row_bytes <= (i32::MAX / 128) as usize;
-    let mut lines = Lines::new(row_bytes, choosing)?;
-    let zeros = filter::zeros(if choosing { row_bytes } else { 0 })?;
+    let adaptive = worth_filtering && row_bytes <= (i32::MAX / 128) as usize;
+    let mut lines = CandidateLines::new(row_bytes, adaptive)?;
+    let zeros = filter::zeros(if adaptive { row_bytes } else { 0 })?;
     let mut above = zeros.as_slice();
     for row in image.chunks_exact(row_bytes) {
-        idat.write(if choosing {
-            lines.best(header.bytes_per_pixel(), above, row)
+        idat.write(if adaptive {
+            lines.best(header.bytes_per_pixel(), row, above)
         } else {
             lines.unfiltered(row)
         })?;
@@ -102,14 +102,14 @@ fn write_icc_profile(out: &mut Vec<u8>, profile: &[u8]) -> Result<()> {
     out.extend_from_slice(ICC_PROFILE_NAME);
     // The name's terminator, then compression method 0.
     out.extend_from_slice(&[0, 0]);
-    let mut zlib = DeflateEncoder::new(
+    let mut deflater = DeflateEncoder::new(
         Z_DEFAULT_COMPRESSION,
         bun_zlib::MAX_WBITS,
         MEM_LEVEL,
         Z_DEFAULT_STRATEGY,
     )?;
-    let bound = zlib.bound(profile.len());
-    match zlib.step(profile, out, bound, FlushValue::Finish) {
+    let bound = deflater.bound(profile.len());
+    match deflater.step(profile, out, bound, FlushValue::Finish) {
         (_, ReturnCode::StreamEnd) => chunk::end(out, start),
         (_, ReturnCode::MemError) => Err(Error::Alloc(bun_alloc::AllocError)),
         _ => Err(Error::Zlib),
@@ -117,16 +117,16 @@ fn write_icc_profile(out: &mut Vec<u8>, profile: &[u8]) -> Result<()> {
 }
 
 fn write_palette(out: &mut Vec<u8>, palette: &Palette) -> Result<()> {
-    if palette.rgba.is_empty() || palette.rgba.len() > 256 {
+    if palette.colors.is_empty() || palette.colors.len() > 256 {
         return Err(Error::InvalidPalette);
     }
-    out.try_reserve(2 * 12 + 4 * palette.rgba.len())?;
+    out.try_reserve(2 * 12 + 4 * palette.colors.len())?;
     let start = chunk::begin(out, chunk::PLTE)?;
-    out.extend(palette.rgba.iter().flat_map(|&[r, g, b, _]| [r, g, b]));
+    out.extend(palette.colors.iter().flat_map(|&[r, g, b, _]| [r, g, b]));
     chunk::end(out, start)?;
     if palette.has_alpha {
         let start = chunk::begin(out, chunk::TRNS)?;
-        out.extend(palette.rgba.iter().map(|&[.., a]| a));
+        out.extend(palette.colors.iter().map(|&[.., a]| a));
         chunk::end(out, start)?;
     }
     Ok(())
@@ -137,7 +137,7 @@ fn write_palette(out: &mut Vec<u8>, palette: &Palette) -> Result<()> {
 /// zlib gets each line in a call of its own and sees only the room left in the current chunk, as with libspng:
 /// at level 0 both decide where a stored block ends.
 struct Idat {
-    zlib: DeflateEncoder,
+    deflater: DeflateEncoder,
     out: Vec<u8>,
     /// Where the chunk being written starts in `out`.
     start: usize,
@@ -150,7 +150,9 @@ impl Idat {
 
     fn deflate(&mut self, input: &[u8], flush: FlushValue) -> Result<(usize, ReturnCode)> {
         let room = self.room();
-        let (used, code) = self.zlib.step_limited(input, &mut self.out, room, flush);
+        let (used, code) = self
+            .deflater
+            .step_limited(input, &mut self.out, room, flush);
         if code == ReturnCode::MemError {
             return Err(Error::Alloc(bun_alloc::AllocError));
         }

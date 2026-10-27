@@ -1,5 +1,7 @@
 //! The five scanline filters. In all of them `a` is the byte one pixel to the left, `b` the byte above
 //! and `c` the byte above `a`. Left of the row and above the image (or pass) they are zero.
+//!
+//! A line is a row behind the byte that says which filter it has, its filter type.
 
 use crate::error::{Error, Result};
 
@@ -18,12 +20,12 @@ pub(crate) fn zeros(len: usize) -> Result<Vec<u8>> {
 }
 
 #[inline(always)]
-fn average(a: u8, b: u8) -> u8 {
+fn average_predictor(a: u8, b: u8) -> u8 {
     ((u16::from(a) + u16::from(b)) / 2) as u8
 }
 
 #[inline(always)]
-fn paeth(a: u8, b: u8, c: u8) -> u8 {
+fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {
     let (wide_a, wide_b, wide_c) = (i16::from(a), i16::from(b), i16::from(c));
     let pa = (wide_b - wide_c).abs();
     let pb = (wide_a - wide_c).abs();
@@ -39,9 +41,9 @@ fn paeth(a: u8, b: u8, c: u8) -> u8 {
 
 /// Eight numbers side by side. Eight, whatever the pixel's size, because they fill a vector register.
 #[derive(Clone, Copy)]
-struct Wide([i16; 8]);
+struct I16x8([i16; 8]);
 
-impl Wide {
+impl I16x8 {
     const ZERO: Self = Self([0; 8]);
 
     /// The lanes that `bytes` does not fill are zero.
@@ -86,25 +88,25 @@ impl Wide {
 
 /// All bits of a lane set, or none.
 #[derive(Clone, Copy)]
-struct Mask(Wide);
+struct Mask(I16x8);
 
 impl Mask {
     #[inline(always)]
-    fn select(self, then: Wide, otherwise: Wide) -> Wide {
+    fn select(self, then: I16x8, otherwise: I16x8) -> I16x8 {
         let then = then.zip(self.0, |x, mask| x & mask);
         then.zip(otherwise.zip(self.0, |x, mask| x & !mask), |x, y| x | y)
     }
 }
 
-/// `undo()` for pixels of `SIZE` bytes. Plain and out of line, or a pixel does not stay in one vector register: after
-/// a change, run bench/image/bench-png.mjs.
-struct Undo<const SIZE: usize>;
+/// `unfilter()` for pixels of `BPP` bytes. Plain and out of line, or a pixel does not stay in one vector register:
+/// after a change, run bench/image/bench-png.mjs.
+struct Unfilter<const BPP: usize>;
 
-impl<const SIZE: usize> Undo<SIZE> {
+impl<const BPP: usize> Unfilter<BPP> {
     /// `a` is the pixel before `row`.
     #[inline(never)]
-    fn sub(mut a: [u8; SIZE], row: &mut [u8]) {
-        for pixel in row.as_chunks_mut::<SIZE>().0 {
+    fn sub(mut a: [u8; BPP], row: &mut [u8]) {
+        for pixel in row.as_chunks_mut::<BPP>().0 {
             for (x, a) in pixel.iter_mut().zip(&mut a) {
                 *x = x.wrapping_add(*a);
                 *a = *x;
@@ -114,71 +116,71 @@ impl<const SIZE: usize> Undo<SIZE> {
 
     #[inline(never)]
     fn average(row: &mut [u8], above: &[u8]) {
-        let mut a = Wide::ZERO;
-        let pixels = row.as_chunks_mut::<SIZE>().0.iter_mut();
-        for (x, b) in pixels.zip(above.as_chunks::<SIZE>().0) {
+        let mut a = I16x8::ZERO;
+        let pixels = row.as_chunks_mut::<BPP>().0.iter_mut();
+        for (x, b) in pixels.zip(above.as_chunks::<BPP>().0) {
             // x + (a + b) / 2 is (a + b + 2x) / 2, and b + 2x does not wait for `a`.
-            let known = Wide::load(x).zip(Wide::load(b), |x, b| 2 * x + b);
-            a = a.zip(known, |a, known| ((a + known) >> 1) & 0xff);
+            let b_plus_2x = I16x8::load(x).zip(I16x8::load(b), |x, b| 2 * x + b);
+            a = a.zip(b_plus_2x, |a, b_plus_2x| ((a + b_plus_2x) >> 1) & 0xff);
             a.store(x);
         }
     }
 
     /// `a` is the pixel before `row` and `c` the one before `above`.
     #[inline(never)]
-    fn paeth(a: &[u8; SIZE], c: &[u8; SIZE], row: &mut [u8], above: &[u8]) {
-        /// x plus what `paeth()` gives, for all a, b and c, in fewer steps from `a`. `known` is 3c - b.
+    fn paeth(a: &[u8; BPP], c: &[u8; BPP], row: &mut [u8], above: &[u8]) {
+        /// x plus what `paeth_predictor()` gives, for all a, b and c, in fewer steps from `a`.
         // https://github.com/nothings/stb/blob/013ac3beddff3dbffafd5177e7972067cd2b5083/stb_image.h#L4657
         #[inline(always)]
-        fn next(x: &[u8], a: Wide, b: Wide, c: Wide, known: Wide) -> Wide {
-            let threshold = known.zip(a, |known, a| known - a);
+        fn reconstruct(x: &[u8], a: I16x8, b: I16x8, c: I16x8, three_c_minus_b: I16x8) -> I16x8 {
+            let threshold = three_c_minus_b.zip(a, |three_c_minus_b, a| three_c_minus_b - a);
             let (min, max) = (a.zip(b, i16::min), a.zip(b, i16::max));
             let min_or_c = max.gt(threshold).select(c, min);
             let nearest = threshold.gt(min).select(min_or_c, max);
-            Wide::load(x).zip(nearest, |x, nearest| x + nearest)
+            I16x8::load(x).zip(nearest, |x, nearest| x + nearest)
         }
-        let Some((last, pixels)) = row.as_chunks_mut::<SIZE>().0.split_last_mut() else {
+        let Some((last, pixels)) = row.as_chunks_mut::<BPP>().0.split_last_mut() else {
             return;
         };
-        let Some((b, later_b)) = above.as_chunks::<SIZE>().0.split_first() else {
+        let Some((b, later_b)) = above.as_chunks::<BPP>().0.split_first() else {
             return;
         };
-        let (mut a, mut b, mut c) = (Wide::load(a), Wide::load(b), Wide::load(c));
+        let (mut a, mut b, mut c) = (I16x8::load(a), I16x8::load(b), I16x8::load(c));
         // Worked out one pixel ahead, or the compiler puts it on the way from one `a` to the next.
-        let mut known = b.zip(c, |b, c| 3 * c - b);
+        let mut three_c_minus_b = b.zip(c, |b, c| 3 * c - b);
         for (x, next_b) in pixels.iter_mut().zip(later_b) {
-            let sum = next(x, a, b, c, known);
+            let sum = reconstruct(x, a, b, c, three_c_minus_b);
             a = sum.map(|sum| sum & 0xff);
             // The same bytes. From `a`, the compiler adds bytes, and widening them is on the way to the next `a` too.
             // From `sum`, it is slower with a pixel that it does not keep in one register.
-            (if SIZE.is_multiple_of(4) { sum } else { a }).store(x);
+            (if BPP.is_multiple_of(4) { sum } else { a }).store(x);
             c = b;
-            b = Wide::load(next_b);
-            known = b.zip(c, |b, c| 3 * c - b);
+            b = I16x8::load(next_b);
+            three_c_minus_b = b.zip(c, |b, c| 3 * c - b);
         }
-        next(last, a, b, c, known).store(last);
+        reconstruct(last, a, b, c, three_c_minus_b).store(last);
     }
 
     /// Where the row above repeats a pixel, b = c, so a is the nearest and Paeth is Sub, at a tenth of the cost.
     fn paeth_or_sub(row: &mut [u8], above: &[u8]) {
         const BLOCK: usize = 48;
         // After a block that is not flat this much is not looked at, or a photo would pay for the looking.
-        const STRETCH: usize = 5 * BLOCK;
-        const { assert!(BLOCK.is_multiple_of(SIZE)) };
+        const BUSY_LEN: usize = 5 * BLOCK;
+        const { assert!(BLOCK.is_multiple_of(BPP)) };
         let is_flat = |at: usize| {
             let block = above.get(at..).and_then(|rest| rest.first_chunk::<BLOCK>());
-            let shifted = at.checked_sub(SIZE).and_then(|at| above.get(at..));
+            let shifted = at.checked_sub(BPP).and_then(|at| above.get(at..));
             block.is_some() && block == shifted.and_then(|rest| rest.first_chunk::<BLOCK>())
         };
-        fn last_pixel<const SIZE: usize>(bytes: &[u8]) -> &[u8; SIZE] {
-            bytes.last_chunk().unwrap_or(&[0; SIZE])
+        fn last_pixel<const BPP: usize>(bytes: &[u8]) -> &[u8; BPP] {
+            bytes.last_chunk().unwrap_or(&[0; BPP])
         }
         let mut start = 0;
         while start < row.len() {
             let flat = is_flat(start);
             // Left of the row is not what the row above starts with, but after one pixel that is over.
-            let busy = if start == 0 { SIZE } else { STRETCH };
-            let mut end = start + if flat { BLOCK } else { busy };
+            let busy_len = if start == 0 { BPP } else { BUSY_LEN };
+            let mut end = start + if flat { BLOCK } else { busy_len };
             while flat && is_flat(end) {
                 end += BLOCK;
             }
@@ -195,10 +197,10 @@ impl<const SIZE: usize> Undo<SIZE> {
         }
     }
 
-    fn undo(filter: u8, row: &mut [u8], above: &[u8]) -> Result<()> {
-        match filter {
+    fn unfilter(filter_type: u8, row: &mut [u8], above: &[u8]) -> Result<()> {
+        match filter_type {
             NONE => {}
-            SUB => Self::sub([0; SIZE], row),
+            SUB => Self::sub([0; BPP], row),
             UP => {
                 for (x, b) in row.iter_mut().zip(above) {
                     *x = x.wrapping_add(*b);
@@ -206,23 +208,28 @@ impl<const SIZE: usize> Undo<SIZE> {
             }
             AVERAGE => Self::average(row, above),
             PAETH => Self::paeth_or_sub(row, above),
-            _ => return Err(Error::InvalidFilter),
+            _ => return Err(Error::InvalidFilterType),
         }
         Ok(())
     }
 }
 
 /// Turns the filtered `row` back into pixels of `bytes_per_pixel`. `above` is the row before it, turned back already.
-pub(crate) fn undo(filter: u8, bytes_per_pixel: usize, row: &mut [u8], above: &[u8]) -> Result<()> {
+pub(crate) fn unfilter(
+    filter_type: u8,
+    bytes_per_pixel: usize,
+    row: &mut [u8],
+    above: &[u8],
+) -> Result<()> {
     debug_assert_eq!(row.len(), above.len());
     match bytes_per_pixel {
-        1 => Undo::<1>::undo(filter, row, above),
-        2 => Undo::<2>::undo(filter, row, above),
-        4 => Undo::<4>::undo(filter, row, above),
-        6 => Undo::<6>::undo(filter, row, above),
-        8 => Undo::<8>::undo(filter, row, above),
+        1 => Unfilter::<1>::unfilter(filter_type, row, above),
+        2 => Unfilter::<2>::unfilter(filter_type, row, above),
+        4 => Unfilter::<4>::unfilter(filter_type, row, above),
+        6 => Unfilter::<6>::unfilter(filter_type, row, above),
+        8 => Unfilter::<8>::unfilter(filter_type, row, above),
         // 3 is not among them: see `push_rgb_as_rgba()`.
-        _ => Err(Error::InvalidFilter),
+        _ => Err(Error::Internal),
     }
 }
 
@@ -247,20 +254,26 @@ pub(crate) fn make_opaque(rgba: &mut [u8]) {
 #[inline(always)]
 fn apply(
     bytes_per_pixel: usize,
-    above: &[u8],
     row: &[u8],
+    above: &[u8],
     out: &mut [u8],
-    filter: impl Fn(u8, u8, u8, u8) -> u8,
+    filter_byte: impl Fn(u8, u8, u8, u8) -> u8,
 ) {
     let first = out.iter_mut().zip(row).zip(above).take(bytes_per_pixel);
     for ((out, x), b) in first {
-        *out = filter(*x, 0, *b, 0);
+        *out = filter_byte(*x, 0, *b, 0);
     }
     let out = out.get_mut(bytes_per_pixel..).unwrap_or_default();
-    let x = row.get(bytes_per_pixel..).unwrap_or_default();
-    let b = above.get(bytes_per_pixel..).unwrap_or_default();
-    for ((((out, x), a), b), c) in out.iter_mut().zip(x).zip(row).zip(b).zip(above) {
-        *out = filter(*x, *a, *b, *c);
+    let later_row = row.get(bytes_per_pixel..).unwrap_or_default();
+    let later_above = above.get(bytes_per_pixel..).unwrap_or_default();
+    let xabc = out
+        .iter_mut()
+        .zip(later_row)
+        .zip(row)
+        .zip(later_above)
+        .zip(above);
+    for ((((out, x), a), b), c) in xabc {
+        *out = filter_byte(*x, *a, *b, *c);
     }
 }
 
@@ -273,25 +286,25 @@ fn score(filtered: &[u8]) -> u32 {
         .sum()
 }
 
-/// One buffer per filter, each a filter byte and a row.
-pub(crate) struct Lines {
+/// A line for each filter type, to pick one from.
+pub(crate) struct CandidateLines {
     lines: [Vec<u8>; 5],
 }
 
-impl Lines {
-    /// Without `choosing` there is only `unfiltered`.
-    pub(crate) fn new(row_bytes: usize, choosing: bool) -> Result<Self> {
+impl CandidateLines {
+    /// Unless `adaptive`, there is only `unfiltered`.
+    pub(crate) fn new(row_bytes: usize, adaptive: bool) -> Result<Self> {
         let mut lines: [Vec<u8>; 5] = Default::default();
-        let used = if choosing { lines.len() } else { 1 };
-        for (filter, line) in (NONE..).zip(&mut lines).take(used) {
+        let used = if adaptive { lines.len() } else { 1 };
+        for (filter_type, line) in (NONE..).zip(&mut lines).take(used) {
             line.try_reserve_exact(row_bytes.saturating_add(1))?;
-            line.push(filter);
+            line.push(filter_type);
             line.resize(row_bytes.saturating_add(1), 0);
         }
         Ok(Self { lines })
     }
 
-    /// `row` behind filter byte 0.
+    /// `row` behind filter type 0.
     pub(crate) fn unfiltered(&mut self, row: &[u8]) -> &[u8] {
         let [none, ..] = &mut self.lines;
         none.truncate(1);
@@ -299,26 +312,26 @@ impl Lines {
         none
     }
 
-    /// `row` behind the byte of the filter that libspng picks for it, filtered.
+    /// `row` behind the filter type that libspng picks for it, filtered.
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1666
-    pub(crate) fn best(&mut self, bytes_per_pixel: usize, above: &[u8], row: &[u8]) -> &[u8] {
+    pub(crate) fn best(&mut self, bytes_per_pixel: usize, row: &[u8], above: &[u8]) -> &[u8] {
         self.unfiltered(row);
         for line in self.lines.iter_mut().skip(1) {
-            let Some((&mut filter, out)) = line.split_first_mut() else {
+            let Some((&mut filter_type, out)) = line.split_first_mut() else {
                 continue;
             };
-            match filter {
-                SUB => apply(bytes_per_pixel, above, row, out, |x, a, _, _| {
+            match filter_type {
+                SUB => apply(bytes_per_pixel, row, above, out, |x, a, _, _| {
                     x.wrapping_sub(a)
                 }),
-                UP => apply(bytes_per_pixel, above, row, out, |x, _, b, _| {
+                UP => apply(bytes_per_pixel, row, above, out, |x, _, b, _| {
                     x.wrapping_sub(b)
                 }),
-                AVERAGE => apply(bytes_per_pixel, above, row, out, |x, a, b, _| {
-                    x.wrapping_sub(average(a, b))
+                AVERAGE => apply(bytes_per_pixel, row, above, out, |x, a, b, _| {
+                    x.wrapping_sub(average_predictor(a, b))
                 }),
-                _ => apply(bytes_per_pixel, above, row, out, |x, a, b, c| {
-                    x.wrapping_sub(paeth(a, b, c))
+                _ => apply(bytes_per_pixel, row, above, out, |x, a, b, c| {
+                    x.wrapping_sub(paeth_predictor(a, b, c))
                 }),
             }
         }

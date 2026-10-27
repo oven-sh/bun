@@ -3,13 +3,13 @@
 use bun_core::strings::{index_of_char_usize, split_once_char};
 use bun_zlib::{InflateDecoder, ReturnCode};
 
-use crate::chunk::{self, Reader, Type};
+use crate::chunk::{self, ChunkType, Reader};
 use crate::error::{Error, Result};
 use crate::filter;
-use crate::header::{ColorType, Header};
+use crate::header::{ColorType, Header, IHDR_LEN};
 
 // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L32
-const MAX_STORED_CHUNKS: u32 = 1000;
+const MAX_COUNTED_CHUNKS: u32 = 1000;
 
 type Rgba = [u8; 4];
 
@@ -30,12 +30,12 @@ pub struct Decoder<'a> {
 impl<'a> Decoder<'a> {
     pub fn new(bytes: &'a [u8]) -> Result<Self> {
         let mut reader = Reader::new(bytes);
-        if reader.array()? != chunk::SIGNATURE {
-            return Err(Error::Signature);
+        if reader.take_array()? != chunk::SIGNATURE {
+            return Err(Error::InvalidSignature);
         }
-        let len = u32::from_be_bytes(reader.array()?);
-        let kind: Type = reader.array()?;
-        if len != 13 || kind != chunk::IHDR {
+        let len = u32::from_be_bytes(reader.take_array()?);
+        let chunk_type: ChunkType = reader.take_array()?;
+        if len != IHDR_LEN || chunk_type != chunk::IHDR {
             return Err(Error::InvalidHeader);
         }
         let header = Header::parse(&mut reader)?;
@@ -51,11 +51,11 @@ impl<'a> Decoder<'a> {
     pub fn decode(self, max_inflated: usize) -> Result<Image> {
         let Self { header, mut reader } = self;
         let mut chunks = Chunks::new(header, max_inflated);
-        let first_idat = chunks.read(&mut reader)?;
-        let expand = Expand::new(&chunks);
-        let mut idat = Idat::new(reader, first_idat)?;
+        let first_idat_len = chunks.read_until_idat(&mut reader)?;
+        let expander = Expander::new(&chunks);
+        let mut idat = Idat::new(reader, first_idat_len)?;
         Ok(Image {
-            rgba: read_image(header, &expand, &mut idat)?,
+            rgba: read_pixels(header, &expander, &mut idat)?,
             icc_profile: chunks.icc_profile,
         })
     }
@@ -77,11 +77,11 @@ struct Chunks<'a> {
     /// There was a bKGD or hIST chunk, which PLTE may not follow.
     palette_is_final: bool,
     /// Also set by an iCCP chunk that was passed over.
-    has_iccp: bool,
-    has_exif: bool,
+    seen_iccp: bool,
+    seen_exif: bool,
     icc_profile: Option<Vec<u8>>,
-    /// The tEXt, zTXt, iTXt, sPLT and eXIf chunks, which libspng kept.
-    stored: u32,
+    /// The tEXt, zTXt, iTXt, sPLT and eXIf chunks so far. libspng kept them, up to a limit.
+    counted_chunks: u32,
 }
 
 impl<'a> Chunks<'a> {
@@ -93,55 +93,55 @@ impl<'a> Chunks<'a> {
             palette_len: 0,
             transparency: None,
             palette_is_final: false,
-            has_iccp: false,
-            has_exif: false,
+            seen_iccp: false,
+            seen_exif: false,
             icc_profile: None,
-            stored: 0,
+            counted_chunks: 0,
         }
     }
 
     /// Leaves `reader` behind the header of the first IDAT and returns that chunk's length.
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L2358
-    fn read(&mut self, reader: &mut Reader<'a>) -> Result<usize> {
+    fn read_until_idat(&mut self, reader: &mut Reader<'a>) -> Result<usize> {
         loop {
-            let (len, kind) = reader.next_header()?;
-            if kind == chunk::IDAT {
+            let (len, chunk_type) = reader.next_chunk_header()?;
+            if chunk_type == chunk::IDAT {
                 if self.header.color_type == ColorType::Indexed && self.palette_len == 0 {
                     return Err(Error::MissingPalette);
                 }
                 return Ok(len);
             }
             let data = reader.take(len)?;
-            match kind {
-                chunk::PLTE => self.palette(data)?,
+            match chunk_type {
+                chunk::PLTE => self.on_plte(data)?,
                 chunk::IHDR | chunk::IEND => return Err(Error::ChunkOutOfPlace),
-                _ if chunk::is_critical(kind) => return Err(Error::UnknownCriticalChunk),
+                _ if chunk::is_critical(chunk_type) => return Err(Error::UnknownCriticalChunk),
                 _ if data.is_empty() => {}
-                chunk::TRNS => self.transparency(data),
-                chunk::BKGD => self.background(data),
-                chunk::HIST => self.histogram(data),
-                chunk::ICCP => self.icc_profile(data)?,
-                chunk::TEXT | chunk::ZTXT | chunk::ITXT => self.text(kind, data)?,
-                chunk::SPLT => self.count_stored()?,
-                chunk::EXIF if !self.has_exif => {
-                    self.has_exif = true;
-                    self.count_stored()?;
+                chunk::TRNS => self.on_trns(data),
+                chunk::BKGD => self.on_bkgd(data),
+                chunk::HIST => self.on_hist(data),
+                chunk::ICCP => self.on_iccp(data)?,
+                chunk::TEXT | chunk::ZTXT | chunk::ITXT => self.on_text(chunk_type, data)?,
+                chunk::SPLT => self.count_chunk()?,
+                chunk::EXIF if !self.seen_exif => {
+                    self.seen_exif = true;
+                    self.count_chunk()?;
                 }
                 _ => {}
             }
         }
     }
 
-    fn palette(&mut self, data: &[u8]) -> Result<()> {
+    fn on_plte(&mut self, data: &[u8]) -> Result<()> {
         if self.transparency.is_some() || self.palette_is_final {
             return Err(Error::ChunkOutOfPlace);
         }
-        let (entries, rest) = data.as_chunks::<3>();
+        let (entries, remainder) = data.as_chunks::<3>();
         let max = match self.header.color_type {
             ColorType::Indexed => 1 << self.header.bit_depth,
             _ => 256,
         };
-        if !rest.is_empty() || entries.is_empty() || entries.len() > max {
+        if !remainder.is_empty() || entries.is_empty() || entries.len() > max {
             return Err(Error::InvalidPalette);
         }
         for (to, from) in self.palette.iter_mut().zip(entries) {
@@ -151,7 +151,7 @@ impl<'a> Chunks<'a> {
         Ok(())
     }
 
-    fn transparency(&mut self, data: &'a [u8]) {
+    fn on_trns(&mut self, data: &'a [u8]) {
         let fits = match self.header.color_type {
             ColorType::Grayscale => data.len() == 2,
             ColorType::Truecolor => data.len() == 6,
@@ -163,7 +163,7 @@ impl<'a> Chunks<'a> {
         }
     }
 
-    fn background(&mut self, data: &[u8]) {
+    fn on_bkgd(&mut self, data: &[u8]) {
         self.palette_is_final |= match self.header.color_type {
             ColorType::Grayscale | ColorType::GrayscaleAlpha => data.len() == 2,
             ColorType::Truecolor | ColorType::TruecolorAlpha => data.len() == 6,
@@ -173,22 +173,22 @@ impl<'a> Chunks<'a> {
         };
     }
 
-    fn histogram(&mut self, data: &[u8]) {
+    fn on_hist(&mut self, data: &[u8]) {
         self.palette_is_final |= self.palette_len != 0 && data.len() / 2 == self.palette_len;
     }
 
-    fn icc_profile(&mut self, data: &[u8]) -> Result<()> {
-        if self.palette_len != 0 || self.has_iccp {
+    fn on_iccp(&mut self, data: &[u8]) -> Result<()> {
+        if self.palette_len != 0 || self.seen_iccp {
             return Ok(());
         }
-        self.has_iccp = true;
+        self.seen_iccp = true;
         let name_field = data.get(..80).unwrap_or(data);
         let Some(name_len) = index_of_char_usize(name_field, 0) else {
             return Ok(());
         };
-        let (name, rest) = data.split_at_checked(name_len).unwrap_or_default();
+        let (name, after_name) = data.split_at_checked(name_len).unwrap_or_default();
         // The name's terminator, then compression method 0.
-        let (true, [0, 0, compressed @ ..]) = (is_keyword(name), rest) else {
+        let (true, [0, 0, compressed @ ..]) = (is_keyword(name), after_name) else {
             return Ok(());
         };
         self.icc_profile = inflate(compressed, self.max_inflated, Keep::Yes)?;
@@ -197,21 +197,21 @@ impl<'a> Chunks<'a> {
 
     /// Nothing is kept of the text, but libspng kept it, so one that inflates to too much fails the decode.
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L2761
-    fn text(&mut self, kind: Type, data: &[u8]) -> Result<()> {
-        self.count_stored()?;
+    fn on_text(&mut self, chunk_type: ChunkType, data: &[u8]) -> Result<()> {
+        self.count_chunk()?;
         // All the fields in front of the text have to be in here.
-        let fields = data.get(..256).unwrap_or(data);
+        let window = data.get(..256).unwrap_or(data);
         let Some(keyword_len) = index_of_char_usize(data.get(..80).unwrap_or(data), 0) else {
             return Ok(());
         };
-        let after_keyword = fields.get(keyword_len + 1..).unwrap_or_default();
-        let fields_left = match (kind, after_keyword) {
+        let after_keyword = window.get(keyword_len + 1..).unwrap_or_default();
+        let window_after_fields = match (chunk_type, after_keyword) {
             // Compression method 0 and at least a byte.
-            (chunk::ZTXT, [0, compressed @ ..]) if !compressed.is_empty() => compressed.len(),
+            (chunk::ZTXT, [0, text @ ..]) if !text.is_empty() => text.len(),
             // Compressed, compression method 0, a language tag, a translated keyword.
-            (chunk::ITXT, [1, 0, tags @ ..]) if tags.len() >= 2 => {
-                let after_language = split_once_char(tags, 0);
-                let Some((_, text)) = after_language.and_then(|(_, rest)| split_once_char(rest, 0))
+            (chunk::ITXT, [1, 0, after_method @ ..]) if after_method.len() >= 2 => {
+                let after_language = split_once_char(after_method, 0).map(|(_, after)| after);
+                let Some((_, text)) = after_language.and_then(|after| split_once_char(after, 0))
                 else {
                     return Ok(());
                 };
@@ -219,18 +219,21 @@ impl<'a> Chunks<'a> {
             }
             _ => return Ok(()),
         };
-        let compressed_at = fields.len() - fields_left;
+        let compressed_at = window.len() - window_after_fields;
         let compressed = data.get(compressed_at..).unwrap_or_default();
         // libspng put a terminator behind the text.
-        let max = self.max_inflated.checked_sub(1).ok_or(Error::ChunkLimits)?;
+        let max = self
+            .max_inflated
+            .checked_sub(1)
+            .ok_or(Error::InflatedTooLarge)?;
         inflate(compressed, max, Keep::No)?;
         Ok(())
     }
 
-    fn count_stored(&mut self) -> Result<()> {
-        self.stored += 1;
-        if self.stored > MAX_STORED_CHUNKS {
-            return Err(Error::ChunkLimits);
+    fn count_chunk(&mut self) -> Result<()> {
+        self.counted_chunks += 1;
+        if self.counted_chunks > MAX_COUNTED_CHUNKS {
+            return Err(Error::TooManyChunks);
         }
         Ok(())
     }
@@ -266,18 +269,18 @@ enum Keep {
 fn inflate(mut input: &[u8], max: usize, keep: Keep) -> Result<Option<Vec<u8>>> {
     const DISCARDED_AT_ONCE: usize = 64 * 1024;
 
-    let mut zlib = new_zlib()?;
+    let mut inflater = new_inflater()?;
     let mut out = Vec::new();
-    let mut size = 8 * 1024;
+    let mut capacity = 8 * 1024;
     let mut total = 0usize;
     loop {
-        let mut room = size - total;
+        let mut room = capacity - total;
         if keep == Keep::No {
             out.clear();
             room = room.min(DISCARDED_AT_ONCE);
         }
         let before = out.len();
-        let (used, code) = zlib.step_limited(input, &mut out, room);
+        let (used, code) = inflater.step_limited(input, &mut out, room);
         input = input.get(used..).unwrap_or_default();
         let produced = out.len() - before;
         total += produced;
@@ -291,11 +294,11 @@ fn inflate(mut input: &[u8], max: usize, keep: Keep) -> Result<Option<Vec<u8>>> 
         if produced < room {
             return Ok(None);
         }
-        if total == size {
-            if size > max / 2 {
-                return Err(Error::ChunkLimits);
+        if total == capacity {
+            if capacity > max / 2 {
+                return Err(Error::InflatedTooLarge);
             }
-            size *= 2;
+            capacity *= 2;
         }
     }
     if total == 0 || keep == Keep::No {
@@ -305,12 +308,13 @@ fn inflate(mut input: &[u8], max: usize, keep: Keep) -> Result<Option<Vec<u8>>> 
     Ok(Some(out))
 }
 
-fn new_zlib() -> Result<InflateDecoder> {
-    let mut zlib = InflateDecoder::new(bun_zlib::MAX_WBITS)?;
-    if zlib.set_validate(false) != ReturnCode::Ok {
+/// One that does not look at the Adler-32.
+fn new_inflater() -> Result<InflateDecoder> {
+    let mut inflater = InflateDecoder::new(bun_zlib::MAX_WBITS)?;
+    if inflater.set_validate(false) != ReturnCode::Ok {
         return Err(Error::Zlib);
     }
-    Ok(zlib)
+    Ok(inflater)
 }
 
 /// The zlib stream that the consecutive IDAT chunks hold between them.
@@ -318,7 +322,7 @@ struct Idat<'a> {
     reader: Reader<'a>,
     /// What zlib has not taken yet of the chunk `reader` is behind.
     input: &'a [u8],
-    zlib: InflateDecoder,
+    inflater: InflateDecoder,
 }
 
 impl<'a> Idat<'a> {
@@ -327,7 +331,7 @@ impl<'a> Idat<'a> {
         Ok(Self {
             input: reader.take(len)?,
             reader,
-            zlib: new_zlib()?,
+            inflater: new_inflater()?,
         })
     }
 
@@ -335,8 +339,8 @@ impl<'a> Idat<'a> {
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1359
     fn next_chunk(&mut self) -> Result<&'a [u8]> {
         loop {
-            let (len, kind) = self.reader.next_header()?;
-            if kind != chunk::IDAT {
+            let (len, chunk_type) = self.reader.next_chunk_header()?;
+            if chunk_type != chunk::IDAT {
                 return Err(Error::IdatTooShort);
             }
             if len != 0 {
@@ -345,19 +349,19 @@ impl<'a> Idat<'a> {
         }
     }
 
-    /// Appends the next `len` bytes of the stream to `out`. What the stream holds after the last row is never looked at.
+    /// Appends the next `len` bytes of the stream to `out`. What the stream holds after the last row is not looked at.
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1389
     fn read(&mut self, out: &mut Vec<u8>, len: usize) -> Result<()> {
         let end = out.len().saturating_add(len);
         while out.len() < end {
-            let (used, code) = self.zlib.step_limited(self.input, out, end - out.len());
+            let (used, code) = self.inflater.step_limited(self.input, out, end - out.len());
             self.input = self.input.get(used..).unwrap_or_default();
             match code {
                 ReturnCode::StreamEnd if out.len() < end => return Err(Error::IdatTooShort),
                 ReturnCode::Ok | ReturnCode::StreamEnd => {}
                 ReturnCode::BufError => self.input = self.next_chunk()?,
                 ReturnCode::MemError => return Err(Error::Alloc(bun_alloc::AllocError)),
-                _ => return Err(Error::IdatStream),
+                _ => return Err(Error::InvalidIdatStream),
             }
         }
         Ok(())
@@ -365,7 +369,7 @@ impl<'a> Idat<'a> {
 }
 
 /// How a row of the file becomes a row of RGBA.
-struct Expand {
+struct Expander {
     layout: Layout,
     /// For `Layout::Lookup`: the color of each sample value.
     table: [Rgba; 256],
@@ -385,7 +389,7 @@ enum Layout {
     Lookup(u8),
 }
 
-impl Expand {
+impl Expander {
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L3878
     fn new(chunks: &Chunks) -> Self {
         let mut table = [[0, 0, 0, 255]; 256];
@@ -421,8 +425,8 @@ impl Expand {
                 for (color, &[r, g, b]) in table.iter_mut().zip(&chunks.palette) {
                     *color = [r, g, b, 255];
                 }
-                for ([.., alpha], transparency) in table.iter_mut().zip(transparency) {
-                    *alpha = *transparency;
+                for ([.., alpha], entry_alpha) in table.iter_mut().zip(transparency) {
+                    *alpha = *entry_alpha;
                 }
                 Layout::Lookup(depth)
             }
@@ -437,7 +441,8 @@ impl Expand {
             .unwrap_or_default()
     }
 
-    fn make_transparent(&self, rgba: &mut [u8]) {
+    /// Of RGBA that came as 8-bit RGB.
+    fn apply_transparent_color(&self, rgba: &mut [u8]) {
         if let Layout::Rgb8(Some(transparent)) = self.layout {
             for pixel in rgba.as_chunks_mut().0 {
                 if let [r, g, b, _] = *pixel
@@ -449,18 +454,18 @@ impl Expand {
         }
     }
 
-    /// `row` is what `filter::undo()` gave. 16-bit samples lose their low byte.
-    fn row(&self, row: &[u8], out: &mut [u8]) {
+    /// `row` is what `filter::unfilter()` gave. 16-bit samples lose their low byte.
+    fn expand_row(&self, row: &[u8], rgba: &mut [u8]) {
         fn alpha<const N: usize>(pixel: &[u8; N], transparent: Option<[u8; N]>) -> u8 {
             if transparent == Some(*pixel) { 0 } else { 255 }
         }
-        let out = out.as_chunks_mut::<4>().0;
+        let out = rgba.as_chunks_mut::<4>().0;
         match self.layout {
             Layout::Rgba8 | Layout::Rgb8(_) => {
                 for (out, pixel) in out.iter_mut().zip(row.as_chunks().0) {
                     *out = *pixel;
                 }
-                self.make_transparent(out.as_flattened_mut());
+                self.apply_transparent_color(out.as_flattened_mut());
             }
             Layout::Rgba16 => {
                 for (out, &[r, _, g, _, b, _, a, _]) in out.iter_mut().zip(row.as_chunks().0) {
@@ -489,15 +494,15 @@ impl Expand {
                     *out = [gray, gray, gray, a];
                 }
             }
-            Layout::Lookup(8) => self.packed_row::<8>(row, out),
-            Layout::Lookup(4) => self.packed_row::<4>(row, out),
-            Layout::Lookup(2) => self.packed_row::<2>(row, out),
-            Layout::Lookup(_) => self.packed_row::<1>(row, out),
+            Layout::Lookup(8) => self.expand_packed_row::<8>(row, out),
+            Layout::Lookup(4) => self.expand_packed_row::<4>(row, out),
+            Layout::Lookup(2) => self.expand_packed_row::<2>(row, out),
+            Layout::Lookup(_) => self.expand_packed_row::<1>(row, out),
         }
     }
 
     /// Several samples of `DEPTH` bits to the byte, the leftmost in the high bits.
-    fn packed_row<const DEPTH: usize>(&self, row: &[u8], out: &mut [Rgba]) {
+    fn expand_packed_row<const DEPTH: usize>(&self, row: &[u8], out: &mut [Rgba]) {
         for (pixels, &byte) in out.chunks_mut(8 / DEPTH).zip(row) {
             for (pixel, end) in pixels.iter_mut().zip((DEPTH..=8).step_by(DEPTH)) {
                 *pixel = self.color((byte >> (8 - end)) & (u8::MAX >> (8 - DEPTH)));
@@ -506,25 +511,25 @@ impl Expand {
     }
 }
 
-/// Undoes the filter of the last row of `rows`, of 4-byte pixels.
-fn undo_last_row(filter: u8, rows: &mut [u8], stride: usize) -> Result<&mut [u8]> {
+/// The last row of `rows`, of 4-byte pixels.
+fn unfilter_last_row(filter_type: u8, rows: &mut [u8], stride: usize) -> Result<&mut [u8]> {
     let start = rows.len().saturating_sub(stride);
     let (done, row) = rows.split_at_mut_checked(start).unwrap_or_default();
     match start.checked_sub(stride).and_then(|at| done.get(at..)) {
-        Some(above) => filter::undo(filter, 4, row, above)?,
-        None => filter::undo(filter, 4, row, &filter::zeros(stride)?)?,
+        Some(above) => filter::unfilter(filter_type, 4, row, above)?,
+        None => filter::unfilter(filter_type, 4, row, &filter::zeros(stride)?)?,
     }
     Ok(row)
 }
 
-/// Inflates each row to where it stays, along with the filter byte of the next row, as libspng did.
+/// Inflates each row to where it stays, along with the filter type of the next row, as libspng did.
 fn read_rgba8(stride: usize, size: usize, idat: &mut Idat, image: &mut Vec<u8>) -> Result<()> {
     idat.read(image, 1)?;
-    while let Some(filter) = image.pop() {
+    while let Some(filter_type) = image.pop() {
         let end = image.len() + stride;
         idat.read(image, (stride + 1).min(size - image.len()))?;
         let rows = image.get_mut(..end).unwrap_or_default();
-        undo_last_row(filter, rows, stride)?;
+        unfilter_last_row(filter_type, rows, stride)?;
         if end == size {
             break;
         }
@@ -532,60 +537,69 @@ fn read_rgba8(stride: usize, size: usize, idat: &mut Idat, image: &mut Vec<u8>) 
     Ok(())
 }
 
-/// A row becomes RGBA before its filter is undone, because that is faster on 4-byte pixels.
-fn read_rgb8(header: Header, expand: &Expand, idat: &mut Idat, image: &mut Vec<u8>) -> Result<()> {
+/// A row becomes RGBA before it is unfiltered, because that is faster on 4-byte pixels.
+fn read_rgb8(
+    header: Header,
+    expander: &Expander,
+    idat: &mut Idat,
+    image: &mut Vec<u8>,
+) -> Result<()> {
     let (line_len, stride) = (header.width as usize * 3 + 1, header.width as usize * 4);
     let mut line: Vec<u8> = Vec::new();
     line.try_reserve_exact(line_len)?;
     for _ in 0..header.height {
         line.clear();
         idat.read(&mut line, line_len)?;
-        let Some((&filter, filtered)) = line.split_first() else {
-            return Err(Error::IdatTooShort);
+        let Some((&filter_type, filtered)) = line.split_first() else {
+            return Err(Error::Internal);
         };
         filter::push_rgb_as_rgba(filtered, image);
-        let row = undo_last_row(filter, image, stride)?;
+        let row = unfilter_last_row(filter_type, image, stride)?;
         filter::make_opaque(row);
-        expand.make_transparent(row);
+        expander.apply_transparent_color(row);
     }
     Ok(())
 }
 
 // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L3618
-fn read_image(header: Header, expand: &Expand, idat: &mut Idat) -> Result<Vec<u8>> {
+fn read_pixels(header: Header, expander: &Expander, idat: &mut Idat) -> Result<Vec<u8>> {
     if header
         .passes()
         .any(|pass| pass.width * 4 > u32::MAX as usize)
     {
-        return Err(Error::RowTooLong);
+        return Err(Error::ImageTooLarge);
     }
     let stride = header.width as usize * 4;
     let size = stride
         .checked_mul(header.height as usize)
-        .ok_or(Error::RowTooLong)?;
+        .ok_or(Error::ImageTooLarge)?;
     let mut image: Vec<u8> = Vec::new();
     image.try_reserve_exact(size)?;
-    match expand.layout {
+    match expander.layout {
         Layout::Rgba8 if !header.interlaced => read_rgba8(stride, size, idat, &mut image)?,
-        Layout::Rgb8(_) if !header.interlaced => read_rgb8(header, expand, idat, &mut image)?,
-        _ => read_rows(header, expand, idat, &mut image)?,
+        Layout::Rgb8(_) if !header.interlaced => read_rgb8(header, expander, idat, &mut image)?,
+        _ => read_any_layout(header, expander, idat, &mut image)?,
     }
     Ok(image)
 }
 
-fn read_rows(header: Header, expand: &Expand, idat: &mut Idat, image: &mut Vec<u8>) -> Result<()> {
+fn read_any_layout(
+    header: Header,
+    expander: &Expander,
+    idat: &mut Idat,
+    image: &mut Vec<u8>,
+) -> Result<()> {
     let stride = header.width as usize * 4;
     let longest = header.passes().map(|pass| pass.row_bytes).max();
     let mut line_len = longest.unwrap_or_default().saturating_add(1);
     let mut bytes_per_pixel = header.bytes_per_pixel();
     // A line that came as RGB, which becomes RGBA as in `read_rgb8()`.
-    let is_rgb = matches!(expand.layout, Layout::Rgb8(_));
+    let is_rgb8 = matches!(expander.layout, Layout::Rgb8(_));
     let mut rgb_line: Vec<u8> = Vec::new();
-    if is_rgb {
+    if is_rgb8 {
         rgb_line.try_reserve_exact(line_len)?;
         (line_len, bytes_per_pixel) = (stride + 1, 4);
     }
-    // A filter byte and a row.
     let mut line: Vec<u8> = Vec::new();
     line.try_reserve_exact(line_len)?;
     let mut line_above: Vec<u8> = Vec::new();
@@ -600,7 +614,7 @@ fn read_rows(header: Header, expand: &Expand, idat: &mut Idat, image: &mut Vec<u
     for pass in header.passes() {
         for y in 0..pass.height {
             line.clear();
-            if is_rgb {
+            if is_rgb8 {
                 rgb_line.clear();
                 idat.read(&mut rgb_line, pass.row_bytes + 1)?;
                 line.extend(rgb_line.first());
@@ -616,26 +630,26 @@ fn read_rows(header: Header, expand: &Expand, idat: &mut Idat, image: &mut Vec<u
                     pass_rgba.resize(pass.width * 4, 0);
                 }
             }
-            let Some((&mut filter, row)) = line.split_first_mut() else {
-                return Err(Error::IdatTooShort);
+            let Some((&mut filter_type, row)) = line.split_first_mut() else {
+                return Err(Error::Internal);
             };
             let above = line_above.get(1..).unwrap_or_default();
-            filter::undo(filter, bytes_per_pixel, row, above)?;
-            if is_rgb {
+            filter::unfilter(filter_type, bytes_per_pixel, row, above)?;
+            if is_rgb8 {
                 filter::make_opaque(row);
             }
 
             let start = (pass.y_start + y * pass.y_step) * stride;
             // The first pass has a row in every eight, so the image is whole at the end of it.
-            let rows = (pass.y_start + (y + 1) * pass.y_step).min(header.height as usize);
-            if image.len() < rows * stride {
-                image.resize(rows * stride, 0);
+            let rows_reached = (pass.y_start + (y + 1) * pass.y_step).min(header.height as usize);
+            if image.len() < rows_reached * stride {
+                image.resize(rows_reached * stride, 0);
             }
             let image_row = image.get_mut(start..start + stride).unwrap_or_default();
             if pass.x_step == 1 {
-                expand.row(row, image_row);
+                expander.expand_row(row, image_row);
             } else {
-                expand.row(row, &mut pass_rgba);
+                expander.expand_row(row, &mut pass_rgba);
                 let places = image_row.as_chunks_mut::<4>().0.get_mut(pass.x_start..);
                 let places = places.unwrap_or_default().chunks_mut(pass.x_step);
                 for (place, from) in places.zip(pass_rgba.as_chunks().0) {

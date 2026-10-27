@@ -72,7 +72,7 @@ pub(crate) fn encode_indexed(
     )
     .map_err(|_| codecs::Error::OutOfMemory)?;
     let palette = bun_png::Palette {
-        rgba: q.palette.as_chunks().0,
+        colors: q.palette.as_chunks().0,
         has_alpha: q.has_alpha,
     };
     bun_png::encode(&q.indices, w, h, Some(&palette), level, icc_profile)

@@ -6,6 +6,8 @@ use crate::error::{Error, Result};
 /// The largest width, height and chunk length the format allows.
 pub(crate) const MAX_U31: u32 = i32::MAX as u32;
 
+pub(crate) const IHDR_LEN: u32 = 13;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ColorType {
     Grayscale = 0,
@@ -40,7 +42,7 @@ pub struct Header {
 pub(crate) struct Pass {
     pub(crate) width: usize,
     pub(crate) height: usize,
-    /// Without the filter byte.
+    /// Without the filter type.
     pub(crate) row_bytes: usize,
     pub(crate) x_start: usize,
     pub(crate) x_step: usize,
@@ -58,15 +60,21 @@ const ADAM7: [(usize, usize, usize, usize); 7] = [
     (1, 0, 2, 2),
     (0, 1, 1, 2),
 ];
-const WHOLE: [(usize, usize, usize, usize); 1] = [(0, 0, 1, 1)];
+const NOT_INTERLACED: [(usize, usize, usize, usize); 1] = [(0, 0, 1, 1)];
 
 impl Header {
-    /// `reader` is in front of the 13 bytes of an IHDR chunk.
+    /// `reader` is in front of the `IHDR_LEN` bytes of an IHDR chunk.
     pub(crate) fn parse(reader: &mut Reader) -> Result<Self> {
-        let width = u32::from_be_bytes(reader.array()?);
-        let height = u32::from_be_bytes(reader.array()?);
-        let [bit_depth, color, compression, filter, interlace] = reader.array()?;
-        let color_type = match color {
+        let width = u32::from_be_bytes(reader.take_array()?);
+        let height = u32::from_be_bytes(reader.take_array()?);
+        let [
+            bit_depth,
+            color_type,
+            compression_method,
+            filter_method,
+            interlace_method,
+        ] = reader.take_array()?;
+        let color_type = match color_type {
             0 => ColorType::Grayscale,
             2 => ColorType::Truecolor,
             3 => ColorType::Indexed,
@@ -74,10 +82,10 @@ impl Header {
             6 => ColorType::TruecolorAlpha,
             _ => return Err(Error::InvalidHeader),
         };
-        if compression != 0 || filter != 0 || interlace > 1 {
+        if compression_method != 0 || filter_method != 0 || interlace_method > 1 {
             return Err(Error::InvalidHeader);
         }
-        Self::new(width, height, bit_depth, color_type, interlace == 1)
+        Self::new(width, height, bit_depth, color_type, interlace_method == 1)
     }
 
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L2030
@@ -101,7 +109,7 @@ impl Header {
         if !depth_fits {
             return Err(Error::InvalidHeader);
         }
-        // With its filter byte a row has to fit in 32 bits.
+        // With its filter type a row has to fit in 32 bits.
         // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L563
         let header = Self {
             width,
@@ -114,7 +122,7 @@ impl Header {
             .passes()
             .any(|pass| pass.row_bytes >= u32::MAX as usize)
         {
-            return Err(Error::RowTooLong);
+            return Err(Error::ImageTooLarge);
         }
         Ok(header)
     }
@@ -130,7 +138,11 @@ impl Header {
 
     /// The passes that have pixels, in the order they are stored.
     pub(crate) fn passes(self) -> impl Iterator<Item = Pass> {
-        let passes: &[_] = if self.interlaced { &ADAM7 } else { &WHOLE };
+        let passes: &[_] = if self.interlaced {
+            &ADAM7
+        } else {
+            &NOT_INTERLACED
+        };
         passes
             .iter()
             .filter_map(move |&(x_start, y_start, x_step, y_step)| {

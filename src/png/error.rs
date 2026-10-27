@@ -1,13 +1,13 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     #[error("invalid signature")]
-    Signature,
+    InvalidSignature,
     #[error("end of file")]
     UnexpectedEof,
     #[error("invalid IHDR chunk")]
     InvalidHeader,
-    #[error("a row of the image is too long")]
-    RowTooLong,
+    #[error("image too large")]
+    ImageTooLarge,
     #[error("chunk exceeds maximum standard length")]
     ChunkTooLong,
     #[error("critical chunk out of place")]
@@ -18,18 +18,23 @@ pub enum Error {
     InvalidPalette,
     #[error("missing PLTE for indexed image")]
     MissingPalette,
-    #[error("reached chunk limits")]
-    ChunkLimits,
+    #[error("too many chunks")]
+    TooManyChunks,
+    #[error("a chunk inflates to too much")]
+    InflatedTooLarge,
     #[error("IDAT stream too short")]
     IdatTooShort,
     #[error("IDAT stream error")]
-    IdatStream,
-    #[error("invalid scanline filter")]
-    InvalidFilter,
+    InvalidIdatStream,
+    #[error("invalid filter type")]
+    InvalidFilterType,
     #[error("zlib error")]
     Zlib,
     #[error("invalid buffer size")]
-    BufferSize,
+    InvalidBufferSize,
+    /// For what the types allow and the code rules out.
+    #[error("internal error")]
+    Internal,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
 }

@@ -59,10 +59,8 @@ public:
     {
         if (scope != JSC::CollectionScope::Full)
             return;
-        // sizeAfterLastFullCollection() is marked cells plus extraMemorySize()
-        // (ArrayBuffer backing stores and other reported external bytes). V8's
-        // old-space cap excludes external memory, so a Node-tuned value must
-        // not abort a Buffer-heavy script here; count the managed cells only.
+        // Count managed cells only: V8's old-space cap excludes external memory
+        // (ArrayBuffer backing stores), which extraMemorySize() reports.
         size_t sizeAfterGC = m_heap.sizeAfterLastFullCollection();
         size_t extra = m_heap.extraMemorySize();
         size_t heapSize = sizeAfterGC > extra ? sizeAfterGC - extra : 0;

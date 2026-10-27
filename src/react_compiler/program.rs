@@ -60,7 +60,7 @@ pub enum JsxImportKind {
 pub trait Host {
     fn symbols(&self) -> &[Symbol];
     fn module_scope(&self) -> &Scope;
-    fn import_records(&self) -> &[ImportRecord];
+    fn import_records(&self) -> &[ImportRecord<'_>];
 
     /// The operand of each `x as T` with the cast, in the order of the operands. The parser drops casts.
     fn type_casts(&self) -> &[(Loc, Loc)] {

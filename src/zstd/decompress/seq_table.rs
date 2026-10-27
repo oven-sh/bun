@@ -1,6 +1,6 @@
 //! The FSE tables that sequences are decoded with: `ZSTD_seqSymbol` and `ZSTD_buildFSETable`.
 
-use crate::common::fse_decompress::{MAX_SPREAD_SIZE, NextState, Spread};
+use crate::common::fse_decompress::{MAX_SPREAD_SIZE, NextState, Spread, State};
 use crate::common::{
     LL_BITS, LL_DEFAULT_NORM_LOG, MAX_LL, MAX_ML, MAX_OFF, ML_BITS, ML_DEFAULT_NORM_LOG,
     OF_DEFAULT_NORM_LOG,
@@ -331,18 +331,12 @@ impl<C: Cell, const N: usize> SeqTable<C, N> {
         self.table_log = table_log;
         self.with_more_bits =
             share_with_more_bits(spread.counts.sub(..nb_symbols)?, codes, table_log);
-        spread.set(nb_symbols, table_log)?;
-
-        for (cell, &symbol) in table_decode.iter_mut().zip(&spread.symbols) {
-            let symbol = usize::from(symbol);
-            let (Some(next), Some(code)) =
-                (spread.symbol_next.get_mut(symbol), codes.get(symbol % 64))
-            else {
-                continue;
-            };
-            let next_state = C::NEXT_STATES.get(usize::from(*next) % (4 * MAX_TABLE_SIZE));
-            *next = next.wrapping_add(1);
-            *cell = C::from_bits(code | next_state.copied().unwrap_or(0));
+        let mut states = spread.states(nb_symbols, table_log)?;
+        for cell in table_decode {
+            let State { symbol, next } = states.next();
+            let code = codes.get(usize::from(symbol) % 64).copied();
+            let next_state = C::NEXT_STATES.get(usize::from(next) % (4 * MAX_TABLE_SIZE));
+            *cell = C::from_bits(code.unwrap_or(0) | next_state.copied().unwrap_or(0));
         }
         Ok(())
     }

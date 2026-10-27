@@ -4017,7 +4017,9 @@ function initOriginSet(session: Http2Session, socket: TLSSocket | Socket) {
     }
     let originString = `https://${hostName}`;
     if (socket.remotePort != null) originString += `:${socket.remotePort}`;
-    originSet.add(originString);
+    // node stores the serialized origin (getURLOrigin): the default port is dropped and the host is
+    // lowercased. http2-wrapper compares originSet[0] with `new URL(authority).origin`.
+    originSet.add(getOrigin(originString, false));
   }
   return originSet;
 }

@@ -102,10 +102,14 @@ impl EncoderParams {
         self.lgwin = self.lgwin.clamp(MIN_WINDOW_BITS, max_lgwin);
     }
 
-    pub(crate) fn compute_lg_block(&self) -> i32 {
-        if self.quality == FAST_ONE_PASS_COMPRESSION_QUALITY
+    /// Whether the input is compressed where it is, block by block, without a ring buffer.
+    pub(crate) fn is_fast(&self) -> bool {
+        self.quality == FAST_ONE_PASS_COMPRESSION_QUALITY
             || self.quality == FAST_TWO_PASS_COMPRESSION_QUALITY
-        {
+    }
+
+    pub(crate) fn compute_lg_block(&self) -> i32 {
+        if self.is_fast() {
             self.lgwin
         } else if self.quality < MIN_QUALITY_FOR_BLOCK_SPLIT {
             14

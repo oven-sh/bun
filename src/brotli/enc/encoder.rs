@@ -48,23 +48,42 @@ use bun_core::AllocError;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StreamState {
     Processing,
-    /// After the next block, pad to a whole byte and go back to `Processing`.
+    /// The pending output gets padded to a whole byte. Back to `Processing` once it is all handed over.
     FlushRequested,
     /// The last meta-block was produced. No more input is accepted.
     Finished,
-    /// Flushing what is pending, then writing the header of a metadata block.
-    MetadataHead,
-    /// Writing the body of a metadata block.
-    MetadataBody,
+    /// Flushing what is pending, then writing the header of a metadata block of `remaining` bytes.
+    MetadataHead {
+        remaining: usize,
+    },
+    /// Writing the body of a metadata block, of which `remaining` bytes are still to come.
+    MetadataBody {
+        remaining: usize,
+    },
 }
 
 /// The "flint" is a tiny uncompressed block at the start of a stream that continues another one
 /// ([`EncoderParameter::StreamOffset`]), so that the context of the first literals does not depend on the bytes before.
-/// A positive value is how many bytes it still needs.
-const FLINT_NEEDS_2_BYTES: i8 = 2;
-const FLINT_WAITING_FOR_PROCESSING: i8 = 0;
-const FLINT_WAITING_FOR_FLUSHING: i8 = -1;
-const FLINT_DONE: i8 = -2;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flint {
+    /// How many bytes of input it still needs. With all of them, it waits to be written.
+    Needs(usize),
+    /// It was written, and the flush after it is not complete.
+    Flushing,
+    /// It is in the output, or the stream has none.
+    Done,
+}
+
+/// What qualities 0 and 1 work with. They have no use for the ring buffer, the hasher and the commands.
+enum FastCompressor {
+    OnePass(Box<OnePassArena>),
+    TwoPass {
+        arena: Box<TwoPassArena>,
+        /// Scratch space.
+        command_buf: Vec<u32>,
+        literal_buf: Vec<u8>,
+    },
+}
 
 /// Where the output that was not handed over yet starts.
 #[derive(Clone, Copy)]
@@ -96,7 +115,7 @@ pub struct Encoder {
     /// The `last_bytes_bits` bits of output that do not fill a byte yet. Before the first block, the stream header.
     last_bytes: u16,
     last_bytes_bits: u8,
-    flint: i8,
+    flint: Flint,
     /// The last two bytes before `last_flush_pos`.
     prev_byte: u8,
     prev_byte2: u8,
@@ -105,26 +124,19 @@ pub struct Encoder {
 
     hasher: Hasher,
 
-    /// The hash table of qualities 0 and 1.
+    /// At qualities 0 and 1.
+    fast: Option<FastCompressor>,
+    /// Its hash table.
     table: Vec<i32>,
-    one_pass_arena: Option<Box<OnePassArena>>,
-    two_pass_arena: Option<Box<TwoPassArena>>,
-    /// Scratch space of quality 1.
-    command_buf: Vec<u32>,
-    literal_buf: Vec<u8>,
 
     next_out: NextOut,
     available_out: usize,
     /// For padding bits, and for the header and the body of metadata blocks.
     tiny_buf: [u8; 16],
-    /// `u32::MAX` outside of a metadata block.
-    remaining_metadata_bytes: u32,
     stream_state: StreamState,
 
-    is_last_block_emitted: bool,
     is_initialized: bool,
     /// Memory ran out, or there is a bug. The state is not consistent and every call fails.
-    /// Set by a failure after which the state is not consistent.
     broken: Option<EncoderError>,
 }
 
@@ -735,22 +747,17 @@ impl Encoder {
             saved_dist_cache,
             last_bytes: 0,
             last_bytes_bits: 0,
-            flint: FLINT_DONE,
+            flint: Flint::Done,
             prev_byte: 0,
             prev_byte2: 0,
             storage: Vec::new(),
             hasher: Hasher::new(),
+            fast: None,
             table: Vec::new(),
-            one_pass_arena: None,
-            two_pass_arena: None,
-            command_buf: Vec::new(),
-            literal_buf: Vec::new(),
             next_out: NextOut::None,
             available_out: 0,
             tiny_buf: [0; 16],
-            remaining_metadata_bytes: u32::MAX,
             stream_state: StreamState::Processing,
-            is_last_block_emitted: false,
             is_initialized: false,
             broken: None,
         }
@@ -831,17 +838,12 @@ impl Encoder {
             return Ok(());
         }
 
-        self.last_bytes_bits = 0;
-        self.last_bytes = 0;
-        self.flint = FLINT_DONE;
-        self.remaining_metadata_bytes = u32::MAX;
-
         self.params.sanitize();
         self.params.lgblock = self.params.compute_lg_block();
         choose_distance_params(&mut self.params);
 
         if self.params.stream_offset != 0 {
-            self.flint = FLINT_NEEDS_2_BYTES;
+            self.flint = Flint::Needs(2);
             // No distance derived from these is valid: -16 ± 3 is below 0.
             self.saved_dist_cache = [-16; 4];
             self.dist_cache.write_at(0, &self.saved_dist_cache)?;
@@ -850,9 +852,7 @@ impl Encoder {
         self.ringbuffer.setup(&self.params);
 
         let mut lgwin = self.params.lgwin;
-        if self.params.quality == FAST_ONE_PASS_COMPRESSION_QUALITY
-            || self.params.quality == FAST_TWO_PASS_COMPRESSION_QUALITY
-        {
+        if self.params.is_fast() {
             lgwin = lgwin.max(18);
         }
         if self.params.stream_offset == 0 {
@@ -866,13 +866,19 @@ impl Encoder {
                 .min(max_backward_limit(lgwin as u32));
         }
 
-        if self.params.quality == FAST_ONE_PASS_COMPRESSION_QUALITY {
-            let mut arena = OnePassArena::new()?;
-            init_command_prefix_codes(&mut arena)?;
-            self.one_pass_arena = Some(arena);
-        } else if self.params.quality == FAST_TWO_PASS_COMPRESSION_QUALITY {
-            self.two_pass_arena = Some(TwoPassArena::new()?);
-        }
+        self.fast = match self.params.quality {
+            FAST_ONE_PASS_COMPRESSION_QUALITY => {
+                let mut arena = OnePassArena::new()?;
+                init_command_prefix_codes(&mut arena)?;
+                Some(FastCompressor::OnePass(arena))
+            }
+            FAST_TWO_PASS_COMPRESSION_QUALITY => Some(FastCompressor::TwoPass {
+                arena: TwoPassArena::new()?,
+                command_buf: Vec::new(),
+                literal_buf: Vec::new(),
+            }),
+            _ => None,
+        };
 
         self.is_initialized = true;
         Ok(())
@@ -898,9 +904,7 @@ impl Encoder {
     /// Processes the input taken since the last call. That may complete a meta-block, which is then what
     /// `next_out` and `available_out` describe; it always does if `is_last` or `force_flush`. Otherwise
     /// `available_out` is 0. Up to 7 bits of the output are held back in `last_bytes` unless `is_last`.
-    ///
-    /// `false` after the last block, or if there is more input than a block.
-    fn encode_data(&mut self, is_last: bool, force_flush: bool) -> Fallible<bool> {
+    fn encode_data(&mut self, is_last: bool, force_flush: bool) -> Fallible {
         let delta = self.unprocessed_input_size();
         let mut bytes = delta as u32;
         let mut wrapped_last_processed_pos = wrap_position(self.last_processed_pos);
@@ -919,23 +923,14 @@ impl Encoder {
                 } else {
                     self.available_out = 0;
                 }
-                return Ok(true);
+                return Ok(());
             }
             if !is_last && !force_flush {
                 self.available_out = 0;
-                return Ok(true);
+                return Ok(());
             }
         }
-
-        if self.is_last_block_emitted {
-            return Ok(false);
-        }
-        if is_last {
-            self.is_last_block_emitted = true;
-        }
-        if delta > self.input_block_size() as u64 {
-            return Ok(false);
-        }
+        debug_assert!(delta <= self.input_block_size() as u64);
 
         // There is at most one command for every 2 bytes. A bit more room than that saves a reallocation if the next
         // block is merged with this one.
@@ -1014,7 +1009,7 @@ impl Encoder {
                     self.hasher.reset();
                 }
                 self.available_out = 0;
-                return Ok(true);
+                return Ok(());
             }
         }
 
@@ -1027,7 +1022,7 @@ impl Encoder {
 
         if !is_last && self.input_pos == self.last_flush_pos {
             self.available_out = 0;
-            return Ok(true);
+            return Ok(());
         }
         debug_assert!(self.input_pos - self.last_flush_pos <= 1 << 24);
 
@@ -1079,7 +1074,7 @@ impl Encoder {
         self.saved_dist_cache = *self.dist_cache.array_at(0)?;
         self.next_out = NextOut::Storage(0);
         self.available_out = storage_ix >> 3;
-        Ok(true)
+        Ok(())
     }
 
     /// Writes the pending bits and the header of a metadata block of `block_size` bytes, at most `1 << 24`, to
@@ -1168,19 +1163,25 @@ impl Encoder {
     /// [`Self::compress_stream`] for qualities 0 and 1, which compress the input where it is, each call on its own.
     fn compress_stream_fast(
         &mut self,
+        fast: &mut FastCompressor,
         op: EncoderOperation,
         input: &mut &[u8],
         output: &mut dyn Output,
-    ) -> Fallible<bool> {
+    ) -> Fallible {
         let block_size_limit = 1usize << self.params.lgwin;
-        if self.params.quality == FAST_TWO_PASS_COMPRESSION_QUALITY {
+        if let FastCompressor::TwoPass {
+            command_buf,
+            literal_buf,
+            ..
+        } = fast
+        {
             let buf_size = COMPRESS_FRAGMENT_TWO_PASS_BLOCK_SIZE
                 .min(input.len())
                 .min(block_size_limit);
-            if self.command_buf.len() < buf_size {
-                let command_buf = try_zeroed(buf_size)?;
-                self.literal_buf = try_zeroed(buf_size)?;
-                self.command_buf = command_buf;
+            if command_buf.len() < buf_size {
+                let longer_command_buf = try_zeroed(buf_size)?;
+                *literal_buf = try_zeroed(buf_size)?;
+                *command_buf = longer_command_buf;
             }
         }
 
@@ -1212,20 +1213,23 @@ impl Encoder {
             let table = get_hash_table(&mut self.table, self.params.quality, block_size)?;
             let (block, rest) = input.split_at_checked(block_size).ok_or(Bug)?;
 
-            if let Some(arena) = &mut self.one_pass_arena {
-                compress_fragment_fast(arena, block, is_last, table, &mut bw)?;
-            } else if let Some(arena) = &mut self.two_pass_arena {
-                compress_fragment_two_pass(
+            match fast {
+                FastCompressor::OnePass(arena) => {
+                    compress_fragment_fast(arena, block, is_last, table, &mut bw)?;
+                }
+                FastCompressor::TwoPass {
+                    arena,
+                    command_buf,
+                    literal_buf,
+                } => compress_fragment_two_pass(
                     arena,
                     block,
                     is_last,
-                    &mut self.command_buf,
-                    &mut self.literal_buf,
+                    command_buf,
+                    literal_buf,
                     table,
                     &mut bw,
-                )?;
-            } else {
-                return Err(Bug.into());
+                )?,
             }
             *input = rest;
             let storage_ix = bw.pos();
@@ -1242,21 +1246,23 @@ impl Encoder {
             }
         }
         self.check_flush_complete();
-        Ok(true)
+        Ok(())
     }
 
-    fn process_metadata(&mut self, input: &mut &[u8], output: &mut dyn Output) -> Fallible<bool> {
+    fn process_metadata(&mut self, input: &mut &[u8], output: &mut dyn Output) -> Fallible {
         if input.len() > (1 << 24) {
-            return Ok(false);
+            return Err(EncoderError::InvalidCall);
         }
-        if self.stream_state == StreamState::Processing {
-            self.remaining_metadata_bytes = input.len() as u32;
-            self.stream_state = StreamState::MetadataHead;
-        }
-        if self.stream_state != StreamState::MetadataHead
-            && self.stream_state != StreamState::MetadataBody
-        {
-            return Ok(false);
+        match self.stream_state {
+            StreamState::Processing => {
+                self.stream_state = StreamState::MetadataHead {
+                    remaining: input.len(),
+                };
+            }
+            StreamState::MetadataHead { .. } | StreamState::MetadataBody { .. } => {}
+            StreamState::FlushRequested | StreamState::Finished => {
+                return Err(EncoderError::InvalidCall);
+            }
         }
 
         loop {
@@ -1269,54 +1275,53 @@ impl Encoder {
 
             if self.input_pos != self.last_flush_pos {
                 let (is_last, force_flush) = (false, true);
-                if !self.encode_data(is_last, force_flush)? {
-                    return Ok(false);
-                }
+                self.encode_data(is_last, force_flush)?;
                 continue;
             }
 
-            if self.stream_state == StreamState::MetadataHead {
-                self.next_out = NextOut::TinyBuf(0);
-                self.available_out =
-                    self.write_metadata_header(self.remaining_metadata_bytes as usize)?;
-                self.stream_state = StreamState::MetadataBody;
-                continue;
+            match self.stream_state {
+                StreamState::MetadataHead { remaining } => {
+                    self.next_out = NextOut::TinyBuf(0);
+                    self.available_out = self.write_metadata_header(remaining)?;
+                    self.stream_state = StreamState::MetadataBody { remaining };
+                }
+                // Only leave this state when there is neither input nor output left.
+                StreamState::MetadataBody { remaining: 0 } => {
+                    self.stream_state = StreamState::Processing;
+                    break;
+                }
+                StreamState::MetadataBody { remaining } => {
+                    let copy = if output.available() != 0 {
+                        output.write(input.sub(..remaining)?)
+                    } else {
+                        // So that there is progress even without room for output.
+                        let copy = remaining.min(self.tiny_buf.len());
+                        self.next_out = NextOut::TinyBuf(0);
+                        self.tiny_buf.write_at(0, input.sub(..copy)?)?;
+                        self.available_out = copy;
+                        copy
+                    };
+                    *input = input.sub(copy..)?;
+                    self.stream_state = StreamState::MetadataBody {
+                        remaining: remaining - copy,
+                    };
+                }
+                StreamState::Processing | StreamState::FlushRequested | StreamState::Finished => {
+                    return Err(Bug.into());
+                }
             }
-            // Only leave this state when there is neither input nor output left.
-            if self.remaining_metadata_bytes == 0 {
-                self.remaining_metadata_bytes = u32::MAX;
-                self.stream_state = StreamState::Processing;
-                break;
-            }
-            let copy = if output.available() != 0 {
-                output.write(input.sub(..self.remaining_metadata_bytes as usize)?)
-            } else {
-                // So that there is progress even without room for output.
-                let copy = (self.remaining_metadata_bytes as usize).min(self.tiny_buf.len());
-                self.next_out = NextOut::TinyBuf(0);
-                self.tiny_buf.write_at(0, input.sub(..copy)?)?;
-                self.available_out = copy;
-                copy
-            };
-            *input = input.sub(copy..)?;
-            self.remaining_metadata_bytes -= copy as u32;
         }
 
-        Ok(true)
+        Ok(())
     }
 
     /// Without [`EncoderParameter::SizeHint`], what is known of the input by the time of the first block has to do.
     fn update_size_hint(&mut self, available_in: usize) {
         if self.params.size_hint == 0 {
-            let delta = self.unprocessed_input_size();
-            let tail = available_in as u64;
-            let limit = 1u64 << 30;
-            let total = if delta >= limit || tail >= limit {
-                limit
-            } else {
-                (delta + tail).min(limit)
-            };
-            self.params.size_hint = total as usize;
+            let total = self
+                .unprocessed_input_size()
+                .saturating_add(available_in as u64);
+            self.params.size_hint = total.min(1 << 30) as usize;
         }
     }
 
@@ -1332,15 +1337,15 @@ impl Encoder {
         if let Some(error) = self.broken {
             return Err(error);
         }
-        match self.compress_stream_internal(op, input, output) {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(EncoderError::InvalidCall),
-            Err(error) => {
+        let result = self.compress_stream_internal(op, input, output);
+        match result {
+            Ok(()) | Err(EncoderError::InvalidCall) => {}
+            Err(error @ (EncoderError::OutOfMemory | EncoderError::Internal)) => {
                 debug_assert!(error != EncoderError::Internal);
                 self.broken = Some(error);
-                Err(error)
             }
         }
+        result
     }
 
     fn compress_stream_internal(
@@ -1348,15 +1353,15 @@ impl Encoder {
         op: EncoderOperation,
         input: &mut &[u8],
         output: &mut dyn Output,
-    ) -> Fallible<bool> {
+    ) -> Fallible {
         self.ensure_initialized()?;
 
         // A metadata block that was started has to be completed.
-        if self.remaining_metadata_bytes != u32::MAX
-            && (input.len() != self.remaining_metadata_bytes as usize
-                || op != EncoderOperation::EmitMetadata)
+        if let StreamState::MetadataHead { remaining } | StreamState::MetadataBody { remaining } =
+            self.stream_state
+            && (input.len() != remaining || op != EncoderOperation::EmitMetadata)
         {
-            return Ok(false);
+            return Err(EncoderError::InvalidCall);
         }
 
         if op == EncoderOperation::EmitMetadata {
@@ -1365,24 +1370,18 @@ impl Encoder {
             return self.process_metadata(input, output);
         }
 
-        if self.stream_state == StreamState::MetadataHead
-            || self.stream_state == StreamState::MetadataBody
-        {
-            return Ok(false);
-        }
-
         if self.stream_state != StreamState::Processing && !input.is_empty() {
-            return Ok(false);
+            return Err(EncoderError::InvalidCall);
         }
-        if self.params.quality == FAST_ONE_PASS_COMPRESSION_QUALITY
-            || self.params.quality == FAST_TWO_PASS_COMPRESSION_QUALITY
-        {
-            return self.compress_stream_fast(op, input, output);
+        if let Some(mut fast) = self.fast.take() {
+            let result = self.compress_stream_fast(&mut fast, op, input, output);
+            self.fast = Some(fast);
+            return result;
         }
         loop {
             let mut remaining_block_size = self.remaining_input_block_size();
-            if self.flint >= 0 && remaining_block_size > self.flint as usize {
-                remaining_block_size = self.flint as usize;
+            if let Flint::Needs(missing) = self.flint {
+                remaining_block_size = remaining_block_size.min(missing);
             }
 
             if remaining_block_size != 0 && !input.is_empty() {
@@ -1390,17 +1389,17 @@ impl Encoder {
                 let (block, rest) = input.split_at_checked(copy_input_size).ok_or(Bug)?;
                 self.copy_input_to_ring_buffer(block)?;
                 *input = rest;
-                if self.flint > 0 {
-                    self.flint -= copy_input_size as i8;
+                if let Flint::Needs(missing) = &mut self.flint {
+                    *missing -= copy_input_size;
                 }
                 continue;
             }
 
             if self.inject_flush_or_push_output(output)? {
-                if self.flint == FLINT_WAITING_FOR_FLUSHING {
+                if self.flint == Flint::Flushing {
                     self.check_flush_complete();
                     if self.stream_state == StreamState::Processing {
-                        self.flint = FLINT_DONE;
+                        self.flint = Flint::Done;
                     }
                 }
                 continue;
@@ -1414,14 +1413,12 @@ impl Encoder {
                 let is_last = input.is_empty() && op == EncoderOperation::Finish;
                 let mut force_flush = input.is_empty() && op == EncoderOperation::Flush;
                 // The flint gets a block of its own.
-                if !is_last && self.flint == FLINT_WAITING_FOR_PROCESSING {
-                    self.flint = FLINT_WAITING_FOR_FLUSHING;
+                if !is_last && self.flint == Flint::Needs(0) {
+                    self.flint = Flint::Flushing;
                     force_flush = true;
                 }
                 self.update_size_hint(input.len());
-                if !self.encode_data(is_last, force_flush)? {
-                    return Ok(false);
-                }
+                self.encode_data(is_last, force_flush)?;
                 if force_flush {
                     self.stream_state = StreamState::FlushRequested;
                 }
@@ -1433,7 +1430,7 @@ impl Encoder {
             break;
         }
         self.check_flush_complete();
-        Ok(true)
+        Ok(())
     }
 }
 

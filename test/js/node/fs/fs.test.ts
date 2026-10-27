@@ -6365,6 +6365,21 @@ describe("ERR_OUT_OF_RANGE is worded as in Node.js", () => {
     });
   });
 
+  // Nothing reads or writes the buffer, so it stays untouched address space.
+  // A small host can still refuse to reserve the 2 GiB.
+  it.skipIf(os.totalmem() < 4 * 1024 ** 3)("the length of write() that is the rest of the buffer", async () => {
+    const big = new Uint8Array(2 ** 31);
+    const tooLong = outOfRange("length", ">= 0 && <= 2147483647", "2147483648");
+    using dir = tempDir("fs-out-of-range", { "file.txt": "hello" });
+    await using handle = await fs.promises.open(join(String(dir), "file.txt"), "r+");
+    for (const rest of [[], [0], [null], [{}], [0, undefined], [0, null, 0], [0, "x"]] as any[][]) {
+      expect(() => fs.writeSync(handle.fd, big, ...rest)).toThrow(tooLong);
+      await expect(promisify(fs.write)(handle.fd, big, ...rest)).rejects.toEqual(tooLong);
+      await expect(handle.write(big, ...rest)).rejects.toEqual(tooLong);
+    }
+    expect(fs.readFileSync(join(String(dir), "file.txt"), "utf8")).toBe("hello");
+  });
+
   it("a BigInt", () => {
     withFile(fd => {
       const range = ">= -1 && <= 9223372036854775806";

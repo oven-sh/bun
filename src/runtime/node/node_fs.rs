@@ -3826,25 +3826,22 @@ pub(crate) mod args {
             };
             arguments.eat();
             'parse: {
-                let Some(mut current) = arguments.next() else {
-                    break 'parse;
-                };
                 match &args.buffer {
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)
                     StringOrBuffer::Buffer(_) | StringOrBuffer::PinnedBuffer(_) => {
                         // Node reads each of the three whatever the others are.
                         let buf_len = args.buffer.slice().len() as u64;
-                        if !current.is_undefined_or_null() {
+                        let offset_value = arguments.next_eat();
+                        if let Some(offset) = offset_value.filter(|v| !v.is_undefined_or_null()) {
                             args.offset = u64::try_from(validators::validate_integer(
                                 ctx,
-                                current,
+                                offset,
                                 "offset",
                                 Some(0),
                                 Some(9007199254740991),
                             )?)
                             .expect("infallible: validated range");
                         }
-                        arguments.eat();
                         // validateOffsetLengthWrite(offset, length, buffer.byteLength);
                         let out_of_range = |value: f64, name, expected: &str| {
                             validators::throw_range_error_msg(ctx, value, name, expected.as_bytes())
@@ -3853,35 +3850,31 @@ pub(crate) mod args {
                             let expected = format!("<= {buf_len}");
                             return Err(out_of_range(args.offset as f64, "offset", &expected));
                         }
-                        let Some(length_value) = arguments.next_eat() else {
-                            break 'parse;
-                        };
-                        if length_value.is_number() {
-                            let length = length_value.as_number();
-                            let rest = buf_len - args.offset;
-                            if length > rest as f64 {
-                                return Err(out_of_range(length, "length", &format!("<= {rest}")));
-                            }
-                            if length < 0.0 {
-                                return Err(out_of_range(length, "length", ">= 0"));
-                            }
-                            args.length = validators::validate_int32(
-                                ctx,
-                                length_value,
-                                "length",
-                                Some(0),
-                                None,
-                            )? as u64;
+                        let rest = buf_len - args.offset;
+                        let length_value = arguments
+                            .next_eat()
+                            .filter(|v| v.is_number())
+                            .unwrap_or_else(|| JSValue::js_number(rest as f64));
+                        let length = length_value.as_number();
+                        if length > rest as f64 {
+                            return Err(out_of_range(length, "length", &format!("<= {rest}")));
                         }
-                        let Some(position_value) = arguments.next_eat() else {
-                            break 'parse;
-                        };
-                        if let Some(position @ 0..) = offset_from_js(position_value) {
+                        if length < 0.0 {
+                            return Err(out_of_range(length, "length", ">= 0"));
+                        }
+                        args.length =
+                            validators::validate_int32(ctx, length_value, "length", Some(0), None)?
+                                as u64;
+                        if let Some(position @ 0..) = arguments.next_eat().and_then(offset_from_js)
+                        {
                             args.position = Some(position);
                         }
                     }
                     // fs.write(fd, string[, position[, encoding]], callback)
                     _ => {
+                        let Some(mut current) = arguments.next() else {
+                            break 'parse;
+                        };
                         if let Some(position @ 0..) = offset_from_js(current) {
                             args.position = Some(position);
                         }

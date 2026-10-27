@@ -1,5 +1,6 @@
+import { afterAll } from "bun:test";
 import { realpathSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -9,6 +10,94 @@ import { join } from "path";
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
 const socket_domain = join(realpathSync(tmpdir()), "node-net-server.sock");
+
+// Runs a command under a seccomp filter that fails socket(<family>, ...) with <errno>, as a kernel
+// without that address family does. `skip` means this host cannot do that (no C compiler, no kernel
+// headers, or a kernel or sandbox that refuses the filter). `error` is a bug in the helper itself.
+const AF_UNIX = 1;
+const AF_INET6 = 10;
+const EMFILE = 24;
+const EAFNOSUPPORT = 97;
+const denySocket: { bin: string } | { skip: true } | { error: string } = (() => {
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  if (!isLinux || !cc) return { skip: true };
+  const dir = tempDir("deny-socket", {
+    "kernel-headers.c": "#include <linux/filter.h>\n#include <linux/seccomp.h>\n",
+    "deny-socket.c": `
+#include <errno.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/prctl.h>
+#include <sys/socket.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+/* usage: deny-socket <family> <errno> <command> [args...]
+          deny-socket <family> <errno> --probe    exit 0 when the filter works on this host, else 77 */
+int main(int argc, char **argv) {
+  if (argc < 4) return 2;
+  int family = atoi(argv[1]), err = atoi(argv[2]);
+  struct sock_filter filter[] = {
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socket, 0, 3),
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0])),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, family, 0, 1),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (err & SECCOMP_RET_DATA)),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+  };
+  struct sock_fprog prog = { sizeof(filter) / sizeof(filter[0]), filter };
+  if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) return 77;
+  if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) != 0) return 77;
+  if (strcmp(argv[3], "--probe") == 0) return socket(family, SOCK_STREAM, 0) < 0 && errno == err ? 0 : 77;
+  execvp(argv[3], argv + 3);
+  return 127;
+}
+`,
+  });
+  const result = ((): typeof denySocket => {
+    const bin = join(String(dir), "deny-socket");
+    try {
+      const compile = Bun.spawnSync({
+        cmd: [cc, "-O0", "-o", bin, join(String(dir), "deny-socket.c")],
+        stderr: "pipe",
+      });
+      if (compile.exitCode !== 0) {
+        // A host without the kernel headers (a separate package on some distros) skips. Any other failure is a bug.
+        const headers = Bun.spawnSync({
+          cmd: [cc, "-E", join(String(dir), "kernel-headers.c")],
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        return headers.exitCode === 0 ? { error: compile.stderr.toString() } : { skip: true };
+      }
+      const probe = Bun.spawnSync({ cmd: [bin, String(AF_INET6), String(EAFNOSUPPORT), "--probe"] });
+      return probe.exitCode === 0 ? { bin } : { skip: true };
+    } catch {
+      // spawnSync throws when the host cannot run the binary it built.
+      return { skip: true };
+    }
+  })();
+  // The tests need the binary until the file ends. Every other outcome is done with the directory now.
+  if ("bin" in result) afterAll(() => dir[Symbol.dispose]());
+  else dir[Symbol.dispose]();
+  return result;
+})();
+
+// Runs `script` with bun -e while socket(family, ...) fails with errno.
+async function runWithSocketDenied(family: number, errno: number, script: string) {
+  if ("error" in denySocket) throw new Error("failed to compile deny-socket.c:\n" + denySocket.error);
+  await using proc = Bun.spawn({
+    cmd: [(denySocket as { bin: string }).bin, String(family), String(errno), bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
 
 describe("net.createServer listen", () => {
   it("should throw when no port or path when using options", done => {
@@ -65,6 +154,89 @@ describe("net.createServer listen", () => {
       }),
     );
   });
+
+  // Prints how a listen() call ends: the error fields, or the address it listens on.
+  // once("listening") rejects with the "error" event, so this settles either way.
+  const listenOutcome = `
+    import { once } from "node:events";
+    import { createServer } from "node:net";
+    async function listenOutcome(...args) {
+      const server = createServer().listen(...args);
+      try {
+        await once(server, "listening");
+      } catch (err) {
+        return { code: err.code, syscall: err.syscall, address: err.address, message: err.message };
+      }
+      const listening = server.address();
+      server.close();
+      return { listening };
+    }
+  `;
+
+  // A kernel without IPv6 (ipv6.disable=1) fails socket(AF_INET6) with EAFNOSUPPORT. Node binds
+  // "::" when listen() gets no host and falls back to "0.0.0.0" there.
+  it.concurrent.skipIf("skip" in denySocket)(
+    "should fall back to 0.0.0.0 when no host is given and the kernel has no IPv6",
+    async () => {
+      const { stdout, stderr, exitCode } = await runWithSocketDenied(
+        AF_INET6,
+        EAFNOSUPPORT,
+        `${listenOutcome}
+         const result = {};
+         const noHost = createServer().listen(0);
+         await once(noHost, "listening");
+         const { address, family, port } = noHost.address();
+         result.noHost = { address, family };
+         // The fallback's own failure names the address that failed.
+         const busy = await listenOutcome(port);
+         result.noHostPortBusy = { ...busy, message: busy.message?.replace(String(port), "PORT") };
+         noHost.close();
+         result.explicitIPv6 = await listenOutcome(0, "::");
+         try {
+           Bun.listen({ hostname: "::", port: 0, socket: { data() {} } }).stop();
+           result.bunListen = "listening";
+         } catch (e) {
+           result.bunListen = { code: e.code, syscall: e.syscall, errno: typeof e.errno };
+         }
+         console.log(JSON.stringify(result));`,
+      );
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        noHost: { address: "0.0.0.0", family: "IPv4" },
+        noHostPortBusy: {
+          code: "EADDRINUSE",
+          syscall: "listen",
+          address: "0.0.0.0",
+          message: "listen EADDRINUSE: address already in use 0.0.0.0:PORT",
+        },
+        explicitIPv6: {
+          code: "EAFNOSUPPORT",
+          syscall: "listen",
+          address: "::",
+          message: "listen EAFNOSUPPORT: address family not supported ::",
+        },
+        bunListen: { code: "EAFNOSUPPORT", syscall: "listen", errno: "number" },
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.concurrent.skipIf("skip" in denySocket)(
+    "should report the errno when socket() fails for a unix path",
+    async () => {
+      using dir = tempDir("net-listen-unix-no-socket", {});
+      const { stdout, stderr, exitCode } = await runWithSocketDenied(
+        AF_UNIX,
+        EMFILE,
+        `${listenOutcome}
+         const { code, syscall } = await listenOutcome(${JSON.stringify(join(String(dir), "listen.sock"))});
+         console.log(JSON.stringify({ code, syscall }));`,
+      );
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ code: "EMFILE", syscall: "listen" });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   it("should call listening", done => {
     const { mustCall } = createCallCheckCtx(done);

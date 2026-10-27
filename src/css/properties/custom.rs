@@ -1543,6 +1543,9 @@ pub enum CustomPropertyName {
     Custom(DashedIdent),
     /// An unknown CSS property.
     Unknown(Ident),
+    /// The IE 6/7 star hack, `*zoom`. Not an identifier: the source text of
+    /// the name with its `*`.
+    StarHack(Ident),
 }
 
 impl CustomPropertyName {
@@ -1558,6 +1561,9 @@ impl CustomPropertyName {
                 let v = unsafe { crate::arena_str(unknown.v) };
                 dest.serialize_identifier(v)
             }
+            // Escaping the `*` would print the identifier `\*zoom`, which is
+            // not the hack. An escape in the name can end with a newline.
+            CustomPropertyName::StarHack(name) => dest.write_bytes(name.v()),
         }
     }
 
@@ -1576,7 +1582,7 @@ impl CustomPropertyName {
     fn as_ptr(&self) -> *const [u8] {
         match self {
             CustomPropertyName::Custom(custom) => custom.v,
-            CustomPropertyName::Unknown(unknown) => unknown.v,
+            CustomPropertyName::Unknown(name) | CustomPropertyName::StarHack(name) => name.v,
         }
     }
 

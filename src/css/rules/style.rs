@@ -498,6 +498,10 @@ impl<R> StyleRule<R> {
                 }
                 true
             }
+            // `PropertyId` equality takes `*zoom` for `zoom`, and the loops do
+            // not pair a normal declaration with an important one.
+            && !self.declarations.has_star_hack()
+            && !other.declarations.has_star_hack()
     }
 }
 

@@ -328,6 +328,20 @@ const _: () = {
                 this.options,
             )
         }
+
+        fn parse_star_hack(
+            this: &mut Self,
+            name: &'static [u8],
+            input: &mut Parser,
+        ) -> Result<Self::Declaration> {
+            css::declaration::parse_star_hack(
+                name,
+                input,
+                &mut this.declarations.declarations,
+                &mut this.declarations.important_declarations,
+                this.options,
+            )
+        }
     }
 
     impl<'a> RuleBodyItemParser for PageRuleParser<'a> {

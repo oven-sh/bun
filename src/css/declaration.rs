@@ -7,7 +7,7 @@ use crate::css_properties::align::AlignHandler;
 use crate::css_properties::background::BackgroundHandler;
 use crate::css_properties::border::BorderHandler;
 use crate::css_properties::box_shadow::BoxShadowHandler;
-use crate::css_properties::custom::CustomPropertyName;
+use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
 use crate::css_properties::flex::FlexHandler;
 use crate::css_properties::font::FontHandler;
 use crate::css_properties::margin_padding::{
@@ -19,6 +19,7 @@ use crate::css_properties::text::Direction;
 use crate::css_properties::transform::TransformHandler;
 use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
+use crate::css_values::ident::Ident;
 
 pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
 
@@ -44,6 +45,20 @@ impl<'bump> DeclarationBlock<'bump> {
 
     pub(crate) fn len(&self) -> usize {
         self.declarations.len() + self.important_declarations.len()
+    }
+
+    /// Whether a declaration is an IE star hack (`*zoom: 1`).
+    pub(crate) fn has_star_hack(&self) -> bool {
+        self.declarations
+            .iter()
+            .chain(self.important_declarations.iter())
+            .any(|property| {
+                matches!(
+                    property,
+                    css::Property::Custom(custom)
+                        if matches!(custom.name, CustomPropertyName::StarHack(_))
+                )
+            })
     }
 
     pub(crate) fn new_in(bump: &'bump Bump) -> Self {
@@ -280,6 +295,20 @@ impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> 
             this.options,
         )
     }
+
+    fn parse_star_hack(
+        this: &mut Self,
+        name: &'static [u8],
+        input: &mut css::Parser,
+    ) -> Result<Self::Declaration> {
+        parse_star_hack(
+            name,
+            input,
+            this.declarations,
+            this.important_declarations,
+            this.options,
+        )
+    }
 }
 
 impl<'a, 'bump> css::RuleBodyItemParser for PropertyDeclarationParser<'a, 'bump> {
@@ -377,6 +406,34 @@ where
             }
         }
     }
+    if important {
+        important_declarations.push(property);
+    } else {
+        declarations.push(property);
+    }
+
+    Ok(())
+}
+
+/// The value of a `*property` declaration, read as the value of an unknown
+/// property is read above. `name` keeps its `*`: it is not `property`.
+#[cold]
+pub(crate) fn parse_star_hack<'bump>(
+    name: &'static [u8],
+    input: &mut css::Parser,
+    declarations: &mut DeclarationList<'bump>,
+    important_declarations: &mut DeclarationList<'bump>,
+    options: &css::ParserOptions,
+) -> Result<()> {
+    let name = CustomPropertyName::StarHack(Ident { v: name });
+    let value = input.parse_until_before(
+        css::Delimiters::BANG | css::Delimiters::CURLY_BRACKET,
+        |input2: &mut css::Parser| CustomProperty::parse(name, input2, options),
+    )?;
+    let important = input.try_parse(css::parse_important).is_ok();
+    input.expect_exhausted()?;
+
+    let property = css::Property::Custom(value);
     if important {
         important_declarations.push(property);
     } else {

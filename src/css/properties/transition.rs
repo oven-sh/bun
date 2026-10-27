@@ -439,13 +439,6 @@ mod transition_handler_body {
                 }
             }
 
-            // A value list that is written beside expanded names needs one value per name.
-            if let Some(sources) = &sources {
-                repeat_for_names(&mut _durations, sources);
-                repeat_for_names(&mut _delays, sources);
-                repeat_for_names(&mut _timing_functions, sources);
-            }
-
             if let Some((durations, prefix)) = _durations.take() {
                 if !prefix.is_empty() {
                     dest.push(Property::TransitionDuration((durations, prefix)));
@@ -491,6 +484,7 @@ mod transition_handler_body {
         // transition-property determines the number of transitions. The values of other
         // properties are repeated to match this length.
         let mut transitions = SmallList::<Transition, 1>::init_capacity(1);
+        debug_assert!(sources.is_none_or(|sources| sources.len() == properties.slice().len()));
         for (index, property_id) in (0u32..).zip(properties.slice()) {
             // Each name takes the values of its entry as written. lightningcss matches by position, which shifts them.
             let source = sources.map_or(index, |sources| sources[index as usize]);
@@ -530,31 +524,6 @@ mod transition_handler_body {
             }
         }
         transitions
-    }
-
-    // Gives each name the value of its entry, unless the list as written already does.
-    #[cold]
-    fn repeat_for_names<T: Clone + PartialEq>(
-        list: &mut Option<(SmallList<T, 1>, VendorPrefix)>,
-        sources: &[u32],
-    ) {
-        let Some((values, prefix)) = list else { return };
-        let len = values.len();
-        if prefix.is_empty() || len < 2 {
-            return;
-        }
-        let written = |index: u32| values.at(index % len);
-        if (0u32..)
-            .zip(sources)
-            .all(|(index, &source)| written(index) == written(source))
-        {
-            return;
-        }
-        let repeated = sources
-            .iter()
-            .map(|&source| written(source).clone())
-            .collect();
-        *values = repeated;
     }
 
     fn expand_properties(

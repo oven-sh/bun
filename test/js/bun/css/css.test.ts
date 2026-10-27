@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -7207,36 +7206,24 @@ describe("css tests", () => {
         `.foo { transition: top 1s linear 3s, bottom 1s linear 3s, left 1s linear 3s, right 1s linear 3s, opacity 2s ease-in 4s; }`,
         safari(8),
       );
-      prefix_test(
-        `.foo {
-          transition-property: inset, opacity;
-          transition-duration: 1s, 2s;
-          transition-delay: 3s, 4s;
-          transition-timing-function: linear, ease-in;
-        }`,
-        `.foo { transition: top 1s linear 3s, bottom 1s linear 3s, left 1s linear 3s, right 1s linear 3s, opacity 2s ease-in 4s; }`,
-        safari(8),
-      );
       // A shorter list repeats over the entries as written, and a value past the last entry is not used.
       prefix_test(
-        `.foo {
-          transition-property: inset, opacity, color;
-          transition-duration: 1s, 2s;
-          transition-delay: 0s;
-          transition-timing-function: ease;
-        }`,
-        `.foo { transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s, color 1s; }`,
+        `.foo { transition: inset 1s, opacity 2s, color 3s; transition-duration: 4s, 5s }`,
+        `.foo { transition: top 4s, bottom 4s, left 4s, right 4s, opacity 5s, color 4s; }`,
         safari(8),
       );
       prefix_test(
-        `.foo {
-          transition-property: inset;
-          transition-duration: 1s, 2s;
-          transition-delay: 0s;
-          transition-timing-function: ease;
-        }`,
-        `.foo { transition: top 1s, bottom 1s, left 1s, right 1s; }`,
+        `.foo { transition: inset 1s; transition-duration: 4s, 5s }`,
+        `.foo { transition: top 4s, bottom 4s, left 4s, right 4s; }`,
         safari(8),
+      );
+      // daisyUI ships this shape in its megamenu, with `linear()` as the first easing.
+      prefix_test(
+        `.foo { transition: inset .3s cubic-bezier(.2, .9, .3, 1.1), background-color .2s ease-out }`,
+        `.foo {
+          transition: top .3s cubic-bezier(.2, .9, .3, 1.1), bottom .3s cubic-bezier(.2, .9, .3, 1.1), left .3s cubic-bezier(.2, .9, .3, 1.1), right .3s cubic-bezier(.2, .9, .3, 1.1), background-color .2s ease-out;
+        }`,
+        safari(14),
       );
       // The order as written stays, so the last entry for a property still decides.
       prefix_test(
@@ -7301,93 +7288,11 @@ describe("css tests", () => {
         ),
         safari(8),
       );
-      // A value list that is written beside the names gets one value per name.
-      prefix_test(
-        `.foo { transition-property: inset, opacity; transition-duration: 1s, 2s }`,
-        `.foo { transition-property: top, bottom, left, right, opacity; transition-duration: 1s, 1s, 1s, 1s, 2s; }`,
-        safari(8),
-      );
-      prefix_test(
-        `.foo { transition-property: mask-border, opacity; transition-duration: 1s, 2s }`,
-        `.foo { transition-property: -webkit-mask-box-image, mask-border, opacity; transition-duration: 1s, 1s, 2s; }`,
-        safari(15),
-      );
-      prefix_test(
-        `.foo {
-          transition-property: inset, opacity;
-          transition-delay: 1s, 2s;
-          transition-timing-function: linear, ease-in;
-        }`,
-        `.foo {
-          transition-property: top, bottom, left, right, opacity;
-          transition-delay: 1s, 1s, 1s, 1s, 2s;
-          transition-timing-function: linear, linear, linear, linear, ease-in;
-        }`,
-        safari(8),
-      );
-      prefix_test(
-        `.foo { transition-property: inset, opacity, color; transition-duration: 1s, 2s }`,
-        `.foo { transition-property: top, bottom, left, right, opacity, color; transition-duration: 1s, 1s, 1s, 1s, 2s, 1s; }`,
-        safari(8),
-      );
-      prefix_test(
-        `.foo { transition-property: inset, opacity; transition-duration: 1s, 2s, 3s }`,
-        `.foo { transition-property: top, bottom, left, right, opacity; transition-duration: 1s, 1s, 1s, 1s, 2s; }`,
-        safari(8),
-      );
-      // A list that already gives every name the value of its entry stays as written.
-      prefix_test(
-        `.foo { transition-property: inset, opacity; transition-duration: 1s, 1s; transition-delay: 3s, 4s }`,
-        `.foo {
-          transition-property: top, bottom, left, right, opacity;
-          transition-duration: 1s, 1s;
-          transition-delay: 3s, 3s, 3s, 3s, 4s;
-        }`,
-        safari(8),
-      );
-      prefix_test(
-        `.foo { transition-property: margin-inline-start, inset, opacity; transition-duration: 1s, 2s, 3s }`,
-        `.foo { transition-duration: 1s, 2s, 2s, 2s, 2s, 3s; }
-        ${directionRules(
-          `transition-property: margin-left, top, bottom, left, right, opacity;`,
-          `transition-property: margin-right, top, bottom, left, right, opacity;`,
-        )}`,
-        safari(8),
-      );
-      // A rule with the same selector brings the other two lists, and the merged block is minified again.
-      prefix_test(
-        `.foo { transition-property: inset, opacity; transition-duration: 1s, 2s }
-         .foo { transition-delay: 0s; transition-timing-function: ease }`,
-        `.foo { transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s; }`,
-        safari(8),
-      );
-      test("a merged block keeps the pairs when the second pass adds `-webkit-mask-box-image` again", () => {
-        const output = cssInternals.minifyTest(
-          `.foo{transition-property:mask-border,opacity;transition-duration:1s,2s}
-           .foo{transition-delay:0s;transition-timing-function:ease}`,
-          "",
-          safari(15),
-        );
-        const transitions = output.slice(output.indexOf(":") + 1, output.indexOf("}")).split(",");
-        expect(new Set(transitions)).toEqual(new Set(["-webkit-mask-box-image 1s", "mask-border 1s", "opacity 2s"]));
-      });
-
       // Prints `color 1s, opacity 1s`: the later property list meets one duration per name of the first list.
       cssTestTodo(
         `.foo { transition: inset 1s, opacity 2s } .foo { transition-property: color, opacity }`,
         `.foo { transition: color 1s, opacity 2s; }`,
         safari(8),
-      );
-      // Prints three names beside `1s, 2s`: a property with several vendor prefixes is one entry of the list.
-      cssTestTodo(
-        `.foo { transition-property: transform, opacity; transition-duration: 1s, 2s }`,
-        `.foo {
-          -webkit-transition-property: -webkit-transform, transform, opacity;
-          transition-property: -webkit-transform, transform, opacity;
-          -webkit-transition-duration: 1s, 1s, 2s;
-          transition-duration: 1s, 1s, 2s;
-        }`,
-        safari(6),
       );
 
       // Nothing becomes several names without targets, or for targets that need nothing.

@@ -417,6 +417,7 @@ test("a HEADERS frame that has no connection credit waits for it", async () => {
   // response to that point. lsquic logs a line when it stops in front of the frame header, and a run without that
   // line does not count.
   let stoppedInFrontOfTheFrame = false;
+  const counts: number[] = [];
   for (let attempt = 0; attempt < 4 && !stoppedInFrontOfTheFrame; attempt++) {
     await using proc = Bun.spawn({
       cmd: [
@@ -436,11 +437,13 @@ test("a HEADERS frame that has no connection credit waits for it", async () => {
     expect(stdout === "" ? stderr.slice(-2000) : "").toBe("");
     // The bytes of bodies and trailers that the client got while its MAX_DATA did not reach the server. Its
     // connection window is 136,000 bytes.
-    expect(Number(stdout)).toBeLessThanOrEqual(136_000);
+    counts.push(Number(stdout));
+    expect(counts.at(-1)).toBeLessThanOrEqual(136_000);
     expect(exitCode).toBe(0);
     stoppedInFrontOfTheFrame = stderr.includes("no connection credit for");
   }
-  expect(stoppedInFrontOfTheFrame).toBe(true);
+  // When no run got there, the counts show where the runs ended.
+  expect({ stoppedInFrontOfTheFrame, counts }).toEqual({ stoppedInFrontOfTheFrame: true, counts: expect.any(Array) });
 }, 60_000);
 
 // The same frame header also needs the credit of its stream. The interim response fills the client's stream window

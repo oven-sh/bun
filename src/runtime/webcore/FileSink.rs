@@ -513,14 +513,11 @@ impl FileSink {
         }
     }
 
-    /// The allocation's pointer (the handler frees through it); a JS-constructed sink has none.
+    /// The allocation's own pointer, which `init`/`create*` gave the writer: the handler frees it.
     fn abort_owner(&self) -> *mut FileSink {
         let allocation = self.writer.get().parent;
-        if allocation.is_null() {
-            core::ptr::from_ref(self).cast_mut()
-        } else {
-            allocation
-        }
+        debug_assert!(!allocation.is_null());
+        allocation
     }
 
     /// Not on Windows: its teardown closes the pipes itself and still drains a file sink's writes.
@@ -1638,8 +1635,8 @@ bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, cause| {
     // What is buffered is dropped with the graph: the writer closes without draining (a reader
     // that never reads would keep it open for ever), and a parked write gives up its promise and
     // the wrapper it pins, as when an attached process exits. `on_close` may free `this`.
-    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run) and is what
-    // `abort_owner` armed with; the guard keeps it so across `close()` and `run_pending`.
+    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run) with
+    // write+dealloc provenance; the guard keeps it so across `close()` and `run_pending`.
     unsafe {
         // The realm `bun test --isolate` retired leaves its loop running, which drains the write.
         if (*this).closes_with_vm_only.replace(false)

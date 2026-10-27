@@ -385,7 +385,7 @@ mod _impl {
             // has the view while the pool thread is here, and shared memory
             // has other writers. `bun_brotli` has no `unsafe` and checks every
             // index, so a byte that reads differently the second time gives
-            // other output, an error or a failed debug assertion.
+            // other output or an error.
             let mut input = unsafe { bun_core::ffi::slice(self.next_in, self.avail_in) };
             // "in" and "out" can be views of the same ArrayBuffer.
             let in_start = self.next_in.addr();

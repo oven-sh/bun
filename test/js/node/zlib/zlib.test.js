@@ -634,8 +634,10 @@ describe("zlib.brotli", () => {
       const input = Buffer.from(contents[0]);
       let result;
       start(input, (error, output) => (result = { error, output }));
-      for (let i = 1; !result; i++) {
-        input.set(contents[i % contents.length]);
+      for (let i = 1; !result;) {
+        for (const end = i + 50; i < end; i++) {
+          input.set(contents[i % contents.length]);
+        }
         await new Promise(setImmediate);
       }
       return result;
@@ -650,6 +652,18 @@ describe("zlib.brotli", () => {
         expect(error).toBeNull();
         expect(zlib.brotliDecompressSync(output).length).toBe(noise.length);
       }
+    });
+
+    it("a stream at quality 0 takes every write", async () => {
+      // A short block gets codes for just the bytes that it has.
+      const blocks = [Buffer.alloc(16 * 1024, "abcdefgh "), noise.subarray(0, 16 * 1024)];
+      const stream = zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 0 } });
+      stream.resume();
+      for (let round = 0; round < 50; round++) {
+        const { error } = await whileItChanges(blocks, (input, done) => stream.write(input, done));
+        expect(error).toBeFalsy();
+      }
+      stream.destroy();
     });
 
     it("brotliDecompress ends with output or with an error in the stream", async () => {

@@ -795,3 +795,24 @@ pub(crate) fn compress_fragment_fast(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enc::Fallible;
+
+    #[test]
+    fn the_bits_of_a_literal_fit_its_code_length() -> Fallible {
+        let mut s = OnePassScratch::new()?;
+        let mut storage = [0u8; 1024];
+        let every_byte: Vec<u8> = (0..=255).collect();
+        for input in [every_byte.as_slice(), b"azazazaz"] {
+            let mut bw = BitWriter::new(&mut storage, 0)?;
+            build_and_store_literal_prefix_code(&mut s, input, &mut bw)?;
+            for (byte, (&depth, &bits)) in s.lit_depth.iter().zip(&s.lit_bits).enumerate() {
+                assert!(bits >> depth == 0, "{byte}: {bits:#b} in {depth} bits");
+            }
+        }
+        Ok(())
+    }
+}

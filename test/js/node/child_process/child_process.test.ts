@@ -29,6 +29,7 @@ import {
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";
+import { Readable } from "node:stream";
 import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
@@ -1930,4 +1931,37 @@ describe("spawn().unref() with piped stdio", () => {
       childExitCode: null,
     });
   });
+});
+
+// Node starts a child's stdout and stderr with uv_read_start: it arms the
+// handle and the first read comes from the event loop. A read on the spot
+// hands JS whatever the child wrote so far, so a child that writes in two
+// steps gives two 'data' events where Node gives one. The upstream
+// test-child-process-prototype-tampering.mjs trips on that with BusyBox pwd.
+it("starting a child pipe that nothing has read reads nothing until the event loop runs", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("fs"); fs.writeSync(1, "first\\n"); fs.writeSync(2, "ready"); process.stdin.resume();`,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    lazy: true,
+  });
+  // The child writes "ready" after "first", so stdout has bytes in the pipe now.
+  const { value } = await proc.stderr.getReader().read();
+  expect(new TextDecoder().decode(value)).toBe("ready");
+
+  // The two steps node:child_process takes for child.stdout.
+  const stdout = Readable.fromWeb(proc.stdout as any);
+  stdout.read(0);
+  expect(stdout.readableLength).toBe(0);
+
+  const [chunk] = await once(stdout, "data");
+  expect(chunk.toString()).toBe("first\n");
+  proc.stdin.end();
+  expect(await proc.exited).toBe(0);
 });

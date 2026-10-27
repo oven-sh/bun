@@ -471,15 +471,18 @@ impl FileReader {
             #[cfg(unix)]
             {
                 use bun_io::pipe_reader::PosixFlags;
-                // An IS_PAUSED arrival is lazy subprocess stdio: its first read is
-                // the bounded on_pull, not an eager loop that outruns the consumer.
-                if !was_lazy
-                    && self.reader().flags.contains(PosixFlags::POLLABLE)
-                    && !self.reader().flags.contains(PosixFlags::IS_PAUSED)
-                {
-                    // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                    // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                    unsafe { IOReader::read(self.reader.get()) };
+                if !was_lazy && self.reader().flags.contains(PosixFlags::POLLABLE) {
+                    if self.reader().flags.contains(PosixFlags::IS_PAUSED) {
+                        // Lazy subprocess stdio starts like uv_read_start: arm the poll and
+                        // let the event loop deliver the first read. A read here would hand
+                        // a child's first write to JS before its second one lands.
+                        self.reader().unpause();
+                        self.reader().watch();
+                    } else {
+                        // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                        // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                        unsafe { IOReader::read(self.reader.get()) };
+                    }
                 }
             }
         }

@@ -1,0 +1,183 @@
+%ArrayIterator%.prototype : @@toStringTag/c next/wc
+%AsyncFromSyncIterator%.prototype : next/wc return/wc throw/wc
+%AsyncFunction%.prototype : @@toStringTag/c constructor/c
+%AsyncGenerator%.prototype : @@toStringTag/c constructor/c next/wc return/wc throw/wc
+%AsyncGeneratorFunction%.prototype : @@toStringTag/c constructor/c prototype/c
+%AsyncIterator%.prototype : @@asyncDispose/wc @@asyncIterator/wc
+%Generator%.prototype : @@toStringTag/c constructor/c next/wc return/wc throw/wc
+%GeneratorFunction%.prototype : @@toStringTag/c constructor/c prototype/c
+%IteratorHelper%.prototype : @@toStringTag/c next/wc return/wc
+%MapIterator%.prototype : @@toStringTag/c next/wc
+%RegExpStringIterator%.prototype : @@toStringTag/c next/wc
+%SetIterator%.prototype : @@toStringTag/c next/wc
+%StringIterator%.prototype : @@toStringTag/c next/wc
+%TypedArray% : @@species/ac from/wc length/? name/? of/wc prototype/-
+%TypedArray%.prototype : @@iterator/wc @@toStringTag/ac at/wc buffer/ac byteLength/ac byteOffset/ac constructor/wc copyWithin/wc entries/wc every/wc fill/wc filter/wc find/wc findIndex/wc findLast/wc findLastIndex/wc forEach/wc includes/wc indexOf/wc join/wc keys/wc lastIndexOf/wc length/ac map/wc reduce/wc reduceRight/wc reverse/wc set/wc slice/wc some/wc sort/wc subarray/wc toLocaleString/wc toReversed/wc toSorted/wc toString/wc values/wc with/wc
+%WrapForValidIterator%.prototype : @@toStringTag/c next/wc return/wc
+AggregateError : length/? name/? prototype/-
+AggregateError.prototype : constructor/wc message/wc name/wc
+Array : @@species/ac from/wc fromAsync/wc isArray/wc length/? name/? of/wc prototype/-
+Array.prototype : @@iterator/wc @@unscopables/c at/wc concat/wc constructor/wc copyWithin/wc entries/wc every/wc fill/wc filter/wc find/wc findIndex/wc findLast/wc findLastIndex/wc flat/wc flatMap/wc forEach/wc includes/wc indexOf/wc join/wc keys/wc lastIndexOf/wc length/w map/wc pop/wc push/wc reduce/wc reduceRight/wc reverse/wc shift/wc slice/wc some/wc sort/wc splice/wc toLocaleString/wc toReversed/wc toSorted/wc toSpliced/wc toString/wc unshift/wc values/wc with/wc
+ArrayBuffer : @@species/ac isView/wc length/? name/? prototype/-
+ArrayBuffer.prototype : @@toStringTag/c byteLength/ac constructor/wc detached/ac maxByteLength/ac resizable/ac resize/wc slice/wc transfer/wc transferToFixedLength/wc
+AsyncDisposableStack : length/? name/? prototype/-
+AsyncDisposableStack.prototype : @@asyncDispose/wc @@toStringTag/c adopt/wc constructor/wc defer/wc disposeAsync/wc disposed/ac move/wc use/wc
+Atomics : @@toStringTag/c add/wc and/wc compareExchange/wc exchange/wc isLockFree/wc load/wc notify/wc or/wc pause/wc store/wc sub/wc wait/wc waitAsync/wc xor/wc
+BigInt : asIntN/wc asUintN/wc length/? name/? prototype/-
+BigInt.prototype : @@toStringTag/c constructor/wc toLocaleString/wc toString/wc valueOf/wc
+BigInt64Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
+BigInt64Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
+BigUint64Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
+BigUint64Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
+Boolean : length/? name/? prototype/-
+Boolean.prototype : constructor/wc toString/wc valueOf/wc
+DataView : BYTES_PER_ELEMENT/- length/? name/? prototype/-
+DataView.prototype : @@toStringTag/c buffer/ac byteLength/ac byteOffset/ac constructor/wc getBigInt64/wc getBigUint64/wc getFloat16/wc getFloat32/wc getFloat64/wc getInt16/wc getInt32/wc getInt8/wc getUint16/wc getUint32/wc getUint8/wc setBigInt64/wc setBigUint64/wc setFloat16/wc setFloat32/wc setFloat64/wc setInt16/wc setInt32/wc setInt8/wc setUint16/wc setUint32/wc setUint8/wc
+Date : UTC/wc length/? name/? now/wc parse/wc prototype/-
+Date.prototype : @@toPrimitive/c constructor/wc getDate/wc getDay/wc getFullYear/wc getHours/wc getMilliseconds/wc getMinutes/wc getMonth/wc getSeconds/wc getTime/wc getTimezoneOffset/wc getUTCDate/wc getUTCDay/wc getUTCFullYear/wc getUTCHours/wc getUTCMilliseconds/wc getUTCMinutes/wc getUTCMonth/wc getUTCSeconds/wc getYear/wc setDate/wc setFullYear/wc setHours/wc setMilliseconds/wc setMinutes/wc setMonth/wc setSeconds/wc setTime/wc setUTCDate/wc setUTCFullYear/wc setUTCHours/wc setUTCMilliseconds/wc setUTCMinutes/wc setUTCMonth/wc setUTCSeconds/wc setYear/wc toDateString/wc toGMTString/wc toISOString/wc toJSON/wc toLocaleDateString/wc toLocaleString/wc toLocaleTimeString/wc toString/wc toTemporalInstant/wc toTimeString/wc toUTCString/wc valueOf/wc
+DisposableStack : length/? name/? prototype/-
+DisposableStack.prototype : @@dispose/wc @@toStringTag/c adopt/wc constructor/wc defer/wc dispose/wc disposed/ac move/wc use/wc
+Error : captureStackTrace/wc isError/wc length/? name/? prototype/- stackTraceLimit/?
+Error.prototype : constructor/wc message/wc name/wc toString/wc
+EvalError : length/? name/? prototype/-
+EvalError.prototype : constructor/wc message/wc name/wc
+FinalizationRegistry : length/? name/? prototype/-
+FinalizationRegistry.prototype : @@toStringTag/c constructor/wc register/wc unregister/wc
+Float16Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
+Float16Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
+Float32Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
+Float32Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
+Float64Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
+Float64Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
+Function : length/? name/? prototype/-
+Function.prototype : @@hasInstance/- apply/wc arguments/ac bind/wc call/wc caller/ac constructor/wc length/c name/c toString/wc
+Int16Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
+Int16Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
+Int32Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
+Int32Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
+Int8Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
+Int8Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
+Intl : @@toStringTag/c Collator/wc DateTimeFormat/wc DisplayNames/wc DurationFormat/wc ListFormat/wc Locale/wc NumberFormat/wc PluralRules/wc RelativeTimeFormat/wc Segmenter/wc getCanonicalLocales/wc supportedValuesOf/wc
+Intl.Collator : length/? name/? prototype/- supportedLocalesOf/wc
+Intl.Collator.prototype : @@toStringTag/c compare/ac constructor/wc resolvedOptions/wc
+Intl.DateTimeFormat : length/? name/? prototype/- supportedLocalesOf/wc
+Intl.DateTimeFormat.prototype : @@toStringTag/c constructor/wc format/ac formatRange/wc formatRangeToParts/wc formatToParts/wc resolvedOptions/wc
+Intl.DisplayNames : length/? name/? prototype/- supportedLocalesOf/wc
+Intl.DisplayNames.prototype : @@toStringTag/c constructor/wc of/wc resolvedOptions/wc
+Intl.DurationFormat : length/? name/? prototype/- supportedLocalesOf/wc
+Intl.DurationFormat.prototype : @@toStringTag/c constructor/wc format/wc formatToParts/wc resolvedOptions/wc
+Intl.ListFormat : length/? name/? prototype/- supportedLocalesOf/wc
+Intl.ListFormat.prototype : @@toStringTag/c constructor/wc format/wc formatToParts/wc resolvedOptions/wc
+Intl.Locale : length/? name/? prototype/-
+Intl.Locale.prototype : @@toStringTag/c baseName/ac calendar/ac caseFirst/ac collation/ac constructor/wc firstDayOfWeek/ac getCalendars/wc getCollations/wc getHourCycles/wc getNumberingSystems/wc getTextInfo/wc getTimeZones/wc getWeekInfo/wc hourCycle/ac language/ac maximize/wc minimize/wc numberingSystem/ac numeric/ac region/ac script/ac toString/wc variants/ac
+Intl.NumberFormat : length/? name/? prototype/- supportedLocalesOf/wc
+Intl.NumberFormat.prototype : @@toStringTag/c constructor/wc format/ac formatRange/wc formatRangeToParts/wc formatToParts/wc resolvedOptions/wc
+Intl.PluralRules : length/? name/? prototype/- supportedLocalesOf/wc
+Intl.PluralRules.prototype : @@toStringTag/c constructor/wc resolvedOptions/wc select/wc selectRange/wc
+Intl.RelativeTimeFormat : length/? name/? prototype/- supportedLocalesOf/wc
+Intl.RelativeTimeFormat.prototype : @@toStringTag/c constructor/wc format/wc formatToParts/wc resolvedOptions/wc
+Intl.Segmenter : length/? name/? prototype/- supportedLocalesOf/wc
+Intl.Segmenter.prototype : @@toStringTag/c constructor/wc resolvedOptions/wc segment/wc
+Iterator : concat/wc from/wc length/? name/? prototype/- zip/wc zipKeyed/wc
+Iterator.prototype : @@dispose/wc @@iterator/wc @@toStringTag/ac chunks/wc constructor/ac drop/wc every/wc filter/wc find/wc flatMap/wc forEach/wc includes/wc join/wc map/wc reduce/wc some/wc take/wc toArray/wc windows/wc
+JSON : @@toStringTag/c isRawJSON/wc parse/wc rawJSON/wc stringify/wc
+Map : @@species/ac groupBy/wc length/? name/? prototype/-
+Map.prototype : @@iterator/wc @@toStringTag/c clear/wc constructor/wc delete/wc entries/wc forEach/wc get/wc getOrInsert/wc getOrInsertComputed/wc has/wc keys/wc set/wc size/ac values/wc
+Math : @@toStringTag/c E/- LN10/- LN2/- LOG10E/- LOG2E/- PI/- SQRT1_2/- SQRT2/- abs/wc acos/wc acosh/wc asin/wc asinh/wc atan/wc atan2/wc atanh/wc cbrt/wc ceil/wc clz32/wc cos/wc cosh/wc exp/wc expm1/wc f16round/wc floor/wc fround/wc hypot/wc imul/wc log/wc log10/wc log1p/wc log2/wc max/wc min/wc pow/wc random/wc round/wc sign/wc sin/wc sinh/wc sqrt/wc sumPrecise/wc tan/wc tanh/wc trunc/wc
+Number : EPSILON/- MAX_SAFE_INTEGER/- MAX_VALUE/- MIN_SAFE_INTEGER/- MIN_VALUE/- NEGATIVE_INFINITY/- NaN/- POSITIVE_INFINITY/- isFinite/wc isInteger/wc isNaN/wc isSafeInteger/wc length/? name/? parseFloat/wc parseInt/wc prototype/-
+Number.prototype : constructor/wc toExponential/wc toFixed/wc toLocaleString/wc toPrecision/wc toString/wc valueOf/wc
+Object : assign/wc create/wc defineProperties/wc defineProperty/wc entries/wc freeze/wc fromEntries/wc getOwnPropertyDescriptor/wc getOwnPropertyDescriptors/wc getOwnPropertyNames/wc getOwnPropertySymbols/wc getPrototypeOf/wc groupBy/wc hasOwn/wc is/wc isExtensible/wc isFrozen/wc isSealed/wc keys/wc length/? name/? preventExtensions/wc prototype/- seal/wc setPrototypeOf/wc values/wc
+Object.prototype : __defineGetter__/wc __defineSetter__/wc __lookupGetter__/wc __lookupSetter__/wc __proto__/ac constructor/wc hasOwnProperty/wc isPrototypeOf/wc propertyIsEnumerable/wc toLocaleString/wc toString/wc valueOf/wc
+Promise : @@species/ac all/wc allSettled/wc any/wc length/? name/? prototype/- race/wc reject/wc resolve/wc try/wc withResolvers/wc
+Promise.prototype : @@toStringTag/c catch/wc constructor/wc finally/wc then/wc
+Proxy : length/? name/? revocable/wc
+RangeError : length/? name/? prototype/-
+RangeError.prototype : constructor/wc message/wc name/wc
+ReferenceError : length/? name/? prototype/-
+ReferenceError.prototype : constructor/wc message/wc name/wc
+Reflect : @@toStringTag/c apply/wc construct/wc defineProperty/wc deleteProperty/wc get/wc getOwnPropertyDescriptor/wc getPrototypeOf/wc has/wc isExtensible/wc ownKeys/wc preventExtensions/wc set/wc setPrototypeOf/wc
+RegExp : $&/ac $'/ac $*/ac $+/ac $1/ac $2/ac $3/ac $4/ac $5/ac $6/ac $7/ac $8/ac $9/ac $_/ac $`/ac @@species/ac escape/wc input/ac lastMatch/ac lastParen/ac leftContext/ac length/? multiline/ac name/? prototype/- rightContext/ac
+RegExp.prototype : @@match/wc @@matchAll/wc @@replace/wc @@search/wc @@split/wc compile/wc constructor/wc dotAll/ac exec/wc flags/ac global/ac hasIndices/ac ignoreCase/ac multiline/ac source/ac sticky/ac test/wc toString/wc unicode/ac unicodeSets/ac
+Set : @@species/ac length/? name/? prototype/-
+Set.prototype : @@iterator/wc @@toStringTag/c add/wc clear/wc constructor/wc delete/wc difference/wc entries/wc forEach/wc has/wc intersection/wc isDisjointFrom/wc isSubsetOf/wc isSupersetOf/wc keys/wc size/ac symmetricDifference/wc union/wc values/wc
+ShadowRealm : length/? name/? prototype/-
+ShadowRealm.prototype : @@toStringTag/c constructor/wc evaluate/wc importValue/wc
+SharedArrayBuffer : @@species/ac length/? name/? prototype/-
+SharedArrayBuffer.prototype : @@toStringTag/c byteLength/ac constructor/wc grow/wc growable/ac maxByteLength/ac slice/wc
+String : fromCharCode/wc fromCodePoint/wc length/? name/? prototype/- raw/wc
+String.prototype : @@iterator/wc anchor/wc at/wc big/wc blink/wc bold/wc charAt/wc charCodeAt/wc codePointAt/wc concat/wc constructor/wc endsWith/wc fixed/wc fontcolor/wc fontsize/wc includes/wc indexOf/wc isWellFormed/wc italics/wc lastIndexOf/wc length/- link/wc localeCompare/wc match/wc matchAll/wc normalize/wc padEnd/wc padStart/wc repeat/wc replace/wc replaceAll/wc search/wc slice/wc small/wc split/wc startsWith/wc strike/wc sub/wc substr/wc substring/wc sup/wc toLocaleLowerCase/wc toLocaleUpperCase/wc toLowerCase/wc toString/wc toUpperCase/wc toWellFormed/wc trim/wc trimEnd/wc trimLeft/wc trimRight/wc trimStart/wc valueOf/wc
+SuppressedError : length/? name/? prototype/-
+SuppressedError.prototype : constructor/wc message/wc name/wc
+Symbol : asyncDispose/- asyncIterator/- dispose/- for/wc hasInstance/- isConcatSpreadable/- iterator/- keyFor/wc length/? match/- matchAll/- name/? prototype/- replace/- search/- species/- split/- toPrimitive/- toStringTag/- unscopables/-
+Symbol.prototype : @@toPrimitive/c @@toStringTag/c constructor/wc description/ac toString/wc valueOf/wc
+SyntaxError : length/? name/? prototype/-
+SyntaxError.prototype : constructor/wc message/wc name/wc
+Temporal : @@toStringTag/c Duration/wc Instant/wc Now/wc PlainDate/wc PlainDateTime/wc PlainMonthDay/wc PlainTime/wc PlainYearMonth/wc ZonedDateTime/wc
+Temporal.Duration : compare/wc from/wc length/? name/? prototype/-
+Temporal.Duration.prototype : @@toStringTag/c abs/wc add/wc blank/ac constructor/wc days/ac hours/ac microseconds/ac milliseconds/ac minutes/ac months/ac nanoseconds/ac negated/wc round/wc seconds/ac sign/ac subtract/wc toJSON/wc toLocaleString/wc toString/wc total/wc valueOf/wc weeks/ac with/wc years/ac
+Temporal.Instant : compare/wc from/wc fromEpochMilliseconds/wc fromEpochNanoseconds/wc length/? name/? prototype/-
+Temporal.Instant.prototype : @@toStringTag/c add/wc constructor/wc epochMilliseconds/ac epochNanoseconds/ac equals/wc round/wc since/wc subtract/wc toJSON/wc toLocaleString/wc toString/wc toZonedDateTimeISO/wc until/wc valueOf/wc
+Temporal.Now : @@toStringTag/c instant/wc plainDateISO/wc plainDateTimeISO/wc plainTimeISO/wc timeZoneId/wc zonedDateTimeISO/wc
+Temporal.PlainDate : compare/wc from/wc length/? name/? prototype/-
+Temporal.PlainDate.prototype : @@toStringTag/c add/wc calendarId/ac constructor/wc day/ac dayOfWeek/ac dayOfYear/ac daysInMonth/ac daysInWeek/ac daysInYear/ac equals/wc era/ac eraYear/ac inLeapYear/ac month/ac monthCode/ac monthsInYear/ac since/wc subtract/wc toJSON/wc toLocaleString/wc toPlainDateTime/wc toPlainMonthDay/wc toPlainYearMonth/wc toString/wc toZonedDateTime/wc until/wc valueOf/wc weekOfYear/ac with/wc withCalendar/wc year/ac yearOfWeek/ac
+Temporal.PlainDateTime : compare/wc from/wc length/? name/? prototype/-
+Temporal.PlainDateTime.prototype : @@toStringTag/c add/wc calendarId/ac constructor/wc day/ac dayOfWeek/ac dayOfYear/ac daysInMonth/ac daysInWeek/ac daysInYear/ac equals/wc era/ac eraYear/ac hour/ac inLeapYear/ac microsecond/ac millisecond/ac minute/ac month/ac monthCode/ac monthsInYear/ac nanosecond/ac round/wc second/ac since/wc subtract/wc toJSON/wc toLocaleString/wc toPlainDate/wc toPlainTime/wc toString/wc toZonedDateTime/wc until/wc valueOf/wc weekOfYear/ac with/wc withCalendar/wc withPlainTime/wc year/ac yearOfWeek/ac
+Temporal.PlainMonthDay : from/wc length/? name/? prototype/-
+Temporal.PlainMonthDay.prototype : @@toStringTag/c calendarId/ac constructor/wc day/ac equals/wc monthCode/ac toJSON/wc toLocaleString/wc toPlainDate/wc toString/wc valueOf/wc with/wc
+Temporal.PlainTime : compare/wc from/wc length/? name/? prototype/-
+Temporal.PlainTime.prototype : @@toStringTag/c add/wc constructor/wc equals/wc hour/ac microsecond/ac millisecond/ac minute/ac nanosecond/ac round/wc second/ac since/wc subtract/wc toJSON/wc toLocaleString/wc toString/wc until/wc valueOf/wc with/wc
+Temporal.PlainYearMonth : compare/wc from/wc length/? name/? prototype/-
+Temporal.PlainYearMonth.prototype : @@toStringTag/c add/wc calendarId/ac constructor/wc daysInMonth/ac daysInYear/ac equals/wc era/ac eraYear/ac inLeapYear/ac month/ac monthCode/ac monthsInYear/ac since/wc subtract/wc toJSON/wc toLocaleString/wc toPlainDate/wc toString/wc until/wc valueOf/wc with/wc year/ac
+Temporal.ZonedDateTime : compare/wc from/wc length/? name/? prototype/-
+Temporal.ZonedDateTime.prototype : @@toStringTag/c add/wc calendarId/ac constructor/wc day/ac dayOfWeek/ac dayOfYear/ac daysInMonth/ac daysInWeek/ac daysInYear/ac epochMilliseconds/ac epochNanoseconds/ac equals/wc era/ac eraYear/ac getTimeZoneTransition/wc hour/ac hoursInDay/ac inLeapYear/ac microsecond/ac millisecond/ac minute/ac month/ac monthCode/ac monthsInYear/ac nanosecond/ac offset/ac offsetNanoseconds/ac round/wc second/ac since/wc startOfDay/wc subtract/wc timeZoneId/ac toInstant/wc toJSON/wc toLocaleString/wc toPlainDate/wc toPlainDateTime/wc toPlainTime/wc toString/wc until/wc valueOf/wc weekOfYear/ac with/wc withCalendar/wc withPlainTime/wc withTimeZone/wc year/ac yearOfWeek/ac
+TypeError : length/? name/? prototype/-
+TypeError.prototype : constructor/wc message/wc name/wc
+URIError : length/? name/? prototype/-
+URIError.prototype : constructor/wc message/wc name/wc
+Uint16Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
+Uint16Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
+Uint32Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
+Uint32Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
+Uint8Array : BYTES_PER_ELEMENT/- fromBase64/wc fromHex/wc length/? name/? prototype/-
+Uint8Array.prototype : BYTES_PER_ELEMENT/- constructor/wc setFromBase64/wc setFromHex/wc toBase64/wc toHex/wc
+Uint8ClampedArray : BYTES_PER_ELEMENT/- length/? name/? prototype/-
+Uint8ClampedArray.prototype : BYTES_PER_ELEMENT/- constructor/wc
+WeakMap : length/? name/? prototype/-
+WeakMap.prototype : @@toStringTag/c constructor/wc delete/wc get/wc getOrInsert/wc getOrInsertComputed/wc has/wc set/wc
+WeakRef : length/? name/? prototype/-
+WeakRef.prototype : @@toStringTag/c constructor/wc deref/wc
+WeakSet : length/? name/? prototype/-
+WeakSet.prototype : @@toStringTag/c add/wc constructor/wc delete/wc has/wc
+WebAssembly : @@toStringTag/c CompileError/wc Exception/wc Global/wc Instance/wc JSTag/ac LinkError/wc Memory/wc Module/wc RuntimeError/wc SuspendError/wc Suspending/wc Table/wc Tag/wc compile/wc compileStreaming/wc instantiate/wc instantiateStreaming/wc promising/wc validate/wc
+WebAssembly.CompileError : length/? name/? prototype/-
+WebAssembly.Exception : length/? name/? prototype/-
+WebAssembly.Exception.prototype : @@toStringTag/c constructor/wc getArg/wc is/wc stack/ac
+WebAssembly.Global : length/? name/? prototype/-
+WebAssembly.Global.prototype : @@toStringTag/c constructor/wc value/ac valueOf/wc
+WebAssembly.Instance : length/? name/? prototype/-
+WebAssembly.Instance.prototype : @@toStringTag/c constructor/wc exports/ac
+WebAssembly.LinkError : length/? name/? prototype/-
+WebAssembly.Memory : length/? name/? prototype/-
+WebAssembly.Memory.prototype : @@toStringTag/c buffer/ac constructor/wc grow/wc toFixedLengthBuffer/wc toResizableBuffer/wc
+WebAssembly.Module : customSections/wc exports/wc imports/wc length/? name/? prototype/-
+WebAssembly.Module.prototype : @@toStringTag/c constructor/wc
+WebAssembly.RuntimeError : length/? name/? prototype/-
+WebAssembly.SuspendError : length/? name/? prototype/-
+WebAssembly.Suspending : length/? name/? prototype/-
+WebAssembly.Suspending.prototype : constructor/wc
+WebAssembly.Table : length/? name/? prototype/-
+WebAssembly.Table.prototype : @@toStringTag/c constructor/wc get/wc grow/wc length/ac set/wc
+WebAssembly.Tag : length/? name/? prototype/-
+WebAssembly.Tag.prototype : @@toStringTag/c constructor/wc
+decodeURI : length/? name/?
+decodeURIComponent : length/? name/?
+encodeURI : length/? name/?
+encodeURIComponent : length/? name/?
+escape : length/? name/?
+eval : length/? name/?
+globalThis open : $vm/? AggregateError/wc Array/wc ArrayBuffer/wc AsyncDisposableStack/wc Atomics/wc BigInt/wc BigInt64Array/wc BigUint64Array/wc Boolean/wc DataView/wc Date/wc DisposableStack/wc Error/wc EvalError/wc FinalizationRegistry/wc Float16Array/wc Float32Array/wc Float64Array/wc Function/wc Infinity/- Int16Array/wc Int32Array/wc Int8Array/wc Intl/wc Iterator/wc JSON/wc Loader/? Map/wc Math/wc NaN/- Number/wc Object/wc Promise/wc Proxy/wc RangeError/wc ReferenceError/wc Reflect/wc RegExp/wc Set/wc ShadowRealm/wc SharedArrayBuffer/wc String/wc SuppressedError/wc Symbol/wc SyntaxError/wc Temporal/wc TypeError/wc URIError/wc Uint16Array/wc Uint32Array/wc Uint8Array/wc Uint8ClampedArray/wc WeakMap/wc WeakRef/wc WeakSet/wc WebAssembly/wc __disableSamplingProfiler/? __disableSuperSampler/? __dumpAndClearSamplingProfilerSamples/? __enableSamplingProfiler/? __enableSuperSampler/? __signpostStart/? __signpostStop/? __tracePointStart/? __tracePointStop/? decodeURI/wc decodeURIComponent/wc encodeURI/wc encodeURIComponent/wc escape/wc eval/wc gc/wc globalThis/wc isFinite/wc isNaN/wc parseFloat/wc parseInt/wc undefined/- unescape/wc
+isFinite : length/? name/?
+isNaN : length/? name/?
+parseFloat : length/? name/?
+parseInt : length/? name/?
+unescape : length/? name/?

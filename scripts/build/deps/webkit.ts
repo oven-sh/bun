@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "680ef47cec2ce646fc109de005882a17542c700d";
+export const WEBKIT_VERSION = "982277c9dd3ee8177ca578e6d871428faeb5021f";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -40,11 +40,13 @@ export const WEBKIT_VERSION = "680ef47cec2ce646fc109de005882a17542c700d";
  *   like the old cmake — avoids debug/release mixing.
  */
 
+import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
 import { computeCpuTargetFlags, hardeningFlags } from "../flags.ts";
-import { slash } from "../shell.ts";
+import type { Ninja } from "../ninja.ts";
+import { quoteArgs, slash } from "../shell.ts";
 import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -71,6 +73,11 @@ function prebuiltSuffix(cfg: Config): string {
     if (cfg.fuzzilli) s += "-coverage";
   }
   if (cfg.hardened) s += "-hardened";
+  // JavaScriptCore's ahead-of-time compiler, which Bun does not use. Only what
+  // ships is also built without it; every other variant has it, and "-aot" at
+  // the end of its name (`variants` in lanes.mjs).
+  const ships = !cfg.debug && !cfg.asan && !/-assertions|-coverage/.test(s) && (!cfg.hardened || cfg.lto);
+  if (!ships) s += "-aot";
   return s;
 }
 
@@ -190,6 +197,53 @@ function webkitSrcDir(cfg: Config): string {
   return resolve(cfg.cwd, env);
 }
 
+/**
+ * It changes the layout of classes in the headers. A prebuilt says which it was
+ * compiled with in its cmakeconfig.h; a checkout turns the compiler on unless
+ * its own compiles and Bun's both say otherwise.
+ */
+const withoutAot = "ENABLE_AOT=0";
+
+// ───────────────────────────────────────────────────────────────────────────
+// The table of built-ins
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * A static JavaScriptCore with the ahead-of-time compiler names the symbols of
+ * the compiler's table of built-ins and leaves defining them to the program
+ * that links it. Returns the table's sources, for Bun to compile: none where
+ * JavaScriptCore has no compiler.
+ *
+ * `fetched`: the WebKit dep's outputs. The generator is in the tarball.
+ */
+export function emitBuiltinTable(n: Ninja, cfg: Config, fetched: string[]): string[] {
+  if (cfg.webkit !== "prebuilt" || !prebuiltSuffix(cfg).endsWith("-aot")) return [];
+  const directory = resolve(cfg.cwd, "src", "codegen", "stand-in-builtin-table");
+  const script = resolve(directory, "index.ts");
+  const host = resolve(directory, "host");
+  const outputs = ["Attachments", "Builtins", "Names", "Overloads", "Types"].map(part =>
+    resolve(cfg.codegenDir, `AOTBuiltinTable${part}.cpp`),
+  );
+  n.build({
+    outputs,
+    rule: "codegen_bun",
+    inputs: [
+      script,
+      resolve(cfg.cwd, "src", "codegen", "helpers.ts"),
+      ...readdirSync(host)
+        .sort()
+        .map(name => resolve(host, name)),
+    ],
+    implicitInputs: fetched,
+    vars: {
+      cwd: cfg.cwd,
+      desc: "AOTBuiltinTable*.cpp",
+      args: quoteArgs(["run", script, prebuiltDestDir(cfg), cfg.codegenDir], cfg.host.os === "windows"),
+    },
+  });
+  return outputs;
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // The Dependency
 // ───────────────────────────────────────────────────────────────────────────
@@ -261,6 +315,7 @@ export const webkit: Dependency = {
     // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
     if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
     if (cfg.hardened) optFlags.push(...hardeningFlags);
+    optFlags.push(`-D${withoutAot}`);
     if (cfg.lto) optFlags.push("-flto=thin");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
@@ -465,6 +520,6 @@ export const webkit: Dependency = {
       includes.push(resolve(process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android", "include"));
     }
 
-    return { libs, includes };
+    return { libs, includes, defines: [withoutAot] };
   },
 };

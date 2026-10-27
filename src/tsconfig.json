@@ -11,5 +11,14 @@
   // js and runtime/bake are projects of their own, with settings that only apply there. The `bun init` and
   // `bun create` templates are users' projects: each has its own tsconfig and dependencies that are not installed
   // here. `cli` is a link to `runtime/cli`. The libuv stub generator needs tree-sitter, which is not installed.
-  "exclude": ["js", "runtime/bake", "runtime/cli/init", "runtime/cli/create", "cli", "jsc/bindings/libuv"]
+  // The stand-in host is WebKit's, and imports a module that WebKit's generator registers when it loads the files.
+  "exclude": [
+    "js",
+    "runtime/bake",
+    "runtime/cli/init",
+    "runtime/cli/create",
+    "cli",
+    "jsc/bindings/libuv",
+    "codegen/stand-in-builtin-table/host"
+  ]
 }

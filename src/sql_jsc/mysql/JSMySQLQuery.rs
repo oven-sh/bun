@@ -221,7 +221,7 @@ impl JSMySQLQuery {
         let Some(target_value) = js::target_get_cached(this_value) else {
             return;
         };
-        let vm = VirtualMachine::get_mut();
+        let vm = VirtualMachine::get();
         let Some(function) = vm.sql_state().mysql_context.on_query_resolve_fn.get() else {
             return;
         };
@@ -231,7 +231,7 @@ impl JSMySQLQuery {
         pending_value.ensure_still_alive();
         self.set_pending_value(JSValue::UNDEFINED);
 
-        vm.event_loop_mut().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
@@ -310,12 +310,12 @@ impl JSMySQLQuery {
         }
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
-        let vm = VirtualMachine::get_mut();
+        let vm = VirtualMachine::get();
         let Some(function) = vm.sql_state().mysql_context.on_query_reject_fn.get() else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
-        vm.event_loop_mut().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),

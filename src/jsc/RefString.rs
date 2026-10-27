@@ -14,8 +14,7 @@ pub(crate) type Hash = u32;
 /// `std.HashMap(Hash, *RefString, bun.IdentityContext(Hash), 80)`
 // `bun.IdentityContext` is an identity hasher (key is already a hash). The `80`
 // max-load-percentage has no direct knob on the Rust side.
-pub type Map =
-    bun_collections::HashMap<Hash, NonNull<RefString>, bun_collections::IdentityContext<Hash>>;
+pub type Map = bun_collections::IdentityHashMapCell<Hash, NonNull<RefString>>;
 
 /// Error for bytes that aren't interned yet and are longer than [`bun_core::String::max_length`].
 #[derive(Debug)]

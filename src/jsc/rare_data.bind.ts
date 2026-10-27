@@ -7,4 +7,4 @@ export const setTLSDefaultCiphers = b.fn({
   expected: { ciphers: ["string"] },
   capability: "heap",
 });
-export const getTLSDefaultCiphers = b.fn({ returns: b.string.utf8, capability: "heap" });
+export const getTLSDefaultCiphers = b.fn({ returns: b.string.local, capability: "heap", throws: true });

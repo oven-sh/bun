@@ -5,6 +5,8 @@
 //! the standalone graph); this crate calls the first two through link-time
 //! `extern "Rust"` decls.
 
+use core::cell::{Cell, OnceCell};
+
 use bun_alloc::Arena as ArenaAllocator;
 use bun_options_types::LoaderExt as _;
 
@@ -23,10 +25,11 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 
 #[derive(Default)]
 pub struct ModuleLoader {
-    pub transpile_source_code_arena: Option<Box<ArenaAllocator>>,
-    pub eval_source: Option<Box<bun_ast::Source<'static>>>,
+    /// Whoever transpiles takes it and puts it back.
+    pub transpile_source_code_arena: Cell<Option<Box<ArenaAllocator>>>,
+    eval_source: OnceCell<Box<bun_ast::Source<'static>>>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
-    pub interactive_eval_script: Option<Box<[u8]>>,
+    interactive_eval_script: OnceCell<Box<[u8]>>,
 }
 
 static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
@@ -45,13 +48,31 @@ pub fn is_allowed_to_use_internal_testing_apis() -> bool {
 }
 
 impl ModuleLoader {
+    /// The synthetic `[eval]` / `[stdin]` entry point.
+    #[inline]
+    pub fn eval_source(&self) -> Option<&bun_ast::Source<'static>> {
+        self.eval_source.get().map(|source| &**source)
+    }
+
+    /// Once, before the entry point loads.
+    pub fn set_eval_source(&self, source: Box<bun_ast::Source<'static>>) {
+        let was_unset = self.eval_source.set(source).is_ok();
+        debug_assert!(was_unset);
+    }
+
+    #[inline]
+    pub fn interactive_eval_script(&self) -> Option<&[u8]> {
+        self.interactive_eval_script.get().map(|script| &**script)
+    }
+
+    /// Once, before the entry point loads.
+    pub fn set_interactive_eval_script(&self, script: Box<[u8]>) {
+        let was_unset = self.interactive_eval_script.set(script).is_ok();
+        debug_assert!(was_unset);
+    }
+
     /// This must be called after calling transpileSourceCode
-    ///
-    /// Takes only `&mut VirtualMachine` (not `&mut self,
-    /// &mut VirtualMachine`) — `ModuleLoader` is a value field of
-    /// `VirtualMachine`, so passing both would alias (PORTING.md §Forbidden).
-    /// Access `module_loader` through `jsc_vm` instead.
-    pub(crate) fn reset_arena(jsc_vm: &mut VirtualMachine) {
+    pub(crate) fn reset_arena(jsc_vm: &VirtualMachine) {
         // PERF: this unconditionally calls `reset()`. Per
         // `MimallocArena::reset_retain_with_limit`'s doc comment, the
         // "mimalloc's segment cache keeps pages warm anyway" theory behind
@@ -62,41 +83,29 @@ impl ModuleLoader {
         // a perf-sensitive change that
         // needs benchmarking (transpile arena RSS vs cycle cost), so it is
         // tracked as a dedicated work order rather than changed inline.
-        if let Some(arena) = jsc_vm.module_loader.transpile_source_code_arena.as_mut() {
+        let slot = &jsc_vm.module_loader.transpile_source_code_arena;
+        if let Some(mut arena) = slot.take() {
             arena.reset();
+            slot.set(Some(arena));
         }
     }
 }
 
-/// RAII guard that calls
-/// [`ModuleLoader::reset_arena`] on the held VM when dropped. Holds a
-/// [`BackRef`] (not `&mut`) so the body of the guarded scope may also reach
-/// into the VM via raw pointers without aliasing the guard; the VM-outlives-
-/// guard contract is the BackRef type invariant.
-///
-/// [`BackRef`]: bun_ptr::BackRef
+/// Calls [`ModuleLoader::reset_arena`] on the held VM when dropped.
 #[must_use = "dropping immediately resets the arena before transpilation"]
-pub struct ArenaResetGuard(bun_ptr::BackRef<VirtualMachine>);
+pub struct ArenaResetGuard<'a>(&'a VirtualMachine);
 
-impl ArenaResetGuard {
-    /// `vm` must be the live per-thread VM (the [`bun_ptr::BackRef`]
-    /// invariant). Drop routes through [`VirtualMachine::as_mut`], which
-    /// derives provenance from the thread-local slot, so neither construction
-    /// nor teardown performs a raw deref here.
+impl<'a> ArenaResetGuard<'a> {
     #[inline]
-    pub fn new(vm: *mut VirtualMachine) -> Self {
-        Self(bun_ptr::BackRef::from(
-            core::ptr::NonNull::new(vm).expect("vm non-null"),
-        ))
+    pub fn new(vm: &'a VirtualMachine) -> Self {
+        Self(vm)
     }
 }
 
-impl Drop for ArenaResetGuard {
+impl Drop for ArenaResetGuard<'_> {
     #[inline]
     fn drop(&mut self) {
-        // BackRef invariant: VM outlives guard. `as_mut()` re-derives the
-        // `&mut` from the thread-local slot (debug-asserts `self.0` is that VM).
-        ModuleLoader::reset_arena(self.0.get().as_mut());
+        ModuleLoader::reset_arena(self.0);
     }
 }
 
@@ -139,7 +148,7 @@ pub struct TranspileExtra<'a> {
 unsafe extern "Rust" {
     /// Defined in `bun_runtime::jsc_hooks`.
     pub(crate) fn __bun_transpile_source_code(
-        jsc_vm: *mut VirtualMachine,
+        jsc_vm: &VirtualMachine,
         args: &TranspileArgs<'_>,
     ) -> Result<ResolvedSource, crate::CrateError>;
     /// Defined in `bun_runtime::jsc_hooks`. `None` when the specifier is not a
@@ -228,12 +237,10 @@ extern "C" fn Bun__getDefaultLoader(
     str: &bun_core::String,
 ) -> bun_options_types::schema::api::Loader {
     use bun_options_types::schema::api;
-    // SAFETY: C++ passed the live JS-thread global; `bun_vm()` is the
-    // per-thread VM pointer (never null on this path).
     let jsc_vm = global.bun_vm();
     let filename = str.to_utf8();
     let loader = jsc_vm
-        .transpiler
+        .transpiler()
         .options
         .loader(bun_resolver::fs::PathName::init(filename.slice()).ext)
         .to_api();

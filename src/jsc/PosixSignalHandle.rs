@@ -21,11 +21,6 @@ pub struct PosixSignalHandle {
 
 #[cfg(unix)]
 impl PosixSignalHandle {
-    // `pub const new = bun.TrivialNew(@This());`
-    pub(crate) fn new(init: Self) -> Box<Self> {
-        Box::new(init)
-    }
-
     /// Returns `false` if the ring is full. The caller wakes the loop on `true`.
     pub(crate) fn enqueue(&self, signal: u8) -> bool {
         self.ring.enqueue(signal)
@@ -33,7 +28,7 @@ impl PosixSignalHandle {
 
     /// Drain as many signals as possible and enqueue them as tasks in the event loop.
     /// Called by the main thread, the ring's single consumer.
-    pub(crate) fn drain(&self, event_loop: &mut EventLoop) {
+    pub(crate) fn drain(&self, event_loop: &EventLoop) {
         while let Some(signal) = self.ring.dequeue() {
             // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
             // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
@@ -59,25 +54,16 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             // SAFETY: `_exit(2)` is async-signal-safe and takes no pointers.
             unsafe { libc::_exit(0) };
         }
-        let Some(vm) = VirtualMachine::get_main_thread_vm() else {
+        let Some(event_loop) = VirtualMachine::main_thread_loop_shared() else {
             return;
         };
-        // SAFETY: `vm` and its event loop are process-lifetime; raw place
-        // projection reads only the `signal_handler` slot (no `&EventLoop`
-        // formed — the main thread may hold `&mut EventLoop` concurrently).
-        let handler = unsafe { (*(*vm).event_loop()).signal_handler };
-        if let Some(handler) = handler {
-            // `BackRef::deref` is the centralised set-once-NonNull proof; the
-            // pointee is all-atomic (`Sync`), so a `&PosixSignalHandle` from
-            // async-signal context is sound.
+        if let Some(handler) = event_loop.signal_handler() {
             // No panic path in a signal handler: drop a number outside 1..=255.
             let Some(signal) = u8::try_from(number).ok().filter(|&s| s != 0) else {
                 return;
             };
             if handler.enqueue(signal) {
-                // SAFETY: same process-lifetime event loop as above; `wakeup`
-                // is one async-signal-safe write to the loop's wakeup fd.
-                unsafe { (*(*vm).event_loop()).wakeup() };
+                event_loop.wakeup();
             }
         }
     }
@@ -220,13 +206,10 @@ impl PosixSignalTask {
 extern "C" fn Bun__ensureSignalHandler() {
     #[cfg(unix)]
     {
-        if let Some(vm) = VirtualMachine::get_main_thread_vm() {
-            // SAFETY: `vm` and its event loop are process-lifetime.
-            let this = unsafe { &mut *(*vm).event_loop() };
-            if this.signal_handler.is_none() {
-                let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
-                this.signal_handler =
-                    Some(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(boxed)));
+        // Only the main thread calls this, so nothing installs between the check and the store.
+        if let Some(event_loop) = VirtualMachine::main_thread_loop_shared() {
+            if event_loop.signal_handler().is_none() {
+                event_loop.install_signal_handler(Box::leak(Box::<PosixSignalHandle>::default()));
             }
         }
     }

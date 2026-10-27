@@ -111,7 +111,7 @@ impl<'a> Holder<'a> {
 
     /// `Drop` releases the strings; this resets the parser arena used while
     /// collecting source lines, which needs `vm`.
-    pub(crate) fn deinit(&mut self, vm: &mut VirtualMachine) {
+    pub(crate) fn deinit(&mut self, vm: &VirtualMachine) {
         if core::mem::take(&mut self.need_to_clear_parser_arena_on_deinit) {
             ModuleLoader::reset_arena(vm);
         }

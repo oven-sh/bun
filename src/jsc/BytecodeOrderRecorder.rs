@@ -14,9 +14,9 @@ use crate::virtual_machine::VirtualMachine;
 use crate::vm::VM;
 
 unsafe extern "C" {
-    fn Bun__BytecodeOrder__enableRecording(vm: *mut VM);
+    safe fn Bun__BytecodeOrder__enableRecording(vm: &VM);
     fn Bun__BytecodeOrder__setLinkedPayload(
-        vm: *mut VM,
+        vm: &VM,
         payload: *const u8,
         payload_size: usize,
         region_ends: *const u32,
@@ -39,7 +39,7 @@ unsafe extern "C" {
         ),
     );
     fn Bun__BytecodeOrder__digestInternalModule(
-        vm: *mut VM,
+        vm: &VM,
         id: u32,
         bytecode: *mut u8,
         bytecode_size: usize,
@@ -51,7 +51,7 @@ unsafe extern "C" {
 
 unsafe extern "C" {
     fn Bun__BytecodeOrder__digestModule(
-        vm: *mut VM,
+        vm: &VM,
         source: &bun_core::String,
         origin_path: &bun_core::String,
         is_module: bool,
@@ -74,10 +74,10 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
     graph.for_each_bytecode_module(&mut |module| {
         let origin_path = bun_core::String::clone_utf8(module.origin_path);
         let (mut digest, mut code_blocks) = (0u64, 0u32);
-        // SAFETY: `jsc_vm` is this thread's live VM; the payload is a live section of the executable.
+        // SAFETY: the payload is a live section of the executable.
         let ok = unsafe {
             Bun__BytecodeOrder__digestModule(
-                vm.jsc_vm,
+                vm.jsc_vm(),
                 &module.source,
                 &origin_path,
                 module.is_esm,
@@ -100,7 +100,7 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
         // SAFETY: as above.
         let ok = unsafe {
             Bun__BytecodeOrder__digestInternalModule(
-                vm.jsc_vm,
+                vm.jsc_vm(),
                 id,
                 bytecode.cast::<u8>(),
                 bytecode.len(),
@@ -136,10 +136,10 @@ pub(crate) fn init_vm(
 ) {
     // `bytecodeOrderStats()` of `bun:jsc`: this VM counts the function bodies it decodes by the payload's regions.
     if let Some((payload, region_ends)) = graph.linked_bytecode_payload() {
-        // SAFETY: `jsc_vm` is this thread's live VM; the payload is a live section of the executable.
+        // SAFETY: the payload is a live section of the executable.
         unsafe {
             Bun__BytecodeOrder__setLinkedPayload(
-                vm.jsc_vm,
+                vm.jsc_vm(),
                 payload.cast::<u8>(),
                 payload.len(),
                 region_ends.as_ptr(),
@@ -154,8 +154,7 @@ fn enable_if_requested(vm: &VirtualMachine) {
     if output_path().is_none() {
         return;
     }
-    // SAFETY: `jsc_vm` is this thread's live VM.
-    unsafe { Bun__BytecodeOrder__enableRecording(vm.jsc_vm) };
+    Bun__BytecodeOrder__enableRecording(vm.jsc_vm());
 }
 
 /// Once: a process that outlives the signal it sent itself has written its order file when it really exits.

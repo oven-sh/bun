@@ -1,9 +1,11 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
+use bun_collections::VecCell;
 use bun_core::{EncodedSlice, String as BunString, StringView};
-use bun_install::Resolution;
+use bun_install::{PackageID, Resolution};
 use bun_io::KeepAlive;
 use bun_resolver::fs as Fs;
 
@@ -68,50 +70,68 @@ struct PackageResolveError<'a> {
     pub version: bun_install::dependency::Version,
 }
 
-pub type Map = Vec<AsyncModule>;
-
+/// The modules that wait for a package. Whoever walks them takes them all out first
+/// ([`Queue::take`]), because rejecting a module's promise calls into JavaScriptCore.
+///
+/// Its entry points are tasks of the event loop, apart from `enqueue`. No reference to the package
+/// manager or to the transpiler is held across a turn of the loop, which is what "a task" means
+/// in the `SAFETY` comments below.
+///
+/// FIXME: a macro is the exception. It runs, and turns the macro loop, under the `&mut Transpiler`
+/// of the parse that called it.
+///
+/// FIXME: there is one package manager per process, which the VM of a Worker gets too, and
+/// nothing orders one thread's `&mut` to it with another's.
 #[derive(Default)]
 pub struct Queue {
-    pub map: Map,
-    pub(crate) scheduled: u32,
+    map: VecCell<AsyncModule>,
+    /// What `run_tasks` reported, until it returns.
+    errors: VecCell<PackageError>,
+    scheduled: Cell<u32>,
+}
+
+enum PackageError {
+    Manifest {
+        name: Box<[u8]>,
+        err: &'static str,
+        url: Box<[u8]>,
+    },
+    Download {
+        package_id: PackageID,
+        name: Box<[u8]>,
+        resolution: Resolution,
+        err: &'static str,
+        url: Box<[u8]>,
+    },
 }
 
 /// The `WakeHandler`'s context, kept for the VM's lifetime; the waking threads outlive any one VM.
 pub struct WakeContext {
-    pub queue: *mut Queue,
     pub handle: crate::VmHandle,
     pub kind: crate::LoopKind,
 }
 
 impl Queue {
-    /// Recover the owning VM.
-    ///
-    /// S017: dropped `container_of` recovery — provenance of `&mut self`
-    /// (which only covers `vm.modules`) cannot soundly widen to the whole
-    /// `VirtualMachine` under Stacked Borrows (see the analogous note on
-    /// `ExitHandler::dispatch_on_exit`). Route through the per-thread
-    /// singleton instead: same pointer, full-allocation provenance via
-    /// [`VirtualMachine::get_mut_ptr`], and no `unsafe` at the call site.
-    /// `&mut self` is kept as a receiver so existing callers
-    /// (`self.vm().package_manager()`) don't change shape.
-    #[inline]
-    pub(crate) fn vm(&mut self) -> &mut VirtualMachine {
-        VirtualMachine::get().as_mut()
+    fn take(&self) -> Vec<AsyncModule> {
+        self.map.take()
     }
 
-    pub(crate) fn on_resolve(_: &mut Queue) {
+    /// What is left of [`take`](Self::take)'s, ahead of the modules enqueued since.
+    fn put_back(&self, mut modules: Vec<AsyncModule>) {
+        modules.append(&mut self.map.take());
+        drop(self.map.replace(modules));
+    }
+
+    pub(crate) fn on_resolve(_: &Queue) {
         bun_core::scoped_log!(AsyncModule, "onResolve");
     }
 }
 
-// Taskable: `Queue` is enqueued via `ConcurrentTask::create_from(this)` in
-// `on_wake_handler` and dispatched in `bun_runtime::dispatch::run_task` →
-// `vm.modules.on_poll()`. The pointer is a
-// borrow into `VirtualMachine.modules`, never freed by the dispatcher.
+// Taskable: dispatched in `bun_runtime::dispatch::run_task` → `vm.modules.on_poll()`.
 impl bun_event_loop::Taskable for Queue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PollPendingModulesTask;
-    /// A "poll your pending modules" ping from an install thread: `this` is
-    /// the VM's own queue; nothing is owned.
+    /// A "poll your pending modules" ping from an install thread. It owns nothing and names no
+    /// queue (`this` is null): the VM that runs it polls its own.
     unsafe fn release_unrun(_: *mut Self) {}
     /// A ping to the VM's own module queue.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -126,10 +146,10 @@ impl bun_event_loop::Taskable for AsyncModule {
     /// handle, arena and parse result go with the box).
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box `done()` queued.
-        let mut this = unsafe { bun_core::heap::take(this) };
-        let vm = VirtualMachine::get().as_mut();
+        let this = unsafe { bun_core::heap::take(this) };
+        let scheduled = &VirtualMachine::get().modules.scheduled;
         this.poll_ref.unref(bun_io::js_vm_ctx());
-        vm.modules.scheduled -= 1;
+        scheduled.set(scheduled.get() - 1);
     }
     /// Fulfils a module fetch of a loader; calls no script of its own.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -223,60 +243,74 @@ use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
 use bun_install::package_manager::run_tasks;
-use bun_install::{self as install, LogLevel, PackageID};
+use bun_install::{self as install, LogLevel};
 
 use crate::event_loop::{ConcurrentTaskItem, Task};
 
-/// `RunTasksCallbacks` impl for the auto-install module queue. `onResolve` /
-/// `onPackageManifestError` / `onPackageDownloadError` forward to the `Queue`
-/// methods, `progress_bar` selected via const generic to match the
+/// `RunTasksCallbacks` impl for the auto-install module queue. The errors are only recorded:
+/// `run_tasks` has the package manager borrowed, which reporting one reads, and reporting one
+/// calls into JavaScriptCore. `progress_bar` selected via const generic to match the
 /// `enable_ansi_colors_stderr` branch.
-struct QueueRunTasksCallbacks<const PROGRESS: bool>;
+struct QueueRunTasksCallbacks<'a, const PROGRESS: bool>(core::marker::PhantomData<&'a Queue>);
 
-impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbacks<PROGRESS> {
-    type Ctx = Queue;
+impl<'a, const PROGRESS: bool> run_tasks::RunTasksCallbacks
+    for QueueRunTasksCallbacks<'a, PROGRESS>
+{
+    type Ctx = &'a Queue;
 
     const PROGRESS_BAR: bool = PROGRESS;
     const HAS_ON_PACKAGE_MANIFEST_ERROR: bool = true;
     const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
     const HAS_ON_RESOLVE: bool = true;
 
-    fn on_resolve(ctx: &mut Queue) {
+    fn on_resolve(ctx: &mut &'a Queue) {
         Queue::on_resolve(ctx)
     }
 
     fn on_package_manifest_error(
-        ctx: &mut Queue,
+        ctx: &mut &'a Queue,
         name: &[u8],
         err: bun_install::Error,
         url: &[u8],
     ) {
-        ctx.on_package_manifest_error(name, err.name(), url)
+        ctx.errors.push(PackageError::Manifest {
+            name: name.into(),
+            err: err.name(),
+            url: url.into(),
+        });
     }
 
     fn on_package_download_error_pkg(
-        ctx: &mut Queue,
+        ctx: &mut &'a Queue,
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
         err: bun_install::Error,
         url: &[u8],
     ) {
-        ctx.on_package_download_error(package_id, name, resolution, err.name(), url)
+        ctx.errors.push(PackageError::Download {
+            package_id,
+            name: name.into(),
+            resolution: *resolution,
+            err: err.name(),
+            url: url.into(),
+        });
     }
 }
 
 impl Queue {
-    pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
+    /// # Safety
+    /// No reference to the package manager or to the transpiler is live.
+    pub unsafe fn enqueue(&self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
-        let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
+        let module = AsyncModule::init(opts, global_object).expect("unreachable");
         module.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
 
-        // allocator arg dropped (Vec uses global mimalloc).
         self.map.push(module);
-        self.vm().package_manager().drain_dependency_list();
+        // SAFETY: fn contract. It schedules network tasks, which call nothing of ours here.
+        unsafe { VirtualMachine::get().package_manager() }.drain_dependency_list();
     }
 
     /// `WakeHandler::handler` — runs on install / HTTP-callback threads
@@ -286,7 +320,11 @@ impl Queue {
         bun_core::scoped_log!(AsyncModule, "onWake");
         // SAFETY: `ctx` is the leaked `WakeContext` registered with this handler.
         let ctx = unsafe { &*ctx.cast::<WakeContext>() };
-        let task = ConcurrentTaskItem::create_from(ctx.queue);
+        let task = ConcurrentTaskItem::create(Task::new(
+            <Queue as bun_event_loop::Taskable>::TAG,
+            core::ptr::null_mut(),
+            bun_event_loop::ContextId::NONE,
+        ));
         if let crate::vm_handle::Posted::Refused(task) = ctx.handle.post(ctx.kind, task) {
             // That VM has closed: nobody is waiting on these modules any more.
             // SAFETY: refused ⇒ we own the task box.
@@ -294,7 +332,7 @@ impl Queue {
         }
     }
 
-    pub fn on_poll(&mut self) {
+    pub fn on_poll(&self) {
         bun_core::scoped_log!(AsyncModule, "onPoll");
         if self.map.is_empty() {
             // A synchronous auto-install drains its own tasks; here their failures would be lost.
@@ -304,39 +342,56 @@ impl Queue {
         self.poll_modules();
     }
 
-    pub(crate) fn run_tasks(&mut self) {
-        // The `run_tasks` free fn takes both
-        // `&mut PackageManager` and `&mut Queue`; the package manager is a
-        // separate heap allocation (`NonNull<dyn AutoInstaller>` on the
-        // resolver), so the two borrows are disjoint.
-        // S017: per-thread VM singleton (safe accessor) instead of
-        // `container_of`-derived `*mut` reborrow.
-        let pm = VirtualMachine::get().as_mut().package_manager();
+    pub(crate) fn run_tasks(&self) {
+        // SAFETY: a task. The callbacks `run_tasks` is given do not reach the package manager.
+        let pm = unsafe { VirtualMachine::get().package_manager() };
+        let mut ctx = self;
 
         if bun_core::output::enable_ansi_colors_stderr() {
             pm.start_progress_bar_if_none();
-            run_tasks::run_tasks::<QueueRunTasksCallbacks<true>>(pm, self, true, LogLevel::Default)
-                .expect("unreachable");
-        } else {
-            run_tasks::run_tasks::<QueueRunTasksCallbacks<false>>(
+            run_tasks::run_tasks::<QueueRunTasksCallbacks<'_, true>>(
                 pm,
-                self,
+                &mut ctx,
+                true,
+                LogLevel::Default,
+            )
+            .expect("unreachable");
+        } else {
+            run_tasks::run_tasks::<QueueRunTasksCallbacks<'_, false>>(
+                pm,
+                &mut ctx,
                 true,
                 LogLevel::DefaultNoProgress,
             )
             .expect("unreachable");
         }
+
+        for error in self.errors.take() {
+            match error {
+                PackageError::Manifest { name, err, url } => {
+                    self.on_package_manifest_error(&name, err, &url);
+                }
+                PackageError::Download {
+                    package_id,
+                    name,
+                    resolution,
+                    err,
+                    url,
+                } => self.on_package_download_error(package_id, &name, &resolution, err, &url),
+            }
+        }
     }
 
-    pub(crate) fn on_package_manifest_error(&mut self, name: &[u8], err: &'static str, url: &[u8]) {
+    pub(crate) fn on_package_manifest_error(&self, name: &[u8], err: &'static str, url: &[u8]) {
         bun_core::scoped_log!(
             AsyncModule,
             "onPackageManifestError: {}",
             bstr::BStr::new(name)
         );
 
-        // reshaped for borrowck — compaction loop → retain_mut.
-        self.map.retain_mut(|module| {
+        let vm = VirtualMachine::get();
+        let mut modules = self.take();
+        modules.retain_mut(|module| {
             for pending in module.parse_result.pending_imports.iter() {
                 if pending.tag == bun_resolver::PendingResolutionTag::Resolve {
                     if pending.esm.name.slice(&pending.string_buf) != name {
@@ -346,8 +401,6 @@ impl Queue {
                     let version = pending.dependency.clone();
                     let import_record_id = pending.import_record_id;
 
-                    // S017: per-thread VM singleton (safe accessor).
-                    let vm = VirtualMachine::get().as_mut();
                     module.resolve_error(
                         vm,
                         import_record_id,
@@ -363,10 +416,11 @@ impl Queue {
             }
             true
         });
+        self.put_back(modules);
     }
 
     pub(crate) fn on_package_download_error(
-        &mut self,
+        &self,
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
@@ -379,62 +433,57 @@ impl Queue {
             bstr::BStr::new(name)
         );
 
-        // S017: per-thread VM singleton (safe accessor) instead of
-        // `container_of`-derived `*mut` reborrow. `resolution_ids` borrows the
-        // lockfile (separate heap allocation, never reallocated on the
-        // download-error path); detach via `RawSlice` so the closure can fetch
-        // a fresh `&mut VirtualMachine` without borrowck tying it to this read.
-        let resolution_ids = bun_ptr::RawSlice::new(
-            VirtualMachine::get()
-                .as_mut()
-                .package_manager()
+        let vm = VirtualMachine::get();
+        let mut modules = self.take();
+        modules.retain_mut(|module| {
+            // SAFETY: a task, after `run_tasks` returned its borrow. This one ends before
+            // `download_error` takes its own.
+            let resolution_ids = unsafe { vm.package_manager() }
                 .lockfile
                 .buffers
                 .resolutions
-                .as_slice(),
-        );
-
-        // reshaped for borrowck — compaction loop → retain_mut.
-        self.map.retain_mut(|module| {
-            for pending in module.parse_result.pending_imports.iter() {
-                if resolution_ids.slice()[pending.root_dependency_id as usize] != package_id {
-                    continue;
-                }
-                let import_record_id = pending.import_record_id;
-                // S017: per-thread VM singleton (safe accessor).
-                let vm = VirtualMachine::get().as_mut();
-                module.download_error(
-                    vm,
-                    import_record_id,
-                    &PackageDownloadError {
-                        name,
-                        resolution: *resolution,
-                        err,
-                        url,
-                    },
-                );
-                return false; // continue :outer
-            }
-            true
+                .as_slice();
+            let Some(import_record_id) = module
+                .parse_result
+                .pending_imports
+                .iter()
+                .find(|pending| resolution_ids[pending.root_dependency_id as usize] == package_id)
+                .map(|pending| pending.import_record_id)
+            else {
+                return true;
+            };
+            module.download_error(
+                vm,
+                import_record_id,
+                &PackageDownloadError {
+                    name,
+                    resolution: *resolution,
+                    err,
+                    url,
+                },
+            );
+            false
         });
+        self.put_back(modules);
     }
 
-    pub(crate) fn poll_modules(&mut self) {
-        // S017: per-thread VM singleton (safe accessor) instead of
-        // `container_of`-derived `*mut` reborrow. The package manager is a
-        // separate heap allocation, disjoint from `self` (= `vm.modules`).
-        let pm = VirtualMachine::get().as_mut().package_manager();
+    pub(crate) fn poll_modules(&self) {
+        let vm = VirtualMachine::get();
+        // SAFETY: a task, after `run_tasks` returned its borrow. What is called below is the
+        // package manager's own, and `done`, which queues a task.
+        let pm = unsafe { vm.package_manager() };
         if pm.pending_tasks.load(Ordering::Relaxed) > 0 {
             return;
         }
+        let mut modules = self.take();
 
         // Walk by index and `remove(i)` finished modules by value into
         // `done(self)`, so each module's owned fields are dropped exactly once
         // (in `on_done`).
         let mut i = 0;
-        while i < self.map.len() {
+        while i < modules.len() {
             let (done_count, tags_len) = {
-                let module = &mut self.map[i];
+                let module = &mut modules[i];
                 let pending_imports = &mut module.parse_result.pending_imports;
                 // var esms = module.parse_result.pending_imports.items(.esm);
                 // var versions = module.parse_result.pending_imports.items(.dependency);
@@ -512,19 +561,28 @@ impl Queue {
             };
 
             if done_count == tags_len {
-                let module = self.map.remove(i);
-                // S017: per-thread VM singleton (safe accessor).
-                module.done(VirtualMachine::get().as_mut());
+                modules.remove(i).done(vm);
             } else {
                 i += 1;
             }
         }
+        self.put_back(modules);
 
         if self.map.is_empty() {
             // ensure we always end the progress bar
-            self.vm().package_manager().end_progress_bar();
+            pm.end_progress_bar();
         }
     }
+}
+
+/// Points the transpiler, its linker and resolver, and the package manager at `log`.
+fn set_log(vm: &VirtualMachine, log: core::ptr::NonNull<bun_ast::Log>) {
+    // SAFETY: `resume_loading_module` runs as a task of the event loop and holds no borrow of the
+    // transpiler between statements, and nothing in this one runs script or reaches the
+    // transpiler through the VM again.
+    unsafe { vm.transpiler_mut() }.set_log(log.as_ptr());
+    // SAFETY: likewise for the package manager.
+    unsafe { vm.package_manager() }.log = log.as_ptr();
 }
 
 impl AsyncModule {
@@ -578,8 +636,9 @@ impl AsyncModule {
         })
     }
 
-    pub(crate) fn done(self, jsc_vm: &mut VirtualMachine) {
-        jsc_vm.modules.scheduled += 1;
+    pub(crate) fn done(self, jsc_vm: &VirtualMachine) {
+        let scheduled = &jsc_vm.modules.scheduled;
+        scheduled.set(scheduled.get() + 1);
         jsc_vm.enqueue_task(Task::from_boxed(Box::new(self)));
     }
 
@@ -595,12 +654,12 @@ impl AsyncModule {
         // lifetime invariant, so no raw-pointer deref is open-coded here.
         let global_ref = this.global_this;
         let global_this: &JSGlobalObject = &global_ref;
-        // SAFETY: `VirtualMachine::get()` is the live per-thread VM (one VM per
-        // thread).
-        let jsc_vm = VirtualMachine::get().as_mut();
-        jsc_vm.modules.scheduled -= 1;
-        if jsc_vm.modules.scheduled == 0 {
-            jsc_vm.package_manager().end_progress_bar();
+        let jsc_vm = VirtualMachine::get();
+        let scheduled = &jsc_vm.modules.scheduled;
+        scheduled.set(scheduled.get() - 1);
+        if scheduled.get() == 0 {
+            // SAFETY: a task (see `Queue`); the borrow ends with the statement.
+            unsafe { jsc_vm.package_manager() }.end_progress_bar();
         }
         let mut log = bun_ast::Log::init();
         this.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
@@ -623,7 +682,7 @@ impl AsyncModule {
 
     fn resolve_error(
         &mut self,
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         import_record_id: u32,
         result: &PackageResolveError<'_>,
     ) {
@@ -696,11 +755,16 @@ impl AsyncModule {
                     b"No match found"
                 };
 
+            // SAFETY: `Queue::run_tasks` has returned its borrow. This one is last used for `msg`,
+            // before anything calls into JavaScriptCore.
+            let literal = unsafe { vm.package_manager() }
+                .lockfile
+                .str(&result.version.literal);
             let _ = write!(
                 &mut msg,
                 "{} '{}' for package '{}' (but package exists)",
                 bstr::BStr::new(prefix),
-                bstr::BStr::new(vm.package_manager().lockfile.str(&result.version.literal)),
+                bstr::BStr::new(literal),
                 bstr::BStr::new(result.name)
             );
         } else {
@@ -809,30 +873,27 @@ impl AsyncModule {
 
     fn download_error(
         &mut self,
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         import_record_id: u32,
         result: &PackageDownloadError<'_>,
     ) {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
-        // `&mut vm` / `&mut self` reborrows below; `GlobalRef::deref` is the
+        // `&mut self` reborrows below; `GlobalRef::deref` is the
         // safe JSC_BORROW accessor.
         let global_ref = self.global_this;
         let global_this: &JSGlobalObject = &global_ref;
 
-        // `string_bytes` borrows the per-VM lockfile arena which outlives this
-        // stack frame; capture as `RawSlice` so `Resolution::fmt` doesn't
-        // extend the `&mut vm` borrow across the `match e` body.
-        let string_bytes = bun_ptr::RawSlice::new(
-            vm.package_manager()
-                .lockfile
-                .buffers
-                .string_bytes
-                .as_slice(),
-        );
+        // SAFETY: `Queue::run_tasks` has returned its borrow. This one is last used for `msg`,
+        // before anything calls into JavaScriptCore.
+        let string_bytes = unsafe { vm.package_manager() }
+            .lockfile
+            .buffers
+            .string_bytes
+            .as_slice();
         let resolution_fmt = bun_core::fmt::redacted(
             result
                 .resolution
-                .fmt(string_bytes.slice(), bun_core::fmt::PathSep::Any),
+                .fmt(string_bytes, bun_core::fmt::PathSep::Any),
         );
 
         let mut msg: Vec<u8> = Vec::new();
@@ -1026,47 +1087,25 @@ impl AsyncModule {
         // the backing `Box<[u8]>` is never replaced in this fn.
         let path_text: &[u8] = unsafe { bun_ptr::detach_lifetime(self.path_text()) };
         let path = Fs::Path::init(path_text);
-        let jsc_vm = VirtualMachine::get_mut_ptr();
-        // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread)
-        // (`transpiler.log`/`resolver.log`/`linker.log` are themselves raw
-        // `*mut Log` aliased deliberately — see `Transpiler::set_log`).
+        let jsc_vm = VirtualMachine::get();
         // `vm.log` is set unconditionally in `init` and never cleared, so the
         // `expect` is infallible.
-        let old_log: core::ptr::NonNull<bun_ast::Log> =
-            unsafe { (*jsc_vm).log }.expect("vm.log set in init");
+        let old_log = jsc_vm.log.get().expect("vm.log set in init");
 
-        let log_nn = core::ptr::NonNull::new(log).expect("AsyncModule log is non-null");
-        let log_ptr: *mut bun_ast::Log = log;
-        // SAFETY: see above — single-thread VM; raw-ptr field stores.
-        unsafe {
-            (*jsc_vm).transpiler.linker.log = log_ptr;
-            (*jsc_vm).transpiler.log = log_ptr;
-            (*jsc_vm).transpiler.resolver.log = log_nn;
-            (*jsc_vm).package_manager().log = log_ptr;
-        }
-        let _restore = scopeguard::guard((jsc_vm, old_log), |(jsc_vm, old_log)| {
-            // SAFETY: same per-thread VM; restoring the original log pointers
-            // stored above.
-            unsafe {
-                let old_log_ptr = old_log.as_ptr();
-                (*jsc_vm).transpiler.linker.log = old_log_ptr;
-                (*jsc_vm).transpiler.log = old_log_ptr;
-                (*jsc_vm).transpiler.resolver.log = old_log;
-                (*jsc_vm).package_manager().log = old_log_ptr;
-            }
-        });
+        set_log(jsc_vm, core::ptr::NonNull::from(&mut *log));
+        let _restore = scopeguard::guard((), |()| set_log(jsc_vm, old_log));
 
         // We _must_ link because:
         // - node_modules bundle won't be properly
-        // SAFETY: per-thread VM; `linker` is a value field of `transpiler`.
-        unsafe {
-            (*jsc_vm).transpiler.linker.link::<false, true>(
+        // SAFETY: as in `set_log`. `link` rewrites import records and writes to the log.
+        unsafe { jsc_vm.transpiler_mut() }
+            .linker
+            .link::<false, true>(
                 &path,
                 &mut parse_result,
-                &(*jsc_vm).origin,
+                &jsc_vm.origin,
                 bun_bundler::options::ImportPathFormat::AbsolutePath,
             )?;
-        }
         self.parse_result = parse_result;
         // `print_with_source_map` consumes `ParseResult` by
         // value (it moves `ast` into `print_ast`). Hoist the post-print
@@ -1110,26 +1149,22 @@ impl AsyncModule {
             });
 
         {
-            // SAFETY: per-thread VM; `source_map_handler` stashes the
-            // `*mut BufferPrinter` and only reborrows inside
-            // `on_source_map_chunk` after the writer's last use retires.
-            let mut mapper = unsafe { (*jsc_vm).source_map_handler(&raw mut printer) };
-            // SAFETY: per-thread VM.
-            let _ = unsafe {
-                (*jsc_vm).transpiler.print_with_source_map(
-                    // `self.arena` is the same per-call arena that built
-                    // `parse_result.ast` (handed to the queue via
-                    // `InitOpts::arena` after the original parse). The
-                    // printer's rope-flattening scratch belongs in it, not
-                    // in the per-VM `transpiler_arena`.
-                    &self.arena,
-                    parse_result,
-                    &mut printer,
-                    bun_js_printer::Format::EsmAscii,
-                    mapper.get(),
-                    None,
-                )
-            }?;
+            let mut mapper = jsc_vm.source_map_handler(&raw mut printer);
+            // SAFETY: as in `set_log`. Of the VM, printing reaches only `source_mappings`, through
+            // `mapper`.
+            let _ = unsafe { jsc_vm.transpiler_mut() }.print_with_source_map(
+                // `self.arena` is the same per-call arena that built
+                // `parse_result.ast` (handed to the queue via
+                // `InitOpts::arena` after the original parse). The
+                // printer's rope-flattening scratch belongs in it, not
+                // in the per-VM `transpiler_arena`.
+                &self.arena,
+                parse_result,
+                &mut printer,
+                bun_js_printer::Format::EsmAscii,
+                mapper.get(),
+                None,
+            )?;
         }
 
         // `bun_core::env::DUMP_SOURCE` is debug, non-test builds only. The previous
@@ -1137,8 +1172,7 @@ impl AsyncModule {
         // exist, which silently compiled this call out everywhere.
         if bun_core::env::DUMP_SOURCE {
             crate::runtime_transpiler_store::dump_source_string(
-                // SAFETY: `jsc_vm` is the live per-thread `VirtualMachine` (BACKREF, non-null).
-                unsafe { core::ptr::NonNull::new_unchecked(jsc_vm) },
+                &jsc_vm.source_mappings,
                 specifier,
                 printer.ctx.get_written(),
             );

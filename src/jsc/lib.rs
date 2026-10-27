@@ -1141,6 +1141,8 @@ pub use self::js_property_iterator::{
 
 #[path = "event_loop.rs"]
 pub mod event_loop;
+#[path = "SpawnSyncEventLoop.rs"]
+pub mod spawn_sync_event_loop;
 pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
@@ -1350,20 +1352,20 @@ pub struct Ref {
 }
 
 impl Ref {
-    pub fn unref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
+    pub fn unref(&mut self, vm: &virtual_machine::VirtualMachine) {
         if !self.has {
             return;
         }
         self.has = false;
-        vm.active_tasks -= 1;
+        vm.active_tasks.set(vm.active_tasks.get() - 1);
     }
 
-    pub fn r#ref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
+    pub fn r#ref(&mut self, vm: &virtual_machine::VirtualMachine) {
         if self.has {
             return;
         }
         self.has = true;
-        vm.active_tasks += 1;
+        vm.active_tasks.set(vm.active_tasks.get() + 1);
     }
 }
 

@@ -13,9 +13,8 @@ pub(crate) fn make_diff(
     let global = cx.global();
     // `git_diff_internal` routes through `bun_spawn::sync`, which on
     // Windows derefs `WindowsOptions.loop_` — supply the JS event loop.
-    // `global.bun_vm().event_loop()` is the live per-thread `jsc::EventLoop`.
-    let mut loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast());
-    let diff = match git_diff_internal(old_folder, new_folder, &mut loop_) {
+    let loop_ = global.bun_vm().event_loop().handle();
+    let diff = match git_diff_internal(old_folder, new_folder, loop_) {
         Ok(d) => d,
         Err(e) => return Err(global.throw_error(e, "failed to make diff")),
     };

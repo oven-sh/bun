@@ -34,12 +34,12 @@
 #[cfg(debug_assertions)]
 use core::panic::Location;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use bun_threading::{Condvar, Guarded};
 
-use crate::event_loop::EventLoop;
+use crate::event_loop::Shared as LoopShared;
 use crate::virtual_machine::VirtualMachine;
 use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
 
@@ -80,8 +80,8 @@ pub enum LoopKind {
     Macro = 1,
 }
 
-/// `state` (read by every native→JS entry on the JS thread) and `vm`, on
-/// their own cache line: the counters after it are RMW'd by pool / HTTP
+/// `state` (read by every native→JS entry on the JS thread), `vm` and `jsc_vm`,
+/// on their own cache line: the counters after it are RMW'd by pool / HTTP
 /// threads on every completion.
 #[cfg_attr(
     any(
@@ -94,10 +94,12 @@ pub enum LoopKind {
 #[cfg_attr(target_arch = "s390x", repr(align(128)))]
 struct ReadMostly {
     state: AtomicU8,
-    /// The VM. Dereferenced by a ticket holder (the VM outlives every ticket),
-    /// by a weak accessor inside the `active` gate before `Closed`, or on the
-    /// JS thread.
-    vm: *mut VirtualMachine,
+    /// The VM. Never borrowed whole: other threads read only the `Sync` part of its two loops
+    /// ([`Shared::loop_of`]), as a ticket holder (the VM outlives every ticket) or as a weak
+    /// accessor inside the `active` gate before `Closed`.
+    vm: *const VirtualMachine,
+    /// The VM's `JSC::VM`, which lives as long as `vm` can be read. Null until `init` has made it.
+    jsc_vm: AtomicPtr<crate::VM>,
 }
 
 pub struct Shared {
@@ -133,8 +135,8 @@ struct LiveTickets {
 }
 
 // SAFETY: `vm` is dereferenced only under the discipline in the module doc
-// (ticket held ⇒ VM alive; weak ⇒ inside the `active` gate before `Closed`);
-// everything else is atomics / sync primitives.
+// (ticket held ⇒ VM alive; weak ⇒ inside the `active` gate before `Closed`)
+// and only as far as a `Sync` field; everything else is atomics / sync primitives.
 unsafe impl Send for Shared {}
 // SAFETY: as above.
 unsafe impl Sync for Shared {}
@@ -157,13 +159,14 @@ impl Shared {
     }
 
     #[inline]
-    fn loop_of(&self, kind: LoopKind) -> &EventLoop {
+    fn loop_of(&self, kind: LoopKind) -> &LoopShared {
         // SAFETY: caller holds a ticket or is inside the weak gate before
-        // `Closed`; the VM and both embedded loops are alive.
+        // `Closed`; the VM and both embedded loops are alive. Only the `Sync`
+        // place is borrowed, never the VM or the loop around it.
         unsafe {
             match kind {
-                LoopKind::Regular => &(*self.hot.vm).regular_event_loop,
-                LoopKind::Macro => &(*self.hot.vm).macro_event_loop,
+                LoopKind::Regular => &(*self.hot.vm).regular_event_loop.shared,
+                LoopKind::Macro => &(*self.hot.vm).macro_event_loop.shared,
             }
         }
     }
@@ -304,11 +307,12 @@ impl Drop for Access<'_> {
 
 impl VmHandle {
     /// JS thread, at VM creation.
-    pub(crate) fn new(vm: *mut VirtualMachine) -> Self {
+    pub(crate) fn new(vm: *const VirtualMachine) -> Self {
         VmHandle(Arc::new(Shared {
             hot: ReadMostly {
                 state: AtomicU8::new(State::Open as u8),
                 vm,
+                jsc_vm: AtomicPtr::new(core::ptr::null_mut()),
             },
             tickets: AtomicU32::new(0),
             active: AtomicU32::new(0),
@@ -320,6 +324,14 @@ impl VmHandle {
                 gate: core::sync::atomic::AtomicBool::new(false),
             },
         }))
+    }
+
+    /// JS thread, whenever `VirtualMachine::jsc_vm` is set.
+    pub(crate) fn set_jsc_vm(&self, jsc_vm: &'static crate::VM) {
+        self.0
+            .hot
+            .jsc_vm
+            .store(jsc_vm.as_mut_ptr(), Ordering::Release);
     }
 
     #[inline]
@@ -391,10 +403,11 @@ impl VmHandle {
     pub fn request_termination(&self) {
         self.stop();
         if let Some(_a) = self.enter() {
-            // SAFETY: inside the gate before `Closed` ⇒ the VM is alive;
-            // `notify_need_termination` is thread-safe (VMTraps). Raw field
-            // read, no `&VirtualMachine` formed off-thread.
-            unsafe { (*(*self.0.hot.vm).jsc_vm.cast_const()).notify_need_termination() };
+            // SAFETY: null, or inside the gate before `Closed` ⇒ the `JSC::VM` is alive.
+            if let Some(jsc_vm) = unsafe { self.0.hot.jsc_vm.load(Ordering::Acquire).as_ref() } {
+                // Thread-safe (VMTraps).
+                jsc_vm.notify_need_termination();
+            }
             self.0.loop_of(LoopKind::Regular).wakeup();
         }
     }
@@ -738,9 +751,9 @@ pub unsafe extern "C" fn Bun__VmHandle__postAndRelease(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine, delta: core::ffi::c_int) {
     if delta > 0 {
-        vm.event_loop_shared().ref_keep_alive();
+        vm.event_loop().ref_keep_alive();
     } else {
-        vm.event_loop_shared().unref_keep_alive();
+        vm.event_loop().unref_keep_alive();
     }
 }
 
@@ -806,7 +819,7 @@ const _: () = assert!(State::Open as u8 == 0);
 /// takes one more ticket.
 pub enum ConcurrentPoster {
     Js(Ticket),
-    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop, bun_ptr::Mut>),
+    Mini(&'static bun_event_loop::MiniEventLoop::Shared),
 }
 
 impl Clone for ConcurrentPoster {
@@ -825,13 +838,10 @@ impl ConcurrentPoster {
     #[track_caller]
     pub fn from_event_loop_handle(h: &bun_event_loop::EventLoopHandle) -> Self {
         match h {
-            bun_event_loop::EventLoopHandle::Js { owner } => {
-                // SAFETY: a `Js` handle is only formed on its VM's thread from
-                // the live VM (`EventLoopHandle::init` contract).
-                let vm = unsafe { &*owner.bun_vm().cast::<VirtualMachine>() };
-                ConcurrentPoster::Js(vm.ticket())
+            bun_event_loop::EventLoopHandle::Js { .. } => {
+                ConcurrentPoster::Js(VirtualMachine::get().ticket())
             }
-            bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(*mini),
+            bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(&mini.shared),
         }
     }
 
@@ -853,13 +863,7 @@ impl ConcurrentPoster {
         task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,
     ) {
         match self {
-            ConcurrentPoster::Mini(mini) => {
-                let mut mini = *mini;
-                // SAFETY: per `EventLoopHandle::Mini` invariant — the mini loop is
-                // alive for as long as work it created runs; its concurrent queue
-                // push is thread-safe.
-                unsafe { mini.get_mut() }.enqueue_task_concurrent(task);
-            }
+            ConcurrentPoster::Mini(mini) => mini.enqueue_task_concurrent(task),
             ConcurrentPoster::Js(..) => debug_assert!(false, "post_mini on a Js poster"),
         }
     }
@@ -924,15 +928,15 @@ impl VirtualMachine {
 pub struct IsolatedPosterInner {
     open: core::sync::atomic::AtomicBool,
     active: AtomicU32,
-    event_loop: *const EventLoop,
+    event_loop: *const LoopShared,
 }
-// SAFETY: `event_loop` is dereferenced only under the gate (open && counted).
+// SAFETY: `event_loop` is dereferenced only under the gate (open && counted), and is `Sync`.
 unsafe impl Send for IsolatedPosterInner {}
 // SAFETY: as above.
 unsafe impl Sync for IsolatedPosterInner {}
 
 impl IsolatedPosterInner {
-    pub(crate) fn new(event_loop: *const EventLoop) -> Arc<Self> {
+    pub(crate) fn new(event_loop: *const LoopShared) -> Arc<Self> {
         Arc::new(Self {
             open: core::sync::atomic::AtomicBool::new(true),
             active: AtomicU32::new(0),

@@ -1,6 +1,9 @@
+use core::cell::{Cell, OnceCell, UnsafeCell};
 use core::ffi::c_void;
+use core::pin::Pin;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::JSGlobalObject;
@@ -18,7 +21,7 @@ use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, Mode};
 use bun_uws::{self as uws, SocketGroup};
 
-use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
+use crate::spawn_sync_event_loop::SpawnSyncEventLoop;
 
 use super::uuid::UUID;
 
@@ -55,7 +58,8 @@ use super::uuid::UUID;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct HotMap {
-    _map: StringArrayHashMap<HotMapEntry>,
+    /// Taken out for the length of one map operation, none of which comes back here.
+    _map: Cell<StringArrayHashMap<HotMapEntry>>,
 }
 
 /// Erased `(tag, ptr)` payload — concrete variant list lives in `bun_runtime`.
@@ -76,36 +80,36 @@ impl Default for HotMapEntry {
 impl HotMap {
     pub(crate) fn init() -> HotMap {
         HotMap {
-            _map: StringArrayHashMap::new(),
+            _map: Cell::new(StringArrayHashMap::new()),
         }
     }
 
     pub fn get_entry(&self, key: &[u8]) -> Option<HotMapEntry> {
-        self._map.get(key).copied()
+        let map = self._map.replace(StringArrayHashMap::new());
+        let entry = map.get(key).copied();
+        self._map.set(map);
+        entry
     }
 
-    /// Untyped insert — typed `insert<T>` lives in `bun_runtime` where the
-    /// `TaggedPointerUnion` payload list is named.
-    pub fn insert_raw(&mut self, key: &[u8], entry: HotMapEntry) {
-        let gop = bun_core::handle_oom(self._map.get_or_put(key));
+    pub fn insert_raw(&self, key: &[u8], entry: HotMapEntry) {
+        let mut map = self._map.replace(StringArrayHashMap::new());
+        let gop = bun_core::handle_oom(map.get_or_put(key));
         if gop.found_existing {
             panic!("HotMap already contains key");
         }
-        // `get_or_put` already boxed the key; the map owns its keys.
         *gop.value_ptr = entry;
+        self._map.set(map);
     }
 
-    pub fn remove(&mut self, key: &[u8]) {
-        // The map owns the Box<[u8]> key and `swap_remove` drops it. The
-        // aliasing assert below means the caller must not pass the map's own
-        // key storage. Ordering doesn't matter for HotMap consumers.
-        let Some(i) = self._map.get_index(key) else {
-            return;
-        };
-        let stored = &self._map.keys()[i];
-        let is_same_slice = stored.as_ptr() == key.as_ptr() && stored.len() == key.len();
-        debug_assert!(!is_same_slice);
-        self._map.swap_remove(key);
+    pub fn remove(&self, key: &[u8]) {
+        let mut map = self._map.replace(StringArrayHashMap::new());
+        if let Some(i) = map.get_index(key) {
+            let stored = &map.keys()[i];
+            let is_same_slice = stored.as_ptr() == key.as_ptr() && stored.len() == key.len();
+            debug_assert!(!is_same_slice);
+            map.swap_remove(key);
+        }
+        self._map.set(map);
     }
 }
 
@@ -133,25 +137,18 @@ impl EntropyCache {
         bun_boringssl::rand_bytes(&mut self.cache);
         self.index = 0;
     }
-    pub fn get(&mut self) -> [u8; 16] {
-        if self.index + 16 > self.cache.len() {
-            self.fill();
-        }
-        let mut r = [0u8; 16];
-        r.copy_from_slice(&self.cache[self.index..self.index + 16]);
-        self.index += 16;
-        r
-    }
-    pub(crate) fn slice(&mut self, len: usize) -> &mut [u8] {
+    /// `false`, with `out` untouched, if `out` is longer than the cache.
+    fn copy_to(&mut self, out: &mut [u8]) -> bool {
+        let len = out.len();
         if len > self.cache.len() {
-            return &mut [];
+            return false;
         }
         if self.index + len > self.cache.len() {
             self.fill();
         }
-        let s = self.index;
+        out.copy_from_slice(&self.cache[self.index..self.index + len]);
         self.index += len;
-        &mut self.cache[s..s + len]
+        true
     }
 }
 
@@ -194,30 +191,30 @@ impl CleanupHook {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RareData {
-    pub(crate) boring_ssl_engine: Option<*mut boring::ENGINE>,
+    pub(crate) boring_ssl_engine: Cell<Option<*mut boring::ENGINE>>,
 
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
     /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
     /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to
     /// re-stat.
-    pub stderr_store: Option<NonNull<c_void>>,
-    pub(crate) stderr_mode: Mode,
-    pub stdin_store: Option<NonNull<c_void>>,
-    pub(crate) stdin_mode: Mode,
-    pub stdout_store: Option<NonNull<c_void>>,
-    pub(crate) stdout_mode: Mode,
+    pub stderr_store: Cell<Option<NonNull<c_void>>>,
+    pub(crate) stderr_mode: Cell<Mode>,
+    pub stdin_store: Cell<Option<NonNull<c_void>>>,
+    pub(crate) stdin_mode: Cell<Mode>,
+    pub stdout_store: Cell<Option<NonNull<c_void>>>,
+    pub(crate) stdout_mode: Cell<Mode>,
 
-    pub(crate) entropy_cache: Option<Box<EntropyCache>>,
+    pub(crate) entropy_cache: Cell<Option<Box<EntropyCache>>>,
 
-    pub(crate) hot_map: Option<HotMap>,
+    pub(crate) hot_map: OnceCell<HotMap>,
 
     // TODO: make this per JSGlobalObject instead of global
     // This does not handle ShadowRealm correctly!
-    pub(crate) cleanup_hooks: Vec<CleanupHook>,
+    pub(crate) cleanup_hooks: bun_collections::VecCell<CleanupHook>,
     /// Joins `cleanup_hooks` once `VirtualMachine::teardown` has everything back from other threads.
-    pub(crate) cleanup_hooks_after_teardown_wait: Vec<CleanupHook>,
+    pub(crate) cleanup_hooks_after_teardown_wait: bun_collections::VecCell<CleanupHook>,
 
-    pub(crate) file_polls: Option<Box<FilePollStore>>,
+    pub(crate) file_polls: OnceCell<Box<UnsafeCell<FilePollStore>>>,
 
     /// Embedded socket groups for kinds that aren't tied to a Listener / server.
     /// Lazily linked into the loop on first socket; never separately allocated.
@@ -233,15 +230,15 @@ pub struct RareData {
     /// SHA-256 + map lookup. Ref owned here. Lazy-init body lives in
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
     /// Held until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
-    pub default_client_ssl_ctx: Option<boring::OwnedSslCtx>,
+    pub default_client_ssl_ctx: Cell<Option<boring::OwnedSslCtx>>,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
-    pub(crate) node_fs_stat_watcher_scheduler: Option<NonNull<c_void>>,
+    pub(crate) node_fs_stat_watcher_scheduler: Cell<Option<NonNull<c_void>>>,
 
     /// `bun_runtime::node::memory_pressure::MemoryPressureWatcher` — erased
     /// `Box`; lazy-init on the first `process.on("memoryPressure", ...)` listener.
-    pub(crate) memory_pressure_watcher: Option<NonNull<c_void>>,
+    pub(crate) memory_pressure_watcher: Cell<Option<NonNull<c_void>>>,
 
     /// Watch-mode restart needs to RST every listen socket so the new process
     /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
@@ -252,13 +249,13 @@ pub struct RareData {
     pub pipe_read_scratch: Box<bun_event_loop::PipeReadScratch>,
 
     /// `node:http2` PADDED DATA scratch; see [`Self::take_h2_padded_frame_buffer`].
-    h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
+    h2_padded_frame_buffer: Cell<Option<Box<H2PaddedFrameBuffer>>>,
     /// Output scratch for one JS-thread `CompressionStream` step; see [`Self::take_compression_scratch`].
-    compression_scratch: Option<Vec<u8>>,
+    compression_scratch: Cell<Option<Vec<u8>>>,
     /// Inflated payload of one `new WebSocket()` client message; see [`Self::take_websocket_inflate_scratch`].
-    websocket_inflate_scratch: Option<Vec<u8>>,
-    /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
-    libdeflate_decompressor: Option<libdeflate::OwnedDecompressor>,
+    websocket_inflate_scratch: Cell<Option<Vec<u8>>>,
+    /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::take_libdeflate_decompressor`].
+    libdeflate_decompressor: Cell<Option<libdeflate::OwnedDecompressor>>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
@@ -268,15 +265,13 @@ pub struct RareData {
     pub s3_default_client: Strong,
     /// Per-VM, like Node's quic `BindingData` (node/src/quic/bindingdata.h).
     pub node_quic_callbacks: Strong,
-    pub(crate) default_csrf_secret: Box<[u8]>,
+    pub(crate) default_csrf_secret: OnceCell<Box<[u8]>>,
 
-    /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
-    /// [`Self::tls_default_ciphers`] strips it.
-    pub(crate) tls_default_ciphers: Option<Box<[u8]>>,
+    pub(crate) tls_default_ciphers: Cell<Option<Rc<[u8]>>>,
 
     // proxy_env_storage moved to VirtualMachine — see comment there on why
     // lazy RareData creation raced with worker spawn.
-    spawn_sync_event_loop_: Option<Box<SpawnSyncEventLoop>>,
+    spawn_sync_event_loop_: OnceCell<Pin<Box<SpawnSyncEventLoop>>>,
 
     pub path_buf: PathBuf,
 }
@@ -286,35 +281,35 @@ pub(crate) type FilePollStore = Async::file_poll::Store;
 impl Default for RareData {
     fn default() -> Self {
         Self {
-            boring_ssl_engine: None,
-            stderr_store: None,
-            stderr_mode: 0,
-            stdin_store: None,
-            stdin_mode: 0,
-            stdout_store: None,
-            stdout_mode: 0,
-            entropy_cache: None,
-            hot_map: None,
-            cleanup_hooks: Vec::new(),
-            cleanup_hooks_after_teardown_wait: Vec::new(),
-            file_polls: None,
+            boring_ssl_engine: Cell::new(None),
+            stderr_store: Cell::new(None),
+            stderr_mode: Cell::new(0),
+            stdin_store: Cell::new(None),
+            stdin_mode: Cell::new(0),
+            stdout_store: Cell::new(None),
+            stdout_mode: Cell::new(0),
+            entropy_cache: Cell::new(None),
+            hot_map: OnceCell::new(),
+            cleanup_hooks: Default::default(),
+            cleanup_hooks_after_teardown_wait: Default::default(),
+            file_polls: OnceCell::new(),
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
             socket_groups: SocketGroups::default(),
-            default_client_ssl_ctx: None,
-            node_fs_stat_watcher_scheduler: None,
-            memory_pressure_watcher: None,
+            default_client_ssl_ctx: Cell::new(None),
+            node_fs_stat_watcher_scheduler: Cell::new(None),
+            memory_pressure_watcher: Cell::new(None),
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
-            h2_padded_frame_buffer: None,
-            compression_scratch: None,
-            websocket_inflate_scratch: None,
-            libdeflate_decompressor: None,
+            h2_padded_frame_buffer: Cell::new(None),
+            compression_scratch: Cell::new(None),
+            websocket_inflate_scratch: Cell::new(None),
+            libdeflate_decompressor: Cell::new(None),
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
-            default_csrf_secret: Box::default(),
-            tls_default_ciphers: None,
-            spawn_sync_event_loop_: None,
+            default_csrf_secret: OnceCell::new(),
+            tls_default_ciphers: Cell::new(None),
+            spawn_sync_event_loop_: OnceCell::new(),
             path_buf: PathBuf::default(),
         }
     }
@@ -324,38 +319,58 @@ impl Default for RareData {
 // PathBuf
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
-/// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
+/// Reusable heap buffers for path.resolve, path.relative, and path.toNamespacedPath.
+/// Three fixed-size tiers, lazily allocated on first use.
 #[derive(Default)]
 pub struct PathBuf {
-    pub(crate) small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
-    pub(crate) medium: Option<Box<[u8; 8 * MAX_PATH_BYTES]>>,
-    pub(crate) large: Option<Box<[u8; 32 * MAX_PATH_BYTES]>>,
+    tiers: [Cell<Option<Box<[u8]>>>; 3],
 }
 
 impl PathBuf {
-    const S: usize = MAX_PATH_BYTES;
+    const SIZES: [usize; 3] = [2 * MAX_PATH_BYTES, 8 * MAX_PATH_BYTES, 32 * MAX_PATH_BYTES];
 
-    /// Returns the smallest lazily-allocated tier buffer that fits `min_len`.
+    /// Takes the smallest tier that fits `min_len` out of its slot, until the lease is dropped. A
+    /// caller that gets here meanwhile finds the slot empty and allocates its own.
     // Revisit caller semantics for inputs exceeding the large tier.
-    pub fn get(&mut self, min_len: usize) -> &mut [u8] {
-        if min_len <= 2 * Self::S {
-            &mut **self
-                .small
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 2 * MAX_PATH_BYTES]>)
-        } else if min_len <= 8 * Self::S {
-            &mut **self
-                .medium
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 8 * MAX_PATH_BYTES]>)
-        } else {
-            &mut **self
-                .large
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 32 * MAX_PATH_BYTES]>)
-        }
+    pub fn take(&self, min_len: usize) -> PathBufLease<'_> {
+        let tier = Self::SIZES
+            .iter()
+            .position(|&size| min_len <= size)
+            .unwrap_or(Self::SIZES.len() - 1);
+        let slot = &self.tiers[tier];
+        let buf = slot
+            .take()
+            .unwrap_or_else(|| vec![0u8; Self::SIZES[tier]].into_boxed_slice());
+        PathBufLease { slot, buf }
     }
 }
 
-// Drop is automatic for Option<Box<...>> fields — no explicit deinit needed.
+pub struct PathBufLease<'a> {
+    slot: &'a Cell<Option<Box<[u8]>>>,
+    buf: Box<[u8]>,
+}
+
+impl core::ops::Deref for PathBufLease<'_> {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        &self.buf
+    }
+}
+
+impl core::ops::DerefMut for PathBufLease<'_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.buf
+    }
+}
+
+impl Drop for PathBufLease<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        self.slot.set(Some(core::mem::take(&mut self.buf)));
+    }
+}
 
 /// One max-size HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding).
 pub type H2PaddedFrameBuffer = [u8; 16384];
@@ -536,20 +551,20 @@ impl SocketGroups {
     /// compile with any other.
     const COUNT: usize = 12;
 
-    fn each(&mut self) -> [&mut SocketGroup; Self::COUNT] {
+    fn each(&self) -> [&SocketGroup; Self::COUNT] {
         [
-            &mut self.bun_connect_group_tcp,
-            &mut self.bun_connect_group_tls,
-            &mut self.postgres_group,
-            &mut self.postgres_tls_group,
-            &mut self.mysql_group_,
-            &mut self.mysql_tls_group,
-            &mut self.valkey_group_,
-            &mut self.valkey_tls_group,
-            &mut self.ws_upgrade_group_,
-            &mut self.ws_upgrade_tls_group,
-            &mut self.ws_client_group_,
-            &mut self.ws_client_tls_group,
+            &self.bun_connect_group_tcp,
+            &self.bun_connect_group_tls,
+            &self.postgres_group,
+            &self.postgres_tls_group,
+            &self.mysql_group_,
+            &self.mysql_tls_group,
+            &self.valkey_group_,
+            &self.valkey_tls_group,
+            &self.ws_upgrade_group_,
+            &self.ws_upgrade_tls_group,
+            &self.ws_client_group_,
+            &self.ws_client_tls_group,
         ]
     }
 
@@ -559,25 +574,20 @@ impl SocketGroups {
     ///
     /// # Safety
     /// `group` is a linked group of some `SocketGroups`.
-    pub unsafe fn of<'a>(group: &SocketGroup) -> &'a mut SocketGroups {
+    pub unsafe fn of<'a>(group: &SocketGroup) -> &'a SocketGroups {
         // SAFETY: fn contract — `lazy` set the owner to the embedding set,
         // which is boxed (in `RareData` or on its own) and outlives its sockets.
-        unsafe { &mut *group.owner::<SocketGroups>() }
+        unsafe { &*group.owner::<SocketGroups>() }
     }
 
-    // `loop_` is passed by value (raw `*mut uws::Loop`, read from
-    // `vm.uws_loop()` before the groups are borrowed), so no caller needs a
-    // second borrow of the VM just for it.
     #[inline]
-    fn lazy(
-        &mut self,
-        group: fn(&mut Self) -> &mut SocketGroup,
-        loop_: *mut uws::Loop,
-    ) -> &mut SocketGroup {
-        let owner = core::ptr::from_mut(self).cast::<c_void>();
-        let g = group(self);
-        if g.loop_.is_null() {
-            g.init(loop_, None, owner);
+    fn lazy<'a>(&'a self, g: &'a SocketGroup, loop_: &'static uws::Loop) -> &'a SocketGroup {
+        if g.loop_.get().is_null() {
+            g.init(
+                loop_,
+                None,
+                core::ptr::from_ref(self).cast_mut().cast::<c_void>(),
+            );
         }
         g
     }
@@ -585,85 +595,92 @@ impl SocketGroups {
     /// One shared group per (context, ssl) for every `Bun.connect` / `tls.connect`
     /// client socket. Replaces the old per-connection `us_socket_context_t`
     /// allocation that was the root of the SSL_CTX-per-connect leak.
-    pub fn bun_connect_group<const SSL: bool>(
-        &mut self,
-        loop_: *mut uws::Loop,
-    ) -> &mut SocketGroup {
-        if SSL {
-            self.lazy(|s| &mut s.bun_connect_group_tls, loop_)
-        } else {
-            self.lazy(|s| &mut s.bun_connect_group_tcp, loop_)
-        }
+    pub fn bun_connect_group<const SSL: bool>(&self, loop_: &'static uws::Loop) -> &SocketGroup {
+        self.lazy(
+            if SSL {
+                &self.bun_connect_group_tls
+            } else {
+                &self.bun_connect_group_tcp
+            },
+            loop_,
+        )
     }
-    pub fn postgres_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        if SSL {
-            self.lazy(|s| &mut s.postgres_tls_group, loop_)
-        } else {
-            self.lazy(|s| &mut s.postgres_group, loop_)
-        }
+    pub fn postgres_group<const SSL: bool>(&self, loop_: &'static uws::Loop) -> &SocketGroup {
+        self.lazy(
+            if SSL {
+                &self.postgres_tls_group
+            } else {
+                &self.postgres_group
+            },
+            loop_,
+        )
     }
-    pub fn mysql_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        if SSL {
-            self.lazy(|s| &mut s.mysql_tls_group, loop_)
-        } else {
-            self.lazy(|s| &mut s.mysql_group_, loop_)
-        }
+    pub fn mysql_group<const SSL: bool>(&self, loop_: &'static uws::Loop) -> &SocketGroup {
+        self.lazy(
+            if SSL {
+                &self.mysql_tls_group
+            } else {
+                &self.mysql_group_
+            },
+            loop_,
+        )
     }
-    pub fn valkey_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        if SSL {
-            self.lazy(|s| &mut s.valkey_tls_group, loop_)
-        } else {
-            self.lazy(|s| &mut s.valkey_group_, loop_)
-        }
+    pub fn valkey_group<const SSL: bool>(&self, loop_: &'static uws::Loop) -> &SocketGroup {
+        self.lazy(
+            if SSL {
+                &self.valkey_tls_group
+            } else {
+                &self.valkey_group_
+            },
+            loop_,
+        )
     }
-    pub fn ws_upgrade_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        if SSL {
-            self.lazy(|s| &mut s.ws_upgrade_tls_group, loop_)
-        } else {
-            self.lazy(|s| &mut s.ws_upgrade_group_, loop_)
-        }
+    pub fn ws_upgrade_group<const SSL: bool>(&self, loop_: &'static uws::Loop) -> &SocketGroup {
+        self.lazy(
+            if SSL {
+                &self.ws_upgrade_tls_group
+            } else {
+                &self.ws_upgrade_group_
+            },
+            loop_,
+        )
     }
-    pub fn ws_client_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        if SSL {
-            self.lazy(|s| &mut s.ws_client_tls_group, loop_)
-        } else {
-            self.lazy(|s| &mut s.ws_client_group_, loop_)
-        }
+    pub fn ws_client_group<const SSL: bool>(&self, loop_: &'static uws::Loop) -> &SocketGroup {
+        self.lazy(
+            if SSL {
+                &self.ws_client_tls_group
+            } else {
+                &self.ws_client_group_
+            },
+            loop_,
+        )
     }
 
     /// No socket is open, connecting or listening in any of these groups.
-    pub(crate) fn is_empty(&mut self) -> bool {
-        self.each().into_iter().all(|g| Self::group_is_empty(g))
+    pub(crate) fn is_empty(&self) -> bool {
+        self.each().into_iter().all(Self::group_is_empty)
     }
 
     /// Close every socket in these groups (JS thread), for a context that has stopped: nothing
     /// connects for it any more, so one pass leaves them empty. Their close handlers run and
-    /// reach this set again ([`of`](Self::of)), so no borrow of it is held across one.
-    ///
-    /// # Safety
-    /// `this` is a live, boxed set.
-    pub(crate) unsafe fn close_all(this: *mut Self) {
-        for i in 0..Self::COUNT {
-            // SAFETY: fn contract; the borrow ends before `close_all` dispatches.
-            let group: *mut SocketGroup = unsafe { &mut *this }.each()[i];
-            // SAFETY: `group` is embedded in the live set.
-            unsafe {
-                if !(*group).loop_.is_null() {
-                    (*group).close_all();
-                }
+    /// reach this set again ([`of`](Self::of)).
+    pub(crate) fn close_all(&self) {
+        for group in self.each() {
+            if !group.loop_.get().is_null() {
+                group.close_all();
             }
         }
     }
 
     fn group_is_empty(g: &SocketGroup) -> bool {
-        g.head_sockets.is_null()
-            && g.head_connecting_sockets.is_null()
-            && g.head_listen_sockets.is_null()
-            && g.low_prio_count == 0
+        g.head_sockets.get().is_null()
+            && g.head_connecting_sockets.get().is_null()
+            && g.head_listen_sockets.get().is_null()
+            && g.low_prio_count.get() == 0
     }
 
     /// Detach every group from the thread's uSockets loop (each is empty). Idempotent.
-    fn detach_from_loop(&mut self) {
+    fn detach_from_loop(&self) {
         for g in self.each() {
             detach_group_from_loop(g);
         }
@@ -671,16 +688,16 @@ impl SocketGroups {
 }
 
 /// Detach an embedded, emptied group from its loop. Idempotent.
-fn detach_group_from_loop(g: &mut SocketGroup) {
+fn detach_group_from_loop(g: &SocketGroup) {
     // Groups whose lazy accessor was never called are still zero-initialised
     // (`loop_ == null`, never `init`'d). The C `us_socket_group_deinit` happens
     // to no-op on those, but `SocketGroup::destroy`'s safety contract requires a
     // prior `init`, so honour it explicitly.
-    if !g.loop_.is_null() {
+    if !g.loop_.get().is_null() {
         // SAFETY: embedded by-value group, previously `init`'d and emptied by
         // its owner, so destroy reduces to the empty-list debug asserts.
-        unsafe { SocketGroup::destroy(std::ptr::from_mut::<SocketGroup>(g)) };
-        g.loop_ = core::ptr::null_mut();
+        unsafe { SocketGroup::destroy(g.as_ptr()) };
+        g.loop_.set(core::ptr::null_mut());
     }
 }
 
@@ -691,7 +708,7 @@ impl Drop for SocketGroups {
 }
 
 impl RareData {
-    pub(crate) fn release_js_handles(&mut self) {
+    pub(crate) fn release_js_handles(&self) {
         self.s3_default_client.deinit();
         self.node_quic_callbacks.deinit();
     }
@@ -701,35 +718,50 @@ impl RareData {
     /// Raw slot — lazy-init body lives in `bun_runtime::node::node_fs_stat_watcher`
     /// (`StatWatcherScheduler::init` is higher-tier).
     #[inline]
-    pub fn node_fs_stat_watcher_scheduler_slot(&mut self) -> &mut Option<NonNull<c_void>> {
-        &mut self.node_fs_stat_watcher_scheduler
+    pub fn node_fs_stat_watcher_scheduler_slot(&self) -> &Cell<Option<NonNull<c_void>>> {
+        &self.node_fs_stat_watcher_scheduler
     }
 
     /// Raw slot — lazy-init body lives in `bun_runtime::node::memory_pressure`.
     #[inline]
-    pub fn memory_pressure_watcher_slot(&mut self) -> &mut Option<NonNull<c_void>> {
-        &mut self.memory_pressure_watcher
+    pub fn memory_pressure_watcher_slot(&self) -> &Cell<Option<NonNull<c_void>>> {
+        &self.memory_pressure_watcher
     }
 
     // ── lazy-init: hot_map ─────────────────────────────────────────────────
-    pub(crate) fn hot_map(&mut self) -> &mut HotMap {
-        self.hot_map.get_or_insert_with(HotMap::init)
+    pub(crate) fn hot_map(&self) -> &HotMap {
+        self.hot_map.get_or_init(HotMap::init)
+    }
+
+    /// `bun_io` changes the store through this pointer.
+    pub fn file_polls(&self) -> *mut FilePollStore {
+        self.file_polls
+            .get_or_init(|| Box::new(UnsafeCell::new(FilePollStore::init())))
+            .get()
     }
 
     // ── lazy-init: entropy ─────────────────────────────────────────────────
-    fn entropy(&mut self) -> &mut EntropyCache {
-        self.entropy_cache.get_or_insert_with(|| {
+
+    /// Random bytes from the cache. `false`, with `out` untouched, if `out` is longer than
+    /// [`EntropyCache::SIZE`].
+    pub fn fill_entropy(&self, out: &mut [u8]) -> bool {
+        let mut cache = self.entropy_cache.take().unwrap_or_else(|| {
             let mut c = Box::new(EntropyCache::default());
             c.fill();
             c
-        })
+        });
+        let filled = cache.copy_to(out);
+        self.entropy_cache.set(Some(cache));
+        filled
     }
-    pub fn entropy_slice(&mut self, len: usize) -> &mut [u8] {
-        self.entropy().slice(len)
+    pub fn entropy<const N: usize>(&self) -> [u8; N] {
+        const { assert!(N <= EntropyCache::SIZE) };
+        let mut bytes = [0u8; N];
+        self.fill_entropy(&mut bytes);
+        bytes
     }
-    pub fn next_uuid(&mut self) -> UUID {
-        let bytes = self.entropy().get();
-        UUID::init_with(&bytes)
+    pub fn next_uuid(&self) -> UUID {
+        UUID::init_with(&self.entropy::<16>())
     }
 
     // ── lazy-init: misc heap slots ────────────────────────────────────────
@@ -737,99 +769,103 @@ impl RareData {
     /// Take the padded-frame scratch out of its slot (lazily allocated). By value rather
     /// than borrowed: the socket write it feeds can re-enter JS and reach this path
     /// again, and that nested caller then finds the slot empty and allocates its own.
-    pub fn take_h2_padded_frame_buffer(&mut self) -> Box<H2PaddedFrameBuffer> {
+    pub fn take_h2_padded_frame_buffer(&self) -> Box<H2PaddedFrameBuffer> {
         self.h2_padded_frame_buffer
             .take()
             .unwrap_or_else(bun_core::boxed_zeroed::<H2PaddedFrameBuffer>)
     }
 
     /// Hand a taken buffer back; the slot keeps the first one returned.
-    pub fn put_back_h2_padded_frame_buffer(&mut self, buffer: Box<H2PaddedFrameBuffer>) {
-        self.h2_padded_frame_buffer.get_or_insert(buffer);
+    pub fn put_back_h2_padded_frame_buffer(&self, buffer: Box<H2PaddedFrameBuffer>) {
+        let slot = &self.h2_padded_frame_buffer;
+        slot.set(Some(slot.take().unwrap_or(buffer)));
+    }
+
+    /// The slot keeps the first buffer returned and lets an oversized one go.
+    fn put_back_scratch(slot: &Cell<Option<Vec<u8>>>, mut buffer: Vec<u8>) {
+        const KEEP: usize = 256 * 1024;
+        match slot.take() {
+            Some(first) => slot.set(Some(first)),
+            None if buffer.capacity() <= KEEP => {
+                buffer.clear();
+                slot.set(Some(buffer));
+            }
+            None => {}
+        }
     }
 
     /// Empty `Vec` with whatever capacity the last step left behind.
-    pub fn take_compression_scratch(&mut self) -> Vec<u8> {
+    pub fn take_compression_scratch(&self) -> Vec<u8> {
         self.compression_scratch.take().unwrap_or_default()
     }
 
     /// Hand a taken buffer back; the slot keeps the first one returned and lets an oversized one go.
-    pub fn put_back_compression_scratch(&mut self, mut buffer: Vec<u8>) {
-        const KEEP: usize = 256 * 1024;
-        if self.compression_scratch.is_none() && buffer.capacity() <= KEEP {
-            buffer.clear();
-            self.compression_scratch = Some(buffer);
-        }
+    pub fn put_back_compression_scratch(&self, buffer: Vec<u8>) {
+        Self::put_back_scratch(&self.compression_scratch, buffer);
     }
 
     /// Empty `Vec` with whatever capacity the last WebSocket client inflate left behind. By value,
     /// like [`Self::take_h2_padded_frame_buffer`]: delivering the payload runs JS, which can reach
     /// this path again before the buffer comes back.
-    pub fn take_websocket_inflate_scratch(&mut self) -> Vec<u8> {
+    pub fn take_websocket_inflate_scratch(&self) -> Vec<u8> {
         self.websocket_inflate_scratch.take().unwrap_or_default()
     }
 
     /// Hand a taken buffer back; the slot keeps the first one returned and lets an oversized one go.
-    pub fn put_back_websocket_inflate_scratch(&mut self, mut buffer: Vec<u8>) {
-        const KEEP: usize = 256 * 1024;
-        if self.websocket_inflate_scratch.is_none() && buffer.capacity() <= KEEP {
-            buffer.clear();
-            self.websocket_inflate_scratch = Some(buffer);
-        }
+    pub fn put_back_websocket_inflate_scratch(&self, buffer: Vec<u8>) {
+        Self::put_back_scratch(&self.websocket_inflate_scratch, buffer);
     }
 
     /// libdeflate keeps no state between calls, so one handle serves every one-shot inflate on
-    /// this thread. `None` when libdeflate cannot allocate it; callers fall back to zlib.
-    pub fn libdeflate_decompressor(&mut self) -> Option<&mut libdeflate::Decompressor> {
-        if self.libdeflate_decompressor.is_none() {
-            self.libdeflate_decompressor = libdeflate::OwnedDecompressor::new();
-        }
-        self.libdeflate_decompressor.as_deref_mut()
+    /// this thread. Taken out of its slot; hand it back with
+    /// [`Self::put_back_libdeflate_decompressor`]. `None` when libdeflate cannot allocate it;
+    /// callers fall back to zlib.
+    pub fn take_libdeflate_decompressor(&self) -> Option<libdeflate::OwnedDecompressor> {
+        self.libdeflate_decompressor
+            .take()
+            .or_else(libdeflate::OwnedDecompressor::new)
     }
 
-    pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
+    pub fn put_back_libdeflate_decompressor(&self, decompressor: libdeflate::OwnedDecompressor) {
+        self.libdeflate_decompressor.set(Some(decompressor));
+    }
+
+    pub fn boring_engine(&self) -> *mut boring::ENGINE {
         // The raw `ENGINE_new()` result is cached without a null check:
         // `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here degrades to
         // "no engine" rather than crashing. Debug-assert to surface it without
         // altering release behavior.
-        let ptr = *self
-            .boring_ssl_engine
-            .get_or_insert_with(|| boring::ENGINE_new());
+        let ptr = self.boring_ssl_engine.get().unwrap_or_else(|| {
+            let engine = boring::ENGINE_new();
+            self.boring_ssl_engine.set(Some(engine));
+            engine
+        });
         debug_assert!(!ptr.is_null(), "ENGINE_new returned null");
         ptr
     }
 
-    pub fn default_csrf_secret(&mut self) -> &[u8] {
-        if self.default_csrf_secret.is_empty() {
+    pub fn default_csrf_secret(&self) -> &[u8] {
+        self.default_csrf_secret.get_or_init(|| {
             let mut secret = vec![0u8; 16].into_boxed_slice();
             bun_boringssl::rand_bytes(&mut secret);
-            self.default_csrf_secret = secret;
-        }
-        &self.default_csrf_secret
+            secret
+        })
     }
 
-    pub(crate) fn tls_default_ciphers(&self) -> Option<&[u8]> {
-        // The stored buffer is NUL-terminated (set_tls_default_ciphers
-        // appends 0); the trailing NUL is stripped from the returned slice's
-        // length. Callers needing a C string can still take `.as_ptr()` — the
-        // NUL byte remains in storage one-past-the-end.
-        self.tls_default_ciphers
-            .as_deref()
-            .map(|s| &s[..s.len() - 1])
+    pub(crate) fn tls_default_ciphers(&self) -> Option<Rc<[u8]>> {
+        let ciphers = self.tls_default_ciphers.take();
+        self.tls_default_ciphers.set(ciphers.clone());
+        ciphers
     }
 
-    pub(crate) fn set_tls_default_ciphers(&mut self, ciphers: &[u8]) {
-        // Old value (if any) drops here via Box<[u8]> Drop.
-        let mut owned = Vec::with_capacity(ciphers.len() + 1);
-        owned.extend_from_slice(ciphers);
-        owned.push(0);
-        self.tls_default_ciphers = Some(owned.into_boxed_slice());
+    pub(crate) fn set_tls_default_ciphers(&self, ciphers: &[u8]) {
+        self.tls_default_ciphers.set(Some(Rc::from(ciphers)));
         // Built from the previous list. Open connections hold their own reference.
-        self.default_client_ssl_ctx = None;
+        self.default_client_ssl_ctx.set(None);
     }
 
     pub fn push_cleanup_hook(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         ctx: *mut c_void,
         func: CleanupHookFunction,
@@ -839,7 +875,7 @@ impl RareData {
     }
 
     pub fn push_cleanup_hook_after_teardown_wait(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         ctx: *mut c_void,
         func: CleanupHookFunction,
@@ -850,29 +886,15 @@ impl RareData {
 
     /// The loop a first `spawn_sync_event_loop` call made.
     pub fn existing_spawn_sync_event_loop(&self) -> Option<&SpawnSyncEventLoop> {
-        self.spawn_sync_event_loop_.as_deref()
+        self.spawn_sync_event_loop_.get().map(|l| &**l)
     }
 
     /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
-    pub fn spawn_sync_event_loop(
-        &mut self,
-        vm: &mut VirtualMachine,
-    ) -> Option<&SpawnSyncEventLoop> {
-        if self.spawn_sync_event_loop_.is_none() {
-            // In-place out-param init: `event_loop` inside captures the
-            // `self` address, so the value must not move after init; allocate
-            // the Box first, then init into it.
-            let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
-            if !SpawnSyncEventLoop::init(
-                &mut *boxed,
-                core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>(),
-            ) {
-                return None;
-            }
-            // SAFETY: `init` fully initialised the slot when it returned `true`.
-            self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
+    pub fn spawn_sync_event_loop(&self) -> Option<&SpawnSyncEventLoop> {
+        if self.spawn_sync_event_loop_.get().is_none() {
+            let _ = self.spawn_sync_event_loop_.set(SpawnSyncEventLoop::new()?);
         }
-        self.spawn_sync_event_loop_.as_deref()
+        self.existing_spawn_sync_event_loop()
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────
@@ -888,26 +910,19 @@ impl RareData {
     }
 
     // ── socket groups: lazy init ──────────────────────────────────────────
-    //
-    // These take the `uws::Loop` pointer directly (rather than
-    // `&VirtualMachine`) because every caller reaches `&mut RareData` through
-    // `vm.rare_data()`, which already holds `&mut VirtualMachine`; requiring a
-    // second `&VirtualMachine` just to read `vm.uws_loop()` forced a raw-pointer
-    // split-borrow at every call site. The loop pointer is `Copy` and read
-    // before `rare_data()` is borrowed, so no aliasing.
     #[inline]
-    fn lazy_group(g: &mut SocketGroup, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        if g.loop_.is_null() {
+    fn lazy_group<'a>(g: &'a SocketGroup, loop_: &'static uws::Loop) -> &'a SocketGroup {
+        if g.loop_.get().is_null() {
             g.init(loop_, None, core::ptr::null_mut());
         }
         g
     }
 
-    pub fn spawn_ipc_group(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        Self::lazy_group(&mut self.spawn_ipc_group, loop_)
+    pub fn spawn_ipc_group(&self, loop_: &'static uws::Loop) -> &SocketGroup {
+        Self::lazy_group(&self.spawn_ipc_group, loop_)
     }
-    pub fn test_parallel_ipc_group(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
-        Self::lazy_group(&mut self.test_parallel_ipc_group, loop_)
+    pub fn test_parallel_ipc_group(&self, loop_: &'static uws::Loop) -> &SocketGroup {
+        Self::lazy_group(&self.test_parallel_ipc_group, loop_)
     }
 
     // ── close_all_socket_groups ───────────────────────────────────────────
@@ -917,7 +932,7 @@ impl RareData {
     /// after `WebWorker__teardownJSCVM`, so doing the closeAll there would touch
     /// freed JSC heap.
     pub(crate) fn close_all_socket_groups(
-        &mut self,
+        &self,
         vm: &VirtualMachine,
     ) -> crate::virtual_machine::SweepResult {
         // A native close path can cascade (closing one socket completes or
@@ -932,9 +947,7 @@ impl RareData {
         let _ = self;
         let mut rounds: u8 = 0;
         while rounds < 8 {
-            // `uws_loop_mut()` is the centralised BACKREF accessor for the
-            // per-VM uSockets loop (live for the VM lifetime).
-            if !vm.uws_loop_mut().close_all_groups() {
+            if !vm.uws_loop().close_all_groups() {
                 break;
             }
             rounds += 1;
@@ -949,7 +962,7 @@ impl RareData {
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
-        vm.uws_loop_mut().drain_closed_sockets();
+        vm.uws_loop().drain_closed_sockets();
         result
     }
 }
@@ -976,9 +989,9 @@ impl RareData {
     }
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
-    pub fn stderr(&mut self) -> *mut c_void {
+    pub fn stderr(&self) -> *mut c_void {
         bun_analytics::features::bun_stderr.fetch_add(1, Ordering::Relaxed);
-        if self.stderr_store.is_none() {
+        if self.stderr_store.get().is_none() {
             let fd = Fd::from_uv(2);
             let mode: Mode = match syscall::fstat(fd) {
                 Ok(stat) => stat.st_mode as Mode,
@@ -987,17 +1000,18 @@ impl RareData {
             let is_atty =
                 Output::stderr_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
             let store = Self::stdio_ctor(fd, is_atty, mode);
-            self.stderr_store = NonNull::new(store);
-            self.stderr_mode = mode;
+            self.stderr_store.set(NonNull::new(store));
+            self.stderr_mode.set(mode);
         }
         self.stderr_store
+            .get()
             .map_or(core::ptr::null_mut(), NonNull::as_ptr)
     }
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
-    pub fn stdout(&mut self) -> *mut c_void {
+    pub fn stdout(&self) -> *mut c_void {
         bun_analytics::features::bun_stdout.fetch_add(1, Ordering::Relaxed);
-        if self.stdout_store.is_none() {
+        if self.stdout_store.get().is_none() {
             let fd = Fd::from_uv(1);
             let mode: Mode = match syscall::fstat(fd) {
                 Ok(stat) => stat.st_mode as Mode,
@@ -1006,17 +1020,18 @@ impl RareData {
             let is_atty =
                 Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
             let store = Self::stdio_ctor(fd, is_atty, mode);
-            self.stdout_store = NonNull::new(store);
-            self.stdout_mode = mode;
+            self.stdout_store.set(NonNull::new(store));
+            self.stdout_mode.set(mode);
         }
         self.stdout_store
+            .get()
             .map_or(core::ptr::null_mut(), NonNull::as_ptr)
     }
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
-    pub fn stdin(&mut self) -> *mut c_void {
+    pub fn stdin(&self) -> *mut c_void {
         bun_analytics::features::bun_stdin.fetch_add(1, Ordering::Relaxed);
-        if self.stdin_store.is_none() {
+        if self.stdin_store.get().is_none() {
             let fd = Fd::from_uv(0);
             let mode: Mode = match syscall::fstat(fd) {
                 Ok(stat) => stat.st_mode as Mode,
@@ -1025,10 +1040,11 @@ impl RareData {
             // On Windows an invalid stdin handle must short-circuit to false.
             let is_atty = fd.unwrap_valid().map(syscall::isatty).unwrap_or(false);
             let store = Self::stdio_ctor(fd, is_atty, mode);
-            self.stdin_store = NonNull::new(store);
-            self.stdin_mode = mode;
+            self.stdin_store.set(NonNull::new(store));
+            self.stdin_mode.set(mode);
         }
         self.stdin_store
+            .get()
             .map_or(core::ptr::null_mut(), NonNull::as_ptr)
     }
 }
@@ -1046,21 +1062,21 @@ enum StdinFdType {
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
-    let rare = vm.as_mut().rare_data();
+    let rare = vm.rare_data();
     // The store is type-erased here, so `stderr/stdout/stdin()` cache `mode`
     // alongside the pointer.
     let mode = match fd {
         0 => {
             rare.stdin();
-            rare.stdin_mode
+            rare.stdin_mode.get()
         }
         1 => {
             rare.stdout();
-            rare.stdout_mode
+            rare.stdout_mode.get()
         }
         2 => {
             rare.stderr();
-            rare.stderr_mode
+            rare.stderr_mode.get()
         }
         _ => unreachable!(),
     };
@@ -1081,23 +1097,20 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
 pub(crate) fn set_tls_default_ciphers(heap: &JsHeap<'_>, ciphers: &[u8]) {
     // SAFETY: only the VM is taken from it.
     let global_this = unsafe { heap.global() };
-    // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
-    // is the audited single-JS-thread `&mut` escape hatch.
     global_this
         .bun_vm()
-        .as_mut()
         .rare_data()
         .set_tls_default_ciphers(ciphers);
 }
 
-pub(crate) fn get_tls_default_ciphers<'a>(heap: &JsHeap<'a>) -> &'a [u8] {
+pub(crate) fn get_tls_default_ciphers<'a>(
+    heap: &JsHeap<'a>,
+) -> crate::bindgen::Result<'a, crate::bindgen::JsLocal<'a, crate::JSString>> {
     // SAFETY: only the VM is taken from it.
     let global_this = unsafe { heap.global() };
-    // `bun_vm()` is the safe BACKREF accessor; see above.
-    let rare = global_this.bun_vm().as_mut().rare_data();
-    match rare.tls_default_ciphers() {
-        Some(c) => c,
-        None => uws::get_default_ciphers().as_bytes(),
+    match global_this.bun_vm().rare_data().tls_default_ciphers() {
+        Some(ciphers) => heap.create_utf8_string(&ciphers),
+        None => heap.create_utf8_string(uws::get_default_ciphers().as_bytes()),
     }
 }
 
@@ -1117,7 +1130,7 @@ impl Drop for RareData {
             unsafe { boring::ENGINE_free(engine) };
         }
 
-        self.default_client_ssl_ctx = None;
+        self.default_client_ssl_ctx.set(None);
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.
 
@@ -1140,11 +1153,11 @@ impl RareData {
     /// Detach every embedded socket group from the thread's uSockets loop
     /// (asserting each is empty). A thread teardown calls this before it frees
     /// that loop; `Drop` calls it for every other owner. Idempotent.
-    pub(crate) fn detach_socket_groups_from_loop(&mut self) {
+    pub(crate) fn detach_socket_groups_from_loop(&self) {
         // closeAllSocketGroups() must have already run (before JSC teardown) so
         // these are empty; deinit() asserts that in debug.
         self.socket_groups.detach_from_loop();
-        detach_group_from_loop(&mut self.spawn_ipc_group);
-        detach_group_from_loop(&mut self.test_parallel_ipc_group);
+        detach_group_from_loop(&self.spawn_ipc_group);
+        detach_group_from_loop(&self.test_parallel_ipc_group);
     }
 }

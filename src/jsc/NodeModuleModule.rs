@@ -4,9 +4,11 @@ use crate::{
 };
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
+use bun_collections::StringArrayHashMap;
 use bun_core::{String as BunString, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
+use core::cell::Cell;
 
 // `bun.schema.api.Loader` — bindgen-emitted schema enum.
 // Mirrored as a transparent `u8` because the schema enum is *open*
@@ -113,17 +115,113 @@ pub(crate) fn stat(path: &[u8]) -> i32 {
     }
 }
 
+/// What `require.extensions[ext]` is set to.
+#[derive(Clone, Copy)]
 pub enum CustomLoader {
+    Loader(Loader),
+    Custom(JSValue),
+}
+
+enum Registered {
     Loader(Loader),
     Custom(Strong),
 }
 
-impl Default for CustomLoader {
+impl Default for Registered {
     /// Placeholder for `StringArrayHashMap::get_or_put` — overwritten
     /// immediately when `!found_existing`.
     fn default() -> Self {
-        CustomLoader::Loader(Loader::default())
+        Registered::Loader(Loader::default())
     }
+}
+
+/// The extensions that exist in the `require.extensions` map.
+#[derive(Default)]
+pub struct CustomExtensions {
+    /// Out of the cell for the length of one operation, none of which runs JavaScript.
+    map: Cell<StringArrayHashMap<Registered>>,
+}
+
+impl CustomExtensions {
+    fn with<R>(&self, operation: impl FnOnce(&mut StringArrayHashMap<Registered>) -> R) -> R {
+        let mut map = self.map.take();
+        let result = operation(&mut map);
+        self.map.set(map);
+        result
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.with(|map| map.is_empty())
+    }
+
+    fn find_longest(&self, filename: &[u8]) -> Option<CustomLoader> {
+        let basename = bun_paths::basename(filename);
+        self.with(|map| {
+            let mut next: usize = 0;
+            while let Some(i) = strings::index_of_char_pos(basename, b'.', next) {
+                next = i + 1;
+                if i == 0 {
+                    continue;
+                }
+                match map.get(&basename[i..]) {
+                    Some(Registered::Loader(loader)) => return Some(CustomLoader::Loader(*loader)),
+                    Some(Registered::Custom(strong)) => {
+                        return Some(CustomLoader::Custom(strong.get()));
+                    }
+                    None => {}
+                }
+            }
+            None
+        })
+    }
+
+    /// Whether `ext` is new to the map.
+    fn set(
+        &self,
+        global: &JSGlobalObject,
+        ext: &[u8],
+        loader: ApiLoader,
+        value: JSValue,
+    ) -> Result<bool, bun_alloc::AllocError> {
+        self.with(|map| {
+            let gop = map.get_or_put(ext)?;
+            if loader != ApiLoader::NONE {
+                // Drops any held `Strong`.
+                *gop.value_ptr = Registered::Loader(Loader::from_api(loader.to_schema()));
+            } else {
+                match gop.value_ptr {
+                    Registered::Loader(_) => {
+                        *gop.value_ptr = Registered::Custom(Strong::create(value, global));
+                    }
+                    Registered::Custom(strong) => strong.set(global, value),
+                }
+            }
+            Ok(!gop.found_existing)
+        })
+    }
+
+    /// Whether `ext` was in the map.
+    fn remove(&self, ext: &[u8]) -> bool {
+        self.with(|map| map.fetch_swap_remove(ext)).is_some()
+    }
+
+    fn keys(&self) -> Box<[Box<[u8]>]> {
+        self.with(|map| map.keys().to_vec().into_boxed_slice())
+    }
+}
+
+fn set_resolver_extensions(vm: &VirtualMachine) {
+    // PERF: the resolver's
+    // `extra_cjs_extensions` is owned `Box<[Box<[u8]>]>`, so we clone the keys.
+    let extensions = vm.commonjs_custom_extensions.keys();
+    // SAFETY: script assigning to `require.extensions` got us here, and no borrow of the
+    // transpiler is held across a call into script. This one ends with the assignment.
+    // FIXME: a macro is the exception. It runs under the `&mut Transpiler` of the parse that
+    // called it.
+    unsafe { vm.transpiler_mut() }
+        .resolver
+        .opts
+        .extra_cjs_extensions = extensions;
 }
 
 fn on_require_extension_modify(
@@ -132,88 +230,38 @@ fn on_require_extension_modify(
     loader: ApiLoader,
     value: JSValue,
 ) -> Result<(), bun_alloc::AllocError> {
-    // global; we are on the JS thread so a `&mut` view is sound for this scope.
-    let vm = global.bun_vm().as_mut();
+    let vm = global.bun_vm();
     let is_built_in = DEFAULT_LOADERS.get(str).is_some();
 
-    let gop = vm.commonjs_custom_extensions.get_or_put(str)?;
-    if !gop.found_existing {
-        // `gop.key_ptr` already owns a duped `Box<[u8]>` (StringArrayHashMap
-        // boxes the key on insert).
-        if is_built_in {
-            vm.has_mutated_built_in_extensions += 1;
-        }
-
-        *gop.value_ptr = if loader != ApiLoader::NONE {
-            CustomLoader::Loader(Loader::from_api(loader.to_schema()))
-        } else {
-            CustomLoader::Custom(Strong::create(value, global))
-        };
-    } else if loader != ApiLoader::NONE {
-        // Replacing with a built-in loader: drop any held Strong via assignment.
-        *gop.value_ptr = CustomLoader::Loader(Loader::from_api(loader.to_schema()));
-    } else {
-        match gop.value_ptr {
-            CustomLoader::Loader(_) => {
-                *gop.value_ptr = CustomLoader::Custom(Strong::create(value, global));
-            }
-            CustomLoader::Custom(strong) => strong.set(global, value),
-        }
+    let is_new = vm
+        .commonjs_custom_extensions
+        .set(global, str, loader, value)?;
+    if is_new && is_built_in {
+        vm.has_mutated_built_in_extensions
+            .set(vm.has_mutated_built_in_extensions.get() + 1);
     }
 
-    // PERF: the resolver's
-    // `extra_cjs_extensions` is owned `Box<[Box<[u8]>]>`, so we clone the keys.
-    vm.transpiler.resolver.opts.extra_cjs_extensions = vm
-        .commonjs_custom_extensions
-        .keys()
-        .to_vec()
-        .into_boxed_slice();
+    set_resolver_extensions(vm);
     Ok(())
 }
 
-fn on_require_extension_modify_non_function(
-    global: &JSGlobalObject,
-    str: &[u8],
-) -> Result<(), bun_alloc::AllocError> {
-    // SAFETY: see `on_require_extension_modify`.
-    let vm = global.bun_vm().as_mut();
+fn on_require_extension_modify_non_function(global: &JSGlobalObject, str: &[u8]) {
+    let vm = global.bun_vm();
     let is_built_in = DEFAULT_LOADERS.get(str).is_some();
 
-    if let Some(prev) = vm.commonjs_custom_extensions.fetch_swap_remove(str) {
-        // `prev.key: Box<[u8]>` — freed on drop.
-        if is_built_in {
-            vm.has_mutated_built_in_extensions -= 1;
-        }
-        // `prev.value` drops here, releasing any held `Strong`.
-        drop(prev);
+    if vm.commonjs_custom_extensions.remove(str) && is_built_in {
+        vm.has_mutated_built_in_extensions
+            .set(vm.has_mutated_built_in_extensions.get() - 1);
     }
 
-    // PERF: see `on_require_extension_modify`.
-    vm.transpiler.resolver.opts.extra_cjs_extensions = vm
-        .commonjs_custom_extensions
-        .keys()
-        .to_vec()
-        .into_boxed_slice();
-    Ok(())
+    set_resolver_extensions(vm);
 }
 
-pub fn find_longest_registered_extension<'a>(
-    vm: &'a VirtualMachine,
+pub fn find_longest_registered_extension(
+    vm: &VirtualMachine,
     filename: &[u8],
-) -> Option<&'a CustomLoader> {
-    let basename = bun_paths::basename(filename);
-    let mut next: usize = 0;
-    while let Some(i) = strings::index_of_char_pos(basename, b'.', next) {
-        next = i + 1;
-        if i == 0 {
-            continue;
-        }
-        let ext = &basename[i..];
-        if let Some(value) = vm.commonjs_custom_extensions.get(ext) {
-            return Some(value);
-        }
-    }
-    None
+) -> Option<CustomLoader> {
+    vm.commonjs_custom_extensions.find_longest(filename)
 }
 
 #[unsafe(no_mangle)]
@@ -234,8 +282,5 @@ extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     global: &JSGlobalObject,
     str: &BunString,
 ) {
-    let str_slice = str.to_utf8();
-    if on_require_extension_modify_non_function(global, str_slice.slice()).is_err() {
-        bun_core::out_of_memory();
-    }
+    on_require_extension_modify_non_function(global, str.to_utf8().slice());
 }

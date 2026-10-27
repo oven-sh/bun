@@ -191,7 +191,7 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) send_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
 
     pub(crate) global_this: GlobalRef,
-    pub(crate) poll_ref: Cell<KeepAlive>,
+    pub(crate) poll_ref: KeepAlive,
 
     pub(crate) header_fragment: Cell<Option<u8>>,
 
@@ -277,9 +277,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub(crate) fn clear_data(&self) {
         log!("clearData");
-        let mut poll_ref = self.poll_ref.take();
-        poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
-        self.poll_ref.set(poll_ref);
+        self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
         self.clear_receive_buffers(true);
         self.clear_send_buffers(true);
         self.initial_data.set(None);
@@ -480,22 +478,27 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn dispatch_compressed_data(&self, data: &[u8], kind: Opcode) {
-        let rare = self.global_this.bun_vm().as_mut().rare_data();
+        let rare = self.global_this.bun_vm().rare_data();
         let mut decompressed = rare.take_websocket_inflate_scratch();
         let result = match self.deflate.borrow_mut().as_mut() {
             None => Err(ErrorCode::UnexpectedRsv1),
-            Some(deflate) => deflate
-                .decompress(
-                    rare.libdeflate_decompressor(),
+            Some(deflate) => {
+                let mut decompressor = rare.take_libdeflate_decompressor();
+                let inflated = deflate.decompress(
+                    decompressor.as_deref_mut(),
                     data,
                     &mut decompressed,
                     self.max_payload_length(),
-                )
-                .map_err(|err| match err {
+                );
+                if let Some(decompressor) = decompressor {
+                    rare.put_back_libdeflate_decompressor(decompressor);
+                }
+                inflated.map_err(|err| match err {
                     websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
                     websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
                     websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
-                }),
+                })
+            }
         };
 
         // The deflate borrow is released: both arms can re-enter `clear_data`.
@@ -504,12 +507,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             Err(code) => self.fail(code),
         }
 
-        // Both arms run JS, so reach for `RareData` again instead of holding `rare` across them.
-        self.global_this
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .put_back_websocket_inflate_scratch(decompressed);
+        rare.put_back_websocket_inflate_scratch(decompressed);
     }
 
     /// Data will be cloned in C++.
@@ -1393,13 +1391,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
         let ctx = Self::vm_loop_ctx(&self.global_this);
-        let mut poll_ref = self.poll_ref.take();
         if keep_alive {
-            poll_ref.r#ref(ctx);
+            self.poll_ref.r#ref(ctx);
         } else {
-            poll_ref.unref(ctx);
+            self.poll_ref.unref(ctx);
         }
-        self.poll_ref.set(poll_ref);
     }
 
     /// In tunnel mode this is the proxy's address.
@@ -1592,7 +1588,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             receive_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             send_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             global_this: GlobalRef::from(global_this),
-            poll_ref: Cell::new(KeepAlive::init()),
+            poll_ref: KeepAlive::init(),
             header_fragment: Cell::new(None),
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
@@ -1629,11 +1625,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         ws.io_ref.set(Some(io_ref));
         bun_core::handle_oom(ws.send_buffer.borrow_mut().ensure_total_capacity(2048));
         bun_core::handle_oom(ws.receive_buffer.borrow_mut().ensure_total_capacity(2048));
-        {
-            let mut poll_ref = ws.poll_ref.take();
-            poll_ref.r#ref(Self::vm_loop_ctx(global_this));
-            ws.poll_ref.set(poll_ref);
-        }
+        ws.poll_ref.r#ref(Self::vm_loop_ctx(global_this));
 
         ws.initial_data
             .set(buffered_data.filter(|b| !b.0.is_empty()));
@@ -2244,8 +2236,7 @@ struct Mask;
 
 impl Mask {
     fn generate(global_this: &JSGlobalObject) -> [u8; 4] {
-        let entropy = global_this.bun_vm().as_mut().rare_data().entropy_slice(4);
-        entropy[..4].try_into().expect("infallible: size matches")
+        global_this.bun_vm().rare_data().entropy()
     }
 
     fn fill(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], output: &mut [u8], input: &[u8]) {

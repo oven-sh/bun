@@ -26,21 +26,21 @@ pub struct CPUProfilerConfig {
 
 // C++ function declarations
 unsafe extern "C" {
-    /// `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is
+    /// `VM` is an opaque `UnsafeCell`-backed ZST handle; `&VM` is
     /// ABI-identical to a non-null `VM*`.
-    safe fn Bun__startCPUProfiler(vm: &mut VM);
+    safe fn Bun__startCPUProfiler(vm: &VM);
     /// `Option<&mut BunString>` is ABI-identical to a nullable `*mut BunString`
     /// via the guaranteed null-pointer optimization; the C++ side writes a +1
     /// ref into each non-null out-param and ignores nulls.
     safe fn Bun__stopCPUProfiler(
-        vm: &mut VM,
+        vm: &VM,
         out_json: Option<&mut BunString>,
         out_text: Option<&mut BunString>,
     );
     /// Plain by-value `c_int`; sets a global sampler interval, no pointer invariants.
     safe fn Bun__setSamplingInterval(interval_microseconds: c_int);
     /// Writes a +1 ref into `out`. Doesn't write to `out` if the VM has no sampling profiler.
-    safe fn Bun__SamplingProfiler__report(vm: &mut VM, out: &mut BunString);
+    safe fn Bun__SamplingProfiler__report(vm: &VM, out: &mut BunString);
 }
 
 pub fn set_sampling_interval(interval: u32) {
@@ -50,13 +50,13 @@ pub fn set_sampling_interval(interval: u32) {
     Bun__setSamplingInterval(clamped as c_int);
 }
 
-pub fn start_cpu_profiler(vm: &mut VM) {
+pub fn start_cpu_profiler(vm: &VM) {
     Bun__startCPUProfiler(vm);
 }
 
 /// Writes `vm`'s sampling profiler report into `directory` (absolute UTF-8), creating it if missing.
 pub(crate) fn write_sampling_profiler_report(
-    vm: &mut VM,
+    vm: &VM,
     directory: &[u8],
 ) -> Result<(), ProfilerError> {
     let mut report = BunString::EMPTY;
@@ -84,7 +84,7 @@ pub(crate) fn write_sampling_profiler_report(
 }
 
 pub(crate) fn stop_and_write_profile(
-    vm: &mut VM,
+    vm: &VM,
     config: &CPUProfilerConfig,
 ) -> Result<(), ProfilerError> {
     let mut json_string = BunString::EMPTY;

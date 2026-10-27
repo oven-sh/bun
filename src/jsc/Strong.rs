@@ -2,6 +2,7 @@
 //! collection. This type implies there is always a valid value held.
 //! For a strong that may be empty (to reuse allocation), use `Optional`.
 
+use core::cell::Cell;
 use core::ptr::NonNull;
 
 use crate::{JSGlobalObject, JSValue};
@@ -30,7 +31,7 @@ impl Strong {
     }
 
     /// Set a new value for the strong reference.
-    pub fn set(&mut self, global: &JSGlobalObject, new_value: JSValue) {
+    pub fn set(&self, global: &JSGlobalObject, new_value: JSValue) {
         debug_assert!(!new_value.is_empty());
         Impl::set(self.handle, global, new_value);
     }
@@ -52,19 +53,21 @@ impl Drop for Strong {
 #[repr(transparent)]
 #[derive(Default)]
 pub struct Optional {
-    handle: Option<NonNull<Impl>>,
+    handle: Cell<Option<NonNull<Impl>>>,
 }
 
 impl Optional {
     pub const fn empty() -> Optional {
-        Optional { handle: None }
+        Optional {
+            handle: Cell::new(None),
+        }
     }
 
     /// Hold a strong reference to a JavaScript value. Released on `Drop` or `clear`.
     pub fn create(value: JSValue, global: &JSGlobalObject) -> Optional {
         if !value.is_empty() {
             Optional {
-                handle: Some(Impl::init(global, value)),
+                handle: Cell::new(Some(Impl::init(global, value))),
             }
         } else {
             Optional::empty()
@@ -72,13 +75,13 @@ impl Optional {
     }
 
     /// Clears the value, but does not de-allocate the Strong reference.
-    pub fn clear_without_deallocation(&mut self) {
-        let Some(r) = self.handle else { return };
+    pub fn clear_without_deallocation(&self) {
+        let Some(r) = self.handle.get() else { return };
         Impl::clear(r);
     }
 
     pub fn get(&self) -> Option<JSValue> {
-        let imp = self.handle?;
+        let imp = self.handle.get()?;
         let result = Impl::get(imp);
         if result.is_empty() {
             return None;
@@ -86,8 +89,8 @@ impl Optional {
         Some(result)
     }
 
-    pub fn swap(&mut self) -> JSValue {
-        let Some(imp) = self.handle else {
+    pub fn swap(&self) -> JSValue {
+        let Some(imp) = self.handle.get() else {
             return JSValue::ZERO;
         };
         let result = Impl::get(imp);
@@ -99,11 +102,13 @@ impl Optional {
     }
 
     pub fn has(&self) -> bool {
-        let Some(r) = self.handle else { return false };
+        let Some(r) = self.handle.get() else {
+            return false;
+        };
         !Impl::get(r).is_empty()
     }
 
-    pub fn try_swap(&mut self) -> Option<JSValue> {
+    pub fn try_swap(&self) -> Option<JSValue> {
         let result = self.swap();
         if result.is_empty() {
             return None;
@@ -113,18 +118,18 @@ impl Optional {
 
     /// Explicit teardown. Idempotent; equivalent to dropping in place and
     /// leaving `self` empty so `Drop` is a no-op.
-    pub fn deinit(&mut self) {
+    pub fn deinit(&self) {
         let Some(r) = self.handle.take() else { return };
         // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
         unsafe { Impl::destroy(r) };
     }
 
-    pub fn set(&mut self, global: &JSGlobalObject, value: JSValue) {
-        let Some(r) = self.handle else {
+    pub fn set(&self, global: &JSGlobalObject, value: JSValue) {
+        let Some(r) = self.handle.get() else {
             if value.is_empty() {
                 return;
             }
-            self.handle = Some(Impl::init(global, value));
+            self.handle.set(Some(Impl::init(global, value)));
             return;
         };
         Impl::set(r, global, value);
@@ -200,9 +205,7 @@ impl Impl {
         // slot release is the whole of teardown. The Rust VM TLS outlives ~VM.
         match crate::virtual_machine::VirtualMachine::get_or_null() {
             Some(vm) => {
-                // SAFETY: `get_or_null` returns the thread-local pointer set by
-                // `init()`; the allocation outlives the thread.
-                if unsafe { (*vm).is_shutting_down() } {
+                if (*vm).is_shutting_down() {
                     return;
                 }
             }

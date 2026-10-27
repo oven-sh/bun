@@ -15,10 +15,7 @@ pub(crate) fn init<'a>(
 ) {
     // SAFETY: setting a `Strong` runs no JavaScript.
     let global = unsafe { heap.global() };
-    // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton); `as_mut()`
-    // is the canonical safe escape hatch for the shrinking set of `&mut self`
-    // helpers like `sql_state()` — one audited unsafe lives in bun_jsc.
-    let ctx = &mut global.bun_vm().as_mut().sql_state().mysql_context;
+    let ctx = &global.bun_vm().sql_state().mysql_context;
     ctx.on_query_resolve_fn
         .set(global, on_resolve_query.to_js());
     ctx.on_query_reject_fn.set(global, on_reject_query.to_js());

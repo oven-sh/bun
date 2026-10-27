@@ -685,8 +685,7 @@ impl ByteRangeMapping {
             None
         } else {
             bun_jsc::VirtualMachine::VirtualMachine::get()
-                .as_mut()
-                .source_mappings()
+                .source_mappings
                 .get(source_url)
         };
 
@@ -838,8 +837,7 @@ impl ByteRangeMapping {
                 .for_each_object_brace(|brace| self.set_executable(brace.original));
             }
         } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
-            .as_mut()
-            .source_mappings()
+            .source_mappings
             .get(self.source_url.slice())
         {
             source_map.for_each_object_brace(|brace| self.set_executable(brace.generated));
@@ -1050,8 +1048,7 @@ extern "C" fn ByteRangeMapping__generate(
         ByteRangeMapping::compute(source_contents_str, source_hash, source_id, source_url);
     // `node:inspector` turns the profiler on too. Nothing is marked for it.
     if bun_jsc::VirtualMachine::VirtualMachine::get()
-        .as_mut()
-        .transpiler
+        .transpiler()
         .options
         .code_coverage
     {

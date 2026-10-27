@@ -41,11 +41,11 @@ pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Res
         return Err(Stopped);
     }
     let vm = global.bun_vm();
-    let _ = vm.as_mut().uncaught_exception(global, ex, false);
+    let _ = vm.uncaught_exception(global, ex, false);
     if vm.is_shutting_down() {
         return Ok(());
     }
-    vm.event_loop_mut().maybe_drain_microtasks()
+    vm.event_loop().maybe_drain_microtasks()
 }
 
 // The full ~96-arm `match` (previously in this file) has been hoisted to

@@ -4,10 +4,7 @@ use core::fmt::Arguments;
 use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
 use bun_core::{Timespec, TimespecMockMode};
 
-use crate::jsc::{
-    EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, JsCell, VirtualMachine,
-    VirtualMachineSqlExt as _,
-};
+use crate::jsc::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, JsCell, VirtualMachine};
 
 pub struct ConnectionTimers {
     idle_timeout_ms: u32,
@@ -53,13 +50,16 @@ impl ConnectionTimers {
 
 fn start(timer: &JsCell<EventLoopTimer>, ms: u32) {
     timer.with_mut(|t| t.next = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, ms.into()));
-    // The fire path recovers the connection from this pointer.
-    VirtualMachine::get_mut().timer().insert(timer.as_ptr());
+    // SAFETY: not in the heap (every caller checks or `stop`s first). It is a field of a boxed
+    // connection, which `stop`s it before it is freed. The fire path recovers the connection from
+    // this pointer.
+    unsafe { VirtualMachine::timer_insert(VirtualMachine::get(), timer.as_ptr()) };
 }
 
 fn stop(timer: &JsCell<EventLoopTimer>) {
     if timer.get().state == EventLoopTimerState::ACTIVE {
-        timer.with_mut(|t| VirtualMachine::get_mut().timer().remove(t));
+        // SAFETY: `ACTIVE` is in the heap.
+        unsafe { VirtualMachine::timer_remove(VirtualMachine::get(), timer.as_ptr()) };
     }
 }
 

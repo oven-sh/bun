@@ -1,8 +1,6 @@
 //! `tls.checkServerIdentity(hostname, cert)` for the SQL drivers.
 
-use crate::jsc::{
-    EventLoopSqlExt as _, JSGlobalObject, JSValue, JsResult, VirtualMachine, bun_string_jsc,
-};
+use crate::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine, bun_string_jsc};
 use bun_boringssl_sys::X509;
 use bun_jsc::ErrorCode;
 use bun_uws::AnySocket;
@@ -28,7 +26,7 @@ pub(crate) fn check(
     socket: &AnySocket,
     hostname: &[u8],
 ) -> Result<(), JSValue> {
-    let _entered = VirtualMachine::get().as_mut().event_loop_mut().entered();
+    let _entered = VirtualMachine::get().event_loop().enter_scope();
     match verdict(global, callback, socket, hostname) {
         Ok(None) => Ok(()),
         Ok(Some(reason)) => Err(reason),

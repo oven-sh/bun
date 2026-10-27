@@ -26,7 +26,7 @@ pub(crate) fn load_npmrc<'a>(
     // an `Option` so both arms yield the same `&Loader` type.
     let mut env_storage: Option<dotenv::Loader> = None;
     let env: &dotenv::Loader = if envjs.is_empty_or_undefined_or_null() {
-        global.bun_vm().as_mut().transpiler.env()
+        global.bun_vm().transpiler().env()
     } else {
         let mut envmap = dotenv::map::HashTable::new();
         let Some(envobj) = envjs.get_object() else {
@@ -189,7 +189,7 @@ pub(crate) fn parse(heap: &JsHeap<'_>, source: &[u8]) -> JsResult<JSValue> {
     // SAFETY: neither parsing nor `expr_to_js` runs JavaScript: the keys are strings and the
     // properties are defined, not set. What throws returns.
     let global = unsafe { heap.global() };
-    let env = global.bun_vm().as_mut().transpiler.env();
+    let env = global.bun_vm().transpiler().env();
     let source = bun_ast::Source::init_path_string(b"<src>", source);
     let arena = bun_alloc::Arena::new();
     let mut parser = Parser::init(&source, env);

@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/15734
 import { describe, expect, test } from "bun:test";
-import { writeFileSync } from "fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join, sep } from "path";
 
@@ -380,6 +380,94 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       // expect().rejects would wait in a nested event loop tick, which can drop the concurrent tests' pipe events.
       const error = await compile(String(dir), ["--asset", "./b"]).catch(error => error);
       expect(error?.message).toContain("collides");
+    },
+    TIMEOUT,
+  );
+
+  // A path under `dir`: text and single bytes, in order. Alone, 0xE8 and 0xE9 are not valid UTF-8.
+  function bytePath(dir: string, name: (string | number)[]) {
+    const parts = name.map(part => (typeof part === "string" ? Buffer.from(part) : Buffer.from([part])));
+    return Buffer.concat([Buffer.from(dir + sep), ...parts]);
+  }
+
+  // A shell glob gives bun each file name as it is. `$0` is bun.
+  async function buildWithShell(dir: string, args: string) {
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `"$0" build --compile ./index.ts ${args}`, bunExe()],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, code };
+  }
+
+  // macOS and Windows reject these file names.
+  test.skipIf(!isLinux)(
+    "--asset errors when a name collides after its invalid UTF-8 is replaced",
+    async () => {
+      using dir = tempDir("bunfs-invalid-utf8-clash", {
+        "index.ts": `console.log("unreachable");`,
+        "chunk/.keep": "",
+        "entry/.keep": "",
+        "entrydir/.keep": "",
+      });
+      const root = String(dir);
+      // The chunk of `a<E8>.ts` and the asset `a<E9>.js` are both stored as `chunk/a\uFFFD.js`.
+      writeFileSync(bytePath(root, ["chunk/a", 0xe8, ".ts"]), "export {};");
+      writeFileSync(bytePath(root, ["chunk/a", 0xe9, ".js"]), "an asset");
+      // The entry point is stored under the name of the executable, `ap<E9>p`.
+      writeFileSync(bytePath(root, ["entry/ap", 0xe8, "p"]), "an asset");
+      mkdirSync(bytePath(root, ["entrydir/ap", 0xe8, "p"]));
+      writeFileSync(bytePath(root, ["entrydir/ap", 0xe8, "p/x.txt"]), "in a directory");
+
+      const outfile = `--outfile "$(printf 'ap\\351p')"`;
+      const [chunk, file, folder] = await Promise.all([
+        buildWithShell(root, `./chunk/*.ts --asset ./chunk --outfile app`),
+        buildWithShell(root, `${outfile} --asset ./entry/*`),
+        buildWithShell(root, `${outfile} --asset ./entrydir/*`),
+      ]);
+      expect(chunk).toEqual({
+        stderr: `error: asset "./chunk" collides with another embedded file at "chunk/a\uFFFD.js"\n`,
+        code: 1,
+      });
+      const sameAsEntry = (asset: string) =>
+        `error: asset "${asset}" would embed at the same path as the entry point; use a different outfile\n`;
+      expect(file).toEqual({ stderr: sameAsEntry("./entry/ap\uFFFDp"), code: 1 });
+      expect(folder).toEqual({ stderr: sameAsEntry("./entrydir/ap\uFFFDp"), code: 1 });
+    },
+    TIMEOUT,
+  );
+
+  // macOS and Windows reject these file names.
+  test.skipIf(!isLinux)(
+    "--asset errors when a chunk has the same name, which isn't valid UTF-8",
+    async () => {
+      using dir = tempDir("bunfs-invalid-utf8-same", {
+        "index.ts": `console.log("unreachable");`,
+        "same/.keep": "",
+      });
+      // The chunk of `a<E9>.ts` is `same/a<E9>.js`, the name of the asset.
+      const entry = bytePath(String(dir), ["same/a", 0xe9, ".ts"]);
+      writeFileSync(entry, "export {};");
+      writeFileSync(bytePath(String(dir), ["same/a", 0xe9, ".js"]), "an asset");
+      const collides = `asset "./same" collides with another embedded file at "same/a\uFFFD.js"`;
+
+      expect(await buildWithShell(String(dir), `./same/*.ts --asset ./same --outfile app`)).toEqual({
+        stderr: `error: ${collides}\n`,
+        code: 1,
+      });
+
+      // An entry point of Bun.build is a string. Through a link, the bundler still sees the name `a<E9>.ts`.
+      symlinkSync(entry, join(String(dir), "link.ts"));
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "index.ts"), join(String(dir), "link.ts")],
+        throw: false,
+        compile: { outfile: join(String(dir), "app"), assets: [join(String(dir), "same")] },
+      });
+      expect(result.logs.map(String).join("\n")).toContain(`collides with another embedded file at "same/a\uFFFD.js"`);
+      expect(result.success).toBe(false);
     },
     TIMEOUT,
   );

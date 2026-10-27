@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -141,6 +142,74 @@ describe("bundler", () => {
       "/foo.magic": [`123`],
     },
   });
+  // A max-length 16-bit rope throws "Out of memory" the first time it's flattened.
+  // `external: true` skips the JS-side path checks, which would flatten it first.
+  test.concurrent("plugin/fails the build when a returned string can't be flattened", async () => {
+    using dir = tempDir("plugin-string-answer-cannot-flatten", {
+      "entry.ts": `import { foo } from "./foo.magic"; console.log(foo);`,
+      "foo.magic": `hello world`,
+      "build.mjs": `
+        let huge = "\\u0100";
+        for (let i = 0; i < 30; i++) huge = huge + huge + "\\u0100";
+        console.log("length=" + (huge.length === 2 ** 31 - 1));
+
+        async function run(name, answer) {
+          const { success, logs } = await Bun.build({
+            entrypoints: ["./entry.ts"],
+            throw: false,
+            plugins: [{
+              name,
+              setup(build) {
+                build.onResolve({ filter: /foo\\.magic$/ }, args => {
+                  console.log(name + ": resolve returned");
+                  return answer.resolve ? answer.resolve(args.path) : undefined;
+                });
+                build.onLoad({ filter: /\\.magic$/ }, () => {
+                  console.log(name + ": load returned");
+                  return answer.load ? answer.load() : undefined;
+                });
+              },
+            }],
+          });
+          const errors = logs.map(l => l.level + " " + JSON.stringify(l.message) + " " + l.position?.file.split(/[\\\\/]/).pop());
+          console.log(name + ": success=" + success + " " + errors.join(", "));
+        }
+
+        await run("contents", { load: () => ({ contents: huge, loader: "js" }) });
+        await run("path", { resolve: () => ({ path: huge, external: true }) });
+        await run("namespace", { resolve: path => ({ path, namespace: huge, external: true }) });
+        await run("ok", { load: () => ({ contents: "export const foo = 1;", loader: "js" }) });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr }).toEqual({
+      stdout: [
+        "length=true",
+        "contents: resolve returned",
+        "contents: load returned",
+        'contents: success=false error "Out of memory" foo.magic',
+        "path: resolve returned",
+        'path: success=false error "Out of memory" entry.ts',
+        "namespace: resolve returned",
+        'namespace: success=false error "Out of memory" entry.ts',
+        "ok: resolve returned",
+        "ok: load returned",
+        "ok: success=true ",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
   itBundled("plugin/ResolveAndLoadDefaultExport", {
     files: {
       "index.ts": /* ts */ `
@@ -258,7 +327,7 @@ describe("bundler", () => {
         });
         builder.onResolve({ filter: /^magic:.*/ }, args => {
           expect(args.path).toBe("magic:some_string");
-          expect(args.importer).toBe(root + "/index.ts");
+          expect(args.importer).toBe(path.join(root, "index.ts"));
           expect(args.namespace).toBe("file");
           expect(args.kind).toBe("import-statement");
           onResolveCount++;
@@ -440,6 +509,105 @@ describe("bundler", () => {
       },
     };
   });
+  // Like esbuild, an external import is printed with the path that onResolve returned.
+  itBundled("plugin/ResolveExternalRewritesPath", {
+    files: {
+      "index.ts": /* ts */ `
+        import React from "react";
+        import { createRoot } from "react-dom/client";
+        export { h } from "preact";
+        export * from "mobx";
+        console.log(React, createRoot, await import("lodash"));
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^(react|react-dom\/client|preact|mobx|lodash)$/ }, args => {
+        return { path: "https://esm.sh/" + args.path, external: true };
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      expect(contents).toContain(`from "https://esm.sh/react"`);
+      expect(contents).toContain(`from "https://esm.sh/react-dom/client"`);
+      expect(contents).toContain(`from "https://esm.sh/preact"`);
+      expect(contents).toContain(`from "https://esm.sh/mobx"`);
+      expect(contents).toContain(`import("https://esm.sh/lodash")`);
+      for (const original of ["react", "react-dom/client", "preact", "mobx", "lodash"]) {
+        expect(contents).not.toContain(`"${original}"`);
+      }
+    },
+  });
+  itBundled("plugin/ResolveExternalRewritesPathRequire", {
+    files: {
+      "index.ts": /* ts */ `
+        const React = require("react");
+        console.log(React);
+      `,
+    },
+    format: "cjs",
+    plugins(builder) {
+      builder.onResolve({ filter: /^react$/ }, () => {
+        return { path: "./vendor/react.cjs", external: true };
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      expect(contents).toContain(`require("./vendor/react.cjs")`);
+      expect(contents).not.toContain(`require("react")`);
+    },
+  });
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`plugin/ResolveExternalRewritesRelativeImport_${format}`, {
+      files: {
+        "/a.js": /* js */ `
+          import { v } from "./b.js";
+          console.log(v);
+        `,
+        "/b.js": `export const v = "bundled";`,
+      },
+      target: "bun",
+      format,
+      plugins(builder) {
+        builder.onResolve({ filter: /b\.js$/ }, () => {
+          return { path: "/somewhere/else/b.js", external: true };
+        });
+      },
+      onAfterBundle(api) {
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(
+          format === "esm" ? `import { v } from "/somewhere/else/b.js";` : `require("/somewhere/else/b.js")`,
+        );
+        expect(contents).not.toContain(`"./b.js"`);
+        expect(contents).not.toContain(`"bundled"`);
+      },
+    });
+  }
+  // rewriteExternalWithNamespace and rewriteExternalWithoutNamespace in
+  // https://github.com/evanw/esbuild/blob/f6058f8364fe7ab91ca57a83e02577ed74c9cae4/scripts/plugin-tests.js#L680-L728
+  for (const namespace of ["for-testing", undefined]) {
+    itBundled(`plugin/RewriteExternal${namespace ? "WithNamespace" : "WithoutNamespace"}`, {
+      files: {
+        "/in.js": /* js */ `
+          import { exists } from "extern";
+          export default exists;
+        `,
+        "/check.js": /* js */ `
+          const fs = require("fs");
+          console.log(require("./out.js").default === fs.exists);
+        `,
+      },
+      format: "cjs",
+      plugins(builder) {
+        builder.onResolve({ filter: /^extern$/ }, () => {
+          return { path: "fs", external: true, namespace };
+        });
+      },
+      run: {
+        file: "/check.js",
+        stdout: "true",
+      },
+    });
+  }
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
       files: {
@@ -536,7 +704,7 @@ describe("bundler", () => {
         stdout: "this string should exist once this string should exist once",
       },
       onAfterBundle(api) {
-        expect(importers.sort()).toEqual([root + "/one.ts", root + "/two.ts"].sort());
+        expect(importers.sort()).toEqual([path.join(root, "one.ts"), path.join(root, "two.ts")].sort());
         expect(onResolveCount).toBe(2);
         const contents = api.readFile("/out.js");
         expect([...contents.matchAll(/this string should exist once/g)].length).toBe(1);
@@ -833,7 +1001,7 @@ describe("bundler", () => {
       },
       entryPoints: ["./index.ts"],
       plugins(build) {
-        expect(build.config).toBe(getConfigRef());
+        expect(build.config).toBe(getConfigRef() as typeof build.config);
       },
     };
   });
@@ -938,6 +1106,49 @@ describe("bundler", () => {
       expect(js).toContain('.png"');
       expect(js).toContain('.wasm"');
     },
+  });
+
+  test.concurrent("plugin/onLoad that returns nothing for an asset leaves it to the file loader", async () => {
+    using dir = tempDir("plugin-onload-declines-asset", {
+      "index.ts": `
+        import logo from "./logo.png";
+        console.log(logo);
+      `,
+      "logo.png": "png bytes",
+      "build.mjs": `
+        import { basename } from "node:path";
+        const result = await Bun.build({
+          entrypoints: ["./index.ts"],
+          outdir: "./out",
+          naming: { asset: "[name].[ext]" },
+          plugins: [
+            {
+              name: "yaml-only",
+              setup(build) {
+                build.onLoad({ filter: /.*/ }, args =>
+                  args.path.endsWith(".yaml") ? { contents: "export default 1", loader: "js" } : undefined,
+                );
+              },
+            },
+          ],
+        });
+        console.log(result.outputs.map(output => output.kind + " " + basename(output.path)).sort().join("\\n"));
+        console.log(await Bun.file("./out/logo.png").text());
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("asset logo.png\nentry-point index.js\npng bytes\n");
+    expect(exitCode).toBe(0);
   });
 
   itBundled("plugin/OnEndBasic", ({ root }) => {
@@ -1633,5 +1844,252 @@ describe("bundler", () => {
         expect(asyncCompleted).toBe(true);
       },
     };
+  });
+
+  for (const [name, call, tuple] of [
+    ["addFilter", 1, `[123, () => {}]`],
+    ["onBeforeParse", 3, `[123, {}, "symbol", undefined]`],
+  ] as const) {
+    test.concurrent(`plugin/${name} throws a TypeError when the filter is not a RegExp`, async () => {
+      using dir = tempDir("plugin-filter-not-regexp", {
+        "index.ts": `console.log("hi");`,
+        "build.mjs": `
+          const originalEntries = Map.prototype.entries;
+          let calls = 0;
+          try {
+            await Bun.build({
+              entrypoints: ["./index.ts"],
+              plugins: [
+                {
+                  name: "entries",
+                  setup(build) {
+                    Map.prototype.entries = function () {
+                      if (++calls !== ${call}) return originalEntries.call(this);
+                      Map.prototype.entries = originalEntries;
+                      return [["file", [${tuple}]]][Symbol.iterator]();
+                    };
+                  },
+                },
+              ],
+            });
+            console.log("resolved");
+          } catch (e) {
+            console.log([e.name, e.code, e.message].join("|"));
+          } finally {
+            Map.prototype.entries = originalEntries;
+          }
+          console.log("calls=" + calls);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr }).toEqual({
+        stdout: `TypeError|ERR_INVALID_ARG_TYPE|Expected filter (1st argument) to be a RegExp\ncalls=${call}\n`,
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // An entry point that onResolve leaves without a module used to be dropped
+  // without a log entry: the linker aborted on an empty chunk list when it was
+  // the only entry point, and the build silently emitted only the other entry
+  // points otherwise. A declined entry point that the package.json "browser"
+  // field disables gets the same error as without plugins.
+  test.concurrent("plugin/entry point left without a module by onResolve fails the build", async () => {
+    using dir = tempDir("plugin-entry-point-without-module", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./disabled.js": false } }),
+      "entry.js": `console.log("entry");`,
+      "live.js": `console.log("live");`,
+      "disabled.js": `console.log("disabled");`,
+      "build.mjs": `
+        const declined = [];
+        const plugins = [
+          {
+            name: "externalize-entry",
+            setup(build) {
+              build.onResolve({ filter: /entry\\.js$/ }, args => ({ path: args.path, external: true }));
+            },
+          },
+          {
+            name: "decline-disabled",
+            setup(build) {
+              build.onResolve({ filter: /disabled\\.js$/ }, args => {
+                declined.push(args.path);
+              });
+            },
+          },
+        ];
+        const results = {};
+        for (const [name, entrypoints] of Object.entries({
+          external: ["./entry.js"],
+          externalNextToLiveEntryPoint: ["./entry.js", "./live.js"],
+          declinedThenDisabledByBrowserField: ["./disabled.js"],
+        })) {
+          const result = await Bun.build({ entrypoints, target: "browser", plugins, throw: false });
+          results[name] = {
+            success: result.success,
+            logs: result.logs.map(log => log.message),
+            outputs: result.outputs.map(output => output.path),
+          };
+        }
+        results.declined = declined;
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      external: {
+        success: false,
+        logs: ['The entry point "./entry.js" cannot be marked as external'],
+        outputs: [],
+      },
+      externalNextToLiveEntryPoint: {
+        success: false,
+        logs: ['The entry point "./entry.js" cannot be marked as external'],
+        outputs: [],
+      },
+      declinedThenDisabledByBrowserField: {
+        success: false,
+        logs: ['"./disabled.js" is disabled due to "browser" field in package.json (entry point)'],
+        outputs: [],
+      },
+      declined: ["./disabled.js"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Two entry point names that onResolve maps to one file make one output file.
+  for (const splitting of [false, true]) {
+    test.concurrent(`plugin/two entry points that resolve to one file (splitting: ${splitting})`, async () => {
+      using dir = tempDir("plugin-two-entry-points-one-file", {
+        "entry.ts": `console.log("entry");`,
+      });
+      const result = await Bun.build({
+        entrypoints: ["first-name", "second-name"],
+        outdir: join(String(dir), "out"),
+        splitting,
+        throw: false,
+        plugins: [
+          {
+            name: "alias",
+            setup(build) {
+              build.onResolve({ filter: /-name$/ }, () => ({ path: join(String(dir), "entry.ts") }));
+            },
+          },
+        ],
+      });
+      expect({
+        success: result.success,
+        logs: result.logs.map(log => log.message),
+        outputs: result.outputs.map(output => path.basename(output.path)),
+      }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
+    });
+  }
+
+  test.concurrent("plugin/internal plugin object checks its receiver and rejects new filters after setup", async () => {
+    using dir = tempDir("plugin-private-object", {
+      "entry.js": `export default 1;`,
+      "fixture.mjs": /* js */ `
+        import { getProtectedObjects } from "bun:jsc";
+        const hasOwn = Object.prototype.hasOwnProperty;
+        // The plugin object is a protected cell. Some other protected cells throw on property lookup.
+        function findPlugin() {
+          for (const object of getProtectedObjects()) {
+            try {
+              if (object && typeof object === "object" && hasOwn.call(object, "addFilter")) return object;
+            } catch {}
+          }
+        }
+        const attempt = call => {
+          try {
+            call();
+            return "accepted";
+          } catch (e) {
+            return e.code ?? e.name;
+          }
+        };
+
+        const leaked = [];
+        for (const name of ["promises", "onEndCallbacks"]) {
+          Object.defineProperty(Object.prototype, name, {
+            configurable: true,
+            get() {
+              if (hasOwn.call(this, "addFilter")) leaked.push(name);
+            },
+            set(value) {
+              Object.defineProperty(this, name, { value, writable: true, enumerable: true, configurable: true });
+            },
+          });
+        }
+
+        let plugin;
+        const outcomes = {};
+        const result = await Bun.build({
+          entrypoints: ["./entry.js"],
+          throw: false,
+          plugins: [
+            {
+              name: "probe",
+              // A callable Proxy isn't a JSFunction.
+              setup: new Proxy(build => {
+                plugin = findPlugin();
+                outcomes.duringSetup = attempt(() => plugin.addFilter(/never/, "probe", 1));
+                build.onEnd(() => {});
+                build.onLoad({ filter: /entry/ }, () => {
+                  outcomes.duringBuild = attempt(() => plugin.addFilter(/never/, "probe", 1));
+                });
+              }, {}),
+            },
+          ],
+        });
+        const calls = {
+          addFilter: [/x/, "a", 1],
+          addError: [0, new Error("x")],
+          onLoadAsync: [0, null, null],
+          onResolveAsync: [0, null, null, null],
+          onBeforeParse: [/x/, "a", {}, "symbol"],
+          generateDeferPromise: [0],
+        };
+        const receivers = Object.entries(calls).map(([name, args]) => attempt(() => plugin[name].apply(undefined, args)));
+        console.log(JSON.stringify({ success: result.success, leaked, outcomes, receivers }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "null")).toEqual({
+      success: true,
+      leaked: [],
+      outcomes: { duringSetup: "accepted", duringBuild: "ERR_INVALID_STATE" },
+      receivers: Array(6).fill("ERR_INVALID_THIS"),
+    });
+    expect(exitCode).toBe(0);
   });
 });

@@ -1,64 +1,78 @@
 use core::ffi::c_ulong;
 use std::io::Write as _;
 
+use crate::Error;
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::output as bun_output;
 use bun_core::printer as js_printer;
-use bun_core;
-use crate::Error;
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::{self, PathBuffer};
 use bun_sys::{self};
 use bun_wyhash::hash;
 
 use super::diff_format::DiffFormatter;
 use super::expect::Expect;
 use super::jest::{FileColumns as _, Jest};
+use bun_collections::index_sort;
 
 // TestRunner.File.ID — concrete alias from jest.rs (`pub type FileId = u32`).
 type FileId = super::jest::FileId;
 
 bun_core::declare_scope!(inline_snapshot, visible);
 
-pub struct Snapshots<'a> {
+pub(crate) struct Snapshots {
     pub(crate) update_snapshots: bool,
     pub(crate) total: usize,
     pub(crate) added: usize,
     pub(crate) passed: usize,
     pub(crate) failed: usize,
 
-    pub(crate) file_buf: &'a mut Vec<u8>,
+    file_buf: Vec<u8>,
     // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
     // Key is u64 to match `bun.hash`'s return type (avoids a narrowing cast).
-    pub(crate) values: &'a mut HashMap<u64, Box<[u8]>>,
-    pub(crate) counts: &'a mut StringHashMap<usize>,
-    pub(crate) _current_file: Option<File>,
-    /// Read-only backref into `Jest::RUNNER.files[..].source.path` (not owned
-    /// here, never freed): the runner is process-global and its files are
-    /// never freed mid-run, so the pointee outlives `self`. Only dereferenced
-    /// via `as_ref()` in `get_snapshot_file` (see the SAFETY comments there).
-    pub(crate) snapshot_dir_path: Option<core::ptr::NonNull<[u8]>>,
-    pub(crate) inline_snapshots_to_write: &'a mut IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
+    values: HashMap<u64, Box<[u8]>>,
+    counts: StringHashMap<usize>,
+    _current_file: Option<File>,
+    /// Directory whose `__snapshots__/` was last created (or found existing);
+    /// borrowed from the runner's `File::source.path`, a `Path<'static>`.
+    snapshot_dir_path: Option<&'static [u8]>,
+    inline_snapshots_to_write: IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
     pub(crate) last_error_snapshot_name: Option<Box<[u8]>>,
 }
 
 // Re-export the TSV-mandated container name so the field type matches verbatim.
-pub use bun_collections::ArrayHashMap as IndexMap;
+pub(crate) use bun_collections::ArrayHashMap as IndexMap;
 
-impl<'a> Snapshots<'a> {
+impl Snapshots {
     const FILE_HEADER: &'static [u8] = b"// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
 
     #[cfg(windows)]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__\\";
     #[cfg(not(windows))]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__/";
+
+    pub(crate) fn init(update_snapshots: bool) -> Snapshots {
+        Snapshots {
+            update_snapshots,
+            total: 0,
+            added: 0,
+            passed: 0,
+            failed: 0,
+            file_buf: Vec::new(),
+            values: HashMap::new(),
+            counts: StringHashMap::new(),
+            _current_file: None,
+            snapshot_dir_path: None,
+            inline_snapshots_to_write: IndexMap::new(),
+            last_error_snapshot_name: None,
+        }
+    }
 }
 
 // hoisted out of `impl Snapshots` — inherent associated types are unstable.
 
-pub struct InlineSnapshotToWrite {
+pub(crate) struct InlineSnapshotToWrite {
     pub(crate) line: c_ulong,
     pub(crate) col: c_ulong,
     /// owned (was: owned by Snapshots.allocator)
@@ -88,12 +102,12 @@ impl InlineSnapshotToWrite {
     }
 }
 
-pub struct File {
+pub(crate) struct File {
     pub(crate) id: FileId,
     pub(crate) file: bun_sys::File,
 }
 
-impl<'a> Snapshots<'a> {
+impl Snapshots {
     /// Reset per-run snapshot counters to 0. Keys stay owned by the map until
     /// `writeSnapshotFile` tears them down on file switch.
     pub(crate) fn reset_counts(&mut self) {
@@ -102,7 +116,11 @@ impl<'a> Snapshots<'a> {
         }
     }
 
-    pub(crate) fn add_count(&mut self, expect: &Expect, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
+    pub(crate) fn add_count(
+        &mut self,
+        expect: &Expect,
+        hint: &[u8],
+    ) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
         let snapshot_name = expect.get_snapshot_name(hint)?;
         // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
@@ -126,9 +144,7 @@ impl<'a> Snapshots<'a> {
         target_value: &[u8],
         hint: &[u8],
     ) -> Result<Option<&[u8]>, Error> {
-        let buntest_strong = expect
-            .bun_test()
-            .ok_or(crate::Error::SnapshotFailed)?;
+        let buntest_strong = expect.bun_test().ok_or(crate::Error::SnapshotFailed)?;
         let bun_test = buntest_strong.get();
         match self.get_snapshot_file(bun_test.file_id)? {
             bun_sys::Result::Ok(()) => {}
@@ -166,7 +182,7 @@ impl<'a> Snapshots<'a> {
 
         // doesn't exist. append to file bytes and add to hashmap.
         // Prevent snapshot creation in CI environments unless --update-snapshots is used
-        if crate::cli::ci_info::is_ci() {
+        if bun_core::ci_info::is_ci() {
             if !self.update_snapshots {
                 // Store the snapshot name for error reporting
                 self.last_error_snapshot_name = Some(name_with_counter.into_boxed_slice());
@@ -214,10 +230,8 @@ impl<'a> Snapshots<'a> {
         // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = VirtualMachine::get().as_mut();
-        let opts = js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone(),
-            bun_ast::Loader::Js,
-        );
+        let opts =
+            js_parser::ParserOptions::init(vm.transpiler.options.jsx.clone(), bun_ast::Loader::Js);
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
@@ -237,20 +251,19 @@ impl<'a> Snapshots<'a> {
         let test_filename = name.filename;
         let dir_path = name.dir_with_trailing_slash();
 
-        let mut snapshot_file_path_buf = PathBuffer::uninit();
-        let buf = snapshot_file_path_buf.0.as_mut_slice();
-        let mut pos = 0usize;
-        buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
-        pos += dir_path.len();
-        buf[pos..pos + Self::SNAPSHOTS_DIR_NAME.len()].copy_from_slice(Self::SNAPSHOTS_DIR_NAME);
-        pos += Self::SNAPSHOTS_DIR_NAME.len();
-        buf[pos..pos + test_filename.len()].copy_from_slice(test_filename);
-        pos += test_filename.len();
-        buf[pos..pos + b".snap".len()].copy_from_slice(b".snap");
-        pos += b".snap".len();
-        buf[pos] = 0;
-        // SAFETY: buf[pos] == 0 written above
-        let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
+        let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
+        let snapshot_file_path = ZStr::from_slice_with_nul(
+            strings::concat_buf_t::<u8>(
+                &mut snapshot_file_path_buf[..],
+                &[
+                    dir_path,
+                    Self::SNAPSHOTS_DIR_NAME,
+                    test_filename,
+                    b".snap\0",
+                ],
+            )
+            .map_err(|_| crate::Error::FailedToOpenSnapshotFile)?,
+        );
 
         let source = bun_ast::Source::init_path_string(
             snapshot_file_path.as_bytes(),
@@ -332,7 +345,8 @@ impl<'a> Snapshots<'a> {
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
             file.file
-                .write_all(self.file_buf)
+                .write_all(&self.file_buf)
+                .and_then(|()| bun_sys::ftruncate(file.file.handle, self.file_buf.len() as i64))
                 .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
             let _ = file.file.close();
             self.file_buf.clear();
@@ -350,10 +364,7 @@ impl<'a> Snapshots<'a> {
         file_id: FileId,
         value: InlineSnapshotToWrite,
     ) -> Result<(), Error> {
-        let list = self
-            .inline_snapshots_to_write
-            .entry(file_id)
-            .or_default();
+        let list = self.inline_snapshots_to_write.entry(file_id).or_default();
         list.push(value);
         Ok(())
     }
@@ -389,7 +400,7 @@ impl<'a> Snapshots<'a> {
             });
 
             // 1. sort ils_info by row, col
-            ils_info.sort_by(|a, b| {
+            index_sort::sort_slice_by(ils_info, |a, b| {
                 if InlineSnapshotToWrite::less_than_fn(a, b) {
                     core::cmp::Ordering::Less
                 } else if InlineSnapshotToWrite::less_than_fn(b, a) {
@@ -458,14 +469,7 @@ impl<'a> Snapshots<'a> {
                             },
                             format_args!(
                                 "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{}",
-                                DiffFormatter {
-                                    received_string: Some(&ils.value),
-                                    expected_string: Some(last_value),
-                                    global_this: Some(vm.global()),
-                                    received: None,
-                                    expected: None,
-                                    not: false,
-                                },
+                                DiffFormatter::from_strings(&ils.value, last_value, false),
                             ),
                         );
                     }
@@ -836,52 +840,43 @@ impl<'a> Snapshots<'a> {
             let test_filename = name.filename;
             let dir_path = name.dir_with_trailing_slash();
 
-            let mut snapshot_file_path_buf = PathBuffer::uninit();
+            let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
             let buf = snapshot_file_path_buf.0.as_mut_slice();
-            let mut pos = 0usize;
-            buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
-            pos += dir_path.len();
-            buf[pos..pos + Self::SNAPSHOTS_DIR_NAME.len()]
-                .copy_from_slice(Self::SNAPSHOTS_DIR_NAME);
-            pos += Self::SNAPSHOTS_DIR_NAME.len();
 
-            // SAFETY: snapshot_dir_path is a BACKREF into Jest::runner().files[..].source.path,
-            // which outlives self (runner is process-global; files are never freed mid-run).
-            let cached_dir = self.snapshot_dir_path.map(|p| unsafe { p.as_ref() });
+            let cached_dir = self.snapshot_dir_path;
             if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true) {
-                buf[pos] = 0;
-                // SAFETY: buf[pos] == 0 written above
-                let snapshot_dir_path = ZStr::from_buf(&buf[..], pos);
+                let snapshot_dir_path = ZStr::from_slice_with_nul(
+                    strings::concat_buf_t::<u8>(buf, &[dir_path, Self::SNAPSHOTS_DIR_NAME, b"\0"])
+                        .map_err(|_| crate::Error::FailedToOpenSnapshotFile)?,
+                );
                 match bun_sys::mkdir(snapshot_dir_path, 0o777) {
                     bun_sys::Result::Ok(()) => {
-                        // SAFETY: read-only backref into Jest::RUNNER.files[..].source.path
-                        // (process-global; outlives self). Never written through — only
-                        // dereferenced via `.as_ref()` above. `NonNull::from(&_)` avoids
-                        // the `*const _ as *mut _` cast while preserving provenance.
-                        self.snapshot_dir_path = Some(core::ptr::NonNull::from(dir_path));
+                        self.snapshot_dir_path = Some(dir_path);
                     }
                     bun_sys::Result::Err(err) => match err.get_errno() {
                         bun_sys::Errno::EEXIST => {
-                            // SAFETY: see above — read-only backref, never written through.
-                            self.snapshot_dir_path = Some(core::ptr::NonNull::from(dir_path));
+                            self.snapshot_dir_path = Some(dir_path);
                         }
                         _ => return Ok(bun_sys::Result::Err(err)),
                     },
                 }
             }
 
-            buf[pos..pos + test_filename.len()].copy_from_slice(test_filename);
-            pos += test_filename.len();
-            buf[pos..pos + b".snap".len()].copy_from_slice(b".snap");
-            pos += b".snap".len();
-            buf[pos] = 0;
-            // SAFETY: buf[pos] == 0 written above
-            let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
+            let snapshot_file_path = ZStr::from_slice_with_nul(
+                strings::concat_buf_t::<u8>(
+                    buf,
+                    &[
+                        dir_path,
+                        Self::SNAPSHOTS_DIR_NAME,
+                        test_filename,
+                        b".snap\0",
+                    ],
+                )
+                .map_err(|_| crate::Error::FailedToOpenSnapshotFile)?,
+            );
 
-            let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-            if self.update_snapshots {
-                flags |= bun_sys::O::TRUNC;
-            }
+            // Not O_TRUNC: a run that exits before `write_snapshot_file` must leave the old contents.
+            let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
             let fd = match bun_sys::open(snapshot_file_path, flags, 0o644) {
                 bun_sys::Result::Ok(fd) => fd,
                 bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),

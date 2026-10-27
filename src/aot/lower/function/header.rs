@@ -4,11 +4,14 @@ use bun_sema::file_analysis::has_live_await;
 use bun_sema::hir::{self, Flags, FnId, FnKind};
 
 use crate::builtins::id::BuiltinClass;
-use crate::ir::generated::{Function, FunctionFlags, FunctionKind, LimitId, SourceRange};
+use crate::ir::generated::{
+    Function, FunctionFlags, FunctionKind, FunctionSyntax, LimitId, SourceRange,
+};
 use crate::ir::{
     Body, DeclaredType, FunctionId, FunctionKey, Mapped, PositionFlags, Primitives, StringId, Type,
     TypeTable,
 };
+use crate::load;
 use crate::lower::{FileLowering, class, generator};
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -21,6 +24,16 @@ impl FileLowering<'_, '_, '_, '_> {
             _ => Binding::Free,
         };
         self.intern_function_name(binding, func.name, func.name_pos)
+    }
+
+    // What an indirect `eval` is given is the body of a function without a name, which is all that its file holds. `Function` makes a function that has a name.
+    fn is_evaluated_script(&self, key: FunctionKey) -> bool {
+        let FunctionKey::Source(source) = key else {
+            return false;
+        };
+        self.inputs.sources.kind(self.file) == load::SourceKind::EvaluatedText
+            && self.hir[source.function].name.is_none()
+            && self.find_enclosing_key(key).is_none()
     }
 
     pub(in crate::lower) fn is_derived_constructor(&self, function: FnId) -> bool {
@@ -162,7 +175,10 @@ pub(crate) fn create_header(
         role: file.source.function_role(),
         flags,
         length: 0,
-        has_written_await: false,
+        syntax: match file.is_evaluated_script(key) {
+            true => FunctionSyntax::IS_EVALUATED_SCRIPT,
+            false => FunctionSyntax::default(),
+        },
         enclosing_runtime_function,
         captures: file.capture_positions(key),
         this_type: DeclaredType::untyped(),
@@ -258,9 +274,12 @@ fn create_source_header(
         }
         None => None,
     };
-    header.has_written_await = header.flags.contains(FunctionFlags::IS_ASYNC)
+    if header.flags.contains(FunctionFlags::IS_ASYNC)
         && !header.flags.contains(FunctionFlags::HAS_EXPLICIT_NAME)
-        && has_live_await(hir, &file.decisions().as_folded_by_bun_run(), function);
+        && has_live_await(hir, &file.decisions().as_folded_by_bun_run(), function)
+    {
+        header.syntax |= FunctionSyntax::HAS_WRITTEN_AWAIT;
+    }
     header.text = file.compute_text_range(function);
     header.length = func
         .params

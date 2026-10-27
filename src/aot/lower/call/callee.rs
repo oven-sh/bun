@@ -336,6 +336,12 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // JSC reports an access to a member at the `.`, the `?.` or the `[` behind the object, which the source map takes back to the last token of the object.
     pub(in crate::lower) fn member_position(&self, object: ExprId) -> u32 {
+        // JSC records no position for what an object pattern reads: the last one is that of the object behind the pattern.
+        let written = self.hir[self.skip_type_syntax(object)].pos;
+        let transpiled = self.transpiled.as_ref();
+        if let Some(joined) = transpiled.and_then(|it| it.find_joined_declarator_at(written)) {
+            return joined.printed_object;
+        }
         let end = self.last_mapped_position(object);
         // The text that runs has no syntax of types: the operator stands right behind the object there.
         if !self.is_shown_without_source_map() || self.skip_type_syntax(object) != object {

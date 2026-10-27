@@ -6,7 +6,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { hasNodeModulesAbove } from "./harness/without-installing-packages";
+import { covers, hasNodeModulesAbove } from "./harness/without-installing-packages";
 
 const missing = "a-package-that-no-test-installs";
 const program = `
@@ -141,6 +141,60 @@ describe("the sources of the tests and tools", () => {
     expect(readFileSync(join(dirname(root), "harness.ts"), "utf8")).toMatch(
       /^import "\.\/aot\/harness\/without-installing-packages";$/m,
     );
+  });
+
+  test("whatever takes a temporary folder from the system imports the harness or the file itself", () => {
+    const takesATemporaryFolder =
+      /^import\b[^;]*\b(tmpdir|mkdtemp|mkdtempSync)\b[^;]*from "(node:)?(os|fs|fs\/promises)";/m;
+    expect(sources.filter(path => takesATemporaryFolder.test(textOf.get(path)!) && !reachesTheCure(path))).toEqual([]);
+  });
+
+  test("whatever works in a folder of its own choice lays node_modules into it", () => {
+    const ownPlace = /["'`]\/(tmp|var\/tmp|dev\/shm)["'`\/]|process\.env\.TMPDIR/;
+    // These name such a place for something else than the folder of a program that plain Bun runs.
+    const otherUses = new Set([
+      "every-image-of-an-executable-has-its-map.test.ts",
+      "generated/text-that-comes-at-run-time-changes-what-the-program-holds.ts",
+      "hardened-environment.test.ts",
+      "names-from-run-time-in-a-trimmed-executable.test.ts",
+      "plain-bun-installs-no-packages.test.ts",
+      "real-apps/run.ts",
+      "the-fuzzer-keeps-a-wrong-answer-beside-a-clock.test.ts",
+      "trimmed-is-whole/environment-in-parts.ts",
+    ]);
+    expect(
+      sources.filter(
+        path =>
+          ownPlace.test(textOf.get(path)!) &&
+          !otherUses.has(path) &&
+          !textOf.get(path)!.includes("withoutInstallingPackages("),
+      ),
+    ).toEqual([]);
+  });
+
+  test("a Python tool that runs plain Bun lays node_modules too", () => {
+    const runsPlainBun = /\[[\w.\[\]"]+, "run", /;
+    expect(
+      [...new Glob("**/*.py").scanSync({ cwd: root })]
+        .map(path => path.replaceAll(sep, "/"))
+        .filter(path => !programFolders.test(path))
+        .filter(path => {
+          const text = readFileSync(join(root, path), "utf8");
+          return runsPlainBun.test(text) && !/node_modules|without_installing_packages\(/.test(text);
+        })
+        .sort(),
+    ).toEqual([]);
+  });
+
+  test("a test in another folder that compiles ahead of time or trims is covered too", () => {
+    const tests = dirname(root);
+    const buildsSo = /--(debug-)?aot\b|--trim\b|\b(aot|trim): true\b/;
+    expect(
+      [...new Glob("{bundler,cli,internal}/**/*.test.ts").scanSync({ cwd: tests })]
+        .filter(path => buildsSo.test(readFileSync(join(tests, path), "utf8")) && !covers(join(tests, path)))
+        .sort(),
+    ).toEqual([]);
+    expect(covers(join(tests, "js", "bun", "util", "inspect.test.js"))).toBe(false);
   });
 
   test("every test reaches it", () => {

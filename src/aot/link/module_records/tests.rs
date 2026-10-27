@@ -703,8 +703,11 @@ fn names_resolved_at_run_time_are_required() {
         module,
         name,
         may_be_absent,
+        export_name,
+        specifier,
     } = *required;
     assert!(!may_be_absent);
+    assert_eq!((export_name, specifier), (None, None));
     assert_eq!(module, module_named(&program, "barrel.js"));
     assert_eq!(program.strings.get(name), b"x");
     let requests = &record_named(&program, "barrel.js").requests;
@@ -737,6 +740,10 @@ fn name_re_exported_by_typescript_is_required() {
         assert!(!required.may_be_absent, "{exporter}");
         assert_eq!(required.module, module_named(&program, "barrel.js"));
         assert_eq!(program.strings.get(required.name), b"x");
+        let written = [required.export_name, required.specifier];
+        let written =
+            written.map(|text| program.strings.get(text.expect("an export statement asks")));
+        assert_eq!(written, [b"x".as_slice(), b"./barrel.js"]);
     }
 }
 

@@ -203,7 +203,8 @@ class Farm:
                 if line.strip() and not line.startswith("#"):
                     pattern, _, reason = line.rstrip("\n").partition("\t")
                     self.known.append((re.compile(pattern), reason))
-        os.makedirs(self.work, exist_ok=True)
+        # `bun run` asks the registry for a package that is not installed, unless a folder above the program holds node_modules.
+        os.makedirs(os.path.join(self.work, "node_modules"), exist_ok=True)
         os.makedirs(self.out, exist_ok=True)
 
     def env(self, *more):

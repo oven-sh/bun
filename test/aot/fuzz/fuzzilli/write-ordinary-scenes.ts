@@ -2981,6 +2981,190 @@ class Scenes {
     this.emit(1, `printValue("factories ${number}", out);`);
     this.lines.push("}");
   }
+
+  /**
+   * A small loop walks a list by its counter. In one turn it tests the element, or a field of it, stores to the same place in one arm, and reads the place again.
+   * The function is called with lists of one kind alone, and both what it answers and the list are printed.
+   */
+  sceneOfElementsStoredAndReadAgain() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += JSON.stringify(value) + ";"; }`,
+    );
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const hasRows = this.chance(40);
+      const hasFractions = this.chance(30);
+      const hit = hasFractions ? "100.5" : "100";
+      const stored = this.chance(90)
+        ? this.pick(hasFractions ? ["3.5", "0.5", "-1.5"] : ["3", "0", "-1", "7", "2147483647"])
+        : this.pick([`"t"`, "1.5", "null", "undefined"]);
+      const element = (at: number) => (this.chance(35) ? hit : String(at + 1) + (hasFractions ? ".5" : ""));
+      const written = (length: number) =>
+        `[${Array.from({ length }, (_, at) => (hasRows ? `{ value: ${element(at)} }` : element(at))).join(", ")}]`;
+      const made = () => {
+        const length = this.pick([1, 3, 3, 8, 21]);
+        const list = written(length);
+        return this.pick([
+          list,
+          list,
+          `(() => { const made${any} = []; for (const each of ${list}) made.push(each); return made; })()`,
+          `Array.from(${list})`,
+          `${list}.map((each${any}) => each)`,
+          `${list}.slice()`,
+          `[...${list}]`,
+          `([]${asAny}).concat(${list})`,
+          `Array.of(...${list})`,
+          hasRows
+            ? `Array.from({ length: ${length} }, (_, at) => ({ value: at % 2 ? ${hit} : at }))`
+            : `new Array(${length}).fill(${hit})`,
+          hasRows ? `${list}.map((each${any}) => new (class { value = each.value; })())` : `[, ...${list}]`,
+        ]);
+      };
+      const place = hasRows ? "a[i].value" : "a[i]";
+      const test = this.pick([
+        `${place} === ${hit}`,
+        `${place} === ${hit}`,
+        `${place} == ${hit}`,
+        `${place} > 99`,
+        `${place} >= ${hit}`,
+        `${place} !== 1`,
+      ]);
+      const [before, store] = this.pick<[string, string]>([
+        ["", `${place} = ${stored};`],
+        ["", `${place} = ${stored};`],
+        ["", `${place} = ${stored};`],
+        ["const b = a;", `${place.replace("a[", "b[")} = ${stored};`],
+        ["", `{ const j = i; ${place.replace("[i]", "[j]")} = ${stored}; }`],
+        ["", `${place.replace("[i]", "[i + 0]")} = ${stored};`],
+        ["", hasRows ? `a[i] = { value: ${stored} };` : `a[i + 1 < a.length ? i + 1 : i] = ${stored};`],
+        ["", hasRows ? `{ const row = a[i]; row.value = ${stored}; }` : `a[i] = a[i] - 97;`],
+        ["", `${place} += 1;`],
+      ]);
+      const turn = this.pick([
+        `if (${test}) ${store} s += ${place};`,
+        `if (${test}) ${store} s += ${place};`,
+        `if (${test}) { ${store} } s = s + ${place};`,
+        `if (!(${test})) { s += 1; } else { ${store} } s += ${place};`,
+        `const first = ${place}; if (${test}) ${store} s += first + ${place};`,
+        `if (${test}) ${store} s += ${place} * 2;`,
+      ]);
+      const loop = this.pick([
+        `for (let i = 0; i < a.length; i++) { ${turn} }`,
+        `for (let i = 0; i < a.length; i++) { ${turn} }`,
+        `for (let i = 0, n = a.length; i < n; i++) { ${turn} }`,
+        `for (let i = a.length - 1; i >= 0; i--) { ${turn} }`,
+        `let i = 0; while (i < a.length) { ${turn} i++; }`,
+        `for (let i = 0; i < a.length; i += 1) { ${turn} }`,
+      ]);
+      const type = this.isTypeScript
+        ? this.plainly(30, ": any", () => (hasRows ? ": { value: number }[]" : ": number[]"))
+        : "";
+      this.emit(1, `function total${id}(a${type})${any} { let s${any} = 0; ${before} ${loop} return s; }`);
+      for (const list of this.several(1, 3, made))
+        this.emit(
+          1,
+          `try { const list${any} = ${list}; note(total${id}(list)); note(list); } catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`,
+        );
+    }
+    this.emit(1, `printValue("elements ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * A second file from which the program takes types alone, so that no code of it is in the executable: enums whose members name members by a path, classes with private names, namespaces,
+   * ambient constants. Or a declaration file beside a JavaScript file. In JavaScript there are no such files, and the scene is one of steps on an object.
+   */
+  sceneOfAFileUsedOnlyForItsTypes() {
+    if (!this.isTypeScript) return this.sceneOfStepsOnOneObject();
+    const number = ++this.count;
+    const tag = this.nameOfItsOwn("t");
+    const declared: [name: string, text: string][] = [
+      ["Flags", `export enum Flags { Read = 1, Write = 2, All = Flags.Read | Flags.Write }`],
+      ["Keyed", `export enum Keyed { A = 1, B = Keyed["A"] + 1 }`],
+      ["Other", `export enum Seed { A = 3 }\nexport enum Other { A = Seed.A, B = Seed.A << 1, C = Other.B | Seed.A }`],
+      [
+        "Via",
+        `export namespace Ns { export enum E { A = 5, B = E.A * 2 } }\nexport enum Via { A = Ns.E.A, B = Ns.E.B + 1 }`,
+      ],
+      ["Texts", 'export enum Texts { A = "a", B = `${Texts.A}b` }'],
+      ["Quick", `export const enum Quick { A = 1, B = Quick.A + 1 }`],
+      ["Mixed", `export enum Mixed { A, B = A + 2, C, D = "d" }`],
+      [
+        "Held",
+        `export class Held { #p = 1; get a() { return this.#p; } static #s = 2; static { Held.#s++; } #m() { return 3; } call() { return this.#m(); } }`,
+      ],
+      [
+        "Shape",
+        `export enum Kind { Round = 1, Square = Kind.Round + 1 }\nexport interface Shape { kind: Kind; side?: number }`,
+      ],
+      ["Alias", `export enum Left { A = 1 }\nexport enum Right { A = Left.A + 1 }\nexport type Alias = Left | Right;`],
+      [
+        "Ambient",
+        `export enum Base { A = 7 }\nexport declare const ambient = Base.A;\nexport type Ambient = typeof ambient;`,
+      ],
+      ["Old", `export function Old(this: any) { this.x = 1; }\nOld.prototype.y = 2;`],
+    ];
+    const chosen = [...new Map(this.several(1, 4, () => this.pick(declared))).entries()];
+    const names = chosen.map(([name]) => name);
+    const isDeclarationFile = this.chance(25);
+    const file = `./${tag}.${isDeclarationFile ? "js" : "ts"}`;
+    if (isDeclarationFile) {
+      this.files.push([file, `export const made${number} = ${number};\n`]);
+      this.files.push([
+        `./${tag}.d.ts`,
+        [
+          `export declare const made${number}: number;`,
+          ...chosen
+            .filter(([name]) => !["Held", "Old", "Ambient"].includes(name))
+            .map(([, text]) => text.replace(/^export (?=enum|const enum|namespace)/gm, "export declare ")),
+          "",
+        ].join("\n"),
+      ]);
+    } else this.files.push([file, chosen.map(([, text]) => text).join("\n") + "\n"]);
+    const usable = isDeclarationFile ? names.filter(name => !["Held", "Old", "Ambient"].includes(name)) : names;
+    const space = `space${number}`;
+    const byNamespace = this.chance(25);
+    const ignore = "// @ts-ignore\n";
+    if (isDeclarationFile) this.imports.push(`${ignore}import { made${number} } from "${file}";`);
+    if (usable.length)
+      this.imports.push(
+        ignore +
+          (byNamespace
+            ? `import type * as ${space} from "${file}";`
+            : this.pick([
+                `import { ${usable.join(", ")} } from "${file}";`,
+                `import { ${usable.join(", ")} } from "${file}";`,
+                `import type { ${usable.join(", ")} } from "${file}";`,
+                `import { ${usable.map(name => "type " + name).join(", ")} } from "${file}";`,
+              ])),
+      );
+    this.lines.push("{");
+    this.emit(1, `let out = "";`, `function note(value: any): void { out += String(value) + ";"; }`);
+    usable.forEach((name, at) => {
+      const type =
+        name === "Old" ? `typeof ${byNamespace ? space + "." : ""}Old` : (byNamespace ? space + "." : "") + name;
+      this.emit(
+        1,
+        this.pick([
+          `const held${number}_${at}: ${type} = ${at + 1} as any; note(held${number}_${at});`,
+          `function takes${number}_${at}(given: ${type}): ${type} | undefined { return given; } note(takes${number}_${at}(${at + 2} as any));`,
+          `let later${number}_${at}: ${type} | undefined; note(later${number}_${at});`,
+          `const list${number}_${at}: ${type}[] = []; note(list${number}_${at}.length);`,
+          `type Local${number}_${at} = { inner: ${type} }; const local${number}_${at}: Local${number}_${at} = { inner: ${at} as any }; note(local${number}_${at}.inner);`,
+          `class Uses${number}_${at} { field?: ${type}; method(given?: ${type}): ${type} | undefined { return given ?? this.field; } } note(new Uses${number}_${at}().method());`,
+        ]),
+      );
+    });
+    if (isDeclarationFile) this.emit(1, `note(made${number});`);
+    this.emit(1, `printValue("types ${number}", out);`);
+    this.lines.push("}");
+  }
 }
 
 /**
@@ -3002,6 +3186,15 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfIdioms(),
+        () => scenes.sceneOfElementsStoredAndReadAgain(),
+        () => scenes.sceneOfElementsStoredAndReadAgain(),
+        () => scenes.sceneOfElementsStoredAndReadAgain(),
+        () => scenes.sceneOfElementsStoredAndReadAgain(),
+        () => scenes.sceneOfElementsStoredAndReadAgain(),
+        () => scenes.sceneOfAFileUsedOnlyForItsTypes(),
+        () => scenes.sceneOfAFileUsedOnlyForItsTypes(),
+        () => scenes.sceneOfAFileUsedOnlyForItsTypes(),
+        () => scenes.sceneOfAFileUsedOnlyForItsTypes(),
         () => scenes.sceneOfClassesOutOfFactories(),
         () => scenes.sceneOfClassesOutOfFactories(),
         () => scenes.sceneOfClassesOutOfFactories(),

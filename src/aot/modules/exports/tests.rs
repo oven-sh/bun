@@ -5,7 +5,7 @@ use crate::modules::module_set::collect_modules;
 use crate::modules::order::compute_order;
 use crate::modules::requests::scan_files;
 use crate::modules::testing::{describe_module, file_named, with_graph};
-use crate::modules::{BindInput, ExportLookup, ModuleFailure};
+use crate::modules::{BindInput, ExportLookup, ExportStatement, ModuleFailure};
 use bstr::BString;
 use bun_core::strings;
 use bun_sema::bind::SymbolId;
@@ -436,7 +436,15 @@ fn named_re_export_of_uncompiled_code_is_indirect() {
             is_read_from_object: true,
         };
         assert_eq!(graph.exports(barrel), [expected]);
-        assert_eq!(graph.required_names(barrel), [RequiredName::new(module, x)]);
+        let asked_by = Some(ExportStatement {
+            export_name: y,
+            specifier: input.files.atoms.intern(UNCOMPILED_MODULE.as_bytes()),
+        });
+        let required = RequiredName {
+            asked_by,
+            ..RequiredName::new(module, x)
+        };
+        assert_eq!(graph.required_names(barrel), [required]);
         assert!(!graph.has_dynamic_names(barrel));
         assert!(graph.synthetic_exports().is_empty());
         assert!(graph.errors().is_empty());

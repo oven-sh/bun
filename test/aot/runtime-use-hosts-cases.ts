@@ -526,6 +526,14 @@ group("other names for Bun and process", () => {
     ["an import of it is exported", `import B from "bun";\nexport { B };`, `import { B } from "./other";\n${paints}`],
     ["an import of its namespace is exported under another name", `import * as all from "bun";\nexport { all as B };`, `import { B } from "./other";\n${paints}`],
     ["an import of its default export by name is exported", `import { default as all } from "bun";\nexport { all as B };`, `import { B } from "./other";\n${paints}`],
+    ["an import of its default export by name is exported and read from the namespace", `import { default as all } from "bun";\nexport { all as B };`, `import * as other from "./other";\nconsole.log(other.B.color("red", "hex"));`],
+    ["an import of its default export by name is exported and required", `import { default as all } from "bun";\nexport { all as B };`, `console.log(require("./other").B.color("red", "hex"));`],
+    ["an import of its default export by name is exported and imported by a call", `import { default as all } from "bun";\nexport { all as B };`, `console.log((await import("./other")).B.color("red", "hex"));\nexport {};`],
+    ["an import of its default export by name is the default export", `import { default as all } from "bun";\nexport default all;`, `import B from "./other";\n${paints}`],
+    ["an import of it is exported and read from the namespace", `import B from "bun";\nexport { B };`, `import * as other from "./other";\nconsole.log(other.B.color("red", "hex"));`],
+    ["an import of its namespace is exported and required", `import * as B from "bun";\nexport { B };`, `console.log(require("./other").B.color("red", "hex"));`],
+    ["an import of a member of it is exported", `import { color } from "bun";\nexport { color };`, `import { color } from "./other";\nconsole.log(color("red", "hex"));`],
+    ["an import of a member of it is exported under another name", `import { color as paint } from "bun";\nexport { paint as paintIt };`, `import * as other from "./other";\nconsole.log(other.paintIt("red", "hex"));`],
     ["an import of it is the default export", `import B from "bun";\nexport default B;`, `import B from "./other";\n${paints}`],
   ])("what is called on Bun is accounted for when %s", async (_, other, main) => {
     expect(await used({ "main.ts": main, "other.ts": other })).toMatchObject({ mayPaint: true });

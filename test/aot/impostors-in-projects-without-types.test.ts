@@ -52,7 +52,8 @@ function typesIn(folder: string): string[] {
   const above: string[] = [];
   for (let up = dirname(folder); ; up = dirname(up)) {
     for (const name of ["tsconfig.json", "jsconfig.json", "package.json", "node_modules"])
-      if (existsSync(join(up, name))) above.push(join(up, name));
+      if (existsSync(join(up, name)) && !(name === "node_modules" && readdirSync(join(up, name)).length === 0))
+        above.push(join(up, name));
     if (up === dirname(up)) return [...inside, ...above];
   }
 }

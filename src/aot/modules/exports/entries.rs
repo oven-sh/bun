@@ -7,12 +7,12 @@ use crate::modules::imports::{
 use crate::modules::interop::ImportPhase;
 use crate::modules::module_set::ModuleSet;
 use crate::modules::requests::{FileScan, ScannedSite, Scans, import_phase, is_replaced_by_object};
-use crate::modules::{BindInput, ModuleRef, find_library_files};
+use crate::modules::{BindInput, ExportStatement, ModuleRef, find_library_files};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound, Decl, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::{self, ExportSpecId, ImportId, StmtId};
-use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, FileRole, Files, Sym};
 
 #[derive(Copy, Clone, Debug)]
@@ -45,6 +45,8 @@ pub(in crate::modules) struct ExportEntries {
 pub(in crate::modules) struct WrittenImport {
     pub imported: CommonJsImport,
     pub written: WrittenPart,
+    /// The module exports the name.
+    pub asked_by: Option<ExportStatement>,
 }
 
 pub(in crate::modules) struct CollectedEntries {
@@ -178,6 +180,7 @@ impl EntryCollector<'_, '_> {
                         name,
                     },
                     written: WrittenPart::new(site, part, site_kind, range),
+                    asked_by: None,
                 });
             }
         }
@@ -188,13 +191,33 @@ impl EntryCollector<'_, '_> {
         for index in 0..self.hir.imports.len() as u32 {
             self.add_names_of_import(ImportId(index), &mut imports);
         }
-        for &(_, entry) in own {
+        for &(export_name, entry) in own {
             let ExportEntry::Indirect {
                 site,
                 name,
-                written: Some(written),
+                written,
             } = entry
             else {
+                continue;
+            };
+            let asked_by = match self.analysis.import_sites[site as usize].specifier {
+                ImportSpecifier::Constant(specifier) => Some(ExportStatement {
+                    export_name,
+                    specifier,
+                }),
+                _ => None,
+            };
+            let Some(written) = written else {
+                // `import { name } from "m"; export { name }`.
+                let mut of_statements = imports.iter_mut();
+                let import = of_statements.find(|import| {
+                    import.written.order.site == site
+                        && import.imported.name == name
+                        && import.asked_by.is_none()
+                });
+                if let Some(import) = import {
+                    import.asked_by = asked_by;
+                }
                 continue;
             };
             let exporter = self.exporting_file_at(site as usize);
@@ -205,6 +228,7 @@ impl EntryCollector<'_, '_> {
                     name,
                 },
                 written,
+                asked_by,
             }));
         }
         imports
@@ -299,8 +323,7 @@ impl EntryCollector<'_, '_> {
             return has_value.then_some(ExportEntry::Local(local));
         };
         let site = find_imported_value_site(self.files, self.file, self.scan, import, local)?;
-        let is_copy = matches!(imported, ImportedName::Name(name) if name != known::default)
-            && matches!(self.scan.sites[site], ScannedSite::Module(target) if is_replaced_by_object(target));
+        let is_copy = matches!(self.scan.sites[site], ScannedSite::Module(target) if is_replaced_by_object(target));
         if is_copy {
             return Some(ExportEntry::Local(local));
         }

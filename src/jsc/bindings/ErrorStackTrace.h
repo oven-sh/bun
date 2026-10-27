@@ -102,6 +102,8 @@ public:
     bool isWasmFrame() const { return m_isWasmFrame; }
     bool isEval()
     {
+        if (m_isAOTCompiled)
+            return m_stackFrame->codeType() == JSC::EvalCode;
         if (m_codeBlock) {
             if (m_codeBlock->codeType() == JSC::EvalCode) {
                 return true;

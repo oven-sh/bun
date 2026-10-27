@@ -30,6 +30,8 @@ aot, jit = os.path.abspath(options.aot), os.path.abspath(options.jit)
 first, _, last = options.cores.partition("-")
 cores = list(range(int(first), int(last or first) + 1))
 work = tempfile.mkdtemp(prefix="against-the-jit-")
+# `bun run` asks the registry for a package that is not installed, unless a folder above the program holds node_modules.
+os.makedirs(os.path.join(work, "node_modules"))
 OPERATIONS = os.path.join(work, "operations")
 subprocess.run([sys.executable, os.path.join(HERE, "operations", "generate.py"), OPERATIONS], check=True, stdout=subprocess.DEVNULL)
 json.dump({"extends": os.path.join(HERE, "operations", "tsconfig.json")}, open(os.path.join(OPERATIONS, "tsconfig.json"), "w"))

@@ -64,6 +64,7 @@
 //   host-functions-that-throw native functions of Bun, Node.js and the web called with values they accept and values they refuse, while code of the program runs underneath them
 //   keys-of-built-in-objects-after-reads-and-copies the own keys of objects of the language, Bun, Node.js and the web, listed after members were read, asked for, added and deleted and the object was copied
 //   keys-of-built-in-objects-that-add-members-when-read the own keys of one built-in object that adds a member when it is first read, listed after members were read, called and asked for, where what is listed could also be something else
+//   keys-of-built-in-objects-beside-what-a-compiler-writes-itself the own keys of one built-in object that adds a member when it is first read, listed in a program that uses none, one or all of its members, beside what a compiler writes with built-in functions of its own accord
 //   members-of-built-in-objects-handed-around objects and functions of the language, Bun, Node.js and the web, copied or handed through Proxies, revivers, Reflect, collections and closures; then every member is tested, read by name and called
 //   closures-tested-before-they-leave a closure is asked something and then returned, stored, thrown, yielded, captured or handed on, under the name that was asked or a second one (closures-tested-before-they-leave.ts)
 //   functions-that-make-many-objects-and-return-one one function makes 8 to 148 pairs of small objects, stores into some and returns one, two or a new one (functions-that-make-many-objects-and-return-one.ts)
@@ -95,6 +96,8 @@
 //   <any of these>-in-several-files the same program with the declarations at its top laid into up to four further files, which import from each other; in every second program they import from its first file too (declarations-in-files-of-their-own.ts), and in every second typed program some of them are JavaScript, half of these beside a declaration file that says too little: `1` for number, one member of a union; two in five of those files are not valid either, and the program has a tsconfig.json with skipLibCheck; three in five of the files with declarations are packages in node_modules, half of them CommonJS; one in four of the files that stay TypeScript says too little in its own annotations, under @ts-nocheck; in three programs of ten the first file imports through a barrel
 //   host-functions-throw-in-code-that-built-ins-call a function of the host or of the language throws inside a getter, a conversion, a callback, a trap, an iterator or a listener that a built-in function has called; the call stands in tail position or not, and the exception is caught in that function, around the built-in function, further up or nowhere (host-functions-throw-in-code-that-built-ins-call.ts)
 //   one-call-reaches-either-of-two-built-ins one call reaches either of two built-in functions, however the two arrive there and however they are called, and one thing is done with what it answers (one-call-reaches-either-of-two-built-ins.ts)
+//   an-element-is-tested-stored-to-and-read-again-in-one-turn-of-a-loop in one turn of a loop that walks a list an element is tested, an element is stored to and an element is read, most often the same one; the body is small, and every function sees lists made in one way alone (an-element-is-tested-stored-to-and-read-again-in-one-turn-of-a-loop.ts)
+//   a-field-of-an-element-is-tested-stored-to-and-read-again-in-one-turn-of-a-loop the same with a field of an element: the field or the element is stored to, through the list, through a name for the row, or through a second name for the list (a-field-of-an-element-is-tested-stored-to-and-read-again-in-one-turn-of-a-loop.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { withPackedPrograms } from "../generate";
@@ -874,6 +877,31 @@ async function inOneFile(programsRoot: string, rejected: Set<string>): Promise<R
         : undefined;
     };
   }
+  if (existsSync(join(import.meta.dir, "keys-of-built-in-objects-beside-what-a-compiler-writes-itself.ts"))) {
+    const { generate, holders, numberOfRounds, uses } = await import(
+      "./keys-of-built-in-objects-beside-what-a-compiler-writes-itself.ts"
+    );
+    sources["keys-of-built-in-objects-beside-what-a-compiler-writes-itself"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const program: Program = {
+        text: generate(
+          new Random(seed),
+          holders[seed % holders.length],
+          uses[Math.floor(seed / holders.length) % uses.length],
+          Math.floor(seed / (holders.length * uses.length)) % numberOfRounds,
+        ),
+        extension: "js",
+      };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? {
+            source: "keys-of-built-in-objects-beside-what-a-compiler-writes-itself",
+            seed,
+            ...program,
+            notes: "untyped",
+          }
+        : undefined;
+    };
+  }
   if (existsSync(join(import.meta.dir, "members-of-built-in-objects-handed-around.ts"))) {
     const { generate } = await import("./members-of-built-in-objects-handed-around.ts");
     sources["members-of-built-in-objects-handed-around"] = (seed, bed) => {
@@ -1101,6 +1129,7 @@ async function inOneFile(programsRoot: string, rejected: Set<string>): Promise<R
     "records-with-open-members-around-rings-written-as-json",
     "functions-capture-what-is-made-of-a-value-declared-as-another-type",
     "a-class-definition-throws-and-the-program-goes-on",
+    "a-field-of-an-element-is-tested-stored-to-and-read-again-in-one-turn-of-a-loop",
   ])
     if (existsSync(join(import.meta.dir, name + ".ts")))
       sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);
@@ -1119,6 +1148,7 @@ async function inOneFile(programsRoot: string, rejected: Set<string>): Promise<R
     "sums-of-whole-numbers-at-the-edges-of-what-a-double-holds",
     "host-functions-throw-in-code-that-built-ins-call",
     "one-call-reaches-either-of-two-built-ins",
+    "an-element-is-tested-stored-to-and-read-again-in-one-turn-of-a-loop",
   ])
     if (existsSync(join(import.meta.dir, name + ".ts")))
       sources[name] = untypedForTheProduct(name, (await import(`./${name}.ts`)).generate);

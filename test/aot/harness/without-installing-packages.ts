@@ -6,7 +6,7 @@
 //
 // test/harness.ts imports this file, so it takes nothing from there. A tool that does not import the harness imports this file,
 // and calls `withoutInstallingPackages` for a folder that it makes anywhere else than in `tmpdir()`.
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -25,17 +25,26 @@ export function withoutInstallingPackages(folder: string): string {
   return folder;
 }
 
-/** Whether the file that Bun was started with is one of the tests and tools that this file is for. */
-export const isCovered =
-  /[\\/]test[\\/](aot[\\/]|cli[\\/]compile[\\/]|(bundler|cli|internal)[\\/](.*[\\/])?[^\\/]*(aot|trim)[^\\/]*$)/.test(
-    Bun.main,
-  );
+/** Whether `main`, the file that Bun was started with, is one of the tests and tools that this file is for. */
+export function covers(main: string): boolean {
+  if (/[\\/]test[\\/](aot[\\/]|cli[\\/]compile[\\/]|.*(aot|trim)[^\\/]*$)/.test(main)) return true;
+  if (!/[\\/]test[\\/]/.test(main)) return false;
+  try {
+    return /--(debug-)?aot\b|--trim\b|\b(aot|trim): true\b/.test(readFileSync(main, "utf8"));
+  } catch {
+    return false;
+  }
+}
 
-if (isCovered) {
+if (covers(Bun.main)) {
   const temporary = realpathSync(tmpdir());
   if (!hasNodeModulesAbove(temporary)) {
     const root = withoutInstallingPackages(join(temporary, "aot"));
     for (const name of process.platform === "win32" ? ["TEMP", "TMP"] : ["TMPDIR"]) process.env[name] = root;
   }
-  withoutInstallingPackages(dirname(import.meta.dir));
+  try {
+    withoutInstallingPackages(dirname(import.meta.dir));
+  } catch {
+    // The sources cannot be written to here. plain-bun-installs-no-packages.test.ts says whether that matters.
+  }
 }

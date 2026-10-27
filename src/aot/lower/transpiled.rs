@@ -6,8 +6,10 @@ use bun_alloc::Arena;
 use bun_ast::b::B;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
+use bun_ast::symbol::follow_symbols;
 use bun_ast::{
-    ASTMemoryAllocator, Binding, Expr, G, Kind, Loader, Loc, Log, Source, Stmt, StmtOrExpr,
+    ASTMemoryAllocator, Binding, E, Expr, G, Kind, Loader, Loc, Log, Ref, Source, Stmt, StmtOrExpr,
+    Symbol, SymbolKind,
 };
 use bun_js_parser::{Define, Parser, ParserOptions, Result as Parsed};
 use bun_sema::atom::Interner;
@@ -15,6 +17,7 @@ use bun_sema::bind::Bound;
 use bun_sema::hir::{self, ExprId};
 use bun_threading::Guarded;
 use rustc_hash::FxHashMap;
+use smallvec::{SmallVec, smallvec};
 
 use self::alignment::{Alignment, PrintedTree};
 pub(super) use self::alignment::{Rewrite, find_written_literal};
@@ -134,7 +137,7 @@ impl RuntimeTranspiler {
         let Ok(Parsed::Ast(tree)) = parsed else {
             return Err(errors_of(&log));
         };
-        let mut walker = Walker::new(request.text.len());
+        let mut walker = Walker::new(request.text.len(), &tree.symbols);
         for part in tree.parts.iter() {
             walker
                 .pending_statements
@@ -165,6 +168,7 @@ impl RuntimeTranspiler {
             accessed_constructions: walker.accessed_constructions,
             moved_return_values: walker.moved_return_values,
             regexp_literals: walker.regexp_literals,
+            joined_declarators: walker.joined_declarators,
             rewrites: rewrites.unwrap_or_default(),
         })
     }
@@ -192,6 +196,14 @@ impl PositionSet {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct JoinedDeclarator {
+    object: u32,
+    /// The `o` that is printed behind the pattern.
+    pub(super) printed_object: u32,
+    pub(super) is_first: bool,
+}
+
 /// Source positions of the nodes that are left in the AST the transpiler prints. The lists are sorted.
 pub(super) struct TranspiledFile {
     identifiers: PositionSet,
@@ -202,6 +214,8 @@ pub(super) struct TranspiledFile {
     // The values of `return` statements that were moved there from an earlier statement, each with its `return`.
     moved_return_values: Vec<(u32, u32)>,
     regexp_literals: Vec<u32>,
+    // `a = o.x, b = o.y` is printed `{ x: a, y: b } = o`: the `o` of each declarator of such a run.
+    joined_declarators: Vec<JoinedDeclarator>,
     rewrites: FxHashMap<ExprId, Rewrite>,
 }
 
@@ -230,6 +244,13 @@ impl TranspiledFile {
         self.regexp_literals.binary_search(&position).is_ok()
     }
 
+    /// For the object of one of several declarators that are printed as one pattern.
+    pub(super) fn find_joined_declarator_at(&self, object: u32) -> Option<JoinedDeclarator> {
+        let joined = &self.joined_declarators;
+        let index = joined.binary_search_by_key(&object, |declarator| declarator.object);
+        index.ok().map(|index| joined[index])
+    }
+
     pub(super) fn find_return_of_moved_value_at(&self, position: u32) -> Option<u32> {
         let values = &self.moved_return_values;
         let index = values.binary_search_by_key(&position, |value| value.0);
@@ -237,12 +258,14 @@ impl TranspiledFile {
     }
 }
 
-struct Walker {
+struct Walker<'a> {
+    symbols: &'a [Symbol],
     identifiers: PositionSet,
     bindings: PositionSet,
     accessed_constructions: Vec<u32>,
     moved_return_values: Vec<(u32, u32)>,
     regexp_literals: Vec<u32>,
+    joined_declarators: Vec<JoinedDeclarator>,
     statements: Vec<(u32, Stmt)>,
     initializers: Vec<(u32, Expr)>,
     computed_keys: Vec<(u32, Expr)>,
@@ -258,14 +281,31 @@ fn push_position(positions: &mut Vec<u32>, position: Loc) {
     }
 }
 
-impl Walker {
-    fn new(text_length: usize) -> Walker {
+/// `name = object.member`, without an optional chain: the name and the object.
+fn find_member_declarator(declarator: &G::Decl) -> Option<(Ref, E::Identifier, Loc)> {
+    let B::BIdentifier(binding) = &declarator.binding.data else {
+        return None;
+    };
+    let ExprData::EDot(member) = &declarator.value.as_ref()?.data else {
+        return None;
+    };
+    let ExprData::EIdentifier(object) = &member.target.data else {
+        return None;
+    };
+    let is_plain = member.optional_chain.is_none();
+    is_plain.then(|| (binding.r#ref, *object, member.target.loc))
+}
+
+impl<'a> Walker<'a> {
+    fn new(text_length: usize, symbols: &'a [Symbol]) -> Walker<'a> {
         Walker {
+            symbols,
             identifiers: PositionSet::new(text_length),
             bindings: PositionSet::new(text_length),
             accessed_constructions: Vec::new(),
             moved_return_values: Vec::new(),
             regexp_literals: Vec::new(),
+            joined_declarators: Vec::new(),
             statements: Vec::new(),
             initializers: Vec::new(),
             computed_keys: Vec::new(),
@@ -291,10 +331,71 @@ impl Walker {
         self.accessed_constructions.sort_unstable();
         self.moved_return_values.sort_unstable();
         self.regexp_literals.sort_unstable();
+        self.joined_declarators.sort_unstable();
         self.statements.sort_unstable_by_key(|entry| entry.0);
         self.initializers.sort_unstable_by_key(|entry| entry.0);
         self.computed_keys.sort_unstable_by_key(|entry| entry.0);
         self.calls.sort_unstable_by_key(|entry| entry.0);
+    }
+
+    // `is_stable_destructuring_target` of js_printer.
+    fn is_stable_object(&self, object: E::Identifier, followed: Ref) -> bool {
+        let symbol = &self.symbols[followed.inner_index() as usize];
+        if object.must_keep_due_to_with_stmt()
+            || symbol.has_been_assigned_to()
+            || symbol.namespace_alias.is_some()
+        {
+            return false;
+        }
+        match symbol.kind {
+            SymbolKind::Unbound => object.can_be_removed_if_unused(),
+            _ => !symbol.must_not_be_renamed(),
+        }
+    }
+
+    // The runs that `print_decls` of js_printer joins.
+    fn find_joined_declarators(&mut self, mut declarators: &[G::Decl]) {
+        let symbols = self.symbols;
+        while let [first, second, ..] = declarators {
+            declarators = &declarators[1..];
+            let Some((first_name, object, first_position)) = find_member_declarator(first) else {
+                continue;
+            };
+            let followed = follow_symbols(symbols, object.ref_);
+            let names_object = |name: Ref| follow_symbols(symbols, name) == followed;
+            if !self.is_stable_object(object, followed) || names_object(first_name) {
+                continue;
+            }
+            let reads_object = |declarator: &G::Decl| {
+                let (name, object, position) = find_member_declarator(declarator)?;
+                names_object(object.ref_).then_some((name, position))
+            };
+            let Some((mut last_name, printed_position)) = reads_object(second) else {
+                continue;
+            };
+            let mut objects: SmallVec<[Loc; 8]> = smallvec![first_position, printed_position];
+            declarators = &declarators[1..];
+            // A declarator that binds the object itself is the last of its run.
+            while !names_object(last_name)
+                && let Some((name, position)) = declarators.first().and_then(reads_object)
+            {
+                last_name = name;
+                objects.push(position);
+                declarators = &declarators[1..];
+            }
+            let Ok(printed_object) = u32::try_from(printed_position.start) else {
+                continue;
+            };
+            let objects = objects.iter().enumerate();
+            self.joined_declarators
+                .extend(objects.filter_map(|(index, object)| {
+                    Some(JoinedDeclarator {
+                        object: u32::try_from(object.start).ok()?,
+                        printed_object,
+                        is_first: index == 0,
+                    })
+                }));
+        }
     }
 
     fn push_initializer(&mut self, binding: Binding, initializer: Option<Expr>) {
@@ -482,6 +583,9 @@ impl Walker {
                 .extend_from_slice(block.stmts.slice()),
             StmtData::SExpr(statement) => self.pending_expressions.push(statement.value),
             StmtData::SLocal(local) => {
+                if !local.kind.is_using() {
+                    self.find_joined_declarators(&local.decls);
+                }
                 for declaration in local.decls.iter() {
                     self.pending_bindings.push(declaration.binding);
                     self.pending_expressions.extend(declaration.value);

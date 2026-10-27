@@ -71,6 +71,7 @@ const needNoCompiler = [
   "aot/perf/idioms.test.ts",
   "aot/plain-bun.test.ts",
   "aot/plain-bun-is-unchanged.test.ts",
+  "aot/plain-bun-installs-no-packages.test.ts",
   "aot/shell-completions-list-flags.test.ts",
   "aot/test-files-self-skip.test.ts",
   "aot/tools/let-values-be-something-else.test.ts",

@@ -2,6 +2,7 @@
 // reduced, attributed to a pass or a flow result, and told apart from those that are there already.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from "fs";
 import { join } from "path";
+import { withoutInstallingPackages } from "../harness/without-installing-packages";
 import { isFinding, sameFailure, wholeText, writeProgram, type Bed, type Failure, type Judged, type Mode, type Program, type Verdict } from "./beds";
 import { parses, reprinted } from "./mutate";
 import { Random } from "./random";
@@ -60,7 +61,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
   let lateLooks = 0;
   for (const { bed } of beds) bed.lastCall = lastCall;
   mkdirSync(join(out, "findings"), { recursive: true });
-  mkdirSync(work, { recursive: true });
+  withoutInstallingPackages(work);
 
   const rejected = new Set<string>();
   const sources = await allSources(settings.programsRoot, rejected, true);

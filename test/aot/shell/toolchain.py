@@ -47,6 +47,18 @@ def tool(name):
     return os.path.abspath(os.environ[name])
 
 
+def without_installing_packages(folder):
+    """Makes the folder. `bun run` asks the registry for a package that is not installed, unless a folder above the program holds node_modules."""
+    os.makedirs(folder, exist_ok=True)
+    at = os.path.realpath(folder)
+    while not os.path.isdir(os.path.join(at, "node_modules")):
+        if os.path.dirname(at) == at:
+            os.makedirs(os.path.join(folder, "node_modules"), exist_ok=True)
+            break
+        at = os.path.dirname(at)
+    return folder
+
+
 def run(command, cwd=None, seconds=120, env=None, stderr=subprocess.STDOUT):
     """Returns (exit code, stdout and stderr together). The exit code is negative for a signal and None for a timeout.
 

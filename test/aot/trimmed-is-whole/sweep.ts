@@ -2,13 +2,14 @@ import { Bench, programsOf, type Case, type Program } from "./environment";
 import { cases, casesOfOptions, casesOfOtherOptions, casesOfVariables } from "./environment-cases";
 import { tls } from "harness";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { withoutInstallingPackages } from "../harness/without-installing-packages";
 const [bun, folder, out, which = "curated", list] = process.argv.slice(2);
 if (!out) {
   console.error("usage: bun sweep.ts <a Bun that can trim> <an empty folder> <out.tsv> [curated | options | others | variables | jsc]");
   process.exit(1);
 }
 const env = { PATH: "/usr/bin:/bin", HOME: folder + "/home", TMPDIR: folder + "/tmp", BUN_ENABLE_CRASH_REPORTING: "0", DO_NOT_TRACK: "1", WTF_numberOfProcessorCores: "8" };
-Bun.spawnSync({ cmd: ["mkdir", "-p", folder + "/home", folder + "/tmp"] });
+Bun.spawnSync({ cmd: ["mkdir", "-p", withoutInstallingPackages(folder) + "/home", folder + "/tmp"] });
 const bench = new Bench(bun, folder, env, tls);
 bench.buildsAtOnce = Number(process.env.BUILDS ?? 1);
 bench.trimWithout = (process.env.WITHOUT ?? "").split(",").filter(Boolean);

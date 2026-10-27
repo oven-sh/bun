@@ -1276,6 +1276,10 @@ TypeError: null is not an object (evaluating 'null.c')
 
 An executable doesn't hold the text of each expression. It keeps what you called where that consists of names, `this`, `super` and keys in brackets, up to 80 characters. A callee that's more than that has no name in the message: `f()()` says `5 is not a function`, and so does a call with spread arguments.
 
+A method that you call on more than that has its own name alone: `make().get()`, `new Late(1).get()` and `[1].get()` all say `get is not a function. (In 'get()', 'get' is undefined)`, where `bun run` says `make().get is not a function. (In 'make().get()', 'make().get' is undefined)`. So does a method that many places call on different objects: `stream.destroy()` can say `destroy is not a function`.
+
+A tagged template is worded as a call. ``tag`x` `` says `tag is not a function. (In 'tag()', 'tag' is undefined)`, where `bun run` says ``undefined is not a function (near '...tag`x`...')``.
+
 One more message differs in an executable built with [`--sourcemap=external`](/compiler/debugging#minified-executables-and-external-source-maps), although `bun run` quotes nothing in it. There, an update through a computed key, `o[k] += 1`, `o[k]++`, `--o[k]` or `o[k] &&= 1`, throws `undefined is not an object` when `o` is `undefined` and `null is not an object` when it's `null`, unless `k` is an object. `bun run` and every other executable say `Cannot access property of undefined or null` for both.
 
 The class of the error is the same, so test `error instanceof TypeError` or `error.name`, not `error.message`. A service that groups errors by message, such as Sentry, sees new groups.
@@ -1357,7 +1361,7 @@ This section applies to CommonJS files without `"use strict"` at the top. ES mod
 | You write                                  | Compiled                                                                                                                                                  |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `f.caller`, `f.arguments`                  | `null`. The build warns where it can see that `f` is a function                                                                                           |
-| `getFunction()` of a call site             | `undefined`, as for a strict function, and as in an executable built without `--aot`                                                                      |
+| `getFunction()` of a call site             | `undefined`, as for a strict function and in an executable built without `--aot`. Also in a text that `eval` or `Function` gets as a constant             |
 | A function declared in a block             | The code around the block, branch, loop, `case` or `try` can read it too, once that has run. Under `bun run` only the block sees it                       |
 | `"use strict"` at the top of a function    | The function runs in sloppy mode, as under `bun run`: Bun's transpiler removes the directive. A function declared in a block inside it stays in its block |
 | A decorator, with `experimentalDecorators` | The decorator expression runs in strict mode, like the class body. Under `bun run` it runs after the class, in sloppy mode                                |

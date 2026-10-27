@@ -222,7 +222,8 @@ if __name__ == "__main__":
         toolchain.tool(name)
     PLAIN = toolchain.tool("PLAIN")
     os.environ["TZ"] = "Etc/UTC"
-    os.makedirs(WORK, exist_ok=True)
+    for root in filter(None, (WORK, os.path.dirname(PROGRAMS), WRITTEN)):
+        toolchain.without_installing_packages(root)
     programs = all_programs() + written_programs() if arguments == ["all"] else arguments
     failed = 0
     with ThreadPoolExecutor(jobs) as pool:

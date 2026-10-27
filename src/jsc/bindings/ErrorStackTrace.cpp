@@ -308,7 +308,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         if (auto position = frame.compiledPosition(); position && frame.hasLineAndColumnInfo()) {
             m_sourcePositions = { OrdinalNumber::fromOneBasedInt(position->startOfExpression().line), OrdinalNumber::fromOneBasedInt(position->startOfExpression().column) };
             m_sourcePositionsState = SourcePositionsState::Calculated;
-            m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode;
+            m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode || frame.codeType() == JSC::EvalCode;
         }
         return;
 #endif

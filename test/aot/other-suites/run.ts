@@ -30,6 +30,7 @@
 //              A second start leaves a mark, so a helper of the harness that starts process.execPath for the test counts too, and so does a test that then waits until its time is up
 //   OUTSIDE    (node) the test loads a file under a path that is made at run time, a fixture as a Worker for one, and the executable says that it does not hold the file
 import { availableParallelism, tmpdir } from "node:os";
+import "../harness/without-installing-packages";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 

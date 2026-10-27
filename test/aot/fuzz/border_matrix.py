@@ -38,6 +38,8 @@ def run(command, cwd, seconds):
 def one(seed):
     folder = tempfile.mkdtemp(prefix="border-%d-" % seed, dir=out or None)
     try:
+        # `bun run` asks the registry for a package that is not installed, unless a folder above the program holds node_modules.
+        os.makedirs(os.path.join(folder, "node_modules"))
         text = subprocess.run([sys.executable, generator, str(seed)] + words.split(), stdout=subprocess.PIPE).stdout.decode()
         main, *others = text.split("\n//// ")
         open(os.path.join(folder, "main.ts"), "w").write(main + "\n")

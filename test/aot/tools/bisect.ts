@@ -1,5 +1,6 @@
 import { mkdtempSync, rmSync, statSync } from "fs";
 import { tmpdir } from "os";
+import "../harness/without-installing-packages";
 import { dirname, join, resolve } from "path";
 
 type Outcome = { stdout: string; error: string; exitCode: number | null; signal: string | null };

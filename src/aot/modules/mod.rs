@@ -27,9 +27,9 @@ mod wrapped;
 mod written_descriptor;
 
 pub use bindings::{
-    AccessedModule, Candidates, ExportBinding, ExportLookup, ExportUse, Holder, ImportBinding,
-    ModuleExport, ModuleRequest, RequiredName, SiteAnswer, SpelledModule, SyntheticExport,
-    SyntheticExportId,
+    AccessedModule, Candidates, ExportBinding, ExportLookup, ExportStatement, ExportUse, Holder,
+    ImportBinding, ModuleExport, ModuleRequest, RequiredName, SiteAnswer, SpelledModule,
+    SyntheticExport, SyntheticExportId,
 };
 pub use bun_core::strings::order_utf16 as compare_code_units;
 pub use commonjs_exports::CommonJsExports;

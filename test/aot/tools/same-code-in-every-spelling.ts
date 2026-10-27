@@ -8,6 +8,7 @@
 // To find the place: `respell-property-names.ts computed --only=<form>` respells one form of name, `--names=` one name, `--in= --places=` one place.
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "fs";
 import { availableParallelism, tmpdir } from "os";
+import "../harness/without-installing-packages";
 import { basename, join, resolve } from "path";
 import { parseArgs } from "util";
 import { packedFiles, writeProgram } from "../generate";

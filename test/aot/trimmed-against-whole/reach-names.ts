@@ -1,6 +1,7 @@
 import { builtinFeatureUses } from "bun:internal-for-testing";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import "../harness/without-installing-packages";
 import { join } from "node:path";
 import type { Program } from "./compare";
 

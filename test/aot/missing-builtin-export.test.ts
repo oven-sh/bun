@@ -19,11 +19,9 @@ async function inMode(mode: (typeof modes)[number], cwd: string, entry: string) 
   return spawned([join(cwd, "program")], cwd);
 }
 
-// The engine has two wordings: one for a name that a module imports, one for a name that it hands on. An executable of the compiler checks both kinds of names in one step and has the first wording for both.
+// The engine has two wordings: one for a name that a module imports, one for a name that it hands on. The bundler writes the module's name without its prefix.
 const handedOn = (mode: (typeof modes)[number], exporter: string) =>
-  mode === "build --compile --aot"
-    ? `Export named 'noSuchExport' not found in module '${exporter}'.`
-    : "export 'noSuchExport' not found in '";
+  `export 'noSuchExport' not found in '${mode === "build --compile" ? exporter.replace("node:", "") : exporter}'`;
 
 const missing: [entry: string, text: string, message: string | ((mode: (typeof modes)[number]) => string)][] = [
   [

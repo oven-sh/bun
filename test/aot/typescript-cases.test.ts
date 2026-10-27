@@ -143,7 +143,8 @@ async function judge(folder: string, source: string): Promise<string> {
   const said = built.stdout + built.stderr;
   if (built.signal || /\bpanic/.test(said)) return "the build crashed";
   if (built.timedOut) return "the build hangs";
-  const interpreted = await run([bunExe(), "run", "./" + entryPoint], folder, 20_000);
+  // Some cases import packages that they only declare. Without --no-install `bun run` looks for a package of that name in the registry.
+  const interpreted = await run([bunExe(), "run", "--no-install", "./" + entryPoint], folder, 20_000);
   if (!existsSync(join(folder, isWindows ? "compiled.exe" : "compiled"))) {
     const refusal = /error: [^\n]*bun compile does not support ([^\n]*)/.exec(said);
     if (refusal) return interpreted.exitCode === 0 ? "unsupported: " + refusal[1].slice(0, 60) : "skipped";

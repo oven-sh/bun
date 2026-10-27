@@ -15,6 +15,7 @@
 import { spawn } from "bun";
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
+import { withoutInstallingPackages } from "../harness/without-installing-packages";
 import { Random } from "./random";
 import { revivers, type Description, type Member } from "./texts-for-generated-types-driver";
 
@@ -681,7 +682,7 @@ if (import.meta.main) {
     texts = 0,
     findings = 0,
     outOfMemory = 0;
-  mkdirSync(join(out, "findings"), { recursive: true });
+  mkdirSync(join(withoutInstallingPackages(out), "findings"), { recursive: true });
 
   const environment = {
     ...process.env,

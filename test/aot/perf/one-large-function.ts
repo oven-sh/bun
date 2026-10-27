@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import "../harness/without-installing-packages";
 import { join } from "node:path";
 
 const kinds: Record<string, (i: number) => string> = {

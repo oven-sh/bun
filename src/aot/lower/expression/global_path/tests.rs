@@ -343,7 +343,7 @@ impl Probe {
     #[track_caller]
     fn builtin_of(&self, value: ValueId) -> Option<BuiltinId> {
         let operation = self.definition(value);
-        let (Opcode::Builtin, &[builtin]) = (operation.opcode, operation.fields) else {
+        let (Opcode::Builtin, &[_, builtin]) = (operation.opcode, operation.fields) else {
             return None;
         };
         BuiltinId::from_wire(builtin)

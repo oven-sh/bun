@@ -71,15 +71,21 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn find_constant_key(&mut self, key: ExprId) -> Option<PropertyKeyId> {
         match expression::find_constant(self, key) {
-            Some(Constant::String(name)) => Some(self.name_key(name)),
-            Some(Constant::Number(number)) => {
+            Some(constant) => self.find_key_of_constant(constant),
+            None => self.find_locked_symbol_key(key),
+        }
+    }
+
+    fn find_key_of_constant(&mut self, constant: Constant) -> Option<PropertyKeyId> {
+        match constant {
+            Constant::String(name) => Some(self.name_key(name)),
+            Constant::Number(number) => {
                 let text = self.intern_bytes(&number_to_string(number));
                 Some(self.text_key(text))
             }
-            Some(
-                Constant::Undefined | Constant::Null | Constant::Boolean(_) | Constant::BigInt(_),
-            ) => None,
-            None => self.find_locked_symbol_key(key),
+            Constant::Undefined | Constant::Null | Constant::Boolean(_) | Constant::BigInt(_) => {
+                None
+            }
         }
     }
 
@@ -187,9 +193,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn lower_computed_key(&mut self, key: ExprId) -> PropertyName {
-        match self.file.find_constant_key(key) {
-            Some(found) => self.normalize_access_key(found),
-            None => PropertyName::Computed(self.lower_expression(key)),
+        if let Some(found) = self.file.find_constant_key(key) {
+            return self.normalize_access_key(found);
+        }
+        let position = self.position();
+        let value = self.lower_expression(key);
+        // Behind the tests of its variables the key is as good as written.
+        let constant = expression::find_constant_outside_dead_zone(self.file, key);
+        match constant.and_then(|constant| self.file.find_key_of_constant(constant)) {
+            Some(found) => {
+                self.set_position(position);
+                self.normalize_access_key(found)
+            }
+            None => PropertyName::Computed(value),
         }
     }
 

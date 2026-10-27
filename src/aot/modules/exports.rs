@@ -621,7 +621,11 @@ fn find_absent_name(
             name: owned_name,
         },
     };
-    let kind = ModuleFailureKind::ExportMayBeAbsent { exporter, name };
+    let kind = ModuleFailureKind::ExportMayBeAbsent {
+        exporter,
+        name,
+        asked_by: written.asked_by,
+    };
     Some((written.written.fail(importer, kind), imported))
 }
 
@@ -662,21 +666,29 @@ pub(super) fn resolve_exports(
         nodes.tables[table].follows_every_star = true;
     }
     let mut failures = Vec::new();
+    let mut indirect_sites = Vec::new();
     for (table, module) in nodes.tables.iter().zip(entries) {
         let own_results = &results[table.nodes.start as usize..];
-        for (&(_, entry), &(_, resolved)) in module.own.iter().zip(own_results) {
+        let own_nodes = table.nodes.start..;
+        for ((&(_, entry), &(_, resolved)), node) in
+            module.own.iter().zip(own_results).zip(own_nodes)
+        {
             failures.extend(find_link_failure(
                 scans,
                 module.file,
                 entry,
                 resolved.resolution,
             ));
+            if let ExportEntry::Indirect { site, .. } = entry {
+                indirect_sites.push((node, site));
+            }
         }
     }
     let mut tables = ExportTables {
         files: table_files,
         tables: nodes.tables,
         results,
+        indirect_sites,
         index: nodes.index,
         failures,
         ..ExportTables::default()
@@ -698,13 +710,18 @@ pub(super) fn resolve_exports(
     for written in &commonjs_imports {
         if let Some((pending, imported)) = find_absent_name(&tables, modules, written) {
             tables.failures.push(pending);
-            absent_names.push((imported, written.written.order));
+            let order = (written.asked_by.is_none(), written.written.order);
+            absent_names.push((imported, order));
         }
     }
     let failures = &mut tables.failures;
     failures.shared_sort_by_key(|pending| (pending.failure.importer, pending.order));
+    // A link looks for the names that a module exports ahead of those that it imports.
     absent_names.shared_sort_by_key(|&(imported, order)| (imported.importer, order));
-    tables.absent_commonjs_names = absent_names;
+    let absent_names = absent_names.into_iter();
+    tables.absent_commonjs_names = absent_names
+        .map(|(imported, (_, order))| (imported, order))
+        .collect();
     let imported = commonjs_imports.iter().map(|written| written.imported);
     let imported = imported.filter_map(|imported| {
         let named = ModuleRef::File(imported.exporter);
@@ -726,12 +743,14 @@ pub(super) struct ExportTables {
     files: Vec<FileId>,
     tables: Vec<FileTable>,
     results: Vec<(Atom, ResolvedName)>,
+    /// Of each own name that stands for a name of another module: its place in `results`, and the import site that names the module. Sorted.
+    indirect_sites: Vec<(u32, u32)>,
     index: FxHashMap<NodeKey, u32>,
     failures: Vec<PendingFailure>,
     pub(super) commonjs: CommonJsNames,
     /// The names that import statements and `export { .. } from` of ES modules read of CommonJS files.
     pub(super) commonjs_imports: Vec<CommonJsImport>,
-    /// Those that the body of the CommonJS module may end without, by importer and by where they are written.
+    /// Those that the body of the CommonJS module may end without, by importer, and of each importer in the order in which a link looks for them.
     pub(super) absent_commonjs_names: Vec<(CommonJsImport, FailureOrder)>,
     /// The CommonJS files that `import()`, `export *` or an exported namespace name.
     pub(super) commonjs_namespace_loads: Vec<FileId>,
@@ -852,6 +871,15 @@ impl ExportTables {
     pub(super) fn own_names(&self, module: FileId) -> &[(Atom, ResolvedName)] {
         let own_count = self.table_of(module).map_or(0, |table| table.own_count);
         &self.names(module)[..own_count as usize]
+    }
+
+    /// The import site behind one of `names(module)`, by its position there: `export { name } from`, or the import whose name the module exports.
+    pub(super) fn find_indirect_site(&self, module: FileId, position: usize) -> Option<u32> {
+        let node = self.table_of(module)?.nodes.start + position as u32;
+        let found = self
+            .indirect_sites
+            .binary_search_by_key(&node, |&(node, _)| node);
+        found.ok().map(|index| self.indirect_sites[index].1)
     }
 
     pub(super) fn has_dynamic_names(&self, module: ModuleRef) -> bool {

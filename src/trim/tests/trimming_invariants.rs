@@ -413,19 +413,39 @@ impl TrimmedCheck<'_> {
 
     fn check_removed_range_list(&self, state: &[u8]) {
         let label = self.label;
-        let section = self
-            .new
-            .bytes(self.layout.table)
-            .unwrap_or_else(|| panic!("{label}: the table section is not mapped"));
+        let table = self.layout.table;
+        let read_start_of_table = |size: usize| {
+            let end = table.start + size as u64;
+            assert!(
+                end <= table.end,
+                "{label}: the records leave the table section"
+            );
+            self.new
+                .bytes(AddressRange { end, ..table })
+                .unwrap_or_else(|| panic!("{label}: the table section is not mapped"))
+        };
+        let header = read_start_of_table(REMOVED_RANGES_HEADER_BYTES);
         assert!(
-            section[..8] == TRIMMED_MAGIC,
+            header[..8] == TRIMMED_MAGIC,
             "{label}: the table section lost its magic"
         );
         assert!(
-            u32_at(&section, 8) == TABLE_VERSION,
+            u32_at(&header, 8) == TABLE_VERSION,
             "{label}: wrong version of the removed ranges"
         );
-        let count = u32_at(&section, 12) as usize;
+        let count = u32_at(&header, 12) as usize;
+        let records_end = REMOVED_RANGES_HEADER_BYTES + count * REMOVED_RANGE_BYTES;
+        let section = read_start_of_table(records_end);
+        for address in table.start + records_end as u64..table.end {
+            let byte = self.new.byte_at(address);
+            assert!(
+                matches!(
+                    byte,
+                    MemoryByte::Unmapped | MemoryByte::NoAccess | MemoryByte::Mapped(0)
+                ),
+                "{label}: {address:#x} behind the removed ranges is {byte:?}"
+            );
+        }
         let state_count = u32_at(state, STATE_RANGE_COUNT_OFFSET) as usize;
         assert!(
             count == state_count,
@@ -1165,12 +1185,8 @@ fn trim_one_unfillable_range(layout: &ToyLayout, range: AddressRange) -> Trimmed
 fn assert_all_filled(layout: &ToyLayout, trimmed: &Trimmed, range: AddressRange) {
     let target = layout.target;
     assert!(
-        trimmed.summary.file_bytes_saved == 0,
+        trimmed.summary.cut_bytes == 0,
         "{target:?}: a range was cut"
-    );
-    assert!(
-        trimmed.after.len() == trimmed.before.len(),
-        "{target:?}: the file changed size"
     );
     let bytes = LoadedImage::load(&trimmed.after)
         .bytes(range)
@@ -1279,6 +1295,31 @@ fn assert_unchanged(layout: &ToyLayout, trimmed: &Trimmed, range: AddressRange) 
 }
 
 #[test]
+fn rest_of_table_leaves_elf_file() {
+    let layout = layout_of(ELF_X86_64);
+    let start = layout.code.start + RAGGED_RANGE_OFFSET;
+    let range = AddressRange {
+        start,
+        end: start + LARGE_RANGE_BYTES,
+    };
+    let trimmed = trim_one_code_range(&layout, range, false);
+    let new = LoadedImage::load(&trimmed.after);
+    let is_mapped = |address: &u64| matches!(new.byte_at(*address), MemoryByte::Mapped(_));
+    let mapped_bytes = (layout.table.start..layout.table.end)
+        .filter(is_mapped)
+        .count() as u64;
+    assert!(layout.table.len() > 3 * layout.cut_alignment);
+    assert!(
+        mapped_bytes < 2 * layout.cut_alignment,
+        "{mapped_bytes:#x} bytes of the table section are mapped"
+    );
+    assert_eq!(
+        trimmed.summary.file_bytes_saved,
+        layout.table.len() - mapped_bytes
+    );
+}
+
+#[test]
 fn unfillable_range_is_cut_or_left_unchanged() {
     for target in ALL_TARGETS {
         let layout = layout_of(target);
@@ -1336,7 +1377,7 @@ fn unfillable_range_is_cut_or_left_unchanged() {
             "{target:?}: bytes that stay are counted as removed"
         );
         assert!(
-            trimmed.summary.file_bytes_saved == 0,
+            trimmed.summary.cut_bytes == 0,
             "{target:?}: a range without a whole page was cut"
         );
     }

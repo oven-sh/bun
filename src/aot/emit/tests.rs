@@ -130,6 +130,8 @@ fn create_module(names: &Names) -> Module {
             module: MODULE,
             name: names.name,
             may_be_absent: false,
+            export_name: Some(names.name),
+            specifier: Some(names.text),
         }],
         positions: source_positions(source, vec![0, 2]),
         function_text: source.to_vec(),
@@ -199,6 +201,7 @@ fn create_full_program() -> Program {
         importer: MODULE,
         specifier: names.text,
         exporter: Some(MODULE),
+        export_specifier: Some(names.text),
     });
     program.eval_scopes.push(EvalScope {
         bindings: vec![EvalBinding {

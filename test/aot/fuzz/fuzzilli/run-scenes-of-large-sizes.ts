@@ -12,6 +12,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { withoutInstallingPackages } from "../../harness/without-installing-packages";
 import { kindsOfScenes, writeOneSceneOfEverySize } from "./write-scenes-of-every-size.ts";
 
 const { values: options } = parseArgs({
@@ -87,7 +88,7 @@ for (let round = 0; rounds === 0 || round < rounds; round++) {
     for (const size of options.sizes.split(",").map(size => Number(size) + (round % 2))) {
       const folder = join(work, `large-${process.pid}`);
       rmSync(folder, { recursive: true, force: true });
-      mkdirSync(folder, { recursive: true });
+      withoutInstallingPackages(folder);
       const text = writeOneSceneOfEverySize(kind, seed, extension === "ts", size);
       const [program, ...others] = text.split(/^\/\/ @filename: \.\/(\S+)\n/m);
       writeFileSync(join(folder, "program." + extension), program, "latin1");

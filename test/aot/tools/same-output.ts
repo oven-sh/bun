@@ -15,6 +15,7 @@
 //   - x64 and arm64, ELF and Mach-O: the image is found by its first bytes.
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "fs";
 import { availableParallelism, tmpdir } from "os";
+import "../harness/without-installing-packages";
 import { basename, dirname, join, resolve } from "path";
 import { parseArgs } from "util";
 

@@ -202,7 +202,7 @@ fn find_value(function: &Function, id: ValueId) -> ValueView<'_> {
 fn names_builtin(function: &Function, value: ValueId, builtin: BuiltinId) -> bool {
     let definition = values(function).find(|candidate| candidate.id == value);
     definition.is_some_and(|definition| {
-        definition.opcode == Opcode::Builtin && definition.fields == [builtin.to_wire()]
+        definition.opcode == Opcode::Builtin && definition.fields[1..] == [builtin.to_wire()]
     })
 }
 

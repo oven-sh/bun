@@ -146,7 +146,8 @@ const noticedBy: Record<string, Row | Row[]> = {
   RemovedLoopsHaveEffects: ofFamily(
     "loops-that-leave-nothing-behind",
     "untyped/heldByAClosure-aVariableOfTheModule-asksAProxy-inAClosure",
-    "untyped/heldByAClosure-four-asksAList-aroundAnAwait",
+    "untyped/heldByAClosure-theLengthOfAList-joinsTexts-inAClosure",
+    "typed/up-aCall-readsAGetter-loop",
   ),
   PromotedEnvironmentsAreMadeOften: ofFamily(
     "variables-that-closures-hold",
@@ -186,7 +187,7 @@ const noticedBy: Record<string, Row | Row[]> = {
   WalkedKeysStandInTheFirstOrder: ofFamily(
     "the-keys-of-an-object-are-walked",
     "typed/oneOfTwoShapes-keysByIndex-deletesThisKey-once",
-    "untyped/oneOfTwoShapes-everyKey-loop",
+    "untyped/instance-names-hidesALaterKey-inAClosure",
   ),
   WrittenRecordsHaveTheirKeysInOneOrder: ofFamily(
     "records-written-as-text",
@@ -212,7 +213,7 @@ const noticedBy: Record<string, Row | Row[]> = {
   BirthsEndWithoutALook: ofFamily(
     "objects-filled-field-by-field",
     "typed/initialValues-aStoredFieldIsDeleted-asksForNames-handlerInALoop",
-    "untyped/initialValues-aStoredFieldIsDeleted-asksForNames-handlerInALoop",
+    "untyped/initialValues-aStoredFieldIsDeleted-addsUpWhatWasSeen-loop",
   ),
   HoistedReadsAreStoredInTheirLoops: ofFamily(
     "variables-of-enclosing-code-in-loops",
@@ -254,7 +255,7 @@ const noticedBy: Record<string, Row | Row[]> = {
   FusedGeneratorsAreSeenByOthers: ofFamily(
     "generators-walked-where-they-are-made",
     "typed/twoLoops-byHandAndEnds-runsOut-moduleLoop",
-    "typed/returnsAValue-forOfThroughAVariable-runsOut-yieldUnderACleanup",
+    "typed/returnsAValue-byHand-runsOut-handlerInALoop",
   ),
   ParsedMembersComeOnce: ofFamily(
     "texts-read-as-records",

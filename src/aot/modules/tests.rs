@@ -69,7 +69,7 @@ fn failure_key(failure: &ModuleFailure) -> FailureKey {
         ModuleFailureKind::NotAProgram { .. } => (None, bun_sema::atom::known::default),
         ModuleFailureKind::ExportNotFound { exporter, name }
         | ModuleFailureKind::ExportAmbiguous { exporter, name }
-        | ModuleFailureKind::ExportMayBeAbsent { exporter, name } => (Some(exporter), name),
+        | ModuleFailureKind::ExportMayBeAbsent { exporter, name, .. } => (Some(exporter), name),
     };
     let ModuleFailure {
         importer,

@@ -8,6 +8,7 @@
 import { spawn } from "bun";
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { extname, join, relative } from "path";
+import { withoutInstallingPackages } from "../harness/without-installing-packages";
 import { Random } from "./random";
 
 const stray = ["q", "static q", "@", "(", ")", "{", "}", "[", "]", "=>", "export", "declare", "class", "namespace", "module", "<", ">", "`", "${", "'", '"', "/*", "*/", "//", "/", "\\", "#", "#q", "?.", "...", ";", ",", ":", "?", "=", "async", "await", "yield", "enum", "interface", "type", "abstract", "import", "from", "as", "satisfies", "new", "super", "this", "case 1:", "default:", "else", "catch", "finally", "get", "set", "accessor", "using", "in", "of", "is", "asserts", "infer", "keyof", "unique symbol", "extends", "implements", "function", "function*", "return", "break", "continue", "0x", "1e", "1n.", "1_", " ", "\0", "￿", "\ud800", "😀", "<!--", "-->", "#!", "</", "/>"]; // prettier-ignore
@@ -65,7 +66,7 @@ if (import.meta.main) {
   const jobs = Number(option("jobs", "8")), files = Number(option("files", "24")), end = Date.now() + Number(option("seconds", "60")) * 1000; // prettier-ignore
   let seed = Number(option("seed", String(Date.now())));
   const programs = (readdirSync(root, { recursive: true }) as string[]).filter(name => /\.(ts|tsx|js|mts|cts)$/.test(name) && !name.endsWith(".d.ts")).sort().map(name => join(root, name)); // prettier-ignore
-  mkdirSync(join(out, "findings"), { recursive: true });
+  mkdirSync(join(withoutInstallingPackages(out), "findings"), { recursive: true });
 
   const commands: Record<string, (file?: string) => string[]> = {
     check: () => [bun, "check"],

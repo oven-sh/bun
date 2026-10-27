@@ -46,6 +46,7 @@ import {
 } from "node:fs";
 import { dirname, extname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { withoutInstallingPackages } from "../../harness/without-installing-packages";
 import { opensTheWorld } from "../the-world-is-open.ts";
 import {
   giveNamesOfGlobals,
@@ -190,7 +191,7 @@ async function spawn(stage: string, cmd: string[], cwd: string, env: Record<stri
  */
 function layOut(folder: string, texts: string[], extension: string, inGroup: number, entryPoints?: number[][]) {
   rmSync(folder, { recursive: true, force: true });
-  mkdirSync(join(folder, "programs"), { recursive: true });
+  mkdirSync(join(withoutInstallingPackages(folder), "programs"), { recursive: true });
   texts.forEach((text, index) => {
     // Behind a line "// @filename: ./<name>" stands a file that the program imports by that name. The name is a hash of the file, so programs can share one.
     const [program, ...others] = text.split(/^\/\/ @filename: \.\/(\S+)\n/m);

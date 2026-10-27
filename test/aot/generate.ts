@@ -23,6 +23,7 @@ import {
   writeFileSync,
 } from "fs";
 import { availableParallelism, tmpdir } from "os";
+import "./harness/without-installing-packages";
 import { basename, dirname, join, resolve, sep } from "path";
 import type { Row } from "./built-ins-alone/table";
 

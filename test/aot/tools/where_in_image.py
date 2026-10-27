@@ -15,7 +15,7 @@
 #   kind: key = the string is the text of an identifier (a property key, a member's name, an export's name) . value = compiled code makes a string of it (a literal of the program) . both . shown = neither
 #   width: 8 | 16 bits
 #   named by = the rows that name any of the covering strings, joined by +:
-#     of a string:      function-name . layout-name . environment-name . layout-set-name . type-site-text . module-path . module-directory . module-display-path . module-failure . literal-union-member . bigint-digits
+#     of a string:      function-name . layout-name . environment-name . layout-set-name . type-site-text . module-path . module-directory . module-display-path . module-failure . export-statement . literal-union-member . bigint-digits
 #     of an identifier: layout-field:<record | instance | container (an enum, a namespace) | other>[:optional] . class-method . static-field . member-guard . export . indirect-export . synthetic-export . required-name .
 #                       parsed-record-field (a parser or evaluated text may make the record: it finds the fields by their names) . added-name . removed-field . class-prototype-name . key-cell (compiled code holds the key) . environment-variable
 #     none of these rows names it, only compiled code, its side tables or a record that is not walked here (data, requests, global bindings, runs of properties): code-value (a literal) . code-key .
@@ -34,7 +34,7 @@ FORM = [(name, int(size)) for name, size in (word.split(":") for word in """
   staticsLayout:8 staticsRuns:16 staticsOfFiles:8 staticsOfImportedFiles:4 staticsRoots:8 staticsNarrowRoots:8 staticsClearedEachCollection:8 functionVariables:8 identifiersByHash:4 identifiersOfEngineSymbols:4 keyCellIdentifiers:4 literalStrings:4
   literalStringTable:4 literalStringLimits:4 literalStringDigests:28 bigIntConstants:4 data:8 requests:4 builtinCells:4 eagerBuiltinCells:4 constantBuiltinMembers:4 globalBindings:4 entryPoints:4
   modules:40 moduleDirectories:6 moduleDisplayPaths:6 moduleRequests:3 linkRequests:2 evaluationRequests:2 groupsLoadedWithGroups:2 entryPointLinkPlan:4 linkPlanRoots:12 linkPlanStepsOfRoots:4 moduleExports:8 indirectExports:8 syntheticExports:8
-  requiredNames:8 moduleFailures:8 modulesByPath:2 modulesOfUncompiledCode:4 compiledRuntimeModules:8 compiledRuntimeFunctions:12
+  requiredNames:8 exportStatements:12 moduleFailures:8 modulesByPath:2 modulesOfUncompiledCode:4 compiledRuntimeModules:8 compiledRuntimeFunctions:12
 """.split())]
 # The facts from "the number of sections of an image" to "sizeof(ProgramTables)", in the order of AOTRuntimeFacts.def; sizeof(ProgramTables) follows from FORM.
 FIRST_FACT_OF_IMAGE = 8
@@ -272,13 +272,15 @@ class Image:
         # What lies where in the section: (start, end, what).
         self.regions = [(0, sizeOfHeader, "header")] + extents
 
-        def column(table, offset, width, row, ofIdentifier=False, skip=(), mask=None):
+        def column(table, offset, width, row, ofIdentifier=False, skip=(), mask=None, only=None):
             o, count = self.tables[table]
             limit = self.numberOfIdentifiers if ofIdentifier else self.numberOfStrings
             numbers = []
             for i in range(count):
                 p = start + o + i * stride[table] + offset
                 n = int.from_bytes(data[p:p + width], "little")
+                if only and not only(n):
+                    continue
                 if mask:
                     n &= mask
                 if n in skip:
@@ -297,6 +299,11 @@ class Image:
         column("moduleDirectories", 3, 3, "module-directory")
         column("moduleDisplayPaths", 3, 3, "module-display-path")
         column("moduleFailures", 4, 4, "module-failure")
+        # Where an export statement asks for what a module lacks, the first word holds what the statement is written from, under two marks.
+        ofExportStatement = lambda word: word >> 30 == 3
+        column("moduleFailures", 0, 4, "module-failure", only=ofExportStatement, mask=(1 << 30) - 1)
+        column("exportStatements", 4, 4, "export-statement")
+        column("exportStatements", 8, 4, "export-statement")
         column("literalStrings", 0, 4, "literal-union-member")
         column("bigIntConstants", 0, 4, "bigint-digits")
         column("moduleExports", 0, 3, "export", True)

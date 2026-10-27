@@ -5,7 +5,9 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 use super::{FileLowering, class};
-use crate::ir::generated::{Function, FunctionFlags, FunctionKind, FunctionRole, SourceRange};
+use crate::ir::generated::{
+    Function, FunctionFlags, FunctionKind, FunctionRole, FunctionSyntax, SourceRange,
+};
 use crate::ir::{Body, DeclaredType, FunctionId, FunctionKey};
 
 #[derive(Default)]
@@ -79,7 +81,7 @@ impl FileLowering<'_, '_, '_, '_> {
             role: FunctionRole::Signature,
             flags: FunctionFlags::default(),
             length: 0,
-            has_written_await: false,
+            syntax: FunctionSyntax::default(),
             enclosing_runtime_function: None,
             captures: Vec::new(),
             this_type: DeclaredType::untyped(),

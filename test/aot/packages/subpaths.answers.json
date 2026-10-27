@@ -5,8 +5,9 @@
   "exports.closed0.mjs": {
     "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
   },
-  "exports.closed5.cjs": "compiled",
-  "exports.closed5.mjs": "compiled",
+  "exports.closed5.cjs": {
+    "output": "require \"sub:lib/a\"\nresolve THROWS ResolveMessage MODULE_NOT_FOUND\n"
+  },
   "exports.closed6.cjs": {
     "output": "require THROWS Error MODULE_NOT_FOUND\nresolve \"string\"\n"
   },

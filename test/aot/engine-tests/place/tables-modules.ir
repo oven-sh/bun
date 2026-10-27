@@ -66,6 +66,7 @@ function f4 name="runtime" module=m6 kind=Module results=[{type=anything}] {
 # CHECK-NEXT: indirectExports 0 0
 # CHECK-NEXT: syntheticExports 1 8
 # CHECK-NEXT: requiredNames 1 8
+# CHECK-NEXT: exportStatements 0 0
 # CHECK-NEXT: moduleFailures 2 16
 # CHECK-NEXT: modulesByPath 5 10
 # CHECK-NEXT: modulesOfUncompiledCode 0 0

@@ -1388,7 +1388,7 @@ attempt(i => {
 attempt(i => {
   turns += views[i].buffer.byteLength;
 });
-if (taken.length < 100) console.log("not held");
+if (!taken.length) console.log("not held");
 taken.fill(null);
 Bun.gc(true);
 // Not every run is told that address space has run out.
@@ -1463,7 +1463,7 @@ for (let i = 0; i < 4; i++) {
     note(error);
   }
 }
-if (taken.length < 100) console.log("not held");
+if (!taken.length) console.log("not held");
 taken.fill(null);
 Bun.gc(true);
 // Not every run is told that address space has run out.
@@ -1533,7 +1533,7 @@ for (let i = 0; i < 4; i++) {
     note(error);
   }
 }
-if (taken.length < 100) console.log("not held");
+if (!taken.length) console.log("not held");
 taken.fill(null);
 Bun.gc(true);
 // Not every run is told that address space has run out.

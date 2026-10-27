@@ -562,6 +562,20 @@ pub(in crate::lower) fn find_constant(
     }
 }
 
+/// The expression throws for a variable in its dead zone or has this value, and does nothing else.
+pub(in crate::lower) fn find_constant_outside_dead_zone(
+    file: &FileLowering<'_, '_, '_, '_>,
+    expression: ExprId,
+) -> Option<Constant> {
+    let inner = file.skip_type_syntax(expression);
+    match file.decisions().constant(file.hir, inner) {
+        FoldedValue::ConstantOutsideDeadZone(constant) => file
+            .passes_every_assertion(expression, constant)
+            .then_some(constant),
+        FoldedValue::Constant(_) | FoldedValue::Unknown => None,
+    }
+}
+
 fn keyword_accepts(keyword: Keyword, constant: Constant) -> bool {
     match (keyword, constant) {
         (Keyword::Any | Keyword::Unknown, _)

@@ -203,7 +203,8 @@ if not OPTIONS.bun:
     if not OPTIONS.plain:
         toolchain.tool("TESTAOT")
         toolchain.tool("FRONT_END")
-os.makedirs(WORK, exist_ok=True)
+for root in (WORK, os.path.dirname(HERE)):
+    toolchain.without_installing_packages(root)
 
 files = []
 for folder in OPTIONS.folders:

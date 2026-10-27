@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests;
 
-use super::bindings::{AccessedModule, Holder, ImportBinding, RequiredName};
+use super::bindings::{AccessedModule, ExportStatement, Holder, ImportBinding, RequiredName};
 use super::exports::{ExportTables, Resolution, ResolvedName};
 use super::failures::{ModuleFailureKind, PendingFailure, SitePart, WrittenPart};
 use super::interop::{ImportPhase, ModuleKind, SyntheticExportRule};
@@ -20,7 +20,7 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{BindingKind, Bound, Decl, SymFlags, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::{self, ExprId, ImportId};
-use bun_sema::import_sites::{ImportSiteKind, JsxImport};
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, JsxImport};
 use bun_sema::program::{FileId, FileRole, Files, Sym};
 use bun_sema::util::{FxHashSet, SharedSort};
 use core::ops::Range;
@@ -248,7 +248,7 @@ pub(super) struct FileBinder<'a, 's> {
     pub(super) analysis: &'a FileAnalysis<'s>,
     pub(super) scan: &'a FileScan,
     pub(super) imports: FileImports,
-    pub(super) required_name_set: FxHashSet<RequiredName>,
+    pub(super) required_name_set: FxHashSet<(ModuleRef, Atom)>,
 }
 
 impl<'a, 's> FileBinder<'a, 's> {
@@ -270,6 +270,8 @@ impl<'a, 's> FileBinder<'a, 's> {
     }
 
     fn bind_file(mut self) -> FileImports {
+        // A link looks for the names that the module exports ahead of those that it imports.
+        self.add_required_export_names();
         for id in (0..self.hir.imports.len() as u32).map(ImportId) {
             for (declaration, item) in imported_items(self.context.files, self.hir, id) {
                 self.bind_symbol(declaration, id, item);
@@ -277,7 +279,6 @@ impl<'a, 's> FileBinder<'a, 's> {
         }
         self.bind_jsx_imports();
         self.bind_namespace_members();
-        self.add_required_export_names();
         let bindings = &mut self.imports.bindings;
         bindings.shared_sort_by_key(|&(symbol, _)| symbol);
         bindings.dedup_by_key(|&mut (symbol, _)| symbol);
@@ -413,14 +414,19 @@ impl<'a, 's> FileBinder<'a, 's> {
         let context = self.context;
         let not_found = ModuleFailureKind::ExportNotFound { exporter, name };
         let binding = match resolved.resolution {
-            Resolution::Variable(symbol) => PendingBinding::Bound(ImportBinding::Variable(symbol)),
+            Resolution::Variable(symbol) => {
+                PendingBinding::Bound(match self.find_object_imported_as(symbol) {
+                    Some(object) => ImportBinding::Builtin(object),
+                    None => ImportBinding::Variable(symbol),
+                })
+            }
             Resolution::Namespace { module, phase } => {
                 PendingBinding::Bound(ImportBinding::Namespace { module, phase })
             }
             Resolution::RuntimeMember { module, name } => {
                 let (names, platform) = (context.builtin_names, context.platform);
-                let is_asked_itself = exporter == ModuleRef::Runtime(module);
-                bind_runtime_member(names, module, name, platform, is_asked_itself)
+                let is_direct_import = exporter == ModuleRef::Runtime(module);
+                bind_runtime_member(names, module, name, platform, is_direct_import)
                     .map_err(|()| not_found)?
             }
             Resolution::Synthetic { module, name } => PendingBinding::Synthetic { module, name },
@@ -449,6 +455,32 @@ impl<'a, 's> FileBinder<'a, 's> {
             }),
         };
         Ok((binding, required_name))
+    }
+
+    /// `import * as a from "bun"; export { a };`: an importer of `a` names `Bun`.
+    fn find_object_imported_as(&self, variable: Sym) -> Option<BuiltinId> {
+        let context = self.context;
+        let bound = context.files.bound(variable.file);
+        if bound.binding_kind(variable.id) != BindingKind::Import {
+            return None;
+        }
+        let hir = context.files.hir(variable.file);
+        let mut declarations = bound.symbol(variable.id).decls.iter();
+        let import = declarations.find_map(|&declaration| match declaration {
+            Decl::ImportDefault(import) | Decl::ImportNamespace(import) => Some(import),
+            Decl::ImportSpec(specifier) if hir[specifier].imported == known::default => {
+                Some(hir[specifier].import)
+            }
+            _ => None,
+        })?;
+        let analysis = context.files.analysis(variable.file);
+        let site = analysis.import_site_index(ImportSiteKind::Import(import))?;
+        match context.scans.of(variable.file).sites[site] {
+            ScannedSite::Module(ModuleRef::Runtime(module)) => {
+                table::object_replacing_namespace(module)
+            }
+            _ => None,
+        }
     }
 
     // The loader fills the variable of such a name when it links a module that says that it binds the name.
@@ -498,7 +530,7 @@ impl<'a, 's> FileBinder<'a, 's> {
     }
 
     fn add_required_name(&mut self, required_name: RequiredName) {
-        if self.required_name_set.insert(required_name) {
+        if (self.required_name_set).insert((required_name.module, required_name.name)) {
             self.imports.required_names.push(required_name);
         }
     }
@@ -530,14 +562,41 @@ impl<'a, 's> FileBinder<'a, 's> {
         }
     }
 
+    fn find_export_statement(&self, position: usize, export_name: Atom) -> Option<ExportStatement> {
+        let site = self
+            .context
+            .tables
+            .find_indirect_site(self.file, position)? as usize;
+        let specifier = match (
+            &self.scan.sites[site],
+            self.analysis.import_sites[site].specifier,
+        ) {
+            // Bun's transpiler prints "fs" as "node:fs".
+            (&ScannedSite::Module(ModuleRef::Runtime(module)), _) => {
+                self.context.files.atoms.intern(table::specifier_of(module))
+            }
+            (_, ImportSpecifier::Constant(specifier)) => specifier,
+            _ => return None,
+        };
+        Some(ExportStatement {
+            export_name,
+            specifier,
+        })
+    }
+
     fn add_required_export_names(&mut self) {
-        for &(_, resolved) in self.context.tables.own_names(self.file) {
+        let own_names = self.context.tables.own_names(self.file).iter();
+        for (position, &(export_name, resolved)) in own_names.enumerate() {
             if let Some(required_name) = resolved.required_name {
-                self.add_required_name(required_name);
+                self.add_required_name(RequiredName {
+                    asked_by: self.find_export_statement(position, export_name),
+                    ..required_name
+                });
             }
         }
         // The export table names the variable.
-        for &(_, resolved) in self.context.tables.names(self.file) {
+        let names = self.context.tables.names(self.file).iter();
+        for (position, &(export_name, resolved)) in names.enumerate() {
             let unlisted_name = match resolved.resolution {
                 Resolution::RuntimeMember { module, name } => {
                     self.find_unlisted_name(ModuleRef::Runtime(module), name)
@@ -547,7 +606,10 @@ impl<'a, 's> FileBinder<'a, 's> {
             };
             let deferred = self.find_deferred_export(resolved.resolution);
             for required_name in [deferred, unlisted_name].into_iter().flatten() {
-                self.add_required_name(required_name);
+                self.add_required_name(RequiredName {
+                    asked_by: self.find_export_statement(position, export_name),
+                    ..required_name
+                });
             }
         }
     }
@@ -582,7 +644,7 @@ fn bind_runtime_member(
     module: RuntimeModule,
     name: Atom,
     platform: Platforms,
-    is_asked_itself: bool,
+    is_direct_import: bool,
 ) -> Result<PendingBinding, ()> {
     let binding = match find_module_export(names, module, name, platform) {
         ModuleExport::Found(member)
@@ -596,7 +658,7 @@ fn bind_runtime_member(
             });
         }
         ModuleExport::Found(member) => ImportBinding::Builtin(member),
-        ModuleExport::PropertyOfNamespace(holder) if is_asked_itself => {
+        ModuleExport::PropertyOfNamespace(holder) if is_direct_import => {
             ImportBinding::BuiltinMember { holder, name }
         }
         ModuleExport::Absent => return Err(()),

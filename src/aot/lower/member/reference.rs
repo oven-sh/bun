@@ -283,10 +283,14 @@ fn lower_member_reference(
     }
     let conversion = match member {
         MemberKey::Name(_) | MemberKey::PrivateName(_) => KeyConversion::AtAccess,
-        MemberKey::Computed(key) => match expression::find_constant(lowering.file, key) {
-            Some(_) => KeyConversion::AtAccess,
-            None => conversion,
-        },
+        MemberKey::Computed(key) => {
+            let constant = expression::find_constant(lowering.file, key)
+                .or_else(|| expression::find_constant_outside_dead_zone(lowering.file, key));
+            match constant {
+                Some(_) => KeyConversion::AtAccess,
+                None => conversion,
+            }
+        }
     };
     if matches!(hir[object].kind, ExprKind::Super) {
         let (home_kind, home) = lowering.get_home_object();

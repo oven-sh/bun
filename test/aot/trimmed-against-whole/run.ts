@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { withoutInstallingPackages } from "../harness/without-installing-packages";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { loadFeatures } from "../../../scripts/build/trim/features";
@@ -154,7 +155,7 @@ const cores = values.cores?.split(",").flatMap(range => {
   const [first, last = first] = range.split("-").map(Number);
   return Array.from({ length: last - first + 1 }, (_, index) => first + index);
 });
-const scratch = join(resolve(values.scratch ?? (existsSync("/dev/shm") ? "/dev/shm" : tmpdir())), `trimmed-against-whole-${process.pid}`);
+const scratch = withoutInstallingPackages(join(resolve(values.scratch ?? (existsSync("/dev/shm") ? "/dev/shm" : tmpdir())), `trimmed-against-whole-${process.pid}`));
 const settings: Settings = {
   bun: resolve(values.bun),
   scratch,

@@ -105,15 +105,28 @@ pub struct SyntheticExport {
     pub is_known_member: bool,
 }
 
+/// `export { name as export_name } from "specifier"`, or the same in two statements: an import and an export of what it declares.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct ExportStatement {
+    pub export_name: Atom,
+    pub specifier: Atom,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct RequiredName {
     pub module: ModuleRef,
     pub name: Atom,
+    /// An import asks for any other name. The error of a link that does not find the name is worded by who asks.
+    pub asked_by: Option<ExportStatement>,
 }
 
 impl RequiredName {
     pub fn new(module: ModuleRef, name: Atom) -> RequiredName {
-        RequiredName { module, name }
+        RequiredName {
+            module,
+            name,
+            asked_by: None,
+        }
     }
 }
 

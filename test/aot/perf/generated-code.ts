@@ -78,7 +78,13 @@ function parseSizes(output: string) {
 }
 
 async function measure(folder: string, source: string, program: string, words: string, functions?: string[]) {
-  const compiled = await spawned([bunExe(), "compile", withProgramOutput(program), source], folder, bunEnv);
+  const executable = `${program}.exe`;
+  const compiled = await spawned(
+    [bunExe(), "compile", withProgramOutput(program), source, "--outfile", executable],
+    folder,
+    bunEnv,
+  );
+  rmSync(executable, { force: true });
   expect({ stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   const printed = await spawned(
     [

@@ -48,6 +48,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
 import { availableParallelism } from "os";
 import { join } from "path";
+import { withoutInstallingPackages } from "../harness/without-installing-packages";
 import { changeEnvironment, EngineBed, ProductBed, type Bed } from "./beds";
 import { fuzz } from "./fuzzer";
 import { allSources } from "./sources";
@@ -84,7 +85,7 @@ if (replay) {
   console.log(`// ${generated.source}:${generated.seed} ${generated.notes}\n${generated.text}`);
   for (const [path, text] of Object.entries(generated.files ?? {})) console.log(`// ${path}\n${text}`);
   if (!has("print-only")) {
-    mkdirSync(work, { recursive: true });
+    withoutInstallingPackages(work);
     for (const mode of bed.modes(generated)) console.log(`// ${bed.name} ${mode.name}:`, (await bed.judge(work, [generated], mode.flags))[0].verdict);
     rmSync(work, { recursive: true, force: true });
   }

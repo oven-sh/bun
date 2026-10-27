@@ -4,10 +4,11 @@
 //   --bun <bun with --aot> --server koa [--modules <node_modules>] [--routes text,json] [--requests 1000] [--rows 40] [--work <folder>] [-- <more build flags>]
 //
 // Needs an installed node_modules (`bun install` in ../app), and nothing else: no counter of the processor is read, so a busy machine prints the same.
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { withoutInstallingPackages } from "../../harness/without-installing-packages";
 import { apiRoutes, routes as plainRoutes } from "../answers";
 
 /** A line of the file of counts: how often, the counter's name, and for some counters what it saw. */
@@ -23,7 +24,7 @@ export async function countServer(flag: string) {
   const routes = (values.server.startsWith("api-") ? apiRoutes : plainRoutes).filter(route => !values.routes || values.routes.split(",").includes(route.name));
   const work = values.work ?? mkdtempSync(join(tmpdir(), "counted-server-"));
   const app = join(work, "app");
-  mkdirSync(work, { recursive: true });
+  withoutInstallingPackages(work);
   cpSync(join(import.meta.dir, "..", "app"), app, { recursive: true, filter: path => !path.includes("node_modules") });
   symlinkSync(values.modules ?? join(import.meta.dir, "..", "app", "node_modules"), join(app, "node_modules"));
   // The counts are written when the process exits by itself.

@@ -2,6 +2,7 @@
 mod tests;
 
 use super::ModuleRef;
+use super::bindings::ExportStatement;
 use super::requests::{SiteForm, site_form};
 use bun_sema::atom::Atom;
 use bun_sema::import_sites::ImportSiteKind;
@@ -55,6 +56,7 @@ pub enum ModuleFailureKind {
     ExportMayBeAbsent {
         exporter: ModuleRef,
         name: Atom,
+        asked_by: Option<ExportStatement>,
     },
 }
 

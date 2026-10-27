@@ -150,6 +150,16 @@ await import(\`node:\${name}\`).then(
   });
 });
 
+const modulesBehindAFlag = [
+  "bun:internal-for-testing",
+  "internal/test/binding",
+  "internal/cluster/round_robin_handle",
+  "internal/repl",
+  "internal/repl/await",
+  "internal/repl/history",
+  "internal/util/inspect",
+];
+
 // A debug build of Bun has these modules without the flag.
 test.skipIf(isDebug)(
   "a computed name of a module that only a flag of Bun turns on fails as under bun run",
@@ -171,21 +181,51 @@ for (const name of process.argv.slice(2)) {
     using dir = tempDir("aot-modules-behind-a-flag", { "asks.js": asks });
     const directory = String(dir);
     const { executable } = await build(directory, "asks.js");
-    const names = [
-      "bun:internal-for-testing",
-      "internal/test/binding",
-      "internal/cluster/round_robin_handle",
-      "internal/repl",
-      "internal/repl/await",
-      "internal/repl/history",
-      "internal/util/inspect",
-    ];
+    const names = modulesBehindAFlag;
     const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: _, ...withoutTheFlag } = bunEnv;
     const underBunRun = await runCommand([bunExe(), "asks.js", ...names], directory, withoutTheFlag);
     expect(underBunRun.stdout).toContain(
       `bun:internal-for-testing import BuildMessage | BuildMessage | ENOENT reading`,
     );
     const compiled = await runCommand([executable, ...names], directory, withoutTheFlag);
+    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
+      stdout: underBunRun.stdout,
+      exitCode: underBunRun.exitCode,
+    });
+  },
+);
+
+test.skipIf(isDebug)(
+  "a constant name of a module that only a flag of Bun turns on fails as under bun run",
+  async () => {
+    // Bun's transpiler prints the one that is left out under another name, which the resolver does not know in an import().
+    const names = modulesBehindAFlag.filter(name => name !== "internal/cluster/round_robin_handle");
+    const asksFor = (name: string) => `try {
+  console.log("${name}", "require", typeof require("${name}"));
+} catch (error) {
+  console.log("${name}", "require", describe(error));
+}
+await import("${name}").then(
+  loaded => console.log("${name}", "import", typeof loaded),
+  error => console.log("${name}", "import", describe(error)),
+);
+`;
+    const asks = `const describe = error =>
+  [error.constructor.name, error.name, error.message, error.code, error.level, Reflect.ownKeys(error).join()].join(" | ");
+${names.map(asksFor).join("")}`;
+    using dir = tempDir("aot-constant-names-of-modules-behind-a-flag", { "asks.js": asks });
+    const directory = String(dir);
+    const executable = join(directory, isWindows ? "asks.exe" : "asks");
+    // With the flag the build takes the program for one of Bun's own tests and compiles the modules in.
+    const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: _, ...withoutTheFlag } = bunEnv;
+    const command = [bunExe(), "build", "--compile", "--aot", "asks.js", "--outfile", executable];
+    const built = await runCommand(command, directory, withoutTheFlag);
+    expect(built.exitCode).toBe(0);
+    const underBunRun = await runCommand([bunExe(), "asks.js"], directory, withoutTheFlag);
+    expect(underBunRun.stdout).toContain(
+      `bun:internal-for-testing import BuildMessage | BuildMessage | ENOENT reading`,
+    );
+    const compiled = await runCommand([executable], directory, withoutTheFlag);
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
       stdout: underBunRun.stdout,
       exitCode: underBunRun.exitCode,

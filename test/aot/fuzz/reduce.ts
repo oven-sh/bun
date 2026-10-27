@@ -12,6 +12,7 @@
 // The command is run as `<command> [words] <the candidate's first file>` in the candidate's folder, and exits with 0 if the candidate still shows what the program showed.
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
+import { withoutInstallingPackages } from "../harness/without-installing-packages";
 import { dirname, join, relative } from "path";
 import { tokenize } from "./tokens";
 
@@ -289,7 +290,7 @@ if (import.meta.main) {
   const paths = (readdirSync(source, { recursive: true, withFileTypes: true }) as import("fs").Dirent[]).filter(each => each.isFile()).map(each => relative(source, join(each.parentPath, each.name)));
   const isCode = (path: string) => /\.[cm]?[jt]sx?$/.test(path) && !path.split("/").includes("node_modules");
   const first = entry || paths.find(path => /^main\.\w+$/.test(path))!;
-  const work = mkdtempSync(join(process.env.REDUCE_TMP ?? tmpdir(), "reduce-"));
+  const work = mkdtempSync(join(withoutInstallingPackages(process.env.REDUCE_TMP ?? tmpdir()), "reduce-"));
   const write = (folder: string, { text, files }: Whole) => {
     // What is no code is there for every candidate.
     cpSync(source, folder, { recursive: true, filter: path => !isCode(relative(source, path)) });

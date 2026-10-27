@@ -54,18 +54,24 @@ pub fn apply(executable: &mut dyn ImageBytes, plan: &TrimPlan) -> Result<TrimSum
     }
     check_removable_bytes(&mut editor, &removable, sections)?;
     clear_removed_module_texts(&mut editor, &removable)?;
+    let rest_of_table = if plan.keeps_table {
+        None
+    } else {
+        Some(write_removed_ranges(&mut editor, plan, sections)?)
+    };
+    if let Some(rest_of_table) = rest_of_table {
+        insert_rest_of_table(&mut removable, rest_of_table);
+    }
     let cut_plan = editor.cut_model().choose(&removable);
+    let cut_bytes_of_table = rest_of_table.map_or(0, |rest| count_bytes_in(&cut_plan.cuts, rest));
     write_fills(&mut editor, &cut_plan.fills)?;
     let removed_ranges: Vec<AddressRange> = removable.iter().map(|item| item.range).collect();
     editor.remove_relocations_in(&removed_ranges)?;
     write_removal_state(&mut editor, sections.state, plan)?;
-    if !plan.keeps_table {
-        write_removed_ranges(&mut editor, plan, sections)?;
-    }
     let file_bytes_saved = editor.remove_ranges(&cut_plan.cuts)?;
     Ok(TrimSummary {
         removed: plan.removed(),
-        cut_bytes: cut_plan.cut_bytes(),
+        cut_bytes: cut_plan.cut_bytes() - cut_bytes_of_table,
         filled_bytes: cut_plan.filled_bytes(),
         file_bytes_saved,
         uncut: cut_plan.uncut,
@@ -413,7 +419,7 @@ fn write_removed_ranges(
     editor: &mut ImageEditor<'_>,
     plan: &TrimPlan,
     sections: TrimSections,
-) -> Result<(), TrimInternalError> {
+) -> Result<AddressRange, TrimInternalError> {
     let records = collect_removed_ranges(plan, sections.state.start);
     let table = editor
         .bytes_at_mut(sections.table)
@@ -441,7 +447,35 @@ fn write_removed_ranges(
         offset_of!(RemovableFeatureState, removed_ranges_offset),
         &records_offset.to_le_bytes(),
     );
-    Ok(())
+    Ok(AddressRange {
+        start: sections.table.start + encoded.bytes.len() as u64,
+        end: sections.table.end,
+    })
+}
+
+fn count_bytes_in(cuts: &[AddressRange], range: AddressRange) -> u64 {
+    cuts.iter()
+        .map(|cut| {
+            let end = cut.end.min(range.end);
+            end.saturating_sub(cut.start.max(range.start))
+        })
+        .sum()
+}
+
+fn insert_rest_of_table(removable: &mut Vec<RemovableBytes>, rest_of_table: AddressRange) {
+    if rest_of_table.is_empty() {
+        return;
+    }
+    let position = removable.partition_point(|item| item.range.start < rest_of_table.start);
+    removable.insert(
+        position,
+        RemovableBytes {
+            range: rest_of_table,
+            is_code: false,
+            can_be_cut: true,
+            can_be_filled: false,
+        },
+    );
 }
 
 #[cfg(test)]

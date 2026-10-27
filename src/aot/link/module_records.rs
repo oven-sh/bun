@@ -400,6 +400,8 @@ impl RecordBuilder<'_, '_, '_> {
                 module: input.id_of(project, required.module),
                 name: self.intern_atom(required.name),
                 may_be_absent: false,
+                export_name: (required.asked_by).map(|it| self.intern_atom(it.export_name)),
+                specifier: (required.asked_by).map(|it| self.intern_atom(it.specifier)),
             })
             .collect();
     }
@@ -504,6 +506,7 @@ impl RecordBuilder<'_, '_, '_> {
         failure: &modules::ModuleFailure,
     ) -> generated::ModuleFailure {
         // Where a module lacks a name, the name stands in the place of the specifier.
+        let mut export_specifier = None;
         let (specifier, exporter) = match failure.kind {
             ModuleFailureKind::NotAProgram { .. } => {
                 let sources = self.input.projects.get(project).sources;
@@ -514,7 +517,14 @@ impl RecordBuilder<'_, '_, '_> {
             | ModuleFailureKind::UnresolvedAtLoad { specifier, .. } => {
                 (self.intern_atom(specifier), None)
             }
-            ModuleFailureKind::ExportMayBeAbsent { exporter, name } => {
+            ModuleFailureKind::ExportMayBeAbsent {
+                exporter,
+                name,
+                asked_by,
+            } => {
+                // An export statement is quoted: the name that it exports, and what it is written from.
+                export_specifier = asked_by.map(|it| self.intern_atom(it.specifier));
+                let name = asked_by.map_or(name, |it| it.export_name);
                 (self.intern_atom(name), Some(exporter))
             }
             ModuleFailureKind::ExportNotFound { .. }
@@ -526,6 +536,7 @@ impl RecordBuilder<'_, '_, '_> {
             importer: self.input.id_of(project, ModuleRef::File(failure.importer)),
             specifier,
             exporter: exporter.map(|exporter| self.input.id_of(project, exporter)),
+            export_specifier,
         }
     }
 }

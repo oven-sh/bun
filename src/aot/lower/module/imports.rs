@@ -9,7 +9,7 @@ use crate::ir::generated::{BlockFrequency, ImportPhase};
 use crate::ir::{PropertyKeyId, StringId, TypeTable, ValueId, VariableKey};
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, commonjs};
-use crate::modules::{ImportBinding, ModuleRef, Shape, SyntheticExportId, View};
+use crate::modules::{ExportBinding, ImportBinding, ModuleRef, Shape, SyntheticExportId, View};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn get_import(&mut self, symbol: SymbolId) -> ValueId {
@@ -37,20 +37,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     /// `import { a } from "bun"` runs as `var { a } = Bun` where the statement stands.
     pub(crate) fn lower_import(&mut self, import: ImportId) {
-        for specifier in self.file.hir[import].named.iter() {
-            let symbol = self.file.bound.declared_symbol(Decl::ImportSpec(specifier));
+        let named = self.file.hir[import].named.iter().map(Decl::ImportSpec);
+        let whole = [Decl::ImportNamespace(import), Decl::ImportDefault(import)];
+        for declaration in whole.into_iter().chain(named) {
+            let symbol = self.file.bound.declared_symbol(declaration);
             if symbol.is_none() {
                 continue;
             }
-            let binding = (self.file.inputs.modules).import_binding(self.file.file, symbol);
-            let ImportBinding::BuiltinMember { holder, name } = binding else {
-                continue;
+            let key = self.file.imported_copy_key(symbol);
+            let modules = self.file.inputs.modules;
+            let value = match modules.import_binding(self.file.file, symbol) {
+                ImportBinding::BuiltinMember { holder, name } => {
+                    let object = self.builder.builtin(holder, false);
+                    self.emit_named_read(object, name)
+                }
+                ImportBinding::Builtin(object) if self.file.is_exported_variable(key) => {
+                    self.emit_builtin_import(object, None)
+                }
+                _ => continue,
             };
-            let object = self.builder.builtin(holder, false);
-            let value = self.emit_named_read(object, name);
-            let variable = self
-                .file
-                .ensure_variable(self.file.imported_copy_key(symbol));
+            let variable = self.file.ensure_variable(key);
             self.builder.put_module_variable(variable, value);
         }
     }
@@ -281,6 +287,14 @@ impl FileLowering<'_, '_, '_, '_> {
         VariableKey::Symbol(Sym {
             file: self.file,
             id: symbol,
+        })
+    }
+
+    fn is_exported_variable(&self, key: VariableKey) -> bool {
+        let mut exports = self.inputs.modules.exports(self.file).iter();
+        exports.any(|export| match export.binding {
+            ExportBinding::Variable(symbol) => VariableKey::Symbol(symbol) == key,
+            _ => false,
         })
     }
 

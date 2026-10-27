@@ -327,6 +327,10 @@ function onServerResponseClose(this: $Node.HttpSocket) {
 // Node's write_() checks before _implicitHeader(): the write that renders the headers is counted but not checked. end() is always checked.
 function strictContentLength(response: $Node.ServerResponse, headerState: NodeHTTPHeaderState, fromEnd: boolean) {
   if (!response.strictContentLength) return;
+  return contentLengthToKeepTo(response, headerState, fromEnd);
+}
+
+function contentLengthToKeepTo(response: $Node.ServerResponse, headerState: NodeHTTPHeaderState, fromEnd: boolean) {
   if (!fromEnd && headerState === NodeHTTPHeaderState.none) return;
   let contentLength = response._contentLength ?? response.getHeader("content-length");
   if (
@@ -3393,11 +3397,11 @@ function renderHeadersInto(flat: unknown[], res: $Node.ServerResponse, exchange:
   return bits;
 }
 
-function renderNativeHeaders(res: $Node.ServerResponse, exchange: Exchange | undefined): unknown[] {
+// `isItself`: `res` is the response of `exchange`, and no proxy or heir of it.
+function renderNativeHeaders(res: $Node.ServerResponse, exchange: Exchange | undefined, isItself: boolean): unknown[] {
   let autoHeaders = 0;
   let keepAliveSecs = 0;
-  const isItself = exchange !== undefined && exchange.response === res;
-  let bits = isItself ? exchange.headerBits : HEADER_SPILLED;
+  let bits = isItself ? exchange!.headerBits : HEADER_SPILLED;
   let flat: unknown[];
   if ((bits & HEADER_UNUSUAL) === 0) {
     // The bits of headers in the compact form say which of them frame the response: nobody walks them.
@@ -3438,7 +3442,7 @@ function renderNativeHeaders(res: $Node.ServerResponse, exchange: Exchange | und
     } else if (res._removedTE) {
       closeDelimited = true;
       storeMustClose(res, exchange);
-    } else if (res._removedContLen || (isItself ? exchange.isFrozenChunked : res[kFramingFrozenChunked])) {
+    } else if (res._removedContLen || (isItself ? exchange!.isFrozenChunked : res[kFramingFrozenChunked])) {
       if ($callNoInline(takesChunks, undefined, res.req)) {
         forceChunked = true;
       } else {
@@ -5120,7 +5124,7 @@ ServerResponse.prototype.end = function (
   } else if (headerState === NodeHTTPHeaderState.none) {
     updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
-  if (held === null && !this._hasBody && chunk) {
+  if (held === null && chunk && !this._hasBody) {
     ("unlikely");
     if (this[kRejectNonStandardBodyWrites]) {
       throw $ERR_HTTP_BODY_NOT_ALLOWED();
@@ -5149,7 +5153,7 @@ ServerResponse.prototype.end = function (
   }
   let draining = false;
   if (headerState !== NodeHTTPHeaderState.sent) {
-    const renderedHeaders = (held !== null ? headOf(held) : renderNativeHeaders(this, exchange)) as string[];
+    const renderedHeaders = (held !== null ? headOf(held) : renderNativeHeaders(this, exchange, true)) as string[];
     const hasSnapshot = (flags & EXCHANGE_HAS_SNAPSHOT) !== 0;
     const statusCode = hasSnapshot ? exchange.statusCode : this.statusCode;
     const statusMessage = hasSnapshot
@@ -5157,7 +5161,7 @@ ServerResponse.prototype.end = function (
       : this.statusMessage === undefined
         ? undefined
         : this.statusMessage;
-    const strict = this.strictContentLength ? strictContentLength(this, headerState, true) : undefined;
+    const strict = this.strictContentLength ? contentLengthToKeepTo(this, headerState, true) : undefined;
     const autoHeaders = renderedAutoHeaders;
     const keepAliveSecs = renderedKeepAliveSecs;
     let contentLength: number;
@@ -5348,7 +5352,7 @@ ServerResponse.prototype.write = function (
   if (exchange.headerState === NodeHTTPHeaderState.none) {
     updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
-  if (!this._hasBody && chunk) {
+  if (chunk && !this._hasBody) {
     ("unlikely");
     if (this[kRejectNonStandardBodyWrites]) {
       throw $ERR_HTTP_BODY_NOT_ALLOWED();
@@ -5375,7 +5379,7 @@ ServerResponse.prototype.write = function (
   ) {
     const socket = exchange.connection;
     if (socket !== null && socket.$isOpen) {
-      const renderedHeaders = renderNativeHeaders(this, exchange);
+      const renderedHeaders = renderNativeHeaders(this, exchange, true);
       exchange.heldChunk = new HeldChunk(chunk, renderedHeaders, renderedAutoHeaders, renderedKeepAliveSecs);
       this[kBytesBuffered] = exchange.bytesBuffered += Buffer.byteLength(chunk);
       this[kAccountingFlushScheduled] = true;
@@ -5408,7 +5412,7 @@ ServerResponse.prototype.write = function (
 
   if (exchange.headerState !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
-      const renderedHeaders = renderNativeHeaders(this, exchange);
+      const renderedHeaders = renderNativeHeaders(this, exchange, true);
       handle.writeHead(
         statusCodeToSend(this),
         statusMessageToSend(this),
@@ -6069,7 +6073,7 @@ function writeHeadToHandle(
   exchange: Exchange | undefined,
   handle: $Node.NodeHTTPResponse | $Node.Http1ResponseHandle,
 ): void {
-  const renderedHeaders = renderNativeHeaders(res, exchange);
+  const renderedHeaders = renderNativeHeaders(res, exchange, exchange !== undefined && exchange.response === res);
   const statusCode = statusCodeToSend(res);
   const statusMessage = statusMessageToSend(res);
   handle.writeHead(statusCode, statusMessage, renderedHeaders as string[], renderedAutoHeaders, renderedKeepAliveSecs);
@@ -6124,7 +6128,11 @@ function endInFull(
   }
   let draining = false;
   if (headerState !== NodeHTTPHeaderState.sent) {
-    const renderedHeaders = renderNativeHeaders(res, exchange) as string[];
+    const renderedHeaders = renderNativeHeaders(
+      res,
+      exchange,
+      exchange !== undefined && exchange.response === res,
+    ) as string[];
     let contentLength: number;
     try {
       contentLength = handle.writeHeadAndEnd(

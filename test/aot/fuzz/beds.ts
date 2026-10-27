@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { dirname, join } from "path";
 import { limitsLowered } from "../harness/limits";
 import { endAtMemoryLimit, memoryLimit } from "../harness/memory-limit";
+import { withoutInstallingPackages } from "../harness/without-installing-packages";
 import { company, memberNames } from "./company";
 import { laterProbes, probeProgram, probes } from "./engine-probes";
 import { asBunInitWritesIt, typeChecker, typingsOfBun, type Checker } from "./type-check";
@@ -365,8 +366,7 @@ export class ProductBed implements Bed {
 
   async switches() {
     if (this.#switches) return this.#switches;
-    const folder = join(process.env.TMPDIR ?? "/tmp", `aot-fuzz-registry-${process.pid}`);
-    mkdirSync(folder, { recursive: true });
+    const folder = withoutInstallingPackages(join(process.env.TMPDIR ?? "/tmp", `aot-fuzz-registry-${process.pid}`));
     writeFileSync(join(folder, "empty.js"), "");
     const listed = await spawned([this.bun, "build", "--compile", "--aot", "empty.js", "--outfile", "empty", "--aot-list=registry"], folder, 120);
     rmSync(folder, { recursive: true, force: true });

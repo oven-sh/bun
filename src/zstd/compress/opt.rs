@@ -283,20 +283,16 @@ fn lit_length_price(lit_length: u32, opt_ptr: &OptState, opt_level: i32) -> Resu
         .wrapping_sub(weight(opt_ptr.lit_length_freq.at(ll_code)?, opt_level)))
 }
 
-/// `ZSTD_getMatchPrice`: the price of the offset and of the match length of a sequence. `off_base` is as in
-/// [`SeqStore::store_seq`]. Below level 2, it favours small offsets, which are faster to decompress.
+/// `ZSTD_getMatchPrice`, the price of the offset and of the match length of a sequence, in two parts to add up: all the
+/// lengths of a match are priced, with the same offset.
+///
+/// This is the part for the offset. `off_base` is as in [`SeqStore::store_seq`]. Below level 2, it favours small
+/// offsets, which are faster to decompress.
 #[inline(always)]
-fn get_match_price(
-    off_base: u32,
-    match_length: u32,
-    opt_ptr: &OptState,
-    opt_level: i32,
-) -> Result<u32> {
+fn offset_price(off_base: u32, opt_ptr: &OptState, opt_level: i32) -> Result<u32> {
     let off_code = highbit32(off_base);
-    let ml_base = match_length.wrapping_sub(MINMATCH);
-
     if opt_ptr.price_type == OptPrice::Predef {
-        return Ok(weight(ml_base, opt_level).wrapping_add((16 + off_code) * BITCOST_MULTIPLIER));
+        return Ok((16 + off_code) * BITCOST_MULTIPLIER);
     }
 
     let off_code_weight = weight(opt_ptr.off_code_freq.at(off_code as usize)?, opt_level);
@@ -308,19 +304,52 @@ fn get_match_price(
     if opt_level < 2 && off_code >= 20 {
         price = price.wrapping_add((off_code - 19) * 2 * BITCOST_MULTIPLIER);
     }
-
-    let ml_code = ml_code(ml_base) as usize;
-    let ml_code_weight = weight(opt_ptr.match_length_freq.at(ml_code)?, opt_level);
-    price = price
-        .wrapping_add(u32::from(ML_BITS.at(ml_code)?) * BITCOST_MULTIPLIER)
-        .wrapping_add(
-            opt_ptr
-                .match_length_sum_base_price
-                .wrapping_sub(ml_code_weight),
-        );
-
     // Matches cost a bit more, to have fewer sequences, which is faster to decompress.
     Ok(price.wrapping_add(BITCOST_MULTIPLIER / 5))
+}
+
+/// The part of `ZSTD_getMatchPrice` for the length. It keeps the price of the last code, which many lengths share.
+struct MatchLengthPrice<'a> {
+    opt_ptr: &'a OptState,
+    opt_level: i32,
+    last: Option<CodePrice>,
+}
+
+#[derive(Clone, Copy)]
+struct CodePrice {
+    ml_code: u32,
+    price: u32,
+}
+
+impl<'a> MatchLengthPrice<'a> {
+    const fn new(opt_ptr: &'a OptState, opt_level: i32) -> Self {
+        Self {
+            opt_ptr,
+            opt_level,
+            last: None,
+        }
+    }
+
+    #[inline(always)]
+    fn of(&mut self, match_length: u32) -> Result<u32> {
+        let ml_base = match_length.wrapping_sub(MINMATCH);
+        if self.opt_ptr.price_type == OptPrice::Predef {
+            return Ok(weight(ml_base, self.opt_level));
+        }
+
+        let ml_code = ml_code(ml_base);
+        if let Some(last) = self.last
+            && last.ml_code == ml_code
+        {
+            return Ok(last.price);
+        }
+        let freq = self.opt_ptr.match_length_freq.at(ml_code as usize)?;
+        let price = (u32::from(ML_BITS.at(ml_code as usize)?) * BITCOST_MULTIPLIER)
+            .wrapping_add(self.opt_ptr.match_length_sum_base_price)
+            .wrapping_sub(weight(freq, self.opt_level));
+        self.last = Some(CodePrice { ml_code, price });
+        Ok(price)
+    }
 }
 
 /// `ZSTD_updateStats`
@@ -1387,10 +1416,11 @@ fn parse_block(
                     stretch.litlen = litlen.wrapping_add(pos);
                     pos += 1;
                 }
+                let mut ml_price = MatchLengthPrice::new(&ms.opt, opt_level);
                 for candidate in matches {
+                    let off_price = offset_price(candidate.off, &ms.opt, opt_level)?;
                     while pos <= candidate.len {
-                        let match_price =
-                            get_match_price(candidate.off, pos, &ms.opt, opt_level)? as i32;
+                        let match_price = off_price.wrapping_add(ml_price.of(pos)?) as i32;
                         let sequence_price = first_price.wrapping_add(match_price);
                         let stretch = opt.at_mut(pos as usize)?;
                         stretch.mlen = pos;
@@ -1530,28 +1560,31 @@ fn parse_block(
 
                     // Set the prices that the matches found here give.
                     let mut start_ml = min_match;
+                    let mut ml_price = MatchLengthPrice::new(&ms.opt, opt_level);
                     for candidate in matches {
-                        let mut mlen = candidate.len;
-                        while mlen >= start_ml {
-                            let pos = cur + mlen;
-                            let price = base_price.wrapping_add(get_match_price(
-                                candidate.off,
-                                mlen,
-                                &ms.opt,
-                                opt_level,
-                            )?
-                                as i32);
+                        if candidate.len < start_ml {
+                            start_ml = candidate.len + 1;
+                            continue;
+                        }
+                        let off_price = offset_price(candidate.off, &ms.opt, opt_level)?;
+                        let furthest = cur + candidate.len;
+                        // The first position that nothing leads to yet is taken at any price.
+                        let mut new = furthest > last_pos;
+                        while last_pos < furthest {
+                            last_pos += 1;
+                            let stretch = opt.at_mut(last_pos as usize)?;
+                            stretch.price = ZSTD_MAX_PRICE;
+                            // Not 0, which would be the end of a match.
+                            stretch.litlen = 1;
+                        }
 
-                            if pos > last_pos || price < opt.at(pos as usize)?.price {
-                                while last_pos < pos {
-                                    // Positions that nothing leads to yet.
-                                    last_pos += 1;
-                                    let stretch = opt.at_mut(last_pos as usize)?;
-                                    stretch.price = ZSTD_MAX_PRICE;
-                                    // Not 0, which would be the end of a match.
-                                    stretch.litlen = 1;
-                                }
-                                let stretch = opt.at_mut(pos as usize)?;
+                        // From the longest length to the shortest.
+                        let reached = opt.sub_mut((cur + start_ml) as usize..=furthest as usize)?;
+                        let lengths = (start_ml..=candidate.len).rev();
+                        for (stretch, mlen) in reached.iter_mut().rev().zip(lengths) {
+                            let match_price = off_price.wrapping_add(ml_price.of(mlen)?) as i32;
+                            let price = base_price.wrapping_add(match_price);
+                            if new || price < stretch.price {
                                 stretch.mlen = mlen;
                                 stretch.off = candidate.off;
                                 stretch.litlen = 0;
@@ -1560,7 +1593,7 @@ fn parse_block(
                                 // Shorter lengths are not tried.
                                 break;
                             }
-                            mlen -= 1;
+                            new = false;
                         }
                         start_ml = candidate.len + 1;
                     }

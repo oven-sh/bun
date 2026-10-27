@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
 use bun_core::strings;
@@ -7,7 +6,7 @@ use bun_jsc::{JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use bun_ptr::RawSlice;
 use bun_simdutf_sys::simdutf;
 
-use crate::webcore::sink::sink_handle_from_id;
+use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
@@ -285,8 +284,7 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
     chunk: JSValue,
-    sink_id: u8,
-    sink_ptr: *mut core::ffi::c_void,
+    controller: &ReadableSinkController,
 ) -> JSValue {
     let Ok(str) = chunk.to_js_string_view(global) else {
         return JSValue::ZERO;
@@ -310,20 +308,15 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
         this.scratch.replace(buf);
         return JSValue::UNDEFINED;
     }
-    let Some(ptr) = NonNull::new(sink_ptr) else {
-        this.scratch.replace(buf);
-        return JSValue::UNDEFINED;
-    };
-    // SAFETY: `sink_ptr` is a live JSSink of type `sink_id` (the C++ caller
-    // null-checks it before attaching); the sink copies what it needs.
-    let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
+    // The sink copies what it needs.
+    let handle = controller.sink_handle();
     if handle.is_none() {
         this.scratch.replace(buf);
         return JSValue::UNDEFINED;
     }
     let wrote = handle
         .write(&streams::Result::Temporary(RawSlice::new(&buf)))
-        .to_js(&global.js_thread_of_caller_no_frame());
+        .to_js(&global.js_thread_of_caller());
     if buf.capacity() <= SCRATCH_CAP {
         this.scratch.replace(buf);
     }
@@ -335,8 +328,7 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
 pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
-    sink_id: u8,
-    sink_ptr: *mut core::ffi::c_void,
+    controller: &ReadableSinkController,
 ) -> JSValue {
     // SAFETY: as in `TextEncoderStreamEncoder__encodeForStream`.
     let this = unsafe { &*this };
@@ -344,15 +336,11 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
         return JSValue::UNDEFINED;
     }
     const REPLACEMENT: [u8; 3] = [0xef, 0xbf, 0xbd];
-    let Some(ptr) = NonNull::new(sink_ptr) else {
-        return JSValue::UNDEFINED;
-    };
-    // SAFETY: as in `TextEncoderStreamEncoder__encodeIntoSink`.
-    let handle = unsafe { sink_handle_from_id(sink_id, ptr) };
+    let handle = controller.sink_handle();
     if handle.is_none() {
         return JSValue::UNDEFINED;
     }
     handle
         .write(&streams::Result::Temporary(RawSlice::new(&REPLACEMENT)))
-        .to_js(&global.js_thread_of_caller_no_frame())
+        .to_js(&global.js_thread_of_caller())
 }

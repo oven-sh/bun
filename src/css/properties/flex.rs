@@ -565,7 +565,10 @@ impl FlexHandler {
 
         match property {
             Property::FlexDirection(val) => {
-                if context.targets.browsers.is_some() {
+                // `display: -webkit-box` reads these two: drop them only if `flush` adds its own.
+                if let Some(browsers) = &context.targets.browsers
+                    && PrefixFeature::is_flex_2009(browsers)
+                {
                     self.box_direction = None;
                     self.box_orient = None;
                 }
@@ -581,7 +584,9 @@ impl FlexHandler {
             }
             Property::BoxLines(val) => property_helper!(box_lines, &val.0, &val.1),
             Property::FlexFlow(val) => {
-                if context.targets.browsers.is_some() {
+                if let Some(browsers) = &context.targets.browsers
+                    && PrefixFeature::is_flex_2009(browsers)
+                {
                     self.box_direction = None;
                     self.box_orient = None;
                 }

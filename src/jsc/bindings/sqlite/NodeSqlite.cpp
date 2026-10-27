@@ -323,7 +323,7 @@ static inline JSValue sqliteToJS(JSGlobalObject* globalObject, Source source, bo
     case SQLITE_INTEGER: {
         int64_t v = source.int64();
         if (useBigInts)
-            RELEASE_AND_RETURN(scope, JSBigInt::makeHeapBigIntOrBigInt32(globalObject, v));
+            RELEASE_AND_RETURN(scope, JSBigInt::createFrom(globalObject, v));
         if (v > JSC::maxSafeInteger() || v < -JSC::maxSafeInteger()) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE,
                 makeString("Value is too large to be represented as a JavaScript number: "_s, v));
@@ -374,7 +374,7 @@ static SqliteFromJS sqliteFromJS(JSGlobalObject* globalObject, ThrowScope& scope
     } else if (value.isBigInt()) {
         // toBigInt64 truncates; detect loss by round-tripping.
         int64_t v = JSBigInt::toBigInt64(value);
-        JSValue roundTrip = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, v);
+        JSValue roundTrip = JSBigInt::createFrom(globalObject, v);
         RETURN_IF_EXCEPTION(scope, SqliteFromJS::Done);
         if (JSBigInt::compare(value, roundTrip) != JSBigInt::ComparisonResult::Equal)
             return SqliteFromJS::BigIntTooLarge;
@@ -2370,9 +2370,9 @@ static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, Thr
     sqlite3_int64 changes = sqlite3_changes64(db);
     sqlite3_int64 rowid = sqlite3_last_insert_rowid(db);
     if (self->useBigInts()) {
-        Bun::putDirectNamed(vm, result, "changes"_s, JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(changes)));
+        Bun::putDirectNamed(vm, result, "changes"_s, JSBigInt::createFrom(globalObject, static_cast<int64_t>(changes)));
         RETURN_IF_EXCEPTION(scope, {});
-        Bun::putDirectNamed(vm, result, "lastInsertRowid"_s, JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(rowid)));
+        Bun::putDirectNamed(vm, result, "lastInsertRowid"_s, JSBigInt::createFrom(globalObject, static_cast<int64_t>(rowid)));
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         Bun::putDirectNamed(vm, result, "changes"_s, jsNumber(static_cast<double>(changes)));

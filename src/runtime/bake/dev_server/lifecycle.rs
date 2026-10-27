@@ -350,7 +350,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             #[cfg(not(windows))]
             bun_core::write_any_to_hasher(&mut h, stat.st_mtime as i64);
             #[cfg(windows)]
-            bun_core::write_any_to_hasher(&mut h, &(stat.mtim.sec as i64));
+            bun_core::write_any_to_hasher(&mut h, stat.mtim.sec as i64);
             h.update(crate::bake::get_hmr_runtime(bake::Side::Client).code);
             h.update(crate::bake::get_hmr_runtime(bake::Side::Server).code);
         } else {
@@ -735,7 +735,6 @@ impl DevServer {
             crate::bake::get_hmr_runtime(crate::bake::Side::Server)
                 .code
                 .as_bytes(),
-            true,
         );
 
         // `self.global()` returns `&'static`, decoupled from `&self` — it's

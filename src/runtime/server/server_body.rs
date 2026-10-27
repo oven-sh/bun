@@ -8,6 +8,9 @@ use crate::api::{SocketAddress, js_bundler as JSBundler};
 use crate::bake::router as FrameworkRouter;
 use crate::bake::{self as bake};
 use crate::generated_bindgen::server::ServerProtocol;
+use crate::generated_bindgen::server_body::{
+    BunServe__onRejectPlugins, BunServe__onResolvePlugins,
+};
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
@@ -18,7 +21,7 @@ use crate::webcore::{
 };
 use ::bstr::BStr;
 use bun_collections::HashMap;
-use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, strings};
+use bun_core::{EncodedSlice, String as BunString, StringView, Utf8Bytes, strings};
 use bun_core::{Output, fmt as bun_fmt};
 use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
@@ -26,8 +29,8 @@ use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsResult, Node, StringJsc as _, VirtualMachine, host_fn,
+    self as jsc, ArrayBuffer, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError, JsResult,
+    Node, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::{AsCtxPtr, RefPtr};
@@ -1003,11 +1006,12 @@ impl ServePlugins {
         let plugin = JSBundler::Plugin::create(global, JSBundler::BunPluginTarget::Browser);
         // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
         let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
-        let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
+        let mut bunstring_array: Vec<StringView<'_>> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {
-            bunstring_array.push(BunString::from_bytes(raw_plugin));
+            bunstring_array.push(StringView::from_bytes(raw_plugin));
         }
-        let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
+        let plugin_js_array =
+            bun_string_jsc::to_js_array(global, StringView::as_strings(&bunstring_array))?;
         // `bun bake`: the plugin objects of `bake.config.ts`, after the names of bunfig.toml.
         if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get() {
             let mut iter = config_plugins.array_iterator(global)?;
@@ -1046,7 +1050,7 @@ impl ServePlugins {
                 match promise.status() {
                     // promise not fulfilled yet
                     jsc::js_promise::Status::Pending => {
-                        // The reaction's ref, adopted by `on_resolve_impl`/`on_reject_impl`.
+                        // The reaction's ref, adopted by `on_resolve_plugins`/`on_reject_plugins`.
                         self.ref_();
                         let promise_value = promise.as_value();
                         if let ServePluginsState::Pending {
@@ -1059,8 +1063,8 @@ impl ServePlugins {
                         promise_value.then(
                             global,
                             std::ptr::from_mut::<Self>(self),
-                            __jsc_host_on_resolve_impl,
-                            __jsc_host_on_reject_impl,
+                            BunServe__onResolvePlugins,
+                            BunServe__onRejectPlugins,
                         );
                         return Ok(());
                     }
@@ -1167,34 +1171,32 @@ impl Drop for ServePlugins {
     }
 }
 
-#[bun_jsc::host_fn(export = "BunServe__onResolvePlugins")]
-fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_resolve_plugins(
+    _: &mut JsScope<'_>,
+    plugins_result: JsLocal<'_>,
+    context: *mut ServePlugins,
+) {
     ctx_log!("onResolve");
 
-    let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
-    let plugins = plugins_js.as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); this adopts that ref.
-    let _guard = unsafe { RefPtr::from_raw(plugins) };
-    plugins_result.ensure_still_alive();
+    // SAFETY: `context` was heap-allocated and ref()'d before .then(); this adopts that ref.
+    let _guard = unsafe { RefPtr::from_raw(context) };
+    plugins_result.to_js().ensure_still_alive();
 
     // SAFETY: pointer was passed via .then() above
-    unsafe { &mut *plugins }.handle_on_resolve();
-
-    Ok(JSValue::UNDEFINED)
+    unsafe { &mut *context }.handle_on_resolve();
 }
 
-#[bun_jsc::host_fn(export = "BunServe__onRejectPlugins")]
-fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_reject_plugins(
+    cx: &mut JsScope<'_>,
+    error_js: JsLocal<'_>,
+    context: *mut ServePlugins,
+) {
     ctx_log!("onReject");
 
-    let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
-    let plugins = plugin_js.as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); this adopts that ref.
-    let _guard = unsafe { RefPtr::from_raw(plugins) };
+    // SAFETY: `context` was heap-allocated and ref()'d before .then(); this adopts that ref.
+    let _guard = unsafe { RefPtr::from_raw(context) };
     // SAFETY: pointer was passed via .then() above
-    unsafe { &mut *plugins }.handle_on_reject(global, error_js);
-
-    Ok(JSValue::UNDEFINED)
+    unsafe { &mut *context }.handle_on_reject(cx.global(), error_js.to_js());
 }
 
 /// The `options` argument of `server.upgrade(request, options)`. Each property is read once.
@@ -2077,7 +2079,7 @@ where
             .then(|| input.as_class_ref::<Request>())
             .flatten()
         {
-            request_.clone(&global.js_thread_of_caller_no_frame())?
+            request_.clone(&global.js_thread_of_caller())?
         } else {
             let fetch_error = Fetch::fetch_type_error_string(input);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(global, format_args!("{}", fetch_error));
@@ -2734,7 +2736,7 @@ where
                 if let Some(mut s) = prefix {
                     s.extend_from_slice(path);
                     // Same WHATWG pass as `Request::ensure_url` for HTTP/1.
-                    let href = bun_url::href_from_string(&BunString::from_bytes(&s));
+                    let href = bun_url::href_from_string(&StringView::from_bytes(&s));
                     request_object.url.set(if href.is_empty() {
                         BunString::clone_utf8(&s)
                     } else if core::ptr::eq(href.byte_slice().as_ptr(), s.as_ptr()) {

@@ -6,7 +6,7 @@ const path = require("node:path");
 
 const env = Bun.env;
 
-const isRestarting = $newRustFunction("bake/config/plugins.rs", "isRestarting", 0);
+const isRestarting = $bindgen("bake_plugins.bind.ts", "isRestarting");
 
 type ServeFlags = {
   /** `undefined` until `--host` or `--hostname` sets it. */

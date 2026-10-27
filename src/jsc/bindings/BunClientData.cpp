@@ -59,7 +59,7 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvide
     : commonStrings(vm)
     , schemaStrings(vm)
     , m_builtinNames(vm)
-    , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
+    , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider))
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
@@ -190,7 +190,6 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
         JSC::ConstraintVolatility::GreyedByExecution));
 
     vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(true));
-    clientData->builtinFunctions().exportNames();
 }
 
 JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForInit& init, SubspaceSlots slots, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&))

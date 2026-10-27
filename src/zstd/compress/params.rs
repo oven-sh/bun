@@ -50,28 +50,28 @@ pub(crate) const ZSTDMT_JOBLOG_MAX: u32 = 30;
 pub(crate) const ZSTDMT_JOBSIZE_MAX: i32 = 1024 << 20;
 
 /// `ZSTD_cParameter`, as far as `node:zlib` lets a parameter through.
-pub(crate) mod c_param {
+pub mod c_param {
     pub(crate) const FORMAT: i32 = 10;
     pub const COMPRESSION_LEVEL: i32 = 100;
-    pub(crate) const WINDOW_LOG: i32 = 101;
-    pub(crate) const HASH_LOG: i32 = 102;
-    pub(crate) const CHAIN_LOG: i32 = 103;
-    pub(crate) const SEARCH_LOG: i32 = 104;
-    pub(crate) const MIN_MATCH: i32 = 105;
-    pub(crate) const TARGET_LENGTH: i32 = 106;
-    pub(crate) const STRATEGY: i32 = 107;
+    pub const WINDOW_LOG: i32 = 101;
+    pub const HASH_LOG: i32 = 102;
+    pub const CHAIN_LOG: i32 = 103;
+    pub const SEARCH_LOG: i32 = 104;
+    pub const MIN_MATCH: i32 = 105;
+    pub const TARGET_LENGTH: i32 = 106;
+    pub const STRATEGY: i32 = 107;
     pub(crate) const TARGET_C_BLOCK_SIZE: i32 = 130;
-    pub(crate) const ENABLE_LONG_DISTANCE_MATCHING: i32 = 160;
-    pub(crate) const LDM_HASH_LOG: i32 = 161;
-    pub(crate) const LDM_MIN_MATCH: i32 = 162;
-    pub(crate) const LDM_BUCKET_SIZE_LOG: i32 = 163;
-    pub(crate) const LDM_HASH_RATE_LOG: i32 = 164;
-    pub(crate) const CONTENT_SIZE_FLAG: i32 = 200;
-    pub(crate) const CHECKSUM_FLAG: i32 = 201;
-    pub(crate) const DICT_ID_FLAG: i32 = 202;
-    pub(crate) const NB_WORKERS: i32 = 400;
-    pub(crate) const JOB_SIZE: i32 = 401;
-    pub(crate) const OVERLAP_LOG: i32 = 402;
+    pub const ENABLE_LONG_DISTANCE_MATCHING: i32 = 160;
+    pub const LDM_HASH_LOG: i32 = 161;
+    pub const LDM_MIN_MATCH: i32 = 162;
+    pub const LDM_BUCKET_SIZE_LOG: i32 = 163;
+    pub const LDM_HASH_RATE_LOG: i32 = 164;
+    pub const CONTENT_SIZE_FLAG: i32 = 200;
+    pub const CHECKSUM_FLAG: i32 = 201;
+    pub const DICT_ID_FLAG: i32 = 202;
+    pub const NB_WORKERS: i32 = 400;
+    pub const JOB_SIZE: i32 = 401;
+    pub const OVERLAP_LOG: i32 = 402;
 }
 
 /// `ZSTD_format_e`

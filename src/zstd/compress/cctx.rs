@@ -12,10 +12,11 @@ use super::huf::{self, HufRepeat};
 use super::internal::{
     BlockSrc, BufId, Buffers, CompressedBlockState, CompressionParameters, DictMatchState,
     DictTableLoadMethod, EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType, Match,
-    MatchState, Optimal, ParamSwitch, Prefix, RawSeq, RawSeqStore, SeqChunk, SeqStore, Strategy,
-    Table, TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
-    ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX, min_gain, no_compress_block,
-    offbase_is_repcode, offset_to_offbase, rle_compress_block, update_rep,
+    MatchState, Optimal, ParamSwitch, Prefix, RawSeq, RawSeqStore, RowTags, SeqChunk, SeqStore,
+    Strategy, Table, TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX,
+    ZSTD_DUBT_UNSORTED_MARK, ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX,
+    min_gain, no_compress_block, offbase_is_repcode, offset_to_offbase, rle_compress_block,
+    update_rep,
 };
 use super::params::{
     CCtxParams, CParamMode, Format, MatchStateSizes, adjust_c_params_internal,
@@ -175,6 +176,7 @@ fn reset_match_state(
     crp: CompResetPolicy,
     force_reset_index: IndexResetPolicy,
     for_who: ResetTarget,
+    src_size: Option<u64>,
 ) -> Result<()> {
     let sizes = MatchStateSizes::new(c_params, use_row_match_finder, for_who == ResetTarget::CCtx);
 
@@ -182,25 +184,33 @@ fn reset_match_state(
         ms.window = Window::new();
     }
     ms.hash_log3 = sizes.hash_log3;
-    ms.lazy_skipping = false;
     invalidate_match_state(ms);
 
     // As long as indices go on, the ones in the tables are too low to be valid.
     let clean = force_reset_index == IndexResetPolicy::Reset && crp != CompResetPolicy::LeaveDirty;
-    ms.hash_table.reset(sizes.h_size, clean)?;
-    ms.chain_table.reset(sizes.chain_size, clean)?;
-    ms.hash_table3.reset(sizes.h3_size, clean)?;
+    let use_rows = row_match_finder_used(c_params.strat(), use_row_match_finder);
+    // The tables suit the size of the input if it is known. Else it may be much too short to get to most of them.
+    let used_whole = src_size.is_some() || for_who == ResetTarget::CDict;
+    // An entry of a row is written before it is read.
+    (ms.hash_table).reset(sizes.h_size, clean, used_whole && !use_rows)?;
+    ms.chain_table.reset(sizes.chain_size, clean, false)?;
+    ms.hash_table3.reset(sizes.h3_size, clean, false)?;
     if force_reset_index == IndexResetPolicy::Reset {
         forget_unused_indices(ms);
     }
 
-    if row_match_finder_used(c_params.strat(), use_row_match_finder) {
+    if use_rows {
+        ms.row_tags = match for_who {
+            ResetTarget::CCtx => lazy::row_tags_at_start(c_params, src_size),
+            ResetTarget::CDict => RowTags::Flat,
+        };
+        let tag_table_size = lazy::row_tag_table_size(ms.row_tags, sizes.h_size);
         if for_who == ResetTarget::CCtx {
             // A new salt instead of erasing the tags.
-            ms.tag_table.reset(sizes.h_size, false)?;
+            ms.tag_table.reset(tag_table_size, false, used_whole)?;
             ms.hash_salt = bitmix(ms.hash_salt, 8) ^ bitmix(u64::from(ms.hash_salt_entropy), 4);
         } else {
-            ms.tag_table.reset(sizes.h_size, true)?;
+            ms.tag_table.reset(tag_table_size, true, used_whole)?;
             ms.hash_salt = 0;
         }
         let row_log = c_params.search_log.clamp(4, 6);
@@ -551,6 +561,7 @@ impl CDict {
             CompResetPolicy::MakeClean,
             IndexResetPolicy::Reset,
             ResetTarget::CDict,
+            None,
         )?;
         let bufs = Buffers {
             in_buff: &[],
@@ -953,6 +964,7 @@ impl FrameCompressor {
             crp,
             needs_index_reset,
             ResetTarget::CCtx,
+            (pledged_src_size != ZSTD_CONTENTSIZE_UNKNOWN).then_some(pledged_src_size),
         )?;
 
         if params.ldm_params.enable_ldm == ParamSwitch::Enable {
@@ -1071,6 +1083,7 @@ impl FrameCompressor {
         copy_table(&mut dst.chain_table, &src.chain_table, tagged)?;
         if row_match_finder_used(cdict_c_params.strat(), cdict.use_row_match_finder) {
             dst.tag_table.write_at(0, &src.tag_table)?;
+            dst.row_tags = RowTags::Flat;
             dst.hash_salt = src.hash_salt;
         }
         dst.hash_table3.fill(0);

@@ -7,10 +7,12 @@
 #include <utility>
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/NativeFunction.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/RefPtr.h>
 #include "Bindgen/JSBytesView.h"
 #include "Bindgen/JSStringUTF8View.h"
+#include "helpers.h"
 
 namespace Bun::Bindgen {
 
@@ -124,6 +126,16 @@ template<> struct ExternTraits<JSStringUTF8View> {
     }
 };
 
+template<> struct ExternTraits<JSC::GCOwnedDataScope<WTF::StringView>> {
+    using ExternType = EncodedSlice;
+
+    // The caller's `cppValue` keeps the characters' owner alive for the whole call.
+    static ExternType convertToExtern(JSC::GCOwnedDataScope<WTF::StringView>&& cppValue)
+    {
+        return Zig::toEncodedSlice(cppValue.data);
+    }
+};
+
 template<> struct ExternTraits<JSBlobOrBufferView> {
     using ExternType = ExternBytes;
 
@@ -171,6 +183,9 @@ inline JSC::ArgList variadicArguments(JSC::CallFrame* callFrame, unsigned startI
 {
     return { callFrame, static_cast<int>(std::min<size_t>(startIndex, callFrame->argumentCount())) };
 }
+
+// What `$bindgen` returns for a function.
+JSC::EncodedJSValue createFunction(JSC::JSGlobalObject*, unsigned length, ASCIILiteral name, JSC::NativeFunction);
 
 // A converted argument and the argument itself.
 template<typename T>

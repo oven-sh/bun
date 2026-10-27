@@ -552,7 +552,7 @@ impl Terminal {
         let this = terminal.this_ptr();
         let this_value = structure.create(&cx.heap, terminal);
         let global_object = cx.global();
-        let context = global_object.bun_vm().context_of_caller_no_frame();
+        let context = global_object.bun_vm().context_of_caller();
         this.attach(global_object, context, &options, this_value.to_js());
         Ok(this_value)
     }

@@ -31,6 +31,7 @@ export const Image = b.class({
     /** Read-only after a pipeline has run; -1 before. */
     height: { getter: b.i32 },
     jpeg: chainableWithOptions,
+    jxl: chainableWithOptions,
     metadata: terminal,
     modulate: chainableWithOptions,
     /** ThumbHash rendered as a PNG data: URL of at most 32px. */

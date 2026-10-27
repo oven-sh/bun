@@ -819,9 +819,9 @@ fn container_guid(f: codecs::Format) -> Option<*const GUID> {
         // returns WINCODEC_ERR_COMPONENTNOTFOUND if the extension isn't
         // present, which surfaces as BackendUnavailable.
         Heic | Avif => Some(&GUID_ContainerFormatHeif),
-        // Decode-only formats — codecs.encode() short-circuits before this
+        // Decode-only formats and JXL (libjxl) — codecs.encode() short-circuits before this
         // path, so this arm exists for switch exhaustiveness only.
-        Bmp | Tiff | Gif => None,
+        Bmp | Tiff | Gif | Jxl => None,
     }
 }
 

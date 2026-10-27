@@ -45,7 +45,19 @@ fn format_name(f: codecs::Format) -> &'static str {
         codecs::Format::Bmp => "bmp",
         codecs::Format::Tiff => "tiff",
         codecs::Format::Gif => "gif",
+        codecs::Format::Jxl => "jxl",
     }
+}
+
+/// JPEG and JXL probe stored dims; autoOrient turns them upright.
+fn probe_swaps_axes(bytes: &[u8], format: codecs::Format, auto_orient: bool) -> bool {
+    let orient = match format {
+        codecs::Format::Jpeg if auto_orient => exif::read_jpeg(bytes),
+        codecs::Format::Jxl if auto_orient => codecs::jxl::orientation(bytes),
+        _ => return false,
+    };
+    let t = orient.transform();
+    t.rotate == 90 || t.rotate == 270
 }
 
 use crate::generated_bindgen::image::js_Image as js;
@@ -609,6 +621,14 @@ impl Image {
     ) -> JsResult<JsWrapper<'a, Self>> {
         self.set_format(this_value, cx, options, codecs::Format::Avif)
     }
+    pub(crate) fn jxl<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
+        self.set_format(this_value, cx, options, codecs::Format::Jxl)
+    }
 }
 
 /// Stable `.code` so callers can branch without parsing the message — and so
@@ -631,7 +651,7 @@ fn error_message(e: codecs::Error) -> &'static ZStr {
     use codecs::Error as E;
     match e {
         E::UnknownFormat => zstr!(
-            "Image: unrecognised format (expected JPEG, PNG, WebP, GIF, BMP, TIFF, HEIC or AVIF)"
+            "Image: unrecognised format (expected JPEG, PNG, WebP, GIF, BMP, TIFF, HEIC, AVIF or JPEG XL)"
         ),
         E::DecodeFailed => zstr!("Image: decode failed"),
         E::EncodeFailed => zstr!("Image: encode failed"),
@@ -904,11 +924,8 @@ impl Image {
                 Ok(p) => {
                     let mut w = p.width;
                     let mut h = p.height;
-                    if self.auto_orient && p.format == codecs::Format::Jpeg {
-                        let t = exif::read_jpeg(buf).transform();
-                        if t.rotate == 90 || t.rotate == 270 {
-                            mem::swap(&mut w, &mut h);
-                        }
+                    if probe_swaps_axes(buf, p.format, self.auto_orient) {
+                        mem::swap(&mut w, &mut h);
                     }
                     self.last_width.set(i32::try_from(w).expect("int cast"));
                     self.last_height.set(i32::try_from(h).expect("int cast"));
@@ -1064,7 +1081,8 @@ impl Image {
                     | codecs::Format::Png
                     | codecs::Format::Webp
                     | codecs::Format::Heic
-                    | codecs::Format::Avif => {
+                    | codecs::Format::Avif
+                    | codecs::Format::Jxl => {
                         output = Some(codecs::EncodeOptions {
                             format: f,
                             ..Default::default()
@@ -1596,11 +1614,8 @@ impl PipelineTask {
                 Ok(p) => {
                     let mut w = p.width;
                     let mut h = p.height;
-                    if self.auto_orient && p.format == codecs::Format::Jpeg {
-                        let t = exif::read_jpeg(input).transform();
-                        if t.rotate == 90 || t.rotate == 270 {
-                            mem::swap(&mut w, &mut h);
-                        }
+                    if probe_swaps_axes(input, p.format, self.auto_orient) {
+                        mem::swap(&mut w, &mut h);
                     }
                     self.result = TaskResult::Meta {
                         w,
@@ -1640,9 +1655,13 @@ impl PipelineTask {
             codecs::DecodeHint {
                 target_w: tw,
                 target_h: th,
+                auto_orient: self.auto_orient,
             }
         } else {
-            codecs::DecodeHint::default()
+            codecs::DecodeHint {
+                auto_orient: self.auto_orient,
+                ..Default::default()
+            }
         };
 
         let mut decoded = match codecs::decode(input, self.max_pixels, hint) {

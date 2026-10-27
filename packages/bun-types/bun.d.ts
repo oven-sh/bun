@@ -4436,13 +4436,14 @@ declare module "bun" {
      * A build for `target: "bun"` or `"node"` bundles an HTML file for the
      * browser: a page that server code imports, or a page in `entrypoints`.
      * A file that server code and the page both import is then two modules.
-     * The server's module has the path as its key. The browser's module has
-     * the key `<path> (browser)`, for example `shared.ts (browser)`. The
-     * fields that name an input use these keys.
+     * When both have a record, the server's module has the path as its key
+     * and the browser's module has the key `<path> (browser)`, for example
+     * `shared.ts (browser)`. The fields that name an input use these keys.
      *
-     * A module that tree shaking removes has no record. The manifest that
-     * the server bundle holds in place of an imported HTML file has none
-     * either: `outputs[...].inputs` lists it under the key of the HTML file.
+     * A module that tree shaking removes has no record. The other module of
+     * its file then has the path as its key. The manifest that the server
+     * bundle holds in place of an imported HTML file has no record either:
+     * `outputs[...].inputs` lists it under the key of the HTML file.
      */
     inputs: {
       [path: string]: {
@@ -4452,8 +4453,8 @@ declare module "bun" {
         imports: Array<{
           /**
            * Resolved path of the imported file. A bundled file is named by
-           * its key in `inputs`. A file that tree shaking removes has no
-           * record there.
+           * the key of its record in `inputs`. A file that tree shaking
+           * removes has no record.
            */
           path: string;
           /** Type of import statement */

@@ -58,8 +58,8 @@ fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
 ///
 /// A build can have more than one graph: server code that imports an HTML page also bundles
 /// the page for the browser. A file that two graphs load is a module of each, and both have its
-/// pretty path. The module of the first graph keeps the path as its key. The other one takes
-/// the suffix of its graph: `<path> (browser)`.
+/// pretty path. When both have a record, the one of the first graph keeps the path as its key
+/// and the other takes the suffix of its graph: `<path> (browser)`.
 struct InputKeys<'a> {
     sources: &'a [bun_ast::Source<'a>],
     /// By source index, the source whose record stands for it: the page, for the stub that a
@@ -67,12 +67,13 @@ struct InputKeys<'a> {
     record_of: Vec<u32>,
     /// By source index, a key that is not the pretty path. Empty when there is none.
     renamed: Vec<Option<Box<[u8]>>>,
-    /// The build has more than one graph, so each module was given a key that no other has.
+    /// The build has more than one graph, so each record was given a key that no other has.
     has_unique_keys: bool,
 }
 
 impl<'a> InputKeys<'a> {
-    fn init(c: &'a LinkerContext) -> crate::Result<Self> {
+    /// `has_record` holds the sources that get a record in "inputs".
+    fn init(c: &'a LinkerContext, has_record: &DynamicBitSet) -> crate::Result<Self> {
         let graph = c.parse_graph();
         let sources = graph.input_files.items_source();
         let mut keys = Self {
@@ -117,8 +118,8 @@ impl<'a> InputKeys<'a> {
             }
         }
 
-        // Graph by graph, each module claims its pretty path. A module with every part
-        // tree-shaken has no record, but an import of it still names it: it claims too.
+        // Graph by graph, each module that has a record claims its pretty path. A module with
+        // every part tree-shaken has none: a file with one record keeps its path as the key.
         let reachable = c.graph.reachable_files.slice();
         let mut claimed: ArrayHashMap<&[u8], ()> = ArrayHashMap::new();
         claimed.ensure_total_capacity(reachable.len())?;
@@ -127,6 +128,7 @@ impl<'a> InputKeys<'a> {
             for source_index in reachable {
                 let i = source_index.get();
                 if i == Index::RUNTIME.get()
+                    || !has_record.is_set(i as usize)
                     || graph_of[i as usize] != graph
                     || keys.record_of(i) != i
                 {
@@ -409,7 +411,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         }
     }
 
-    let keys = InputKeys::init(c)?;
+    let keys = InputKeys::init(c, &seen_sources)?;
 
     // A split `import()` / `require()` record names its target's chunk
     // (`compute_cross_chunk_dependencies`); "entryPoint" adds the input.
@@ -1097,7 +1099,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                         }
                         if let Some(imp_path) = imp_path {
                             if let JsonValue::String(target) = imp_path {
-                                // An import of a module that tree shaking removed names no record.
+                                // An import of a module that tree shaking removed can name no record.
                                 let target: &[u8] = target;
                                 if inputs_obj.contains(target) {
                                     let gop = imported_by.get_or_put(target)?;

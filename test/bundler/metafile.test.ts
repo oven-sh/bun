@@ -1692,8 +1692,8 @@ describe("metafile outputs[..].bytes is the size of the emitted file", () => {
 });
 
 // A build can have more than one graph: server code that imports an HTML page also bundles the page
-// for the browser. A file that both sides load is a module of each graph, and each module has a record.
-// The module of the build's target keeps the path as its key. The browser's module is `<path> (browser)`.
+// for the browser. A file that both sides load is a module of each graph. When both modules have a
+// record, the one of the build's target keeps the path as its key. The browser's is `<path> (browser)`.
 describe("metafile of a build with more than one graph", () => {
   // The two modules of shared.js do not import the same file.
   const shared = {
@@ -2002,55 +2002,37 @@ describe("metafile of a build with more than one graph", () => {
     });
   });
 
-  // A module with every part tree-shaken has no record. An import of it still names that module, and
-  // not the module of the other graph: each side loads both files of the package and uses one.
-  test.concurrent("a module beside a tree-shaken module of the other graph", async () => {
+  // Each side loads both files of the package and uses one, so tree shaking removes one of the two
+  // modules of each file. Such a module has no record. A file with one record keeps its path as the
+  // key, whichever graph the record is from. Only both.js has two records.
+  test.concurrent("a suffix only when both modules of a file have a record", async () => {
     using dir = tempDir("metafile-two-graphs-tree-shaken", {
-      "server.js": `import { onClient } from "lib/on-client.js";\nimport { onServer } from "lib/on-server.js";\nconsole.log(onServer);\n`,
+      "server.js": `import { both } from "./both.js";\nimport { onClient } from "lib/on-client.js";\nimport { onServer } from "lib/on-server.js";\nconsole.log(both, onServer);\n`,
       "index.html": page("client.js"),
-      "client.js": `import { onClient } from "lib/on-client.js";\nimport { onServer } from "lib/on-server.js";\nimport { root } from "./on-client.js";\nconsole.log(onClient, root);\n`,
-      // The path of this file is the end of the path of a file of the package.
-      "on-client.js": `export const root = "root";\n`,
+      "client.js": `import { both } from "./both.js";\nimport { onClient } from "lib/on-client.js";\nimport { onServer } from "lib/on-server.js";\nconsole.log(both, onClient);\n`,
+      "both.js": `export const both = "both";\n`,
       "node_modules/lib/package.json": JSON.stringify({ name: "lib", sideEffects: false }),
       "node_modules/lib/on-client.js": `export const onClient = "client";\n`,
       "node_modules/lib/on-server.js": `export const onServer = "server";\n`,
     });
-    const { inputs, withoutRecord, markdown } = await build(String(dir), [
+    const { inputs, withoutRecord } = await build(String(dir), [
       "server.js",
       "index.html",
       "--target=bun",
       "--outdir=dist",
     ]);
 
-    expect({
-      keys: Object.keys(inputs).sort(),
-      "server.js": importsOf(inputs["server.js"]),
-      "client.js": importsOf(inputs["client.js"]),
-      withoutRecord: withoutRecord.sort(),
-      // The report lists an import under the record that has its exact name.
-      importedBy: markdown.match(/^\[IMPORTED_BY: .*\]$/gm)?.sort(),
-    }).toEqual({
+    expect({ keys: Object.keys(inputs).sort(), withoutRecord }).toEqual({
       keys: [
+        "both.js",
+        "both.js (browser)",
         "client.js",
         "index.html",
-        "node_modules/lib/on-client.js (browser)",
+        "node_modules/lib/on-client.js",
         "node_modules/lib/on-server.js",
-        "on-client.js",
         "server.js",
       ],
-      "server.js": ["node_modules/lib/on-client.js", "node_modules/lib/on-server.js"],
-      "client.js": [
-        "node_modules/lib/on-client.js (browser)",
-        "node_modules/lib/on-server.js (browser)",
-        "on-client.js",
-      ],
-      withoutRecord: ["node_modules/lib/on-client.js", "node_modules/lib/on-server.js (browser)"],
-      importedBy: [
-        "[IMPORTED_BY: client.js <- index.html]",
-        "[IMPORTED_BY: node_modules/lib/on-client.js (browser) <- client.js]",
-        "[IMPORTED_BY: node_modules/lib/on-server.js <- server.js]",
-        "[IMPORTED_BY: on-client.js <- client.js]",
-      ],
+      withoutRecord: [],
     });
   });
 

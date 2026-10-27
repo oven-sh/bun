@@ -1697,6 +1697,10 @@ impl Stream {
             if bytes.is_empty() {
                 // just merge the end_stream
                 lf!().end_stream = end_stream;
+                if !callback.is_callable() {
+                    // The queued frame keeps its callback, which runs once its own bytes are flushed.
+                    return;
+                }
                 // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                 // this is fine is like a per-stream CORKING in a frame level
                 let old_callback = core::mem::replace(

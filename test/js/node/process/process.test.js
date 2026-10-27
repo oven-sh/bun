@@ -3383,6 +3383,32 @@ describe("default warning printer survives a failing stderr", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "EPIPE\nalive\n", exitCode: 0 });
   });
 
+  // A file-backed stderr is destroyed and revived on every failed write, so each failure
+  // emits its own 'error'. "b" prints between the failure of "a" and that event, and "c"
+  // prints after the first event has been handled.
+  it.concurrent.skipIf(!isLinux)("stderr file whose writes keep failing (ENOSPC)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { writeSync } = require("node:fs");
+         try { writeSync(2, "x"); } catch (e) { console.log(e.code); }
+         process.emitWarning("a");
+         Promise.resolve().then(() => process.emitWarning("b"));
+         (function afterFirstError() {
+           if (!process.stderr._writableState.errorEmitted) return setImmediate(afterFirstError);
+           process.emitWarning("c");
+         })();
+         process.on("beforeExit", () => console.log("alive", process.stderr.listenerCount("error")));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: Bun.file("/dev/full"),
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "ENOSPC\nalive 0\n", exitCode: 0 });
+  });
+
   it.concurrent("leaves no 'error' listener behind on a healthy stderr", async () => {
     await using proc = Bun.spawn({
       cmd: [

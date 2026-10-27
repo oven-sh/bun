@@ -632,7 +632,6 @@ export function rawDebug() {
 // The 'warning' listener itself is a native trampoline registered when `process` is created
 // (BunProcess.cpp); this builds the printer it forwards to on the first warning.
 export function createOnWarning(process, redirectPath, disabledArr) {
-  function noop() {}
   const appendFileSync = redirectPath ? require("node:fs").appendFileSync : undefined;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
@@ -640,6 +639,9 @@ export function createOnWarning(process, redirectPath, disabledArr) {
   let traceWarningHelperShown = false;
 
   function writeOut(message) {
+    // One per call: `finally` removes it by identity, so a shared one lets the next print take
+    // away the listener this print's callback left for an 'error' that is still on its way.
+    function noop() {}
     if (appendFileSync) {
       try {
         appendFileSync(redirectPath, message + "\n");
@@ -667,7 +669,16 @@ export function createOnWarning(process, redirectPath, disabledArr) {
       if (guarded) {
         if (stream.listenerCount("error") === 0) stream.once("error", noop);
         stream.write(message + "\n", err => {
-          if (err !== null && !stream._writableState.errorEmitted && stream.listenerCount("error") === 0) {
+          // Leave a listener only if errorOrDestroy() emits 'error' after this callback: never on
+          // a destroyed stream, always with autoDestroy (stdio is revived after each destroy, and
+          // errorEmitted is then stale), otherwise for the first error only.
+          const state = stream._writableState;
+          if (
+            err !== null &&
+            !state.destroyed &&
+            (state.autoDestroy || !state.errorEmitted) &&
+            stream.listenerCount("error") === 0
+          ) {
             stream.once("error", noop);
           }
         });

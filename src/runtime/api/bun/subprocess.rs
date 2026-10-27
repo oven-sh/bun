@@ -567,9 +567,9 @@ impl Subprocess<'_> {
             return;
         }
         self.event_loop_timer_refd.set(refd);
-        let uws_loop = self.global_this().bun_vm().uws_loop();
+        let vm = self.global_this().bun_vm();
         let delta: i32 = if refd { 1 } else { -1 };
-        crate::jsc_hooks::timer_all().increment_timer_ref(delta, uws_loop);
+        crate::timer::All::of(vm).increment_timer_ref(delta, vm.uws_loop());
     }
 
     pub(crate) fn timeout_callback(&self) {
@@ -865,7 +865,7 @@ impl Subprocess<'_> {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             // SAFETY: `ACTIVE` is linked: `timeout_callback` takes the popped node off it before
             // it calls anything that gets here.
-            unsafe { crate::jsc_hooks::timer_all().remove(self.event_loop_timer.as_ptr()) };
+            unsafe { crate::timer::All::of(jsc_vm).remove(self.event_loop_timer.as_ptr()) };
         }
         self.set_event_loop_timer_refd(false);
 
@@ -1231,7 +1231,10 @@ impl Subprocess<'_> {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             // SAFETY: `ACTIVE` is linked: `timeout_callback` takes the popped node off it before
             // it calls anything that gets here.
-            unsafe { crate::jsc_hooks::timer_all().remove(self.event_loop_timer.as_ptr()) };
+            unsafe {
+                crate::timer::All::of(self.global_this().bun_vm())
+                    .remove(self.event_loop_timer.as_ptr())
+            };
         }
         self.set_event_loop_timer_refd(false);
 

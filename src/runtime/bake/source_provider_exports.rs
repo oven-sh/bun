@@ -86,8 +86,8 @@ impl SourceProvider for BakeSourceProvider {
             // no bundled outputs exist yet, so fall back to disk.
             return None;
         }
-        // SAFETY: `pt` is the live non-null `*mut PerThread` attached above;
-        // called on the JS thread.
+        // SAFETY: `pt` is the live non-null `*mut PerThread` attached above; the JS thread is
+        // this thread or is parked, as above.
         let pt = unsafe { &*pt.cast::<super::production::PerThread>() };
         let Some(idx) = pt.source_maps.get(source_filename) else {
             // Under a bake global the output table is authoritative: an empty
@@ -131,36 +131,48 @@ impl SourceProvider for DevServerSourceProvider {
     }
 }
 
+/// # Safety
+/// `opaque_source_provider` is a `Bake::SourceProvider`, and `SavedSourceMap::put_source_provider`'s
+/// contract holds for it.
 // HOST_EXPORT(Bun__addBakeSourceProviderSourceMap, c)
-pub(crate) fn add_bake_source_provider_source_map(
+pub(crate) unsafe fn add_bake_source_provider_source_map(
     vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
-    vm.source_mappings.put_source_provider(
-        AnySourceProvider::new(
-            opaque_source_provider
-                .cast::<BakeSourceProvider>()
-                .cast_const(),
-        ),
-        slice.slice(),
-    );
+    // SAFETY: fn contract.
+    unsafe {
+        vm.source_mappings.put_source_provider(
+            AnySourceProvider::new(
+                opaque_source_provider
+                    .cast::<BakeSourceProvider>()
+                    .cast_const(),
+            ),
+            slice.slice(),
+        )
+    };
 }
 
+/// # Safety
+/// `opaque_source_provider` is a `Bake::DevServerSourceProvider`, and
+/// `SavedSourceMap::put_source_provider`'s contract holds for it.
 // HOST_EXPORT(Bun__addDevServerSourceProvider, c)
-pub(crate) fn add_dev_server_source_provider(
+pub(crate) unsafe fn add_dev_server_source_provider(
     vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
-    vm.source_mappings.put_source_provider(
-        AnySourceProvider::new(
-            opaque_source_provider
-                .cast::<DevServerSourceProvider>()
-                .cast_const(),
-        ),
-        slice.slice(),
-    );
+    // SAFETY: fn contract.
+    unsafe {
+        vm.source_mappings.put_source_provider(
+            AnySourceProvider::new(
+                opaque_source_provider
+                    .cast::<DevServerSourceProvider>()
+                    .cast_const(),
+            ),
+            slice.slice(),
+        )
+    };
 }

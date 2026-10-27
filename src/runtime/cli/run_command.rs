@@ -844,13 +844,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         b.resolver.opts.install_preference = offline;
         b.options.global_cache = ctx.debug.global_cache;
         b.options.install_preference = offline;
-        b.resolver.env_loader = ::core::ptr::NonNull::new(b.env);
+        b.resolver.env_loader.set(::core::ptr::NonNull::new(b.env));
         if ctx.runtime_options.eval.reads_configuration {
             b.resolver.opts.packages_require_like_node();
         }
 
-        b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
-        b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.options
+            .minify_identifiers
+            .set(ctx.bundler_options.minify_identifiers);
+        b.options
+            .minify_whitespace
+            .set(ctx.bundler_options.minify_whitespace);
         b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
         // resolver's forward-decl `BundleOptions` does not project
         // `minify_*` (resolver never reads them).
@@ -1030,21 +1034,36 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         });
         bun_ast::initialize_store();
 
-        let vm = VirtualMachine::init(VmInitOptions {
-            transform_options: ctx.args.clone(),
-            log: ::core::ptr::NonNull::new(ctx.log),
-            debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
-            global_cache: ctx.debug.global_cache,
-            smol: ctx.runtime_options.smol,
-            mini_mode: ctx.runtime_options.smol,
-            eval_mode: ctx.runtime_options.eval.eval_and_print,
-            is_main_thread: true,
-            ..Default::default()
-        })?;
+        let prints_eval_result = matches!(main, BootMain::File { .. })
+            && !ctx.runtime_options.eval.script.is_empty()
+            && ctx.runtime_options.eval.eval_and_print;
+        let mut defines_loaded = false;
+        let vm = VirtualMachine::init(
+            VmInitOptions {
+                transform_options: ctx.args.clone(),
+                log: ::core::ptr::NonNull::new(ctx.log),
+                debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
+                global_cache: ctx.debug.global_cache,
+                smol: ctx.runtime_options.smol,
+                mini_mode: ctx.runtime_options.smol,
+                eval_mode: ctx.runtime_options.eval.eval_and_print,
+                is_main_thread: true,
+                // Hand the CLI's vectors over wholesale (process-lifetime, never freed).
+                argv: std::mem::take(&mut ctx.passthrough),
+                preload: std::mem::take(&mut ctx.preloads),
+                ..Default::default()
+            },
+            &mut |b| {
+                if prints_eval_result {
+                    b.options.dead_code_elimination = false;
+                }
+                // ctx → transpiler/resolver option mapping.
+                Self::wire_transpiler_from_ctx(b, ctx);
+                b.options.env.behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
+                defines_loaded = b.configure_defines().is_ok();
+            },
+        )?;
 
-        // Hand the CLI's vectors over wholesale (process-lifetime, never freed).
-        vm.preload.replace(std::mem::take(&mut ctx.preloads));
-        let _ = vm.argv.set(std::mem::take(&mut ctx.passthrough));
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order
@@ -1077,10 +1096,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 .set_eval_source(Box::new(bun_ast::Source::init_path_string(entry, script)));
             if let Some(script) = ctx.runtime_options.eval.interactive_script.take() {
                 vm.module_loader.set_interactive_eval_script(script);
-            }
-            if ctx.runtime_options.eval.eval_and_print {
-                // SAFETY: nothing else borrows the transpiler: no script has run yet.
-                unsafe { vm.transpiler_mut() }.options.dead_code_elimination = false;
             }
         } else if let Some(entry) = entry
             && !ctx.runtime_options.cron_title.is_empty()
@@ -1127,19 +1142,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             vm.set_main(Some(heap_entry));
         }
 
-        // ctx → transpiler/resolver option mapping.
-        // SAFETY: nothing else borrows the transpiler: no script has run yet.
-        let b = unsafe { vm.transpiler_mut() };
-        Self::wire_transpiler_from_ctx(b, ctx);
-        b.options.env.behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
-        if b.configure_defines().is_err() {
+        if !defines_loaded {
             crate::run_main::fail_with_build_error(vm);
         }
 
         // Allow setting a custom timezone. Without `$TZ`, JSC/ICU lazily
         // auto-detects the host zone the first time a `Date` is constructed —
         // matching upstream Bun. `.env` files are loaded by
-        // `configure_defines` above, so `$TZ` set in one is honored.
+        // `configure_defines`, so `$TZ` set in one is honored.
         if let Some(tz) = vm.env_loader().get(b"TZ") {
             if !tz.is_empty() {
                 let _ = vm
@@ -1148,7 +1158,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
-        // SAFETY: nothing else borrows the log: no script has run yet, and `b` is not used again.
+        // SAFETY: nothing else borrows the log: no script has run yet.
         let log = unsafe { vm.log_mut() }.unwrap();
         bun_http::async_http::load_env(log, vm.env_loader());
 
@@ -1238,47 +1248,49 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             &*(std::ptr::from_ref::<bun_standalone_graph::Graph>(graph)
                 as *const (dyn bun_resolver::StandaloneModuleGraph + 'static))
         };
-        let vm = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
-            log: std::ptr::NonNull::new(ctx.log),
-            args: ctx.args.clone(),
-            graph: Some(graph_dyn),
-            is_main_thread: true,
-            smol: ctx.runtime_options.smol,
-            // `Options::dns_result_order` is `u8` until the
-            // b2-cycle widens it to `bun_dns::Order`; the enum is
-            // `#[repr(u8)]` so `as u8` is exact.
-            dns_result_order: bun_dns::Order::from_string_or_die(
-                &ctx.runtime_options.dns_result_order,
-            ) as u8,
-            ..Default::default()
-        })?;
+        let mut defines_loaded = false;
+        let vm = VirtualMachine::init_with_module_graph(
+            bun_jsc::virtual_machine::Options {
+                log: std::ptr::NonNull::new(ctx.log),
+                args: ctx.args.clone(),
+                graph: Some(graph_dyn),
+                is_main_thread: true,
+                smol: ctx.runtime_options.smol,
+                // `Options::dns_result_order` is `u8` until the
+                // b2-cycle widens it to `bun_dns::Order`; the enum is
+                // `#[repr(u8)]` so `as u8` is exact.
+                dns_result_order: bun_dns::Order::from_string_or_die(
+                    &ctx.runtime_options.dns_result_order,
+                ) as u8,
+                argv: std::mem::take(&mut ctx.passthrough),
+                preload: std::mem::take(&mut ctx.preloads),
+                ..Default::default()
+            },
+            &mut |b| {
+                Self::wire_transpiler_from_ctx(b, ctx);
+
+                // `serve_plugins` / `bunfig_path` (standalone-only).
+                b.options.serve_plugins = ctx.args.serve_plugins.take().map(Vec::into_boxed_slice);
+                b.options.bunfig_path = ::core::mem::take(&mut ctx.args.bunfig_path);
+
+                crate::run_main::apply_standalone_runtime_flags(b, graph);
+
+                defines_loaded = b.configure_defines().is_ok();
+            },
+        )?;
+        if !defines_loaded {
+            crate::run_main::fail_with_build_error(vm);
+        }
         if graph.runtime_options.jit_policy > 1.0 {
             vm.jsc_vm()
                 .set_startup_jit_deferral_scale(f64::from(graph.runtime_options.jit_policy));
         }
 
-        vm.preload.replace(std::mem::take(&mut ctx.preloads));
-        let _ = vm.argv.set(std::mem::take(&mut ctx.passthrough));
-
         // The runner never returns, so the allocation is process-lifetime by construction.
         let entry: &'static [u8] = Box::leak(entry_path);
         vm.set_main(Some(entry));
 
-        // SAFETY: nothing else borrows the transpiler: no script has run yet.
-        let b = unsafe { vm.transpiler_mut() };
-        Self::wire_transpiler_from_ctx(b, ctx);
-
-        // `serve_plugins` / `bunfig_path` (standalone-only).
-        b.options.serve_plugins = ctx.args.serve_plugins.take().map(Vec::into_boxed_slice);
-        b.options.bunfig_path = ::core::mem::take(&mut ctx.args.bunfig_path);
-
-        crate::run_main::apply_standalone_runtime_flags(b, graph);
-
-        if b.configure_defines().is_err() {
-            crate::run_main::fail_with_build_error(vm);
-        }
-
-        // SAFETY: nothing else borrows the log: no script has run yet, and `b` is not used again.
+        // SAFETY: nothing else borrows the log: no script has run yet.
         let log = unsafe { vm.log_mut() }.unwrap();
         bun_http::async_http::load_env(log, vm.env_loader());
 
@@ -1348,10 +1360,9 @@ impl Run<'_> {
         _global: &JSGlobalObject,
         value: JSValue,
     ) {
-        // SAFETY: BORROW_PARAM ptr set by caller, outlives this call.
+        // SAFETY: `replace_unhandled_rejection_exception_list`'s contract.
         let list = this
-            .on_unhandled_rejection_exception_list
-            .get()
+            .unhandled_rejection_exception_list()
             .map(|p| unsafe { &mut *p.as_ptr() });
         this.run_error_handler(value, list);
         ANY_UNHANDLED.store(true, Ordering::Relaxed);
@@ -1484,10 +1495,7 @@ impl Run<'_> {
         // ── hot-reloader enable ─────────────────────────────────────────────
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
-                // SAFETY: no borrow of the transpiler is live here.
-                unsafe {
-                    bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(vm, entry)
-                }
+                bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(vm, entry);
                 // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the
                 // kill signal's JS handlers run first, as in watch mode.
                 if entry.is_none() {
@@ -1497,10 +1505,7 @@ impl Run<'_> {
                 }
             }
             cli::command::HotReload::Watch => {
-                // SAFETY: no borrow of the transpiler is live here.
-                unsafe {
-                    bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, entry)
-                }
+                bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, entry);
                 bun_jsc::posix_signal_handle::enable_watch_mode_signals(
                     ctx.debug.watch_kill_signal,
                 );
@@ -1520,8 +1525,8 @@ impl Run<'_> {
             Some(Unchecked::Main(loader)) => {
                 let watching = crate::cli::check_command::watching(vm);
                 let main = (vm.main()).expect("a file entry point has a path");
-                let argv = vm.argv.get().map_or(&[][..], |argv| argv);
-                let has_type_errors = !RunCommand::check_main(ctx, main, loader, argv, watching);
+                let has_type_errors =
+                    !RunCommand::check_main(ctx, main, loader, &vm.argv, watching);
                 if has_type_errors {
                     // It is not read if the options are wrong.
                     vm.add_main_to_watcher_if_needed();
@@ -2585,12 +2590,12 @@ impl RunCommand {
         // for this one resolve.
         let prefixed: Vec<u8>;
         let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
-            let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
-            this_transpiler.resolver.opts.preserve_symlinks =
+            let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks.replace(
                 ctx.runtime_options.preserve_symlinks_main
                     || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
                         .get()
-                        .unwrap_or(false);
+                        .unwrap_or(false),
+            );
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
             let resolved = match this_transpiler.resolver.resolve(
@@ -2609,7 +2614,11 @@ impl RunCommand {
                     )
                 }
             };
-            this_transpiler.resolver.opts.preserve_symlinks = saved_preserve;
+            this_transpiler
+                .resolver
+                .opts
+                .preserve_symlinks
+                .set(saved_preserve);
             resolved
         };
         // (path, loader) — captured if the resolve hit a real file whose

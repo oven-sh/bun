@@ -4,7 +4,6 @@
 //! from stdin, runs each file under isolation, and streams results to fd 3).
 
 use core::ffi::c_char;
-use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_core::{Global, Output};
@@ -628,13 +627,7 @@ pub(crate) fn run_as_worker(
     vm.test_isolation_enabled.set(ctx.test_options.isolate);
     vm.auto_killer.enabled.set(ctx.test_options.isolate);
 
-    // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
-    // reader was dropped from the GC path (see web_worker.rs, which wires its
-    // own arena the same way and notes the dropped read).
-    let mut arena = bun_alloc::MimallocArena::new();
     vm.event_loop().ensure_waker();
-    vm.arena.set(Some(NonNull::from(&mut arena)));
-    // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
     let mut wloop = WorkerLoop {
         reporter,

@@ -634,7 +634,7 @@ mod windows_impl {
         pub(crate) fn create_with_ctx(
             file_blob: Blob,
             bytes_blob: Blob,
-            event_loop: &'static EventLoop,
+            vm: &'static jsc::VirtualMachineRef,
             script_context: &bun_jsc::ScriptExecutionContext,
             on_write_file_context: *mut c_void,
             on_complete_callback: WriteFileOnWriteFileCallback,
@@ -650,6 +650,7 @@ mod windows_impl {
                     .as_file()
                     .pathlike
                     .is_path();
+            let event_loop = vm.event_loop();
             let write_file = Self::new(WriteFileWindows {
                 file_blob,
                 bytes_blob,
@@ -695,7 +696,7 @@ mod windows_impl {
                         (*write_file).fd = 'brk: {
                             // `RareData::std{out,err,in}_store` is type-erased
                             // `Option<NonNull<c_void>>` — compare on raw pointer identity.
-                            if let Some(rare) = jsc::VirtualMachineRef::get().rare_data.get() {
+                            if let Some(rare) = vm.rare_data.get() {
                                 let store_ptr = (*write_file)
                                     .file_blob
                                     .store
@@ -704,14 +705,12 @@ mod windows_impl {
                                     .unwrap()
                                     .as_ptr()
                                     .cast::<c_void>();
-                                if rare.stdout_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
+                                if rare.stdout_store().map(|p| p.as_ptr()) == Some(store_ptr) {
                                     break 'brk 1;
-                                } else if rare.stderr_store.get().map(|p| p.as_ptr())
-                                    == Some(store_ptr)
+                                } else if rare.stderr_store().map(|p| p.as_ptr()) == Some(store_ptr)
                                 {
                                     break 'brk 2;
-                                } else if rare.stdin_store.get().map(|p| p.as_ptr())
-                                    == Some(store_ptr)
+                                } else if rare.stdin_store().map(|p| p.as_ptr()) == Some(store_ptr)
                                 {
                                     break 'brk 0;
                                 }
@@ -725,9 +724,7 @@ mod windows_impl {
                     }
                 }
 
-                (*write_file)
-                    .poll_ref
-                    .ref_(jsc::VirtualMachineRef::get().event_loop_ctx());
+                (*write_file).poll_ref.ref_(vm.event_loop_ctx());
             }
             Ok(write_file)
         }
@@ -1176,7 +1173,7 @@ mod windows_impl {
         }
 
         pub(crate) fn create<C>(
-            event_loop: &'static EventLoop,
+            vm: &'static jsc::VirtualMachineRef,
             script_context: &bun_jsc::ScriptExecutionContext,
             file_blob: Blob,
             bytes_blob: Blob,
@@ -1189,7 +1186,7 @@ mod windows_impl {
             WriteFileWindows::create_with_ctx(
                 file_blob,
                 bytes_blob,
-                event_loop,
+                vm,
                 script_context,
                 context.cast::<c_void>(),
                 callback,

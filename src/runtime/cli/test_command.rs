@@ -1937,26 +1937,53 @@ impl TestCommand {
         }
 
         bun_ast::initialize_store();
-        let vm = VirtualMachine::init(jsc::virtual_machine::InitOptions {
-            // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
-            // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
-            // main_fields,extension_order,feature_flags,preserve_symlinks,
-            // allow_addons,allow_ffi_cc,jsx} after this point to forward them
-            // to workers.
-            transform_options: ctx.args.clone(),
-            debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-            log: core::ptr::NonNull::new(ctx.log),
-            env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
-            smol: ctx.runtime_options.smol,
-            is_main_thread: true,
-            ..Default::default()
-        })?;
-        let _ = vm.argv.set(core::mem::take(&mut ctx.passthrough));
-        // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
-        vm.preload.replace(ctx.preloads.clone());
-        // SAFETY: nothing else borrows the transpiler: no script has run yet.
-        let transpiler = unsafe { vm.transpiler_mut() };
-        transpiler.options.rewrite_jest_for_tests = true;
+        let mut configured: crate::Result<()> = Ok(());
+        let vm = VirtualMachine::init(
+            jsc::virtual_machine::InitOptions {
+                // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
+                // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
+                // main_fields,extension_order,feature_flags,preserve_symlinks,
+                // allow_addons,allow_ffi_cc,jsx} after this point to forward them
+                // to workers.
+                transform_options: ctx.args.clone(),
+                debugger: core::mem::take(&mut ctx.runtime_options.debugger),
+                log: core::ptr::NonNull::new(ctx.log),
+                env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
+                smol: ctx.runtime_options.smol,
+                is_main_thread: true,
+                argv: core::mem::take(&mut ctx.passthrough),
+                // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
+                preload: ctx.preloads.clone(),
+                ..Default::default()
+            },
+            &mut |transpiler| {
+                configured = (|| {
+                    transpiler.options.rewrite_jest_for_tests = true;
+                    transpiler.options.env.behavior =
+                        bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
+
+                    let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;
+                    if !node_env_entry.found_existing {
+                        *node_env_entry.key_ptr = Box::<[u8]>::from(&**node_env_entry.key_ptr);
+                        *node_env_entry.value_ptr = DotEnv::HashTableValue {
+                            value: Box::<[u8]>::from(b"test" as &[u8]),
+                        };
+                    }
+
+                    transpiler.configure_defines()?;
+
+                    if ctx.test_options.coverage.enabled {
+                        let options = &mut transpiler.options;
+                        options.code_coverage = true;
+                        options.minify_syntax.set(false);
+                        options.minify_identifiers.set(false);
+                        options.minify_whitespace.set(false);
+                        options.dead_code_elimination = false;
+                    }
+                    Ok(())
+                })();
+            },
+        )?;
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
             core::sync::atomic::Ordering::Relaxed,
@@ -1965,17 +1992,7 @@ impl TestCommand {
             ctx.runtime_options.experimental_http3_fetch,
             core::sync::atomic::Ordering::Relaxed,
         );
-        transpiler.options.env.behavior = bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
-
-        let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;
-        if !node_env_entry.found_existing {
-            *node_env_entry.key_ptr = Box::<[u8]>::from(&**node_env_entry.key_ptr);
-            *node_env_entry.value_ptr = DotEnv::HashTableValue {
-                value: Box::<[u8]>::from(b"test" as &[u8]),
-            };
-        }
-
-        transpiler.configure_defines()?;
+        configured?;
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread.set(true);
@@ -1987,13 +2004,6 @@ impl TestCommand {
         }
 
         if ctx.test_options.coverage.enabled {
-            // SAFETY: nothing else borrows the transpiler: no script has run yet.
-            let options = unsafe { &mut vm.transpiler_mut().options };
-            options.code_coverage = true;
-            options.minify_syntax = false;
-            options.minify_identifiers = false;
-            options.minify_whitespace = false;
-            options.dead_code_elimination = false;
             vm.global().vm().enable_control_flow_profiler();
         }
 
@@ -2323,16 +2333,10 @@ impl TestCommand {
 
             match vm.hot_reload.get() {
                 jsc::virtual_machine::HotReload::Hot => {
-                    // SAFETY: no borrow of the transpiler is live here.
-                    unsafe {
-                        jsc::hot_reloader::HotReloader::enable_hot_module_reloading(vm, None);
-                    }
+                    jsc::hot_reloader::HotReloader::enable_hot_module_reloading(vm, None);
                 }
                 jsc::virtual_machine::HotReload::Watch => {
-                    // SAFETY: no borrow of the transpiler is live here.
-                    unsafe {
-                        jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, None);
-                    }
+                    jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, None);
                 }
                 _ => {}
             }
@@ -2404,7 +2408,7 @@ impl TestCommand {
             // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
             // `enable_hot_module_reloading`; non-null because
             // `is_watcher_enabled()` checked it.
-            let watcher = unsafe { &mut *vm.bun_watcher.get() };
+            let watcher = unsafe { &mut *vm.bun_watcher_ptr() };
             for path in &changed_module_graph_files {
                 let _ = watcher.add_file_by_path_slow(path);
             }
@@ -2808,9 +2812,6 @@ impl TestCommand {
             }
         }
 
-        // No MimallocArena is wired through `vm.arena` on this serial run
-        // path; the parallel worker path in runner.rs does wire one.
-        // Reintroduce here if it shows up in profiles.
         vm_.event_loop().ensure_waker();
         let mut ctx = Context {
             reporter: reporter_,
@@ -2852,9 +2853,7 @@ impl TestCommand {
         scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
 
         let dot_slash = core::cell::OnceCell::new();
-        // SAFETY: no script is running between files, so nothing else borrows the transpiler.
-        let resolution =
-            unsafe { vm.transpiler_mut() }.resolve_entry_point(file_name, &dot_slash)?;
+        let resolution = vm.transpiler().resolve_entry_point(file_name, &dot_slash)?;
         vm.clear_entry_point()?;
 
         // `append_slice` interns into the process-static `FilenameStore` and

@@ -141,7 +141,7 @@ pub(crate) fn filter<'a>(
             }
         },
     );
-    scan_transpiler.options.target = bun_ast::Target::Bun;
+    scan_transpiler.options.target.set(bun_ast::Target::Bun);
     // Do not follow bare specifiers into node_modules; changes there are not
     // considered local edits.
     scan_transpiler.options.packages = bun_bundler::options::PackagesOption::External;
@@ -154,10 +154,13 @@ pub(crate) fn filter<'a>(
     let _ = scan_transpiler.configure_defines();
     // `Transpiler::init` already projected resolver.opts, so sync only the
     // fields we changed above.
-    scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
+    scan_transpiler.resolver.opts.target = scan_transpiler.options.target.get();
     scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
     scan_transpiler.resolver.opts.output_dir = Box::default();
-    scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
+    scan_transpiler
+        .resolver
+        .env_loader
+        .set(core::ptr::NonNull::new(scan_transpiler.env));
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
     // scope exit; the arena bulk-free skips Drop.
@@ -367,13 +370,8 @@ pub(crate) fn init_watch_trigger() {
         // Process-lifetime singletons — store in the CLI arena so the borrows
         // are legitimately `&'static`.
         let arena = crate::cli::cli_arena();
-        let set: &'static mut StringSet = arena.alloc(StringSet::new());
-        // Written once on the main thread before the watcher thread starts;
-        // after that only the watcher thread touches these. See doc on
-        // `hot_reloader::WATCH_CHANGED_PATHS`.
+        // Written once on the main thread, before the reloader is enabled.
         let _ = jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE.set(arena.alloc(path).as_zstr());
-        let _ = jsc::hot_reloader::WATCH_CHANGED_PATHS
-            .set(jsc::hot_reloader::WatchChangedPaths::new(set));
     }
 }
 

@@ -3405,7 +3405,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Per-VM weak cache: `tls:true` and `{servername}`-only hit
             // the same CTX as `Bun.connect`; an inline CA dedupes across
             // every upgradeTLS that names it.
-            owned_ctx = crate::jsc_hooks::runtime_state()
+            owned_ctx = crate::jsc_hooks::RuntimeState::of(handlers.vm)
                 .ssl_ctx_cache
                 .get_or_create(cfg, &mut create_err);
             if owned_ctx.is_none() {

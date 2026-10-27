@@ -71,7 +71,7 @@ impl Framework {
     /// - If any file system router types are provided, configure using
     ///   the above react configuration.
     pub(crate) fn auto(
-        resolver: &mut bun_resolver::Resolver,
+        resolver: &bun_resolver::Resolver,
         file_system_router_types: Vec<FileSystemRouterType>,
     ) -> Framework {
         let mut fw = Framework::default();
@@ -101,7 +101,7 @@ impl Framework {
     /// The default framework of `bun bake`: the `.tsx` and `.jsx` pages in `app/pages/`, Next.js
     /// pages style, rendered on the server and hydrated in the browser with the project's React. No
     /// server components.
-    pub(crate) fn bake_pages(resolver: &mut bun_resolver::Resolver) -> Framework {
+    pub(crate) fn bake_pages(resolver: &bun_resolver::Resolver) -> Framework {
         let mut fw = Self::auto(resolver, Vec::new());
         bun_core::handle_oom(fw.built_in_modules.put(
             b"bun-bake-react/client.tsx",
@@ -157,11 +157,13 @@ impl Framework {
 }
 
 #[inline]
-fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Utf8Bytes<'static>> {
+fn resolve_or_null(r: &bun_resolver::Resolver, path: &[u8]) -> Option<Utf8Bytes<'static>> {
     match resolve_path(r, path) {
         Ok(resolved) => Some(resolved),
         Err(_) => {
-            r.log_mut().reset();
+            // SAFETY: the resolver's log is allocated (`Resolver::set_log`), and the resolver,
+            // which writes to it, has returned.
+            unsafe { r.log_ptr().as_mut() }.reset();
             None
         }
     }

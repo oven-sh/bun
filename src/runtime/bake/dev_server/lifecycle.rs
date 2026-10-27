@@ -47,6 +47,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     unsafe {
         w!(magic, Magic::Valid);
         w!(root, Box::from(root));
+        w!(vm, options.vm);
         w!(vm_handle, options.vm.handle());
         w!(server, None);
         w!(directory_watchers, DirectoryWatchStore::default());
@@ -144,12 +145,15 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
-    // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
-    // SAFETY: `Watcher::init` only stores `p` as an opaque `*mut ()` ctx; it does
-    // not dereference it until `start()` spawns the watcher thread, by which point
-    // every `DevServer` field is initialized (`assume_init` below precedes
-    // `bun_watcher.start()`).
-    let bun_watcher = match Watcher::init::<DevServer>(p, top_level_dir) {
+    // SAFETY: `p` is only stored. `bun_watcher.start()`, after `assume_init` below, spawns the
+    // thread that calls back, and `Watcher::shutdown` in `Drop for DevServer` ends the callbacks.
+    let watcher_atomics = unsafe { WatcherAtomics::init(p) };
+    // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
+    unsafe { w!(watcher_atomics, watcher_atomics) };
+
+    // SAFETY: the allocation just made; no reference is formed.
+    let watch_context = unsafe { &raw mut (*watcher_atomics.as_ptr()).watch_context };
+    let bun_watcher = match Watcher::init::<WatchContext>(watch_context, top_level_dir) {
         Ok(w) => w,
         Err(err) => {
             return Err(global.throw_error(
@@ -160,12 +164,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
     unsafe { w!(bun_watcher, ::core::mem::ManuallyDrop::new(bun_watcher)) };
-
-    // `.watcher_atomics = undefined` → `WatcherAtomics.init(dev)`
-    // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
-    // as a BACKREF for later `concurrent_task.from(dev)` / `run`; not dereferenced
-    // during construction.
-    unsafe { w!(watcher_atomics, WatcherAtomics::init(p)) };
 
     // This causes a memory leak, but the allocator is otherwise used on multiple threads.
     // (allocator param dropped — global mimalloc)
@@ -278,13 +276,22 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // vtable flows directly into the resolver without conversion.
     let resolve_watcher = dev.bun_watcher.get_resolve_watcher();
     dev.server_transpiler_mut().options.dev_server = dev_ptr as *const ();
-    dev.server_transpiler_mut().resolver.watcher = Some(resolve_watcher);
+    dev.server_transpiler_mut()
+        .resolver
+        .watcher
+        .set(Some(resolve_watcher));
     dev.client_transpiler_mut().options.dev_server = dev_ptr as *const ();
-    dev.client_transpiler_mut().resolver.watcher = Some(resolve_watcher);
+    dev.client_transpiler_mut()
+        .resolver
+        .watcher
+        .set(Some(resolve_watcher));
 
     if separate_ssr_graph {
         dev.ssr_transpiler_mut().options.dev_server = dev_ptr as *const ();
-        dev.ssr_transpiler_mut().resolver.watcher = Some(resolve_watcher);
+        dev.ssr_transpiler_mut()
+            .resolver
+            .watcher
+            .set(Some(resolve_watcher));
     }
 
     debug_assert!(dev.server_transpiler().resolver.opts.target != bun_ast::Target::Browser);
@@ -550,6 +557,7 @@ impl Drop for DevServer {
                 root: _,
                 inspector_server_id: _,
                 configuration_hash_key: _,
+                vm: _,
                 vm_handle: _,
                 server: _,
                 router: _,
@@ -617,7 +625,7 @@ impl Drop for DevServer {
         if self.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE {
             let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
             // SAFETY: `ACTIVE` is linked: the handler marks the popped node `FIRED` first thing.
-            unsafe { crate::jsc_hooks::timer_all().remove(timer_ptr) };
+            unsafe { crate::timer::All::of(self.vm).remove(timer_ptr) };
         }
         self.graph_safety_lock.lock();
         // Hand ownership of the heap allocation to the watcher thread (which frees it in
@@ -659,7 +667,7 @@ impl Drop for DevServer {
             let timer_ptr: *mut EventLoopTimer = &raw mut self.source_maps.weak_ref_sweep_timer;
             // SAFETY: `ACTIVE` is linked: `sweep_weak_refs` takes the popped node off it before
             // it returns, and does not drop the server.
-            unsafe { crate::jsc_hooks::timer_all().remove(timer_ptr) };
+            unsafe { crate::timer::All::of(self.vm).remove(timer_ptr) };
         }
 
         // `Watcher::shutdown` serialises with `dispatch_file_updates` on
@@ -803,7 +811,7 @@ impl DevServer {
         // are disjoint fields of `*self_ptr`.
         unsafe {
             (*self_ptr).router.scan_all(
-                &mut (*(*self_ptr).server_transpiler.as_mut_ptr()).resolver,
+                &(*(*self_ptr).server_transpiler.as_ptr()).resolver,
                 router::InsertionContext::wrap(&mut *self_ptr),
             )?;
         }

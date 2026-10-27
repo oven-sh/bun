@@ -30,6 +30,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::ThreadId;
 
+use crate::jsc_hooks::RuntimeState;
+
 bun_core::declare_scope!(lint_js, hidden);
 
 /// One call into the program: its message, and the callback that answers the program's queries while it runs.
@@ -121,7 +123,7 @@ impl LintSpan {
 
 /// Answers `kind` and keeps the answer alive. `None` if no file is being linted.
 fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
-    let state = crate::jsc_hooks::lint_vm().get()?;
+    let state = RuntimeState::of(VirtualMachine::get()).lint.get()?;
     let mut call = state.call.get()?;
     // SAFETY: it points to the stack of `ThreadVm::call`, which is below this frame and clears the pointer before it
     // returns. `serve` runs no JavaScript, so this is the only reference.
@@ -228,36 +230,39 @@ fn start_vm() -> Result<(), Vec<u8>> {
         .concat()
     };
     bun_ast::initialize_store();
-    let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {
-        is_main_thread: false,
-        ..Default::default()
-    })
+    let mut defines = Ok(());
+    let vm = VirtualMachine::init(
+        jsc::VirtualMachineInitOptions {
+            is_main_thread: false,
+            argv: bun_core::argv().iter().skip(1).map(Box::from).collect(),
+            ..Default::default()
+        },
+        &mut |transpiler| {
+            transpiler
+                .resolver
+                .env_loader
+                .set(NonNull::new(transpiler.env));
+            transpiler.options.env.behavior =
+                bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
+            // Same as for config files: see `run_script` in `lint_command.rs`.
+            transpiler.options.env.disable_default_env_files = true;
+            transpiler.resolver.opts.packages_require_like_node();
+            defines = transpiler.configure_defines();
+        },
+    )
     .map_err(|error| failed(error.name()))?;
     // Transpile on this thread. It would only wait for the result anyway.
     vm.transpiler_store.enabled.set(false);
-    // SAFETY: nothing else borrows the transpiler: no script has run yet.
-    let transpiler = unsafe { vm.transpiler_mut() };
-    transpiler.resolver.env_loader = NonNull::new(transpiler.env);
-    transpiler.options.env.behavior =
-        bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
-    // Same as for config files: see `run_script` in `lint_command.rs`.
-    transpiler.options.env.disable_default_env_files = true;
-    transpiler.resolver.opts.packages_require_like_node();
-    transpiler
-        .configure_defines()
-        .map_err(|error| failed(error.name()))?;
+    defines.map_err(|error| failed(error.name()))?;
     vm.load_extra_env_and_source_code_printer();
-    let _ = vm
-        .argv
-        .set(bun_core::argv().iter().skip(1).map(Box::from).collect());
     vm.event_loop().ensure_waker();
     Ok(())
 }
 
 /// Returns `vm`'s `LintVm`, and runs the program first if it hasn't run yet. `vm` is this thread's VM, and the caller
 /// holds its lock.
-fn program_of(vm: &VirtualMachine) -> Result<&'static LintVm, Vec<u8>> {
-    let slot = crate::jsc_hooks::lint_vm();
+fn program_of(vm: &VirtualMachine) -> Result<&LintVm, Vec<u8>> {
+    let slot = &RuntimeState::of(vm).lint;
     match slot.get() {
         Some(state) => Ok(&**state),
         None => {
@@ -404,7 +409,7 @@ fn end_vm(frees: bool) {
     // Never released: `exit_and_free` frees the VM, and the lock with it.
     let _lock = core::mem::ManuallyDrop::new(vm.global().vm().get_api_lock());
     // SAFETY: no call into the plugins is on the stack, and only those borrow it.
-    drop(unsafe { crate::jsc_hooks::take_lint_vm() });
+    drop(unsafe { crate::jsc_hooks::take_lint_vm(vm) });
     // SAFETY: `start_vm` created it on this thread, which holds its lock. No other thread has a pointer to it, and
     // `vm` is not used again.
     unsafe { VirtualMachine::exit_and_free() };

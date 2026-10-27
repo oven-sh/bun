@@ -250,9 +250,8 @@ impl Drop for SSLContextCache {
     /// dereference the freed `Entry`/map. Map itself holds no refs, so no
     /// `SSL_CTX_free` here.
     fn drop(&mut self) {
-        let inner = self.inner.lock();
-        for &entry in inner.map.values() {
-            // SAFETY: map values are live heap Entries; we hold the lock.
+        for &entry in self.inner.get_mut().map.values() {
+            // SAFETY: map values are live heap Entries.
             let ctx = unsafe { &*entry }.ctx.get();
             if !ctx.is_null() {
                 // SAFETY: ctx non-null; clearing the ex_data slot we set.

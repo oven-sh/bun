@@ -910,9 +910,7 @@ impl ServerConfig {
                             }
                         }
                         _ => {
-                            // SAFETY: no other transpiler borrow is live here and resolving runs
-                            // no script (see `transpiler_mut` on macros).
-                            let resolver = &mut unsafe { vm.transpiler_mut() }.resolver;
+                            let resolver = &vm.transpiler().resolver;
                             if bake_pages {
                                 crate::bake::Framework::bake_pages(resolver)
                             } else {

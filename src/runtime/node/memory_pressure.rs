@@ -30,10 +30,6 @@ use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope};
 #[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-#[cfg(not(windows))]
-use core::cell::Cell;
-#[cfg(not(windows))]
-use core::ptr::NonNull;
 
 /// Pressure level passed to JS. Values are the `NOTE_MEMORYSTATUS_PRESSURE_*`
 /// bits on macOS so the kqueue dispatch can pass `fflags` through unchanged.
@@ -77,7 +73,7 @@ fn pressure_task(lvl: i32) -> Task {
 }
 
 #[cfg(not(windows))]
-fn slot(vm: &VirtualMachine) -> &Cell<Option<NonNull<core::ffi::c_void>>> {
+fn slot(vm: &VirtualMachine) -> &bun_jsc::rare_data::ErasedSlot {
     vm.rare_data().memory_pressure_watcher_slot()
 }
 
@@ -273,7 +269,8 @@ mod posix {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             psi_some_total: psi_some_total.unwrap_or(0),
         });
-        slot(vm).set(NonNull::new(bun_core::heap::into_raw(watcher).cast()));
+        // SAFETY: a leaked `MemoryPressureWatcher`, which is what this file casts the slot back to.
+        unsafe { slot(vm).set(bun_core::heap::into_raw_nn(watcher).cast()) };
     }
 
     /// Whether the installed watcher holds a live OS source. `install` still
@@ -352,9 +349,8 @@ mod posix {
 
 #[cfg(windows)]
 mod windows {
-    use core::cell::Cell;
     use core::ffi::c_void;
-    use core::ptr::{self, NonNull};
+    use core::ptr;
 
     use bun_event_loop::ConcurrentTask::ConcurrentTask;
     use bun_jsc::JSGlobalObject;
@@ -400,7 +396,7 @@ mod windows {
         thread: Option<std::thread::JoinHandle<()>>,
     }
 
-    fn slot(vm: &VirtualMachine) -> &Cell<Option<NonNull<c_void>>> {
+    fn slot(vm: &VirtualMachine) -> &bun_jsc::rare_data::ErasedSlot {
         vm.rare_data().memory_pressure_watcher_slot()
     }
 
@@ -462,7 +458,8 @@ mod windows {
             shutdown,
             thread: Some(thread),
         });
-        slot(vm).set(NonNull::new(bun_core::heap::into_raw(watcher).cast()));
+        // SAFETY: a leaked `MemoryPressureWatcher`, which is what this module casts the slot back to.
+        unsafe { slot(vm).set(bun_core::heap::into_raw_nn(watcher).cast()) };
     }
 
     pub(super) fn uninstall(global: &JSGlobalObject) {

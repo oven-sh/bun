@@ -1,10 +1,12 @@
 {
   "src/event_loop/AnyEventLoop.rs": {
     "unsafe impl Send": [
-      "JsPoster"
+      "JsPoster",
+      "LoopWaker"
     ],
     "unsafe impl Sync": [
-      "JsPoster"
+      "JsPoster",
+      "LoopWaker"
     ]
   },
   "src/jsc/CppTask.rs": {
@@ -30,6 +32,11 @@
   },
   "src/jsc/RuntimeTranspilerStore.rs": {
     "WorkPool::schedule*": 1
+  },
+  "src/jsc/SavedSourceMap.rs": {
+    "unsafe impl Send": [
+      "RegisteredProvider"
+    ]
   },
   "src/jsc/TopExceptionScope.rs": {
     "unsafe impl Send": [
@@ -181,22 +188,6 @@
     ],
     "unsafe impl Sync": [
       "PathWatcherManager"
-    ]
-  },
-  "src/runtime/shell/IOReader.rs": {
-    "unsafe impl Send": [
-      "IOReader"
-    ],
-    "unsafe impl Sync": [
-      "IOReader"
-    ]
-  },
-  "src/runtime/shell/IOWriter.rs": {
-    "unsafe impl Send": [
-      "IOWriter"
-    ],
-    "unsafe impl Sync": [
-      "IOWriter"
     ]
   },
   "src/runtime/shell/builtin/cp.rs": {

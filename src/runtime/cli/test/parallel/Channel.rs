@@ -262,7 +262,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// reading. On failure the caller still owns `pipe`. The pipe stays ref'd
     /// so the loop blocks for the peer's first frame; `Drop` closes it.
     #[cfg(windows)]
-    pub(crate) fn adopt_pipe(this: *mut Self, _vm: &VirtualMachine, pipe: *mut uv::Pipe) -> bool {
+    pub(crate) fn adopt_pipe(this: *mut Self, pipe: *mut uv::Pipe) -> bool {
         // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
         let self_ = unsafe { &*this };
         self_.root.set(this);

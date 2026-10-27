@@ -32,7 +32,7 @@ pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>>
 ///
 /// Centralises the `RacyCell<Option<_>> → &mut InternalMsgHolder` deref so the
 /// three host-fn callers stay safe at the call site (PORTING.md §Global mutable
-/// state — same shape as `cron::vm_mut`). Callers must be on the JS thread and
+/// state). Callers must be on the JS thread and
 /// must not hold the borrow across a re-entrant `child_singleton()` call.
 #[inline]
 fn child_singleton<'a>() -> &'a mut InternalMsgHolder {

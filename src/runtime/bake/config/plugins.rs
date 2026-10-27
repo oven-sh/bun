@@ -20,8 +20,11 @@ pub(crate) fn set_config_plugins<'a>(
     } else {
         vm.bake_config_plugins.set(global, plugins.to_js());
     }
-    vm.bake_config_plugin_names
-        .set(names.into_iter().map(|name| Box::from(&*name)).collect());
+    vm.bake_config_has_tailwind_plugin.set(
+        names
+            .into_iter()
+            .any(|name| bun_core::strings::includes(&name, b"tailwind")),
+    );
 }
 
 /// Set in the environment by the first start of `bun bake --check`, so that the process that a

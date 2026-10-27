@@ -33,10 +33,10 @@ impl Framework {
             None,
         )?);
 
-        out.options.target = match renderer {
+        out.options.target.set(match renderer {
             Graph::Client => bun_ast::Target::Browser,
             Graph::Server | Graph::Ssr => bun_ast::Target::Bun,
-        };
+        });
         out.options.public_path = match renderer {
             Graph::Client => dev_server::CLIENT_PREFIX.as_bytes().into(),
             Graph::Server | Graph::Ssr => Box::default(),
@@ -59,8 +59,8 @@ impl Framework {
         out.options.server_components = self.server_components.is_some();
 
         out.options.conditions = bun_bundler::options::ESMConditions::init(
-            out.options.target.default_conditions(),
-            out.options.target.is_server_side(),
+            out.options.target.get().default_conditions(),
+            out.options.target.get().is_server_side(),
             &[],
         )?;
         if renderer == Graph::Server && self.server_components.is_some() {
@@ -80,9 +80,15 @@ impl Framework {
         out.options.tree_shaking = mode != Mode::Development;
         // The dev server never minifies.
         let minify = |option: Option<bool>| mode != Mode::Development && option.unwrap_or(true);
-        out.options.minify_syntax = minify(bundler_options.minify_syntax);
-        out.options.minify_identifiers = minify(bundler_options.minify_identifiers);
-        out.options.minify_whitespace = minify(bundler_options.minify_whitespace);
+        out.options
+            .minify_syntax
+            .set(minify(bundler_options.minify_syntax));
+        out.options
+            .minify_identifiers
+            .set(minify(bundler_options.minify_identifiers));
+        out.options
+            .minify_whitespace
+            .set(minify(bundler_options.minify_whitespace));
         out.options.css_chunking = true;
         // The bundler crate (lower tier) carries a TYPE_ONLY projection
         // (`bake_types::Framework`); construct it here and give it arena

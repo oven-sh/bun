@@ -1058,7 +1058,7 @@ fn spawn_maybe_sync(
     } else {
         None
     };
-    let sync_loop = isolated_loop.map(|isolated_loop| isolated_loop.prepare());
+    let sync_loop = isolated_loop.map(|isolated_loop| isolated_loop.prepare(jsc_vm));
     // For is_sync, stdio readers/writers register on the isolated loop instead of the main loop.
     let event_loop: &'static jsc::event_loop::EventLoop = match isolated_loop {
         Some(isolated_loop) => isolated_loop.event_loop(),
@@ -1578,22 +1578,11 @@ fn spawn_maybe_sync(
         // registered before onProcessExit can potentially be called.
         if let Some(timeout_val) = timeout {
             let ts = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(timeout_val));
-            // Note: `EventLoopTimer.next` is a local-stub Timespec until
-            // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
-            subprocess.event_loop_timer.with_mut(|t| {
-                t.next = crate::timer::ElTimespec {
-                    sec: ts.sec,
-                    nsec: ts.nsec,
-                };
-            });
-            // `Timer::All` lives in `bun_runtime`; reach it via the
-            // `RuntimeHooks` dispatch (`VirtualMachineRef::timer_insert`) which
-            // forwards to `crate::timer::All::insert`.
+            subprocess.event_loop_timer.with_mut(|t| t.next = ts);
             // SAFETY: never linked yet. The node is in a cell of the heap-allocated `Subprocess`,
             // on which the JS wrapper holds a ref until `Subprocess::finalize`, which unlinks it.
             unsafe {
-                jsc::VirtualMachineRef::timer_insert(
-                    jsc_vm,
+                crate::timer::All::of(jsc_vm).insert(
                     core::ptr::addr_of!(subprocess.event_loop_timer)
                         .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
                         .cast_mut(),

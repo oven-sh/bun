@@ -368,7 +368,7 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 /// Reports an error that no `error()` handled. The server keeps running, so a
 /// Worker prints it like the main thread does. Its own handler ends the Worker.
 fn report_unhandled_error(vm: &jsc::VirtualMachine, global: &JSGlobalObject, value: JSValue) {
-    if vm.worker.get().is_some() {
+    if vm.worker_ref().is_some() {
         jsc::VirtualMachine::default_on_unhandled_rejection(vm, global, value);
     } else {
         (vm.on_unhandled_rejection.get())(vm, global, value);
@@ -3598,12 +3598,16 @@ where
         let vm = server.vm();
         if DEBUG_MODE {
             let mut exception_list: jsc::ExceptionList = Vec::new();
-            let prev_exception_list = vm.on_unhandled_rejection_exception_list.get();
-            vm.on_unhandled_rejection_exception_list
-                .set(Some(NonNull::from(&mut exception_list)));
+            // SAFETY: `exception_list` is not touched until the slot has the previous list back,
+            // which whoever installed it vouches for.
+            let prev_exception_list = unsafe {
+                vm.replace_unhandled_rejection_exception_list(Some(NonNull::from(
+                    &mut exception_list,
+                )))
+            };
             report_unhandled_error(vm, global_this, value);
-            vm.on_unhandled_rejection_exception_list
-                .set(prev_exception_list);
+            // SAFETY: as above.
+            unsafe { vm.replace_unhandled_rejection_exception_list(prev_exception_list) };
 
             bun_core::pretty_errorln!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",

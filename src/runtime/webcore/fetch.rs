@@ -275,7 +275,7 @@ pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> 
     // of `href_raw` transfers here (`is_url_owned: true`).
     // A request to an origin the environment proxies never dials it. One after `tls.DEFAULT_CIPHERS` was assigned does not use the default context.
     let vm = VirtualMachine::get();
-    if vm.env_loader().get_http_proxy_for(&url).is_some() || vm.tls_default_ciphers().is_some() {
+    if vm.env_loader().get_http_proxy_for(&url).is_some() || vm.has_tls_default_ciphers() {
         reclaim_href!();
         return Ok(());
     }

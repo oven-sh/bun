@@ -22,9 +22,7 @@ use crate::run_command::{ConfigureEnvOptions, RunCommand};
 // lives under crate::api::bun::process.
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{
-    self as spawn, Rusage, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
-};
+use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, SpawnProcessResult, Status};
 use bun_collections::index_sort;
 use bun_dotenv::Loader as DotEnvLoader;
 type OutputWriter = bun_core::io::Writer;
@@ -96,7 +94,7 @@ bun_io::impl_buffered_reader_parent! {
         let _ = state.maybe_finish(&mut *handle);
     };
     loop_           = |this| bun_io::uws_to_native((*(*(*this).handle).state).event_loop.loop_).as_ptr();
-    event_loop      = |this| (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx();
+    event_loop      = |this| (*(*(*this).handle).state).event_loop.as_event_loop_ctx();
 }
 
 struct ProcessSlot {
@@ -339,9 +337,6 @@ const RESET: &[u8] = ansi::RESET.as_bytes();
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
     event_loop: &'static MiniEventLoop,
-    /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
     /// The POSIX shell that the scripts run under. `None` on Windows (see `ScriptArgv`).
@@ -907,9 +902,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop_handle_to_ctx(
-        EventLoopHandle::init_mini(event_loop),
-    ));
+    bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop.as_event_loop_ctx());
     let shell_bin: Option<&'static ZStr> = if cfg!(unix) {
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; the &mut borrow passed to
         // init_global above has been released, so this read does not alias a live &mut.
@@ -926,7 +919,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     if !ctx.filters.is_empty() || ctx.workspaces {
         // Workspace-aware mode: iterate over matching workspace packages
-        let selected = FilterArg::select_packages(&*ctx, &mut this_transpiler.resolver, cwd)?;
+        let selected = FilterArg::select_packages(&*ctx, &this_transpiler.resolver, cwd)?;
         let resolve_root: &[u8] = &selected.root_dir;
 
         // Phase 1: collect packages; `scripts` is deep-copied so MatchedPackage sorts independently of `selected`.
@@ -1120,7 +1113,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let mut state = State {
         handles: Box::default(),
         event_loop,
-        event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
         max_label_len,
         shell_bin,

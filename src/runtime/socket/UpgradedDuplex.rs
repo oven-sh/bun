@@ -24,7 +24,7 @@ use super::DuplexUpgradeContext;
 use super::ssl_wrapper::SSLWrapper;
 use crate::generated_bindgen::socket_body::js_TLSSocket;
 use crate::generated_bindgen::upgraded_duplex::{self as listeners, DuplexChunk};
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
@@ -112,8 +112,6 @@ pub(crate) struct Handlers {
     pub(crate) server_identity:
         fn(*mut (), &mut bun_boringssl_sys::SSL) -> bun_boringssl::ServerIdentity,
 }
-
-use crate::jsc_hooks::timer_all;
 
 /// Lazily create-and-cache a JS host-function callback in `shadow`, mirrored
 /// into the owning `JSTLSSocket` wrapper's internal field (the GC
@@ -701,10 +699,11 @@ impl UpgradedDuplex {
     }
 
     fn set_timeout_in_milliseconds(&self, ms: c_uint) {
+        let all = crate::timer::All::of(VirtualMachine::get());
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             // SAFETY: `ACTIVE` is linked: `on_timeout` marks the popped node `FIRED` before it
             // calls anything.
-            unsafe { timer_all().remove(self.event_loop_timer.as_ptr()) };
+            unsafe { all.remove(self.event_loop_timer.as_ptr()) };
         }
         self.current_timeout.set(ms);
 
@@ -714,21 +713,14 @@ impl UpgradedDuplex {
         }
 
         // reschedule the timer
-        // Note: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
-        // bridge from `bun_core::Timespec` until the lower tier switches.
         let next =
             bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
-        self.event_loop_timer.with_mut(|t| {
-            t.next = ElTimespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            };
-        });
+        self.event_loop_timer.with_mut(|t| t.next = next);
         // SAFETY: unlinked above. The node is in a cell of `self`, which was written in place into
         // its heap-allocated `DuplexUpgradeContext` and is dropped with it; `Drop` unlinks the node
         // (`teardown`).
         unsafe {
-            timer_all().insert(
+            all.insert(
                 core::ptr::addr_of!(self.event_loop_timer)
                     .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
                     .cast_mut(),

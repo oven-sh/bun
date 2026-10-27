@@ -1526,7 +1526,8 @@ impl DirTask {
             }
             EventLoopTask::Mini(at) => {
                 let at = at.from(this, dir_task_run_from_main_thread_mini);
-                poster.post_mini(core::ptr::NonNull::new(at).expect("intrusive task"));
+                // SAFETY: a field of `*this`, which its run on the main thread frees.
+                unsafe { poster.post_mini(core::ptr::NonNull::new(at).expect("intrusive task")) };
             }
         }
     }

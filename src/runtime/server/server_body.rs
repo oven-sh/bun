@@ -1028,15 +1028,16 @@ impl ServePlugins {
             dev_server: None,
         };
 
-        global.bun_vm().event_loop().enter();
-        let result = jsc::host_fn::from_js_host_call(global, || {
-            match &self.state {
-                ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
-                _ => unreachable!(),
-            }
-            .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
-        })?;
-        global.bun_vm().event_loop().exit();
+        let result = {
+            let _scope = global.bun_vm().event_loop().enter_scope();
+            jsc::host_fn::from_js_host_call(global, || {
+                match &self.state {
+                    ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
+                    _ => unreachable!(),
+                }
+                .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
+            })
+        }?;
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {
@@ -2063,7 +2064,7 @@ where
                 BunString::clone_utf8(url.href),
                 headers,
                 // Moves `body` into the per-VM hive pool (ref_count = 1).
-                crate::webcore::body::hive_alloc(body),
+                crate::webcore::body::hive_alloc(self.vm(), body),
                 method,
             ))
         } else if let Some(request_) = input
@@ -2667,7 +2668,7 @@ where
             .deprecated_report_extra_memory(core::mem::size_of::<Ctx>());
 
         // Pooled body slot, ref_count = 1.
-        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
+        let body_hive = crate::webcore::body::hive_alloc(server.vm(), BodyValue::Null);
         // The ctx and Request each own a +1 on the
         // same slot. Paired drop in `RequestContext::deinit` / `Request::destroy`.
         ctx.set_request_body(Some(body_hive.clone()));
@@ -2941,7 +2942,7 @@ where
         let ctx = unsafe { &*ctx_slot.assume_init().as_ptr() };
 
         // Pooled body slot, ref_count = 1.
-        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
+        let body_hive = crate::webcore::body::hive_alloc(this.vm(), BodyValue::Null);
         // The ctx and Request each own a +1 on the
         // same slot. Paired drop in `RequestContext::deinit` / `Request::destroy`.
         ctx.request_body.set(Some(body_hive.clone()));

@@ -1,49 +1,37 @@
-//! `WatcherContext` trait impl for `DevServer`.
-//!
-//! `Watcher::init::<DevServer>` dispatches through the generic
-//! `WatcherContext` vtable, so the trait methods here are the *only* path the
-//! watcher thread reaches — they forward to the inherent
-//! `DevServer::{on_file_update, on_watch_error}` bodies below.
+//! What the watcher thread does for a `DevServer`.
 
 use super::DevServer;
 use super::*;
 
-// ──────────────────────────────────────────────────────────────────────────
-// WatcherContext impl — wires `bun_watcher::Watcher::init::<DevServer>`.
-// The watcher's stored fn-ptrs (`on_file_update_wrapped` / `on_error_wrapped`
-// in `Watcher::init`) call *these* trait methods, never the inherent ones
-// directly, so each forwards to the real ported body on `DevServer`.
-// ──────────────────────────────────────────────────────────────────────────
-impl bun_watcher::WatcherContext for DevServer {
+/// What `bun_watcher::Watcher` calls back with, on its thread. It reaches single fields of the
+/// `DevServer` and never borrows the whole, which the JS thread does and which is `!Sync`.
+pub(crate) struct WatchContext {
+    dev: *mut DevServer,
+}
+
+impl WatchContext {
+    /// # Safety
+    /// Whenever a `Watcher` calls this back, `dev` is a live, initialized `DevServer` and that
+    /// `Watcher` is its `bun_watcher`.
+    pub(super) unsafe fn new(dev: *mut DevServer) -> Self {
+        Self { dev }
+    }
+}
+
+impl bun_watcher::WatcherContext for WatchContext {
     fn on_file_update(
         &mut self,
         events: &mut [bun_watcher::WatchEvent],
         changed_files: &[bun_watcher::ChangedFilePath],
         watchlist: &bun_watcher::WatchList,
     ) {
-        DevServer::on_file_update(self, events, changed_files, watchlist);
-    }
-
-    /// The trait's default `on_watch_error` would forward here, so route both
-    /// to the inherent path-aware impl rather than emitting a generic warn.
-    fn on_error(&mut self, err: bun_sys::Error) {
-        DevServer::on_watch_error(self, err);
-    }
-
-    fn on_watch_error(&mut self, err: bun_sys::Error) {
-        DevServer::on_watch_error(self, err);
-    }
-}
-
-impl DevServer {
-    /// Called on watcher's thread; Access to dev-server state restricted.
-    pub(crate) fn on_file_update(
-        &mut self,
-        events: &[bun_watcher::Event],
-        changed_files: &[bun_watcher::ChangedFilePath],
-        watchlist: &bun_watcher::WatchList,
-    ) {
-        debug_assert!(self.magic == Magic::Valid);
+        let dev = self.dev;
+        // SAFETY: the server is live (contract of `new`). `magic` and `watcher_atomics` are not
+        // written between `init` and `Drop`.
+        let atomics = unsafe {
+            debug_assert!((*dev).magic == Magic::Valid);
+            (*dev).watcher_atomics.as_ptr()
+        };
         debug_log!("onFileUpdate start");
         scopeguard::defer! { debug_log!("onFileUpdate end") };
 
@@ -62,14 +50,10 @@ impl DevServer {
         // SAFETY: see above; `kinds` is a disjoint SoA column owned by `watchlist`.
         let kinds = unsafe { &*kinds };
 
-        let atomics = self.watcher_atomics.as_ptr();
         // SAFETY: `atomics` is the heap `WatcherAtomics`; watcher thread holds
         // `Watcher.mutex`. The returned slot is exclusive on this thread and
         // is deref'd per-access below (no long-lived `&mut`).
         let ev_ptr = unsafe { WatcherAtomics::watcher_acquire_event(atomics) };
-        // Note: erase `self` to a raw ptr in the deferred closures so the
-        // loop body can keep using `self.bun_watcher`.
-        let self_ptr: *mut Self = self;
         let ev_ptr_defer: *mut HotReloadEvent = ev_ptr;
         scopeguard::defer! {
             // SAFETY: `atomics`/`ev_ptr_defer` are live for the fn body; guard
@@ -77,10 +61,11 @@ impl DevServer {
             unsafe { WatcherAtomics::watcher_release_and_submit_event(atomics, ev_ptr_defer) }
         };
 
-        // SAFETY: see `self_ptr` SAFETY above.
-        scopeguard::defer! { unsafe { (*self_ptr).bun_watcher.flush_evictions() } };
+        let dev_defer = dev;
+        // SAFETY: the server is live; only `bun_watcher` is borrowed, under `Watcher.mutex`.
+        scopeguard::defer! { unsafe { (*dev_defer).bun_watcher.flush_evictions() } };
 
-        for event in events {
+        for event in events.iter() {
             // TODO: why does this out of bounds when you delete every file in the directory?
             if event.index as usize >= file_paths.len() {
                 continue;
@@ -110,12 +95,15 @@ impl DevServer {
                         || event.op.contains(bun_watcher::Op::RENAME)
                     {
                         // TODO: audit this line heavily
-                        self.bun_watcher.remove_at_index::<false>(
-                            bun_watcher::Kind::File,
-                            event.index,
-                            0,
-                            &[],
-                        );
+                        // SAFETY: as `flush_evictions` above.
+                        unsafe {
+                            (*dev).bun_watcher.remove_at_index::<false>(
+                                bun_watcher::Kind::File,
+                                event.index,
+                                0,
+                                &[],
+                            );
+                        }
                     }
 
                     // SAFETY: `ev_ptr` is this thread's exclusively-acquired
@@ -152,7 +140,7 @@ impl DevServer {
         }
     }
 
-    pub(crate) fn on_watch_error(&self, err: sys::Error) {
+    fn on_error(&mut self, err: sys::Error) {
         if !err.path.is_empty() {
             // Note: split out path before moving `err` into `Output::err`.
             let path = err.path.clone();

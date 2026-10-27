@@ -1,6 +1,7 @@
 //! macOS DNSServiceQueryRecord backend: all lookups share one mDNSResponder connection (see dns.rs banner).
 
 use super::*;
+use crate::jsc_hooks::RuntimeState;
 use bun_collections::index_sort;
 
 type DNSServiceRef = *mut c_void;
@@ -631,9 +632,9 @@ impl SharedConnection {
 
     /// Arm the timer for the nearest early-out deadline (JS thread only; daemon timeout otherwise).
     fn arm_early_out(&mut self) {
-        if VirtualMachine::get_or_null().is_none() {
+        let Some(state) = VirtualMachine::get_or_null().and_then(RuntimeState::try_of) else {
             return;
-        }
+        };
         let mut min_deadline: Option<i64> = None;
         for inf in self.inflight.iter() {
             // SAFETY: entries in `inflight` are live requests.
@@ -654,14 +655,11 @@ impl SharedConnection {
         // frees, after it unlinks the node. `ACTIVE` is linked: `on_early_out` marks the popped
         // node `FIRED` first thing.
         unsafe {
-            crate::jsc_hooks::timer_all().update(
+            state.timer.update(
                 core::ptr::addr_of!(self.early_out_timer)
                     .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
                     .cast_mut(),
-                &ElTimespec {
-                    sec: next.sec,
-                    nsec: next.nsec,
-                },
+                &next,
             );
         }
         self.early_out_armed_for.set(deadline);
@@ -701,10 +699,10 @@ impl SharedConnection {
         let conn = unsafe { bun_core::heap::take(this) };
         debug_assert!(conn.inflight.is_empty());
         if conn.early_out_timer.get().state == EventLoopTimerState::ACTIVE
-            && VirtualMachine::get_or_null().is_some()
+            && let Some(state) = VirtualMachine::get_or_null().and_then(RuntimeState::try_of)
         {
             // SAFETY: `ACTIVE` is linked (see `arm_early_out`).
-            unsafe { crate::jsc_hooks::timer_all().remove(conn.early_out_timer.as_ptr()) };
+            unsafe { state.timer.remove(conn.early_out_timer.as_ptr()) };
         }
         // SAFETY: `file_poll` is the live hive slot; `deinit` returns it.
         unsafe { (*conn.file_poll.as_ptr()).deinit() };

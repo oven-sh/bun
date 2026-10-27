@@ -16,11 +16,11 @@
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_uws::Loop;
 
-use crate::jsc_hooks::timer_all;
+use super::All;
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: &Loop) {
     if let Some(vm) = VirtualMachine::get_or_null() {
-        timer_all().update_date_header_timer_if_necessary(loop_, vm);
+        All::of(vm).update_date_header_timer_if_necessary(loop_, vm);
     }
 }

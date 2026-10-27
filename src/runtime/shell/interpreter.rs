@@ -1477,7 +1477,7 @@ impl Interpreter {
     /// # Safety
     /// `command_ctx` must be null or point to a live `ContextData` that
     /// outlives this call.
-    pub(crate) fn append_var_argv(
+    pub(crate) unsafe fn append_var_argv(
         out: &mut Vec<u8>,
         original_int: u8,
         event_loop: EventLoopHandle,
@@ -1520,7 +1520,7 @@ impl Interpreter {
                     return;
                 }
 
-                if let Some(arg) = vm.argv.get().and_then(|argv| argv.get(int as usize)) {
+                if let Some(arg) = vm.argv.get(int as usize) {
                     out.extend_from_slice(arg);
                 }
             }
@@ -1528,8 +1528,7 @@ impl Interpreter {
                 if command_ctx.is_null() {
                     return;
                 }
-                // SAFETY: `command_ctx` is the process-global `ContextData`
-                // (see `init`); it outlives the interpreter.
+                // SAFETY: fn contract.
                 let ctx = unsafe { &*command_ctx };
                 if int as usize > ctx.passthrough.len() {
                     return;

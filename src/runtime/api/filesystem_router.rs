@@ -32,7 +32,7 @@ const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"
 
 /// Newtype so the orphan rule lets us `impl ResolverLike` for the foreign
 /// `bun_resolver::Resolver`.
-struct RouterResolver<'a, 'r>(&'r mut Resolver<'a>);
+struct RouterResolver<'a, 'r>(&'r Resolver<'a>);
 
 impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     #[inline]
@@ -103,15 +103,16 @@ fn load_router(
 ) -> JsResult<Option<(Router::Router, bun_resolver::DirInfoRef)>> {
     let vm = VirtualMachine::get();
     let mut log = Log::Log::new();
-    // SAFETY: no other transpiler borrow is live across the store.
-    let previous_log = core::mem::replace(
-        &mut unsafe { vm.transpiler_mut() }.resolver.log,
-        core::ptr::NonNull::from(&mut log),
-    );
+    let resolver = &vm.transpiler().resolver;
+    let previous_log = resolver.log_ptr();
+    // SAFETY: `_restore_log` takes the pointer out again before `log` drops.
+    // FIXME: `load_routes` below holds `&mut log` while it calls the resolver, which may write to
+    // the log through this pointer.
+    unsafe { resolver.set_log(core::ptr::NonNull::from(&mut log)) };
     // Dropped before `log`.
     let _restore_log = scopeguard::guard(previous_log, |previous_log| {
-        // SAFETY: runs after the last use of `resolver` below, so no other transpiler borrow is live.
-        unsafe { vm.transpiler_mut() }.resolver.log = previous_log;
+        // SAFETY: it was in use when this function was called, and its owner has not returned.
+        unsafe { resolver.set_log(previous_log) };
     });
     if load == Load::FromDisk {
         FileSystemRouter::bust_dir_cache_recursive(
@@ -119,9 +120,6 @@ fn load_router(
         );
     }
 
-    // SAFETY: nothing until its last use, in `load_routes`, reaches the transpiler through the VM
-    // or runs script (see `transpiler_mut` on macros).
-    let resolver = &mut unsafe { vm.transpiler_mut() }.resolver;
     let root_dir_info = match resolver.read_dir_info(&config.dir) {
         Ok(Some(info)) => info,
         Ok(None) => return Ok(None),
@@ -164,9 +162,7 @@ impl FileSystemRouter {
             path = normalized.as_slice();
         }
 
-        // SAFETY: `load_router` holds no transpiler borrow across this call, and the borrow ends
-        // with the statement.
-        let root_dir_info = match unsafe { vm.transpiler_mut() }.resolver.read_dir_info(path) {
+        let root_dir_info = match vm.transpiler().resolver.read_dir_info(path) {
             Ok(v) => v,
             Err(_) => return,
         };

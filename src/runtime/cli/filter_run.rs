@@ -306,7 +306,7 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).loop_();
-    event_loop      = |this| (*(*this).state.as_ptr()).event_loop_handle.as_event_loop_ctx();
+    event_loop      = |this| (*(*this).state.as_ptr()).event_loop.as_event_loop_ctx();
 }
 
 /// Compile-time ANSI-tag expansion.
@@ -319,9 +319,6 @@ macro_rules! fmt {
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
     event_loop: &'static MiniEventLoop,
-    /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     // buffer for batched output
     draw_buf: Vec<u8>,
@@ -851,13 +848,10 @@ pub(crate) fn run_scripts_with_filter(
         },
     )?;
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
-    let mut this_transpiler = unsafe { this_transpiler.assume_init() };
+    let this_transpiler = unsafe { this_transpiler.assume_init() };
 
-    let selected = FilterArg::select_packages(
-        &*ctx,
-        &mut this_transpiler.resolver,
-        fsinstance.top_level_dir(),
-    )?;
+    let selected =
+        FilterArg::select_packages(&*ctx, &this_transpiler.resolver, fsinstance.top_level_dir())?;
 
     let mut scripts: Vec<ScriptConfig> = Vec::new();
     for package in &selected.packages {
@@ -975,7 +969,6 @@ pub(crate) fn run_scripts_with_filter(
     let mut state = State {
         handles, // placeholder; reassigned after init below
         event_loop,
-        event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
         draw_buf: Vec::new(),
         last_lines_written: 0,

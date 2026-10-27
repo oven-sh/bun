@@ -72,19 +72,19 @@ fn jsv_to_u32(v: JSValue) -> u32 {
 }
 
 impl CountedKeepAlive {
-    fn ref_(&self, _vm: &VirtualMachine) {
+    fn ref_(&self, vm: &'static VirtualMachine) {
         let ref_count = self.ref_count.get();
         if ref_count == 0 {
-            self.keep_alive.ref_(bun_io::js_vm_ctx());
+            self.keep_alive.ref_(vm.event_loop_ctx());
         }
         self.ref_count.set(ref_count + 1);
     }
 
-    fn unref(&self, _vm: &VirtualMachine) {
+    fn unref(&self, vm: &'static VirtualMachine) {
         let ref_count = self.ref_count.get() - 1;
         self.ref_count.set(ref_count);
         if ref_count == 0 {
-            self.keep_alive.unref(bun_io::js_vm_ctx());
+            self.keep_alive.unref(vm.event_loop_ctx());
         }
     }
 }

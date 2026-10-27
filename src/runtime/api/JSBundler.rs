@@ -8,6 +8,7 @@ use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
 use bun_ast::Target;
 use bun_bundler::BundleV2;
+use bun_bundler::bundle_v2::LoopPoster;
 use bun_bundler::options;
 use bun_collections::{StringMap, StringSet};
 use bun_core::MutableString;
@@ -1627,31 +1628,34 @@ pub(crate) mod js_bundler {
             // running BundleV2), which is distinct from the
             // `enqueue_on_js_loop_for_plugins` target (the plugin host's JS loop)
             // when `Bun.build` runs the bundler on its own Mini event loop.
-            // SAFETY: `parse_task.ctx` and `bv2` are valid backrefs; `mini` is
-            // live (see `BundleV2::mini_poster`).
+            // SAFETY: `parse_task.ctx` and `bv2` are valid backrefs; `mini`:
+            // see `LoopPoster::Mini`.
             unsafe {
                 let ctx = (*self.parse_task).ctx.expect("ParseTask.ctx unset");
-                match (*ctx.as_mut_ptr()).mini_poster {
-                    None => {
+                match (*ctx.as_mut_ptr())
+                    .poster
+                    .as_ref()
+                    .expect("bundle has an event loop")
+                {
+                    LoopPoster::Js(poster) => {
                         let ct = ConcurrentTask::create_from(
                             std::ptr::from_mut::<Load>(self).cast::<LoadDeferred>(),
                         );
-                        let poster = (*ctx.as_mut_ptr())
-                            .js_poster
-                            .as_ref()
-                            .expect("JS-owned bundle has a poster");
                         if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                             // Owning JS VM torn down mid-bundle: the notify never runs.
                             bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
                         }
                     }
-                    Some(mini) => {
-                        mini.as_ref()
-                            .enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
-                                std::ptr::from_mut::<Load>(self),
-                                on_notify_defer_mini_wrap,
-                                core::mem::offset_of!(Load, defer_task),
-                            );
+                    LoopPoster::Mini(mini) => {
+                        bun_event_loop::MiniEventLoop::Shared::enqueue_task_concurrent_with_extra_ctx::<
+                            Load,
+                            BundleV2<'static>,
+                        >(
+                            mini.as_ptr(),
+                            std::ptr::from_mut::<Load>(self),
+                            on_notify_defer_mini_wrap,
+                            core::mem::offset_of!(Load, defer_task),
+                        );
                     }
                 }
 

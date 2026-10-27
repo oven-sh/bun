@@ -78,7 +78,7 @@ pub(crate) struct Framework {
 }
 
 pub(super) fn resolve_path(
-    r: &mut bun_resolver::Resolver,
+    r: &bun_resolver::Resolver,
     path: &[u8],
 ) -> Result<Utf8Bytes<'static>, bun_resolver::Error> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
@@ -157,8 +157,8 @@ impl Framework {
     /// specifiers and entry points against the resolvers, in place. Errors written into `r.log`.
     pub(crate) fn resolve(
         &mut self,
-        server: &mut bun_resolver::Resolver,
-        client: &mut bun_resolver::Resolver,
+        server: &bun_resolver::Resolver,
+        client: &bun_resolver::Resolver,
     ) -> crate::Result<()> {
         let mut had_errors = false;
 
@@ -218,7 +218,7 @@ impl Framework {
 
     fn resolve_helper(
         built_in_modules: &bun_collections::StringArrayHashMap<BuiltInModule>,
-        r: &mut bun_resolver::Resolver,
+        r: &bun_resolver::Resolver,
         path: &mut Utf8Bytes<'static>,
         had_errors: &mut bool,
         desc: &[u8],

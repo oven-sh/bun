@@ -46,10 +46,10 @@ use bun_sys::windows::libuv as uv;
 
 bun_output::define_scoped_log!(log, Listener, visible);
 
-/// This thread's `SSL_CTX` cache.
+/// `vm`'s `SSL_CTX` cache.
 #[inline]
-fn ssl_ctx_cache() -> &'static crate::api::SSLContextCache::SSLContextCache {
-    &crate::jsc_hooks::runtime_state().ssl_ctx_cache
+fn ssl_ctx_cache(vm: &VirtualMachine) -> &crate::api::SSLContextCache::SSLContextCache {
+    &crate::jsc_hooks::RuntimeState::of(vm).ssl_ctx_cache
 }
 
 pub(crate) struct Listener {
@@ -748,13 +748,12 @@ impl Listener {
         let sni_ctx: boring_sys::OwnedSslCtx =
             if let Some(sc) = tls.as_class_ref::<SecureContext>() {
                 sc.ctx.clone()
-            } else if let Some(ssl_config) = {
-                let vm = VirtualMachine::get();
-                SSLConfig::from_js(vm, global, tls, true)?
-            } {
+            } else if let vm = VirtualMachine::get()
+                && let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)?
+            {
                 // Note: `cfg` cleanup handled by Drop on SSLConfig
                 let mut create_err = uws::create_bun_socket_error_t::none;
-                match ssl_ctx_cache().get_or_create(&ssl_config, &mut create_err) {
+                match ssl_ctx_cache(vm).get_or_create(&ssl_config, &mut create_err) {
                     Some(ctx) => ctx,
                     None => {
                         if create_err != uws::create_bun_socket_error_t::none {
@@ -1254,7 +1253,7 @@ impl Listener {
                 // `requires_custom_request_ctx` gate is gone; the cache makes the
                 // default-vs-custom distinction by content.
                 let mut create_err = uws::create_bun_socket_error_t::none;
-                owned_ssl_ctx = ssl_ctx_cache().get_or_create(ssl_cfg, &mut create_err);
+                owned_ssl_ctx = ssl_ctx_cache(vm).get_or_create(ssl_cfg, &mut create_err);
                 if owned_ssl_ctx.is_none() {
                     return Err(cx.global().throw_value(
                         crate::socket::uws_jsc::create_bun_socket_error_to_js(

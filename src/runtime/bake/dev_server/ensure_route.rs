@@ -136,18 +136,15 @@ pub(super) fn ensure_route_is_bundled(
                             } else {
                                 // TODO: implement a proper solution here
                                 let vm = dev.vm();
-                                let config_plugin_names = vm.bake_config_plugin_names.take();
-                                let has_tailwind = vm
-                                    .transpiler()
-                                    .options
-                                    .serve_plugins
-                                    .iter()
-                                    .flatten()
-                                    .chain(config_plugin_names.iter())
-                                    .find(|p| strings::includes(p, b"tailwind"))
-                                    .map(|_| Default::default());
-                                vm.bake_config_plugin_names.set(config_plugin_names);
-                                dev.has_tailwind_plugin_hack = has_tailwind;
+                                let has_tailwind = vm.bake_config_has_tailwind_plugin.get()
+                                    || vm
+                                        .transpiler()
+                                        .options
+                                        .serve_plugins
+                                        .iter()
+                                        .flatten()
+                                        .any(|p| strings::includes(p, b"tailwind"));
+                                dev.has_tailwind_plugin_hack = has_tailwind.then(Default::default);
 
                                 let load_result: crate::server::GetOrStartLoadResult = dev
                                     .server

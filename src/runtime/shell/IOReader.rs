@@ -74,11 +74,6 @@ pub(crate) struct IOReader {
     state: UnsafeCell<State>,
 }
 
-// SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
-unsafe impl Send for IOReader {}
-// SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
-unsafe impl Sync for IOReader {}
-
 impl IOReader {
     #[inline]
     #[allow(clippy::mut_from_ref)] // interior mutability via UnsafeCell; single-threaded

@@ -44,6 +44,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             root: _,
             inspector_server_id: _,
             configuration_hash_key: _,
+            vm: _,
             vm_handle: _,
             server: _,
             router: _,
@@ -109,6 +110,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .watcher_atomics
 
     // pointers that are not considered a part of DevServer
+    //   .vm
     //   .server
     //   .server_transpiler
     //   .client_transpiler
@@ -309,7 +311,7 @@ impl DevServer {
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
         // SAFETY: `ACTIVE` is linked: the popped node was marked `FIRED` first thing.
         // `DevServer::drop` unlinks it before the box is freed. `dev` is not used again.
-        unsafe { crate::jsc_hooks::timer_all().update(timer, &next) };
+        unsafe { crate::timer::All::of(dev.vm).update(timer, &next) };
     }
 
     pub(crate) fn emit_memory_visualizer_message_if_needed(&mut self) {}

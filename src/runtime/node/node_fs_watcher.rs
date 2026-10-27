@@ -15,7 +15,6 @@ use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CommonAbortReason,
     CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
-    VirtualMachineRef as VirtualMachine,
 };
 use bun_jsc::{JsCell, JsCellRefExt as _};
 use bun_paths::resolve_path::{self as Path, platform};
@@ -52,6 +51,9 @@ pub(crate) struct FSWatcher {
     handle: bun_jsc::VmHandle,
     #[cfg(not(windows))]
     loop_kind: bun_jsc::LoopKind,
+    /// libuv delivers fs events on the JS thread, so no other thread borrows `self`.
+    #[cfg(windows)]
+    vm: &'static jsc::VirtualMachineRef,
     verbose: bool,
 
     mutex: Mutex,
@@ -86,12 +88,6 @@ bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, cause| {
 });
 
 impl FSWatcher {
-    /// JS thread only.
-    #[inline]
-    fn vm_ctx() -> bun_io::EventLoopCtx {
-        VirtualMachine::get().event_loop_ctx()
-    }
-
     /// Watcher thread → JS thread. `task` is the intrusive node of a heap batch
     /// task; the queue takes ownership unless the VM has been torn down, in
     /// which case the caller gets it back.
@@ -429,11 +425,12 @@ impl core::fmt::Display for StringOrBytesToDecode {
 impl FSWatchTaskWindows {
     pub(crate) fn append_abort(&mut self) {
         let ctx = self.ctx;
+        let watcher = ctx.expect("FSWatchTask.ctx unset");
         // Balanced by `deinit()`, as in `on_path_update_windows` and the posix `enqueue()`.
         // SAFETY: ParentRef — `ctx` is the live owning FSWatcher set at
         // construction; FSWatcher outlives every task it enqueues.
         // R-2: `ref_task` takes `&self`; ParentRef Derefs to `&FSWatcher`.
-        if !ctx.expect("FSWatchTask.ctx unset").ref_task() {
+        if !watcher.ref_task() {
             return;
         }
         let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
@@ -442,9 +439,7 @@ impl FSWatchTaskWindows {
         }));
 
         // Ownership of `task` transfers to the queue (drained on the same thread).
-        VirtualMachine::get()
-            .event_loop()
-            .enqueue_task(Task::init(task));
+        watcher.vm.event_loop().enqueue_task(Task::init(task));
     }
 
     /// this runs on JS Context Thread
@@ -579,10 +574,8 @@ impl FSWatcher {
             ctx: this.current_task.get().ctx,
             event,
         }));
-        // libuv delivers fs events on the JS thread. Ownership of `task` transfers to the queue.
-        VirtualMachine::get()
-            .event_loop()
-            .enqueue_task(Task::init(task));
+        // Ownership of `task` transfers to the queue.
+        this.vm.event_loop().enqueue_task(Task::init(task));
     }
 
     #[cfg(windows)]
@@ -753,7 +746,7 @@ impl FSWatcher {
         // R-2: deref as shared; mutation goes through `Cell`/`JsCell`.
         let this_ref = unsafe { &*this };
         if this_ref.persistent.get() {
-            this_ref.poll_ref.ref_(Self::vm_ctx());
+            this_ref.poll_ref.ref_(bun_io::js_vm_ctx());
         }
 
         // SAFETY: the GC wrapper takes over the ref `this` was created with.
@@ -943,14 +936,14 @@ impl FSWatcher {
     pub(crate) fn r#ref(&self) {
         if !self.closed.get() && !self.persistent.get() {
             self.persistent.set(true);
-            self.poll_ref.ref_(Self::vm_ctx());
+            self.poll_ref.ref_(bun_io::js_vm_ctx());
         }
     }
 
     pub(crate) fn unref(&self) {
         if self.persistent.get() {
             self.persistent.set(false);
-            self.poll_ref.unref(Self::vm_ctx());
+            self.poll_ref.unref(bun_io::js_vm_ctx());
         }
     }
 
@@ -1043,7 +1036,7 @@ impl FSWatcher {
 
         if self.persistent.get() {
             self.persistent.set(false);
-            self.poll_ref.unref(Self::vm_ctx());
+            self.poll_ref.unref(bun_io::js_vm_ctx());
         }
 
         self.abort_handle.unfollow();
@@ -1093,6 +1086,8 @@ impl FSWatcher {
             handle: vm.handle(),
             #[cfg(not(windows))]
             loop_kind: vm.current_loop_kind(),
+            #[cfg(windows)]
+            vm,
             current_task: JsCell::new(FSWatchTask {
                 ctx: None,
                 ..Default::default()

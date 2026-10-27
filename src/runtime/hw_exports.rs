@@ -173,8 +173,8 @@ mod sql_hooks {
     use super::*;
     use bun_sql_jsc::jsc::{RareData as SqlRareData, SqlRuntimeHooks};
 
-    fn sql_rare(_vm: &VirtualMachine) -> &SqlRareData {
-        &crate::jsc_hooks::runtime_state().sql_rare
+    fn sql_rare(vm: &VirtualMachine) -> &SqlRareData {
+        &crate::jsc_hooks::RuntimeState::of(vm).sql_rare
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         use crate::socket::SSLConfigFromJs;

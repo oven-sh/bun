@@ -968,8 +968,7 @@ impl Request {
         init: JSValue,
     ) -> JsResult<Request> {
         let mut success = false;
-        // SAFETY: bun_vm() yields the live per-thread VM singleton.
-        let body = body::hive_alloc(BodyValue::Null);
+        let body = body::hive_alloc(cx.vm(), BodyValue::Null);
         // Snapshot the seed slot pointer for the repoint check below; `body`
         // (the +1) is moved into `req.body` next.
         let body_seed_ptr = body.as_ptr();
@@ -1455,7 +1454,7 @@ impl Request {
         let _ = self.ensure_url();
         let body_ = self.clone_body_value_via_cached_stream(cx)?;
         // BodyValue's Drop frees `body_` on the `?` error path
-        let body = body::hive_alloc(body_);
+        let body = body::hive_alloc(cx.vm(), body_);
         // Last fallible call; an early return here leaves `req.url` untouched.
         // `body` (a `BodyHiveHandle`) drops on the `?` error path, releasing its +1.
         let headers = self.clone_headers(cx.global())?;

@@ -86,7 +86,7 @@ pub(crate) struct NodeHTTPResponse {
 
     pub(crate) body_read_state: Cell<BodyReadState>,
     pub(crate) body_read_ref: JsCell<jsc::Ref>,
-    pub(crate) promise: JsCell<StrongOptional>, // Strong.Optional
+    pub(crate) promise: StrongOptional,
     pub(crate) server: AnyServer,
 
     /// node:http: the raw trailer section that followed THIS request's chunked
@@ -717,11 +717,8 @@ impl NodeHTTPResponse {
         // and release the ref here. `on_resolve`/`on_reject` observe the
         // empty slot and skip their own deref, so a late settlement is a
         // no-op rather than a double release.
-        let had_async_promise = self.promise.with_mut(|p| {
-            let had = p.has();
-            p.deinit();
-            had
-        });
+        let had_async_promise = self.promise.has();
+        self.promise.deinit();
 
         let vm = VirtualMachine::get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
@@ -1391,11 +1388,8 @@ pub(crate) fn on_resolve(
     let global_object = cx.global();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
-    let had_promise = this.promise.with_mut(|p| {
-        let had = p.has();
-        p.deinit();
-        had
-    });
+    let had_promise = this.promise.has();
+    this.promise.deinit();
     this.maybe_stop_reading_body(wrapper.to_js());
 
     let flags = this.flags.get();
@@ -1431,11 +1425,8 @@ pub(crate) fn on_reject(
     let global_object = cx.global();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
-    let had_promise = this.promise.with_mut(|p| {
-        let had = p.has();
-        p.deinit();
-        had
-    });
+    let had_promise = this.promise.has();
+    this.promise.deinit();
     this.maybe_stop_reading_body(wrapper.to_js());
 
     let flags = this.flags.get();
@@ -2435,7 +2426,7 @@ impl Drop for NodeHTTPResponse {
         self.body_read_ref
             .with_mut(|r| r.unref(VirtualMachine::get()));
 
-        self.promise.with_mut(|p| p.deinit());
+        self.promise.deinit();
     }
 }
 
@@ -2523,7 +2514,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         }),
         poll_ref: JsCell::new(jsc::Ref::default()),
         body_read_ref: JsCell::new(jsc::Ref::default()),
-        promise: JsCell::new(StrongOptional::empty()),
+        promise: StrongOptional::empty(),
         request_trailers: JsCell::new(Vec::new()),
         armed_this_value: Cell::new(JSValue::ZERO),
         raw_request_headers: JsCell::new(Vec::new()),

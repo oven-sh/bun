@@ -1398,10 +1398,10 @@ impl BlobExt for Blob {
                         // (type-erased `*Blob.Store`); compare on raw pointer
                         // identity exactly like the POSIX arm below.
                         let store_ptr = store.as_ptr().cast::<c_void>();
-                        if rare.stdout_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
+                        if rare.stdout_store().map(|p| p.as_ptr()) == Some(store_ptr) {
                             break 'brk true;
                         }
-                        if rare.stderr_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
+                        if rare.stderr_store().map(|p| p.as_ptr()) == Some(store_ptr) {
                             break 'brk true;
                         }
                     }
@@ -1599,10 +1599,10 @@ impl BlobExt for Blob {
                 }
                 if let Some(rare) = vm.rare_data.get() {
                     let store_ptr = store.as_ptr().cast::<c_void>();
-                    if rare.stdout_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
+                    if rare.stdout_store().map(|p| p.as_ptr()) == Some(store_ptr) {
                         break 'brk true;
                     }
-                    if rare.stderr_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
+                    if rare.stderr_store().map(|p| p.as_ptr()) == Some(store_ptr) {
                         break 'brk true;
                     }
                 }
@@ -4257,7 +4257,7 @@ pub(crate) fn write_file_with_source_destination(
                     .set(cx.global(), promise_value)
             };
             match write_file::WriteFileWindows::create(
-                cx.global().bun_vm().event_loop(),
+                cx.global().bun_vm(),
                 cx.context(),
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),

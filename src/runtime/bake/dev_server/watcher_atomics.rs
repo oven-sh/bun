@@ -16,6 +16,8 @@ pub(crate) struct WatcherAtomics {
     pub(crate) current_event: Option<u8>,
     /// Watcher-thread-only; index into `events` queued behind `current_event`.
     pub(crate) pending_event: Option<u8>,
+    /// Watcher-thread-only; what the `Watcher` calls back with.
+    pub(crate) watch_context: WatchContext,
     // Debug fields to ensure methods are being called in the right order.
     #[cfg(debug_assertions)]
     pub(crate) dbg_watcher_event: Option<*mut HotReloadEvent>,
@@ -286,13 +288,17 @@ impl WatcherAtomics {
 }
 
 impl WatcherAtomics {
-    pub(crate) fn init(owner: *mut DevServer) -> core::ptr::NonNull<Self> {
+    /// # Safety
+    /// As [`WatchContext::new`], for the `Watcher` that is given `watch_context`.
+    pub(crate) unsafe fn init(owner: *mut DevServer) -> core::ptr::NonNull<Self> {
         let mk_event = || HotReloadEvent::init_empty(owner);
         let atomics: *mut WatcherAtomics = bun_core::heap::into_raw(Box::new(WatcherAtomics {
             events: [mk_event(), mk_event(), mk_event()],
             next_event: core::sync::atomic::AtomicU8::new(NextEvent::DONE.0),
             current_event: None,
             pending_event: None,
+            // SAFETY: fn contract.
+            watch_context: unsafe { WatchContext::new(owner) },
             #[cfg(debug_assertions)]
             dbg_watcher_event: None,
             #[cfg(debug_assertions)]

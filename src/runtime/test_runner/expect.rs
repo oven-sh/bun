@@ -821,14 +821,16 @@ impl Expect {
         let _ = vm.global().handle_rejected_promises();
 
         let scope = vm.unhandled_rejection_scope();
-        let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture.get();
-        vm.unhandled_pending_rejection_to_capture.set(Some(&raw mut return_value));
+        // SAFETY: `return_value` outlives the slot's hold on it, which ends with the restore below.
+        let prev_unhandled_pending_rejection_to_capture =
+            unsafe { vm.replace_unhandled_pending_rejection_to_capture(Some(&raw mut return_value)) };
         vm.on_unhandled_rejection.set(VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value);
         return_value_from_function = match value.call(global_this, JSValue::UNDEFINED, &[]) {
             Ok(v) => v,
             Err(err) => global_this.take_exception(err),
         };
-        vm.unhandled_pending_rejection_to_capture.set(prev_unhandled_pending_rejection_to_capture);
+        // SAFETY: whoever installed the previous slot vouches for it.
+        unsafe { vm.replace_unhandled_pending_rejection_to_capture(prev_unhandled_pending_rejection_to_capture) };
 
         let _ = vm.global().handle_rejected_promises();
 

@@ -283,12 +283,7 @@ impl Config {
                 self.tsconfig_buf = out.to_owned_slice().into();
 
                 // TODO: JSC -> Ast conversion
-                // SAFETY: no other transpiler borrow is live here and parsing JSON runs no
-                // script (see `transpiler_mut` on macros).
-                let json_cache = &mut unsafe { VirtualMachine::get().transpiler_mut() }
-                    .resolver
-                    .caches
-                    .json;
+                let json_cache = &VirtualMachine::get().transpiler().resolver.caches.json;
                 if let Ok(Some(parsed_tsconfig)) = TSConfigJSON::parse(
                     &mut self.log,
                     &bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
@@ -332,12 +327,7 @@ impl Config {
                 self.macros_buf = out.to_owned_slice().into();
                 let source =
                     bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
-                // SAFETY: no other transpiler borrow is live here and parsing JSON runs no
-                // script (see `transpiler_mut` on macros).
-                let json_cache = &mut unsafe { VirtualMachine::get().transpiler_mut() }
-                    .resolver
-                    .caches
-                    .json;
+                let json_cache = &VirtualMachine::get().transpiler().resolver.caches.json;
                 let Ok(Some(json)) = json_cache.parse_json(
                     &mut self.log,
                     &source,
@@ -705,18 +695,16 @@ impl TransformTask {
         // *original* transpiler, not this copy. Null it so `parse()` lazily
         // creates a fresh one whose self-refs target this copy, then reclaim
         // the fresh box on every return path (mirrors `RuntimeTranspilerStore`).
-        self.transpiler.macro_context = None;
-        let _macro_ctx_guard = scopeguard::guard(
-            core::ptr::addr_of_mut!(self.transpiler.macro_context),
-            |slot| {
+        self.transpiler.macro_context.set(None);
+        let _macro_ctx_guard =
+            scopeguard::guard(core::ptr::addr_of!(self.transpiler.macro_context), |slot| {
                 // SAFETY: `slot` points into the heap-stable `TransformTask`
-                // box; only this thread holds `&mut self`, and the parser's
-                // `&mut MacroContext` borrow ended with `parse()`.
+                // box; only this thread holds `&mut self`.
                 if let Some(ctx) = unsafe { (*slot).take() } {
-                    ctx.deinit();
+                    // SAFETY: the parser's copy of the handle went with `parse()`.
+                    unsafe { ctx.deinit() };
                 }
-            },
-        );
+            });
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
@@ -729,7 +717,9 @@ impl TransformTask {
             self.input_code.slice(),
         ));
         self.transpiler.set_arena(arena_ref);
-        self.transpiler.set_log(&raw mut self.log);
+        // SAFETY: `self.log` lives as long as the copy, beside it in the task, and this function
+        // does not touch it while a method of the copy runs.
+        unsafe { self.transpiler.set_log(&raw mut self.log) };
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
         let jsx = match tsconfig {
@@ -979,7 +969,9 @@ impl JSTranspiler {
         // SAFETY: same exclusive-ownership invariant as the line above — `this: Box<_>`
         // is uniquely owned at init time, so `&mut` projection is alias-free.
         let transpiler = unsafe { this.transpiler.get_mut() };
-        transpiler.set_log(&raw mut config.log);
+        // SAFETY: `config.log` lives as long as the transpiler, beside it in the `JSTranspiler`,
+        // and is borrowed below only between calls to the transpiler.
+        unsafe { transpiler.set_log(&raw mut config.log) };
         // `set_log` doesn't update `options.log`, which `configure_defines` logs to.
         transpiler.options.log = &raw mut config.log;
 
@@ -1003,15 +995,18 @@ impl JSTranspiler {
         // REPL mode disables DCE to preserve expressions like `42`
         transpiler.options.dead_code_elimination =
             config.dead_code_elimination && !config.repl_mode;
-        transpiler.options.minify_whitespace = config.minify_whitespace;
+        transpiler
+            .options
+            .minify_whitespace
+            .set(config.minify_whitespace);
 
         // Keep defaults for these
         if config.minify_syntax {
-            transpiler.options.minify_syntax = true;
+            transpiler.options.minify_syntax.set(true);
         }
 
         if config.minify_identifiers {
-            transpiler.options.minify_identifiers = true;
+            transpiler.options.minify_identifiers.set(true);
         }
 
         transpiler.options.transform_only = !transpiler.options.allow_runtime;
@@ -1035,13 +1030,11 @@ impl Drop for JSTranspiler {
         // `self.transpiler` and (unlike `transformSync`) leave it in place
         // for reuse across calls. The boxed `bun_js_parser_jsc::MacroContext`
         // behind `.data` has no `Drop` glue — release it explicitly.
-        // `with_mut` borrow is closure-scoped; no JS re-entry inside.
-        self.transpiler.with_mut(|t| {
-            if let Some(ctx) = t.macro_context.take() {
-                ctx.deinit();
-            }
-        });
-        let log = self.transpiler.get().log;
+        if let Some(ctx) = self.transpiler.get().macro_context.take() {
+            // SAFETY: `&mut self`: no parse is in progress, so no copy of the handle is left.
+            unsafe { ctx.deinit() };
+        }
+        let log = self.transpiler.get().log_ptr();
         if !log.is_null() {
             // SAFETY: `transpiler.log` was set via `set_log` to `&mut self.config.log`
             // (heap-stable for `Self`'s lifetime) and just checked non-null.
@@ -1107,7 +1100,9 @@ impl Drop for TranspilerStateGuard {
         let prev_arena = self.prev_arena;
         let prev_macro_context = self.prev_macro_context.take();
         let transpiler = self.transpiler_mut();
-        transpiler.set_log(restore_log);
+        // SAFETY: `config.log` lives as long as the transpiler, beside it in the `JSTranspiler`,
+        // and is borrowed by no one while a method of the transpiler runs.
+        unsafe { transpiler.set_log(restore_log) };
         transpiler.arena = prev_arena;
         if let Some(prev) = prev_macro_context {
             // `transformSync` created a fresh MacroContext for this parse and
@@ -1116,9 +1111,10 @@ impl Drop for TranspilerStateGuard {
             // so overwriting it with `prev` would strand the box. Free it
             // explicitly before restoring the outer state.
             if let Some(new_ctx) = transpiler.macro_context.take() {
-                new_ctx.deinit();
+                // SAFETY: the parse it was made for has returned, and its AST is printed.
+                unsafe { new_ctx.deinit() };
             }
-            transpiler.macro_context = prev;
+            transpiler.macro_context.set(prev);
         }
     }
 }
@@ -1133,24 +1129,6 @@ impl JSTranspiler {
         // SAFETY: `as_ptr()` yields the `UnsafeCell` payload; `&raw mut` field
         // projection forms no intermediate reference.
         unsafe { &raw mut (*self.config.as_ptr()).log }
-    }
-
-    /// `&mut Transpiler` projection through `&self`.
-    ///
-    /// # Safety
-    ///
-    /// Caller must not hold another `&`/`&mut` to `self.transpiler` for the
-    /// borrow's lifetime. `Transpiler::parse` may re-enter JS via macros; if
-    /// that JS calls back into a `JSTranspiler` host-fn on *this same instance*
-    /// the inner `Transpiler` is re-borrowed — a pre-existing hazard that R-2's
-    /// outer-struct fix does not address. The R-2 invariant this upholds is
-    /// that no `noalias &mut JSTranspiler` is live across that re-entry.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    unsafe fn transpiler_mut(&self) -> &mut Transpiler::Transpiler<'static> {
-        // SAFETY: caller upholds the no-aliasing precondition documented on this
-        // `unsafe fn`; `JsCell::get_mut` projects through `UnsafeCell`.
-        unsafe { self.transpiler.get_mut() }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1227,8 +1205,7 @@ impl JSTranspiler {
             allow_bytecode_cache: false,
         };
 
-        // SAFETY: see `transpiler_mut` — `parse` may re-enter JS via macros.
-        unsafe { self.transpiler_mut() }.parse(parse_options, None)
+        self.transpiler.get().parse(parse_options, None)
     }
 
     pub(crate) fn scan(
@@ -1254,7 +1231,9 @@ impl JSTranspiler {
         let prev_arena = self.transpiler.with_mut(|t| {
             let prev = t.arena;
             t.set_arena(arena_ref);
-            t.set_log(&raw mut log);
+            // SAFETY: see above. `log` is read below only through the transpiler's pointer,
+            // after the parse has returned.
+            unsafe { t.set_log(&raw mut log) };
             prev
         });
         let _restore = TranspilerStateGuard {
@@ -1400,7 +1379,9 @@ impl JSTranspiler {
             // `take()` both reads the prior value AND nulls it.
             let prev_mc = t.macro_context.take();
             t.set_arena(arena_ref);
-            t.set_log(&raw mut log);
+            // SAFETY: see above. `log` is read below only through the transpiler's pointer,
+            // after the parse has returned.
+            unsafe { t.set_log(&raw mut log) };
             (prev_arena, prev_mc)
         });
         let _restore = TranspilerStateGuard {
@@ -1433,9 +1414,8 @@ impl JSTranspiler {
 
         buffer_writer.reset();
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
-        // SAFETY: see `transpiler_mut` — `print` does not re-enter JS.
         // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
-        if let Err(err) = unsafe { self.transpiler_mut() }.print(
+        if let Err(err) = self.transpiler.get().print(
             &arena,
             parse_result,
             &mut printer,
@@ -1549,7 +1529,9 @@ impl JSTranspiler {
             // SAFETY: `arena` outlives every use through `t` — `_restore` below
             // restores `prev_arena` before `arena` drops (reverse-decl order).
             t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
-            t.set_log(&raw mut log);
+            // SAFETY: likewise for `log`. No method of the transpiler runs while `scan` below
+            // borrows it: a scan visits nothing, so it calls no macro.
+            unsafe { t.set_log(&raw mut log) };
             prev
         });
         let _restore = TranspilerStateGuard {
@@ -1569,15 +1551,12 @@ impl JSTranspiler {
         };
 
         let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
-        // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
-        // disjointly for `macro_context` (stored in `opts`) and `options.define`
-        // (raw-addr read) below; both end when `opts` is consumed by `scan()`.
-        let transpiler = unsafe { self.transpiler_mut() };
-        if transpiler.macro_context.is_none() {
+        let transpiler = self.transpiler.get();
+        if transpiler.macro_context.get().is_none() {
             let mc = JSAst::Macro::MacroContext::init(transpiler);
-            transpiler.macro_context = Some(mc);
+            transpiler.macro_context.set(Some(mc));
         }
-        opts.macro_context = transpiler.macro_context.as_mut();
+        opts.macro_context = transpiler.macro_context.get();
 
         // `options.define` is `Box<Define>` owned by the long-lived `Transpiler`;
         // the parser borrows it for the arena lifetime.

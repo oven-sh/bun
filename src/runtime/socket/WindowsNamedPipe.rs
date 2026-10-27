@@ -36,15 +36,13 @@ use bun_uws::us_bun_verify_error_t;
 
 use crate::socket::SSLConfig;
 use crate::socket::ssl_wrapper::{self, SSLWrapper};
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
 pub(crate) type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
-
-use crate::jsc_hooks::timer_all;
 
 pub(crate) struct WindowsNamedPipe {
     pub(crate) wrapper: JsCell<Option<WrapperType>>,
@@ -958,10 +956,11 @@ impl WindowsNamedPipe {
     }
 
     pub(crate) fn set_timeout_in_milliseconds(&self, ms: c_uint) {
+        let all = crate::timer::All::of(self.vm);
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             // SAFETY: `ACTIVE` is linked: `on_timeout` marks the popped node `FIRED` before it
             // calls anything.
-            unsafe { timer_all().remove(self.event_loop_timer.as_ptr()) };
+            unsafe { all.remove(self.event_loop_timer.as_ptr()) };
         }
         self.current_timeout.set(ms);
 
@@ -971,20 +970,13 @@ impl WindowsNamedPipe {
         }
 
         // reschedule the timer
-        // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
-        // bridge from `bun_core::Timespec` until the lower tier switches.
         let next = timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
-        self.event_loop_timer.with_mut(|t| {
-            t.next = ElTimespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            };
-        });
+        self.event_loop_timer.with_mut(|t| t.next = next);
         // SAFETY: unlinked above. The node is in a cell of `self`, which was written in place into
         // its heap-allocated `WindowsNamedPipeContext` and is dropped with it; `Drop` unlinks the node
         // (`release_resources`).
         unsafe {
-            timer_all().insert(
+            all.insert(
                 core::ptr::addr_of!(self.event_loop_timer)
                     .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
                     .cast_mut(),

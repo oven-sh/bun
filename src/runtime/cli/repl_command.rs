@@ -13,7 +13,6 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::dns_jsc::Order as DnsOrder;
-use bun_alloc::Arena;
 use bun_core::EncodedSlice;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -61,9 +60,6 @@ impl ReplCommand {
         });
 
         bun_ast::initialize_store();
-        // The arena is threaded into VirtualMachine (vm.arena). `bun_alloc::Arena`
-        // is `MimallocArena` (a per-heap mimalloc wrapper).
-        let arena = Arena::new();
 
         // Validate DNS result order before VM init; wired onto the VM
         // post-init below, like run_command.rs.
@@ -73,52 +69,50 @@ impl ReplCommand {
                 Global::exit(1);
             });
 
-        // Initialize the VM. `InitOptions` has no allocator field (the VM does
-        // not take a caller-provided allocator in the Rust port; `vm.arena` is
-        // set below).
-        let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {
-            transform_options: core::mem::take(&mut ctx.args),
-            debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-            log: core::ptr::NonNull::new(ctx.log),
-            global_cache: ctx.debug.global_cache,
-            smol: ctx.runtime_options.smol,
-            eval_mode: true,
-            is_main_thread: true,
-            ..Default::default()
-        })?;
+        let mut defines_loaded = false;
+        let vm = VirtualMachine::init(
+            jsc::VirtualMachineInitOptions {
+                transform_options: core::mem::take(&mut ctx.args),
+                debugger: core::mem::take(&mut ctx.runtime_options.debugger),
+                log: core::ptr::NonNull::new(ctx.log),
+                global_cache: ctx.debug.global_cache,
+                smol: ctx.runtime_options.smol,
+                eval_mode: true,
+                is_main_thread: true,
+                argv: core::mem::take(&mut ctx.passthrough),
+                preload: core::mem::take(&mut ctx.preloads),
+                ..Default::default()
+            },
+            &mut |b| {
+                // Configure bundler options
+                // `BundleOptions.install` is `Option<NonNull<_>>` so no
+                // lifetime-extension cast is needed.
+                let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
+                b.options.install = install_ptr;
+                b.resolver.opts.install = install_ptr;
+                let offline = ctx
+                    .debug
+                    .offline_mode_setting
+                    .unwrap_or(OfflineMode::Online);
+                b.resolver.opts.install_preference = offline;
+                b.options.install_preference = offline;
+                b.resolver.env_loader.set(NonNull::new(b.env));
+                b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
+                b.options.dead_code_elimination = false; // REPL needs all code
 
-        // SAFETY: nothing else borrows the transpiler: no script has run yet.
-        let b = unsafe { vm.transpiler_mut() };
-        vm.preload.replace(core::mem::take(&mut ctx.preloads));
-        let _ = vm.argv.set(core::mem::take(&mut ctx.passthrough));
-        // `vm.dns_result_order` is a `u8` (see VirtualMachine.rs); set
-        // post-init like run_command.rs since InitOptions doesn't carry it.
-        vm.dns_result_order.set(dns_order as u8);
-        // There is no per-VM allocator handle; the `vm.arena` assignment itself happens below
-        // ReplRunner construction to avoid a move-after-borrow.
-
-        // Configure bundler options
-        // `BundleOptions.install` is `Option<NonNull<_>>` so no
-        // lifetime-extension cast is needed.
-        let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
-        b.options.install = install_ptr;
-        b.resolver.opts.install = install_ptr;
-        let offline = ctx
-            .debug
-            .offline_mode_setting
-            .unwrap_or(OfflineMode::Online);
-        b.resolver.opts.install_preference = offline;
-        b.options.install_preference = offline;
-        b.resolver.env_loader = NonNull::new(b.env);
-        b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
-        b.options.dead_code_elimination = false; // REPL needs all code
-
-        if b.configure_defines().is_err() {
+                defines_loaded = b.configure_defines().is_ok();
+            },
+        )?;
+        if !defines_loaded {
             Self::dump_build_error(vm);
             Global::exit(1);
         }
 
-        // SAFETY: nothing else borrows the log: no script has run yet, and `b` is not used again.
+        // `vm.dns_result_order` is a `u8` (see VirtualMachine.rs); set
+        // post-init like run_command.rs since InitOptions doesn't carry it.
+        vm.dns_result_order.set(dns_order as u8);
+
+        // SAFETY: nothing else borrows the log: no script has run yet.
         let log = unsafe { vm.log_mut() }.unwrap();
         bun_http::async_http::load_env(log, vm.env_loader());
         vm.load_extra_env_and_source_code_printer();
@@ -136,7 +130,6 @@ impl ReplCommand {
         let mut runner = ReplRunner {
             repl,
             vm,
-            arena,
             // ctx is the process-global ContextData; extend the borrow past the
             // local reborrow lifetime via raw ptr (the runner never outlives
             // ctx — global_exit() is `!`).
@@ -149,11 +142,6 @@ impl ReplCommand {
             },
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
         };
-        // vm.arena stores a *mut Arena pointing at runner.arena;
-        // lifetime is the holdAPILock scope (globalExit() never returns so the frame never
-        // unwinds). Assigned AFTER moving `arena` into `runner` — assigning from the pre-move
-        // local would dangle.
-        vm.arena.set(NonNull::new(&raw mut runner.arena));
 
         // `bun_jsc::opaque_wrap` requires a type implementing `FnTyped<Ctx>`;
         // rather than depend on that upstream trait, write the trivial thunk locally.
@@ -189,7 +177,6 @@ impl ReplCommand {
 struct ReplRunner<'a, 'r> {
     repl: &'a mut Repl<'r>,
     vm: &'static VirtualMachine,
-    arena: Arena,
     eval_script: &'a [u8],
     eval_and_print: bool,
 }

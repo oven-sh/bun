@@ -215,13 +215,6 @@ pub(crate) struct IOWriter {
     state: UnsafeCell<State>,
 }
 
-// SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
-// No cross-thread access.
-unsafe impl Send for IOWriter {}
-// SAFETY: see `Send` — single-threaded, `Arc` is used only for refcounting; no
-// concurrent `&IOWriter` access occurs.
-unsafe impl Sync for IOWriter {}
-
 impl IOWriter {
     /// SAFETY: single-threaded; no overlapping `&mut State` may be live across
     /// a re-entrant `enqueue` from a child callback (the `Yield` trampoline

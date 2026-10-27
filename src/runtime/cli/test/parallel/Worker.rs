@@ -264,7 +264,7 @@ impl Worker {
             // to the Channel on success (it does the Box::from_raw internally).
             // On failure the caller still owns it (Channel.rs:294) and the
             // `ipc_pipe_guard` errdefer performs `close_and_destroy`.
-            if !Channel::adopt_pipe(&raw mut this.ipc, coord.vm, ipc_pipe) {
+            if !Channel::adopt_pipe(&raw mut this.ipc, ipc_pipe) {
                 return Err(crate::Error::ChannelAdoptFailed);
             }
             // Channel now owns the Box; disarm the errdefer so end-of-block

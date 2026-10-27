@@ -364,7 +364,7 @@ mod _impl {
         let vm = global_object.bun_vm();
 
         let worker: Option<&WebWorker> = vm.worker_ref();
-        let vm_argv: &[Box<[u8]>] = vm.argv.get().map_or(&[], |argv| argv);
+        let vm_argv: &[Box<[u8]>] = &vm.argv;
 
         let args_count: usize = match worker {
             Some(w) => w.argv().len(),

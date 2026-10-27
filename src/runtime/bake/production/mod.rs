@@ -14,7 +14,6 @@ use bstr::BStr;
 use crate::bake;
 use crate::bake::router::PatternBuffer;
 use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
-use bun_alloc::Arena;
 use bun_bundler::BundleV2;
 use bun_bundler::Transpiler;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
@@ -110,88 +109,88 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     jsc::initialize(jsc::InitializeOptions::default());
     bun_ast::initialize_store();
 
-    let mut arena = Arena::new();
-
-    let vm = VirtualMachine::init_bake(jsc::virtual_machine::Options {
-        // arena: arena — dropped per §Allocators (global mimalloc)
-        log: NonNull::new(ctx.log),
-        args: ctx.args.clone(),
-        smol: ctx.runtime_options.smol,
-        ..Default::default()
-    })?;
-    let _vm_guard = scopeguard::guard((), |()| {
+    let mut defines_loaded = false;
+    let vm = VirtualMachine::init_bake(
+        jsc::virtual_machine::Options {
+            log: NonNull::new(ctx.log),
+            args: ctx.args.clone(),
+            smol: ctx.runtime_options.smol,
+            argv: ctx.passthrough.clone(),
+            preload: ctx.preloads.clone(),
+            ..Default::default()
+        },
+        &mut |b| {
+            // `BundleOptions.install` is `Option<NonNull<_>>`, so no
+            // lifetime-extension cast is needed.
+            let install_ptr = ctx.install.as_deref().map(NonNull::from);
+            b.options.install = install_ptr;
+            b.resolver.opts.install = install_ptr;
+            b.resolver.opts.global_cache = ctx.debug.global_cache;
+            let offline = ctx
+                .debug
+                .offline_mode_setting
+                .unwrap_or(OfflineMode::Online);
+            b.resolver.opts.install_preference = offline;
+            b.options.global_cache = b.resolver.opts.global_cache;
+            b.options.install_preference = offline;
+            // `b.env` is the Transpiler-owned `*mut Loader`; store it
+            // as `NonNull` (not `&Loader`) because `configure_defines()` below
+            // reborrows the same allocation as `&mut Loader` via `run_env_loader()`,
+            // which would alias a live `&Loader` here. The Loader outlives the
+            // resolver (process-lifetime singleton or VM-owned).
+            b.resolver.env_loader.set(NonNull::new(b.env));
+            b.options
+                .minify_identifiers
+                .set(ctx.bundler_options.minify_identifiers);
+            b.options
+                .minify_whitespace
+                .set(ctx.bundler_options.minify_whitespace);
+            b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+            // Note: `bun_resolver::options::BundleOptions` has no
+            // `minify_identifiers`/`minify_whitespace` fields; resolver.opts does
+            // not carry them (the resolver never reads them).
+            b.options.env.behavior = bundler_options::EnvBehavior::LoadAllWithoutInlining;
+            match &ctx.debug.macros {
+                MacroOptions::Disable => {
+                    b.options.no_macros = true;
+                }
+                MacroOptions::Map(macros) => {
+                    // Note: the two map types are nominally
+                    // distinct (`ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
+                    // vs `StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>`), so
+                    // rebuild the resolver-shaped map by cloning value bytes.
+                    let mut remap = bun_resolver::package_json::MacroMap::default();
+                    for (pkg, inner) in macros.iter() {
+                        let mut entry =
+                            bun_resolver::package_json::MacroImportReplacementMap::default();
+                        for (import_name, path) in inner.iter() {
+                            entry.insert(import_name.as_ref(), Box::<[u8]>::from(path.as_ref()));
+                        }
+                        remap.insert(pkg.as_ref(), entry);
+                    }
+                    b.options.macro_remap = remap;
+                }
+                MacroOptions::Unspecified => {}
+            }
+            defines_loaded = b.configure_defines().is_ok();
+        },
+    )?;
+    scopeguard::defer! {
         // Its loop is alive, so queued work is released here rather than by a thread teardown.
         vm.release_queued_work();
         // SAFETY: last use of this thread's VM: everything declared below has been dropped.
         unsafe { VirtualMachine::destroy() };
-    });
+    }
 
     // A special global object is used to allow registering virtual modules
     // that bypass Bun's normal module resolver and plugin system.
     vm.regular_event_loop.set_global(vm.global());
     vm.event_loop().ensure_waker();
-    {
-        // SAFETY: nothing else borrows the transpiler: no script has run yet.
-        let b = unsafe { vm.transpiler_mut() };
-        vm.preload.replace(ctx.preloads.clone());
-        let _ = vm.argv.set(ctx.passthrough.clone());
-        vm.arena.set(NonNull::new(&raw mut arena));
-        // vm.allocator = arena.arena() — dropped per §Allocators
-        // `BundleOptions.install` is `Option<NonNull<_>>`, so no
-        // lifetime-extension cast is needed.
-        let install_ptr = ctx.install.as_deref().map(NonNull::from);
-        b.options.install = install_ptr;
-        b.resolver.opts.install = install_ptr;
-        b.resolver.opts.global_cache = ctx.debug.global_cache;
-        let offline = ctx
-            .debug
-            .offline_mode_setting
-            .unwrap_or(OfflineMode::Online);
-        b.resolver.opts.install_preference = offline;
-        b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.install_preference = offline;
-        // SAFETY: `b.env` is the Transpiler-owned `*mut Loader`; store it
-        // as `NonNull` (not `&Loader`) because `configure_defines()` below
-        // reborrows the same allocation as `&mut Loader` via `run_env_loader()`,
-        // which would alias a live `&Loader` here. The Loader outlives the
-        // resolver (process-lifetime singleton or VM-owned).
-        b.resolver.env_loader = NonNull::new(b.env);
-        b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
-        b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
-        b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
-        // Note: `bun_resolver::options::BundleOptions` has no
-        // `minify_identifiers`/`minify_whitespace` fields; resolver.opts does
-        // not carry them (the resolver never reads them).
-        b.options.env.behavior = bundler_options::EnvBehavior::LoadAllWithoutInlining;
-    }
     vm.event_loop().ensure_waker();
-    // SAFETY: nothing else borrows the transpiler: no script has run yet.
-    let b = unsafe { vm.transpiler_mut() };
-    match &ctx.debug.macros {
-        MacroOptions::Disable => {
-            b.options.no_macros = true;
-        }
-        MacroOptions::Map(macros) => {
-            // Note: the two map types are nominally
-            // distinct (`ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
-            // vs `StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>`), so
-            // rebuild the resolver-shaped map by cloning value bytes.
-            let mut remap = bun_resolver::package_json::MacroMap::default();
-            for (pkg, inner) in macros.iter() {
-                let mut entry = bun_resolver::package_json::MacroImportReplacementMap::default();
-                for (import_name, path) in inner.iter() {
-                    entry.insert(import_name.as_ref(), Box::<[u8]>::from(path.as_ref()));
-                }
-                remap.insert(pkg.as_ref(), entry);
-            }
-            b.options.macro_remap = remap;
-        }
-        MacroOptions::Unspecified => {}
-    }
-    if b.configure_defines().is_err() {
+    if !defines_loaded {
         fail_with_build_error(vm);
     }
-    // SAFETY: nothing else borrows the log: no script has run yet, and `b` is not used again.
+    // SAFETY: nothing else borrows the log: no script has run yet.
     let log = unsafe { vm.log_mut() }.unwrap();
     bun_http::async_http::load_env(log, vm.env_loader());
     vm.load_extra_env_and_source_code_printer();
@@ -282,8 +281,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         unresolved_config_entry_point = prefixed;
     }
 
-    // SAFETY: nothing else borrows the transpiler: no script has run yet.
-    let resolver = unsafe { &mut vm.transpiler_mut().resolver };
+    let resolver = &vm.transpiler().resolver;
     let config_entry_point = match resolver.resolve(
         cwd,
         &unresolved_config_entry_point,
@@ -454,9 +452,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             targets.push(unsafe { ssr_transpiler.assume_init_mut() });
         }
         for transpiler in targets {
-            transpiler.options.minify_syntax = false;
-            transpiler.options.minify_identifiers = false;
-            transpiler.options.minify_whitespace = false;
+            transpiler.options.minify_syntax.set(false);
+            transpiler.options.minify_identifiers.set(false);
+            transpiler.options.minify_whitespace.set(false);
             // Note: `bun_resolver::options::BundleOptions` carries no naming
             // templates; the canonical fields live on `transpiler.options`
             // (bun_bundler::options::BundleOptions).
@@ -473,15 +471,14 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     debug_assert!(core::ptr::eq(server_transpiler.env, client_transpiler.env));
 
     if framework
-        .resolve(
-            &mut server_transpiler.resolver,
-            &mut client_transpiler.resolver,
-        )
+        .resolve(&server_transpiler.resolver, &client_transpiler.resolver)
         .is_err()
     {
         if framework.is_built_in_react {
             // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
-            bake::Framework::add_react_install_command_note(unsafe { &mut *server_transpiler.log });
+            bake::Framework::add_react_install_command_note(unsafe {
+                &mut *server_transpiler.log_ptr()
+            });
         }
         bun_core::err_generic!("Failed to resolve all imports required by the framework");
         Output::flush();
@@ -574,7 +571,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         invalid_routes: 0,
     };
     router.scan_all(
-        &mut server_transpiler.resolver,
+        &server_transpiler.resolver,
         router::InsertionContext::wrap(&mut route_scan),
     )?;
     if route_scan.invalid_routes > 0 {

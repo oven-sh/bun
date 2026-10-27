@@ -165,8 +165,14 @@ impl Async {
                     task,
                     run_from_main_thread_mini,
                 );
-                mini.shared
-                    .enqueue_task_concurrent(core::ptr::NonNull::new(any).expect("heap task"));
+                // SAFETY: `mini` is never freed; the task is a fresh allocation that frees itself
+                // after it has run.
+                unsafe {
+                    bun_event_loop::MiniEventLoop::Shared::enqueue_task_concurrent(
+                        &raw const mini.shared,
+                        core::ptr::NonNull::new(any).expect("heap task"),
+                    )
+                };
             }
         }
     }

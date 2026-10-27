@@ -132,7 +132,7 @@ impl HmrSocket {
                                         // `Drop` unlinks it. `ACTIVE` is linked: the handler
                                         // marks the popped node `FIRED` first thing.
                                         unsafe {
-                                            crate::jsc_hooks::timer_all().update(
+                                            crate::timer::All::of(dev.vm()).update(
                                                 &raw mut dev.memory_visualizer_timer,
                                                 &next,
                                             );
@@ -303,7 +303,8 @@ impl HmrSocket {
                     // SAFETY: `ACTIVE` is linked: the handler marks the popped node `FIRED`
                     // first thing.
                     unsafe {
-                        crate::jsc_hooks::timer_all().remove(&raw mut dev.memory_visualizer_timer);
+                        crate::timer::All::of(dev.vm())
+                            .remove(&raw mut dev.memory_visualizer_timer);
                     }
                 }
             }

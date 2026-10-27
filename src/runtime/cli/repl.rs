@@ -2139,10 +2139,7 @@ impl<'a> Repl<'a> {
         // Create arena for parsing
         let arena = bun_alloc::Arena::new();
 
-        // SAFETY: the REPL transforms a line before it evaluates it, so no script is running and
-        // nothing else borrows the transpiler. A macro that the parse below runs is the exception
-        // `transpiler_mut` documents.
-        let transpiler = unsafe { vm.transpiler_mut() };
+        let transpiler = vm.transpiler();
 
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(
@@ -2161,10 +2158,12 @@ impl<'a> Repl<'a> {
         // which the REPL transform passes through intact.
 
         // Initialize macro context from transpiler (required for import processing).
-        if transpiler.macro_context.is_none() {
-            transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(transpiler));
+        if transpiler.macro_context.get().is_none() {
+            transpiler
+                .macro_context
+                .set(Some(bun_js_parser::Macro::MacroContext::init(transpiler)));
         }
-        opts.macro_context = transpiler.macro_context.as_mut();
+        opts.macro_context = transpiler.macro_context.get();
 
         // Create log for errors
         let mut log = bun_ast::Log::init();

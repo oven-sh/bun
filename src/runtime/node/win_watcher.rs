@@ -213,7 +213,7 @@ impl PathWatcher {
         }
 
         // SAFETY: libuv contract — `loop_` is valid while the handle is open.
-        let timestamp = unsafe { (*me.handle.loop_).time.get() };
+        let timestamp = unsafe { (*me.handle.loop_).time() };
 
         if let Some(err) = status.to_error(sys::Tag::watch) {
             me.emit_in_progress.set(true);

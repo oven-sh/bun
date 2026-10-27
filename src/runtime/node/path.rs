@@ -1,4 +1,4 @@
-use crate::jsc::rare_data::{PathBuf as RarePathBuf, PathBufLease as RarePathBufLease};
+use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{
     JSGlobalObject, JSStringView, JSValue, JsResult, StringJsc as _, SysErrorJsc as _,
     bun_string_jsc,
@@ -30,17 +30,14 @@ fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsRes
     }
 }
 
-/// Path scratch leased from the per-VM [`RarePathBuf`].
+/// Path scratch carved from the per-VM [`RarePathBuf`].
 ///
 /// When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) we spill to a one-shot
 /// zeroed heap slab instead (`T: Pod`, so the zero-fill is the cost of handing
 /// out a safe `&mut [T]`; consumers are write-before-read so the zeros are
 /// never observed).
 enum PathScratch<'a, T: PathCharCwd> {
-    Pooled {
-        lease: RarePathBufLease<'a>,
-        bytes: usize,
-    },
+    Pooled(&'a mut [T]),
     Spill(Box<[T]>),
 }
 
@@ -48,14 +45,17 @@ impl<'a, T: PathCharCwd> PathScratch<'a, T> {
     /// Largest pool tier in `RarePathBuf` (`32 * MAX_PATH_BYTES`).
     const POOL_MAX: usize = 32 * MAX_PATH_BYTES;
 
+    /// # Safety
+    /// No other scratch of `pool` is live. The type does not leave this file, so that is: nothing
+    /// called while one is held makes another.
     #[inline]
-    fn new(pool: &'a RarePathBuf, len: usize) -> Self {
+    unsafe fn new(pool: &'a RarePathBuf, len: usize) -> Self {
         let bytes = len * size_of::<T>();
-        if bytes <= Self::POOL_MAX {
-            let mut lease = pool.take(bytes);
-            if bun_core::try_cast_slice_mut::<u8, T>(&mut lease[..bytes]).is_some() {
-                return Self::Pooled { lease, bytes };
-            }
+        if bytes <= Self::POOL_MAX
+            // SAFETY: fn contract.
+            && let Some(pooled) = bun_core::try_cast_slice_mut(&mut unsafe { pool.get(bytes) }[..bytes])
+        {
+            return Self::Pooled(pooled);
         }
         // Spill is rare (over 128 KB), so the zero-fill is negligible.
         Self::Spill(vec![T::default(); len].into_boxed_slice())
@@ -64,8 +64,7 @@ impl<'a, T: PathCharCwd> PathScratch<'a, T> {
     #[inline]
     fn slice(&mut self) -> &mut [T] {
         match self {
-            // `new` checked that this cast succeeds.
-            Self::Pooled { lease, bytes } => bun_core::cast_slice_mut(&mut lease[..*bytes]),
+            Self::Pooled(s) => s,
             Self::Spill(b) => &mut b[..],
         }
     }
@@ -319,7 +318,9 @@ fn format_js_t<T: PathCharCwd>(
             path_object.name.len() + path_object.ext.len() + 1
         }))
         .max(path_size::<T>());
-    let mut scratch = PathScratch::<T>::new(pool, buf_len);
+    // SAFETY: the one scratch of this call. Under it run path arithmetic and the making of a JS
+    // string or error, neither of which runs script.
+    let mut scratch = unsafe { PathScratch::<T>::new(pool, buf_len) };
     let buf = scratch.slice();
     if is_windows {
         format_windows_js_t(global_object, path_object, buf)
@@ -502,7 +503,9 @@ fn join_js_t<T: PathCharCwd>(
     paths: &[&[T]],
 ) -> JsResult<JSValue> {
     let buf_len = join_buf_len(is_windows, paths);
-    let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
+    // SAFETY: the one scratch of this call. Under it run path arithmetic and the making of a JS
+    // string or error, neither of which runs script.
+    let mut scratch = unsafe { PathScratch::<T>::new(pool, buf_len * 2) };
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
     if is_windows {
         join_windows_js_t(global_object, paths, buf, buf2)
@@ -571,7 +574,9 @@ fn normalize_js_t<T: PathCharCwd>(
     is_windows: bool,
     path: &[T],
 ) -> JsResult<JSValue> {
-    let mut scratch = PathScratch::<T>::new(pool, normalize_buf_len(path));
+    // SAFETY: the one scratch of this call. Under it run path arithmetic and the making of a JS
+    // string or error, neither of which runs script.
+    let mut scratch = unsafe { PathScratch::<T>::new(pool, normalize_buf_len(path)) };
     let buf = scratch.slice();
     if is_windows {
         normalize_windows_js_t(global_object, path, buf)
@@ -687,7 +692,9 @@ fn relative_js_t<T: PathCharCwd>(
 ) -> JsResult<JSValue> {
     // ×3 for buf/from_buf/tmp_buf carved from one slab.
     let buf_len = relative_buf_len(from, to);
-    let mut scratch = PathScratch::<T>::new(pool, buf_len * 3);
+    // SAFETY: the one scratch of this call. Under it run path arithmetic and the making of a JS
+    // string or error, neither of which runs script.
+    let mut scratch = unsafe { PathScratch::<T>::new(pool, buf_len * 3) };
     let (buf, rest) = scratch.slice().split_at_mut(buf_len);
     let (from_buf, tmp_buf) = rest.split_at_mut(buf_len);
     if is_windows {
@@ -771,7 +778,9 @@ fn resolve_js_t<T: PathCharCwd>(
 ) -> JsResult<JSValue> {
     // Carve buf/buf2 from one pooled slab.
     let buf_len = resolve_buf_len(is_windows, paths);
-    let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
+    // SAFETY: the one scratch of this call. Under it run path arithmetic and the making of a JS
+    // string or error, neither of which runs script.
+    let mut scratch = unsafe { PathScratch::<T>::new(pool, buf_len * 2) };
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
     if is_windows {
         resolve_windows_js_t(global_object, paths, buf, buf2)
@@ -861,7 +870,9 @@ fn to_namespaced_path_js_t<T: PathCharCwd>(
     }
     // ×2 for buf/buf2.
     let buf_len = to_namespaced_path_buf_len(path);
-    let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
+    // SAFETY: the one scratch of this call. Under it run path arithmetic and the making of a JS
+    // string or error, neither of which runs script.
+    let mut scratch = unsafe { PathScratch::<T>::new(pool, buf_len * 2) };
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
     to_namespaced_path_windows_js_t(global_object, path, buf, buf2)
 }

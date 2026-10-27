@@ -1899,8 +1899,8 @@ mod _async_tasks {
                         unsafe { (*p).run_from_js_thread_mini(ctx) }
                     },
                 );
-                // `from_callback_auto_deinit` heap-allocates; never null.
-                poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
+                // SAFETY: `from_callback_auto_deinit` just allocated it, and running it frees it.
+                unsafe { poster.post_mini(core::ptr::NonNull::new(at).expect("heap task")) };
             }
             // The pool side is done (`this` may already be freed by its loop).
             drop(poster);

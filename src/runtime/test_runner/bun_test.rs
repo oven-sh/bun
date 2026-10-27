@@ -11,7 +11,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::RefPtr;
 use super::jest::{Jest, FileId, FileColumns as _};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::cli::test_command::CommandLineReporter;
 use crate::generated_bindgen::bun_test::{
     Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
@@ -27,15 +27,6 @@ macro_rules! group_begin {
     };
 }
 pub(crate) use group_begin;
-
-/// `bun.timespec.orderIgnoreEpoch` — epoch == "no timeout", treated as +∞.
-/// Local helper so it can compare `bun_core::Timespec` against the
-/// event-loop crate's distinct `Timespec` (converted by field).
-// ElTimespec dedup is a separate ticket.
-#[inline]
-fn order_ignore_epoch(a: &Timespec, b: &ElTimespec) -> core::cmp::Ordering {
-    Timespec::order_ignore_epoch(*a, Timespec { sec: b.sec, nsec: b.nsec })
-}
 
 /// `Strong::create` requires a `&JSGlobalObject`; recover it from the
 /// per-thread VM so `ExecutionEntry::create` (which has no global in scope)
@@ -851,7 +842,7 @@ impl BunTest {
         // SAFETY: `this` derived from `UnsafeCell::get`; single-threaded; each
         // deref is a point-use that does not span a re-entrant `.get()`.
         unsafe {
-            (*this).timer.next = ElTimespec::EPOCH;
+            (*this).timer.next = Timespec::EPOCH;
             (*this).timer.state = EventLoopTimerState::PENDING;
 
             match (*this).phase {
@@ -950,7 +941,6 @@ impl BunTest {
 
     fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
         let _g = group_begin!();
-        let _ = global_this;
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
         bun_core::scoped_log!(
             bun_test_group,
@@ -958,25 +948,24 @@ impl BunTest {
             min_timeout,
             self.timer.next.sec,
             self.timer.next.nsec,
-            order_ignore_epoch(min_timeout, &self.timer.next)
+            Timespec::order_ignore_epoch(*min_timeout, self.timer.next)
         );
-        if order_ignore_epoch(min_timeout, &self.timer.next) == core::cmp::Ordering::Less {
+        if Timespec::order_ignore_epoch(*min_timeout, self.timer.next) == core::cmp::Ordering::Less {
             bun_core::scoped_log!(bun_test_group, "-> setting timer to {:?}", min_timeout);
-            if self.timer.next != ElTimespec::EPOCH {
+            let all = crate::timer::All::of(global_this.bun_vm());
+            if self.timer.next != Timespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
                 // SAFETY: `next` is not `EPOCH` only while the node is linked:
                 // `bun_test_timeout_callback`, which runs once it is popped or
                 // `remove_active_timeout` has unlinked it, resets `next` first thing.
-                unsafe { crate::jsc_hooks::timer_all().remove(&raw mut self.timer) };
+                unsafe { all.remove(&raw mut self.timer) };
             }
-            // `EventLoopTimer.next` uses the event-loop crate's local
-            // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
-            self.timer.next = ElTimespec { sec: min_timeout.sec, nsec: min_timeout.nsec };
-            if self.timer.next != ElTimespec::EPOCH {
+            self.timer.next = *min_timeout;
+            if self.timer.next != Timespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> inserting timer");
                 // SAFETY: unlinked: `next` was `EPOCH`, or it was removed above. `self` is the
                 // payload of an `Rc<BunTestCell>` (`run` got it from one), and `Drop` unlinks the node.
-                unsafe { crate::jsc_hooks::timer_all().insert(&raw mut self.timer) };
+                unsafe { all.insert(&raw mut self.timer) };
                 if debug::group::get_log_enabled() {
                     let duration = min_timeout.since_now_force_real_time();
                     bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
@@ -1368,7 +1357,7 @@ impl Drop for BunTest {
             // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
             // SAFETY: `ACTIVE` is linked: `bun_test_timeout_callback` marks the popped node
             // `PENDING` first thing.
-            unsafe { crate::jsc_hooks::timer_all().remove(&raw mut self.timer) };
+            unsafe { crate::timer::All::of(VirtualMachine::get()).remove(&raw mut self.timer) };
         }
 
         for entry in self.extra_execution_entries.drain(..) {

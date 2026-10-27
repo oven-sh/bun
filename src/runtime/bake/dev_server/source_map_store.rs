@@ -530,9 +530,9 @@ impl SourceMapStore {
                     && self.weak_ref_sweep_timer.next.sec == first.expire
                 {
                     // SAFETY: `ACTIVE` is linked: `sweep_weak_refs` takes the popped node off it
-                    // before it returns, and does not come here.
+                    // before it returns, and does not come here. Invariant of `owner()`.
                     unsafe {
-                        crate::jsc_hooks::timer_all()
+                        crate::timer::All::of((*self.owner()).vm)
                             .remove(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer));
                     }
                 }
@@ -552,7 +552,7 @@ impl SourceMapStore {
             // SAFETY: not `ACTIVE`, so unlinked (as above). `self` is the `source_maps` field of
             // the boxed `DevServer` (what `owner()` relies on), whose `Drop` unlinks the node.
             unsafe {
-                crate::jsc_hooks::timer_all()
+                crate::timer::All::of((*self.owner()).vm)
                     .update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
             }
         }
@@ -642,9 +642,9 @@ impl SourceMapStore {
                 store.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
                 store.weak_ref_sweep_timer.state = EventLoopTimerState::FIRED;
                 // SAFETY: popped and marked `FIRED`, so unlinked. `DevServer::drop` unlinks it
-                // before the box that holds the store is freed.
+                // before the box that holds the store is freed. Invariant of `owner()`.
                 unsafe {
-                    crate::jsc_hooks::timer_all().update(
+                    crate::timer::All::of((*store.owner()).vm).update(
                         core::ptr::addr_of_mut!(store.weak_ref_sweep_timer),
                         &Timespec {
                             sec: item.expire + 1,

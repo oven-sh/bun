@@ -11,7 +11,6 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
 };
-use crate::timer::ElTimespec;
 
 pub(crate) use super::bun_test;
 use crate::generated_bindgen::bun_test::{
@@ -185,15 +184,11 @@ impl<'a> TestRunner<'a> {
             }
         }
         if active_file.timer.state != TimerState::ACTIVE
-            || active_file.timer.next == ElTimespec::EPOCH
+            || active_file.timer.next == bun_core::Timespec::EPOCH
         {
             return bun_core::Timespec::EPOCH;
         }
-        // bun_event_loop carries a local Timespec stub with the
-        // same `{sec, nsec}` shape as bun_core::Timespec; convert by field
-        // until the lower tier unifies on bun_core::Timespec (see
-        // src/runtime/timer/mod.rs ElTimespec alias).
-        bun_core::Timespec { sec: active_file.timer.next.sec, nsec: active_file.timer.next.nsec }
+        active_file.timer.next
     }
 
     pub(crate) fn remove_active_timeout(&mut self, vm: &VirtualMachine) {
@@ -206,14 +201,13 @@ impl<'a> TestRunner<'a> {
         // reshape (see bun_test.rs).
         let active_file = unsafe { bun_test::buntest_as_mut(active_file) };
         if active_file.timer.state != TimerState::ACTIVE
-            || active_file.timer.next == ElTimespec::EPOCH
+            || active_file.timer.next == bun_core::Timespec::EPOCH
         {
             return;
         }
-        let _ = vm;
         // SAFETY: `ACTIVE` is linked: `bun_test_timeout_callback` marks the popped node `PENDING`
         // first thing.
-        unsafe { crate::jsc_hooks::timer_all().remove(&raw mut active_file.timer) };
+        unsafe { crate::timer::All::of(vm).remove(&raw mut active_file.timer) };
     }
 
 
@@ -625,11 +619,9 @@ pub(crate) mod on_unhandled_rejection {
             return;
         }
 
-        // SAFETY: whoever set the list owns it, clears the slot before the list dies, and does
-        // not touch the list while it is in the slot.
+        // SAFETY: `replace_unhandled_rejection_exception_list`'s contract.
         let exception_list = jsc_vm
-            .on_unhandled_rejection_exception_list
-            .get()
+            .unhandled_rejection_exception_list()
             .map(|p| unsafe { &mut *p.as_ptr() });
         bun_test::print_error(jsc_vm, global_object, rejection, exception_list);
     }

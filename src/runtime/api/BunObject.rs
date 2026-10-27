@@ -555,13 +555,10 @@ pub(crate) fn register_macro<'a>(
     }
     let callback = callback.to_js();
 
-    let macros = &VirtualMachine::get().macros;
-    if let Some(previous) = macros.get(id) {
+    callback.protect();
+    if let Some(previous) = VirtualMachine::get().macros.replace(id, callback) {
         previous.unprotect();
     }
-
-    callback.protect();
-    bun_core::handle_oom(macros.put(id, callback));
 
     Ok(())
 }
@@ -597,58 +594,57 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // This makes `eval('require.main === module')` work when the main module is a symlink.
     // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
     'use_resolved_path: {
-        let mut resolved = vm.main_resolved_path.take();
-        if resolved.is_empty() {
-            // If it's from eval, don't try to resolve it.
-            if strings::ends_with(main, b"[eval]") {
-                break 'use_resolved_path;
-            }
-            if strings::ends_with(main, b"[stdin]") {
-                break 'use_resolved_path;
-            }
+        if let Some(value) = vm.main_resolved_path_to_js(global_this) {
+            return value.or_pending_exception();
+        }
+        // If it's from eval, don't try to resolve it.
+        if strings::ends_with(main, b"[eval]") {
+            break 'use_resolved_path;
+        }
+        if strings::ends_with(main, b"[stdin]") {
+            break 'use_resolved_path;
+        }
 
-            let Ok(fd) = sys::openat_a(
-                if cfg!(windows) {
-                    Fd::INVALID
-                } else {
-                    Fd::cwd()
-                },
-                main,
-                // Open with the minimum permissions necessary for resolving the file path.
-                if cfg!(any(target_os = "linux", target_os = "android")) {
-                    sys::O::PATH
-                } else {
-                    sys::O::RDONLY
-                },
-                0,
-            ) else {
+        let Ok(fd) = sys::openat_a(
+            if cfg!(windows) {
+                Fd::INVALID
+            } else {
+                Fd::cwd()
+            },
+            main,
+            // Open with the minimum permissions necessary for resolving the file path.
+            if cfg!(any(target_os = "linux", target_os = "android")) {
+                sys::O::PATH
+            } else {
+                sys::O::RDONLY
+            },
+            0,
+        ) else {
+            break 'use_resolved_path;
+        };
+
+        let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
+        #[cfg(windows)]
+        let resolved = {
+            let mut wpath = bun_paths::w_path_buffer_pool::get();
+            let Ok(fdpath) = bun_sys::get_fd_path_w(fd, &mut wpath) else {
+                break 'use_resolved_path;
+            };
+            BunString::clone_utf16(fdpath)
+        };
+        #[cfg(not(windows))]
+        let resolved = {
+            let mut path = bun_paths::path_buffer_pool::get();
+            let Ok(fdpath) = bun_sys::get_fd_path(fd, &mut path) else {
                 break 'use_resolved_path;
             };
 
-            let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
-            #[cfg(windows)]
-            {
-                let mut wpath = bun_paths::w_path_buffer_pool::get();
-                let Ok(fdpath) = bun_sys::get_fd_path_w(fd, &mut wpath) else {
-                    break 'use_resolved_path;
-                };
-                resolved = BunString::clone_utf16(fdpath);
-            }
-            #[cfg(not(windows))]
-            {
-                let mut path = bun_paths::path_buffer_pool::get();
-                let Ok(fdpath) = bun_sys::get_fd_path(fd, &mut path) else {
-                    break 'use_resolved_path;
-                };
-
-                // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
-                resolved = BunString::try_create_atom(fdpath)
-                    .unwrap_or_else(|| BunString::clone_utf8(fdpath));
-            }
-        }
+            // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
+            BunString::try_create_atom(fdpath).unwrap_or_else(|| BunString::clone_utf8(fdpath))
+        };
 
         let value = resolved.to_js(global_this).or_pending_exception();
-        vm.main_resolved_path.set(resolved);
+        vm.set_main_resolved_path(resolved);
         return value;
     }
 
@@ -974,16 +970,25 @@ pub(crate) fn bun_resolve_sync_with_paths(
     };
 
     let bun_vm = global.bun_vm();
-    debug_assert!(bun_vm.transpiler().resolver.custom_dir_paths.is_none());
+    debug_assert!(
+        bun_vm
+            .transpiler()
+            .resolver
+            .custom_dir_paths
+            .get()
+            .is_none()
+    );
     // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
-    // this synchronous resolve call; lifetime is erased for the resolver slot.
-    // No other transpiler borrow is live across the store.
-    unsafe {
-        bun_vm.transpiler_mut().resolver.custom_dir_paths = Some(bun_ptr::detach_lifetime(paths));
-    }
+    // this synchronous resolve call; lifetime is erased for the resolver slot,
+    // which the guard below empties before they go.
+    let paths = unsafe { bun_ptr::detach_lifetime(paths) };
+    bun_vm
+        .transpiler()
+        .resolver
+        .custom_dir_paths
+        .set(Some(paths));
     scopeguard::defer! {
-        // SAFETY: the resolve returned, so no other transpiler borrow is live across the store.
-        unsafe { bun_vm.transpiler_mut() }.resolver.custom_dir_paths = None;
+        bun_vm.transpiler().resolver.custom_dir_paths.set(None);
     }
 
     jsc::to_js_host_call(global, || {
@@ -1361,7 +1366,6 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     // `RareData.s3_default_client: Strong` field.
     use crate::webcore::s3_client::S3Client;
     let vm = global_this.bun_vm();
-    let env_ptr = vm.transpiler().env;
     let rare = vm.rare_data();
     if let Some(v) = rare.s3_default_client.get() {
         return Ok(v);
@@ -1371,8 +1375,9 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
     // SAFETY: `transpiler.env` is the process-lifetime dotenv loader; no other borrow of it is
     // live here.
-    let env_creds =
-        crate::webcore::fetch::s3_credentials_from_env(unsafe { (*env_ptr).get_s3_credentials() });
+    let env_creds = crate::webcore::fetch::s3_credentials_from_env(unsafe {
+        (*vm.transpiler().env).get_s3_credentials()
+    });
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
         Default::default(),

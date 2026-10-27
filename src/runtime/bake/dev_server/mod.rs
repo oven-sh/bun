@@ -102,6 +102,7 @@ pub(crate) use http::{is_allowed_dev_host, is_allowed_host_header};
 pub(crate) use lifecycle::init;
 pub(crate) use protocol::{ConsoleLogKind, HmrTopic, HmrTopicBits, IncomingMessageId, MessageId};
 use router_glue::{OpaqueFileIdOrOptional, from_opaque_file_id, to_opaque_file_id};
+use watch::WatchContext;
 pub(crate) use watcher_atomics::{NextEvent, WatcherAtomics};
 
 /// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
@@ -295,11 +296,9 @@ impl DevServer {
         crate::bake::dev_server::memory_cost::memory_cost_detailed(self)
     }
 
-    /// The virtual machine (global object) to execute code in. Not a field: the watcher thread
-    /// borrows `DevServer` too, and the VM is `!Sync`.
     #[inline]
     pub(crate) fn vm(&self) -> &'static VirtualMachine {
-        VirtualMachine::get()
+        self.vm
     }
 
     #[inline]
@@ -345,7 +344,7 @@ pub(crate) struct Options<'a> {
     /// Arena must live until DevServer drops
     pub arena: &'a Arena,
     pub root: &'a ZStr,
-    pub vm: &'a VirtualMachine,
+    pub vm: &'static VirtualMachine,
     pub framework: bake::Framework,
     pub bundler_options: bake::SplitBundlerOptions,
     pub broadcast_console_log_from_browser_to_server: bool,
@@ -463,6 +462,9 @@ pub(crate) struct DevServer {
     /// Emebedding in client bundles and sent when the HMR Socket is opened;
     /// When the value mismatches the page is forcibly reloaded.
     pub(crate) configuration_hash_key: [u8; 16],
+    /// The virtual machine (global object) to execute code in. It makes `DevServer` `!Sync`: the
+    /// watcher thread has a [`WatchContext`] instead of a borrow.
+    vm: &'static VirtualMachine,
     /// How the file-watcher thread submits hot-reload events to the VM.
     pub(crate) vm_handle: bun_jsc::VmHandle,
     /// May be `None` if not attached to an HTTP server yet. When no server is

@@ -231,7 +231,7 @@ impl FrameworkRouter {
 
     pub(crate) fn scan_all(
         &mut self,
-        r: &mut Resolver,
+        r: &Resolver,
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
         for i in 0..self.types.len() {
@@ -545,7 +545,7 @@ impl FrameworkRouter {
     pub(crate) fn scan(
         &mut self,
         ty: TypeIndex,
-        r: &mut Resolver,
+        r: &Resolver,
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
         let abs_root: Box<[u8]> = self.types[ty.get() as usize].abs_root.clone();
@@ -561,7 +561,7 @@ impl FrameworkRouter {
     fn scan_inner(
         &mut self,
         t_index: TypeIndex,
-        r: &mut Resolver,
+        r: &Resolver,
         dir_info: &DirInfo,
         arena_state: &mut Arena,
         ctx: &mut dyn InsertionHandler,

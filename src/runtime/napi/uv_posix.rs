@@ -37,8 +37,8 @@ use bun_jsc::{
     LoopKind, Posted, VmHandle,
 };
 
-use crate::jsc_hooks::{RuntimeState, timer_all};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::jsc_hooks::RuntimeState;
+use crate::timer::{All, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(uv, hidden);
 
@@ -281,11 +281,10 @@ impl UvLoop {
 
     /// Runs the idle handles, then the prepare handles. `auto_tick` calls this before
     /// it polls. Returns true if an idle handle is started, so the poll must not block.
-    pub(crate) fn before_poll(&self) -> bool {
+    pub(crate) fn before_poll(&self, vm: &VirtualMachine) -> bool {
         if self.idles.is_empty() && self.prepares.is_empty() {
             return false;
         }
-        let vm = VirtualMachine::get();
         if !vm.script_allowed() {
             return false;
         }
@@ -295,11 +294,10 @@ impl UvLoop {
     }
 
     /// Runs the check handles. `auto_tick` calls this after it polls.
-    pub(crate) fn after_poll(&self) {
+    pub(crate) fn after_poll(&self, vm: &VirtualMachine) {
         if self.checks.is_empty() {
             return;
         }
-        let vm = VirtualMachine::get();
         if vm.script_allowed() {
             self.checks.walk(vm);
         }
@@ -324,19 +322,14 @@ impl UvLoop {
     /// this because `runtime_state` doesn't change between those two writes, and an
     /// addon stops its threads in its cleanup hooks, which run before the second write.
     pub(crate) unsafe fn of_vm(vm: *const VirtualMachine) -> *mut UvLoop {
-        // SAFETY: fn contract. Only the field is borrowed: this may not be the VM's thread.
-        let state = unsafe { (*vm).runtime_state.load(Ordering::Relaxed) }.cast::<RuntimeState>();
+        // SAFETY: fn contract.
+        let state = unsafe { VirtualMachine::runtime_state_of(vm) }.cast::<RuntimeState>();
         if state.is_null() {
             return core::ptr::null_mut();
         }
         // SAFETY: `runtime_state` is `vm`'s boxed `RuntimeState`, and `&raw mut`
         // doesn't create a reference.
         unsafe { &raw mut (*state).uv_loop }
-    }
-
-    /// JS thread only.
-    fn global(&self) -> &'static JSGlobalObject {
-        VirtualMachine::get().global()
     }
 
     /// Queues the dispatch task unless one is already queued. Any thread can call this.
@@ -365,18 +358,17 @@ impl UvLoop {
     /// Runs the task that `schedule_dispatch` posted, on the JS thread.
     ///
     /// # Safety
-    /// `this` is the loop of the VM that dispatched the task.
-    pub(crate) unsafe fn dispatch(this: *mut UvLoop) {
+    /// `this` is the loop of `vm`, which dispatched the task.
+    pub(crate) unsafe fn dispatch(this: *mut UvLoop, vm: &VirtualMachine) {
         // SAFETY: this loop's VM dispatched the task and owns the `RuntimeState`
         // that contains the loop, so `this` is live. Other threads only use
         // shared references to it.
         let this = unsafe { &*this };
-        let global = this.global();
         this.dispatch_state
             .store(DispatchState::Running as u8, Ordering::SeqCst);
         // Don't run callbacks once the VM is stopping. Threadsafe functions do the same.
-        if global.bun_vm().script_allowed() {
-            this.run_pass(global);
+        if vm.script_allowed() {
+            this.run_pass(vm.global());
         }
         // A send during the pass sets `Pending` instead of posting a task, and this
         // then fails. The next pass is a new task, so a thread that keeps sending
@@ -831,8 +823,8 @@ impl UvTimerNode {
     /// callback can stop or close the handle.
     ///
     /// # Safety
-    /// `this` is a started timer's node, and this is the loop thread.
-    pub(crate) unsafe fn on_fire(this: *mut UvTimerNode) -> JsResult<()> {
+    /// `this` is a started timer's node, and `vm` is its loop's VM.
+    pub(crate) unsafe fn on_fire(this: *mut UvTimerNode, vm: &VirtualMachine) -> JsResult<()> {
         // SAFETY: fn contract. `FIRED` tells `update`/`remove` that the node isn't
         // in the heap.
         let timer = unsafe {
@@ -846,10 +838,9 @@ impl UvTimerNode {
         };
         if repeat_ms != 0 {
             // SAFETY: same as above.
-            unsafe { UvTimer::arm(timer, repeat_ms) };
+            unsafe { UvTimer::arm(timer, repeat_ms, vm) };
         }
         bun_output::scoped_log!(uv, "uv_timer_t {:?}: timer_cb", timer);
-        let vm = VirtualMachine::get();
         if let Some(cb) = cb {
             let _scope = vm.enter_event_loop_scope();
             let _handles = CallbackScope::open(vm.global());
@@ -867,8 +858,8 @@ impl UvTimer {
     /// Schedules the timer to fire `timeout_ms` from now and marks it started.
     ///
     /// # Safety
-    /// `handle` is a timer that's initialized and not closed, and this is the loop thread.
-    unsafe fn arm(handle: *mut UvTimer, timeout_ms: u64) {
+    /// `handle` is a timer that's initialized and not closed, and `vm` is its loop's VM.
+    unsafe fn arm(handle: *mut UvTimer, timeout_ms: u64, vm: &VirtualMachine) {
         let due = Timespec::ms_from_now(
             TimespecMockMode::ForceRealTime,
             i64::try_from(timeout_ms).unwrap_or(i64::MAX),
@@ -877,7 +868,7 @@ impl UvTimer {
         // unlinks the node before it frees it. `ACTIVE` is linked: `on_fire` marks the popped node
         // `FIRED` first thing.
         unsafe {
-            timer_all().update(&raw mut (*(*handle).node).event_loop_timer, &due);
+            All::of(vm).update(&raw mut (*(*handle).node).event_loop_timer, &due);
             (*handle).ref_state.set_active(true);
         }
     }
@@ -887,7 +878,7 @@ impl UvTimer {
     /// without telling their owners.
     ///
     /// # Safety
-    /// Same as [`Self::arm`].
+    /// `handle` is a timer that's initialized and not closed, and this is the loop thread.
     unsafe fn stop(handle: *mut UvTimer) {
         // SAFETY: fn contract. `ACTIVE` is linked (see `arm`).
         unsafe {
@@ -896,7 +887,7 @@ impl UvTimer {
             }
             let event_loop_timer = &raw mut (*(*handle).node).event_loop_timer;
             if (*event_loop_timer).state == EventLoopTimerState::ACTIVE {
-                timer_all().remove(event_loop_timer);
+                All::of(VirtualMachine::get()).remove(event_loop_timer);
             }
             (*handle).ref_state.set_active(false);
         }
@@ -906,7 +897,7 @@ impl UvTimer {
     /// a stopping VM refuses the task. Nothing reads the node once the closing flag is set.
     ///
     /// # Safety
-    /// Same as [`Self::arm`], and `handle` is being closed for the first time.
+    /// Same as [`Self::stop`], and `handle` is being closed for the first time.
     unsafe fn close(handle: *mut UvTimer) {
         // SAFETY: fn contract. `stop` removes the node from the heap, and
         // `uv_timer_init` allocated `node` with `heap::alloc`.
@@ -975,7 +966,7 @@ pub(crate) unsafe extern "C" fn uv_timer_start(
         }
         (*handle).timer_cb = cb;
         (*handle).repeat_ms = repeat_ms;
-        UvTimer::arm(handle, timeout_ms);
+        UvTimer::arm(handle, timeout_ms, VirtualMachine::get());
     }
     0
 }
@@ -1013,7 +1004,7 @@ pub(crate) unsafe extern "C" fn uv_timer_again(handle: *mut UvTimer) -> c_int {
         }
         let repeat_ms = (*handle).repeat_ms;
         if repeat_ms != 0 && (*handle).handle.flags & UV_HANDLE_CLOSING == 0 {
-            UvTimer::arm(handle, repeat_ms);
+            UvTimer::arm(handle, repeat_ms, VirtualMachine::get());
         }
     }
     0
@@ -1121,8 +1112,8 @@ impl Taskable for UvHandle {
     /// it tries to run is refused.
     unsafe fn release_unrun(this: *mut Self) {
         // On `Err` the exception is still pending, and the release dispatcher handles it.
-        // SAFETY: fn contract.
-        let _ = unsafe { UvHandle::run_close(this) };
+        // SAFETY: fn contract. The loop's VM releases its own tasks.
+        let _ = unsafe { UvHandle::run_close(this, VirtualMachine::get().global()) };
     }
     /// Not tied to one context, like [`UvLoop`]'s task.
     unsafe fn context(_: *const Self) -> ContextId {
@@ -1136,16 +1127,14 @@ impl UvHandle {
     ///
     /// # Safety
     /// `uv_close` posted the task for `handle`, which the addon keeps alive until
-    /// `close_cb` has run. This is the loop thread.
-    pub(crate) unsafe fn run_close(handle: *mut UvHandle) -> JsResult<()> {
+    /// `close_cb` has run. `global` is that of the loop's VM.
+    pub(crate) unsafe fn run_close(handle: *mut UvHandle, global: &JSGlobalObject) -> JsResult<()> {
         // SAFETY: fn contract.
-        let (close_cb, loop_) = unsafe {
+        let close_cb = unsafe {
             (*handle).flags |= UV_HANDLE_CLOSED;
-            ((*handle).close_cb, (*handle).loop_)
+            (*handle).close_cb
         };
         bun_output::scoped_log!(uv, "uv_handle_t {:?}: close_cb", handle);
-        // SAFETY: the VM owns the loop, so it outlives its handles.
-        let global = unsafe { &*loop_ }.global();
         if let Some(close_cb) = close_cb {
             let _handles = CallbackScope::open(global);
             // SAFETY: calls the addon's callback on the loop thread with its handle.
@@ -1368,8 +1357,8 @@ impl JobContext for UvWorkJob {
 /// The request keeps the process alive, like an active request in libuv.
 ///
 /// # Safety
-/// `loop_` is null or one of this module's loops. `req` points to `sizeof(uv_work_t)`
-/// bytes that the addon keeps alive until its `after_work_cb` has run.
+/// `loop_` is null or one of this module's loops, and this is its thread. `req` points to
+/// `sizeof(uv_work_t)` bytes that the addon keeps alive until its `after_work_cb` has run.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_queue_work(
     loop_: *mut UvLoop,
@@ -1377,7 +1366,7 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
     work_cb: Option<UvWorkCb>,
     after_work_cb: Option<UvAfterWorkCb>,
 ) -> c_int {
-    let (Some(loop_ref), Some(req_ref), Some(_)) = (
+    let (Some(_), Some(req_ref), Some(_)) = (
         NonNull::new(loop_),
         NonNull::new(req),
         work_cb, // libuv also returns UV_EINVAL
@@ -1395,8 +1384,8 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
         (&raw mut (*req).after_work_cb).write(after_work_cb);
         (&raw mut (*req).state).write(AtomicU32::new(WorkState::Queued as u32));
     }
-    // SAFETY: the loop is alive (fn contract), and this is the JS thread.
-    let cx = unsafe { loop_ref.as_ref() }.global().js_thread_of_caller();
+    let vm = VirtualMachine::get();
+    let cx = vm.global().js_thread(vm.context_of_caller());
     // SAFETY: the request outlives the job (fn contract, see `UvWorkJob`).
     Job::<UvWorkJob>::schedule(&cx, unsafe { JsPtr::new(req_ref) }, ());
     0

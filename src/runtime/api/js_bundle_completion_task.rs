@@ -1059,9 +1059,15 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.output_dir = Box::from(config.outdir.list.as_slice());
         transpiler.options.root_dir = Box::from(config.rootdir.list.as_slice());
-        transpiler.options.minify_syntax = config.minify.syntax;
-        transpiler.options.minify_whitespace = config.minify.whitespace;
-        transpiler.options.minify_identifiers = config.minify.identifiers;
+        transpiler.options.minify_syntax.set(config.minify.syntax);
+        transpiler
+            .options
+            .minify_whitespace
+            .set(config.minify.whitespace);
+        transpiler
+            .options
+            .minify_identifiers
+            .set(config.minify.identifiers);
         transpiler.options.keep_names = config.minify.keep_names;
         transpiler.options.inlining = config.minify.syntax;
         transpiler.options.source_map = config.source_map;
@@ -1184,7 +1190,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
         // `transpiler.env` is the dotenv loader installed by
         // `Transpiler::init`; non-null and valid for `'a`.
-        transpiler.resolver.env_loader = NonNull::new(transpiler.env);
+        transpiler
+            .resolver
+            .env_loader
+            .set(NonNull::new(transpiler.env));
         // `Resolver.opts` is the resolver-crate subset
         // — re-project from the now-mutated `transpiler.options`.
         transpiler.sync_resolver_opts();

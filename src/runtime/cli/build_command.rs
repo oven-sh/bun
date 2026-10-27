@@ -219,7 +219,7 @@ impl BuildCommand {
             .clone_from(&ctx.bundler_options.asset_naming);
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_transpiler.options.react_compiler = if ctx.bundler_options.react_compiler {
-            if this_transpiler.options.target.is_server_side() {
+            if this_transpiler.options.target.get().is_server_side() {
                 bun_ast::runtime::ReactCompilerMode::Ssr
             } else {
                 bun_ast::runtime::ReactCompilerMode::Client
@@ -231,9 +231,18 @@ impl BuildCommand {
             ctx.bundler_options.inline_entrypoint_import_meta_main;
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.split_require = ctx.bundler_options.split_require;
-        this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
-        this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
-        this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        this_transpiler
+            .options
+            .minify_syntax
+            .set(ctx.bundler_options.minify_syntax);
+        this_transpiler
+            .options
+            .minify_whitespace
+            .set(ctx.bundler_options.minify_whitespace);
+        this_transpiler
+            .options
+            .minify_identifiers
+            .set(ctx.bundler_options.minify_identifiers);
         this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_transpiler.options.deprecated_namespace_object_setters =
@@ -523,7 +532,10 @@ impl BuildCommand {
         // `bun_resolver::options::BundleOptions` subset, distinct from the
         // bundler-side `BundleOptions<'a>`; re-project the mutated options.
         this_transpiler.sync_resolver_opts();
-        this_transpiler.resolver.env_loader = core::ptr::NonNull::new(this_transpiler.env);
+        this_transpiler
+            .resolver
+            .env_loader
+            .set(core::ptr::NonNull::new(this_transpiler.env));
 
         // Allow tsconfig.json overriding, but always set it to false if --production is passed.
         if ctx.bundler_options.production {
@@ -565,9 +577,9 @@ impl BuildCommand {
         // `this_transpiler` for the rest of its life. Snapshot every options
         // field read after that point so the borrow checker is satisfied.
         let opt_output_dir: Box<[u8]> = this_transpiler.options.output_dir.clone();
-        let opt_minify_identifiers = this_transpiler.options.minify_identifiers;
-        let opt_minify_whitespace = this_transpiler.options.minify_whitespace;
-        let opt_minify_syntax = this_transpiler.options.minify_syntax;
+        let opt_minify_identifiers = this_transpiler.options.minify_identifiers.get();
+        let opt_minify_whitespace = this_transpiler.options.minify_whitespace.get();
+        let opt_minify_syntax = this_transpiler.options.minify_syntax.get();
         let opt_public_path: Box<[u8]> = this_transpiler.options.public_path.clone();
         let opt_output_format = this_transpiler.options.output_format;
         let opt_source_map = this_transpiler.options.source_map;

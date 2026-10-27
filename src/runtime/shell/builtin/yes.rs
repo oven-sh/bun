@@ -233,7 +233,10 @@ impl YesTask {
                             }
                             EventLoopTask::Js(_) => unreachable!(),
                         });
-                    mini.shared.enqueue_task_concurrent(at);
+                    bun_event_loop::MiniEventLoop::Shared::enqueue_task_concurrent(
+                        &raw const mini.shared,
+                        at,
+                    );
                 }
             }
         }

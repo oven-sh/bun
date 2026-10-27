@@ -162,7 +162,7 @@ pub(crate) struct SelectedPackages {
 /// Discovers the workspace packages under `cwd` and returns the ones `--filter` / `--workspaces` select, in discovery order.
 pub(crate) fn select_packages(
     ctx: &Command::ContextData,
-    resolver: &mut bun_resolver::Resolver<'_>,
+    resolver: &bun_resolver::Resolver<'_>,
     cwd: &[u8],
 ) -> Result<SelectedPackages, crate::Error> {
     let patterns: Vec<&[u8]> = if ctx.workspaces {

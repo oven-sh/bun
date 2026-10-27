@@ -8,14 +8,14 @@ use core::ptr::{null, null_mut};
 use bun_collections::smallvec::SmallVec;
 use bun_io::KeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc,
 };
 use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
-use crate::jsc_hooks::timer_all;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{All as TimerAll, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 use super::callbacks;
 use super::ffi::lsquic_callback;
@@ -1584,7 +1584,7 @@ impl QuicEndpoint {
         // does not move, and the sweeper frees it through `Drop`, which unlinks the node first.
         // `ACTIVE` is linked: `on_timer_fire` marks the popped node `FIRED` first thing.
         unsafe {
-            timer_all().update(
+            TimerAll::of(VirtualMachine::get()).update(
                 core::ptr::addr_of!(self.event_loop_timer)
                     .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
                     .cast_mut(),
@@ -1630,7 +1630,7 @@ impl QuicEndpoint {
             );
             // SAFETY: as in `schedule_process`.
             unsafe {
-                timer_all().update(
+                TimerAll::of(VirtualMachine::get()).update(
                     core::ptr::addr_of!(self.event_loop_timer)
                         .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
                         .cast_mut(),
@@ -2101,7 +2101,7 @@ impl QuicEndpoint {
         self.unlink_loop_driver();
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             // SAFETY: `ACTIVE` is linked (see `schedule_process`).
-            unsafe { timer_all().remove(self.event_loop_timer.as_ptr()) };
+            unsafe { TimerAll::of(VirtualMachine::get()).remove(self.event_loop_timer.as_ptr()) };
         }
         for engine in [
             self.server_engine.replace(null_mut()),
@@ -2151,7 +2151,7 @@ impl QuicEndpoint {
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
         // SAFETY: as in `schedule_process`.
         unsafe {
-            timer_all().update(
+            TimerAll::of(VirtualMachine::get()).update(
                 core::ptr::addr_of!(self.event_loop_timer)
                     .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
                     .cast_mut(),
@@ -2717,7 +2717,7 @@ impl Drop for QuicEndpoint {
         // operation dereferences the freed node.
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             // SAFETY: `ACTIVE` is linked (see `schedule_process`).
-            unsafe { timer_all().remove(self.event_loop_timer.as_ptr()) };
+            unsafe { TimerAll::of(VirtualMachine::get()).remove(self.event_loop_timer.as_ptr()) };
         }
         self.detach_for_finalize();
         self.release_native();

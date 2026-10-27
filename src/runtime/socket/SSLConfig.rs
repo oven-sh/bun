@@ -292,7 +292,9 @@ pub(crate) fn tls_true_defaults(vm: &VirtualMachine, is_server: bool) -> SSLConf
 
 /// For a request without TLS options: its default context is built on the HTTP thread, which does not see `tls.DEFAULT_CIPHERS`.
 pub(crate) fn http_client_defaults(vm: &VirtualMachine) -> Option<bun_http::ssl_config::SharedPtr> {
-    vm.tls_default_ciphers()?;
+    if !vm.has_tls_default_ciphers() {
+        return None;
+    }
     Some(bun_http::ssl_config::global_registry::intern(
         tls_true_defaults(vm, false),
     ))

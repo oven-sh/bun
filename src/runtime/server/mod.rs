@@ -868,7 +868,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
 
         // Allocate the pooled body slot (ref_count = 1).
-        let body_hive = crate::webcore::body::hive_alloc(crate::webcore::body::Value::Null);
+        let body_hive =
+            crate::webcore::body::hive_alloc(server.vm(), crate::webcore::body::Value::Null);
         // Raw payload pointer for the deferred Locked write below.
         // SAFETY: slot stays live — both `ctx.request_body` and `Request.body` hold a +1.
         let body_value: *mut crate::webcore::body::Value =
@@ -1461,7 +1462,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 break 'brk HttpResult::Success;
                             }
 
-                            nhr.promise.set(core::mem::replace(
+                            nhr.promise.adopt(core::mem::replace(
                                 &mut strong_promise,
                                 jsc::StrongOptional::empty(),
                             ));
@@ -1794,12 +1795,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // unrefs when the drain completes): on Windows uv_run skips I/O with
         // zero ref'd handles, so unrefing here wedged server.close() teardown.
 
-        if !SSL {
-            // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken
-            // from `self.listener`.
-            let fd = unsafe { (*listener).socket().fd() };
-            self.vm().remove_listening_socket_for_watch_mode(fd);
-        }
         self.notify_inspector_server_stopped();
 
         match &self.config.get().address {
@@ -2030,12 +2025,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return self.on_listen_failed();
         };
         self.listener.set(Some(socket));
-        self.vm().event_loop_handle.set(Some(bun_io::Loop::get()));
-        if !SSL {
-            // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-            let fd = bun_opaque::opaque_deref_mut(socket).socket().fd();
-            self.vm().add_listening_socket_for_watch_mode(fd);
-        }
+        self.vm().set_platform_loop(bun_io::Loop::get());
     }
 
     /// Build the bind/listen failure as a `SystemError` (so JS sees
@@ -3093,9 +3083,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 }
                             }
                             if !tcp {
-                                jsc::VirtualMachine::get()
-                                    .event_loop_handle
-                                    .set(Some(bun_io::Loop::get()));
+                                jsc::VirtualMachine::get().set_platform_loop(bun_io::Loop::get());
                             }
                         }
                     }

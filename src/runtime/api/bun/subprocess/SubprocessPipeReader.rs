@@ -366,7 +366,7 @@ impl PipeReader {
 
     #[cfg(windows)]
     fn loop_(&self) -> *mut AsyncLoop {
-        bun_jsc::VirtualMachineRef::get().uws_loop().uv().as_ptr()
+        bun_uws::Loop::get().uv().as_ptr()
     }
 }
 

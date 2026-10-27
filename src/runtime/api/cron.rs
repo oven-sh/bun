@@ -54,7 +54,8 @@ use bun_sys::FdDirExt as _;
 use bun_core::ZBox as ZString;
 use bun_sys::{self as sys, Fd, File};
 
-use crate::jsc_hooks::timer_all;
+use crate::jsc_hooks::RuntimeState;
+use crate::timer::All as TimerAll;
 
 // ============================================================================
 // CronJobBase — shared base for CronRegisterJob and CronRemoveJob
@@ -242,8 +243,7 @@ struct CronRegisterJob {
     exit_status: JsCell<Option<Status>>,
     err_msg: JsCell<Option<Vec<u8>>>,
     tmp_path: JsCell<Option<ZString>>,
-    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
-    /// wraps `*const EventLoopHandle`).
+    /// The VM's loop, for the io layer.
     event_loop_handle: EventLoopHandle,
 }
 
@@ -949,8 +949,7 @@ struct CronRemoveJob {
     exit_status: JsCell<Option<Status>>,
     err_msg: JsCell<Option<Vec<u8>>>,
     tmp_path: JsCell<Option<ZString>>,
-    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
-    /// wraps `*const EventLoopHandle`).
+    /// The VM's loop, for the io layer.
     event_loop_handle: EventLoopHandle,
 }
 
@@ -1426,13 +1425,19 @@ impl CronJob {
         <Self as bun_ptr::CellRefCounted>::deref_nn(this);
     }
 
+    /// The node, with the provenance of `self`: `from_timer_ptr` goes back from it to the job.
+    #[inline]
+    fn timer_node(&self) -> *mut EventLoopTimer {
+        (&raw const self.event_loop_timer).cast_mut().cast()
+    }
+
     /// Idempotent — every step checks its own state.
-    fn stop_internal(&self, _vm: &VirtualMachine) {
+    fn stop_internal(&self, vm: &VirtualMachine) {
         self.stopped.set(true);
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             // SAFETY: `ACTIVE` is linked: `on_timer_fire` marks the popped node `FIRED` first
             // thing, and `FakeTimers::clear` marks what it unlinks `CANCELLED`.
-            unsafe { timer_all().remove(self.event_loop_timer.as_ptr()) };
+            unsafe { TimerAll::of(vm).remove(self.event_loop_timer.as_ptr()) };
         }
         self.poll_ref.unref(bun_io::js_vm_ctx());
         self.abort_handle.leave();
@@ -1443,14 +1448,14 @@ impl CronJob {
     /// May free `this`.
     fn finish_deferred_stop(this: ThisPtr<Self>, vm: &VirtualMachine) {
         this.stop_internal(vm);
-        Self::remove_from_list(this);
+        Self::remove_from_list(this, vm);
     }
 
     /// The fake heap dropped this job's timer (`useRealTimers()` /
     /// `clearAllTimers()`): stop the job as `stop()` would, so it does not
     /// keep the event loop alive for a timer that can no longer fire.
-    pub(crate) fn stop_dropped_from_fake_heap(this: ThisPtr<Self>) {
-        Self::self_stop(this, VirtualMachine::get());
+    pub(crate) fn stop_dropped_from_fake_heap(this: ThisPtr<Self>, vm: &VirtualMachine) {
+        Self::self_stop(this, vm);
     }
 
     /// The context of the script that scheduled the job stopped. A tick's promise that is pending
@@ -1468,7 +1473,7 @@ impl CronJob {
         let _guard = RefPtr::from_this(this);
         this.stop_internal(vm);
         this.let_go_of_wrapper();
-        Self::remove_from_list(this);
+        Self::remove_from_list(this, vm);
         if vm_is_going {
             Self::reclaim_tick_claim(this);
         }
@@ -1486,20 +1491,18 @@ impl CronJob {
             return;
         }
         this.stop_internal(vm);
-        Self::remove_from_list(this);
+        Self::remove_from_list(this, vm);
     }
 
     /// May free `this`.
-    fn remove_from_list(this: ThisPtr<Self>) {
-        let Some(state) = crate::jsc_hooks::try_runtime_state() else {
-            return;
-        };
+    fn remove_from_list(this: ThisPtr<Self>, vm: &VirtualMachine) {
+        let state = RuntimeState::of(vm);
         let mut jobs = state.cron_jobs.take();
         let removed = jobs
             .iter()
             .position(|j| j.as_ptr() == this.as_ptr())
             .map(|i| jobs.swap_remove(i));
-        drop(state.cron_jobs.replace(jobs));
+        state.cron_jobs.set(jobs);
         drop(removed);
     }
 
@@ -1508,10 +1511,7 @@ impl CronJob {
     /// `.teardown`: worker exit — the event loop is dying, settle never
     /// happens, so take the claim back here to avoid leaking the struct.
     pub(crate) fn clear_all_for_vm<const MODE: ClearMode>(vm: &VirtualMachine) {
-        let Some(state) = crate::jsc_hooks::try_runtime_state() else {
-            return;
-        };
-        for job in state.cron_jobs.take() {
+        for job in RuntimeState::of(vm).cron_jobs.take() {
             let this = job.this_ptr();
             this.stop_internal(vm);
             if MODE == ClearMode::Teardown {
@@ -1561,14 +1561,7 @@ impl CronJob {
         };
         // SAFETY: as in `register`: the job is not stopped, so `this_value` is still strong.
         // `ACTIVE` is linked (see `stop_internal`).
-        unsafe {
-            timer_all().update(
-                this.event_loop_timer
-                    .as_ptr()
-                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>(),
-                &next_time,
-            );
-        }
+        unsafe { TimerAll::of(vm).update(this.timer_node(), &next_time) };
     }
 
     /// The tick's callback runs here as a top-level call (what it throws
@@ -1750,10 +1743,8 @@ impl CronJob {
         // The cron_jobs list exists so --hot reload and worker teardown can
         // stop/release jobs. Main-thread VMs without --hot never enumerate it,
         // so skip the list ref + append entirely.
-        if vm.hot_reload.get() == HotReload::Hot || vm.worker.get().is_some() {
-            if let Some(state) = crate::jsc_hooks::try_runtime_state() {
-                state.cron_jobs.push(job.clone());
-            }
+        if vm.hot_reload.get() == HotReload::Hot || vm.worker_ref().is_some() {
+            RuntimeState::of(vm).cron_jobs.push(job.clone());
         }
 
         // `job`'s ref moves to the JS wrapper (released via `finalize`).
@@ -1773,14 +1764,7 @@ impl CronJob {
         // SAFETY: never linked yet. The node is in a cell of the heap-allocated job, on which the
         // wrapper holds a ref. `this_value` roots the wrapper until the job is stopped, and what
         // stops a job whose timer can be linked is `stop_internal`, which unlinks it.
-        unsafe {
-            timer_all().update(
-                job.event_loop_timer
-                    .as_ptr()
-                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>(),
-                &next_time,
-            );
-        }
+        unsafe { TimerAll::of(vm).update(job.timer_node(), &next_time) };
 
         Ok(js_value)
     }
@@ -2197,9 +2181,8 @@ fn resolve_path(global: &JSGlobalObject, path_: &[u8]) -> crate::Result<ZString>
     let caller_utf8 = srcloc.str.to_utf8();
     let raw_dir = path::resolve_path::dirname::<path::platform::Auto>(caller_utf8.slice());
     let source_dir: &[u8] = if raw_dir.is_empty() { b"." } else { raw_dir };
-    // SAFETY: no other transpiler borrow is live here and resolving runs no script (see
-    // `transpiler_mut` on macros).
-    let mut resolved = unsafe { vm.transpiler_mut() }
+    let mut resolved = vm
+        .transpiler()
         .resolver
         .resolve(source_dir, path_, bun_ast::ImportKind::EntryPointRun)
         .map_err(|_| crate::Error::ModuleNotFound)?;

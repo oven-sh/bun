@@ -269,7 +269,7 @@ impl SecureContext {
         d: [u8; 32],
     ) -> JsResult<SecureContext> {
         let mut err = uws::create_bun_socket_error_t::none;
-        let cache = &crate::jsc_hooks::runtime_state().ssl_ctx_cache;
+        let cache = &crate::jsc_hooks::RuntimeState::of(global.bun_vm()).ssl_ctx_cache;
         let Some(ctx) = cache.get_or_create_digest(ctx_opts, d, &mut err) else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the

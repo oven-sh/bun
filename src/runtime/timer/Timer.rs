@@ -18,7 +18,6 @@ use super::{
     All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimerState, EventLoopTimerTag,
     ImmediateObject, Kind, TimeoutObject, TimeoutWarning, TimerObjectInternals,
 };
-use crate::jsc_hooks::timer_all;
 
 // ════════════════════════════════════════════════════════════════════════════
 // JS-facing surface on `super::All`
@@ -26,7 +25,7 @@ use crate::jsc_hooks::timer_all;
 
 impl All {
     pub(crate) fn update_date_header_timer_if_necessary(
-        &'static self,
+        &self,
         loop_: &UwsLoop,
         vm: &VirtualMachine,
     ) {
@@ -161,7 +160,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!promise.is_empty() && !countdown.is_empty());
-        let all = timer_all();
+        let all = Self::of(cx.vm());
         let id = all.next_id();
 
         let countdown_int = all.js_value_to_countdown(
@@ -188,8 +187,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty());
-        let all = timer_all();
-        let id = all.next_id();
+        let id = Self::of(cx.vm()).next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
         Ok(ImmediateObject::init(cx, id, wrapped_callback, arguments))
@@ -203,7 +201,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
-        let all = timer_all();
+        let all = Self::of(cx.vm());
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
@@ -231,7 +229,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
-        let all = timer_all();
+        let all = Self::of(cx.vm());
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
@@ -269,18 +267,18 @@ impl All {
         vm: &VirtualMachine,
         context: &bun_jsc::ScriptExecutionContext,
         id: u64,
-    ) -> Option<*mut TimeoutObject> {
+    ) -> Option<*mut TimerObjectInternals> {
         let (map, (idx, value)) = if let Some(found) = self.maps.set_timeout.find(id) {
             (&self.maps.set_timeout, found)
         } else {
             (&self.maps.set_interval, self.maps.set_interval.find(id)?)
         };
-        // SAFETY: entry value points to EventLoopTimer embedded in a TimeoutObject
-        debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
-        // SAFETY: entry value points to TimeoutObject.event_loop_timer
-        let timeout = unsafe { TimeoutObject::from_timer_ptr(value) };
         // SAFETY: in the map ⇒ live.
-        if !vm.context_may_name(context, unsafe { (*timeout).internals.context }) {
+        debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
+        // SAFETY: `to_primitive` put the node of a `TimerObjectInternals` in the map.
+        let timeout = unsafe { TimerObjectInternals::from_timer_ptr(value) };
+        // SAFETY: in the map ⇒ live.
+        if !vm.context_may_name(context, unsafe { (*timeout).context }) {
             return None;
         }
         map.swap_remove_at(idx);
@@ -297,7 +295,7 @@ impl All {
         let vm = global_this.bun_vm();
         // `clearTimeout` / `clearInterval` / `clearImmediate`, C++ host functions, call this.
         let context = vm.context_of_caller();
-        let all = timer_all();
+        let all = Self::of(vm);
 
         let timer: Option<*mut TimerObjectInternals> = 'brk: {
             if timer_id_value.is_number() {
@@ -307,11 +305,7 @@ impl All {
                     return Ok(());
                 };
                 // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
-                let Some(t) = all.remove_timer_by_id(vm, context, id) else {
-                    return Ok(());
-                };
-                // SAFETY: t is a valid TimeoutObject pointer
-                break 'brk Some(unsafe { core::ptr::addr_of_mut!((*t).internals) });
+                break 'brk all.remove_timer_by_id(vm, context, id);
             } else if timer_id_value.is_string_literal() {
                 // Primitive string only (JSType::String) — boxed `new String(..)`
                 // must fall through to `from_js` below and be a no-op, matching
@@ -367,26 +361,20 @@ impl All {
                 if parsed > Self::MAX_ID {
                     return Ok(());
                 }
-                let Some(t) = all.remove_timer_by_id(vm, context, parsed) else {
-                    return Ok(());
-                };
-                // SAFETY: t is a valid TimeoutObject pointer
-                break 'brk Some(unsafe { core::ptr::addr_of_mut!((*t).internals) });
+                break 'brk all.remove_timer_by_id(vm, context, parsed);
             }
 
             if let Some(timeout) = TimeoutObject::from_js(timer_id_value) {
                 // clearImmediate should be a noop if anything other than an Immediate is passed to it.
                 if kind != Kind::SetImmediate {
-                    // SAFETY: `timeout` is a valid TimeoutObject pointer
-                    break 'brk Some(unsafe { core::ptr::addr_of_mut!((*timeout).internals) });
+                    break 'brk Some(timeout.cast());
                 } else {
                     return Ok(());
                 }
             } else if let Some(immediate) = ImmediateObject::from_js(timer_id_value) {
                 // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
                 if kind == Kind::SetImmediate {
-                    // SAFETY: `immediate` is a valid ImmediateObject pointer
-                    break 'brk Some(unsafe { core::ptr::addr_of_mut!((*immediate).internals) });
+                    break 'brk Some(immediate.cast());
                 } else {
                     return Ok(());
                 }
@@ -432,7 +420,7 @@ impl DateHeaderTimer {
     /// 2. If the timer is stale (> 1 second since last update), update the date
     ///    immediately and reschedule
     ///
-    fn enable(all: &'static All, vm: &VirtualMachine) {
+    fn enable(all: &All, vm: &VirtualMachine) {
         let timer = &all.date_header_timer.event_loop_timer;
         if timer.state() == EventLoopTimerState::ACTIVE {
             return;
@@ -557,7 +545,8 @@ pub(crate) mod internal_bindings {
         id: Option<u64>,
     ) -> bindgen::Result<'a, ()> {
         let Some(id) = id else { return Ok(()) };
-        let current = timer_all().last_id.get();
+        let last_id = &All::of(VirtualMachine::get()).last_id;
+        let current = last_id.get();
         if id < current {
             return Err(heap.error_with_code(
                 bun_jsc::ErrorCode::OUT_OF_RANGE,
@@ -575,7 +564,7 @@ pub(crate) mod internal_bindings {
                 ),
             ));
         }
-        timer_all().last_id.set(id);
+        last_id.set(id);
         Ok(())
     }
 }

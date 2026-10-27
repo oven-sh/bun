@@ -501,8 +501,11 @@ impl Expansion {
                 }
             }
             ast::SimpleAtom::VarArgv(int) => {
-                // SAFETY: `command_ctx` is the live VM ctx; `vm_args_utf8` borrows it.
-                Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
+                // SAFETY: the interpreter's `command_ctx`: null, or the process-global
+                // `ContextData`.
+                unsafe {
+                    Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
+                }
             }
             ast::SimpleAtom::Asterisk => {
                 meta_offsets.push(out.len() as u32);

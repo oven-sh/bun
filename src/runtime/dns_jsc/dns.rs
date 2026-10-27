@@ -39,7 +39,7 @@ use super::cares_jsc::error_to_deferred;
 use crate::generated_bindgen::dns::LookupOptions;
 use crate::generated_bindgen::dns_internals::ResolverOptions;
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
 
 // `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
@@ -76,11 +76,14 @@ type Sockaddr = netc::sockaddr;
 /// `noalias` hazard when c-ares callbacks re-enter on the same global resolver.
 #[inline]
 fn global_resolver(global_this: &JSGlobalObject) -> &'static Resolver {
-    let gd = crate::jsc_hooks::global_dns_data().get_or_init(|| {
-        let gd = GlobalData::init(global_this.bun_vm());
-        gd.resolver.ref_(); // pin for the VM's lifetime
-        gd
-    });
+    let vm = global_this.bun_vm();
+    let gd = crate::jsc_hooks::RuntimeState::of(vm)
+        .global_dns_data
+        .get_or_init(|| {
+            let gd = GlobalData::init(vm);
+            gd.resolver.ref_(); // pin for the VM's lifetime
+            gd
+        });
     &gd.resolver
 }
 
@@ -3971,14 +3974,7 @@ impl Resolver {
 
     // ───────────── timer / pending bookkeeping ─────────────
 
-    pub(crate) fn check_timeouts(&self, now: &ElTimespec, vm: &VirtualMachine) {
-        // Caller (`dispatch.rs::fire_timer`) hands us the event-loop's
-        // local `ElTimespec`; `add_timer` works in `bun_core::timespec`. Same
-        // `{ sec: i64, nsec: i64 }` layout — convert field-by-field.
-        let now = bun::timespec {
-            sec: now.sec,
-            nsec: now.nsec,
-        };
+    pub(crate) fn check_timeouts(&self, now: &bun::timespec, vm: &VirtualMachine) {
         let uws_loop = vm.uws_loop();
         // R-2: `&self` carries no `noalias`, and every field touched below is
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
@@ -3986,7 +3982,7 @@ impl Resolver {
         // `&Resolver` from their stored ctx without aliasing UB.
         let deref_this = self.as_ctx_ptr();
         scopeguard::defer! {
-            crate::jsc_hooks::timer_all().increment_timer_ref(-1, uws_loop);
+            crate::timer::All::of(vm).increment_timer_ref(-1, uws_loop);
             // SAFETY: `deref_this` is the heap allocation from `init`; releases
             // `add_timer`'s ref. May be the final release; nothing touches
             // `*self` after this point.
@@ -4006,7 +4002,7 @@ impl Resolver {
                 );
                 // See `on_dns_poll` — c-ares detaches post-callback, so re-check.
                 if self.any_requests_pending() {
-                    let _ = self.add_timer(Some(&now));
+                    let _ = self.add_timer(Some(now));
                 } else {
                     self.remove_timer();
                 }
@@ -4070,17 +4066,10 @@ impl Resolver {
             .copied()
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
         let next = now_ts.add_ms(1000);
-        // `EventLoopTimer.next` uses the event-loop crate's local
-        // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
-        self.event_loop_timer.with_mut(|t| {
-            t.next = ElTimespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            }
-        });
-        let uws_loop = self.vm().uws_loop();
-        let all = crate::jsc_hooks::timer_all();
-        all.increment_timer_ref(1, uws_loop);
+        self.event_loop_timer.with_mut(|t| t.next = next);
+        let vm = self.vm();
+        let all = crate::timer::All::of(vm);
+        all.increment_timer_ref(1, vm.uws_loop());
         // SAFETY: not `ACTIVE`, so unlinked: `check_timeouts` marks the popped node `PENDING`
         // before it calls anything. The node is in a cell of the heap-allocated resolver, which
         // the ref taken above keeps until `check_timeouts` or `remove_timer` releases it, each
@@ -4103,21 +4092,20 @@ impl Resolver {
 
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
         let this = self.as_ctx_ptr();
+        let vm = self.vm();
+        let all = crate::timer::All::of(vm);
         scopeguard::defer! {
+            all.increment_timer_ref(-1, vm.uws_loop());
             // SAFETY: `this` is the heap allocation from `init`. This releases
             // the ref taken by `add_timer`. Every caller holds at least one
             // other ref for the duration of this call (a `RefPtr` or the
             // global-resolver permanent pin), so this
             // `deref` cannot reach 0 while `&self` is live.
-            unsafe {
-                let uws_loop = (*this).vm().uws_loop();
-                crate::jsc_hooks::timer_all().increment_timer_ref(-1, uws_loop);
-                Self::deref(this);
-            }
+            unsafe { Self::deref(this) };
         }
 
         // SAFETY: `ACTIVE` is linked (see `add_timer`).
-        unsafe { crate::jsc_hooks::timer_all().remove(self.event_loop_timer.as_ptr()) };
+        unsafe { all.remove(self.event_loop_timer.as_ptr()) };
     }
 
     // ───────────── pending-cache helpers ─────────────
@@ -4852,7 +4840,7 @@ impl Resolver {
                 Async::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
-            let loop_ = self.vm().event_loop_handle.get().unwrap();
+            let loop_ = self.vm().platform_loop_opt().unwrap();
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };

@@ -1051,7 +1051,7 @@ impl TryWith {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-pub(crate) struct CopyFileWindows<'a> {
+pub(crate) struct CopyFileWindows {
     pub(crate) destination_file_store: RefPtr<Store>,
     pub(crate) source_file_store: RefPtr<Store>,
 
@@ -1059,7 +1059,7 @@ pub(crate) struct CopyFileWindows<'a> {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) mkdirp_if_not_exists: bool,
     pub(crate) destination_mode: Option<Mode>,
-    pub(crate) event_loop: &'a jsc::event_loop::EventLoop,
+    pub(crate) event_loop: &'static jsc::event_loop::EventLoop,
     /// The context of the script that asked for the copy.
     pub(crate) context: jsc::ContextId,
 
@@ -1109,7 +1109,7 @@ impl Default for ReadWriteLoop {
 // borrow checker can see `self.read_write_loop` / `self.io_request` / `self.event_loop`
 // as disjoint field accesses through a single `&mut self`.
 #[cfg(windows)]
-impl<'a> CopyFileWindows<'a> {
+impl CopyFileWindows {
     fn read_write_loop_start(&mut self) -> bun_sys::Result<()> {
         self.read_write_loop.read_buf.reserve_exact(64 * 1024);
 
@@ -1334,7 +1334,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 }
 
 #[cfg(windows)]
-impl<'a> CopyFileWindows<'a> {
+impl CopyFileWindows {
     pub(crate) fn on_read_write_loop_complete(&mut self) {
         self.event_loop.unref_keep_alive();
 
@@ -1347,14 +1347,14 @@ impl<'a> CopyFileWindows<'a> {
         self.on_complete(written);
     }
 
-    pub(crate) fn new(init: CopyFileWindows<'a>) -> Box<CopyFileWindows<'a>> {
+    pub(crate) fn new(init: CopyFileWindows) -> Box<CopyFileWindows> {
         Box::new(init)
     }
 
     pub(crate) fn init(
         destination_file_store: RefPtr<Store>,
         source_file_store: RefPtr<Store>,
-        event_loop: &'a jsc::event_loop::EventLoop,
+        event_loop: &'static jsc::event_loop::EventLoop,
         context: &jsc::ScriptExecutionContext,
         mkdirp_if_not_exists: bool,
         size_: SizeType,
@@ -1902,7 +1902,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
 #[cfg(windows)]
 fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket: &jsc::Ticket) {
     bun_sys::syslog!("mkdirp complete");
-    let this = ctx.cast::<CopyFileWindows<'_>>();
+    let this = ctx.cast::<CopyFileWindows>();
     // SAFETY: `ctx` is the `*mut CopyFileWindows` stored in `AsyncMkdirp.completion_ctx`
     // by `mkdirp` above, which the JS thread leaves alone until the post below.
     // Only `err` is borrowed: this is a pool thread, and `event_loop` is `!Sync`.
@@ -1910,7 +1910,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket:
     debug_assert!(err.is_none());
     *err = err_.err();
     ticket.post(jsc::ConcurrentTask::create_from(
-        this.cast::<CopyFileWindowsMkdirp<'_>>(),
+        this.cast::<CopyFileWindowsMkdirp>(),
     ));
 }
 
@@ -1918,10 +1918,10 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket:
 /// own tag.
 #[cfg(windows)]
 #[repr(transparent)]
-pub(crate) struct CopyFileWindowsMkdirp<'a>(CopyFileWindows<'a>);
+pub(crate) struct CopyFileWindowsMkdirp(CopyFileWindows);
 
 #[cfg(windows)]
-impl bun_event_loop::Taskable for CopyFileWindowsMkdirp<'_> {
+impl bun_event_loop::Taskable for CopyFileWindowsMkdirp {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::CopyFileWindowsMkdirp;
     /// Frees nothing: the copy is not this task's.
     unsafe fn release_unrun(_: *mut Self) {}
@@ -1932,7 +1932,7 @@ impl bun_event_loop::Taskable for CopyFileWindowsMkdirp<'_> {
 }
 
 #[cfg(windows)]
-impl CopyFileWindowsMkdirp<'_> {
+impl CopyFileWindowsMkdirp {
     /// # Safety
     /// `this` is the live `CopyFileWindows` `on_mkdirp_complete_concurrent` posted;
     /// `on_mkdirp_complete` may free it via `throw`.

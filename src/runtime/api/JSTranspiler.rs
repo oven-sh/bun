@@ -33,7 +33,7 @@ use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_collections::ArrayHashMapExt;
-use bun_core::{EncodedSlice, String as BunString};
+use bun_core::{EncodedSlice, String as BunString, StringView};
 use bun_options_types::schema::api;
 
 // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
@@ -47,7 +47,8 @@ pub(crate) struct JSTranspiler {
     /// resting-state log that `transpiler.log: *mut Log` points at between
     /// host-fn calls. `JsCell` so a `*mut Log` can be projected from `&self`.
     pub(crate) config: JsCell<Config>,
-    pub(crate) scan_pass_result: JsCell<ScanPassResult>,
+    /// Empty between calls: kept for its capacity.
+    pub(crate) scan_pass_result: JsCell<ScanPassResult<'static>>,
     pub(crate) buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
     // Arena bulk-frees the config strings. Boxed so its
     // address is stable across the move into `Box<JSTranspiler>` —
@@ -1147,13 +1148,13 @@ impl JSTranspiler {
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn get_parse_result(
+    fn get_parse_result<'p>(
         &self,
-        arena: &'static Arena,
-        code: &[u8],
+        arena: &'p Arena,
+        code: &'p [u8],
         loader: Option<Loader>,
         macro_js_ctx: MacroJSCtx,
-    ) -> Option<ParseResult<'static>> {
+    ) -> Option<ParseResult<'p>> {
         let config = self.config.get();
         let name = config.default_loader.stdin_name();
 
@@ -1165,7 +1166,7 @@ impl JSTranspiler {
         // CALLER's arena so the bytes outlive `parse()` and the returned `ParseResult`
         // (whose AST may hold slices into the source). A stack-local `Vec` would drop at
         // the end of this fn and leave dangling references.
-        let processed_code: &[u8] = if config.repl_mode && is_likely_object_literal(code) {
+        let processed_code: &'p [u8] = if config.repl_mode && is_likely_object_literal(code) {
             let mut buf = ArenaVec::<u8>::with_capacity_in(code.len() + 2, arena);
             buf.push(b'(');
             buf.extend_from_slice(code);
@@ -1299,7 +1300,7 @@ impl JSTranspiler {
         loader_arg: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let js_thread = global.js_thread_of_caller_no_frame();
+        let js_thread = global.js_thread_of_caller();
         jsc::mark_binding();
         let code = match code_arg {
             StringOrJsBytes::Bytes(buffer) => {
@@ -1462,8 +1463,8 @@ fn named_exports_to_js(
     }
     index_sort::sort_slice_unstable_by(&mut keys, |a, b| a.cmp(b));
 
-    let names: Vec<BunString> = keys.into_iter().map(BunString::from_bytes).collect();
-    bun_string_jsc::to_js_array(global, &names)
+    let names: Vec<StringView<'_>> = keys.into_iter().map(StringView::from_bytes).collect();
+    bun_string_jsc::to_js_array(global, StringView::as_strings(&names))
 }
 
 fn named_imports_to_js(
@@ -1580,19 +1581,16 @@ impl JSTranspiler {
         // no `scan` body; the real `scan` lives on `bun_bundler::cache::JavaScript`.
         // Both are stateless unit structs, so calling the bundler-crate one
         // directly is equivalent.
-        // SAFETY: `scan_pass_result` JsCell — `scan()` does not re-enter JS.
+        let mut scan_pass_result = self.scan_pass_result.replace(ScanPassResult::init());
         let scan_result = bun_bundler::cache::JavaScript::init().scan(
             &arena,
-            unsafe { self.scan_pass_result.get_mut() },
+            &mut scan_pass_result,
             opts,
             define,
             &mut log,
             &source,
         );
 
-        // `scan_pass_result` must be reset on every exit past this point
-        // (including the error paths). Compute the result, then reset
-        // unconditionally before returning.
         let result = (|| -> JsResult<JSValue> {
             if let Err(err) = scan_result {
                 if (log.warnings + log.errors) > 0 {
@@ -1610,11 +1608,11 @@ impl JSTranspiler {
 
             named_imports_to_js(
                 global,
-                self.scan_pass_result.get().import_records.as_slice(),
+                scan_pass_result.import_records.as_slice(),
                 self.config.get().trim_unused_imports.unwrap_or(false),
             )
         })();
-        self.scan_pass_result.with_mut(|s| s.reset());
+        self.scan_pass_result.set(scan_pass_result.recycle());
         result
     }
 }

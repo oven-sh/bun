@@ -735,7 +735,6 @@ impl DevServer {
             crate::bake::get_hmr_runtime(crate::bake::Side::Server)
                 .code
                 .as_bytes(),
-            true,
         );
 
         // `self.global()` returns `&'static`, decoupled from `&self` — it's

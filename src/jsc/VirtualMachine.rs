@@ -2161,6 +2161,9 @@ impl VirtualMachine {
                 // normal path; process_exit() RETURNS on a worker, so the
                 // main-thread process_exit(7)+panic below would crash.
                 self.exit_handler.exit_code = 1;
+                if let Some(worker) = self.worker_ref() {
+                    worker.note_uncaught_exception_handler_threw();
+                }
                 (self.on_unhandled_rejection)(self, global_object, err);
                 return false;
             }

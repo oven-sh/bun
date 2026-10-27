@@ -319,7 +319,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
           const w = new Worker("./worker.ts");
           w.addEventListener("message", () => w.terminate());
           // Any worker 'error' here means cron routed the TerminationException
-          // through uncaughtException → WebWorker__dispatchError — the
+          // through uncaughtException → WebWorker__postErrorToWorkerObject: the
           // regression this test guards against, independent of whether
           // VMTraps asserts are compiled in.
           w.addEventListener("error", () => errors++);

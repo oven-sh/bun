@@ -267,6 +267,65 @@ console.log(utils());`,
       expect(await stderr.text()).toBe("");
       expect(await exited).toBe(0);
     });
+
+    test("--no-bundle runs the macro file next to the importer when --external matches it", async () => {
+      using dir = tempDir("bun-build-no-bundle-macro-external", {
+        "src/entry.ts": `import { which } from "./macro.ts" with { type: "macro" }; console.log(which());`,
+        "src/macro.ts": `export const which = () => "src/macro.ts";`,
+        // What "./macro.ts" names when it is read against the working directory.
+        "macro.ts": `export const which = () => "macro.ts";`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", "src/entry.ts", "--external", "./mac*", "--external", "./macro.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain(`console.log("src/macro.ts");`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("`external` in bunfig.toml applies to bun build, and --external replaces it", async () => {
+      using dir = tempDir("bun-build-bunfig-external", {
+        "bunfig.toml": `external = ["from-bunfig"]`,
+        "entry.js": `import a from "from-bunfig"; import b from "from-cli"; console.log(a, b);`,
+        "node_modules/from-bunfig/package.json": `{ "name": "from-bunfig", "version": "1.0.0", "main": "index.js" }`,
+        "node_modules/from-bunfig/index.js": `module.exports = "bundled from-bunfig";`,
+        "node_modules/from-cli/package.json": `{ "name": "from-cli", "version": "1.0.0", "main": "index.js" }`,
+        "node_modules/from-cli/index.js": `module.exports = "bundled from-cli";`,
+      });
+      const build = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "entry.js", ...args],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return {
+          imports: stdout.match(/^import .*$/gm),
+          bundled: stdout.match(/bundled from-\w+/g),
+          stderr,
+          exitCode,
+        };
+      };
+      expect(await build()).toEqual({
+        imports: [`import a from "from-bunfig";`],
+        bundled: ["bundled from-cli"],
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(await build("--external", "from-cli")).toEqual({
+        imports: [`import b from "from-cli";`],
+        bundled: ["bundled from-bunfig"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   },
   10_000,
 );

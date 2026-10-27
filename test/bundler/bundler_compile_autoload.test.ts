@@ -103,6 +103,28 @@ console.log("PRELOAD");
     },
   });
 
+  // `external` in bunfig.toml is about the output of `bun build`. An executable loads what it resolves.
+  itBundled("compile/AutoloadBunfigExternalDoesNotChangeWhatLoads", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        const name = "runtime-pkg";
+        import(name)
+          .then(m => console.log(m.default))
+          .catch(e => console.log("import-failed: " + e.message));
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `external = ["runtime-pkg"]`,
+      "/node_modules/runtime-pkg/package.json": JSON.stringify({ name: "runtime-pkg", main: "index.js" }),
+      "/node_modules/runtime-pkg/index.js": `module.exports = "loaded runtime-pkg";`,
+    },
+    run: {
+      stdout: "loaded runtime-pkg",
+      setCwd: true,
+    },
+  });
+
   // Test that bunfig.toml can be disabled with autoloadBunfig: false
   itBundled("compile/AutoloadBunfigDisabled", {
     compile: {

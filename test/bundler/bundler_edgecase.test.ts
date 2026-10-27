@@ -3533,6 +3533,51 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: "foo-value foo-value" },
   });
+  // The macro file itself runs at build time too. An entry that names it by a
+  // wildcard, as written, or by its path does not change which file that is.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`edgecase/MacroFileMatchedByExternal/${backend}`, {
+      files: {
+        "/src/entry.ts": /* js */ `
+          import { which } from "./macro.ts" with { type: "macro" };
+          console.log(which());
+        `,
+        "/src/macro.ts": `export const which = () => "src/macro.ts";`,
+        // What "./macro.ts" names when it is read against the working directory.
+        "/macro.ts": `export const which = () => "macro.ts";`,
+      },
+      entryPoints: ["/src/entry.ts"],
+      backend,
+      external: ["./mac*", "./macro.ts", "./src/macro.ts"],
+      target: "bun",
+      run: { stdout: "src/macro.ts" },
+    });
+  }
+  // An external macro package is left to the macro runtime, which takes "main" on every target.
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`edgecase/MacroPackageMarkedExternalLoadsMain/${target}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          import { which } from "macro-pkg" with { type: "macro" };
+          console.log(which());
+        `,
+        "/node_modules/macro-pkg/package.json": JSON.stringify({
+          name: "macro-pkg",
+          version: "1.0.0",
+          main: "main.js",
+          module: "module.js",
+          browser: "browser.js",
+        }),
+        "/node_modules/macro-pkg/main.js": `exports.which = () => "main.js";`,
+        "/node_modules/macro-pkg/module.js": `export const which = () => "module.js";`,
+        "/node_modules/macro-pkg/browser.js": `export const which = () => "browser.js";`,
+      },
+      backend: "cli",
+      external: ["macro-pkg"],
+      target,
+      run: { stdout: "main.js" },
+    });
+  }
   itBundled("edgecase/NodeBuiltinWithoutPrefix", {
     files: {
       "/entry.ts": `

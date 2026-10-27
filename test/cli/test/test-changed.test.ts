@@ -394,6 +394,22 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `external` in bunfig.toml is about the output of `bun build`, not about what a test loads.
+  test("a dependency that bunfig.toml lists in `external` still selects the importing test", async () => {
+    using dir = tempDir("test-changed-bunfig-external", {
+      ...fixture,
+      // b.test.ts imports "./src/other" (matched by path). src/util.ts imports "./helper" (matched as written).
+      "bunfig.toml": `external = ["./src/other", "./helper"]\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "src", "other.ts"), "// touched\n");
+    appendFileSync(join(String(dir), "src", "helper.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, names)).toEqual(["a.test.ts", "b.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a node:vm timeout can interrupt a hot loop", async () => {
     using dir = tempDir("test-changed-vm-timeout", {
       "package.json": JSON.stringify({ name: "vm-timeout", type: "module" }),

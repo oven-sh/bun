@@ -146,7 +146,12 @@ impl MacroContext {
             let resolve_result = match resolver.resolve(
                 source_dir,
                 import_record_path_without_macro_prefix,
-                bun_ast::ImportKind::Stmt,
+                // The macro file is loaded, not printed: `external` does not apply to it.
+                if bun_resolver::is_package_path(import_record_path_without_macro_prefix) {
+                    bun_ast::ImportKind::Stmt
+                } else {
+                    bun_ast::ImportKind::EntryPointBuild
+                },
             ) {
                 Ok(r) => r,
                 Err(bun_resolver::Error::ModuleNotFound) => {
@@ -430,12 +435,6 @@ impl Macro {
         let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
             (VirtualMachine::get_mut_ptr(), false)
         } else {
-            let mut transform_options = transform_options.clone();
-            // Build-only flags about the output bundle. The macro module's own
-            // imports must still resolve.
-            transform_options.external = Vec::new();
-            transform_options.packages = None;
-
             // JSC needs to be initialized if building from CLI
             jsc::initialize(jsc::InitializeOptions::default());
 
@@ -449,7 +448,7 @@ impl Macro {
             };
 
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
-                transform_options,
+                transform_options: transform_options.clone(),
                 log: Some(NonNull::from(&mut *log)),
                 owned_env_loader,
                 is_main_thread: false,

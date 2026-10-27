@@ -2255,3 +2255,95 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+// `external` in bunfig.toml is about the output of `bun build`. A runtime loads what it resolves.
+describe.concurrent("a top-level `external` in bunfig.toml does not change what the runtime loads", () => {
+  // Every module exports its own path, so this table is the expected result of each kind of resolve.
+  const expected = {
+    "./lib.js": "src/lib.js",
+    "./wild.js": "src/wild.js",
+    "../vendor/b": "vendor/b.js",
+    "./noext": "src/noext.js",
+    "./dir": "src/dir/index.js",
+    mypkg: "node_modules/mypkg/index.js",
+  };
+  const specifiers = Object.keys(expected);
+  const fixture = () =>
+    tempDir("bunfig-external-runtime", {
+      "bunfig.toml": `external = ["./lib.js", "./wild*", "./vendor/*", "./src/noext", "./src/dir", "mypkg", "./mac*"]`,
+      ...Object.fromEntries(Object.values(expected).map(path => [path, `module.exports = ${JSON.stringify(path)};`])),
+      "node_modules/mypkg/package.json": JSON.stringify({ name: "mypkg", version: "1.0.0", main: "index.js" }),
+      "src/macro.ts": `export const which = () => "src/macro.ts";`,
+      // What the entries name when they are read against the working directory.
+      "lib.js": `module.exports = "lib.js";`,
+      "wild.js": `module.exports = "wild.js";`,
+      "macro.ts": `export const which = () => "macro.ts";`,
+      "src/static.mjs": [
+        ...specifiers.map((specifier, i) => `import m${i} from ${JSON.stringify(specifier)};`),
+        `console.log("loaded: " + JSON.stringify([${specifiers.map((_, i) => `m${i}`)}]));`,
+      ].join("\n"),
+      "src/static.test.mjs": `import { test } from "bun:test"; import "./static.mjs"; test("loaded", () => {});`,
+      "src/uses-macro.ts": `
+        import { which } from "./macro.ts" with { type: "macro" };
+        console.log("loaded: " + JSON.stringify([which()]));
+      `,
+      "worker.mjs": `new Worker(new URL("./src/static.mjs", import.meta.url));`,
+      "empty.mjs": ``,
+      "src/dynamic.mjs": `
+        import { createRequire } from "node:module";
+        import { relative } from "node:path";
+        const require = createRequire(import.meta.url);
+        const path = absolute => relative(process.cwd(), absolute).replaceAll("\\\\", "/");
+        const kinds = {
+          "import()": async specifier => (await import(specifier)).default,
+          "require()": specifier => require(specifier),
+          "require.resolve()": specifier => path(require.resolve(specifier)),
+          "import.meta.resolveSync()": specifier => path(import.meta.resolveSync(specifier)),
+          "Bun.resolveSync()": specifier => path(Bun.resolveSync(specifier, import.meta.dir)),
+        };
+        const result = {};
+        for (const [kind, load] of Object.entries(kinds)) {
+          result[kind] = {};
+          for (const specifier of ${JSON.stringify(specifiers)}) {
+            try {
+              result[kind][specifier] = await load(specifier);
+            } catch (error) {
+              result[kind][specifier] = String(error);
+            }
+          }
+        }
+        console.log("loaded: " + JSON.stringify(result));
+      `,
+    });
+
+  async function run(dir: string, args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { loaded: JSON.parse(stdout.match(/^loaded: (.*)$/m)?.[1] ?? "null"), exitCode };
+  }
+
+  test.each([
+    ["static imports under bun <file>", ["src/static.mjs"], Object.values(expected)],
+    ["static imports under --preload", ["--preload", "./src/static.mjs", "empty.mjs"], Object.values(expected)],
+    ["static imports in a Worker", ["worker.mjs"], Object.values(expected)],
+    ["static imports under bun test", ["test", "./src/static.test.mjs"], Object.values(expected)],
+    ["a macro import under bun <file>", ["src/uses-macro.ts"], ["src/macro.ts"]],
+  ])("%s", async (_, args, loaded) => {
+    using dir = fixture();
+    expect(await run(String(dir), args)).toEqual({ loaded, exitCode: 0 });
+  });
+
+  test("import(), require() and the resolve functions", async () => {
+    using dir = fixture();
+    expect(await run(String(dir), ["src/dynamic.mjs"])).toEqual({
+      loaded: {
+        "import()": expected,
+        "require()": expected,
+        "require.resolve()": expected,
+        "import.meta.resolveSync()": expected,
+        "Bun.resolveSync()": expected,
+      },
+      exitCode: 0,
+    });
+  });
+});

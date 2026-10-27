@@ -21,7 +21,7 @@ use crate::webcore::{
 };
 use ::bstr::BStr;
 use bun_collections::HashMap;
-use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, strings};
+use bun_core::{EncodedSlice, String as BunString, StringView, Utf8Bytes, strings};
 use bun_core::{Output, fmt as bun_fmt};
 use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
@@ -1006,11 +1006,12 @@ impl ServePlugins {
         let plugin = JSBundler::Plugin::create(global, JSBundler::BunPluginTarget::Browser);
         // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
         let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
-        let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
+        let mut bunstring_array: Vec<StringView<'_>> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {
-            bunstring_array.push(BunString::from_bytes(raw_plugin));
+            bunstring_array.push(StringView::from_bytes(raw_plugin));
         }
-        let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
+        let plugin_js_array =
+            bun_string_jsc::to_js_array(global, StringView::as_strings(&bunstring_array))?;
         // `bun bake`: the plugin objects of `bake.config.ts`, after the names of bunfig.toml.
         if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get() {
             let mut iter = config_plugins.array_iterator(global)?;
@@ -2735,7 +2736,7 @@ where
                 if let Some(mut s) = prefix {
                     s.extend_from_slice(path);
                     // Same WHATWG pass as `Request::ensure_url` for HTTP/1.
-                    let href = bun_url::href_from_string(&BunString::from_bytes(&s));
+                    let href = bun_url::href_from_string(&StringView::from_bytes(&s));
                     request_object.url.set(if href.is_empty() {
                         BunString::clone_utf8(&s)
                     } else if core::ptr::eq(href.byte_slice().as_ptr(), s.as_ptr()) {

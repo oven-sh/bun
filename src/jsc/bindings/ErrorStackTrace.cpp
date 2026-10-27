@@ -203,7 +203,8 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     size_t maxRawFrames = 2 * std::max<size_t>(stackTraceLimit, 8);
     while (!getFramesForCallerWithin(vm, owner, callerObject, callerName, stackTrace, stackTraceLimit, maxRawFrames)) {
         stackTrace.clear();
-        maxRawFrames *= 8;
+        // A trace that needs more than the top of the stack needs all of it in most cases.
+        maxRawFrames *= 64;
     }
 }
 

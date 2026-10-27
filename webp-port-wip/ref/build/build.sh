@@ -14,8 +14,8 @@ for f in $files; do
     *_sse2.c) flag=-msse2;;
   esac
   o=$OUT/$(echo $f | tr / _).o
-  echo "clang-23 -O2 -g -fPIC $flag -I. -Isrc -c $f -o $o"
+  echo "${CC:-clang-23} -O2 -g -fPIC $flag -I. -Isrc -c $f -o $o"
 done | xargs -P 32 -I{} sh -c "{}"
-clang-23 -O2 -g -fPIC -I. -Isrc -c /root/ref/build/shim.c -o $OUT/shim.o
+${CC:-clang-23} -O2 -g -fPIC -I. -Isrc -c /root/ref/build/shim.c -o $OUT/shim.o
 rm -f /root/ref/build/libwebp_ref.a
-llvm-ar-23 rcs /root/ref/build/libwebp_ref.a $OUT/*.o
+${AR:-llvm-ar-23} rcs /root/ref/build/libwebp_ref.a $OUT/*.o

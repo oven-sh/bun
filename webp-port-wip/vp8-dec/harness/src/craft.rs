@@ -5,9 +5,9 @@ use crate::images::Rng;
 
 #[allow(dead_code)]
 mod vp8 {
-    #[path = "/root/repos/oven-sh/bun/.claude/worktrees/agent-ab5b9f08c21ba6de8/src/webp/vp8/common.rs"]
+    #[path = "/root/ref/crate/src/vp8/common.rs"]
     pub mod common;
-    #[path = "/root/repos/oven-sh/bun/.claude/worktrees/agent-ab5b9f08c21ba6de8/src/webp/vp8/tables.rs"]
+    #[path = "/root/ref/crate/src/vp8/tables.rs"]
     pub mod tables;
 }
 use vp8::tables::{BMODES_PROBA, COEFFS_UPDATE_PROBA};

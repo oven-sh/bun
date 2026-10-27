@@ -23,4 +23,6 @@ mkdir -p /root/ref/dl /root/ref/libwebp
 cp -r $REPO/webp-port-wip/ref/{PORTING.md,new-harness.sh,build,cov,harness,select,corpus} /root/ref/
 chmod +x /root/ref/new-harness.sh /root/ref/build/build.sh /root/ref/cov/build.sh
 /root/ref/build/build.sh
+bash /root/ref/new-harness.sh $REPO
+(cd /root/ref/h/vp8-dec && bash make-refc.sh)
 mkdir -p /root/ref/corpus/img && bun /root/ref/corpus/mkimg.ts

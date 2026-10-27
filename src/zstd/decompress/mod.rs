@@ -6,10 +6,8 @@ mod seq_table;
 
 use std::borrow::Cow;
 
-use block::{
-    BlockDecoder, BlockOutput, EntropyDTables, ExtDict, Streaming, TableSource, get_c_block_size,
-};
-use seq_table::{LL_BASE, ML_BASE, OF_BASE, OF_BITS};
+use block::{BlockDecoder, BlockOutput, EntropyDTables, ExtDict, Streaming, get_c_block_size};
+use seq_table::{LL_BASE, ML_BASE, OF_BASE, OF_BITS, SeqTableSources, TableSource};
 
 use crate::common::entropy::read_ncount;
 use crate::common::xxhash::Xxh64;
@@ -330,7 +328,7 @@ fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<usize> {
         if header.max_symbol_value > MAX_OFF || header.table_log > OFF_FSE_LOG {
             return Err(CORRUPTED);
         }
-        entropy.of_table.build(
+        entropy.seq.of.build(
             ncount.sub(..header.max_symbol_value as usize + 1)?,
             &OF_BASE,
             &OF_BITS,
@@ -344,7 +342,7 @@ fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<usize> {
         if header.max_symbol_value > MAX_ML || header.table_log > ML_FSE_LOG {
             return Err(CORRUPTED);
         }
-        entropy.ml_table.build(
+        entropy.seq.ml.build(
             ncount.sub(..header.max_symbol_value as usize + 1)?,
             &ML_BASE,
             &ML_BITS,
@@ -358,7 +356,7 @@ fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<usize> {
         if header.max_symbol_value > MAX_LL || header.table_log > LL_FSE_LOG {
             return Err(CORRUPTED);
         }
-        entropy.ll_table.build(
+        entropy.seq.ll.build(
             ncount.sub(..header.max_symbol_value as usize + 1)?,
             &LL_BASE,
             &LL_BITS,
@@ -676,9 +674,7 @@ impl DState {
         self.dict_id = 0;
         self.b_type = BlockType::Reserved;
         self.block.entropy.rep = REP_START_VALUE;
-        self.block.ll_source = TableSource::Local;
-        self.block.ml_source = TableSource::Local;
-        self.block.of_source = TableSource::Local;
+        self.block.seq_sources = SeqTableSources::all(TableSource::Local);
         self.block.huf_source = TableSource::Local;
 
         // `ZSTD_copyDDictParameters`
@@ -688,9 +684,7 @@ impl DState {
             if let Some(entropy) = &ddict.entropy {
                 self.block.lit_entropy = true;
                 self.block.fse_entropy = true;
-                self.block.ll_source = TableSource::Dict;
-                self.block.ml_source = TableSource::Dict;
-                self.block.of_source = TableSource::Dict;
+                self.block.seq_sources = SeqTableSources::all(TableSource::Dict);
                 self.block.huf_source = TableSource::Dict;
                 self.block.entropy.rep = entropy.rep;
             }

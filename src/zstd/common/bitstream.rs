@@ -142,6 +142,12 @@ impl<'a> BitDStream<'a> {
         })
     }
 
+    /// The stream up to the end of what `container` was read from.
+    #[inline(always)]
+    pub(crate) fn bytes(&self) -> &'a [u8] {
+        self.src
+    }
+
     /// `BIT_lookBits`: `nb_bits` is less than 32.
     #[inline(always)]
     pub(crate) fn look_bits(&self, nb_bits: u32) -> u64 {

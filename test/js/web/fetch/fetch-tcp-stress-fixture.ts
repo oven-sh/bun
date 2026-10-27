@@ -13,7 +13,7 @@
 import { getMaxFD } from "harness";
 
 type CloseMethod = "end" | "shutdown" | "terminate";
-type SocketData = { request: string; read?: boolean; written?: boolean };
+type SocketData = { request: string; read?: boolean; written: number };
 
 const [afterWrite, afterFetch] = process.argv.slice(2) as [CloseMethod, CloseMethod | "none"];
 const [batches, batchSize, deadline] = process.argv.slice(4).map(Number);
@@ -50,8 +50,9 @@ let toClose = 0;
 let pendingClose = Promise.withResolvers<void>();
 
 function writeAnswer(socket: Bun.Socket<SocketData>) {
-  if (socket.write(answer) === answer.length) {
-    socket.data.written = true;
+  const state = socket.data;
+  state.written += Math.max(0, socket.write(answer.slice(state.written)));
+  if (state.written === answer.length) {
     socket[afterWrite]();
   }
 }
@@ -60,7 +61,7 @@ const server = Bun.listen<SocketData>({
   port: 0,
   socket: {
     open(socket) {
-      socket.data = { request: "" };
+      socket.data = { request: "", written: 0 };
     },
     data(socket, data) {
       const state = socket.data;
@@ -82,7 +83,7 @@ const server = Bun.listen<SocketData>({
       writeAnswer(socket);
     },
     drain(socket) {
-      if (!socket.data.read || socket.data.written) {
+      if (!socket.data.read || socket.data.written === answer.length) {
         return;
       }
 

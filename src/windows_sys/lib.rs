@@ -1,5 +1,5 @@
 // Tier-0 leaf crate: pure Win32 typedefs/consts/externs over `core` only.
-// `no_std` so the standalone `bun_shim_impl.exe` (which depends on nothing
+// `no_std` so the standalone `bun-shim-impl.exe` (which depends on nothing
 // else from the workspace) links without the Rust runtime / CRT (no libc).
 #![no_std]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]

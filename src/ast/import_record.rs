@@ -10,11 +10,9 @@ use bun_paths::fs::Path;
 // `bun_ast::import_record::{ImportKind, Index, Loader}` keep resolving.
 pub use crate::{ImportKind, Index, Loader};
 
-pub struct ImportRecord {
+pub struct ImportRecord<'a> {
     pub range: Range,
-    // TODO: lifetime — `bun_paths::fs::Path<'a>` borrows resolver-owned
-    // strings. Uses 'static (PORTING.md: no struct lifetime params).
-    pub path: Path<'static>,
+    pub path: Path<'a>,
     pub kind: ImportKind,
     pub tag: Tag,
     pub loader: Option<Loader>,
@@ -24,18 +22,16 @@ pub struct ImportRecord {
     /// The original import specifier as written in source code (e.g., "./foo.js").
     /// This is preserved before resolution overwrites `path` with the resolved path.
     /// Used for metafile generation.
-    // TODO: lifetime — likely a borrow into parser-owned source text; using
-    // &'static [u8] as a placeholder.
-    pub original_path: &'static [u8],
+    pub original_path: &'a [u8],
 
-    /// Pack all boolean flags into 2 bytes to reduce padding overhead.
+    /// Pack all boolean flags into 4 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     pub flags: Flags,
 }
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
-    pub struct Flags: u16 {
+    pub struct Flags: u32 {
         /// require() / await import() / require.resolve() inside the try or
         /// catch body of a try/catch, or import('x').catch(..) / .then(_, ..):
         /// don't fail the build when the path can't be resolved.
@@ -72,26 +68,45 @@ bitflags::bitflags! {
 
         const WAS_ORIGINALLY_REQUIRE = 1 << 9;
 
+        /// A split `require()` (code splitting, target bun): the target is a chunk
+        /// of its own; `path` is pointed at that chunk and the call is printed as
+        /// `import.meta.require(path)`.
+        const CROSS_CHUNK_REQUIRE = 1 << 10;
+
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;
 
-        /// Tell the printer to print the record as "foo:my-path" instead of "path"
-        /// where "foo" is the namespace
-        ///
-        /// Used to prevent running resolve plugins multiple times for the same path
-        const PRINT_NAMESPACE_IN_PATH = 1 << 12;
-
-        const WRAP_WITH_TO_ESM = 1 << 13;
-        const WRAP_WITH_TO_COMMONJS = 1 << 14;
+        const WRAP_WITH_TO_ESM = 1 << 12;
+        const WRAP_WITH_TO_COMMONJS = 1 << 13;
 
         /// "import defer * as ns from 'path'" — defer evaluation of the
         /// imported module until a property on the namespace object is
         /// accessed. Requires `CONTAINS_IMPORT_STAR`.
-        const PHASE_DEFER = 1 << 15;
+        const PHASE_DEFER = 1 << 14;
+
+        /// The linker pointed `path` at another output chunk (a split
+        /// `import()` / `require()`): `text` is its path, `pretty` its id; `source_index` is cleared.
+        const IMPORTS_CHUNK = 1 << 15;
+
+        /// `import()` / `require()` whose value nothing reads: the linker bound
+        /// every name read off it to an export, so it evaluates to `{}`.
+        const NAMESPACE_UNUSED = 1 << 16;
+
+        /// A split `require()` whose target is CommonJS at link time: the
+        /// chunk's namespace is `{ default: module.exports }`, so the call
+        /// reads `.default` to return `module.exports`.
+        const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 17;
+
+        /// Barrel optimization deferred this record: it set `IS_UNUSED` so the
+        /// target does not load until an importer requests one of its exports.
+        /// Only a record with this flag can be un-deferred. The parser sets
+        /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
+        /// import), and those records must never be resolved.
+        const IS_BARREL_DEFERRED = 1 << 18;
     }
 }
 
-pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;
+pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord<'a>>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -111,15 +126,6 @@ pub enum Tag {
     /// For Bun Kit, if a module in the server graph should actually
     /// crossover to the SSR graph. See bake.Framework.ServerComponents.separate_ssr_graph
     BakeResolveToSsrGraph,
-
-    Tailwind,
-}
-
-impl Tag {
-    #[inline]
-    pub fn is_internal(self) -> bool {
-        (self as u8) >= (Tag::Runtime as u8)
-    }
 }
 
 // NOTE: no `impl Default for ImportRecord` — `range`, `path`, `kind` have no

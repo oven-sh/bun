@@ -39,6 +39,11 @@ impl ReplaceableExport {
     pub fn is_replace(&self) -> bool {
         matches!(self, Self::Replace(_))
     }
+
+    #[inline]
+    pub fn injects_default(&self) -> bool {
+        matches!(self, Self::Inject { name, .. } if **name == *crate::ClauseItem::DEFAULT_ALIAS)
+    }
 }
 
 /// Newtype (not a bare alias) so we can hang `get_ptr` (which borrows
@@ -151,8 +156,6 @@ pub struct Imports {
     pub(crate) __reExport: Ref,
     pub(crate) __exportValue: Ref,
     pub(crate) __exportDefault: Ref,
-    // __refreshRuntime: ?GeneratedSymbol = null,
-    // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
     pub(crate) __merge: Ref,
     pub(crate) __legacyDecorateClassTS: Ref,
     pub(crate) __legacyDecorateParamTS: Ref,
@@ -210,7 +213,7 @@ impl Imports {
 
     /// Rust stable cannot sort in `const`; precomputed here and verified by
     /// the test in `tests` below.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     const ALL_SORTED: [&'static [u8]; 27] = [
         b"$$typeof",
         b"__EARLY_RETURN_SENTINEL",
@@ -399,7 +402,6 @@ pub struct ImportsIterator<'a> {
 #[derive(Clone, Copy)]
 pub struct ImportsIteratorEntry {
     pub key: u16,
-    pub value: Ref,
 }
 
 impl ImportsIterator<'_> {
@@ -407,10 +409,9 @@ impl ImportsIterator<'_> {
         while self.i < Imports::ALL.len() {
             let t = self.i;
             self.i += 1;
-            if let Some(val) = self.runtime_imports.field(t) {
+            if self.runtime_imports.field(t).is_some() {
                 return Some(ImportsIteratorEntry {
                     key: u16::try_from(t).expect("int cast"),
-                    value: val,
                 });
             }
         }

@@ -35,7 +35,7 @@ $ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config 
 ```
 
 ```bash#Fedora
-$ sudo dnf install clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+$ sudo dnf install clang23 llvm23 lld23 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash#openSUSE Tumbleweed
@@ -94,17 +94,17 @@ Our build scripts will automatically detect and use `ccache` if available. You c
 
 ## Install LLVM
 
-Bun requires LLVM 21.1.8 (`clang` is part of LLVM). This version is enforced by the build system — mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 23.1.1 (`clang` is part of LLVM). This version is enforced by the build system — mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@21
+$ brew install llvm@23
 ```
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 21 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 23 all
 ```
 
 ```bash#Arch
@@ -116,17 +116,17 @@ $ sudo dnf install llvm clang lld-devel
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install clang21 lld21 llvm21
+$ sudo zypper install clang23 lld23 llvm23
 ```
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.1).
 
-Make sure Clang/LLVM 21 is in your path:
+Make sure Clang/LLVM 23 is in your path:
 
 ```bash
-$ which clang-21
+$ which clang-23
 ```
 
 If not, run this to manually add it:
@@ -135,13 +135,13 @@ If not, run this to manually add it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-# use path+="$(brew --prefix llvm@21)/bin" if you are using zsh
-$ export PATH="$(brew --prefix llvm@21)/bin:$PATH"
+# use path+="$(brew --prefix llvm@23)/bin" if you are using zsh
+$ export PATH="$(brew --prefix llvm@23)/bin:$PATH"
 ```
 
 ```bash#Arch
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:/usr/lib/llvm21/bin"
+$ export PATH="$PATH:/usr/lib/llvm23/bin"
 ```
 
 {% /codetabs %}
@@ -200,8 +200,7 @@ Several code generation scripts are used during Bun's build process. These are r
 
 In particular, these are:
 
-- `./src/codegen/generate-jssink.ts` -- Generates `build/debug/codegen/JSSink.cpp`, `build/debug/codegen/JSSink.h` which implement various classes for interfacing with `ReadableStream`. This is internally how `FileSink`, `ArrayBufferSink`, `"type": "direct"` streams and other code related to streams works.
-- `./src/codegen/generate-classes.ts` -- Generates Rust & C++ bindings for JavaScriptCore classes implemented in Rust. In `**/*.classes.ts` files, we define the interfaces for various classes, methods, prototypes, getters/setters etc which the code generator reads to generate boilerplate code implementing the JavaScript objects in C++ and wiring them up to Rust.
+- `./src/codegen/bindgen.ts` -- Generates Rust, C++ & TypeScript bindings for functions and JavaScriptCore classes implemented in Rust. `**/*.bind.ts` files declare the functions, classes, methods, getters/setters and the types of their arguments; the generator emits the C++ objects, the argument conversions and the calls into Rust. See [Bindgen](/project/bindgen).
 - `./src/codegen/cppbind.ts` -- Scans the C++ bindings for functions marked with an export attribute and generates automatic Rust FFI wrappers (`cpp.rs`) for them.
 - `./src/codegen/bundle-modules.ts` -- Bundles built-in modules like `node:fs`, `bun:ffi` into files we can include in the final binary. In development, these can be reloaded without rebuilding native code (you still need to run `bun run build`, but it re-reads the transpiled files from disk afterwards). In release builds, these are embedded into the binary.
 - `./src/codegen/bundle-functions.ts` -- Bundles globally-accessible functions implemented in JavaScript/TypeScript like `ReadableStream`, `WritableStream`, and a handful more. These are used similarly to the builtin modules, but the output more closely aligns with what WebKit/Safari does for Safari's built-in functions so that we can copy-paste the implementations from WebKit as a starting point.
@@ -283,7 +282,7 @@ $ bun sync-webkit-source
 $ bun run build:local
 ```
 
-`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC will incrementally rebuild if any WebKit sources changed. `ninja -Cbuild/debug-local` also works after the first build, and will build Bun+JSC.
+`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC will incrementally rebuild if any WebKit sources changed.
 
 The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 
@@ -318,7 +317,7 @@ The issue may manifest when initially running `bun setup` as Clang being unable 
 ```
 The C++ compiler
 
-  "/usr/bin/clang++-21"
+  "/usr/bin/clang++-23"
 
 is not able to compile a simple test program.
 ```
@@ -340,14 +339,6 @@ Now, we need to set GCC 11 as the default compiler:
 ```bash
 $ sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
 $ sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
-```
-
-### libarchive
-
-If you see an error on macOS when compiling `libarchive`, run:
-
-```bash
-$ brew install pkg-config
 ```
 
 ### macOS `library not found for -lSystem`

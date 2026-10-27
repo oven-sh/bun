@@ -86,20 +86,6 @@ static inline size_t findListener(const EventListenerVector& listeners, EventLis
     return notFound;
 }
 
-void EventListenerMap::replace(const AtomString& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, const RegisteredEventListener::Options& options)
-{
-    releaseAssertOrSetThreadUID();
-    Locker locker { m_lock };
-
-    auto* listeners = find(eventType);
-    ASSERT(listeners);
-    size_t index = findListener(*listeners, oldListener, options.capture);
-    ASSERT(index != notFound);
-    auto& registeredListener = listeners->at(index);
-    registeredListener->markAsRemoved();
-    registeredListener = RegisteredEventListener::create(WTF::move(newListener), options);
-}
-
 RegisteredEventListener* EventListenerMap::add(const AtomString& eventType, Ref<EventListener>&& listener, const RegisteredEventListener::Options& options)
 {
     releaseAssertOrSetThreadUID();

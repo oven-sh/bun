@@ -35,7 +35,7 @@
 //! - https://github.com/ScoopInstaller/Shim/blob/master/src/shim.cs
 //!
 //! This file is compiled twice: into bun.exe (for the bunx fast paths below) and as
-//! the standalone `bun_shim_impl.exe` PE (see `main.rs` / the `shim_standalone`
+//! the standalone `bun-shim-impl.exe` PE (see `main.rs` / the `shim_standalone`
 //! feature), which is then `include_bytes!`-embedded into Bun by `BinLinkingShim.rs`.
 //! When the encoding changes, `BinLinkingShim::VersionFlag::CURRENT` should be bumped.
 //!
@@ -71,7 +71,7 @@ use super::_bin_linking_shim::Flags;
 const DBG: bool = cfg!(debug_assertions);
 
 /// True when this module IS the binary root (the standalone
-/// `bun_shim_impl.exe`), false when compiled into bun.exe.
+/// `bun-shim-impl.exe`), false when compiled into bun.exe.
 const IS_STANDALONE: bool = cfg!(feature = "shim_standalone");
 
 #[cfg(not(feature = "shim_standalone"))]
@@ -150,6 +150,8 @@ mod k32 {
     pub(super) use w::kernel32::CreateProcessW;
     /// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
     pub(super) use w::kernel32::GetLastError;
+    /// https://learn.microsoft.com/en-us/windows/console/setconsolectrlhandler
+    pub(super) use w::kernel32::SetConsoleCtrlHandler;
 
     // SAFETY: kernel32 externs; signatures match SDK. Declared locally as
     // `safe fn` (vs. re-exporting `unsafe fn` from `w::kernel32`) because
@@ -217,7 +219,6 @@ pub enum FailReason {
     NoDirname,
     CouldNotOpenShim,
     CouldNotReadShim,
-    InvalidShimDataSize,
     ShimNotFound,
     CreateProcessFailed,
     /// When encountering this outside of standalone mode, you should fallback
@@ -229,6 +230,7 @@ pub enum FailReason {
     InterpreterNotFound,
     InterpreterNotFoundBun,
     ElevationRequired,
+    BatchFileArgument,
 }
 
 impl FailReason {
@@ -239,7 +241,6 @@ impl FailReason {
             FailReason::ShimNotFound => "could not find bin metadata file",
             FailReason::CouldNotOpenShim => "could not open bin metadata file",
             FailReason::CouldNotReadShim => "could not read bin metadata",
-            FailReason::InvalidShimDataSize => "bin metadata is corrupt (size)",
             FailReason::InvalidShimValidation => "bin metadata is corrupt (validate)",
             FailReason::InvalidShimBounds => "bin metadata is corrupt (bounds)",
             // The difference between these two is that one is with a shebang (#!/usr/bin/env node) and
@@ -250,6 +251,9 @@ impl FailReason {
             FailReason::BinNotFound => "bin executable does not exist on disk",
             FailReason::ElevationRequired => "process requires elevation",
             FailReason::CreateProcessFailed => "could not create process",
+            FailReason::BatchFileArgument => {
+                "cannot pass an argument containing % & | < > ^ to a .cmd or .bat file"
+            }
 
             FailReason::CouldNotDirectLaunch => {
                 if !IS_STANDALONE {
@@ -325,6 +329,9 @@ impl core::fmt::Display for FailReason {
                 "    powershell -c \"irm bun.sh/install.ps1|iex\"\n",
                 "\n",
             ),
+            FailReason::BatchFileArgument => {
+                "cmd.exe runs the file and would read the character as a command or a variable.\n\n"
+            }
             _ => concat!(
                 "Bun failed to remap this bin to its proper location within node_modules.\n",
                 "This is an indication of a corrupted node_modules directory.\n",
@@ -415,6 +422,18 @@ fn fail_and_exit_with_reason(reason: FailReason) -> ! {
     }
 
     nt::RtlExitUserProcess(255)
+}
+
+/// The child shares our console and gets Ctrl+C itself; outlive it to report its
+/// exit code. Every path after this exits the process, so it is never removed.
+fn ignore_ctrl_c() {
+    extern "system" fn handler(ctrl_type: DWORD) -> BOOL {
+        if ctrl_type == w::CTRL_C_EVENT {
+            return w::TRUE;
+        }
+        w::FALSE
+    }
+    let _ = k32::SetConsoleCtrlHandler(Some(handler), w::TRUE);
 }
 
 const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
@@ -522,15 +541,13 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // SAFETY: image_path_ptr is valid for image_path_b_len bytes per UNICODE_STRING / caller contract.
     let image_path_u16: &[u16] =
         unsafe { bun_core::ffi::slice(image_path_ptr, image_path_b_len / 2) };
-    // Byte view of the same buffer — `&[u16]` → `&[u8]` is a total, panic-free
-    // `bytemuck` cast (align 1, size always divides).
-    let image_path_u8: &[u8] = bytemuck::cast_slice(image_path_u16);
+    let image_path_u8 = bun_core::slice_as_bytes(image_path_u16);
 
     let cmd_line_b_len = command_line.Length as usize;
     // SAFETY: CommandLine.Buffer is valid for Length bytes.
     let cmd_line_u16: &[u16] =
         unsafe { bun_core::ffi::slice(command_line.Buffer, cmd_line_b_len / 2) };
-    let cmd_line_u8: &[u8] = bytemuck::cast_slice(cmd_line_u16);
+    let cmd_line_u8 = bun_core::slice_as_bytes(cmd_line_u16);
 
     debug_assert!((cmd_line_u16.as_ptr() as usize) % 2 == 0); // alignment assumption
 
@@ -682,8 +699,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // `from_raw_parts` from the byte view.
     let (user_arguments_u16, user_arguments_u8): (&[u16], &[u8]) = if !IS_STANDALONE {
         let a = bun_ctx.arguments();
-        // `&[u16]` → `&[u8]` reinterpretation: total, panic-free `bytemuck` cast.
-        (a, bytemuck::cast_slice(a))
+        (a, bun_core::slice_as_bytes(a))
     } else {
         'find_args: {
             // Windows command line quotes are really silly. This post explains it better than I can:
@@ -726,7 +742,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             break 'find_args (&cmd_line_u16[0..0], &cmd_line_u8[0..0]);
         }
     };
-    let _ = user_arguments_u16; // only read under DBG
 
     if DBG {
         // Raw dump of the UTF-16-LE arg tail. Display via `fmt16` on the
@@ -901,6 +916,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         );
     }
 
+    let metadata_ptr: *mut u16 = read_ptr;
+
     // All three `read_len` outcomes land on initialized memory:
     //   - SUCCESS, read_len >= 2  → inside the bytes NtReadFile just wrote.
     //   - SUCCESS, read_len < 2   → moves *backward* into the image-path prefix we
@@ -927,6 +944,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         debug!("    is_node_or_bun: {}", flags.is_node_or_bun());
         debug!("    is_node: {}", flags.is_node());
         debug!("    has_shebang: {}", flags.has_shebang());
+        debug!("    is_absolute_target: {}", flags.is_absolute_target());
         debug!("    version_tag: {}", flags.version_tag().bits());
     }
 
@@ -939,6 +957,15 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
         return LauncherMode::fail(MODE, FailReason::InvalidShimValidation);
     }
+
+    // An absolute bin path starts where it was read. The u16 before either start is a spare `\`.
+    let bin_path_start: *mut u16 = if flags.is_absolute_target() {
+        metadata_ptr
+    } else {
+        // SAFETY: NT_OBJECT_PREFIX was written at the start of buf1 above.
+        unsafe { buf1_u16.add(NT_OBJECT_PREFIX.len()) }
+    };
+    debug_assert!(unsafe { *bin_path_start.sub(1) } == '\\' as u16);
 
     let mut spawn_command_line: *mut u16 = if !flags.has_shebang() {
         'spawn_command_line: {
@@ -953,12 +980,13 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             //                                                                  ^^ flags
             //                                                         zero char|
 
-            // change the \ from '\??\' to '""
+            // change the \ before the path (the one from '\??\' here) to '"'
             // the ending quote is assumed to already exist as per the format
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js"##!!!!!!!!!!'
-            //           ^
-            // SAFETY: index 3 is within buf1.
-            unsafe { *buf1_u16.add(3) = '"' as u16 };
+            //           ^ opening_quote_ptr
+            // SAFETY: the u16 before bin_path_start is inside buf1 (see where it is computed).
+            let opening_quote_ptr: *mut u16 = unsafe { bin_path_start.sub(1) };
+            unsafe { *opening_quote_ptr = '"' as u16 };
 
             // Copy user arguments in, overwriting old data. Remember that we ensured the arguments
             // this started with a space.
@@ -998,12 +1026,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     .write_unaligned(0);
             }
 
-            // SAFETY: buf1_u8 + 2*(4-1) is 2-byte-aligned (buf1 is u16-aligned, offset is even).
-            break 'spawn_command_line unsafe {
-                buf1_u8
-                    .add(2 * (NT_OBJECT_PREFIX.len() - 1/* "\"".len */))
-                    .cast::<u16>()
-            };
+            break 'spawn_command_line opening_quote_ptr;
         }
     } else {
         'spawn_command_line: {
@@ -1045,7 +1068,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // BinLinkingShim.rs and must be even. An odd value (corrupt or
             // tampered shim) would later misalign `write_ptr` (used to store a
             // u16 NUL terminator) and break the even-length invariant relied on
-            // by `bytemuck::cast_slice`. Reject up front.
+            // by the `[u16]` view of the filename. Reject up front.
             if shebang_arg_len_u8 == 0
                 || (shebang_arg_len_u8 & 1) != 0
                 || (shebang_bin_path_len_bytes & 1) != 0
@@ -1082,17 +1105,15 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 }
                 // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
                 //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^  ^ read_ptr
-                let len = ((read_ptr as usize) - (buf1_u8 as usize) - shebang_arg_len_u8 as usize)
+                //            ^ bin_path_start
+                let len = ((read_ptr as usize)
+                    - shebang_arg_len_u8 as usize
+                    - (bin_path_start as usize))
                     / 2
-                    - NT_OBJECT_PREFIX.len()
                     - 2 /* "\"\x00".len */;
-                // SAFETY: buf1_u16 + 4 .. + 4 + len is within buf1; the next char is '"' (the metadata format places '"' after the bin path).
-                let launch_slice =
-                    unsafe { bun_core::ffi::slice_mut(buf1_u16.add(NT_OBJECT_PREFIX.len()), len) };
-                debug_assert_eq!(
-                    unsafe { *buf1_u16.add(NT_OBJECT_PREFIX.len() + len) },
-                    '"' as u16
-                );
+                // SAFETY: bin_path_start .. + len is within buf1; the next char is '"' (the metadata format places '"' after the bin path).
+                let launch_slice = unsafe { bun_core::ffi::slice_mut(bin_path_start, len) };
+                debug_assert_eq!(unsafe { *bin_path_start.add(len) }, '"' as u16);
                 bun_ctx.direct_launch_with_bun_js(launch_slice);
                 return LauncherMode::fail(MODE, FailReason::CouldNotDirectLaunch);
             }
@@ -1114,9 +1135,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             //
             // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
-            let length_of_filename_u8 = (read_ptr as usize)
-                - (buf1_u8 as usize)
-                - 2 * (NT_OBJECT_PREFIX.len() + 1/* "\x00".len */);
+            //            ^ bin_path_start
+            let length_of_filename_u8 =
+                (read_ptr as usize) - (bin_path_start as usize) - 2 * 1 /* "\x00".len */;
             if shebang_arg_len_u8 as usize
                 + 2 /* "\"".len */
                 + length_of_filename_u8
@@ -1149,19 +1170,12 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // Copy the filename in. There is no leading " but there is a trailing "
             // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
+            //            ^ bin_path_start
             // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
-            // SAFETY: slice within buf1.
-            let filename: &[u8] = unsafe {
-                bun_core::ffi::slice(
-                    buf1_u8.add(2 * NT_OBJECT_PREFIX.len()),
-                    length_of_filename_u8,
-                )
-            };
-            // `filename` is a UTF-16 byte view: its base is `buf1_u8 + 2*NT_OBJECT_PREFIX.len()`
-            // (even offset from a `*mut u16`-derived pointer ⇒ 2-aligned) and its length is the
-            // difference of two `*mut u16`-derived addresses minus an even constant ⇒ even.
-            // `bytemuck::cast_slice` checks both invariants at runtime, so no `unsafe` needed.
-            let filename_u16: &[u16] = bytemuck::cast_slice(filename);
+            // SAFETY: slice within buf1; the length is even (checked above).
+            let filename_u16: &[u16] =
+                unsafe { bun_core::ffi::slice(bin_path_start, length_of_filename_u8 / 2) };
+            let filename = bun_core::slice_as_bytes(filename_u16);
             if DBG {
                 debug!("filename and quote: '{}'", fmt16(filename_u16));
                 if !filename_u16.is_empty() {
@@ -1178,6 +1192,16 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     return LauncherRet::LaunchFellThrough;
                 }
                 return LauncherMode::fail(MODE, FailReason::InvalidShimValidation);
+            }
+
+            // These run under `cmd /c`, which parses the command line again, so quoting doesn't
+            // protect any argument.
+            if is_batch_file(filename_u16)
+                && user_arguments_u16
+                    .iter()
+                    .any(|&unit| is_cmd_special_character(unit))
+            {
+                return LauncherMode::fail(MODE, FailReason::BatchFileArgument);
             }
 
             // SAFETY: buf2 has room for shebang_arg_len_u8 + 2 + length_of_filename_u8 bytes.
@@ -1347,6 +1371,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
         },
     };
+
+    ignore_ctrl_c();
 
     // PERF: the body is large enough that unrolling this two-iteration loop is
     // unlikely to matter — profile if it shows up on a hot path.
@@ -1615,7 +1641,7 @@ impl BunCtx for &FromBunRunContext {
 }
 
 /// This is called from run_command.rs in bun.exe which allows us to skip the CreateProcessW
-/// call to create bun_shim_impl.exe. Instead we invoke the logic it has from an open file handle.
+/// call to create bun-shim-impl.exe. Instead we invoke the logic it has from an open file handle.
 ///
 /// This saves ~5-12ms depending on the machine.
 ///
@@ -1702,7 +1728,7 @@ pub enum ReadWithoutLaunchResult {
 
 /// Given the path and handle to a .bunx file, do everything needed to execute it,
 /// *except* for spawning it. This is used by the Bun shell to skip spawning the
-/// bun_shim_impl.exe executable. The returned command line is fed into the shell's
+/// bun-shim-impl.exe executable. The returned command line is fed into the shell's
 /// method for launching a process.
 ///
 /// The cost of spawning is about 5-12ms, and the unicode conversions are way
@@ -1718,7 +1744,7 @@ pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchRes
     }
 }
 
-/// Main function for `bun_shim_impl.exe`
+/// Main function for `bun-shim-impl.exe`
 #[cfg(feature = "shim_standalone")]
 #[inline]
 pub(crate) fn main() -> ! {
@@ -1731,6 +1757,23 @@ pub(crate) fn main() -> ! {
 }
 
 // ───── helpers ─────
+
+/// `.cmd"` or `.bat"` at the end, in any spelling, as Windows takes them.
+fn is_batch_file(filename_and_quote: &[u16]) -> bool {
+    filename_and_quote.last_chunk::<5>().is_some_and(|end| {
+        [b".cmd\"", b".bat\""].iter().any(|batch| {
+            (end.iter().zip(batch.iter()))
+                .all(|(&unit, byte)| u8::try_from(unit).is_ok_and(|c| c.eq_ignore_ascii_case(byte)))
+        })
+    })
+}
+
+/// Same as `batch_arg_has_cmd_metachars` (src/which/lib.rs) but without `"`, because a raw command
+/// line uses it for quoting.
+fn is_cmd_special_character(unit: u16) -> bool {
+    // % & | < > ^ \r \n
+    matches!(unit, 0x25 | 0x26 | 0x7C | 0x3C | 0x3E | 0x5E | 0x0D | 0x0A)
+}
 
 /// Lossy (replacement-char) UTF-16-LE formatter — only
 /// used for debug logging under `if DBG`, so lossiness is fine.

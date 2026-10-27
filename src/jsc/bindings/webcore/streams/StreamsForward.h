@@ -30,7 +30,13 @@ namespace Zig {
 class GlobalObject;
 }
 
+namespace Bun::Bindgen::Generated {
+class JSReadableSinkController; // a native sink's controller (GeneratedSink.h)
+}
+
 namespace WebCore {
+
+using Bun::Bindgen::Generated::JSReadableSinkController;
 
 class AbortSignal;
 // NOTE: JSDOMGlobalObject is deliberately NOT forward-declared here. In Bun it is not a
@@ -69,15 +75,17 @@ class JSStreamsRuntime;
 
 // The Bun-native layer cells & classes.
 class JSDirectStreamController;
+class JSDirectStreamSource; // a converted type:"direct" underlying source (JSDirectStreamSource.h)
 class JSBunStandaloneTextSink; // the standalone Text sink (BunStandaloneTextSink.h)
 class JSOneShotDirectSink; // consumeDirectStreamToArrayBuffer's throwaway controller
 class JSReadableStreamIntoArrayOperation; // the array pump's reader/chunks/result state
 class JSNativeStreamSourceAdapter;
-class JSDirectSinkCloseState;
 class JSAsyncIteratorSourceOperation;
 class JSReadStreamIntoSinkOperation;
 class JSTextEncoderStream;
 class JSTextDecoderStream;
+class JSCompressionStream;
+class JSDecompressionStream;
 
 } // namespace WebCore
 
@@ -121,7 +129,7 @@ enum class SourceKind : uint8_t {
 };
 
 // Which arm runs a writable controller's write/close/abort algorithms.
-// The Bun JSSink layer never uses a WritableStream, so it adds no arm.
+// Bun's native sinks never use a WritableStream, so they add no arm.
 enum class SinkKind : uint8_t {
     JavaScript, // user underlyingSink
     Nothing, // new WritableStream() with no sink
@@ -135,6 +143,18 @@ enum class TransformerKind : uint8_t {
     Identity, // new TransformStream() with no `transform` member: enqueue the chunk unchanged
     TextEncoder, // TextEncoderStream (context = the JSTextEncoderStream cell)
     TextDecoder, // TextDecoderStream (context = the JSTextDecoderStream cell)
+    Compression, // CompressionStream   (context = the JSCompressionStream cell)
+    Decompression, // DecompressionStream (context = the JSDecompressionStream cell)
+};
+
+// CompressionStream / DecompressionStream format. Matches the `Format` enum in
+// CompressionStreamCoder.rs.
+enum class CompressionFormat : uint8_t {
+    Deflate = 0,
+    DeflateRaw = 1,
+    Gzip = 2,
+    Brotli = 3,
+    Zstd = 4,
 };
 
 // JSReadableStream Bun-mode members
@@ -153,7 +173,7 @@ enum class ControllerKind : uint8_t {
     Default, // JSReadableStreamDefaultController
     Byte, // JSReadableByteStreamController
     Direct, // JSDirectStreamController (Bun `type:"direct"`, JS-consumption path)
-    NativeSink, // a generated JSReadable*Controller JSSink cell (Bun native-sink path)
+    NativeSink, // a JSReadableSinkController (Bun native-sink path)
 };
 
 // Readers & read requests
@@ -186,11 +206,17 @@ enum class ReadIntoRequestKind : uint8_t {
     ByteTee, // the byte tee's BYOB read-into request: context = the JSStreamTeeState
 };
 
+// A step that was already deferred to a microtask passes No, because it has to make progress (see streamLinkMustDefer).
+enum class MayDefer : bool {
+    No,
+    Yes,
+};
+
 // Bun `type:"direct"`
 
 // The 3 direct sink flavors carried by ONE JSDirectStreamController.
 enum class DirectSinkKind : uint8_t {
-    ArrayBuffer, // a real Bun.ArrayBufferSink
+    ArrayBuffer, // a byte buffer the reader drains as Uint8Array chunks
     Text, // the rope + pieces accumulator
     Array, // chunks pushed into a JSArray
 };
@@ -224,12 +250,6 @@ enum class ReadableStreamType : uint8_t { Bytes };
 // WebIDL `enum ReadableStreamReaderMode { "byob" }` (getReader(options).mode)
 enum class ReadableStreamReaderMode : uint8_t { Byob };
 
-// Cross-realm transform protocol message `type`: "chunk" | "pull" | "error" | "close".
-enum class CrossRealmMessageType : uint8_t { Chunk,
-    Pull,
-    Error,
-    Close };
-
 } // namespace WebStreams
 } // namespace Bun
 
@@ -238,7 +258,6 @@ enum class CrossRealmMessageType : uint8_t { Chunk,
 namespace WebCore {
 using Bun::WebStreams::BunStreamMode;
 using Bun::WebStreams::ControllerKind;
-using Bun::WebStreams::CrossRealmMessageType;
 using Bun::WebStreams::DirectSinkKind;
 using Bun::WebStreams::ReadableStreamReaderMode;
 using Bun::WebStreams::ReadableStreamState;

@@ -22,12 +22,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<Function, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForV8Function.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForV8Function = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForV8Function.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForV8Function = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<Function, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForV8Function, m_subspaceForV8Function));
     }
 
     FunctionTemplate* functionTemplate() const { return m_functionTemplate.get(); }
@@ -38,7 +33,7 @@ private:
     JSC::WriteBarrier<FunctionTemplate> m_functionTemplate;
 
     Function(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, FunctionTemplate::functionCall)
+        : Base(vm, structure, FunctionTemplate::functionCall, FunctionTemplate::functionConstruct)
     {
     }
 

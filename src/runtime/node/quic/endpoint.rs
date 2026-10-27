@@ -7,9 +7,9 @@ use core::ptr::{null, null_mut};
 
 use bun_collections::smallvec::SmallVec;
 use bun_io::KeepAlive;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult,
-    StringJsc,
+    self as jsc, ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc,
 };
 use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
@@ -28,7 +28,7 @@ bun_core::declare_scope!(quic, hidden);
 
 /// Mirrors Node's `Endpoint::State`.
 #[repr(C)]
-pub struct EndpointState {
+pub(crate) struct EndpointState {
     pub bound: u8,
     pub(crate) receiving: u8,
     pub(crate) listening: u8,
@@ -183,7 +183,7 @@ impl Default for BindConfig {
 /// `#[repr(C)]` so `vtable_ptr` is at offset 0 — the C shim reads it via
 /// `*(us_nq_vtable**)peer_ctx`. Without it Rust may reorder fields.
 #[repr(C)]
-pub struct QuicEndpoint {
+pub(crate) struct QuicEndpoint {
     /// MUST stay the first field — `ea_get_ssl_ctx`'s `peer_ctx` is the
     /// QuicEndpoint pointer, and the C shim's thunk reads
     /// `*(us_nq_vtable**)peer_ctx` to recover the vtable.
@@ -382,7 +382,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     if user.is_null() {
         return;
     }
-    // SAFETY: `user` is the heap-allocated QuicEndpoint, live until close.
+    // SAFETY: `user` is the QuicEndpoint, live until close.
     let this = unsafe { &*user.cast::<QuicEndpoint>() };
     if this.closed.get() {
         return;
@@ -447,7 +447,7 @@ extern "C" fn on_data(
     if user.is_null() {
         return;
     }
-    // SAFETY: `user` was set to the heap-allocated QuicEndpoint at bind time
+    // SAFETY: `user` was set to the QuicEndpoint at bind time
     // and stays live until close; all mutated fields are Cell-based.
     let this = unsafe { &*user.cast::<QuicEndpoint>() };
     let global_ptr = this.global.get();
@@ -566,7 +566,7 @@ extern "C" fn on_data(
                     for other_ptr in others {
                         // Registration is the liveness guarantee: `teardown`
                         // unregisters before dropping the self-reference that
-                        // gates finalize, so a listed pointer is allocated.
+                        // keeps the wrapper alive, so a listed pointer is live.
                         if !ENDPOINT_REGISTRY.with_borrow(|v| v.contains(&other_ptr)) {
                             continue;
                         }
@@ -608,7 +608,11 @@ extern "C" fn on_data(
         }
         // Node announces server sessions at Initial receipt — before the
         // handshake — so `onsession` precedes the client's `opened`.
-        this.maybe_announce_provisional(global, payload, core::ptr::from_ref(peer).cast());
+        if let Err(err) =
+            this.maybe_announce_provisional(global, payload, core::ptr::from_ref(peer).cast())
+        {
+            crate::dispatch::fold(Err(err));
+        }
         let engines = match owner_engine {
             // Already matched above: the other engine would only miss it.
             Some(e) => [e, null_mut()],
@@ -831,7 +835,7 @@ fn match_sni<'a>(entries: &'a [(Vec<u8>, TlsContext)], host: &[u8]) -> Option<&'
     if let Some((_, ctx)) = entries.iter().find(|(h, _)| eq(h, host)) {
         return Some(ctx);
     }
-    if let Some(dot) = host.iter().position(|&b| b == b'.') {
+    if let Some(dot) = bun_core::strings::index_of_char_usize(host, b'.') {
         let suffix = &host[dot..];
         if let Some((_, ctx)) = entries
             .iter()
@@ -974,11 +978,10 @@ fn apply_transport_params(
             let Some(addr_js) = tp.get(global, key)?.filter(|v| v.is_object()) else {
                 continue;
             };
-            let Some(addr) = crate::generated_classes::js_SocketAddress::from_js(addr_js) else {
+            let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() else {
                 continue;
             };
-            // SAFETY: `from_js` returned a live SocketAddress.
-            let stored = session::StoredAddr::from_socket_address(unsafe { addr.as_ref() });
+            let stored = session::StoredAddr::from_socket_address(addr);
             let Some((_family, port, ip)) = stored.decode() else {
                 continue;
             };
@@ -1061,7 +1064,7 @@ fn apply_transport_params(
         ..lsquic::NqTransportParams::default()
     };
     if let Some(cc) = options.get(global, "cc")?.filter(|v| v.is_string()) {
-        let name = bun_core::String::from_js(cc, global)?.to_utf8_bytes();
+        let name = bun_core::String::from_js(cc, global)?.to_owned_slice();
         // lsquic.h es_cc_algo: 0=default(→3 Adaptive), 1=Cubic, 2=BBRv1,
         // 3=Adaptive. lsquic ships no Reno (NGTCP2_CC_ALGO_RENO in node's
         // backend), so map 'reno' to Cubic, the closest loss-based option,
@@ -1092,11 +1095,11 @@ pub(super) fn alloc_exposed_array_buffer(
 }
 
 impl QuicEndpoint {
-    pub(crate) fn constructor(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-        this_value: JSValue,
-    ) -> JsResult<*mut Self> {
+    pub(crate) fn constructor<'a>(
+        cx: &mut JsScope<'a>,
+        structure: JsStructure<'a, Self>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
             // SAFETY: pure library init.
@@ -1162,15 +1165,12 @@ impl QuicEndpoint {
             nq_registered: Cell::new(false),
             defer_closes: Cell::new(false),
             send_scope_depth: Cell::new(0),
-            global: Cell::new(core::ptr::from_ref(global)),
+            global: Cell::new(core::ptr::from_ref(cx.global())),
         };
-        // Codegen installs the pointer on the JS object only after this
-        // returns Ok, so a throw from any option read below would leak the
-        // endpoint, its vtable and any Strong already stored in it.
-        let mut raw = scopeguard::guard(bun_core::heap::into_raw(Box::new(this)), |r| {
-            // SAFETY: `r` is the box we just created; nothing else owns it yet.
-            unsafe { bun_core::heap::destroy(r) };
-        });
+        let this_value = structure.create(&cx.heap, this);
+        let js_value = this_value.to_js();
+        let raw: *mut Self = this_value.payload_ptr().as_ptr();
+        let global = cx.global();
 
         let vt = Box::new(lsquic::NqVtable {
             owner: raw.cast(),
@@ -1199,22 +1199,20 @@ impl QuicEndpoint {
             packets_out,
             on_mini_conn_failed,
         });
-        // SAFETY: `raw` was just created and is uniquely owned by the wrapper.
+        // SAFETY: `raw` was just created and nothing else has the wrapper.
         unsafe {
-            (**raw).vtable_ptr = &raw const *vt;
-            (**raw).vtable.set(Some(vt));
+            (*raw).vtable_ptr = &raw const *vt;
+            (*raw).vtable.set(Some(vt));
         }
 
-        let [options] = frame.arguments_as_array::<1>();
+        let options = options.to_js();
         if options.is_object() {
             if let Some(addr_js) = options
                 .get(global, "address")?
                 .filter(|v| !v.is_empty_or_undefined_or_null())
             {
-                if let Some(addr) = crate::generated_classes::js_SocketAddress::from_js(addr_js) {
-                    // SAFETY: `from_js` returned a live SocketAddress owned by
-                    // the JS value.
-                    let stored = StoredAddr::from_socket_address(unsafe { addr.as_ref() });
+                if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
+                    let stored = StoredAddr::from_socket_address(addr);
                     if let Some((_, port, ip)) = stored.decode() {
                         use core::fmt::Write;
                         let mut host = String::new();
@@ -1234,7 +1232,7 @@ impl QuicEndpoint {
                         host_nul.push(0);
                         // SAFETY: `raw` is uniquely owned here.
                         unsafe {
-                            (**raw).bind_config.set(BindConfig {
+                            (*raw).bind_config.set(BindConfig {
                                 host: host_nul,
                                 port,
                             })
@@ -1243,13 +1241,14 @@ impl QuicEndpoint {
                 }
             }
             if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
-                if let Some(bl) = crate::generated_classes::js_BlockList::from_js(bl_js) {
+                if let Some(bl) = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js)
+                {
                     // SAFETY: `raw` is uniquely owned here; the Strong keeps
                     // the BlockList wrapper (and thus the native object)
                     // alive for the endpoint's lifetime.
                     unsafe {
-                        (**raw).block_list.set(Some(bl.as_ptr()));
-                        (**raw)
+                        (*raw).block_list.set(Some(bl.as_ptr()));
+                        (*raw)
                             .block_list_js
                             .with_mut(|s| *s = Some(bun_jsc::Strong::create(bl_js, global)));
                     }
@@ -1259,16 +1258,16 @@ impl QuicEndpoint {
                 .get(global, "blockListPolicy")?
                 .filter(|v| v.is_string())
             {
-                let policy = bun_core::String::from_js(policy, global)?.to_utf8_bytes();
+                let policy = bun_core::String::from_js(policy, global)?.to_owned_slice();
                 // SAFETY: as above.
-                unsafe { (**raw).block_list_allow.set(policy == b"allow") };
+                unsafe { (*raw).block_list_allow.set(policy == b"allow") };
             }
             if let Some(v) = options
                 .get(global, "disableStatelessReset")?
                 .filter(|v| v.is_boolean())
             {
                 // SAFETY: as above.
-                unsafe { (**raw).disable_stateless_reset.set(v.to_boolean()) };
+                unsafe { (*raw).disable_stateless_reset.set(v.to_boolean()) };
             }
             if let Some(v) = options
                 .get(global, "statelessResetBurst")?
@@ -1276,39 +1275,39 @@ impl QuicEndpoint {
             {
                 let burst = v.as_number().max(0.0).min(u32::MAX as f64) as u32;
                 // SAFETY: as above.
-                unsafe { (**raw).stateless_reset_burst.set(burst) };
+                unsafe { (*raw).stateless_reset_burst.set(burst) };
             }
             if let Some(v) = options
                 .get(global, "statelessResetRate")?
                 .filter(|v| v.is_number())
             {
                 // SAFETY: as above.
-                unsafe { (**raw).stateless_reset_rate.set(v.as_number().max(0.0)) };
+                unsafe { (*raw).stateless_reset_rate.set(v.as_number().max(0.0)) };
             }
         }
 
         let state_ptr = alloc_exposed_array_buffer(
             global,
-            this_value,
+            js_value,
             b"state",
             core::mem::size_of::<EndpointState>(),
         )?;
         let stats_ptr = alloc_exposed_array_buffer(
             global,
-            this_value,
+            js_value,
             b"stats",
             ENDPOINT_STATS_FIELDS.len() * core::mem::size_of::<u64>(),
         )?;
-        this_value.put(global, b"stateByteOffset", JSValue::js_number(0.0));
-        this_value.put(global, b"statsByteOffset", JSValue::js_number(0.0));
+        js_value.put(global, b"stateByteOffset", JSValue::js_number(0.0));
+        js_value.put(global, b"statsByteOffset", JSValue::js_number(0.0));
         // SAFETY: `state`/`stats` are write-once before any other access.
         unsafe {
-            (**raw).state = state_ptr.cast();
-            (**raw).stats = stats_ptr.cast();
-            (**raw).write_stat(IDX_STATS_CREATED_AT, now_ns());
+            (*raw).state = state_ptr.cast();
+            (*raw).stats = stats_ptr.cast();
+            (*raw).write_stat(IDX_STATS_CREATED_AT, now_ns());
         }
 
-        Ok(scopeguard::ScopeGuard::into_inner(raw))
+        Ok(this_value)
     }
 
     fn state_mut(&self) -> *mut EndpointState {
@@ -1325,7 +1324,7 @@ impl QuicEndpoint {
     }
     /// Upgrade a session pointer to a reference, verifying it is still in
     /// the `sessions` registry — `unregister_session` always precedes the
-    /// session's teardown/finalize, so a registered pointer is live on the
+    /// session's teardown and `Drop`, so a registered pointer is live on the
     /// JS thread.
     fn live_session(&self, p: *mut QuicSession) -> Option<&QuicSession> {
         // SAFETY: see doc comment.
@@ -1507,6 +1506,7 @@ impl QuicEndpoint {
             if let Some(callback) = callbacks::get(global, "onSessionNew") {
                 let vm = global.bun_vm().as_mut();
                 vm.event_loop_ref().run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global,
                     self.this_value.get().get(),
@@ -1577,7 +1577,12 @@ impl QuicEndpoint {
         // time-driven state (RTO, ACK delay, idle) and the deferred close.
         self.mark_driver_pending();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(self.event_loop_timer.as_ptr(), &next);
+        timer_all().update(
+            core::ptr::addr_of!(self.event_loop_timer)
+                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                .cast_mut(),
+            &next,
+        );
     }
 
     fn rearm_timer(&self) {
@@ -1615,7 +1620,12 @@ impl QuicEndpoint {
                 bun_core::TimespecMockMode::ForceRealTime,
                 ms as i64,
             );
-            timer_all().update(self.event_loop_timer.as_ptr(), &next);
+            timer_all().update(
+                core::ptr::addr_of!(self.event_loop_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+                &next,
+            );
         }
     }
 
@@ -1644,17 +1654,17 @@ impl QuicEndpoint {
         global: &JSGlobalObject,
         payload: &[u8],
         peer: *const c_void,
-    ) {
+    ) -> JsResult<()> {
         if self.server_engine.get().is_null()
             || self.with_state(|s| s.listening) == 0
             || self.closing.get()
         {
-            return;
+            return Ok(());
         }
         // Long header: 0b1xxx_xxxx; version != 0 (0 = version negotiation);
         // DCID length-prefixed at byte 5 (RFC 8999 §5.1).
         if payload.len() < LONG_HEADER_MIN_LEN || payload[0] & LONG_HEADER_FORM_BIT == 0 {
-            return;
+            return Ok(());
         }
         let version = u32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]);
         // Type bits (byte0 5:4): v1 Initial = 0b00 (RFC 9000 §17.2), v2
@@ -1666,16 +1676,16 @@ impl QuicEndpoint {
             _ => false,
         };
         if !is_initial {
-            return;
+            return Ok(());
         }
         let dcid_len = payload[LONG_HEADER_DCID_LEN_OFFSET] as usize;
         let dcid_start = LONG_HEADER_DCID_LEN_OFFSET + 1;
         if dcid_len == 0 || dcid_len > MAX_CID_LEN || payload.len() < dcid_start + dcid_len {
-            return;
+            return Ok(());
         }
         let dcid = &payload[dcid_start..dcid_start + dcid_len];
         if self.provisional.get().iter().any(|p| p.dcid == dcid) {
-            return;
+            return Ok(());
         }
         // On a dual-mode endpoint the peer's Initial *response* carries our
         // client's SCID, which only the client engine hashes -- checking the
@@ -1688,7 +1698,7 @@ impl QuicEndpoint {
                 unsafe { lsquic::lsquic_engine_cid_in_use(e, dcid.as_ptr(), dcid.len()) != 0 }
             });
         if known {
-            return;
+            return Ok(());
         }
         let peer_stored = stored_addr_from_sockaddr(peer);
         let peer_decoded = peer_stored.decode();
@@ -1699,7 +1709,7 @@ impl QuicEndpoint {
             || busy != 0
             || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize)
         {
-            return;
+            return Ok(());
         }
         bun_core::scoped_log!(
             quic,
@@ -1708,32 +1718,28 @@ impl QuicEndpoint {
             peer_decoded
         );
         let endpoint_handle = self.this_value.get().get();
-        let created = QuicSession::create(
+        let (session, _handle) = QuicSession::create(
             global,
             self.vtable_ptr,
             core::ptr::from_ref(self).cast_mut(),
             endpoint_handle,
             null_mut(),
             true,
-        );
-        if let Err(e) = created {
-            global.report_uncaught_exception_from_error(e);
-            return;
-        }
-        if let Ok((session, _handle)) = created {
-            self.apply_server_session_options(global, session);
-            self.sessions.with_mut(|v| v.push(session));
-            self.pending_new_sessions.with_mut(|v| v.push(session));
-            self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
-            self.provisional.with_mut(|v| {
-                v.push(ProvisionalSession {
-                    dcid: dcid.to_vec(),
-                    peer: peer_stored,
-                    created_ns: now_ns(),
-                    session,
-                })
-            });
-        }
+            self.application(true),
+        )?;
+        let applied = self.apply_server_session_options(global, session);
+        self.sessions.with_mut(|v| v.push(session));
+        self.pending_new_sessions.with_mut(|v| v.push(session));
+        self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
+        self.provisional.with_mut(|v| {
+            v.push(ProvisionalSession {
+                dcid: dcid.to_vec(),
+                peer: peer_stored,
+                created_ns: now_ns(),
+                session,
+            })
+        });
+        applied
     }
 
     /// Queues the handshake-failure close both timeout lists deliver.
@@ -1799,6 +1805,12 @@ impl QuicEndpoint {
         }
         // SAFETY: as in `on_data`.
         let global = unsafe { &*global_ptr };
+        // lsquic promotes a server conn only after its handshake completes, and never
+        // calls `on_hsk_done` for it.
+        // SAFETY: `conn` is the live conn lsquic just created.
+        let Some(handshaken) = (unsafe { lsquic::Conn::from_raw(conn) }) else {
+            return null_mut();
+        };
         let endpoint_handle = self.this_value.get().get();
         let peer = conn_peer_addr(conn);
         let provisional = self.provisional.with_mut(|v| {
@@ -1810,7 +1822,7 @@ impl QuicEndpoint {
         if let Some(session) = provisional {
             if let Some(live) = self.live_session(session) {
                 live.bind_conn(conn);
-                live.push_event(session::SessionEvent::HandshakeDone { ok: true });
+                live.note_handshake_ok(handshaken);
                 return session;
             }
         }
@@ -1874,21 +1886,23 @@ impl QuicEndpoint {
             endpoint_handle,
             conn,
             true,
+            self.application(true),
         ) {
             Ok((session, _handle)) => {
-                self.apply_server_session_options(global, session);
+                if let Err(err) = self.apply_server_session_options(global, session) {
+                    crate::dispatch::fold(Err(err));
+                }
                 self.sessions.with_mut(|v| v.push(session));
                 self.pending_new_sessions.with_mut(|v| v.push(session));
                 self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
                 // SAFETY: session was just created.
-                unsafe { (*session).push_event(session::SessionEvent::HandshakeDone { ok: true }) };
+                unsafe { (*session).note_handshake_ok(handshaken) };
                 session
             }
             Err(e) => {
-                // As in `on_remote_stream`: never return to lsquic with a
-                // pending exception. Abort like the sibling null-return
-                // branches, or the conn lingers with no session behind it.
-                global.report_uncaught_exception_from_error(e);
+                // Abort like the sibling null-return branches, or the conn
+                // lingers with no session behind it.
+                crate::dispatch::fold(Err(e));
                 // SAFETY: `conn` is the live conn lsquic just created.
                 if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) } {
                     c.abort_silent();
@@ -1917,6 +1931,14 @@ impl QuicEndpoint {
             self.server_is_http.get()
         } else {
             self.client_is_http.get()
+        }
+    }
+
+    fn application(&self, is_server: bool) -> session::Application {
+        if self.is_http(is_server) {
+            session::Application::Http3
+        } else {
+            session::Application::Default
         }
     }
 
@@ -2115,10 +2137,19 @@ impl QuicEndpoint {
         self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         self.pending_endpoint_close.set(true);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(self.event_loop_timer.as_ptr(), &next);
+        timer_all().update(
+            core::ptr::addr_of!(self.event_loop_timer)
+                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                .cast_mut(),
+            &next,
+        );
     }
 
-    fn apply_server_session_options(&self, global: &JSGlobalObject, session: *mut QuicSession) {
+    fn apply_server_session_options(
+        &self,
+        global: &JSGlobalObject,
+        session: *mut QuicSession,
+    ) -> JsResult<()> {
         if let Some(options) = self
             .server_session_options
             .get()
@@ -2126,12 +2157,9 @@ impl QuicEndpoint {
             .map(bun_jsc::Strong::get)
         {
             // SAFETY: `session` was just created and is live.
-            if let Err(e) = unsafe { (*session).apply_options(global, options) } {
-                // This runs from a lsquic callback; leaving the exception
-                // pending would poison the next `callbacks::get()`.
-                global.report_uncaught_exception_from_error(e);
-            }
+            unsafe { (*session).apply_options(global, options) }?;
         }
+        Ok(())
     }
 
     pub(super) fn buffer_early_keylog(&self, ssl: *mut c_void, peer: StoredAddr, line: Vec<u8>) {
@@ -2165,6 +2193,7 @@ impl QuicEndpoint {
         if let Some(callback) = callbacks::get(global, "onEndpointClose") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global,
                 self.this_value.get().get(),
@@ -2178,7 +2207,13 @@ impl QuicEndpoint {
         self.vtable.set(None);
     }
 
-    pub(crate) fn listen(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn listen(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<()> {
+        let global = cx.global();
         if self.closed.get() || self.closing.get() {
             return Err(global
                 .err(
@@ -2187,11 +2222,11 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        if !self.ensure_bound(global, frame.this())? {
-            return Ok(JSValue::UNDEFINED);
+        if !self.ensure_bound(global, this_value.to_js())? {
+            return Ok(());
         }
         if self.server_engine.get().is_null() {
-            let [options] = frame.arguments_as_array::<1>();
+            let options = options.to_js();
             if options.is_object() {
                 self.server_session_options
                     .set(Some(bun_jsc::Strong::create(options, global)));
@@ -2209,7 +2244,7 @@ impl QuicEndpoint {
                         if !v.is_string() {
                             continue;
                         }
-                        let bytes = bun_core::String::from_js(v, global)?.to_utf8_bytes();
+                        let bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
                         if bytes.is_empty() || bytes.len() > u16::MAX as usize {
                             continue;
                         }
@@ -2237,10 +2272,18 @@ impl QuicEndpoint {
         // SAFETY: state buffer is live.
         self.with_state(|s| s.listening = 1);
         self.update_keepalive();
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    pub(crate) fn connect(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn connect(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        address: JsLocal<'_>,
+        options: JsLocal<'_>,
+        session_ticket: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
         if self.closed.get() || self.closing.get() {
             return Err(global
                 .err(
@@ -2249,11 +2292,13 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        if !self.ensure_bound(global, frame.this())? {
+        if !self.ensure_bound(global, this_value.to_js())? {
             return Ok(JSValue::UNDEFINED);
         }
-        let [address, options, session_ticket_arg] = frame.arguments_as_array::<3>();
-        let Some(addr) = crate::generated_classes::js_SocketAddress::from_js(address) else {
+        let address = address.to_js();
+        let options = options.to_js();
+        let session_ticket = session_ticket.to_js();
+        let Some(addr) = address.as_class_ref::<crate::socket::SocketAddress>() else {
             return Err(global
                 .err(
                     jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -2261,15 +2306,20 @@ impl QuicEndpoint {
                 )
                 .throw());
         };
-        // SAFETY: `from_js` returned a live SocketAddress.
-        let remote = StoredAddr::from_socket_address(unsafe { addr.as_ref() });
+        let remote = StoredAddr::from_socket_address(addr);
         if let Some(version) = read_u64_option(global, options, "version")?
             .map(|v| v as u32)
             .filter(|v| *v != QUIC_VERSION_1 && *v != QUIC_VERSION_2)
         {
             let min_version = read_u64_option(global, options, "minVersion")?
                 .map_or(QUIC_VERSION_1, |v| v as u32);
-            return self.connect_verneg_probe(global, frame.this(), remote, version, min_version);
+            return self.connect_verneg_probe(
+                global,
+                this_value.to_js(),
+                remote,
+                version,
+                min_version,
+            );
         }
         let tls = options.get(global, "tls")?.unwrap_or(JSValue::UNDEFINED);
         let config = TlsConfig::from_js(global, tls, false)?;
@@ -2332,15 +2382,16 @@ impl QuicEndpoint {
             global,
             self.vtable_ptr,
             core::ptr::from_ref(self).cast_mut(),
-            frame.this(),
+            this_value.to_js(),
             null_mut(),
             false,
+            self.application(false),
         )?;
         // `TlsConfig::from_js` defaults servername to "localhost\0" (Node parity).
         let sni = config.servername.as_ref();
         let local = self.local_addr.get();
         let resume_blob: Option<Vec<u8>> = if config.enable_early_data {
-            session_ticket_arg
+            session_ticket
                 .as_array_buffer(global)
                 .map(|buf| buf.byte_slice().to_vec())
         } else {
@@ -2355,7 +2406,7 @@ impl QuicEndpoint {
         self.send_scope_depth.set(self.send_scope_depth.get() + 1);
         // SAFETY: engine is live; local/remote/sni/resume are valid for this
         // call (lsquic copies the resume blob); `session` is the
-        // heap-allocated conn-ctx.
+        // conn-ctx, at its final address in its wrapper.
         let conn = unsafe {
             lsquic::lsquic_engine_connect(
                 self.client_engine.get(),
@@ -2425,6 +2476,7 @@ impl QuicEndpoint {
             this_value,
             null_mut(),
             false,
+            session::Application::None,
         )?;
         let mut dcid = [0u8; VERNEG_PROBE_CID_LEN];
         let mut scid = [0u8; VERNEG_PROBE_CID_LEN];
@@ -2512,13 +2564,9 @@ impl QuicEndpoint {
         true
     }
 
-    pub(crate) fn close_gracefully(
-        &self,
-        _global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn close_gracefully(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) {
         if self.closed.get() || self.closing.get() {
-            return Ok(JSValue::UNDEFINED);
+            return;
         }
         self.closing.set(true);
         self.with_state(|s| {
@@ -2527,38 +2575,27 @@ impl QuicEndpoint {
         });
         if self.this_value.get().is_empty() {
             self.this_value
-                .with_mut(|r| r.set_strong(frame.this(), _global));
+                .with_mut(|r| r.set_strong(this_value.to_js(), cx.global()));
         }
         if self.sessions.get().is_empty() && self.engine_conn_count() == 0 {
             self.finish_close();
         } else {
             self.schedule_process();
         }
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn release_socket(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn release_socket(&self, _: &mut JsScope<'_>) {
         self.pending_endpoint_close.set(false);
         self.teardown();
         self.poll_ref.with_mut(|p| p.disable());
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn address(&self, global: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
-        Ok(self.local_addr.get().to_js_socket_address(global))
+    pub(crate) fn address(&self, cx: &mut JsScope<'_>) -> JSValue {
+        self.local_addr.get().to_js_socket_address(cx.global())
     }
-    pub(crate) fn mark_busy(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let busy = frame.arguments_as_array::<1>()[0].to_boolean();
+    pub(crate) fn mark_busy(&self, busy: bool) {
         // SAFETY: state buffer is live.
         self.with_state(|s| s.busy = busy as u8);
-        Ok(JSValue::UNDEFINED)
-    }
-    pub(crate) fn do_ref(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let want = frame.arguments_as_array::<1>()[0].to_boolean();
-        let ctx = bun_io::js_vm_ctx();
-        self.poll_ref
-            .with_mut(|p| if want { p.ref_(ctx) } else { p.unref(ctx) });
-        Ok(JSValue::UNDEFINED)
     }
     fn build_sni_contexts(
         global: &JSGlobalObject,
@@ -2570,7 +2607,7 @@ impl QuicEndpoint {
         let mut out = Vec::with_capacity(len as usize);
         for i in 0..len {
             let key = keys.get_index(global, i)?;
-            let host = bun_core::String::from_js(key, global)?.to_utf8_bytes();
+            let host = bun_core::String::from_js(key, global)?.to_owned_slice();
             let value = entries
                 .get(global, host.as_slice())?
                 .unwrap_or(JSValue::UNDEFINED);
@@ -2595,9 +2632,11 @@ impl QuicEndpoint {
 
     pub(crate) fn set_sni_contexts(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+        cx: &mut JsScope<'_>,
+        entries: JsLocal<'_>,
+        replace: JsLocal<'_>,
+    ) -> JsResult<()> {
+        let global = cx.global();
         if self.closed.get() {
             return Err(global
                 .err(
@@ -2606,7 +2645,8 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        let [entries, replace] = frame.arguments_as_array::<2>();
+        let entries = entries.to_js();
+        let replace = replace.to_js();
         if !entries.is_object() {
             return Err(global
                 .err(
@@ -2632,19 +2672,38 @@ impl QuicEndpoint {
                 }
             }
         });
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    #[expect(
-        clippy::boxed_local,
-        reason = "codegen's host_fn_finalize calls this as `|b| QuicEndpoint::finalize(b)` and requires `self: Box<Self>`"
-    )]
-    pub(crate) fn finalize(self: Box<Self>) {
+    /// Swaps in close callbacks that are safe to run during VM teardown.
+    ///
+    /// Teardown finalizes endpoints, sessions and streams in any order, so
+    /// `lsquic_engine_destroy` can call back for a session or stream that's already freed.
+    /// `Drop` nulls a freed object's lsquic ctx, and for a live one these callbacks
+    /// don't dereference session or endpoint pointers.
+    fn detach_for_finalize(&self) {
+        self.sessions.with_mut(Vec::clear);
+        self.pending_new_sessions.with_mut(Vec::clear);
+        self.provisional.with_mut(Vec::clear);
+        self.pending_verneg.with_mut(Vec::clear);
+        self.vtable.with_mut(|vt| {
+            if let Some(vt) = vt.as_mut() {
+                vt.owner = null_mut();
+                vt.on_stream_close = stream::QuicStream::on_close_detached;
+                vt.on_conn_closed = QuicSession::on_closed_detached;
+            }
+        });
+    }
+}
+
+impl Drop for QuicEndpoint {
+    fn drop(&mut self) {
         // Remove the timer before the backing storage drops, or a later heap
         // operation dereferences the freed node.
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }
+        self.detach_for_finalize();
         self.release_native();
     }
 }

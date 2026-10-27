@@ -4,6 +4,7 @@ use core::fmt;
 
 use bstr::BStr;
 
+use bun_core::fmt::{escape_control_chars, for_terminal};
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
@@ -15,7 +16,6 @@ pub use bun_core::StringBuilder;
 
 // FFI surface over vendor/picohttpparser. Hand-written rather than
 // bindgen-generated.
-#[allow(non_camel_case_types)]
 mod c {
     use core::ffi::{c_char, c_int};
     #[repr(C)]
@@ -26,7 +26,7 @@ mod c {
         pub value_len: usize,
     }
     /// Mirrors `struct phr_chunked_decoder` from picohttpparser.h. The HTTP
-    /// client writes `consume_trailer` and reads `_state` directly, so the
+    /// client owns the storage and writes `consume_trailer` directly, so the
     /// layout must match C exactly.
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
@@ -35,7 +35,9 @@ mod c {
         /// Set to 1 to discard trailing headers after the terminal `0\r\n` chunk.
         pub consume_trailer: core::ffi::c_char,
         pub(crate) _hex_count: core::ffi::c_char,
-        pub _state: core::ffi::c_char,
+        pub(crate) _state: core::ffi::c_char,
+        pub(crate) _total_read: u64,
+        pub(crate) _total_overhead: u64,
     }
     unsafe extern "C" {
         pub(super) fn phr_parse_response(
@@ -54,6 +56,8 @@ mod c {
             buf: *mut u8,
             len: *mut usize,
         ) -> isize;
+        /// Added by patches/picohttpparser/chunked-decoder.patch.
+        pub safe fn phr_decode_chunked_is_in_trailers(decoder: &phr_chunked_decoder) -> c_int;
     }
 }
 
@@ -155,19 +159,24 @@ impl Header {
     }
 }
 
+// The `Display` impls here (except `Headers`: wire format) print peer-supplied text to a terminal.
 impl fmt::Display for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // NOTE: pretty_fmt! is the compile-time ANSI-tag expander (`<r><cyan>` → escape
         // codes).
         if enable_ansi_colors_stderr() {
             if self.is_multiline() {
-                write!(f, pretty_fmt!("<r><cyan>{}", true), BStr::new(self.value()))
+                write!(
+                    f,
+                    pretty_fmt!("<r><cyan>{}", true),
+                    for_terminal(BStr::new(self.value()))
+                )
             } else {
                 write!(
                     f,
                     pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", true),
-                    BStr::new(self.name()),
-                    BStr::new(self.value()),
+                    escape_control_chars(self.name()),
+                    for_terminal(BStr::new(self.value())),
                 )
             }
         } else {
@@ -175,14 +184,14 @@ impl fmt::Display for Header {
                 write!(
                     f,
                     pretty_fmt!("<r><cyan>{}", false),
-                    BStr::new(self.value())
+                    for_terminal(BStr::new(self.value()))
                 )
             } else {
                 write!(
                     f,
                     pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", false),
-                    BStr::new(self.name()),
-                    BStr::new(self.value()),
+                    escape_control_chars(self.name()),
+                    for_terminal(BStr::new(self.value())),
                 )
             }
         }
@@ -192,7 +201,7 @@ impl fmt::Display for Header {
 const _: () = assert!(core::mem::size_of::<Header>() == core::mem::size_of::<c::phr_header>());
 const _: () = assert!(core::mem::align_of::<Header>() == core::mem::align_of::<c::phr_header>());
 
-pub struct HeaderCurlFormatter<'a> {
+struct HeaderCurlFormatter<'a> {
     header: &'a Header,
 }
 
@@ -203,11 +212,11 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
             write!(
                 f,
                 "-H \"{}: {}\"",
-                BStr::new(header.name()),
-                BStr::new(header.value())
+                escape_control_chars(header.name()),
+                escape_control_chars(header.value())
             )
         } else {
-            write!(f, "-H \"{}\"", BStr::new(header.name()))
+            write!(f, "-H \"{}\"", escape_control_chars(header.name()))
         }
     }
 }
@@ -307,7 +316,7 @@ impl fmt::Display for Request<'_> {
             f,
             "> HTTP/1.1 {} {}",
             BStr::new(self.method),
-            BStr::new(self.path)
+            escape_control_chars(self.path)
         )?;
         for header in self.headers {
             if enable_ansi_colors_stderr() {
@@ -348,10 +357,14 @@ impl fmt::Display for RequestCurlFormatter<'_> {
             write!(
                 f,
                 pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{}\"<r>", true),
-                BStr::new(request.path),
+                escape_control_chars(request.path),
             )?;
         } else {
-            write!(f, "curl --http1.1 \"{}\"", BStr::new(request.path))?;
+            write!(
+                f,
+                "curl --http1.1 \"{}\"",
+                escape_control_chars(request.path)
+            )?;
         }
 
         if request.method != b"GET" {
@@ -381,9 +394,6 @@ impl fmt::Display for RequestCurlFormatter<'_> {
 
         if !self.body.is_empty() && Self::is_printable_body(content_type) {
             f.write_str(" --data-raw ")?;
-            // bun_core re-exports the tier-0 minimal impl as
-            // `js_printer::write_json_string`; the full encoding-aware printer
-            // in bun_js_printer overrides at link time.
             bun_core::js_printer::write_json_string(
                 self.body,
                 f,
@@ -435,19 +445,7 @@ pub struct Response<'a> {
     pub status_code: u32,
     pub status: &'a [u8],
     pub headers: HeaderList<'a>,
-    pub bytes_read: c_int,
-}
-
-impl<'a> Default for Response<'a> {
-    fn default() -> Self {
-        Response {
-            minor_version: 0,
-            status_code: 0,
-            status: b"",
-            headers: HeaderList::default(),
-            bytes_read: 0,
-        }
-    }
+    pub bytes_read: usize,
 }
 
 impl<'a> Response<'a> {
@@ -539,7 +537,9 @@ impl<'a> Response<'a> {
                     headers: HeaderList {
                         list: &src[0..num_headers.min(src.len())],
                     },
-                    bytes_read: rc,
+                    // > 0 here: -1/-2 were handled above and 0 is not a
+                    // return value of phr_parse_response.
+                    bytes_read: rc as usize,
                 })
             }
         }
@@ -564,7 +564,7 @@ impl fmt::Display for Response<'_> {
             StatusCodeFormatter {
                 code: self.status_code as usize
             },
-            BStr::new(self.status),
+            escape_control_chars(self.status),
         )?;
         for header in self.headers.list {
             if enable_ansi_colors_stderr() {
@@ -579,30 +579,9 @@ impl fmt::Display for Response<'_> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Headers
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct Headers<'a> {
-    pub headers: &'a [Header],
-}
-
-impl fmt::Display for Headers<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for header in self.headers {
-            write!(
-                f,
-                "{}: {}\r\n",
-                BStr::new(header.name()),
-                BStr::new(header.value())
-            )?;
-        }
-        Ok(())
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // Re-exports from picohttp_sys
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use c::phr_chunked_decoder;
 pub use c::phr_decode_chunked;
+pub use c::phr_decode_chunked_is_in_trailers;

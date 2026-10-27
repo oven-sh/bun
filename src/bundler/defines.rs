@@ -42,11 +42,7 @@ fn defines_path() -> FsPath<'static> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// `bun_dotenv::DefineStore` impls. dotenv (T2) calls through the link-interface
-// handle; bundler (T5) owns the concrete `E::String` + `DefineData` construction.
-// `to_string` is a
-// `StringHashMap<DefineData>` (= UserDefines), `to_json` is a
-// `StringHashMap<Box<[u8]>>` (= RawDefines / framework defaults).
+// `process.env.*` → define entries
 // ══════════════════════════════════════════════════════════════════════════
 
 fn env_string_store_put(
@@ -59,8 +55,9 @@ fn env_string_store_put(
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
     // the env-define payloads must outlive it. Allocate from `bump` (the
     // transpiler arena) so the slab is bulk-freed with the `Define` table
-    // instead of leaking a `Box` per env var. Value bytes alias the long-lived
-    // env-map storage.
+    // instead of leaking a `Box` per env var. Copy the value because
+    // `Bun__setEnvValue` frees the env-map entry it points into.
+    let value: &[u8] = bump.alloc_slice_copy(value);
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
         bump.alloc(bun_ast::E::EString::init(value)),
     ));
@@ -74,108 +71,41 @@ fn env_string_store_put(
     Ok(())
 }
 
-/// Moved up from
-/// `bun_dotenv` so it can name `DefineData` / `E::String` directly instead of
-/// dispatching through a vtable — it only reads `loader.map.map.{keys,values}()`,
-/// all of which are public.
-///
-/// `to_json` is the framework-defaults `RawDefines` map; `to_string` is the
-/// per-env `UserDefinesArray`.
+/// Copies `process.env.*` entries from the dotenv loader into `to_string`
+/// according to `behavior` (all of them, or only those starting with `prefix`).
 pub(crate) fn copy_env_for_define(
     env: &bun_dotenv::Loader,
-    to_json: &mut RawDefines,
     to_string: &mut UserDefinesArray,
-    framework_defaults_keys: &[&[u8]],
-    framework_defaults_values: &[&[u8]],
     behavior: bun_dotenv::DotEnvBehavior,
     prefix: &[u8],
     bump: &bun_alloc::Arena,
 ) -> Result<(), crate::Error> {
     use bun_dotenv::DotEnvBehavior;
-    const INVALID_HASH: u64 = u64::MAX - 1;
-    let mut string_map_hashes: Vec<u64> = vec![INVALID_HASH; framework_defaults_keys.len()];
-
-    // Frameworks determine an allowlist of values
     const PROCESS_ENV: &[u8] = b"process.env.";
-    for (i, &key) in framework_defaults_keys.iter().enumerate() {
-        if key.len() > PROCESS_ENV.len() && &key[..PROCESS_ENV.len()] == PROCESS_ENV {
-            let hashable_segment = &key[PROCESS_ENV.len()..];
-            string_map_hashes[i] = bun_wyhash::hash(hashable_segment);
-        }
+
+    if behavior == DotEnvBehavior::Disable || behavior == DotEnvBehavior::LoadAllWithoutInlining {
+        return Ok(());
+    }
+    if behavior == DotEnvBehavior::Prefix {
+        debug_assert!(!prefix.is_empty());
     }
 
-    // With per-entry copies no pre-sizing
-    // pass is needed — emit directly. PERF: was single-buffer key arena; now per-entry Vec reuse.
-    if behavior != DotEnvBehavior::Disable && behavior != DotEnvBehavior::LoadAllWithoutInlining {
-        if behavior == DotEnvBehavior::Prefix {
-            debug_assert!(!prefix.is_empty());
+    let mut key_buf: Vec<u8> = Vec::new();
+    // borrowck — iterate parallel slices instead of `iterator()` so the
+    // map borrow stays shared while we write into the define store.
+    let keys = env.map.map.keys();
+    let values = env.map.map.values();
+    for (k, v) in keys.iter().zip(values.iter()) {
+        if k.is_empty() {
+            continue;
         }
-
-        // When `behavior == .prefix` and NO env key starts
-        // with `prefix`, the entire second walk (including the framework-hash `else` arm)
-        // must be skipped. Pre-scan for a prefix match before emitting.
-        let any_prefix_match = if behavior == DotEnvBehavior::Prefix {
-            env.map
-                .map
-                .keys()
-                .iter()
-                .any(|k| bun_core::strings::starts_with(k, prefix))
-        } else {
-            true
-        };
-
-        if any_prefix_match {
-            let mut key_buf: Vec<u8> = Vec::new();
-            // borrowck — iterate parallel slices instead of `iterator()` so the
-            // map borrow stays shared while we write into the define stores.
-            let keys = env.map.map.keys();
-            let values = env.map.map.values();
-            for (k, v) in keys.iter().zip(values.iter()) {
-                if k.is_empty() {
-                    continue;
-                }
-                let value: &[u8] = &v.value;
-
-                if behavior == DotEnvBehavior::Prefix {
-                    if bun_core::strings::starts_with(k, prefix) {
-                        key_buf.clear();
-                        key_buf.extend_from_slice(PROCESS_ENV);
-                        key_buf.extend_from_slice(k);
-                        env_string_store_put(to_string, bump, &key_buf, value)?;
-                    } else {
-                        let hash = bun_wyhash::hash(k);
-                        debug_assert!(hash != INVALID_HASH);
-                        if let Some(key_i) =
-                            string_map_hashes.iter().enumerate().position(|(i, &h)| {
-                                h == hash
-                                    && h != INVALID_HASH
-                                    && framework_defaults_keys[i].get(PROCESS_ENV.len()..)
-                                        == Some(&k[..])
-                            })
-                        {
-                            env_string_store_put(
-                                to_string,
-                                bump,
-                                framework_defaults_keys[key_i],
-                                value,
-                            )?;
-                        }
-                    }
-                } else {
-                    key_buf.clear();
-                    key_buf.extend_from_slice(PROCESS_ENV);
-                    key_buf.extend_from_slice(k);
-                    env_string_store_put(to_string, bump, &key_buf, value)?;
-                }
-            }
+        if behavior == DotEnvBehavior::Prefix && !bun_core::strings::starts_with(k, prefix) {
+            continue;
         }
-    }
-
-    for (i, &key) in framework_defaults_keys.iter().enumerate() {
-        let value = framework_defaults_values[i];
-        if !to_string.contains_key(key) && !to_json.contains_key(key) {
-            to_json.get_or_put_value(key, Box::<[u8]>::from(value))?;
-        }
+        key_buf.clear();
+        key_buf.extend_from_slice(PROCESS_ENV);
+        key_buf.extend_from_slice(k);
+        env_string_store_put(to_string, bump, &key_buf, &v.value)?;
     }
 
     Ok(())
@@ -211,6 +141,7 @@ impl DefineExt for Define {
     ) -> Result<(), bun_alloc::AllocError> {
         let key = global[global.len() - 1];
         let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
+        self.dots_filter.insert(key);
         if let Some(existing) = self.dots.get_mut(key) {
             existing.push(DotDefine {
                 parts,
@@ -237,7 +168,9 @@ impl DefineExt for Define {
         let mut define = Box::new(Define {
             identifiers: StringHashMap::default(),
             dots: StringHashMap::default(),
+            dots_filter: Default::default(),
             drop_debugger,
+            user_hash: None,
         });
         define.dots.reserve(124);
 
@@ -354,6 +287,29 @@ pub trait DefineDataExt: Sized {
     ) -> Result<UserDefines, crate::Error>;
 }
 
+/// The positions are in the text of the define, and the printer takes them for ones in the file.
+fn clear_locs(expr: &mut bun_ast::Expr) {
+    expr.loc = bun_ast::Loc::EMPTY;
+    match expr.data {
+        ExprData::EObject(mut object) => {
+            object.close_brace_loc = bun_ast::Loc::EMPTY;
+            for property in object.properties.iter_mut() {
+                if let Some(key) = &mut property.key {
+                    clear_locs(key);
+                }
+                if let Some(value) = &mut property.value {
+                    clear_locs(value);
+                }
+            }
+        }
+        ExprData::EArray(mut array) => {
+            array.close_bracket_loc = bun_ast::Loc::EMPTY;
+            array.items.iter_mut().for_each(clear_locs);
+        }
+        _ => {}
+    }
+}
+
 impl DefineDataExt for DefineData {
     fn from_mergeable_input_entry(
         user_defines: &mut UserDefines,
@@ -386,7 +342,7 @@ impl DefineDataExt for DefineData {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<DefineData, crate::Error> {
-        let mut key_splitter = key.split(|b| *b == b'.');
+        let mut key_splitter = strings::split(key, b".");
         while let Some(part) = key_splitter.next() {
             if !js_lexer::is_identifier(part) {
                 if strings::eql(part, key) {
@@ -414,7 +370,7 @@ impl DefineDataExt for DefineData {
         }
 
         // check for nested identifiers
-        let mut value_splitter = value_str.split(|b| *b == b'.');
+        let mut value_splitter = strings::split(value_str, b".");
         let mut is_ident = true;
 
         while let Some(part) = value_splitter.next() {
@@ -493,12 +449,7 @@ impl DefineDataExt for DefineData {
         bun_ast::Stmt::data_store_create();
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
         let source = bun_ast::Source {
-            // `Source.contents` is typed `&'static [u8]` as a stand-in for an
-            // arena lifetime (see logger/lib.rs `Str` note). `arena_value` lives in `bump`,
-            // which the caller (`Define::init`) owns for the lifetime of the
-            // `Define` table — i.e. as long as any `ExprData` produced here is
-            // reachable. Route through `StoreStr` for the lifetime erasure.
-            contents: std::borrow::Cow::Borrowed(bun_ast::StoreStr::new(arena_value).slice()),
+            contents: std::borrow::Cow::Borrowed(arena_value),
             path: defines_path(),
             ..Default::default()
         };
@@ -511,7 +462,9 @@ impl DefineDataExt for DefineData {
         // `.into()` deep-walking T2→T4 and re-boxing the payload; now `.into()`
         // is identity, so without `deep_clone` the `DefineData.value` dangles
         // into a freed slab and `process.env.NODE_ENV` reads garbage.
-        let data: ExprData = expr.data.deep_clone(bump)?;
+        let mut expr = bun_parsers::json_parser::clone_out_of_store(&expr, &source, log, bump)?;
+        clear_locs(&mut expr);
+        let data: ExprData = expr.data;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {
             value: data,

@@ -19,5 +19,8 @@ struct BunTTYState {
 // `state` points at `Bun__ttyStateSize()` zero-initialized bytes, owned by the
 // caller for as long as the handle lives. The bytes are copied in and out, so
 // the buffer carries no alignment requirement.
-extern "C" int Bun__ttySetMode(int fd, int mode, void* state);
+// `drain` nonzero applies the change with TCSADRAIN (libuv's behavior, for
+// real ttys); zero uses TCSANOW, required for PTY masters (see the comment in
+// wtf-bindings.cpp).
+extern "C" int Bun__ttySetMode(int fd, int mode, void* state, int drain);
 extern "C" size_t Bun__ttyStateSize();

@@ -2,10 +2,12 @@ use std::sync::OnceLock;
 
 use bun_collections::HashMap;
 use bun_core::strings;
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, UUID};
+use bun_jsc::{JSGlobalObject, JSValue, UUID};
 use bun_threading::Guarded;
 
+use crate::generated_bindgen::blob::BlobOrBuildArtifact;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 
@@ -14,7 +16,7 @@ use crate::webcore::BlobExt as _;
 // Key is `[u8; 16]` (the UUID bytes) rather than `UUID` directly because
 // upstream `bun_jsc::UUID` does not yet derive `Hash + Eq`; using the raw
 // byte array avoids touching the upstream crate.
-pub struct ObjectURLRegistry {
+pub(crate) struct ObjectURLRegistry {
     map: Guarded<HashMap<[u8; 16], Box<Entry>>>,
 }
 
@@ -26,12 +28,13 @@ impl Default for ObjectURLRegistry {
     }
 }
 
-pub struct Entry {
+/// Holds no VM-affine state: `blob.global_this` is null and `blob.name` is a
+/// shared impl (pre-hashed, never atomized in place), so dupes may clone it
+/// into any VM.
+pub(crate) struct Entry {
     blob: Blob,
 }
 
-// `Entry` is auto-`Send`: its sole field is `Blob`, which already asserts
-// `Send + Sync` (see `webcore_types::Blob`). No `unsafe impl` needed.
 const _: fn() = || {
     fn assert_send<T: Send>() {}
     assert_send::<Entry>();
@@ -39,9 +42,10 @@ const _: fn() = || {
 
 impl Entry {
     pub(crate) fn init(blob: &Blob) -> Box<Entry> {
-        Box::new(Entry {
-            blob: blob.dupe_with_content_type(true),
-        })
+        let blob = blob.dupe_with_content_type(true);
+        blob.global_this.set(core::ptr::null());
+        blob.name.with_mut(|name| name.make_thread_shareable());
+        Box::new(Entry { blob })
     }
 }
 
@@ -66,11 +70,17 @@ impl ObjectURLRegistry {
         REGISTRY.get_or_init(ObjectURLRegistry::default)
     }
 
-    pub(crate) fn resolve_and_dupe(&self, pathname: &[u8]) -> Option<Blob> {
+    pub(crate) fn resolve_and_dupe(
+        &self,
+        pathname: &[u8],
+        global_object: &JSGlobalObject,
+    ) -> Option<Blob> {
         let uuid = uuid_from_pathname(pathname)?;
         let map = self.map.lock();
-        map.get(&uuid.bytes)
-            .map(|e| e.blob.dupe_with_content_type(true))
+        let entry = map.get(&uuid.bytes)?;
+        let blob = entry.blob.dupe_with_content_type(true);
+        blob.global_this.set(global_object);
+        Some(blob)
     }
 
     pub(crate) fn resolve_and_dupe_to_js(
@@ -78,7 +88,7 @@ impl ObjectURLRegistry {
         pathname: &[u8],
         global_object: &JSGlobalObject,
     ) -> Option<JSValue> {
-        let blob = Blob::new(self.resolve_and_dupe(pathname)?);
+        let blob = Blob::new(self.resolve_and_dupe(pathname, global_object)?);
         // SAFETY: `Blob::new` returns a freshly-boxed heap pointer.
         Some(unsafe { (*blob).to_js(global_object) })
     }
@@ -103,98 +113,38 @@ fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
     UUID::parse(pathname).ok()
 }
 
-#[bun_jsc::host_fn(export = "Bun__createObjectURL")]
-fn bun_create_object_url(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [blob_arg] = callframe.arguments_as_array::<1>();
-    if callframe.arguments_count() < 1 {
-        return Err(global_object.throw_not_enough_arguments(
-            "createObjectURL",
-            1,
-            callframe.arguments_count() as usize,
-        ));
-    }
-    let Some(blob) = blob_arg.as_class_ref::<Blob>() else {
-        return Err(global_object
-            .throw_invalid_arguments(format_args!("createObjectURL expects a Blob object")));
-    };
+pub(crate) fn create_object_url(object: BlobOrBuildArtifact<'_>) -> bun_core::String {
     let registry = ObjectURLRegistry::singleton();
-    // SAFETY: `bun_vm_ptr()` returns the live VM pointer for `global_object`.
-    let uuid = registry.register(unsafe { &mut *global_object.bun_vm_ptr() }, blob);
-    let mut str = bun_core::String::create_format(format_args!("blob:{}", uuid));
-    str.transfer_to_js(global_object)
+    let uuid = registry.register(VirtualMachine::get().as_mut(), object.blob());
+    bun_core::String::create_format(format_args!("blob:{}", uuid))
 }
 
-#[bun_jsc::host_fn(export = "Bun__revokeObjectURL")]
-fn bun_revoke_object_url(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [url_arg] = callframe.arguments_as_array::<1>();
-    if callframe.arguments_count() < 1 {
-        return Err(global_object.throw_not_enough_arguments(
-            "revokeObjectURL",
-            1,
-            callframe.arguments_count() as usize,
-        ));
-    }
-    if !url_arg.is_string() {
-        return Err(
-            global_object.throw_invalid_arguments(format_args!("revokeObjectURL expects a string"))
-        );
-    }
-    // `to_bun_string` returns a +1 ref; `bun_core::String` is `Copy` (no Drop),
-    // so wrap in `OwnedString` for scope-exit `deref()`.
-    let str =
-        bun_core::OwnedString::new(url_arg.to_bun_string(global_object).expect("unreachable"));
-    if !str.has_prefix_comptime(b"blob:") {
-        return Ok(JSValue::UNDEFINED);
+pub(crate) fn revoke_object_url(url: &bun_core::String) {
+    if !url.starts_with_ascii(b"blob:") {
+        return;
     }
 
-    let slice = str.to_utf8_without_ref();
-    // released by ZigStringSlice Drop
-
+    let slice = url.to_utf8();
     let sliced = slice.slice();
     if sliced.len() < b"blob:".len() + UUID::STRING_LENGTH {
-        return Ok(JSValue::UNDEFINED);
+        return;
     }
     ObjectURLRegistry::singleton().revoke(&sliced[b"blob:".len()..]);
-    Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn(export = "jsFunctionResolveObjectURL")]
-fn js_function_resolve_object_url(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [url_arg] = callframe.arguments_as_array::<1>();
-
+pub(crate) fn resolve_object_url(cx: &mut JsScope<'_>, url: &bun_core::String) -> Option<JSValue> {
     // Errors are ignored.
     // Not thrown.
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/blob.js#L441
-    if callframe.arguments_count() < 1 {
-        return Ok(JSValue::UNDEFINED);
-    }
-    // `to_bun_string` returns a +1 ref; wrap in `OwnedString` so every exit
-    // path (exception, non-blob prefix, success) releases it.
-    let str = bun_core::OwnedString::new(url_arg.to_bun_string(global_object)?);
-
-    if global_object.has_exception() {
-        return Ok(JSValue::ZERO);
+    if !url.starts_with_ascii(b"blob:") || url.length() < SPECIFIER_LEN {
+        return None;
     }
 
-    if !str.has_prefix_comptime(b"blob:") || str.length() < SPECIFIER_LEN {
-        return Ok(JSValue::UNDEFINED);
-    }
-
-    let slice = str.to_utf8_without_ref();
+    let slice = url.to_utf8();
     let sliced = slice.slice();
 
     let registry = ObjectURLRegistry::singleton();
-    let blob = registry.resolve_and_dupe_to_js(&sliced[b"blob:".len()..], global_object);
-    Ok(blob.unwrap_or(JSValue::UNDEFINED))
+    registry.resolve_and_dupe_to_js(&sliced[b"blob:".len()..], cx.global())
 }
 
 const SPECIFIER_LEN: usize = b"blob:".len() + UUID::STRING_LENGTH;

@@ -1,10 +1,18 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import pkg from "../package.json";
 
 const BUN_VERSION = (process.env.BUN_VERSION || Bun.version || process.versions.bun).replace(/^.*v/, "");
 
-await Bun.write(join(import.meta.dir, "../package.json"), JSON.stringify({ ...pkg, version: BUN_VERSION }, null, 2));
+// Usage: bun scripts/build.ts [outDir]
+//
+// The generated files (package.json with the version filled in, CLAUDE.md, docs/)
+// are written to outDir, by default this package's own directory, which is what the
+// release workflow publishes. test/integration/bun-types builds into a scratch copy
+// of the package instead so that running the test never modifies the checkout.
+const outDir = process.argv[2] ? resolve(process.argv[2]) : join(import.meta.dir, "..");
+
+await Bun.write(join(outDir, "package.json"), JSON.stringify({ ...pkg, version: BUN_VERSION }, null, 2));
 
 // copy CLAUDE.md
 let claude = Bun.file(join(import.meta.dir, "../../../src/cli/init/rule.md"));
@@ -16,11 +24,11 @@ if (await claude.exists()) {
     original = original.slice(endOfFrontMatter + "---\n".length).trim() + "\n";
   }
 
-  await Bun.write(join(import.meta.dir, "../CLAUDE.md"), original);
+  await Bun.write(join(outDir, "CLAUDE.md"), original);
 }
 
 // Copy docs
-const docsDir = join(import.meta.dir, "../docs");
+const docsDir = join(outDir, "docs");
 const sourceDocsDir = join(import.meta.dir, "../../../docs");
 await Bun.$`rm -rf ${docsDir}`;
 

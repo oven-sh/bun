@@ -221,7 +221,7 @@ pub(super) fn predict_block<const N: usize>(
     Ok(())
 }
 
-/// A 4x4 block in the work buffer with its neighbours, from the top left sample to the last sample of the block.
+/// A 4x4 block in the work buffer with its neighbors, from the top left sample to the last sample of the block.
 pub(super) type Luma4 = [u8; 4 * BPS + 5];
 
 #[inline(always)]
@@ -320,7 +320,7 @@ pub(super) fn predict_luma4(mode: IntraMode, dst: &mut Luma4) {
     }
 }
 
-// Edge filtering, in 8 bits with saturation and no branches: the same results as libwebp's tables, and it vectorises.
+// Edge filtering, in 8 bits with saturation and no branches: the same results as libwebp's tables, and it vectorizes.
 
 /// Sixteen samples next to each other along an edge: of one row for a horizontal edge, of one column for a vertical one.
 type Line = [u8; 16];
@@ -430,7 +430,7 @@ pub(super) struct Edges<T> {
 }
 
 impl<T> Edges<T> {
-    /// The lines that the filters use, out of the last four of the neighbour followed by the `size` of the macroblock.
+    /// The lines that the filters use, out of the last four of the neighbor followed by the `size` of the macroblock.
     fn span(&self, size: usize) -> core::ops::Range<usize> {
         let start = if self.outer.is_some() { 0 } else { 4 };
         start..if self.inner.is_some() { 4 + size } else { 8 }

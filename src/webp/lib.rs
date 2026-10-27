@@ -30,7 +30,7 @@ pub(crate) struct Output<'a> {
 
 impl Output<'_> {
     /// `WebPAllocateDecBuffer` for memory of the caller's.
-    pub(crate) fn check(&self, width: usize, height: usize) -> Result<(), Error> {
+    pub(crate) fn check(&self, width: usize, height: usize) -> Result<()> {
         let row = width.checked_mul(4).ok_or(Error::InvalidParam)?;
         let last = height.checked_sub(1).ok_or(Error::InvalidParam)?;
         // The last row needs no padding.
@@ -117,7 +117,7 @@ pub(crate) struct Input<'a> {
 }
 
 impl<'a> Input<'a> {
-    fn new(rgba: &'a [u8], width: u32, height: u32, stride: usize) -> Result<Self, Error> {
+    fn new(rgba: &'a [u8], width: u32, height: u32, stride: usize) -> Result<Self> {
         if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
             return Err(Error::BadDimension);
         }

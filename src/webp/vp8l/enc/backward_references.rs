@@ -1,13 +1,12 @@
-//! `backward_references_enc.c`: turns pixels into literals, colour cache hits and copies of earlier pixels.
+//! `backward_references_enc.c`: turns pixels into literals, color cache hits and copies of earlier pixels.
 
 use super::backward_references_cost::backward_references_trace_backwards;
 use super::histogram::Histogram;
 use super::lossless::{prefix_encode, vector_mismatch};
-use crate::Error;
+use crate::Result;
 use crate::util::{Bug, Checked, SliceExt, try_vec};
 use crate::vp8l::color_cache::{ColorCache, hash_pix};
 use crate::vp8l::format_constants::{NUM_LENGTH_CODES, NUM_LITERAL_CODES};
-use bun_alloc::AllocError;
 
 /// The format allows 11.
 pub(crate) const MAX_COLOR_CACHE_BITS: u32 = 10;
@@ -58,17 +57,17 @@ pub(crate) struct BackwardRefs(Vec<PixOrCopy>);
 
 impl BackwardRefs {
     #[inline]
-    pub(crate) fn push(&mut self, v: PixOrCopy) -> Result<(), AllocError> {
+    pub(crate) fn push(&mut self, v: PixOrCopy) -> Result<()> {
         if self.0.len() == self.0.capacity() {
-            self.0.try_reserve(1).map_err(|_| AllocError)?;
+            self.0.try_reserve(1)?;
         }
         self.0.push(v);
         Ok(())
     }
 
     #[inline]
-    pub(crate) fn push_copy(&mut self, distance: usize, len: usize) -> Result<(), Error> {
-        Ok(self.push(PixOrCopy::copy(distance, len)?)?)
+    pub(crate) fn push_copy(&mut self, distance: usize, len: usize) -> Result<()> {
+        self.push(PixOrCopy::copy(distance, len)?)
     }
 
     pub(crate) fn clear(&mut self) {
@@ -171,7 +170,7 @@ fn get_window_size_for_hash_chain(quality: i32, xsize: usize) -> usize {
 
 impl HashChain {
     /// For images of up to `size` pixels.
-    pub(crate) fn new(size: usize) -> Result<Self, AllocError> {
+    pub(crate) fn new(size: usize) -> Result<Self> {
         Ok(Self {
             offset_length: try_vec(0, size)?,
         })
@@ -206,7 +205,7 @@ impl HashChain {
     }
 
     /// `VP8LHashChainFill`
-    pub(crate) fn fill(&mut self, quality: i32, argb: &[u32], xsize: usize) -> Result<(), Error> {
+    pub(crate) fn fill(&mut self, quality: i32, argb: &[u32], xsize: usize) -> Result<()> {
         let size = argb.len();
         let iter_max = get_max_iters_for_quality(quality);
         let window_size = get_window_size_for_hash_chain(quality, xsize);
@@ -229,7 +228,7 @@ impl HashChain {
             while pos < size - 2 {
                 let argb_comp_next = argb.at(pos + 1)? == argb.at(pos + 2)?;
                 if argb_comp && argb_comp_next {
-                    // All pairs in a run of one colour hash alike, so hash the colour and what is left of the run.
+                    // All pairs in a run of one color hash alike, so hash the color and what is left of the run.
                     let color = argb.at(pos)?;
                     let mut len = 1 + argb
                         .sub(pos + 3..)?
@@ -356,11 +355,7 @@ impl HashChain {
 // -----------------------------------------------------------------------------
 
 /// Copies from the pixel before and the pixel above only.
-fn backward_references_rle(
-    xsize: usize,
-    argb: &[u32],
-    refs: &mut BackwardRefs,
-) -> Result<(), Error> {
+fn backward_references_rle(xsize: usize, argb: &[u32], refs: &mut BackwardRefs) -> Result<()> {
     let pix_count = argb.len();
     refs.clear();
     refs.push(PixOrCopy::Literal(argb.at(0)?))?;
@@ -391,7 +386,7 @@ fn backward_references_lz77(
     argb: &[u32],
     hash_chain: &HashChain,
     refs: &mut BackwardRefs,
-) -> Result<(), Error> {
+) -> Result<()> {
     let pix_count = argb.len();
     refs.clear();
     let mut i = 0;
@@ -435,7 +430,7 @@ fn backward_references_lz77_box(
     hash_chain_best: &HashChain,
     hash_chain: &mut HashChain,
     refs: &mut BackwardRefs,
-) -> Result<(), Error> {
+) -> Result<()> {
     let pix_count = argb.len();
 
     // How many times the pixel at each position is repeated from there on, up to MAX_LENGTH.
@@ -506,7 +501,7 @@ fn backward_references_lz77_box(
                 if argb.at(j_offset)? != argb.at(i)? {
                     continue;
                 }
-                // Go from run to run of the same colour.
+                // Go from run to run of the same color.
                 let mut curr_length = 0;
                 let mut j = i;
                 loop {
@@ -588,12 +583,12 @@ impl LiteralCounts {
 /// Key `key` of the cache of `bits` bits is at `(1 << bits) | key`, so half an index is the next smaller cache's.
 type PerCacheKey = [u32; 2 << MAX_COLOR_CACHE_BITS];
 
-/// The size of colour cache, up to `cache_bits_max`, with which `refs` have the lowest entropy. 0 is none.
+/// The size of color cache, up to `cache_bits_max`, with which `refs` have the lowest entropy. 0 is none.
 fn calculate_best_cache_size(
     argb: &[u32],
     refs: &BackwardRefs,
     cache_bits_max: u32,
-) -> Result<u32, Error> {
+) -> Result<u32> {
     if cache_bits_max == 0 {
         return Ok(0);
     }
@@ -682,12 +677,12 @@ fn calculate_best_cache_size(
     Ok(best_cache_bits)
 }
 
-/// `BackwardRefsWithLocalCache`: replaces the literals that a colour cache holds.
+/// `BackwardRefsWithLocalCache`: replaces the literals that a color cache holds.
 fn backward_refs_with_local_cache(
     argb: &[u32],
     cache_bits: u32,
     refs: &mut BackwardRefs,
-) -> Result<(), Error> {
+) -> Result<()> {
     let mut hashers = ColorCache::new(cache_bits)?;
     let mut pixels = argb.iter();
     for v in &mut refs.0 {
@@ -718,7 +713,7 @@ pub(crate) enum Lz77 {
     Box,
 }
 
-/// `VP8LGetBackwardReferences`: the cheapest of `lz77_types_to_try` goes to `refs_best`. Returns its colour cache bits.
+/// `VP8LGetBackwardReferences`: the cheapest of `lz77_types_to_try` goes to `refs_best`. Returns its color cache bits.
 pub(crate) fn get_backward_references(
     width: usize,
     argb: &[u32],
@@ -728,14 +723,14 @@ pub(crate) fn get_backward_references(
     hash_chain: &HashChain,
     refs_best: &mut BackwardRefs,
     refs_tmp: &mut BackwardRefs,
-) -> Result<u32, Error> {
+) -> Result<u32> {
     let mut lz77_type_best = None;
     let mut bit_cost_best = u64::MAX;
     let mut cache_bits_best = 0;
     let mut hash_chain_box = None;
 
     for &lz77_type in lz77_types_to_try {
-        // The colour cache comes afterwards: the best LZ77 with one would not be very different.
+        // The color cache comes afterwards: the best LZ77 with one would not be very different.
         match lz77_type {
             Lz77::Rle => backward_references_rle(width, argb, refs_tmp)?,
             Lz77::Standard => backward_references_lz77(argb, hash_chain, refs_tmp)?,

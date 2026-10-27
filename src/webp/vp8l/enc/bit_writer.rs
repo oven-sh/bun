@@ -1,5 +1,7 @@
 //! `bit_writer_utils.c`: `VP8LBitWriter`. Bits fill each byte from its least significant end.
 
+use crate::Result;
+use crate::util::try_with_capacity;
 use bun_alloc::AllocError;
 
 pub(crate) struct BitWriter {
@@ -30,9 +32,8 @@ impl BitWriter {
         }
     }
 
-    pub(crate) fn try_clone(&self) -> Result<Self, AllocError> {
-        let mut buf = Vec::new();
-        buf.try_reserve(self.buf.len()).map_err(|_| AllocError)?;
+    pub(crate) fn try_clone(&self) -> Result<Self> {
+        let mut buf = try_with_capacity(self.buf.len())?;
         buf.extend_from_slice(&self.buf);
         Ok(Self { buf, ..*self })
     }
@@ -78,10 +79,10 @@ impl BitWriter {
         self.used += n_bits;
     }
 
-    pub(crate) fn finish(mut self) -> Result<Vec<u8>, AllocError> {
+    pub(crate) fn finish(mut self) -> Result<Vec<u8>> {
         let rest = self.used.div_ceil(8) as usize;
         if self.error || self.buf.try_reserve_exact(rest).is_err() {
-            return Err(AllocError);
+            return Err(AllocError.into());
         }
         self.buf
             .extend(self.bits.to_le_bytes().into_iter().take(rest));

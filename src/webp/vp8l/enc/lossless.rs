@@ -1,4 +1,4 @@
-//! `lossless_enc.c`, `lossless_common.h`: fixed-point logarithms and entropies, prefix codes, colour transforms.
+//! `lossless_enc.c`, `lossless_common.h`: fixed-point logarithms and entropies, prefix codes, color transforms.
 
 use crate::util::{Checked, SliceExt};
 
@@ -459,10 +459,10 @@ pub(crate) fn transform_color(m: Multipliers, data: &mut [u32]) {
     }
 }
 
-/// The most pixels that a tile of the colour transform has.
+/// The most pixels that a tile of the color transform has.
 const MAX_COLOR_TILE_SIZE: usize = 32 * 32;
 
-/// The pixels of a tile, one channel after another so that trying a multiplier on all of them vectorises.
+/// The pixels of a tile, one channel after another so that trying a multiplier on all of them vectorizes.
 pub(crate) struct ColorTile {
     len: usize,
     /// Each is a signed byte.

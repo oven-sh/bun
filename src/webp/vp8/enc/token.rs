@@ -3,8 +3,8 @@
 use super::bit_writer::BitWriter;
 use super::dsp::{Coeffs, num_levels_block};
 use super::tables::{CAT3, CAT4, CAT5, CAT6, ENC_BANDS, NUM_BANDS, NUM_CTX, NUM_PROBAS};
+use crate::Result;
 use crate::util::{Checked, SliceExt};
-use bun_alloc::AllocError;
 
 /// Bit 15: the bit to code. Bits 0 to 13: its probability if bit 14 (`FIXED_PROBA_BIT`) is set, else the index of it.
 type Token = u16;
@@ -74,10 +74,8 @@ impl TokenBuffer {
     }
 
     /// Makes room for the tokens of `blocks` more blocks.
-    pub(super) fn reserve(&mut self, blocks: usize) -> Result<(), AllocError> {
-        self.tokens
-            .try_reserve(blocks * MAX_TOKENS_PER_BLOCK)
-            .map_err(|_| AllocError)
+    pub(super) fn reserve(&mut self, blocks: usize) -> Result<()> {
+        Ok(self.tokens.try_reserve(blocks * MAX_TOKENS_PER_BLOCK)?)
     }
 
     /// Records the coefficients of a block from `first` on, for which `reserve` made room. Returns whether there are any.

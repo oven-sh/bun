@@ -2,7 +2,7 @@
 
 use super::tables::{GAMMA_TO_LINEAR, LINEAR_TO_GAMMA};
 use crate::util::{Checked, SliceExt, try_vec};
-use crate::{Error, Input};
+use crate::{Input, Result};
 
 pub(super) struct Picture {
     pub(super) width: usize,
@@ -166,7 +166,7 @@ fn convert_rgb_to_uv(rgb: &[Rgb], u: &mut [u8], v: &mut [u8]) {
 
 impl Picture {
     /// `ImportYUVAFromRGBA`
-    pub(super) fn import(input: &Input<'_>) -> Result<Self, Error> {
+    pub(super) fn import(input: &Input<'_>) -> Result<Self> {
         let (width, height) = (input.width, input.height);
         let mut has_alpha = false;
         for y in 0..height {

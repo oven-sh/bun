@@ -5,7 +5,7 @@ use super::io::{Emitter, Rows};
 use super::{Decoder, FilterType, MbContext, MbData};
 use crate::util::{Checked, SliceExt, try_vec};
 use crate::vp8::common::{IntraMode, NUM_MB_SEGMENTS};
-use crate::{Error, Output, alpha};
+use crate::{Output, Result, alpha};
 
 /// How a macroblock is filtered.
 #[derive(Clone, Copy, Default)]
@@ -143,7 +143,7 @@ fn precompute_filter_strengths(dec: &Decoder<'_>) -> [[FInfo; 2]; NUM_MB_SEGMENT
 
 impl<'a> Frame<'a> {
     /// `VP8EnterCritical` and `VP8InitFrame`
-    pub(super) fn new(dec: &Decoder<'_>, alpha_data: Option<&'a [u8]>) -> Result<Self, Error> {
+    pub(super) fn new(dec: &Decoder<'_>, alpha_data: Option<&'a [u8]>) -> Result<Self> {
         let emitter = Emitter::new(dec.width, dec.height)?;
         let mb_w = dec.mb_w;
         let filter_type = dec.filter_hdr.filter_type;
@@ -330,7 +330,7 @@ impl<'a> Frame<'a> {
     }
 
     /// Filters the row and writes what no later filtering changes.
-    fn finish_row(&mut self, mb_y: usize, output: &mut Output<'_>) -> Result<(), Error> {
+    fn finish_row(&mut self, mb_y: usize, output: &mut Output<'_>) -> Result<()> {
         let y_stride = 16 * self.mb_w;
         let uv_stride = 8 * self.mb_w;
         let extra_y_rows = filter_extra_rows(self.filter_type);
@@ -384,11 +384,7 @@ impl<'a> Frame<'a> {
     }
 
     /// `VP8ProcessRow`
-    pub(super) fn process_row(
-        &mut self,
-        mb_y: usize,
-        output: &mut Output<'_>,
-    ) -> Result<(), Error> {
+    pub(super) fn process_row(&mut self, mb_y: usize, output: &mut Output<'_>) -> Result<()> {
         self.reconstruct_row(mb_y)?;
         self.finish_row(mb_y, output)
     }

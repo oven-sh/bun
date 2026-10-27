@@ -1,11 +1,11 @@
 //! Writing the RIFF container (`syntax_enc.c`, `vp8l_enc.c` and, for a profile, `mux/`).
 
-use crate::Error;
 use crate::riff::{
     ALPHA_FLAG, CHUNK_HEADER_SIZE, ICCP_FLAG, MAX_CHUNK_PAYLOAD, RIFF_HEADER_SIZE, TAG_SIZE,
     VP8X_CHUNK_SIZE,
 };
-use bun_alloc::AllocError;
+use crate::util::try_with_capacity;
+use crate::{Error, Result};
 
 /// What the encoders return.
 pub(crate) struct Image {
@@ -34,7 +34,7 @@ impl<T: AsRef<[u8]>> Chunk<'_, T> {
             .sum()
     }
 
-    fn disk_size(&self) -> Result<u64, Error> {
+    fn disk_size(&self) -> Result<u64> {
         let size = self.payload_size();
         if size > u64::from(MAX_CHUNK_PAYLOAD) {
             return Err(Error::FileTooBig);
@@ -56,7 +56,7 @@ impl<T: AsRef<[u8]>> Chunk<'_, T> {
     }
 }
 
-pub(crate) fn assemble(image: &Image, icc_profile: Option<&[u8]>) -> Result<Vec<u8>, Error> {
+pub(crate) fn assemble(image: &Image, icc_profile: Option<&[u8]>) -> Result<Vec<u8>> {
     let icc_profile = icc_profile.filter(|profile| !profile.is_empty());
     let mut flags = 0;
     if icc_profile.is_some() {
@@ -102,9 +102,7 @@ pub(crate) fn assemble(image: &Image, icc_profile: Option<&[u8]>) -> Result<Vec<
         return Err(Error::FileTooBig);
     }
 
-    let mut out = Vec::new();
-    out.try_reserve_exact(size as usize)
-        .map_err(|_| AllocError)?;
+    let mut out = try_with_capacity(size as usize)?;
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(riff_size as u32).to_le_bytes());
     out.extend_from_slice(b"WEBP");

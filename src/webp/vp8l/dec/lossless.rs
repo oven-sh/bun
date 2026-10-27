@@ -9,7 +9,7 @@ use super::predictors::{
 use crate::util::{Bug, Checked, SliceExt};
 use crate::vp8l::format_constants::{TransformType, sub_sample_size};
 
-/// The size of `Transform::data` for `ColorIndexing`, whatever the number of colours, so that any index is valid.
+/// The size of `Transform::data` for `ColorIndexing`, whatever the number of colors, so that any index is valid.
 pub(super) const COLOR_MAP_SIZE: usize = 256;
 
 pub(super) struct Transform {
@@ -58,9 +58,9 @@ struct Span<'a> {
 
 impl<'a> Span<'a> {
     fn new(upper: &'a [Pixel], row: &'a mut [Pixel], x: usize, x_end: usize) -> Checked<Self> {
-        let (done, out) = row.sub_mut(..x_end)?.halves_mut(x)?;
+        let (done, out) = row.sub_mut(..x_end)?.split_at_mid(x)?;
         let top_right = upper.sub(x + 1..)?;
-        let (whole, rest) = out.halves_mut(out.len().min(top_right.len()) & !3)?;
+        let (whole, rest) = out.split_at_mid(out.len().min(top_right.len()) & !3)?;
         Ok(Self {
             left: *done.last().ok_or(Bug)?,
             whole: whole.as_flattened_mut().as_chunks_mut().0,
@@ -191,7 +191,7 @@ impl Transform {
         let tile_width = 1 << self.bits;
         let tiles_per_row = sub_sample_size(width, self.bits);
         for y in y_start..y_end {
-            let (upper, below) = take(&mut rows).halves_mut(width)?;
+            let (upper, below) = take(&mut rows).split_at_mid(width)?;
             let row = below.sub_mut(..width)?;
             let first = row.at_mut(0)?;
             let above = if y == 0 { BLACK } else { upper.at(0)? };
@@ -238,7 +238,7 @@ impl Transform {
         Ok(())
     }
 
-    /// Sets `dst` to `value` of the colours. Each of `indices` packs `1 << bits` indices, the first in the lowest bits.
+    /// Sets `dst` to `value` of the colors. Each of `indices` packs `1 << bits` indices, the first in the lowest bits.
     #[inline(always)]
     fn color_index_inverse<T>(
         &self,

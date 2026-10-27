@@ -1,9 +1,10 @@
 //! `analysis_enc.c`: measures how well each macroblock takes quantization, and groups the macroblocks into segments.
 
+use super::Encoder;
 use super::dsp::{self, DC_PRED, Histogram, Lanes, TM_PRED};
 use super::iterator::EncIterator;
 use super::tables::NUM_MB_SEGMENTS;
-use super::{Encoder, Error};
+use crate::Result;
 use crate::util::{Checked, SliceExt};
 
 const MAX_ITERS_K_MEANS: usize = 6;
@@ -119,7 +120,7 @@ fn mb_analyze(it: &EncIterator) -> Checked<(u8, i32)> {
 }
 
 /// `VP8EncAnalyze`
-pub(super) fn analyze(enc: &mut Encoder<'_>) -> Result<(), Error> {
+pub(super) fn analyze(enc: &mut Encoder<'_>) -> Result<()> {
     let mut alphas = [0; MAX_ALPHA as usize + 1];
     let mut uv_alpha = 0i32;
     let mut it = EncIterator::new(enc)?;

@@ -1,4 +1,4 @@
-//! `quant_dec.c`: the dequantisation factors.
+//! `quant_dec.c`: the dequantization factors.
 
 use super::SegmentHeader;
 use super::bit_reader::BitReader;

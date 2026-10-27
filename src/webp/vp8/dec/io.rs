@@ -2,8 +2,8 @@
 
 use super::upsampling::Upsampler;
 use crate::Output;
+use crate::Result;
 use crate::util::{Checked, SliceExt, try_vec};
-use bun_alloc::AllocError;
 
 /// Consecutive rows of the image that are final.
 pub(super) struct Rows<'a> {
@@ -33,7 +33,7 @@ pub(super) struct Emitter {
 
 impl Emitter {
     /// `CustomSetup`
-    pub(super) fn new(width: usize, height: usize) -> Result<Self, AllocError> {
+    pub(super) fn new(width: usize, height: usize) -> Result<Self> {
         let uv_width = width.div_ceil(2);
         Ok(Self {
             width,

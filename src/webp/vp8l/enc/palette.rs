@@ -1,11 +1,11 @@
-//! `palette.c`: collects the colours of an image and orders them.
+//! `palette.c`: collects the colors of an image and orders them.
 
 use crate::util::{Checked, SliceExt};
 use crate::vp8l::color_cache::hash_pix;
 use crate::vp8l::enc::predictors::sub_pixels;
 use crate::vp8l::format_constants::MAX_PALETTE_SIZE;
 
-/// Up to `MAX_PALETTE_SIZE` colours.
+/// Up to `MAX_PALETTE_SIZE` colors.
 #[derive(Clone, Copy)]
 pub(crate) struct Palette {
     colors: [u32; MAX_PALETTE_SIZE],
@@ -35,7 +35,7 @@ fn palette_color_distance(col1: u32, col2: u32) -> u32 {
     (b + g + r) * MORE_WEIGHT_FOR_RGB_THAN_FOR_ALPHA + a
 }
 
-/// `GetColorPalette`: the colours of `argb` in increasing order, if there are no more than `MAX_PALETTE_SIZE`.
+/// `GetColorPalette`: the colors of `argb` in increasing order, if there are no more than `MAX_PALETTE_SIZE`.
 pub(crate) fn get_color_palette(argb: &[u32]) -> Checked<Option<Palette>> {
     const COLOR_HASH_SIZE: usize = MAX_PALETTE_SIZE * 4;
     const COLOR_HASH_RIGHT_SHIFT: u32 = 22;
@@ -75,7 +75,7 @@ pub(crate) fn get_color_palette(argb: &[u32]) -> Checked<Option<Palette>> {
     Ok(Some(palette))
 }
 
-/// Whether a channel goes both up and down along the palette. If none does, as in a grey image, no order is better.
+/// Whether a channel goes both up and down along the palette. If none does, as in a gray image, no order is better.
 fn palette_has_non_monotonous_deltas(palette: &[u32]) -> bool {
     let mut predict = 0;
     let mut sign_found = 0u32;
@@ -95,7 +95,7 @@ fn palette_has_non_monotonous_deltas(palette: &[u32]) -> bool {
     sign_found & (sign_found << 1) != 0
 }
 
-/// `PaletteSortMinimizeDeltas`: each colour is followed by the nearest one left, as the palette is written as deltas.
+/// `PaletteSortMinimizeDeltas`: each color is followed by the nearest one left, as the palette is written as deltas.
 pub(crate) fn palette_sort_minimize_deltas(palette_sorted: &Palette) -> Checked<Palette> {
     let mut palette = *palette_sorted;
     if !palette_has_non_monotonous_deltas(palette_sorted.colors()) {

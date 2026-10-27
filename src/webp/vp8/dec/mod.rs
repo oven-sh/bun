@@ -8,14 +8,13 @@ mod quant;
 mod tree;
 mod upsampling;
 
-use crate::riff::le24;
 use crate::util::{Bug, Checked, SliceExt};
 use crate::vp8::common::{
     IntraMode, MAX_NUM_PARTITIONS, MB_FEATURE_TREE_PROBS, NUM_MB_SEGMENTS, NUM_MODE_LF_DELTAS,
     NUM_REF_LF_DELTAS, SIGNATURE,
 };
 use crate::vp8::tables::{CAT3, CAT4, CAT5, CAT6, ZIGZAG};
-use crate::{Error, Output};
+use crate::{Error, Info, Output, Result};
 use bit_reader::BitReader;
 use frame::Frame;
 use quant::{Quant, QuantMatrix};
@@ -24,7 +23,7 @@ use tree::{Proba, TypeProbas};
 pub(crate) use crate::vp8::common::FRAME_HEADER_SIZE;
 
 /// `VP8GetInfo`: the width and the height, if `data` starts like a key frame that fits in `chunk_size` bytes.
-pub(crate) fn get_info(data: &[u8], chunk_size: usize) -> Option<(u32, u32)> {
+pub(crate) fn get_info(data: &[u8], chunk_size: usize) -> Option<Info> {
     let &[b0, b1, b2, s0, s1, s2, w0, w1, h0, h1] = data.first_chunk::<FRAME_HEADER_SIZE>()?;
     if [s0, s1, s2] != SIGNATURE {
         return None;
@@ -45,7 +44,7 @@ pub(crate) fn get_info(data: &[u8], chunk_size: usize) -> Option<(u32, u32)> {
     {
         return None;
     }
-    Some((width, height))
+    Some(Info { width, height })
 }
 
 struct SegmentHeader {
@@ -154,14 +153,14 @@ struct Partitions<'a> {
 
 impl<'a> Partitions<'a> {
     /// Paragraph 9.5. `buf` is what follows the first partition.
-    fn parse(br: &mut BitReader<'_>, buf: &'a [u8]) -> Result<Self, Error> {
+    fn parse(br: &mut BitReader<'_>, buf: &'a [u8]) -> Result<Self> {
         let last_part = (1usize << br.get_value(2)) - 1;
         let Some((sizes, mut rest)) = buf.split_at_checked(3 * last_part) else {
             return Err(Error::NotEnoughData);
         };
         let mut parts = [BitReader::new(&[]); MAX_NUM_PARTITIONS];
-        for (p, part) in parts.iter_mut().enumerate().take(last_part) {
-            let size = (le24(sizes, 3 * p)? as usize).min(rest.len());
+        for (part, &[s0, s1, s2]) in parts.iter_mut().zip(sizes.as_chunks().0) {
+            let size = (u32::from_le_bytes([s0, s1, s2, 0]) as usize).min(rest.len());
             let (data, after) = rest.split_at_checked(size).ok_or(Bug)?;
             *part = BitReader::new(data);
             rest = after;
@@ -200,7 +199,7 @@ struct Decoder<'a> {
 
 impl<'a> Decoder<'a> {
     /// `VP8GetHeaders`, of a frame that `get_info` accepts.
-    fn get_headers(data: &'a [u8]) -> Result<Self, Error> {
+    fn get_headers(data: &'a [u8]) -> Result<Self> {
         let (header, buf) = data.split_first_chunk::<FRAME_HEADER_SIZE>().ok_or(Bug)?;
         let &[b0, b1, b2, _, _, _, w0, w1, h0, h1] = header;
         let partition_length = (u32::from_le_bytes([b0, b1, b2, 0]) >> 5) as usize;
@@ -212,7 +211,7 @@ impl<'a> Decoder<'a> {
             return Err(Error::NotEnoughData);
         };
         let mut br = BitReader::new(first);
-        // The colour space and whether the decoder has to clamp.
+        // The color space and whether the decoder has to clamp.
         br.get_value(2);
         let (segment_hdr, segments) = SegmentHeader::parse(&mut br);
         if br.eof() {
@@ -391,7 +390,7 @@ fn parse_residuals(
 ) -> Checked<bool> {
     let [i16_ac, i16_dc, chroma, i4] = &proba.bands;
     block.coeffs = [[0; 16]; 24];
-    let (luma_coeffs, chroma_coeffs) = block.coeffs.halves_mut(16)?;
+    let (luma_coeffs, chroma_coeffs) = block.coeffs.split_at_mid(16)?;
 
     let (first, ac_proba) = if !block.is_i4x4 {
         let mut dc = [0; 16];
@@ -497,7 +496,7 @@ fn decode_mb(
 
 impl Decoder<'_> {
     /// `ParseFrame`: each row of macroblocks is parsed, then reconstructed, filtered and written.
-    fn parse_frame(mut self, frame: &mut Frame<'_>, output: &mut Output<'_>) -> Result<(), Error> {
+    fn parse_frame(mut self, frame: &mut Frame<'_>, output: &mut Output<'_>) -> Result<()> {
         for mb_y in 0..self.mb_h {
             let update_map = self.segment_hdr.update_map;
             for (top, block) in frame.intra_t.iter_mut().zip(&mut frame.mb_data) {
@@ -522,11 +521,7 @@ impl Decoder<'_> {
 }
 
 /// `VP8GetHeaders`, `VP8Decode`. `data` goes from the frame header to the end of the file. `alpha`: the `ALPH` payload.
-pub(crate) fn decode(
-    data: &[u8],
-    alpha: Option<&[u8]>,
-    output: &mut Output<'_>,
-) -> Result<(), Error> {
+pub(crate) fn decode(data: &[u8], alpha: Option<&[u8]>, output: &mut Output<'_>) -> Result<()> {
     let dec = Decoder::get_headers(data)?;
     output.check(dec.width, dec.height)?;
     let mut frame = Frame::new(&dec, alpha)?;

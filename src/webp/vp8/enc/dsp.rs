@@ -17,7 +17,7 @@ pub(super) type Chroma = [[Block; 4]; 2];
 /// The coefficients of a block, or its 16 levels in zigzag order.
 pub(super) type Coeffs = Matrix4x4<i16>;
 
-/// `L` blocks interleaved: the first value of each, then the second... A branch-free loop over the blocks vectorises.
+/// `L` blocks interleaved: the first value of each, then the second... A branch-free loop over the blocks vectorizes.
 #[derive(Clone)]
 pub(super) struct Lanes<T, const L: usize>(Matrix4x4<[T; L]>);
 

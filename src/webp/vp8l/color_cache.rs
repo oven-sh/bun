@@ -1,7 +1,7 @@
-//! `color_cache_utils.c`: the last colour seen for each value of a hash.
+//! `color_cache_utils.c`: the last color seen for each value of a hash.
 
+use crate::Result;
 use crate::util::{Checked, SliceExt, try_vec};
-use bun_alloc::AllocError;
 
 /// `VP8LHashPix`: the top `32 - shift` bits of the hash.
 #[inline]
@@ -16,7 +16,7 @@ pub(crate) struct ColorCache {
 
 impl ColorCache {
     /// `hash_bits` is 1 to `MAX_CACHE_BITS`.
-    pub(crate) fn new(hash_bits: u32) -> Result<Self, AllocError> {
+    pub(crate) fn new(hash_bits: u32) -> Result<Self> {
         debug_assert!((1..=11).contains(&hash_bits));
         Ok(Self {
             colors: try_vec(0, 1 << hash_bits)?,

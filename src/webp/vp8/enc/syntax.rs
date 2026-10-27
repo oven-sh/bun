@@ -1,15 +1,15 @@
 //! `syntax_enc.c`: the frame header and the first partition.
 
+use super::Encoder;
 use super::bit_writer::BitWriter;
 use super::tree::{code_intra_modes, write_probas};
-use super::{Encoder, Error};
 use crate::vp8::common::{FRAME_HEADER_SIZE, SIGNATURE};
-use bun_alloc::AllocError;
+use crate::{Error, Result};
 
 const VP8_MAX_PARTITION0_SIZE: usize = 1 << 19;
 
 /// Paragraph 9.1.
-fn frame_header(enc: &Encoder<'_>, size0: usize) -> Result<[u8; FRAME_HEADER_SIZE], Error> {
+fn frame_header(enc: &Encoder<'_>, size0: usize) -> Result<[u8; FRAME_HEADER_SIZE]> {
     if size0 >= VP8_MAX_PARTITION0_SIZE {
         return Err(Error::Partition0Overflow);
     }
@@ -65,7 +65,7 @@ fn put_quant(bw: &mut BitWriter, enc: &Encoder<'_>) {
     bw.put_signed_bits(enc.dq_uv_ac, 4);
 }
 
-fn generate_partition0(enc: &Encoder<'_>) -> Result<Vec<u8>, Error> {
+fn generate_partition0(enc: &Encoder<'_>) -> Result<Vec<u8>> {
     // About 7 bits a macroblock.
     let mut bw = BitWriter::new(enc.mb_w * enc.mb_h * 7 / 8)?;
     // The color space, and the clamping type.
@@ -81,15 +81,15 @@ fn generate_partition0(enc: &Encoder<'_>) -> Result<Vec<u8>, Error> {
     bw.put_bit_uniform(false);
     write_probas(&mut bw, &enc.proba);
     code_intra_modes(enc, &mut bw)?;
-    Ok(bw.finish()?)
+    bw.finish()
 }
 
 /// `VP8EncWrite`: the payload of the `VP8 ` chunk, in pieces. libwebp counts the padding to an even size as part of it.
-pub(super) fn write(enc: &Encoder<'_>, mut tokens: Vec<u8>) -> Result<Vec<Vec<u8>>, Error> {
+pub(super) fn write(enc: &Encoder<'_>, mut tokens: Vec<u8>) -> Result<Vec<Vec<u8>>> {
     let part0 = generate_partition0(enc)?;
     let header = frame_header(enc, part0.len())?;
     if (header.len() + part0.len() + tokens.len()) & 1 != 0 {
-        tokens.try_reserve_exact(1).map_err(|_| AllocError)?;
+        tokens.try_reserve_exact(1)?;
         tokens.push(0);
     }
     Ok(vec![header.to_vec(), part0, tokens])

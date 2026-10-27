@@ -3,12 +3,12 @@
 use super::unfilters::unfilter;
 use super::{ALPHA_LOSSLESS_COMPRESSION, ALPHA_NO_COMPRESSION, Filter};
 use crate::util::{SliceExt, try_vec};
-use crate::{Error, vp8l};
+use crate::{Error, Result, vp8l};
 
 const ALPHA_PREPROCESSED_LEVELS: u8 = 1;
 
 /// The alpha values of an `ALPH` payload. Malformed data is a `BitstreamError`, also where libwebp says out of memory.
-pub(crate) fn decode(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>, Error> {
+pub(crate) fn decode(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
     if width == 0 || height == 0 {
         return Err(Error::Bug);
     }

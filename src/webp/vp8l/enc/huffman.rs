@@ -1,8 +1,8 @@
 //! `huffman_encode_utils.c`: builds prefix codes of limited length, and the run-length coding of their lengths.
 
+use crate::Result;
 use crate::util::{Bug, Checked, SliceExt, try_vec};
 use crate::vp8l::format_constants::MAX_ALLOWED_CODE_LENGTH;
-use bun_alloc::AllocError;
 
 /// One symbol of a `HuffmanTreeCode`, which is a slice of these.
 #[derive(Clone, Copy, Default)]
@@ -40,7 +40,7 @@ pub(crate) struct Scratch {
 
 impl Scratch {
     /// For codes of up to `max_num_symbols` symbols.
-    pub(crate) fn new(max_num_symbols: usize) -> Result<Self, AllocError> {
+    pub(crate) fn new(max_num_symbols: usize) -> Result<Self> {
         Ok(Self {
             good_for_rle: try_vec(false, max_num_symbols)?,
             tree: try_vec(HuffmanTree::default(), max_num_symbols)?,

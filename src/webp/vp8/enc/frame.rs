@@ -1,5 +1,6 @@
 //! `frame_enc.c`: the loop over the macroblocks that makes the token partition.
 
+use super::Encoder;
 use super::bit_writer::BitWriter;
 use super::cost::{Proba, TYPE_CHROMA_A, TYPE_I4_AC, TYPE_I16_AC, TYPE_I16_DC, bit_cost};
 use super::filter::adjust_filter_strength;
@@ -7,7 +8,7 @@ use super::iterator::EncIterator;
 use super::quant::{ModeScore, decimate, set_segment_params};
 use super::tables::{COEFFS_PROBA0, COEFFS_UPDATE_PROBA, NUM_MB_SEGMENTS, flatten, flatten_mut};
 use super::token::TokenBuffer;
-use super::{Encoder, Error};
+use crate::Result;
 use crate::util::Checked;
 
 /// The limit on the size of the first partition, with 2 KiB of headroom, in 1/256 bit.
@@ -98,7 +99,7 @@ fn record_tokens(
     rd: &ModeScore,
     proba: &mut Proba,
     tokens: &mut TokenBuffer,
-) -> Result<(), Error> {
+) -> Result<()> {
     let stats = flatten_mut(&mut proba.stats);
     tokens.reserve(1 + 16 + 8)?;
     it.nz_to_bytes()?;
@@ -154,7 +155,7 @@ fn set_loop_params(enc: &mut Encoder<'_>) -> Checked {
 const MIN_COUNT: usize = 96;
 
 /// `VP8EncTokenLoop`: returns the token partition.
-pub(super) fn token_loop(enc: &mut Encoder<'_>) -> Result<Vec<u8>, Error> {
+pub(super) fn token_loop(enc: &mut Encoder<'_>) -> Result<Vec<u8>> {
     // Refresh the probabilities about eight times.
     let max_count = ((enc.mb_w * enc.mb_h) >> 3).max(MIN_COUNT);
     let mut it = EncIterator::new(enc)?;
@@ -196,5 +197,5 @@ pub(super) fn token_loop(enc: &mut Encoder<'_>) -> Result<Vec<u8>, Error> {
     let mut bw = BitWriter::new(tokens.len() / 8)?;
     tokens.emit_tokens(&mut bw, flatten(&enc.proba.coeffs))?;
     adjust_filter_strength(enc);
-    Ok(bw.finish()?)
+    bw.finish()
 }

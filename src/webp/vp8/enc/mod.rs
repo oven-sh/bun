@@ -14,7 +14,6 @@ mod tables;
 mod token;
 mod tree;
 
-use bun_alloc::AllocError;
 use cost::Proba;
 use dsp::Matrix;
 use picture::Picture;
@@ -22,7 +21,7 @@ use tables::NUM_MB_SEGMENTS;
 
 use crate::container::Image;
 use crate::util::{Checked, SliceExt, try_vec};
-use crate::{Error, Input};
+use crate::{Error, Input, Result};
 
 const SNS_STRENGTH: i32 = 50;
 const FILTER_STRENGTH: i32 = 60;
@@ -100,7 +99,7 @@ struct Encoder<'a> {
 }
 
 impl<'a> Encoder<'a> {
-    fn new(pic: &'a Picture, quality: f32) -> Result<Self, AllocError> {
+    fn new(pic: &'a Picture, quality: f32) -> Result<Self> {
         let mb_w = pic.width.div_ceil(16);
         let mb_h = pic.height.div_ceil(16);
         let preds_w = 4 * mb_w + 1;
@@ -164,7 +163,7 @@ impl<'a> Encoder<'a> {
 }
 
 /// `WebPEncodeRGBA`, without the container.
-pub(crate) fn encode(input: &Input<'_>, quality: f32) -> Result<Image, Error> {
+pub(crate) fn encode(input: &Input<'_>, quality: f32) -> Result<Image> {
     if !(0.0..=100.0).contains(&quality) {
         return Err(Error::InvalidConfiguration);
     }

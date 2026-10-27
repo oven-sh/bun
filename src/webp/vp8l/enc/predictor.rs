@@ -1,10 +1,10 @@
-//! `predictor_enc.c`: chooses the spatial predictor and the colour transform of each tile, and applies them.
+//! `predictor_enc.c`: chooses the spatial predictor and the color transform of each tile, and applies them.
 
 use super::lossless::{
     Accumulated, ColorTile, LOG_2_PRECISION_BITS, Multipliers, combined_shannon_entropy, div_round,
     transform_color,
 };
-use crate::Error;
+use crate::Result;
 use crate::util::{Checked, SliceExt, try_vec};
 use crate::vp8l::enc::predictors::{
     predictor0, predictor1, predictor2, predictor3, predictor4, predictor5, predictor6, predictor7,
@@ -22,7 +22,7 @@ type HistoArgb = [[u32; 256]; 4];
 
 // Methods to calculate Entropy (Shannon).
 
-/// A bias, hence negative, in favour of values near 0. `exp_val` is a percentage.
+/// A bias, hence negative, in favor of values near 0. `exp_val` is a percentage.
 fn prediction_cost_bias(counts: &[u32; 256], weight_0: u64, exp_val: u64) -> i64 {
     const SIGNIFICANT_SYMBOLS: usize = 256 >> 4;
     let [count_0, ..] = *counts;
@@ -73,7 +73,7 @@ fn update_histo(histo_argb: &mut HistoArgb, argb: u32) -> Checked {
 
 // Spatial transform functions.
 
-/// `current - predict`. Unless `EXACT`, a transparent pixel takes the predicted colour, in `current` too.
+/// `current - predict`. Unless `EXACT`, a transparent pixel takes the predicted color, in `current` too.
 #[inline]
 fn residual_of<const EXACT: bool>(current: &mut u32, predict: u32) -> u32 {
     let residual = sub_pixels(*current, predict);
@@ -113,7 +113,7 @@ fn predict_batch<const EXACT: bool>(
     Ok(())
 }
 
-/// `GetResidual` of `current_row[x_start..x_end]`. Rows have one more pixel, the last one's top right neighbour.
+/// `GetResidual` of `current_row[x_start..x_end]`. Rows have one more pixel, the last one's top right neighbor.
 fn get_residual<const EXACT: bool>(
     width: usize,
     upper_row: &mut [u32],
@@ -370,12 +370,12 @@ fn residual_image_with<const EXACT: bool>(
     height: usize,
     bits: u32,
     argb: &mut [u32],
-) -> Result<(Vec<u32>, u32), Error> {
+) -> Result<(Vec<u32>, u32)> {
     let tiles_per_row = sub_sample_size(width, bits);
     let tiles_per_col = sub_sample_size(height, bits);
     let mut modes = try_vec(0u32, tiles_per_row * tiles_per_col)?;
     let mut argb_scratch = try_vec(0u32, 2 * (width + 1))?;
-    let (upper, current) = argb_scratch.halves_mut(width + 1)?;
+    let (upper, current) = argb_scratch.split_at_mid(width + 1)?;
     let mut rows = Rows { upper, current };
 
     let mut all_argb = try_vec([[0u32; 256]; 4], NUM_PRED_MODES)?;
@@ -415,7 +415,7 @@ pub(crate) fn residual_image(
     bits: u32,
     argb: &mut [u32],
     exact: bool,
-) -> Result<(Vec<u32>, u32), Error> {
+) -> Result<(Vec<u32>, u32)> {
     // Without transparent pixels it makes no difference, and pixels that stay as they are can be dealt with in parallel.
     if exact || argb.iter().all(|pixel| pixel & MASK_ALPHA != 0) {
         residual_image_with::<true>(width, height, bits, argb)
@@ -442,7 +442,7 @@ const fn multipliers_to_color_code(m: Multipliers) -> u32 {
 /// The `quality` of an image. In an alpha plane red and blue are 0, so that it never gets this transform.
 const QUALITY: i32 = 70;
 
-/// What is taken off the cost for each way in which a multiplier is like its neighbours, or 0.
+/// What is taken off the cost for each way in which a multiplier is like its neighbors, or 0.
 const SAME_MULTIPLIER_BIAS: i64 = 3 << LOG_2_PRECISION_BITS;
 
 fn prediction_cost_cross_color(accumulated: &Accumulated, counts: &[u32; 256]) -> i64 {
@@ -560,7 +560,7 @@ pub(crate) fn color_space_transform(
     height: usize,
     bits: u32,
     argb: &mut [u32],
-) -> Result<(Vec<u32>, u32), Error> {
+) -> Result<(Vec<u32>, u32)> {
     let max_tile_size = 1 << bits;
     let tile_xsize = sub_sample_size(width, bits);
     let tile_ysize = sub_sample_size(height, bits);

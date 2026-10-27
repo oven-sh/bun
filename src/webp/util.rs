@@ -1,6 +1,6 @@
 //! Slice access that reports a broken invariant instead of panicking, and allocation that can fail.
 
-use bun_alloc::AllocError;
+use crate::Result;
 use core::slice::SliceIndex;
 
 /// An index or a length that the algorithm keeps in range was out of range. No input should be able to cause it.
@@ -21,8 +21,7 @@ pub(crate) trait SliceExt<T> {
     /// The `N` elements from `start` on.
     fn array_at<const N: usize>(&self, start: usize) -> Checked<&[T; N]>;
     fn array_at_mut<const N: usize>(&mut self, start: usize) -> Checked<&mut [T; N]>;
-    /// `split_at_mut` that cannot panic.
-    fn halves_mut(&mut self, mid: usize) -> Checked<(&mut [T], &mut [T])>;
+    fn split_at_mid(&mut self, mid: usize) -> Checked<(&mut [T], &mut [T])>;
     /// `memmove(&self[dst], &self[src], len)`.
     fn move_within(&mut self, src: usize, dst: usize, len: usize) -> Checked
     where
@@ -81,7 +80,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[inline(always)]
-    fn halves_mut(&mut self, mid: usize) -> Checked<(&mut [T], &mut [T])> {
+    fn split_at_mid(&mut self, mid: usize) -> Checked<(&mut [T], &mut [T])> {
         self.split_at_mut_checked(mid).ok_or(Bug)
     }
 
@@ -110,10 +109,16 @@ impl<T> SliceExt<T> for [T] {
     }
 }
 
-/// `len` copies of `value`, or nothing if there is no memory for them.
-pub(crate) fn try_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>, AllocError> {
+/// An empty vector with room for `capacity` elements.
+pub(crate) fn try_with_capacity<T>(capacity: usize) -> Result<Vec<T>> {
     let mut vec = Vec::new();
-    vec.try_reserve_exact(len).map_err(|_| AllocError)?;
+    vec.try_reserve_exact(capacity)?;
+    Ok(vec)
+}
+
+/// `len` copies of `value`.
+pub(crate) fn try_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>> {
+    let mut vec = try_with_capacity(len)?;
     vec.resize(len, value);
     Ok(vec)
 }

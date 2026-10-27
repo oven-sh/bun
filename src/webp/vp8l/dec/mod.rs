@@ -6,7 +6,6 @@ mod lossless;
 mod predictors;
 
 use bit_reader::BitReader;
-use bun_alloc::AllocError;
 use huffman::{
     HTreeGroup, HUFFMAN_PACKED_BITS, HUFFMAN_PACKED_TABLE_SIZE, HUFFMAN_TABLE_BITS,
     HUFFMAN_TABLE_MASK, HuffmanCode, HuffmanCode32, LENGTHS_TABLE_MASK, MAX_CODE_LENGTHS_SIZE,
@@ -21,8 +20,8 @@ use super::format_constants::{
     NUM_DISTANCE_CODES, NUM_HUFFMAN_BITS, NUM_LENGTH_CODES, NUM_LITERAL_CODES, NUM_TRANSFORM_BITS,
     NUM_TRANSFORMS, TransformType, VERSION_BITS, sub_sample_size,
 };
-use crate::util::{Bug, Checked, SliceExt, try_vec};
-use crate::{Error, Output};
+use crate::util::{Bug, Checked, SliceExt, try_vec, try_with_capacity};
+use crate::{Error, Info, Output, Result};
 use predictors::{Pixel, add_pixels, block_of, first_pixel};
 
 pub(crate) use super::format_constants::FRAME_HEADER_SIZE;
@@ -34,7 +33,7 @@ const CODE_LENGTH_REPEAT_CODE: u32 = 16;
 const CODE_LENGTH_EXTRA_BITS: [u8; 3] = [2, 3, 7];
 const CODE_LENGTH_REPEAT_OFFSETS: [u8; 3] = [3, 3, 11];
 
-// The five codes of a meta code. Green also codes the length prefixes and the colour cache indices.
+// The five codes of a meta code. Green also codes the length prefixes and the color cache indices.
 const GREEN: usize = 0;
 const RED: usize = 1;
 const BLUE: usize = 2;
@@ -49,7 +48,7 @@ const ALPHABET_SIZE: [usize; HUFFMAN_CODES_PER_META_CODE] = [
     NUM_DISTANCE_CODES,
 ];
 
-/// Green symbols from here on are colour cache indices.
+/// Green symbols from here on are color cache indices.
 const LEN_CODE_LIMIT: usize = NUM_LITERAL_CODES + NUM_LENGTH_CODES;
 
 const CODE_TO_PLANE_CODES: usize = 120;
@@ -72,11 +71,6 @@ const CODE_TO_PLANE: [u8; CODE_TO_PLANE_CODES] = [
 
 /// Added to `HuffmanCode32::bits` if the green symbol is not a literal.
 const BITS_SPECIAL_MARKER: u32 = 0x100;
-
-pub(crate) struct Info {
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-}
 
 /// `VP8LCheckSignature`
 pub(crate) fn check_signature(data: &[u8]) -> bool {
@@ -172,7 +166,7 @@ fn read_huffman_code_lengths(
     br: &mut BitReader<'_>,
     code_length_code_lengths: &[u8; CODE_LENGTH_CODES],
     code_lengths: &mut [u8],
-) -> Result<(), Error> {
+) -> Result<()> {
     let table = build_lengths_table(code_length_code_lengths)?.ok_or(Error::BitstreamError)?;
     let num_symbols = code_lengths.len();
     let mut max_symbol = num_symbols;
@@ -227,7 +221,7 @@ fn read_huffman_code(
     br: &mut BitReader<'_>,
     buffers: &mut CodeBuffers,
     tables: Option<&mut Vec<HuffmanCode>>,
-) -> Result<usize, Error> {
+) -> Result<usize> {
     let code_lengths = buffers.code_lengths.sub_mut(..alphabet_size)?;
     code_lengths.fill(0);
 
@@ -290,7 +284,7 @@ impl Metadata {
         self.htree_groups.at_ref(meta_index as usize)
     }
 
-    /// Whether only the green channel is entropy-coded, without a colour cache.
+    /// Whether only the green channel is entropy-coded, without a color cache.
     fn is_8b_optimizable(&self) -> Checked<bool> {
         if self.color_cache.is_some() {
             return Ok(false);
@@ -314,7 +308,7 @@ fn read_huffman_codes_helper(
     num_htree_groups: usize,
     num_htree_groups_max: usize,
     mapping: Option<&[Option<u32>]>,
-) -> Result<(Vec<HTreeGroup>, Vec<HuffmanCode>), Error> {
+) -> Result<(Vec<HTreeGroup>, Vec<HuffmanCode>)> {
     let mut alphabet_sizes = ALPHABET_SIZE;
     if color_cache_bits > 0 {
         alphabet_sizes[GREEN] += 1 << color_cache_bits;
@@ -370,13 +364,13 @@ fn read_huffman_codes_helper(
     Ok((htree_groups, tables))
 }
 
-/// `ReadHuffmanCodes`, and the colour cache size before them. Only the main image (`is_level0`) has several meta codes.
+/// `ReadHuffmanCodes`, and the color cache size before them. Only the main image (`is_level0`) has several meta codes.
 fn read_metadata(
     br: &mut BitReader<'_>,
     xsize: usize,
     ysize: usize,
     is_level0: bool,
-) -> Result<Metadata, Error> {
+) -> Result<Metadata> {
     let mut color_cache_bits = 0;
     if br.read_bits(1) != 0 {
         color_cache_bits = br.read_bits(4);
@@ -465,13 +459,6 @@ fn copy_block<T: Copy>(data: &mut Vec<T>, dist: usize, length: usize) -> Checked
     Ok(())
 }
 
-/// An empty vector with room for `capacity` elements.
-fn try_with_capacity<T>(capacity: usize) -> Result<Vec<T>, AllocError> {
-    let mut vec = Vec::new();
-    vec.try_reserve_exact(capacity).map_err(|_| AllocError)?;
-    Ok(vec)
-}
-
 /// Inserts the pixels from `last_cached` on, and moves it to the end.
 #[inline]
 fn cache_pixels(color_cache: &mut ColorCache, data: &[u32], last_cached: &mut usize) -> Checked {
@@ -489,7 +476,7 @@ fn decode_image_data(
     width: usize,
     height: usize,
     process_rows: &mut dyn FnMut(&[u32], usize) -> Checked,
-) -> Result<Vec<u32>, Error> {
+) -> Result<Vec<u32>> {
     let num_pixels = width * height;
     let mut data = try_with_capacity(num_pixels)?;
     // Apart from it, `hdr` stays borrowed.
@@ -600,17 +587,13 @@ fn decode_image_data(
 }
 
 /// `DecodeImageStream` of an image that is part of a header: it has no transforms and a single meta code.
-fn decode_image_stream(
-    br: &mut BitReader<'_>,
-    xsize: usize,
-    ysize: usize,
-) -> Result<Vec<u32>, Error> {
+fn decode_image_stream(br: &mut BitReader<'_>, xsize: usize, ysize: usize) -> Result<Vec<u32>> {
     let mut hdr = read_metadata(br, xsize, ysize, false)?;
     decode_image_data(br, &mut hdr, xsize, ysize, &mut |_, _| Ok(()))
 }
 
-/// The colours are stored as differences.
-fn expand_color_map(colors: &[u32]) -> Result<Vec<u32>, AllocError> {
+/// The colors are stored as differences.
+fn expand_color_map(colors: &[u32]) -> Result<Vec<u32>> {
     let mut color_map = try_vec(0, COLOR_MAP_SIZE)?;
     let mut previous = block_of([0; 4]);
     for (new, color) in color_map.iter_mut().zip(colors) {
@@ -626,7 +609,7 @@ fn read_transform(
     xsize: &mut usize,
     ysize: usize,
     transforms: &mut Vec<Transform>,
-) -> Result<(), Error> {
+) -> Result<()> {
     let kind = match br.read_bits(2) {
         0 => TransformType::Predictor,
         1 => TransformType::CrossColor,
@@ -680,7 +663,7 @@ struct Decoder<'a> {
 
 impl<'a> Decoder<'a> {
     /// `DecodeImageStream` of the main image, up to the pixels.
-    fn new(mut br: BitReader<'a>, xsize: usize, ysize: usize) -> Result<Self, Error> {
+    fn new(mut br: BitReader<'a>, xsize: usize, ysize: usize) -> Result<Self> {
         let mut width = xsize;
         let mut transforms = Vec::with_capacity(NUM_TRANSFORMS);
         while br.read_bits(1) != 0 {
@@ -710,11 +693,7 @@ struct ArgbCache<'a> {
 }
 
 impl<'a> ArgbCache<'a> {
-    fn new(
-        transforms: &'a [Transform],
-        width: usize,
-        final_width: usize,
-    ) -> Result<Self, AllocError> {
+    fn new(transforms: &'a [Transform], width: usize, final_width: usize) -> Result<Self> {
         Ok(Self {
             transforms,
             width,
@@ -746,7 +725,7 @@ impl<'a> ArgbCache<'a> {
 }
 
 /// `VP8LDecodeHeader` and `VP8LDecodeImage`. `data` starts at the signature byte and goes on to the end of the file.
-pub(crate) fn decode(data: &[u8], output: &mut Output<'_>) -> Result<(), Error> {
+pub(crate) fn decode(data: &[u8], output: &mut Output<'_>) -> Result<()> {
     let mut br = BitReader::new(data);
     let info = read_image_info(&mut br).ok_or(Error::BitstreamError)?;
     let (width, height) = (info.width as usize, info.height as usize);
@@ -777,7 +756,7 @@ fn decode_alpha_data(
     hdr: &Metadata,
     width: usize,
     height: usize,
-) -> Result<Vec<u8>, Error> {
+) -> Result<Vec<u8>> {
     let num_pixels = width * height;
     let mut data = try_with_capacity(num_pixels)?;
     let tables = hdr.huffman_tables.as_slice();
@@ -835,7 +814,7 @@ pub(crate) fn decode_alpha(
     width: usize,
     height: usize,
     output: &mut [u8],
-) -> Result<(), Error> {
+) -> Result<()> {
     let mut dec = Decoder::new(BitReader::new(data), width, height)?;
 
     if let [transform] = dec.transforms.as_slice()

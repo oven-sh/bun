@@ -3,8 +3,8 @@
 use super::dsp::{Block, Chroma, Luma};
 use super::picture::Picture;
 use super::{DError, Encoder};
+use crate::Result;
 use crate::util::{Bug, Checked, SliceExt, try_vec};
-use bun_alloc::AllocError;
 
 pub(super) struct EncIterator {
     /// The current macroblock.
@@ -108,7 +108,7 @@ fn import_line(src: &[u8], start: usize, step: usize, dst: &mut [u8], len: usize
 }
 
 impl EncIterator {
-    pub(super) fn new(enc: &Encoder<'_>) -> Result<Self, AllocError> {
+    pub(super) fn new(enc: &Encoder<'_>) -> Result<Self> {
         let mut it = Self {
             x: 0,
             y: 0,
@@ -236,7 +236,7 @@ impl EncIterator {
             y_top.fill(127);
             uv_top.fill(127);
         } else {
-            let (u_top, v_top) = uv_top.halves_mut(8)?;
+            let (u_top, v_top) = uv_top.split_at_mid(8)?;
             for (top, (src, stride, start, w, _)) in
                 [y_top.as_mut_slice(), u_top, v_top].into_iter().zip(planes)
             {

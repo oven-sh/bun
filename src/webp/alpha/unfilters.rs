@@ -33,7 +33,7 @@ pub(super) fn unfilter(filter: Filter, plane: &mut [u8], width: usize) -> Checke
     if filter == Filter::None {
         return Ok(());
     }
-    let (mut prev, below) = plane.halves_mut(width)?;
+    let (mut prev, below) = plane.split_at_mid(width)?;
     horizontal_unfilter(0, prev);
     for row in below.chunks_exact_mut(width) {
         match filter {

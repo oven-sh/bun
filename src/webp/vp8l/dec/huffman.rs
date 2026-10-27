@@ -1,12 +1,11 @@
 //! `huffman_utils.c`: two-level lookup tables for decoding prefix codes.
 
-use crate::Error;
 use crate::util::{Bug, Checked, SliceExt};
 use crate::vp8l::format_constants::{
     CODE_LENGTH_CODES, HUFFMAN_CODES_PER_META_CODE, MAX_ALLOWED_CODE_LENGTH, MAX_CACHE_BITS,
     NUM_LENGTH_CODES, NUM_LITERAL_CODES,
 };
-use bun_alloc::AllocError;
+use crate::{Error, Result};
 
 pub(super) const HUFFMAN_TABLE_BITS: u32 = 8;
 pub(super) const HUFFMAN_TABLE_MASK: u32 = (1 << HUFFMAN_TABLE_BITS) - 1;
@@ -17,7 +16,7 @@ pub(super) const LENGTHS_TABLE_MASK: u32 = (1 << LENGTHS_TABLE_BITS) - 1;
 pub(super) const HUFFMAN_PACKED_BITS: u32 = 6;
 pub(super) const HUFFMAN_PACKED_TABLE_SIZE: usize = 1 << HUFFMAN_PACKED_BITS;
 
-/// The largest alphabet: green, with the largest colour cache.
+/// The largest alphabet: green, with the largest color cache.
 pub(super) const MAX_CODE_LENGTHS_SIZE: usize =
     (1 << MAX_CACHE_BITS) + NUM_LITERAL_CODES + NUM_LENGTH_CODES;
 
@@ -256,12 +255,12 @@ pub(super) fn append_huffman_table(
     tables: &mut Vec<HuffmanCode>,
     code_lengths: &[u8],
     sorted: &mut [u16; MAX_CODE_LENGTHS_SIZE],
-) -> Result<usize, Error> {
+) -> Result<usize> {
     let root_bits = HUFFMAN_TABLE_BITS as usize;
     let size = build_huffman_table(None, root_bits, code_lengths, &mut [])?
         .ok_or(Error::BitstreamError)?;
     let start = tables.len();
-    tables.try_reserve(size).map_err(|_| AllocError)?;
+    tables.try_reserve(size)?;
     tables.resize(start + size, HuffmanCode::default());
     build_huffman_table(
         Some(tables.sub_mut(start..)?),

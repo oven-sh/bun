@@ -5,11 +5,10 @@ use super::backward_references::{
 };
 use super::histogram::{Histogram, histogram_num_codes};
 use super::lossless::{LOG_2_PRECISION_BITS, div_round, fast_log2, prefix_encode};
-use crate::Error;
-use crate::util::{Bug, Checked, SliceExt, try_vec};
+use crate::Result;
+use crate::util::{Bug, Checked, SliceExt, try_vec, try_with_capacity};
 use crate::vp8l::color_cache::ColorCache;
 use crate::vp8l::format_constants::{NUM_DISTANCE_CODES, NUM_LENGTH_CODES, NUM_LITERAL_CODES};
-use bun_alloc::AllocError;
 
 /// What each symbol costs.
 struct CostModel {
@@ -35,7 +34,7 @@ fn convert_population_count_table_to_bit_estimates(population_counts: &[u32], ou
 
 impl CostModel {
     /// `CostModelBuild`
-    fn new(xsize: usize, cache_bits: u32, refs: &BackwardRefs) -> Result<Self, Error> {
+    fn new(xsize: usize, cache_bits: u32, refs: &BackwardRefs) -> Result<Self> {
         let mut histo = Histogram::new(cache_bits)?;
         histo.store_refs(refs, |distance| distance_to_plane_code(xsize, distance))?;
         let mut m = Self {
@@ -122,7 +121,7 @@ struct CostManager<'a> {
 }
 
 impl<'a> CostManager<'a> {
-    fn new(dist_array: &'a mut [u16], cost_model: &CostModel) -> Result<Self, Error> {
+    fn new(dist_array: &'a mut [u16], cost_model: &CostModel) -> Result<Self> {
         let pix_count = dist_array.len();
         let cost_cache_size = pix_count.min(MAX_LENGTH);
 
@@ -130,10 +129,7 @@ impl<'a> CostManager<'a> {
         for (cost, length) in cost_cache.iter_mut().zip(0..) {
             *cost = cost_model.get_length_cost(length)?;
         }
-        let mut cache_intervals = Vec::new();
-        cache_intervals
-            .try_reserve(cost_cache.chunk_by(|a, b| a == b).count())
-            .map_err(|_| AllocError)?;
+        let mut cache_intervals = try_with_capacity(cost_cache.chunk_by(|a, b| a == b).count())?;
         let mut start = 0;
         for run in cost_cache.chunk_by(|a, b| a == b) {
             let end = start + run.len();
@@ -145,10 +141,7 @@ impl<'a> CostManager<'a> {
             start = end;
         }
 
-        let mut free_intervals = Vec::new();
-        free_intervals
-            .try_reserve_exact(COST_CACHE_INTERVAL_SIZE_MAX)
-            .map_err(|_| AllocError)?;
+        let mut free_intervals = try_with_capacity(COST_CACHE_INTERVAL_SIZE_MAX)?;
         free_intervals.extend(0..COST_CACHE_INTERVAL_SIZE_MAX);
         Ok(Self {
             head: None,
@@ -376,7 +369,7 @@ fn backward_references_hash_chain_distance_only(
     hash_chain: &HashChain,
     refs: &BackwardRefs,
     dist_array: &mut [u16],
-) -> Result<(), Error> {
+) -> Result<()> {
     let pix_count = argb.len();
     let cost_model = CostModel::new(xsize, cache_bits, refs)?;
     let mut hashers = match cache_bits {
@@ -478,7 +471,7 @@ fn backward_references_hash_chain_follow_chosen_path(
     chosen_path: &[u16],
     hash_chain: &HashChain,
     refs: &mut BackwardRefs,
-) -> Result<(), Error> {
+) -> Result<()> {
     let mut hashers = match cache_bits {
         0 => None,
         _ => Some(ColorCache::new(cache_bits)?),
@@ -523,7 +516,7 @@ pub(crate) fn backward_references_trace_backwards(
     hash_chain: &HashChain,
     refs_src: &BackwardRefs,
     refs_dst: &mut BackwardRefs,
-) -> Result<(), Error> {
+) -> Result<()> {
     let mut dist_array = try_vec(0u16, argb.len())?;
     backward_references_hash_chain_distance_only(
         xsize,

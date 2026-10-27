@@ -28,13 +28,13 @@ pub(crate) struct OnePassArena {
     /// - 40 to 63: insert length code 0 to 23, copy length code 0
     ///
     /// 16 and 40 stand for the same symbol of the full alphabet. Neither is used.
-    pub(crate) cmd_depth: [u8; 128],
-    pub(crate) cmd_bits: [u16; 128],
+    cmd_depth: [u8; 128],
+    cmd_bits: [u16; 128],
     cmd_histo: [u32; 128],
 
     /// Those two codes as they are written to the stream.
-    pub(crate) cmd_code: [u8; 512],
-    pub(crate) cmd_code_numbits: usize,
+    cmd_code: [u8; 512],
+    cmd_code_numbits: usize,
 
     tree: [HuffmanTree; 2 * NUM_LITERAL_SYMBOLS + 1],
     histogram: [u32; 256],
@@ -43,15 +43,56 @@ pub(crate) struct OnePassArena {
 }
 
 impl OnePassArena {
+    /// With the command and distance prefix codes of the first block.
     pub(crate) fn new() -> Result<Box<Self>, AllocError> {
+        #[rustfmt::skip]
+        const DEFAULT_COMMAND_DEPTHS: [u8; 128] = [
+            0, 4, 4, 5, 6, 6, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8,
+            0, 0, 0, 4, 4, 4, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7,
+            7, 7, 10, 10, 10, 10, 10, 10, 0, 4, 4, 5, 5, 5, 6, 6,
+            7, 8, 8, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+            5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4,
+            4, 4, 4, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7, 7, 8, 10,
+            12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 0, 0, 0, 0,
+        ];
+        #[rustfmt::skip]
+        const DEFAULT_COMMAND_BITS: [u16; 128] = [
+            0,   0,   8,   9,   3,  35,   7,   71,
+            39, 103,  23,  47, 175, 111, 239,   31,
+            0,   0,   0,   4,  12,   2,  10,    6,
+            13,  29,  11,  43,  27,  59,  87,   55,
+            15,  79, 319, 831, 191, 703, 447,  959,
+            0,  14,   1,  25,   5,  21,  19,   51,
+            119, 159,  95, 223, 479, 991,  63,  575,
+            127, 639, 383, 895, 255, 767, 511, 1023,
+            14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            27, 59, 7, 39, 23, 55, 30, 1, 17, 9, 25, 5, 0, 8, 4, 12,
+            2, 10, 6, 21, 13, 29, 3, 19, 11, 15, 47, 31, 95, 63, 127, 255,
+            767, 2815, 1791, 3839, 511, 2559, 1535, 3583, 1023, 3071, 2047, 4095, 0, 0, 0, 0,
+        ];
+        #[rustfmt::skip]
+        const DEFAULT_COMMAND_CODE: [u8; 57] = [
+            0xff, 0x77, 0xd5, 0xbf, 0xe7, 0xde, 0xea, 0x9e, 0x51, 0x5d, 0xde, 0xc6,
+            0x70, 0x57, 0xbc, 0x58, 0x58, 0x58, 0xd8, 0xd8, 0x58, 0xd5, 0xcb, 0x8c,
+            0xea, 0xe0, 0xc3, 0x87, 0x1f, 0x83, 0xc1, 0x60, 0x1c, 0x67, 0xb2, 0xaa,
+            0x06, 0x83, 0xc1, 0x60, 0x30, 0x18, 0xcc, 0xa1, 0xce, 0x88, 0x54, 0x94,
+            0x46, 0xe1, 0xb0, 0xd0, 0x4e, 0xb2, 0xf7, 0x04, 0x00,
+        ];
+        const DEFAULT_COMMAND_CODE_NUM_BITS: usize = 448;
+        let mut cmd_code = [0; 512];
+        cmd_code
+            .split_at_mut(DEFAULT_COMMAND_CODE.len())
+            .0
+            .copy_from_slice(&DEFAULT_COMMAND_CODE);
         try_box(Self {
             lit_depth: [0; 256],
             lit_bits: [0; 256],
-            cmd_depth: [0; 128],
-            cmd_bits: [0; 128],
+            cmd_depth: DEFAULT_COMMAND_DEPTHS,
+            cmd_bits: DEFAULT_COMMAND_BITS,
             cmd_histo: [0; 128],
-            cmd_code: [0; 512],
-            cmd_code_numbits: 0,
+            cmd_code,
+            cmd_code_numbits: DEFAULT_COMMAND_CODE_NUM_BITS,
             tree: [HuffmanTree::new(0, 0, 0); 2 * NUM_LITERAL_SYMBOLS + 1],
             histogram: [0; 256],
             tmp_depth: [0; NUM_COMMAND_SYMBOLS],

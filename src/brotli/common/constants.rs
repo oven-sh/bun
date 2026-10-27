@@ -40,9 +40,6 @@ pub(crate) const fn distance_alphabet_size(npostfix: u32, ndirect: u32, max_nbit
     NUM_DISTANCE_SHORT_CODES + ndirect + (max_nbits << (npostfix + 1))
 }
 
-/// The largest distance that any `NPOSTFIX` and `NDIRECT` can express in an RFC 7932 stream.
-pub(crate) const MAX_DISTANCE: usize = 0x3FF_FFFC;
-
 /// Up to here a distance can be computed in a signed 32-bit integer without overflow.
 pub(crate) const MAX_ALLOWED_DISTANCE: u32 = 0x7FFF_FFFC;
 

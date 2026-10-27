@@ -20,7 +20,7 @@ use super::fast_log::{fast_log2, log2_floor_nonzero};
 use super::hash::Hasher;
 use super::meta_block::{
     MAX_STATIC_CONTEXTS, MetaBlockSplit, build_meta_block, build_meta_block_greedy,
-    init_distance_params, optimize_histograms,
+    optimize_histograms,
 };
 use super::params::{
     DistanceParams, EncoderParams, FAST_ONE_PASS_COMPRESSION_QUALITY,
@@ -37,8 +37,7 @@ use super::{
     Fallible, MAX_WINDOW_BITS,
 };
 use crate::common::constants::{
-    MAX_DISTANCE, MAX_DISTANCE_BITS, MAX_NDIRECT, MAX_NPOSTFIX, NUM_DISTANCE_SHORT_CODES,
-    WINDOW_GAP, distance_alphabet_size, max_backward_limit,
+    MAX_NDIRECT, MAX_NPOSTFIX, NUM_DISTANCE_SHORT_CODES, WINDOW_GAP, max_backward_limit,
 };
 use crate::common::context::{ContextType, context_lut};
 use crate::io::{Cursor, Output, Rewind, SpareCapacity};
@@ -199,52 +198,6 @@ fn encode_window_bits(lgwin: i32, large_window: bool) -> (u16, u8) {
     } else {
         ((((lgwin - 8) << 4) | 0x01) as u16, 7)
     }
-}
-
-/// The command and distance prefix codes of the first block at quality 0.
-fn init_command_prefix_codes(s: &mut OnePassArena) -> Checked {
-    #[rustfmt::skip]
-    const DEFAULT_COMMAND_DEPTHS: [u8; 124] = [
-        0, 4, 4, 5, 6, 6, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8,
-        0, 0, 0, 4, 4, 4, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7,
-        7, 7, 10, 10, 10, 10, 10, 10, 0, 4, 4, 5, 5, 5, 6, 6,
-        7, 8, 8, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
-        5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4,
-        4, 4, 4, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7, 7, 8, 10,
-        12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
-    ];
-    #[rustfmt::skip]
-    const DEFAULT_COMMAND_BITS: [u16; 124] = [
-        0,   0,   8,   9,   3,  35,   7,   71,
-        39, 103,  23,  47, 175, 111, 239,   31,
-        0,   0,   0,   4,  12,   2,  10,    6,
-        13,  29,  11,  43,  27,  59,  87,   55,
-        15,  79, 319, 831, 191, 703, 447,  959,
-        0,  14,   1,  25,   5,  21,  19,   51,
-        119, 159,  95, 223, 479, 991,  63,  575,
-        127, 639, 383, 895, 255, 767, 511, 1023,
-        14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        27, 59, 7, 39, 23, 55, 30, 1, 17, 9, 25, 5, 0, 8, 4, 12,
-        2, 10, 6, 21, 13, 29, 3, 19, 11, 15, 47, 31, 95, 63, 127, 255,
-        767, 2815, 1791, 3839, 511, 2559, 1535, 3583, 1023, 3071, 2047, 4095,
-    ];
-    #[rustfmt::skip]
-    const DEFAULT_COMMAND_CODE: [u8; 57] = [
-        0xff, 0x77, 0xd5, 0xbf, 0xe7, 0xde, 0xea, 0x9e, 0x51, 0x5d, 0xde, 0xc6,
-        0x70, 0x57, 0xbc, 0x58, 0x58, 0x58, 0xd8, 0xd8, 0x58, 0xd5, 0xcb, 0x8c,
-        0xea, 0xe0, 0xc3, 0x87, 0x1f, 0x83, 0xc1, 0x60, 0x1c, 0x67, 0xb2, 0xaa,
-        0x06, 0x83, 0xc1, 0x60, 0x30, 0x18, 0xcc, 0xa1, 0xce, 0x88, 0x54, 0x94,
-        0x46, 0xe1, 0xb0, 0xd0, 0x4e, 0xb2, 0xf7, 0x04, 0x00,
-    ];
-    const DEFAULT_COMMAND_CODE_NUM_BITS: usize = 448;
-    s.cmd_depth.fill(0);
-    s.cmd_depth.write_at(0, &DEFAULT_COMMAND_DEPTHS)?;
-    s.cmd_bits.fill(0);
-    s.cmd_bits.write_at(0, &DEFAULT_COMMAND_BITS)?;
-    s.cmd_code.write_at(0, &DEFAULT_COMMAND_CODE)?;
-    s.cmd_code_numbits = DEFAULT_COMMAND_CODE_NUM_BITS;
-    Ok(())
 }
 
 /// The Shannon entropy of all the symbols counted in `population` together, in bits.
@@ -627,8 +580,7 @@ fn choose_distance_params(params: &mut EncoderParams) {
         }
     }
 
-    init_distance_params(
-        &mut params.dist,
+    params.dist = DistanceParams::new(
         distance_postfix_bits,
         num_direct_distance_codes,
         params.large_window,
@@ -710,7 +662,6 @@ impl Default for Encoder {
 
 impl Encoder {
     pub fn new() -> Self {
-        let alphabet_size_max = distance_alphabet_size(0, 0, MAX_DISTANCE_BITS);
         let mut dist_cache = [0; NUM_DISTANCE_SHORT_CODES as usize];
         let saved_dist_cache = [4, 11, 15, 16];
         for (to, from) in dist_cache.iter_mut().zip(saved_dist_cache) {
@@ -727,13 +678,7 @@ impl Encoder {
                 disable_literal_context_modeling: false,
                 large_window: false,
                 hasher: HasherParams::default(),
-                dist: DistanceParams {
-                    distance_postfix_bits: 0,
-                    num_direct_distance_codes: 0,
-                    alphabet_size_max,
-                    alphabet_size_limit: alphabet_size_max,
-                    max_distance: MAX_DISTANCE,
-                },
+                dist: DistanceParams::default(),
                 dictionary: CompoundDictionary::default(),
             },
             input_pos: 0,
@@ -868,9 +813,7 @@ impl Encoder {
 
         self.fast = match self.params.quality {
             FAST_ONE_PASS_COMPRESSION_QUALITY => {
-                let mut arena = OnePassArena::new()?;
-                init_command_prefix_codes(&mut arena)?;
-                Some(FastCompressor::OnePass(arena))
+                Some(FastCompressor::OnePass(OnePassArena::new()?))
             }
             FAST_TWO_PASS_COMPRESSION_QUALITY => Some(FastCompressor::TwoPass {
                 arena: TwoPassArena::new()?,

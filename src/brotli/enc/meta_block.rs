@@ -11,9 +11,8 @@ use super::histogram::{
 };
 use super::params::{DistanceParams, EncoderParams};
 use crate::common::constants::{
-    DISTANCE_CONTEXT_BITS, LARGE_MAX_DISTANCE_BITS, LITERAL_CONTEXT_BITS, MAX_ALLOWED_DISTANCE,
-    MAX_DISTANCE_BITS, MAX_NPOSTFIX, MAX_NUMBER_OF_BLOCK_TYPES, NUM_COMMAND_SYMBOLS,
-    NUM_LITERAL_SYMBOLS, calculate_distance_code_limit, distance_alphabet_size,
+    DISTANCE_CONTEXT_BITS, LITERAL_CONTEXT_BITS, MAX_NPOSTFIX, MAX_NUMBER_OF_BLOCK_TYPES,
+    NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS,
 };
 use crate::common::context::{ContextLut, ContextType};
 use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_zeroed};
@@ -31,33 +30,6 @@ pub(crate) struct MetaBlockSplit {
     pub(crate) literal_histograms: Vec<HistogramLiteral>,
     pub(crate) command_histograms: Vec<HistogramCommand>,
     pub(crate) distance_histograms: Vec<HistogramDistance>,
-}
-
-pub(crate) fn init_distance_params(
-    dist: &mut DistanceParams,
-    npostfix: u32,
-    ndirect: u32,
-    large_window: bool,
-) {
-    dist.distance_postfix_bits = npostfix;
-    dist.num_direct_distance_codes = ndirect;
-
-    let mut alphabet_size_max = distance_alphabet_size(npostfix, ndirect, MAX_DISTANCE_BITS);
-    let mut alphabet_size_limit = alphabet_size_max;
-    let mut max_distance = ndirect
-        .wrapping_add(1u32 << (MAX_DISTANCE_BITS + npostfix + 2))
-        .wrapping_sub(1u32 << (npostfix + 2));
-
-    if large_window {
-        let limit = calculate_distance_code_limit(MAX_ALLOWED_DISTANCE, npostfix, ndirect);
-        alphabet_size_max = distance_alphabet_size(npostfix, ndirect, LARGE_MAX_DISTANCE_BITS);
-        alphabet_size_limit = limit.max_alphabet_size;
-        max_distance = limit.max_distance;
-    }
-
-    dist.alphabet_size_max = alphabet_size_max;
-    dist.alphabet_size_limit = alphabet_size_limit;
-    dist.max_distance = max_distance as usize;
 }
 
 #[inline(always)]
@@ -144,13 +116,12 @@ pub(crate) fn build_meta_block(
     let mut check_orig = true;
     let mut best_dist_cost = 1e99;
     let orig_params = *dist;
-    let mut new_params = *dist;
     {
         let mut tmp = try_box(HistogramDistance::new())?;
         for npostfix in 0..=MAX_NPOSTFIX {
             while ndirect_msb < 16 {
                 let ndirect = ndirect_msb << npostfix;
-                init_distance_params(&mut new_params, npostfix, ndirect, params.large_window);
+                let new_params = DistanceParams::new(npostfix, ndirect, params.large_window);
                 if npostfix == orig_params.distance_postfix_bits
                     && ndirect == orig_params.num_direct_distance_codes
                 {

@@ -6,6 +6,10 @@ use super::{
     EncoderMode, LARGE_MAX_WINDOW_BITS, MAX_INPUT_BLOCK_BITS, MAX_QUALITY, MAX_WINDOW_BITS,
     MIN_INPUT_BLOCK_BITS, MIN_QUALITY, MIN_WINDOW_BITS,
 };
+use crate::common::constants::{
+    LARGE_MAX_DISTANCE_BITS, MAX_ALLOWED_DISTANCE, MAX_DISTANCE_BITS,
+    calculate_distance_code_limit, distance_alphabet_size,
+};
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct HasherParams {
@@ -22,6 +26,31 @@ pub(crate) struct DistanceParams {
     pub(crate) alphabet_size_max: u32,
     pub(crate) alphabet_size_limit: u32,
     pub(crate) max_distance: usize,
+}
+
+impl DistanceParams {
+    pub(crate) fn new(npostfix: u32, ndirect: u32, large_window: bool) -> Self {
+        let (alphabet_size_max, alphabet_size_limit, max_distance) = if large_window {
+            let limit = calculate_distance_code_limit(MAX_ALLOWED_DISTANCE, npostfix, ndirect);
+            (
+                distance_alphabet_size(npostfix, ndirect, LARGE_MAX_DISTANCE_BITS),
+                limit.max_alphabet_size,
+                limit.max_distance,
+            )
+        } else {
+            let alphabet_size = distance_alphabet_size(npostfix, ndirect, MAX_DISTANCE_BITS);
+            let max_distance =
+                ndirect + (1 << (MAX_DISTANCE_BITS + npostfix + 2)) - (1 << (npostfix + 2));
+            (alphabet_size, alphabet_size, max_distance)
+        };
+        Self {
+            distance_postfix_bits: npostfix,
+            num_direct_distance_codes: ndirect,
+            alphabet_size_max,
+            alphabet_size_limit,
+            max_distance: max_distance as usize,
+        }
+    }
 }
 
 pub(crate) struct EncoderParams {

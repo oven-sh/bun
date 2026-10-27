@@ -369,7 +369,7 @@ impl HufDTable {
             return false;
         };
         stream.decode_most(&self.table, self.log);
-        self.decode_tails([stream])
+        self.decode_tails(&mut [stream])
     }
 
     /// Four streams after their sizes. Whether each is exactly its share of `dst.len()` symbols.
@@ -386,7 +386,7 @@ impl HufDTable {
         if !streams.0.iter().all(Stream::fits_tail) {
             return self.decode_stragglers(streams);
         }
-        self.decode_4_tails(streams)
+        self.decode_4_tails(&mut streams)
     }
 
     #[inline(never)]
@@ -438,19 +438,19 @@ impl HufDTable {
             }
             self.decode_most(&mut decoding);
         }
-        self.decode_4_tails(streams)
+        self.decode_4_tails(&mut streams)
     }
 
     #[inline(never)]
-    fn decode_4_tails(&self, streams: Streams<'_>) -> bool {
-        self.decode_tails(streams.0)
+    fn decode_4_tails(&self, streams: &mut Streams<'_>) -> bool {
+        self.decode_tails(&mut streams.0)
     }
 
     /// Decodes what is left of streams. Whether each turns out to be exactly as many symbols as its output takes.
     #[inline(always)]
-    fn decode_tails<const N: usize>(&self, mut streams: [Stream<'_>; N]) -> bool {
+    fn decode_tails<const N: usize>(&self, streams: &mut [Stream<'_>; N]) -> bool {
         let mut tails = [const { Tail::new() }; N];
-        for (tail, stream) in tails.iter_mut().zip(&streams) {
+        for (tail, stream) in tails.iter_mut().zip(&*streams) {
             if !tail.set(stream) {
                 return false;
             }
@@ -478,7 +478,7 @@ impl HufDTable {
             }
         }
         let mut exact = true;
-        for (tail, stream) in tails.iter().zip(&mut streams) {
+        for (tail, stream) in tails.iter().zip(streams) {
             exact &= tail.get(stream, self.code.table_log);
         }
         exact

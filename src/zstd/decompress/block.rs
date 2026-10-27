@@ -803,7 +803,7 @@ struct PaddedStart(OnceCell<[u8; Self::PADDING + Self::MAX_SIZE]>);
 
 impl PaddedStart {
     const PADDING: usize = 32;
-    const MAX_SIZE: usize = 32;
+    const MAX_SIZE: usize = 224;
 
     const fn new() -> Self {
         Self(OnceCell::new())
@@ -1741,8 +1741,10 @@ impl<'a> Executor<'_, 'a> {
         }
         self.out.extend_to(self.op + size, self.op + size);
         for part in parts {
-            self.out.bytes().write_at(self.op, part)?;
-            self.op += part.len();
+            if !part.is_empty() {
+                self.out.bytes().write_at(self.op, part)?;
+                self.op += part.len();
+            }
         }
         Ok(())
     }

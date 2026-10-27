@@ -1286,6 +1286,13 @@ describe("Histogram", () => {
       const Interval = Object.getPrototypeOf(interval);
       const Base = Object.getPrototypeOf(Recordable);
       const code = (fn: () => unknown) => thrown(fn).split(":")[0];
+      const invalidThis = (fn: () => unknown, type: string) =>
+        isNative
+          ? assert.match(
+              thrown(fn),
+              new RegExp(`^TypeError ERR_INVALID_THIS: Expected this to be instanceof ${type}\\b`),
+            )
+          : assert.strictEqual(thrown(fn), `TypeError ERR_INVALID_THIS: Value of "this" must be of type ${type}`);
       // Node.js reads a property of it first, which is a TypeError with no code.
       const noReceiver = notInNode.skip ? [] : [undefined];
 
@@ -1295,29 +1302,25 @@ describe("Histogram", () => {
           if (key === "constructor" || typeof key === "symbol") continue;
           // In Node.js it is a getter that throws.
           if (key === "toJSON" && !isNative) continue;
-          assert.strictEqual(
-            thrown(() => (get ?? value).call(receiver, "not looked at")),
-            get && isNative
-              ? `TypeError undefined: The Histogram.${String(key)} getter can only be used on instances of Histogram`
-              : 'TypeError ERR_INVALID_THIS: Value of "this" must be of type Histogram',
-            String(key),
-          );
+          const call = () => (get ?? value).call(receiver, "not looked at");
+          if (get && isNative) {
+            assert.strictEqual(
+              thrown(call),
+              `TypeError undefined: The Histogram.${String(key)} getter can only be used on instances of Histogram`,
+            );
+          } else {
+            invalidThis(call, "Histogram");
+          }
         }
       }
       for (const receiver of [{}, interval, Recordable, ...noReceiver]) {
         for (const key of ["record", "recordDelta", "add"]) {
-          assert.strictEqual(
-            thrown(() => Recordable[key].call(receiver, "not looked at")),
-            'TypeError ERR_INVALID_THIS: Value of "this" must be of type RecordableHistogram',
-          );
+          invalidThis(() => Recordable[key].call(receiver, "not looked at"), "RecordableHistogram");
         }
       }
       for (const receiver of [{}, recordable, Interval, ...noReceiver]) {
         for (const key of ["enable", "disable"]) {
-          assert.strictEqual(
-            thrown(() => Interval[key].call(receiver)),
-            'TypeError ERR_INVALID_THIS: Value of "this" must be of type ELDHistogram',
-          );
+          invalidThis(() => Interval[key].call(receiver), "ELDHistogram");
         }
       }
       // A prototype does not make it another kind of histogram.

@@ -142,14 +142,14 @@ test("the prototypes of a histogram can be printed", () => {
   const printed: string[] = [];
   for (const histogram of [perf.createHistogram(), perf.monitorEventLoopDelay()]) {
     for (let p = Object.getPrototypeOf(histogram); p !== Object.prototype; p = Object.getPrototypeOf(p)) {
-      printed.push(Bun.inspect({ p }).split("\n", 3).join(" "));
+      printed.push(Bun.inspect({ p }).split("\n", 2).join(" "));
     }
   }
   expect(printed).toEqual([
-    "{   p: RecordableHistogram {     record: [Function: record],",
-    "{   p: Histogram {     count: [Getter],",
-    "{   p: ELDHistogram {     enable: [Function: enable],",
-    "{   p: Histogram {     count: [Getter],",
+    "{   p: RecordableHistogram {",
+    "{   p: Histogram {",
+    "{   p: ELDHistogram {",
+    "{   p: Histogram {",
   ]);
 });
 

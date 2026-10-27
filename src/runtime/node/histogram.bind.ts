@@ -5,6 +5,12 @@ export default b.module({ rustPath: "crate::node::histogram" });
 /** What the members of a class that Node.js writes in JavaScript are. */
 const nodeClass = { construct: "illegal", configurable: true, enumerable: false } as const;
 const bigInt = { getter: b.u64.asBigInt } as const;
+const percentile = {
+  args: { percentile: b.f64 },
+  expected: { percentile: ["number"] },
+  capability: "heap",
+  throws: true,
+} as const;
 /** It can make the counts grow, which it tells the GC of the object. */
 const grows = { passThis: true, capability: "heap" } as const;
 
@@ -38,14 +44,8 @@ export const Histogram = b.class({
     exceeds: { getter: b.u64 },
     exceedsBigInt: { ...bigInt, rustName: "exceeds" },
     stddev: { getter: b.f64 },
-    percentile: { args: { percentile: b.f64 }, returns: b.u64, capability: "heap", throws: true },
-    percentileBigInt: {
-      args: { percentile: b.f64 },
-      returns: b.u64.asBigInt,
-      capability: "heap",
-      throws: true,
-      rustName: "percentile",
-    },
+    percentile: { ...percentile, returns: b.u64 },
+    percentileBigInt: { ...percentile, returns: b.u64.asBigInt, rustName: "percentile" },
     /** A `Map`. */
     percentiles: { getter: b.any, capability: "js", throws: true },
     percentilesBigInt: { getter: b.any, capability: "js", throws: true },
@@ -61,7 +61,7 @@ export const RecordableHistogram = b.class({
   proto: {
     record: { args: { val: b.any }, length: 1, passThis: true, capability: "js", throws: true },
     recordDelta: grows,
-    add: { ...grows, args: { other: b.self } },
+    add: { ...grows, args: { other: b.self }, expected: { other: ["RecordableHistogram"] } },
   },
 });
 

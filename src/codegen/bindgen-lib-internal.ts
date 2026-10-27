@@ -2628,9 +2628,6 @@ export interface ClassOptions {
 export const memberIdentifier = (name: string) => name.replace(/^(_+|@@)/, "");
 /** `iterator` for the key `@@iterator`, `undefined` for a key that is not a symbol. */
 export const wellKnownSymbol = (name: string) => (name.startsWith("@@") ? name.slice(2) : undefined);
-/** What JavaScript writes for the symbol of an `@@` key. */
-export const symbolExpression = (name: string) =>
-  name === "@@inspectCustom" ? 'Symbol.for("nodejs.util.inspect.custom")' : `Symbol.${wellKnownSymbol(name)}`;
 /** The `description` of the symbol of an `@@` key. */
 export const symbolDescription = (name: string) =>
   name === "@@inspectCustom" ? "nodejs.util.inspect.custom" : `Symbol.${wellKnownSymbol(name)}`;

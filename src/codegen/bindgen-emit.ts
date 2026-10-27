@@ -37,7 +37,6 @@ import {
   Signature,
   snakeCase,
   symbolDescription,
-  symbolExpression,
   type Type,
   UnionType,
   UnitType,
@@ -2295,7 +2294,7 @@ export function dts(files: readonly SchemaFile[]): string {
   const overloadsType = (fn: FunctionDefinition) => fn.signatures.map(s => `(${signatureType(s)})`).join(" & ");
   const functionMember = (fn: FunctionDefinition) =>
     wellKnownSymbol(fn.name)
-      ? `    [${symbolExpression(fn.name)}]: ${overloadsType(fn)};`
+      ? `    [Symbol.${wellKnownSymbol(fn.name)}]: ${overloadsType(fn)};`
       : member(fn.name, false, overloadsType(fn));
   /** `Symbol.for(..)` is not a key that an interface can declare. */
   const isDeclarable = (member: { name: string }) => member.name !== "@@inspectCustom";
@@ -2320,7 +2319,7 @@ ${[
     .filter(isDeclarable)
     .map(builtin =>
       wellKnownSymbol(builtin.name)
-        ? `    [${symbolExpression(builtin.name)}]: (...args: any[]) => any;`
+        ? `    [Symbol.${wellKnownSymbol(builtin.name)}]: (...args: any[]) => any;`
         : member(builtin.name, false, "(...args: any[]) => any"),
     ),
   ...type.constants.map(constant => `    readonly ${JSON.stringify(constant.name)}: ${constant.value};`),

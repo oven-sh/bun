@@ -2861,7 +2861,7 @@ describe("classes", () => {
         expect(() => TestSquare.prototype.scale.call(receiver, 2)).toThrow(
           expect.objectContaining({
             code: "ERR_INVALID_THIS",
-            message: 'Value of "this" must be of type TestSquare',
+            message: expect.stringContaining("Expected this to be instanceof TestSquare"),
           }),
         );
       }

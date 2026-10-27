@@ -79,7 +79,11 @@ mod timing {
                 name
             );
         }
-        eprintln!("  {:>10.2}ms total", total as f64 / 1e6);
+        eprintln!(
+            "  {:>10.2}ms total\n  {:>10} entries moved by removes that keep the order",
+            total as f64 / 1e6,
+            crate::hir::id_map::MOVED_BY_REMOVE.load(std::sync::atomic::Ordering::Relaxed)
+        );
     }
 
     pub(super) fn ensure_dump_registered() {

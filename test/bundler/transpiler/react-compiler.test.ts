@@ -3349,6 +3349,25 @@ describe("bundler", () => {
     });
   }
 
+  // One memo cache per component, kept between renders, as a fiber keeps it.
+  const reactWithAKeptMemoCache = {
+    "/node_modules/react/index.js": /* js */ `
+      const fibers = new Map();
+      let current;
+      exports.render = (Component, ...args) => {
+        current = fibers.get(Component);
+        if (!current) fibers.set(Component, (current = { cache: null }));
+        return Component(...args);
+      };
+      exports.memoCache = size =>
+        (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+    `,
+    "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  };
+
   // A memo block saves each `let` that it assigns and gives it back when its cache hits. Each component renders several
   // times on one memo cache and has to render what the plain build renders. `*` marks a render that got the `list` of
   // the render before it, so each line also shows that the block still hits its cache.
@@ -3735,22 +3754,7 @@ describe("bundler", () => {
             { initial: "j", b: "b", items: some },
           );
         `,
-        // One memo cache per component, kept between renders, as a fiber keeps it.
-        "/node_modules/react/index.js": /* js */ `
-          const fibers = new Map();
-          let current;
-          exports.render = (Component, ...args) => {
-            current = fibers.get(Component);
-            if (!current) fibers.set(Component, (current = { cache: null }));
-            return Component(...args);
-          };
-          exports.memoCache = size =>
-            (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
-        `,
-        "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
-        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
-        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
-        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        ...reactWithAKeptMemoCache,
       },
       reactCompiler,
       target: "browser",
@@ -3928,6 +3932,147 @@ describe("bundler", () => {
           StoreAheadOfANamedOperand=[{"title":[[2],3],"children":"3"},3]
           StoreInsideACommaOperand=[[-2,3,2],2]
         `,
+      },
+    });
+  }
+
+  // Two passes take blocks out of the block map of a function. PruneUnusedLabelsHIR merges a labeled block that nothing
+  // breaks out of into the block before it, and gives the blocks behind it their new predecessor. PruneMaybeThrows
+  // removes the handler of a `try` in which nothing can throw, and the block after the `try` when only the handler
+  // reached it. `*` marks a render that got the `list` of the render before it.
+  const removedBlocksOutput = `
+    LabelsInARow [3,[1,2,3]] [3,[1,2,3]]* [3,[3,2,5]]
+    LabelWithABreakBetween [null,[1,"b",2]] [null,[1,"b",2]]* [true,[1,2]]
+    LabelInALabel [1,[1,2]] [1,[1,2]]* [1,[1,3]]
+    LabelsInASwitch [0,[0]] [0,[0]]* [8,[8]] [9,[]]
+    CallbacksWithAFoldedTest [3,[1,3]] [3,[1,3]]* "skipped" [5,[3,5]]
+    TriesThatReturn ["none",[1]] ["none",[1]]* "a" "c" ["none",[2]]
+    TryThatReturnsBesideOneThatThrows ["none",[1]] "a" ["none",[1,"thrown"]] "b"
+    TryThatReturnsInATry ["none",[1]] ["none",[1]]* "inner" ["none",[2]]
+  `;
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/BlocksTakenOutOfTheBlockMap-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { render } from "react";
+
+          // Each is merged into the block of the label before it.
+          function LabelsInARow(p) {
+            const list = [];
+            a: { list.push(p.x); }
+            b: { list.push(p.y); }
+            c: { list.push(p.x + p.y); }
+            return <div label={list.length} list={list} />;
+          }
+
+          // The label in the middle has a break and stays.
+          function LabelWithABreakBetween(p) {
+            const list = [];
+            a: { list.push(p.x); }
+            b: { if (p.skip) break b; list.push("b"); }
+            c: { list.push(p.y); }
+            return <div label={p.skip} list={list} />;
+          }
+
+          function LabelInALabel(p) {
+            const list = [];
+            outer: {
+              inner: { list.push(p.x); }
+              list.push(p.y);
+            }
+            return <div label={p.x} list={list} />;
+          }
+
+          // The block after the switch gets nine new predecessors, which is more than a set keeps without a table.
+          function LabelsInASwitch(p) {
+            const list = [];
+            switch (p.k) {
+              ${Array.from({ length: 9 }, (_, i) => `case ${i}: l${i}: { list.push(${i}); } break;`).join("\n              ")}
+            }
+            return <div label={p.k} list={list} />;
+          }
+
+          // A callback with two returns is inlined into a labeled block. Its test folds, and the block is merged.
+          function CallbacksWithAFoldedTest(p) {
+            const list = [];
+            const a = (() => { if (true) { return p.x; } return 0; })();
+            list.push(a);
+            if (p.skip) return "skipped";
+            const b = (() => { if (true) { return a + p.y; } return 0; })();
+            list.push(b);
+            return <div label={b} list={list} />;
+          }
+
+          // Each returns, so only its handler reaches what is after it.
+          function TriesThatReturn(p) {
+            const list = [p.x];
+            if (p.a) { try { return "a"; } catch (e) { list.push(e); } list.push("after a"); }
+            if (p.b) { try { return "b"; } catch (e) { list.push(e); } list.push("after b"); }
+            if (p.c) { try { return "c"; } catch (e) { list.push(e); } list.push("after c"); }
+            return <div label="none" list={list} />;
+          }
+
+          // The second one can throw and keeps its handler.
+          function TryThatReturnsBesideOneThatThrows(p) {
+            const list = [p.x];
+            if (p.a) { try { return "a"; } catch (e) { list.push(e); } }
+            if (p.b) { try { return p.f(); } catch (e) { list.push(e.message); } }
+            return <div label="none" list={list} />;
+          }
+
+          // What is after the inner one is in the outer one, which then cannot throw either.
+          function TryThatReturnsInATry(p) {
+            const list = [p.x];
+            if (p.a) {
+              try {
+                try { return "inner"; } catch (e) { list.push(e); }
+                list.push("after inner");
+              } catch (e) { list.push(e); }
+              list.push("after outer");
+            }
+            return <div label="none" list={list} />;
+          }
+
+          function run(Component, ...renders) {
+            let previous;
+            const results = renders.map(props => {
+              const result = render(Component, props);
+              if (typeof result !== "object") return JSON.stringify(result);
+              const hit = result.list === previous ? "*" : "";
+              previous = result.list;
+              return JSON.stringify([result.label, result.list]) + hit;
+            });
+            console.log(Component.name + " " + results.join(" "));
+          }
+
+          run(LabelsInARow, { x: 1, y: 2 }, { x: 1, y: 2 }, { x: 3, y: 2 });
+          run(LabelWithABreakBetween, { x: 1, y: 2 }, { x: 1, y: 2 }, { x: 1, y: 2, skip: true });
+          run(LabelInALabel, { x: 1, y: 2 }, { x: 1, y: 2 }, { x: 1, y: 3 });
+          run(LabelsInASwitch, { k: 0 }, { k: 0 }, { k: 8 }, { k: 9 });
+          run(CallbacksWithAFoldedTest, { x: 1, y: 2 }, { x: 1, y: 2 }, { x: 1, y: 2, skip: true }, { x: 3, y: 2 });
+          run(TriesThatReturn, { x: 1 }, { x: 1 }, { x: 1, a: true }, { x: 2, c: true }, { x: 2 });
+          const f = () => { throw new Error("thrown"); };
+          run(
+            TryThatReturnsBesideOneThatThrows,
+            { x: 1 },
+            { x: 1, a: true },
+            { x: 1, b: true, f },
+            { x: 1, b: true, f: () => "b" },
+          );
+          run(TryThatReturnsInATry, { x: 1 }, { x: 1 }, { x: 1, a: true }, { x: 2 });
+        `,
+        ...reactWithAKeptMemoCache,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: { stdout: reactCompiler ? removedBlocksOutput : removedBlocksOutput.replaceAll("*", "") },
+      onAfterBundle(api) {
+        if (!reactCompiler) return;
+        const out = api.readFile("/out.js");
+        // Six handlers are gone, and with them what only they reached.
+        expect(out.match(/\bcatch\b/g)).toHaveLength(1);
+        expect(out).not.toContain("after ");
       },
     });
   }
@@ -4513,6 +4658,167 @@ test("react-compiler compile time is not exponential in the function nesting dep
   expect(stdout).toContain("p.a + s");
   expect(stdout).toMatch(/\b_c\(\d+\)/);
   expect(exitCode).toBe(0);
+});
+
+// Two passes take blocks out of the block map of a function, which keeps its blocks in order. PruneUnusedLabelsHIR
+// merges a labeled block that nothing breaks out of into the block before it, and gives each block behind the label
+// its new predecessor. PruneMaybeThrows removes the block after a `try` that only the handler reached, when nothing in
+// the `try` can throw. Each took one entry at a time out with the remove that moves every later entry, so N entries
+// took N^2 moves. Now one pass over the map or the set takes them all out.
+describe("react-compiler takes what a pass removes out of an ordered map in one pass", () => {
+  // What the components hold, a statement of it, what is around the statements, and how many statements a release
+  // build gets: as many as an unfixed build compiles twice in the time that a test has.
+  const rows: [what: string, statement: (i: number) => string, around: [string, string], statements: number][] = [
+    ["labels in a row", i => `l${i}: { f(${i}); }`, ["", ""], 10_000],
+    // The block after `outer` has the block after each label as a predecessor.
+    [
+      "labels in front of one join",
+      i => `if (c) { l${i}: {} break outer; }`,
+      ["const c = props.c; outer: {", "}"],
+      8000,
+    ],
+    // The `try` always leaves the loop, so only the handler reaches what is after it.
+    [
+      "try statements that cannot throw",
+      () => "do { try { let t; break; } catch (e) { log(e); } } while (false);",
+      ["", ""],
+      8000,
+    ],
+  ];
+  const source = ([, statement, [open, close]]: (typeof rows)[number], components: number, each: number) =>
+    Array.from(
+      { length: components },
+      (_, c) =>
+        `export function App${c}(props) {\n  ${open}\n` +
+        Array.from({ length: each }, (_, i) => `  ${statement(i)}\n`).join("") +
+        `  ${close}\n  return <div>{props.x}</div>;\n}\n`,
+    ).join("");
+  const build = (cwd: string, entry: string, env = bunEnv) =>
+    Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+  // A debug or ASAN build counts the entries that these removes move, and prints the count with the time of each pass.
+  // 200 statements moved 79,800, 200,200 and 99,700 entries.
+  describe.concurrent.skipIf(!isDebug && !isASAN)("the removes move no entry", () => {
+    test.each(rows)("%s", async (...row) => {
+      const statements = 200;
+      using dir = tempDir("react-compiler-removed-blocks", { "entry.jsx": source(row, 1, statements) });
+      await using proc = build(String(dir), "entry.jsx", { ...bunEnv, BUN_REACT_COMPILER_TIMING: "1" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ compiled: stdout.includes("react/compiler-runtime"), exitCode }).toEqual({
+        compiled: true,
+        exitCode: 0,
+      });
+      const [, moved] = stderr.match(/^ *(\d+) entries moved by removes that keep the order$/m) ?? [];
+      expect(Number(moved)).toBeLessThan(statements);
+    });
+  });
+
+  // A release build does not count. There one component of N statements took 6 to 16 times the user CPU time of the
+  // same statements in components of 20, and now takes 1.1 to 1.8 times. The least time of each build counts, because
+  // other load only adds to a time. A round takes less than half a second.
+  describe.skipIf(isDebug || isASAN)("the time does not grow with the square of what is removed", () => {
+    test.each(rows)("%s", async (...row) => {
+      const statements = row[3];
+      const perComponent = 20;
+      using dir = tempDir("react-compiler-removed-blocks", {
+        "large.jsx": source(row, 1, statements),
+        "control.jsx": source(row, statements / perComponent, perComponent),
+      });
+      const userTime = async (entry: string) => {
+        await using proc = build(String(dir), entry);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ compiled: stdout.includes("react/compiler-runtime"), stderr, exitCode }).toEqual({
+          compiled: true,
+          stderr: "",
+          exitCode: 0,
+        });
+        return Number(proc.resourceUsage()!.cpuTime.user);
+      };
+
+      let large = Infinity;
+      let control = Infinity;
+      for (let round = 0; round < 2 && !(large / control < 2); round++) {
+        large = Math.min(large, await userTime("large.jsx"));
+        control = Math.min(control, await userTime("control.jsx"));
+      }
+      expect(large / control).toBeLessThan(4);
+    });
+  });
+
+  // `bun lint` runs PruneUnusedLabelsHIR only in a function that the passes behind the validations can say something
+  // about. Each of these has a memoization to preserve or a ref read to report. A debug build is left out: its first
+  // `bun lint` reads the linter from the disk, and that can take longer than a test has.
+  test.skipIf(isDebug)("bun lint reports a function with such labels as without them", async () => {
+    using dir = tempDir("react-compiler-lint-labels", {
+      ".oxlintrc.json": JSON.stringify({
+        plugins: ["react"],
+        categories: { correctness: "off" },
+        rules: { "react/preserve-manual-memoization": "error", "react/refs": "error" },
+      }),
+      "labels.jsx": `import { useCallback, useMemo, useRef } from "react";
+
+// The memoization of the list is kept.
+export function useListBuiltInLabels(props) {
+  const x = [];
+  a: { x.push(props.a); }
+  b: { x.push(props.b); }
+  return useCallback(() => [x], [x]);
+}
+
+// With a hook between, it cannot be kept.
+export function useListBuiltInLabelsAfterAHook(props) {
+  const x = [];
+  useHook();
+  a: { x.push(props.a); }
+  b: { x.push(props.b); }
+  return useCallback(() => [x], [x]);
+}
+
+export function LabelsBesideARefRead(props) {
+  const ref = useRef(null);
+  const list = [];
+  a: { list.push(props.x); }
+  b: { list.push(ref.current); }
+  return <div>{list}</div>;
+}
+
+// The block after the if gets the block of each label as a predecessor.
+export function LabelsInBothBranches(props) {
+  const list = [];
+  if (props.a) { a: { list.push(props.x); } } else { b: { list.push(props.y); } }
+  const sum = useMemo(() => props.x + props.y, [props.x, props.y]);
+  return <div>{list}{sum}</div>;
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lint", "-f", "json", "labels.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    type Found = { code: string; labels: { span: { line: number; column: number } }[] };
+    expect(
+      (JSON.parse(stdout).diagnostics as Found[]).map(it => [
+        it.code,
+        it.labels[0].span.line,
+        it.labels[0].span.column,
+      ]),
+    ).toEqual([
+      ["react(preserve-manual-memoization)", 17, 10],
+      ["react(refs)", 24, 18],
+    ]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 // Upstream sorts them with `<` of JavaScript, by UTF-16 code units: U+20000 begins with 0xD840, which is

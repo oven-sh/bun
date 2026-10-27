@@ -14,6 +14,12 @@ use std::alloc::Global;
 
 use bun_collections::array_hash_map::MapAllocator;
 
+/// The entries that [`IdMap::remove`] has moved in this process: one such remove in a loop moves the square of what
+/// the loop removes. `BUN_REACT_COMPILER_TIMING` prints it.
+#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
+pub(crate) static MOVED_BY_REMOVE: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+
 /// With no more entries than this the keys are scanned and there is no table.
 const SCAN_MAX: usize = 8;
 
@@ -159,6 +165,11 @@ impl<K: Copy + Into<u32>, A: MapAllocator> IdIndex<K, A> {
     /// Keeps the order of the rest.
     fn shift_remove_at(&mut self, at: usize) -> K {
         let key = self.keys.remove(at);
+        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
+        MOVED_BY_REMOVE.fetch_add(
+            (self.keys.len() - at) as u64,
+            core::sync::atomic::Ordering::Relaxed,
+        );
         if !self.places.is_empty() {
             *self.places.get_mut(key.into()) = 0;
             for &later in &self.keys[at..] {

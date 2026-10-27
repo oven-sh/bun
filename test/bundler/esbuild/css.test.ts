@@ -2323,6 +2323,31 @@ c {
 });
 
 describe("bundler", () => {
+  // tachyons, handsontable and jasmine ship the IE star hack.
+  itBundled("css/StarHackIsSkipped", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./clearfix.css";
+        .inline-block { display: inline-block; *display: inline; *background: url(./missing.png); *zoom: 1 }
+      `,
+      "/clearfix.css": /* css */ `.cf:after { clear: both } .cf { *zoom: 1 }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* clearfix.css */
+        .cf:after {
+          clear: both;
+        }
+
+        /* entry.css */
+        .inline-block {
+          display: inline-block;
+        }
+      `);
+    },
+  });
+
   // The bundler puts the path of a copied file in after printing. Unquoted, a space or a parenthesis ends the url().
   itBundled("css/FileLoaderURLWithSpecialCharsMinified", {
     files: {

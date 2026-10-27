@@ -8380,6 +8380,28 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
   });
 });
 
+describe("IE star hack", () => {
+  // A browser skips `*zoom: 1` and keeps the rest of the rule.
+  minify_test(".a{color:red;*zoom:1;top:0}", ".a{color:red;top:0}");
+  minify_test(".cf { *zoom: 1 }", "");
+  minify_test(".a { *zoom: expression(this.runtimeStyle.zoom='1;'); color: red }", ".a{color:red}");
+  minify_test(".a { *display: inline !ie; color: red }", ".a{color:red}");
+  minify_test("@page { *zoom: 1; margin: 1px }", "@page{margin:1px}");
+  // It ends at a block too, as an invalid nested rule does.
+  minify_test(".a { *zoom:hover { color: red } top: 0 }", ".a{top:0}");
+
+  // A nested rule that starts with `*` is a rule.
+  minify_test(".a { *:hover { color: red } }", ".a{& :hover{color:red}}");
+  minify_test(".a { * { color: red } }", ".a{& *{color:red}}");
+
+  test.each([
+    [".a { * zoom: 1 }", "Unexpected end of input"],
+    ["@media screen { *zoom: 1; .a { color: red } }", "Unexpected token: zoom"],
+  ])("ERROR: %s", (source, error) => {
+    expect(() => minify_test_with_options(source, "")).toThrow(`parsing failed: ${error}`);
+  });
+});
+
 describe("whitespace in values kept as tokens", () => {
   // [declaration, default output, minified output]
   const declarations: [string, string, string][] = [

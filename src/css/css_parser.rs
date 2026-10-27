@@ -2942,6 +2942,18 @@ where
             }
 
             let token = *tok;
+            // `*zoom: 1`, an IE 7 hack. No selector starts with `*` and a name: browsers skip it.
+            if matches!(token, Token::Delim(delim) if delim == u32::from(b'*'))
+                && P::parse_declarations(self.parser)
+                && self.input.input.tokenizer.is_ident_start()
+            {
+                let delimiters = Delimiters::SEMICOLON | Delimiters::CURLY_BRACKET;
+                let _ = self
+                    .input
+                    .parse_until_after(delimiters, Parser::parse_empty);
+                continue;
+            }
+
             let result: CssResult<I<P>> = if P::parse_qualified(self.parser) {
                 self.input.reset(&start);
                 let delimiters = if P::parse_declarations(self.parser) {

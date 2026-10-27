@@ -1548,40 +1548,37 @@ describe("Histogram", () => {
     });
 
     test("enabling one leaves the others enabled", async ({ signal }) => {
-      const a = monitorEventLoopDelay({ resolution: 1 });
-      const b = monitorEventLoopDelay({ resolution: 1 });
+      using a = monitorEventLoopDelay({ resolution: 1 });
+      using b = monitorEventLoopDelay({ resolution: 1 });
       a.enable();
       b.enable();
       await samples(a, 2, signal);
       await samples(b, 2, signal);
-      a.disable();
-      b.disable();
     });
 
     test("disabling one leaves the others enabled", async ({ signal }) => {
-      const a = monitorEventLoopDelay({ resolution: 1 });
-      const b = monitorEventLoopDelay({ resolution: 1 });
+      using a = monitorEventLoopDelay({ resolution: 1 });
+      using b = monitorEventLoopDelay({ resolution: 1 });
       a.enable();
       b.enable();
       a.disable();
       await samples(b, 2, signal);
-      b.disable();
     });
 
-    test("a slow timer does not bring the next sample forward", async ({ signal }) => {
+    // Node.js counts the resolution from when the event loop last read the clock, so its next sample can be at once.
+    test("a slow timer does not bring the next sample forward", notInNode, async ({ signal }) => {
       const resolution = 20;
       const block = (ms: number) => {
         const end = performance.now() + ms;
         while (performance.now() < end);
       };
-      const h = monitorEventLoopDelay({ resolution });
+      using h = monitorEventLoopDelay({ resolution });
       h.enable();
       // Both are due in the next turn of the event loop, and this one comes first.
       setTimeout(block, 1, 3 * resolution);
       block(2 * resolution);
       await samples(h, 1, signal);
       h.disable();
-      // A timer is never early, so no sample is less than the resolution after the one before.
       assert.ok(h.min > (resolution / 2) * 1e6, `min is ${h.min}`);
     });
 
@@ -1728,7 +1725,7 @@ describe("Histogram", () => {
         Atomics.store(flags, 1, 1);
         Atomics.notify(flags, 1);
         for (let i = 0; i < 20000; i++) here();
-        assert.deepStrictEqual(await done, Array(workers).fill(h.constructor.name));
+        assert.deepStrictEqual(await done, Array(workers).fill("RecordableHistogram"));
         return Number(process.hrtime.bigint() - start);
       } finally {
         await Promise.all(threads.map(worker => worker.terminate()));
@@ -1741,12 +1738,29 @@ describe("Histogram", () => {
       assert.deepStrictEqual([h.count, h.min, h.max, h.mean], [40000, 1, 2, 1.5]);
     });
 
-    // Both threads would wait for each other for ever if each locked its own histogram first.
-    test("to a worker that adds two histograms the other way around", async () => {
-      const a = createHistogram();
-      const b = createHistogram();
-      await inThreads(1, [a, b], "h[1].add(h[0])", () => a.add(b));
-      assert.deepStrictEqual([a.count, b.count], [0, 0]);
+    // Both threads would wait for each other for ever if each locked its own histogram first, so this is in a child.
+    test("to a worker that adds two histograms the other way around", () => {
+      const script = `
+        const { Worker } = require("node:worker_threads");
+        const { createHistogram } = require("node:perf_hooks");
+        const a = createHistogram(), b = createHistogram();
+        // Whether the worker is ready, and whether it can start.
+        const flags = new Int32Array(new SharedArrayBuffer(8));
+        const worker = new Worker(\`
+          const { workerData: [a, b, flags] } = require("node:worker_threads");
+          Atomics.store(flags, 0, 1);
+          Atomics.notify(flags, 0);
+          Atomics.wait(flags, 1, 0);
+          for (let i = 0; i < 20000; i++) b.add(a);
+        \`, { eval: true, workerData: [a, b, flags] });
+        worker.on("error", error => { throw error; });
+        Atomics.waitAsync(flags, 0, 0).value.then(() => {
+          Atomics.store(flags, 1, 1);
+          Atomics.notify(flags, 1);
+          for (let i = 0; i < 20000; i++) a.add(b);
+        });`;
+      const { status, signal } = spawnSync(process.execPath, ["-e", script], { stdio: "ignore", timeout: 30_000 });
+      assert.deepStrictEqual({ status, signal }, { status: 0, signal: null });
     });
 
     test("to workers that call recordDelta while this thread does", async () => {

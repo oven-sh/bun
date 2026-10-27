@@ -310,6 +310,7 @@ var access = function access(path, mode, callback?) {
           position = null,
         } = offsetOrOptions ?? {});
       }
+      if (typeof offsetOrOptions === "function") offsetOrOptions = 0;
 
       fs.writeCb(onWritten, fd, buffer, offsetOrOptions, length, position);
       return;

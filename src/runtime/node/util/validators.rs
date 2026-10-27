@@ -43,7 +43,7 @@ pub(crate) fn throw_err_invalid_arg_type(
 }
 
 #[inline]
-fn throw_range_error_msg(
+pub(crate) fn throw_range_error_msg(
     global_this: &JSGlobalObject,
     value: f64,
     name: &str,
@@ -68,19 +68,6 @@ pub(crate) fn validate_integer(
     min_value: Option<i64>,
     max_value: Option<i64>,
 ) -> JsResult<i64> {
-    if !value.is_number() {
-        return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
-    }
-
-    if !value.is_integer() {
-        return Err(throw_range_error_msg(
-            global_this,
-            value.as_number(),
-            name,
-            b"an integer",
-        ));
-    }
-
     if let Some(min) = min_value {
         debug_assert!(
             min >= jsc::MIN_SAFE_INTEGER,
@@ -93,23 +80,9 @@ pub(crate) fn validate_integer(
             "max_value must be less than or equal to jsc::MAX_SAFE_INTEGER"
         );
     }
-
-    let min: f64 = min_value.unwrap_or(jsc::MIN_SAFE_INTEGER) as f64;
-    let max: f64 = max_value.unwrap_or(jsc::MAX_SAFE_INTEGER) as f64;
-
-    let num = value.as_number();
-
-    if num < min || num > max {
-        let range = format!(">= {min} && <= {max}");
-        return Err(throw_range_error_msg(
-            global_this,
-            num,
-            name,
-            range.as_bytes(),
-        ));
-    }
-
-    Ok(num as i64)
+    let min = min_value.unwrap_or(jsc::MIN_SAFE_INTEGER) as f64;
+    let max = max_value.unwrap_or(jsc::MAX_SAFE_INTEGER) as f64;
+    validate_integral(global_this, value, name, min, max).map(|num| num as i64)
 }
 
 pub(crate) fn validate_int32(
@@ -148,7 +121,7 @@ fn validate_integral(
         return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
     }
     let num = value.as_number();
-    if !num.is_finite() || num.fract() != 0.0 {
+    if !value.is_integer() {
         return Err(throw_range_error_msg(global_this, num, name, b"an integer"));
     }
     if num < min || num > max {

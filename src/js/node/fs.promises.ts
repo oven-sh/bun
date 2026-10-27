@@ -644,10 +644,6 @@ function asyncWrap(fn: any, name: string) {
           ({ offset = 0, length = buffer.byteLength - offset, position = null } = offset ?? kEmptyObject);
         }
 
-        if (offset == null) {
-          offset = 0;
-        }
-        if (typeof length !== "number") length = buffer.byteLength - offset;
         if (typeof position !== "number") position = null;
       } else {
         // filehandle.write(string[, position[, encoding]]): `length` is the

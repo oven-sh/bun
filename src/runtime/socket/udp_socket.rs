@@ -375,7 +375,7 @@ impl UDPSocketConfig {
         };
 
         let flags: i32 = if let Some(value) = options.get_truthy(global_this, "flags")? {
-            validators::validate_int32(global_this, value, "flags", None, None)?
+            validators::validate_int32(global_this, value, "options.flags", None, None)?
         } else {
             0
         };
@@ -384,7 +384,8 @@ impl UDPSocketConfig {
         // values are rejected instead of coercing to 0.
         let fd: Option<i32> = match options.get(global_this, "fd")? {
             Some(value) if !value.is_undefined_or_null() => {
-                let number = validators::validate_int32(global_this, value, "fd", None, None)?;
+                let number =
+                    validators::validate_int32(global_this, value, "options.fd", None, None)?;
                 if number < 0 {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected \"fd\" to be a non-negative integer"

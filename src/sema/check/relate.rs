@@ -2463,15 +2463,29 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns a sort key for when `checkDeferredNodes` reaches the type parameter `tp` of a class,
-    /// interface or type alias. It visits the files in program order, and a file's
-    /// `links.deferredNodes` in `checkNodeDeferred` order. A deferred node defers its contents only
-    /// when it's checked itself, so they come after everything deferred until then.
+    /// interface or type alias.
     fn place_in_deferred_nodes(&self, file: FileId, tp: TypeParamId) -> (u32, u32, u32) {
         let hir = self.hir(file);
         // `checkClassExpression` checks the type parameters of the class immediately.
         let declaration = hir.parent(hir.node(tp));
-        let mut enclosing_deferred = 0;
-        hir.find_ancestor(hir.parent(declaration), |node| {
+        self.place_in_check_order(file, hir.parent(declaration), hir[tp].start, true)
+    }
+
+    /// Returns a sort key for when `checkSourceFile` reaches `node`, at `pos` in `file`. It visits the files in
+    /// program order, a file's statements in source order, and then the file's `links.deferredNodes` in
+    /// `checkNodeDeferred` order. A deferred node defers its contents only when it's checked itself, so they come
+    /// after everything deferred until then. `is_deferred` is true if `node` is checked by `checkDeferredNodes`
+    /// although it isn't a deferred expression.
+    fn place_in_check_order(
+        &self,
+        file: FileId,
+        node: Node,
+        pos: u32,
+        is_deferred: bool,
+    ) -> (u32, u32, u32) {
+        let hir = self.hir(file);
+        let mut enclosing_deferred = u32::from(is_deferred);
+        hir.find_ancestor(node, |node| {
             if let NodeData::Expr(e) = hir.data(node)
                 && matches!(
                     hir[e].kind,
@@ -2485,11 +2499,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             false
         });
-        (
-            self.files().rank_of_file(file),
-            enclosing_deferred,
-            hir[tp].start,
-        )
+        (self.files().rank_of_file(file), enclosing_deferred, pos)
     }
 
     /// Returns the type parameter list of each declaration of the class, interface or type alias `sym`.
@@ -4374,16 +4384,20 @@ impl<'p, 's> Checker<'p, 's> {
     /// earlier than the entry at `from`. tsgo numbers types in the order it creates them. Here the same type has one
     /// id however it was reached, so the order is derived from how each entry was created:
     ///
-    /// 1. An entry reached through a member of a class, an interface or a type literal that is not instantiated is
-    ///    the type of a type node in that declaration. If the declaration is in a file that is checked, and comes
-    ///    before the source element being checked, `checkSourceFile` created the type when it reached the
-    ///    declaration. Two such entries are ordered by the positions of the declarations. One such entry is older
-    ///    than an entry that was created on demand.
-    /// 2. A type is created after its components. An entry that the comparison reached from `from` through
-    ///    components only, one level at a time, is older.
-    /// 3. Otherwise both were created on demand, and the comparison created the one it reached first: the one that
-    ///    was pushed first is the older one. Push numbers grow with every level, and a level's target has a lower
-    ///    one than its source. No two entries share one, so this is a total order.
+    /// 1. An entry reached through a member of a class, an interface, a type literal or a function type that is not
+    ///    instantiated is the type of a type node in that declaration. If the declaration is in a file that is
+    ///    checked, and `checkSourceFile` reaches it before the source element being checked, it created the type
+    ///    there. Two such entries are in the order of their declarations.
+    /// 2. The two types the comparison started with existed before it, and so did every type their keys mention,
+    ///    directly or through the keys of the types they mention: a type is created after the types its key
+    ///    mentions. An entry that existed before the comparison, by 1 or 2, is older than one that the comparison
+    ///    created on demand.
+    /// 3. Two entries that existed before the comparison are ordered by height, then by push order: a type is
+    ///    taller than the types it's built from.
+    /// 4. Of two entries created on demand, one whose key mentions the other is the newer one. Otherwise the
+    ///    comparison created the one it reached first: the one that was pushed first is the older one. Push numbers
+    ///    grow with every level, and a level's target has a lower one than its source. No two entries share one, so
+    ///    this is a total order.
     fn is_at_least_as_new(
         &self,
         to: usize,
@@ -4396,103 +4410,114 @@ impl<'p, 's> Checker<'p, 's> {
         if t == last {
             return true;
         }
+        // A member of a union is compared after the union, so the union's parent is the member's too.
         let written = |at: usize| {
-            let parent = stack[..at].last()?.0;
-            self.checked_declaration_before_current(parent)
+            let (mut child, mut i) = (stack[at].0, at);
+            loop {
+                i = i.checked_sub(1)?;
+                let parent = stack[i].0;
+                match self.data(parent) {
+                    TypeData::Union(parts) | TypeData::Intersection(parts)
+                        if parts.contains(&child) =>
+                    {
+                        child = parent;
+                    }
+                    _ => return self.checked_declaration_before_current(parent),
+                }
+            }
         };
-        match (written(to), written(from)) {
-            (Some(t), Some(last)) if t != last => return t > last,
-            (Some(_), None) => return false,
-            (None, Some(_)) => return true,
-            _ => {}
+        let (to_written, from_written) = (written(to), written(from));
+        if let (Some(t), Some(last)) = (to_written, from_written)
+            && t != last
+        {
+            return t > last;
         }
-        if self.types().height_order(t, last).is_lt() && self.is_reached_through_components(stack, from, to) {
-            return false;
-        }
+        let types = self.types();
+        let tops = [stacks[0].first(), stacks[1].first()]
+            .map(|top| top.map_or(TypeId::NEVER, |top| top.0));
+        let existed = |x: TypeId, written: Option<(u32, u32, u32)>| {
+            written.is_some() || tops.contains(&x) || types.key_mentions(&tops, x)
+        };
         let pushed = |t: TypeId| {
             let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
             stacks.into_iter().filter_map(first).min()
         };
-        pushed(t) >= pushed(last)
+        match (existed(t, to_written), existed(last, from_written)) {
+            (true, false) => false,
+            (false, true) => true,
+            (true, true) => (types.height_order(t, last))
+                .then_with(|| pushed(t).cmp(&pushed(last)))
+                .is_ge(),
+            (false, false) => {
+                !(types.height_order(t, last).is_lt() && types.key_mentions(&[last], t))
+                    && pushed(t) >= pushed(last)
+            }
+        }
     }
 
-    /// The position in check order of the declaration of `parent`, if `parent` is a class, an interface or a type
-    /// literal that is not instantiated, declared in a file that reports semantic errors, before the source element
-    /// being checked. The types of its members are the types of the type nodes in that declaration, which
-    /// `checkSourceFile` resolves when it reaches the declaration.
-    fn checked_declaration_before_current(&self, parent: TypeId) -> Option<(u32, u32)> {
+    /// The place in check order of the declaration of `parent`, if `parent` is a class, an interface, a type
+    /// literal or a function type that is not instantiated, declared in a file that reports semantic errors, and
+    /// `checkSourceFile` reaches the declaration before the source element being checked. The types of its members,
+    /// parameters and results are the types of the type nodes in that declaration, which `checkSourceFile` resolves
+    /// when it reaches the declaration.
+    fn checked_declaration_before_current(&self, parent: TypeId) -> Option<(u32, u32, u32)> {
         let current = self.current_source_element?;
         let files = self.files();
-        let (file, pos) = match self.data(parent) {
+        let at = match self.data(parent) {
+            TypeData::Fns {
+                decls,
+                mapper: MapperId::IDENTITY,
+            } => {
+                let &(file, f) = decls.first()?;
+                if !self.reports_semantic_errors(file) {
+                    return None;
+                }
+                let hir = self.hir(file);
+                self.place_in_check_order(file, hir.node(f), hir[f].start, false)
+            }
             TypeData::Ref {
                 target,
                 args: TypeArguments::Given(args),
             } if args.is_empty() => {
                 let declarations = files.decls_of(*target).into_iter();
-                let positions = declarations.filter_map(|(file, declaration)| {
-                    let pos = declaration.name_pos_of_class_or_interface(self.hir(file))?;
-                    Some((file, pos))
+                let places = declarations.filter_map(|(file, declaration)| {
+                    let hir = self.hir(file);
+                    let (node, pos) = match declaration {
+                        crate::bind::Decl::Class(c) => (hir.node(c), hir[c].name_pos),
+                        crate::bind::Decl::Interface(i) => (hir.node(i), hir[i].name_pos),
+                        _ => return None,
+                    };
+                    self.reports_semantic_errors(file)
+                        .then(|| self.place_in_check_order(file, node, pos, false))
                 });
-                positions.min_by_key(|&(file, pos)| (files.rank_of_file(file), pos))?
+                places.min()?
             }
             &TypeData::Anon {
                 origin: Origin::TypeLiteral(file, node),
                 mapper: MapperId::IDENTITY,
-            } => (file, self.hir(file)[node].pos),
+            } if self.reports_semantic_errors(file) => {
+                let hir = self.hir(file);
+                self.place_in_check_order(file, hir.node(node), hir[node].pos, false)
+            }
             _ => return None,
         };
-        if !self.reports_semantic_errors(file) {
-            return None;
-        }
-        let (current_file, current_pos) = match current {
-            CurrentNode::Expr(file, e) => (file, start_of(self.hir(file), e)),
-            CurrentNode::TypeNode(file, node) => (file, self.hir(file)[node].pos),
-            CurrentNode::Node(file, node) => (file, self.hir(file).start(node)),
+        // `checkTypeParameter` defers the checks that compare types.
+        let now = match current {
+            CurrentNode::Expr(file, e) => {
+                let hir = self.hir(file);
+                self.place_in_check_order(file, hir.node(e), start_of(hir, e), false)
+            }
+            CurrentNode::TypeNode(file, node) => {
+                let hir = self.hir(file);
+                self.place_in_check_order(file, hir.node(node), hir[node].pos, false)
+            }
+            CurrentNode::Node(file, node) => {
+                let hir = self.hir(file);
+                let is_deferred = matches!(hir.data(node), NodeData::TypeParam(_));
+                self.place_in_check_order(file, node, hir.start(node), is_deferred)
+            }
         };
-        let at = (files.rank_of_file(file), pos);
-        (at < (files.rank_of_file(current_file), current_pos)).then_some(at)
-    }
-
-    /// True if each entry of `stack` after `from`, up to and including `to`, is a component of the entry before it.
-    /// The comparison then reached the entry at `to` from the entry at `from` through components only, so the
-    /// entry at `to` was created first.
-    fn is_reached_through_components(&self, stack: &[(TypeId, u32)], from: usize, to: usize) -> bool {
-        if from >= to {
-            return false;
-        }
-        let mut container = stack[from].0;
-        for &(part, _) in &stack[from + 1..=to] {
-            if !self.is_component(container, part) {
-                return false;
-            }
-            container = part;
-        }
-        true
-    }
-
-    /// True if `part` is in the interning key of `whole`: a type argument, an element, a constituent, or what a
-    /// type parameter of `whole` is mapped to.
-    fn is_component(&self, whole: TypeId, part: TypeId) -> bool {
-        match self.data(whole) {
-            TypeData::Ref {
-                args: TypeArguments::Given(parts),
-                ..
-            }
-            | TypeData::Tuple {
-                elems: TypeArguments::Given(parts),
-                ..
-            } => parts.contains(&part),
-            TypeData::Union(parts) | TypeData::Intersection(parts) => parts.contains(&part),
-            TypeData::Anon { mapper, .. }
-            | TypeData::Fns { mapper, .. }
-            | TypeData::Cond { mapper, .. } => {
-                (self.types().mapping(*mapper).iter()).any(|pair| pair.1 == part)
-            }
-            &TypeData::IndexedAccess { obj, index, .. } => part == obj || part == index,
-            &TypeData::Substitution { base, constraint } => part == base || part == constraint,
-            &TypeData::Keyof(inner) | &TypeData::StringMapping { ty: inner, .. } => part == inner,
-            _ => false,
-        }
+        (at < now).then_some(at)
     }
 
     /// `is_deeply_nested_type` of the last entry of the stack, at depth 3. `identities` has an `OnStack` for

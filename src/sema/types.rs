@@ -3875,6 +3875,39 @@ impl<'p, 's> Types<'p, 's> {
         order.then_with(|| a.0.cmp(&b.0))
     }
 
+    /// True if the interning key of one of `wholes` mentions `part`, directly or through the keys of the types it
+    /// mentions, which includes what a mapper, a signature or a component list in a key references. A type is created
+    /// after the types its key mentions, so `part` is then older than that whole. Only a type taller than `part` can
+    /// mention it, so no other key is followed.
+    pub fn key_mentions(&self, wholes: &[TypeId], part: TypeId) -> bool {
+        let height = self.rank(part).height;
+        let mut to_visit: SmallVec<[TypeId; 16]> = SmallVec::new();
+        let mut visited: crate::util::FxHashSet<TypeId> = Default::default();
+        let mut found = false;
+        for &whole in wholes {
+            if self.rank(whole).height > height && visited.insert(whole) {
+                to_visit.push(whole);
+            }
+        }
+        while let Some(next) = to_visit.pop() {
+            let mut mentions = Mentions {
+                types: *self,
+                found: &mut |id: TypeId| {
+                    if id == part {
+                        found = true;
+                    } else if self.rank(id).height > height && visited.insert(id) {
+                        to_visit.push(id);
+                    }
+                },
+            };
+            self.record(next).created.visit(&mut mentions);
+            if found {
+                return true;
+            }
+        }
+        false
+    }
+
     fn written_key(&self, id: TypeId) -> Vec<KeyItem> {
         let mut writer = KeyWriter {
             types: *self,
@@ -5266,6 +5299,30 @@ impl Visitor for Ranking<'_, '_> {
             self.last_syntax = self.last_syntax.max(syntax_position);
         }
     }
+}
+
+/// Calls `found` with each type a key mentions. See `Types::key_mentions`.
+struct Mentions<'a, 'p, 's> {
+    types: Types<'p, 's>,
+    found: &'a mut dyn FnMut(TypeId),
+}
+
+impl Visitor for Mentions<'_, '_, '_> {
+    fn atom(&mut self, _: Atom) {}
+    fn components(&mut self, id: ComponentsId) {
+        self.types.components(id).visit(self);
+    }
+    fn mapper(&mut self, id: MapperId) {
+        self.types.mapping(id).visit(self);
+    }
+    fn sig(&mut self, id: SigId) {
+        self.types.sig(id).visit(self);
+    }
+    fn ty(&mut self, id: TypeId) {
+        (self.found)(id);
+    }
+    fn file(&mut self, _: FileId) {}
+    fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
 }
 
 /// One item of a type's written-out key, for `Types::compare_contents`.

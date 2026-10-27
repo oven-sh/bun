@@ -319,6 +319,33 @@ test.skipIf(!isLinux)(
   30_000,
 );
 
+// On POSIX a backslash is a byte of a directory name. A script runs in the directory of its package.json.
+test.skipIf(isWindows).concurrent.each([
+  ["that directory", ""],
+  ["a directory below it", "sub"],
+])("bun run <script> runs in a directory named pro\\j, from %s", async (_, below) => {
+  using dir = tempDir("run-backslash-cwd", {
+    "pro\\j": {
+      "package.json": JSON.stringify({ scripts: { where: "pwd && echo $npm_package_json" } }),
+      sub: {},
+    },
+  });
+  const root = join(String(dir), "pro\\j");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "where"],
+    cwd: join(root, below),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: `${root}\n${root}/package.json\n`,
+    stderr: "$ pwd && echo $npm_package_json\n",
+    exitCode: 0,
+  });
+});
+
 describe.concurrent.each([
   ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
   ["CR", "\r", "\\r"],

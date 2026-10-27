@@ -353,6 +353,25 @@ pub mod fs {
             join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir(), buf, parts)
         }
 
+        /// `abs_buf_checked` for `name` in a directory that is open as `dir`: on POSIX a backslash there is a byte of a file name.
+        pub(crate) fn abs_buf_in_dir_checked<'b>(
+            &self,
+            dir: &[u8],
+            name: &[u8],
+            buf: &'b mut [u8],
+        ) -> Option<&'b [u8]> {
+            let parts: [&[u8]; 2] = [dir, name];
+            #[cfg(not(windows))]
+            if bun_core::strings::contains_char(dir, b'\\')
+                || bun_core::strings::contains_char(name, b'\\')
+            {
+                use bun_paths::resolve_path::{join_z_buf_checked, platform};
+                return join_z_buf_checked::<platform::Posix>(buf, &parts)
+                    .map(|path| path.as_bytes());
+            }
+            self.abs_buf_checked(&parts, buf)
+        }
+
         /// Normalizes `str` (separators, `.`/`..` segments) into `buf`.
         pub fn normalize_buf<'b>(&self, buf: &'b mut [u8], str: &[u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{normalize_string_buf, platform};

@@ -1661,16 +1661,17 @@ impl<'a> Resolver<'a> {
                 } else if !dir.abs_real_path.is_empty()
                     // When the directory is a symlink, we don't need to call getFdPath.
                     && let mut buf = bun_paths::path_buffer_pool::get()
-                    && let Some(out_len) =
-                        ::bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-                            ::bun_paths::platform::Loose,
-                        >(
-                            self.fs_ref().top_level_dir(),
-                            &mut buf[..],
-                            &[dir.abs_real_path, query.entry().base()],
+                    && let nul = buf.len() - 1
+                    && let Some(out_len) = self
+                        .fs_ref()
+                        .abs_buf_in_dir_checked(
+                            dir.abs_real_path,
+                            query.entry().base(),
+                            &mut buf[..nul],
                         )
                         .map(|joined| joined.len())
                 {
+                    buf[out_len] = 0;
                     let store_fd = self.store_fd;
 
                     if !query.entry().cache().fd.is_valid() && store_fd {
@@ -2528,15 +2529,17 @@ impl<'a> Resolver<'a> {
         self.bust_dir_cache_and_parent(joined)
     }
 
-    fn bust_dir_cache_and_parent(&mut self, path: &[u8]) -> bool {
+    fn bust_dir_cache_and_parent(&mut self, import_path: &[u8]) -> bool {
         // On Windows the dirname of `a\hello\` is `a\hello`, so strip first.
-        let path = strings::without_trailing_slash_windows_path(path);
+        let path = strings::without_trailing_slash_windows_path(import_path);
         let dir = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
 
         // `load_as_file` lists `/a/b` for the import path `/a/b\/c.js`.
         let a = self.bust_dir_cache(strings::without_trailing_slash_windows_path(dir));
         let b = self.bust_dir_cache(path);
-        a || b
+        // On POSIX the lookup of a directory `/a/b\` stores its entry under that key.
+        let c = path.len() != import_path.len() && self.bust_dir_cache(import_path);
+        a || b || c
     }
 
     pub(crate) fn load_node_modules(
@@ -6406,8 +6409,9 @@ impl<'a> Resolver<'a> {
                             }
                             info.abs_real_path = symlink;
                         } else if !parent_.abs_real_path.is_empty()
-                            && let Some(joined) = self.fs_ref().abs_buf_checked(
-                                &[parent_.abs_real_path, base],
+                            && let Some(joined) = self.fs_ref().abs_buf_in_dir_checked(
+                                parent_.abs_real_path,
+                                base,
                                 bufs!(dir_info_uncached_filename),
                             )
                         {

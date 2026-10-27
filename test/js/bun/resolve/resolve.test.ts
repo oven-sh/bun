@@ -1558,6 +1558,78 @@ test.skipIf(isWindows).concurrent("a file created after a failed lookup through 
   expect(exitCode).toBe(0);
 });
 
+// A directory below a symlink has a real path: the real path of its parent and its own name. On POSIX a backslash
+// is a byte of that name. `real/pro/j` is the directory that a loose reading of `pro\j` names.
+test.skipIf(isWindows).concurrent("a module in pro\\j below a symlinked directory has its real path", async () => {
+  using dir = tempDir("resolve-backslash-real-path", {
+    "real/pro\\j/mod.js": `module.exports = "mod";`,
+    "real/pro\\j/sub/deep.js": `module.exports = "deep";`,
+    "real/pro/j/mod.js": `module.exports = "decoy";`,
+    "load.cjs": `
+      const B = String.fromCharCode(92);
+      const dir = __dirname + "/link/pro" + B + "j";
+      const attempt = lookup => {
+        try {
+          return String(lookup()).replace(__dirname, "");
+        } catch (e) {
+          return e.code ?? e.name;
+        }
+      };
+      const result = {
+        path: attempt(() => require.resolve(dir + "/mod")),
+        value: attempt(() => require(dir + "/mod")),
+        deep: attempt(() => require(dir + "/sub/deep")),
+      };
+      console.log(JSON.stringify(result));
+    `,
+  });
+  symlinkSync("real", join(String(dir), "link"));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-install", "load.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stripAsanWarning(stderr)).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ path: "/real/pro\\j/mod.js", value: "mod", deep: "deep" });
+  expect(exitCode).toBe(0);
+});
+
+// The bundler matches a module against the "sideEffects" list of its package.json by path. On POSIX the path of the
+// package.json in `we\ird` keeps the backslash.
+test.skipIf(isWindows).concurrent.each([
+  ["keep", "drop"],
+  ["drop", "keep"],
+])("Bun.build applies the sideEffects of a package.json in we\\ird: %s, then %s", async (first, second) => {
+  using dir = tempDir("resolve-backslash-side-effects", {
+    "we\\ird/package.json": JSON.stringify({ name: "weird", sideEffects: ["./keep.js"] }),
+    "we\\ird/keep.js": `console.log("kept-module");`,
+    "we\\ird/drop.js": `console.log("dropped-module");`,
+    "build.mjs": `
+      const B = String.fromCharCode(92);
+      const dir = import.meta.dir + "/we" + B + "ird";
+      const imports = process.argv.slice(2).map(name => "import " + JSON.stringify(dir + "/" + name) + ";");
+      await Bun.write(import.meta.dir + "/entry.js", imports.join("\\n"));
+      const build = await Bun.build({ entrypoints: [import.meta.dir + "/entry.js"] });
+      const text = await build.outputs[0].text();
+      console.log(JSON.stringify({ kept: text.includes("kept-module"), dropped: text.includes("dropped-module") }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-install", "build.mjs", first, second],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stripAsanWarning(stderr)).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ kept: true, dropped: false });
+  expect(exitCode).toBe(0);
+});
+
 // ASAN builds print a warning on stderr that has nothing to do with resolution.
 function stripAsanWarning(stderr: string): string {
   return stderr

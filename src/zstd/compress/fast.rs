@@ -4,7 +4,7 @@ use super::internal::{
     BlockSrc, CompressionParameters, DictTableLoadMethod, HASH_READ_SIZE, K_SEARCH_STRENGTH,
     MatchState, Near, Prefix, REPCODE1_TO_OFFBASE, SeqSink, SeqStore, TableFillPurpose,
     ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, count, count_2segments, hash_of, hash_ptr,
-    index_overlap_check, offset_to_offbase, table_get, table_put, write_tagged_index,
+    index_overlap_check, le64_at, offset_to_offbase, table_put, table_swap, write_tagged_index,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
@@ -374,8 +374,9 @@ impl<'a> NoDictBlock<'a> {
 
 /// `ZSTD_compressBlock_fast_noDict_generic`
 ///
-/// Each turn of the inner loop looks at two positions, `ip0` and `ip1`, for a match, and at `ip2` for a repeat. The
-/// hash of a position is computed, and the table is read, one position ahead of the comparison.
+/// Each turn of the inner loop looks at two positions, `ip0` and the next one, for a match, and at `ip2` for a repeat.
+/// The C code computes hashes and reads the table one position ahead. Here that is left to the processor: a turn only
+/// takes the position and the 8 bytes there from the one before.
 fn compress_block_fast_no_dict_generic<const MLS: u32>(
     ms: &mut MatchState,
     seq_store: &mut SeqStore,
@@ -398,137 +399,113 @@ fn compress_block_fast_no_dict_generic<const MLS: u32>(
     let mut ip0 = block.first;
     let mut seq_store = SeqSink::new(seq_store);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
+    // The 8 bytes at `ip0`.
+    let Some(mut bytes0) = near.read64(ip0) else {
+        return Ok(src.end - src.start);
+    };
 
     'start: loop {
         let mut step = step_size;
         let mut next_step = ip0 + K_STEP_INCR;
-
-        let mut ip1 = ip0 + 1;
         let mut ip2 = ip0 + step;
-        let mut ip3 = ip2 + 1;
-        if ip3 as usize >= block.ilimit {
-            break 'start;
-        }
 
-        // The 8 bytes at `ip0` and at `ip1`.
-        let mut bytes0 = near.read64(ip0).ok_or(BUG)?;
-        let mut bytes1 = near.read64(ip1).ok_or(BUG)?;
-        let mut hash0 = hash_of::<MLS>(bytes0, hlog);
-        let mut hash1 = hash_of::<MLS>(bytes1, hlog);
-        let mut match_idx = table_get(hash_table, hash0);
-        let mut current0;
+        // Ends with where 4 bytes are the same, at `ip0` and at `match0`.
+        let (match0, back, offcode, current0) = loop {
+            // There is a position after `ip2` to look at, and that one is before the last that can be.
+            let Some(ahead) = near.window::<{ HASH_READ_SIZE + 2 }>(ip2) else {
+                break 'start;
+            };
+            let bytes2 = le64_at::<0, _>(ahead);
+            // As far as they are hashed or compared.
+            let bytes1 = bytes0 >> 8;
+            let current0 = block.base_index.wrapping_add(ip0);
+            let idx0 = table_swap(hash_table, hash_of::<MLS>(bytes0, hlog), current0);
+            // The next position is indexed whatever is found, as it is before the end of any match.
+            let idx1 = table_swap(hash_table, hash_of::<MLS>(bytes1, hlog), current0 + 1);
 
-        // Ends with the start and the length so far of a repeat match, or with `None` for a match at `match_idx`.
-        let rep_match = loop {
-            let bytes2 = near.read64(ip2).ok_or(BUG)?;
-            let rval = near.read32(ip2.wrapping_sub(rep_offset1));
-
-            current0 = block.base_index.wrapping_add(ip0);
-            table_put(hash_table, hash0, current0);
-
-            if (rval == Some(bytes2 as u32)) & (rep_offset1 > 0) {
+            if rep_offset1 > 0 && near.read32(ip2.wrapping_sub(rep_offset1)) == Some(bytes2 as u32)
+            {
                 ip0 = ip2;
                 let match0 = ip0 - rep_offset1;
                 let back = u32::from(near.read8(ip0 - 1) == near.read8(match0.wrapping_sub(1)));
-                ip0 -= back;
-                // The hash of ip1 is there, and ip1 is before the end of the match.
-                table_put(hash_table, hash1, block.base_index.wrapping_add(ip1));
-                break Some((match0.wrapping_sub(back), 4 + back));
+                break (match0, back, REPCODE1_TO_OFFBASE, current0);
             }
 
-            if candidates.read32(match_idx.wrapping_sub(block.prefix_lowest_index))
+            let (idx, current0) = if candidates.read32(idx0.wrapping_sub(block.prefix_lowest_index))
                 == Some(bytes0 as u32)
             {
-                table_put(hash_table, hash1, block.base_index.wrapping_add(ip1));
-                break None;
-            }
-
-            match_idx = table_get(hash_table, hash1);
-            hash0 = hash1;
-            bytes0 = bytes1;
-            bytes1 = bytes2;
-            hash1 = hash_of::<MLS>(bytes1, hlog);
-
-            ip0 = ip1;
-            ip1 = ip2;
-            ip2 = ip3;
-
-            current0 = block.base_index.wrapping_add(ip0);
-            table_put(hash_table, hash0, current0);
-
-            if candidates.read32(match_idx.wrapping_sub(block.prefix_lowest_index))
-                == Some(bytes0 as u32)
+                (idx0, current0)
+            } else if candidates.read32(idx1.wrapping_sub(block.prefix_lowest_index))
+                == Some(bytes1 as u32)
             {
-                // ip1 is certain to be before the end of the match only if the step is small.
+                ip0 += 1;
+                // `ip2` is certain to be before the end of the match only if the step is small.
                 if step <= 4 {
-                    table_put(hash_table, hash1, block.base_index.wrapping_add(ip1));
+                    table_put(
+                        hash_table,
+                        hash_of::<MLS>(bytes2, hlog),
+                        block.base_index.wrapping_add(ip2),
+                    );
                 }
-                break None;
-            }
+                (idx1, current0 + 1)
+            } else {
+                ip0 = ip2;
+                bytes0 = bytes2;
+                ip2 += step;
+                if ip2 >= next_step {
+                    step += 1;
+                    next_step += K_STEP_INCR;
+                }
+                continue;
+            };
 
-            match_idx = table_get(hash_table, hash1);
-            hash0 = hash1;
-            bytes0 = bytes1;
-            bytes1 = near.read64(ip2).ok_or(BUG)?;
-            hash1 = hash_of::<MLS>(bytes1, hlog);
-
-            ip0 = ip1;
-            ip1 = ip2;
-            ip2 = ip0 + step;
-            ip3 = ip1 + step;
-
-            if ip2 >= next_step {
-                step += 1;
-                next_step += K_STEP_INCR;
-            }
-            if ip3 as usize >= block.ilimit {
-                break 'start;
-            }
+            let match0 = idx - block.base_index;
+            rep_offset2 = rep_offset1;
+            rep_offset1 = ip0 - match0;
+            let back = near.count_backwards(ip0, anchor, match0, block.prefix_lowest);
+            break (match0, back, offset_to_offbase(rep_offset1), current0);
         };
 
-        let (offcode, match0, mut m_length) = match rep_match {
-            Some((match0, m_length)) => (REPCODE1_TO_OFFBASE, match0, m_length),
-            None => {
-                let match0 = match_idx - block.base_index;
-                rep_offset2 = rep_offset1;
-                rep_offset1 = ip0 - match0;
-                let back = near.count_backwards(ip0, anchor, match0, block.prefix_lowest);
-                ip0 -= back;
-                (offset_to_offbase(rep_offset1), match0 - back, 4 + back)
-            }
+        let end = ip0 + 4 + near.count(ip0 + 4, match0 + 4);
+        let match_start = ip0 - back;
+        seq_store.store_seq(
+            match_start - anchor,
+            near,
+            anchor,
+            offcode,
+            end - match_start,
+        )?;
+        ip0 = end;
+        anchor = end;
+
+        // `ip0` is not past the last position that can be looked at.
+        let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip0 - 2) else {
+            break 'start;
         };
+        let to_insert = near.read64(current0 + 2 - block.base_index).ok_or(BUG)?;
+        table_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
+        table_put(
+            hash_table,
+            hash_of::<MLS>(le64_at::<0, _>(around), hlog),
+            block.base_index.wrapping_add(ip0 - 2),
+        );
+        bytes0 = le64_at::<2, _>(around);
 
-        m_length += near.count(ip0 + m_length, match0 + m_length);
-        seq_store.store_seq(ip0 - anchor, near, anchor, offcode, m_length)?;
-        ip0 += m_length;
-        anchor = ip0;
-
-        if ip0 as usize <= block.ilimit {
-            let to_insert = near.read64(current0 + 2 - block.base_index).ok_or(BUG)?;
-            table_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
-            let before2 = near.read64(ip0 - 2).ok_or(BUG)?;
+        while rep_offset2 > 0 && near.read32(ip0.wrapping_sub(rep_offset2)) == Some(bytes0 as u32) {
+            let r_length = near.count(ip0 + 4, (ip0 + 4).wrapping_sub(rep_offset2)) + 4;
+            core::mem::swap(&mut rep_offset1, &mut rep_offset2);
             table_put(
                 hash_table,
-                hash_of::<MLS>(before2, hlog),
-                block.base_index.wrapping_add(ip0 - 2),
+                hash_of::<MLS>(bytes0, hlog),
+                block.base_index.wrapping_add(ip0),
             );
-
-            while rep_offset2 > 0 && ip0 as usize <= block.ilimit {
-                let bytes = near.read64(ip0).ok_or(BUG)?;
-                if near.read32(ip0.wrapping_sub(rep_offset2)) != Some(bytes as u32) {
-                    break;
-                }
-                let r_length = near.count(ip0 + 4, (ip0 + 4).wrapping_sub(rep_offset2)) + 4;
-                core::mem::swap(&mut rep_offset1, &mut rep_offset2);
-                table_put(
-                    hash_table,
-                    hash_of::<MLS>(bytes, hlog),
-                    block.base_index.wrapping_add(ip0),
-                );
-                ip0 += r_length;
-                seq_store.store_seq(0, near, anchor, REPCODE1_TO_OFFBASE, r_length)?;
-                anchor = ip0;
-            }
+            ip0 += r_length;
+            seq_store.store_seq(0, near, anchor, REPCODE1_TO_OFFBASE, r_length)?;
+            anchor = ip0;
+            let Some(bytes) = near.read64(ip0) else {
+                break 'start;
+            };
+            bytes0 = bytes;
         }
     }
 

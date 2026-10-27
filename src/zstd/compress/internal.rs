@@ -684,8 +684,14 @@ impl<'a> Near<'a> {
 
     #[inline(always)]
     fn chunk16(self, pos: u32) -> Option<&'a [u8; 16]> {
+        self.window(pos)
+    }
+
+    /// The `N` bytes at `pos`, which can then be read with no further check.
+    #[inline(always)]
+    pub(crate) fn window<const N: usize>(self, pos: u32) -> Option<&'a [u8; N]> {
         let pos = pos as usize;
-        self.0.get(pos..pos + 16)?.first_chunk()
+        self.0.get(pos..pos + N)?.first_chunk()
     }
 
     #[inline(always)]
@@ -765,6 +771,23 @@ pub(crate) fn table_put(table: &mut [u32], hash: usize, index: u32) {
     if let Some(cell) = table.get_mut(hash & mask) {
         *cell = index;
     }
+}
+
+/// `table[hash] = index`, likewise. Returns what was there.
+#[inline(always)]
+pub(crate) fn table_swap(table: &mut [u32], hash: usize, index: u32) -> u32 {
+    let mask = table.len().wrapping_sub(1);
+    match table.get_mut(hash & mask) {
+        Some(cell) => core::mem::replace(cell, index),
+        None => 0,
+    }
+}
+
+/// The 8 bytes of `window` from `AT` on.
+#[inline(always)]
+pub(crate) fn le64_at<const AT: usize, const N: usize>(window: &[u8; N]) -> u64 {
+    let bytes = window.get(AT..).and_then(<[u8]>::first_chunk);
+    bytes.map_or(0, |bytes| u64::from_le_bytes(*bytes))
 }
 
 /// `ZSTD_count`: how long `buf` from `p_in` on, up to `p_in_limit`, is the same as `match_buf` from `p_match` on.

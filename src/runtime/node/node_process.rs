@@ -7,11 +7,9 @@ use bun_core::env_var;
 use bun_core::{self, Environment, Global};
 use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult};
 
-// Both materialize the array on first access through `Bun__Process__createArgv`
-// / `createExecArgv` below, which return zero with the exception pending.
+// Filled on first access by `Bun__Process__createArgv` below. Zero means a pending exception.
 unsafe extern "C" {
     safe fn Bun__Process__getArgv(global: &JSGlobalObject) -> JSValue;
-    safe fn Bun__Process__getExecArgv(global: &JSGlobalObject) -> JSValue;
 }
 
 // ───────────────────────────── argv0 / execPath ─────────────────────────────
@@ -56,10 +54,6 @@ pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::St
 
 pub(crate) fn get_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
     bun_jsc::call_zero_is_throw(global, || Bun__Process__getArgv(global))
-}
-
-pub(crate) fn get_exec_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
-    bun_jsc::call_zero_is_throw(global, || Bun__Process__getExecArgv(global))
 }
 
 // ───────────────────────────── exit ─────────────────────────────
@@ -312,43 +306,10 @@ mod _impl {
 
             // A set of execArgv args consume an extra argument, so we do not want to
             // confuse these with script names.
-            // Build the set lazily at runtime from the `AUTO_PARAMS` table:
-            // `--long` / `-s` for every param with a value.
-            static MAP: std::sync::LazyLock<bun_collections::StringSet> =
-                std::sync::LazyLock::new(|| {
-                    let mut set = bun_collections::StringSet::new();
-                    for param in crate::cli::arguments::AUTO_PARAMS.iter() {
-                        // An optional value is only ever written `--name=value`.
-                        if param.takes_value != bun_clap::Values::None
-                            && param.takes_value != bun_clap::Values::OneOptional
-                        {
-                            if let Some(name) = param.names.long {
-                                let mut k = Vec::with_capacity(2 + name.len());
-                                k.extend_from_slice(b"--");
-                                k.extend_from_slice(name);
-                                bun_core::handle_oom(set.insert(&k));
-                            }
-                            if let Some(name) = param.names.short {
-                                bun_core::handle_oom(set.insert(&[b'-', name]));
-                            }
-                        }
-                    }
-                    // Node's whole-token aliases are not params, so they never
-                    // land above; an alias takes a value iff its target does.
-                    for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
-                        if set.contains(to) {
-                            bun_core::handle_oom(set.insert(from));
-                        }
-                    }
-                    set
-                });
-
-            if let Some(p) = prev {
-                if MAP.contains(p) {
-                    args.push(BunString::clone_utf8(arg));
-                    prev = Some(arg);
-                    continue;
-                }
+            if prev.is_some_and(|prev| crate::cli::arguments::takes_value(prev) == Some(true)) {
+                args.push(BunString::clone_utf8(arg));
+                prev = Some(arg);
+                continue;
             }
 
             // we hit the script name

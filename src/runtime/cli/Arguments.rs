@@ -787,6 +787,24 @@ pub(crate) use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_ar
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
 pub(crate) const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 
+/// What the flag of `bun` takes that `is_it` says yes to. `None`: there is no such flag.
+pub(crate) fn values_of(is_it: &dyn Fn(&clap::Names) -> bool) -> Option<&'static clap::Values> {
+    let mut flags = AUTO_PARAMS.iter();
+    flags.find(|it| is_it(&it.names)).map(|it| &it.takes_value)
+}
+
+/// Whether the flag `name`, written `--name` or `-n`, has its value in the argument after it. `None`: `bun` has no such flag.
+pub(crate) fn takes_value(name: &[u8]) -> Option<bool> {
+    let alias = NODE_SHORT_ALIASES.iter().find(|(from, _)| *from == name);
+    let values = match alias.map_or(name, |(_, to)| *to) {
+        [b'-', b'-', long @ ..] => values_of(&|names| names.matches_long(long)),
+        [b'-', short] => values_of(&|names| names.short == Some(*short)),
+        _ => None,
+    }?;
+    // An optional value is only ever written `--name=value`.
+    Some(matches!(values, clap::Values::One | clap::Values::Many))
+}
+
 /// `--disallow-code-generation-from-strings[=<value>]`. Raises the process's level; never lowers it.
 fn disallow_code_generation_from_strings(value: &[u8]) {
     match bun_core::CodeGenerationFromStrings::from_flag_value(value) {

@@ -170,6 +170,10 @@ panic = "abort"
 # `dsymutil` already expects.
 split-debuginfo = "unpacked"
 
+# Unoptimised, a 640x612 image takes 20 s to encode. Overflow checks and debug assertions stay on.
+[profile.dev.package.bun_webp]
+opt-level = 3
+
 # Release with debuginfo retained for `perf record` / flamegraphs. Same opt
 # level as release; binary is large but profilable.
 [profile.release-profiling]

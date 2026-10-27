@@ -63,7 +63,7 @@ impl<'a> BitWriter<'a> {
         }
     }
 
-    #[inline(always)]
+    #[inline(never)]
     fn write_buffer(&mut self) {
         let buffer = self.buffer;
         if buffer & 0x8080_8080_8080_8080 & !buffer.wrapping_add(0x0101_0101_0101_0101) == 0 {
@@ -102,17 +102,13 @@ pub(crate) struct Code {
 
 /// The code of every symbol.
 pub(crate) struct EncodeTable {
-    code: [u16; 256],
-    /// 0 if the symbol has no code.
-    size: [u8; 256],
+    /// The size in the low byte, 0 if the symbol has no code, and the code above it.
+    entries: [u32; 256],
 }
 
 impl EncodeTable {
     pub(crate) fn empty() -> Self {
-        EncodeTable {
-            code: [0; 256],
-            size: [0; 256],
-        }
+        EncodeTable { entries: [0; 256] }
     }
 
     pub(crate) fn new(spec: &HuffSpec) -> Result<Self> {
@@ -122,15 +118,11 @@ impl EncodeTable {
         for (length, &count) in spec.bits.iter().enumerate().skip(1) {
             for _ in 0..count {
                 let symbol = usize::from(*symbols.next().ok_or(Error::BadHuffTable)?);
-                let (Some(c), Some(s)) = (table.code.get_mut(symbol), table.size.get_mut(symbol))
-                else {
-                    return Err(Error::Internal);
-                };
-                if *s != 0 {
+                let entry = table.entries.get_mut(symbol).ok_or(Error::Internal)?;
+                if *entry != 0 {
                     return Err(Error::BadHuffTable);
                 }
-                *c = code as u16;
-                *s = length as u8;
+                *entry = code << 8 | length as u32;
                 code += 1;
             }
             // No code is all ones, so one more than the last code still fits in `length` bits.
@@ -144,10 +136,10 @@ impl EncodeTable {
 
     #[inline(always)]
     pub(crate) fn get(&self, symbol: u8) -> Code {
-        let symbol = usize::from(symbol);
+        let entry = self.entries.get(usize::from(symbol)).copied().unwrap_or(0);
         Code {
-            code: u32::from(self.code.get(symbol).copied().unwrap_or(0)),
-            size: u32::from(self.size.get(symbol).copied().unwrap_or(0)),
+            code: entry >> 8,
+            size: entry & 255,
         }
     }
 }

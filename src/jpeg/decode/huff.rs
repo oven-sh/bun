@@ -213,7 +213,7 @@ impl HuffDecoder {
     }
 
     /// Returns false, with no state changed but with coefficients stored, if it came upon what may be a marker.
-    #[inline(always)]
+    #[inline(never)]
     fn decode_mcu_fast(&mut self, inp: &mut Input, mcu: &mut impl McuBlocks) -> Result<bool> {
         let mut bits = FastBitReader::new(self.bits, inp.remaining());
         let mut last_dc_val = self.last_dc_val;

@@ -5,10 +5,18 @@
 _working_dir() {
     local line=0 value;
     working_dir="${PWD}";
-    for ((; line < COMP_CWORD - 1; line+=1)); do
-        [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] || continue;
-        value="${COMP_WORDS[$((line + 1))]}";
-        [[ "${value}" == "=" ]] && value="${COMP_WORDS[$((line + 2))]}";
+    for ((; line < COMP_CWORD; line+=1)); do
+        case "${COMP_WORDS[${line}]}" in
+            --cwd=*) value="${COMP_WORDS[${line}]#--cwd=}";;
+            --cwd)
+                (( line + 1 < COMP_CWORD )) || break;
+                value="${COMP_WORDS[$((line + 1))]}";
+                [[ "${value}" == "=" ]] && {
+                    (( line + 2 < COMP_CWORD )) || break;
+                    value="${COMP_WORDS[$((line + 2))]}";
+                };;
+            *) continue;;
+        esac
         [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value#\~}";
         [[ -n "${value}" ]] && working_dir="${value}";
     done
@@ -22,11 +30,13 @@ _file_arguments() {
     # bun test picks test files by their lowercased name, so the filter ignores case too.
     # the options and the cd are in the subshell only, so an interrupted listing leaks nothing.
     # the callers add flags and script names to the list, so readline must not treat it as
-    # file names: a name with a space is escaped here instead
+    # file names: a name with a space is escaped here instead. the typed part stays as it is,
+    # so that a leading ~ still expands
+    local rest;
     COMPREPLY=();
     while IFS= read -r file; do
-        printf -v file '%q' "${file}";
-        COMPREPLY+=( "${file}" );
+        printf -v rest '%q' "${file:${#cur_word}}";
+        COMPREPLY+=( "${cur_word}${rest}" );
     done < <(CDPATH= builtin cd -- "${working_dir}" >/dev/null 2>&1 && shopt -s extglob nocasematch && compgen -f -X "${extensions}" -- "${cur_word}");
 }
 
@@ -161,6 +171,12 @@ _bun_completions() {
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
             return;;
+        =)
+            # readline splits `--cwd=dir` at the `=`
+            [[ "${COMP_WORDS[$(( COMP_CWORD - 2 ))]}" == "--cwd" ]] && {
+                COMPREPLY=( $(compgen -d -- "${cur_word}" ));
+                return;
+            };;
         --jsx-runtime)
             COMPREPLY=( $(compgen -W "automatic classic" -- "${cur_word}") );
             return;;

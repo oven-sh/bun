@@ -543,6 +543,10 @@ describe("bun", () => {
         // `bun test --cwd=sub <TAB>`: readline splits the word at the `=`
         const underCwdEq = await complete(cwd, "test", "--cwd", "=", "sub", "");
         expect(underCwdEq.filter(word => !word.startsWith("-"))).toEqual(["nested.test.js"]);
+        // `bun test --cwd=s<TAB>`: the value itself completes a directory
+        expect(await complete(cwd, "test", "--cwd", "=", "s")).toEqual(["sub"]);
+        // `bun test sub/n<TAB>`: the typed part stays as it is in the result
+        expect(await complete(cwd, "test", "sub/n")).toEqual(["sub/nested.test.js"]);
         expect((await complete(cwd, "test", "--preload", "")).sort()).toEqual([
           "Button.Spec.tsx",
           "bar_spec.js",

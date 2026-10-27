@@ -15,6 +15,7 @@
  * "harness" at the top for the same reason.
  */
 import assert from "node:assert";
+import type { ChildProcess } from "node:child_process";
 import { execFile, execFileSync, fork, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import path from "node:path";
@@ -52,6 +53,25 @@ function revoked(): any[] {
 
 // What `Array.isArray()` throws for a revoked Proxy. Node: "Cannot perform 'IsArray' on a proxy that has been revoked".
 const revokedProxyError = { name: "TypeError", message: /IsArray|Array\.isArray/ };
+
+// The first IPC message of the child. It rejects when the child closes or fails before that.
+function firstMessage(child: ChildProcess): Promise<unknown> {
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+  const onMessage = (message: unknown) => {
+    child.off("close", onClose);
+    child.off("error", reject);
+    resolve(message);
+  };
+  const onClose = (code: number | null, signal: string | null) => {
+    child.off("message", onMessage);
+    child.off("error", reject);
+    reject(new Error(`the child closed (code ${code}, signal ${signal}) and sent no message`));
+  };
+  child.once("message", onMessage);
+  child.once("close", onClose);
+  child.once("error", reject);
+  return promise;
+}
 
 describe("child_process takes a Proxy of an array", () => {
   describe("as args", () => {
@@ -130,7 +150,7 @@ describe("child_process takes a Proxy of an array", () => {
         stdio: indexedOnly(["ignore", "inherit", "inherit", "ipc"]),
       });
       child.send({ from: "spawn" });
-      const [[message], [code]] = await Promise.all([once(child, "message"), once(child, "close")]);
+      const [message, [code]] = await Promise.all([firstMessage(child), once(child, "close")]);
       assert.deepStrictEqual(message, { from: "spawn" });
       assert.strictEqual(code, 0);
     });
@@ -159,7 +179,7 @@ describe("child_process takes a Proxy of an array", () => {
       // With the default stdio, fork() inherits stdout and `child.stdout` is null.
       assert.notStrictEqual(child.stdout, null);
       child.send({ from: "fork" });
-      const [[message], [code]] = await Promise.all([once(child, "message"), once(child, "close")]);
+      const [message, [code]] = await Promise.all([firstMessage(child), once(child, "close")]);
       assert.deepStrictEqual(message, { from: "fork" });
       assert.strictEqual(code, 0);
     });

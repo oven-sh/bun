@@ -34,7 +34,7 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
 /// `.system` (default on darwin/windows) is the perf-optimal hybrid:
-///   • jpeg/png/webp decode+encode → static codecs (turbo/spng/libwebp).
+///   • jpeg/png/webp decode+encode → static codecs (turbo/bun_png/libwebp).
 ///     Profiling on M-series found ImageIO no faster: Huffman/inflate
 ///     dominate and aren't AMX-amenable, and ImageIO bottoms out in stock
 ///     libz vs our zlib-ng. Keeping these static also makes output bytes
@@ -273,7 +273,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
         Format::Webp => webp::decode(bytes, max_pixels),
         // Static codecs cover everything we ship; profiling on M-series showed
         // ImageIO is no faster (AppleJPEG ≈ libjpeg-turbo since Huffman is the
-        // bottleneck and isn't vectorisable; spng+zlib-ng beats ImageIO's
+        // bottleneck and isn't vectorisable; bun_png+zlib-ng beats ImageIO's
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
         // out of even that so behaviour is identical to Linux.
@@ -439,7 +439,7 @@ pub(crate) struct EncodeOptions {
     pub(crate) quality: u8,
     /// WebP only: emit lossless VP8L instead of lossy VP8.
     pub(crate) lossless: bool,
-    /// PNG only: zlib level 0–9. -1 = libspng default.
+    /// PNG only: zlib level 0–9. -1 = zlib's default.
     pub(crate) compression_level: i8,
     /// PNG only: quantize to ≤ `colors` and emit an indexed PNG.
     pub(crate) palette: bool,
@@ -476,8 +476,8 @@ impl Default for EncodeOptions {
 }
 
 /// Encoded output paired with the free function for its allocator. The C
-/// codecs each malloc internally (turbojpeg's allocator, libwebp's, libc for
-/// libspng); rather than dupe into the global allocator so JS can own it,
+/// codecs each malloc internally (turbojpeg's allocator, libwebp's); rather
+/// than dupe into the global allocator so JS can own it,
 /// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
 /// the matching free — one allocation, zero copies, for the final output.
 ///
@@ -518,7 +518,6 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
-    #[cfg(any(target_os = "macos", windows))]
     pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
         // SAFETY: Vec data ptr is non-null; len is valid.

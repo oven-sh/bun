@@ -120,6 +120,8 @@ unsafe extern "C" {
 
     pub fn inflateReset(stream: *mut zStream_struct) -> ReturnCode;
 
+    pub fn inflateValidate(stream: *mut zStream_struct, check: c_int) -> ReturnCode;
+
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
 }
 
@@ -768,6 +770,12 @@ impl DeflateEncoder {
         unsafe { deflateReset(self.strm.as_ptr()) }
     }
 
+    /// `deflateBound()`: room in which one `Finish` step over `source_len` bytes is sure to end the stream.
+    pub fn bound(&mut self, source_len: usize) -> usize {
+        // SAFETY: strm was initialized via deflateInit2_.
+        unsafe { deflateBound(self.strm.as_ptr(), source_len as uLong) as usize }
+    }
+
     /// One `deflate()` call writing into `out`'s spare capacity.
     ///
     /// Reserves at least `reserve` spare bytes in `out`, points
@@ -857,6 +865,12 @@ impl InflateDecoder {
             self.state = State::Uninitialized;
         }
         rc
+    }
+
+    /// `inflateValidate()`: whether the stream's check value (Adler-32 or CRC-32) is computed and compared.
+    pub fn set_validate(&mut self, check: bool) -> ReturnCode {
+        // SAFETY: strm was initialized via inflateInit2_.
+        unsafe { inflateValidate(self.strm.as_ptr(), c_int::from(check)) }
     }
 
     #[inline]

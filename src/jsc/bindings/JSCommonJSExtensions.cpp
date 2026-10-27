@@ -265,6 +265,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         mod,
         specifierWtfString,
         loaderType,
+        false,
         scope);
     RETURN_IF_EXCEPTION(scope, {});
     if (result == jsNumber(-1)) {

@@ -1491,7 +1491,12 @@ impl<'a> Package<'a> {
         None
     }
 
-    pub(crate) fn parse(specifier: &'a [u8], subpath_buf: &'a mut [u8]) -> Option<Package<'a>> {
+    /// `INSTANCE` is the `PATHS` of the `Resolver::load_node_modules` that calls. With a copy
+    /// per instance, each caller keeps this function inlined.
+    pub(crate) fn parse<const INSTANCE: bool>(
+        specifier: &'a [u8],
+        subpath_buf: &'a mut [u8],
+    ) -> Option<Package<'a>> {
         if specifier.is_empty() {
             return None;
         }

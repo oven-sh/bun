@@ -32,6 +32,8 @@ A file in `node_modules` belongs to the project that the `node_modules` director
 
 The first import that needs auto-install decides the project for the rest of the process.
 
+The `paths` option of [`require.resolve()`](https://nodejs.org/api/modules.html#requireresolverequest-options) only says where the search for `node_modules` directories starts. The file that makes the call is still the importing file: it decides whether auto-install is on and which project installs the package. Bun searches every directory in `paths` before it installs anything.
+
 ---
 
 ## Version resolution

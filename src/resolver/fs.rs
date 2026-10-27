@@ -241,8 +241,11 @@ impl Entry {
                     store_fd,
                 ) {
                     Ok(c) => self.cache.set(c),
-                    Err(_) => {
-                        self.need_stat.store(false, Ordering::Release);
+                    Err(err) => {
+                        // A `stat` that had no free descriptor runs again on the next call.
+                        if !crate::error::short_of_descriptors::note(err) {
+                            self.need_stat.store(false, Ordering::Release);
+                        }
                         return self.cache().kind;
                     }
                 }
@@ -255,6 +258,10 @@ impl Entry {
         self.cache().kind
     }
 
+    /// The real path that `cache` holds for this entry: the target of a link, or what a caller
+    /// stored with `set_cache_symlink`. Empty when it holds none. `None` when this call had no
+    /// free descriptor for the `stat`. The caller does not read the entry again to learn which
+    /// it was: another thread can have run the `stat` by then.
     ///
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global
@@ -263,7 +270,7 @@ impl Entry {
         &self,
         fs: *mut R,
         store_fd: bool,
-    ) -> &'static [u8] {
+    ) -> Option<&'static [u8]> {
         if self.need_stat.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
             // Relaxed: every write happens under `mutex`, which we hold.
@@ -278,16 +285,19 @@ impl Entry {
                     store_fd,
                 ) {
                     Ok(c) => self.cache.set(c),
-                    Err(_) => {
+                    Err(err) => {
+                        if crate::error::short_of_descriptors::note(err) {
+                            return None;
+                        }
                         self.need_stat.store(false, Ordering::Release);
-                        return b"";
+                        return Some(b"");
                     }
                 }
                 // See `Entry::kind`: Release-publish `cache` before the flag clear.
                 self.need_stat.store(false, Ordering::Release);
             }
         }
-        self.cache().symlink.as_bytes()
+        Some(self.cache().symlink.as_bytes())
     }
 }
 

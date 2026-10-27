@@ -51,6 +51,7 @@ unsafe extern "Rust" {
     ) -> Option<Dependency::Version>;
 }
 use crate::cache::Set as CacheSet;
+use crate::error::short_of_descriptors;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 
 /// `Dependency` namespace as the body spells it (`Dependency::Version` /
@@ -571,6 +572,9 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
+
+    /// `short_of_descriptors::mark()` at the start of the resolution in progress.
+    short_mark: u32,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -648,6 +652,7 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            short_mark: 0,
         }
     }
 
@@ -970,6 +975,7 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            short_mark: 0,
         }
     }
 
@@ -1084,6 +1090,25 @@ impl<'a> Resolver<'a> {
     // var tracing_start: i128 — unused; dropped.
 
     pub fn resolve_and_auto_install<'r>(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+    ) -> ResultUnion<'r> {
+        // A resolution that had no free descriptor for a directory or a file has a guess in
+        // it. That is not an answer: it fails with the error.
+        let mark = short_of_descriptors::mark();
+        let outer = core::mem::replace(&mut self.short_mark, mark);
+        let result = self.resolve_one(source_dir, import_path, kind, global_cache);
+        self.short_mark = outer;
+        match short_of_descriptors::since(mark) {
+            Some(err) if !matches!(result, ResultUnion::Failure(_)) => ResultUnion::Failure(err),
+            _ => result,
+        }
+    }
+
+    fn resolve_one<'r>(
         &mut self,
         source_dir: &[u8],
         import_path: &'r [u8],
@@ -1642,7 +1667,8 @@ impl<'a> Resolver<'a> {
             if let Some(query) = dir.get_entry(self.generation, name.filename) {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
-                let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                let known = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                let symlink_path = known.unwrap_or(b"");
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -1656,7 +1682,10 @@ impl<'a> Resolver<'a> {
                             bstr::BStr::new(symlink_path)
                         ));
                     }
+                // A link whose `stat` had no free descriptor was not followed. Its real path
+                // is not known, and is not taken to be below the real path of the directory.
                 } else if !dir.abs_real_path.is_empty()
+                    && known.is_some()
                     // When the directory is a symlink, we don't need to call getFdPath.
                     && let mut buf = bun_paths::path_buffer_pool::get()
                     && let Some(out_len) =
@@ -2911,6 +2940,8 @@ impl<'a> Resolver<'a> {
         // this is the magic!
         if global_cache.can_use(any_node_modules_folder)
             && self.use_package_manager()
+            // A directory that was not read can have the package.
+            && short_of_descriptors::since(self.short_mark).is_none()
             && let Some(esm_ref) = esm_.as_ref()
             && strings::is_npm_package_name(esm_ref.name)
         {
@@ -3564,7 +3595,16 @@ impl<'a> Resolver<'a> {
         // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
         // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
         let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
-        self.dir_info_uncached(
+        // Only a listing with `store_fd` keeps the descriptor. Without it, what
+        // `dir_info_uncached` opens has one descriptor more.
+        let dir_fd = if self.store_fd {
+            open_dir
+        } else {
+            open_dir.close();
+            FD::INVALID
+        };
+        let mark = short_of_descriptors::mark();
+        let filled = self.dir_info_uncached(
             dir_info_ptr,
             dir_entries_dir,
             // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
@@ -3575,9 +3615,16 @@ impl<'a> Resolver<'a> {
             // to check for a parent package.json
             None,
             allocators::NOT_FOUND,
-            open_dir,
+            dir_fd,
             Some(package_id),
-        )?;
+        );
+        // Nothing of the package is resolved from a guess. The resolution fails, as it does
+        // when the directory does not open, and the next one reads the package again.
+        if let Some(err) = short_of_descriptors::since(mark) {
+            self.dir_cache_mut().remove_result(dir_cache_info_result);
+            return Err(err);
+        }
+        filled?;
         // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
         Ok(Some(unsafe { DirInfoRef::from_raw(dir_info_ptr) }))
     }
@@ -4447,14 +4494,21 @@ impl<'a> Resolver<'a> {
         // mid-walk. Reach the RealFS via the `&'static` singleton accessor
         // instead of capturing a raw `*mut RealFS` (the read is `&self`-only).
         let close_dirs_store_fd = self.store_fd;
-        scopeguard::defer! {
+        // Closes what the walk has open. Returns whether there was something. With `store_fd`
+        // the listings keep their descriptors, until the process is near its limit.
+        let close_held_dirs = || -> bool {
             let n = open_dir_count.get();
-            if n > 0 && (!close_dirs_store_fd || Fs::FileSystem::get().fs.need_to_close_files()) {
-                let open_dirs = &bufs!(open_dirs)[0..n];
-                for open_dir in open_dirs {
-                    open_dir.close();
-                }
+            if n == 0 || (close_dirs_store_fd && !Fs::FileSystem::get().fs.need_to_close_files()) {
+                return false;
             }
+            for open_dir in &bufs!(open_dirs)[0..n] {
+                open_dir.close();
+            }
+            open_dir_count.set(0);
+            true
+        };
+        scopeguard::defer! {
+            close_held_dirs();
         }
 
         // We want to walk in a straight line from the topmost directory to the desired directory
@@ -4470,6 +4524,10 @@ impl<'a> Resolver<'a> {
         // - fts_open is not the fastest way to read directories. fts actually just uses readdir!!
         // - remember
         let mut _safe_path: Option<&'static [u8]> = None;
+        // A directory of this walk has a `DirInfo` with a guess in it: there was no free
+        // descriptor for a link, a package.json or a tsconfig.json of it. That `DirInfo`, and
+        // each one below it, is for this call only.
+        let mut guessed = false;
 
         // Start at the top.
         while queue_slice_len > 0 {
@@ -4535,6 +4593,8 @@ impl<'a> Resolver<'a> {
                     match open_req {
                         Ok(fd) => break 'open_dir fd,
                         Err(err) => {
+                            let err =
+                                Fs::file_system::RealFS::dir_open_error(queue_top_unsafe_path, err);
                             // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
                             // as if there is nothing there at all instead of causing an error due to
                             // the directory actually being a file. This is a workaround for situations
@@ -4564,17 +4624,31 @@ impl<'a> Resolver<'a> {
                                 );
                                 break 'open_dir FD::INVALID;
                             }
-                            let cached_dir_entry_result = rfs!()
-                                .entries
-                                .get_or_put(queue_top_unsafe_path)
-                                .expect("unreachable");
-                            // If we don't properly cache not found, then we repeatedly attempt to open the same directories,
-                            // which causes a perf trace that looks like this stupidity;
-                            //
-                            //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
-                            //   ...
-                            self.dir_cache_mut().mark_not_found(queue_top.result);
-                            rfs!().entries.mark_not_found(cached_dir_entry_result);
+                            // The listing of the directory is in the cache, and the step below
+                            // reads it: the descriptor was only needed for the files in it.
+                            if err.is_out_of_descriptors()
+                                && let Some(Fs::file_system::real_fs::EntriesOption::Entries(
+                                    listing,
+                                )) = rfs!().entries.get(queue_top_unsafe_path)
+                                && listing.generation >= self.generation
+                            {
+                                break 'open_dir FD::INVALID;
+                            }
+                            // The directory is there, and the process had no descriptor for
+                            // it: that is not kept.
+                            if !short_of_descriptors::note(err) {
+                                let cached_dir_entry_result = rfs!()
+                                    .entries
+                                    .get_or_put(queue_top_unsafe_path)
+                                    .expect("unreachable");
+                                // If we don't properly cache not found, then we repeatedly attempt to open the same directories,
+                                // which causes a perf trace that looks like this stupidity;
+                                //
+                                //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
+                                //   ...
+                                self.dir_cache_mut().mark_not_found(queue_top.result);
+                                rfs!().entries.mark_not_found(cached_dir_entry_result);
+                            }
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
@@ -4774,18 +4848,41 @@ impl<'a> Resolver<'a> {
             let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
                 .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
-            self.dir_info_uncached(
-                dir_info_ptr,
-                dir_path,
-                // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and outlives the resolver.
-                dir_entries_option,
-                queue_top.result,
-                cached_dir_entry_result.index,
-                parent_dir_ptr,
-                top_parent.index,
-                open_dir,
-                None,
-            )?;
+            // The directory is open for this step only. A step that had no free descriptor for
+            // a file of the directory runs once more, with the directory closed.
+            let mut dir_fd = open_dir;
+            let filled = loop {
+                let log = self.log_mut();
+                let logged = (log.msgs.len(), log.errors, log.warnings);
+                let mark = short_of_descriptors::mark();
+                let filled = self.dir_info_uncached(
+                    dir_info_ptr,
+                    dir_path,
+                    // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and outlives the resolver.
+                    dir_entries_option,
+                    queue_top.result,
+                    cached_dir_entry_result.index,
+                    parent_dir_ptr,
+                    top_parent.index,
+                    dir_fd,
+                    None,
+                );
+                let guess = short_of_descriptors::since(mark).is_some();
+                if !close_held_dirs() || !guess {
+                    guessed |= guess;
+                    break filled;
+                }
+                // Without what the first time counted and put in the log.
+                short_of_descriptors::rewind(mark);
+                let log = self.log_mut();
+                log.msgs.truncate(logged.0);
+                (log.errors, log.warnings) = (logged.1, logged.2);
+                dir_fd = FD::INVALID;
+            };
+            if guessed {
+                self.dir_cache_mut().remove_result(queue_top.result);
+            }
+            filled?;
 
             top_parent = queue_top.result;
 
@@ -6225,7 +6322,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        if self.care_about_bin_folder {
+        if self.care_about_bin_folder && fd.is_valid() {
             'append_bin_dir: {
                 if info.has_node_modules() {
                     if entries!().has_comptime_query(b"node_modules") {
@@ -6365,7 +6462,8 @@ impl<'a> Resolver<'a> {
 
                         // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
                         // rewrite inside `symlink()` is serialized on `Entry.mutex`.
-                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
+                        let known = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
+                        let mut symlink = known.unwrap_or(b"");
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6378,7 +6476,10 @@ impl<'a> Resolver<'a> {
                                 logs.add_note(buf);
                             }
                             info.abs_real_path = symlink;
-                        } else if !parent_.abs_real_path.is_empty()
+                        // A link whose `stat` had no free descriptor was not followed. Its real
+                        // path is not known, and is not taken to be below that of the parent.
+                        } else if known.is_some()
+                            && !parent_.abs_real_path.is_empty()
                             && let Some(joined) = self.fs_ref().abs_buf_checked(
                                 &[parent_.abs_real_path, base],
                                 bufs!(dir_info_uncached_filename),
@@ -6580,6 +6681,7 @@ impl<'a> Resolver<'a> {
                         ),
                     );
                 }
+                short_of_descriptors::note(err);
                 None
             }
         };
@@ -6622,6 +6724,7 @@ impl<'a> Resolver<'a> {
                                 bun_core::fmt::quote(shown_path)
                             ),
                         );
+                        short_of_descriptors::note(err);
                         break;
                     }
                 };
@@ -6717,8 +6820,15 @@ impl<'a> Resolver<'a> {
             {
                 path = joined.to_vec();
             }
+            let mark = short_of_descriptors::mark();
             let loaded = self.load_tsconfig(&path, FD::INVALID).ok().flatten();
-            self.opts.tsconfig_override_json = Some(loaded.map(Arc::from));
+            // A read with no free descriptor read nothing. It is not kept: the next
+            // resolution reads the file again.
+            if short_of_descriptors::since(mark).is_none() {
+                self.opts.tsconfig_override_json = Some(loaded.map(Arc::from));
+            } else {
+                return Some(loaded.map(Arc::from));
+            }
         }
         self.opts.tsconfig_override_json.clone()
     }

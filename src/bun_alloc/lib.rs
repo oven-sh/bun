@@ -2321,6 +2321,12 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
     }
+
+    /// [`remove`](Self::remove), for the key that gave `result`.
+    pub fn remove_result(&mut self, result: Result) -> bool {
+        let _guard = self.mutex.lock();
+        self.index.remove(&result.hash).is_some()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

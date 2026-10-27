@@ -1025,6 +1025,34 @@ pub mod fs {
             Ok(dir)
         }
 
+        /// An open that had no free descriptor did not look at the path. `stat` needs no
+        /// descriptor: this is the error that an open of `dir` has when one is free, or
+        /// `err` when `dir` is a directory.
+        #[inline]
+        pub(crate) fn dir_open_error(dir: &[u8], err: crate::Error) -> crate::Error {
+            if err.is_out_of_descriptors() {
+                return Self::dir_open_error_without_shortage(dir, err);
+            }
+            err
+        }
+
+        #[cold]
+        fn dir_open_error_without_shortage(dir: &[u8], err: crate::Error) -> crate::Error {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            if dir.len() >= buf.len() {
+                return err;
+            }
+            buf[..dir.len()].copy_from_slice(dir);
+            buf[dir.len()] = 0;
+            match bun_sys::exists_at_type(Fd::cwd(), ZStr::from_buf(&buf[..], dir.len())) {
+                Ok(bun_sys::ExistsAtType::Directory) => err,
+                Ok(bun_sys::ExistsAtType::File) => {
+                    crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
+                }
+                Err(stat_err) => stat_err.into(),
+            }
+        }
+
         /// Cache (or threadlocal-
         /// stash) an `EntriesOption::Err` for `dir` and hand back its address.
         fn read_directory_error(
@@ -1032,6 +1060,15 @@ pub mod fs {
             dir: &[u8],
             err: crate::Error,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
+            // The directory is there, and the next call opens it again.
+            if crate::error::short_of_descriptors::note(err) {
+                return Ok(temp_entries_option_write(EntriesOption::Err(
+                    dir_entry::Err {
+                        original_err: err,
+                        canonical_error: err,
+                    },
+                )));
+            }
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 self.entries.mark_not_found(get_or_put_result);
@@ -1118,7 +1155,9 @@ pub mod fs {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
-                    Err(err) => return self.read_directory_error(dir, err),
+                    Err(err) => {
+                        return self.read_directory_error(dir, Self::dir_open_error(dir, err));
+                    }
                 },
             };
 
@@ -1479,9 +1518,14 @@ pub mod fs {
                     let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir) {
                         Ok(h) => h,
                         Err(err) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err.into()).ok();
+                            let err = Self::dir_open_error(dir, err.into());
+                            // The listing of the earlier generation stays, and the
+                            // next call for this generation reads the directory again.
+                            if !err.is_out_of_descriptors() {
+                                // SAFETY: see above.
+                                unsafe { (*e_ptr).data.clear() };
+                            }
+                            return self.read_directory_error(dir, err).ok();
                         }
                     };
                     let _close_guard = scopeguard::guard(handle, |h| {

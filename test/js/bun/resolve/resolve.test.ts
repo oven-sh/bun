@@ -1,7 +1,19 @@
 import { pathToFileURL } from "bun";
-import { describe, expect, it, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isRoot,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -2255,3 +2267,551 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+// An open fails with EMFILE before it looks at the path. The resolver kept
+// what it then had: a directory that is not there, or a directory with no
+// package.json, no tsconfig.json and no link to follow. Now a resolution that
+// has no descriptor for something fails with the error, and nothing is kept.
+describe.concurrent("when the process is short of descriptors", () => {
+  // As root on musl, bun raises the descriptor limit at startup, to more
+  // descriptors than a script can open in the time of a test.
+  const canLimitDescriptors = !isWindows && !(isMusl && isRoot);
+
+  const packageWithMain = (name: string) => ({
+    [`${name}/package.json`]: JSON.stringify({ name: name.split("/").at(-1), version: "1.0.0", main: "real.js" }),
+    [`${name}/real.js`]: `globalThis.evaluated = (globalThis.evaluated ?? 0) + 1; module.exports = "the main of package.json";`,
+    [`${name}/index.js`]: `module.exports = "index.js, which is not the main";`,
+  });
+  const files = {
+    "package.json": JSON.stringify({ name: "root", version: "1.0.0" }),
+    // Opens files until `free` descriptors are left. Returns a function that closes them.
+    "take-descriptors.js": `
+      const { closeSync, openSync } = require("fs");
+      module.exports = free => {
+        const held = [];
+        for (;;) {
+          try {
+            held.push(openSync(__filename, "r"));
+          } catch (e) {
+            if (e.code !== "EMFILE") throw e;
+            break;
+          }
+        }
+        for (let i = 0; i < free; i++) closeSync(held.pop());
+        return () => {
+          for (const fd of held.splice(0)) closeSync(fd);
+        };
+      };
+    `,
+    // Resolves "specifier" with "free" descriptors left, then with none left, and again when
+    // every descriptor is free.
+    "resolve.js": `
+      const { join } = require("path");
+      const takeDescriptors = require("./take-descriptors.js");
+      const { warmUp, specifier, from, free } = JSON.parse(process.argv[2]);
+      const resolve = (specifier, from) => Bun.resolveSync(specifier, join(import.meta.dir, from));
+      const attempt = () => {
+        try {
+          return resolve(specifier, from);
+        } catch (e) {
+          return { error: e.message };
+        }
+      };
+      for (const [specifier, from] of warmUp) resolve(specifier, from);
+      const release = takeDescriptors(free);
+      const out = { inShortage: attempt() };
+      const releaseTheRest = takeDescriptors(0);
+      out.withNoneLeft = attempt();
+      releaseTheRest();
+      release();
+      out.afterwards = attempt();
+      console.log(JSON.stringify(out));
+    `,
+    // Loads each of "specifiers" with "free" descriptors left, and again when every descriptor is free.
+    "load.js": `
+      const { load, warmUp = [], specifiers, free } = JSON.parse(process.argv[2]);
+      const attempt = async specifier => {
+        try {
+          return load === "require" ? require(specifier) : (await import(specifier)).default;
+        } catch (e) {
+          return { code: e.code };
+        }
+      };
+      for (const specifier of warmUp) await attempt(specifier);
+      const release = require("./take-descriptors.js")(free);
+      const out = { inShortage: [], afterwards: [] };
+      for (const specifier of specifiers) out.inShortage.push(await attempt(specifier));
+      release();
+      for (const specifier of specifiers) out.afterwards.push(await attempt(specifier));
+      out.evaluated = globalThis.evaluated;
+      console.log(JSON.stringify(out));
+    `,
+    ...packageWithMain("node_modules/dep"),
+    ...packageWithMain("nest/node_modules/dep"),
+    ...packageWithMain("store/linked"),
+    ...packageWithMain("store/modules/only"),
+    "node_modules/other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
+    "node_modules/other/index.js": `module.exports = "other";`,
+    "nest/node_modules/other/package.json": JSON.stringify({ name: "other", version: "2.0.0" }),
+    "nest/node_modules/other/index.js": `module.exports = "other";`,
+    "node_modules/exports/package.json": JSON.stringify({ name: "exports", exports: "./e.js", main: "./m.js" }),
+    "node_modules/exports/e.js": `module.exports = "exports";`,
+    "node_modules/exports/m.js": `module.exports = "main";`,
+    "lib/deep/index.js": `module.exports = "deep";`,
+    "d1/d2/d3/d4/d5/index.js": `module.exports = "d5";`,
+    "ts/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }),
+    "ts/src/util.ts": `export default "util";`,
+    "linked-modules/sub/empty.js": "",
+    "store/plain/x.js": `module.exports = "x";`,
+  };
+
+  // No test writes in it, and each test is one process, so the tests share it.
+  let fixture: ReturnType<typeof tempDir> | undefined;
+  let root: string;
+  beforeAll(() => {
+    if (!canLimitDescriptors) return;
+    fixture = tempDir("resolver-few-descriptors", files);
+    root = realpathSync(String(fixture));
+    symlinkSync(join("..", "store", "linked"), join(root, "node_modules", "linked"));
+    symlinkSync(join("..", "store", "modules"), join(root, "linked-modules", "node_modules"));
+    symlinkSync(join("store", "plain"), join(root, "plain-link"));
+    symlinkSync(join("..", "..", "lib", "deep", "index.js"), join(root, "store", "plain", "link.js"));
+  });
+  afterAll(() => fixture?.[Symbol.dispose]());
+
+  // Runs bun in `cwd` with 256 descriptors. An argument that is not a string is JSON for the script.
+  // `stdout` is the JSON that the script prints, or the text of a script that did not get that far.
+  async function runWithFewDescriptors(cwd: string, args: (string | object)[], env: NodeJS.Dict<string> = {}) {
+    const argv = args.map(arg => (typeof arg === "string" ? arg : JSON.stringify(arg)));
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'ulimit -n 256 && exec "$0" "$@"', bunExe(), ...argv],
+      env: { ...bunEnv, ...env },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [text, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let stdout: unknown = text;
+    try {
+      stdout = JSON.parse(text);
+    } catch {}
+    return { stdout, stderr, exitCode };
+  }
+
+  const noDescriptor = { error: expect.stringContaining("EMFILE while resolving") };
+  it.skipIf(!canLimitDescriptors).each([
+    // With no free descriptor a directory does not open. The resolution fails with that.
+    {
+      name: "a package, with no descriptor",
+      lookup: { warmUp: [], specifier: "dep", from: ".", free: 0 },
+      inShortage: noDescriptor,
+      afterwards: "node_modules/dep/real.js",
+    },
+    {
+      name: "a directory, with no descriptor",
+      lookup: { warmUp: [], specifier: "./lib/deep", from: ".", free: 0 },
+      inShortage: noDescriptor,
+      afterwards: "lib/deep/index.js",
+    },
+    {
+      // Its record in "node_modules" does not say what the link names.
+      name: "a link to a package, with no descriptor",
+      lookup: { warmUp: [["other", "."]], specifier: "linked", from: ".", free: 0 },
+      inShortage: noDescriptor,
+      afterwards: "store/linked/real.js",
+    },
+    {
+      // The directory is in the cache, and the link in it is not followed.
+      name: "a link to a file, with no descriptor",
+      lookup: { warmUp: [["./plain-link/x.js", "."]], specifier: "./plain-link/link.js", from: ".", free: 0 },
+      inShortage: noDescriptor,
+      afterwards: "lib/deep/index.js",
+    },
+    {
+      // The copy that is further up is in the cache. It is not the answer: the nearest one
+      // is there, and does not open.
+      name: "the nearest of two copies of a package, with no descriptor",
+      lookup: { warmUp: [["dep", "."]], specifier: "dep", from: "nest", free: 0 },
+      inShortage: noDescriptor,
+      afterwards: "nest/node_modules/dep/real.js",
+    },
+    {
+      // "nest/node_modules/exports" is not there. A failed open does not say so, and a
+      // `stat` does: the package that is further up is the answer, as with a descriptor.
+      name: "a package that only a directory further up has, with no descriptor",
+      lookup: {
+        warmUp: [
+          ["exports", "."],
+          ["other", "nest"],
+        ],
+        specifier: "exports",
+        from: "nest",
+        free: 0,
+      },
+      inShortage: "node_modules/exports/e.js",
+      afterwards: "node_modules/exports/e.js",
+    },
+    // One descriptor is enough, when the directory that was just listed does not keep it.
+    {
+      name: "a package, with one descriptor",
+      lookup: { warmUp: [], specifier: "dep", from: ".", free: 1 },
+      inShortage: "node_modules/dep/real.js",
+      afterwards: "node_modules/dep/real.js",
+    },
+    {
+      name: "a package with exports, with two descriptors",
+      lookup: { warmUp: [], specifier: "exports", from: ".", free: 2 },
+      inShortage: "node_modules/exports/e.js",
+      afterwards: "node_modules/exports/e.js",
+    },
+    {
+      name: "the nearest of two copies of a package, with one descriptor",
+      lookup: {
+        warmUp: [
+          ["dep", "."],
+          ["other", "nest"],
+        ],
+        specifier: "dep",
+        from: "nest",
+        free: 1,
+      },
+      inShortage: "nest/node_modules/dep/real.js",
+      afterwards: "nest/node_modules/dep/real.js",
+    },
+    {
+      name: "a link to a package, with one descriptor",
+      lookup: { warmUp: [["other", "."]], specifier: "linked", from: ".", free: 1 },
+      inShortage: "store/linked/real.js",
+      afterwards: "store/linked/real.js",
+    },
+    {
+      name: "a package below a link to node_modules, with one descriptor",
+      lookup: { warmUp: [], specifier: "only", from: "linked-modules/sub", free: 1 },
+      inShortage: "store/modules/only/real.js",
+      afterwards: "store/modules/only/real.js",
+    },
+    {
+      name: "a path of tsconfig.json, with one descriptor",
+      lookup: { warmUp: [], specifier: "@/util", from: "ts/src", free: 1 },
+      inShortage: "ts/src/util.ts",
+      afterwards: "ts/src/util.ts",
+    },
+    {
+      name: "a file below a link, with one descriptor",
+      lookup: { warmUp: [], specifier: "./plain-link/x.js", from: ".", free: 1 },
+      inShortage: "store/plain/x.js",
+      afterwards: "store/plain/x.js",
+    },
+    {
+      name: "a directory five levels down, with one descriptor",
+      lookup: { warmUp: [], specifier: "./d1/d2/d3/d4/d5", from: ".", free: 1 },
+      inShortage: "d1/d2/d3/d4/d5/index.js",
+      afterwards: "d1/d2/d3/d4/d5/index.js",
+    },
+  ])("Bun.resolveSync of $name", async ({ lookup, inShortage, afterwards }) => {
+    const found = (answer: string | object) => (typeof answer === "string" ? join(root, answer) : answer);
+    expect(await runWithFewDescriptors(root, ["--no-install", "resolve.js", lookup])).toEqual({
+      // With none left the answer is the same: from the cache, or the error again.
+      stdout: { inShortage: found(inShortage), withNoneLeft: found(inShortage), afterwards: found(afterwards) },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  describe.each([
+    { load: "require", code: "MODULE_NOT_FOUND" },
+    { load: "import", code: "ERR_MODULE_NOT_FOUND" },
+  ])("$load()", ({ load, code }) => {
+    it.skipIf(!canLimitDescriptors)("of a package, with no descriptor", async () => {
+      const loads = { load, specifiers: ["dep"], free: 0 };
+      expect(await runWithFewDescriptors(root, ["--no-install", "load.js", loads])).toEqual({
+        stdout: { inShortage: [{ code }], afterwards: ["the main of package.json"], evaluated: 1 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Auto-install is on. A lookup that takes the project for a directory with no
+    // node_modules asks the registry for the package.
+    it.skipIf(!canLimitDescriptors)(
+      "of a package that is not installed and of one that is, with one descriptor",
+      async () => {
+        using cache = tempDir("resolver-few-descriptors-cache", {});
+        const requests: string[] = [];
+        await using registry = Bun.serve({
+          port: 0,
+          fetch(request) {
+            requests.push(request.url);
+            return new Response("{}", { status: 404 });
+          },
+        });
+        const loads = { load, specifiers: ["not-installed", "dep"], free: 1 };
+        const env = { BUN_CONFIG_REGISTRY: registry.url.href, BUN_INSTALL_CACHE_DIR: String(cache) };
+        expect({ ...(await runWithFewDescriptors(root, ["load.js", loads], env)), requests }).toEqual({
+          stdout: {
+            inShortage: [{ code }, "the main of package.json"],
+            afterwards: [{ code }, "the main of package.json"],
+            evaluated: 1,
+          },
+          stderr: "",
+          exitCode: 0,
+          requests: [],
+        });
+      },
+    );
+  });
+
+  // A build reads a directory again when it is in a later generation than the build that
+  // listed it, and the bundler starts a generation when no build waits. So the script
+  // builds with every descriptor taken until a build had to read "src/sub" again.
+  it.skipIf(!canLimitDescriptors)(
+    "Bun.build and Bun.resolveSync after a build that could not read a directory again",
+    async () => {
+      using dir = tempDir("resolver-few-descriptors-build", {
+        "take-descriptors.js": files["take-descriptors.js"],
+        "build.js": `
+          const { readFileSync } = require("fs");
+          const { join } = require("path");
+          const takeDescriptors = require("./take-descriptors.js");
+          const src = join(import.meta.dir, "src");
+          const source = readFileSync(join(src, "entry.js"), "utf8");
+          let release;
+          const build = async () => {
+            const result = await Bun.build({
+              entrypoints: [join(src, "entry.js")],
+              throw: false,
+              plugins: [
+                {
+                  name: "take every descriptor",
+                  setup(builder) {
+                    builder.onLoad({ filter: /entry\\.js$/ }, () => {
+                      release?.();
+                      release = takeDescriptors(0);
+                      return { contents: source, loader: "js" };
+                    });
+                  },
+                },
+              ],
+            });
+            release?.();
+            return result.success ? "built" : result.logs.map(log => log.message);
+          };
+          const out = { before: await Bun.build({ entrypoints: [join(src, "entry.js")] }).then(() => "built") };
+          for (let builds = 0; builds < 200; builds++) {
+            out.withoutDescriptors = await build();
+            if (out.withoutDescriptors.some?.(message => message.startsWith("Cannot read directory"))) break;
+          }
+          out.resolved = Bun.resolveSync("./dir", src);
+          out.afterwards = await Bun.build({ entrypoints: [join(src, "entry.js")] }).then(() => "built");
+          console.log(JSON.stringify(out));
+        `,
+        "src/entry.js": `import { a } from "./sub/a.js";\nimport b from "./dir";\nconsole.log(a, b);`,
+        "src/sub/a.js": `export const a = "a";`,
+        "src/dir/index.js": `export default "b";`,
+      });
+      const root = realpathSync(String(dir));
+      expect(await runWithFewDescriptors(root, ["build.js"])).toEqual({
+        stdout: {
+          before: "built",
+          withoutDescriptors: expect.arrayContaining([`Cannot read directory "${join(root, "src", "sub")}": EMFILE`]),
+          resolved: join(root, "src", "dir", "index.js"),
+          afterwards: "built",
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The first build lists "src" and "src/a". The next two meet the link and the directory
+  // below it, and the package, with two descriptors: one for the resolver, and one that
+  // another thread of the build can have for a moment. Each build reads one module.
+  it.skipIf(!canLimitDescriptors)("Bun.build through a link and of a package, with two descriptors", async () => {
+    using dir = tempDir("resolver-few-descriptors-link", {
+      "take-descriptors.js": files["take-descriptors.js"],
+      "build.js": `
+        const { join } = require("path");
+        const takeDescriptors = require("./take-descriptors.js");
+        const entry = join(import.meta.dir, "src", "a", "entry.js");
+        // The path that the bundle gives for each module, or the errors of the build.
+        const modules = async result =>
+          result.success
+            ? (await result.outputs[0].text()).match(/^\\/\\/ .*\\.js$/gm)
+            : result.logs.map(log => log.message);
+        const build = async (contents, free) => {
+          let release;
+          const result = await Bun.build({
+            entrypoints: [entry],
+            throw: false,
+            plugins: [
+              {
+                name: "take descriptors",
+                setup(builder) {
+                  builder.onLoad({ filter: /entry\\.js$/ }, () => {
+                    if (free !== undefined) release = takeDescriptors(free);
+                    return { contents, loader: "js" };
+                  });
+                },
+              },
+            ],
+          });
+          release?.();
+          return modules(result);
+        };
+        const out = { before: await build("") };
+        out.link = await build('import x from "../linked/deep/x.js"; console.log(x);', 2);
+        out.package = await build('import dep from "dep"; console.log(dep);', 2);
+        out.afterwards = await modules(await Bun.build({ entrypoints: [entry], throw: false }));
+        console.log(JSON.stringify(out));
+      `,
+      "src/a/entry.js": `import x from "../linked/deep/x.js";\nimport dep from "dep";\nconsole.log(x, dep);`,
+      "store/linked/deep/x.js": `export default "x";`,
+      ...packageWithMain("node_modules/dep"),
+    });
+    const root = realpathSync(String(dir));
+    symlinkSync(join("..", "store", "linked"), join(root, "src", "linked"));
+    expect(await runWithFewDescriptors(root, ["build.js"])).toEqual({
+      stdout: {
+        before: ["// src/a/entry.js"],
+        link: ["// store/linked/deep/x.js", "// src/a/entry.js"],
+        package: ["// node_modules/dep/real.js", "// src/a/entry.js"],
+        afterwards: ["// node_modules/dep/real.js", "// store/linked/deep/x.js", "// src/a/entry.js"],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The project has no node_modules, so auto-install answers for "cached", from the
+  // install cache, where an earlier process put it.
+  it.skipIf(!canLimitDescriptors)("require() of a package in the install cache, with one descriptor", async () => {
+    const cached = packageWithMain("package");
+    cached["package/package.json"] = JSON.stringify({ name: "cached", version: "1.0.0", main: "real.js" });
+    const tarball = await new Bun.Archive(cached, { compress: "gzip" }).bytes();
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/cached/-/cached-1.0.0.tgz") return new Response(tarball);
+        if (pathname !== "/cached") return new Response("{}", { status: 404 });
+        const dist = { tarball: `${registry.url}cached/-/cached-1.0.0.tgz` };
+        return Response.json({
+          name: "cached",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name: "cached", version: "1.0.0", dist } },
+        });
+      },
+    });
+    using dir = tempDir("resolver-few-descriptors-install-cache", {
+      "take-descriptors.js": files["take-descriptors.js"],
+      "load.js": files["load.js"],
+    });
+    using cache = tempDir("resolver-few-descriptors-cache", {});
+    const env = { BUN_CONFIG_REGISTRY: registry.url.href, BUN_INSTALL_CACHE_DIR: String(cache) };
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `console.log(require("cached"))`],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "the main of package.json\n", stderr: "", exitCode: 0 });
+    }
+    // The request for a package that the registry does not have starts the package manager
+    // before the descriptors are taken, and leaves no work for another thread.
+    const loads = { load: "require", warmUp: ["absent"], specifiers: ["cached"], free: 1 };
+    expect(await runWithFewDescriptors(String(dir), ["load.js", loads], env)).toEqual({
+      stdout: { inShortage: ["the main of package.json"], afterwards: ["the main of package.json"], evaluated: 1 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // With one descriptor left, the walk closes the directory that it has open, to read the
+  // package.json in it. Here another thread can take that descriptor first. A resolution
+  // that has no descriptor for something is not an answer: it is right, or it fails.
+  it.skipIf(!canLimitDescriptors)("Bun.resolveSync while another thread opens and closes a file", async () => {
+    const links = 64;
+    using dir = tempDir("resolver-few-descriptors-threads", {
+      "take-descriptors.js": files["take-descriptors.js"],
+      // Has a descriptor for half of the time.
+      "open-and-close.js": `
+        const { closeSync, openSync } = require("fs");
+        onmessage = ({ data }) => {
+          const state = new Int32Array(data);
+          postMessage("ready");
+          Atomics.wait(state, 0, 0);
+          while (Atomics.load(state, 0) === 1) {
+            try {
+              const fd = openSync(__filename, "r");
+              for (let i = 0; i < 300; i++);
+              closeSync(fd);
+            } catch {}
+            if (Atomics.compareExchange(state, 1, 0, 1) === 0) Atomics.notify(state, 1);
+            for (let i = 0; i < 300; i++);
+          }
+        };
+      `,
+      // Resolves each link, and a path of its "exports", with one descriptor left, and
+      // again when every descriptor is free.
+      "resolve-links.js": `
+        const { relative } = require("path");
+        const takeDescriptors = require("./take-descriptors.js");
+        // [0]: 1 tells the other thread to open and close, 2 to stop. [1]: 1 when it does.
+        const state = new Int32Array(new SharedArrayBuffer(8));
+        const worker = new Worker(import.meta.dir + "/open-and-close.js");
+        const ready = new Promise(resolve => (worker.onmessage = resolve));
+        worker.postMessage(state.buffer);
+        await ready;
+        const right = { "": "store/package/e.js", "/sub": "store/package/lib/sub-real.js" };
+        // The answers that are not the right file.
+        const resolveEach = () =>
+          Array.from({ length: ${links * 2} }, (_, i) => {
+            const path = i % 2 ? "/sub" : "";
+            try {
+              const answer = relative(import.meta.dir, Bun.resolveSync("link-" + (i >> 1) + path, import.meta.dir));
+              return answer === right[path] ? [] : [answer];
+            } catch (e) {
+              return [e.message];
+            }
+          }).flat();
+        const release = takeDescriptors(1);
+        Atomics.store(state, 0, 1);
+        Atomics.notify(state, 0);
+        Atomics.wait(state, 1, 0);
+        const inShortage = resolveEach();
+        Atomics.store(state, 0, 2);
+        release();
+        const afterwards = resolveEach();
+        worker.terminate();
+        console.log(
+          JSON.stringify({
+            wrongInShortage: inShortage.filter(answer => !answer.startsWith("EMFILE while resolving package 'link-")),
+            afterwards,
+          }),
+        );
+      `,
+      "store/package/package.json": JSON.stringify({
+        name: "package",
+        exports: { ".": "./e.js", "./sub": "./lib/sub-real.js" },
+        main: "./m.js",
+      }),
+      "store/package/e.js": `module.exports = "exports";`,
+      "store/package/m.js": `module.exports = "main";`,
+      "store/package/index.js": `module.exports = "index.js";`,
+      "store/package/sub.js": `module.exports = "a file that the package does not export";`,
+      "store/package/lib/sub-real.js": `module.exports = "sub";`,
+      node_modules: {},
+    });
+    const root = realpathSync(String(dir));
+    for (let i = 0; i < links; i++)
+      symlinkSync(join("..", "store", "package"), join(root, "node_modules", `link-${i}`));
+    expect(await runWithFewDescriptors(root, ["--no-install", "resolve-links.js"])).toEqual({
+      stdout: { wrongInShortage: [], afterwards: [] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

@@ -278,10 +278,6 @@ pub use parse_task::ParseTask;
 pub use thread_pool::{ThreadPool, Worker};
 /// See `transpiler`.
 pub use transpiler::Transpiler;
-pub enum AdditionalFile {
-    SourceIndex(u32),
-    OutputFile(u32),
-}
 
 /// `bun_ast::Index` — source-index newtype, re-exported for crate-wide use.
 pub(crate) use bun_ast::{Index, IndexInt};

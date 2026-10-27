@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -451,4 +452,158 @@ describe("bundler", () => {
       expect(exitCode).toBe(0);
     });
   }
+});
+
+// A chunk prints the output path of each asset that it holds, and that path has
+// the hash of the asset's bytes. When those bytes change, the chunk needs a new
+// [hash] too.
+describe("naming/ChunkHashCoversAssetPath", () => {
+  const fixture = {
+    "entry.js": `import logo from "./logo.png";\nconsole.log(logo);`,
+    "a.js": `import { logo } from "./shared.js";\nconsole.log("a", logo);`,
+    "b.js": `import { logo } from "./shared.js";\nconsole.log("b", logo);`,
+    "shared.js": `import logo from "./logo.png";\nexport { logo };`,
+    "no-asset.js": `console.log("no asset");`,
+    "style.css": `body { background: url("./logo.png"); }`,
+    "index.html": `<link rel="stylesheet" href="./style.css"><img src="./logo.png">`,
+  };
+  const hashed = "[name]-[hash].[ext]";
+  const withoutHash = (name: string) => name.replace(/-[a-z0-9]+(?=\.\w+$)/, "");
+
+  // `first` and `second` are the outputs of two builds that differ only in the bytes of logo.png.
+  // `unchanged` are the outputs that do not hold the asset. Only they keep their names.
+  function expectNewNames(
+    first: Record<string, string>,
+    second: Record<string, string>,
+    outputs: string[],
+    unchanged: string[],
+  ) {
+    expect(Object.keys(first).map(withoutHash).sort()).toEqual(outputs);
+    expect(Object.keys(second).map(withoutHash).sort()).toEqual(outputs);
+    const kept = Object.keys(first).filter(name => name in second);
+    expect(kept.filter(name => first[name] !== second[name])).toEqual([]);
+    expect(kept.map(withoutHash).sort()).toEqual(unchanged);
+  }
+
+  const onLoadFile = (bytes: Buffer): Bun.BunPlugin => ({
+    name: "onLoad file",
+    setup(builder) {
+      builder.onLoad({ filter: /\.png$/ }, () => ({ contents: bytes, loader: "file" }));
+    },
+  });
+  const onResolvePath = (): Bun.BunPlugin => ({
+    name: "onResolve path",
+    setup(builder) {
+      builder.onResolve({ filter: /\.png$/ }, args => ({ path: join(dirname(args.importer), args.path) }));
+    },
+  });
+  const onResolveNothing = (): Bun.BunPlugin => ({
+    name: "onResolve nothing",
+    setup(builder) {
+      builder.onResolve({ filter: /\.png$/ }, () => undefined);
+    },
+  });
+
+  // A stylesheet inlines an asset under 128 KB as a data URL. Above that it prints the path.
+  const cases: {
+    asset: string;
+    entrypoints: string[];
+    plugin?: (bytes: Buffer) => Bun.BunPlugin;
+    splitting?: boolean;
+    kilobytes?: number;
+    outputs: string[];
+    unchanged?: string[];
+  }[] = [
+    { asset: "imported", entrypoints: ["entry.js"], outputs: ["entry.js", "logo.png"] },
+    {
+      asset: "the result of an onLoad plugin",
+      entrypoints: ["entry.js"],
+      plugin: onLoadFile,
+      outputs: ["entry.js", "logo.png"],
+    },
+    {
+      asset: "resolved by an onResolve plugin",
+      entrypoints: ["entry.js"],
+      plugin: onResolvePath,
+      outputs: ["entry.js", "logo.png"],
+    },
+    {
+      asset: "left to the resolver by an onResolve plugin",
+      entrypoints: ["entry.js"],
+      plugin: onResolveNothing,
+      outputs: ["entry.js", "logo.png"],
+    },
+    {
+      asset: "an entry point",
+      entrypoints: ["logo.png", "entry.js", "no-asset.js"],
+      outputs: ["entry.js", "logo.js", "logo.png", "no-asset.js"],
+      unchanged: ["no-asset.js"],
+    },
+    {
+      asset: "an entry point, and a path in a stylesheet",
+      entrypoints: ["logo.png", "style.css"],
+      kilobytes: 200,
+      outputs: ["logo.js", "logo.png", "style.css"],
+    },
+    {
+      asset: "an entry point, and a data URL in a stylesheet",
+      entrypoints: ["logo.png", "style.css"],
+      kilobytes: 1,
+      outputs: ["logo.js", "logo.png", "style.css"],
+    },
+    {
+      asset: "an entry point, and the src of an HTML page",
+      entrypoints: ["logo.png", "index.html"],
+      kilobytes: 200,
+      outputs: ["chunk.css", "chunk.js", "index.html", "logo.js", "logo.png"],
+    },
+    {
+      asset: "an entry point, and in a chunk that two entry points share",
+      entrypoints: ["logo.png", "a.js", "b.js", "no-asset.js"],
+      splitting: true,
+      outputs: ["a.js", "b.js", "chunk.js", "logo.js", "logo.png", "no-asset.js"],
+      unchanged: ["no-asset.js"],
+    },
+  ];
+
+  for (const { asset, entrypoints, plugin, splitting = false, kilobytes = 1, outputs, unchanged = [] } of cases) {
+    test.concurrent(`the asset is ${asset}`, async () => {
+      using dir = tempDir("naming-chunk-hash-asset", fixture);
+      const build = async (fill: string) => {
+        const bytes = Buffer.alloc(kilobytes * 1024, fill);
+        writeFileSync(join(String(dir), "logo.png"), bytes);
+        const result = await Bun.build({
+          entrypoints: entrypoints.map(file => join(String(dir), file)),
+          naming: { entry: hashed, chunk: "chunk-[hash].[ext]", asset: hashed },
+          splitting,
+          plugins: plugin ? [plugin(bytes)] : [],
+        });
+        const files: Record<string, string> = {};
+        for (const output of result.outputs) files[basename(output.path)] = await output.text();
+        return files;
+      };
+      expectNewNames(await build("A"), await build("B"), outputs, unchanged);
+    });
+  }
+
+  test.concurrent("the asset is an entry point of `bun build`", async () => {
+    using dir = tempDir("naming-chunk-hash-asset-cli", fixture);
+    const build = async (fill: string) => {
+      writeFileSync(join(String(dir), "logo.png"), Buffer.alloc(1024, fill));
+      const outdir = join(String(dir), "out-" + fill);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./entry.js", "./logo.png", "--outdir", outdir, "--entry-naming", hashed],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const files: Record<string, string> = {};
+      for (const name of readdirSync(outdir)) files[name] = readFileSync(join(outdir, name), "latin1");
+      return files;
+    };
+    expectNewNames(await build("A"), await build("B"), ["entry.js", "logo.js", "logo.png"], []);
+  });
 });

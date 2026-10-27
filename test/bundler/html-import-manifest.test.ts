@@ -599,6 +599,62 @@ console.log("About manifest:", aboutHtml);
     expect(htmlA.headers.etag).not.toBe(htmlB.headers.etag);
   });
 
+  // The same for an asset of the page: the HTML prints the asset's output path,
+  // so its etag must change with that path, whichever way the asset came in.
+  test.each<[string, ((bytes: Buffer) => Bun.BunPlugin) | undefined]>([
+    ["imported", undefined],
+    [
+      "left to the resolver by an onResolve plugin",
+      () => ({
+        name: "onResolve nothing",
+        setup(builder) {
+          builder.onResolve({ filter: /\.png$/ }, () => undefined);
+        },
+      }),
+    ],
+    [
+      "the result of an onLoad plugin",
+      bytes => ({
+        name: "onLoad file",
+        setup(builder) {
+          builder.onLoad({ filter: /\.png$/ }, () => ({ contents: bytes, loader: "file" }));
+        },
+      }),
+    ],
+  ])("html-import/etag-changes-with-referenced-asset (the asset is %s)", async (_, plugin) => {
+    await using dir = tempDir("html-etag-asset", {
+      "server.ts": `import m from "./index.html"; console.log(JSON.stringify(m));`,
+      "index.html": `<!doctype html><img src="./logo.png"><script type="module" src="./app.ts"></script>`,
+      "app.ts": `console.log(1);`,
+    });
+
+    async function buildAndReadManifest(fill: string) {
+      const bytes = Buffer.alloc(1024, fill);
+      writeFileSync(join(dir, "logo.png"), bytes);
+      const out = join(dir, "out");
+      const r = await Bun.build({
+        entrypoints: [join(dir, "server.ts")],
+        outdir: out,
+        target: "bun",
+        plugins: plugin ? [plugin(bytes)] : [],
+      });
+      expect(r.success).toBe(true);
+      const js = readFileSync(join(out, "server.js"), "utf8");
+      const m = js.match(/__jsonParse\("(.+?)"\)/s)!;
+      const { files }: Manifest = JSON.parse(JSON.parse('"' + m[1] + '"'));
+      const find = (loader: string) => files.find(f => f.loader === loader)!;
+      return { html: find("html"), js: find("js"), asset: find("file") };
+    }
+
+    const a = await buildAndReadManifest("A");
+    const b = await buildAndReadManifest("B");
+
+    expect(a.asset.path).not.toBe(b.asset.path);
+    expect(a.js.path).toBe(b.js.path);
+    expect(a.html.path).toBe(b.html.path);
+    expect(a.html.headers.etag).not.toBe(b.html.headers.etag);
+  });
+
   // The manifest JSON is spliced into the chunk in place of a 25-byte
   // placeholder after the source map was generated, so the map has to be
   // shifted by the size difference. With whitespace minified, the rest of the

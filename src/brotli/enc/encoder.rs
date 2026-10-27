@@ -564,6 +564,7 @@ fn write_meta_block(
     Ok(())
 }
 
+/// Completes `params.dist`, which has `NPOSTFIX` and `NDIRECT` as they were asked for.
 fn choose_distance_params(params: &mut EncoderParams) {
     let mut distance_postfix_bits = 0;
     let mut num_direct_distance_codes = 0;
@@ -777,12 +778,7 @@ impl Encoder {
     }
 
     fn remaining_input_block_size(&self) -> usize {
-        let delta = self.unprocessed_input_size();
-        let block_size = self.input_block_size();
-        if delta >= block_size as u64 {
-            return 0;
-        }
-        block_size - delta as usize
+        (self.input_block_size() as u64).saturating_sub(self.unprocessed_input_size()) as usize
     }
 
     fn ensure_initialized(&mut self) -> Fallible {
@@ -988,7 +984,7 @@ impl Encoder {
         storage.write_at(0, &self.last_bytes.to_le_bytes())?;
         let mut bw = BitWriter::new(storage, usize::from(self.last_bytes_bits))?;
         write_meta_block(
-            self.ringbuffer.buffer(),
+            data,
             mask as usize,
             self.last_flush_pos,
             meta_block_size,

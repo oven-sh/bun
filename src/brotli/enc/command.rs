@@ -5,7 +5,7 @@ use super::params::DistanceParams;
 use crate::common::constants::NUM_DISTANCE_SHORT_CODES;
 
 /// A distance symbol in the low 10 bits and the number of its extra bits in the high 6.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct DistancePrefix(u16);
 
 impl DistancePrefix {
@@ -107,7 +107,7 @@ fn length_code(insert_len: usize, copy_len: usize, use_last_distance: bool) -> u
     )
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct Command {
     pub(crate) insert_len: u32,
     /// The copy length in the low 25 bits. In the high 7, what to add to it for the length that is encoded, which differs

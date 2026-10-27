@@ -5,7 +5,7 @@ use core::slice::SliceIndex;
 use bun_core::AllocError;
 
 /// An index or a length that the algorithm keeps in range was out of range. No input should be able to cause it.
-/// The decoder reports it as [`crate::DecoderErrorCode::Unreachable`] and the encoder as a failed call.
+/// The decoder reports it as [`crate::DecoderErrorCode::Unreachable`] and the encoder as [`crate::EncoderError::Internal`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Bug;
 

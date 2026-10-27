@@ -9,10 +9,10 @@ use crate::util::{Bug, Checked, SliceExt};
 /// A node of a Huffman tree.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct HuffmanTree {
-    pub(crate) total_count: u32,
+    total_count: u32,
     /// Negative for a leaf.
-    pub(crate) index_left: i16,
-    pub(crate) index_right_or_value: i16,
+    index_left: i16,
+    index_right_or_value: i16,
 }
 
 impl HuffmanTree {

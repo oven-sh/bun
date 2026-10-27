@@ -155,11 +155,12 @@ pub(crate) fn build_meta_block(
         literal_context_lut = Some(context_lut(literal_context_mode));
     }
 
+    // One histogram for each block type and context, to be clustered.
     let literal_histograms_size = literal_split.num_types * literal_context_multiplier;
-    let mut literal_histograms = try_vec(HistogramLiteral::new(), literal_histograms_size)?;
+    let mut all_literal_histograms = try_vec(HistogramLiteral::new(), literal_histograms_size)?;
 
     let distance_histograms_size = distance_split.num_types << DISTANCE_CONTEXT_BITS;
-    let mut distance_histograms = try_vec(HistogramDistance::new(), distance_histograms_size)?;
+    let mut all_distance_histograms = try_vec(HistogramDistance::new(), distance_histograms_size)?;
 
     let mut command_histograms = try_vec(HistogramCommand::new(), command_split.num_types)?;
 
@@ -174,13 +175,14 @@ pub(crate) fn build_meta_block(
         prev_byte,
         prev_byte2,
         literal_context_lut,
-        &mut literal_histograms,
+        &mut all_literal_histograms,
         &mut command_histograms,
-        &mut distance_histograms,
+        &mut all_distance_histograms,
     )?;
 
     let mut literal_context_map = try_zeroed(literal_split.num_types << LITERAL_CONTEXT_BITS)?;
-    let literal_histograms = cluster_histograms(&literal_histograms, &mut literal_context_map)?;
+    let literal_histograms = cluster_histograms(&all_literal_histograms, &mut literal_context_map)?;
+    drop(all_literal_histograms);
 
     if params.disable_literal_context_modeling {
         // So far there is one entry for each block type. Give all the contexts of the type that entry.
@@ -193,7 +195,8 @@ pub(crate) fn build_meta_block(
     }
 
     let mut distance_context_map = try_zeroed(distance_histograms_size)?;
-    let distance_histograms = cluster_histograms(&distance_histograms, &mut distance_context_map)?;
+    let distance_histograms =
+        cluster_histograms(&all_distance_histograms, &mut distance_context_map)?;
     Ok((
         MetaBlockSplit {
             literal_split,

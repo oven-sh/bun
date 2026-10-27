@@ -20,8 +20,11 @@
 )]
 
 mod decode;
+mod encode;
 mod error;
+mod lanes;
 mod tables;
 
 pub use decode::{ColorSpace, Decoder, PixelFormat, Warning};
+pub use encode::{EncodeOptions, encode};
 pub use error::{Error, Result};

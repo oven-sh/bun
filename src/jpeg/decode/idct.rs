@@ -8,6 +8,7 @@
 //! - The other sizes ran as C with 64-bit `long`.
 
 use super::Block;
+use crate::lanes::{I16x8, add16, add32, descale, madd, mul16, sub16, sub32, transpose, widen_shl};
 use core::ops::{Add, Mul, Shl, Sub};
 
 const CONST_BITS: u32 = 13;
@@ -32,89 +33,10 @@ fn rows<T>(block: &[T; 64]) -> &[[T; 8]] {
     block.as_chunks::<8>().0
 }
 
-// ---- Eight lanes at a time.
-
-type I16x8 = [i16; 8];
-type I32x8 = [i32; 8];
-
-#[inline(always)]
-fn zip<A: Copy, B: Copy, C: Copy + Default, const N: usize>(
-    a: [A; N],
-    b: [B; N],
-    f: impl Fn(A, B) -> C,
-) -> [C; N] {
-    let mut out = [C::default(); N];
-    for ((out, a), b) in out.iter_mut().zip(a).zip(b) {
-        *out = f(a, b);
-    }
-    out
-}
-
-/// pmullw
-#[inline(always)]
-fn mul16(a: I16x8, b: I16x8) -> I16x8 {
-    zip(a, b, i16::wrapping_mul)
-}
-
-/// paddw
-#[inline(always)]
-fn add16(a: I16x8, b: I16x8) -> I16x8 {
-    zip(a, b, i16::wrapping_add)
-}
-
-/// psubw
-#[inline(always)]
-fn sub16(a: I16x8, b: I16x8) -> I16x8 {
-    zip(a, b, i16::wrapping_sub)
-}
-
-/// punpck[lh]wd and pmaddwd: `a * ca + b * cb`. With these constants the sum cannot overflow.
-#[inline(always)]
-fn madd(a: I16x8, ca: i32, b: I16x8, cb: i32) -> I32x8 {
-    zip(a, b, |a, b| i32::from(a) * ca + i32::from(b) * cb)
-}
-
-/// paddd
-#[inline(always)]
-fn add32(a: I32x8, b: I32x8) -> I32x8 {
-    zip(a, b, i32::wrapping_add)
-}
-
-/// psubd
-#[inline(always)]
-fn sub32(a: I32x8, b: I32x8) -> I32x8 {
-    zip(a, b, i32::wrapping_sub)
-}
-
-/// Sign extension and pslld.
-#[inline(always)]
-fn widen_shl(a: I16x8, n: u32) -> I32x8 {
-    a.map(|a| i32::from(a) << n)
-}
-
-/// paddd with the rounding constant, psrad and packssdw.
-#[inline(always)]
-fn descale(a: I32x8, n: u32) -> I16x8 {
-    a.map(|a| (a.wrapping_add(1 << (n - 1)) >> n).clamp(-32768, 32767) as i16)
-}
-
 /// packsswb and paddb with 128.
 #[inline(always)]
 fn to_sample(a: i16) -> u8 {
     (a.clamp(-128, 127) + 128) as u8
-}
-
-#[inline(always)]
-fn transpose<T: Copy + Default, const R: usize, const C: usize>(m: &[[T; C]; R]) -> [[T; R]; C] {
-    let mut out = [[T::default(); R]; C];
-    for (r, row) in m.iter().enumerate() {
-        for (out, &v) in out.iter_mut().zip(row) {
-            if let Some(out) = out.get_mut(r) {
-                *out = v;
-            }
-        }
-    }
-    out
 }
 
 /// The rows of the block times their multipliers, and whether the rows picked by `ac_rows` are all zero.

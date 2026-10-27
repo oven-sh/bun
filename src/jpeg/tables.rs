@@ -88,7 +88,6 @@ pub(crate) const STD_AC_CHROMINANCE: HuffSpec = spec(
 );
 
 /// Table K.1 of the standard, in row-major order.
-#[expect(dead_code)]
 pub(crate) const STD_LUMINANCE_QUANT: [u16; 64] = [
     16, 11, 10, 16, 24, 40, 51, 61, //
     12, 12, 14, 19, 26, 58, 60, 55, //
@@ -101,7 +100,6 @@ pub(crate) const STD_LUMINANCE_QUANT: [u16; 64] = [
 ];
 
 /// Table K.2 of the standard, in row-major order.
-#[expect(dead_code)]
 pub(crate) const STD_CHROMINANCE_QUANT: [u16; 64] = [
     17, 18, 24, 47, 99, 99, 99, 99, //
     18, 21, 26, 66, 99, 99, 99, 99, //

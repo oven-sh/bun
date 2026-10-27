@@ -51,6 +51,39 @@ describe("setTimeout", () => {
 
     await expect(promise).rejects.toThrow(expect.objectContaining({ name: "AbortError" }));
   });
+
+  // mock.timers of node:test replaces globalThis.clearTimeout. This timer started before that, so it is a
+  // real one, and the child exits only if the real clearTimeout stops it. The unref'd timer only ends a
+  // child that a leaked timer keeps alive: a failed run leaves no process behind.
+  it.concurrent("an abort while node:test mock timers are enabled stops the timer", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { mock } = require("node:test");
+         const { setTimeout: sleep } = require("node:timers/promises");
+         setTimeout(() => {
+           console.log("a timer is still running");
+           process.exit(1);
+         }, 2000).unref();
+         const controller = new AbortController();
+         sleep(100_000_000, undefined, { signal: controller.signal }).catch(error => console.log(error.name));
+         mock.timers.enable({ apis: ["setTimeout"] });
+         controller.abort();
+         mock.timers.reset();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "AbortError\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
 
 describe("setImmediate", () => {

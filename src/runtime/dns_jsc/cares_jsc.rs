@@ -858,13 +858,12 @@ pub(crate) fn canonicalize_ip<'a>(
     bun_jsc::mark_binding!();
     let global_this = cx.global();
 
-    let mut ip_addr = [0u8; bun_boringssl::INET6_ADDRSTRLEN + 1];
-    let Some(slice) = bun_boringssl::canonicalize_ip(address, &mut ip_addr) else {
+    let Some(canonical) = bun_boringssl::canonicalize_ip(address) else {
         return Ok(JSValue::UNDEFINED);
     };
-    if address == slice {
+    if *address == *canonical {
         return Ok(address_value.to_js());
     }
 
-    bun_string_jsc::create_utf8_for_js(global_this, slice)
+    bun_string_jsc::create_utf8_for_js(global_this, &canonical)
 }

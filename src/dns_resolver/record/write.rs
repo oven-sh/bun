@@ -1,0 +1,214 @@
+use super::name::{self, Charset, Written};
+use super::{OptionValue, RData, Record, Rr, Svcb, rcode};
+use crate::{Error, Result};
+
+const MAX_MESSAGE_LEN: usize = 0xffff;
+const MAX_RDATA_LEN: usize = 0xffff;
+
+fn put_string(out: &mut Vec<u8>, string: &[u8]) -> Result<()> {
+    out.push(u8::try_from(string.len()).map_err(|_| Error::EFORMERR)?);
+    out.extend_from_slice(string);
+    Ok(())
+}
+
+fn put_nonempty(out: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
+    if bytes.is_empty() {
+        return Err(Error::EFORMERR);
+    }
+    out.extend_from_slice(bytes);
+    Ok(())
+}
+
+fn put_options(out: &mut Vec<u8>, options: &[OptionValue]) {
+    for option in options {
+        out.extend_from_slice(&option.id.to_be_bytes());
+        out.extend_from_slice(&(option.value.len() as u16).to_be_bytes());
+        out.extend_from_slice(&option.value);
+    }
+}
+
+fn put_svcb(out: &mut Vec<u8>, svcb: &Svcb) -> Result<()> {
+    out.extend_from_slice(&svcb.priority.to_be_bytes());
+    name::write(out, None, Charset::Any, &svcb.target)?;
+    put_options(out, &svcb.params);
+    Ok(())
+}
+
+/// Only the types of RFC 1035 have their RDATA names compressed: a server that does not know a type passes it on as it is.
+fn put_rdata(out: &mut Vec<u8>, written: &mut Written, data: &RData) -> Result<()> {
+    let mut put_name =
+        |out: &mut Vec<u8>, name: &[u8]| name::write(out, Some(written), Charset::Any, name);
+    match data {
+        RData::A(address) => out.extend_from_slice(address),
+        RData::Ns(name) | RData::Cname(name) | RData::Ptr(name) => put_name(out, name)?,
+        RData::Soa(soa) => {
+            put_name(out, &soa.mname)?;
+            put_name(out, &soa.rname)?;
+            for value in [soa.serial, soa.refresh, soa.retry, soa.expire, soa.minimum] {
+                out.extend_from_slice(&value.to_be_bytes());
+            }
+        }
+        RData::Hinfo { cpu, os } => {
+            put_string(out, cpu)?;
+            put_string(out, os)?;
+        }
+        RData::Mx {
+            preference,
+            exchange,
+        } => {
+            out.extend_from_slice(&preference.to_be_bytes());
+            put_name(out, exchange)?;
+        }
+        RData::Txt(strings) => {
+            if strings.is_empty() {
+                return Err(Error::EFORMERR);
+            }
+            for string in strings {
+                put_string(out, string)?;
+            }
+        }
+        RData::Sig(sig) => {
+            out.extend_from_slice(&sig.type_covered.to_be_bytes());
+            out.extend_from_slice(&[sig.algorithm, sig.labels]);
+            out.extend_from_slice(&sig.original_ttl.to_be_bytes());
+            out.extend_from_slice(&sig.expiration.to_be_bytes());
+            out.extend_from_slice(&sig.inception.to_be_bytes());
+            out.extend_from_slice(&sig.key_tag.to_be_bytes());
+            name::write(out, None, Charset::Any, &sig.signers_name)?;
+            put_nonempty(out, &sig.signature)?;
+        }
+        RData::Aaaa(address) => out.extend_from_slice(address),
+        RData::Srv {
+            priority,
+            weight,
+            port,
+            target,
+        } => {
+            for value in [priority, weight, port] {
+                out.extend_from_slice(&value.to_be_bytes());
+            }
+            name::write(out, None, Charset::Any, target)?;
+        }
+        RData::Naptr(naptr) => {
+            out.extend_from_slice(&naptr.order.to_be_bytes());
+            out.extend_from_slice(&naptr.preference.to_be_bytes());
+            put_string(out, &naptr.flags)?;
+            put_string(out, &naptr.services)?;
+            put_string(out, &naptr.regexp)?;
+            name::write(out, None, Charset::Any, &naptr.replacement)?;
+        }
+        RData::Opt { options, .. } => put_options(out, options),
+        RData::Tlsa {
+            cert_usage,
+            selector,
+            matching,
+            data,
+        } => {
+            out.extend_from_slice(&[*cert_usage, *selector, *matching]);
+            put_nonempty(out, data)?;
+        }
+        RData::Svcb(svcb) | RData::Https(svcb) => put_svcb(out, svcb)?,
+        RData::Uri {
+            priority,
+            weight,
+            target,
+        } => {
+            out.extend_from_slice(&priority.to_be_bytes());
+            out.extend_from_slice(&weight.to_be_bytes());
+            put_nonempty(out, target)?;
+        }
+        RData::Caa {
+            critical,
+            tag,
+            value,
+        } => {
+            out.push(*critical);
+            put_string(out, tag)?;
+            put_nonempty(out, value)?;
+        }
+        RData::Raw { data, .. } => out.extend_from_slice(data.as_ref().ok_or(Error::EFORMERR)?),
+    }
+    Ok(())
+}
+
+impl Record {
+    fn put_rr(
+        &self,
+        out: &mut Vec<u8>,
+        written: &mut Written,
+        rr: &Rr,
+        ttl_decrement: u32,
+    ) -> Result<()> {
+        name::write(out, Some(written), Charset::Hostname, &rr.name)?;
+        out.extend_from_slice(&rr.data.rtype().to_be_bytes());
+        let (class, ttl) = match rr.data {
+            RData::Opt {
+                udp_size,
+                version,
+                flags,
+                ..
+            } => (
+                udp_size,
+                u32::from(self.rcode >> 4 & 0xff) << 24
+                    | u32::from(version) << 16
+                    | u32::from(flags),
+            ),
+            _ => (rr.class, rr.ttl.saturating_sub(ttl_decrement)),
+        };
+        out.extend_from_slice(&class.to_be_bytes());
+        out.extend_from_slice(&ttl.to_be_bytes());
+
+        let length_at = out.len();
+        out.extend_from_slice(&[0, 0]);
+        put_rdata(out, written, &rr.data)?;
+        let rdlength = out.len() - length_at - 2;
+        if rdlength > MAX_RDATA_LEN {
+            return Err(Error::EBADQUERY);
+        }
+        if let Some(slot) = out.get_mut(length_at..length_at + 2) {
+            slot.copy_from_slice(&(rdlength as u16).to_be_bytes());
+        }
+        Ok(())
+    }
+
+    /// The message, with `ttl_decrement` seconds taken off every TTL.
+    ///
+    /// Stricter than [`Record::parse`], as in c-ares: the name of the question and of every record has to be made of host name bytes unless an earlier RDATA already spelled it, no compressible name is longer than 255 bytes with its escapes, and a record of an unknown type has RDATA.
+    pub fn write(&self, ttl_decrement: u32) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        let written = &mut Written::default();
+
+        out.extend_from_slice(&self.id.to_be_bytes());
+        let low_rcode = if self.rcode > 15 && self.opt().is_none() {
+            rcode::SERVFAIL
+        } else {
+            self.rcode & 0xf
+        };
+        let bits = self.flags | u16::from(self.opcode & 0xf) << 11 | low_rcode;
+        out.extend_from_slice(&bits.to_be_bytes());
+        for count in [
+            self.question.len(),
+            self.answer.len(),
+            self.authority.len(),
+            self.additional.len(),
+        ] {
+            out.extend_from_slice(&(count as u16).to_be_bytes());
+        }
+
+        for question in &self.question {
+            name::write(&mut out, Some(written), Charset::Hostname, &question.name)?;
+            out.extend_from_slice(&question.qtype.to_be_bytes());
+            out.extend_from_slice(&question.qclass.to_be_bytes());
+        }
+        for section in self.sections() {
+            for rr in section {
+                self.put_rr(&mut out, written, rr, ttl_decrement)?;
+            }
+        }
+
+        if out.len() > MAX_MESSAGE_LEN {
+            return Err(Error::EBADQUERY);
+        }
+        Ok(out)
+    }
+}

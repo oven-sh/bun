@@ -1,7 +1,10 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_int;
-use std::io::Write as _;
+
+mod eai;
+pub use bun_dns_resolver::Error;
+pub use eai::{eai_raw_by_name, error_from_eai};
 
 use bun_core::String as BunString;
 // `bun_wyhash` exports `Wyhash11` (iterative init/update/final_ surface).
@@ -70,17 +73,6 @@ impl GetAddrInfo {
             port: self.port,
             options: self.options,
         }
-    }
-
-    pub fn to_cares(&self) -> bun_cares_sys::c_ares_draft::AddrInfo_hints {
-        let mut hints: bun_cares_sys::c_ares_draft::AddrInfo_hints = bun_core::ffi::zeroed();
-
-        hints.ai_family = self.options.family.to_libc();
-        hints.ai_socktype = self.options.socktype.to_libc();
-        hints.ai_protocol = self.options.protocol.to_libc();
-        hints.ai_flags = self.options.flags;
-
-        hints
     }
 
     pub fn hash(&self) -> u64 {
@@ -366,28 +358,16 @@ pub fn address_to_string(address: &Address) -> BunString {
         }
         sock::AF_INET6 => {
             let v6 = address.as_in6().unwrap(); // family() just checked
-            // Render the bare address directly via ares_inet_ntop, then
-            // re-append the `%scope_id` suffix for nonzero scope (e.g. fe80::
-            // link-local from getaddrinfo) — ntop only sees the 16 raw addr
-            // bytes and cannot emit it itself.
-            let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46) + "%4294967295" (11)
-            // SAFETY: sin6_addr is a valid in6_addr; buf len fits INET6_ADDRSTRLEN.
-            let n = match unsafe {
-                bun_cares_sys::ntop(sock::AF_INET6, (&raw const v6.sin6_addr).cast(), &mut buf)
-            } {
-                Some(s) => s.len(),
-                None => return BunString::EMPTY,
-            };
-            let len = if v6.sin6_scope_id != 0 {
-                let mut cursor = &mut buf[n..];
-                let before = cursor.len();
-                // 64 - 46 = 18 > len("%4294967295") = 11, cannot truncate.
-                let _ = write!(cursor, "%{}", v6.sin6_scope_id);
-                n + (before - cursor.len())
-            } else {
-                n
-            };
-            BunString::clone_latin1(&buf[..len])
+            let text = bun_core::ip_address::format_v6(v6.sin6_addr.s6_addr);
+            // A link-local address from getaddrinfo (fe80::) has a scope.
+            if v6.sin6_scope_id == 0 {
+                return BunString::clone_latin1(&text);
+            }
+            BunString::create_format(format_args!(
+                "{}%{}",
+                bstr::BStr::new(&*text),
+                v6.sin6_scope_id
+            ))
         }
         sock::AF_UNIX => {
             // Unix sockets exist on every target Bun ships (Windows 10 rs4+

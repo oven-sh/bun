@@ -125,3 +125,298 @@ pub fn strip_ipv6_brackets(host: &[u8]) -> &[u8] {
     }
     host
 }
+
+/// The text of one address, without an allocation. Derefs to its bytes.
+#[derive(Clone, Copy)]
+pub struct AddressText {
+    /// "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255" is the longest.
+    buf: [u8; 45],
+    len: u8,
+}
+
+impl AddressText {
+    const EMPTY: Self = Self {
+        buf: [0; 45],
+        len: 0,
+    };
+
+    fn push(&mut self, byte: u8) {
+        if let Some(slot) = self.buf.get_mut(usize::from(self.len)) {
+            *slot = byte;
+            self.len += 1;
+        }
+    }
+
+    fn push_decimal(&mut self, octet: u8) {
+        if octet >= 100 {
+            self.push(b'0' + octet / 100);
+        }
+        if octet >= 10 {
+            self.push(b'0' + octet / 10 % 10);
+        }
+        self.push(b'0' + octet % 10);
+    }
+
+    fn push_hex(&mut self, word: u16) {
+        let skipped = (word.leading_zeros() / 4).min(3);
+        for nibble in skipped..4 {
+            let digit = (word >> (12 - 4 * nibble)) as u8 & 0xf;
+            self.push(if digit < 10 {
+                b'0' + digit
+            } else {
+                b'a' + digit - 10
+            });
+        }
+    }
+
+    fn push_v4(&mut self, octets: [u8; 4]) {
+        for (i, octet) in octets.into_iter().enumerate() {
+            if i != 0 {
+                self.push(b'.');
+            }
+            self.push_decimal(octet);
+        }
+    }
+}
+
+impl core::ops::Deref for AddressText {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        self.buf.get(..usize::from(self.len)).unwrap_or(&[])
+    }
+}
+
+/// `inet_ntop(AF_INET)`.
+pub fn format_v4(octets: [u8; 4]) -> AddressText {
+    let mut text = AddressText::EMPTY;
+    text.push_v4(octets);
+    text
+}
+
+/// `inet_ntop(AF_INET6)` as in BIND, libuv and c-ares. Unlike `Ipv6Addr`'s `Display`, `::1.2.3.4` keeps its dotted quad.
+pub fn format_v6(octets: [u8; 16]) -> AddressText {
+    let words = Ipv6Addr::from(octets).segments();
+
+    // The longest run of zero words, the first of equals, if it is two or more.
+    let (mut best_base, mut best_len) = (0usize, 0usize);
+    let (mut run_base, mut run_len) = (0usize, 0usize);
+    for (i, &word) in words.iter().enumerate() {
+        if word != 0 {
+            run_len = 0;
+            continue;
+        }
+        if run_len == 0 {
+            run_base = i;
+        }
+        run_len += 1;
+        if run_len > best_len {
+            (best_base, best_len) = (run_base, run_len);
+        }
+    }
+    if best_len < 2 {
+        best_len = 0;
+    }
+
+    let mut text = AddressText::EMPTY;
+    for (i, &word) in words.iter().enumerate() {
+        if best_len != 0 && (best_base..best_base + best_len).contains(&i) {
+            if i == best_base {
+                text.push(b':');
+            }
+            continue;
+        }
+        if i != 0 {
+            text.push(b':');
+        }
+        let [.., a, b, c, d] = octets;
+        let [.., fifth, _, _] = words;
+        if i == 6
+            && best_len != 0
+            && best_base == 0
+            && (best_len == 6 || (best_len == 5 && fifth == 0xffff))
+        {
+            text.push_v4([a, b, c, d]);
+            return text;
+        }
+        text.push_hex(word);
+    }
+    if best_len != 0 && best_base + best_len == words.len() {
+        text.push(b':');
+    }
+    text
+}
+
+pub fn format(ip: IpAddr) -> AddressText {
+    match ip {
+        IpAddr::V4(ip) => format_v4(ip.octets()),
+        IpAddr::V6(ip) => format_v6(ip.octets()),
+    }
+}
+
+/// The text is a C string to the `parse_ares_*` parsers: it ends at its first NUL.
+fn c_char_at(src: &[u8], index: usize) -> u8 {
+    src.get(index).copied().unwrap_or(0)
+}
+
+/// c-ares's `ares_inet_pton(AF_INET)`, which reads more than a dotted quad: one to four octets with the rest zero (`10`, `127.1` is 127.1.0.0), leading zeros (`010` is ten) and `0x` followed by up to eight hex digits.
+pub fn parse_ares_v4(src: &[u8]) -> Option<[u8; 4]> {
+    let mut octets = [0u8; 4];
+    parse_ares_v4_into(src, &mut octets)?;
+    Some(octets)
+}
+
+/// Octets the text does not name are left as they were.
+fn parse_ares_v4_into(src: &[u8], dst: &mut [u8; 4]) -> Option<()> {
+    let mut written = 0usize;
+    let mut at = 0usize;
+    let mut next = || {
+        at += 1;
+        c_char_at(src, at - 1)
+    };
+    let mut put = |octet: u8| {
+        *dst.get_mut(written)? = octet;
+        written += 1;
+        Some(())
+    };
+
+    let mut ch = next();
+    if ch == b'0'
+        && matches!(c_char_at(src, 1), b'x' | b'X')
+        && c_char_at(src, 2).is_ascii_hexdigit()
+    {
+        next();
+        let mut pending: Option<u8> = None;
+        loop {
+            ch = next();
+            let Some(digit) = (ch as char).to_digit(16) else {
+                break;
+            };
+            let digit = digit as u8;
+            pending = match pending {
+                None => Some(digit),
+                Some(high) => {
+                    put(high << 4 | digit)?;
+                    None
+                }
+            };
+        }
+        if let Some(high) = pending {
+            put(high << 4)?;
+        }
+    } else if ch.is_ascii_digit() {
+        loop {
+            let mut octet = 0u32;
+            loop {
+                octet = octet * 10 + u32::from(ch - b'0');
+                if octet > 255 {
+                    return None;
+                }
+                ch = next();
+                if !ch.is_ascii_digit() {
+                    break;
+                }
+            }
+            put(octet as u8)?;
+            if ch == 0 || ch == b'/' {
+                break;
+            }
+            if ch != b'.' {
+                return None;
+            }
+            ch = next();
+            if !ch.is_ascii_digit() {
+                return None;
+            }
+        }
+    } else {
+        return None;
+    }
+    (ch == 0).then_some(())
+}
+
+/// c-ares's `ares_inet_pton(AF_INET6)`. No zone id. A dotted quad at the end is read by [`parse_ares_v4`], so `::1.2` is `::1.2.0.0`.
+pub fn parse_ares_v6(src: &[u8]) -> Option<[u8; 16]> {
+    let mut octets = [0u8; 16];
+    let mut written = 0usize;
+    let mut elided_at: Option<usize> = None;
+    let mut at = 0usize;
+
+    if c_char_at(src, 0) == b':' {
+        if c_char_at(src, 1) != b':' {
+            return None;
+        }
+        at = 1;
+    }
+    let mut group_start = at;
+    let mut digits = 0u32;
+    let mut word = 0u16;
+    fn put_word(octets: &mut [u8; 16], written: &mut usize, word: u16) -> Option<()> {
+        octets
+            .get_mut(*written..*written + 2)?
+            .copy_from_slice(&word.to_be_bytes());
+        *written += 2;
+        Some(())
+    }
+
+    loop {
+        let ch = c_char_at(src, at);
+        at += 1;
+        if ch == 0 {
+            break;
+        }
+        if let Some(digit) = (ch as char).to_digit(16) {
+            if digits >= 4 {
+                return None;
+            }
+            word = word << 4 | digit as u16;
+            digits += 1;
+            continue;
+        }
+        if ch == b':' {
+            group_start = at;
+            if digits == 0 {
+                if elided_at.is_some() {
+                    return None;
+                }
+                elided_at = Some(written);
+                continue;
+            }
+            if c_char_at(src, at) == 0 {
+                return None;
+            }
+            put_word(&mut octets, &mut written, word)?;
+            (digits, word) = (0, 0);
+            continue;
+        }
+        if ch == b'.' && written + 4 <= octets.len() {
+            let mut quad = [0u8; 4];
+            parse_ares_v4_into(src.get(group_start..)?, &mut quad)?;
+            octets.get_mut(written..written + 4)?.copy_from_slice(&quad);
+            written += 4;
+            digits = 0;
+            break;
+        }
+        return None;
+    }
+    if digits != 0 {
+        put_word(&mut octets, &mut written, word)?;
+    }
+    if let Some(elided_at) = elided_at {
+        if written == octets.len() {
+            return None;
+        }
+        let tail = written - elided_at;
+        octets.copy_within(elided_at..written, 16 - tail);
+        octets.get_mut(elided_at..16 - tail)?.fill(0);
+        written = octets.len();
+    }
+    (written == octets.len()).then_some(octets)
+}
+
+/// [`parse_ares_v4`], else [`parse_ares_v6`].
+pub fn parse_ares(src: &[u8]) -> Option<IpAddr> {
+    if let Some(v4) = parse_ares_v4(src) {
+        return Some(IpAddr::from(v4));
+    }
+    parse_ares_v6(src).map(IpAddr::from)
+}

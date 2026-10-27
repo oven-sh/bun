@@ -49,13 +49,13 @@ members = [
   "src/threading",
   "src/valkey",
   "src/watcher",
-  "src/cares_sys",
   "src/clap",
   "src/clap_macros",
   "src/crash_handler",
   "src/csrf",
   "src/css_jsc",
   "src/dns",
+  "src/dns_resolver",
   "src/dotenv",
   "src/event_loop",
   "src/exe_format",
@@ -419,13 +419,13 @@ bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
-bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
 bun_clap_macros = { path = "src/clap_macros" }
 bun_crash_handler = { path = "src/crash_handler" }
 bun_csrf = { path = "src/csrf" }
 bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
+bun_dns_resolver = { path = "src/dns_resolver" }
 bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }

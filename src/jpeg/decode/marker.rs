@@ -291,6 +291,7 @@ impl Decoder<'_> {
         let Some(length) = usize::from(self.input.u16()).checked_sub(2) else {
             return Ok(());
         };
+        self.app2.try_reserve(1)?;
         if let Some(data) = self.input.remaining().get(..length) {
             self.app2.push(Cow::Borrowed(data));
             self.input.skip(length);

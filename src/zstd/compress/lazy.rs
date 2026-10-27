@@ -365,10 +365,10 @@ fn sort_dubt1_in_dict(
     bt_low: u32,
     window_low: u32,
 ) -> Result<()> {
-    let no_dict = Prefix { buf: &[], base: 0 };
-    let dict_end = input.dict.pos_of(input.dict_limit);
-    let dict = TreeInput::new(input.dict, no_dict, low_limit, dict_end)?;
-    sort_dubt1(bt, &dict, curr, nb_compares, bt_low, window_low)
+    let older = input.dict;
+    let nothing = Prefix { buf: &[], base: 0 };
+    let older = TreeInput::new(older, nothing, low_limit, older.pos_of(input.dict_limit))?;
+    sort_dubt1(bt, &older, curr, nb_compares, bt_low, window_low)
 }
 
 /// The body of `ZSTD_insertDUBT1`, for a position of `input.near`.

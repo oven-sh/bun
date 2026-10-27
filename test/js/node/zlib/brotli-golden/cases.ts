@@ -49,13 +49,23 @@ export const kinds = [
 export type Kind = (typeof kinds)[number];
 export type Input = { kind: Kind; seed: number; length: number };
 
+const separators = [" ", " ", " ", ", ", ". ", "\n", "(", '"', "'", "=", ":"];
+const tags = ["div", "span", "a", "p", "li", "td", "script", "h1"];
+const scripts = [0x430, 0x4e00, 0x3040, 0x5d0, 0x1f600];
+
+const encoded = new Map<string, Buffer>();
+
 function fill(out: Buffer, start: number, end: number, kind: Kind, r: Rng) {
-  const put = (piece: () => string | Buffer) => {
-    let at = start;
-    while (at < end) {
-      const p = piece();
-      const b = typeof p === "string" ? Buffer.from(p) : p;
-      at += b.copy(out, at, 0, Math.min(b.length, end - at));
+  /** A piece comes in parts that recur, as making a string or a Buffer takes long in a debug build. */
+  const put = (piece: () => (string | Buffer)[]) => {
+    for (let at = start; at < end;) {
+      const parts = piece();
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i];
+        let b = typeof p === "string" ? encoded.get(p) : p;
+        if (b === undefined) encoded.set(p as string, (b = Buffer.from(p)));
+        at += b.copy(out, at, 0, Math.min(b.length, end - at));
+      }
     }
   };
   switch (kind) {
@@ -68,25 +78,23 @@ function fill(out: Buffer, start: number, end: number, kind: Kind, r: Rng) {
       for (let i = start; i < end; i++) out[i] = r.chance(1, 20) ? 0x20 : r.next();
       return;
     case "text":
-      return put(() => r.pick(words) + " ");
+      return put(() => [r.pick(words), " "]);
     case "Text":
       return put(() => {
         const w = r.pick(words);
-        return (
-          (r.chance(1, 4) ? w[0].toUpperCase() + w.slice(1) : r.chance(1, 20) ? w.toUpperCase() : w) +
-          r.pick([" ", " ", " ", ", ", ". ", "\n", "(", '"', "'", "=", ":"])
-        );
+        return r.chance(1, 4)
+          ? [w[0].toUpperCase(), w.slice(1), r.pick(separators)]
+          : [r.chance(1, 20) ? w.toUpperCase() : w, r.pick(separators)];
       });
     case "html":
       return put(() => {
-        const tag = r.pick(["div", "span", "a", "p", "li", "td", "script", "h1"]);
-        return `<${tag} class="${r.pick(words)}" id="n${r.below(50)}">${r.pick(words)} ${r.pick(words)}</${tag}>\n`;
+        const tag = r.pick(tags);
+        // prettier-ignore
+        return ["<", tag, ' class="', r.pick(words), '" id="n', `${r.below(50)}`, '">', r.pick(words), " ", r.pick(words), "</", tag, ">\n"];
       });
     case "json":
-      return put(
-        () =>
-          `{"id":${r.below(100000)},"name":"${r.pick(words)}","ok":${r.chance(1, 2)},"v":[${r.below(10)},${r.below(10)}]},`,
-      );
+      // prettier-ignore
+      return put(() => ['{"id":', `${r.below(100000)}`, ',"name":"', r.pick(words), '","ok":', `${r.chance(1, 2)}`, ',"v":[', `${r.below(10)}`, ",", `${r.below(10)}`, "]},"]);
     case "ints": {
       let v = r.next();
       const step = r.range(1, 9);
@@ -94,13 +102,13 @@ function fill(out: Buffer, start: number, end: number, kind: Kind, r: Rng) {
         v = (v + r.below(step)) >>> 0;
         const b = Buffer.alloc(4);
         b.writeUInt32LE(v);
-        return b;
+        return [b];
       });
     }
     case "period": {
       const pattern = Buffer.alloc(r.range(1, 70));
       for (let i = 0; i < pattern.length; i++) pattern[i] = r.next();
-      return put(() => pattern);
+      return put(() => [pattern]);
     }
     case "letters": {
       const n = r.range(2, 20);
@@ -108,11 +116,7 @@ function fill(out: Buffer, start: number, end: number, kind: Kind, r: Rng) {
       return;
     }
     case "utf8":
-      return put(
-        () =>
-          String.fromCodePoint(r.pick([0x430, 0x4e00, 0x3040, 0x5d0, 0x1f600]) + r.below(40)) +
-          (r.chance(1, 5) ? " " : ""),
-      );
+      return put(() => [String.fromCodePoint(r.pick(scripts) + r.below(40)), r.chance(1, 5) ? " " : ""]);
     case "copies":
       for (let i = start; i < end;) {
         if (i > 8 && r.chance(3, 4)) {
@@ -197,7 +201,7 @@ export async function encode(k: EncoderCase): Promise<Buffer> {
   for (const [size, flush] of k.writes) {
     stream.write(input.subarray(at, at + size));
     at += size;
-    if (flush !== -1) await new Promise<void>(resolve => stream.flush(flush, resolve));
+    if (flush !== -1) await Promise.race([done, new Promise<void>(resolve => stream.flush(flush, resolve))]);
   }
   stream.end(input.subarray(at));
   await done;
@@ -219,17 +223,33 @@ export type DecoderCase = {
   /** base64 */
   dictionary?: string;
   chunkSize?: number;
+  /** Write it through a stream, in pieces of this size. */
+  pieces?: number;
   /** Recorded: the length and the start of the SHA-256 of the output, or the error. */
   result?: string;
 };
 
-export function observeDecoder(k: DecoderCase) {
+async function decodeInPieces(input: Buffer, size: number, options: zlib.BrotliOptions) {
+  const stream = zlib.createBrotliDecompress(options);
+  const chunks: Buffer[] = [];
+  stream.on("data", chunk => chunks.push(chunk));
+  const done = new Promise<void>((resolve, reject) => stream.on("end", resolve).on("error", reject));
+  for (let at = 0; at < input.length; at += size) stream.write(input.subarray(at, at + size));
+  stream.end();
+  await done;
+  return Buffer.concat(chunks);
+}
+
+export async function observeDecoder(k: DecoderCase) {
   const options: zlib.BrotliOptions & { dictionary?: Buffer } = { maxOutputLength: 1 << 24 };
   if (k.params) options.params = k.params;
   if (k.chunkSize) options.chunkSize = k.chunkSize;
   if (k.dictionary) options.dictionary = Buffer.from(k.dictionary, "base64");
+  const input = Buffer.from(k.stream, "base64");
   try {
-    return digest(zlib.brotliDecompressSync(Buffer.from(k.stream, "base64"), options));
+    return digest(
+      k.pieces ? await decodeInPieces(input, k.pieces, options) : zlib.brotliDecompressSync(input, options),
+    );
   } catch (e: any) {
     return `${e.code} ${e.errno} ${e.message}`;
   }
@@ -255,9 +275,45 @@ function length(r: Rng, quality: number) {
   }
 }
 
-export function generateEncoderCases(count: number, seed: number) {
+/** Values that the encoder replaces or refuses. */
+const unusualEncoderParams: Record<number, number>[] = [
+  { [c.BROTLI_PARAM_QUALITY]: 12 },
+  { [c.BROTLI_PARAM_QUALITY]: 0x7fffffff },
+  { [c.BROTLI_PARAM_LGWIN]: 0 },
+  { [c.BROTLI_PARAM_LGWIN]: 9 },
+  { [c.BROTLI_PARAM_LGWIN]: 25 },
+  { [c.BROTLI_PARAM_LGWIN]: 31, [c.BROTLI_PARAM_LARGE_WINDOW]: 1 },
+  { [c.BROTLI_PARAM_LARGE_WINDOW]: 2 },
+  { [c.BROTLI_PARAM_LGBLOCK]: 15 },
+  { [c.BROTLI_PARAM_LGBLOCK]: 25 },
+  { [c.BROTLI_PARAM_MODE]: 3 },
+  { [c.BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING]: 0 },
+  { [c.BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING]: 2 },
+  { [c.BROTLI_PARAM_SIZE_HINT]: 0xfffffffe },
+  { [c.BROTLI_PARAM_NPOSTFIX]: 4 },
+  { [c.BROTLI_PARAM_NPOSTFIX]: 2, [c.BROTLI_PARAM_NDIRECT]: 3 },
+  { [c.BROTLI_PARAM_NPOSTFIX]: 3, [c.BROTLI_PARAM_NDIRECT]: 128 },
+];
+
+export function generateEncoderCases(count = 240, seed = 1) {
   const r = prng(seed);
-  const cases: EncoderCase[] = [];
+  const text: Input = { kind: "Text", seed: 3, length: 3000 };
+  const cases: EncoderCase[] = [{ input: text, params: {} }];
+  for (const unusual of unusualEncoderParams) {
+    cases.push({ input: text, params: { [c.BROTLI_PARAM_QUALITY]: 5, ...unusual } });
+  }
+  for (let quality = 0; quality < 12; quality++) {
+    cases.push({
+      input: { kind: "html", seed: 4, length: 2000 },
+      params: { [c.BROTLI_PARAM_QUALITY]: quality },
+      writes: [
+        [0, c.BROTLI_OPERATION_EMIT_METADATA],
+        [500, c.BROTLI_OPERATION_FLUSH],
+        [500, c.BROTLI_OPERATION_PROCESS],
+        [500, c.BROTLI_OPERATION_EMIT_METADATA],
+      ],
+    });
+  }
   for (let i = 0; i < count; i++) {
     const quality = i % 12;
     const input: Input = { kind: r.pick(kinds), seed: r.next(), length: length(r, quality) };
@@ -298,7 +354,7 @@ export function generateEncoderCases(count: number, seed: number) {
 }
 
 /** Streams that are intact, cut short or damaged. */
-export async function generateDecoderCases(count: number, seed: number) {
+export async function generateDecoderCases(count = 600, seed = 2) {
   const r = prng(seed);
   const cases: DecoderCase[] = [];
   while (cases.length < count) {
@@ -345,8 +401,19 @@ export async function generateDecoderCases(count: number, seed: number) {
       if (r.chance(1, 10)) d.params = { ...d.params, [c.BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION]: 1 };
       if (dictionary && r.chance(9, 10)) d.dictionary = dictionary;
       if (r.chance(1, 5)) d.chunkSize = r.pick([64, 65, 200, 4096]);
+      if (cases.length % 7 === 0) d.pieces = [32, 150, 1000][(cases.length / 7) % 3];
       cases.push(d);
     }
+  }
+  const stream = zlib.brotliCompressSync(makeInput({ kind: "Text", seed: 3, length: 3000 })).toString("base64");
+  for (const params of [
+    { [c.BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION]: 2 },
+    { [c.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 2 },
+    // The decoder has no such parameters.
+    { [c.BROTLI_DECODER_PARAM_LARGE_WINDOW + 1]: 0 },
+    { [c.BROTLI_PARAM_NDIRECT]: 1 },
+  ]) {
+    cases.push({ stream, params });
   }
   return cases;
 }

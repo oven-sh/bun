@@ -24,21 +24,27 @@ async function mapConcurrently<T, R>(items: T[], run: (item: T, index: number) =
 
 const cases = await load<DecodeCase[]>(join(import.meta.dir, "cases.json.gz"));
 const parts = 8;
-test.each(Array.from({ length: parts }, (_, part) => part))("decodes files, whole and damaged (part %d)", async part => {
-  const mine = cases.map((c, index) => ({ ...c, index })).filter(c => c.index % parts === part);
-  const actual = await mapConcurrently(mine, c => observeDecodeCase(Buffer.from(c.data, "base64"), c.index));
-  const differences = mine.flatMap((c, i) =>
-    c.expected!.flatMap((expected, copy) =>
-      actual[i][copy] === expected ? [] : [{ name: c.name, copy, expected, actual: actual[i][copy] }],
-    ),
-  );
-  expect(differences).toEqual([]);
-});
+test.each(Array.from({ length: parts }, (_, part) => part))(
+  "decodes files, whole and damaged (part %d)",
+  async part => {
+    const mine = cases.map((c, index) => ({ ...c, index })).filter(c => c.index % parts === part);
+    const actual = await mapConcurrently(mine, c => observeDecodeCase(Buffer.from(c.data, "base64"), c.index));
+    const differences = mine.flatMap((c, i) =>
+      c.expected!.flatMap((expected, copy) =>
+        actual[i][copy] === expected ? [] : [{ name: c.name, copy, expected, actual: actual[i][copy] }],
+      ),
+    );
+    expect(differences).toEqual([]);
+  },
+);
 
-test("encodes pictures", async () => {
+const pictures = encodeCases().map((c, index) => ({ ...c, index }));
+test.each(Array.from({ length: parts }, (_, part) => part))("encodes pictures (part %d)", async part => {
   const expected = await load<string[]>(join(import.meta.dir, "encoded.json.gz"));
-  const pictures = encodeCases();
-  const actual = await mapConcurrently(pictures, observeEncode);
-  const differences = pictures.flatMap((c, i) => (actual[i] === expected[i] ? [] : [{ ...c, expected: expected[i], actual: actual[i] }]));
+  const mine = pictures.filter(c => c.index % parts === part);
+  const actual = await mapConcurrently(mine, observeEncode);
+  const differences = mine.flatMap((c, i) =>
+    actual[i] === expected[c.index] ? [] : [{ ...c, expected: expected[c.index], actual: actual[i] }],
+  );
   expect(differences).toEqual([]);
 });

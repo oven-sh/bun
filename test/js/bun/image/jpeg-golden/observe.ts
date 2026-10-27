@@ -121,7 +121,9 @@ export async function observeDecode(file: Uint8Array, eighths: number[]): Promis
       await outcome(() => {
         const image = new Bun.Image(file, { autoOrient: false });
         if (m === 8 || !size) return decoded(image);
-        return decoded(image.resize(Math.ceil((size.width * m) / 8), Math.ceil((size.height * m) / 8), { fit: "fill" }));
+        return decoded(
+          image.resize(Math.ceil((size.width * m) / 8), Math.ceil((size.height * m) / 8), { fit: "fill" }),
+        );
       }),
     );
   }
@@ -154,7 +156,11 @@ export function damaged(file: Uint8Array, seed: number, count: number): Uint8Arr
         }
         case 4: {
           const from = at();
-          copy = Buffer.concat([copy.subarray(0, from), Buffer.from([0xff, special[below(special.length)]]), copy.subarray(from)]);
+          copy = Buffer.concat([
+            copy.subarray(0, from),
+            Buffer.from([0xff, special[below(special.length)]]),
+            copy.subarray(from),
+          ]);
           break;
         }
         default:
@@ -200,7 +206,8 @@ export function picture({ kind, width, height, quality }: EncodeCase): Uint8Arra
       const p = (y * width + x) * 4;
       let rgb: number[];
       if (kind === 0) rgb = [below(256), below(256), below(256)];
-      else if (kind === 2) rgb = [((x * 255) / width) | 0, ((y * 255) / height) | 0, (((x + y) * 255) / (width + height)) | 0];
+      else if (kind === 2)
+        rgb = [((x * 255) / width) | 0, ((y * 255) / height) | 0, (((x + y) * 255) / (width + height)) | 0];
       else if (kind === 3) rgb = (((x / period) | 0) + ((y / period) | 0)) % 2 ? [255, 255, 255] : [0, 0, 0];
       else if (kind === 4) rgb = [below(2) * 255, below(2) * 255, below(2) * 255];
       else if (kind === 5) rgb = [125 + below(7), 125 + below(7), 125 + below(7)];
@@ -223,7 +230,21 @@ export async function observeEncode(c: EncodeCase): Promise<string> {
 
 export function encodeCases(): EncodeCase[] {
   const sizes = [
-    [1, 1], [2, 2], [7, 9], [8, 8], [9, 7], [15, 17], [16, 16], [17, 15], [24, 8], [8, 24], [31, 33], [33, 31], [1, 40], [40, 1], [64, 48],
+    [1, 1],
+    [2, 2],
+    [7, 9],
+    [8, 8],
+    [9, 7],
+    [15, 17],
+    [16, 16],
+    [17, 15],
+    [24, 8],
+    [8, 24],
+    [31, 33],
+    [33, 31],
+    [1, 40],
+    [40, 1],
+    [64, 48],
   ];
   const qualities = [1, 2, 10, 25, 49, 50, 51, 75, 80, 90, 95, 99, 100];
   const cases: EncodeCase[] = [];

@@ -1,8 +1,8 @@
 use bun_core::compress::State;
 
-use crate::{Decoder, DecoderParameter, DecoderResult, Error, SpareCapacity};
+use crate::{Decoder, DecoderResult, Error, SpareCapacity};
 
-/// A [`Decoder`] that appends to a `Vec`. It accepts large windows.
+/// A [`Decoder`] that appends to a `Vec`. It refuses large windows, which `Content-Encoding: br` does not have.
 pub struct StreamingDecoder {
     decoder: Decoder,
     state: State,
@@ -16,10 +16,8 @@ impl Default for StreamingDecoder {
 
 impl StreamingDecoder {
     pub fn new() -> Self {
-        let mut decoder = Decoder::new();
-        decoder.set_parameter(DecoderParameter::LargeWindow, 1);
         Self {
-            decoder,
+            decoder: Decoder::new(),
             state: State::Uninitialized,
         }
     }

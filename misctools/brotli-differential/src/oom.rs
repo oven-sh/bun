@@ -313,7 +313,7 @@ pub fn run(seed0: u64, iters: u64, max_len: usize, corpus: &r#gen::Corpus) {
                 }
             }
         }
-        if case.dict.is_some() {
+        if case.dict.is_some() || case.params.contains(&(6, 1)) {
             continue;
         }
         COUNT.store(0, Relaxed);

@@ -17,7 +17,8 @@ pub enum Failure {
     ShortRead,
 }
 
-/// `StreamingDecoder` as it was before the C library was replaced (src/brotli/lib.rs at 92e819d8).
+/// `StreamingDecoder` as it was before the C library was replaced (src/brotli/lib.rs at 92e819d8), except that it
+/// accepted large windows.
 pub struct Old {
     c: CDecoder,
     state: State,
@@ -25,9 +26,7 @@ pub struct Old {
 
 impl Old {
     pub fn new() -> Self {
-        let mut c = CDecoder::new();
-        c.set(1, 1);
-        Self { c, state: State::Uninitialized }
+        Self { c: CDecoder::new(), state: State::Uninitialized }
     }
     pub fn is_inflating(&self) -> bool {
         self.state == State::Inflating

@@ -8,14 +8,49 @@ mod phuff;
 mod sample;
 
 use crate::error::{Error, Result, try_vec};
-use crate::tables::{self, HuffSpec};
+use crate::tables::{self, HuffSpec, NATURAL_ORDER};
 use fdct::Divisors;
 use huff::{BitWriter, Counts, EncodeTable, Output};
 use phuff::{AcEncoder, Sink};
 use sample::{MCU_SIZE, McuRowSamples};
 
-/// Quantized coefficients in zigzag order.
-type Block = [i16; 64];
+/// The quantized coefficients of a block.
+#[derive(Clone, Copy)]
+struct Block {
+    /// In row-major order.
+    coefs: [i16; 64],
+    /// Bit `k` is set if the `k`th coefficient in zigzag order is not zero. Most are, and nothing looks at those.
+    nonzero: u64,
+}
+
+impl Block {
+    /// A block outside of the image.
+    const fn flat(dc: i16) -> Self {
+        let mut coefs = [0; 64];
+        let [first, ..] = &mut coefs;
+        *first = dc;
+        Block { coefs, nonzero: 0 }
+    }
+
+    #[inline(always)]
+    fn dc(&self) -> i16 {
+        let [dc, ..] = self.coefs;
+        dc
+    }
+
+    /// The `k`th coefficient in zigzag order.
+    #[inline(always)]
+    fn zigzag(&self, k: u32) -> i16 {
+        let position = NATURAL_ORDER.get(k as usize).copied().unwrap_or(0);
+        self.coefs.get(usize::from(position)).copied().unwrap_or(0)
+    }
+
+    /// `nonzero` for the coefficients from `first` to `last`.
+    #[inline(always)]
+    fn nonzero_between(&self, first: u32, last: u32) -> u64 {
+        self.nonzero & (u64::MAX << first) & (u64::MAX >> (63 - last))
+    }
+}
 
 const MAX_DIMENSION: u32 = 65500;
 
@@ -115,7 +150,7 @@ struct BlockRows {
 impl BlockRows {
     fn new(blocks_per_row: usize, rows: usize) -> Result<Self> {
         Ok(BlockRows {
-            blocks: try_vec([0; 64], blocks_per_row * rows)?,
+            blocks: try_vec(Block::flat(0), blocks_per_row * rows)?,
             blocks_per_row,
         })
     }
@@ -162,21 +197,11 @@ fn transform_rows(
                 let samples = lines.map(|line| line.get(x).copied().unwrap_or_default());
                 *block = fdct::forward(&samples, divisors);
             }
-            let [last_dc, ..] = image.last().ok_or(Error::Internal)?;
-            for block in dummy {
-                *block = [0; 64];
-                let [dc, ..] = block;
-                *dc = *last_dc;
-            }
+            dummy.fill(Block::flat(image.last().ok_or(Error::Internal)?.dc()));
         } else {
             let above = above.ok_or(Error::Internal)?;
             for (out, above) in out.chunks_exact_mut(samp).zip(above.chunks_exact(samp)) {
-                let [last_dc, ..] = above.last().ok_or(Error::Internal)?;
-                for block in out {
-                    *block = [0; 64];
-                    let [dc, ..] = block;
-                    *dc = *last_dc;
-                }
+                out.fill(Block::flat(above.last().ok_or(Error::Internal)?.dc()));
             }
         }
         above = Some(out);
@@ -308,12 +333,12 @@ impl Encoder<'_> {
             for mcu in mcus(&y, &cb, &cr) {
                 for block in mcu.y {
                     huff::encode_block(&mut bits, block, last_y, &luma_dc, &luma_ac);
-                    [last_y, ..] = *block;
+                    last_y = block.dc();
                 }
                 huff::encode_block(&mut bits, mcu.cb, last_cb, &chroma_dc, &chroma_ac);
-                [last_cb, ..] = *mcu.cb;
+                last_cb = mcu.cb.dc();
                 huff::encode_block(&mut bits, mcu.cr, last_cr, &chroma_dc, &chroma_ac);
-                [last_cr, ..] = *mcu.cr;
+                last_cr = mcu.cr.dc();
             }
         }
         bits.finish();
@@ -337,16 +362,13 @@ impl Encoder<'_> {
                         1 => (&cb, self.chroma_extent, 1),
                         _ => (&cr, self.chroma_extent, 1),
                     };
-                    let mut encoder = AcEncoder::new(table);
+                    let mut encoder = AcEncoder::new(table, scan);
                     for row in blocks.rows().take(extent.height_in_blocks) {
                         for block in row.iter().take(extent.width_in_blocks) {
-                            let band = block
-                                .get(usize::from(scan.ss)..=usize::from(scan.se))
-                                .unwrap_or(&[]);
                             if scan.ah == 0 {
-                                encoder.encode_first(sink, band, al);
+                                encoder.encode_first(sink, block);
                             } else {
-                                encoder.encode_refine(sink, band, al);
+                                encoder.encode_refine(sink, block);
                             }
                         }
                     }

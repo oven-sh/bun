@@ -1,7 +1,7 @@
 //! Huffman coding of progressive scans (jcphuff.c).
 
-use super::Block;
 use super::huff::{BitWriter, Code, Counts, EncodeTable, bit_length, value_bits};
+use super::{Block, Scan};
 
 /// The most correction bits that wait for the end of a run of blocks. How long such a run gets depends on it.
 const MAX_CORR_BITS: usize = 1000;
@@ -58,8 +58,7 @@ pub(crate) fn encode_dc_first(
     al: u32,
     last_dc: i32,
 ) -> i32 {
-    let [dc, ..] = block;
-    let value = i32::from(*dc) >> al;
+    let value = i32::from(block.dc()) >> al;
     let diff = value - last_dc;
     let nbits = bit_length(diff.unsigned_abs());
     sink.symbol(table, nbits as u8);
@@ -70,13 +69,17 @@ pub(crate) fn encode_dc_first(
 /// A later scan of a DC coefficient: bit `al`.
 #[inline]
 pub(crate) fn encode_dc_refine(sink: &mut Sink, block: &Block, al: u32) {
-    let [dc, ..] = block;
-    sink.bits(((i32::from(*dc) >> al) & 1) as u32, 1);
+    sink.bits(((i32::from(block.dc()) >> al) & 1) as u32, 1);
 }
 
 /// The state of a scan of AC coefficients.
 pub(crate) struct AcEncoder {
     table: usize,
+    /// The first and the last coefficient of the scan, in zigzag order.
+    ss: u32,
+    se: u32,
+    /// The bit position that the scan stops at.
+    al: u32,
     /// Blocks gone by that had nothing left to code when they ended.
     eob_run: u32,
     /// The correction bits of those blocks, one in a byte.
@@ -86,9 +89,12 @@ pub(crate) struct AcEncoder {
 }
 
 impl AcEncoder {
-    pub(crate) fn new(table: usize) -> Self {
+    pub(crate) fn new(table: usize, scan: &Scan) -> Self {
         AcEncoder {
             table,
+            ss: u32::from(scan.ss),
+            se: u32::from(scan.se),
+            al: u32::from(scan.al),
             eob_run: 0,
             bit_buffer: [0; MAX_CORR_BITS],
             be: 0,
@@ -106,17 +112,23 @@ impl AcEncoder {
         }
     }
 
-    /// The first scan of a band of coefficients: all of their bits from `al` up. `band` is in zigzag order.
+    /// The first scan of a band of coefficients: all of their bits from `al` up.
     #[inline]
-    pub(crate) fn encode_first(&mut self, sink: &mut Sink, band: &[i16], al: u32) {
-        let mut run = 0u32;
-        for &coef in band {
+    pub(crate) fn encode_first(&mut self, sink: &mut Sink, block: &Block) {
+        let mut left = block.nonzero_between(self.ss, self.se);
+        // One more than the place of the last coefficient that was coded.
+        let mut next = self.ss;
+        while left != 0 {
+            let k = left.trailing_zeros();
+            left &= left - 1;
+            let coef = block.zigzag(k);
             // Toward zero.
-            let magnitude = u32::from(coef.unsigned_abs()) >> al;
+            let magnitude = u32::from(coef.unsigned_abs()) >> self.al;
             if magnitude == 0 {
-                run += 1;
                 continue;
             }
+            let mut run = k - next;
+            next = k + 1;
             self.emit_eob_run(sink);
             while run > 15 {
                 sink.symbol(self.table, 0xf0);
@@ -126,9 +138,8 @@ impl AcEncoder {
             sink.symbol(self.table, ((run << 4) + nbits) as u8);
             let bits = if coef < 0 { !magnitude } else { magnitude };
             sink.bits(bits & ((1 << nbits) - 1), nbits);
-            run = 0;
         }
-        if run > 0 {
+        if next <= self.se {
             self.eob_run += 1;
             if self.eob_run == 0x7fff {
                 self.emit_eob_run(sink);
@@ -138,21 +149,38 @@ impl AcEncoder {
 
     /// A later scan of a band of coefficients: bit `al`.
     #[inline]
-    pub(crate) fn encode_refine(&mut self, sink: &mut Sink, band: &[i16], al: u32) {
-        let magnitude = |coef: i16| u32::from(coef.unsigned_abs()) >> al;
-        // The last coefficient that becomes nonzero in this scan. After it there are only correction bits.
-        let eob = band.iter().rposition(|&coef| magnitude(coef) == 1);
+    pub(crate) fn encode_refine(&mut self, sink: &mut Sink, block: &Block) {
+        let al = self.al;
+        let magnitude = |k: u32| u32::from(block.zigzag(k).unsigned_abs()) >> al;
+        let nonzero = block.nonzero_between(self.ss, self.se);
 
+        // The last coefficient that becomes nonzero in this scan. After it there are only correction bits.
+        let mut eob = None;
+        let mut left = nonzero;
+        while left != 0 && eob.is_none() {
+            let k = 63 - left.leading_zeros();
+            left &= !(1 << k);
+            if magnitude(k) == 1 {
+                eob = Some(k);
+            }
+        }
+
+        // Zeros since the last symbol.
         let mut run = 0u32;
+        let mut next = self.ss;
         // This block's correction bits since the last symbol go after those of the blocks before it.
         let mut br_start = self.be;
         let mut br = 0usize;
-        for (k, &coef) in band.iter().enumerate() {
-            let magnitude = magnitude(coef);
+        let mut left = nonzero;
+        while left != 0 {
+            let k = left.trailing_zeros();
+            left &= left - 1;
+            let magnitude = magnitude(k);
             if magnitude == 0 {
-                run += 1;
                 continue;
             }
+            run += k - next;
+            next = k + 1;
 
             // Runs of 16 zeros, unless the end of the block takes care of them.
             while run > 15 && eob.is_some_and(|eob| k <= eob) {
@@ -175,12 +203,13 @@ impl AcEncoder {
 
             self.emit_eob_run(sink);
             sink.symbol(self.table, ((run << 4) + 1) as u8);
-            sink.bits(u32::from(coef >= 0), 1);
+            sink.bits(u32::from(block.zigzag(k) >= 0), 1);
             sink.buffered_bits(self.bit_buffer.get(br_start..br_start + br).unwrap_or(&[]));
             br_start = 0;
             br = 0;
             run = 0;
         }
+        run += self.se + 1 - next;
 
         if run > 0 || br > 0 {
             self.eob_run += 1;

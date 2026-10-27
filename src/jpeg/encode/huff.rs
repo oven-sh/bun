@@ -164,7 +164,7 @@ pub(crate) fn value_bits(value: i32, nbits: u32) -> u32 {
     ((value + (value >> 31)) as u32) & ((1 << nbits) - 1)
 }
 
-/// Writes a block of a sequential scan. `block` is in zigzag order.
+/// Writes a block of a sequential scan.
 #[inline]
 pub(crate) fn encode_block(
     bits: &mut BitWriter,
@@ -173,30 +173,29 @@ pub(crate) fn encode_block(
     dc_table: &EncodeTable,
     ac_table: &EncodeTable,
 ) {
-    let [dc, ac @ ..] = block;
-    let diff = i32::from(*dc) - i32::from(last_dc);
+    let diff = i32::from(block.dc()) - i32::from(last_dc);
     let nbits = bit_length(diff.unsigned_abs());
     let Code { code, size } = dc_table.get(nbits as u8);
     bits.put((code << nbits) | value_bits(diff, nbits), size + nbits);
 
-    let mut run = 0u32;
-    for &coef in ac {
-        if coef == 0 {
-            run += 1;
-            continue;
-        }
+    let mut left = block.nonzero_between(1, 63);
+    let mut last = 0;
+    while left != 0 {
+        let k = left.trailing_zeros();
+        left &= left - 1;
+        let mut run = k - last - 1;
+        last = k;
         while run > 15 {
             let Code { code, size } = ac_table.get(0xf0);
             bits.put(code, size);
             run -= 16;
         }
-        let coef = i32::from(coef);
+        let coef = i32::from(block.zigzag(k));
         let nbits = bit_length(coef.unsigned_abs());
         let Code { code, size } = ac_table.get(((run << 4) + nbits) as u8);
         bits.put((code << nbits) | value_bits(coef, nbits), size + nbits);
-        run = 0;
     }
-    if run > 0 {
+    if last != 63 {
         let Code { code, size } = ac_table.get(0);
         bits.put(code, size);
     }

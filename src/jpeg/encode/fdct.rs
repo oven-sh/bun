@@ -96,15 +96,22 @@ fn fdct8<const FIRST: bool>([d0, d1, d2, d3, d4, d5, d6, d7]: [i16; 8]) -> [i16;
     ]
 }
 
-/// Each column of `samples` is a row of the block, and so it is with the result.
 #[inline(never)]
-fn rows_pass(samples: &[[u8; 8]; 8]) -> [[i16; 8]; 8] {
-    from_columns(|lane| fdct8::<true>(column(samples, lane).map(|s| i16::from(s) - 128)))
+fn center(samples: &[[u8; 8]; 8]) -> [[i16; 8]; 8] {
+    let mut out = [[0i16; 8]; 8];
+    for (out, &sample) in out
+        .as_flattened_mut()
+        .iter_mut()
+        .zip(samples.as_flattened())
+    {
+        *out = i16::from(sample) - 128;
+    }
+    out
 }
 
 #[inline(never)]
-fn columns_pass(data: &[[i16; 8]; 8]) -> [[i16; 8]; 8] {
-    from_columns(|lane| fdct8::<false>(column(data, lane)))
+fn pass<const FIRST: bool>(data: &[[i16; 8]; 8]) -> [[i16; 8]; 8] {
+    from_columns(|lane| fdct8::<FIRST>(column(data, lane)))
 }
 
 #[inline(never)]
@@ -127,17 +134,64 @@ fn quantize(coefs: &[[i16; 8]; 8], divisors: &Divisors) -> [[i16; 8]; 8] {
     out
 }
 
-/// The quantized coefficients of 8 rows of 8 samples, in zigzag order.
+/// `ZIGZAG_BITS[row][bits]` has a bit for each bit of `bits`: the place in zigzag order of that column of `row`.
+#[allow(clippy::indexing_slicing, reason = "evaluated at compile time")]
+static ZIGZAG_BITS: [[u64; 256]; 8] = {
+    let mut place = [0u8; 64];
+    let mut k = 0;
+    while k < 64 {
+        place[NATURAL_ORDER[k] as usize] = k as u8;
+        k += 1;
+    }
+    let mut table = [[0u64; 256]; 8];
+    let mut row = 0;
+    while row < 8 {
+        let mut bits = 0;
+        while bits < 256 {
+            let mut column = 0;
+            while column < 8 {
+                if bits >> column & 1 != 0 {
+                    table[row][bits] |= 1 << place[row * 8 + column];
+                }
+                column += 1;
+            }
+            bits += 1;
+        }
+        row += 1;
+    }
+    table
+};
+
+#[inline(never)]
+fn nonzero(coefs: &[[i16; 8]; 8]) -> u64 {
+    let mut flags = [[0u8; 8]; 8];
+    for (flag, &coef) in flags
+        .as_flattened_mut()
+        .iter_mut()
+        .zip(coefs.as_flattened())
+    {
+        *flag = u8::from(coef != 0);
+    }
+    let mut nonzero = 0;
+    for (flags, table) in flags.iter().zip(&ZIGZAG_BITS) {
+        // The multiplication moves the low bit of byte `i` to bit `56 + i`, and nothing else gets there.
+        let bits = u64::from_le_bytes(*flags).wrapping_mul(0x0102_0408_1020_4080) >> 56;
+        nonzero |= table.get(bits as usize).copied().unwrap_or(0);
+    }
+    nonzero
+}
+
+/// The quantized coefficients of 8 rows of 8 samples.
 #[inline]
 pub(crate) fn forward(samples: &[[u8; 8]; 8], divisors: &Divisors) -> Block {
     // Rows first: the two passes round differently.
-    let coefs = columns_pass(&transpose(&rows_pass(&transpose(samples))));
+    let samples = center(&transpose(samples));
+    let coefs = pass::<false>(&transpose(&pass::<true>(&samples)));
     let quantized = quantize(&coefs, divisors);
-
-    let quantized = quantized.as_flattened();
-    let mut block = [0i16; 64];
-    for (out, &position) in block.iter_mut().zip(&NATURAL_ORDER) {
-        *out = quantized.get(usize::from(position)).copied().unwrap_or(0);
+    let mut coefs = [0; 64];
+    coefs.copy_from_slice(quantized.as_flattened());
+    Block {
+        coefs,
+        nonzero: nonzero(&quantized),
     }
-    block
 }

@@ -59,6 +59,7 @@ members = [
   "src/event_loop",
   "src/exe_format",
   "src/highway",
+  "src/histogram",
   "src/http_jsc",
   "src/http_types",
   "src/ini",
@@ -427,6 +428,7 @@ bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }
 bun_highway = { path = "src/highway" }
+bun_histogram = { path = "src/histogram" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }

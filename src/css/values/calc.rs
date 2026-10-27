@@ -778,14 +778,29 @@ impl<V: CalcValue> Calc<V> {
             }
         }
 
-        if let Ok(v) = try_parse_atan2_args::<Length>(input) {
-            return Ok(v);
+        match try_parse_atan2_args::<Length>(input) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
         }
-        if let Ok(v) = try_parse_atan2_args::<Percentage>(input) {
-            return Ok(v);
+        match try_parse_atan2_args::<Percentage>(input) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
         }
-        if let Ok(v) = try_parse_atan2_args::<Time>(input) {
-            return Ok(v);
+        match try_parse_atan2_args::<Time>(input) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
         }
 
         Calc::<CSSNumber>::parse_atan2_args(input, &Self::number_ident(parse_ident))

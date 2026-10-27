@@ -527,31 +527,33 @@ impl BlockDecoder {
             self.fse_entropy = true;
         }
 
-        let block_end = start + capacity;
         let oend = if literals.location == LitLocation::InDst {
             start + block_size_max + WILDCOPY_OVERLENGTH
         } else {
-            block_end
+            start + capacity
         };
         let split = literals.location == LitLocation::Split;
-        let in_dst_size = literals.size.saturating_sub(LIT_BUFFER_EXTRA_SIZE);
+        let lits = match literals.in_src {
+            Some(start) => src.sub(start..)?,
+            None => lit_buffer.as_slice(),
+        };
+        // How many would be in the output buffer, if some.
+        let in_dst_size = if split {
+            literals.size - LIT_BUFFER_EXTRA_SIZE
+        } else {
+            literals.size
+        };
         let mut exec = Executor {
-            buf: buf.sub_mut(..block_end)?,
+            buf: buf.sub_mut(..oend)?,
             op: start,
-            oend,
             prefix_start,
             ext_dict,
-            lits: match literals.in_src {
-                Some(start) => src.sub(start..)?,
-                None => lit_buffer.as_slice(),
-            },
-            lit_pos: 0,
-            lit_limit: if split { in_dst_size } else { literals.size },
-            lit_size: literals.size,
+            lits: lits.sub(..in_dst_size + WILDCOPY_OVERLENGTH)?,
             split,
-            // `litBufferEnd` is `WILDCOPY_OVERLENGTH` short of how far the block is expected to write.
-            lit_in_dst: (start + capacity.min(block_size_max))
-                .wrapping_sub(WILDCOPY_OVERLENGTH + in_dst_size),
+            lits_extra: lits.sub(in_dst_size..literals.size + WILDCOPY_OVERLENGTH)?,
+            // `WILDCOPY_OVERLENGTH` short of how far the block is expected to write.
+            lit_end_in_dst: (start + capacity.min(block_size_max))
+                .wrapping_sub(WILDCOPY_OVERLENGTH),
         };
 
         if nb_seq > 0 {
@@ -635,12 +637,13 @@ fn long_offset_share(of_table: &SeqTable<{ 1 << OFF_FSE_LOG }>) -> u32 {
 /// `seq_t`
 #[derive(Clone, Copy, Default)]
 struct Sequence {
-    lit_length: usize,
-    match_length: usize,
+    lit_length: u32,
+    match_length: u32,
     offset: usize,
 }
 
 /// `seqState_t`
+#[derive(Clone, Copy)]
 struct SeqState<'a> {
     bit_d: BitDStream<'a>,
     state_ll: usize,
@@ -688,8 +691,8 @@ impl<'a> SeqState<'a> {
         let ll_d_info = self.ll_table.get(self.state_ll);
         let ml_d_info = self.ml_table.get(self.state_ml);
         let of_d_info = self.of_table.get(self.state_off);
-        let mut match_length = ml_d_info.base_value as usize;
-        let mut lit_length = ll_d_info.base_value as usize;
+        let mut match_length = ml_d_info.base_value;
+        let mut lit_length = ll_d_info.base_value;
         let of_base = of_d_info.base_value as usize;
         let ll_bits = u32::from(ll_d_info.nb_additional_bits);
         let ml_bits = u32::from(ml_d_info.nb_additional_bits);
@@ -724,14 +727,14 @@ impl<'a> SeqState<'a> {
         }
 
         if ml_bits > 0 {
-            match_length += self.bit_d.read_bits_fast(ml_bits) as usize;
+            match_length += self.bit_d.read_bits_fast(ml_bits) as u32;
         }
         const ACCUMULATOR_MIN: u32 = 57;
         if total_bits >= ACCUMULATOR_MIN - (LL_FSE_LOG + ML_FSE_LOG + OFF_FSE_LOG) {
             self.bit_d.reload();
         }
         if ll_bits > 0 {
-            lit_length += self.bit_d.read_bits_fast(ll_bits) as usize;
+            lit_length += self.bit_d.read_bits_fast(ll_bits) as u32;
         }
 
         if !is_last_seq {
@@ -778,39 +781,83 @@ fn copy_match_exact(buf: &mut [u8], src: usize, dst: usize, len: usize) -> Resul
 }
 
 /// Turns sequences into output.
-struct Executor<'a> {
-    /// Ends where the block has to.
-    buf: &'a mut [u8],
+struct Executor<'buf, 'a> {
+    /// Ends where the block has to stop writing: `oend`.
+    buf: &'buf mut [u8],
     op: usize,
-    /// How far the C code would let the block write.
-    oend: usize,
     prefix_start: usize,
     ext_dict: ExtDict<'a>,
-    /// At least `WILDCOPY_OVERLENGTH` longer than `lit_size`.
+    /// The literals that are left, up to `litBufferEnd`, and `WILDCOPY_OVERLENGTH` bytes after them.
     lits: &'a [u8],
-    lit_pos: usize,
-    /// `litBufferEnd`
-    lit_limit: usize,
-    lit_size: usize,
-    /// `litBufferLocation == ZSTD_split`: the literals up to `lit_limit` would be in the output buffer.
+    /// `litBufferLocation == ZSTD_split`: `lits` would be in the output buffer.
     split: bool,
-    /// Where in `buf` they would start.
-    lit_in_dst: usize,
+    /// The literals that come after `lits` then, likewise.
+    lits_extra: &'a [u8],
+    /// Where in `buf` `lits` would end then.
+    lit_end_in_dst: usize,
 }
 
-impl Executor<'_> {
-    /// The match of a sequence whose literals end at `o_lit_end`. `FAST`: 32 bytes after the match may be written.
+impl<'a> Executor<'_, 'a> {
+    /// `litBufferEnd - litPtr`
     #[inline(always)]
-    fn copy_match<const FAST: bool>(&mut self, o_lit_end: usize, sequence: Sequence) -> Result<()> {
-        let Sequence {
-            mut match_length,
-            offset,
-            ..
-        } = sequence;
-        let mut op = o_lit_end;
-        let in_prefix = o_lit_end - self.prefix_start;
-        let mut match_pos = o_lit_end.wrapping_sub(offset);
+    fn lits_left(&self) -> usize {
+        self.lits.len().saturating_sub(WILDCOPY_OVERLENGTH)
+    }
 
+    /// The same, for a while. A loop works on a copy that is a local variable and whose address nothing takes, which
+    /// can stay in registers. What is behind a reference is written and read again for every sequence.
+    #[inline(always)]
+    fn fork(&mut self) -> Executor<'_, 'a> {
+        Executor {
+            buf: &mut *self.buf,
+            ..*self
+        }
+    }
+
+    #[inline(always)]
+    fn join(&mut self, (op, lits, split): (usize, &'a [u8], bool)) {
+        (self.op, self.lits, self.split) = (op, lits, split);
+    }
+
+    #[inline(always)]
+    fn exec_sequence_end(&mut self, sequence: Sequence) -> Result<()> {
+        let mut fork = self.fork();
+        fork.exec_sequence_end_cold(sequence)?;
+        let state = (fork.op, fork.lits, fork.split);
+        self.join(state);
+        Ok(())
+    }
+
+    /// `ZSTD_execSequenceEnd` and `ZSTD_execSequenceEndSplitLitBuffer`: nothing is written past the sequence. Also what
+    /// `ZSTD_execSequence` does of a match that starts before the prefix.
+    #[cold]
+    #[inline(never)]
+    fn exec_sequence_end_cold(&mut self, sequence: Sequence) -> Result<()> {
+        let lit_length = sequence.lit_length as usize;
+        let mut match_length = sequence.match_length as usize;
+        let offset = sequence.offset;
+        let mut op = self.op;
+
+        if lit_length + match_length > self.buf.len() - op {
+            return Err(ErrorCode::DstSizeTooSmall);
+        }
+        if lit_length > self.lits_left() {
+            return Err(ErrorCode::CorruptionDetected);
+        }
+        if self.split {
+            let lit_ptr = self.lit_end_in_dst.wrapping_sub(self.lits_left());
+            if op > lit_ptr && op < lit_ptr.wrapping_add(lit_length) {
+                return Err(ErrorCode::DstSizeTooSmall);
+            }
+        }
+
+        self.buf.write_at(op, self.lits.sub(..lit_length)?)?;
+        self.lits = self.lits.sub(lit_length..)?;
+        op += lit_length;
+        self.op = op + match_length;
+
+        let in_prefix = op - self.prefix_start;
+        let mut match_pos = op.wrapping_sub(offset);
         if offset > in_prefix {
             if offset > in_prefix + self.ext_dict.len() {
                 return Err(ErrorCode::CorruptionDetected);
@@ -825,24 +872,85 @@ impl Executor<'_> {
             match_length -= back;
             match_pos = self.prefix_start;
         }
+        copy_match_exact(self.buf, match_pos, op, match_length)
+    }
 
-        if !FAST {
-            return copy_match_exact(self.buf, match_pos, op, match_length);
+    /// `ZSTD_execSequence` and `ZSTD_execSequenceSplitLitBuffer`, if there is room to copy in chunks and the match is
+    /// in the prefix. Otherwise `None`, and what is changed is only output that the sequence is to overwrite.
+    ///
+    /// The conditions are such that the compiler sees that most of the `?` cannot fail.
+    #[inline(always)]
+    fn exec_sequence_fast<const SPLIT: bool>(&mut self, sequence: Sequence) -> Option<()> {
+        let lit_length = sequence.lit_length as usize;
+        let match_length = sequence.match_length as usize;
+        let offset = sequence.offset;
+        let op = self.op;
+
+        let room = self.buf.get_mut(op..)?;
+        if lit_length + match_length + WILDCOPY_OVERLENGTH > room.len()
+            || lit_length + WILDCOPY_OVERLENGTH > self.lits.len()
+        {
+            return None;
         }
-
-        if offset >= 16 {
-            // `ZSTD_wildcopy(ZSTD_no_overlap)`
-            let mut done = 0usize;
-            loop {
-                copy_within::<16>(self.buf, match_pos + done, op + done)?;
-                done += 16;
-                if done >= match_length {
-                    return Ok(());
-                }
+        if SPLIT {
+            // The output must not catch up with the literals.
+            let i_lit_end = (self.lit_end_in_dst)
+                .wrapping_sub(self.lits.len() - WILDCOPY_OVERLENGTH)
+                .wrapping_add(lit_length);
+            if op + lit_length + match_length + WILDCOPY_OVERLENGTH > i_lit_end {
+                return None;
             }
         }
 
-        // `ZSTD_overlapCopy8`: after 8 bytes, the source is at least 8 bytes behind.
+        *room.first_chunk_mut::<16>()? = *self.lits.first_chunk()?;
+        if lit_length > 16 {
+            room.get_mut(16..lit_length)?
+                .copy_from_slice(self.lits.get(16..lit_length)?);
+        }
+
+        let o_lit_end = op + lit_length;
+        if offset > o_lit_end - self.prefix_start {
+            return None;
+        }
+        let (before, room) = self.buf.split_at_mut_checked(o_lit_end)?;
+        let from = before.get(before.len().checked_sub(offset)?..)?;
+        if offset >= 16 {
+            // `ZSTD_wildcopy(ZSTD_no_overlap)`
+            *room.first_chunk_mut::<16>()? = *from.first_chunk()?;
+            if match_length > 16 {
+                let rounded = (match_length + 15) & !15;
+                if offset >= rounded {
+                    room.get_mut(16..rounded)?
+                        .copy_from_slice(from.get(16..rounded)?);
+                } else {
+                    let mut done = 16;
+                    while done < match_length {
+                        let to = o_lit_end + done;
+                        copy_within::<16>(self.buf, to - offset, to).ok()?;
+                        done += 16;
+                    }
+                }
+            }
+        } else {
+            self.copy_close_match(o_lit_end, offset, match_length)
+                .ok()?;
+        }
+
+        self.lits = self.lits.get(lit_length..)?;
+        self.op = o_lit_end + match_length;
+        Some(())
+    }
+
+    /// `ZSTD_overlapCopy8` and `ZSTD_wildcopy(ZSTD_overlap_src_before_dst)`: a match less than 16 bytes back.
+    #[inline(always)]
+    fn copy_close_match(
+        &mut self,
+        mut op: usize,
+        offset: usize,
+        match_length: usize,
+    ) -> Result<()> {
+        let mut match_pos = op - offset;
+        // After 8 bytes, the source is at least 8 bytes behind.
         if offset < 8 {
             const DEC32_TABLE: [usize; 8] = [0, 1, 2, 1, 4, 4, 4, 4];
             const DEC64_TABLE: [usize; 8] = [8, 8, 8, 7, 8, 9, 10, 11];
@@ -859,7 +967,6 @@ impl Executor<'_> {
             match_pos += 8;
         }
         op += 8;
-        // `ZSTD_wildcopy(ZSTD_overlap_src_before_dst)`
         let mut done = 8usize;
         while done < match_length {
             copy_within::<8>(self.buf, match_pos, op)?;
@@ -870,92 +977,71 @@ impl Executor<'_> {
         Ok(())
     }
 
-    /// `ZSTD_execSequenceEnd` and `ZSTD_execSequenceEndSplitLitBuffer`: near the end of a buffer.
+    #[inline(always)]
+    fn exec_sequence<const SPLIT: bool>(&mut self, sequence: Sequence) -> Result<()> {
+        match self.exec_sequence_fast::<SPLIT>(sequence) {
+            Some(()) => Ok(()),
+            None => self.exec_sequence_end(sequence),
+        }
+    }
+
+    /// The first sequence whose literals do not end among those that would be in the output buffer.
+    #[inline(always)]
+    fn exec_sequence_leaving_split(&mut self, sequence: Sequence) -> Result<()> {
+        let mut fork = self.fork();
+        fork.exec_sequence_leaving_split_cold(sequence)?;
+        let state = (fork.op, fork.lits, fork.split);
+        self.join(state);
+        Ok(())
+    }
+
     #[cold]
     #[inline(never)]
-    fn exec_sequence_end(&mut self, sequence: Sequence) -> Result<()> {
-        let op = self.op;
-        let o_lit_end = op + sequence.lit_length;
-        let sequence_length = sequence.lit_length + sequence.match_length;
-
-        if sequence_length > self.oend - op {
-            return Err(ErrorCode::DstSizeTooSmall);
-        }
-        if sequence.lit_length > self.lit_limit - self.lit_pos {
-            return Err(ErrorCode::CorruptionDetected);
-        }
-        if self.split {
-            let lit_ptr = self.lit_in_dst.wrapping_add(self.lit_pos);
-            if op > lit_ptr && op < lit_ptr + sequence.lit_length {
+    fn exec_sequence_leaving_split_cold(&mut self, mut sequence: Sequence) -> Result<()> {
+        let leftover_lit = self.lits_left();
+        if leftover_lit > 0 {
+            if leftover_lit > self.buf.len() - self.op {
                 return Err(ErrorCode::DstSizeTooSmall);
             }
+            self.buf.write_at(self.op, self.lits.sub(..leftover_lit)?)?;
+            sequence.lit_length -= leftover_lit as u32;
+            self.op += leftover_lit;
         }
-
-        self.buf
-            .write_at(op, self.lits.span(self.lit_pos, sequence.lit_length)?)?;
-        self.lit_pos += sequence.lit_length;
-        self.copy_match::<false>(o_lit_end, sequence)?;
-        self.op = op + sequence_length;
-        Ok(())
+        self.split = false;
+        self.lits = self.lits_extra;
+        self.exec_sequence::<false>(sequence)
     }
 
-    /// `ZSTD_execSequence` and `ZSTD_execSequenceSplitLitBuffer`
     #[inline(always)]
-    fn exec_sequence(&mut self, sequence: Sequence) -> Result<()> {
-        let op = self.op;
-        let o_lit_end = op + sequence.lit_length;
-        let o_match_end = o_lit_end + sequence.match_length;
-        let i_lit_end = self.lit_pos + sequence.lit_length;
-        // How far a copy in chunks may write, plus `WILDCOPY_OVERLENGTH`.
-        let limit = if self.split {
-            self.lit_in_dst.wrapping_add(i_lit_end)
+    fn exec_sequence_maybe_split(&mut self, sequence: Sequence) -> Result<()> {
+        if !self.split {
+            self.exec_sequence::<false>(sequence)
+        } else if sequence.lit_length as usize > self.lits_left() {
+            self.exec_sequence_leaving_split(sequence)
         } else {
-            self.oend
-        };
-
-        if i_lit_end > self.lit_limit || o_match_end + WILDCOPY_OVERLENGTH > limit {
-            return self.exec_sequence_end(sequence);
+            self.exec_sequence::<true>(sequence)
         }
-
-        *self.buf.array_at_mut::<16>(op)? = *self.lits.array_at(self.lit_pos)?;
-        if sequence.lit_length > 16 {
-            self.buf
-                .write_at(op + 16, self.lits.sub(self.lit_pos + 16..i_lit_end)?)?;
-        }
-        self.lit_pos = i_lit_end;
-        self.copy_match::<true>(o_lit_end, sequence)?;
-        self.op = o_match_end;
-        Ok(())
-    }
-
-    /// A sequence, whose literals may start among those that would be in the output buffer and end among the others.
-    #[inline(always)]
-    fn exec_sequence_maybe_split(&mut self, mut sequence: Sequence) -> Result<()> {
-        if self.split && self.lit_pos + sequence.lit_length > self.lit_limit {
-            let leftover_lit = self.lit_limit - self.lit_pos;
-            if leftover_lit > 0 {
-                if leftover_lit > self.oend - self.op {
-                    return Err(ErrorCode::DstSizeTooSmall);
-                }
-                self.buf
-                    .write_at(self.op, self.lits.span(self.lit_pos, leftover_lit)?)?;
-                sequence.lit_length -= leftover_lit;
-                self.op += leftover_lit;
-                self.lit_pos += leftover_lit;
-            }
-            self.split = false;
-            self.lit_limit = self.lit_size;
-        }
-        self.exec_sequence(sequence)
     }
 
     /// `ZSTD_decompressSequences_body` and `ZSTD_decompressSequences_bodySplitLitBuffer`
     fn run(&mut self, seq_state: &mut SeqState<'_>, nb_seq: usize) -> Result<()> {
-        for remaining in (1..=nb_seq).rev() {
-            let sequence = seq_state.decode_sequence(remaining == 1);
-            self.exec_sequence_maybe_split(sequence)?;
+        let mut exec = self.fork();
+        let mut state = *seq_state;
+        let mut remaining = nb_seq;
+        while exec.split && remaining > 0 {
+            let sequence = state.decode_sequence(remaining == 1);
+            remaining -= 1;
+            exec.exec_sequence_maybe_split(sequence)?;
         }
-        if !seq_state.bit_d.is_at_end() {
+        while remaining > 0 {
+            let sequence = state.decode_sequence(remaining == 1);
+            remaining -= 1;
+            exec.exec_sequence::<false>(sequence)?;
+        }
+        let exec = (exec.op, exec.lits, exec.split);
+        self.join(exec);
+        *seq_state = state;
+        if !state.bit_d.is_at_end() {
             return Err(ErrorCode::CorruptionDetected);
         }
         Ok(())
@@ -987,13 +1073,17 @@ impl Executor<'_> {
 
     /// The literals after the last sequence.
     fn last_literals(&mut self) -> Result<()> {
-        let last_ll_size = self.lit_size - self.lit_pos;
-        if last_ll_size > self.oend - self.op {
+        let extra = if self.split { self.lits_extra } else { &[] };
+        let parts = [self.lits, extra]
+            .map(|part| part.get(..part.len().saturating_sub(WILDCOPY_OVERLENGTH)));
+        let parts = parts.map(Option::unwrap_or_default);
+        if parts.iter().map(|part| part.len()).sum::<usize>() > self.buf.len() - self.op {
             return Err(ErrorCode::DstSizeTooSmall);
         }
-        self.buf
-            .write_at(self.op, self.lits.span(self.lit_pos, last_ll_size)?)?;
-        self.op += last_ll_size;
+        for part in parts {
+            self.buf.write_at(self.op, part)?;
+            self.op += part.len();
+        }
         Ok(())
     }
 }

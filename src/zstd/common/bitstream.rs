@@ -98,11 +98,10 @@ pub(crate) enum DStreamStatus {
 /// `BIT_DStream_t`
 #[derive(Clone, Copy)]
 pub(crate) struct BitDStream<'a> {
+    /// The stream up to the end of what `container` was read from: its last 8 bytes, or all of it if it is shorter.
     src: &'a [u8],
     pub(crate) container: u64,
     pub(crate) bits_consumed: u32,
-    /// Where `container` was read from.
-    pos: usize,
 }
 
 impl<'a> BitDStream<'a> {
@@ -121,7 +120,6 @@ impl<'a> BitDStream<'a> {
                 src,
                 container: u64::from_le_bytes(*tail),
                 bits_consumed: padding,
-                pos: src.len() - CONTAINER_BYTES,
             });
         }
         if last_byte == 0 {
@@ -133,7 +131,6 @@ impl<'a> BitDStream<'a> {
             src,
             container: u64::from_le_bytes(bytes),
             bits_consumed: padding + (CONTAINER_BYTES - src.len()) as u32 * 8,
-            pos: 0,
         })
     }
 
@@ -141,10 +138,9 @@ impl<'a> BitDStream<'a> {
     #[inline]
     pub(crate) fn resume(src: &'a [u8], pos: usize, bits_consumed: u32) -> Result<Self> {
         Ok(Self {
-            src,
+            src: src.sub(..pos + CONTAINER_BYTES)?,
             container: read_le64(src, pos)?,
             bits_consumed,
-            pos,
         })
     }
 
@@ -187,18 +183,27 @@ impl<'a> BitDStream<'a> {
         value
     }
 
+    /// `ptr - start`
     #[inline(always)]
-    fn load(&mut self, pos: usize) {
-        self.pos = pos;
-        if let Ok(container) = read_le64(self.src, pos) {
-            self.container = container;
+    fn pos(&self) -> usize {
+        self.src.len().saturating_sub(CONTAINER_BYTES)
+    }
+
+    /// Goes `nb_bytes` back, which is no more than `pos`.
+    #[inline(always)]
+    fn load(&mut self, nb_bytes: usize) {
+        if let Some(src) = self.src.get(..self.src.len().wrapping_sub(nb_bytes))
+            && let Some(tail) = src.last_chunk()
+        {
+            self.src = src;
+            self.container = u64::from_le_bytes(*tail);
         }
     }
 
     /// `BIT_reloadDStreamFast`
     #[inline(always)]
     pub(crate) fn reload_fast(&mut self) -> DStreamStatus {
-        if self.pos < CONTAINER_BYTES {
+        if self.src.len() < 2 * CONTAINER_BYTES {
             return DStreamStatus::Overflow;
         }
         self.reload_internal()
@@ -207,9 +212,9 @@ impl<'a> BitDStream<'a> {
     /// `BIT_reloadDStream_internal`: `pos` is at least 8 and at most 64 bits are consumed.
     #[inline(always)]
     fn reload_internal(&mut self) -> DStreamStatus {
-        let pos = self.pos.wrapping_sub((self.bits_consumed >> 3) as usize);
+        let nb_bytes = (self.bits_consumed >> 3) as usize;
         self.bits_consumed &= 7;
-        self.load(pos);
+        self.load(nb_bytes);
         DStreamStatus::Unfinished
     }
 
@@ -219,10 +224,11 @@ impl<'a> BitDStream<'a> {
         if self.bits_consumed > CONTAINER_BITS {
             return DStreamStatus::Overflow;
         }
-        if self.pos >= CONTAINER_BYTES {
+        if self.src.len() >= 2 * CONTAINER_BYTES {
             return self.reload_internal();
         }
-        if self.pos == 0 {
+        let pos = self.pos();
+        if pos == 0 {
             if self.bits_consumed < CONTAINER_BITS {
                 return DStreamStatus::EndOfBuffer;
             }
@@ -230,18 +236,18 @@ impl<'a> BitDStream<'a> {
         }
         let mut nb_bytes = (self.bits_consumed >> 3) as usize;
         let mut result = DStreamStatus::Unfinished;
-        if self.pos < nb_bytes {
-            nb_bytes = self.pos;
+        if pos < nb_bytes {
+            nb_bytes = pos;
             result = DStreamStatus::EndOfBuffer;
         }
         self.bits_consumed -= nb_bytes as u32 * 8;
-        self.load(self.pos - nb_bytes);
+        self.load(nb_bytes);
         result
     }
 
     /// `BIT_endOfDStream`
     #[inline(always)]
     pub(crate) fn is_at_end(&self) -> bool {
-        self.pos == 0 && self.bits_consumed == CONTAINER_BITS
+        self.pos() == 0 && self.bits_consumed == CONTAINER_BITS
     }
 }

@@ -4534,54 +4534,46 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Does `require()` of `target` evaluate to its namespace object? It does
-    /// when that object stands in for `module.exports`
-    /// (`NAMESPACE_IS_MODULE_EXPORTS`): the call gets no `__toCommonJS` copy,
+    /// for a CommonJS file that the parser lifted to an ES module: that object
+    /// stands in for `module.exports`. The call gets no `__toCommonJS` copy,
     /// and the file is not a chunk that `import.meta.require` loads as an ES
     /// module. A lifted `module.exports = require("./impl")` is an `export *`,
     /// so `./impl` decides.
     pub(crate) fn require_returns_namespace(
         ast_flags: &[AstFlags],
+        exports_kinds: &[ExportsKind],
         export_star_import_records: &[bun_alloc::AstVec<u32>],
         import_records: &[bun_ast::import_record::List<'_>],
         redirects: &[u32],
         target: u32,
     ) -> bool {
         let mut file = target as usize;
-        // Each step follows one record, so a longer walk is a cycle.
+        // Each step follows one record. A longer walk is a cycle of files
+        // that all passed the test.
         for _ in 0..ast_flags.len() {
-            let record_index = match redirects.get(file) {
+            let record_index = match crate::bundle_v2::bv2_impl::get_redirect_id(redirects[file]) {
                 // `find_reachable_files` points a record past a redirect file
                 // only when it visits the importer.
-                Some(&redirect) if redirect != u32::MAX => redirect,
-                _ => {
-                    if !ast_flags
-                        .get(file)
-                        .is_some_and(|flags| flags.contains(AstFlags::NAMESPACE_IS_MODULE_EXPORTS))
+                Some(redirect) => redirect,
+                None => {
+                    if exports_kinds[file] != ExportsKind::Esm
+                        || !ast_flags[file].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
                     {
                         return false;
                     }
-                    match export_star_import_records
-                        .get(file)
-                        .map(|stars| stars.as_slice())
-                    {
-                        Some([]) => return true,
-                        Some(&[star]) => star,
-                        _ => return false,
+                    match export_star_import_records[file].first() {
+                        Some(&star) => star,
+                        None => return true,
                     }
                 }
             };
-            let Some(record) = import_records
-                .get(file)
-                .and_then(|records| records.as_slice().get(record_index as usize))
-            else {
-                return false;
-            };
-            if !record.source_index.is_valid() {
+            let source = import_records[file].as_slice()[record_index as usize].source_index;
+            if !source.is_valid() {
                 return false;
             }
-            file = record.source_index.get() as usize;
+            file = source.get() as usize;
         }
-        false
+        true
     }
 
     /// Resolves every named import in one file to its matching export,

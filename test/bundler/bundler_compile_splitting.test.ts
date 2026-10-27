@@ -597,6 +597,36 @@ describe("bundler", () => {
       });
     }
 
+    // A CommonJS file of an unwrapped package that was lifted to an ES module
+    // is CommonJS to require(): it is not a chunk, and the call returns the
+    // file's exports object. `bun run` prints the same line.
+    itBundled("compile/splitting/SplitRequireLeavesLiftedCommonJSInline", {
+      compile: true,
+      splitting: true,
+      format: "esm",
+      files: {
+        "/entry.ts": /* js */ `
+          let m;
+          try {
+            m = require("react");
+          } catch {}
+          m.count = 41;
+          const ns = await import("react");
+          console.log(m.__esModule, m.inc(), ns.default === m);
+        `,
+        "/node_modules/react/package.json": /* json */ `
+          { "name": "react", "version": "19.0.0", "main": "index.js" }
+        `,
+        "/node_modules/react/index.js": /* js */ `
+          exports.count = 0;
+          exports.inc = () => ++exports.count;
+        `,
+      },
+      run: {
+        stdout: "undefined 42 true",
+      },
+    });
+
     // A chunk that is only linked statically has no module namespace object.
     itBundled("compile/splitting/NamespaceObjectsOnlyForImportedChunks", {
       compile: true,

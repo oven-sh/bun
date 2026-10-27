@@ -9232,16 +9232,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let force_cjs_to_esm = self.unwrap_all_requires
             || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
-        let commonjs_lifted_to_esm = force_cjs_to_esm && !self.has_es_module_syntax;
-        let namespace_is_module_exports = commonjs_lifted_to_esm
-            && exports_kind == js_ast::ExportsKind::Esm
-            && (self
-                .commonjs_named_exports
-                .values()
-                .iter()
-                .any(|export| !export.needs_decl)
-                || (self.options.module_type != options::ModuleType::Esm
-                    && !self.imports_to_convert_from_require.is_empty()));
 
         let wrapper_ref: Ref = 'brk: {
             if self.options.features.hot_module_reloading {
@@ -9368,8 +9358,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             require_ref,
 
             force_cjs_to_esm,
-            commonjs_lifted_to_esm,
-            namespace_is_module_exports,
+            commonjs_lifted_to_esm: force_cjs_to_esm && !self.has_es_module_syntax,
             uses_module_ref,
             uses_exports_ref,
             uses_require_ref,

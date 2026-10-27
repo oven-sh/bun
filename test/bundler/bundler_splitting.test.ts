@@ -3696,10 +3696,27 @@ describe("bundler", () => {
 
   // A CommonJS file of an unwrapped package that was lifted to an ES module
   // is still CommonJS to require(): the call returns the file's exports
-  // object, with no `__esModule` that the file did not set. So the file is
-  // not split either. `import.meta.require` of a chunk would return the
-  // chunk's module namespace. Here the lift target is itself lifted.
-  itBundled("splitting/SplitRequireLeavesLiftedCommonJSTargetInline", {
+  // object, with no `__esModule` that the file did not set. So the call is
+  // not a chunk boundary either. `import.meta.require` of a chunk would
+  // return the chunk's module namespace.
+  //
+  // `itBundledLikeBunRun` also runs the entry point of a case with `bun run`,
+  // which must print the stdout that the case expects of the bundle.
+  const itBundledLikeBunRun = (id: string, opts: BundlerTestInput) =>
+    itBundled(id, {
+      ...opts,
+      async onAfterBundle(api) {
+        await opts.onAfterBundle?.(api);
+        const unbundled = await run([bunExe(), api.join(opts.entryPoints![0])], api.root, env);
+        expect({ stdout: unbundled.stdout.trim(), exitCode: unbundled.exitCode }).toEqual({
+          stdout: (opts.run as { stdout: string }).stdout,
+          exitCode: 0,
+        });
+      },
+    });
+
+  // Here the lift target is itself lifted.
+  itBundledLikeBunRun("splitting/SplitRequireLeavesLiftedCommonJSTargetInline", {
     files: {
       "/main.ts": /* ts */ `
         let m;
@@ -3731,7 +3748,7 @@ describe("bundler", () => {
 
   // The lift target is reached through a file that is only
   // `module.exports = require()`.
-  itBundled("splitting/SplitRequireLeavesLiftedCommonJSTargetInlineThroughRedirect", {
+  itBundledLikeBunRun("splitting/SplitRequireLeavesLiftedCommonJSTargetInlineThroughRedirect", {
     files: {
       "/main.ts": /* ts */ `
         let m;
@@ -3764,29 +3781,26 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "side effect\nundefined 19.0.0 rendered" },
   });
 
-  // The lift target calls require() as well, but it assigns `module.exports`
-  // and keeps its wrapper. The file that re-exports it is wrapped again and
-  // stays a chunk, as in #41236.
-  itBundled("splitting/SplitRequireOfRewrappedLiftedCommonJSThatCallsRequire", {
+  // Two files that re-export each other never reach a file that decides.
+  itBundledLikeBunRun("splitting/SplitRequireLeavesLiftedCommonJSCycleInline", {
     files: {
       "/main.ts": /* ts */ `
         let m;
         try {
-          m = require("react-dom");
+          m = require("react");
         } catch {}
-        console.log(m.__esModule, m.version);
+        console.log(m.__esModule, Object.keys(m).length, globalThis.loaded);
       `,
-      "/node_modules/react-dom/index.js": /* js */ `
-        console.log('side effect');
-        module.exports = require('./impl');
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "main": "index.js" }
       `,
-      "/node_modules/react-dom/impl.js": /* js */ `
-        const dependency = require('./dependency');
-        module.exports = function render() {};
-        module.exports.version = dependency.version;
+      "/node_modules/react/index.js": /* js */ `
+        globalThis.loaded = (globalThis.loaded ?? 0) + 1;
+        module.exports = require("./other");
       `,
-      "/node_modules/react-dom/dependency.js": /* js */ `
-        exports.version = "19.0.0";
+      "/node_modules/react/other.js": /* js */ `
+        globalThis.loaded = (globalThis.loaded ?? 0) + 1;
+        module.exports = require("./index");
       `,
     },
     entryPoints: ["/main.ts"],
@@ -3795,16 +3809,14 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     onAfterBundle(api) {
-      const chunk = chunkContaining(api, "side effect");
-      api.expectFile("/out/main.js").toContain(`import.meta.require("./${chunk}").default`);
+      expect(jsFilesIn(api)).toEqual(["main.js"]);
     },
-    run: { file: "/out/main.js", stdout: "side effect\nundefined 19.0.0" },
+    run: { file: "/out/main.js", stdout: "undefined 0 2" },
   });
 
   // The same value with a split require(), with `splitRequire: false` and
   // for a target that cannot split a require(): a write reaches the lifted
   // binding, and the `default` of an import() of the file is that object.
-  // Each stdout is what `bun run` prints for the same files.
   const liftedCommonJSFiles = {
     "/main.ts": /* ts */ `
       let m;
@@ -3829,7 +3841,7 @@ describe("bundler", () => {
     ["SplitRequireOff", { target: "bun", splitRequire: false }],
     ["TargetNode", { target: "node" }],
   ] as const) {
-    itBundled(`splitting/RequireOfLiftedCommonJSReturnsNamespace-${name}`, {
+    itBundledLikeBunRun(`splitting/RequireOfLiftedCommonJSReturnsNamespace-${name}`, {
       files: liftedCommonJSFiles,
       entryPoints: ["/main.ts"],
       splitting: true,
@@ -3844,8 +3856,9 @@ describe("bundler", () => {
     });
   }
 
-  // The file stays lazy inside its importer's chunk: it runs when the call does.
-  itBundled("splitting/SplitRequireOfLiftedCommonJSRunsAtTheCall", {
+  // The file stays lazy inside the chunks that load with its importer: it
+  // runs when the call does.
+  itBundledLikeBunRun("splitting/SplitRequireOfLiftedCommonJSRunsAtTheCall", {
     files: {
       ...liftedCommonJSFiles,
       "/main.ts": /* ts */ `
@@ -3869,9 +3882,85 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "main\nreact evaluated\n1" },
   });
 
+  // The call needs no `try` when its specifier is an alias of the file.
+  itBundledLikeBunRun("splitting/SplitRequireLeavesLiftedCommonJSBehindAliasInline", {
+    files: {
+      ...liftedCommonJSFiles,
+      "/main.ts": /* ts */ `
+        const m = require("react-alias");
+        m.count = 41;
+        console.log(m.__esModule, m.inc(), m === require("react"));
+      `,
+      "/tsconfig.json": /* json */ `
+        { "compilerOptions": { "baseUrl": ".", "paths": { "react-alias": ["./node_modules/react/index.js"] } } }
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toEqual(["main.js"]);
+    },
+    run: { file: "/out/main.js", stdout: "react evaluated\nundefined 42 true" },
+  });
+
+  // The files that the lifted file imports get lazy wrappers as well, for
+  // every entry point. An entry point that only imports one of them calls
+  // its wrapper first, and prints what `bun run` prints.
+  itBundled("splitting/SplitRequireOfLiftedCommonJSWrapsItsImportsForOtherEntryPoints", {
+    files: {
+      "/server.ts": /* ts */ `
+        export function render() {
+          try {
+            return require("react-dom").render();
+          } catch {}
+        }
+        console.log("server");
+      `,
+      "/client.ts": /* ts */ `
+        import { useState } from "react";
+        console.log("client", useState());
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        { "name": "react-dom", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        const React = require("react");
+        exports.render = () => "rendered " + React.useState();
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        console.log("react evaluated");
+        exports.useState = () => "state";
+      `,
+    },
+    entryPoints: ["/server.ts", "/client.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    async onAfterBundle(api) {
+      api.expectFile("/out/client.js").toContain("init_react()");
+      for (const [entry, stdout] of [
+        ["client.ts", "react evaluated\nclient state\n"],
+        ["server.ts", "server\n"],
+      ]) {
+        expect(await run([bunExe(), api.join(entry)], api.root, env)).toEqual({ stdout, stderr: "", exitCode: 0 });
+      }
+    },
+    run: [
+      { file: "/out/client.js", stdout: "react evaluated\nclient state" },
+      { file: "/out/server.js", stdout: "server" },
+    ],
+  });
+
   // `bun run` loads a file with no exports as CommonJS when it calls
   // require(), which the parser turned into an import.
-  itBundled("splitting/SplitRequireLeavesLiftedCommonJSWithNoExportsInline", {
+  itBundledLikeBunRun("splitting/SplitRequireLeavesLiftedCommonJSWithNoExportsInline", {
     files: {
       "/main.ts": /* ts */ `
         let m;
@@ -3902,7 +3991,7 @@ describe("bundler", () => {
 
   // Control: an ES module inside an unwrapped package is an ES module to
   // `bun run` too. Its require() splits and has `__esModule`.
-  itBundled("splitting/SplitRequireOfESModuleInUnwrappedPackage", {
+  itBundledLikeBunRun("splitting/SplitRequireOfESModuleInUnwrappedPackage", {
     files: {
       "/main.ts": /* ts */ `
         let m;
@@ -3931,6 +4020,43 @@ describe("bundler", () => {
       api.expectFile("/out/main.js").toContain(`import.meta.require("./${chunk}")`);
     },
     run: { file: "/out/main.js", stdout: "react evaluated\ntrue value" },
+  });
+
+  // A lifted `module.exports = require()` of an external package is still a
+  // chunk, and that chunk has `export *` inside a function.
+  itBundledLikeBunRun("splitting/SplitRequireOfLiftedReExportOfExternal", {
+    todo: true,
+    files: {
+      "/main.ts": /* ts */ `
+        let m;
+        try {
+          m = require("react-dom");
+        } catch (e) {
+          console.log(e.message);
+        }
+        console.log(m?.value);
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        { "name": "react-dom", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('external-package');
+      `,
+      "/node_modules/external-package/package.json": /* json */ `
+        { "name": "external-package", "version": "1.0.0", "main": "index.js" }
+      `,
+      "/node_modules/external-package/index.js": /* js */ `
+        exports.value = "external value";
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    external: ["external-package"],
+    run: { file: "/out/main.js", stdout: "side effect\nexternal value" },
   });
 
   // A top-level require() in a module that the required chunk imports back

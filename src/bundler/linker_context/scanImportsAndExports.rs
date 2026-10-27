@@ -1150,16 +1150,11 @@ pub(crate) fn scan_imports_and_exports(
                                 runtime_require_uses += 1;
                             }
 
-                            // A split `require()` whose target is CommonJS at link
-                            // time (for example a lifted `module.exports = require()`
-                            // file the linker wrapped again): the chunk exports only
-                            // `default: module.exports`, so the printed call reads
-                            // `.default` to return `module.exports`, the same value
-                            // an unsplit `require()` returns.
                             debug_assert!(
                                 !(kind == ImportKind::Require && is_external_dyn)
                                     || !LinkerContext::require_returns_namespace(
                                         col_ref!(ast_flags_list),
+                                        col_ref!(exports_kind),
                                         col_ref!(export_star_import_records),
                                         col_ref!(import_records_list),
                                         col_ref!(redirects),
@@ -1167,6 +1162,13 @@ pub(crate) fn scan_imports_and_exports(
                                     ),
                                 "find_reachable_files splits no require() of a lifted CommonJS file"
                             );
+
+                            // A split `require()` whose target is CommonJS at link
+                            // time (for example a lifted `module.exports = require()`
+                            // file the linker wrapped again): the chunk exports only
+                            // `default: module.exports`, so the printed call reads
+                            // `.default` to return `module.exports`, the same value
+                            // an unsplit `require()` returns.
                             if kind == ImportKind::Require
                                 && is_external_dyn
                                 && rec_source_index.is_valid()
@@ -1292,15 +1294,18 @@ pub(crate) fn scan_imports_and_exports(
                             // https://github.com/evanw/esbuild/issues/1591.
                             //
                             // A lifted CommonJS module was never an ES module: its
-                            // exports object is its `module.exports`.
+                            // exports object is its `module.exports`. Only ESM
+                            // output lifts.
                             if kind == ImportKind::Require
-                                && !LinkerContext::require_returns_namespace(
-                                    col_ref!(ast_flags_list),
-                                    col_ref!(export_star_import_records),
-                                    col_ref!(import_records_list),
-                                    col_ref!(redirects),
-                                    other_source_index,
-                                )
+                                && !(output_format == Format::Esm
+                                    && LinkerContext::require_returns_namespace(
+                                        col_ref!(ast_flags_list),
+                                        col_ref!(exports_kind),
+                                        col_ref!(export_star_import_records),
+                                        col_ref!(import_records_list),
+                                        col_ref!(redirects),
+                                        other_source_index,
+                                    ))
                             {
                                 col!(import_records_list)[id].as_mut_slice()
                                     [import_record_index as usize]

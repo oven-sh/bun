@@ -2258,6 +2258,7 @@ pub mod bv2_impl {
                                         == ExportsKind::Esm
                                     && !LinkerContext::require_returns_namespace(
                                         self.all_ast_flags,
+                                        self.all_exports_kinds,
                                         self.all_export_star_import_records,
                                         self.all_import_records,
                                         self.redirects,
@@ -8401,7 +8402,7 @@ pub mod bv2_impl {
         }
     }
 
-    fn get_redirect_id(id: u32) -> Option<u32> {
+    pub(crate) fn get_redirect_id(id: u32) -> Option<u32> {
         if id == u32::MAX {
             return None;
         }

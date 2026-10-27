@@ -1,11 +1,13 @@
 //! `zstd_double_fast.c`: the `dfast` strategy, which looks up a table of long hashes and a table of short ones.
 
-use super::fast::{FAST_HASH_FILL_STEP, NoDictBlock, TwoSegments, count_backwards, restore_rep};
+use super::fast::{
+    FAST_HASH_FILL_STEP, MatchSink, NoDictBlock, TwoSegments, count_backwards, restore_rep,
+};
 use super::internal::{
     BlockSrc, DictTableLoadMethod, HASH_READ_SIZE, K_SEARCH_STRENGTH, MatchState, Prefix,
-    REPCODE1_TO_OFFBASE, SeqSink, SeqStore, TableFillPurpose, ZSTD_SHORT_CACHE_TAG_BITS,
+    REPCODE1_TO_OFFBASE, SeqStore, TableFillPurpose, ZSTD_SHORT_CACHE_TAG_BITS,
     compare_packed_tags, count, count_2segments, hash_of, hash_ptr, hash8, index_overlap_check,
-    offset_to_offbase, table_get, table_put, write_tagged_index,
+    le64_at, offset_to_offbase, table_get, table_put, table_swap, write_tagged_index,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
@@ -103,193 +105,205 @@ pub(crate) fn fill_double_hash_table(
     }
 }
 
-/// `ZSTD_compressBlock_doubleFast_noDict_generic`
-fn compress_block_double_fast_no_dict_generic<const MLS: u32>(
+/// What `dfast` looks for matches with, when there is no dictionary and the window is one segment.
+struct Finder {
+    /// The index of the first position.
+    base_index: u32,
+    h_bits_l: u32,
+    h_bits_s: u32,
+    /// Where to start.
+    first: u32,
+    offset_1: u32,
+    offset_2: u32,
+}
+
+impl Finder {
+    /// `ZSTD_compressBlock_doubleFast_noDict_generic`
+    ///
+    /// The C code computes the long hash and reads its table one position ahead. Here that is left to the processor: a
+    /// turn of the inner loop only takes the position and the 8 bytes there, `bytes0`, from the one before.
+    #[inline(never)]
+    fn find_matches<const MLS: u32>(
+        &mut self,
+        hash_long: &mut [u32],
+        hash_small: &mut [u32],
+        sink: &mut MatchSink<'_, '_>,
+    ) {
+        const K_STEP_INCR: u32 = 1 << K_SEARCH_STRENGTH;
+        let Self {
+            base_index,
+            h_bits_l,
+            h_bits_s,
+            first: mut ip,
+            mut offset_1,
+            mut offset_2,
+        } = *self;
+        let near = sink.near;
+        if hash_long.is_empty() || hash_small.is_empty() {
+            return;
+        }
+        let Some(mut bytes0) = near.read64(ip) else {
+            return;
+        };
+
+        // One turn per match.
+        'block: loop {
+            let mut step = 1;
+            let mut next_step = ip + K_STEP_INCR;
+            let mut ip1 = ip + step;
+            let mut curr;
+
+            // One turn per position.
+            let end = loop {
+                let Some(bytes1) = near.read64(ip1) else {
+                    break 'block;
+                };
+                curr = base_index.wrapping_add(ip);
+                let idxl0 = table_swap(hash_long, hash8(bytes0, h_bits_l, 0), curr);
+                let idxs0 = table_swap(hash_small, hash_of::<MLS>(bytes0, h_bits_s), curr);
+
+                if sink.read32_before(ip + 1, offset_1) == Some((bytes0 >> 8) as u32)
+                    && offset_1 > 0
+                {
+                    ip += 1;
+                    let end = ip + 4 + sink.count_before(ip + 4, offset_1);
+                    sink.store(ip, end, REPCODE1_TO_OFFBASE);
+                    break end;
+                }
+
+                // An index that is too low leads past the end. Whether one is takes no branch to find out: what is
+                // read instead is unlikely to be the same.
+                let matchl0 = idxl0.wrapping_sub(base_index);
+                let matchs0 = idxs0.wrapping_sub(base_index);
+                let (match0, end) = if near.diff64(matchl0, bytes0) == 0 {
+                    (matchl0, ip + 8 + near.count(ip + 8, matchl0 + 8))
+                } else if near.diff64(matchs0, bytes0) as u32 == 0 {
+                    // A short match: a longer one at the next position is preferred.
+                    let end = ip + 4 + near.count(ip + 4, matchs0 + 4);
+                    let idxl1 = table_get(hash_long, hash8(bytes1, h_bits_l, 0));
+                    let matchl1 = idxl1.wrapping_sub(base_index);
+                    if matchl1 > 0 && near.read64(matchl1) == Some(bytes1) {
+                        let end1 = ip1 + 8 + near.count(ip1 + 8, matchl1 + 8);
+                        if end1 - ip1 > end - ip {
+                            ip = ip1;
+                            (matchl1, end1)
+                        } else {
+                            (matchs0, end)
+                        }
+                    } else {
+                        (matchs0, end)
+                    }
+                } else {
+                    if ip1 >= next_step {
+                        core::hint::cold_path();
+                        step += 1;
+                        next_step += K_STEP_INCR;
+                    }
+                    ip = ip1;
+                    ip1 += step;
+                    bytes0 = bytes1;
+                    continue;
+                };
+
+                offset_2 = offset_1;
+                offset_1 = ip - match0;
+                // With a larger step, ip1 may be past the end of the match.
+                if step < 4 {
+                    table_put(
+                        hash_long,
+                        hash8(bytes1, h_bits_l, 0),
+                        base_index.wrapping_add(ip1),
+                    );
+                }
+                let back = near.count_backwards(ip, sink.anchor, match0, 0);
+                sink.store(ip - back, end, offset_to_offbase(offset_1));
+                break end;
+            };
+            ip = end;
+
+            // `ip` is not past the last position that can be looked at.
+            let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip - 2) else {
+                break 'block;
+            };
+            let index_to_insert = curr + 2;
+            if let Some(to_insert) = near.read64(index_to_insert.wrapping_sub(base_index)) {
+                table_put(hash_long, hash8(to_insert, h_bits_l, 0), index_to_insert);
+                table_put(
+                    hash_small,
+                    hash_of::<MLS>(to_insert, h_bits_s),
+                    index_to_insert,
+                );
+            }
+            table_put(
+                hash_long,
+                hash8(le64_at::<0, _>(around), h_bits_l, 0),
+                base_index.wrapping_add(ip - 2),
+            );
+            table_put(
+                hash_small,
+                hash_of::<MLS>(le64_at::<1, _>(around), h_bits_s),
+                base_index.wrapping_add(ip - 1),
+            );
+            bytes0 = le64_at::<2, _>(around);
+
+            while offset_2 > 0 && sink.read32_before(ip, offset_2) == Some(bytes0 as u32) {
+                let end = ip + 4 + sink.count_before(ip + 4, offset_2);
+                core::mem::swap(&mut offset_1, &mut offset_2);
+                let index = base_index.wrapping_add(ip);
+                table_put(hash_small, hash_of::<MLS>(bytes0, h_bits_s), index);
+                table_put(hash_long, hash8(bytes0, h_bits_l, 0), index);
+                sink.store(ip, end, REPCODE1_TO_OFFBASE);
+                ip = end;
+                let Some(bytes) = near.read64(ip) else {
+                    break 'block;
+                };
+                bytes0 = bytes;
+            }
+        }
+
+        self.offset_1 = offset_1;
+        self.offset_2 = offset_2;
+    }
+}
+
+/// `ZSTD_compressBlock_doubleFast`
+pub(crate) fn compress_block_double_fast(
     ms: &mut MatchState,
     seq_store: &mut SeqStore,
     rep: &mut [u32; ZSTD_REP_NUM],
     src: &BlockSrc<'_>,
 ) -> Result<usize> {
-    const K_STEP_INCR: u32 = 1 << K_SEARCH_STRENGTH;
-
     let Some(block) = NoDictBlock::new(ms, rep, src)? else {
         return Ok(src.end - src.start);
     };
-    let NoDictBlock {
-        near,
-        base_index,
-        candidates,
-        prefix_lowest_index,
-        prefix_lowest,
-        ilimit,
-        mut offset_1,
-        mut offset_2,
-        ..
-    } = block;
     let h_bits_l = ms.c_params.hash_log;
     let h_bits_s = ms.c_params.chain_log;
-    let mut anchor = block.istart;
-    let mut ip = block.first;
-    let mut seq_store = SeqSink::new(seq_store);
+    let mut finder = Finder {
+        base_index: block.prefix_lowest_index,
+        h_bits_l,
+        h_bits_s,
+        first: block.first - block.prefix_lowest,
+        offset_1: block.offset_1,
+        offset_2: block.offset_2,
+    };
+    let mut sink = MatchSink::new(seq_store, &block);
     let hash_long = ms.hash_table.sub_mut(..1 << h_bits_l)?;
     let hash_small = ms.chain_table.sub_mut(..1 << h_bits_s)?;
-
-    // One turn per match.
-    'start: loop {
-        let mut step = 1;
-        let mut next_step = ip + K_STEP_INCR;
-        let mut ip1 = ip + step;
-        if ip1 as usize > ilimit {
-            break 'start;
-        }
-
-        // The 8 bytes at `ip`.
-        let mut bytes0 = near.read64(ip).ok_or(BUG)?;
-        let mut hl0 = hash8(bytes0, h_bits_l, 0);
-        let mut idxl0 = table_get(hash_long, hl0);
-        let mut curr;
-
-        let m_length = 'match_stored: {
-            // One turn per position. Ends with the offset and the length of a match, which `ip` is moved to the start
-            // of.
-            let (offset, m_length, hl1) = loop {
-                let hs0 = hash_of::<MLS>(bytes0, h_bits_s);
-                let idxs0 = table_get(hash_small, hs0);
-                curr = base_index.wrapping_add(ip);
-                table_put(hash_long, hl0, curr);
-                table_put(hash_small, hs0, curr);
-
-                if offset_1 > 0
-                    && near.read32((ip + 1).wrapping_sub(offset_1)) == Some((bytes0 >> 8) as u32)
-                {
-                    ip += 1;
-                    let m_length = near.count(ip + 4, (ip + 4).wrapping_sub(offset_1)) + 4;
-                    seq_store.store_seq(
-                        ip - anchor,
-                        near,
-                        anchor,
-                        REPCODE1_TO_OFFBASE,
-                        m_length,
-                    )?;
-                    break 'match_stored m_length;
-                }
-
-                let bytes1 = near.read64(ip1).ok_or(BUG)?;
-                let hl1 = hash8(bytes1, h_bits_l, 0);
-
-                if candidates.read64(idxl0.wrapping_sub(prefix_lowest_index)) == Some(bytes0) {
-                    let matchl0 = idxl0 - base_index;
-                    let m_length = near.count(ip + 8, matchl0 + 8) + 8;
-                    let offset = ip - matchl0;
-                    let back = near.count_backwards(ip, anchor, matchl0, prefix_lowest);
-                    ip -= back;
-                    break (offset, m_length + back, hl1);
-                }
-
-                let idxl1 = table_get(hash_long, hl1);
-
-                if candidates.read32(idxs0.wrapping_sub(prefix_lowest_index)) == Some(bytes0 as u32)
-                {
-                    // A short match: a longer one at the next position is preferred.
-                    let mut matchs0 = idxs0 - base_index;
-                    let mut m_length = near.count(ip + 4, matchs0 + 4) + 4;
-                    let mut offset = ip - matchs0;
-                    let matchl1 = idxl1.wrapping_sub(base_index);
-                    if idxl1 > prefix_lowest_index && near.read64(matchl1) == Some(bytes1) {
-                        let l1len = near.count(ip1 + 8, matchl1 + 8) + 8;
-                        if l1len > m_length {
-                            ip = ip1;
-                            m_length = l1len;
-                            offset = ip - matchl1;
-                            matchs0 = matchl1;
-                        }
-                    }
-                    let back = near.count_backwards(ip, anchor, matchs0, prefix_lowest);
-                    ip -= back;
-                    break (offset, m_length + back, hl1);
-                }
-
-                if ip1 >= next_step {
-                    step += 1;
-                    next_step += K_STEP_INCR;
-                }
-                ip = ip1;
-                ip1 += step;
-
-                bytes0 = bytes1;
-                hl0 = hl1;
-                idxl0 = idxl1;
-                if ip1 as usize > ilimit {
-                    break 'start;
-                }
-            };
-
-            offset_2 = offset_1;
-            offset_1 = offset;
-            // With a larger step, ip1 may be past the end of the match.
-            if step < 4 {
-                table_put(hash_long, hl1, base_index.wrapping_add(ip1));
-            }
-            seq_store.store_seq(
-                ip - anchor,
-                near,
-                anchor,
-                offset_to_offbase(offset),
-                m_length,
-            )?;
-            m_length
-        };
-
-        ip += m_length;
-        anchor = ip;
-
-        if ip as usize <= ilimit {
-            let index_to_insert = curr + 2;
-            let to_insert = near.read64(index_to_insert - base_index).ok_or(BUG)?;
-            let before2 = near.read64(ip - 2).ok_or(BUG)?;
-            let before1 = near.read64(ip - 1).ok_or(BUG)?;
-            table_put(hash_long, hash8(to_insert, h_bits_l, 0), index_to_insert);
-            table_put(
-                hash_long,
-                hash8(before2, h_bits_l, 0),
-                base_index.wrapping_add(ip - 2),
-            );
-            table_put(
-                hash_small,
-                hash_of::<MLS>(to_insert, h_bits_s),
-                index_to_insert,
-            );
-            table_put(
-                hash_small,
-                hash_of::<MLS>(before1, h_bits_s),
-                base_index.wrapping_add(ip - 1),
-            );
-
-            while ip as usize <= ilimit && offset_2 > 0 {
-                let bytes = near.read64(ip).ok_or(BUG)?;
-                if near.read32(ip.wrapping_sub(offset_2)) != Some(bytes as u32) {
-                    break;
-                }
-                let r_length = near.count(ip + 4, (ip + 4).wrapping_sub(offset_2)) + 4;
-                core::mem::swap(&mut offset_1, &mut offset_2);
-                let index = base_index.wrapping_add(ip);
-                table_put(hash_small, hash_of::<MLS>(bytes, h_bits_s), index);
-                table_put(hash_long, hash8(bytes, h_bits_l, 0), index);
-                seq_store.store_seq(0, near, anchor, REPCODE1_TO_OFFBASE, r_length)?;
-                ip += r_length;
-                anchor = ip;
-            }
-        }
+    match ms.c_params.min_match {
+        5 => finder.find_matches::<5>(hash_long, hash_small, &mut sink),
+        6 => finder.find_matches::<6>(hash_long, hash_small, &mut sink),
+        7 => finder.find_matches::<7>(hash_long, hash_small, &mut sink),
+        _ => finder.find_matches::<4>(hash_long, hash_small, &mut sink),
     }
-
+    let last_literals = sink.finish()?;
     restore_rep(
         rep,
-        offset_1,
-        offset_2,
+        finder.offset_1,
+        finder.offset_2,
         block.offset_saved1,
         block.offset_saved2,
     );
-    Ok((near.len() - anchor) as usize)
+    Ok(last_literals)
 }
 
 /// `ZSTD_compressBlock_doubleFast_dictMatchState_generic`
@@ -550,21 +564,6 @@ fn compress_block_double_fast_dict_match_state_generic<const MLS: u32>(
     *rep0 = offset_1;
     *rep1 = offset_2;
     Ok(seg.iend - anchor)
-}
-
-/// `ZSTD_compressBlock_doubleFast`
-pub(crate) fn compress_block_double_fast(
-    ms: &mut MatchState,
-    seq_store: &mut SeqStore,
-    rep: &mut [u32; ZSTD_REP_NUM],
-    src: &BlockSrc<'_>,
-) -> Result<usize> {
-    match ms.c_params.min_match {
-        5 => compress_block_double_fast_no_dict_generic::<5>(ms, seq_store, rep, src),
-        6 => compress_block_double_fast_no_dict_generic::<6>(ms, seq_store, rep, src),
-        7 => compress_block_double_fast_no_dict_generic::<7>(ms, seq_store, rep, src),
-        _ => compress_block_double_fast_no_dict_generic::<4>(ms, seq_store, rep, src),
-    }
 }
 
 /// `ZSTD_compressBlock_doubleFast_dictMatchState`

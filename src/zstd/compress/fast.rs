@@ -378,20 +378,39 @@ impl<'a> NoDictBlock<'a> {
 pub(super) struct MatchSink<'a, 'b> {
     seq_store: SeqSink<'b>,
     /// The input from the lowest index a match can be at. Positions are in this.
-    near: Near<'a>,
+    pub(super) near: Near<'a>,
     /// The same with what is before it, as far as a repeat offset can reach.
     older: Near<'a>,
     /// How much that is.
     older_len: u32,
     /// The end of the last match.
-    anchor: u32,
+    pub(super) anchor: u32,
     failed: bool,
 }
 
-impl MatchSink<'_, '_> {
+impl<'a, 'b> MatchSink<'a, 'b> {
+    pub(super) fn new(seq_store: &'b mut SeqStore, block: &NoDictBlock<'a>) -> Self {
+        Self {
+            seq_store: SeqSink::new(seq_store),
+            near: block.candidates,
+            older: block.near,
+            older_len: block.prefix_lowest,
+            anchor: block.istart - block.prefix_lowest,
+            failed: false,
+        }
+    }
+
+    /// How many bytes there are after the last match.
+    pub(super) fn finish(self) -> Result<usize> {
+        if self.failed {
+            return Err(BUG);
+        }
+        Ok((self.near.len() - self.anchor) as usize)
+    }
+
     /// The 4 bytes that are `offset` before `pos`.
     #[inline(always)]
-    fn read32_before(&self, pos: u32, offset: u32) -> Option<u32> {
+    pub(super) fn read32_before(&self, pos: u32, offset: u32) -> Option<u32> {
         match self.near.read32(pos.wrapping_sub(offset)) {
             Some(bytes) => Some(bytes),
             None => {
@@ -404,7 +423,7 @@ impl MatchSink<'_, '_> {
 
     /// How long what is at `pos` is the same as what is `offset` before.
     #[inline(always)]
-    fn count_before(&self, pos: u32, offset: u32) -> u32 {
+    pub(super) fn count_before(&self, pos: u32, offset: u32) -> u32 {
         if offset <= pos {
             self.near.count(pos, pos - offset)
         } else {
@@ -416,7 +435,7 @@ impl MatchSink<'_, '_> {
 
     /// Stores the match from `ip` to `end`, with the literals before it.
     #[inline(always)]
-    fn store(&mut self, ip: u32, end: u32, off_base: u32) {
+    pub(super) fn store(&mut self, ip: u32, end: u32, off_base: u32) {
         let anchor = self.anchor;
         self.anchor = end;
         if (self.seq_store)
@@ -593,14 +612,7 @@ pub(crate) fn compress_block_fast(
         rep_offset1: block.offset_1,
         rep_offset2: block.offset_2,
     };
-    let mut sink = MatchSink {
-        seq_store: SeqSink::new(seq_store),
-        near: block.candidates,
-        older: block.near,
-        older_len: block.prefix_lowest,
-        anchor: block.istart - block.prefix_lowest,
-        failed: false,
-    };
+    let mut sink = MatchSink::new(seq_store, &block);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
     match ms.c_params.min_match {
         5 => finder.find_matches::<5>(hash_table, &mut sink),
@@ -608,10 +620,7 @@ pub(crate) fn compress_block_fast(
         7 => finder.find_matches::<7>(hash_table, &mut sink),
         _ => finder.find_matches::<4>(hash_table, &mut sink),
     }
-    if sink.failed {
-        return Err(BUG);
-    }
-
+    let last_literals = sink.finish()?;
     restore_rep(
         rep,
         finder.rep_offset1,
@@ -619,7 +628,7 @@ pub(crate) fn compress_block_fast(
         block.offset_saved1,
         block.offset_saved2,
     );
-    Ok((sink.near.len() - sink.anchor) as usize)
+    Ok(last_literals)
 }
 
 /// `ZSTD_compressBlock_fast_dictMatchState_generic`

@@ -684,6 +684,21 @@ impl<'a> Near<'a> {
         Some(u64::from_le_bytes(*bytes))
     }
 
+    /// What differs between `bytes` and the 8 bytes at `pos`: 0 if nothing does. Not 0 in the lower half if `pos` is too
+    /// far to read them, which takes no branch to find out.
+    #[inline(always)]
+    pub(crate) fn diff64(self, pos: u32, bytes: u64) -> u64 {
+        let Some(last) = self.0.len().checked_sub(8) else {
+            return 1;
+        };
+        let pos = pos as usize;
+        let at = pos.min(last);
+        match self.0.get(at..at + 8).and_then(<[u8]>::first_chunk) {
+            Some(there) => (u64::from_le_bytes(*there) ^ bytes) | u64::from(pos > last),
+            None => 1,
+        }
+    }
+
     #[inline(always)]
     fn chunk16(self, pos: u32) -> Option<&'a [u8; 16]> {
         self.window(pos)

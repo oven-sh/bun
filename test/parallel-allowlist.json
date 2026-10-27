@@ -9,7 +9,7 @@
     "stats": {
       "dirs": 250,
       "files": 1513,
-      "excluded": 368
+      "excluded": 367
     }
   },
   "dirs": [
@@ -544,6 +544,7 @@
     "js/third_party/jsonwebtoken/async_sign.test.js",
     "js/third_party/jsonwebtoken/claim-aud.test.js",
     "js/third_party/socket.io/socket.io-handshake.test.ts",
+    "js/web/atomics.test.ts",
     "js/web/explicit-resource-management.test.ts",
     "js/web/abort/abort.test.ts",
     "js/web/console/console-log.test.ts",

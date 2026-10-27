@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, tempDir } from "harness";
 
 describe("heapStats() mimalloc integration", () => {
   test("mimalloc aggregate stats are present", () => {
@@ -291,6 +291,67 @@ describe("heapStats() mimalloc integration", () => {
       // The two 256 KiB buffers of a request are 128 pages of 4 KiB: about a hundred faults for every request when the
       // sweeps in between give the buffers back, one or two when they leave them.
       expect(perRequest).toBeLessThan(20);
+    },
+  );
+
+  // The collector's helper threads go idle after every collection and sweep then, and an idle thread sweeps again
+  // 100 ms later when its sweep left large blocks that were in use a moment ago. That is for the blocks in its own
+  // pages. A sweep also passes the pages that other threads use, and each sweep moves the clock by which the allocator
+  // tells which blocks were used a moment ago: helper threads that came back for those pages took the buffers of a
+  // thread that uses them again every few hundred ms, which then faulted all of them in again (2500 faults for 10 MiB).
+  // Linux only: reads the minor faults of the thread from /proc. Not ASAN or debug: malloc is not mimalloc there.
+  test.skipIf(!isLinux || isASAN || isDebug)(
+    "idle helper threads leave the large buffers that a busy thread takes again",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import { readFileSync } from "node:fs";
+          // the minor faults of this thread so far: the tenth field, and the second one can have spaces in it
+          const faults = () => {
+            const stat = readFileSync("/proc/thread-self/stat", "utf8");
+            return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[7]);
+          };
+          // The allocator keeps the free large blocks of a thread only once that thread was idle.
+          await Bun.sleep(5);
+          const kept = [], perRound = [];
+          // 4 rounds until the pages are settled, then the 3 that count. Every round is 300 ms.
+          for (let round = 0; round < 7; round++) {
+            const before = faults();
+            const buffers = [];
+            for (let i = 0; i < 40; i++) buffers.push(new Uint8Array(256 * 1024).fill(round + 1));
+            perRound.push(faults() - before);
+            for (let i = 0; i < buffers.length; i++) {
+              // a few stay in the first rounds, so that the pages do not become free as a whole
+              if (round < 3 && i % 5 === 0) kept.push(buffers[i]);
+              // transfer(0) frees the 256 KiB here and now
+              else buffers[i].buffer.transfer(0);
+            }
+            // The helper threads work in a collection and go idle after it.
+            Bun.gc(true);
+            // No await: this thread does not go idle. The 300 ms are the input of this test: a helper thread that
+            // comes back does so 200 ms after the collection.
+            const end = performance.now() + 300;
+            while (performance.now() < end);
+          }
+          console.log(JSON.stringify({ perRound, kept: kept.length }));
+        `,
+        ],
+        // `bun -e` runs with one GC marker, which means no helper threads. This gives it 7 on any machine.
+        env: { ...bunEnv, BUN_JSC_numberOfGCMarkers: "8" },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const { perRound } = JSON.parse(stdout);
+      // The first rounds fault the memory in for the first time. After that a round takes 70 faults when the buffers
+      // were left alone, and 2560 (one for each 4 KiB of 10 MiB) when they were given back. The median decides:
+      // beside much other work the sweeps of the helper threads spread out, and 1 round in 100 takes the faults.
+      const settled = perRound.slice(4).sort((a: number, b: number) => a - b);
+      expect(settled[settled.length >> 1], stdout).toBeLessThan(500);
+      expect(exitCode).toBe(0);
     },
   );
 });

@@ -675,12 +675,11 @@ describe.concurrent("import.meta.glob", () => {
       `Bun.plugin({
          name: "virtual",
          setup(build) {
-           build.onResolve({ filter: /^virtual:/ }, ({ path }) => ({ path, namespace: "virtual" }));
            build.onLoad({ filter: /./, namespace: "virtual" }, ({ path }) => ({
              loader: "ts",
-             contents: path === "virtual:root"
+             contents: path === "root"
                ? 'export default import.meta.glob(["/src/dir/[ab].ts", "!./src/dir/a.ts"], { import: "name" });'
-               : path === "virtual:base"
+               : path === "base"
                  ? 'export default import.meta.glob("./[ab].ts", { base: "/src/dir", eager: true, import: "name" });'
                  : 'export default import.meta.glob("./src/dir/[ab].ts");',
            }));

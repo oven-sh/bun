@@ -689,22 +689,10 @@ describe.concurrent("a failed resolution sees files and packages created after t
       }
     `);
   });
+});
 
-  test("a file added to a resolved package, from this thread and a Worker", async () => {
-    expect(await runGroup("worker")).toMatchInlineSnapshot(`
-      {
-        "exitCode": 0,
-        "stderr": "",
-        "stdout": 
-      "D1 OK 1
-      D2 OK 2
-      D3 OK 3
-      steps that failed, of 25 in each thread: 0 0"
-      ,
-      }
-    `);
-  });
-
+// A second block, so that fewer processes of a debug build start at the same time.
+describe.concurrent("a failed resolution checks again what it read from the caches", () => {
   test("an imports or exports entry added to the package.json next to the importer", async () => {
     expect(await runGroup("manifest")).toMatchInlineSnapshot(`
       {
@@ -890,4 +878,21 @@ describe.concurrent("a failed resolution sees files and packages created after t
       }
     `);
   });
+});
+
+// A Worker takes more than a second to start in a debug build, so this one does not share
+// the machine with the tests above.
+test("a file added to a resolved package, from this thread and a Worker", async () => {
+  expect(await runGroup("worker")).toMatchInlineSnapshot(`
+    {
+      "exitCode": 0,
+      "stderr": "",
+      "stdout": 
+    "D1 OK 1
+    D2 OK 2
+    D3 OK 3
+    steps that failed, of 25 in each thread: 0 0"
+    ,
+    }
+  `);
 });

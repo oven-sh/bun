@@ -964,6 +964,9 @@ describe("QuotaExceededError", () => {
     record.writeDoubleLE(quota, record.length - 16);
     record.writeDoubleLE(requested, record.length - 8);
     expect(() => deserialize(record)).toThrow(unreadable);
+    // The reader does not take the bytes after a refused record for another value.
+    const emptyObject = Buffer.from([2, 0xff, 0xff, 0xff, 0xff]);
+    expect(() => deserialize(Buffer.concat([record, emptyObject]))).toThrow(unreadable);
   });
 
   test("a record with a NaN for quota reads as null", () => {

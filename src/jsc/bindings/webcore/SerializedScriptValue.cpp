@@ -3539,8 +3539,10 @@ private:
                 return value;
             };
             auto quotaExceededError = DOMQuotaExceededError::create(message->string(), { toOptional(quota), toOptional(requested) });
-            if (quotaExceededError.hasException())
+            if (quotaExceededError.hasException()) {
+                fail();
                 return JSValue();
+            }
             exception = quotaExceededError.releaseReturnValue();
         } else
             exception = DOMException::create(message->string(), name->string());

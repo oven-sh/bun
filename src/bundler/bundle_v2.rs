@@ -2921,6 +2921,15 @@ pub mod bv2_impl {
             };
 
             if resolve_result.flags.is_external() {
+                // As `resolve_import_records` does, so an unused side-effect-free external drops.
+                let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                    [import_record.importer_source_index as usize]
+                    .as_mut_slice()[import_record.import_record_index as usize];
+                record.flags.set(
+                    bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
+                    resolve_result.primary_side_effects_data
+                        != bun_ast::SideEffects::HasSideEffects,
+                );
                 return;
             }
 

@@ -257,6 +257,24 @@ describe("bundler", () => {
     });
   }
 
+  // A declined import that resolves to an external keeps the side effects the resolver
+  // reports, as an unmatched one does, so an unused import of a Node.js builtin is dropped.
+  itBundled("plugin/ResolveReturnsUndefinedDropsUnusedBuiltinImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import fs from "node:fs";
+        console.log("entry");
+      `,
+    },
+    target: "node",
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("node:fs");
+    },
+  });
+
   // Load Plugin Errors
   itBundled("plugin/ResolveThrow", {
     files: resolveFixture,

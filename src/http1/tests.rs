@@ -661,3 +661,93 @@ fn any_number_of_small_chunks() {
     }
     assert_eq!(decoder.decode(&mut *b"0\r\n\r\n".to_vec()).status, COMPLETE);
 }
+
+/// What picohttpparser got wrong at one time or another, by the commit that fixed it. That commit's parent hangs on
+/// each of these, reads past the end of it, overflows an `int` or gives another answer.
+#[test]
+fn bugs_fixed_in_picohttpparser_heads() {
+    let head = |header: &[u8]| [b"HTTP/1.1 200 OK\r\n", header, b"\r\n\r\n"].concat();
+
+    // 8edde15, and 3d506cc after 8efc8f1 had undone it: a name of no bytes, or one that starts with a blank.
+    for header in [&b":a"[..], b" :a", b": 1", b"a: 1\r\n: 2"] {
+        assert_error(&head(header), Malformed);
+    }
+    // 6ca637d: control characters.
+    for header in [&b"a: b\0c"[..], b"a: b\x1bc", b"a: b\x7fc"] {
+        assert_error(&head(header), Malformed);
+    }
+    assert_error(b"HTTP/1.1 200 O\0K\r\n\r\n", Malformed);
+    // d2ee427: the search of a value never got past a byte over 0x7f.
+    let value = b"\xe3\x81\xb2".repeat(20);
+    assert_head(
+        &head(&[b"User-Agent: ", &value[..]].concat()),
+        1,
+        200,
+        b"OK",
+        &[(b"User-Agent", &value)],
+    );
+    // 8efc8f1: a name is a token.
+    for byte in *b"\"(),/;<=>?@[\\]{} \x7f" {
+        assert_error(&head(&[b'a', byte, b'b', b':', b' ', b'1']), Malformed);
+    }
+    // 3aba9fe: the version and the status took any number of digits.
+    for buf in [
+        &b"HTTP/1.99999999999999999999 200 OK\r\n\r\n"[..],
+        b"HTTP/1.1 99999999999999999999 OK\r\n\r\n",
+        b"HTTP/1.10 200 OK\r\n\r\n",
+        b"HTTP/1.1 2000 OK\r\n\r\n",
+        b"HTTP/1.1 20 OK\r\n\r\n",
+    ] {
+        assert_error(buf, Malformed);
+    }
+    // 6bd82cb: the blanks after a value are not part of it.
+    assert_head(&head(b"bar: \t b\t \t"), 1, 200, b"OK", &[(b"bar", b"b")]);
+    // 14fc601, a6ab773: no reason and no space before it, and more spaces than one.
+    assert_head(b"HTTP/1.1 200\r\n\r\n", 1, 200, b"", &[]);
+    assert_head(b"HTTP/1.1   200   OK\r\n\r\n", 1, 200, b"OK", &[]);
+    assert_head(b"HTTP/1.1 200     \r\n\r\n", 1, 200, b"", &[]);
+    // b820122, a security fix: since a6ab773 those spaces were skipped without a look at where the buffer ends.
+    for spaces in [1, 2, 7, 8, 15, 16, 17, 64, 4096] {
+        assert_error(
+            &[&b"HTTP/1.1"[..], &vec![b' '; spaces]].concat(),
+            Incomplete,
+        );
+    }
+}
+
+/// As above. The names in capitals are the kinds of request smuggling in "Funky chunks" (w4ke.info, 2025), each of
+/// which needs one of two parsers to be lenient in that way.
+#[test]
+fn bugs_fixed_in_picohttpparser_chunks() {
+    let malformed = |encoded: &[u8], data: &[u8]| {
+        assert_decodes(encoded, data, ChunkedStatus::Malformed);
+    };
+
+    // f5ae3f3: CRLF after the data.
+    malformed(b"5\r\nhello0\r\n\r\n", b"hello");
+    // d236094: what followed the digits was skipped, so that `5x` was 5 here and could be something else elsewhere.
+    for byte in *b"xg_,=\0\x80-+." {
+        malformed(
+            &[&[b'5', byte][..], b"\r\nhello\r\n0\r\n\r\n"].concat(),
+            b"",
+        );
+    }
+    malformed(b"0x5\r\nhello\r\n0\r\n\r\n", b"");
+    // a875a01, TERM.EXT and EXT.TERM: LF alone ended the size line, and CR alone was part of it.
+    for size_line in [&b"5\n"[..], b"5;a\n", b"5;a\rb\r\n", b"5\r\r\n", b"5\rX\n"] {
+        malformed(&[size_line, b"hello\r\n0\r\n\r\n"].concat(), b"");
+    }
+    malformed(b"2;\nxx\r\n4\r\nabcd\r\n0\r\n\r\n", b"");
+    malformed(b"5\r\nhello\r\n0\n\r\n", b"hello");
+    // a875a01, SPILL.TERM: LF alone ended the data, and so did any number of CR before it.
+    malformed(b"5\r\nhello\n0\r\n\r\n", b"hello");
+    malformed(b"5\r\nhello\r\r\n0\r\n\r\n", b"hello");
+
+    // Never picohttpparser's: TERM.SPILL, and two bytes after the data that are not looked at.
+    for after_data in [&b"XX"[..], b"XXX\r\n", b"\r", b"\n\r"] {
+        malformed(
+            &[b"5\r\nhello", after_data, b"0\r\n\r\n"].concat(),
+            b"hello",
+        );
+    }
+}

@@ -50,9 +50,9 @@ JSClassConstructor::JSClassConstructor(VM& vm, Structure* structure, NativeFunct
 {
 }
 
-JSClassConstructor* JSClassConstructor::create(VM& vm, JSGlobalObject* globalObject, ASCIILiteral name, NativeFunction call, NativeFunction construct, unsigned length, std::span<const HashTableValue> tableValues, JSObject* prototype)
+JSClassConstructor* JSClassConstructor::create(VM& vm, JSGlobalObject* globalObject, ASCIILiteral name, NativeFunction call, NativeFunction construct, unsigned length, std::span<const HashTableValue> tableValues, JSObject* prototype, JSObject* base)
 {
-    auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
+    auto* structure = createStructure(vm, globalObject, base ? base : globalObject->functionPrototype());
     auto* constructor = new (NotNull, allocateCell<JSClassConstructor>(vm)) JSClassConstructor(vm, structure, call, construct);
     constructor->finishCreation(vm, length, name, PropertyAdditionMode::WithoutStructureTransition);
     // Reifying makes the structure a dictionary, even for no properties.

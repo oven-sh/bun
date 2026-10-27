@@ -2,7 +2,7 @@ use core::ffi::{c_int, c_void};
 use core::ptr;
 
 use crate::exception_list;
-use bun_core::String;
+use bun_core::{String, StringOrView};
 use bun_url::URL as ZigURL;
 
 use crate::module_loader::ModuleLoader;
@@ -16,13 +16,13 @@ unsafe extern "C" {
     pub(crate) safe fn ZigException__collectSourceLines(
         js_value: JSValue,
         global: &JSGlobalObject,
-        exception: &mut ZigException,
+        exception: &mut ZigException<'_>,
     );
 }
 
 /// Represents a JavaScript exception with additional information
 #[repr(C)]
-pub struct ZigException {
+pub struct ZigException<'a> {
     pub r#type: JSErrorCode,
     pub runtime_type: JSRuntimeType,
 
@@ -35,9 +35,9 @@ pub struct ZigException {
     /// SystemError only
     pub path: String,
 
-    pub name: String,
-    pub message: String,
-    pub stack: ZigStackTrace,
+    pub name: StringOrView<'a>,
+    pub message: StringOrView<'a>,
+    pub stack: ZigStackTrace<'a>,
 
     pub exception: *mut c_void,
 
@@ -45,10 +45,10 @@ pub struct ZigException {
 
     pub fd: i32,
 
-    pub browser_url: String,
+    pub browser_url: StringOrView<'a>,
 }
 
-impl ZigException {
+impl ZigException<'_> {
     pub(crate) fn collect_source_lines(&mut self, value: JSValue, global: &JSGlobalObject) {
         ZigException__collectSourceLines(value, global, self);
     }
@@ -81,25 +81,25 @@ impl ZigException {
     }
 }
 
+const FRAME_COUNT: usize = 32;
+pub(crate) const SOURCE_LINES_COUNT: usize = 6;
+
 /// Backing storage for a `ZigException`'s stack; C++ fills `source_lines` /
 /// `frames` through the pointers in `zig_exception.stack`.
-pub struct Holder {
-    pub(crate) source_line_numbers: [i32; Self::SOURCE_LINES_COUNT],
-    source_lines: [String; Self::SOURCE_LINES_COUNT],
-    frames: [ZigStackFrame; Self::FRAME_COUNT],
-    pub(crate) zig_exception: Option<ZigException>,
+pub struct Holder<'a> {
+    pub(crate) source_line_numbers: [i32; SOURCE_LINES_COUNT],
+    source_lines: [StringOrView<'a>; SOURCE_LINES_COUNT],
+    frames: [ZigStackFrame<'a>; FRAME_COUNT],
+    pub(crate) zig_exception: Option<ZigException<'a>>,
     pub(crate) need_to_clear_parser_arena_on_deinit: bool,
 }
 
-impl Holder {
-    const FRAME_COUNT: usize = 32;
-    pub(crate) const SOURCE_LINES_COUNT: usize = 6;
-
+impl<'a> Holder<'a> {
     pub(crate) fn zero() -> Self {
         Self {
             frames: core::array::from_fn(|_| ZigStackFrame::ZERO),
-            source_line_numbers: [-1; Self::SOURCE_LINES_COUNT],
-            source_lines: core::array::from_fn(|_| String::EMPTY),
+            source_line_numbers: [-1; SOURCE_LINES_COUNT],
+            source_lines: core::array::from_fn(|_| StringOrView::EMPTY),
             zig_exception: None,
             need_to_clear_parser_arena_on_deinit: false,
         }
@@ -117,21 +117,21 @@ impl Holder {
         }
     }
 
-    pub fn zig_exception(&mut self) -> &mut ZigException {
+    pub fn zig_exception(&mut self) -> &mut ZigException<'a> {
         self.zig_exception.get_or_insert_with(|| ZigException {
             r#type: JSErrorCode(255),
             runtime_type: JSRuntimeType::NOTHING,
-            name: String::EMPTY,
-            message: String::EMPTY,
+            name: StringOrView::EMPTY,
+            message: StringOrView::EMPTY,
             exception: ptr::null_mut(),
             stack: ZigStackTrace {
                 source_lines_ptr: self.source_lines.as_mut_ptr(),
                 source_lines_numbers: self.source_line_numbers.as_mut_ptr(),
-                source_lines_len: Self::SOURCE_LINES_COUNT as u8,
-                source_lines_to_collect: Self::SOURCE_LINES_COUNT as u8,
+                source_lines_len: SOURCE_LINES_COUNT as u8,
+                source_lines_to_collect: SOURCE_LINES_COUNT as u8,
                 frames_ptr: self.frames.as_mut_ptr(),
                 frames_len: 0,
-                frames_cap: Self::FRAME_COUNT as u8,
+                frames_cap: FRAME_COUNT as u8,
                 referenced_source_provider: None,
             },
             errno: 0,
@@ -140,7 +140,7 @@ impl Holder {
             path: String::EMPTY,
             remapped: false,
             fd: -1,
-            browser_url: String::EMPTY,
+            browser_url: StringOrView::EMPTY,
         })
     }
 }

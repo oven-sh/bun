@@ -184,7 +184,7 @@ fn compress_block_fast_no_dict_generic<const MLS: u32>(
     let target_length = ms.c_params.target_length;
     // The least step is 2, as two positions are looked at per turn.
     let step_size = (target_length + u32::from(target_length == 0) + 1) as usize;
-    let buf = src.buf;
+    let buf = src.buf.sub(..src.end)?;
     let istart = src.start;
     let iend = src.end;
     let end_index = src.index_of(iend);
@@ -378,7 +378,7 @@ fn compress_block_fast_dict_match_state_generic<const MLS: u32>(
     let hlog = ms.c_params.hash_log;
     let target_length = ms.c_params.target_length;
     let step_size = (target_length + u32::from(target_length == 0)) as usize;
-    let buf = src.buf;
+    let buf = src.buf.sub(..src.end)?;
     let istart = src.start;
     let iend = src.end;
     let prefix_start_index = ms.window.dict_limit;
@@ -607,7 +607,7 @@ fn compress_block_fast_ext_dict_generic<const MLS: u32>(
     let hlog = ms.c_params.hash_log;
     let target_length = ms.c_params.target_length;
     let step_size = (target_length + u32::from(target_length == 0) + 1) as usize;
-    let buf = src.buf;
+    let buf = src.buf.sub(..src.end)?;
     let istart = src.start;
     let iend = src.end;
     let end_index = src.index_of(iend);

@@ -115,7 +115,7 @@ fn compress_block_double_fast_no_dict_generic<const MLS: u32>(
     let h_bits_l = ms.c_params.hash_log;
     let h_bits_s = ms.c_params.chain_log;
     let window_log = ms.c_params.window_log;
-    let buf = src.buf;
+    let buf = src.buf.sub(..src.end)?;
     let istart = src.start;
     let iend = src.end;
     let end_index = src.index_of(iend);
@@ -295,7 +295,7 @@ fn compress_block_double_fast_dict_match_state_generic<const MLS: u32>(
 ) -> Result<usize> {
     let h_bits_l = ms.c_params.hash_log;
     let h_bits_s = ms.c_params.chain_log;
-    let buf = src.buf;
+    let buf = src.buf.sub(..src.end)?;
     let istart = src.start;
     let iend = src.end;
     let end_index = src.index_of(iend);
@@ -420,7 +420,7 @@ fn compress_block_double_fast_dict_match_state_generic<const MLS: u32>(
                     }
                 }
 
-                let short_found = if match_index_s >= prefix_lowest_index {
+                let short_found = if match_index_s > prefix_lowest_index {
                     read_le32(buf, src.pos_of(match_index_s))? == read_le32(buf, ip)?
                 } else if dict_tags_match_s {
                     let dict_match_index_s =
@@ -598,7 +598,7 @@ fn compress_block_double_fast_ext_dict_generic<const MLS: u32>(
 ) -> Result<usize> {
     let h_bits_l = ms.c_params.hash_log;
     let h_bits_s = ms.c_params.chain_log;
-    let buf = src.buf;
+    let buf = src.buf.sub(..src.end)?;
     let istart = src.start;
     let iend = src.end;
     let end_index = src.index_of(iend);

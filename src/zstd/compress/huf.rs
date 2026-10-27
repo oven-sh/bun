@@ -6,14 +6,12 @@ use super::internal::Strategy;
 use crate::common::entropy::huf_read_stats;
 use crate::common::{HUF_SYMBOLVALUE_MAX, HUF_TABLELOG_MAX};
 use crate::error::{ErrorCode, Result};
-use crate::util::{SliceExt, highbit32, write_le16};
+use crate::util::{BUG, SliceExt, highbit32, write_le16};
 
 pub(crate) const HUF_BLOCKSIZE_MAX: usize = 128 * 1024;
-pub(crate) const HUF_WORKSPACE_SIZE: usize = (8 << 10) + 512;
 pub(crate) const HUF_TABLELOG_DEFAULT: u32 = 11;
 /// The strategies from this one on look for the best depth of the tree.
 pub(crate) const HUF_OPTIMAL_DEPTH_THRESHOLD: Strategy = Strategy::BtUltra;
-const HUF_CTABLEBOUND: usize = 129;
 
 /// `HUF_flags_e`
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -292,41 +290,74 @@ struct NodeElt {
 const STARTNODE: i32 = HUF_SYMBOLVALUE_MAX as i32 + 1;
 
 /// `huffNodeTable`: the leaves from 0 on, sorted from the most frequent symbol to the rarest, the other nodes from
-/// [`STARTNODE`] on, and a sentinel at -1.
+/// [`STARTNODE`] on, and a sentinel at -1. A number that is out of the table wraps around, which spares the checks.
 struct HuffNodes([NodeElt; 2 * (HUF_SYMBOLVALUE_MAX as usize + 1)]);
 
 impl HuffNodes {
     #[inline(always)]
-    fn at(&self, n: i32) -> Result<NodeElt> {
-        self.0.at(n.wrapping_add(1) as usize)
+    const fn index(n: i32) -> usize {
+        n.wrapping_add(1) as usize & (2 * (HUF_SYMBOLVALUE_MAX as usize + 1) - 1)
     }
 
     #[inline(always)]
-    fn at_mut(&mut self, n: i32) -> Result<&mut NodeElt> {
-        self.0.at_mut(n.wrapping_add(1) as usize)
+    fn get(&self, n: i32) -> NodeElt {
+        self.0.get(Self::index(n)).copied().unwrap_or_default()
     }
 
     #[inline(always)]
-    fn nb_bits(&self, n: i32) -> Result<u32> {
-        Ok(u32::from(self.at(n)?.nb_bits))
+    fn set(&mut self, n: i32, node: NodeElt) {
+        if let Some(slot) = self.0.get_mut(Self::index(n)) {
+            *slot = node;
+        }
+    }
+
+    #[inline(always)]
+    fn count(&self, n: i32) -> u32 {
+        self.get(n).count
+    }
+
+    #[inline(always)]
+    fn nb_bits(&self, n: i32) -> u32 {
+        u32::from(self.get(n).nb_bits)
+    }
+
+    #[inline(always)]
+    fn set_count(&mut self, n: i32, count: u32) {
+        if let Some(node) = self.0.get_mut(Self::index(n)) {
+            node.count = count;
+        }
+    }
+
+    #[inline(always)]
+    fn set_parent(&mut self, n: i32, parent: i32) {
+        if let Some(node) = self.0.get_mut(Self::index(n)) {
+            node.parent = parent as u16;
+        }
+    }
+
+    #[inline(always)]
+    fn set_nb_bits(&mut self, n: i32, nb_bits: u32) {
+        if let Some(node) = self.0.get_mut(Self::index(n)) {
+            node.nb_bits = nb_bits as u8;
+        }
     }
 
     /// The nodes from 0 on.
     #[inline(always)]
-    fn from_0(&mut self) -> &mut [NodeElt] {
-        let [_, nodes @ ..] = &mut self.0;
+    fn leaves(&self) -> &[NodeElt] {
+        let [_, nodes @ ..] = &self.0;
         nodes
     }
 }
 
-/// `HUF_setMaxHeight`: makes no code longer than `target_nb_bits`, which is enough for a code for every symbol.
-/// `last_non_null` is the rarest symbol, which has the longest code. Returns the length of the longest code.
+/// `HUF_setMaxHeight`: makes no code longer than `target_nb_bits`, which is not 0 and is enough for a code for every
+/// symbol. `last_non_null` is the rarest symbol, which has the longest code. Returns the length of the longest code.
 fn set_max_height(
     huff_node: &mut HuffNodes,
     last_non_null: u32,
     target_nb_bits: u32,
 ) -> Result<u32> {
-    let largest_bits = huff_node.nb_bits(last_non_null as i32)?;
+    let largest_bits = huff_node.nb_bits(last_non_null as i32);
     if largest_bits <= target_nb_bits {
         return Ok(largest_bits);
     }
@@ -338,15 +369,14 @@ fn set_max_height(
     let mut n = last_non_null as i32;
 
     // Shorten the codes that are too long. `total_cost` is how much more than the whole code space is taken then.
-    while huff_node.nb_bits(n)? > target_nb_bits {
-        let node = huff_node.at_mut(n)?;
-        let cost = base_cost.wrapping_sub(cost_of(u32::from(node.nb_bits)));
+    while huff_node.nb_bits(n) > target_nb_bits {
+        let cost = base_cost.wrapping_sub(cost_of(huff_node.nb_bits(n)));
         total_cost = total_cost.wrapping_add(cost as i32);
-        node.nb_bits = target_nb_bits as u8;
+        huff_node.set_nb_bits(n, target_nb_bits);
         n -= 1;
     }
-    // `n` ends at the rarest symbol with a code shorter than `target_nb_bits`.
-    while huff_node.nb_bits(n)? == target_nb_bits {
+    // `n` ends at the rarest symbol with a code shorter than `target_nb_bits`, or at the sentinel.
+    while huff_node.nb_bits(n) == target_nb_bits {
         n -= 1;
     }
 
@@ -360,7 +390,7 @@ fn set_max_height(
 
     let mut current_nb_bits = target_nb_bits;
     for pos in (0..=n).rev() {
-        let nb_bits = huff_node.nb_bits(pos)?;
+        let nb_bits = huff_node.nb_bits(pos);
         if nb_bits >= current_nb_bits {
             continue;
         }
@@ -379,8 +409,8 @@ fn set_max_height(
                     break;
                 }
                 // It is cheaper to lengthen this one than two of the rank below.
-                let high_total = huff_node.at(high_pos as i32)?.count;
-                let low_total = huff_node.at(low_pos as i32)?.count.wrapping_mul(2);
+                let high_total = huff_node.count(high_pos as i32);
+                let low_total = huff_node.count(low_pos as i32).wrapping_mul(2);
                 if high_total <= low_total {
                     break;
                 }
@@ -393,9 +423,11 @@ fn set_max_height(
             n_bits_to_decrease += 1;
         }
         let pos = rank_last.at(n_bits_to_decrease)?;
+        if pos == NO_SYMBOL {
+            return Err(BUG);
+        }
         total_cost -= 1 << (n_bits_to_decrease - 1);
-        let node = huff_node.at_mut(pos as i32)?;
-        node.nb_bits = node.nb_bits.wrapping_add(1);
+        huff_node.set_nb_bits(pos as i32, huff_node.nb_bits(pos as i32) + 1);
 
         // The symbol is now of the rank below, where it is the rarest only if there was none.
         let below = rank_last.at_mut(n_bits_to_decrease - 1)?;
@@ -404,7 +436,7 @@ fn set_max_height(
         }
         // The next symbol takes its place, if it is of the same rank.
         let same_rank = target_nb_bits.wrapping_sub(n_bits_to_decrease as u32);
-        let next = if pos != 0 && huff_node.nb_bits(pos as i32 - 1)? == same_rank {
+        let next = if pos != 0 && huff_node.nb_bits(pos as i32 - 1) == same_rank {
             pos - 1
         } else {
             NO_SYMBOL
@@ -416,18 +448,14 @@ fn set_max_height(
     let [_, rank_last_1, ..] = &mut rank_last;
     while total_cost < 0 {
         if *rank_last_1 == NO_SYMBOL {
-            while huff_node.nb_bits(n)? == target_nb_bits {
+            while huff_node.nb_bits(n) == target_nb_bits {
                 n -= 1;
             }
-            let node = huff_node.at_mut(n + 1)?;
-            node.nb_bits = node.nb_bits.wrapping_sub(1);
-            *rank_last_1 = (n + 1) as u32;
-            total_cost += 1;
-            continue;
+            *rank_last_1 = n as u32;
         }
-        let node = huff_node.at_mut(rank_last_1.wrapping_add(1) as i32)?;
-        node.nb_bits = node.nb_bits.wrapping_sub(1);
-        *rank_last_1 += 1;
+        *rank_last_1 = rank_last_1.wrapping_add(1);
+        let pos = *rank_last_1 as i32;
+        huff_node.set_nb_bits(pos, huff_node.nb_bits(pos).wrapping_sub(1));
         total_cost += 1;
     }
 
@@ -462,65 +490,62 @@ fn get_index(count: u32) -> usize {
 
 /// `HUF_swapNodes`
 #[inline(always)]
-fn swap_nodes(arr: &mut [NodeElt], a: i32, b: i32) -> Result<()> {
-    let tmp = arr.at(a as usize)?;
-    arr.put(a as usize, arr.at(b as usize)?)?;
-    arr.put(b as usize, tmp)
+fn swap_nodes(arr: &mut HuffNodes, a: i32, b: i32) {
+    let tmp = arr.get(a);
+    arr.set(a, arr.get(b));
+    arr.set(b, tmp);
 }
 
 /// `HUF_insertionSort`: by decreasing count, from `low` to `high` included.
 #[inline]
-fn insertion_sort(huff_node: &mut [NodeElt], low: i32, high: i32) -> Result<()> {
-    let size = high - low + 1;
-    let huff_node = huff_node.sub_mut(low as usize..)?;
-    for i in 1..size {
-        let key = huff_node.at(i as usize)?;
+fn insertion_sort(huff_node: &mut HuffNodes, low: i32, high: i32) {
+    for i in low + 1..=high {
+        let key = huff_node.get(i);
         let mut j = i - 1;
-        while j >= 0 && huff_node.at(j as usize)?.count < key.count {
-            huff_node.put((j + 1) as usize, huff_node.at(j as usize)?)?;
+        while j >= low && huff_node.count(j) < key.count {
+            huff_node.set(j + 1, huff_node.get(j));
             j -= 1;
         }
-        huff_node.put((j + 1) as usize, key)?;
+        huff_node.set(j + 1, key);
     }
-    Ok(())
 }
 
 /// `HUF_quickSortPartition`: the pivot is the last element. Returns where it ends up.
-fn quick_sort_partition(arr: &mut [NodeElt], low: i32, high: i32) -> Result<i32> {
-    let pivot = arr.at(high as usize)?.count;
+fn quick_sort_partition(arr: &mut HuffNodes, low: i32, high: i32) -> i32 {
+    let pivot = arr.count(high);
     let mut i = low - 1;
     for j in low..high {
-        if arr.at(j as usize)?.count > pivot {
+        if arr.count(j) > pivot {
             i += 1;
-            swap_nodes(arr, i, j)?;
+            swap_nodes(arr, i, j);
         }
     }
-    swap_nodes(arr, i + 1, high)?;
-    Ok(i + 1)
+    swap_nodes(arr, i + 1, high);
+    i + 1
 }
 
 /// `HUF_simpleQuickSort`: by decreasing count, from `low` to `high` included. It recurses into the smaller part only,
 /// which bounds the depth. The order it leaves symbols of the same count in decides their codes.
-fn simple_quick_sort(arr: &mut [NodeElt], mut low: i32, mut high: i32) -> Result<()> {
+fn simple_quick_sort(arr: &mut HuffNodes, mut low: i32, mut high: i32) {
     const INSERTION_SORT_THRESHOLD: i32 = 8;
     if high - low < INSERTION_SORT_THRESHOLD {
-        return insertion_sort(arr, low, high);
+        insertion_sort(arr, low, high);
+        return;
     }
     while low < high {
-        let idx = quick_sort_partition(arr, low, high)?;
+        let idx = quick_sort_partition(arr, low, high);
         if idx - low < high - idx {
-            simple_quick_sort(arr, low, idx - 1)?;
+            simple_quick_sort(arr, low, idx - 1);
             low = idx + 1;
         } else {
-            simple_quick_sort(arr, idx + 1, high)?;
+            simple_quick_sort(arr, idx + 1, high);
             high = idx - 1;
         }
     }
-    Ok(())
 }
 
-/// `HUF_sort`: fills `count` and `byte` of the first nodes with the symbols, by decreasing count.
-fn sort(huff_node: &mut [NodeElt], count: &[u32]) -> Result<()> {
+/// `HUF_sort`: makes the first nodes, which are all zeros, the symbols by decreasing count. At most 256 counts.
+fn sort(huff_node: &mut HuffNodes, count: &[u32]) -> Result<()> {
     let mut rank_position = [RankPos::default(); RANK_POSITION_TABLE_SIZE];
 
     // A bucket starts after the symbols of all the buckets above it.
@@ -536,19 +561,19 @@ fn sort(huff_node: &mut [NodeElt], count: &[u32]) -> Result<()> {
 
     for (n, &c) in count.iter().enumerate() {
         let rank = rank_position.at_mut(get_index(c) + 1)?;
-        let pos = usize::from(rank.curr);
+        let node = NodeElt {
+            count: c,
+            byte: n as u8,
+            ..NodeElt::default()
+        };
+        huff_node.set(i32::from(rank.curr), node);
         rank.curr += 1;
-        let node = huff_node.at_mut(pos)?;
-        node.count = c;
-        node.byte = n as u8;
     }
 
     let shared = RANK_POSITION_DISTINCT_COUNT_CUTOFF as usize..RANK_POSITION_TABLE_SIZE - 1;
     for rank in rank_position.sub(shared)? {
-        let bucket_size = i32::from(rank.curr) - i32::from(rank.base);
-        if bucket_size > 1 {
-            let bucket = huff_node.sub_mut(usize::from(rank.base)..)?;
-            simple_quick_sort(bucket, 0, bucket_size - 1)?;
+        if rank.curr > rank.base + 1 {
+            simple_quick_sort(huff_node, i32::from(rank.base), i32::from(rank.curr) - 1);
         }
     }
     Ok(())
@@ -557,56 +582,50 @@ fn sort(huff_node: &mut [NodeElt], count: &[u32]) -> Result<()> {
 /// `HUF_buildTree`: `huff_node` is sorted, and some count is not 0. Sets the depth of every leaf, and returns the
 /// rarest symbol whose count is not 0.
 fn build_tree(huff_node: &mut HuffNodes, max_symbol_value: u32) -> Result<i32> {
-    let mut non_null_rank = max_symbol_value as i32;
-    while huff_node.at(non_null_rank)?.count == 0 {
-        non_null_rank -= 1;
-    }
+    let mut symbols = (0..=max_symbol_value as i32).rev();
+    let non_null_rank = symbols.find(|&n| huff_node.count(n) != 0).ok_or(BUG)?;
     let mut low_s = non_null_rank;
     let mut node_nb = STARTNODE;
     let node_root = node_nb + low_s - 1;
     let mut low_n = node_nb;
 
-    let mut join = |huff_node: &mut HuffNodes, n1: i32, n2: i32| -> Result<()> {
-        let count = huff_node
-            .at(n1)?
-            .count
-            .wrapping_add(huff_node.at(n2)?.count);
-        huff_node.at_mut(node_nb)?.count = count;
-        huff_node.at_mut(n1)?.parent = node_nb as u16;
-        huff_node.at_mut(n2)?.parent = node_nb as u16;
+    let mut join = |huff_node: &mut HuffNodes, n1: i32, n2: i32| {
+        let count = huff_node.count(n1).wrapping_add(huff_node.count(n2));
+        huff_node.set_count(node_nb, count);
+        huff_node.set_parent(n1, node_nb);
+        huff_node.set_parent(n2, node_nb);
         node_nb += 1;
-        Ok(())
     };
 
-    join(huff_node, low_s, low_s - 1)?;
+    join(huff_node, low_s, low_s - 1);
     low_s -= 2;
     for n in STARTNODE + 1..=node_root {
-        huff_node.at_mut(n)?.count = 1 << 30;
+        huff_node.set_count(n, 1 << 30);
     }
     // The sentinel is never the smaller of the two.
-    huff_node.at_mut(-1)?.count = 1 << 31;
+    huff_node.set_count(-1, 1 << 31);
 
     // Join the two nodes of the lowest counts, which are the next leaves or the next parents.
     for _ in STARTNODE + 1..=node_root {
-        let mut lowest = |huff_node: &HuffNodes| -> Result<i32> {
-            Ok(if huff_node.at(low_s)?.count < huff_node.at(low_n)?.count {
+        let mut lowest = |huff_node: &HuffNodes| {
+            if huff_node.count(low_s) < huff_node.count(low_n) {
                 low_s -= 1;
                 low_s + 1
             } else {
                 low_n += 1;
                 low_n - 1
-            })
+            }
         };
-        let n1 = lowest(huff_node)?;
-        let n2 = lowest(huff_node)?;
-        join(huff_node, n1, n2)?;
+        let n1 = lowest(huff_node);
+        let n2 = lowest(huff_node);
+        join(huff_node, n1, n2);
     }
 
     // The parents come after their children, so that this goes from the root down.
-    huff_node.at_mut(node_root)?.nb_bits = 0;
+    huff_node.set_nb_bits(node_root, 0);
     for n in (STARTNODE..node_root).rev().chain(0..=non_null_rank) {
-        let parent = i32::from(huff_node.at(n)?.parent);
-        huff_node.at_mut(n)?.nb_bits = huff_node.at(parent)?.nb_bits.wrapping_add(1);
+        let parent = i32::from(huff_node.get(n).parent);
+        huff_node.set_nb_bits(n, huff_node.nb_bits(parent) + 1);
     }
 
     Ok(non_null_rank)
@@ -650,7 +669,7 @@ pub(crate) fn build_ctable(
     }
     let mut huff_node = HuffNodes([NodeElt::default(); _]);
 
-    sort(huff_node.from_0(), count.sub(..=max_symbol_value as usize)?)?;
+    sort(&mut huff_node, count.sub(..=max_symbol_value as usize)?)?;
     let non_null_rank = build_tree(&mut huff_node, max_symbol_value)?;
     max_nb_bits = set_max_height(&mut huff_node, non_null_rank as u32, max_nb_bits)?;
     if max_nb_bits > HUF_TABLELOG_MAX {
@@ -658,7 +677,7 @@ pub(crate) fn build_ctable(
     }
     build_ctable_from_tree(
         ctable,
-        huff_node.from_0(),
+        huff_node.leaves(),
         non_null_rank,
         max_symbol_value,
         max_nb_bits,
@@ -687,11 +706,6 @@ pub(crate) fn validate_ctable(ctable: &HufCTable, count: &[u32], max_symbol_valu
     (ctable.elements().iter().zip(count))
         .take(max_symbol_value as usize + 1)
         .all(|(&elt, &count)| count == 0 || get_nb_bits(elt) != 0)
-}
-
-/// `HUF_compressBound`
-pub(crate) const fn compress_bound(size: usize) -> usize {
-    HUF_CTABLEBOUND + size + (size >> 8) + 8
 }
 
 /// One `bitContainer` of `HUF_CStream_t` and its `bitPos`.
@@ -752,21 +766,20 @@ impl<'a> HufCStream<'a> {
         self.container.pos = self.container.pos.wrapping_add(second.pos);
     }
 
-    /// `HUF_flushBits`: writes the whole bytes. With `FAST`, the caller knows that the output is large enough.
-    /// Without, the stream stops advancing at the end of the output, which [`Self::close`] reports.
+    /// `HUF_flushBits`: writes the whole bytes. At the end of the output the stream stops advancing, which
+    /// [`Self::close`] reports. The C code has a variant without that limit for when the output is known to be large
+    /// enough, but here the limit is what spares a check on the write.
     #[inline(always)]
-    fn flush_bits<const FAST: bool>(&mut self) {
+    fn flush_bits(&mut self) {
         let nb_bits = self.container.nb_bits();
         let nb_bytes = (nb_bits >> 3) as usize;
         let bits = self.container.bits >> (u64::from(u64::BITS).wrapping_sub(nb_bits) & 63);
         self.container.pos &= 7;
-        if let Ok(out) = self.dst.array_at_mut(self.pos) {
+        let pos = self.pos.min(self.end);
+        if let Ok(out) = self.dst.array_at_mut(pos) {
             *out = bits.to_le_bytes();
         }
-        self.pos += nb_bytes;
-        if !FAST && self.pos > self.end {
-            self.pos = self.end;
-        }
+        self.pos = pos + nb_bytes;
     }
 
     /// `HUF_closeCStream`: the size of the stream, or 0 if it did not fit.
@@ -775,7 +788,7 @@ impl<'a> HufCStream<'a> {
         /// `HUF_endMark`: one bit, set.
         const END_MARK: u64 = 1 | (1 << 63);
         self.container.add_bits::<false>(END_MARK);
-        self.flush_bits::<false>();
+        self.flush_bits();
         if self.pos >= self.end {
             return 0;
         }
@@ -809,7 +822,7 @@ fn encode_symbols<const UNROLL: usize, const LAST_FAST: bool>(
 /// `HUF_compress1X_usingCTable_internal_body_loop`: a container has room for `UNROLL` symbols on top of the 7 bits
 /// that a flush can leave, and, with `LAST_FAST`, for 4 bits more.
 #[inline(always)]
-fn compress_1x_body_loop<const UNROLL: usize, const FAST_FLUSH: bool, const LAST_FAST: bool>(
+fn compress_1x_body_loop<const UNROLL: usize, const LAST_FAST: bool>(
     bit_c: &mut HufCStream<'_>,
     src: &[u8],
     ct: &Elements,
@@ -819,21 +832,21 @@ fn compress_1x_body_loop<const UNROLL: usize, const FAST_FLUSH: bool, const LAST
         for &symbol in rem.iter().rev() {
             encode_symbol::<false>(&mut bit_c.container, symbol, ct);
         }
-        bit_c.flush_bits::<FAST_FLUSH>();
+        bit_c.flush_bits();
     }
     let (pairs, odd) = groups.as_chunks::<2>();
     if let [group] = odd {
         encode_symbols::<UNROLL, LAST_FAST>(&mut bit_c.container, group, ct);
-        bit_c.flush_bits::<FAST_FLUSH>();
+        bit_c.flush_bits();
     }
     for [second, first] in pairs.iter().rev() {
         encode_symbols::<UNROLL, LAST_FAST>(&mut bit_c.container, first, ct);
-        bit_c.flush_bits::<FAST_FLUSH>();
+        bit_c.flush_bits();
         // The second group does not depend on the flush, since it has a container of its own.
         let mut container = BitContainer::default();
         encode_symbols::<UNROLL, LAST_FAST>(&mut container, second, ct);
         bit_c.merge(container);
-        bit_c.flush_bits::<FAST_FLUSH>();
+        bit_c.flush_bits();
     }
 }
 
@@ -859,15 +872,15 @@ pub(crate) fn compress_1x_using_ctable(
     let bit_c_ref = &mut bit_c;
 
     if dst_size < tight_compress_bound(src.len(), usize::from(table_log)) || table_log > 11 {
-        compress_1x_body_loop::<4, false, false>(bit_c_ref, src, ct);
+        compress_1x_body_loop::<4, false>(bit_c_ref, src, ct);
     } else {
         match table_log {
-            11 => compress_1x_body_loop::<5, true, false>(bit_c_ref, src, ct),
-            10 => compress_1x_body_loop::<5, true, true>(bit_c_ref, src, ct),
-            9 => compress_1x_body_loop::<6, true, false>(bit_c_ref, src, ct),
-            8 => compress_1x_body_loop::<7, true, false>(bit_c_ref, src, ct),
-            7 => compress_1x_body_loop::<8, true, false>(bit_c_ref, src, ct),
-            _ => compress_1x_body_loop::<9, true, true>(bit_c_ref, src, ct),
+            11 => compress_1x_body_loop::<5, false>(bit_c_ref, src, ct),
+            10 => compress_1x_body_loop::<5, true>(bit_c_ref, src, ct),
+            9 => compress_1x_body_loop::<6, false>(bit_c_ref, src, ct),
+            8 => compress_1x_body_loop::<7, false>(bit_c_ref, src, ct),
+            7 => compress_1x_body_loop::<8, false>(bit_c_ref, src, ct),
+            _ => compress_1x_body_loop::<9, true>(bit_c_ref, src, ct),
         }
     }
     Ok(bit_c.close())

@@ -69,8 +69,10 @@ impl FseCTable {
         let step = fse_table_step(table_size);
         let counts = normalized_counter.sub(..=max_symbol_value as usize)?;
 
-        let mut cumul = [0u16; MAX_SEQ as usize + 1];
-        let mut table_symbol = [0u8; 1 << ML_FSE_LOG];
+        const STATE_TABLE_SIZE: usize = 1 << ML_FSE_LOG;
+        const CUMUL_SIZE: usize = (MAX_SEQ as usize + 1).next_power_of_two();
+        let mut cumul = [0u16; CUMUL_SIZE];
+        let mut table_symbol = [0u8; STATE_TABLE_SIZE];
         let mut high_threshold = table_size - 1;
 
         self.table_log = table_log;
@@ -127,10 +129,14 @@ impl FseCTable {
 
         // The states, sorted by symbol.
         for (u, &symbol) in table_symbol.sub(..table_size)?.iter().enumerate() {
-            let next = cumul.at_mut(usize::from(symbol))?;
-            self.state_table
-                .put(usize::from(*next), (table_size + u) as u16)?;
+            let Some(next) = cumul.get_mut(usize::from(symbol) & (CUMUL_SIZE - 1)) else {
+                continue;
+            };
+            let state = usize::from(*next) & (STATE_TABLE_SIZE - 1);
             *next = next.wrapping_add(1);
+            if let Some(state) = self.state_table.get_mut(state) {
+                *state = (table_size + u) as u16;
+            }
         }
 
         let mut total = 0u32;

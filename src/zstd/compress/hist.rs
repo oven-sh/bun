@@ -60,28 +60,30 @@ fn count_parallel(
     let mut counting4 = [0u32; 256];
 
     // Each word is read before the bytes of the one before it are counted.
-    let (words, rest) = src.as_chunks::<4>();
+    let (words, rest) = src.as_chunks::<8>();
     if let Some((&first, words)) = words.split_first() {
-        let mut cached = u32::from_le_bytes(first);
-        let mut count_word = |next: [u8; 4]| {
+        let mut cached = u64::from_le_bytes(first);
+        let mut count_word = |next: [u8; 8]| {
             let c = cached;
-            cached = u32::from_le_bytes(next);
+            cached = u64::from_le_bytes(next);
             increment(&mut counting1, c as u8);
             increment(&mut counting2, (c >> 8) as u8);
             increment(&mut counting3, (c >> 16) as u8);
             increment(&mut counting4, (c >> 24) as u8);
+            increment(&mut counting1, (c >> 32) as u8);
+            increment(&mut counting2, (c >> 40) as u8);
+            increment(&mut counting3, (c >> 48) as u8);
+            increment(&mut counting4, (c >> 56) as u8);
         };
-        let (stripes, words) = words.as_chunks::<4>();
-        for &[a, b, c, d] in stripes {
+        let (stripes, words) = words.as_chunks::<2>();
+        for &[a, b] in stripes {
             count_word(a);
             count_word(b);
-            count_word(c);
-            count_word(d);
         }
         for &word in words {
             count_word(word);
         }
-        count_word([0; 4]);
+        count_word([0; 8]);
     }
     for &byte in rest {
         increment(&mut counting1, byte);

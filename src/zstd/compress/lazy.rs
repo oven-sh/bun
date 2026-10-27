@@ -1,5 +1,7 @@
 //! `zstd_lazy.c`: the `greedy`, `lazy`, `lazy2` and `btlazy2` strategies.
 
+use core::hint::{Locality, prefetch_read};
+
 use super::internal::{
     BlockSrc, DictMatchState, DictMode, K_SEARCH_STRENGTH, MatchState, Prefix, REPCODE1_TO_OFFBASE,
     SeqStore, Strategy, ZSTD_DUBT_UNSORTED_MARK, ZSTD_ROW_HASH_CACHE_SIZE, count, count_2segments,
@@ -16,6 +18,12 @@ const K_LAZY_SKIPPING_STEP: usize = 8;
 const NO_DICT: u8 = DictMode::NoDict as u8;
 const EXT_DICT: u8 = DictMode::ExtDict as u8;
 const DICT_MATCH_STATE: u8 = DictMode::DictMatchState as u8;
+
+/// `PREFETCH_L1`: a hint that `slice[index]` is about to be read. `index` may be anything.
+#[inline(always)]
+fn prefetch_l1<T>(slice: &[T], index: usize) {
+    prefetch_read(slice.as_ptr().wrapping_add(index), Locality::L1);
+}
 
 /// `dms->window.nextSrc - dms->window.base`: the index of the end of the dictionary, among its own indices.
 #[inline(always)]
@@ -586,11 +594,7 @@ fn row_next_index(head: &mut u8, row_mask: u32) -> u32 {
     next
 }
 
-#[inline(always)]
-fn prefetch_l1<T>(slice: &[T], index: usize) {
-    core::hint::prefetch_read(slice.as_ptr().wrapping_add(index), core::hint::Locality::L1);
-}
-
+/// `ZSTD_row_prefetch`: of the row that starts at `rel_row`.
 #[inline(always)]
 fn row_prefetch(hash_table: &[u32], tag_table: &[u8], rel_row: usize, row_log: u32) {
     prefetch_l1(hash_table, rel_row);
@@ -608,6 +612,7 @@ fn row_prefetch(hash_table: &[u32], tag_table: &[u8], rel_row: usize, row_log: u
 fn row_fill_hash_cache(
     ms: &mut MatchState,
     prefix: Prefix<'_>,
+    row_log: u32,
     mls: u32,
     idx: u32,
     i_limit: usize,
@@ -624,6 +629,8 @@ fn row_fill_hash_cache(
             mls,
             ms.hash_salt,
         )? as u32;
+        let row = ((hash >> ZSTD_ROW_HASH_TAG_BITS) << row_log) as usize;
+        row_prefetch(&ms.hash_table, &ms.tag_table, row, row_log);
         let cached = (idx & ZSTD_ROW_HASH_CACHE_MASK) as usize;
         ms.hash_cache.put(cached, hash)?;
     }
@@ -637,10 +644,10 @@ fn row_next_cached_hash(
     cache: &mut [u32; ZSTD_ROW_HASH_CACHE_SIZE],
     hash_table: &[u32],
     tag_table: &[u8],
-    row_log: u32,
     prefix: Prefix<'_>,
     idx: u32,
     hash_log: u32,
+    row_log: u32,
     mls: u32,
     hash_salt: u64,
 ) -> Result<u32> {
@@ -651,12 +658,8 @@ fn row_next_cached_hash(
         mls,
         hash_salt,
     )? as u32;
-    row_prefetch(
-        hash_table,
-        tag_table,
-        ((new_hash >> ZSTD_ROW_HASH_TAG_BITS) << row_log) as usize,
-        row_log,
-    );
+    let row = ((new_hash >> ZSTD_ROW_HASH_TAG_BITS) << row_log) as usize;
+    row_prefetch(hash_table, tag_table, row, row_log);
     let cached = cache.at_mut((idx & ZSTD_ROW_HASH_CACHE_MASK) as usize)?;
     Ok(core::mem::replace(cached, new_hash))
 }
@@ -684,10 +687,10 @@ fn row_update_internal_impl(
                 &mut ms.hash_cache,
                 hash_table,
                 tag_table,
-                row_log,
                 prefix,
                 idx,
                 hash_log,
+                row_log,
                 mls,
                 hash_salt,
             )?
@@ -731,7 +734,7 @@ fn row_update_internal(
         let bound = idx + K_MAX_MATCH_START_POSITIONS_TO_UPDATE;
         row_update_internal_impl(ms, prefix, idx, bound, mls, row_log, row_mask, use_cache)?;
         idx = target - K_MAX_MATCH_END_POSITIONS_TO_UPDATE;
-        row_fill_hash_cache(ms, prefix, mls, idx, ip + 1)?;
+        row_fill_hash_cache(ms, prefix, row_log, mls, idx, ip + 1)?;
     }
     row_update_internal_impl(ms, prefix, idx, target, mls, row_log, row_mask, use_cache)?;
     ms.next_to_update = target;
@@ -772,7 +775,7 @@ fn row_get_match_mask<const ROW_ENTRIES: usize>(
 
 /// The first loop of `ZSTD_RowFindBestMatch`: copies the entries of a row that have the tag `tag` to `match_buffer`,
 /// the most recent first. It stops after `nb_attempts` of them, which it decreases, or at the first that is less than
-/// `low_limit`. Returns how many there are.
+/// `low_limit`. `prefetch` is called with each. Returns how many there are.
 #[inline(always)]
 fn row_collect_matches<const ROW_ENTRIES: usize>(
     row: &[u32; ROW_ENTRIES],
@@ -833,6 +836,16 @@ fn row_find_best_match<const MLS: u32, const ROW_ENTRIES: usize, const DICT_MODE
     let mut ml = 4 - 1;
     let mut match_buffer = [0u32; ROW_ENTRIES];
 
+    let mut dms_hash = 0u32;
+    let mut dms_rel_row = 0usize;
+    if DICT_MODE == DICT_MATCH_STATE {
+        let dms = src.dms.ok_or(BUG)?;
+        let dms_hash_log = dms.ms.row_hash_log + ZSTD_ROW_HASH_TAG_BITS;
+        dms_hash = hash_ptr(buf, ip, dms_hash_log, MLS)? as u32;
+        dms_rel_row = ((dms_hash >> ZSTD_ROW_HASH_TAG_BITS) << row_log) as usize;
+        row_prefetch(&dms.ms.hash_table, &dms.ms.tag_table, dms_rel_row, row_log);
+    }
+
     // Update the tables up to, and not including, `ip`.
     let hash = if ms.lazy_skipping {
         // While skipping, not every position is inserted.
@@ -845,10 +858,10 @@ fn row_find_best_match<const MLS: u32, const ROW_ENTRIES: usize, const DICT_MODE
             &mut ms.hash_cache,
             &ms.hash_table,
             &ms.tag_table,
-            row_log,
             prefix,
             curr,
             hash_log,
+            row_log,
             MLS,
             hash_salt,
         )?
@@ -921,9 +934,6 @@ fn row_find_best_match<const MLS: u32, const ROW_ENTRIES: usize, const DICT_MODE
         let dms_lowest_index = dms.ms.window.dict_limit;
         let dms_index_delta = dict_limit.wrapping_sub(dms_end_index(&dms));
 
-        let dms_hash_log = dms.ms.row_hash_log + ZSTD_ROW_HASH_TAG_BITS;
-        let dms_hash = hash_ptr(buf, ip, dms_hash_log, MLS)? as u32;
-        let dms_rel_row = ((dms_hash >> ZSTD_ROW_HASH_TAG_BITS) << row_log) as usize;
         let num_matches = row_collect_matches(
             dms.ms.hash_table.array_at::<ROW_ENTRIES>(dms_rel_row)?,
             dms.ms.tag_table.array_at::<ROW_ENTRIES>(dms_rel_row)?,
@@ -1155,7 +1165,7 @@ fn compress_block_lazy_generic<const SEARCH_METHOD: u8, const DEPTH: u32, const 
     }
 
     if SEARCH_METHOD == SEARCH_ROW_HASH {
-        row_fill_hash_cache(ms, src.prefix(), mls, ms.next_to_update, ilimit)?;
+        row_fill_hash_cache(ms, src.prefix(), row_log, mls, ms.next_to_update, ilimit)?;
     }
 
     'parse: while ip < ilimit {
@@ -1308,7 +1318,7 @@ fn compress_block_lazy_generic<const SEARCH_METHOD: u8, const DEPTH: u32, const 
         if ms.lazy_skipping {
             // There was a match: every position is inserted again.
             if SEARCH_METHOD == SEARCH_ROW_HASH {
-                row_fill_hash_cache(ms, src.prefix(), mls, ms.next_to_update, ilimit)?;
+                row_fill_hash_cache(ms, src.prefix(), row_log, mls, ms.next_to_update, ilimit)?;
             }
             ms.lazy_skipping = false;
         }

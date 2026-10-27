@@ -1754,7 +1754,8 @@ describe("Histogram", () => {
           for (let i = 0; i < 20000; i++) b.add(a);
         \`, { eval: true, workerData: [a, b, flags] });
         worker.on("error", error => { throw error; });
-        Atomics.waitAsync(flags, 0, 0).value.then(() => {
+        // A string, not a promise, if the worker is ready already.
+        Promise.resolve(Atomics.waitAsync(flags, 0, 0).value).then(() => {
           Atomics.store(flags, 1, 1);
           Atomics.notify(flags, 1);
           for (let i = 0; i < 20000; i++) a.add(b);

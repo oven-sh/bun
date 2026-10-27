@@ -27,6 +27,7 @@ bun_core::define_scoped_log!(log, watcher, visible);
 
 pub const MAX_COUNT: usize = 128;
 
+/// True for kqueue only. A file's stored descriptor would hide a rename over the file from inotify.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 pub const REQUIRES_FILE_DESCRIPTORS: bool = true;
 #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
@@ -304,10 +305,7 @@ impl Watcher {
             } else {
                 me.mutex.unlock();
                 if close_descriptors && me.running.load() {
-                    let fds = me.watchlist.items_fd();
-                    for &fd in fds {
-                        let _ = bun_sys::close(fd);
-                    }
+                    close_watchlist_fds(&me.watchlist);
                 }
                 true
             }
@@ -377,10 +375,7 @@ impl Watcher {
             self.close_descriptors.load()
         };
         if close_descriptors {
-            let fds = self.watchlist.items_fd();
-            for &fd in fds {
-                let _ = bun_sys::close(fd);
-            }
+            close_watchlist_fds(&self.watchlist);
         }
         false
     }
@@ -430,8 +425,7 @@ impl Watcher {
 
             #[cfg(not(windows))]
             {
-                // on mac and linux we can just close the file descriptor
-                // we don't need to call inotify_rm_watch on linux because it gets removed when the file descriptor is closed
+                // The close removes a kqueue watch. An inotify watch stays until its inode goes.
                 if fds[item as usize].is_valid() {
                     let _ = bun_sys::close(fds[item as usize]);
                 }
@@ -581,6 +575,13 @@ impl Watcher {
             self.platform.watch_path(slice)?
         };
 
+        let offered_with_fd = fd.is_valid();
+        let (fd, ownership) = if REQUIRES_FILE_DESCRIPTORS {
+            (fd, FdOwnership::Watcher)
+        } else {
+            (Fd::INVALID, FdOwnership::Caller)
+        };
+
         self.watchlist.append_assume_capacity(WatchItem {
             file_path: file_path_,
             fd,
@@ -589,10 +590,28 @@ impl Watcher {
             parent_hash,
             package_json,
             kind: WatchItemKind::File,
+            offered_with_fd,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
         });
-        Ok(FdOwnership::Watcher)
+
+        let cwd_len_with_slash = if self.cwd[self.cwd.len() - 1] == b'/' {
+            self.cwd.len()
+        } else {
+            self.cwd.len() + 1
+        };
+        let display_path =
+            if file_path.len() > cwd_len_with_slash && file_path.starts_with(self.cwd) {
+                &file_path[cwd_len_with_slash..]
+            } else {
+                file_path
+            };
+        log!(
+            "<d>Added <b>{}<r><d> to watch list.<r>",
+            bstr::BStr::new(display_path)
+        );
+
+        Ok(ownership)
     }
 
     fn append_directory_assume_capacity<const CLONE_FILE_PATH: bool>(
@@ -675,6 +694,7 @@ impl Watcher {
             count: 0,
             parent_hash,
             kind: WatchItemKind::Directory,
+            offered_with_fd: false,
             package_json: None,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
@@ -748,39 +768,14 @@ impl Watcher {
         }
         let _ = parent_watch_item;
 
-        match self.append_file_assume_capacity::<CLONE_FILE_PATH>(
+        self.append_file_assume_capacity::<CLONE_FILE_PATH>(
             fd,
             file_path,
             hash,
             parent_dir_hash,
             package_json,
-        ) {
-            Err(err) => {
-                return Err(err.with_path(file_path));
-            }
-            // Not appended (e.g. outside the project root on Windows); the
-            // caller keeps the descriptor.
-            Ok(FdOwnership::Caller) => return Ok(FdOwnership::Caller),
-            Ok(FdOwnership::Watcher) => {}
-        }
-
-        let cwd_len_with_slash = if self.cwd[self.cwd.len() - 1] == b'/' {
-            self.cwd.len()
-        } else {
-            self.cwd.len() + 1
-        };
-        let display_path =
-            if file_path.len() > cwd_len_with_slash && file_path.starts_with(self.cwd) {
-                &file_path[cwd_len_with_slash..]
-            } else {
-                file_path
-            };
-        log!(
-            "<d>Added <b>{}<r><d> to watch list.<r>",
-            bstr::BStr::new(display_path)
-        );
-
-        Ok(FdOwnership::Watcher)
+        )
+        .map_err(|err| err.with_path(file_path))
     }
 
     #[inline]
@@ -889,21 +884,11 @@ impl Watcher {
         self.mutex.lock();
 
         if let Some(index) = self.index_of(hash) {
-            let mut ownership = FdOwnership::Caller;
-            if feature_flags::ATOMIC_FILE_WATCHER && fd.is_valid() {
-                // Upgrade a path-only entry (`add_file_by_path_slow` inserts
-                // fd-less, e.g. the `--hot` entrypoint) so `hot_reloader`'s
-                // directory-event recovery sees a valid fd. A valid stored fd
-                // is never replaced: the watchlist owns it until eviction,
-                // and the old overwrite leaked it.
-                let fds = self.watchlist.items_fd_mut();
-                if !fds[index as usize].is_valid() {
-                    fds[index as usize] = fd;
-                    ownership = FdOwnership::Watcher;
-                }
+            if fd.is_valid() {
+                self.watchlist.items_offered_with_fd_mut()[index as usize] = true;
             }
             self.mutex.unlock();
-            return Ok(ownership);
+            return Ok(FdOwnership::Caller);
         }
 
         let r = self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
@@ -1061,10 +1046,13 @@ pub struct WatchItem {
     pub file_path: Cow<'static, [u8]>,
     // filepath hash for quick comparison
     pub hash: u32,
+    /// A directory holds one. A file holds one only with [`REQUIRES_FILE_DESCRIPTORS`].
     pub fd: Fd,
     pub count: u32,
     pub parent_hash: u32,
     pub kind: WatchItemKind,
+    /// Set once a caller passes a valid `fd`. Such a caller adds the file again on every load.
+    pub offered_with_fd: bool,
     pub package_json: Option<&'static PackageJSON>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
@@ -1079,13 +1067,9 @@ pub enum WatchItemKind {
 /// Who owns the `fd` passed to [`Watcher::add_file`] after it returns.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FdOwnership {
-    /// The watchlist stored the descriptor; `flush_evictions`/shutdown will
-    /// close it. The caller must not use or close it afterwards.
+    /// The watchlist stored the descriptor and closes it. The caller must not use or close it.
     Watcher,
-    /// The watchlist did not take the descriptor: the file was already
-    /// watched with a valid stored one, or the path is not watchable (e.g.
-    /// outside the project root on Windows). The caller still owns `fd` and
-    /// must close it (or keep using it).
+    /// The watchlist did not take the descriptor. The caller still owns `fd` and must close it.
     Caller,
 }
 
@@ -1097,9 +1081,10 @@ pub trait WatchItemColumns {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>];
     fn items_hash(&self) -> &[u32];
     fn items_fd(&self) -> &[Fd];
-    fn items_fd_mut(&mut self) -> &mut [Fd];
     fn items_parent_hash(&self) -> &[u32];
     fn items_kind(&self) -> &[WatchItemKind];
+    fn items_offered_with_fd(&self) -> &[bool];
+    fn items_offered_with_fd_mut(&mut self) -> &mut [bool];
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex];
 }
@@ -1114,14 +1099,17 @@ impl WatchItemColumns for WatchList {
     fn items_fd(&self) -> &[Fd] {
         self.items::<"fd", Fd>()
     }
-    fn items_fd_mut(&mut self) -> &mut [Fd] {
-        self.items_mut::<"fd", Fd>()
-    }
     fn items_parent_hash(&self) -> &[u32] {
         self.items::<"parent_hash", u32>()
     }
     fn items_kind(&self) -> &[WatchItemKind] {
         self.items::<"kind", WatchItemKind>()
+    }
+    fn items_offered_with_fd(&self) -> &[bool] {
+        self.items::<"offered_with_fd", bool>()
+    }
+    fn items_offered_with_fd_mut(&mut self) -> &mut [bool] {
+        self.items_mut::<"offered_with_fd", bool>()
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
@@ -1139,17 +1127,28 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     fn items_fd(&self) -> &[Fd] {
         self.items::<"fd", Fd>()
     }
-    fn items_fd_mut(&mut self) -> &mut [Fd] {
-        self.items_mut::<"fd", Fd>()
-    }
     fn items_parent_hash(&self) -> &[u32] {
         self.items::<"parent_hash", u32>()
     }
     fn items_kind(&self) -> &[WatchItemKind] {
         self.items::<"kind", WatchItemKind>()
     }
+    fn items_offered_with_fd(&self) -> &[bool] {
+        self.items::<"offered_with_fd", bool>()
+    }
+    fn items_offered_with_fd_mut(&mut self) -> &mut [bool] {
+        self.items_mut::<"offered_with_fd", bool>()
+    }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
+    }
+}
+
+fn close_watchlist_fds(watchlist: &WatchList) {
+    for &fd in watchlist.items_fd() {
+        if fd.is_valid() {
+            let _ = sys::close(fd);
+        }
     }
 }

@@ -23,7 +23,7 @@ use bun_event_loop::task_tag;
 
 bun_core::declare_scope!(hot_reloader, visible);
 
-use bun_core::env::IS_KQUEUE;
+use bun_core::env::{IS_KQUEUE, IS_LINUX};
 
 pub enum ImportWatcher {
     None,
@@ -39,7 +39,7 @@ impl ImportWatcher {
     /// and `flush_evictions` closes it concurrently, so a reader would hit
     /// `EBADF`/`EISDIR` after the mutex is released (watch-many-dirs.test.ts)
     /// or read the stale pre-rename inode after an atomic save. Reloads open
-    /// the file by path; `Watcher::add_file` adopts the fresh descriptor.
+    /// the file by path.
     pub fn snapshot_package_json(
         &self,
         hash: bun_watcher::HashType,
@@ -827,6 +827,7 @@ where
         let hashes = slice.items_hash();
         let parents = slice.items_parent_hash();
         let file_descriptors = slice.items_fd();
+        let offered_with_fd = slice.items_offered_with_fd();
         // Note: reshaped for borrowck — `ctx` is held as a raw pointer so
         // `self` can be reborrowed inside the loop body for tombstone access,
         // and so the deferred `flush_evictions` doesn't hold `&mut Watcher`
@@ -878,7 +879,18 @@ where
 
             match kind {
                 bun_watcher::Kind::File => {
+                    // Removed, not replaced: the directory's event reloads it, or nothing does.
+                    let removed = IS_LINUX
+                        && event.op.contains(WatchOp::DELETE)
+                        && offered_with_fd[event.index as usize]
+                        && !bun_sys::exists(file_path);
+                    let left_to_directory = removed
+                        && hashes.iter().zip(kinds).any(|(hash, kind)| {
+                            *hash == parents[event.index as usize]
+                                && *kind == bun_watcher::Kind::Directory
+                        });
                     if !bun_watcher::WATCHES_BY_PATH
+                        && !left_to_directory
                         && (event.op.contains(WatchOp::DELETE)
                             || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE))
                     {
@@ -907,9 +919,10 @@ where
                         ));
                     }
 
-                    if event
-                        .op
-                        .intersects(WatchOp::WRITE | WatchOp::DELETE | WatchOp::RENAME)
+                    if !removed
+                        && event
+                            .op
+                            .intersects(WatchOp::WRITE | WatchOp::DELETE | WatchOp::RENAME)
                     {
                         record_changed_path(file_path);
                         if IS_KQUEUE {
@@ -1174,7 +1187,7 @@ where
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {
                                                 if *hash == file_hash {
-                                                    if file_descriptors[entry_id].is_valid() {
+                                                    if offered_with_fd[entry_id] {
                                                         if prev_entry_id != entry_id {
                                                             record_changed_path(
                                                                 path_string.as_bytes(),

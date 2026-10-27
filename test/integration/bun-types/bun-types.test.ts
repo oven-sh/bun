@@ -402,6 +402,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "hosted_git_info_jsc.bind.ts": null,
   "html_rewriter.bind.ts": "{ HTMLRewriter: typeof HTMLRewriter }",
   "html_rewriter_internals.bind.ts": null,
+  "http1_testing.bind.ts": null,
   "hw_exports.bind.ts": null,
   "imported_class_test.bind.ts": null,
   "ini_jsc.bind.ts": null,

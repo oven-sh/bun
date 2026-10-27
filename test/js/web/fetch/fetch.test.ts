@@ -3141,10 +3141,11 @@ it("rejects a response that carries both Transfer-Encoding and Content-Length", 
   };
   let connections = 0;
   const sockets = new Set<net.Socket>();
+  const closed: Promise<void>[] = [];
   await using server = net.createServer(socket => {
     connections++;
     sockets.add(socket);
-    socket.on("close", () => sockets.delete(socket));
+    closed.push(new Promise(resolve => socket.on("close", () => resolve(void sockets.delete(socket)))));
     socket.on("error", () => {});
     let buffered = "";
     socket.on("data", chunk => {
@@ -3184,7 +3185,8 @@ it("rejects a response that carries both Transfer-Encoding and Content-Length", 
       expect.stringContaining("both a Transfer-Encoding and a Content-Length header"),
     ]);
 
-    // The rejected connection is closed, so the next request opens a new one.
+    // The client closes the rejected connection, so the next request opens a new one.
+    await closed[connections - 1];
     const before = connections;
     const ok = await fetch(`http://localhost:${port}/valid`);
     expect(await ok.text()).toBe("hello");

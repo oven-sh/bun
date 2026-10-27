@@ -1232,6 +1232,13 @@ mod rule_parsers {
                         None
                     };
 
+                    // Another tool's syntax, such as Tailwind's `source()`: its plugin did not run.
+                    let state = input.state();
+                    let location = input.current_source_location();
+                    if let Ok(&token @ Token::Function(_)) = input.next() {
+                        return Err(location.new_unexpected_token_error(token));
+                    }
+                    input.reset(&state);
                     let media = parse_media_list(input, this.options)?;
 
                     return Ok(AtRulePrelude::Import { url: url_str, media, supports, layer });
@@ -3672,7 +3679,7 @@ impl<'a> Parser<'a> {
     /// The source text of the token `next*` returned last, if it is an integer of over 6 digits
     /// or touches another number: `5.0.1` is `5.0` and `.1`, whose values print as `5.1`.
     #[inline]
-    pub(crate) fn long_integer_text(&self) -> Option<&'static [u8]> {
+    pub(crate) fn raw_number_text(&self) -> Option<&'static [u8]> {
         let cached = self.input.cached_token.as_ref()?;
         let int_value: Option<i32> = match &cached.token {
             Token::Number(num) => num.int_value,

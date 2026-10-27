@@ -7,16 +7,13 @@ use bun_core::strings;
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
 #[derive(Clone)]
 pub struct Url {
-    /// The url as written. A pointer and a `u32` length: a slice grows `Property` by 8 bytes.
-    text: *const u8,
-    text_len: u32,
+    /// The url as written.
+    text: &'static [u8],
     /// The import record of this `url()`.
     pub(crate) import_record_idx: u32,
     /// The location where the `url()` was seen in the CSS source file.
     pub(crate) loc: crate::dependencies::Location,
 }
-
-const _: () = assert!(core::mem::size_of::<Url>() == 24);
 
 impl Url {
     pub(crate) fn new(
@@ -25,9 +22,7 @@ impl Url {
         loc: crate::dependencies::Location,
     ) -> Url {
         Url {
-            text: text.as_ptr(),
-            // A source file is shorter than `i32::MAX` bytes: `add_import_record` checks it.
-            text_len: u32::try_from(text.len()).unwrap_or(u32::MAX),
+            text,
             import_record_idx,
             loc,
         }
@@ -45,12 +40,6 @@ impl Url {
             import_record_idx,
             crate::dependencies::Location::from_source_location(loc),
         ))
-    }
-
-    fn text(&self) -> &[u8] {
-        // SAFETY: `text` and `text_len` come from one slice of the parser source or arena in
-        // `Url::new`. That storage outlives every value of the stylesheet.
-        unsafe { core::slice::from_raw_parts(self.text, self.text_len as usize) }
     }
 
     /// Returns whether the URL is absolute, and not relative.
@@ -180,10 +169,10 @@ impl Url {
 
     /// Each `url()` has its own import record, so the text decides.
     pub fn eql(&self, other: &Url) -> bool {
-        self.text() == other.text()
+        self.text == other.text
     }
 
     pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        hasher.update(self.text());
+        hasher.update(self.text);
     }
 }

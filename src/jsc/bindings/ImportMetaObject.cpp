@@ -261,6 +261,10 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
         Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, requirer->moduleGraph());
         RETURN_IF_EXCEPTION(scope, {});
+        if (!isESM && from.isString()) {
+            from = requirer->filenameForResolution(globalObject, asString(from));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
 
     if (!isRequireDotResolve) {

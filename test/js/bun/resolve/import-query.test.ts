@@ -624,6 +624,7 @@ test.concurrent.skipIf(isWindows).each(["?", "#"])(
         const path = require("node:path");
         const child = require("./child.cjs");
         assert.equal(child, require("./child.cjs"));
+        assert.equal(child, require("node:module").createRequire(__filename)("./child.cjs"));
         assert.equal(path.basename(__filename), ${JSON.stringify(filename)});
         assert.equal(path.basename(__dirname), ${JSON.stringify(directory)});
         module.exports = { child };
@@ -657,3 +658,33 @@ test.concurrent.skipIf(isWindows).each(["?", "#"])(
     }
   },
 );
+
+test.concurrent("CommonJS query referrers resolve relative children before the suffix", async () => {
+  using dir = tempDir("cjs-query-referrer", {
+    "main.cjs": `module.exports = require("./child.cjs");`,
+    "child.cjs": `module.exports = { value: 42 };`,
+  });
+  const url = Bun.pathToFileURL(path.join(String(dir), "main.cjs")).href;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const assert = require("node:assert/strict");
+      for (const suffix of ["?generation=a/b", "#a/b"]) {
+        const url = ${JSON.stringify(url)} + suffix;
+        const first = require(url);
+        assert.equal(first, require(url));
+        assert.equal(first.value, 42);
+        assert.equal((await import(url)).default, first);
+      }
+      console.log("ok");
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+});

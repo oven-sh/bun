@@ -2906,21 +2906,25 @@ pub mod bv2_impl {
             let out_source_index: Option<Index>;
 
             let importer = import_record.importer_source_index as usize;
-            let record_index = import_record.import_record_index as usize;
             let importer_loader = self.graph.input_files.items_loader()[importer];
-            let kind =
-                self.graph.ast.items_import_records()[importer].as_slice()[record_index].kind;
-            if !self.select_import_module(&mut resolve_result, importer_loader, kind) {
-                // Disable failing packages from being printed.
-                // This may cause broken code to write.
-                // However, doing this means we tell them all the resolve errors
-                // Rather than just the first one.
-                self.graph.ast.items_import_records_mut()[importer].as_mut_slice()[record_index]
-                    .path
-                    .is_disabled = true;
-                return;
-            }
-            let mut path = resolve_result.path_pair.primary;
+            let kind = self.graph.ast.items_import_records()[importer].as_slice()
+                [import_record.import_record_index as usize]
+                .kind;
+            let module = self.select_import_module(&mut resolve_result, importer_loader, kind);
+            let mut path = match module {
+                Some(p) => *p,
+                None => {
+                    let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                        [import_record.importer_source_index as usize]
+                        .as_mut_slice()[import_record.import_record_index as usize];
+                    // Disable failing packages from being printed.
+                    // This may cause broken code to write.
+                    // However, doing this means we tell them all the resolve errors
+                    // Rather than just the first one.
+                    record.path.is_disabled = true;
+                    return;
+                }
+            };
             let is_empty_module = path.is_disabled_module();
 
             if resolve_result.flags.is_external() {
@@ -6397,50 +6401,43 @@ pub mod bv2_impl {
             false
         }
 
-        /// Makes `result.path_pair.primary` the module that an import of `result` loads.
-        /// Returns `false` when the import stays an external, disabled record.
-        ///
-        /// Like esbuild, a JavaScript import of a path the "browser" field disabled loads
-        /// the empty module `(disabled):<path>`. Bun's own stubs for Node.js builtins are
-        /// in the `node` namespace and stay external, as does everything in the DevServer.
-        fn select_import_module<'r>(
+        /// The module that an import of `result` loads, or `None` for a disabled, external record.
+        fn select_import_module<'p, 'r>(
             &self,
-            result: &mut _resolver::Result<'r>,
+            result: &'p mut _resolver::Result<'r>,
             importer: Loader,
             kind: ImportKind,
-        ) -> bool
+        ) -> Option<&'p mut Fs::Path<'r>>
         where
             'a: 'r,
         {
             let primary = result.path_pair.primary;
-            if !primary.is_disabled {
-                return true;
-            }
-            if self.dev_server.is_none()
-                && importer.is_javascript_like()
-                && matches!(
-                    kind,
-                    ImportKind::Stmt | ImportKind::Require | ImportKind::Dynamic
-                )
-                && primary.is_file()
-            {
-                result.path_pair.primary = self.disabled_module_path(&primary);
-                return true;
-            }
-            // A live "main" stands in for a disabled "module" entry. The fds are not its own.
-            match result.path_pair.secondary.take() {
-                Some(secondary) if !secondary.is_disabled => {
+            if primary.is_disabled {
+                // Like esbuild. Bun's stubs for Node.js builtins (`node` namespace) stay external.
+                if self.dev_server.is_none()
+                    && importer.is_javascript_like()
+                    && matches!(
+                        kind,
+                        ImportKind::Stmt | ImportKind::Require | ImportKind::Dynamic
+                    )
+                    && primary.is_file()
+                {
+                    result.path_pair.primary = self.disabled_module_path(&primary);
+                } else {
+                    // A live "main" stands in for a disabled "module" entry. The fds are not its own.
+                    let secondary = result.path_pair.secondary.take()?;
+                    if secondary.is_disabled {
+                        return None;
+                    }
                     result.path_pair.primary = secondary;
                     result.file_fd = bun_sys::Fd::INVALID;
                     result.dirname_fd = bun_sys::Fd::INVALID;
-                    true
                 }
-                _ => false,
             }
+            Some(&mut result.path_pair.primary)
         }
 
-        /// `text` stays what the resolver returned. `pretty` is what esbuild prints:
-        /// `(disabled):<path relative to the project>`.
+        /// `pretty` is what esbuild prints: `(disabled):<path relative to the project>`.
         fn disabled_module_path(&self, path: &Fs::Path<'_>) -> Fs::Path<'a> {
             use crate::bun_fs::PathResolverExt as _;
 
@@ -7157,16 +7154,18 @@ pub mod bv2_impl {
                 // would lock the whole struct while the loop body still needs to
                 // read other `resolve_result` fields (`.flags`, `.path_pair`,
                 // `.primary_side_effects_data`, `.jsx`). Detach via raw ptr.
-                if !self.select_import_module(&mut resolve_result, loader, import_record.kind) {
-                    import_record.path.is_disabled = true;
-                    import_record.source_index = Index::INVALID;
-                    continue;
-                }
-                // SAFETY: `resolve_result` outlives this borrow; see note above.
-                let path: &mut Fs::Path<'a> = unsafe {
-                    bun_ptr::detach_lifetime_mut::<Fs::Path<'a>>(
-                        &mut resolve_result.path_pair.primary,
-                    )
+                let path: &mut Fs::Path<'a> = match self.select_import_module(
+                    &mut resolve_result,
+                    loader,
+                    import_record.kind,
+                ) {
+                    // SAFETY: `resolve_result` outlives this borrow; see note above.
+                    Some(p) => unsafe { bun_ptr::detach_lifetime_mut::<Fs::Path<'a>>(p) },
+                    None => {
+                        import_record.path.is_disabled = true;
+                        import_record.source_index = Index::INVALID;
+                        continue;
+                    }
                 };
                 let is_empty_module = path.is_disabled_module();
 
@@ -7307,8 +7306,7 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                // Within one importer's queue the pretty path tells the empty module of a
-                // file from the file.
+                // In one importer's queue the pretty path tells the empty module from its file.
                 let queue_key = if is_empty_module {
                     path.pretty
                 } else {

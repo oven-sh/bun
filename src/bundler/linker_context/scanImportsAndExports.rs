@@ -305,9 +305,7 @@ pub(crate) fn scan_imports_and_exports(
 
                 match record.kind {
                     ImportKind::Stmt => {
-                        // The empty module of a disabled file follows the rule described
-                        // below. Its placeholder AST has a lazy export, so that rule's own
-                        // condition does not cover it.
+                        // The rule below, for the empty module: its lazy export fails that condition.
                         if col_ref!(input_files)[other_file].path.is_disabled {
                             if record.flags.intersects(
                                 ImportRecordFlags::CONTAINS_IMPORT_STAR

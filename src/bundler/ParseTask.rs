@@ -258,23 +258,22 @@ impl<'a> ParseTask<'a> {
         // provenance to read-only, making the later `&mut *ctx` UB).
         ctx: *mut BundleV2<'a>,
     ) -> ParseTask<'a> {
-        // Every empty module of a disabled path gets the same attributes, whichever
-        // import creates it.
+        // Every empty module gets the same attributes, whichever import creates it.
         let is_empty_module = path.is_disabled_module();
-        let (package_name, package_version) =
-            match resolve_result.package_json.filter(|_| !is_empty_module) {
-                // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
-                // arena outlives the bundle pass, so deref'ing the raw pointer here to
-                // borrow `name`/`version` is sound.
-                Some(pj) => unsafe {
-                    let pj = &*pj;
-                    (
-                        ast::StoreStr::new(&pj.name[..]),
-                        ast::StoreStr::new(&pj.version[..]),
-                    )
-                },
-                None => (ast::StoreStr::EMPTY, ast::StoreStr::EMPTY),
-            };
+        let package_json = resolve_result.package_json.filter(|_| !is_empty_module);
+        let (package_name, package_version) = match package_json {
+            // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
+            // arena outlives the bundle pass, so deref'ing the raw pointer here to
+            // borrow `name`/`version` is sound.
+            Some(pj) => unsafe {
+                let pj = &*pj;
+                (
+                    ast::StoreStr::new(&pj.name[..]),
+                    ast::StoreStr::new(&pj.version[..]),
+                )
+            },
+            None => (ast::StoreStr::EMPTY, ast::StoreStr::EMPTY),
+        };
         // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
         // write provenance from the `*mut BundleV2` parameter; caller passes a
         // live `&mut BundleV2` coerced to `*mut`.

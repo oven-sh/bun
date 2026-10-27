@@ -2,8 +2,7 @@ use bun_collections::StringHashMap;
 
 use crate::IndexStringMap::IndexInt;
 
-/// The pretty-path prefix of the empty module that stands in for a path the
-/// "browser" field disabled. esbuild prints the same prefix.
+/// Pretty-path prefix of the empty module of a disabled path, as in esbuild.
 pub(crate) const DISABLED_PRETTY_PREFIX: &[u8] = b"(disabled):";
 
 /// An unused import of that empty module is dropped, as esbuild drops it.
@@ -12,12 +11,11 @@ pub(crate) const DISABLED_MODULE_SIDE_EFFECTS: bun_ast::SideEffects =
 
 /// Abstracts over the two structurally-identical `Path` ports (`bun_paths::fs::Path`
 /// and `bun_resolver::fs::Path`) so the bundler can key the map with either while
-/// the crates converge.
+/// the crates converge. Both expose `.text: &[u8]`, which is all we need.
 pub trait PathLike {
     fn path_text(&self) -> &[u8];
 
-    /// The path names the empty module of a disabled file, not the file.
-    /// `is_disabled` alone does not say so: records that stay external carry it too.
+    /// The path names the empty module of a disabled file, not an external disabled record.
     fn is_disabled_module(&self) -> bool;
 }
 
@@ -41,8 +39,7 @@ impl PathLike for bun_paths::fs::Path<'_> {
 #[derive(Default)]
 pub struct PathToSourceIndexMap {
     pub(crate) map: Map,
-    /// The empty modules of disabled files, keyed by the same text. A file can be in
-    /// the graph both ways.
+    /// The empty modules of disabled files, keyed by the same text as the files.
     disabled: Map,
 }
 

@@ -152,9 +152,9 @@ impl VendorPrefix {
 pub use crate::SourceLocation;
 
 impl SourceLocation {
-    pub(crate) fn to_logger_location(self, file: &'static [u8]) -> bun_ast::Location {
+    pub(crate) fn to_logger_location(self, file: &[u8]) -> bun_ast::Location {
         bun_ast::Location {
-            file: std::borrow::Cow::Borrowed(file),
+            file: Box::from(file),
             line: i32::try_from(self.line).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
             ..Default::default()
@@ -253,13 +253,6 @@ pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
 pub trait EnumProperty: Sized + Copy + Into<&'static str> {
     fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self>;
 
-    fn eql(lhs: &Self, rhs: &Self) -> bool
-    where
-        Self: PartialEq,
-    {
-        lhs == rhs
-    }
-
     fn parse(input: &mut Parser) -> CssResult<Self> {
         enum_property_util::parse(input)
     }
@@ -267,20 +260,6 @@ pub trait EnumProperty: Sized + Copy + Into<&'static str> {
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let s: &'static str = (*self).into();
         dest.write_str(s.as_bytes())
-    }
-
-    #[inline]
-    fn deep_clone(&self) -> Self {
-        *self
-    }
-
-    fn hash(&self, hasher: &mut bun_wyhash::Wyhash)
-    where
-        Self: Into<u32>,
-    {
-        // The hash value never leaves the process, so a fixed u32 tag width is fine.
-        let tag: u32 = (*self).into();
-        hasher.update(&tag.to_ne_bytes());
     }
 }
 
@@ -726,7 +705,7 @@ pub struct BundlerAtRuleParser<'a> {
     /// SharedRW provenance (see `parse_bundler`); each materialises a
     /// short-lived `&mut` only at the point of use, so accesses interleave
     /// soundly under Stacked Borrows.
-    pub(crate) import_records: *mut Vec<ImportRecord>,
+    pub(crate) import_records: *mut Vec<ImportRecord<'static>>,
     pub(crate) layer_names: Vec<LayerName>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
@@ -2322,7 +2301,12 @@ pub struct StyleSheet<AtRule> {
     pub sources: Vec<Box<[u8]>>,
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
     pub license_comments: Vec<&'static [u8]>, // TODO: lifetime — arena
-    pub options: ParserOptions<'static>,      // TODO: lifetime
+    /// [`ParserOptions::filename`] of the parse.
+    pub filename: &'static [u8], // TODO: lifetime
+    /// [`ParserOptions::css_modules`] of the parse.
+    pub css_modules: Option<css_modules::Config>,
+    /// [`ParserOptions::flags`] of the parse.
+    pub flags: ParserFlags,
     pub layer_names: Vec<LayerName>,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.
@@ -2341,13 +2325,28 @@ impl<AtRule> StyleSheet<AtRule> {
             sources: Vec::new(),
             source_map_urls: Vec::new(),
             license_comments: Vec::new(),
-            options: ParserOptions::default(None),
+            filename: b"",
+            css_modules: None,
+            flags: ParserFlags::default(),
             layer_names: Vec::new(),
             local_scope: LocalScope::default(),
             local_properties: LocalPropertyUsage::default(),
             composes: ComposesMap::default(),
         }
     }
+}
+
+/// Positions are `i32`, and a column at the end of the input is `len + 1`.
+const MAX_INPUT_LEN: usize = i32::MAX as usize - 1;
+
+fn check_input_len(code: &[u8]) -> Maybe<(), Err<ParserError>> {
+    if code.len() > MAX_INPUT_LEN {
+        return Err(Err {
+            kind: ParserError::input_too_large,
+            loc: None,
+        });
+    }
+    Ok(())
 }
 
 // ── StyleSheet behavior (parse/minify/to_css) ────────────────────────────────
@@ -2378,7 +2377,7 @@ mod stylesheet_impl {
             // here and create a lookup table by name.
             let custom_media: Option<
                 ArrayHashMap<Box<[u8]>, css_rules::custom_media::CustomMediaRule>,
-            > = if self.options.flags.contains(ParserFlags::CUSTOM_MEDIA)
+            > = if self.flags.contains(ParserFlags::CUSTOM_MEDIA)
                 && options
                     .targets
                     .should_compile_same(compat::Feature::CustomMediaQueries)
@@ -2403,7 +2402,7 @@ mod stylesheet_impl {
                 handler_context: ctx,
                 unused_symbols: &options.unused_symbols,
                 custom_media,
-                css_modules: self.options.css_modules.is_some(),
+                css_modules: self.css_modules.is_some(),
                 extra,
                 err: None,
                 selector_expansion_multiplier: 1,
@@ -2422,7 +2421,7 @@ mod stylesheet_impl {
                     .sources
                     .get(e.loc.source_index as usize)
                     .map(|source| &**source)
-                    .unwrap_or(self.options.filename);
+                    .unwrap_or(self.filename);
                 let minify_error = Err {
                     kind: e.kind,
                     loc: Some(ErrorLocation {
@@ -2482,7 +2481,7 @@ mod stylesheet_impl {
                 printer.newline()?;
             }
 
-            if let Some(config) = &self.options.css_modules {
+            if let Some(config) = &self.css_modules {
                 let mut references = CssModuleReferences::default();
                 let references_ptr: *mut CssModuleReferences<'_> = &raw mut references;
                 // SAFETY: `'bump`-erasure — `Printer<'a>` stores `CssModule<'a>` which
@@ -2541,8 +2540,8 @@ mod stylesheet_impl {
         pub fn parse(
             arena: &'static Bump,
             code: &[u8],
-            options: ParserOptions<'static>,
-            import_records: Option<&mut Vec<ImportRecord>>,
+            options: ParserOptions<'_>,
+            import_records: Option<&mut Vec<ImportRecord<'static>>>,
             source_index: SrcIndex,
         ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
             // Returns the concrete `StyleSheet<DefaultAtRule>`. Callers that
@@ -2566,15 +2565,12 @@ mod stylesheet_impl {
         }
 
         /// Parse a style sheet from a string.
-        // TODO: `ParserOptions<'static>` matches the `StyleSheet.options`
-        // field's `'static` erasure; re-threads to `<'bump>` alongside the rest of
-        // the crate.
         pub(crate) fn parse_with<P: CustomAtRuleParser<AtRule = AtRule>>(
             arena: &'static Bump,
             code: &[u8],
-            options: ParserOptions<'static>,
+            options: ParserOptions<'_>,
             at_rule_parser: &mut P,
-            import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
+            import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
             // TODO: 'bump lifetime threading — every arena-backed slice the
@@ -2584,6 +2580,7 @@ mod stylesheet_impl {
             // returned `StyleSheet`.
             // TODO(refactor): re-thread the lifetime through `CssRuleList<'bump, R>`
             // and drop the `'static` bound on `arena`.
+            check_input_len(code)?;
             let mut composes = ComposesMap::default();
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
@@ -2660,7 +2657,9 @@ mod stylesheet_impl {
                     sources,
                     source_map_urls,
                     license_comments,
-                    options,
+                    filename: options.filename,
+                    css_modules: options.css_modules,
+                    flags: options.flags,
                     layer_names,
                     local_scope: parser_extra.local_scope,
                     local_properties,
@@ -2678,12 +2677,13 @@ mod stylesheet_impl {
             arena: &'static Bump,
             code: &[u8],
             options: &ParserOptions,
-            import_records: &mut Vec<ImportRecord>,
+            import_records: &mut Vec<ImportRecord<'static>>,
             source_index: SrcIndex,
         ) -> Maybe<StyleAttribute, Err<ParserError>> {
             // TODO: 'bump lifetime threading — `DeclarationBlock<'static>` in
             // `StyleAttribute` vs `Parser<'a>` here; `arena: &'static Bump`
             // matches the crate-wide erasure (see `parse_with`).
+            check_input_len(code)?;
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
                 symbols: SymbolList::default(),
@@ -2746,27 +2746,17 @@ mod stylesheet_impl {
         pub fn parse_bundler(
             arena: &'static Bump,
             code: &[u8],
-            options: ParserOptions<'static>,
-            import_records: &mut Vec<ImportRecord>,
+            options: ParserOptions<'_>,
+            import_records: &mut Vec<ImportRecord<'static>>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
             // `import_records` is shared by both `BundlerAtRuleParser` and the
-            // inner `Parser`, and `options` is both borrowed by the at-rule
-            // parser and passed by value:
-            // - `import_records`: derive a single raw `NonNull` from the unique
-            //   borrow; both the at-rule parser and `Parser::new` store copies of
-            //   that raw pointer. Neither holds a
-            //   long-lived `&mut`, so interleaved writes from `on_import_rule` and
-            //   `add_import_record`/`state`/`reset` each create a fresh short-lived
-            //   `&mut` from the shared SharedRW provenance — sound under SB.
-            // - `options`: bitwise-duplicate via `ptr::read` and wrap the
-            //   original in `ManuallyDrop` so
-            //   only the moved copy drops — `ParserOptions` transitively owns a
-            //   `SmallList` (via `css_modules::Config::pattern`) which has a real
-            //   `Drop`, so both copies must not run their destructors.
-            let options = core::mem::ManuallyDrop::new(options);
-            // SAFETY: original is `ManuallyDrop`; only `options_for_parse` drops.
-            let options_for_parse = unsafe { core::ptr::read(&raw const *options) };
+            // inner `Parser`: derive a single raw `NonNull` from the unique
+            // borrow; both the at-rule parser and `Parser::new` store copies of
+            // that raw pointer. Neither holds a
+            // long-lived `&mut`, so interleaved writes from `on_import_rule` and
+            // `add_import_record`/`state`/`reset` each create a fresh short-lived
+            // `&mut` from the shared SharedRW provenance — sound under SB.
             let import_records_ptr = core::ptr::NonNull::from(import_records);
             let mut at_rule_parser = BundlerAtRuleParser {
                 arena,
@@ -2779,7 +2769,7 @@ mod stylesheet_impl {
             Self::parse_with(
                 arena,
                 code,
-                options_for_parse,
+                options,
                 &mut at_rule_parser,
                 Some(import_records_ptr),
                 source_index,
@@ -2922,10 +2912,9 @@ pub struct ParserOptions<'a> {
     /// Stored as a raw `NonNull<Log>` so `warn(&self)`
     /// can soundly write through it. Deriving `&mut Log` from a `&self`-reachable
     /// `&'a mut Log` (the previous representation) is UB under Stacked Borrows
-    /// — see PORTING.md §Forbidden patterns. The caller that constructs
-    /// `ParserOptions` guarantees the pointee outlives `'a` and is not aliased
-    /// for the duration of parsing.
-    pub logger: Option<core::ptr::NonNull<Log>>,
+    /// — see PORTING.md §Forbidden patterns. Only `default` sets it, from a
+    /// `&'a mut Log`.
+    logger: Option<core::ptr::NonNull<Log>>,
     /// Feature flags to enable.
     pub flags: ParserFlags,
     _lt: core::marker::PhantomData<&'a mut Log>,
@@ -3008,12 +2997,19 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct ParserOpts: u8 {
         const CSS_MODULES = 0b1;
+        /// Makes `TokenList::parse` keep `url()` as a raw token instead of creating an import record.
+        const RAW_URL_TOKENS = 0b10;
     }
 }
 impl ParserOpts {
     #[inline]
     pub(crate) fn css_modules(self) -> bool {
         self.contains(Self::CSS_MODULES)
+    }
+
+    #[inline]
+    pub(crate) fn raw_url_tokens(self) -> bool {
+        self.contains(Self::RAW_URL_TOKENS)
     }
 }
 
@@ -3027,7 +3023,7 @@ pub struct Parser<'a> {
     /// be invalidated under Stacked Borrows the moment `on_import_rule`
     /// derives its own `&mut` from the sibling raw pointer. Each access site
     /// materialises a fresh short-lived `&mut` instead.
-    pub(crate) import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
+    pub(crate) import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
     pub(crate) extra: Option<&'a mut ParserExtra>,
 }
 
@@ -3085,10 +3081,13 @@ impl<'a> Parser<'a> {
     }
 
     // TODO: dedupe import records??
+    /// `start_position..end_position` is the whole token, such as `url("./a.png")`: the range that
+    /// an error about the import underlines.
     pub(crate) fn add_import_record(
         &mut self,
         url: &[u8],
         start_position: usize,
+        end_position: usize,
         kind: ImportKind,
     ) -> CssResult<u32> {
         if let Some(ptr) = self.import_records {
@@ -3107,8 +3106,7 @@ impl<'a> Parser<'a> {
                     loc: bun_ast::Loc {
                         start: i32::try_from(start_position).expect("int cast"),
                     },
-                    // TODO: technically this is not correct because the url could be escaped
-                    len: i32::try_from(url.len()).expect("int cast"),
+                    len: i32::try_from(end_position - start_position).expect("int cast"),
                 },
                 tag: Default::default(),
                 loader: None,
@@ -3137,7 +3135,7 @@ impl<'a> Parser<'a> {
     /// error.
     pub fn new(
         input: &'a mut ParserInput<'a>,
-        import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
+        import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
         flags: ParserOpts,
         extra: Option<&'a mut ParserExtra>,
     ) -> Parser<'a> {
@@ -3252,6 +3250,17 @@ impl<'a> Parser<'a> {
         if result.is_err() {
             self.reset(&start);
         }
+        result
+    }
+
+    pub(crate) fn parse_with_raw_url_tokens<R>(
+        &mut self,
+        func: impl FnOnce(&mut Parser) -> CssResult<R>,
+    ) -> CssResult<R> {
+        let saved = self.flags;
+        self.flags.insert(ParserOpts::RAW_URL_TOKENS);
+        let result = func(self);
+        self.flags = saved;
         result
     }
 
@@ -3567,10 +3576,6 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn position(&self) -> usize {
-        debug_assert!(strings::is_on_char_boundary(
-            self.input.tokenizer.src,
-            self.input.tokenizer.position
-        ));
         self.input.tokenizer.position
     }
 
@@ -3934,7 +3939,7 @@ pub mod nth {
                     } else if strings::eql_case_insensitive_asciii_check_length(unit, b"n-") {
                         return parse_signless_b(input, a, -1);
                     } else {
-                        if let Ok(b) = parse_n_dash_digits(unit) {
+                        if let Ok(b) = parse_n_dash_digits(input.arena(), unit) {
                             return Ok((a, b));
                         } else {
                             return Err(input.new_unexpected_token_error(Token::Ident(unit)));
@@ -3962,7 +3967,7 @@ pub mod nth {
                     } else {
                         (value, 1)
                     };
-                    if let Ok(b) = parse_n_dash_digits(slice) {
+                    if let Ok(b) = parse_n_dash_digits(input.arena(), slice) {
                         return Ok((a, b));
                     }
                     return Err(input.new_unexpected_token_error(Token::Ident(value)));
@@ -3977,7 +3982,7 @@ pub mod nth {
                     } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n") {
                         return parse_signless_b(input, 1, -1);
                     } else {
-                        if let Ok(b) = parse_n_dash_digits(value) {
+                        if let Ok(b) = parse_n_dash_digits(input.arena(), value) {
                             return Ok((1, b));
                         } else {
                             return Err(input.new_unexpected_token_error(Token::Ident(value)));
@@ -4032,21 +4037,20 @@ pub mod nth {
         Err(input.new_unexpected_token_error(tok))
     }
 
-    fn parse_n_dash_digits(str: &[u8]) -> Maybe<i32, ()> {
+    fn parse_n_dash_digits(arena: &Bump, str: &[u8]) -> Maybe<i32, ()> {
         let bytes = str;
         if bytes.len() >= 3
             && strings::eql_case_insensitive_asciii_check_length(&bytes[0..2], b"n-")
             && bytes[2..].iter().all(|&b| b >= b'0' && b <= b'9')
         {
-            parse_number_saturate(&str[1..]) // Include the minus sign
+            parse_number_saturate(arena, &str[1..]) // Include the minus sign
         } else {
             Err(())
         }
     }
 
-    fn parse_number_saturate(string: &[u8]) -> Maybe<i32, ()> {
-        let arena = Bump::new();
-        let mut input = ParserInput::new(string, &arena);
+    fn parse_number_saturate(arena: &Bump, string: &[u8]) -> Maybe<i32, ()> {
+        let mut input = ParserInput::new(string, arena);
         let mut parser = Parser::new(&mut input, None, ParserOpts::default(), None);
         let tok = match parser.next_including_whitespace_and_comments() {
             Ok(v) => v,
@@ -4134,7 +4138,6 @@ impl<'a> Tokenizer<'a> {
     }
 
     pub(crate) fn get_position(&self) -> usize {
-        debug_assert!(strings::is_on_char_boundary(self.src, self.position));
         self.position
     }
 

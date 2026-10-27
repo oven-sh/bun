@@ -23,12 +23,12 @@ export const highway: Dependency = {
   name: "highway",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "google/highway",
     commit: HIGHWAY_COMMIT,
   }),
 
-  patches: ["patches/highway/silence-warnings.patch"],
+  patches: ["patches/highway/silence-warnings.patch", "patches/highway/sve2-requires-sve.patch"],
 
   build: cfg => {
     const spec: DirectBuild = {

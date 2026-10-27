@@ -1,17 +1,7 @@
 declare module "bun" {
   /** @deprecated Unused in Bun's types and may be removed */
   type Platform =
-    | "aix"
-    | "android"
-    | "darwin"
-    | "freebsd"
-    | "haiku"
-    | "linux"
-    | "openbsd"
-    | "sunos"
-    | "win32"
-    | "cygwin"
-    | "netbsd";
+    "aix" | "android" | "darwin" | "freebsd" | "haiku" | "linux" | "openbsd" | "sunos" | "win32" | "cygwin" | "netbsd";
 
   /** @deprecated Unused in Bun's types and may be removed */
   type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";

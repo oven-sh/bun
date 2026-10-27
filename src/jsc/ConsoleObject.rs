@@ -377,10 +377,13 @@ fn message_with_type_and_level_(
     len: usize,
 ) -> JsResult<()> {
     let console: *mut ConsoleObject = vm_console(global);
-    // `defer console.default_indent +|= (message_type == StartGroup) as u16;`
+    // `defer console.default_indent +|= is_start_group as u16;`
     // Capture the raw pointer (Copy) by `move` so no borrow of the local is
     // held across the body; dereference only at scope-exit.
-    let is_start_group = message_type == MessageType::StartGroup;
+    let is_start_group = matches!(
+        message_type,
+        MessageType::StartGroup | MessageType::StartGroupCollapsed
+    );
     let _indent_guard = scopeguard::guard(console, move |console| {
         // SAFETY: see `vm_console` — points at the live boxed
         // `ConsoleObject` for this VM; JS-thread-only.
@@ -391,8 +394,9 @@ fn message_with_type_and_level_(
         }
     });
 
-    if message_type == MessageType::StartGroup && len == 0 {
-        // undefined is printed if passed explicitly.
+    if is_start_group && len == 0 {
+        // No label prints nothing, so return before the before-print hook of
+        // `bun test` runs. An explicit `undefined` is a label and is printed.
         return Ok(());
     }
 
@@ -517,9 +521,12 @@ fn message_with_type_and_level_(
         let opts = vals_slice[1];
         if opts.is_object() {
             if let Some(depth_prop) = opts.get(global, b"depth")? {
-                if depth_prop.is_int32() || depth_prop.is_number() || depth_prop.is_big_int() {
+                if depth_prop.is_number() {
                     // Clamp negatives to 0, then truncate (not saturate) to u16.
                     print_options.max_depth = depth_prop.to_int32().max(0) as u32 as u16;
+                } else if depth_prop.is_big_int() {
+                    print_options.max_depth =
+                        depth_prop.to_int64().clamp(0, i64::from(u16::MAX)) as u16;
                 } else if depth_prop.is_null() {
                     print_options.max_depth = u16::MAX;
                 }
@@ -547,8 +554,6 @@ fn message_with_type_and_level_(
         let w = unsafe { (*console).writer() };
         let _ = w.write_all(b"\n");
         let _ = w.flush();
-    } else if message_type != MessageType::Trace {
-        let _ = writer.write_all(b"undefined\n");
     }
 
     if message_type == MessageType::Trace {
@@ -667,12 +672,16 @@ impl<'a> TablePrinter<'a> {
                 f.single_line = true;
                 f.max_depth = 5;
                 f.can_throw_stack_overflow = true;
-                f.stack_check = StackCheck::init();
                 f
             },
             values_col_width: None,
             values_col_idx: usize::MAX,
         })
+    }
+
+    /// Cells start at nesting level `depth`, out of the formatter's `max_depth`.
+    pub fn set_start_depth(&mut self, depth: u16) {
+        self.value_formatter.depth = depth.min(self.value_formatter.max_depth);
     }
 
     /// Format `value` exactly once (bare for strings, quoted otherwise),
@@ -1122,11 +1131,10 @@ impl<'a> DynWriteAdapter<'a> {
 }
 
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
+    let mut source_code = bun_core::Utf8Bytes::EMPTY;
     let mut holder = crate::zig_exception::Holder::init();
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
-
-    let mut source_code_slice: Option<bun_core::Utf8Bytes> = None;
 
     let err = global.create_error_instance(format_args!("trace output"));
     // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
@@ -1139,7 +1147,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         err,
         None,
         &mut need_to_clear,
-        &mut source_code_slice,
+        &mut source_code,
         false,
     );
     holder.need_to_clear_parser_arena_on_deinit = need_to_clear;
@@ -1151,7 +1159,6 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         Output::enable_ansi_colors_stderr(),
     );
 
-    drop(source_code_slice);
     holder.deinit(vm);
 }
 
@@ -1259,42 +1266,8 @@ impl ErrorDisplayLevel {
 }
 
 impl FormatOptions {
-    pub fn from_js(&mut self, global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<()> {
-        let arg1 = arguments[0];
-
-        if arg1.is_object() {
-            if let Some(opt) = arg1.get_truthy(global_this, "depth")? {
-                self.set_depth(global_this, opt)?;
-            }
-            if let Some(opt) = arg1.get_boolean_loose(global_this, "colors")? {
-                self.enable_colors = opt;
-            }
-            if let Some(opt) = arg1.get_boolean_loose(global_this, "sorted")? {
-                self.ordered_properties = opt;
-            }
-            if let Some(opt) = arg1.get_boolean_loose(global_this, "compact")? {
-                self.single_line = opt;
-            }
-        } else {
-            // formatOptions.show_hidden = arg1.toBoolean();
-            if !arguments.is_empty() {
-                self.set_depth(global_this, arg1)?;
-                if arguments.len() > 1 && !arguments[1].is_empty_or_undefined_or_null() {
-                    self.enable_colors = arguments[1].to_boolean();
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// `depth`: a non-negative integer (clamped to `u16::MAX`) or `Infinity`; non-numbers are
-    /// ignored. Decided on the number's value, so an integer JSC boxed as a double (a
-    /// `Float64Array` element, `-0`) is accepted like its int32 twin.
-    fn set_depth(&mut self, global_this: &JSGlobalObject, depth: JSValue) -> JsResult<()> {
-        if !depth.is_number() {
-            return Ok(());
-        }
-        let depth = depth.as_number();
+    /// `depth`: a non-negative integer (clamped to `u16::MAX`) or `Infinity`.
+    pub fn set_depth(&mut self, global_this: &JSGlobalObject, depth: f64) -> JsResult<()> {
         if depth.is_infinite() {
             self.max_depth = u16::MAX;
         } else if depth.trunc() != depth {
@@ -1338,7 +1311,6 @@ pub fn format2(
         fmt.max_depth = options.max_depth;
         fmt.single_line = options.single_line;
         fmt.indent = u32::from(options.default_indent);
-        fmt.stack_check = StackCheck::init();
         fmt.can_throw_stack_overflow = true;
         fmt.error_display_level = options.error_display_level;
         let tag = formatter::Tag::get(vals[0], global)?;
@@ -1401,7 +1373,6 @@ pub fn format2(
     fmt.max_depth = options.max_depth;
     fmt.single_line = options.single_line;
     fmt.indent = u32::from(options.default_indent);
-    fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
     fmt.error_display_level = options.error_display_level;
     let mut tag: formatter::TagResult;
@@ -1592,6 +1563,8 @@ pub mod formatter {
         pub(crate) indent: u32,
         pub depth: u16,
         pub(crate) max_depth: u16,
+        /// `max_depth` before the error property dump narrowed it.
+        pub(crate) outer_max_depth: Option<u16>,
         pub quote_strings: bool,
         pub quote_keys: bool,
         pub(crate) failed: bool,
@@ -1622,6 +1595,7 @@ pub mod formatter {
                 indent: 0,
                 depth: 0,
                 max_depth: 8,
+                outer_max_depth: None,
                 quote_strings: false,
                 quote_keys: false,
                 failed: false,
@@ -1631,10 +1605,7 @@ pub mod formatter {
                 ordered_properties: false,
                 custom_formatted_object: CustomFormattedObject::default(),
                 disable_inspect_custom: false,
-                // `StackCheck::default()` has `cached_stack_end = 0` ⇒ the
-                // check always passes; callers that want a real bound
-                // overwrite with `StackCheck::init()` explicitly.
-                stack_check: StackCheck::default(),
+                stack_check: StackCheck::init(),
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
@@ -1660,6 +1631,7 @@ pub mod formatter {
                 indent: self.indent,
                 depth: self.depth,
                 max_depth: self.max_depth,
+                outer_max_depth: self.outer_max_depth,
                 quote_strings: self.quote_strings,
                 quote_keys: self.quote_keys,
                 failed: self.failed,
@@ -1733,6 +1705,11 @@ pub mod formatter {
 
         pub fn add_for_new_line(&mut self, len: usize) {
             self.estimated_line_length = self.estimated_line_length.saturating_add(len);
+        }
+
+        /// Depth cap for the `cause` and `AggregateError.errors` walks.
+        pub(crate) fn error_chain_max_depth(&self) -> u16 {
+            self.outer_max_depth.unwrap_or(self.max_depth)
         }
     }
 
@@ -1811,13 +1788,6 @@ pub mod formatter {
         bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
         pub type PoolNode = bun_collections::pool::Node<Map>;
 
-        /// Safe `&mut Map` accessor for a pooled node. `Map::INIT` is `Some`,
-        /// so every node returned by [`Pool::get_node`] carries an initialized
-        /// `data` payload, and the caller exclusively owns the node until
-        /// [`Pool::release`]. Centralises the `NonNull::as_mut()` +
-        /// `assume_init_mut()` pair so the four call sites in this file (and
-        /// the cause-chain guard in `VirtualMachine::print_error_instance`)
-        /// don't each open-code two `unsafe` operations.
         #[inline]
         pub(crate) fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
             // SAFETY: `Map::INIT` is `Some`, so `data` is initialized for
@@ -1900,7 +1870,12 @@ pub mod formatter {
                     | Tag::Error
                     | Tag::Class
                     | Tag::Event
+                    | Tag::JSX
             )
+        }
+
+        pub(crate) fn printer_marks_visited(self) -> bool {
+            matches!(self, Tag::Error)
         }
     }
 
@@ -3196,6 +3171,33 @@ pub mod formatter {
     // ───────────────────────────────────────────────────────────────────────
 
     impl<'a> Formatter<'a> {
+        #[inline(never)]
+        pub(crate) fn visited_insert(&mut self, value: JSValue) -> bool {
+            if self.map_node.is_none() {
+                let mut node = core::ptr::NonNull::new(visited::Pool::get_node())
+                    .expect("ObjectPool::get_node always returns a valid heap node");
+                let data = visited::node_data_mut(&mut node);
+                data.clear();
+                self.map = core::mem::take(data);
+                self.map_node = Some(node);
+            }
+            !self
+                .map
+                .get_or_put(value)
+                .expect("unreachable")
+                .found_existing
+        }
+
+        #[inline]
+        pub(crate) fn visited_remove(&mut self, value: JSValue) {
+            let _ = self.map.remove(&value);
+        }
+
+        #[inline]
+        pub(crate) fn visited_contains(&self, value: JSValue) -> bool {
+            self.map_node.is_some() && self.map.contains(&value)
+        }
+
         /// Circular-reference / stack-overflow / visited-map prelude for
         /// `print_as`. Outlined so its locals (the pool node, the
         /// `get_or_put` result, the `[Circular]` write path) live in a leaf
@@ -3210,7 +3212,7 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
-            can_circ: bool,
+            format: Tag,
             remove_before_recurse: &mut bool,
         ) -> JsResult<bool> {
             if self.failed {
@@ -3219,10 +3221,6 @@ pub mod formatter {
             if self.global_this.has_exception() {
                 return Err(jsc::JsError::Thrown);
             }
-            if !can_circ {
-                return Ok(true);
-            }
-
             if !self.stack_check.is_safe_to_recurse() {
                 self.failed = true;
                 if self.can_throw_stack_overflow {
@@ -3231,17 +3229,11 @@ pub mod formatter {
                 return Ok(false);
             }
 
-            if self.map_node.is_none() {
-                let mut node = core::ptr::NonNull::new(visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = visited::node_data_mut(&mut node);
-                data.clear();
-                self.map = core::mem::take(data);
-                self.map_node = Some(node);
+            if !format.can_have_circular_references() || format.printer_marks_visited() {
+                return Ok(true);
             }
 
-            let entry = self.map.get_or_put(value).expect("unreachable");
-            if entry.found_existing {
+            if !self.visited_insert(value) {
                 if writer_
                     .write_all(pfmt!("<r><cyan>[Circular]<r>", C).as_bytes())
                     .is_err()
@@ -3269,7 +3261,7 @@ pub mod formatter {
             if !self.print_as_prelude::<ENABLE_ANSI_COLORS>(
                 writer_,
                 value,
-                format.can_have_circular_references(),
+                format,
                 &mut remove_before_recurse,
             )? {
                 return Ok(());
@@ -3484,18 +3476,19 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let target = value.get_proxy_internal_field(jsc::ProxyField::Target);
+            let mut target = value.get_proxy_internal_field(jsc::ProxyField::Target);
             // Proxy does not allow non-objects here.
             debug_assert!(target.is_cell());
             // TODO: if (options.showProxy), print like
             // `Proxy { target: ..., handlers: ... }` — this is default off so
             // it is not used.
-            self.format::<C>(
-                Tag::get(target, self.global_this)?,
-                writer_,
-                target,
-                self.global_this,
-            )
+            loop {
+                let tag = Tag::get(target, self.global_this)?;
+                if !matches!(tag.tag.tag(), Tag::Proxy) {
+                    return self.format::<C>(tag, writer_, target, self.global_this);
+                }
+                target = target.get_proxy_internal_field(jsc::ProxyField::Target);
+            }
         }
 
         #[inline(never)]
@@ -3841,25 +3834,6 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            // Temporarily remove from the visited map to allow
-            // printErrorlikeObject to process it. The circular reference
-            // check is already done in print_as, so we know it's safe.
-            let was_in_map = if self.map_node.is_some() {
-                self.map.remove(&value).is_some()
-            } else {
-                false
-            };
-            let map_restore_ptr: *mut visited::Map = &raw mut self.map;
-            scopeguard::defer! {
-                // SAFETY: `self.map` outlives this guard; no other borrow is
-                // live at the drop point.
-                unsafe {
-                    if was_in_map {
-                        let _ = (*map_restore_ptr).insert(value, ());
-                    }
-                }
-            }
-
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get().as_mut();
@@ -4223,6 +4197,10 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
+            let len = value.get_length(self.global_this)?;
+            if len != 0 && self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, "Array");
+            }
             // Cache once: `disable_inspect_custom` does not change inside this
             // function, and `WrappedWriter` holds `&mut self.estimated_line_length`
             // which prevents calling `&self` methods while it is live.
@@ -4237,8 +4215,6 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-
-            let len = value.get_length(self.global_this)?;
 
             // TODO: DerivedArray does not get passed along in JSType, and it's
             // not clear why.
@@ -4516,7 +4492,7 @@ pub mod formatter {
                 }
             }
 
-            // `DOMFormData` is a C++-backed WebCore type — no `JsClass` derive,
+            // `DOMFormData` is a C++-backed WebCore type — no `JsClass` impl,
             // so use its dedicated `from_js` FFI downcast instead of `value.as_`.
             if crate::DOMFormData::from_js(value).is_some() {
                 if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
@@ -4538,7 +4514,7 @@ pub mod formatter {
             } else if js_type != jsc::JSType::DOMWrapper {
                 if *remove_before_recurse {
                     *remove_before_recurse = false;
-                    let _ = self.map.remove(&value);
+                    self.visited_remove(value);
                 }
 
                 if value.is_callable() {
@@ -4551,7 +4527,7 @@ pub mod formatter {
             }
             if *remove_before_recurse {
                 *remove_before_recurse = false;
-                let _ = self.map.remove(&value);
+                self.visited_remove(value);
             }
 
             *remove_before_recurse = true;
@@ -4582,6 +4558,10 @@ pub mod formatter {
             if length == 0 {
                 let _ = write!(writer_, "{map_name} {{}}");
                 return Ok(());
+            }
+
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, map_name);
             }
 
             if self.single_line {
@@ -4643,6 +4623,9 @@ pub mod formatter {
             value: JSValue,
             label: &'static str,
         ) -> JsResult<()> {
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, label);
+            }
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
@@ -4724,6 +4707,10 @@ pub mod formatter {
             if length == 0 {
                 let _ = write!(writer_, "{set_name} {{}}");
                 return Ok(());
+            }
+
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, set_name);
             }
 
             if self.single_line {
@@ -4810,7 +4797,7 @@ pub mod formatter {
                 evt @ (EventType::MessageEvent | EventType::ErrorEvent) => evt,
                 _ => {
                     if *remove_before_recurse {
-                        let _ = self.map.remove(&value);
+                        self.visited_remove(value);
                     }
                     // We must potentially remove it again.
                     *remove_before_recurse = true;
@@ -4826,6 +4813,9 @@ pub mod formatter {
                 EventType::ErrorEvent => "ErrorEvent",
                 _ => unreachable!(),
             };
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, event_tag_name);
+            }
             let _ = writeln!(
                 writer_,
                 "{}{}{} {{",
@@ -5413,6 +5403,23 @@ pub mod formatter {
         }
 
         #[inline(never)]
+        fn print_depth_exceeded_marker<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            name: &str,
+        ) -> JsResult<()> {
+            self.add_for_new_line(name.len() + 6);
+            let _ = write!(
+                writer_,
+                "{}[{} ...]{}",
+                pfmt!("<r><cyan>", C),
+                name,
+                pfmt!("<r>", C)
+            );
+            Ok(())
+        }
+
+        #[inline(never)]
         fn print_object_tail<const C: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
@@ -5506,32 +5513,17 @@ pub mod formatter {
             writer.print(format_args!("({}) [ ", array_buffer.len));
 
             use jsc::JSType as T;
-            // `slice` comes from a typed array whose backing storage is aligned for its
-            // element type (JS spec: typed-array byteOffset is always a multiple of
-            // element size, and ArrayBuffer storage is mimalloc-aligned), so the safe
-            // `bytemuck::cast_slice` alignment/size checks always pass.
-            use bytemuck::cast_slice;
             match js_type {
-                T::Int8Array => Self::write_typed_array::<i8, C>(&mut writer, cast_slice(slice)),
-                T::Int16Array => Self::write_typed_array::<i16, C>(&mut writer, cast_slice(slice)),
-                T::Uint16Array => Self::write_typed_array::<u16, C>(&mut writer, cast_slice(slice)),
-                T::Int32Array => Self::write_typed_array::<i32, C>(&mut writer, cast_slice(slice)),
-                T::Uint32Array => Self::write_typed_array::<u32, C>(&mut writer, cast_slice(slice)),
-                T::Float16Array => {
-                    Self::write_typed_array::<bun_core::f16, C>(&mut writer, cast_slice(slice))
-                }
-                T::Float32Array => {
-                    Self::write_typed_array::<f32, C>(&mut writer, cast_slice(slice))
-                }
-                T::Float64Array => {
-                    Self::write_typed_array::<f64, C>(&mut writer, cast_slice(slice))
-                }
-                T::BigInt64Array => {
-                    Self::write_typed_array::<i64, C>(&mut writer, cast_slice(slice))
-                }
-                T::BigUint64Array => {
-                    Self::write_typed_array::<u64, C>(&mut writer, cast_slice(slice))
-                }
+                T::Int8Array => Self::write_typed_array::<i8, C>(&mut writer, slice),
+                T::Int16Array => Self::write_typed_array::<i16, C>(&mut writer, slice),
+                T::Uint16Array => Self::write_typed_array::<u16, C>(&mut writer, slice),
+                T::Int32Array => Self::write_typed_array::<i32, C>(&mut writer, slice),
+                T::Uint32Array => Self::write_typed_array::<u32, C>(&mut writer, slice),
+                T::Float16Array => Self::write_typed_array::<bun_core::f16, C>(&mut writer, slice),
+                T::Float32Array => Self::write_typed_array::<f32, C>(&mut writer, slice),
+                T::Float64Array => Self::write_typed_array::<f64, C>(&mut writer, slice),
+                T::BigInt64Array => Self::write_typed_array::<i64, C>(&mut writer, slice),
+                T::BigUint64Array => Self::write_typed_array::<u64, C>(&mut writer, slice),
                 // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
                 _ => Self::write_typed_array::<u8, C>(&mut writer, slice),
             }
@@ -5549,14 +5541,16 @@ pub mod formatter {
         // `WrappedWriter` mirrors.
         fn write_typed_array<N: TypedArrayElement, const C: bool>(
             writer: &mut WrappedWriter<'_>,
-            slice: &[N],
+            bytes: &[u8],
         ) {
+            // `Unaligned`: an ArrayBuffer over foreign memory (bun:ffi, N-API) starts anywhere.
+            let slice = bun_core::Unaligned::<N>::slice_of(bytes);
             // Only the per-element `Display` differs by `N`; the loop is shared.
             Self::write_typed_array_elements::<C>(
                 writer,
                 slice.len(),
                 N::IS_BIGINT,
-                &mut |w, i| w.print(format_args!("{}", N::display(slice[i]))),
+                &mut |w, i| w.print(format_args!("{}", N::display(slice[i].get()))),
             );
         }
 
@@ -5624,7 +5618,6 @@ pub mod formatter {
             value: JSValue,
             writer: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
-            self.stack_check.update();
             let one = [value];
             self.remaining_values = bun_ptr::RawSlice::new(&one);
             let global = self.global_this;
@@ -5636,7 +5629,7 @@ pub mod formatter {
     }
 
     /// Abstracts over `{d}` vs `{f}` and `n`-suffix for `write_typed_array`.
-    trait TypedArrayElement: Copy {
+    trait TypedArrayElement: bun_core::AnyBitPattern {
         const IS_BIGINT: bool;
         type Display: core::fmt::Display;
         fn display(self) -> Self::Display;
@@ -5693,14 +5686,13 @@ pub mod formatter {
 pub(crate) extern "C" fn Bun__ConsoleObject__count(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
-    ptr: *const u8,
-    len: usize,
+    label: &BunString,
 ) {
     // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
     // set-once `VirtualMachine.console` box.
     let this = unsafe { vm_console_mut(global_this) };
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
+    let label = label.to_utf8();
+    let slice: &[u8] = &label;
     let hash = bun_wyhash::hash(slice);
     // we don't want to store these strings, it will take too much memory
     let counter = this.counts.get_or_put(hash).expect("unreachable");
@@ -5734,15 +5726,12 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
 pub(crate) extern "C" fn Bun__ConsoleObject__countReset(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
-    ptr: *const u8,
-    len: usize,
+    label: &BunString,
 ) {
     // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
     // set-once `VirtualMachine.console` box.
     let this = unsafe { vm_console_mut(global_this) };
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
-    let hash = bun_wyhash::hash(slice);
+    let hash = bun_wyhash::hash(&label.to_utf8());
     // we don't delete it because deleting is implemented via tombstoning
     if let Some(v) = this.counts.get_mut(&hash) {
         *v = 0;
@@ -5760,11 +5749,9 @@ thread_local! {
 pub(crate) extern "C" fn Bun__ConsoleObject__time(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
-    chars: *const u8,
-    len: usize,
+    label: &BunString,
 ) {
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let id = bun_wyhash::hash(unsafe { bun_core::ffi::slice(chars, len) });
+    let id = bun_wyhash::hash(&label.to_utf8());
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::default());
         PENDING_TIME_LOGS_LOADED.with(|c| c.set(true));
@@ -5783,15 +5770,14 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
 pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
-    chars: *const u8,
-    len: usize,
+    label: &BunString,
 ) {
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         return;
     }
 
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(chars, len) };
+    let label = label.to_utf8();
+    let slice: &[u8] = &label;
     let id = bun_wyhash::hash(slice);
     // Replace the slot with `None`, returning the previous value.
     let Some(prev) = PENDING_TIME_LOGS.with_borrow_mut(|m| m.get_mut(&id).map(|slot| slot.take()))
@@ -5803,7 +5789,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
     );
-    match len {
+    match slice.len() {
         0 => Output::print_errorln(format_args!("")),
         _ => Output::print_errorln(format_args!(" {}", bstr::BStr::new(slice))),
     }
@@ -5816,8 +5802,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
 pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     _console: *mut ConsoleObject,
     global: &JSGlobalObject,
-    chars: *const u8,
-    len: usize,
+    label: &BunString,
     args: *const JSValue,
     args_len: usize,
 ) {
@@ -5825,8 +5810,8 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
         return;
     }
 
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(chars, len) };
+    let label = label.to_utf8();
+    let slice: &[u8] = &label;
     let id = bun_wyhash::hash(slice);
     let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
@@ -5835,7 +5820,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
     );
-    match len {
+    match slice.len() {
         0 => {}
         _ => Output::print_error(format_args!(" {}", bstr::BStr::new(slice))),
     }
@@ -5848,7 +5833,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     fmt.max_depth = bun_options_types::context::try_get()
         .and_then(|ctx| ctx.runtime_options.console_depth)
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
-    fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
     let console = vm_console(global);
     // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
@@ -5880,8 +5864,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
 ///
 /// Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`)
 /// and `paste` is not a `bun_jsc` dep, so the full `Bun__ConsoleObject__<name>`
-/// export symbol is passed verbatim — same pattern as `export_callbacks!` in
-/// `runtime/api/BunObject.rs`.
+/// export symbol is passed verbatim.
 macro_rules! console_noop_hooks {
     (str: $($name:ident),+ $(,)?) => {$(
         #[unsafe(no_mangle)]
@@ -5913,11 +5896,12 @@ console_noop_hooks!(str: Bun__ConsoleObject__profile, Bun__ConsoleObject__profil
 pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
-    _chars: *const u8,
-    _len: usize,
 ) {
     // TODO: this does an extra JSONStringify and we don't need it to!
-    let snapshot: [JSValue; 1] = [global_this.generate_heap_snapshot()];
+    let Ok(result) = global_this.generate_heap_snapshot() else {
+        return;
+    };
+    let snapshot: [JSValue; 1] = [result];
     // SAFETY: re-entry into our own host shim with a stack-local args slice.
     unsafe {
         message_with_type_and_level(

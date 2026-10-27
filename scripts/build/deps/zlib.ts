@@ -123,7 +123,7 @@ export const zlib: Dependency = {
   versionMacro: "ZLIB_HASH",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "zlib-ng/zlib-ng",
     commit: ZLIB_COMMIT,
   }),
@@ -236,7 +236,7 @@ export const zlib: Dependency = {
   },
 
   // The substituted zlib.h / zconf.h land in the build dir, not the source
-  // tree, so consumers (libarchive, bun's own bindings) include from there.
+  // tree, so consumers (libspng, bun's own bindings) include from there.
   provides: cfg => ({
     libs: [],
     includes: [depBuildDir(cfg, "zlib")],

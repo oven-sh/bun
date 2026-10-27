@@ -11,6 +11,7 @@
 #include "JSBufferEncodingType.h"
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include "BunClientData.h"
+#include "ObjectBindings.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/StringImpl.h"
 #include "wtf/unicode/CharacterNames.h"
@@ -420,6 +421,11 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
 
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "buf"_s, "Buffer, TypedArray, or DataView"_s, buffer);
     }
+    if (view->isShared()) [[unlikely]] {
+        auto copy = Bun::copySharedBytes(lexicalGlobalObject, throwScope, view->span());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, copy.mutableSpan().data(), copy.sizeInBytes())));
+    }
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
 }
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSStringDecoder* castedThis)
@@ -435,6 +441,11 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
     if (!view || view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
+    }
+    if (view->isShared()) [[unlikely]] {
+        auto copy = Bun::copySharedBytes(lexicalGlobalObject, throwScope, view->span());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, copy.mutableSpan().data(), copy.sizeInBytes())));
     }
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
 }
@@ -458,6 +469,11 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
     uint32_t byteLength = view->byteLength();
     if (offset < 0 || static_cast<uint32_t>(offset) > byteLength)
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
+    if (view->isShared()) [[unlikely]] {
+        auto copy = Bun::copySharedBytes(lexicalGlobalObject, throwScope, view->span().subspan(offset, byteLength - offset));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, copy.mutableSpan().data(), copy.sizeInBytes())));
+    }
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()) + offset, byteLength - offset)));
 }
 
@@ -553,36 +569,56 @@ void JSStringDecoderConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* glo
 
 JSStringDecoderConstructor* JSStringDecoderConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSStringDecoderPrototype* prototype)
 {
-    JSStringDecoderConstructor* ptr = new (NotNull, JSC::allocateCell<JSStringDecoderConstructor>(vm)) JSStringDecoderConstructor(vm, structure, construct);
+    JSStringDecoderConstructor* ptr = new (NotNull, JSC::allocateCell<JSStringDecoderConstructor>(vm)) JSStringDecoderConstructor(vm, structure);
     ptr->finishCreation(vm, globalObject, prototype);
     return ptr;
 }
 
-JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+// Shared by call() and construct(). `newTarget` is null for a [[Call]]. Returns nullptr with an exception pending.
+static JSStringDecoder* createDecoder(JSC::JSGlobalObject* lexicalGlobalObject, JSValue jsEncoding, JSC::JSObject* newTarget)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    Structure* structure = globalObject->JSStringDecoderStructure();
+
+    // `class Sub extends StringDecoder` and `Reflect.construct(StringDecoder, args, newTarget)`.
+    if (newTarget && newTarget != globalObject->JSStringDecoder()) [[unlikely]] {
+        // A ShadowRealm or node:vm function belongs to a different global object.
+        auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(lexicalGlobalObject, newTarget));
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
+        structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->JSStringDecoderStructure());
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
+    }
+
     auto encoding = BufferEncodingType::utf8;
-    auto jsEncoding = callFrame->argument(0);
     if (!jsEncoding.isUndefinedOrNull()) {
         std::optional<BufferEncodingType> opt = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, jsEncoding);
-        RETURN_IF_EXCEPTION(throwScope, {});
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
         if (opt.has_value()) {
             encoding = opt.value();
         } else {
             auto* encodingString = jsEncoding.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, {});
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
             const auto& view = encodingString->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, {});
-            return Bun::ERR::UNKNOWN_ENCODING(throwScope, lexicalGlobalObject, view);
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
+            Bun::ERR::UNKNOWN_ENCODING(throwScope, lexicalGlobalObject, view);
+            return nullptr;
         }
     }
+    return JSStringDecoder::create(vm, lexicalGlobalObject, structure, encoding);
+}
+
+JSC::EncodedJSValue JSStringDecoderConstructor::call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto* constructor = globalObject->JSStringDecoder();
-    Structure* structure = globalObject->JSStringDecoderStructure();
 
-    JSStringDecoder* jsObject = JSStringDecoder::create(
-        vm, lexicalGlobalObject, structure, encoding);
+    JSStringDecoder* jsObject = createDecoder(lexicalGlobalObject, callFrame->argument(0), nullptr);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto encoding = jsObject->m_encoding;
 
     // StringDecodeer is a Weird one
     // This is a hack to make express' body-parser work
@@ -593,12 +629,19 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
         auto clientData = WebCore::clientData(vm);
         JSObject* thisObject = asObject(thisValue);
 
-        thisObject->putDirect(vm, clientData->builtinNames().decodePrivateName(), jsObject, JSC::PropertyAttribute::DontEnum | 0);
-        thisObject->putDirect(vm, clientData->builtinNames().encodingPublicName(), convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, encoding), JSC::PropertyAttribute::DontEnum | 0);
+        Bun::defineOwnDataProperty(lexicalGlobalObject, thisObject, clientData->builtinNames().encodingPublicName(), convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, encoding), JSC::PropertyAttribute::DontEnum | 0);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        Bun::defineOwnDataProperty(lexicalGlobalObject, thisObject, clientData->builtinNames().decodePrivateName(), jsObject, JSC::PropertyAttribute::DontEnum | 0);
+        RETURN_IF_EXCEPTION(throwScope, {});
         return JSC::JSValue::encode(thisObject);
     }
 
     return JSC::JSValue::encode(jsObject);
+}
+
+JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    return JSC::JSValue::encode(createDecoder(lexicalGlobalObject, callFrame->argument(0), asObject(callFrame->newTarget())));
 }
 
 const ClassInfo JSStringDecoderConstructor::s_info = { "StringDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStringDecoderConstructor) };

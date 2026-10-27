@@ -25,7 +25,10 @@ const cases: Array<{
   },
 ];
 
-const md5 = (b: ArrayBuffer | Uint8Array) => createHash("md5").update(Buffer.from(b)).digest("hex");
+const md5 = (b: ArrayBuffer | Uint8Array) =>
+  createHash("md5")
+    .update(Buffer.from(b as Uint8Array))
+    .digest("hex");
 
 /** Each test spawns its own server so failures don't cascade and concurrency
  * is safe. */

@@ -4,21 +4,17 @@
  * Order matters for two reasons:
  *   1. `fetchDeps` relationships — a dep with fetchDeps must come AFTER the
  *      deps it references, so the referenced .ref stamp node exists in ninja
- *      when we add order-only edges to it. (zlib before libarchive.)
+ *      when we add order-only edges to it. (zlib before libspng.)
  *   2. Link order — when these libs hit the final link line, static linking
  *      resolves left-to-right. Deps that PROVIDE symbols should come after
  *      deps that USE them. This list becomes the link order.
  */
 
 import type { Dependency } from "../source.ts";
-import { bootstrapCmds } from "./bootstrap-cmds.ts";
 import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
-import { hdrhistogram } from "./hdrhistogram.ts";
 import { highway } from "./highway.ts";
-import { icu } from "./icu.ts";
-import { libarchive } from "./libarchive.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
 import { libspng } from "./libspng.ts";
@@ -41,7 +37,7 @@ import { zstd } from "./zstd.ts";
 /**
  * All deps in dependency-resolution + link order.
  *
- * zlib FIRST — libarchive's fetchDeps references it.
+ * zlib FIRST — libspng's and lsquic's fetchDeps reference it.
  * brotli libs in internal dep order (common last on link line).
  * boringssl near the end — many things depend on crypto/ssl symbols.
  */
@@ -54,13 +50,11 @@ export const allDeps: readonly Dependency[] = [
   zstd,
   brotli,
   libdeflate,
-  libarchive,
   // Image codecs — libspng has fetchDeps:["zlib"], so after zlib.
   libjpegTurbo,
   libspng,
   libwebp,
   cares,
-  hdrhistogram,
   highway,
   libuv,
   lolhtml,
@@ -75,12 +69,6 @@ export const allDeps: readonly Dependency[] = [
   // a DirectBuild dep its .o files go straight on the link line so static
   // link order doesn't apply.
   lsquic,
-  // icu before WebKit: WTF/JSC compile against its headers (fetchDeps).
-  // Disabled on macOS (the SDK's ICU) and with a prebuilt WebKit (bundles it).
-  icu,
-  // bootstrap_cmds before WebKit: source of the migcom host tool the macOS
-  // source build runs (fetchDeps). macOS only; not with a prebuilt WebKit.
-  bootstrapCmds,
   // WebKit LAST in link order — WTF/JSC provide symbols that everything
   // above might reference (via JavaScriptCore types in headers).
   webkit,
@@ -88,14 +76,10 @@ export const allDeps: readonly Dependency[] = [
 
 // Re-export individuals for direct import when needed.
 export {
-  bootstrapCmds,
   boringssl,
   brotli,
   cares,
-  hdrhistogram,
   highway,
-  icu,
-  libarchive,
   libdeflate,
   libjpegTurbo,
   libspng,

@@ -42,9 +42,7 @@
  * would conflict with shell-quoted ninja vars like $args). --stamp=PATH
  * writes an empty file at PATH when the child exits 0 — used for rules
  * whose command doesn't naturally produce an output file (e.g. a typecheck
- * pass) so ninja can still chain on it. --stdout=PATH captures the child's
- * stdout into PATH instead of forwarding it (generators that print their
- * output), writing only when the content changed so restat can prune.
+ * pass) so ninja can still chain on it.
  * --label=TEXT puts TEXT after the `[name]` prefix on every line (the
  * post-link checks label their lines with the executable they ran on).
  * --elapsed holds each line back until the next one arrives so the last
@@ -55,7 +53,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, createWriteStream, openSync, writeSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { writeIfChanged } from "./fs.ts";
 import { formatElapsed, nameColor } from "./tty.ts";
 
 export const streamPath: string = import.meta.filename;
@@ -97,7 +94,7 @@ function main(): void {
   const argv = process.argv.slice(2);
   const name = argv.shift();
   if (!name) {
-    process.stderr.write("usage: stream.ts <name> [--cwd=DIR] [--env=K=V ...] [--stdout=PATH] <command...>\n");
+    process.stderr.write("usage: stream.ts <name> [--cwd=DIR] [--env=K=V ...] <command...>\n");
     process.exit(2);
   }
 
@@ -105,7 +102,6 @@ function main(): void {
   let cwd: string | undefined;
   let consoleMode = false;
   let stampPath: string | undefined;
-  let stdoutPath: string | undefined;
   let label = "";
   let elapsed = false;
   const envOverrides: Record<string, string> = {};
@@ -150,8 +146,6 @@ function main(): void {
       consoleMode = true;
     } else if (opt.startsWith("--stamp=")) {
       stampPath = opt.slice(8);
-    } else if (opt.startsWith("--stdout=")) {
-      stdoutPath = opt.slice(9);
     } else if (opt.startsWith("--label=")) {
       label = opt.slice(8) + " ";
     } else if (opt === "--elapsed") {
@@ -273,9 +267,7 @@ function main(): void {
     writeSync(outFd, lead + prefix + `${held} (${formatElapsed(performance.now() - started)})\n`);
     held = undefined;
   };
-  const captured: Buffer[] = [];
-  if (stdoutPath !== undefined) child.stdout!.on("data", (chunk: Buffer) => captured.push(chunk));
-  else pump(child.stdout!);
+  pump(child.stdout!);
   pump(child.stderr!);
 
   // writeSync for final messages: out.write() is async; process.exit()
@@ -296,10 +288,7 @@ function main(): void {
       writeFinal(`killed by ${signal}\n`);
       process.exit(1);
     }
-    if (code === 0) {
-      if (stdoutPath !== undefined) writeIfChanged(stdoutPath, Buffer.concat(captured).toString("utf8"));
-      writeStamp();
-    }
+    if (code === 0) writeStamp();
     process.exit(code ?? 1);
   });
 }

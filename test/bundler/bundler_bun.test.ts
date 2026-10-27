@@ -96,8 +96,12 @@ describe("bundler", () => {
         return db.serialize();
       })(),
     };
+    // A bundled output starts with a `// entry.js` header. The transpiled one does not.
     const keepsAttribute = (api: BundlerTestBundleAPI) => {
-      api.expectFile("out.js").toContain('import db from "./app.db" with { type: "sqlite" };');
+      expect(api.readFile("out.js").replace(/^\/\/ entry\.js\n/, "")).toBe(
+        'import db from "./app.db" with { type: "sqlite" };\n' +
+          'console.log(db.query("select message from messages LIMIT 1").get().message);\n',
+      );
     };
     for (const target of ["node", "browser"] as const) {
       itBundled(`bun/sqlite-attribute-target-${target}`, {

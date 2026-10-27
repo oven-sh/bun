@@ -6325,9 +6325,12 @@ pub(crate) mod __gated_printer {
                                 Loader::Bunsh => {
                                     self.print_whitespacer(ws!(b" with { type: \"sh\" }"))
                                 }
-                                Loader::Sqlite | Loader::SqliteEmbedded => {
+                                Loader::Sqlite => {
                                     self.print_whitespacer(ws!(b" with { type: \"sqlite\" }"))
                                 }
+                                Loader::SqliteEmbedded => self.print_whitespacer(ws!(
+                                    b" with { type: \"sqlite\", embed: \"true\" }"
+                                )),
                                 Loader::Html => {
                                     self.print_whitespacer(ws!(b" with { type: \"html\" }"))
                                 }

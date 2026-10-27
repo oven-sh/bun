@@ -744,6 +744,27 @@ impl<'a> Near<'a> {
         len
     }
 
+    /// How long what is at `pos` is the same as what is at `other_pos` in `other`, up to the end of either.
+    #[inline(always)]
+    pub(crate) fn count_in(self, pos: u32, other: Near<'_>, other_pos: u32) -> u32 {
+        let mut len = 0;
+        while let (Some(bytes), Some(other_bytes)) =
+            (self.chunk16(pos + len), other.chunk16(other_pos + len))
+        {
+            let diff = u128::from_le_bytes(*bytes) ^ u128::from_le_bytes(*other_bytes);
+            if diff != 0 {
+                return len + (diff.trailing_zeros() >> 3);
+            }
+            len += 16;
+        }
+        while let Some(byte) = self.read8(pos + len)
+            && other.read8(other_pos + len) == Some(byte)
+        {
+            len += 1;
+        }
+        len
+    }
+
     /// How many bytes before `pos`, down to `anchor`, are the same as those before `match_pos`, down to `match_low`.
     #[inline(always)]
     pub(crate) fn count_backwards(
@@ -754,25 +775,37 @@ impl<'a> Near<'a> {
         match_low: u32,
     ) -> u32 {
         let most = (pos - anchor).min(match_pos - match_low);
+        self.count_backwards_in(pos, self, match_pos, most)
+    }
+
+    /// How many bytes before `pos` are the same as those before `other_pos` in `other`, up to `most`.
+    #[inline(always)]
+    pub(crate) fn count_backwards_in(
+        self,
+        pos: u32,
+        other: Near<'_>,
+        other_pos: u32,
+        most: u32,
+    ) -> u32 {
         // Whether there is anything to compare is as good as random: it takes no branch to find out.
-        if let (Some(bytes), Some(match_bytes)) = (
+        if let (Some(bytes), Some(other_bytes)) = (
             self.read64(pos.wrapping_sub(8)),
-            self.read64(match_pos.wrapping_sub(8)),
+            other.read64(other_pos.wrapping_sub(8)),
         ) {
-            let same = (bytes ^ match_bytes).leading_zeros() >> 3;
+            let same = (bytes ^ other_bytes).leading_zeros() >> 3;
             if same < 8 || most <= 8 {
                 return same.min(most);
             }
         }
-        self.count_backwards_bytewise(pos, match_pos, most)
+        self.count_backwards_bytewise(pos, other, other_pos, most)
     }
 
     #[cold]
-    fn count_backwards_bytewise(self, pos: u32, match_pos: u32, most: u32) -> u32 {
+    fn count_backwards_bytewise(self, pos: u32, other: Near<'_>, other_pos: u32, most: u32) -> u32 {
         let mut len = 0;
         while len < most
             && let Some(byte) = self.read8(pos - len - 1)
-            && self.read8(match_pos - len - 1) == Some(byte)
+            && other.read8(other_pos - len - 1) == Some(byte)
         {
             len += 1;
         }

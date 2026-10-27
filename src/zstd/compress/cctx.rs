@@ -18,6 +18,7 @@ use super::internal::{
     min_gain, no_compress_block, offbase_is_repcode, offset_to_offbase, rle_compress_block,
     update_rep,
 };
+use super::literals::min_literals_to_compress;
 use super::params::{
     CCtxParams, CParamMode, Format, MatchStateSizes, adjust_c_params_internal,
     allocate_chain_table, cdict_indices_are_tagged, compress_bound, cycle_log,
@@ -1180,6 +1181,22 @@ impl FrameCompressor {
 
     /// `ZSTD_buildSeqStore`
     fn build_seq_store(&mut self, input: &Input<'_>, src: Span) -> Result<BuildSeqStore> {
+        Ok(match self.find_sequences(input, src)? {
+            Some(rep) => {
+                block_state_mut(&mut self.next_c_block).rep = rep;
+                BuildSeqStore::Compress
+            }
+            None => BuildSeqStore::NoCompress,
+        })
+    }
+
+    /// `ZSTD_buildSeqStore`, but for the repeat offsets after the block, which it returns rather than store. `None` is
+    /// `ZSTDbss_noCompress`.
+    fn find_sequences(
+        &mut self,
+        input: &Input<'_>,
+        src: Span,
+    ) -> Result<Option<[u32; ZSTD_REP_NUM]>> {
         let params = &self.applied_params;
         let ms = &mut self.match_state;
         let src_size = src.len();
@@ -1193,7 +1210,7 @@ impl FrameCompressor {
                     params.c_params.min_match,
                 )?;
             }
-            return Ok(BuildSeqStore::NoCompress);
+            return Ok(None);
         }
         self.seq_store.start_block(src_size)?;
         ms.opt.literal_compression_mode = ParamSwitch::Auto;
@@ -1224,8 +1241,8 @@ impl FrameCompressor {
         };
         let dict_mode = ms.dict_mode(block.dms.as_ref());
         let use_row_match_finder = params.use_row_match_finder == ParamSwitch::Enable;
-        let rep = &mut block_state_mut(&mut self.next_c_block).rep;
-        *rep = block_state(&self.prev_c_block).rep;
+        let mut rep_after = block_state(&self.prev_c_block).rep;
+        let rep = &mut rep_after;
 
         let last_ll_size = if self.extern_seq_store.pos < self.extern_seq_store.size {
             ldm::block_compress(
@@ -1270,7 +1287,18 @@ impl FrameCompressor {
         };
         let last_literals = block.buf.sub(src.end - last_ll_size..src.end)?;
         self.seq_store.store_last_literals(last_literals)?;
-        Ok(BuildSeqStore::Compress)
+        Ok(Some(rep_after))
+    }
+
+    /// Whether the block is nothing but literals, too few for `ZSTD_compressLiterals` to try, which is larger than the
+    /// block is, if it fits in `dst_size` bytes at all. The tables for the next block need not be made to find that out.
+    fn is_too_short_to_compress(&self, dst_size: usize) -> bool {
+        let prev_huf = &block_state(&self.prev_c_block).entropy.huf;
+        let strategy = self.applied_params.c_params.strat();
+        let store = &self.seq_store;
+        store.sequences.is_empty()
+            && store.lit_len < min_literals_to_compress(strategy, prev_huf.repeat_mode)
+            && store.lit_len + 3 + 4 <= dst_size
     }
 
     /// `ZSTD_compressSeqStore_singleBlock`
@@ -1479,19 +1507,25 @@ impl FrameCompressor {
         const RLE_MAX_LENGTH: usize = 25;
         let bytes = src.bytes(&input.bufs)?;
 
-        let c_size = match self.build_seq_store(input, src)? {
-            BuildSeqStore::NoCompress => Ok(0),
-            BuildSeqStore::Compress => {
-                let whole = self.seq_store.whole();
-                let mut c_size = entropy_compress_seq_store(
-                    &mut self.seq_store,
-                    &whole,
-                    &block_state(&self.prev_c_block).entropy,
-                    &mut block_state_mut(&mut self.next_c_block).entropy,
-                    &self.applied_params,
-                    dst,
-                    bytes.len(),
-                );
+        let c_size = match self.find_sequences(input, src)? {
+            None => Ok(0),
+            Some(rep) => {
+                let mut c_size = if self.is_too_short_to_compress(dst.len()) {
+                    Ok(0)
+                } else {
+                    let next = block_state_mut(&mut self.next_c_block);
+                    next.rep = rep;
+                    let whole = self.seq_store.whole();
+                    entropy_compress_seq_store(
+                        &mut self.seq_store,
+                        &whole,
+                        &block_state(&self.prev_c_block).entropy,
+                        &mut next.entropy,
+                        &self.applied_params,
+                        dst,
+                        bytes.len(),
+                    )
+                };
                 if !self.is_first_block
                     && c_size.is_ok_and(|c_size| c_size < RLE_MAX_LENGTH)
                     && is_rle(bytes)

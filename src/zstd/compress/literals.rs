@@ -38,7 +38,7 @@ pub(crate) fn compress_rle_literals_block(dst: &mut [u8], src: &[u8]) -> Result<
 }
 
 /// `ZSTD_minLiteralsToCompress`: fewer literals than this are not worth a try.
-fn min_literals_to_compress(strategy: Strategy, huf_repeat: HufRepeat) -> usize {
+pub(crate) fn min_literals_to_compress(strategy: Strategy, huf_repeat: HufRepeat) -> usize {
     let shift = (9 - strategy as i32).min(3);
     if huf_repeat == HufRepeat::Valid {
         6

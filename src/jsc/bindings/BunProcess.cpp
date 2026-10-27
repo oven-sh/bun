@@ -1898,8 +1898,24 @@ static void restoreDefaultSignalDisposition(int signalNumber)
 }
 #endif
 
+// Set by `bun fuzzilli`: process.abort, process.execve and process._kill then do nothing, in every global.
+static std::atomic<bool> isFuzzilliREPRL { false };
+
+extern "C" void Bun__Process__enterFuzzilliREPRL()
+{
+    isFuzzilliREPRL.store(true);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionEnterFuzzilliREPRLForTesting, (JSGlobalObject*, CallFrame*))
+{
+    Bun__Process__enterFuzzilliREPRL();
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {
+    if (isFuzzilliREPRL.load()) [[unlikely]]
+        return JSValue::encode(jsUndefined());
 #if OS(WINDOWS)
     // Raising SIGABRT is handled in the CRT in windows, calling _exit() with ambiguous code "3" by default.
     // This adjustment to the abort behavior gives a more sane exit code on abort, by calling _exit directly with code 134.
@@ -2100,6 +2116,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
     for (auto& s : envStorage)
         envp.append(const_cast<char*>(s.legacyCStringPointer()));
     envp.append(nullptr);
+
+    if (isFuzzilliREPRL.load()) [[unlikely]]
+        return JSValue::encode(jsUndefined());
 
     // Set stdin, stdout and stderr to be non-close-on-exec so that the new
     // process will inherit them. Record the previous flags so a failed
@@ -4884,6 +4903,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
 
     int signal = callFrame->argument(1).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (isFuzzilliREPRL.load()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(0)));
 
 #if !OS(WINDOWS)
     int ownPid = getpid();

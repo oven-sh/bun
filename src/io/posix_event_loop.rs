@@ -341,28 +341,38 @@ impl FilePoll {
     // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
     // (`register_with_fd`/`unregister`/`deinit`).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub(crate) fn on_kqueue_event(&mut self, kqueue_event: &KQueueEvent) {
-        self.update_flags(Flags::from_kqueue_event(kqueue_event));
-        syslog!("onKQueueEvent: {}", self);
+    pub(crate) unsafe fn on_kqueue_event(this: *mut FilePoll, kqueue_event: &KQueueEvent) {
+        // SAFETY: caller contract; the borrow ends with the statement.
+        unsafe { (*this).update_flags(Flags::from_kqueue_event(kqueue_event)) };
+        // SAFETY: caller contract; the borrow ends with the statement.
+        syslog!("onKQueueEvent: {}", unsafe { &*this });
 
+        // SAFETY: caller contract.
         #[cfg(all(target_os = "macos", debug_assertions))]
-        debug_assert!(self.generation_number == kqueue_event.ext[0] as usize);
+        debug_assert!(unsafe { (*this).generation_number } == kqueue_event.ext[0] as usize);
 
         // EVFILT_MEMORYSTATUS reports the pressure level in `fflags`, not `data`;
         // thread it through `size_or_offset` so the dispatch arm can read it.
         #[cfg(target_os = "macos")]
         if kqueue_event.filter == bun_sys::darwin::EVFILT::MEMORYSTATUS {
-            self.on_update(kqueue_event.fflags as i64);
+            // SAFETY: caller contract.
+            unsafe { Self::on_update(this, kqueue_event.fflags as i64) };
             return;
         }
 
-        self.on_update(kqueue_event.data as i64);
+        // SAFETY: caller contract.
+        unsafe { Self::on_update(this, kqueue_event.data as i64) };
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn on_epoll_event(&mut self, epoll_event: &bun_sys::linux::epoll_event) {
-        self.update_flags(Flags::from_epoll_event(epoll_event));
-        self.on_update(0);
+    pub(crate) unsafe fn on_epoll_event(
+        this: *mut FilePoll,
+        epoll_event: &bun_sys::linux::epoll_event,
+    ) {
+        // SAFETY: caller contract; the borrow ends with the statement.
+        unsafe { (*this).update_flags(Flags::from_epoll_event(epoll_event)) };
+        // SAFETY: caller contract.
+        unsafe { Self::on_update(this, 0) };
     }
 
     pub fn is_readable(&mut self) -> bool {
@@ -424,19 +434,22 @@ impl FilePoll {
             || self.flags.contains(Flags::PollMemoryPressure)
     }
 
-    pub(crate) fn on_update(&mut self, size_or_offset: i64) {
-        if self.flags.contains(Flags::OneShot) && !self.flags.contains(Flags::NeedsRearm) {
-            self.flags.insert(Flags::NeedsRearm);
-        }
+    pub(crate) unsafe fn on_update(this: *mut FilePoll, size_or_offset: i64) {
+        // SAFETY: caller contract; each borrow ends with its statement.
+        unsafe {
+            if (*this).flags.contains(Flags::OneShot) && !(*this).flags.contains(Flags::NeedsRearm)
+            {
+                (*this).flags.insert(Flags::NeedsRearm);
+            }
 
-        debug_assert!(!self.owner.is_null());
+            debug_assert!(!(*this).owner.is_null());
+        }
 
         // Hot-path hoisted-match: the per-tag `match` lives in
         // `bun_runtime::dispatch::__bun_run_file_poll` (link-time extern) so
         // this T3 crate names no variant types.
-        // SAFETY: `self` is a live FilePoll for the duration of the call
-        // (guaranteed by the uws loop callback contract).
-        unsafe { __bun_run_file_poll(self, size_or_offset) };
+        // SAFETY: caller contract; nothing reads `this` after the owner runs.
+        unsafe { __bun_run_file_poll(this, size_or_offset) };
     }
 
     #[inline]
@@ -1484,9 +1497,9 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
         return;
     }
 
+    let file_poll: *mut FilePoll = tag.as_file_poll();
     // SAFETY: tag matched FilePoll; pointer was set via Pollable::init in register_with_fd.
-    let file_poll: &mut FilePoll = unsafe { &mut *tag.as_file_poll() };
-    if file_poll.flags.contains(Flags::IgnoreUpdates) {
+    if unsafe { (*file_poll).flags.contains(Flags::IgnoreUpdates) } {
         return;
     }
 
@@ -1499,10 +1512,13 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
     // handler is free to form its own `&mut Loop`.
     let ev = unsafe { &*loop_ }.current_ready_event();
 
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    file_poll.on_kqueue_event(&ev);
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    file_poll.on_epoll_event(&ev);
+    // SAFETY: `file_poll` is live (checked above); nothing reads it after the owner runs.
+    unsafe {
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        FilePoll::on_kqueue_event(file_poll, &ev);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        FilePoll::on_epoll_event(file_poll, &ev);
+    }
 }
 
 #[cfg(target_os = "macos")]

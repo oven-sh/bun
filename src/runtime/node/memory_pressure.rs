@@ -301,17 +301,23 @@ mod posix {
 
     /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
-    pub(crate) fn on_poll(poll: &mut FilePoll, fflags: i64) {
+    pub(crate) unsafe fn on_poll(poll: *mut FilePoll, fflags: i64) {
         let vm = VirtualMachine::get_mut();
 
         // `EPOLLERR`/`EPOLLHUP` on a PSI fd means the trigger is dead (e.g.
         // the cgroup was removed). kernfs reports that permanently, so tear
         // the watch down instead of emitting to avoid a level-triggered spin.
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        if poll.flags.contains(Flags::Eof) || poll.flags.contains(Flags::Hup) {
-            drop(take_watcher(vm));
-            deinit_poll(poll);
-            return;
+        {
+            // SAFETY: `poll` is live (caller contract); both reads end with the statement.
+            let dead =
+                unsafe { (*poll).flags.contains(Flags::Eof) || (*poll).flags.contains(Flags::Hup) };
+            if dead {
+                drop(take_watcher(vm));
+                // SAFETY: `poll` is live, and the watcher that held it is gone, so this is its last use.
+                deinit_poll(unsafe { &mut *poll });
+                return;
+            }
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -324,7 +330,9 @@ mod posix {
             // while the poll dispatch runs.
             let watcher = unsafe { raw.cast::<MemoryPressureWatcher>().as_mut() };
             let mut buf = [0u8; 256];
-            if let Some(contents) = read_psi_file(poll.fd, &mut buf)
+            // SAFETY: `poll` is live (caller contract).
+            let fd = unsafe { (*poll).fd };
+            if let Some(contents) = read_psi_file(fd, &mut buf)
                 && !psi_growth_reached_threshold(&mut watcher.psi_some_total, contents)
             {
                 return;

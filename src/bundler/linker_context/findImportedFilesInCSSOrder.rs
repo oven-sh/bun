@@ -36,7 +36,7 @@ unsafe fn bitwise_copy<T>(src: &T) -> T {
 /// Bitwise move of arena-backed entries from `wip` back into `order`'s
 /// buffer (which always has `cap >= wip.len`).
 #[inline]
-fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrder>) {
+fn memcpy_and_reset<'a>(order: &mut Vec<CssImportOrder<'a>>, wip: &mut Vec<CssImportOrder<'a>>) {
     debug_assert!(order.capacity() >= wip.len());
     // Do not Drop `order`'s prior entries — they were already
     // bitwise-copied into `wip` (see `bitwise_copy` callers above), so dropping
@@ -78,17 +78,17 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
 /// The traversal recurses once per `@import`. Returns `Err` if the import chain
 /// is too deep for the thread's stack, and the caller reports it.
 pub(crate) fn find_imported_files_in_css_order<'a>(
-    this: &'a mut LinkerContext,
-    temp_arena: &'a Arena,
+    this: &mut LinkerContext<'a>,
+    temp_arena: &Arena,
     entry_points: &[Index],
-) -> Result<Vec<CssImportOrder>, CssImportChainTooDeep> {
+) -> Result<Vec<CssImportOrder<'a>>, CssImportChainTooDeep> {
     let _ = temp_arena;
 
-    struct Visitor<'a> {
-        arena: &'a Arena,
+    struct Visitor<'v, 'a> {
+        arena: &'v Arena,
         // `BundledAst.css` SoA column.
-        css_asts: &'a [crate::bundled_ast::CssCol],
-        all_import_records: &'a [bun_ast::import_record::List<'a>],
+        css_asts: &'v [crate::bundled_ast::CssCol],
+        all_import_records: &'v [bun_ast::import_record::List<'a>],
 
         // No `graph` field — `visit()` never reads it, and holding one would
         // create an aliasing `&mut this.graph` borrow against
@@ -100,7 +100,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 
         has_external_import: bool,
         visited: Vec<Index>,
-        order: Vec<CssImportOrder>,
+        order: Vec<CssImportOrder<'a>>,
 
         stack_check: StackCheck,
         /// Set when the stack is nearly exhausted. The traversal then unwinds
@@ -108,7 +108,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         too_deep: Option<CssImportChainTooDeep>,
     }
 
-    impl<'a> Visitor<'a> {
+    impl<'v, 'a> Visitor<'v, 'a> {
         #[inline]
         fn input_file_pretty(&self, source_index: Index) -> &BStr {
             let sources = self.parse_graph.input_files.items_source();
@@ -119,9 +119,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         fn visit_import(
             &mut self,
             importer: Index,
-            record: &ImportRecord,
+            record: &ImportRecord<'a>,
             wrapping_conditions: &mut Vec<ImportConditions>,
-            wrapping_import_records: &mut Vec<ImportRecord>,
+            wrapping_import_records: &mut Vec<ImportRecord<'a>>,
         ) -> bool {
             if !self.stack_check.is_safe_to_recurse() {
                 self.too_deep = Some(CssImportChainTooDeep {
@@ -143,7 +143,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             &mut self,
             source_index: Index,
             wrapping_conditions: &mut Vec<ImportConditions>,
-            wrapping_import_records: &mut Vec<ImportRecord>,
+            wrapping_import_records: &mut Vec<ImportRecord<'a>>,
         ) {
             debug!(
                 "Visit file: {}={}",
@@ -835,10 +835,10 @@ fn fork_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<ImportCon
 
 /// Shallow copy of `ImportRecord` values into a fresh allocation.
 #[inline]
-fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
+fn shallow_clone_records<'a>(list: &Vec<ImportRecord<'a>>) -> Vec<ImportRecord<'a>> {
     let mut out = Vec::<ImportRecord>::init_capacity(list.len() as usize);
     for r in list.slice_const() {
-        // `ImportRecord` is plain-old-data; its `Path<'static>` slices borrow
+        // `ImportRecord` is plain-old-data; its `Path` slices borrow
         // resolver storage.
         // SAFETY: `ImportRecord` is POD (borrowed slices, no owning `Drop`); a
         // bitwise duplicate aliasing the same resolver storage is sound and

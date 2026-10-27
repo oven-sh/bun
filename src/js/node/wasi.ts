@@ -37,7 +37,7 @@ interface WASICaughtError {
 
 interface WASIFileDescriptor {
   real: number;
-  filetype?: number;
+  filetype: number;
   rights: { base: bigint; inheriting: bigint };
   path: string;
   fakePath?: string;
@@ -466,17 +466,6 @@ var stat = (wasi: WASI, fd: number) => {
   if (!entry) {
     throw new WASIError(WASI_EBADF);
   }
-  if (entry.filetype === void 0) {
-    const stats = wasi.fstatSync(entry.real);
-    const { filetype, rightsBase, rightsInheriting } = translateFileAttributes(wasi, fd, stats);
-    entry.filetype = filetype;
-    if (!entry.rights) {
-      entry.rights = {
-        base: rightsBase,
-        inheriting: rightsInheriting,
-      };
-    }
-  }
   return entry;
 };
 var translateFileAttributes = (wasi, fd, stats) => {
@@ -710,7 +699,8 @@ class WASI {
     const CHECK_FD = (fd: number, rights: bigint) => {
       const stats = stat(this, fd);
       if (rights !== BigInt(0) && (stats.rights.base & rights) === BigInt(0)) {
-        throw new WASIError(WASI_EPERM);
+        // uvwasi refuses with ENOTCAPABLE, the one value that wasi-libc maps to the errno of the call: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/fd_table.c#L370-L374
+        throw new WASIError(WASI_ENOTCAPABLE);
       }
       return stats;
     };
@@ -874,9 +864,6 @@ class WASI {
       fd_fdstat_get: wrap((fd, bufPtr) => {
         const stats = CHECK_FD(fd, BigInt(0));
         this.refreshMemory();
-        if (stats.filetype == null) {
-          throw Error("stats.filetype must be set");
-        }
         this.view.setUint8(bufPtr, stats.filetype);
         this.view.setUint16(bufPtr + 2, 0, true);
         this.view.setUint16(bufPtr + 4, 0, true);
@@ -897,11 +884,11 @@ class WASI {
         fsRightsInheriting = BigInt.asUintN(64, fsRightsInheriting);
         const nrb = stats.rights.base | fsRightsBase;
         if (nrb > stats.rights.base) {
-          return WASI_EPERM;
+          return WASI_ENOTCAPABLE;
         }
         const nri = stats.rights.inheriting | fsRightsInheriting;
         if (nri > stats.rights.inheriting) {
-          return WASI_EPERM;
+          return WASI_ENOTCAPABLE;
         }
         stats.rights.base = fsRightsBase;
         stats.rights.inheriting = fsRightsInheriting;
@@ -915,9 +902,6 @@ class WASI {
         bufPtr += 8;
         this.view.setBigUint64(bufPtr, BigInt(rstats.ino), true);
         bufPtr += 8;
-        if (stats.filetype == null) {
-          throw Error("stats.filetype must be set");
-        }
         this.view.setUint8(bufPtr, stats.filetype);
         bufPtr += 8;
         this.view.setBigUint64(bufPtr, BigInt(rstats.nlink), true);
@@ -1324,11 +1308,8 @@ class WASI {
             } else if (write) {
               noflags = nodeFsConstants.O_WRONLY;
             }
-            let neededBase = fsRightsBase | WASI_RIGHT_PATH_OPEN;
-            let neededInheriting = fsRightsBase | fsRightsInheriting;
             if ((oflags & WASI_O_CREAT) !== 0) {
               noflags |= nodeFsConstants.O_CREAT;
-              neededBase |= WASI_RIGHT_PATH_CREATE_FILE;
             }
             if ((oflags & WASI_O_DIRECTORY) !== 0) {
               noflags |= nodeFsConstants.O_DIRECTORY;
@@ -1338,7 +1319,6 @@ class WASI {
             }
             if ((oflags & WASI_O_TRUNC) !== 0) {
               noflags |= nodeFsConstants.O_TRUNC;
-              neededBase |= WASI_RIGHT_PATH_FILESTAT_SET_SIZE;
             }
             if ((fsFlags & WASI_FDFLAG_APPEND) !== 0) {
               noflags |= nodeFsConstants.O_APPEND;
@@ -1346,7 +1326,6 @@ class WASI {
             if ((fsFlags & WASI_FDFLAG_DSYNC) !== 0) {
               const O_DSYNC = nodeFsConstants.O_DSYNC;
               noflags |= O_DSYNC ? O_DSYNC : nodeFsConstants.O_SYNC;
-              neededInheriting |= WASI_RIGHT_FD_DATASYNC;
             }
             if ((fsFlags & WASI_FDFLAG_NONBLOCK) !== 0) {
               noflags |= nodeFsConstants.O_NONBLOCK;
@@ -1354,14 +1333,9 @@ class WASI {
             if ((fsFlags & WASI_FDFLAG_RSYNC) !== 0) {
               const O_RSYNC = nodeFsConstants.O_RSYNC;
               noflags |= O_RSYNC ? O_RSYNC : nodeFsConstants.O_SYNC;
-              neededInheriting |= WASI_RIGHT_FD_SYNC;
             }
             if ((fsFlags & WASI_FDFLAG_SYNC) !== 0) {
               noflags |= nodeFsConstants.O_SYNC;
-              neededInheriting |= WASI_RIGHT_FD_SYNC;
-            }
-            if (write && (noflags & (nodeFsConstants.O_APPEND | nodeFsConstants.O_TRUNC)) === 0) {
-              neededInheriting |= WASI_RIGHT_FD_SEEK;
             }
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
@@ -1439,17 +1413,29 @@ class WASI {
             } else {
               realfd = fs.openSync(full, noflags);
             }
-            const newfd = this.getUnusedFileDescriptor();
+            // uvwasi stores the request masked by the maximum of the file type: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2131-L2143
+            let max;
+            let newfd;
+            try {
+              max = translateFileAttributes(this, realfd, this.fstatSync(realfd));
+              // Not every host has O_DIRECTORY: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2114-L2129
+              if ((oflags & WASI_O_DIRECTORY) !== 0 && max.filetype !== WASI_FILETYPE_DIRECTORY) {
+                throw new WASIError(WASI_ENOTDIR);
+              }
+              newfd = this.getUnusedFileDescriptor();
+            } catch (e) {
+              fs.closeSync(realfd);
+              throw e;
+            }
             this.FD_MAP.set(newfd, {
               real: realfd,
-              filetype: void 0,
+              filetype: max.filetype,
               rights: {
-                base: neededBase,
-                inheriting: neededInheriting,
+                base: fsRightsBase & max.rightsBase,
+                inheriting: fsRightsInheriting & max.rightsInheriting,
               },
               path: full,
             });
-            stat(this, newfd);
             this.view.setUint32(fdPtr, newfd, true);
           } catch (e) {
             if (e instanceof WASIError) {

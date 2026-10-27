@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::io::Time;
 use crate::record::{RData, Record, flag, rcode};
+use crate::{Error, Result};
 
 /// c-ares's default for `ARES_OPT_QUERY_CACHE`, which Bun left alone.
 const MAX_TTL: u32 = 3600;
@@ -80,20 +81,19 @@ impl QueryCache {
         entry.record.rewritten(age).ok()
     }
 
-    pub(crate) fn insert(&mut self, now: Time, key: &[u8], answer: &Record) {
-        let Ok(record) = answer.rewritten(0) else {
-            return;
-        };
+    /// `Err`: it is not one to keep.
+    pub(crate) fn insert(&mut self, now: Time, key: &[u8], answer: &Record) -> Result<()> {
+        let record = answer.rewritten(0)?;
         let ttl = match record.rcode {
-            _ if record.flags & flag::TC != 0 => return,
+            _ if record.flags & flag::TC != 0 => return Err(Error::EREFUSED),
             // c-ares keeps an answer without records for `MAX_TTL`: no TTL in it is the lowest.
             rcode::NOERROR if !record.answer.is_empty() => lowest_ttl(&record),
             rcode::NOERROR | rcode::NXDOMAIN => negative_ttl(&record),
-            _ => return,
+            _ => return Err(Error::EREFUSED),
         }
         .min(MAX_TTL);
         if ttl == 0 {
-            return;
+            return Err(Error::EREFUSED);
         }
         let entry = Entry {
             record,
@@ -102,5 +102,6 @@ impl QueryCache {
         // An entry that has not run out is still in `expiry` under its own time, and takes this one with it then.
         self.entries.insert(key.to_vec(), entry);
         self.expiry.insert((now.sec + i64::from(ttl), key.to_vec()));
+        Ok(())
     }
 }

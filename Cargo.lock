@@ -219,7 +219,6 @@ dependencies = [
  "bun_alloc",
  "bun_boringssl_sys",
  "bun_core",
- "bun_sys",
 ]
 
 [[package]]

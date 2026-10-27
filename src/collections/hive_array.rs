@@ -83,19 +83,6 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     }
 
     #[inline]
-    pub fn find_first_set(&self) -> Option<usize> {
-        let mut i = 0;
-        while i < Self::NUM_WORDS {
-            let m = self.masks[i].get();
-            if m != 0 {
-                return Some(i * WORD_BITS + m.trailing_zeros() as usize);
-            }
-            i += 1;
-        }
-        None
-    }
-
-    #[inline]
     pub fn find_first_unset(&self) -> Option<usize> {
         let mut i = 0;
         while i < Self::NUM_WORDS {

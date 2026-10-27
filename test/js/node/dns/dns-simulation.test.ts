@@ -553,8 +553,8 @@ describe("timeouts and servers", () => {
       [
         "open 2 udp 10.0.0.1#53#0",
         "watch 2 r-",
-        "send 2 dd7401000001000000000000016104746573740000010001",
         "send 2 547d01000001000000000000016204746573740000010001",
+        "send 2 dd7401000001000000000000016104746573740000010001",
         "close 1",
         "timer 4641",
       ]
@@ -763,6 +763,13 @@ describe("lookupService()", () => {
     "https 443/udp",
     "#ssh 22/tcp",
     "  indented 23/tcp",
+    "cut 24/tcp#comment",
+    "hex 0x19/tcp",
+    "octal 032/tcp",
+    "slashes 27//tcp",
+    "wrapped 65564/tcp",
+    "nothing 29",
+    "junk 30x/tcp",
     `${Buffer.alloc(32, "x")} 32/tcp`,
     `${Buffer.alloc(33, "y")} 33/tcp`,
   ].join("\n");
@@ -771,7 +778,11 @@ describe("lookupService()", () => {
     const it = new World(oneServer, file("/etc/hosts", "10.1.1.1 box.test box\n"), file("/etc/services", services));
     expect(
       it
-        .run(...[0, 1, 7, 80, 443, 22, 23, 32, 33, 65535].map(port => `nameinfo 10.1.1.1 ${port}`))
+        .run(
+          ...[0, 1, 7, 80, 443, 22, 23, 24, 25, 26, 27, 28, 29, 30, 32, 33, 65535].map(
+            port => `nameinfo 10.1.1.1 ${port}`,
+          ),
+        )
         .filter(line => line.startsWith("done")),
     ).toMatchInlineSnapshot(`
       [
@@ -782,18 +793,25 @@ describe("lookupService()", () => {
         "done 4 name=box.test service=443",
         "done 5 name=box.test service=22",
         "done 6 name=box.test service=indented",
-        "done 7 name=box.test service=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-        "done 8 name=box.test service=%",
-        "done 9 name=box.test service=65535",
+        "done 7 name=box.test service=cut",
+        "done 8 name=box.test service=hex",
+        "done 9 name=box.test service=octal",
+        "done 10 name=box.test service=slashes",
+        "done 11 name=box.test service=wrapped",
+        "done 12 name=box.test service=29",
+        "done 13 name=box.test service=30",
+        "done 14 name=box.test service=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "done 15 name=box.test service=%",
+        "done 16 name=box.test service=65535",
       ]
     `);
     it.run("nameinfo 10.9.9.9 80");
     expect(it.questions()).toEqual(["1 12 9.9.9.10.in-addr.arpa"]);
     expect(it.reply(1, { answers: [record("9.9.9.10.in-addr.arpa", TYPE.PTR, 60, name("far.test"))] })).toContain(
-      "done 10 name=far.test service=http",
+      "done 17 name=far.test service=http",
     );
     it.run("nameinfo 10.9.9.8 80");
-    expect(it.reply(2, { rcode: RCODE.NXDOMAIN })).toContain("done 11 error ENOTFOUND");
+    expect(it.reply(2, { rcode: RCODE.NXDOMAIN })).toContain("done 18 error ENOTFOUND");
   });
 });
 

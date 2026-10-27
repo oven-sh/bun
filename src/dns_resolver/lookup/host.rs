@@ -10,7 +10,7 @@ use crate::channel::{Answer, Channel, LookupId, Owner, Status};
 use crate::io::{Io, Time};
 use crate::record::{Record, rr_type};
 use crate::sysconfig::{Source, load_etc_file};
-use crate::text::{parse_uint, trim_start, word};
+use crate::text::{take_while, trim_start, word};
 use crate::{Error, Result, reply};
 
 /// c-ares's buffer, with its NUL.
@@ -50,14 +50,52 @@ fn reverse_name(address: IpAddr) -> Vec<u8> {
     name
 }
 
-/// services(5): lines of `name port/protocol aliases...`.
+/// `strtoul(text, &rest, 0)` cut to 32 bits, as glibc reads a number in its databases. `None` without a digit.
+fn strtoul(text: &[u8]) -> Option<(u32, &[u8])> {
+    let text = trim_start(text);
+    let (negative, text) = match text {
+        [b'-', rest @ ..] => (true, rest),
+        [b'+', rest @ ..] => (false, rest),
+        _ => (false, text),
+    };
+    let (radix, digits) = match text {
+        [b'0', b'x' | b'X', rest @ ..] if rest.first().is_some_and(u8::is_ascii_hexdigit) => {
+            (16, rest)
+        }
+        [b'0', ..] => (8, text),
+        _ => (10, text),
+    };
+    let (digits, rest) = take_while(digits, |byte| char::from(byte).is_digit(radix));
+    if digits.is_empty() {
+        return None;
+    }
+    let value = digits.iter().try_fold(0u64, |value, &byte| {
+        value
+            .checked_mul(radix.into())?
+            .checked_add(char::from(byte).to_digit(radix)?.into())
+    });
+    let value = match value {
+        Some(value) if negative => value.wrapping_neg(),
+        Some(value) => value,
+        None => u64::MAX,
+    };
+    Some((value.min(u32::MAX.into()) as u32, rest))
+}
+
+/// services(5), lines of `name port/protocol aliases...`, the way glibc's `getservbyport_r()` reads them.
 fn tcp_service_name(services: &[u8], port: u16) -> Option<&[u8]> {
     strings::split(services, b"\n").find_map(|line| {
+        let line = match strings::index_of_char_usize(line, b'#') {
+            Some(comment) => line.get(..comment)?,
+            None => line,
+        };
         let (name, rest) = word(trim_start(line));
-        let (port_and_protocol, _) = word(trim_start(rest));
-        let (number, protocol) = strings::split_once_char(port_and_protocol, b'/')?;
-        let is_it = !name.starts_with(b"#")
-            && parse_uint(number, 65535) == Some(port.into())
+        let (number, rest) = strtoul(rest)?;
+        let (slashes, rest) = take_while(rest, |byte| byte == b'/');
+        let (protocol, _) = word(rest);
+        let is_it = !name.is_empty()
+            && (!slashes.is_empty() || rest.is_empty())
+            && number as u16 == port
             && protocol == b"tcp";
         is_it.then_some(name)
     })

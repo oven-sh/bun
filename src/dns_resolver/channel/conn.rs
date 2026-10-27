@@ -30,6 +30,14 @@ pub(crate) struct Conn<Socket> {
 
 const LARGEST_MESSAGE: usize = 65535;
 
+pub(super) enum Read {
+    All,
+    /// To be acted on after what the socket delivered first.
+    ThenFailed,
+    /// It failed and had delivered nothing, so the connection is gone.
+    Closed,
+}
+
 impl<Socket> Conn<Socket> {
     pub(super) fn became_writable(&mut self) {
         if !self.fast_open_pending {
@@ -147,8 +155,8 @@ impl<I: Io, T> Channel<I, T> {
         Ok(())
     }
 
-    /// Moves what the socket has into `in_buf`. `Ok(true)`: the socket then failed, which is to be acted on after what it delivered.
-    pub(super) fn read_packets(&mut self, now: Time, id: ConnId) -> Result<bool, Error> {
+    /// Moves what the socket has into `in_buf`.
+    pub(super) fn read_packets(&mut self, now: Time, id: ConnId) -> Read {
         let mut failed = false;
         let mut buffer = core::mem::take(&mut self.read_buffer);
         buffer.resize(LARGEST_MESSAGE, 0);
@@ -162,7 +170,12 @@ impl<I: Io, T> Channel<I, T> {
                 Transport::Tcp => self.io.recv(conn.socket, &mut buffer),
                 // The socket is connected, so the system has normally dropped what others send already.
                 Transport::Udp => match self.io.recv_from(conn.socket, &mut buffer) {
-                    Ok((_, from)) if expected.is_some_and(|it| it != (from.ip(), from.port())) => {
+                    // A port of 0: the system did not say.
+                    Ok((_, from))
+                        if expected.is_some_and(|(address, port)| {
+                            address != from.ip() || (from.port() != 0 && from.port() != port)
+                        }) =>
+                    {
                         Err(IoError::WouldBlock)
                     }
                     Ok((count, _)) => Ok(count),
@@ -197,9 +210,12 @@ impl<I: Io, T> Channel<I, T> {
                 .is_some_and(|conn| conn.in_buf.is_empty())
         {
             self.connection_failed(now, id, true, Err(Error::ECONNREFUSED));
-            return Err(Error::ECONNREFUSED);
+            return Read::Closed;
         }
-        Ok(failed)
+        match failed {
+            true => Read::ThenFailed,
+            false => Read::All,
+        }
     }
 
     /// `critical`: the server is to blame.
@@ -240,10 +256,11 @@ impl<I: Io, T> Channel<I, T> {
 
     pub(super) fn close_idle_connections(&mut self, now: Time) {
         let idle: Vec<ConnId> = self
-            .conns
+            .servers
             .iter()
-            .filter(|(_, conn)| conn.queries.is_empty())
-            .map(|(id, _)| *id)
+            .flat_map(|server| &server.connections)
+            .filter(|id| self.conns.get(id).is_some_and(|it| it.queries.is_empty()))
+            .copied()
             .collect();
         for id in idle {
             self.close_connection(now, id, Ok(()));

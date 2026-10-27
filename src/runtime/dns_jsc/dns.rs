@@ -2785,6 +2785,12 @@ impl Resolver {
                 monotonic_now(),
             )
         };
+        self.settle_what_finished();
+        result
+    }
+
+    /// The caller holds a ref.
+    fn settle_what_finished(&self) {
         loop {
             let completion = match self.channel.borrow_mut().as_mut() {
                 Some(channel) => channel.next_completion(),
@@ -2804,7 +2810,6 @@ impl Resolver {
             Some(time) => self.set_timer(time),
             None => self.remove_timer(),
         }
-        result
     }
 
     /// Ends every waiter of a request. The caller holds a ref: theirs go.

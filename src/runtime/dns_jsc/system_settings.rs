@@ -214,7 +214,7 @@ mod windows {
             if status != advapi32::ERROR_SUCCESS {
                 return None;
             }
-            let len = value.iter().position(|&unit| unit == 0)?;
+            let len = strings::index_of_scalar(&value, 0)?;
             value.truncate(len);
             (!value.is_empty()).then_some(value)
         }

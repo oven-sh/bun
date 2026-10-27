@@ -29,7 +29,7 @@ pub(crate) struct SystemIo {
     polls: ArrayHashMap<Fd, *mut PollType>,
 }
 
-fn io_error(error: sys::Error) -> IoError {
+fn io_error(error: &sys::Error) -> IoError {
     match error.get_errno() {
         sys::E::EAGAIN | sys::E::EINPROGRESS => IoError::WouldBlock,
         _ => IoError::Failed,
@@ -79,7 +79,7 @@ impl SystemIo {
             && socket::set_option(fd, libc::IPPROTO_TCP, libc::TCP_FASTOPEN_CONNECT, 1).is_ok();
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         let fast_open = false;
-        match socket::connect(fd, server).map_err(io_error) {
+        match socket::connect(fd, server).map_err(|error| io_error(&error)) {
             Ok(()) | Err(IoError::WouldBlock) => Ok(fast_open),
             Err(IoError::Failed) => Err(sys::Error::from_code(
                 sys::E::ECONNREFUSED,
@@ -120,12 +120,13 @@ impl Io for SystemIo {
         match sys::send_non_block(socket, data) {
             Ok(0) => Err(IoError::Failed),
             Ok(sent) => Ok(sent),
-            Err(error) => Err(io_error(error)),
+            Err(error) => Err(io_error(&error)),
         }
     }
 
     fn recv_from(&mut self, socket: Fd, buffer: &mut [u8]) -> Result<(usize, SocketAddr), IoError> {
-        let (received, from) = socket::recv_from(socket, buffer).map_err(io_error)?;
+        let (received, from) =
+            socket::recv_from(socket, buffer).map_err(|error| io_error(&error))?;
         Ok((received, from.to_socket_addr().ok_or(IoError::Failed)?))
     }
 
@@ -133,7 +134,7 @@ impl Io for SystemIo {
         match sys::recv_non_block(socket, buffer) {
             Ok(0) => Err(IoError::Failed),
             Ok(received) => Ok(received),
-            Err(error) => Err(io_error(error)),
+            Err(error) => Err(io_error(&error)),
         }
     }
 
@@ -284,7 +285,7 @@ impl Io for SystemIo {
         // SAFETY: the buffer has the units the function may write, and Winsock was started in `new`.
         let status =
             unsafe { sys::windows::GetHostNameW(buffer.as_mut_ptr(), buffer.len() as i32) };
-        let len = buffer.iter().position(|&unit| unit == 0)?;
+        let len = bun_core::strings::index_of_scalar(&buffer, 0)?;
         (status == 0).then(|| bun_core::strings::to_utf8_alloc(&buffer[..len]))
     }
 
@@ -338,7 +339,9 @@ impl Io for SystemIo {
             Err(_) => return Err(IoError::Failed),
         };
         let _close = scopeguard::guard(fd, socket::close);
-        if let Err(IoError::Failed) = socket::connect(fd, &destination).map_err(io_error) {
+        if let Err(IoError::Failed) =
+            socket::connect(fd, &destination).map_err(|error| io_error(&error))
+        {
             return Ok(None);
         }
         let local = socket::local_address(fd).map_err(|_| IoError::Failed)?;

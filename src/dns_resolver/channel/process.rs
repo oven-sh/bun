@@ -1,6 +1,8 @@
 //! Sending queries, and what happens when a socket is ready or time runs out.
 
-use super::conn::ConnId;
+use core::cmp::Reverse;
+
+use super::conn::{ConnId, Read};
 use super::server::ServerId;
 use super::{Channel, Owner, Query, SERVER_RETRY_CHANCE, SendFlags, Serial, Status};
 use crate::Error;
@@ -41,8 +43,10 @@ impl<I: Io, T> Channel<I, T> {
     }
 
     fn process_read(&mut self, now: Time, id: ConnId) {
-        let Ok(failed) = self.read_packets(now, id) else {
-            return;
+        let failed = match self.read_packets(now, id) {
+            Read::All => false,
+            Read::ThenFailed => true,
+            Read::Closed => return,
         };
         if self.read_answers(now, id).is_ok() && failed {
             self.connection_failed(now, id, true, Err(Error::ECONNREFUSED));
@@ -116,7 +120,7 @@ impl<I: Io, T> Channel<I, T> {
             return Ok(());
         }
 
-        self.cache.insert(now, &query.cache_key, &answer);
+        let _ = self.cache.insert(now, &query.cache_key, &answer);
         self.server_is_good(server);
         self.end_query(
             now,
@@ -131,7 +135,7 @@ impl<I: Io, T> Channel<I, T> {
 
     fn process_timeouts(&mut self, now: Time) {
         let mut deferred = DeferredList::new();
-        while let Some((time, serial)) = self.timeouts.first().copied()
+        while let Some(first @ (time, _, serial)) = self.timeouts.first().copied()
             && time <= now
         {
             if let Some((conn, server)) = self.queries.get(&serial).and_then(|it| it.sent_on) {
@@ -142,7 +146,7 @@ impl<I: Io, T> Channel<I, T> {
             }
             let timed_out = Err(Error::ETIMEOUT);
             let _ = self.requeue_query(now, serial, timed_out, true, None, Some(&mut deferred));
-            self.timeouts.remove(&(time, serial));
+            self.timeouts.remove(&first);
         }
         self.run_deferred(now, deferred);
     }
@@ -152,7 +156,8 @@ impl<I: Io, T> Channel<I, T> {
             return;
         };
         if let Some(time) = query.timeout.take() {
-            self.timeouts.remove(&(time, serial));
+            self.timeouts
+                .remove(&(time, Reverse(query.send_order), serial));
         }
         if let Some((conn, _)) = query.sent_on.take()
             && let Some(conn) = self.conns.get_mut(&conn)
@@ -368,7 +373,8 @@ impl<I: Io, T> Channel<I, T> {
             query.timeout = Some(timeout);
             query.sent_on = Some((conn, server));
             query.send_order = self.sends;
-            self.timeouts.insert((timeout, serial));
+            self.timeouts
+                .insert((timeout, Reverse(query.send_order), serial));
             if let Some(conn) = self.conns.get_mut(&conn) {
                 conn.queries.insert((query.send_order, serial));
             }

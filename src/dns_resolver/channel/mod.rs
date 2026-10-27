@@ -5,6 +5,7 @@ mod process;
 mod qcache;
 mod server;
 
+use core::cmp::Reverse;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -87,7 +88,7 @@ pub(crate) struct Query<T> {
     /// Why the last try failed.
     error_status: Status,
     sent_at: Time,
-    /// Its place in `Channel::timeouts`.
+    /// With `send_order`, its place in `Channel::timeouts`.
     timeout: Option<Time>,
     sent_on: Option<(ConnId, ServerId)>,
     /// Its place in `Conn::queries`.
@@ -126,7 +127,8 @@ pub struct Channel<I: Io, T> {
     pub(crate) queries: BTreeMap<Serial, Query<T>>,
     next_serial: Serial,
     serial_of_qid: BTreeMap<u16, Serial>,
-    timeouts: BTreeSet<(Time, Serial)>,
+    /// Of those due at one time, the one sent last comes first, as in c-ares's skip list.
+    timeouts: BTreeSet<(Time, Reverse<u64>, Serial)>,
     cache: QueryCache,
     read_buffer: Vec<u8>,
 
@@ -215,7 +217,7 @@ impl<I: Io, T> Channel<I, T> {
 
     /// When [`Channel::process`] is next to be called even if no socket is ready.
     pub fn next_timeout(&self) -> Option<Time> {
-        self.timeouts.first().map(|(time, _)| *time)
+        self.timeouts.first().map(|(time, ..)| *time)
     }
 
     /// Queries waiting for a server, those a lookup makes among them.
@@ -351,12 +353,21 @@ impl<I: Io, T> Channel<I, T> {
         request: &Record,
         owner: Owner<T>,
     ) -> Option<Serial> {
+        if self.serial_of_qid.len() > usize::from(u16::MAX) {
+            self.finish(now, owner, Err(Error::ENOMEM), None);
+            return None;
+        }
+        // Before anything else, as in c-ares, so that the same random bytes make the same choices.
+        let qid = loop {
+            let qid = self.random_u16();
+            if !self.serial_of_qid.contains_key(&qid) {
+                break qid;
+            }
+        };
         let refusal = if self.shut_down {
             Some(Error::EDESTRUCTION)
         } else if self.servers.is_empty() {
             Some(Error::ENOSERVER)
-        } else if self.serial_of_qid.len() > usize::from(u16::MAX) {
-            Some(Error::ENOMEM)
         } else {
             None
         };
@@ -382,12 +393,6 @@ impl<I: Io, T> Channel<I, T> {
                 };
                 self.finish(now, owner, Err(error), None);
                 return None;
-            }
-        };
-        let qid = loop {
-            let qid = self.random_u16();
-            if !self.serial_of_qid.contains_key(&qid) {
-                break qid;
             }
         };
         record.id = qid;

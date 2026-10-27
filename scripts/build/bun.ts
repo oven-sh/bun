@@ -107,6 +107,7 @@ function systemLibs(cfg: Config): string[] {
       "userenv.lib",
       "dbghelp.lib",
       "crypt32.lib",
+      "iphlpapi.lib", // libuv, and the DNS servers of the adapters
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
       "ws2_32.lib",
       "delayimp.lib", // required for /delayload: in release

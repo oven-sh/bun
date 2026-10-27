@@ -346,6 +346,8 @@ impl DateHeaderTimer {
 /// Samples the event loop for every enabled `monitorEventLoopDelay()` histogram of this thread, with one timer.
 pub(crate) struct EventLoopDelayMonitor {
     enabled: Vec<EnabledInterval>,
+    /// Those that sample every iteration of the event loop, and so need no timer. Weak for the same reason.
+    every_iteration: Vec<std::rc::Weak<Interval>>,
     pub(crate) event_loop_timer: EventLoopTimer,
 }
 
@@ -359,6 +361,7 @@ impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
         Self {
             enabled: Vec::new(),
+            every_iteration: Vec::new(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::EventLoopDelayMonitor),
         }
     }
@@ -371,23 +374,70 @@ impl EventLoopDelayMonitor {
     }
 
     fn enable(&mut self, interval: &Rc<Interval>) {
+        let Some(resolution_ms) = interval.resolution_ms else {
+            self.every_iteration.push(Rc::downgrade(interval));
+            return;
+        };
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
         self.enabled.push(EnabledInterval {
             interval: Rc::downgrade(interval),
-            next: now.add_ms(i64::from(interval.resolution_ms)),
+            next: now.add_ms(i64::from(resolution_ms)),
         });
         self.schedule();
     }
 
     fn disable(&mut self, interval: &Rc<Interval>) {
+        self.every_iteration
+            .retain(|enabled| !core::ptr::eq(enabled.as_ptr(), Rc::as_ptr(interval)));
         self.enabled
             .retain(|enabled| !core::ptr::eq(enabled.interval.as_ptr(), Rc::as_ptr(interval)));
         self.schedule();
     }
 
     pub(crate) fn disable_all(&mut self) {
+        self.every_iteration.clear();
         self.enabled.clear();
         self.schedule();
+    }
+
+    /// The event loop is about to wait for something to happen, for `timeout` at most.
+    #[inline]
+    pub(crate) fn before_poll(&mut self, timeout: Option<&Timespec>) {
+        if !self.every_iteration.is_empty() {
+            self.sample_before_poll(timeout.map(Timespec::ns));
+        }
+    }
+
+    #[cold]
+    fn sample_before_poll(&mut self, timeout_ns: Option<u64>) {
+        self.every_iteration.retain(|interval| {
+            let interval = interval.upgrade();
+            interval
+                .inspect(|interval| interval.before_poll(timeout_ns))
+                .is_some()
+        });
+    }
+
+    /// The event loop has waited.
+    #[inline]
+    pub(crate) fn after_poll(&mut self, vm: &bun_jsc::virtual_machine::VirtualMachine) {
+        if !self.every_iteration.is_empty() {
+            self.sample_after_poll(vm);
+        }
+    }
+
+    #[cold]
+    fn sample_after_poll(&mut self, vm: &bun_jsc::virtual_machine::VirtualMachine) {
+        let intervals = self
+            .every_iteration
+            .iter()
+            .filter_map(std::rc::Weak::upgrade);
+        let allocated: usize = intervals.map(|interval| interval.after_poll()).sum();
+        if allocated > 0 {
+            // This can collect, so it comes last.
+            vm.jsc_vm()
+                .report_extra_memory_allocated(bun_jsc::JSValue::UNDEFINED, allocated);
+        }
     }
 
     pub(crate) fn on_fire(
@@ -405,12 +455,14 @@ impl EventLoopDelayMonitor {
             let Some(interval) = enabled.interval.upgrade() else {
                 return false;
             };
-            if enabled.next.order(&now).is_le() {
+            if let Some(resolution_ms) = interval.resolution_ms
+                && enabled.next.order(&now).is_le()
+            {
                 // From the time of the sample, which is later than `now` if a timer before this one was slow: the
                 // next sample is then no sooner than the resolution. `All::drain_timers` pops every node due at
                 // or before `now`.
                 let (sampled_at, grown) = interval.sample();
-                enabled.next = sampled_at.add_ms(i64::from(interval.resolution_ms));
+                enabled.next = sampled_at.add_ms(i64::from(resolution_ms));
                 allocated += grown;
             }
             true

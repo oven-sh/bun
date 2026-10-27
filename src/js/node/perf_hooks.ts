@@ -7,10 +7,18 @@ const {
   PerformanceNodeEntry,
   kEmptyObject,
 } = require("internal/shared");
-const { validateFunction, validateInteger, validateObject } = require("internal/validators");
+const {
+  validateBoolean,
+  validateFunction,
+  validateInteger,
+  validateNumber,
+  validateObject,
+} = require("internal/validators");
 
 const createRecordable = $bindgen("histogram.bind.ts", "createRecordable");
 const createInterval = $bindgen("histogram.bind.ts", "createInterval");
+const createSlidingWindow = $bindgen("histogram.bind.ts", "createSlidingWindow");
+const importHistogramBytes = $bindgen("histogram.bind.ts", "importHistogram");
 const isHistogram = $bindgen("histogram.bind.ts", "isHistogram");
 
 const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
@@ -126,6 +134,85 @@ function eventLoopUtilization(_utilization1, _utilization2) {
 }
 
 const { PerformanceResourceTiming } = globalThis;
+
+type HistogramRange = { lowest?: number | bigint; highest?: number | bigint; figures?: number };
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/histogram.js#L908
+function validateHistogramOptions(lowest, highest, figures) {
+  if (typeof lowest !== "bigint") {
+    validateInteger(lowest, "options.lowest", 1, NumberMAX_SAFE_INTEGER);
+  } else if (lowest < 1n || lowest > kInt64Max) {
+    throw $ERR_OUT_OF_RANGE("options.lowest", `>= 1n && <= ${kInt64Max}n`, lowest);
+  }
+  if (typeof highest !== "bigint") {
+    validateInteger(highest, "options.highest", 1, NumberMAX_SAFE_INTEGER);
+  } else if (highest < 1n || highest > kInt64Max) {
+    throw $ERR_OUT_OF_RANGE("options.highest", `>= 1n && <= ${kInt64Max}n`, highest);
+  }
+  const minimumHighest = 2n * BigInt(lowest);
+  if (BigInt(highest) < minimumHighest) {
+    throw $ERR_OUT_OF_RANGE("options.highest", `>= 2 * options.lowest (${minimumHighest}n)`, highest);
+  }
+  validateInteger(figures, "options.figures", 1, 5);
+}
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/perf/event_loop_delay.js#L92
+function monitorEventLoopDelay(
+  options: HistogramRange & { resolution?: number; samplePerIteration?: boolean } = kEmptyObject,
+) {
+  validateObject(options, "options");
+  const { samplePerIteration = false, resolution = 10 } = options;
+  validateBoolean(samplePerIteration, "options.samplePerIteration");
+  validateInteger(resolution, "options.resolution", 1);
+  const { lowest = samplePerIteration ? 1 : 1000, highest = kInt64Max, figures = 3 } = options;
+  validateHistogramOptions(lowest, highest, figures);
+  return createInterval(lowest, highest, figures, resolution, samplePerIteration);
+}
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/histogram.js#L945
+function createHistogram(options: HistogramRange & { halfLife?: number; threshold?: number } = kEmptyObject) {
+  validateObject(options, "options");
+  const { lowest = 1, highest = NumberMAX_SAFE_INTEGER, figures = 3, halfLife = 0, threshold = 0 } = options;
+  validateHistogramOptions(lowest, highest, figures);
+  validateNumber(halfLife, "options.halfLife");
+  if (halfLife < 0) throw $ERR_OUT_OF_RANGE("options.halfLife", ">= 0", halfLife);
+  validateNumber(threshold, "options.threshold");
+  if (threshold < 0) throw $ERR_OUT_OF_RANGE("options.threshold", ">= 0", threshold);
+  return createRecordable(lowest, highest, figures, halfLife, threshold);
+}
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/histogram.js#L985
+function createSlidingWindowHistogram(
+  options: HistogramRange & { chunks: number; chunkDuration?: number; recordsPerChunk?: number },
+) {
+  validateObject(options, "options");
+  const { chunks, chunkDuration, recordsPerChunk, lowest = 1, highest = NumberMAX_SAFE_INTEGER, figures = 3 } = options;
+  validateInteger(chunks, "options.chunks", 1, 1024);
+  validateHistogramOptions(lowest, highest, figures);
+  const timeBased = chunkDuration !== undefined;
+  if (timeBased === (recordsPerChunk !== undefined)) {
+    throw $ERR_INVALID_ARG_VALUE(
+      "options",
+      options,
+      'must specify exactly one of "chunkDuration" or "recordsPerChunk"',
+    );
+  }
+  let rotateAt;
+  if (timeBased) {
+    validateInteger(chunkDuration, "options.chunkDuration", 1, 18_446_744_073_709);
+    rotateAt = BigInt(chunkDuration) * 1_000_000n;
+  } else {
+    validateInteger(recordsPerChunk, "options.recordsPerChunk", 1, NumberMAX_SAFE_INTEGER);
+    rotateAt = BigInt(recordsPerChunk);
+  }
+  return createSlidingWindow(lowest, highest, figures, chunks, timeBased, rotateAt);
+}
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/histogram.js#L1027
+function importHistogram(data: Uint8Array) {
+  if (!require("node:util/types").isUint8Array(data)) throw $ERR_INVALID_ARG_TYPE("data", "Uint8Array", data);
+  return importHistogramBytes(data);
+}
 
 const kNodeObserver = Symbol("kNodeObserver");
 const kObserverCallback = Symbol("kObserverCallback");
@@ -308,40 +395,9 @@ export default {
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
   eventLoopUtilization,
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/event_loop_delay.js#L81
-  monitorEventLoopDelay: function monitorEventLoopDelay(options: { resolution?: number } = kEmptyObject) {
-    validateObject(options, "options");
-
-    const { resolution = 10 } = options;
-    validateInteger(resolution, "options.resolution", 1);
-
-    return createInterval(resolution);
-  },
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js#L367
-  createHistogram: function createHistogram(
-    options: { lowest?: number | bigint; highest?: number | bigint; figures?: number } = kEmptyObject,
-  ) {
-    validateObject(options, "options");
-    const { lowest = 1, highest = NumberMAX_SAFE_INTEGER, figures = 3 } = options;
-    if (typeof lowest !== "bigint") {
-      validateInteger(lowest, "options.lowest", 1, NumberMAX_SAFE_INTEGER);
-    } else if (lowest < 1n || lowest > kInt64Max) {
-      throw $ERR_OUT_OF_RANGE("options.lowest", `>= 1n && <= ${kInt64Max}n`, lowest);
-    }
-    if (typeof highest !== "bigint") {
-      validateInteger(highest, "options.highest", 2 * Number(lowest), NumberMAX_SAFE_INTEGER);
-    } else if (highest < 2n * BigInt(lowest)) {
-      throw $ERR_INVALID_ARG_VALUE_RangeError("options.highest", highest);
-    } else if (highest > kInt64Max) {
-      throw $ERR_OUT_OF_RANGE("options.highest", `<= ${kInt64Max}n`, highest);
-    }
-    validateInteger(figures, "options.figures", 1, 5);
-
-    const histogram = createRecordable(lowest, highest, figures);
-    if (histogram === null) {
-      throw $ERR_INVALID_ARG_VALUE("options.lowest", lowest, `is too large for ${figures} significant figures`);
-    }
-    return histogram;
-  },
+  monitorEventLoopDelay,
+  createHistogram,
+  createSlidingWindowHistogram,
+  importHistogram,
   PerformanceResourceTiming,
 };

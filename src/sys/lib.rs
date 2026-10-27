@@ -3190,66 +3190,101 @@ mod posix_impl {
         );
         Ok(n as usize)
     }
-    /// Latched once `recv(2)` / `send(2)` returned EPERM or ENOSYS: a seccomp
-    /// policy that blocks the socket syscalls (to deny networking) but leaves
-    /// `read(2)` / `write(2)` alone. Node (libuv) only ever uses `read`/`write` on
-    /// a stream handle, so those keep working on the socketpair behind a child's
-    /// stdio. Process-wide because a seccomp filter is.
+    /// Set once `recv(2)` / `send(2)` failed with EPERM or ENOSYS while `read(2)` /
+    /// `write(2)` on the same fd did not: a seccomp policy that blocks the socket
+    /// syscalls (to deny networking) but leaves the file syscalls alone. libuv
+    /// only uses `read`/`write` on a stream handle, so Node keeps working on the
+    /// socketpair behind a child's stdio. One flag for the process: the fallback
+    /// is valid on any socket, so a thread the filter does not cover (a
+    /// `prctl(PR_SET_SECCOMP)` without TSYNC is per thread) only loses
+    /// `MSG_NOSIGNAL`, which SIGPIPE being ignored makes moot. The flag says
+    /// "prefer read/write", not "the socket syscalls are denied".
     static SOCKET_RECV_DENIED: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
     static SOCKET_SEND_DENIED: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+    /// Sockets have `FMODE_NOWAIT` since Linux 6.4. Before that `RWF_NOWAIT` says EOPNOTSUPP on every socket.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    static SOCKET_RWF_NOWAIT_UNSUPPORTED: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
     fn is_socket_syscall_denied(err: &Error) -> bool {
         matches!(err.get_errno(), E::EPERM | E::ENOSYS)
     }
 
-    /// `read(2)` stands in for `recv(MSG_DONTWAIT)`: `poll(0)` first so a
-    /// blocking socket with nothing to read reports EAGAIN instead of blocking.
+    /// `read(2)` stands in for `recv(MSG_DONTWAIT)`, the same way the pipe path
+    /// reads: `RWF_NOWAIT` where the kernel has it, else `poll(0)` then `read(2)`.
     fn recv_fallback(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if !SOCKET_RWF_NOWAIT_UNSUPPORTED.load(core::sync::atomic::Ordering::Relaxed) {
+            match read_nowait(fd, buf)? {
+                Some(n) => return Ok(n),
+                None => {
+                    SOCKET_RWF_NOWAIT_UNSUPPORTED.store(true, core::sync::atomic::Ordering::Relaxed)
+                }
+            }
+        }
         match bun_core::is_readable(fd) {
             bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
             bun_core::Pollable::NotReady => Err(Error::retry().with_fd(fd)),
         }
     }
 
-    /// `write(2)` stands in for `send(MSG_DONTWAIT | MSG_NOSIGNAL)`. `poll(0)`
-    /// first, as in `recv_fallback`. SIGPIPE is ignored process-wide at startup,
-    /// so a broken pipe still reports EPIPE.
+    /// `write(2)` stands in for `send(MSG_DONTWAIT | MSG_NOSIGNAL)`, as in
+    /// `recv_fallback`. Without `RWF_NOWAIT` a socket that is not `O_NONBLOCK`
+    /// (stdio after an `inherit` spawn) blocks a write larger than the space
+    /// `poll` saw, as Node does. SIGPIPE is ignored at startup, so a closed peer
+    /// still reports EPIPE.
     fn send_fallback(fd: Fd, buf: &[u8]) -> Maybe<usize> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if !SOCKET_RWF_NOWAIT_UNSUPPORTED.load(core::sync::atomic::Ordering::Relaxed) {
+            match write_nowait(fd, buf)? {
+                Some(n) => return Ok(n),
+                None => {
+                    SOCKET_RWF_NOWAIT_UNSUPPORTED.store(true, core::sync::atomic::Ordering::Relaxed)
+                }
+            }
+        }
         match bun_core::is_writable(fd) {
             bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
             bun_core::Pollable::NotReady => Err(Error::retry().with_fd(fd)),
         }
     }
 
-    /// `recv(MSG_DONTWAIT)`, or `poll(0)` + `read(2)` once the kernel has denied `recv`.
+    /// `recv(MSG_DONTWAIT)`, or `recv_fallback` once the kernel has denied `recv`.
     pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         use core::sync::atomic::Ordering;
         if SOCKET_RECV_DENIED.load(Ordering::Relaxed) {
             return recv_fallback(fd, buf);
         }
         match recv(fd, buf, MSG_DONTWAIT) {
-            Err(err) if is_socket_syscall_denied(&err) => {
-                SOCKET_RECV_DENIED.store(true, Ordering::Relaxed);
-                recv_fallback(fd, buf)
-            }
+            Err(err) if is_socket_syscall_denied(&err) => match recv_fallback(fd, buf) {
+                // The fd itself is denied (a firewall rule, an LSM), not the syscall: report the recv error.
+                Err(fallback_err) if is_socket_syscall_denied(&fallback_err) => Err(err),
+                rc => {
+                    SOCKET_RECV_DENIED.store(true, Ordering::Relaxed);
+                    rc
+                }
+            },
             rc => rc,
         }
     }
     /// `send(MSG_DONTWAIT | MSG_NOSIGNAL)` so a broken-pipe write returns EPIPE
-    /// instead of raising SIGPIPE, or `poll(0)` + `write(2)` once the kernel has
-    /// denied `send`.
+    /// instead of raising SIGPIPE, or `send_fallback` once the kernel has denied
+    /// `send`.
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         use core::sync::atomic::Ordering;
         if SOCKET_SEND_DENIED.load(Ordering::Relaxed) {
             return send_fallback(fd, buf);
         }
         match send(fd, buf, SEND_FLAGS_NONBLOCK) {
-            Err(err) if is_socket_syscall_denied(&err) => {
-                SOCKET_SEND_DENIED.store(true, Ordering::Relaxed);
-                send_fallback(fd, buf)
-            }
+            Err(err) if is_socket_syscall_denied(&err) => match send_fallback(fd, buf) {
+                Err(fallback_err) if is_socket_syscall_denied(&fallback_err) => Err(err),
+                rc => {
+                    SOCKET_SEND_DENIED.store(true, Ordering::Relaxed);
+                    rc
+                }
+            },
             rc => rc,
         }
     }

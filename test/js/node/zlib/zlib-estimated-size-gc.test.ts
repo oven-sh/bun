@@ -12,7 +12,7 @@ import zlib from "node:zlib";
 
 // estimateShallowMemoryUsageOf(cell) == sizeof(cell) + estimated_size(). `min`
 // is a floor below the per-mode footprint the constructor caches (brotli encode
-// 5143, brotli decode 855, zstd compress about 14000, zstd decompress about 31000).
+// 5143, brotli decode 855, zstd compress about 15000, zstd decompress about 36000).
 function checkFootprintStableAcrossClose(create: () => any, min: number) {
   const engine = create();
   engine.on("error", () => {});

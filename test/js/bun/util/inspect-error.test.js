@@ -873,8 +873,9 @@ setTimeout(() => {
     expect(iterations).toBe(0);
   });
 
-  // Only an array has a length that bounds the walk.
-  test("an `errors` that is not an array is not walked", () => {
+  // Only an array has a length that bounds the walk. Any other value is a
+  // property line.
+  test("an `errors` that is not an array is a property, and no iterator runs", () => {
     let steps = 0;
     const iterable = new AggregateError([], "outer");
     iterable.errors = (function* () {
@@ -883,13 +884,17 @@ setTimeout(() => {
         yield new Error(message);
       }
     })();
-    expect(inspected(new Error("wrapper", { cause: iterable }))).toEqual(["error: wrapper", "AggregateError: outer"]);
-    expect(inspected(iterable)).toEqual(["AggregateError: outer"]);
+    expect(inspected(new Error("wrapper", { cause: iterable }))).toEqual([
+      "error: wrapper",
+      "AggregateError: outer",
+      " errors: {},",
+    ]);
+    expect(inspected(iterable)).toEqual(["AggregateError: outer", " errors: {},"]);
     expect(steps).toBe(0);
 
     const inSet = new AggregateError([], "outer");
-    inSet.errors = new Set([new Error("in a set")]);
-    expect(inspected(inSet)).toEqual(["AggregateError: outer"]);
+    inSet.errors = new Set(["in a set"]);
+    expect(inspected(inSet)).toEqual(["AggregateError: outer", " errors: Set(1) {", '  "in a set",', "},"]);
   });
 
   test("an own enumerable `errors` prints once", () => {
@@ -1191,7 +1196,7 @@ test("rejects", async () => {
       cmd: [bunExe(), "test", "./a.test.js", "--reporter=junit", "--reporter-outfile=junit.xml"],
       cwd: String(dir),
       env: bunEnv,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -1208,12 +1213,17 @@ test("rejects", async () => {
     expect(exitCode).toBe(1);
   });
 
-  // It has no message and no stack, so its members carry the report.
-  test("the AggregateError of Promise.any adds no annotation and no JUnit failure of its own", async () => {
+  // It has no message and no stack, so its members carry the report. With no
+  // member, it reports itself.
+  test("an AggregateError with no message and no stack reports its members in its place", async () => {
     using dir = tempDir("inspect-aggregate-any", {
       "a.test.js": `import { test } from "bun:test";
 test("rejects", async () => {
   await Promise.any([Promise.reject(new Error("first rejection")), Promise.reject(new TypeError("second rejection"))]);
+});
+test("has no member", () => {
+  Error.stackTraceLimit = 0;
+  throw new AggregateError([]);
 });
 `,
     });
@@ -1221,19 +1231,22 @@ test("rejects", async () => {
       cmd: [bunExe(), "test", "./a.test.js", "--reporter=junit", "--reporter-outfile=junit.xml"],
       cwd: String(dir),
       env: { ...bunEnv, GITHUB_ACTIONS: "true" },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     const junit = await Bun.file(`${dir}/junit.xml`).text();
     expect({
       printed: outline(stderr).filter(line => /^ *\w*[Ee]rror: /.test(line)),
-      annotations: stderr.split("\n").filter(line => line.startsWith("::error ")).length,
-      failure: /<failure type="[^"]*" message="[^"]*">/.exec(junit)?.[0],
+      annotations: stderr
+        .split("\n")
+        .filter(line => line.startsWith("::error "))
+        .map(line => /title=(\w*[Ee]rror)/.exec(line)?.[1]),
+      failures: junit.match(/<failure[^>]*>/g),
     }).toEqual({
-      printed: ["AggregateError: ", "  error: first rejection", "  TypeError: second rejection"],
-      annotations: 2,
-      failure: '<failure type="Error" message="first rejection">',
+      printed: ["AggregateError: ", "  error: first rejection", "  TypeError: second rejection", "AggregateError: "],
+      annotations: ["error", "TypeError", "AggregateError"],
+      failures: ['<failure type="Error" message="first rejection">', '<failure type="AggregateError">'],
     });
     expect(exitCode).toBe(1);
   });
@@ -1252,7 +1265,7 @@ const listener = net.createServer().listen(0, "127.0.0.1", () => {
       lookup: (hostname, options, callback) =>
         callback(null, [
           { address: "127.0.0.1", family: 4 },
-          { address: "127.0.0.2", family: 4 },
+          { address: "::1", family: 6 },
         ]),
     });
     socket.on("error", error => console.error(error));
@@ -1262,11 +1275,13 @@ const listener = net.createServer().listen(0, "127.0.0.1", () => {
       },
       "index.cjs",
     );
+    // Nothing listens at the port. A host with no IPv6 fails the second
+    // connect with another code.
     const names = outline(stderr).filter(line => /^ *\w*[Ee]rror: /.test(line));
-    expect(names.map(line => line.replace(/connect \w+ (\S+):\d+$/, "connect $1"))).toEqual([
+    expect(names.map(line => line.replace(/connect .*$/, "connect"))).toEqual([
       "AggregateError: ",
-      "  error: connect 127.0.0.1",
-      "  error: connect 127.0.0.2",
+      "  error: connect",
+      "  error: connect",
     ]);
     expect(exitCode).toBe(0);
   });

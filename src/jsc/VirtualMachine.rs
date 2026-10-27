@@ -6158,8 +6158,8 @@ impl VirtualMachine {
 
     /// Members of an error nested this deep print at the column of their
     /// AggregateError. Every level of indentation is one more writer that
-    /// each byte of a member passes through, and `Formatter::depth` counts
-    /// every nested error, so this bounds them.
+    /// each byte of a member passes through, on the stack too, and
+    /// `Formatter::depth` counts every nested error, so this bounds them.
     const AGGREGATE_MEMBER_INDENT_MAX_DEPTH: u16 = 32;
 
     /// Note: takes runtime bools and the concrete `bun_core::io::Writer`.
@@ -6278,6 +6278,17 @@ impl VirtualMachine {
         Some(errors)
     }
 
+    /// Whether the AggregateError that `value` is, or that the `JSC::Exception`
+    /// cell `value` holds, has an `errors` array with members. Runs no user
+    /// code.
+    fn has_aggregate_error_members(value: JSValue, global: &JSGlobalObject) -> bool {
+        value
+            .to_error()
+            .filter(|error| error.is_aggregate_error(global))
+            .and_then(|aggregate| aggregate.fast_get_direct(global, jsc::BuiltinName::errors))
+            .is_some_and(|errors| errors.is_array() && errors.array_length() != 0)
+    }
+
     /// Prints one member of an AggregateError, or a marker in its place.
     #[allow(clippy::too_many_arguments)]
     fn print_aggregate_error_member(
@@ -6323,18 +6334,38 @@ impl VirtualMachine {
         formatter.depth = formatter.depth.saturating_sub(1);
     }
 
-    /// Prints the members of the AggregateError that `error_instance` is, or
-    /// that the `JSC::Exception` cell `error_instance` holds, under the lines
-    /// `print_error_instance_body` wrote for it: one blank line before each
-    /// member, and each member indented. `after_blank_line` is whether those
-    /// lines ended in a blank line. Returns how many `\n` end the last member
-    /// (see `LinePrefixWriter::trailing_newlines`), or `None` when there was
-    /// no member.
+    /// The AggregateError that the `JSC::Exception` cell `value` holds, and
+    /// its `errors` array.
+    fn aggregate_error_in_exception(
+        value: JSValue,
+        global: &JSGlobalObject,
+    ) -> Option<(JSValue, JSValue)> {
+        let aggregate = value
+            .to_error()
+            .filter(|error| error.is_aggregate_error(global))?;
+        match aggregate.fast_get(global, jsc::BuiltinName::errors) {
+            Ok(Some(errors)) if errors.is_array() => Some((aggregate, errors)),
+            Ok(_) => None,
+            Err(_) => {
+                global.clear_exception();
+                None
+            }
+        }
+    }
+
+    /// Prints the members that `errors`, the `errors` array of `aggregate`,
+    /// holds, under the lines `print_error_instance_body` wrote for that
+    /// AggregateError: one blank line before each member, and each member
+    /// indented. `after_blank_line` is whether those lines ended in a blank
+    /// line. Returns how many `\n` end the last member (see
+    /// `LinePrefixWriter::trailing_newlines`), or `None` when there was no
+    /// member.
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     fn print_members_under_aggregate_error(
         &mut self,
-        error_instance: JSValue,
+        aggregate: JSValue,
+        errors: JSValue,
         after_blank_line: bool,
         mut exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
@@ -6348,22 +6379,7 @@ impl VirtualMachine {
         if formatter.failed || global_ref.has_exception() {
             return None;
         }
-        let aggregate = match error_instance.to_error() {
-            Some(error) if error.is_aggregate_error(global_ref) => error,
-            _ => return None,
-        };
-        let errors = match aggregate.fast_get(global_ref, jsc::BuiltinName::errors) {
-            Ok(Some(errors)) => errors,
-            Ok(None) => return None,
-            Err(_) => {
-                global_ref.clear_exception();
-                return None;
-            }
-        };
-        // Only an array: its length bounds the walk, and no iterator runs.
-        if !errors.is_array() {
-            return None;
-        }
+        // The length of the array bounds the walk, and no iterator runs.
         let Ok(mut members) = errors.array_iterator(global_ref) else {
             global_ref.clear_exception();
             return None;
@@ -6375,16 +6391,8 @@ impl VirtualMachine {
         // A member that is this AggregateError prints `[Circular]`.
         let newly_visited = formatter.visited_insert(aggregate);
         let had_errors = self.had_errors;
-        let indent = if formatter.depth < Self::AGGREGATE_MEMBER_INDENT_MAX_DEPTH {
-            Self::AGGREGATE_MEMBER_INDENT
-        } else {
-            b""
-        };
-        let mut indented = crate::console_object::LinePrefixWriter::new(
-            writer,
-            indent,
-            if after_blank_line { 2 } else { 1 },
-        );
+        let is_indented = formatter.depth < Self::AGGREGATE_MEMBER_INDENT_MAX_DEPTH;
+        let mut trailing_newlines: u8 = if after_blank_line { 2 } else { 1 };
         loop {
             let member = match members.next() {
                 Ok(Some(member)) => member,
@@ -6394,22 +6402,42 @@ impl VirtualMachine {
                     break;
                 }
             };
-            for _ in indented.trailing_newlines()..2 {
-                let _ = indented.write_all(b"\n");
-            }
             // A member prints as an error that nothing holds: its
             // Error-valued properties go to its queue, and a build error
             // writes no blank line of its own.
             self.had_errors = false;
-            let mut adapter = crate::console_object::DynWriteAdapter::new(&mut indented);
-            self.print_aggregate_error_member(
-                member,
-                exception_list.as_deref_mut(),
-                formatter,
-                adapter.interface(),
-                allow_ansi_color,
-                allow_side_effects,
-            );
+            if is_indented {
+                let mut indented = crate::console_object::LinePrefixWriter::new(
+                    &mut *writer,
+                    Self::AGGREGATE_MEMBER_INDENT,
+                    trailing_newlines,
+                );
+                for _ in trailing_newlines..2 {
+                    let _ = indented.write_all(b"\n");
+                }
+                let mut adapter = crate::console_object::DynWriteAdapter::new(&mut indented);
+                self.print_aggregate_error_member(
+                    member,
+                    exception_list.as_deref_mut(),
+                    formatter,
+                    adapter.interface(),
+                    allow_ansi_color,
+                    allow_side_effects,
+                );
+                trailing_newlines = indented.trailing_newlines();
+            } else {
+                // Nothing counts the line ends here.
+                let _ = writer.write_all(b"\n");
+                self.print_aggregate_error_member(
+                    member,
+                    exception_list.as_deref_mut(),
+                    formatter,
+                    writer,
+                    allow_ansi_color,
+                    allow_side_effects,
+                );
+                trailing_newlines = 1;
+            }
             if global_ref.has_exception() {
                 global_ref.clear_exception();
                 break;
@@ -6422,7 +6450,7 @@ impl VirtualMachine {
         if newly_visited {
             formatter.visited_remove(aggregate);
         }
-        Some(indented.trailing_newlines())
+        Some(trailing_newlines)
     }
 
     fn print_error_from_maybe_private_data(
@@ -7151,7 +7179,8 @@ impl VirtualMachine {
         let allow_side_effects_here = allow_side_effects
             && !(is_aggregate_error
                 && exception.message.is_empty()
-                && exception.stack.frames_len == 0);
+                && exception.stack.frames_len == 0
+                && Self::has_aggregate_error_members(error_instance, self.global()));
 
         if allow_side_effects_here {
             if let Some(debugger) = self.debugger.as_deref_mut() {
@@ -7445,6 +7474,18 @@ impl VirtualMachine {
         // Whether the property lines, which end in a blank line, are the last
         // lines so far.
         let mut after_blank_line = false;
+        // The `errors` of an AggregateError, read once. It is not enumerable.
+        // The members of an array print after the stack trace. Any other
+        // value is the last property line.
+        let mut aggregate_members = None;
+        let mut errors_property = None;
+        if is_error_instance && is_aggregate_error {
+            match error_instance.fast_get(global_ref, jsc::BuiltinName::errors) {
+                Ok(Some(errors)) if errors.is_array() => aggregate_members = Some(errors),
+                Ok(errors) => errors_property = errors,
+                Err(_) => global_ref.clear_exception(),
+            }
+        }
         if is_error_instance {
             let mut saw_cause = false;
             // SAFETY: `is_error_instance` ⇒ object.
@@ -7463,7 +7504,14 @@ impl VirtualMachine {
             )?;
             let longest_name = iterator.get_longest_property_name().min(10);
             let mut is_first_property = true;
-            while let Some((field, value)) = iterator.next()? {
+            loop {
+                let (field, value) = match iterator.next()? {
+                    Some(property) => property,
+                    None => match errors_property.take() {
+                        Some(errors) => (bun_core::StringView::static_("errors"), errors),
+                        None => break,
+                    },
+                };
                 if field.eq_ascii(b"message") || field.eq_ascii(b"name") || field.eq_ascii(b"stack")
                 {
                     continue;
@@ -7471,14 +7519,13 @@ impl VirtualMachine {
                 if field.eq_ascii(b"code") && code.is_some() {
                     continue;
                 }
-                // An own enumerable `errors`, such as a class field: the
-                // member walk prints the members that an array holds.
-                if is_aggregate_error
-                    && field.eq_ascii(b"errors")
-                    && value.is_array()
-                    && value.array_length() != 0
-                {
-                    continue;
+                // An own enumerable `errors`, such as a class field: it is
+                // this line, or the members that an array holds.
+                if is_aggregate_error && field.eq_ascii(b"errors") {
+                    errors_property = None;
+                    if value.is_array() && value.array_length() != 0 {
+                        continue;
+                    }
                 }
 
                 let kind = value.js_type();
@@ -7648,20 +7695,27 @@ impl VirtualMachine {
         // follows them as a `cause` follows any other error.
         let mut newlines_after_members = None;
         if is_aggregate_error {
-            let wrote_frame = exception
-                .stack
-                .frames()
-                .iter()
-                .any(|frame| !frame.source_url.is_empty() || !frame.function_name.is_empty());
-            newlines_after_members = self.print_members_under_aggregate_error(
-                error_instance,
-                after_blank_line && !wrote_frame,
-                exception_list,
-                formatter,
-                writer,
-                allow_ansi_color,
-                allow_side_effects,
-            );
+            let members = if is_error_instance {
+                aggregate_members.map(|errors| (error_instance, errors))
+            } else {
+                Self::aggregate_error_in_exception(error_instance, global_ref)
+            };
+            if let Some((aggregate, errors)) = members {
+                let wrote_frame =
+                    exception.stack.frames().iter().any(|frame| {
+                        !frame.source_url.is_empty() || !frame.function_name.is_empty()
+                    });
+                newlines_after_members = self.print_members_under_aggregate_error(
+                    aggregate,
+                    errors,
+                    after_blank_line && !wrote_frame,
+                    exception_list,
+                    formatter,
+                    writer,
+                    allow_ansi_color,
+                    allow_side_effects,
+                );
+            }
         }
 
         if !*recorded && !errors_to_append.is_empty() {

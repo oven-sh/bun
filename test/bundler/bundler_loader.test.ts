@@ -544,6 +544,23 @@ describe("bundler", async () => {
     },
   });
 
+  itBundled("loader/AssetEntryPointInlinedByStylesheet", {
+    backend: "cli",
+    outdir: "/out",
+    entryPoints: ["/logo.png", "/style.css"],
+    outputPaths: ["/out/logo.js", "/out/style.css"],
+    files: {
+      "/logo.png": "png bytes",
+      "/style.css": `body { background: url("./logo.png"); }`,
+    },
+    onAfterBundle(api) {
+      const png = readdirSync(api.outdir).find(x => x.endsWith(".png"))!;
+      expect(api.readFile(join("/out", png))).toBe("png bytes");
+      expect(api.readFile("/out/logo.js")).toContain(`"./${png}"`);
+      expect(api.readFile("/out/style.css")).toContain(`url("data:image/png;base64,`);
+    },
+  });
+
   describe("handles empty files", () => {
     for (const target of ["bun", "node", "browser"] as const) {
       itBundled(`${target}/loader-empty-text-file`, {

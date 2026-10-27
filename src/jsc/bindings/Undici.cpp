@@ -7,6 +7,7 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "ZigGlobalObject.h"
 
+#include "GeneratedResponse.h"
 #include "JSFetchHeaders.h"
 #include "JSDOMFormData.h"
 #include "JavaScriptCore/ObjectConstructor.h"
@@ -34,8 +35,8 @@ JSC::JSValue createUndiciInternalBinding(Zig::GlobalObject* globalObject)
     auto& vm = JSC::getVM(globalObject);
 
     auto fields = std::make_tuple(
-        globalObject->JSResponseConstructor(),
-        globalObject->JSRequestConstructor(),
+        Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSResponse>(globalObject),
+        Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSRequest>(globalObject),
         WebCore::JSFetchHeaders::getConstructor(vm, globalObject),
         WebCore::JSDOMFormData::getConstructor(vm, globalObject),
         globalObject->JSDOMFileConstructor(),

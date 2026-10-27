@@ -56,7 +56,8 @@ pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
 pub use string::{
     EncodedSlice, HashedString, MutableString, NodeEncoding, SmolStr, String, StringBuilder,
-    StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
+    StringOrView, StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt,
+    WTFStringImplStruct,
 };
 pub use string::{
     STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier, lexer,
@@ -2760,7 +2761,7 @@ pub mod ffi {
     ///
     /// Replaces the `// SAFETY: H is a ZST → mem::zeroed()` comment repeated
     /// at every callback trampoline that smuggles a generic `H: Fn*` through C
-    /// (`uws_sys::thunk`, `sql_jsc::IntoJSHostFn`, `server_body::route_thunk`).
+    /// (`uws_sys::thunk`, `server_body::route_thunk`).
     #[inline(always)]
     pub fn conjure_zst<H>() -> H {
         const {

@@ -57,7 +57,6 @@ const expected = (name: string) => ({ code: `Expected code to be a string or Uin
 export const Transpiler = b.class({
   rustPath: "crate::api::js_transpiler::JSTranspiler",
   refCounted: true,
-  configurable: false,
   construct: {
     args: { options: TranspilerOptions.nullable },
     expected: { options: "Expected an object" },

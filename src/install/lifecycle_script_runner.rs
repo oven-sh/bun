@@ -222,7 +222,12 @@ pub fn replace_package_manager_run(
             }
             b'p' => {
                 if delimiter > 0 {
-                    if strings::has_prefix_comptime(&script[start..], b"pnpm run ") {
+                    // pnpm's `-w` is `--workspace-root`. `bun run` has npm's `-w`, which takes a value.
+                    if strings::has_prefix_comptime(&script[start..], b"pnpm run ")
+                        && !strings::tokenize_any(&script[start + b"pnpm run ".len()..], b" \t")
+                            .take_while(|word| word[0] == b'-')
+                            .any(|word| word == b"-w")
+                    {
                         append_bun_run(copy_script);
                         copy_script.push(b' ');
                         entry_i += b"pnpm run ".len();
@@ -269,8 +274,9 @@ fn append_npm_run_in_workspaces(out: &mut Vec<u8>, args: &[u8]) -> usize {
     let mut selects_workspaces = false;
     let mut tokens = strings::tokenize_any(command, b" \t");
     while let Some(token) = tokens.next() {
-        let workspace = match token {
-            b"-w" | b"--workspace" => tokens.next(),
+        // The `=` stays: a shell expands `-w={a,b}` to two flags, and `-w {a,b}` to a value and a script name.
+        let (workspace, separator): (Option<&[u8]>, &[u8]) = match token {
+            b"-w" | b"--workspace" => (tokens.next(), b" "),
             b"--workspaces" | b"--ws" => {
                 selects_workspaces = true;
                 flags.extend_from_slice(b" --workspaces");
@@ -291,7 +297,7 @@ fn append_npm_run_in_workspaces(out: &mut Vec<u8>, args: &[u8]) -> usize {
                 .strip_prefix(b"--workspace=")
                 .or_else(|| token.strip_prefix(b"-w="))
             {
-                Some(workspace) => Some(workspace),
+                Some(workspace) => (Some(workspace), b"="),
                 None => {
                     rest.push(b' ');
                     rest.extend_from_slice(token);
@@ -308,12 +314,9 @@ fn append_npm_run_in_workspaces(out: &mut Vec<u8>, args: &[u8]) -> usize {
             return 0;
         };
         selects_workspaces = true;
-        flags.extend_from_slice(b" --filter=");
-        // npm also accepts the workspace's folder. `--filter` tells a path from a name by the
-        // leading dot.
-        if strings::contains_char(workspace, b'/') && !matches!(workspace[0], b'@' | b'.' | b'/') {
-            flags.extend_from_slice(b"./");
-        }
+        // The short flag: a `bun` in `PATH` from before the flag refuses `-w`, but skips `--workspace` and runs this package's script.
+        flags.extend_from_slice(b" -w");
+        flags.extend_from_slice(separator);
         flags.extend_from_slice(workspace);
     }
 

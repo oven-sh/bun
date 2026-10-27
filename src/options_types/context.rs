@@ -35,7 +35,7 @@ pub struct ContextData {
     pub bundler_options: BundlerOptions,
     pub runtime_options: RuntimeOptions,
 
-    pub filters: Vec<Box<[u8]>>,
+    pub filters: Vec<PackageFilter>,
     pub workspaces: bool,
     pub if_present: bool,
     pub parallel: bool,
@@ -44,6 +44,23 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
+}
+
+/// Which workspace packages `bun run` runs a script in.
+pub enum PackageFilter {
+    /// `--filter <pattern>`
+    Pattern(Box<[u8]>),
+    /// `--workspace <value>`: a package's name, its folder or the parent of its folder, as in npm.
+    Workspace(Box<[u8]>),
+}
+
+impl PackageFilter {
+    /// The value as it was given.
+    pub fn text(&self) -> &[u8] {
+        match self {
+            PackageFilter::Pattern(text) | PackageFilter::Workspace(text) => text,
+        }
+    }
 }
 
 impl Default for ContextData {

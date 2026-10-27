@@ -4120,6 +4120,46 @@ describe("bundler", () => {
   });
 });
 
+// What the tests of memory and of time below measure: one `bun build` of `entry` in `dir`. The build must be clean,
+// and it must compile a component, unless the entry is "empty.jsx", which has none.
+const buildWithReactCompiler = (entry: string) => [
+  bunExe(),
+  "build",
+  "--react-compiler",
+  "--target=browser",
+  "--external=*",
+  entry,
+];
+
+function expectBuilt(entry: string, stdout: string, stderr: string, exitCode: number | null) {
+  expect(stderr).toBe("");
+  expect(stdout.includes("react/compiler-runtime")).toBe(entry !== "empty.jsx");
+  expect(exitCode).toBe(0);
+}
+
+async function peakMBOfBuild(dir: string, entry: string, env = bunEnv) {
+  const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+    cmd: buildWithReactCompiler(entry),
+    env,
+    cwd: dir,
+  });
+  expectBuilt(entry, stdout, stderr, exitCode);
+  return maxRSS / 1024 / 1024;
+}
+
+async function cpuTimeOfBuild(dir: string, entry: string) {
+  await using proc = Bun.spawn({
+    cmd: buildWithReactCompiler(entry),
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expectBuilt(entry, stdout, stderr, exitCode);
+  return Number(proc.resourceUsage()!.cpuTime.total);
+}
+
 // Three passes kept one copy of their work per basic block or per nesting
 // level of a value, so memory grew with the square of the size of a component
 // that has no loop at all. The fixpoint in InferMutationAliasingEffects kept
@@ -4154,20 +4194,8 @@ test("react-compiler memory does not grow with the square of the size of a compo
     `,
   });
 
-  const peakMB = async (entry: string) => {
-    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
-      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
-      env: withoutAsanQuarantine(bunEnv),
-      cwd: String(dir),
-    });
-    expect(stderr).toBe("");
-    // The component compiled, or there is no component.
-    expect(stdout.includes("react/compiler-runtime")).toBe(entry !== "empty.jsx");
-    expect(exitCode).toBe(0);
-    return maxRSS / 1024 / 1024;
-  };
-
+  // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+  const peakMB = (entry: string) => peakMBOfBuild(String(dir), entry, withoutAsanQuarantine(bunEnv));
   const [empty, chain, pattern] = await Promise.all([peakMB("empty.jsx"), peakMB("chain.jsx"), peakMB("pattern.jsx")]);
   // Above the empty build, without the fixes: 110 MB and 125 MB for the small
   // inputs, 1050 MB for the large pattern, and 940 MB for a chain of 400 terms,
@@ -4237,18 +4265,10 @@ test.skipIf(isDebug || isASAN)(
       "whole.jsx": `export default function App(props) { return <div>${children(3000)}</div>; }`,
     });
 
-    const peakMB = async (entry: string) => {
-      const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
-        cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-        cwd: String(dir),
-      });
-      expect(stderr).toBe("");
-      expect(stdout).toContain("react/compiler-runtime");
-      expect(exitCode).toBe(0);
-      return maxRSS / 1024 / 1024;
-    };
-
-    const [half, whole] = await Promise.all([peakMB("half.jsx"), peakMB("whole.jsx")]);
+    const [half, whole] = await Promise.all([
+      peakMBOfBuild(String(dir), "half.jsx"),
+      peakMBOfBuild(String(dir), "whole.jsx"),
+    ]);
     // Without the fix the second component takes more than 500 MB more than the first.
     expect(whole - half).toBeLessThan(100);
   },
@@ -4279,18 +4299,10 @@ test.skipIf(isDebug || isASAN)(
       `,
     });
 
-    const peakMB = async (entry: string) => {
-      const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
-        cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-        cwd: String(dir),
-      });
-      expect(stderr).toBe("");
-      expect(stdout.includes("react/compiler-runtime")).toBe(entry !== "empty.jsx");
-      expect(exitCode).toBe(0);
-      return maxRSS / 1024 / 1024;
-    };
-
-    const [empty, loop] = await Promise.all([peakMB("empty.jsx"), peakMB("loop.jsx")]);
+    const [empty, loop] = await Promise.all([
+      peakMBOfBuild(String(dir), "empty.jsx"),
+      peakMBOfBuild(String(dir), "loop.jsx"),
+    ]);
     // 150 MB above the empty build, and 430 MB where the join of the `switch` takes the phis.
     expect(loop - empty).toBeLessThan(280);
   },
@@ -4394,7 +4406,8 @@ test("react-compiler finds what a variable is after a loop that is left below a 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  // The cache of each component, and what `v` is where the element reads it.
+  // The cache of each component, and what `v` and `n` are where the element reads them: the constant, and the
+  // variable that the loop writes, not what it was before the loop.
   const compiled = stdout
     .split(/^function /m)
     .slice(1)
@@ -4402,14 +4415,15 @@ test("react-compiler finds what a variable is after a loop that is left below a 
       text.slice(0, text.indexOf("(")),
       text.match(/\b_c\(\d+\)/)?.[0],
       text.match(/\btitle: [^,\n]+/)?.[0],
+      text.match(/\bchildren: [^,\n]+/)?.[0],
     ]);
   expect(compiled).toEqual([
-    ["WhileIfTernaryBreak", "_c(2)", "title: 1"],
-    ["ForOfNullishBreak", "_c(2)", "title: 1"],
-    ["DoWhileNestedTernaryAnd", "_c(2)", "title: 1"],
-    ["ForOptionalChainLabelledBreak", "_c(2)", "title: 1"],
-    ["WhileIfBreakTernary", "_c(2)", "title: 1"],
-    ["DoWhileTryBreak", "_c(7)", "title: 1"],
+    ["WhileIfTernaryBreak", "_c(2)", "title: 1", "children: n"],
+    ["ForOfNullishBreak", "_c(2)", "title: 1", "children: n"],
+    ["DoWhileNestedTernaryAnd", "_c(2)", "title: 1", "children: n"],
+    ["ForOptionalChainLabelledBreak", "_c(2)", "title: 1", "children: n"],
+    ["WhileIfBreakTernary", "_c(2)", "title: 1", "children: n"],
+    ["DoWhileTryBreak", "_c(7)", "title: 1", "children: n"],
   ]);
   expect(exitCode).toBe(0);
 });
@@ -4439,24 +4453,14 @@ test.skipIf(isDebug || isASAN)(
       "none.jsx": source("props.c"),
     });
 
-    const cpuTime = async (entry: string) => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toContain("react/compiler-runtime");
-      expect(exitCode).toBe(0);
-      return Number(proc.resourceUsage()!.cpuTime.total);
-    };
-
-    const best = async (entry: string) => Math.min(await cpuTime(entry), await cpuTime(entry));
+    // Two runs of each, in turn, and the lower of the two counts.
+    const times = { joins: [] as number[], none: [] as number[] };
+    for (let run = 0; run < 2; run++) {
+      times.joins.push(await cpuTimeOfBuild(String(dir), "joins.jsx"));
+      times.none.push(await cpuTimeOfBuild(String(dir), "none.jsx"));
+    }
     // 2 to 3 times, and 15 to 19 times where the 1st join alone keeps what is found.
-    expect((await best("joins.jsx")) / (await best("none.jsx"))).toBeLessThan(6);
+    expect(Math.min(...times.joins) / Math.min(...times.none), JSON.stringify(times)).toBeLessThan(6);
   },
 );
 
@@ -4566,21 +4570,7 @@ test("react-compiler time does not grow with the cube of a chain of functions", 
   const n = isDebug || isASAN ? 80 : 200;
   using dir = tempDir("react-compiler-chain-of-functions", { "n.jsx": source(n), "2n.jsx": source(2 * n) });
 
-  const cpuTime = async (entry: string) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("react/compiler-runtime");
-    expect(exitCode).toBe(0);
-    return Number(proc.resourceUsage()!.cpuTime.total);
-  };
-
+  const cpuTime = (entry: string) => cpuTimeOfBuild(String(dir), entry);
   // A debug build: 2 to 2.6, and 5.5 without the fix. A release build: 2.9 to 4.2, which is a square's, and 14.5 to 16.6.
   expect((await cpuTime("2n.jsx")) / (await cpuTime("n.jsx"))).toBeLessThan(isDebug || isASAN ? 4 : 8);
 });

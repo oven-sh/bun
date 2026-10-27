@@ -19,7 +19,7 @@ use crate::common::{
     WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE, ZSTD_BLOCKSIZE_MAX, ZSTD_CONTENTSIZE_ERROR,
     ZSTD_CONTENTSIZE_UNKNOWN, ZSTD_DID_FIELD_SIZE, ZSTD_FCS_FIELD_SIZE, ZSTD_FRAMEHEADERSIZE_MAX,
     ZSTD_FRAMEIDSIZE, ZSTD_MAGIC_DICTIONARY, ZSTD_MAGIC_SKIPPABLE_MASK, ZSTD_MAGIC_SKIPPABLE_START,
-    ZSTD_MAGICNUMBER, ZSTD_SKIPPABLEHEADERSIZE, ZSTD_WINDOWLOG_ABSOLUTEMIN,
+    ZSTD_MAGICNUMBER, ZSTD_REP_NUM, ZSTD_SKIPPABLEHEADERSIZE, ZSTD_WINDOWLOG_ABSOLUTEMIN,
     ZSTD_WINDOWLOG_LIMIT_DEFAULT, ZSTD_WINDOWLOG_MAX, ZSTD_WORKSPACETOOLARGE_FACTOR,
     ZSTD_WORKSPACETOOLARGE_MAXDURATION,
 };
@@ -324,8 +324,8 @@ pub(crate) fn find_decompressed_size(mut src: &[u8]) -> u64 {
 
 // ── dictionaries ──────────────────────────────────────────────────────────
 
-/// `ZSTD_loadDEntropy`: reads the tables at the start of a dictionary, and returns where its content starts.
-fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<usize> {
+/// `ZSTD_loadDEntropy`: reads the tables at the start of a dictionary, and returns the last offsets that it sets.
+fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<[u32; ZSTD_REP_NUM]> {
     const CORRUPTED: ErrorCode = ErrorCode::DictionaryCorrupted;
     if dict.len() <= 8 {
         return Err(CORRUPTED);
@@ -382,14 +382,15 @@ fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<usize> {
         return Err(CORRUPTED);
     }
     let dict_content_size = dict.len() - (pos + 12);
-    for rep in &mut entropy.rep {
+    let mut reps = [0; ZSTD_REP_NUM];
+    for rep in &mut reps {
         *rep = read_le32(dict, pos)?;
         pos += 4;
         if *rep == 0 || *rep as usize > dict_content_size {
             return Err(CORRUPTED);
         }
     }
-    Ok(pos)
+    Ok(reps)
 }
 
 /// `ZSTD_dictContentType_e`
@@ -406,6 +407,8 @@ pub struct DDict<'a> {
     content: Cow<'a, [u8]>,
     /// The tables, if the dictionary has some.
     entropy: Option<Box<EntropyDTables>>,
+    /// The last offsets that a frame starts with.
+    rep: [u32; ZSTD_REP_NUM],
     dict_id: u32,
 }
 
@@ -415,6 +418,7 @@ impl<'a> DDict<'a> {
         let mut ddict = Self {
             content,
             entropy: None,
+            rep: REP_START_VALUE,
             dict_id: 0,
         };
         let dict = &*ddict.content;
@@ -426,7 +430,8 @@ impl<'a> DDict<'a> {
         }
         ddict.dict_id = read_le32(dict, ZSTD_FRAMEIDSIZE)?;
         let mut entropy = Box::new(EntropyDTables::new());
-        load_d_entropy(&mut entropy, dict).map_err(|_| ErrorCode::DictionaryCorrupted)?;
+        ddict.rep =
+            load_d_entropy(&mut entropy, dict).map_err(|_| ErrorCode::DictionaryCorrupted)?;
         ddict.entropy = Some(entropy);
         Ok(ddict)
     }
@@ -725,7 +730,7 @@ impl DState {
         self.block.fse_entropy = false;
         self.dict_id = 0;
         self.b_type = BlockType::Reserved;
-        self.block.entropy.rep = REP_START_VALUE;
+        self.block.rep = REP_START_VALUE;
         self.block.seq_sources = SeqTableSources::all(TableSource::Local);
         self.block.huf_source = TableSource::Local;
 
@@ -733,12 +738,12 @@ impl DState {
         if let Some(ddict) = ddict {
             self.dict_id = ddict.dict_id;
             self.dict_end_address = ddict.end_address();
-            if let Some(entropy) = &ddict.entropy {
+            self.block.rep = ddict.rep;
+            if ddict.entropy.is_some() {
                 self.block.lit_entropy = true;
                 self.block.fse_entropy = true;
                 self.block.seq_sources = SeqTableSources::all(TableSource::Dict);
                 self.block.huf_source = TableSource::Dict;
-                self.block.entropy.rep = entropy.rep;
             }
         }
     }

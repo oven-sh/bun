@@ -5,7 +5,7 @@ use super::seq_table::{
     Cell, Codes, LL_CODES, ML_CODES, OF_CODES, OffsetTable, SeqTable, SeqTableSources, SeqTables,
     TableSource, Workspace,
 };
-use core::cell::OnceCell;
+use core::cell::{self, OnceCell};
 use core::hint::{Locality, prefetch_read};
 
 use crate::common::bitstream::BitDStream;
@@ -16,7 +16,7 @@ use crate::common::{
     REP_START_VALUE, SymbolEncodingType, WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
 };
 use crate::error::{ErrorCode, Result};
-use crate::util::{SliceExt, read_le16, read_le24, read_le32};
+use crate::util::{BUG, SliceExt, read_le16, read_le24, read_le32};
 
 /// `blockProperties_t`
 pub(crate) struct BlockProperties {
@@ -55,7 +55,6 @@ pub(crate) fn get_c_block_size(src: &[u8]) -> Result<(usize, BlockProperties)> {
 pub(crate) struct EntropyDTables {
     pub(crate) seq: SeqTables,
     pub(crate) huf_table: HufDTable,
-    pub(crate) rep: [u32; ZSTD_REP_NUM],
     pub(crate) workspace: Workspace,
 }
 
@@ -64,7 +63,6 @@ impl EntropyDTables {
         Self {
             seq: SeqTables::new(),
             huf_table: HufDTable::new(),
-            rep: REP_START_VALUE,
             workspace: Workspace::new(),
         }
     }
@@ -197,7 +195,9 @@ struct Literals {
 
 /// The state of a `ZSTD_DCtx` that lasts from block to block.
 pub(crate) struct BlockDecoder {
-    pub(crate) entropy: Box<EntropyDTables>,
+    /// There once a block takes it.
+    scratch: Option<Box<Scratch>>,
+    pub(crate) rep: [u32; ZSTD_REP_NUM],
     pub(crate) seq_sources: SeqTableSources,
     pub(crate) huf_source: TableSource,
     /// There is a Huffman table to repeat.
@@ -205,22 +205,24 @@ pub(crate) struct BlockDecoder {
     /// There are sequence tables to repeat.
     pub(crate) fse_entropy: bool,
     pub(crate) ddict_is_cold: bool,
+}
+
+/// What it takes to decode blocks that are compressed.
+struct Scratch {
+    entropy: EntropyDTables,
     /// Grows to the literals of the largest block so far, and `WILDCOPY_OVERLENGTH`.
     lit_buffer: Vec<u8>,
 }
 
-impl BlockDecoder {
-    pub(crate) fn new() -> Self {
-        Self {
-            entropy: Box::new(EntropyDTables::new()),
-            seq_sources: SeqTableSources::all(TableSource::Local),
-            huf_source: TableSource::Local,
-            lit_entropy: false,
-            fse_entropy: false,
-            ddict_is_cold: false,
-            lit_buffer: Vec::new(),
-        }
-    }
+thread_local! {
+    /// That of the last decoder that was dropped, for the next one. Nothing depends on what is in it, and it takes
+    /// longer to clear a new one than to decode a small frame.
+    static SPARE_SCRATCH: cell::Cell<Option<Box<Scratch>>> = const { cell::Cell::new(None) };
+}
+
+impl Scratch {
+    /// A thread keeps no more than that for its next decoder.
+    const MAX_SPARE_LIT_BUFFER: usize = 1 << 14;
 
     fn lit_buffer(&mut self, lit_size: usize) -> Result<&mut [u8]> {
         let needed = lit_size + WILDCOPY_OVERLENGTH;
@@ -231,6 +233,44 @@ impl BlockDecoder {
             self.lit_buffer.resize(needed, 0);
         }
         self.lit_buffer.sub_mut(..lit_size)
+    }
+}
+
+impl Drop for BlockDecoder {
+    fn drop(&mut self) {
+        if let Some(mut scratch) = self.scratch.take() {
+            if scratch.lit_buffer.capacity() > Scratch::MAX_SPARE_LIT_BUFFER {
+                scratch.lit_buffer = Vec::new();
+            }
+            // Not if the thread is at its end.
+            let _ = SPARE_SCRATCH.try_with(|spare| spare.set(Some(scratch)));
+        }
+    }
+}
+
+impl BlockDecoder {
+    pub(crate) const fn new() -> Self {
+        Self {
+            scratch: None,
+            rep: REP_START_VALUE,
+            seq_sources: SeqTableSources::all(TableSource::Local),
+            huf_source: TableSource::Local,
+            lit_entropy: false,
+            fse_entropy: false,
+            ddict_is_cold: false,
+        }
+    }
+
+    fn scratch(&mut self) -> &mut Scratch {
+        self.scratch.get_or_insert_with(|| {
+            let spare = SPARE_SCRATCH.try_with(cell::Cell::take).ok().flatten();
+            spare.unwrap_or_else(|| {
+                Box::new(Scratch {
+                    entropy: EntropyDTables::new(),
+                    lit_buffer: Vec::new(),
+                })
+            })
+        })
     }
 
     /// `ZSTD_decodeLiteralsBlock`
@@ -285,12 +325,12 @@ impl BlockDecoder {
                 let compressed = src.span(lh_size, lit_c_size)?;
 
                 let huf_source = self.huf_source;
-                self.lit_buffer(lit_size)?;
-                let Self {
+                let scratch = self.scratch();
+                scratch.lit_buffer(lit_size)?;
+                let Scratch {
                     entropy,
                     lit_buffer,
-                    ..
-                } = self;
+                } = scratch;
                 let dst = lit_buffer.sub_mut(..lit_size)?;
                 let huf_result = if lit_enc_type == SymbolEncodingType::Repeat {
                     let table = match (huf_source, dict_entropy) {
@@ -347,7 +387,8 @@ impl BlockDecoder {
                     if lit_size + lh_size > src.len() {
                         return Err(ErrorCode::CorruptionDetected);
                     }
-                    self.lit_buffer(lit_size)?
+                    self.scratch()
+                        .lit_buffer(lit_size)?
                         .copy_from_slice(src.span(lh_size, lit_size)?);
                     return Ok(Literals {
                         c_size: lh_size + lit_size,
@@ -386,7 +427,7 @@ impl BlockDecoder {
                 if expected_write_size < lit_size {
                     return Err(ErrorCode::DstSizeTooSmall);
                 }
-                self.lit_buffer(lit_size)?.fill(src.at(lh_size)?);
+                self.scratch().lit_buffer(lit_size)?.fill(src.at(lh_size)?);
                 Ok(Literals {
                     c_size: lh_size + 1,
                     size: lit_size,
@@ -438,39 +479,44 @@ impl BlockDecoder {
         ip += 1;
 
         let fse_entropy = self.fse_entropy;
+        self.scratch();
+        let Some(scratch) = &mut self.scratch else {
+            return Err(BUG);
+        };
+        let EntropyDTables { seq, workspace, .. } = &mut scratch.entropy;
         ip += build_seq_table(
-            &mut self.entropy.seq.ll,
+            &mut seq.ll,
             &mut self.seq_sources.ll,
             SymbolEncodingType::from_bits(modes >> 6),
             MAX_LL,
             LL_FSE_LOG,
             src.sub(ip..)?,
             &LL_CODES,
-            &mut self.entropy.workspace,
+            workspace,
             fse_entropy,
         )
         .map_err(|_| ErrorCode::CorruptionDetected)?;
         ip += build_seq_table(
-            &mut self.entropy.seq.of,
+            &mut seq.of,
             &mut self.seq_sources.of,
             SymbolEncodingType::from_bits(modes >> 4),
             MAX_OFF,
             OFF_FSE_LOG,
             src.sub(ip..)?,
             &OF_CODES,
-            &mut self.entropy.workspace,
+            workspace,
             fse_entropy,
         )
         .map_err(|_| ErrorCode::CorruptionDetected)?;
         ip += build_seq_table(
-            &mut self.entropy.seq.ml,
+            &mut seq.ml,
             &mut self.seq_sources.ml,
             SymbolEncodingType::from_bits(modes >> 2),
             MAX_ML,
             ML_FSE_LOG,
             src.sub(ip..)?,
             &ML_CODES,
-            &mut self.entropy.workspace,
+            workspace,
             fse_entropy,
         )
         .map_err(|_| ErrorCode::CorruptionDetected)?;
@@ -512,13 +558,21 @@ impl BlockDecoder {
             return Err(ErrorCode::DstSizeTooSmall);
         }
 
+        self.scratch();
         let Self {
+            scratch: Some(scratch),
+            rep,
+            ..
+        } = self
+        else {
+            return Err(BUG);
+        };
+        let Scratch {
             entropy,
             lit_buffer,
-            ..
-        } = self;
-        let EntropyDTables { seq, rep, .. } = &mut **entropy;
-        let tables = seq.gather(&mut self.seq_sources, dict_entropy.map(|dict| &dict.seq));
+        } = &mut **scratch;
+        let dict_tables = dict_entropy.map(|dict| &dict.seq);
+        let tables = entropy.seq.gather(&mut self.seq_sources, dict_tables);
 
         // With matches far back in a long history, it pays to know the sequences ahead of time. Nothing is prefetched
         // here, but which of two problems in a damaged block is reported depends on the order.
@@ -1250,10 +1304,36 @@ impl<'a> Executor<'_, 'a> {
     ///
     /// The last offsets are those of the 3 sequences before, which are rewritten for that where it takes it.
     #[inline(never)]
-    fn exec_batch(&mut self, sequences: &mut [RawSequence], mut index: usize) -> usize {
+    fn exec_batch(&mut self, sequences: &mut [RawSequence], index: usize) -> usize {
+        self.exec_batch_with::<false>(sequences, index, &[])
+    }
+
+    /// The same where matches in `dict`, which comes before the output, are of the common kind too.
+    #[inline(never)]
+    fn exec_batch_after_dict(
+        &mut self,
+        sequences: &mut [RawSequence],
+        index: usize,
+        dict: &[u8],
+    ) -> usize {
+        self.exec_batch_with::<true>(sequences, index, dict)
+    }
+
+    #[inline(always)]
+    fn exec_batch_with<const DICT: bool>(
+        &mut self,
+        sequences: &mut [RawSequence],
+        mut index: usize,
+        dict: &[u8],
+    ) -> usize {
         // Positions fit in 32 bits, so that the compiler sees that nothing added to them overflows.
         const MAX_BACK: usize = 3 << 30;
         let start = self.prefix_start.max(self.op.saturating_sub(MAX_BACK));
+        let dict = if start == self.prefix_start {
+            dict
+        } else {
+            &[]
+        };
         let buf = self.out.bytes();
         let end = buf.len().min(start + u32::MAX as usize);
         let buf = buf.get_mut(start..end).unwrap_or_default();
@@ -1281,18 +1361,45 @@ impl<'a> Executor<'_, 'a> {
                 || lit_end + WILDCOPY_OVERLENGTH > lits.len()
                 || lit_length > 32
                 || match_length > 64
-                || offset_value as usize > o_lit_end + 3
+                || !DICT && offset_value as usize > o_lit_end + 3
             {
                 break;
             }
-            let match_pos = o_lit_end + 3 - offset_value as usize;
             let (Some(to), Some(from)) = (
                 buf.get_mut(op as usize..op as usize + 32),
                 lits.get(lit_pos as usize..lit_pos as usize + 32),
             ) else {
                 break;
             };
+            if DICT && offset_value as usize > o_lit_end + 3 {
+                let back = offset_value as usize - 3 - o_lit_end;
+                let Some(match_pos) = dict.len().checked_sub(back) else {
+                    break;
+                };
+                let Some(([first, second], _)) = dict
+                    .get(match_pos..match_pos + 64)
+                    .map(<[u8]>::as_chunks::<32>)
+                else {
+                    break;
+                };
+                to.copy_from_slice(from);
+                let Some(to) = buf.get_mut(o_lit_end..o_lit_end + 32) else {
+                    break;
+                };
+                to.copy_from_slice(first);
+                if match_length > 32 {
+                    let Some(to) = buf.get_mut(o_lit_end + 32..o_lit_end + 64) else {
+                        break;
+                    };
+                    to.copy_from_slice(second);
+                }
+                op = o_match_end as u32;
+                lit_pos = lit_end as u32;
+                index += 1;
+                continue;
+            }
             to.copy_from_slice(from);
+            let match_pos = o_lit_end + 3 - offset_value as usize;
             if !copy_16(buf, match_pos, o_lit_end) || !copy_16(buf, match_pos + 16, o_lit_end + 16)
             {
                 break;
@@ -1377,8 +1484,9 @@ impl<'a> Executor<'_, 'a> {
         let more_bits = tables.ll.with_more_bits + tables.ml.with_more_bits > 512 / 10;
 
         let mut remaining = nb_seq;
-        // Long copies go on while the next sequences are decoded, if that is what comes next.
-        if tables.ml.with_more_bits > 512 / 2 && !self.split {
+        // Long copies go on while the next sequences are decoded, if that is what comes next. And a batch of a few
+        // sequences is not worth it.
+        if (tables.ml.with_more_bits > 512 / 2 || nb_seq <= 8) && !self.split {
             let mut exec = self.fork();
             while remaining > ahead.len() {
                 let sequence = seq_state.decode_sequence(remaining == 1);
@@ -1478,7 +1586,12 @@ impl<'a> Executor<'_, 'a> {
         }
         let mut index = 3;
         loop {
-            index = self.exec_batch(sequences, index);
+            index = match self.ext_dict {
+                ExtDict::Dict(dict) if !dict.is_empty() => {
+                    self.exec_batch_after_dict(sequences, index, dict)
+                }
+                _ => self.exec_batch(sequences, index),
+            };
             if index >= sequences.len() {
                 break;
             }

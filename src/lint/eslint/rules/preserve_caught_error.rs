@@ -321,7 +321,7 @@ impl PreserveCaughtError {
             Cause::Missing => {
                 let report = cx.report(statement, MISSING_CAUSE).hint_with(|| {
                     let caught = bstr::BStr::new(caught.bytes());
-                    Some(format!("Pass {{ cause: {caught} }} as the last argument, so that the caught error is not lost."))
+                    Some(format!("Pass {{ cause: {caught} }} as the last argument to keep the caught error."))
                 });
                 match cx.language().is_oxlint {
                     true => report.fix(|fixer| {

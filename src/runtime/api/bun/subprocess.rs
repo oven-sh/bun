@@ -914,9 +914,7 @@ impl Subprocess<'_> {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 if existing_value.is_cell() {
                     if stdin.is_none() {
-                        // TODO: review this cast
-                        stdin = crate::webcore::file_sink::JSSink::from_js(existing_value)
-                            .and_then(|p| NonNull::new(p.cast::<FileSink>()));
+                        stdin = crate::webcore::file_sink::JSSink::sink_from_js(existing_value);
                     }
 
                     if !self.flags.get().contains(Flags::IS_STDIN_A_READABLE_STREAM) {
@@ -937,7 +935,7 @@ impl Subprocess<'_> {
         }
 
         if !existing_stdin_value.is_empty() {
-            crate::webcore::file_sink::JSSink::set_destroy_callback(existing_stdin_value, 0);
+            crate::webcore::file_sink::JSSink::forget_subprocess(existing_stdin_value);
         }
 
         // Node.js keeps reading stdout/stderr until EOF after the direct child

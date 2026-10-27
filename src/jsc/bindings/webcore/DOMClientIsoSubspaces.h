@@ -29,9 +29,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForNodeSqliteSession { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeSqliteLimits { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeSqliteTagStore { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForJSSinkConstructor { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForJSSinkController { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForJSSink { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForStringDecoder { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForPendingVirtualModuleResult { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForCallSite { nullptr };

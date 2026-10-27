@@ -570,7 +570,7 @@ mod _impl {
             // environment variable, then falls back to reading the passwd entry.
             if let Some(home) = env_var::HOME.get() {
                 if !home.is_empty() {
-                    return Ok(BunString::from_bytes(home));
+                    return Ok(BunString::clone_utf8(home));
                 }
             }
 
@@ -1014,7 +1014,7 @@ mod _impl {
 
             // Does this entry already exist?
             // The OS picks the interface name, so it can be an array index like "0".
-            let key = bun_core::String::from_bytes(interface_name);
+            let key = bun_core::StringView::from_bytes(interface_name);
             if let Some(array) = ret.get_own(global_this, &key)? {
                 // Add this interface entry to the existing array
                 let next_index: u32 =
@@ -1197,7 +1197,7 @@ mod _impl {
             // SAFETY: iface.name is a NUL-terminated C string from libuv
             let interface_name = unsafe { bun_core::ffi::cstr(iface.name) }.to_bytes();
             // The OS picks the interface name, so it can be an array index like "0".
-            let key = bun_core::String::from_bytes(interface_name);
+            let key = bun_core::StringView::from_bytes(interface_name);
             if let Some(array) = ret.get_own(global_this, &key)? {
                 // Add this interface entry to the existing array
                 let next_index: u32 =

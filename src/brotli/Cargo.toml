@@ -11,6 +11,4 @@ workspace = true
 
 [dependencies]
 thiserror.workspace = true
-bun_alloc.workspace = true
 bun_core.workspace = true
-bun_brotli_sys.workspace = true

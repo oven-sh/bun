@@ -333,7 +333,7 @@ export interface NestedCmakeBuild {
   libSubdir?: string;
   /**
    * Subdirectory within the SOURCE dir containing CMakeLists.txt.
-   * E.g. zstd's cmake files live at `build/cmake/`, not the repo root.
+   * Some projects keep their cmake files in e.g. `build/cmake/`, not the repo root.
    * Becomes the `-S` arg to cmake. Default: source root.
    */
   sourceSubdir?: string;
@@ -462,8 +462,7 @@ export type DepName =
   | "rust-argon2"
   | "sqlite"
   | "tinycc"
-  | "zlib"
-  | "zstd";
+  | "zlib";
 
 /**
  * A vendored dependency definition. Lives in scripts/build/deps/<name>.ts.
@@ -869,7 +868,7 @@ export function resolveDep(
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
     // as the stamp — touching it triggers reconfigure/rebuild.
-    //   cmake deps → CMakeLists.txt (in sourceSubdir if set, e.g. zstd)
+    //   cmake deps → CMakeLists.txt (in sourceSubdir if set)
     //   cargo deps → Cargo.toml (in manifestDir)
     //   direct/header-only → none: the sources are on disk before ninja
     //     starts, so the compiler depfiles see edits directly. (Stamping the
@@ -958,8 +957,8 @@ export function resolveDep(
 
   // ─── Resolve include paths ───
   // Includes are relative to the SOURCE dir (in-tree or vendor). Not the
-  // cmake subdir — e.g. zstd's headers are at vendor/zstd/lib/, not
-  // vendor/zstd/build/cmake/lib/.
+  // cmake subdir — e.g. headers are at vendor/<dep>/lib/, not
+  // vendor/<dep>/build/cmake/lib/.
   //
   // Includes CAN be absolute — for deps whose headers land in the BUILD dir
   // (generated during configure), the `provides` function computes absolute
@@ -1153,7 +1152,7 @@ function emitNestedCmake(
   const hostWin = cfg.host.os === "windows";
 
   // cmake source dir (where CMakeLists.txt lives). Usually srcDir, but
-  // some projects nest it (zstd: vendor/zstd/build/cmake/).
+  // some projects nest it (vendor/<dep>/build/cmake/).
   const cmakeSrcDir = spec.sourceSubdir ? resolve(srcDir, spec.sourceSubdir) : srcDir;
 
   // ─── Assemble cmake configure args ───

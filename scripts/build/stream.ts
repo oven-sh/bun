@@ -69,7 +69,7 @@ export const STREAM_FD = 3;
 
 /**
  * Produce a colored `[name] ` prefix. Color derived from a hash of the
- * name — deterministic, so zstd is always the same shade across runs.
+ * name — deterministic, so zlib is always the same shade across runs.
  *
  * Palette: 12 ANSI 256-color codes from gold → green → cyan → blue →
  * purple. No reds/pinks (error connotation), no dark blues (illegible

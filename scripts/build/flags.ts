@@ -251,7 +251,7 @@ export const globalFlags: Flag[] = [
     // cmake's Release/RelWithDebInfo build types append this to
     // CMAKE_<LANG>_FLAGS_<TYPE> automatically; nested-cmake deps got it
     // from there. Direct deps only see globalFlags, so it must be here
-    // too — otherwise every assert() in zstd/boringssl/mimalloc/etc.
+    // too — otherwise every assert() in zlib/boringssl/mimalloc/etc.
     // stays live in release. (bun's own NDEBUG in `defines` below is
     // redundant after this, but harmless.)
     flag: "-DNDEBUG",

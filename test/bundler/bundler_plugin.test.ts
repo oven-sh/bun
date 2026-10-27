@@ -2092,4 +2092,413 @@ describe("bundler", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  describe("plugin hooks run in the AsyncLocalStorage stores of their Bun.build() call", () => {
+    const prelude = /* js */ `
+      import { AsyncLocalStorage } from "node:async_hooks";
+      const als = new AsyncLocalStorage();
+      const seen = {};
+      // The stores each step ran in.
+      const at = step => void (seen[step] ??= new Set()).add(String(als.getStore()));
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+      const report = more =>
+        console.log(JSON.stringify({ ...more, ...Object.fromEntries(Object.entries(seen).map(([step, stores]) => [step, [...stores]])) }));
+    `;
+    // Runs the fixture beside an entry point that imports "virtual:a" and "virtual:b". Gives the JSON line it prints.
+    async function runFixture(fixture: string) {
+      using dir = tempDir("plugin-async-context", {
+        "entry.js": `import a from "virtual:a";\nimport b from "virtual:b";\nconsole.log(a, b);`,
+        "plain.js": `console.log("plain");`,
+        "fixture.mjs": prelude + fixture,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { printed: JSON.parse(stdout || "null"), stderr, exitCode };
+    }
+
+    test.concurrent("hooks, what they await, and what the bundler reads from what they return or throw", async () => {
+      const result = await runFixture(/* js */ `
+        const result = await als.run("build", () =>
+          Bun.build({
+            entrypoints: ["./entry.js"],
+            plugins: [
+              {
+                name: "hooks",
+                setup(build) {
+                  // Declines after an await, so the next matching callback runs from a promise reaction.
+                  build.onResolve({ filter: /^virtual:/ }, async () => {
+                    at("onResolve");
+                    await tick();
+                    at("onResolve after an await");
+                  });
+                  build.onResolve({ filter: /^virtual:/ }, args => {
+                    at("second onResolve");
+                    return { path: args.path, namespace: "virtual" };
+                  });
+                  build.onLoad({ filter: /a$/, namespace: "virtual" }, async args => {
+                    at("onLoad");
+                    await tick();
+                    at("onLoad after an await");
+                    build.onEnd(() => at("onEnd registered in onLoad"));
+                    await args.defer();
+                    at("onLoad after defer()");
+                    return {
+                      loader: "js",
+                      get contents() {
+                        at("getter of the result");
+                        return "export default 1";
+                      },
+                    };
+                  });
+                  build.onLoad({ filter: /b$/, namespace: "virtual" }, () => ({
+                    loader: "object",
+                    exports: {
+                      toJSON() {
+                        at("toJSON of exports");
+                        return { default: 2 };
+                      },
+                    },
+                  }));
+                  build.onEnd(async () => {
+                    at("onEnd");
+                    await tick();
+                    at("onEnd after an await");
+                  });
+                },
+              },
+            ],
+          }),
+        );
+        const failed = [];
+        for (const throws of [false, true]) {
+          const build = als.run("build", () =>
+            Bun.build({
+              entrypoints: ["./entry.js"],
+              throw: throws,
+              plugins: [
+                {
+                  name: "throws",
+                  setup(build) {
+                    build.onResolve({ filter: /^virtual:/ }, () => {
+                      throw {
+                        toString() {
+                          at("toString of a thrown value");
+                          return "thrown";
+                        },
+                      };
+                    });
+                    build.onEnd(() => at("onEnd of a failed build"));
+                  },
+                },
+              ],
+            }),
+          );
+          failed.push(
+            await build.then(
+              result => (result.success ? "built" : "failed"),
+              () => "rejected",
+            ),
+          );
+        }
+        report({ success: result.success, failed });
+      `);
+      expect(result).toEqual({
+        printed: {
+          success: true,
+          failed: ["failed", "rejected"],
+          "onResolve": ["build"],
+          "onResolve after an await": ["build"],
+          "second onResolve": ["build"],
+          "onLoad": ["build"],
+          "toJSON of exports": ["build"],
+          "onLoad after an await": ["build"],
+          "onLoad after defer()": ["build"],
+          "getter of the result": ["build"],
+          "onEnd": ["build"],
+          "onEnd registered in onLoad": ["build"],
+          "onEnd after an await": ["build"],
+          "toString of a thrown value": ["build"],
+          "onEnd of a failed build": ["build"],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The store of the Bun.build() call, read before the first setup(): not the store a hook is registered in.
+    test.concurrent("a hook that setup() registers inside another store, or after an await", async () => {
+      const result = await runFixture(/* js */ `
+        await als.run("build", () =>
+          Bun.build({
+            entrypoints: ["./entry.js"],
+            plugins: [
+              {
+                name: "first",
+                setup(build) {
+                  als.run("registration", () => {
+                    build.onResolve({ filter: /^virtual:/ }, args => {
+                      at("onResolve registered inside another run()");
+                      return { path: args.path, namespace: "virtual" };
+                    });
+                    build.onLoad(
+                      { filter: /a$/, namespace: "virtual" },
+                      AsyncLocalStorage.bind(() => {
+                        at("onLoad bound with AsyncLocalStorage.bind()");
+                        return { contents: "export default 1", loader: "js" };
+                      }),
+                    );
+                  });
+                  // The rest of the Bun.build() call runs in this store.
+                  als.enterWith("entered in the first setup()");
+                },
+              },
+              {
+                name: "second",
+                async setup(build) {
+                  at("second setup()");
+                  await tick();
+                  als.run("registration after an await", () => {
+                    build.onLoad({ filter: /b$/, namespace: "virtual" }, () => {
+                      at("onLoad registered after an await in setup()");
+                      return { contents: "export default 2", loader: "js" };
+                    });
+                    build.onEnd(() => at("onEnd registered after an await in setup()"));
+                  });
+                },
+              },
+            ],
+          }),
+        );
+        report();
+      `);
+      expect(result).toEqual({
+        printed: {
+          "second setup()": ["entered in the first setup()"],
+          "onResolve registered inside another run()": ["build"],
+          "onLoad bound with AsyncLocalStorage.bind()": ["registration"],
+          "onLoad registered after an await in setup()": ["build"],
+          "onEnd registered after an await in setup()": ["build"],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("hooks of two overlapping builds each read the store of their own build", async () => {
+      const result = await runFixture(/* js */ `
+        const firstEnded = Promise.withResolvers();
+        let firstHasEnded = false;
+        let firstEndedInsideTheSecondCall;
+        const first = als.run("first build", () =>
+          Bun.build({
+            entrypoints: ["./entry.js"],
+            plugins: [
+              {
+                name: "first",
+                setup(build) {
+                  build.onResolve({ filter: /^virtual:/ }, args => {
+                    at("onResolve");
+                    return { path: args.path, namespace: "virtual" };
+                  });
+                  build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+                    at("onLoad");
+                    return { contents: "export default 1", loader: "js" };
+                  });
+                  build.onEnd(() => {
+                    at("onEnd");
+                    firstHasEnded = true;
+                    firstEnded.resolve();
+                  });
+                },
+              },
+            ],
+          }),
+        );
+        const second = als.run("second build", () => {
+          const build = Bun.build({
+            entrypoints: ["./entry.js"],
+            throw: false,
+            plugins: [
+              { name: "waits for the first build", setup: () => firstEnded.promise },
+              { name: "after the wait", setup: () => at("the second call's next setup()") },
+            ],
+          });
+          firstEndedInsideTheSecondCall = firstHasEnded;
+          at("the second call after Bun.build() returned");
+          return build;
+        });
+        await Promise.all([first, second]);
+        report({ firstEndedInsideTheSecondCall });
+      `);
+      expect(result).toEqual({
+        printed: {
+          firstEndedInsideTheSecondCall: true,
+          "onResolve": ["first build"],
+          "onLoad": ["first build"],
+          "onEnd": ["first build"],
+          "the second call's next setup()": ["second build"],
+          "the second call after Bun.build() returned": ["second build"],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Script can hold a plugin object after its build, through the builder or through what a hook was given.
+    test.concurrent("a plugin object that script keeps does not keep the store of a finished build", async () => {
+      const result = await runFixture(/* js */ `
+        const kept = [];
+        let sawItsStore = 0;
+        async function buildInAStore(id) {
+          const store = { id };
+          const build = als.run(store, () =>
+            Bun.build({
+              entrypoints: ["./entry.js"],
+              plugins: [
+                {
+                  name: "keeps",
+                  setup(build) {
+                    kept.push(build);
+                    build.onResolve({ filter: /^virtual:/ }, args => ({ path: args.path, namespace: "virtual" }));
+                    build.onLoad({ filter: /.*/, namespace: "virtual" }, args => {
+                      kept.push(args.defer);
+                      // Compares the id: a hook that used the store object itself would keep it alive.
+                      if (als.getStore()?.id === id) sawItsStore++;
+                      return { contents: "export default 1", loader: "js" };
+                    });
+                  },
+                },
+              ],
+            }),
+          );
+          // No hook has run yet, and nothing but the plugin object holds the context of the call.
+          Bun.gc(true);
+          await build;
+          return new WeakRef(store);
+        }
+        const stores = [];
+        for (let id = 0; id < 5; id++) stores.push(await buildInAStore(id));
+        const collected = () => stores.filter(store => store.deref() === undefined).length;
+        for (let turn = 0; turn < 500 && collected() < stores.length; turn++) {
+          Bun.gc(true);
+          await tick();
+        }
+        report({ sawItsStore, collected: collected(), kept: kept.length });
+      `);
+      expect(result).toEqual({
+        printed: { sawItsStore: 10, collected: 5, kept: 15 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("a build that runs as a Bun.ModuleGraph", async () => {
+      const result = await runFixture(/* js */ `
+        const graph = new Bun.ModuleGraph();
+        const other = new Bun.ModuleGraph();
+        const runsAs = () => {
+          const current = Bun.ModuleGraph.current;
+          return current === graph ? "the graph" : current === other ? "the other graph" : current === undefined ? "the host" : "?";
+        };
+        // Set outside every store and graph: a hook dispatch must leave nothing behind for it.
+        let ticks = 0;
+        const timer = setInterval(() => {
+          ticks++;
+          at("a timer of the host, as " + runsAs());
+        }, 0);
+        const build = name =>
+          Bun.build({
+            entrypoints: ["./entry.js"],
+            plugins: [
+              {
+                name,
+                setup(build) {
+                  build.onResolve({ filter: /^virtual:/ }, args => {
+                    at(name + ": onResolve as " + runsAs());
+                    return { path: args.path, namespace: "virtual" };
+                  });
+                  other.run(() =>
+                    build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+                      at(name + ": onLoad registered inside another graph's run(), as " + runsAs());
+                      return { contents: "export default 1", loader: "js" };
+                    }),
+                  );
+                  build.onEnd(() => at(name + ": onEnd as " + runsAs()));
+                },
+              },
+            ],
+          });
+        await graph.run(() => als.run("graph's store", () => build("a graph's build")));
+        await als.run("host's store", () => build("the host's build"));
+        while (ticks === 0) await tick();
+        clearInterval(timer);
+        report();
+        process.exit(0);
+      `);
+      expect(result).toEqual({
+        printed: {
+          "a timer of the host, as the host": ["undefined"],
+          "a graph's build: onResolve as the graph": ["graph's store"],
+          "a graph's build: onLoad registered inside another graph's run(), as the graph": ["graph's store"],
+          "a graph's build: onEnd as the graph": ["graph's store"],
+          "the host's build: onResolve as the host": ["host's store"],
+          "the host's build: onLoad registered inside another graph's run(), as the host": ["host's store"],
+          "the host's build: onEnd as the host": ["host's store"],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The plugin object is protected while its build runs. It keeps the stores of the call, not the Bun.ModuleGraph.
+    test.concurrent("a build that waits in a hook does not keep the Bun.ModuleGraph that started it", async () => {
+      const result = await runFixture(/* js */ `
+        let waiting = 0;
+        const plugin = {
+          name: "never answers",
+          setup(build) {
+            build.onResolve({ filter: /^virtual:/ }, args => ({ path: args.path, namespace: "virtual" }));
+            build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+              at("onLoad");
+              waiting++;
+              return new Promise(() => {});
+            });
+          },
+        };
+        // Nothing but the build knows the graph once this returns.
+        function start() {
+          const graph = new Bun.ModuleGraph();
+          graph
+            .run(() => als.run("graph's store", () => Bun.build({ entrypoints: ["./entry.js"], plugins: [plugin] })))
+            .catch(() => {});
+          return new WeakRef(graph);
+        }
+        const graph = start();
+        while (waiting === 0) await tick();
+        // Builds run one at a time: this one starts when the collected graph's build is given up.
+        let next = "pending";
+        Bun.build({ entrypoints: ["./plain.js"] }).then(
+          result => void (next = result.success ? "built" : "failed"),
+          () => void (next = "rejected"),
+        );
+        // Timer turns: a graph that the event loop has just run is collected only after the loop has waited once.
+        for (let turn = 0; turn < 200 && next === "pending"; turn++) {
+          Bun.gc(true);
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        report({ graphCollected: graph.deref() === undefined, next });
+      `);
+      expect(result).toEqual({
+        printed: { graphCollected: true, next: "built", "onLoad": ["graph's store"] },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });

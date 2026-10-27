@@ -603,6 +603,8 @@ pub(crate) mod js_bundler {
                                     Target::Node => BunPluginTarget::Node,
                                     _ => BunPluginTarget::Browser,
                                 },
+                                // Read before the first `setup()` runs: the hooks continue this `Bun.build()` call.
+                                PluginAsyncContext::Caller,
                             );
                             **plugins = Some(p);
                             p
@@ -1742,6 +1744,18 @@ pub(crate) mod js_bundler {
     // is what matters at the ABI.
     bun_core::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
 
+    /// Which AsyncLocalStorage stores a plugin object's hooks run in. Mirrors `BundlerPluginAsyncContext` in JSBundlerPlugin.h.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    pub(crate) enum PluginAsyncContext {
+        /// Those the event loop has when it calls the hook.
+        None = 0,
+        /// Those that are current at `Plugin::create`: the hooks continue that call.
+        Caller = 1,
+    }
+
+    bun_core::assert_ffi_discr!(PluginAsyncContext, u8; None = 0, Caller = 1);
+
     // `Plugin` is an `opaque_ffi!` handle (`repr(C)` + `UnsafeCell` marker), so
     // `&mut Plugin`/`&Plugin` are ABI-identical to non-null pointers and the
     // validity proof lives in the type. `runSetupFunction` and `globalObject`
@@ -1751,6 +1765,7 @@ pub(crate) mod js_bundler {
         safe fn JSBundlerPlugin__create(
             global: &JSGlobalObject,
             target: BunPluginTarget,
+            async_context: PluginAsyncContext,
         ) -> *mut Plugin;
         safe fn JSBundlerPlugin__tombstone(plugin: &Plugin);
         safe fn JSBundlerPlugin__runOnEndCallbacks(
@@ -1784,7 +1799,11 @@ pub(crate) mod js_bundler {
     /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
     /// added as an extension trait rather than an inherent `impl`.
     pub(crate) trait PluginJscExt {
-        fn create(global: &JSGlobalObject, target: BunPluginTarget) -> *mut Plugin;
+        fn create(
+            global: &JSGlobalObject,
+            target: BunPluginTarget,
+            async_context: PluginAsyncContext,
+        ) -> *mut Plugin;
         fn run_on_end_callbacks(
             &mut self,
             global_this: &JSGlobalObject,
@@ -1820,9 +1839,13 @@ pub(crate) mod js_bundler {
     }
 
     impl PluginJscExt for Plugin {
-        fn create(global: &JSGlobalObject, target: BunPluginTarget) -> *mut Plugin {
+        fn create(
+            global: &JSGlobalObject,
+            target: BunPluginTarget,
+            async_context: PluginAsyncContext,
+        ) -> *mut Plugin {
             jsc::mark_binding();
-            let plugin = JSBundlerPlugin__create(global, target);
+            let plugin = JSBundlerPlugin__create(global, target, async_context);
             JSValue::from_cell(plugin).protect();
             plugin
         }
@@ -2020,6 +2043,7 @@ pub(crate) fn worker_live_count() -> usize {
 pub(crate) use js_bundler::BunPluginTarget;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub(crate) use js_bundler::Plugin;
+pub(crate) use js_bundler::PluginAsyncContext;
 pub(crate) use js_bundler::PluginJscExt;
 
 /// Wraps a `webcore::Blob` plus

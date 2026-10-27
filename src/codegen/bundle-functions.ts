@@ -80,7 +80,6 @@ interface BundledBuiltin {
   name: string;
   directives: Record<string, any>;
   constructAbility: string;
-  /** The C++ literal of the function's `name`. `ASCIILiteral()` leaves the function without one. */
   overriddenName: string;
   source: string;
   params: string[];

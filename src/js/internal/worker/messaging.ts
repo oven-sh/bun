@@ -166,12 +166,8 @@ function receiveMessageFromWorker(source: number, value: unknown, memory: Shared
   // Don't use process.emit("workerMessage", ...): Bun's native emit routes a
   // throwing listener to reportUnhandledError instead of rethrowing, so
   // LISTENER_ERROR can't be detected. Invoke listeners directly.
-  //
-  // Known limitation: process.once('workerMessage', fn) listeners are not
-  // removed here — the native process EventEmitter tracks isOnce internally
-  // (fireEventListeners handles removal) with no JS-side onceWrapper to detect.
-  // Fixing this needs the native emit to rethrow (a broader change).
-  const listeners: Array<(value: unknown, source: number) => void> = process.listeners("workerMessage");
+  // rawListeners(), not listeners(): calling the wrapper of a once() listener removes its registration.
+  const listeners: Array<(value: unknown, source: number) => void> = process.rawListeners("workerMessage");
   const listenerCount = listeners.length;
   if (listenerCount > 0) {
     try {

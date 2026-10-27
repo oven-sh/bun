@@ -154,6 +154,7 @@ public:
     IsoSubspace* m_subspaceForEvent { nullptr };
     IsoSubspace* m_subspaceForEventTarget { nullptr };
     IsoSubspace* m_subspaceForEventEmitter { nullptr };
+    IsoSubspace* m_subspaceForEventEmitterOnceWrapper { nullptr };
 
     IsoSubspace* m_subspaceForURLSearchParams { nullptr };
     IsoSubspace* m_subspaceForURLSearchParamsIterator { nullptr };

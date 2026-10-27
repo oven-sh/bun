@@ -117,6 +117,7 @@ using namespace JSC;
     macro(kResistStopPropagation) \
     macro(lazy) \
     macro(lineText) \
+    macro(listener) \
     macro(loadEsmIntoCjs) \
     macro(main) \
     macro(makeAbortError) \

@@ -177,6 +177,71 @@ done"
   expect(exitCode).toBe(0);
 });
 
+// rawListeners() returns node's wrapper for a once() listener. The wrapper removes the registration when it is
+// called, and the signal handler goes with the last registration.
+test.skipIf(isWindows)("calling the wrapper of a once() signal listener uninstalls the handler", async () => {
+  const script = /*js*/ `
+    let calls = 0;
+    process.once("SIGUSR2", () => calls++);
+    const wrapper = process.rawListeners("SIGUSR2")[0];
+    wrapper();
+    console.log(JSON.stringify({ calls, listeners: process.listenerCount("SIGUSR2") }));
+
+    // If we get here, the signal handler was incorrectly still installed.
+    setTimeout(() => process.exit(42), 1000);
+
+    process.kill(process.pid, "SIGUSR2");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe('{"calls":1,"listeners":0}\n');
+  expect(exitCode).not.toBe(42);
+  expect(exitCode).not.toBe(0);
+  expect(proc.signalCode).not.toBeNull();
+});
+
+test.skipIf(isWindows)("the wrapper of a once() signal listener does nothing after the signal ran it", async () => {
+  const script = /*js*/ `
+    const { promise, resolve } = Promise.withResolvers();
+    let calls = 0;
+    process.once("SIGUSR2", () => {
+      calls++;
+      resolve();
+    });
+    const wrapper = process.rawListeners("SIGUSR2")[0];
+
+    process.kill(process.pid, "SIGUSR2");
+    await promise;
+    wrapper();
+    console.log(JSON.stringify({ calls, listeners: process.listenerCount("SIGUSR2") }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: '{"calls":1,"listeners":0}\n',
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 // SIGIOT is an alias for SIGABRT. Node starts one watcher per event name, so one signal runs the listeners
 // for both names, and the OS handler is only removed once both names have no listeners.
 // On Windows, no signal number has two names.

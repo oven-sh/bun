@@ -68,9 +68,10 @@ enum class DOMStructureSlot : uint8_t {
 #define DOM_STRUCTURE_SLOT_ENUMERATE(name) name,
     FOR_EACH_DOM_STRUCTURE_SLOT(DOM_STRUCTURE_SLOT_ENUMERATE)
 #undef DOM_STRUCTURE_SLOT_ENUMERATE
-    // TU-local JSDOMIterator subclasses; each specializes DOMStructureSlotOf next to its definition.
+    // Each of these specializes DOMStructureSlotOf next to its definition. The iterators are TU-local JSDOMIterator subclasses.
     CookieMapIterator,
     DOMFormDataIterator,
+    EventEmitterOnceWrapper,
     FetchHeadersIterator,
     URLSearchParamsIterator,
     Count,

@@ -44,21 +44,13 @@ void EventEmitter::addListenerForBindings(const Identifier& eventType, RefPtr<Ev
     addListener(eventType, listener.releaseNonNull(), once, prepend);
 }
 
-void EventEmitter::removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener)
-{
-    if (!listener)
-        return;
-
-    removeListener(eventType, *listener);
-}
-
-bool EventEmitter::removeListener(const Identifier& eventType, EventListener& listener)
+bool EventEmitter::removeListener(const Identifier& eventType, JSC::JSObject& function)
 {
     auto* data = eventTargetData();
     if (!data)
         return false;
 
-    if (data->eventListenerMap.remove(eventType, listener)) {
+    if (data->eventListenerMap.remove(eventType, function)) {
         eventListenersDidChange();
 
         if (this->onDidChangeListener)
@@ -171,25 +163,6 @@ int EventEmitter::listenerCount(const Identifier& eventType)
         }
     }
     return result;
-}
-
-Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
-{
-    auto* data = eventTargetData();
-    if (!data)
-        return {};
-    Vector<JSObject*> listeners;
-    if (auto* listenersVector = data->eventListenerMap.find(eventType)) {
-        for (auto& registeredListener : *listenersVector) {
-            if (registeredListener->wasRemoved()) [[unlikely]]
-                continue;
-
-            if (JSC::JSObject* jsFunction = registeredListener->callback().jsFunction()) {
-                listeners.append(jsFunction);
-            }
-        }
-    }
-    return listeners;
 }
 
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke

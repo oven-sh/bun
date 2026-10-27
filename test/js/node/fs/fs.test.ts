@@ -4518,6 +4518,14 @@ describe("createWriteStream", () => {
     expect.toThrowWithCode(() => stream.write(false), "ERR_INVALID_ARG_TYPE");
   });
 
+  // Only the streams over a sink (process.stdout, child.stdin) take an ArrayBuffer.
+  it("writing an ArrayBuffer throws ERR_INVALID_ARG_TYPE", async () => {
+    const streamPath = join(tmpdirSync(), "create-write-stream-arraybuffer.txt");
+    const stream = createWriteStream(streamPath);
+    expect.toThrowWithCode(() => stream.write(new ArrayBuffer(2)), "ERR_INVALID_ARG_TYPE");
+    expect.toThrowWithCode(() => stream.write(new SharedArrayBuffer(2)), "ERR_INVALID_ARG_TYPE");
+  });
+
   it("writing false throws ERR_INVALID_ARG_TYPE (objectMode: true)", async () => {
     const streamPath = join(tmpdirSync(), "create-write-stream-false-object-mode.txt");
     const stream = createWriteStream(streamPath, {

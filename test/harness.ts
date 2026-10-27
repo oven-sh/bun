@@ -1536,17 +1536,25 @@ class WriteBlockedError extends Error {
     this.name = "WriteBlockedError";
   }
 }
+// A write that blocks waits for the child to read. A write that does not block copies the chunk and makes one
+// syscall: about 1 ms for 1 MiB with a release build, 20 to 30 ms with a debug or ASAN build.
+const writeBlockedLimitMs = isASAN || isDebug ? 100 : 25;
 function failTestsOnBlockingWriteCall() {
   const prop = Object.getOwnPropertyDescriptor(child_process.ChildProcess.prototype, "stdin");
   const didAttachSymbol = Symbol("kDidAttach");
+  // child.stdin shares its prototype with process.stdout and fs.WriteStream. Only child.stdin is timed.
+  const kIsChildStdin = Symbol("kIsChildStdin");
   if (prop) {
     Object.defineProperty(child_process.ChildProcess.prototype, "stdin", {
       ...prop,
       get() {
         const actual = prop.get!.call(this);
-        if (actual?.write && !actual.__proto__[didAttachSymbol]) {
-          actual.__proto__[didAttachSymbol] = true;
-          attachWriteMeasurement(actual);
+        if (actual?.write) {
+          actual[kIsChildStdin] = true;
+          if (!actual.__proto__[didAttachSymbol]) {
+            actual.__proto__[didAttachSymbol] = true;
+            attachWriteMeasurement(actual);
+          }
         }
         return actual;
       },
@@ -1559,10 +1567,11 @@ function failTestsOnBlockingWriteCall() {
       Object.defineProperty(stream.__proto__, "write", {
         ...prop,
         value(chunk, encoding, cb) {
+          if (!this[kIsChildStdin]) return prop.value.apply(this, arguments);
           const start = performance.now();
           const rc = prop.value.apply(this, arguments);
           const end = performance.now();
-          if (end - start > 8) {
+          if (end - start > writeBlockedLimitMs) {
             const err = new WriteBlockedError(end - start);
             throw err;
           }

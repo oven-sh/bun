@@ -1,7 +1,7 @@
 import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExe, nodeExeAtLeast, normalizeBunSnapshot, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -1017,6 +1017,327 @@ console.log("survived", require("./late.js"));`,
       restored: { readsBack: true, require: "returned dep" },
     });
     expect(exitCode).toBe(0);
+  });
+
+  // Node validates the id in require() and require.resolve(), and Module._findPath rejects it unconverted.
+  // Module._resolveFilename and Module._resolveLookupPaths convert it first: the last two columns of the table.
+  describe.concurrent("a module request that is not a string", () => {
+    const INVALID = "ERR_INVALID_ARG_TYPE";
+    const NO_CODE = "TypeError with no code";
+    const ARRAY = "returned an array";
+    const THROWN = "threw what toString threw";
+    // [the value, what ERR_INVALID_ARG_TYPE says it received, Module._resolveFilename, Module._resolveLookupPaths]
+    const values = [
+      ["42", "type number (42)", INVALID, ARRAY],
+      ["undefined", "undefined", NO_CODE, NO_CODE],
+      ["null", "null", NO_CODE, NO_CODE],
+      ['["dep"]', "an instance of Array", INVALID, ARRAY],
+      ['{ toString: () => "dep" }', "an instance of Object", INVALID, ARRAY],
+      ['new String("dep")', "an instance of String", INVALID, ARRAY],
+      ['Symbol("dep")', "type symbol (Symbol(dep))", NO_CODE, NO_CODE],
+      ["pathToFileURL(dep)", "an instance of URL", INVALID, ARRAY],
+      ['Buffer.from("dep")', "an instance of Buffer", INVALID, ARRAY],
+      ["{ toString() { throw thrown; } }", "an instance of Object", THROWN, THROWN],
+      // Only a string form with the node: prefix names a builtin, and only one that require() loads.
+      ['{ toString: () => "node:fs" }', "an instance of Object", "returned the request", "returned null"],
+      ['{ toString: () => "node:ws" }', "an instance of Object", INVALID, ARRAY],
+      ['{ toString: () => "node:nope" }', "an instance of Object", INVALID, ARRAY],
+      ['{ toString: () => "fs" }', "an instance of Object", INVALID, ARRAY],
+    ];
+    const invalid = (name, received) =>
+      `TypeError [${INVALID}]: The "${name}" argument must be of type string. Received ${received}`;
+    const allInvalid = name => values.map(([, received]) => invalid(name, received));
+    const files = {
+      // What the string form of a value would load.
+      "node_modules/dep/index.js": `globalThis.loaded.push("dep"); module.exports = "dep";`,
+      "node_modules/42/index.js": `globalThis.loaded.push("42");`,
+    };
+    // Runs after the entry has defined Module, pathToFileURL and created, a require function made by createRequire.
+    const common = `
+      globalThis.loaded = [];
+      const dep = created.resolve("dep");
+      const thrown = new RangeError("thrown by toString");
+      const values = [${values.map(([value]) => value)}];
+      const outcome = (fn, request) => {
+        try {
+          const result = fn(request);
+          if (result === request) return "returned the request";
+          return "returned " + (Array.isArray(result) ? "an array" : String(result));
+        } catch (e) {
+          if (e === thrown) return "threw what toString threw";
+          // An error with no code has the text of the engine.
+          return e.code ? e.name + " [" + e.code + "]: " + e.message : e.name + " with no code";
+        }
+      };
+      const each = fn => values.map(value => outcome(fn, value));
+    `;
+    const cjs = `
+      const Module = require("node:module");
+      const { pathToFileURL } = require("node:url");
+      const created = Module.createRequire(__filename);${common}`;
+    const mjs = `
+      import Module from "node:module";
+      import { pathToFileURL } from "node:url";
+      const created = Module.createRequire(import.meta.url);${common}`;
+
+    // A Bun that converts the value would ask the registry for a package with that name.
+    const bun = [bunExe(), "--no-install"];
+    // Node runs the same files: what it prints is the expected result.
+    const runtimes = node => [
+      ["bun", bun],
+      ["node", node && [node]],
+    ];
+    const run = async (cmd, dir, ...args) => {
+      await using proc = Bun.spawn({
+        cmd: [...cmd, ...args],
+        // A debug build of Bun checks the exception scopes of the natives. A release build ignores the option.
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1", NODE_NO_WARNINGS: "1" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    for (const [runtime, cmd] of runtimes(nodeExe())) {
+      test.skipIf(!cmd).each([
+        // [the entry, its setup, the calls and the argument name in each error]
+        [
+          "main.cjs",
+          cjs,
+          {
+            "require(x)": "id",
+            "module.require(x)": "id",
+            "Module.prototype.require.call(module, x)": "id",
+            "created(x)": "id",
+            "require.resolve(x)": "request",
+            "created.resolve(x)": "request",
+          },
+        ],
+        [
+          "main.mjs",
+          mjs,
+          {
+            "created(x)": "id",
+            "created.resolve(x)": "request",
+            // An ES module of Node has none of these.
+            ...(runtime === "bun" && {
+              "import.meta.require(x)": "id",
+              "require(x)": "id",
+              "require.resolve(x)": "request",
+            }),
+          },
+        ],
+      ])(`never reaches a replaced Module._resolveFilename from %s (${runtime})`, async (entry, setup, calls) => {
+        using dir = tempDir("module-request-not-a-string", {
+          ...files,
+          [entry]: `${setup}
+            const original = Module._resolveFilename;
+            let replacementCalls = 0;
+            Module._resolveFilename = function () {
+              replacementCalls++;
+              return original.apply(this, arguments);
+            };
+            const results = { ${Object.keys(calls).map(call => `${JSON.stringify(call)}: each(x => ${call})`)} };
+            const afterValues = { replacementCalls, loaded: [...loaded] };
+            const string = { exports: created("dep"), replacementCalls };
+            console.log(JSON.stringify({ results, afterValues, string }));
+          `,
+        });
+        const { stdout, stderr, exitCode } = await run(cmd, dir, entry);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          results: Object.fromEntries(Object.entries(calls).map(([call, name]) => [call, allInvalid(name)])),
+          afterValues: { replacementCalls: 0, loaded: [] },
+          // A string still goes through the replacement.
+          string: { exports: "dep", replacementCalls: 1 },
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      test.skipIf(!cmd)(
+        `like an empty id, is rejected before options.paths and before any replacement of Module._resolveFilename (${runtime})`,
+        async () => {
+          using dir = tempDir("module-request-not-a-string-order", {
+            ...files,
+            "main.cjs": `${cjs}
+              const results = {
+                "require.resolve(42, { paths: 'x' })": outcome(() => require.resolve(42, { paths: "x" })),
+                "require.resolve(42, { paths: 5 })": outcome(() => require.resolve(42, { paths: 5 })),
+                "require(42, { paths: 'x' })": outcome(() => require(42, { paths: "x" })),
+                "require(42, { paths: [0] })": outcome(() => require(42, { paths: [0] })),
+                "require(42, { paths: [__dirname] })": outcome(() => require(42, { paths: [__dirname] })),
+              };
+              const original = Module._resolveFilename;
+              let calls = 0;
+              const rejected = () => [
+                outcome(() => require(42)),
+                outcome(() => require.resolve(42)),
+                outcome(() => require("")),
+                calls,
+              ];
+              Module._resolveFilename = function () {
+                calls++;
+                return original.apply(this, arguments);
+              };
+              results["a replacement that forwards"] = rejected();
+              Module._resolveFilename = () => (calls++, dep);
+              results["a replacement that does not forward"] = rejected();
+              results["require.resolve('') under it"] = [require.resolve("") === dep, calls];
+              Module._resolveFilename = 42;
+              results["a replacement that is not callable"] = rejected();
+              console.log(JSON.stringify({ results, loaded }));
+            `,
+          });
+          const { stdout, stderr, exitCode } = await run(cmd, dir, "main.cjs");
+          expect(stderr).toBe("");
+          const id = invalid("id", "type number (42)");
+          const request = invalid("request", "type number (42)");
+          const empty = "TypeError [ERR_INVALID_ARG_VALUE]: The argument 'id' must be a non-empty string. Received ''";
+          expect(JSON.parse(stdout)).toEqual({
+            results: {
+              "require.resolve(42, { paths: 'x' })": request,
+              "require.resolve(42, { paths: 5 })": request,
+              "require(42, { paths: 'x' })": id,
+              "require(42, { paths: [0] })": id,
+              "require(42, { paths: [__dirname] })": id,
+              // [require(42), require.resolve(42), require(""), the calls of the replacement so far]
+              "a replacement that forwards": [id, request, empty, 0],
+              "a replacement that does not forward": [id, request, empty, 0],
+              // require.resolve() passes an empty request on.
+              "require.resolve('') under it": [true, 1],
+              "a replacement that is not callable": [id, request, empty, 1],
+            },
+            loaded: [],
+          });
+          expect(exitCode).toBe(0);
+        },
+      );
+    }
+
+    // Before v26.4.0 node's Module._resolveFilename read options.paths and the parent before it rejected the request.
+    for (const [runtime, cmd] of runtimes(nodeExeAtLeast("26.4.0"))) {
+      test.skipIf(!cmd)(
+        `Module._findPath, Module._resolveFilename and Module._resolveLookupPaths (${runtime})`,
+        async () => {
+          using dir = tempDir("module-request-not-a-string-natives", {
+            ...files,
+            "main.cjs": `${cjs}
+              const unread = {
+                get filename() {
+                  throw new Error("read parent.filename");
+                },
+                get paths() {
+                  throw new Error("read options.paths");
+                },
+              };
+              const nodeModules = require("node:path").join(__dirname, "node_modules");
+              console.log(JSON.stringify({
+                "Module._findPath(x, [nodeModules])": each(x => Module._findPath(x, [nodeModules])),
+                "Module._findPath(x)": each(x => Module._findPath(x)),
+                "Module._findPath(x, 5)": each(x => Module._findPath(x, 5)),
+                "Module._resolveFilename(x, module)": each(x => Module._resolveFilename(x, module)),
+                "Module._resolveFilename(x, module, false, { paths: 'x' })": each(x => Module._resolveFilename(x, module, false, { paths: "x" })),
+                "Module._resolveFilename(x, unread, false, unread)": each(x => Module._resolveFilename(x, unread, false, unread)),
+                "Module._resolveLookupPaths(x, module)": each(x => Module._resolveLookupPaths(x, module)),
+                loaded,
+                strings: [
+                  Module._findPath("dep", [nodeModules]) === dep,
+                  Module._resolveFilename("dep", module) === dep,
+                  outcome(() => Module._resolveLookupPaths("dep", module)),
+                ],
+              }));
+            `,
+          });
+          const { stdout, stderr, exitCode } = await run(cmd, dir, "main.cjs");
+          expect(stderr).toBe("");
+          // Module._resolveFilename converts the value, then rejects it, before it reads the parent or options.paths.
+          const resolveFilename = values.map(([, received, outcome]) =>
+            outcome === INVALID ? invalid("path", received) : outcome,
+          );
+          expect(JSON.parse(stdout)).toEqual({
+            // Module._findPath converts nothing.
+            "Module._findPath(x, [nodeModules])": allInvalid("path"),
+            "Module._findPath(x)": allInvalid("path"),
+            "Module._findPath(x, 5)": allInvalid("path"),
+            "Module._resolveFilename(x, module)": resolveFilename,
+            "Module._resolveFilename(x, module, false, { paths: 'x' })": resolveFilename,
+            "Module._resolveFilename(x, unread, false, unread)": resolveFilename,
+            // Module._resolveLookupPaths converts the value. It rejects only undefined and null before that.
+            "Module._resolveLookupPaths(x, module)": values.map(([, , , outcome]) => outcome),
+            loaded: [],
+            strings: [true, true, ARRAY],
+          });
+          expect(exitCode).toBe(0);
+        },
+      );
+    }
+
+    // Upstream passes values that are not strings to require(). A replacement that only forwards must not change that.
+    test("test-module-loading-error.js passes under a Module._resolveFilename that forwards", async () => {
+      using dir = tempDir("module-request-not-a-string-upstream", {
+        "forward.cjs": `
+          const Module = require("node:module");
+          const original = Module._resolveFilename;
+          Module._resolveFilename = function () {
+            return original.apply(this, arguments);
+          };
+        `,
+      });
+      const upstream = path.join(import.meta.dir, "..", "test", "parallel", "test-module-loading-error.js");
+      expect(await run(bun, dir, "-r", "./forward.cjs", upstream)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
+    test("asks the registry for nothing", async () => {
+      const requests = [];
+      using registry = Bun.serve({
+        port: 0,
+        fetch(request) {
+          requests.push(new URL(request.url).pathname);
+          return new Response("not found", { status: 404 });
+        },
+      });
+      using dir = tempDir("module-request-not-a-string-registry", {
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+        "main.cjs": `
+          const Module = require("node:module");
+          const codes = [];
+          const attempt = fn => {
+            try {
+              fn();
+              codes.push("returned");
+            } catch (e) {
+              codes.push(e.code);
+            }
+          };
+          attempt(() => Module._findPath(41, [__dirname]));
+          attempt(() => Module._resolveFilename(42, module));
+          const original = Module._resolveFilename;
+          Module._resolveFilename = function () {
+            return original.apply(this, arguments);
+          };
+          attempt(() => require(43));
+          // A string is looked up.
+          attempt(() => require("not-installed"));
+          console.log(JSON.stringify(codes));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--install=fallback", "main.cjs"],
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: path.join(String(dir), ".bun-cache") },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect({ codes: JSON.parse(stdout), requests }).toEqual({
+        codes: [INVALID, INVALID, INVALID, "MODULE_NOT_FOUND"],
+        requests: ["/not-installed"],
+      });
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe.concurrent(

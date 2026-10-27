@@ -219,23 +219,32 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         RETURN_IF_EXCEPTION(scope, {});
     }
 
+    // Node validates the id first, so a replaced Module._resolveFilename never receives one that is not a string.
+    if (!moduleName.isString()) [[unlikely]] {
+        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, isRequireDotResolve ? "request"_s : "id"_s, "string"_s, moduleName);
+        scope.release();
+        return {};
+    }
+
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
-        if (moduleName.isString()) {
-            auto moduleString = moduleName.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto fromString = from.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
-                if (moduleString == resolvedString.value())
-                    return JSC::JSValue::encode(moduleName);
-                return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
-            }
+        auto moduleString = moduleName.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto fromString = from.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
+            if (moduleString == resolvedString.value())
+                return JSC::JSValue::encode(moduleName);
+            return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
         }
     }
 
     if (!isESM) {
         if (globalObject) [[likely]] {
             if (globalObject->hasOverriddenModuleResolveFilenameFunction) [[unlikely]] {
+                // Node's require() rejects an empty id before the replacement too. Without a replacement Bun__resolveSync rejects it.
+                if (!isRequireDotResolve && asString(moduleName)->length() == 0)
+                    return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "id"_s, moduleName, "must be a non-empty string"_s);
+
                 JSValue overrideHandler = globalObject->m_moduleResolveFilenameOverride.get();
                 JSC::CallData overrideCallData = JSC::getCallData(overrideHandler);
                 if (overrideCallData.type == JSC::CallData::Type::None) [[unlikely]] {
@@ -274,7 +283,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         // node resolves builtin ids before validating `paths`, so `require.resolve("node:fs",
         // { paths: [0] })` must not throw. Only real builtins bypass; "node:nope" still validates.
         // https://github.com/nodejs/node/blob/main/lib/internal/modules/cjs/loader.js
-        if (!userPathList.isUndefinedOrNull() && moduleName.isString()) {
+        if (!userPathList.isUndefinedOrNull()) {
             auto builtinCheckStr = moduleName.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (Bun::isBuiltinModule(builtinCheckStr))
@@ -283,12 +292,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
         if (!userPathList.isUndefinedOrNull()) {
             if (JSArray* userPathListArray = dynamicDowncast<JSArray>(userPathList)) {
-                if (!moduleName.isString()) {
-                    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "request"_s, "string"_s, moduleName);
-                    scope.release();
-                    return {};
-                }
-
                 JSC::EncodedJSValue result = {};
                 WTF::Vector<BunString> paths;
                 for (size_t i = 0; i < userPathListArray->length(); ++i) {
@@ -331,12 +334,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 return {};
             }
         }
-    }
-
-    if (!moduleName.isString()) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, isRequireDotResolve ? "request"_s : "id"_s, "string"_s, moduleName);
-        scope.release();
-        return {};
     }
 
     auto result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve);

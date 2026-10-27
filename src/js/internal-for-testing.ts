@@ -898,6 +898,21 @@ export const fetchH3Internals = {
   liveCounts: $bindgen("headers_jsc.bind.ts", "h3LiveCounts"),
 };
 
+export const http1Internals = {
+  /**
+   * What the HTTP client makes of a response head at the start of `data`, with room for `slots` headers:
+   * `malformed`, `incomplete`, or `1.<minor> <status> <reason> <length of the head>` and a `<name>:<value>` per
+   * header, where each part is `<offset in data>+<length>`.
+   */
+  parseResponse: $bindgen("http1_testing.bind.ts", "parseResponse"),
+  /**
+   * `data` decoded as a chunked body, in pieces that end at `cuts` and at its end. A line per piece, also for those
+   * after the body has ended or failed:
+   * `<status> <length of the data> <t if in the trailers> <the piece afterwards, in hex>`.
+   */
+  decodeChunked: $bindgen("http1_testing.bind.ts", "decodeChunked"),
+};
+
 const proxyFor = $bindgen("proxy_testing.bind.ts", "proxyFor");
 
 export const proxyInternals = {

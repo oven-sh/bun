@@ -31,15 +31,16 @@ _file_arguments() {
     # the options and the cd are in the subshell only, so an interrupted listing leaks nothing.
     # the callers add flags and script names to the list, so readline must not treat it as
     # file names: a name with a space is escaped here instead, unless the user opened a quote.
-    # a leading ~ stays as it is, so that it still expands
-    local tilde;
+    # the directory part is kept as the user typed it (`~/`, `$HOME/`, `my\ dir/`), compgen
+    # hands it back expanded or without the backslashes
+    local typed_dir="";
+    [[ "${cur_word}" == */* ]] && typed_dir="${cur_word%/*}/";
     COMPREPLY=();
     while IFS= read -r file; do
         if [[ "${cur_word}" != [\"\']* ]]; then
-            tilde="";
-            [[ "${file}" == "~"* ]] && { tilde="~"; file="${file#\~}"; };
+            [[ -n "${typed_dir}" ]] && file="${file##*/}";
             printf -v file '%q' "${file}";
-            file="${tilde}${file}";
+            file="${typed_dir}${file}";
         fi
         COMPREPLY+=( "${file}" );
     done < <(CDPATH= builtin cd -- "${working_dir}" >/dev/null 2>&1 && shopt -s extglob nocasematch && compgen -f -X "${extensions}" -- "${cur_word}");

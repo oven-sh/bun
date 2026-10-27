@@ -2403,6 +2403,174 @@ describe("explicit undefined behaves like an absent optional argument", () => {
   });
 });
 
+// Node takes the completion callback with `callback ||= slot` in writev, readv, write, readFile and
+// writeFile: the last argument wins over a function in the slot before it. In the slot-first
+// functions, a function in the options slot is the callback.
+describe.concurrent("a callback argument after a function in the optional slot", () => {
+  type Fn = (...args: any[]) => void;
+  type Ctx = { dir: string; file: string; fd: number };
+  type Start = (c: Ctx, fn: Fn, cb: unknown) => void;
+
+  async function withFile<T>(run: (c: Ctx) => T | Promise<T>): Promise<T> {
+    using dir = tempDir("fs-callback-slot", { "f.txt": "0123456789" });
+    const file = join(String(dir), "f.txt");
+    const fd = openSync(file, "r+");
+    try {
+      return await run({ dir: String(dir), file, fd });
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  // Resolves with "fn" or "cb" (the function that node:fs called), then the arguments it got.
+  function called(start: (fn: Fn, cb: Fn) => void): Promise<any[]> {
+    const { promise, resolve } = Promise.withResolvers<any[]>();
+    start(
+      (...args) => resolve(["fn", ...args]),
+      (...args) => resolve(["cb", ...args]),
+    );
+    return promise;
+  }
+
+  const thrown = (run: () => void) => {
+    try {
+      run();
+    } catch (e: any) {
+      return { code: e.code, message: e.message };
+    }
+  };
+  const invalidCallback = (received: string) => ({
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `The "cb" argument must be of type function. Received ${received}`,
+  });
+
+  const lastArgumentWins: [string, Start][] = [
+    ["writev(fd, buffers, fn, cb)", (c, fn, cb) => (fs.writev as any)(c.fd, [Buffer.from("ab")], fn, cb)],
+    ["writev(fd, [], fn, cb)", (c, fn, cb) => (fs.writev as any)(c.fd, [], fn, cb)],
+    ["readv(fd, buffers, fn, cb)", (c, fn, cb) => (fs.readv as any)(c.fd, [Buffer.alloc(2)], fn, cb)],
+    ["readFile(path, fn, cb)", (c, fn, cb) => (fs.readFile as any)(c.file, fn, cb)],
+    ["writeFile(path, data, fn, cb)", (c, fn, cb) => (fs.writeFile as any)(c.file, "x", fn, cb)],
+    ["write(fd, buffer, fn, cb)", (c, fn, cb) => (fs.write as any)(c.fd, Buffer.from("ab"), fn, cb)],
+  ];
+
+  it.each(lastArgumentWins)("fs.%s calls cb", async (_label, start) => {
+    await withFile(async c => {
+      expect((await called((fn, cb) => start(c, fn, cb))).slice(0, 2)).toEqual(["cb", null]);
+    });
+  });
+
+  it.each(lastArgumentWins)("fs.%s calls fn when cb is falsy", async (_label, start) => {
+    await withFile(async c => {
+      for (const falsy of [undefined, null, 0, ""]) {
+        expect((await called(fn => start(c, fn, falsy))).slice(0, 2)).toEqual(["fn", null]);
+      }
+    });
+  });
+
+  it.each(lastArgumentWins)("fs.%s throws when cb is not a function", async (_label, start) => {
+    await withFile(c => {
+      expect(thrown(() => start(c, () => {}, "str"))).toEqual(invalidCallback("type string ('str')"));
+      expect(readFileSync(c.file, "latin1")).toBe("0123456789");
+    });
+  });
+
+  const slotWins: [string, Start][] = [
+    ["realpath(path, fn, cb)", (c, fn, cb) => (fs.realpath as any)(c.file, fn, cb)],
+    ["readdir(path, fn, cb)", (c, fn, cb) => (fs.readdir as any)(c.dir, fn, cb)],
+    ["stat(path, fn, cb)", (c, fn, cb) => (fs.stat as any)(c.file, fn, cb)],
+    ["mkdir(path, fn, cb)", (c, fn, cb) => (fs.mkdir as any)(join(c.dir, "new"), fn, cb)],
+  ];
+
+  it.each(slotWins)("fs.%s calls fn", async (_label, start) => {
+    await withFile(async c => {
+      expect((await called((fn, cb) => start(c, fn, cb))).slice(0, 2)).toEqual(["fn", null]);
+    });
+  });
+
+  it("fs.writev and fs.readv pass the result to cb, and a function is no position", async () => {
+    await withFile(async c => {
+      const written = [Buffer.from("ab"), Buffer.from("cd")];
+      expect(await called((fn, cb) => (fs.writev as any)(c.fd, written, fn, cb))).toEqual(["cb", null, 4, written]);
+      expect(readFileSync(c.file, "latin1")).toBe("abcd456789");
+      // The read starts where the write stopped.
+      const read = [Buffer.alloc(2), Buffer.alloc(2)];
+      expect(await called((fn, cb) => (fs.readv as any)(c.fd, read, fn, cb))).toEqual(["cb", null, 4, read]);
+      expect(Buffer.concat(read).toString()).toBe("4567");
+    });
+  });
+
+  it.each(["writev", "readv"] as const)("fs.%s(fd, buffers, fn, cb) reports an I/O error to cb", async name => {
+    const buffers = [Buffer.alloc(1)];
+    // No file has this descriptor.
+    const [who, err, ...rest] = await called((fn, cb) => (fs[name] as any)(2147483647, buffers, fn, cb));
+    expect([who, err?.code, ...rest]).toEqual(["cb", "EBADF", 0, buffers]);
+  });
+
+  it("util.promisify(fs.writev) and util.promisify(fs.readv) resolve with a function as the position", async () => {
+    await withFile(async c => {
+      // util.promisify appends its callback last. Resolves with "fn" when node:fs calls the function before it.
+      const settled = (run: (fn: Fn) => Promise<unknown>) => {
+        const { promise, resolve } = Promise.withResolvers<string>();
+        return Promise.race([run(() => resolve("fn")), promise]);
+      };
+      const written = [Buffer.from("ab")];
+      expect(await settled(fn => (promisify(fs.writev) as any)(c.fd, written, fn))).toMatchObject({ bytesWritten: 2 });
+      const read = [Buffer.alloc(2)];
+      expect(await settled(fn => (promisify(fs.readv) as any)(c.fd, read, fn))).toEqual({
+        bytesRead: 2,
+        buffers: read,
+      });
+    });
+  });
+
+  // Node names the second key `buffer`: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L953-L957
+  it.failing("util.promisify(fs.writev) resolves { bytesWritten, buffer } like node", async () => {
+    await withFile(async c => {
+      const buffers = [Buffer.from("ab")];
+      expect(await promisify(fs.writev)(c.fd, buffers)).toEqual({ bytesWritten: 2, buffer: buffers } as any);
+    });
+  });
+
+  it("the error names the value in the callback slot", async () => {
+    await withFile(c => {
+      const buffers = [Buffer.alloc(1)];
+      expect(thrown(() => (fs.writev as any)(c.fd, buffers, 4))).toEqual(invalidCallback("type number (4)"));
+      expect(thrown(() => (fs.readv as any)(c.fd, buffers, 4))).toEqual(invalidCallback("type number (4)"));
+      expect(thrown(() => (fs.writev as any)(c.fd, buffers, {}))).toEqual(invalidCallback("an instance of Object"));
+      expect(thrown(() => (fs.readv as any)(c.fd, buffers))).toEqual(invalidCallback("undefined"));
+    });
+  });
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L753-L756
+  it.each(["writev", "readv"] as const)("fs.%s checks fd, then buffers, then the callback", async name => {
+    await withFile(c => {
+      const error = (...args: unknown[]) => thrown(() => (fs[name] as any)(...args));
+      const buffers = [Buffer.alloc(1)];
+      const invalidBuffers = (received: string) => ({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "buffers" argument must be an ArrayBufferView[]. Received ${received}`,
+      });
+      expect(error(-1, buffers, () => {}, "str")).toEqual({
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received -1',
+      });
+      expect(error(1.5, "nobufs", "str")).toEqual({
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "fd" is out of range. It must be an integer. Received 1.5',
+      });
+      expect(error(undefined, buffers)).toEqual({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "fd" argument must be of type number. Received undefined',
+      });
+      expect(error(c.fd, { length: 1, 0: Buffer.alloc(1) }, () => {}, 1)).toEqual(
+        invalidBuffers("an instance of Object"),
+      );
+      expect(error(c.fd, [Buffer.alloc(1), "x"])).toEqual(invalidBuffers("an instance of Array"));
+      expect(error(-0, buffers, "str")).toEqual(invalidCallback("type string ('str')"));
+    });
+  });
+});
+
 describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
   // IOV_MAX is 1024 on Linux and macOS. Node's libuv loops writev in
   // IOV_MAX-sized batches and caps readv at IOV_MAX; Bun previously passed

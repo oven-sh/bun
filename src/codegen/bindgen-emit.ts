@@ -18,7 +18,7 @@ import {
   DeferredDictionaryType,
   DictionaryType,
   EnumerationType,
-  ExternField,
+  type ExternField,
   FunctionDefinition,
   Getter,
   indent,

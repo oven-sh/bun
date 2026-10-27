@@ -366,6 +366,119 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
+// A workspace install links node_modules/lib to packages/lib. The resolver walks the link to find a file of the
+// package, and the watcher reports that file by its real path. The links exist before the server starts.
+{
+  const throughNodeModulesLink = {
+    how: "through a node_modules link",
+    lib: "lib",
+    symlinks: { "node_modules/lib": "../packages/lib" },
+  };
+  const throughDirectoryLink = {
+    how: "through a directory link",
+    lib: "./linked",
+    symlinks: { linked: "packages/lib" },
+  };
+  const byRelativePath = { how: "by its relative path", lib: "./packages/lib", symlinks: undefined };
+  const indexHtml = emptyHtmlFile({ scripts: ["index.ts"] });
+  const libPackageJson = (fields: object = {}) => JSON.stringify({ name: "lib", version: "1.0.0", ...fields });
+  const clientScriptUrl = (html: string) => /src="([^"]+\.js)"/.exec(html)?.[1];
+  // Which of the exports of packages/lib the script of "/" holds.
+  async function servedLibExports(dev: Dev) {
+    // A watcher event that arrives after a build bundles the route again, and its script gets a new URL.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const url = clientScriptUrl(await dev.fetch("/").text());
+      if (!url) throw new Error('"/" serves no script');
+      const script = await dev.fetch(url).text();
+      if (clientScriptUrl(await dev.fetch("/").text()) === url) {
+        return ["EXPORT_A", "EXPORT_C", "EXPORT_D"].filter(name => script.includes(name));
+      }
+    }
+    throw new Error('The script of "/" got a new URL on every attempt');
+  }
+
+  for (const { how, lib, symlinks, dir } of [
+    { ...throughNodeModulesLink, dir: "" },
+    { ...throughNodeModulesLink, dir: "sub/" },
+    { ...throughDirectoryLink, dir: "" },
+    { ...byRelativePath, dir: "" },
+  ]) {
+    devTest(`renaming a file ${dir ? "in a subdirectory " : ""}of a package imported ${how}`, {
+      skip: [
+        "win32", // unlinkSync is having weird behavior
+      ],
+      symlinks,
+      files: {
+        "index.html": indexHtml,
+        "index.ts": `
+          import { a } from '${lib}/a';
+          import { c } from '${lib}/${dir}c';
+          console.log(a, c);
+        `,
+        "packages/lib/package.json": libPackageJson(),
+        "packages/lib/a.ts": `export const a = "EXPORT_A";`,
+        [`packages/lib/${dir}c.ts`]: `export const c = "EXPORT_C";`,
+      },
+      async test(dev) {
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_C"]);
+        {
+          // Only the rename is in this batch. An importer that is saved in the same batch keeps its import of
+          // the removed file, with or without a link.
+          await using batch = await dev.batchChanges();
+          await dev.delete(`packages/lib/${dir}c.ts`);
+          await dev.write(`packages/lib/${dir}c.tsx`, `export const c = "EXPORT_D";`);
+        }
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_D"]);
+        await dev.writeNoChanges("index.ts");
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_D"]);
+      },
+    });
+  }
+
+  // The importer reports the import of a deleted file, and it is bundled again when the file is back. The
+  // package.json of the package can name the file too: as its "main", or in its "exports".
+  for (const { entry, how, symlinks, specifier, fields } of [
+    { entry: "a file", ...throughNodeModulesLink, specifier: "lib/c", fields: {} },
+    { entry: 'the "main" file', ...throughNodeModulesLink, specifier: "lib", fields: { main: "./c.ts" } },
+    { entry: 'the "main" file', ...byRelativePath, specifier: "./packages/lib", fields: { main: "./c.ts" } },
+    {
+      entry: 'an "exports" file',
+      ...throughNodeModulesLink,
+      specifier: "lib/c",
+      fields: { exports: { "./c": "./c.ts" } },
+    },
+  ]) {
+    devTest(`deleting then re-creating ${entry} of a package imported ${how}`, {
+      skip: [
+        "win32", // unlinkSync is having weird behavior
+      ],
+      symlinks,
+      files: {
+        "index.html": indexHtml,
+        "index.ts": `
+          import { c } from '${specifier}';
+          console.log(c);
+        `,
+        "packages/lib/package.json": libPackageJson(fields),
+        "packages/lib/c.ts": `export const c = "EXPORT_C";`,
+      },
+      async test(dev) {
+        await using c = await dev.client("/");
+        await c.expectMessage("EXPORT_C");
+        await dev.delete("packages/lib/c.ts", {
+          errors: [
+            `index.ts:1:19: error: Could not resolve: "${specifier}"` +
+              (specifier.startsWith(".") ? "" : '. Maybe you need to "bun install"?'),
+          ],
+        });
+        await c.expectReload(async () => {
+          await dev.write("packages/lib/c.ts", `export const c = "EXPORT_D";`);
+        });
+        await c.expectMessage("EXPORT_D");
+      },
+    });
+  }
+}
 // Without a separate SSR graph, the server bundle keeps a "use client" module
 // and the parser wraps its exported values in `registerClientReference(value,
 // file, name)`. The parser chose `file` by the JSX development flag. A

@@ -220,6 +220,28 @@ impl DirectoryWatchStore {
         }
     }
 
+    /// Registers a directory watch so that `importer` is bundled again once `abs_path`, a file
+    /// it imports that was deleted, exists again. `track_resolution_failure` covers this only
+    /// for a relative specifier: an import by package name or tsconfig path registers nothing.
+    /// `importer` is a key of `IncrementalGraph.bundled_files`, as `Dep.source_file_path` is.
+    pub(crate) fn watch_for_deleted_file(
+        &mut self,
+        importer: bun_ptr::RawSlice<u8>,
+        abs_path: &[u8],
+    ) -> Result<(), bun_alloc::AllocError> {
+        // The dev server watches nothing in node_modules.
+        if !bun_paths::is_absolute(abs_path)
+            || bun_paths::string_paths::path_contains_node_modules_folder(abs_path)
+        {
+            return Ok(());
+        }
+        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(abs_path);
+        match self.insert(dir, importer, abs_path) {
+            Ok(()) | Err(DirectoryWatchInsertError::Ignore) => Ok(()),
+            Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
+        }
+    }
+
     /// `dir_name_to_watch` is cloned; `file_path` must outlive the watch;
     /// `specifier` is cloned.
     fn insert(
@@ -402,6 +424,17 @@ impl DirectoryWatchStore {
     /// with `IncrementalGraph.bundled_files`. Called before IncrementalGraph
     /// frees a file's key string so no `Dep` is left holding a dangling pointer.
     pub(crate) fn remove_dependencies_for_file(&mut self, file_path: &[u8]) {
+        self.remove_dependencies(file_path, |_| true);
+    }
+
+    /// Removes what `watch_for_deleted_file` registered for `file_path`, a key of
+    /// `IncrementalGraph.bundled_files`. Called when that file bundles: it no longer imports the
+    /// deleted file, and a watch left behind would bust the directory at every later event.
+    pub(crate) fn remove_deleted_file_watches(&mut self, file_path: &[u8]) {
+        self.remove_dependencies(file_path, |dep| bun_paths::is_absolute(&dep.specifier));
+    }
+
+    fn remove_dependencies(&mut self, file_path: &[u8], matches: impl Fn(&Dep) -> bool) {
         if self.watches.count() == 0 {
             return;
         }
@@ -425,7 +458,9 @@ impl DirectoryWatchStore {
                 let dep_path = self.dependencies[index as usize].source_file_path;
                 it = dep_next;
                 // Pointer-identity comparison.
-                if dep_path.slice().as_ptr() == file_path.as_ptr() {
+                if dep_path.slice().as_ptr() == file_path.as_ptr()
+                    && matches(&self.dependencies[index as usize])
+                {
                     self.free_dependency_index(index);
                 } else {
                     self.dependencies[index as usize].next = new_chain;

@@ -23,7 +23,7 @@ const identityCases: [string, () => object, Function][] = [
   ["TypeError", () => new TypeError("boom"), TypeError],
   ["URIError", () => new URIError("boom"), URIError],
   ["DOMException", () => new DOMException("boom", "NotFoundError"), DOMException],
-  ["QuotaExceededError", () => new QuotaExceededError("boom", { quota: 1, requested: 2 }), QuotaExceededError],
+  ["QuotaExceededError", () => new QuotaExceededError("boom", { quota: 1 }), globalThis.QuotaExceededError],
   ["Blob", () => new Blob(["hi"], { type: "text/plain" }), Blob],
   ["File", () => new File(["hi"], "a.txt", { type: "text/plain" }), File],
   ["X509Certificate", () => new X509Certificate(tls.cert), X509Certificate],

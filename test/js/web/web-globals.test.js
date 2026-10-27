@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { nativeQuotaExceededError } from "bun:internal-for-testing";
+import * as internalForTesting from "bun:internal-for-testing";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
 
@@ -664,7 +664,7 @@ describe("QuotaExceededError", () => {
 
   // No API of Bun throws the QuotaExceededError exception code yet, so a hook makes the error that such an API gets.
   test("native code that throws its exception code gets the class", () => {
-    const error = nativeQuotaExceededError("over the quota");
+    const error = internalForTesting.nativeQuotaExceededError("over the quota");
     expect(Object.getPrototypeOf(error)).toBe(QuotaExceededError.prototype);
     expect(describeError(error)).toEqual({
       name: "QuotaExceededError",
@@ -674,7 +674,7 @@ describe("QuotaExceededError", () => {
       requested: null,
     });
     expect(typeof error.stack).toBe("string");
-    expect(nativeQuotaExceededError("").message).toBe("The quota has been exceeded.");
+    expect(internalForTesting.nativeQuotaExceededError("").message).toBe("The quota has been exceeded.");
   });
 
   // The class of that error comes from the global object, not from its `QuotaExceededError` property:

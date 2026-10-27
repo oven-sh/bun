@@ -36,38 +36,43 @@ fn ycc_to_rgb(y: u8, cb: u8, cr: u8) -> [u8; 3] {
     [r, g, b].map(|v| v.clamp(0, 255) as u8)
 }
 
-/// Converts one row. `planes` has a row of each component, and `output` 4 bytes for each pixel.
-pub(crate) fn convert(conversion: Conversion, planes: [&[u8]; 4], output: &mut [u8]) {
-    let (pixels, _) = output.as_chunks_mut::<4>();
-    let [p0, p1, p2, p3] = planes;
+/// Converts one row of `width` pixels and appends it to `output`, which has room for it. `planes` has a row of each
+/// component.
+pub(crate) fn convert(
+    conversion: Conversion,
+    planes: [&[u8]; 4],
+    width: usize,
+    output: &mut Vec<[u8; 4]>,
+) {
+    let [p0, p1, p2, p3] = planes.map(|row| row.get(..width).unwrap_or(row));
+    let end = output.len() + width;
     match conversion {
-        Conversion::GrayToRgba => {
-            for (pixel, &v) in pixels.iter_mut().zip(p0) {
-                *pixel = [v, v, v, 255];
-            }
-        }
+        Conversion::GrayToRgba => output.extend(p0.iter().map(|&v| [v, v, v, 255])),
         Conversion::RgbToRgba => {
-            for (((pixel, &r), &g), &b) in pixels.iter_mut().zip(p0).zip(p1).zip(p2) {
-                *pixel = [r, g, b, 255];
-            }
+            output.extend(
+                p0.iter()
+                    .zip(p1)
+                    .zip(p2)
+                    .map(|((&r, &g), &b)| [r, g, b, 255]),
+            );
         }
         Conversion::YccToRgba => {
-            for (((pixel, &y), &cb), &cr) in pixels.iter_mut().zip(p0).zip(p1).zip(p2) {
+            output.extend(p0.iter().zip(p1).zip(p2).map(|((&y, &cb), &cr)| {
                 let [r, g, b] = ycc_to_rgb(y, cb, cr);
-                *pixel = [r, g, b, 255];
-            }
+                [r, g, b, 255]
+            }));
         }
         Conversion::Cmyk => {
-            for ((((pixel, &c), &m), &y), &k) in pixels.iter_mut().zip(p0).zip(p1).zip(p2).zip(p3) {
-                *pixel = [c, m, y, k];
-            }
+            let rows = p0.iter().zip(p1).zip(p2).zip(p3);
+            output.extend(rows.map(|(((&c, &m), &y), &k)| [c, m, y, k]));
         }
         Conversion::YcckToCmyk => {
-            for ((((pixel, &y), &cb), &cr), &k) in pixels.iter_mut().zip(p0).zip(p1).zip(p2).zip(p3)
-            {
+            let rows = p0.iter().zip(p1).zip(p2).zip(p3);
+            output.extend(rows.map(|(((&y, &cb), &cr), &k)| {
                 let [r, g, b] = ycc_to_rgb(y, cb, cr);
-                *pixel = [255 - r, 255 - g, 255 - b, k];
-            }
+                [255 - r, 255 - g, 255 - b, k]
+            }));
         }
     }
+    output.resize(end, [0; 4]);
 }

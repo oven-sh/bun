@@ -28,11 +28,11 @@ impl Method {
 ///
 /// The result is `(3 * near + far + bias) >> shift`.
 #[inline(always)]
-fn widen<T: Copy + Into<u32>>(input: &[T], output: &mut [u8], bias: [u32; 2], shift: u32) {
+fn widen<T: Copy + Into<u16>>(input: &[T], output: &mut [u8], bias: [u16; 2], shift: u32) {
     let (pairs, _) = output.as_chunks_mut::<2>();
     let [bias_left, bias_right] = bias;
     let sample =
-        |near: T, far: T, bias: u32| ((near.into() * 3 + far.into() + bias) >> shift) as u8;
+        |near: T, far: T, bias: u16| ((near.into() * 3 + far.into() + bias) >> shift) as u8;
 
     let (Some(&first), Some(&last)) = (input.first(), input.last()) else {
         return;
@@ -71,7 +71,7 @@ pub(crate) fn h2v1_fancy(input: &[u8], output: &mut [u8]) {
 pub(crate) fn h1v2_fancy(near: &[u8], far: &[u8], upper: bool, output: &mut [u8]) {
     let bias = if upper { 1 } else { 2 };
     for ((out, &near), &far) in output.iter_mut().zip(near).zip(far) {
-        *out = ((u32::from(near) * 3 + u32::from(far) + bias) >> 2) as u8;
+        *out = ((u16::from(near) * 3 + u16::from(far) + bias) >> 2) as u8;
     }
 }
 

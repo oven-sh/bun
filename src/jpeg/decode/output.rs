@@ -10,7 +10,7 @@ use super::marker::Reached;
 use super::phuff::PHuffDecoder;
 use super::upsample::{self, Method};
 use super::{ColorSpace, DCTSIZE, Decoder, PixelFormat, div_round_up, round_up};
-use crate::error::{Error, Result, try_vec};
+use crate::error::{Error, Result, try_vec_with_capacity};
 
 enum Source {
     Lossy(CoefController),
@@ -96,8 +96,7 @@ impl Decoder<'_> {
             Vec::new()
         };
 
-        let row_bytes = output_width as usize * 4;
-        let mut pixels = try_vec(0, row_bytes * output_height as usize)?;
+        let mut pixels = try_vec_with_capacity(output_width as usize * output_height as usize)?;
 
         self.start_input_pass(&mut source)?;
         if self.has_multiple_scans {
@@ -129,7 +128,8 @@ impl Decoder<'_> {
             max_v_samp: self.max_v_samp as usize,
             rowgroups: min_dct_scaled_size as usize,
             output_width: output_width as usize,
-            rows: pixels.chunks_exact_mut(row_bytes.max(1)),
+            rows_left: output_height as usize,
+            pixels: &mut pixels,
             column_sums: Vec::new(),
         };
         let total = self.total_imcu_rows;
@@ -178,7 +178,7 @@ impl Decoder<'_> {
                 Reached::Eoi => self.eoi_reached = true,
             }
         }
-        Ok(pixels)
+        Ok(pixels.into_flattened())
     }
 
     /// A subsampled component is brought closer to full size by a larger inverse DCT where that works out, which saves
@@ -292,8 +292,9 @@ struct Emitter<'p> {
     /// Row groups in an iMCU row. Each makes `max_v_samp` rows of the image.
     rowgroups: usize,
     output_width: usize,
-    /// The rows of the image that are still to be written.
-    rows: core::slice::ChunksExactMut<'p, u8>,
+    /// Rows of the image that are still to be written.
+    rows_left: usize,
+    pixels: &'p mut Vec<[u8; 4]>,
     column_sums: Vec<u16>,
 }
 
@@ -309,7 +310,7 @@ impl Emitter<'_> {
         bottom: bool,
     ) {
         for rowgroup in 0..self.rowgroups {
-            if self.rows.len() == 0 {
+            if self.rows_left == 0 {
                 return;
             }
             for (ci, (up, plane)) in upsamplers.iter_mut().zip(current).enumerate() {
@@ -384,9 +385,10 @@ impl Emitter<'_> {
             }
 
             for r in 0..self.max_v_samp {
-                let Some(output) = self.rows.next() else {
+                if self.rows_left == 0 {
                     return;
-                };
+                }
+                self.rows_left -= 1;
                 let mut planes: [&[u8]; 4] = [&[]; 4];
                 for ((input, up), plane) in planes.iter_mut().zip(upsamplers.iter()).zip(current) {
                     *input = if up.method == Method::FullSize {
@@ -395,7 +397,7 @@ impl Emitter<'_> {
                         up.buffer.row(r)
                     };
                 }
-                color::convert(self.conversion, planes, output);
+                color::convert(self.conversion, planes, self.output_width, self.pixels);
             }
         }
     }

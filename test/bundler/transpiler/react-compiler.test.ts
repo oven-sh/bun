@@ -4414,6 +4414,52 @@ test("react-compiler finds what a variable is after a loop that is left below a 
   expect(exitCode).toBe(0);
 });
 
+// Each value is read after the `switch`. Where each case ends in a join of its own, the join of the `switch` takes a
+// phi candidate for each value, and each operand of it is a lookup from a case, through the joins of the values. The
+// 2nd, 4th.. join that a lookup passes without a phi keeps what is found, so the lookup from the next case ends at
+// the first of them. If none but the 1st kept it, each lookup would pass each join again: 1.7 s for these 750 cases,
+// not 0.2 s.
+test.skipIf(isDebug || isASAN)(
+  "react-compiler time does not grow with the cube of a switch below as many conditional values",
+  async () => {
+    const each = (text: (index: number) => string) => Array.from({ length: 750 }, (_, i) => text(i)).join("\n");
+    const source = (inCase: string) => `
+      export default function App(props) {
+        ${each(i => `const a${i} = props.a ? 1 : 2;`)}
+        let r;
+        switch (props.k) {
+          ${each(i => `case ${i}: r = [${inCase}]; break;`)}
+          default: r = null;
+        }
+        return <div>${each(i => `{a${i}}`)}{r}</div>;
+      }
+    `;
+    using dir = tempDir("react-compiler-switch-below-joins", {
+      "joins.jsx": source("props.c ? 1 : 2"),
+      "none.jsx": source("props.c"),
+    });
+
+    const cpuTime = async (entry: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("react/compiler-runtime");
+      expect(exitCode).toBe(0);
+      return Number(proc.resourceUsage()!.cpuTime.total);
+    };
+
+    const best = async (entry: string) => Math.min(await cpuTime(entry), await cpuTime(entry));
+    // 2 to 3 times, and 15 to 19 times where the 1st join alone keeps what is found.
+    expect((await best("joins.jsx")) / (await best("none.jsx"))).toBeLessThan(6);
+  },
+);
+
 // InferTypes puts the type of a phi into each phi that it is an operand of, and it copied it. Variables that are assigned
 // from each other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.
 // Where the fix is missing, this test takes all the memory that the machine gives it until its time is over.

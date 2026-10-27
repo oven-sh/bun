@@ -33,8 +33,8 @@ function filesUnder(folder: string): Record<string, string> {
 function whereItDeparts(aot: string, plain: string) {
   const theirs = plain.split("\n");
   const lines = aot.split("\n").filter((line, i) => line !== theirs[i]);
-  // A long number is a time or an address. A case may cut a message in the middle of the path of the temporary folder.
-  return [...lines.slice(0, 4).map(line => line.replaceAll("program.exe", "program").replace(/B:\\~BUN\\root[^\s"']*/g, path => "/$bunfs/root" + path.slice(12).replaceAll("\\", "/")).replaceAll("\\r\\n", "\\n").slice(0, 160).replace(/\d{10,}/g, "<number>").replace(/Cannot load '(?:\/|[A-Z]:\\)[^']*/g, "Cannot load '<path>")), ...(lines.length > 4 ? [`and ${lines.length - 4} lines more`] : [])].join("\n");
+  // A long number is a time or an address. A case may cut a message itself, in the middle of the path of the temporary folder or somewhere behind it: how much is left goes by the length of that path, so the line ends at the path. What differs from run to run is replaced before the line is cut.
+  return [...lines.slice(0, 4).map(line => line.replaceAll("program.exe", "program").replace(/B:\\~BUN\\root[^\s"']*/g, path => "/$bunfs/root" + path.slice(12).replaceAll("\\", "/")).replaceAll("\\r\\n", "\\n").replace(/\d{10,}/g, "<number>").replace(/Cannot load '(?:\/|[A-Z]:\\).*/, "Cannot load '<path>").slice(0, 160)), ...(lines.length > 4 ? [`and ${lines.length - 4} lines more`] : [])].join("\n");
 }
 
 /**
@@ -60,7 +60,7 @@ function madeCases(topic: string, { without = [], seeds = 0 }: { without?: strin
     }
     // A case that has no tsconfig.json of its own gets the options and the types of ../programs. Without this, whether a folder above the temporary folder holds node_modules/@types would decide what TypeScript says of it.
     mkdirSync(join(root, "run"), { recursive: true });
-    const compilerOptions = { target: "esnext", module: "preserve", moduleResolution: "bundler", allowImportingTsExtensions: true, allowJs: true, resolveJsonModule: true, noEmit: true, typeRoots: [join(import.meta.dir, "..", "..", "..", "packages")], types: ["bun-types"] };
+    const compilerOptions = { target: "esnext", module: "preserve", moduleDetection: "force", moduleResolution: "bundler", allowImportingTsExtensions: true, allowJs: true, resolveJsonModule: true, noEmit: true, typeRoots: [join(import.meta.dir, "..", "..", "..", "packages")], types: ["bun-types"] };
     writeFileSync(join(root, "run", "tsconfig.json"), JSON.stringify({ compilerOptions }));
     const written = readdirSync(join(root, "made"), { withFileTypes: true });
     const alone = Object.fromEntries(written.filter(entry => entry.isFile()).map(entry => [entry.name, readFileSync(join(root, "made", entry.name), "utf8")]));

@@ -15,6 +15,7 @@ mod unlinked_engine;
 use core::ffi::c_void;
 use core::num::NonZeroUsize;
 use core::ptr::NonNull;
+use core::time::Duration;
 
 #[cfg(not(test))]
 use bun_aot_interface::engine::shared;
@@ -275,6 +276,8 @@ unsafe extern "C" fn release_program(owner: *mut c_void) {
         return;
     };
     if !owner.frees_on_pool_thread {
+        drop(program);
+        give_freed_pages_back_after(USUAL_DELAY);
         return;
     }
     // The engine waits for this call, and a large program is hundreds of thousands of allocations.
@@ -287,6 +290,19 @@ unsafe extern "C" fn release_program(owner: *mut c_void) {
 unsafe extern "C" fn free_program(program: *mut c_void) {
     // SAFETY: the caller's promise.
     drop(unsafe { Box::from_raw(program.cast::<ProgramBytes>()) });
+    give_freed_pages_back_after(USUAL_DELAY);
+}
+
+// The allocator keeps a freed page for a while, in case somebody wants it again. The stages of the engine do, all the time. What the
+// front end frees nobody wants for seconds, and it is much: while it waits, the engine's first stages take new pages beside it.
+pub(crate) const DELAY_UNTIL_THE_PROGRAM_IS_READ: Duration = Duration::from_millis(20);
+pub(crate) const USUAL_DELAY: Duration = Duration::from_millis(100);
+
+pub(crate) fn give_freed_pages_back_after(delay: Duration) {
+    use bun_alloc::mimalloc::{Option, mi_option_set_default};
+    if bun_alloc::USE_MIMALLOC {
+        mi_option_set_default(Option::purge_delay, delay.as_millis() as _);
+    }
 }
 
 pub struct EngineResult {

@@ -85,6 +85,8 @@ export const mimalloc: Dependency = {
     "patches/mimalloc/new-uses-address-space-kept-aside.patch",
     "patches/mimalloc/entry-points-that-use-address-space-kept-aside.patch",
     "patches/mimalloc/page-map-covers-the-arenas.patch",
+    "patches/mimalloc/keep-pieces-of-the-arenas-aside.patch",
+    "patches/mimalloc/no-thread-locals-for-address-space-kept-aside.patch",
     ...(cfg.lockEnvironment ? ["patches/mimalloc/environment-sets-sizes-and-pace-only.patch"] : []),
   ],
 

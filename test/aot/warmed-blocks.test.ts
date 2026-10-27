@@ -15,6 +15,12 @@ export function grow(count: number): Entry | null {
   for (let i = 0; i < count; i++) head = { id: i, next: head };
   return head;
 }
+// What nobody reads the compiler need not keep, and then no heap grows.
+export function length(head: Entry | null): number {
+  let count = 0;
+  for (let entry = head; entry; entry = entry.next) count++;
+  return count;
+}
 export function helpers(): number {
   let count = 0;
   for (const task of readdirSync("/proc/self/task")) {
@@ -28,28 +34,28 @@ export function helpers(): number {
 
 const growsOnTheMainThread = {
   "helpers.ts": countsHelpers,
-  "program.ts": `import { grow, helpers } from "./helpers";
+  "program.ts": `import { grow, helpers, length } from "./helpers";
 const kept = grow(400_000);
-console.log(helpers(), kept!.id);
+console.log(helpers(), length(kept));
 `,
 };
 
 const growsInAWorker = {
   "helpers.ts": countsHelpers,
   "program.ts": `import { Worker } from "node:worker_threads";
-import { grow, helpers } from "./helpers";
+import { grow, helpers, length } from "./helpers";
 const kept = grow(400_000);
 const before = helpers();
 const worker = new Worker("./worker.ts");
 worker.once("message", (during: number) => {
-  worker.once("exit", () => console.log(before, during, helpers(), kept!.id));
+  worker.once("exit", () => console.log(before, during, helpers(), length(kept)));
   worker.postMessage("end");
 });
 `,
   "worker.ts": `import { parentPort } from "node:worker_threads";
-import { grow, helpers } from "./helpers";
+import { grow, helpers, length } from "./helpers";
 const kept = grow(400_000);
-parentPort!.once("message", () => process.exit(kept!.id === 399_999 ? 0 : 1));
+parentPort!.once("message", () => process.exit(length(kept) === 400_000 ? 0 : 1));
 parentPort!.postMessage(helpers());
 `,
 };
@@ -78,14 +84,14 @@ describe.skipIf(!isLinux || isASAN).concurrent("no blocks are warmed for a compi
   test("a heap that grows has a helper under plain Bun and none in a compiled program", async () => {
     using folder = tempDir("aot-warmed-blocks", growsOnTheMainThread);
     const plain = await run([bunExe(), "run", "program.ts"], String(folder));
-    expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "1 399999\n", exitCode: 0 });
+    expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "1 400000\n", exitCode: 0 });
     const { stdout, exitCode } = await run([await build(String(folder))], String(folder));
-    expect({ stdout, exitCode }).toEqual({ stdout: "0 399999\n", exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({ stdout: "0 400000\n", exitCode: 0 });
   }, 120_000);
 
   test("a Worker whose heap grows has none either", async () => {
     using folder = tempDir("aot-warmed-blocks", growsInAWorker);
     const { stdout, exitCode } = await run([await build(String(folder), "worker.ts")], String(folder));
-    expect({ stdout, exitCode }).toEqual({ stdout: "0 0 0 399999\n", exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({ stdout: "0 0 0 400000\n", exitCode: 0 });
   }, 120_000);
 });

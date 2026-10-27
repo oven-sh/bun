@@ -243,12 +243,19 @@ function findRoots(
   if (entry >= 0) roots.add(entry);
   const exported = new Set<number>();
   const dynamic = elf.sections.find(section => section.type === 11);
+  const definesVersions = elf.sections.some(section => section.type === 0x6ffffffd);
+  const versionSection = definesVersions ? elf.sections.find(section => section.type === 0x6fffffff) : undefined;
   if (dynamic !== undefined) {
     const symbols = readAt(elf.fd, dynamic.offset, dynamic.size);
+    const versions = versionSection && readAt(elf.fd, versionSection.offset, versionSection.size);
     for (let at = 0; at < symbols.length; at += 24) {
       const node =
         symbols.readUInt16LE(at + 6) !== 0 ? nodeAt(placedNodes, Number(symbols.readBigUInt64LE(at + 8))) : -1;
-      if (node >= 0) exported.add(node);
+      if (node < 0) continue;
+      // Where the exports for loaded code carry a version, one without stands in the place of a function of the system: every
+      // library binds to it, also those that libc loads by itself.
+      if (versions !== undefined && (versions.readUInt16LE(at / 12) & 0x7fff) === 1) roots.add(node);
+      else exported.add(node);
     }
   }
   return { roots, exported };

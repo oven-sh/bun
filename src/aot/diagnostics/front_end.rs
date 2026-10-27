@@ -69,7 +69,12 @@ impl Diagnostics {
             let mut message =
                 log_message(&diagnostic).expect("the driver drops suggestions and messages");
             message.kind = kind;
-            self.add_message(diagnostic.code, message);
+            match (kind, diagnostic.class) {
+                (Kind::Err, DiagnosticClass::EarlyError) => {
+                    self.add_early_error(diagnostic.code, message);
+                }
+                _ => self.add_message(diagnostic.code, message),
+            }
         }
     }
 

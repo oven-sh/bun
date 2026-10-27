@@ -789,6 +789,7 @@ classes/static-field-replaces-a-static-method-that-a-loop-stored-to
 classes/static-fields-named-like-static-methods-and-accessors-are-listed
 classes/static-fields-read-through-classes-below
 classes/static-fields-whose-type-is-one-number-are-read-while-they-change
+classes/static-fields-without-a-value-are-read-before-and-after-their-first-store
 classes/stores-to-a-function-below-another-function-strict
 classes/super-call-in-a-text-evaluated-by-the-constructor-of-a-class-without-a-parent
 classes/the-class-above-hands-back-an-object-of-the-class-below
@@ -1255,9 +1256,13 @@ data-from-outside/sql-typed-rows
 data-from-outside/two-files-ask-for-the-serializer-of-one-layout-and-every-pass-is-verified
 data-from-outside/typed-parse-in-a-program-that-evaluates-text-and-makes-a-shadow-realm
 data-from-outside/unions-below-unions-that-no-tag-tells-apart-take-time-in-proportion
+declarations/a-script-with-code-adds-to-interfaces-of-the-library
+declarations/a-type-of-a-script-with-code-that-cannot-add-to-a-global-one-is-its-own
 declarations/class-and-function-bindings-that-are-assigned-again
 declarations/constants-copied-from-returned-object
 declarations/functions-declared-in-blocks-of-a-sloppy-file-are-read-outside-them
+declarations/scripts-with-code-and-a-declaration-file-add-to-one-another
+declarations/what-runs-in-a-script-with-code-takes-nothing-from-a-global-declaration
 definitions-by-descriptor/a-bound-function-that-is-a-getter-throws-where-the-language-reads-the-property
 definitions-by-descriptor/a-computed-name-among-the-written-names-of-a-map
 definitions-by-descriptor/a-description-holds-what-stands-elsewhere-in-the-call-that-takes-it
@@ -1418,6 +1423,7 @@ errors/a-read-of-an-accessor-of-a-web-class-on-its-prototype-leaves-no-frame
 errors/a-read-of-an-accessor-without-a-function-object-leaves-no-frame
 errors/a-read-through-super-under-a-null-prototype-quotes-the-expression
 errors/a-refused-apply-names-the-member-that-was-called
+errors/a-refused-call-names-the-member-that-was-called
 errors/an-error-with-a-joined-message-is-thrown-into-a-catch-that-reads-nothing-and-every-pass-is-verified
 errors/call-sites-and-frames-of-text-that-eval-is-given-as-a-constant
 errors/call-sites-and-limits-of-stack-traces-that-list-a-built-in-function
@@ -1900,11 +1906,15 @@ initializers-run-at-the-first-read/stores-to-new-functions-that-the-objects-abov
 inner-objects/a-collection-meets-the-outer-object-before-its-booleans-are-written
 inner-objects/many-hold-one-inner-object-while-several-threads-mark
 inner-objects/the-class-of-the-inner-object-is-evaluated-again
+jsdoc-types/a-class-and-a-typedef-of-a-js-module-are-imported-as-types-in-typescript
+jsdoc-types/a-constructor-function-of-a-js-module-is-named-as-a-type-in-typescript
 jsdoc-types/a-js-function-that-reads-arguments-gets-operands-from-typescript
 jsdoc-types/a-member-is-added-to-exports-after-exports-and-module-exports-got-one-function
 jsdoc-types/a-member-is-added-to-module-exports-after-a-class-was-assigned-to-it
 jsdoc-types/a-method-assigned-to-the-prototype-of-a-js-class-is-called-from-typescript
+jsdoc-types/an-enum-tag-of-a-js-module-is-imported-as-a-type-in-typescript
 jsdoc-types/an-enum-tag-of-a-js-module-is-used-as-a-type-in-typescript
+jsdoc-types/the-instances-of-a-constructor-function-of-a-commonjs-module-are-named-in-typescript
 json-text-of-records/members-whose-text-comes-out-of-code-that-runs-in-the-middle-of-the-writing
 jsx/a-factory-pragma-that-is-a-quoted-text
 jsx/a-function-written-as-an-attribute-gets-the-name-of-the-attribute
@@ -2234,10 +2244,15 @@ modules/a-function-of-a-commonjs-file-that-ignores-its-this-is-called-through-th
 modules/a-function-of-a-file-in-a-cycle-reads-variables-of-a-file-that-has-not-begun
 modules/a-function-of-a-file-on-a-cycle-reads-a-constant-of-a-file-that-has-not-run
 modules/a-function-stored-under-an-if-is-handed-on-by-an-es-module-imported-through-a-getter-and-called
+modules/a-function-that-the-program-stored-on-process-is-imported-by-name-from-node-process-and-called
 modules/a-function-under-nan-is-read-from-the-namespace-of-an-import-call-by-a-dot
 modules/a-getter-of-a-commonjs-file-over-a-module-that-hands-on-the-default-of-a-file-without-the-flag-of-es-modules-returns-its-exports
 modules/a-getter-of-a-commonjs-file-returns-the-member-named-default-of-a-file-without-the-flag-of-es-modules
 modules/a-getter-of-a-commonjs-file-that-returns-a-name-which-the-other-file-does-not-have-is-imported-as-undefined
+modules/a-getter-that-the-program-put-on-process-runs-where-a-statement-exports-its-name-from-node-process
+modules/a-getter-that-the-program-put-on-process-runs-where-a-statement-imports-its-name-from-node-process
+modules/a-getter-that-the-program-put-on-process-runs-where-a-statement-imports-node-process-for-nothing
+modules/a-getter-that-the-program-put-on-process-throws-where-a-statement-imports-node-process
 modules/a-graph-that-a-module-imported-on-demand-imports-without-waiting-runs-behind-the-await-of-that-module
 modules/a-helper-that-defines-getters-on-the-exports-of-a-commonjs-file-also-defines-the-flag-of-es-modules
 modules/a-late-module-reaches-what-is-not-installed-through-a-module-that-the-entry-point-imports
@@ -2444,6 +2459,7 @@ modules/one-of-a-few-names-is-a-built-in-module-and-an-arrow-of-an-es-module-loa
 modules/one-of-a-few-names-is-a-built-in-module-beside-a-name-that-is-joined
 modules/one-of-a-few-names-is-a-built-in-module-in-a-choice-a-call-and-a-table
 modules/one-of-a-few-names-is-a-file-alone-and-an-arrow-loads-each-of-a-list
+modules/one-of-a-few-names-is-asked-of-require-resolve
 modules/one-of-four-modules-imported-on-demand-stores-a-function-under-a-computed-key-behind-a-call-that-always-throws
 modules/only-a-reexport-from-bun-loads-the-module
 modules/options-of-an-import-of-a-file-of-the-program-are-read-and-refused
@@ -2769,6 +2785,7 @@ objects/dictionaries-are-built-anew-from-the-same-names-between-collections
 objects/elements-are-stored-below-typed-arrays-at-indexes-that-those-do-not-have
 objects/every-way-an-allocation-site-meets-its-record
 objects/extra-property-reads-avoid-runtime
+objects/fields-and-keys-come-and-go-in-every-order-and-are-listed-in-every-way
 objects/fields-created-by-name-beside-extra-properties-keep-the-order-of-keys
 objects/functions-that-make-makers-of-objects-below-their-own-prototype
 objects/getters-under-computed-keys-hide-values-on-the-prototype
@@ -2785,6 +2802,7 @@ objects/json-stringify-of-one-typed-record-twice-in-a-list-whose-unknown-member-
 objects/json-stringify-of-rings-with-long-texts-beside-a-to-json-while-the-process-stays-small
 objects/json-stringify-of-typed-records-around-rings-of-records-and-lists
 objects/keys-are-added-and-removed-around-fields-that-are-created-late
+objects/keys-made-at-run-time-are-stored-below-objects-that-get-and-lose-setters
 objects/keys-of-the-arguments-of-strict-functions-after-members-are-added
 objects/literals-with-computed-index-keys
 objects/literals-with-symbols-between-names-are-printed-in-the-order-of-creation
@@ -3271,6 +3289,7 @@ untyped-code/what-an-object-gets-after-it-was-first-read
 untyped-code/what-inherits-from-another-realm-follows-its-index-accessors
 untyped-code/what-is-filed-for-a-proxy-is-there-behind-a-collection
 untyped-code/what-may-be-undefined-or-a-proxy-is-asked-as-what-it-is
+untyped-code/whether-a-proxy-has-a-property-of-its-own-asks-the-trap-of-its-handler
 untyped-loops/a-closure-stores-to-a-variable-that-every-turn-of-a-loop-reads-and-every-pass-is-verified
 untyped-loops/a-counter-below-a-number-of-every-kind
 untyped-loops/a-counter-below-an-integer-past-int32-is-used-behind-its-loop

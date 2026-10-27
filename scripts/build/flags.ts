@@ -1787,9 +1787,12 @@ export function versionScriptPath(cfg: Pick<Config, "cwd" | "freebsd">): string 
   return join(cfg.cwd, "src", cfg.freebsd ? "linker-freebsd.lds" : "linker.lds");
 }
 
-/** Whether BunSignalActions.cpp defines functions of libc: glibc and musl. A sanitizer's run time defines them itself. */
-export function definesLibcFunctions(cfg: Pick<Config, "linux" | "abi" | "asan">): boolean {
-  return cfg.linux && cfg.abi !== "android" && !cfg.asan;
+/**
+ * Whether BunSignalActions.cpp defines functions of libc: with the ahead-of-time compiler's run time, on glibc and musl.
+ * A sanitizer's run time defines them itself.
+ */
+export function definesLibcFunctions(cfg: Pick<Config, "aot" | "linux" | "abi" | "asan">): boolean {
+  return cfg.aot && cfg.linux && cfg.abi !== "android" && !cfg.asan;
 }
 
 /** A second, anonymous version script: the names in it are exported without a version. */

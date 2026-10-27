@@ -4,16 +4,16 @@
     "untyped": 206
   },
   "everyday-loops-over-lists-and-typed-arrays/uint8-array-copied-by-index": {
-    "typed": 1467,
-    "untyped": 1458
+    "typed": 156,
+    "untyped": 147
   },
   "everyday-loops-over-lists-and-typed-arrays/list-of-objects-one-field-summed": {
     "typed": 4632,
     "untyped": 4630
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-mean-of-three-neighbors": {
-    "typed": 4686.9,
-    "untyped": 4550
+    "typed": 2277,
+    "untyped": 2270
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-dot-product-of-a-thousand": {
     "typed": 4931.9,
@@ -32,16 +32,16 @@
     "untyped": 6500.9
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-matrix-transposed-flat": {
-    "typed": 3168,
-    "untyped": 3050.9
+    "typed": 1712,
+    "untyped": 1482
   },
   "everyday-loops-over-lists-and-typed-arrays/uint8-array-counted-into-bins": {
     "typed": 5155,
     "untyped": 5150.9
   },
   "everyday-loops-over-lists-and-typed-arrays/float32-array-scaled-in-place": {
-    "typed": 1909.5,
-    "untyped": 1835.5
+    "typed": 504.5,
+    "untyped": 497.5
   },
   "everyday-loops-over-lists-and-typed-arrays/rows-of-float64-arrays": {
     "typed": 3019,

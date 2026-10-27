@@ -47,10 +47,34 @@ const allToolStrings = Object.entries(toolStrings).flatMap(([tool, strings]) =>
 const findToolStrings = (file: Buffer) =>
   allToolStrings.filter(each => file.includes(each.slice(each.indexOf(": ") + 2)));
 
+// Keys that ICU's date, number and currency formatters look up in its data.
+const formatterStrings = ["/DateTimePatterns%atTime", "CurrencyPlurals", "currencySpacing", "surroundingMatch"];
+
+const madeByIntl: Record<string, string> = {
+  "Intl.Collator": `new Intl.Collator("en-US").compare("a", "b")`,
+  "Intl.DateTimeFormat": `new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }).formatRange(0, 86400000 * 40)`,
+  "Intl.DisplayNames": `new Intl.DisplayNames("en-US", { type: "region" }).of("US")`,
+  "Intl.DurationFormat": `new Intl.DurationFormat("en-US").format({ hours: 1 })`,
+  "Intl.ListFormat": `new Intl.ListFormat("en-US").format(["a", "b"])`,
+  "Intl.Locale": `new Intl.Locale("en-US").language`,
+  "Intl.NumberFormat": `new Intl.NumberFormat("en-US").format(1234.5)`,
+  "Intl.PluralRules": `new Intl.PluralRules("en-US").select(1)`,
+  "Intl.RelativeTimeFormat": `new Intl.RelativeTimeFormat("en-US").format(-1, "day")`,
+  "Intl.Segmenter": `[...new Intl.Segmenter("en-US").segment("a b")].length`,
+};
+const makeAndCollect = (expression: string) => `
+  let last: unknown;
+  for (let round = 0; round < 4; round++) {
+    for (let i = 0; i < 300; i++) last = ${expression};
+    Bun.gc(true);
+  }
+  console.log(String(last));
+`;
+
 const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, segment) => sum + segment.length, 0);
 
 // What an executable maps whatever its program is, on Linux x64 with glibc. These bounds only go down.
-const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 27_800_000 };
+const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 25_700_000 };
 const mostBytesOfCompiler = 22_480_000;
 
 const importsItsArguments = `
@@ -103,6 +127,30 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
       expect(findToolStrings(executable)).toEqual([]);
       if (isLinux) expect(countMappedBytes(executable) / countMappedBytes(bun)).toBeLessThan(0.53);
     }, 600_000);
+
+    test.skipIf(!isGlibc || process.arch !== "x64" || flags.length === 0)(
+      "hello world contains no strings from ICU's formatters",
+      async () => {
+        using dir = tempDirForAotBuilds("compile-aot-size", { "hello.ts": `console.log("hello world");` });
+        const executable = readFileSync(await build(String(dir), "hello"));
+        const bun = readFileSync(bunExe());
+        expect(formatterStrings.filter(each => bun.includes(each))).toEqual(formatterStrings);
+        expect(formatterStrings.filter(each => executable.includes(each))).toEqual([]);
+      },
+      600_000,
+    );
+
+    test.each(Object.entries(madeByIntl))(
+      "objects of %s are collected",
+      async (_, expression) => {
+        using dir = tempDirForAotBuilds("compile-aot-size", { "program.ts": makeAndCollect(expression) });
+        const program = await build(String(dir), "program");
+        const plain = await spawned([bunExe(), "run", "program.ts"], String(dir), bunEnv);
+        expect(plain).toMatchObject({ exitCode: 0 });
+        expect(await spawned([program], String(dir), bunEnv)).toMatchObject({ stdout: plain.stdout, exitCode: 0 });
+      },
+      600_000,
+    );
 
     test.skipIf(!isGlibc || process.arch !== "x64")(
       "hello world maps no more bytes than it did",

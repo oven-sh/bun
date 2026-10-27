@@ -41,6 +41,8 @@
 //   programs/<topic>/<words>.programs     many programs in one file, with the text that they share written once: `packedFiles` in generate.ts. A test file writes those that it runs
 //                                         into a temporary folder, under the names they have there; `bun test/aot/generate.ts <topic> <where>` writes them all
 //   programs/**/tsconfig.json             the compiler options for the programs below it
+//                                         programs/tsconfig.json says `moduleDetection: force`, as `bun init` does: a program without import or export is a module for the checker too.
+//                                         A program about scripts says `auto` in a tsconfig.json of its own
 //   programs/jsc-shell-functions.ts       noInline(), gc() and similar functions, for the programs that import it
 //   programs/start-the-entry-point-named.ts  the first entry point of an executable that holds many programs (programs-as-entry-points.ts)
 //   programs/changes-to-builtins.js       tries every way to change a property of a built-in object, for the programs about locked built-ins

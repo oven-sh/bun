@@ -121,7 +121,22 @@ static void writeFeatureNumber(uint16_t feature)
     writeToStandardError(std::span<const char> { digits }.subspan(first, last - first));
 }
 
+static void writeOffset(intptr_t offset)
+{
+    char digits[2 * sizeof(offset)];
+    size_t first = sizeof(digits);
+    uintptr_t rest = offset < 0 ? -static_cast<uintptr_t>(offset) : static_cast<uintptr_t>(offset);
+    do
+        digits[--first] = "0123456789abcdef"[rest % 16];
+    while (rest /= 16);
+    writeToStandardError(offset < 0 ? "-0x"_span : "+0x"_span);
+    writeToStandardError(std::span<const char> { digits }.subspan(first));
 }
+
+}
+
+// src/trim/removable_features/state.rs
+extern "C" intptr_t Bun__placeInRemovedCode[2];
 
 extern "C" JSC::EncodedJSValue Bun__throwForRemovedFeature(JSC::JSGlobalObject* globalObject, uint16_t feature)
 {
@@ -166,6 +181,10 @@ extern "C" [[noreturn]] void Bun__abortForRemovedFeature(uint16_t feature)
     Bun::writeToStandardError(getenv("BUN_OPTIONS") ? " An option in BUN_OPTIONS may be the cause. If not, this is a bug in Bun."_span : " This is a bug in Bun."_span);
     Bun::writeToStandardError(" Please report it with this number: "_span);
     Bun::writeFeatureNumber(feature);
+    for (intptr_t offset : Bun__placeInRemovedCode) {
+        if (offset)
+            Bun::writeOffset(offset);
+    }
     Bun::writeToStandardError("\n"_span);
     _exit(70);
 }

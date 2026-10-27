@@ -948,6 +948,39 @@ describeLink("what the executable exports", () => {
     expect(featuresOf("entry_of_other")).toEqual(sortedByIndex(Other, ...exportFeatures));
     expect(trimmedResult.exitCode).toBe(0);
   });
+
+  test("keeps an export without a version beside exports that have one, though only a feature's code calls it", async () => {
+    using dir = tempDir("trim-elf-exports", {
+      ...sources,
+      "entry.c": `
+        int feature_code(int);
+        int for_any_library(int);
+        __attribute__((noinline)) int entered(int x) { return feature_code(x) * 3 + for_any_library(x + 1); }
+      `,
+      "more.c": `
+        ${mixingFunction("only_for_any_library", 3)}
+        __attribute__((noinline)) int for_any_library(int x) { for (int i = 0; i < 5; i++) x = x * 7 + i; return only_for_any_library(x); }
+        __attribute__((noinline)) int for_loaded_code(int x) { for (int i = 0; i < 5; i++) x = x * 11 + i; return x; }
+      `,
+      "with-version.lds": "TOY_1 { global: for_loaded_code; local: *; };\n",
+      "without-version.lds": "{ global: for_any_library; };\n",
+    });
+    const linkFlags = [
+      "-Wl,--export-dynamic-symbol=for_loaded_code",
+      "-Wl,--export-dynamic-symbol=for_any_library",
+      "-Wl,--version-script=with-version.lds",
+      "-Wl,--version-script=without-version.lds",
+    ];
+    const objects = ["feature_code", "entry", "more", "table", "embedder", "main"];
+    const { featuresOf, trimmedResult } = await linked(String(dir), { objects, linkFlags });
+    expect(["for_any_library", "only_for_any_library", "for_loaded_code", "entered"].map(featuresOf)).toEqual([
+      undefined,
+      undefined,
+      exportFeatures,
+      [Extra],
+    ]);
+    expect(trimmedResult.exitCode).toBe(0);
+  });
 });
 
 describeLink("ICU's data package", () => {

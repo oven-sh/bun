@@ -1620,6 +1620,28 @@ mod draft {
         }
     }
 
+    /// Where the function returns to whose first instruction faulted.
+    #[cfg(unix)]
+    fn return_address_at_function_entry(ctx: *mut c_void) -> Option<usize> {
+        let uc = ctx.cast::<libc::ucontext_t>().cast_const();
+        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
+        unsafe {
+            Some((*uc).uc_mcontext.regs[30] as usize)
+        }
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
+        unsafe {
+            let mc = (*uc).uc_mcontext;
+            (!mc.is_null()).then(|| (*mc).__ss.__lr as usize)
+        }
+        #[cfg(not(all(any(target_os = "linux", target_os = "macos"), target_arch = "aarch64")))]
+        {
+            let _ = uc;
+            None
+        }
+    }
+
     #[cfg(unix)]
     extern "C" fn handle_segfault_posix(sig: c_int, info: *mut libc::siginfo_t, ctx: *mut c_void) {
         // SAFETY: kernel provides a valid siginfo_t; `si_addr` reads the per-platform
@@ -1646,8 +1668,15 @@ mod draft {
             libc::SIGBUS if cfg!(target_os = "macos") => pc.filter(|&pc| pc == addr),
             _ => None,
         };
-        if let Some(feature) = entered.and_then(crate::compiled_frames::removed_feature_entered) {
-            bun_removable_features::abort_for_removed_feature(feature);
+        if let Some(entered) = entered
+            && let Some(feature) = crate::compiled_frames::removed_feature_entered(entered)
+        {
+            let return_address = return_address_at_function_entry(ctx);
+            bun_removable_features::abort_for_removed_feature_entered(
+                feature,
+                entered,
+                return_address,
+            );
         }
 
         crash_handler(

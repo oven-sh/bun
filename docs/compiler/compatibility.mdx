@@ -46,6 +46,7 @@ Some of these take a slow path: a `Proxy` used as an array, and an array with ho
 | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Type errors](/compiler/aot#type-errors-stop-the-build)                                   | `bun build` ignores them                                         | They stop the build                                                                                                                                                                                                                     |
 | [The version of TypeScript](#type-errors-are-typescript-7s)                               | Types are never checked                                          | TypeScript 7's errors, whichever version you have installed                                                                                                                                                                             |
+| [A `.ts` file without `import` or `export`](#files-without-import-or-export)              | Its variables aren't global. Another file that reads one throws  | The other file is a type error, also where `tsc` takes the file for a script                                                                                                                                                            |
 | [Built-in objects](#built-in-objects-are-read-only)                                       | Can be changed                                                   | Can be extended. Their existing members can't be replaced                                                                                                                                                                               |
 | [Seven Bun classes](#request-response-and-five-other-classes)                             | Their prototypes can be changed                                  | Their prototypes are read-only. Subclasses work                                                                                                                                                                                         |
 | [Code from strings](#code-from-strings)                                                   | The JIT compiles it                                              | Bun interprets it                                                                                                                                                                                                                       |
@@ -243,17 +244,35 @@ These change built-in objects too, in ways that are allowed. They load, and chan
 
 The build reports the errors that `tsc` from TypeScript 7 reports, like [`bun check`](/runtime/check), whichever version of `typescript` your project has installed. A project that passes TypeScript 5 or 6 can still have errors. [Coming from TypeScript 5](/runtime/check#coming-from-typescript-5) lists the options and defaults that changed.
 
-TypeScript 7 also stopped reading four older patterns in JavaScript files. They still run. But when a TypeScript file imports one of your own `.js` files that uses them, it no longer sees what TypeScript 6 saw, and the build stops at the TypeScript file.
+TypeScript 7 also stopped reading five older patterns in JavaScript files. They still run. But when a TypeScript file imports one of your own `.js` files that uses them, with `import type` too, it no longer sees what TypeScript 6 saw, and the build stops at the TypeScript file.
 
-| In the `.js` file                                                             | The error in the TypeScript file                                       | Write instead                                           |
-| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------- |
-| `function f() { return arguments.length }`, called with arguments             | `TS2554: Expected 0 arguments, but got 3.`                             | A rest parameter: `function f(...values) {}`            |
-| A constructor function: `function Old(v) { this.value = v }` and `new Old(3)` | `TS7009: 'new' expression, whose target lacks a construct signature`   | A `class` with a `constructor`                          |
-| A method added later: `Grown.prototype.extra = function () {}`                | `TS2339: Property 'extra' does not exist on type 'Grown'.`             | A method in the body of the class                       |
-| `/** @enum {number} */ const Level = { Low: 1 }`, with `Level` used as a type | `TS2749: 'Level' refers to a value, but is being used as a type here.` | `/** @typedef {number} Level */` above the object       |
-| `module.exports = Main` followed by `module.exports.helper = ...`             | `TS2339: Property 'helper' does not exist on type 'typeof Main'.`      | `Main.helper = ...` first, then `module.exports = Main` |
+| In the `.js` file                                                             | The error in the TypeScript file                                                                                                           | Write instead                                           |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `function f() { return arguments.length }`, called with arguments             | `TS2554: Expected 0 arguments, but got 3.`                                                                                                 | A rest parameter: `function f(...values) {}`            |
+| A constructor function: `function Old(v) { this.value = v }` and `new Old(3)` | `TS7009: 'new' expression, whose target lacks a construct signature`                                                                       | A `class` with a `constructor`                          |
+| The same function named as a type: `(old: Old)`, `InstanceType<typeof Old>`   | `TS2749: 'Old' refers to a value, but is being used as a type here.` and `TS2344: Type '(v: any) => void' does not satisfy the constraint` | A `class` with a `constructor`                          |
+| A method added later: `Grown.prototype.extra = function () {}`                | `TS2339: Property 'extra' does not exist on type 'Grown'.`                                                                                 | A method in the body of the class                       |
+| `/** @enum {number} */ const Level = { Low: 1 }`, with `Level` used as a type | `TS2749: 'Level' refers to a value, but is being used as a type here.`                                                                     | `/** @typedef {number} Level */` above the object       |
+| `module.exports = Main` followed by `module.exports.helper = ...`             | `TS2339: Property 'helper' does not exist on type 'typeof Main'.`                                                                          | `Main.helper = ...` first, then `module.exports = Main` |
 
 The build doesn't report type errors inside a `.js` file, so only the TypeScript files that use it are affected.
+
+### Files without `import` or `export`
+
+For TypeScript, a `.ts` file that has no `import` and no `export` is a script, and everything at its top level is global. `"moduleDetection": "force"` turns that off. `bun init` writes it, and the build assumes it if there's no `tsconfig.json`.
+
+Bun runs every file as a module, whatever `moduleDetection` says. So a variable, a function or a class of such a file exists only in that file. Its types follow `tsc`, and its values follow what runs:
+
+| At the top level of the file                                                                                                                          | `tsc` and `bun check`                                                                                       | The build                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| An `interface`, a `type`, anything with `declare`                                                                                                     | Global. It adds to a global declaration of the same name: `interface Array<T> { last(): T }`                | The same                                                                                                 |
+| One of those that can't add to the global declaration: `type Node` beside the `Node` of the DOM types, `declare var self: Worker` beside their `self` | `TS2300: Duplicate identifier 'Node'.`, `TS2403: Subsequent variable declarations must have the same type.` | No error. In that file the name is the file's own                                                        |
+| `var`, `let`, `const`, `function`, `class`, `enum`, a `namespace` with code in it                                                                     | Global. Another file can use it without an import                                                           | Another file gets `TS2304: Cannot find name`. Under `bun run` it throws a `ReferenceError`               |
+| A `class`, an `enum` or a `namespace` with code in it, named like a global declaration of another file                                                | The two merge                                                                                               | They don't. It has the members that it has at run time, so the others are `TS2339`, `TS2345` or `TS2694` |
+
+A name that is both, like `interface Point` beside `const Point`, counts as code. To use it in another file, `export` it and `import` it there.
+
+An `interface Request` or `interface Node` of your own in such a file adds to the one of the DOM types or of `@types/bun`, so `tsc`, `bun check` and the build all report what is missing from your objects. An `export {}` at the end of the file, or `"moduleDetection": "force"`, makes the name the file's own.
 
 ## Built-in objects are read-only
 
@@ -929,11 +948,11 @@ error: Cannot load '/$bunfs/root/app.ts': it's compiled into this executable, an
 
 The compiler resolves every `import` and every `require()` of a constant path at build time, and compiles it to a call of the module. Nothing in `node:module` is asked on the way, so a hook doesn't see those.
 
-| Hook                                                                                     | The assignment    | Bun calls it for                                                             |
-| ---------------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------- |
-| `Module._resolveFilename`, `Module.prototype.require`                                    | Works             | A `require()` of a [dynamic path](#dynamic-imports), and `require.resolve()` |
-| `Module._load`, `Module.wrap`                                                            | Works             | Nothing. `bun run` doesn't call `Module._load` either                        |
-| `Module._extensions[".js"]`, and every other extension that a file in the executable has | Throws an `Error` |                                                                              |
+| Hook                                                                                     | The assignment    | Bun calls it for                                                                                                    |
+| ---------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `Module._resolveFilename`, `Module.prototype.require`                                    | Works             | A `require()` or a `require.resolve()` of a [dynamic path](#dynamic-imports), for a name that the build didn't find |
+| `Module._load`, `Module.wrap`                                                            | Works             | Nothing. `bun run` doesn't call `Module._load` either                                                               |
+| `Module._extensions[".js"]`, and every other extension that a file in the executable has | Throws an `Error` |                                                                                                                     |
 
 Frameworks such as Next.js install the first two when they are loaded, to point a few names at their own copies of a package. In an executable the names that are constants already point where the build found them.
 
@@ -1052,11 +1071,13 @@ The options and the parts of the `Blob` have to be written as literals, `{ eval:
 
 In a `data:` URL, an object URL or `eval` code that is CommonJS, `require.main === module` and `import.meta.main` are `false`. Under `bun run` they are `true`. `require.main` itself is the module, as under `bun run`.
 
-If the code in the URL, or in a file that the compiler found by its path, doesn't compile, because of a syntax error or an import that can't be resolved, the build leaves it out. It prints what's wrong as warnings, and the Worker fails as it does under `bun run`:
+If the code in the URL, or in a file that the compiler found by its path, has a syntax error or an import that can't be resolved, the build leaves it out. It prints what's wrong as warnings, and the Worker fails as it does under `bun run`:
 
 ```txt
 warn: TS100072: The code that this Worker starts from can't be compiled, so the Worker fails to load
 ```
+
+Any other error in that code stops the build, as it does in an entry point that you list: a type error in `worker.ts` is the same error as in `main.ts`.
 
 A Worker that you create from a `data:` URL, an object URL or `eval` code that your program puts together at run time works too. Its code is [code from a string](#code-from-strings), so Bun interprets it, and the built-in modules it imports too. It shares nothing with your compiled code: it can use any API, [built-in objects](#built-in-objects-are-read-only) aren't read-only in it, and it makes the rest of your program neither larger nor slower.
 

@@ -31,16 +31,23 @@ function segmentsOfElf(file: Buffer) {
     .map(header => ({
       start: Number(file.readBigUInt64LE(header + 16)),
       end: Number(file.readBigUInt64LE(header + 16) + file.readBigUInt64LE(header + 40)),
+      offset: Number(file.readBigUInt64LE(header + 8)),
+      bytesInFile: Number(file.readBigUInt64LE(header + 32)),
     }));
 }
 
 function segmentsOfMachO(file: Buffer) {
-  const segments: { start: number; end: number }[] = [];
+  const segments: { start: number; end: number; offset: number; bytesInFile: number }[] = [];
   for (let command = 32, index = 0; index < file.readUInt32LE(16); command += file.readUInt32LE(command + 4), index++) {
     if (file.readUInt32LE(command) !== 0x19 || file.toString("latin1", command + 8, command + 18) === "__PAGEZERO")
       continue;
     const start = Number(file.readBigUInt64LE(command + 24));
-    segments.push({ start, end: start + Number(file.readBigUInt64LE(command + 32)) });
+    segments.push({
+      start,
+      end: start + Number(file.readBigUInt64LE(command + 32)),
+      offset: Number(file.readBigUInt64LE(command + 40)),
+      bytesInFile: Number(file.readBigUInt64LE(command + 48)),
+    });
   }
   return segments;
 }
@@ -53,8 +60,15 @@ function middleOfLargestHole(executable: string) {
     .map(({ start }, index) => ({ start: segments[index].end, size: start - segments[index].end }));
   const largest = holes.sort((a, b) => b.size - a.size)[0];
   const middle = largest.start + largest.size / 2;
-  return { address: middle - (middle % 0x4000), size: largest.size };
+  const placesOfMagic: number[] = [];
+  for (let at = file.indexOf("BUNFEAT\0"); at >= 0; at = file.indexOf("BUNFEAT\0", at + 1)) {
+    const segment = segments.find(({ offset, bytesInFile }) => offset <= at && at < offset + bytesInFile);
+    if (segment) placesOfMagic.push(segment.start + at - segment.offset);
+  }
+  return { address: middle - (middle % 0x4000), size: largest.size, placesOfMagic };
 }
+
+const offsetText = (offset: number) => (offset < 0 ? "-0x" : "+0x") + Math.abs(offset).toString(16);
 
 describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed range", () => {
   const wanted: Record<string, unknown> = {
@@ -110,6 +124,9 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
         const saysRemoved = / removed .* from this executable/.test(stderr);
         found[how] = { stdout, saysRemoved, exits70: exitCode === 70 };
         if (saysRemoved) {
+          // The sentence ends with where removed code was entered, counted from Bun__removableFeatureState.
+          const place = /number: \d+([-+]0x[0-9a-f]+)/.exec(stderr)?.[1];
+          expect(hole.placesOfMagic.map(state => offsetText(address - state))).toContain(place);
           free = address;
           break;
         }

@@ -82,7 +82,7 @@ test("it is refused where the target is not Linux with glibc", () => {
   using dir = tempDir("build-relr-option", {});
   const sentence = /relr=true requires os=linux and abi=gnu/;
   expect(() => config({ relr: true, abi: "musl" }, String(dir))).toThrow(sentence);
-  expect(() => config({ relr: true, os: "darwin", arch: "arm64", abi: undefined }, String(dir))).toThrow(sentence);
+  expect(() => config({ relr: true, os: "darwin", arch: "aarch64", abi: undefined }, String(dir))).toThrow(sentence);
 });
 
 test("glibc reads them from 2.36 on", () => {

@@ -328,4 +328,6 @@ pub(crate) struct Diagnostics {
     internal_errors: Vec<InternalError>,
     int32_flows: FxHashMap<Int32FlowKey, Int32Flow>,
     error_count: u32,
+    /// How many of them the language itself has: whoever loads the file reports them.
+    early_error_count: u32,
 }

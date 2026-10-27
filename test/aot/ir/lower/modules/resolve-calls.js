@@ -19,6 +19,15 @@
 // COMPUTED-NOT: isForRequire
 // COMPUTED: Return
 
+// RUN(FEW): lower
+// FEW-LABEL: function {{*}}name="oneOfFew"
+// FEW-NOT: ResolveDynamic
+// FEW: SwitchString
+// FEW: = ResolveModule module=m
+// FEW: = ResolveModule module=m
+// FEW-NOT: ResolveDynamic
+// FEW: Return
+
 // RUN(MISSING): lower
 // MISSING-LABEL: function {{*}}name="missing"
 // MISSING-NOT: isForRequire
@@ -48,6 +57,10 @@ export function url() {
 
 export function computed(name) {
   return require.resolve(name);
+}
+
+export function oneOfFew(isOther) {
+  return require.resolve(isOther ? "./imports/values" : "./imports/nested");
 }
 
 export function missing() {

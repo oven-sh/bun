@@ -176,6 +176,8 @@ pub struct BuildFailed {
     pub is_one_program: bool,
     /// No failure yet: see `compile`.
     pub brought_bun_types: bool,
+    /// `Diagnostics::has_only_early_errors`
+    pub has_only_early_errors: bool,
 }
 
 impl fmt::Debug for BuildFailed {
@@ -378,6 +380,7 @@ impl KeepsFreeBlocksBelowThePeak {
         let watcher = (bun_alloc::USE_MIMALLOC && is_first)
             .then(|| {
                 Self::hand_out_last_freed_memory(true);
+                engine::give_freed_pages_back_after(engine::DELAY_UNTIL_THE_PROGRAM_IS_READ);
                 if !starts_thread {
                     return None;
                 }
@@ -443,6 +446,7 @@ impl Drop for KeepsFreeBlocksBelowThePeak {
             && bun_alloc::USE_MIMALLOC
         {
             Self::hand_out_last_freed_memory(false);
+            engine::give_freed_pages_back_after(engine::USUAL_DELAY);
         }
         self.is_over.store(true, Ordering::Release);
         if let Some(watcher) = self.watcher.take() {
@@ -618,8 +622,11 @@ fn compile_with_options(
             }
             Err(failure) => {
                 let texts = &options.load.entry_texts;
-                if !left_out.take_texts_with_errors(log, said_before.0, texts, &failure)
-                    && !left_out.take_files_named_by_paths(log, said_before.0, &failure)
+                let starts_over = failure.brought_bun_types && !failure.is_internal_error;
+                if starts_over
+                    || !fails_to_load(&failure)
+                    || (!left_out.take_texts_with_errors(log, said_before.0, texts, &failure)
+                        && !left_out.take_files_named_by_paths(log, said_before.0, &failure))
                 {
                     return Err(failure);
                 }
@@ -632,6 +639,12 @@ fn compile_with_options(
         remove_program_files_of_further_entry_points(&longer);
         with_worker_files = Some(longer);
     }
+}
+
+/// The file, or one that it imports, is no program or is not found. What else is wrong with the code that a Worker starts from stops the build, as it does in any entry point.
+fn fails_to_load(failure: &BuildFailed) -> bool {
+    let is_found = !matches!(failure.stage, Stage::Load | Stage::BindModules);
+    !failure.is_internal_error && (!is_found || failure.has_only_early_errors)
 }
 
 /// The texts and the files named by paths that Workers start from and that are no programs. `bun run` says what is wrong with one where the Worker starts, so the build goes on without it.
@@ -814,19 +827,24 @@ fn add_programs_of_worker_files(
                 continue;
             }
             Err(failure) if failure.is_one_program => None,
+            // `compile` starts over without the declarations. Only what is wrong then is wrong with the code.
+            Err(failure) if failure.brought_bun_types && !failure.is_internal_error => {
+                return Err(failure);
+            }
             Err(failure)
-                if left_out.take_texts_with_errors(
-                    log,
-                    said_before,
-                    &own.load.entry_texts,
-                    &failure,
-                ) =>
+                if fails_to_load(&failure)
+                    && left_out.take_texts_with_errors(
+                        log,
+                        said_before,
+                        &own.load.entry_texts,
+                        &failure,
+                    ) =>
             {
                 (log.warnings, log.errors) = counted_before;
                 texts_not_started.extend(found.pop());
                 continue;
             }
-            Err(failure) if is_named_by_path && !failure.is_internal_error => {
+            Err(failure) if is_named_by_path && fails_to_load(&failure) => {
                 left_out.take_errors(log, said_before);
                 (log.warnings, log.errors) = counted_before;
                 left_out
@@ -1242,6 +1260,7 @@ fn compile_programs<'a>(
             refused_entry_points,
             is_one_program: false,
             brought_bun_types,
+            has_only_early_errors: false,
         }),
     }
 }
@@ -1254,10 +1273,12 @@ fn fail(
     log: &mut Log,
 ) -> BuildFailed {
     let is_internal_error = diagnostics.has_internal_errors();
+    let has_only_early_errors = diagnostics.has_only_early_errors();
     diagnostics.write_to(log);
     BuildFailed {
         stage,
         is_internal_error,
+        has_only_early_errors,
         statistics,
         compilation: None,
         refused_entry_points,

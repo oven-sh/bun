@@ -12,7 +12,7 @@ var __export = (target: any, all: any) => {
 {
   "extends": "../../tsconfig.json",
   "files": ["main.ts"],
-  "compilerOptions": { "strict": true }
+  "compilerOptions": { "strict": true, "moduleDetection": "auto" }
 }
 ////: lines-2
 interface «1» {
@@ -60,7 +60,7 @@ export {};
 {
   "extends": "../../tsconfig.json",
   "files": ["main.ts", "globals.ts"],
-  "compilerOptions": { "strict": true }
+  "compilerOptions": { "strict": true, "moduleDetection": "auto" }
 }
 //// a-script-with-code-declares-every-kind-of-name/declares.ts
 ////= lines-2	Shape	sides	number
@@ -87,14 +87,14 @@ everything.Meter = class {
 };
 everything.Kind = { First: 0, Second: 1 };
 //// a-script-with-code-declares-every-kind-of-name/main.ts
-// What `bun run` drops of a script that has code is global, as for tsc and `bun check`: an interface, a type alias, and `declare function`, `namespace`, `class` and `enum`, whose values its code puts on globalThis. A name that another file has declared stays the script's own: `Node` here, and `Shape` in the second script.
+// What `bun run` drops of a script that has code is global, as for tsc and `bun check`: an interface, a type alias, and `declare function`, `namespace`, `class` and `enum`, whose values its code puts on globalThis. A name that cannot add to what another file has declared stays the script's own: `Node` here, and `Shape` in the second script.
 import "./declares";
 import "./second";
 const shape: Shape = { sides: 4 };
 const level: Level = "high";
 console.log(shape.sides, level, describe(shape), Units.perMeter, new Meter(2).length, Kind.Second);
 //// a-script-with-code-declares-every-kind-of-name/second.ts
-////= lines-2	Shape	name	string
+type Shape = { name: string };
 const named: Shape = { name: "its own" };
 console.log(named.name);
 //// a-script-with-code-declares-every-kind-of-name/tsconfig.json
@@ -138,7 +138,7 @@ declare module "*.thing" {
 {
   "extends": "../../tsconfig.json",
   "files": ["main.ts"],
-  "compilerOptions": { "strict": true, "allowJs": false }
+  "compilerOptions": { "strict": true, "allowJs": false, "moduleDetection": "auto" }
 }
 //// class-and-function-bindings-that-are-assigned-again/exporter.ts
 export class Ex { m() { return "Ex"; } static s = "Ex.s"; }
@@ -1699,7 +1699,7 @@ function helper(): number {
 {
   "extends": "../../tsconfig.json",
   "files": ["main.ts", "never-runs.ts"],
-  "compilerOptions": { "strict": true }
+  "compilerOptions": { "strict": true, "moduleDetection": "auto" }
 }
 //// throwing-initializers/a-bigint-and-a-number.ts
 function sum(a: bigint, b: number): { v: unknown } { return { v: (a as any) + b }; }

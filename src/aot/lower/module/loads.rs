@@ -41,6 +41,7 @@ enum ModuleOperation {
 enum ComputedLoad {
     Require,
     Import,
+    Resolve,
 }
 
 #[derive(Copy, Clone)]
@@ -177,14 +178,10 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_name_answered_as_asked(&mut self, site: AnsweredSite<'_>) -> Option<StringId> {
-        let (ImportSpecifier::Constant(name), SiteAnswer::Module(ModuleRef::Runtime(_))) =
-            (site.specifier, site.answer)
-        else {
-            return None;
-        };
-        let alias = Alias::get(self.queries.atom_bytes(name), Target::Bun, Cfg::default())?;
-        alias.node_builtin.then(|| self.intern_atom(name))
+    fn is_name_answered_as_asked(&self, name: Atom, module: ModuleRef) -> bool {
+        matches!(module, ModuleRef::Runtime(_))
+            && Alias::get(self.queries.atom_bytes(name), Target::Bun, Cfg::default())
+                .is_some_and(|alias| alias.node_builtin)
     }
 }
 
@@ -886,6 +883,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let loaded = match load {
                 ComputedLoad::Require => self.emit_require_of_candidate(spelled.module, spelling),
                 ComputedLoad::Import => self.emit_import_through_face(spelled.module, None),
+                ComputedLoad::Resolve => {
+                    self.emit_resolve_of_name(spelled.spelling, spelled.module, false)
+                }
             };
             self.builder.write_variable(result, loaded);
             self.jump(done);
@@ -913,6 +913,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match load {
             ComputedLoad::Require => self.builder.require_dynamic(specifier, referrer),
             ComputedLoad::Import => self.builder.import_dynamic(specifier, None, referrer),
+            ComputedLoad::Resolve => self
+                .builder
+                .resolve_dynamic(specifier, referrer, false, false),
         }
     }
 
@@ -922,15 +925,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         specifier: Option<ValueId>,
     ) -> ValueId {
         match site.answer {
-            SiteAnswer::Module(module) => match self.file.find_name_answered_as_asked(site) {
-                Some(name) => self.builder.string(name),
-                None => self.emit_resolve_module(site.specifier, module, false),
-            },
-            SiteAnswer::Computed(_) => {
+            SiteAnswer::Module(module) => self.emit_resolve_module(site.specifier, module, false),
+            SiteAnswer::Computed(candidates) => {
                 let specifier = specifier.unwrap_or_else(|| self.builder.undefined());
+                let node = site.specifier_node;
                 let referrer = self.referrer_of(site);
-                self.builder
-                    .resolve_dynamic(specifier, referrer, false, false)
+                let load = ComputedLoad::Resolve;
+                self.emit_computed_load(load, referrer, node, specifier, candidates)
             }
             SiteAnswer::Failed(failure) => self.emit_require_failure(site, failure, false),
             SiteAnswer::Erased => self.builder.undefined(),
@@ -946,10 +947,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let ImportSpecifier::Constant(text) = specifier else {
             unreachable!("only a constant specifier names one module");
         };
+        self.emit_resolve_of_name(text, module, is_url)
+    }
+
+    fn emit_resolve_of_name(&mut self, name: Atom, module: ModuleRef, is_url: bool) -> ValueId {
+        let is_answered_as_asked = !is_url && self.file.is_name_answered_as_asked(name, module);
+        let name = self.file.intern_atom(name);
+        if is_answered_as_asked {
+            return self.builder.string(name);
+        }
         let module = self.file.fragment.declare_module(module);
         let referrer = self.file.module_id();
-        let text = self.file.intern_atom(text);
-        self.builder.resolve_module(module, referrer, text, is_url)
+        self.builder.resolve_module(module, referrer, name, is_url)
     }
 
     // The error of `require` and of `require.resolve` is worded by the host's resolver, which is told which of the two asks. It is another than that of `import`.

@@ -195,7 +195,6 @@ function engineAt(javaScriptCore: string | undefined): EngineSources {
     builtinTableInputs: ["/fake/engine/aot/builtins/array.def"],
     builtinTableOutputs: ["/fake/engine/aot/builtins/generated/AOTBuiltinTableBuiltins.cpp"],
     builtinsLeftOut: [],
-    requiresVerifiedOverloads: false,
   };
 }
 const checkout = engineAt("/fake/engine");
@@ -208,7 +207,6 @@ function noSources(lists: Partial<Sources> = {}): Sources {
     aotRust: [],
     builtinsTableCodegen: [],
     bindgen: [],
-    zigGeneratedClasses: [],
     js: [],
     jsCodegen: [],
     aotPrelude: [],

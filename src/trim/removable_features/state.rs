@@ -1,6 +1,7 @@
 use core::mem::offset_of;
 use core::ptr;
 use core::slice;
+use core::sync::atomic::{AtomicIsize, Ordering};
 
 use crate::{Feature, Removal};
 
@@ -156,6 +157,25 @@ pub fn find_removed_range(ranges: &[RemovedRange], offset: i64) -> Option<u16> {
     let end = ranges.partition_point(|range| range.start <= offset);
     let range = ranges[..end].last()?;
     (offset.abs_diff(range.start) < u64::from(range.size)).then_some(range.feature)
+}
+
+/// Where removed code was entered and where that call returns to, as offsets from the state. Zero: not known.
+/// `Bun__abortForRemovedFeature` ends its sentence with them.
+#[unsafe(no_mangle)]
+static Bun__placeInRemovedCode: [AtomicIsize; 2] = [AtomicIsize::new(0), AtomicIsize::new(0)];
+
+#[cold]
+#[inline(never)]
+pub fn abort_for_removed_feature_entered(
+    feature: Feature,
+    address: usize,
+    return_address: Option<usize>,
+) -> ! {
+    let base = ptr::from_ref(state()).addr();
+    let offset_of = |address: usize| address.wrapping_sub(base).cast_signed();
+    Bun__placeInRemovedCode[0].store(offset_of(address), Ordering::Relaxed);
+    Bun__placeInRemovedCode[1].store(return_address.map_or(0, offset_of), Ordering::Relaxed);
+    abort_for_removed_feature(feature)
 }
 
 #[cold]

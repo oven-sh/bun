@@ -4,13 +4,13 @@
 // stdout, same error class. Most cases print nothing, so this mainly catches compiler crashes, build refusals and exceptions
 // that only the compiled program throws.
 //
-//   bun test test/aot/typescript-cases                               every 50th case
+//   bun test test/aot/typescript-cases                               every 50th case, and those of typescript-cases.known.json
 //   AOT_TYPESCRIPT_CASES=all bun test test/aot/typescript-cases      all of them, about 9,000 (slow)
 //   AOT_TYPESCRIPT_CASES=enumMerging bun test test/aot/typescript-cases    cases whose path contains the text
 //   AOT_TYPESCRIPT_CASES_REPORT=/tmp/report ...    also writes what was unexpected to /tmp/report.<part>.json
 //
 // typescript-cases.known.json lists the cases that are expected to differ: "<outcome> | <reason>". The outcome "any" is for a case whose
-// output is not deterministic.
+// output is not deterministic. Every run takes them, but for those that never end, so a line that is out of date fails.
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -119,9 +119,10 @@ async function run(cmd: string[], cwd: string, timeout: number) {
   return { stdout, stderr, exitCode, timedOut, signal: timedOut ? null : spawned.signalCode };
 }
 
-const errorClass = (text: string) => /\b((?:[A-Z][a-z]+)*Error)\b/.exec(text)?.[1] ?? "";
+// `bun run` quotes the lines of the source above the error, and they can hold such a word too.
+const errorClass = (text: string) => /^((?:[A-Z][a-z]+)*Error)\b/m.exec(text)?.[1] ?? "";
 
-// "same", "skipped" (not judged), or a short description of how the compiled program departs from `bun run`.
+// "same", "skipped" or "not built" (not judged), or a short description of how the compiled program departs from `bun run`.
 async function judge(folder: string, source: string): Promise<string> {
   const entryPoint = writeCase(folder, source);
   if (!entryPoint) return "skipped";
@@ -149,7 +150,7 @@ async function judge(folder: string, source: string): Promise<string> {
     const refusal = /error: [^\n]*bun compile does not support ([^\n]*)/.exec(said);
     if (refusal) return interpreted.exitCode === 0 ? "unsupported: " + refusal[1].slice(0, 60) : "skipped";
     if (/error: internal/.test(said)) return "internal compiler error";
-    return "skipped";
+    return "not built";
   }
   if (interpreted.timedOut) return "skipped";
   const compiled = await run(["./compiled"], folder, 40_000);
@@ -170,11 +171,24 @@ async function judge(folder: string, source: string): Promise<string> {
 // These spread an iterator that never ends. `bun run` fills memory with it for as long as it is let, 10 GB and more.
 const neverEnds = new Set(["conformance/es6/destructuring/iterableArrayPattern15.ts"]);
 
+// The judge once took these for different.
+const judgedAgain = [
+  "compiler/recursiveBaseConstructorCreation2.ts",
+  "conformance/externalModules/topLevelAmbientModule.ts",
+];
+// Not those that never end: each would take the whole time that a program is given.
+const inEveryRun = new Set([
+  ...Object.keys(known).filter(name => !(known as Record<string, string>)[name].startsWith("the program hangs")),
+  ...judgedAgain,
+]);
+
 const cases = unsupported
   ? []
   : readCases()
       .filter(([, source]) => !skippedDirective.test(source))
-      .filter(([name], index) => (selection === "all" ? true : selection ? name.includes(selection) : index % 50 === 0))
+      .filter(([name], index) =>
+        selection === "all" ? true : selection ? name.includes(selection) : index % 50 === 0 || inEveryRun.has(name),
+      )
       .filter(([name]) => !neverEnds.has(name));
 
 for (let shard = 0; shard < shardCount; shard++) {
@@ -194,7 +208,8 @@ for (let shard = 0; shard < shardCount; shard++) {
           const outcome = await judge(folder, source);
           rmSync(folder, { recursive: true, force: true });
           const expected = (known as Record<string, string>)[name]?.split(" | ")[0] ?? "same";
-          if (outcome !== "skipped" && expected !== "any" && outcome !== expected) unexpected[name] = outcome;
+          const isJudged = outcome !== "skipped" && (outcome !== "not built" || name in known);
+          if (isJudged && expected !== "any" && outcome !== expected) unexpected[name] = outcome;
         }
       };
       await Promise.all(Array.from({ length: availableParallelism() }, worker));

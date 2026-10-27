@@ -7825,12 +7825,13 @@ impl<'s> Files<'s> {
                 }
             }
         }
-        // In its own file such a name stays the file's own, so it adds to nothing that another file declares.
-        for &id in declaring
-            .iter()
-            .filter(|id| self.modules[id.idx()].hir.is_script_with_code)
-        {
+        // Such a name is global, as for the project of its file. Where TypeScript would report a duplicate it stays the
+        // file's own, as in a module.
+        for &id in declaring {
             let module = &self.modules[id.idx()];
+            if !module.hir.is_script_with_code {
+                continue;
+            }
             let erased = find_erased_declarations(&module.hir);
             let locals = module.bound.table(module.bound.scopes[0].locals).iter();
             let is_erased = |symbol: SymbolId| {
@@ -7846,13 +7847,18 @@ impl<'s> Files<'s> {
                 .filter(|&(_, symbol)| is_erased(symbol))
                 .collect();
             for (name, symbol) in found {
-                if !self.globals.contains_key(name) {
-                    let merged = self.get_merged_symbol(Sym {
-                        file: id,
-                        id: symbol,
-                    });
-                    self.globals.insert(name, merged);
-                }
+                let own = Sym {
+                    file: id,
+                    id: symbol,
+                };
+                let merged = match self.globals.get(name).copied() {
+                    Some(existing) if self.can_merge(existing, own) => {
+                        self.merge_symbol(existing, own, false)
+                    }
+                    Some(_) => continue,
+                    None => self.get_merged_symbol(own),
+                };
+                self.globals.insert(name, merged);
             }
         }
         if let Some(id) = last_resort {
@@ -8506,6 +8512,15 @@ impl<'s> Files<'s> {
     /// `symbol.Exports`
     fn exports_in_table(&self, sym: Sym) -> Vec<(Atom, Sym)> {
         self.each_export_in_table(sym).collect()
+    }
+
+    /// True if `mergeSymbol` adds `source` to `target` itself and reports nothing about the two. A second declaration of
+    /// a variable adds nothing to the first.
+    fn can_merge(&self, target: Sym, source: Sym) -> bool {
+        let (target_flags, source_flags) = (self.flags(target), self.flags(source));
+        !self.is_non_local_alias(target)
+            && !target_flags.intersects(get_excluded_symbol_flags(source_flags))
+            && !(target_flags & source_flags).intersects(SymFlags::VARIABLE)
     }
 
     /// `mergeSymbol`. Returns the symbol that the table containing `target` holds from then on.

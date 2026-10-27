@@ -1,4 +1,4 @@
-import { expect } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { beforeAll, describe, test } from "../supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { cpSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
@@ -43,6 +43,8 @@ function testEachProgram(
       .replace(/took [0-9.]+m?s/g, "took N ms");
 
   describe(form === "in place" ? folder : `${folder}, as one file`, () => {
+    // The packages are 80,000 files, and the executables lie beside them.
+    afterAll(() => rmSync(String(dir), { recursive: true, force: true }), 300_000);
     beforeAll(async () => {
       cpSync(join(import.meta.dir, folder), project, { recursive: true });
       const packages = join(project, "node_modules");

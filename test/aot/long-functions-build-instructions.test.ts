@@ -4,6 +4,7 @@ import { expectLinearInstructionCount } from "./long-functions-instructions";
 import {
   indexesUpTo,
   mix,
+  writeClassWithFields,
   writeClassWithMethods,
   writeLocalsReadInCatch,
   type Program,
@@ -111,6 +112,14 @@ test.skipIf(isSlowBuild || isWindows)(
   "the instructions of a build are linear in the number of methods of a class",
   async () => {
     await expectLinearInstructionCount(30_000, writeClassWithMethods, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of fields of a class",
+  async () => {
+    await expectLinearInstructionCount(15_000, writeClassWithFields, 4.5);
   },
   240_000,
 );

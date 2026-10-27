@@ -3,6 +3,7 @@
   "compilerOptions": {
     "target": "esnext",
     "module": "preserve",
+    "moduleDetection": "force",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "typeRoots": ["../../../packages"],

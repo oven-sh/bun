@@ -25,6 +25,19 @@ pub(crate) fn static_field_position(
     class: ClassId,
     member: MemberId,
 ) -> DeclaredType {
+    let written = written_static_field_position(file, class, member);
+    let starts_undefined = file.hir[member].init.is_none();
+    match starts_undefined {
+        true => file.add_undefined(written),
+        false => written,
+    }
+}
+
+fn written_static_field_position(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    class: ClassId,
+    member: MemberId,
+) -> DeclaredType {
     let shape = file.queries.class_shape(file.own_class(class));
     let source = ClassMemberSource::Member(member);
     let Some(entry) = shape.members.iter().find(|entry| entry.source == source) else {

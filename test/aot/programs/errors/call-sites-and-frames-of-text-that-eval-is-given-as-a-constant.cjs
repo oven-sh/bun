@@ -1,5 +1,5 @@
 // The text that an indirect eval is given, known when the program is built: its frame is one of eval code for a call site, in a stack and where an error is printed.
-const withoutFolders = text => String(text).replace(/[^\s(|]*\/([^\/\s:]+:\d+:\d+)/g, "$1");
+const withoutFolders = text => String(text).replace(/[^\s(|]*[\\/]([^\\/\s:]+:\d+:\d+)/g, "$1");
 const top = text => withoutFolders(text).split("\n").slice(0, 4).join("\n");
 function sitesOf(run) {
   const kept = Error.prepareStackTrace;

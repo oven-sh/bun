@@ -117,7 +117,6 @@ const known: Record<string, number> = {
   "passes/AOTSinkAllocationsCandidates.cpp AllocationSinking::collectCandidates": 7,
   "passes/AOTSinkAllocationsCandidates.cpp operationsOnSlots": 7,
   "passes/AOTSinkAllocationsCandidates.cpp testsIndependentOfStores": 7,
-  "passes/AOTStringPasses.cpp keyedAccesses": 3,
   "passes/AOTStringPasses.cpp operationsHandingOnValues": 7,
   "passes/AOTTypeTestOperatorRule.cpp operationsOnElements": 3,
   "passes/AOTTypeTestOperatorRule.cpp operationsOnElementsOfViews": 3,

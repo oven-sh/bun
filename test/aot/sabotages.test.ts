@@ -4,8 +4,6 @@
 // conditions under which it may change the code. An ordinary build holds
 // none of it. `bun compile --aot-list=registry` lists the names. For each name the table below has the programs that must notice, and this test passes only if
 // AT LEAST ONE RUN OF THEM DIFFERS FROM PLAIN BUN OR DIES. A sabotage that nothing sees fails here, and so does a name that the table lacks: each says which program is still to be written.
-// A compiler that has learned more may no longer do to a program what the sabotage breaks. Each program of the table that sees nothing any more has a line of its own, `SABOTAGE <name>: NOT NOTICED BY <program>`,
-// and the names that a single program is left to notice are listed at the end: those want another program before the last one goes.
 // A run that notices has its control: the same program in the same environment without the sabotage, as plain Bun.
 //
 //   bun test test/aot/sabotages                          all
@@ -82,6 +80,10 @@ const noticedBy: Record<string, Row | Row[]> = {
   NoCallWrites: toldTheBackEnd(
     "--aot-check=MovedLoads",
     "a-field-is-read-on-both-sides-of-a-call-that-stores-into-it.ts",
+  ),
+  MergedLoadsOutlastWritesOnUnlikelyPaths: toldTheBackEnd(
+    "--aot-check=MovedLoads",
+    "an-element-is-tested-stored-on-a-way-seldom-taken-and-read-again.js",
   ),
   FieldsNeverChange: toldTheBackEnd(
     "--aot-check=ClaimsToBackEnd",
@@ -220,7 +222,6 @@ const noticedBy: Record<string, Row | Row[]> = {
     "typed/functionAbove-object-reads-aWriterOnOneTurn-testedBehind-inAClosure",
     "untyped/functionAbove-object-reads-aWriterOnOneTurn-testedBehind-inAClosure",
   ),
-  // The writer has to stay somebody else: one that the compiler follows and copies into the loop has become a store of the loop's own.
   CarriedVariablesAreWrittenByOthers: ofFamily(
     "variables-of-enclosing-code-in-loops",
     "typed/moduleLet-whole-storesThenReads-aWriterUnderTextMadeAtRunTime-overAList-handlerInALoop",

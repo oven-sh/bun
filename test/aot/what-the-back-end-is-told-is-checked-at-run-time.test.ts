@@ -34,6 +34,12 @@ const rows: [sabotage: string, flags: string[], program: string, named: string][
     "a-name-appears-on-the-prototype-while-a-loop-reads-an-absent-field.ts",
     "LoadMayMove",
   ],
+  [
+    "MergedLoadsOutlastWritesOnUnlikelyPaths",
+    [movedLoads],
+    "an-element-is-tested-stored-on-a-way-seldom-taken-and-read-again.js",
+    "LoadMayMove",
+  ],
   ["FieldsNeverChange", [claims], "a-field-is-read-and-stored-on-every-turn-of-a-loop.ts", "WordNeverChanges"],
   [
     "ClosureInFrameKeepsNoCaptures",

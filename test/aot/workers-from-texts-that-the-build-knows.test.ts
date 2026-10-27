@@ -247,4 +247,71 @@ describe.concurrent("compile/aot/workers from texts that the build knows", () =>
       }),
     timeout,
   );
+
+  test(
+    "code in TypeScript that names the globals of a Worker is compiled where no typings are installed",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-workers-from-texts", {
+          "main.ts": `
+            const heard = (worker: Worker) =>
+              new Promise<void>(done => {
+                worker.onmessage = event => (console.log("message", event.data), worker.terminate(), done());
+                worker.onerror = event => (console.log("error"), event.preventDefault(), done());
+                worker.postMessage(20);
+              });
+            await heard(new Worker(new URL("./self.ts", import.meta.url)));
+            await heard(new Worker(new URL("./bare.ts", import.meta.url)));
+            await heard(new Worker(new URL("./listener.ts", import.meta.url)));
+            await heard(new Worker("data:text/javascript,self.onmessage = event => self.postMessage(event.data %2B 4)"));
+            await heard(
+              new Worker(
+                URL.createObjectURL(
+                  new Blob(["self.onmessage = (event: MessageEvent) => self.postMessage(event.data + 5)"], {
+                    type: "application/typescript",
+                  }),
+                ),
+              ),
+            );
+          `,
+          "self.ts": `self.onmessage = (event: MessageEvent) => { self.postMessage(event.data + 1); };`,
+          "bare.ts": `onmessage = (event: MessageEvent) => { postMessage(event.data + 2); };`,
+          "listener.ts": `
+            self.addEventListener("message", (event: MessageEvent) => { postMessage(event.data + 3); });
+            self.onerror = null;
+            console.log(typeof self.dispatchEvent, typeof dispatchEvent, onerror);
+          `,
+        });
+        const compiled = await build(String(dir), "main.ts");
+        built(compiled);
+        expect(compiled.stderr).not.toContain("warn:");
+        const ran = await spawned([compiled.executable], String(dir), compiledOnly);
+        expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
+          stdout: "message 21\nmessage 22\nfunction function null\nmessage 23\nmessage 24\nmessage 25\n",
+          exitCode: 0,
+        });
+      }),
+    timeout,
+  );
+
+  test.each([
+    ["a file that is named by a path", `new URL("./worker.ts", import.meta.url)`],
+    ["a text", JSON.stringify(`data:text/javascript,let count: number = "text"; postMessage(count)`)],
+  ])(
+    "a type error in %s stops the build, as it does in an entry point",
+    (_, code) =>
+      slot(async () => {
+        using dir = tempDir("aot-workers-from-texts", {
+          "main.ts": `const worker = new Worker(${code});${listen}`,
+          "worker.ts": `let count: number = "text"; postMessage(count);`,
+        });
+        const compiled = await build(String(dir), "main.ts");
+        expect({ stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({
+          stderr: expect.stringContaining("error: TS2322"),
+          exitCode: 1,
+        });
+        expect(compiled.stderr).not.toContain("TS100072");
+      }),
+    timeout,
+  );
 });

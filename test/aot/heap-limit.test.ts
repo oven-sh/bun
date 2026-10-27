@@ -1560,6 +1560,77 @@ console.log(text.length, blobs.map(blob => blob.size).join(", "));
     120_000,
   );
 
+  test.skipIf(!isLinux || isASAN)(
+    "a program that runs out of address space round after round, and gets back only what malloc keeps, goes on",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.js": `function withManyMembers(object) {
+  for (let member = 0; member < 6000; member++) object["m" + member] = member;
+  return object;
+}
+let turns = 0;
+function pause() {
+  for (let i = 0; i < 3; i++) turns += i;
+}
+function takeTexts(list) {
+  for (let size = 16 * 1024 * 1024; size >= 8 * 1024; size /= 2) {
+    for (const eighths of [14, 12, 10, 8]) {
+      try {
+        for (;;) list.push("x".repeat((size / 8) * eighths));
+      } catch {}
+    }
+  }
+}
+// These are made while malloc has room of its own, so what they leave when they are let go of stays with malloc.
+let early = [];
+for (let i = 0; i < 200; i++) early.push("e".repeat(1024 * 1024));
+// All the address space of the system, for good.
+const pinned = [];
+for (let size = 64 * 1024 * 1024; size >= 64 * 1024; size /= 2) {
+  try {
+    for (;;) pinned.push(new ArrayBuffer(size));
+  } catch {}
+}
+takeTexts(pinned);
+
+function round() {
+  early.fill(null);
+  early = [];
+  Bun.gc(true);
+  const objects = [withManyMembers({}), withManyMembers({}), withManyMembers({})];
+  takeTexts(early);
+  for (let i = 0; i < 3; i++) {
+    try {
+      objects[i][3] = i;
+      pause();
+    } catch {}
+  }
+}
+let rounds = 0;
+for (; rounds < 12; rounds++) {
+  try {
+    round();
+  } catch (error) {
+    if (!(error instanceof RangeError)) console.log(String(error));
+  }
+}
+console.log(rounds, pinned.length > 10);
+`,
+      });
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
+        String(folder),
+      );
+      expect(built.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await run(
+        ["sh", "-c", "ulimit -c 0 && ulimit -v 2097152 && exec ./program"],
+        String(folder),
+      );
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "12 true\n", stderr: "", exitCode: 0 });
+    },
+    240_000,
+  );
+
   test.skipIf(!isLinux)(
     "the range of a Worker that has ended is given back",
     async () => {

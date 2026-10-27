@@ -45,6 +45,7 @@ impl Diagnostics {
             internal_errors: Vec::new(),
             int32_flows: FxHashMap::default(),
             error_count: 0,
+            early_error_count: 0,
         }
     }
 
@@ -54,6 +55,10 @@ impl Diagnostics {
 
     pub(crate) fn has_internal_errors(&self) -> bool {
         !self.internal_errors.is_empty()
+    }
+
+    pub(crate) fn has_only_early_errors(&self) -> bool {
+        !self.has_internal_errors() && self.error_count == self.early_error_count
     }
 
     pub(crate) fn paths_of_errors(&self) -> Option<Vec<&[u8]>> {
@@ -74,6 +79,7 @@ impl Diagnostics {
         self.internal_errors.extend(other.internal_errors);
         self.int32_flows.extend(other.int32_flows);
         self.error_count += other.error_count;
+        self.early_error_count += other.early_error_count;
     }
 
     pub(super) fn add_message(&mut self, code: u32, message: Msg) {
@@ -81,6 +87,12 @@ impl Diagnostics {
             self.error_count += 1;
         }
         self.entries.push(Entry::new(code, message));
+    }
+
+    pub(super) fn add_early_error(&mut self, code: u32, message: Msg) {
+        debug_assert!(message.kind == Kind::Err);
+        self.early_error_count += 1;
+        self.add_message(code, message);
     }
 
     pub(super) fn report_internal_error(&mut self, stage: Stage, message: Vec<u8>) {

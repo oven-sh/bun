@@ -2791,7 +2791,7 @@ pub(crate) mod __gated_printer {
                             }
                             self.print_symbol(meta.exports_ref);
                             if wrap_with_to_esm {
-                                self.print_to_esm_suffix();
+                                self.print_to_esm_suffix(record);
                             }
                         }
                         self.print_dot_then_suffix();
@@ -2886,7 +2886,7 @@ pub(crate) mod __gated_printer {
                     self.print(b")");
                 }
                 if wrap_with_to_esm {
-                    self.print_to_esm_suffix();
+                    self.print_to_esm_suffix(record);
                 }
                 if record.kind == ImportKind::Dynamic && has_side_effects {
                     self.print_dot_then_suffix();
@@ -2988,7 +2988,7 @@ pub(crate) mod __gated_printer {
                 }
 
                 if wrap_with_to_esm {
-                    self.print_to_esm_suffix();
+                    self.print_to_esm_suffix(record);
                 }
                 if wrap {
                     self.print(b")");
@@ -3055,9 +3055,12 @@ pub(crate) mod __gated_printer {
         }
 
         /// Closes a `__toESM(` call: `, 1` (`isNodeMode`) for an ES module by
-        /// type, then `)`.
-        fn print_to_esm_suffix(&mut self) {
-            if self.options.input_module_type == bundle_opts::ModuleType::Esm {
+        /// type, then `)`. Not for a sqlite module: its `default` is the
+        /// database, and node mode would bind the namespace instead.
+        fn print_to_esm_suffix(&mut self, record: &ImportRecord) {
+            if self.options.input_module_type == bundle_opts::ModuleType::Esm
+                && !record.loader.is_some_and(bun_ast::Loader::is_sqlite)
+            {
                 self.print(b",");
                 self.print_space();
                 self.print(b"1");

@@ -130,6 +130,17 @@ describe("bundler", () => {
         run: { stdout: "Hello, world!" },
       });
     }
+    // An importer that is an ES module by type gets `__toESM(..., 1)`. Node mode
+    // binds `default` to the whole namespace, so a sqlite module does not take it.
+    itBundled("bun/sqlite-attribute-format-cjs-esm-importer", {
+      target: "bun",
+      format: "cjs",
+      files: { "/entry.mjs": files["/entry.js"], "/app.db": files["/app.db"] },
+      onAfterBundle(api) {
+        api.expectFile("out.js").toContain('__toESM(require("./app.db", { type: "sqlite" }))');
+      },
+      run: { stdout: "Hello, world!" },
+    });
   });
   itBundled("bun/embedded-sqlite-file", {
     target: "bun",

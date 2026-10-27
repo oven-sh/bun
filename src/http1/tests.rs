@@ -1,10 +1,11 @@
-//! The cases of picohttpparser's `test.c` that apply, what Bun's patch to it changed, and every byte value at every
+//! The cases of picohttpparser's `test.c` that apply, where Bun differs from it, and every byte value at every
 //! alignment of the 16-byte blocks that `response::index_of` reads (see `PADDINGS` for what Miri runs of that).
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::panic)]
 
 use crate::ParseError::{Incomplete, Malformed};
 use crate::{
-    ChunkedDecoder, ChunkedStatus, HeadScanner, Header, ParseError, ResponseHead, parse_response,
+    ChunkedDecoder, ChunkedStatus, Decoded, HeadScanner, Header, ParseError, ResponseHead,
+    parse_response,
 };
 
 type Parsed<'a> = Result<(ResponseHead<'a>, Vec<(&'a [u8], &'a [u8])>), ParseError>;
@@ -264,6 +265,22 @@ fn a_folded_line_is_malformed_once_the_head_is_whole() {
         assert_error(head, Malformed);
     }
     assert_error(b"HTTP/1.0 200 OK\r\nfoo: b\r\n c\0", Malformed);
+    // There is nothing for the first line to continue, so it is a name that starts with a blank.
+    assert_error(b"HTTP/1.0 200 OK\r\n c", Malformed);
+    assert_error(b"HTTP/1.0 200 OK\r\n\tc", Malformed);
+}
+
+/// Too short for `response::index_of` to read a block.
+#[test]
+fn fewer_than_sixteen_bytes() {
+    assert_head(b"HTTP/1.1 200\n\n", 1, 200, b"", &[]);
+    assert_head(b"HTTP/1.1 200\r\n\n", 1, 200, b"", &[]);
+    assert_head(b"HTTP/1.1 200\n\r\n", 1, 200, b"", &[]);
+    assert_head(b"HTTP/1.1 200 \n\n", 1, 200, b"", &[]);
+    assert_error(b"HTTP/1.1 200\n\r", Incomplete);
+    assert_error(b"HTTP/1.1 200\na:", Incomplete);
+    assert_error(b"HTTP/1.1 200 \0", Malformed);
+    assert_error(b"HTTP/1.1 200\n:", Malformed);
 }
 
 #[test]
@@ -466,10 +483,14 @@ fn decode_in_pieces(encoded: &[u8], piece_len: usize) -> (Vec<u8>, ChunkedStatus
 fn assert_decodes(encoded: &[u8], data: &[u8], status: ChunkedStatus) {
     for piece_len in 1..=encoded.len() {
         let (decoded, last, _) = decode_in_pieces(encoded, piece_len);
-        let last = match last {
+        let last = match (last, status) {
             // How much of the last piece is left depends on where the pieces were cut.
-            ChunkedStatus::Complete { .. } if piece_len < encoded.len() => status,
-            last => last,
+            (ChunkedStatus::Complete { .. }, ChunkedStatus::Complete { .. })
+                if piece_len < encoded.len() =>
+            {
+                status
+            }
+            _ => last,
         };
         assert_eq!(
             (decoded.escape_ascii().to_string(), last),
@@ -516,7 +537,13 @@ fn chunked_bodies() {
 
 #[test]
 fn chunked_body_cut_short() {
-    assert_decodes(b"", b"", ChunkedStatus::Incomplete);
+    assert_eq!(
+        ChunkedDecoder::default().decode(&mut []),
+        Decoded {
+            len: 0,
+            status: ChunkedStatus::Incomplete
+        }
+    );
     assert_decodes(b"b", b"", ChunkedStatus::Incomplete);
     assert_decodes(b"b\r\nhello", b"hello", ChunkedStatus::Incomplete);
     assert_decodes(
@@ -582,7 +609,7 @@ fn malformed_chunks() {
     }
 }
 
-/// picohttpparser allows it. llhttp does not, so Bun's patch did not either.
+/// picohttpparser allows it, llhttp does not.
 #[test]
 fn no_whitespace_after_the_chunk_size() {
     assert_decodes(
@@ -710,8 +737,8 @@ fn after_an_error_the_decoder_goes_on_from_where_it_stopped() {
     }
 }
 
-/// picohttpparser gives up once the framing is over 100 KB and three quarters of what it has read. Bun's patch took
-/// that out: it protects a server, and a response made of very small chunks is legitimate.
+/// picohttpparser gives up once the framing is over 100 KB and three quarters of what it has read. That protects a
+/// server, and a response made of very small chunks is legitimate.
 #[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn any_number_of_small_chunks() {

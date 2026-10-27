@@ -19,7 +19,7 @@ enum State {
 pub struct ChunkedDecoder {
     /// Bytes of the chunk's data still to come. While the size is being read, the digits so far.
     chunk_remaining: usize,
-    size_digits: u8,
+    size_digits: u32,
     state: State,
 }
 
@@ -42,22 +42,26 @@ pub struct Decoded {
     pub status: ChunkedStatus,
 }
 
-const MAX_SIZE_DIGITS: u8 = (usize::BITS / 4) as u8;
+const MAX_SIZE_DIGITS: u32 = usize::BITS / 4;
 
 impl ChunkedDecoder {
     /// Decodes the next piece of the body in place. The trailer section is read and dropped.
     ///
-    /// A caller that decodes again after a status other than [`ChunkedStatus::Incomplete`] gets what picohttpparser
-    /// gave it: the decoder goes on from the state it stopped in. Both clients can do so. After
+    /// No status is the last one. A call after [`ChunkedStatus::Complete`] or [`ChunkedStatus::Malformed`] goes on from
+    /// the state the decoder stopped in, as with picohttpparser, and there are callers that make one. After
     /// [`ChunkedStatus::Complete`] that state is the start of a line of the trailer section.
     ///
     /// Only CRLF ends a chunk's size line and its data; a line of the trailer section may end in LF alone. A chunk
     /// extension is dropped unread, and no whitespace may come between it and the size, as in llhttp (Node.js).
     pub fn decode(&mut self, buf: &mut [u8]) -> Decoded {
         let (mut src, mut dst) = (0, 0);
-        // A local, and an `if` per state in the order in which they follow each other: going on to the next state is
+        // Locals, and an `if` per state in the order in which they follow each other: going on to the next state is
         // then falling through, where a `match` in a loop jumps through a table for every byte.
-        let mut state = self.state;
+        let Self {
+            mut chunk_remaining,
+            mut size_digits,
+            mut state,
+        } = *self;
         let status = 'decode: loop {
             /// Reads this byte and nothing else.
             macro_rules! expect {
@@ -70,26 +74,33 @@ impl ChunkedDecoder {
                 };
             }
             if state == State::Size {
-                loop {
+                let end = loop {
                     let Some(&byte) = buf.get(src) else {
                         break 'decode ChunkedStatus::Incomplete;
                     };
                     let Some(digit) = hex_digit(byte) else {
-                        // LF is for `State::Extension` to refuse, which is then the state after the error.
-                        if self.size_digits == 0 || !matches!(byte, b';' | b'\r' | b'\n') {
-                            break 'decode ChunkedStatus::Malformed;
-                        }
-                        break;
+                        break byte;
                     };
-                    if self.size_digits == MAX_SIZE_DIGITS {
+                    if size_digits == MAX_SIZE_DIGITS {
                         break 'decode ChunkedStatus::Malformed;
                     }
-                    self.chunk_remaining = (self.chunk_remaining << 4) | usize::from(digit);
-                    self.size_digits += 1;
+                    chunk_remaining = (chunk_remaining << 4) | usize::from(digit);
+                    size_digits += 1;
                     src += 1;
+                };
+                if size_digits == 0 {
+                    break ChunkedStatus::Malformed;
                 }
-                self.size_digits = 0;
-                state = State::Extension;
+                state = match end {
+                    b'\r' => {
+                        src += 1;
+                        State::SizeLineFeed
+                    }
+                    // LF is for `State::Extension` to refuse, which is then the state after the error.
+                    b';' | b'\n' => State::Extension,
+                    _ => break ChunkedStatus::Malformed,
+                };
+                size_digits = 0;
             }
             if state == State::Extension {
                 loop {
@@ -105,23 +116,31 @@ impl ChunkedDecoder {
             }
             if state == State::SizeLineFeed {
                 expect!(b'\n');
-                state = if self.chunk_remaining == 0 {
+                state = if chunk_remaining == 0 {
                     State::TrailerLineStart
                 } else {
                     State::Data
                 };
             }
             if state == State::Data {
-                let len = self.chunk_remaining.min(buf.len() - src);
-                if dst != src {
-                    buf.copy_within(src..src + len, dst);
-                }
-                src += len;
-                dst += len;
-                self.chunk_remaining -= len;
-                if self.chunk_remaining != 0 {
+                let available = buf.len() - src;
+                // Its own case, and not the smaller of the two lengths, so that a whole chunk has less to keep across
+                // the call that moves it.
+                if available < chunk_remaining {
+                    if dst != src {
+                        buf.copy_within(src.., dst);
+                    }
+                    src += available;
+                    dst += available;
+                    chunk_remaining -= available;
                     break ChunkedStatus::Incomplete;
                 }
+                if dst != src {
+                    buf.copy_within(src..src + chunk_remaining, dst);
+                }
+                src += chunk_remaining;
+                dst += chunk_remaining;
+                chunk_remaining = 0;
                 state = State::DataCarriageReturn;
             }
             if state == State::DataCarriageReturn {
@@ -161,8 +180,12 @@ impl ChunkedDecoder {
             }
             state = State::TrailerLineStart;
         };
-        self.state = state;
-        if dst != src {
+        *self = Self {
+            chunk_remaining,
+            size_digits,
+            state,
+        };
+        if src != buf.len() {
             buf.copy_within(src.., dst);
         }
         Decoded { len: dst, status }

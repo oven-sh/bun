@@ -39,28 +39,36 @@ pub fn parse_response<'a, H: From<Header<'a>>>(
 ) -> Result<ResponseHead<'a>, ParseError> {
     let (minor_version, rest) = http_version(buf)?;
     let (status_code, after_status) = status_code(skip_spaces(rest))?;
-    let (reason, mut rest) = reason(after_status, 0)?;
+    let reason_at = buf.len() - after_status.len();
+    let (reason, mut at) = reason(buf, reason_at, reason_at)?;
 
     let mut header_count = 0;
     let mut has_folded_line = false;
     loop {
-        if let Some(after) = empty_line(rest)? {
-            rest = after;
-            break;
-        }
+        let is_folded = match line_start(buf, at, header_count)? {
+            LineStart::EndOfHead(end) => {
+                at = end;
+                break;
+            }
+            LineStart::Folded => true,
+            LineStart::Field => false,
+        };
         // A folded line takes a slot too, so that it counts towards the limit.
         let Some(slot) = headers.get_mut(header_count) else {
             return Err(ParseError::Malformed);
         };
         header_count += 1;
-        if is_folded_line(rest, header_count) {
+        let mut name = &[][..];
+        if is_folded {
             has_folded_line = true;
-            (_, rest) = line(rest, 0)?;
-            continue;
+        } else {
+            (name, at) = field_name(buf, at, at)?;
+            while let Some(b' ' | b'\t') = buf.get(at) {
+                at += 1;
+            }
         }
-        let (name, after_colon) = field_name(rest, 0)?;
         let value;
-        (value, rest) = line(value_start(after_colon)?, 0)?;
+        (value, at) = line(buf, at, at)?;
         *slot = H::from(Header {
             name,
             value: trim_blanks_end(value),
@@ -75,7 +83,7 @@ pub fn parse_response<'a, H: From<Header<'a>>>(
         status_code,
         reason,
         header_count,
-        len: buf.len() - rest.len(),
+        len: at,
     })
 }
 
@@ -85,8 +93,8 @@ pub struct HeadScanner {
     part: Part,
     /// Where `part` starts in the buffer.
     start: usize,
-    /// How many bytes of `part` have been read and did not end it.
-    known: usize,
+    /// Where the bytes of `part` start that have not been searched for its end.
+    unsearched: usize,
     header_count: usize,
     has_folded_line: bool,
 }
@@ -98,11 +106,9 @@ enum Part {
     Version,
     Status,
     Reason,
-    /// The first bytes of a line after the status line, which tell what it is.
     LineStart,
     Name,
-    Blanks,
-    /// Or a folded line.
+    /// With the blanks before it, or a folded line.
     Value,
 }
 
@@ -110,64 +116,63 @@ impl HeadScanner {
     /// As [`parse_response`] of `buf` and `max_headers` slots. After `Incomplete`, the next `buf` begins with this one.
     pub fn scan(&mut self, buf: &[u8], max_headers: usize) -> Result<usize, ParseError> {
         loop {
-            let part = buf.get(self.start..).unwrap_or_default();
-            let (next, rest) = match self.part {
-                Part::Version => (Part::Status, http_version(part)?.1),
+            let (next, at) = match self.part {
+                Part::Version => (Part::Status, buf.len() - http_version(buf)?.1.len()),
                 Part::Status => {
-                    let digits = skip_spaces(part);
-                    self.start = buf.len() - digits.len();
-                    (Part::Reason, status_code(digits)?.1)
+                    let digits = skip_spaces(buf.get(self.start..).unwrap_or_default());
+                    self.go_to(Part::Status, buf.len() - digits.len());
+                    (Part::Reason, buf.len() - status_code(digits)?.1.len())
                 }
-                Part::Reason => (Part::LineStart, self.resume(reason, part)?),
+                Part::Reason => (Part::LineStart, self.resume(reason, buf)?),
                 Part::LineStart => {
-                    if let Some(rest) = empty_line(part)? {
+                    let line_start = line_start(buf, self.start, self.header_count)?;
+                    if let LineStart::EndOfHead(end) = line_start {
                         if self.has_folded_line {
                             return Err(ParseError::Malformed);
                         }
                         // The next `buf` begins with another head.
                         *self = Self::default();
-                        return Ok(buf.len() - rest.len());
+                        return Ok(end);
                     }
                     if self.header_count >= max_headers {
                         return Err(ParseError::Malformed);
                     }
                     self.header_count += 1;
-                    if is_folded_line(part, self.header_count) {
+                    if matches!(line_start, LineStart::Folded) {
                         self.has_folded_line = true;
-                        (Part::Value, part)
+                        (Part::Value, self.start)
                     } else {
-                        (Part::Name, part)
+                        (Part::Name, self.start)
                     }
                 }
-                Part::Name => (Part::Blanks, self.resume(field_name, part)?),
-                Part::Blanks => {
-                    let value = skip_blanks(part);
-                    self.start = buf.len() - value.len();
-                    (Part::Value, value_start(value)?)
-                }
-                Part::Value => (Part::LineStart, self.resume(line, part)?),
+                Part::Name => (Part::Value, self.resume(field_name, buf)?),
+                Part::Value => (Part::LineStart, self.resume(line, buf)?),
             };
-            self.part = next;
-            self.start = buf.len() - rest.len();
-            self.known = 0;
+            self.go_to(next, at);
         }
     }
 
     /// How many bytes of the buffer the next call will not read.
     pub fn scanned(&self) -> usize {
-        self.start + self.known
+        self.unsearched
     }
 
-    /// What follows `part`, which `read` reads without the bytes of it that are known.
+    fn go_to(&mut self, part: Part, start: usize) {
+        self.part = part;
+        self.start = start;
+        self.unsearched = start;
+    }
+
+    /// Where the part ends that `read` reads.
     fn resume<'a>(
         &mut self,
-        read: impl FnOnce(&'a [u8], usize) -> Result<(&'a [u8], &'a [u8]), ParseError>,
-        part: &'a [u8],
-    ) -> Result<&'a [u8], ParseError> {
-        let result = read(part, self.known);
+        read: impl FnOnce(&'a [u8], usize, usize) -> Result<(&'a [u8], usize), ParseError>,
+        buf: &'a [u8],
+    ) -> Result<usize, ParseError> {
+        let result = read(buf, self.start, self.unsearched);
         if result == Err(ParseError::Incomplete) {
             // A CR at the end has yet to be told from the one of a CRLF.
-            self.known = part.len() - usize::from(part.ends_with(b"\r"));
+            self.unsearched = buf.len() - usize::from(buf.ends_with(b"\r"));
         }
         Ok(result?.1)
     }
@@ -198,36 +203,33 @@ fn status_code(buf: &[u8]) -> Result<(u16, &[u8]), ParseError> {
     Ok((status_code, rest))
 }
 
-/// The reason without the spaces before it, and the bytes of the next lines. `known` is as for [`line`].
+/// [`line`] for the rest of the status line, without the spaces before the reason.
 #[inline(always)]
-fn reason(buf: &[u8], known: usize) -> Result<(&[u8], &[u8]), ParseError> {
-    let (reason, rest) = line(buf, known)?;
+fn reason(buf: &[u8], from: usize, unsearched: usize) -> Result<(&[u8], usize), ParseError> {
+    let (reason, next_line) = line(buf, from, unsearched)?;
     if !matches!(reason, [] | [b' ', ..]) {
         return Err(ParseError::Malformed);
     }
-    Ok((skip_spaces(reason), rest))
+    Ok((skip_spaces(reason), next_line))
 }
 
-/// What follows the empty line that ends the head, if `buf` starts with it.
-fn empty_line(buf: &[u8]) -> Result<Option<&[u8]>, ParseError> {
-    match buf {
-        [] | [b'\r'] => Err(ParseError::Incomplete),
-        [b'\r', b'\n', rest @ ..] | [b'\n', rest @ ..] => Ok(Some(rest)),
-        [b'\r', ..] => Err(ParseError::Malformed),
-        _ => Ok(None),
-    }
+enum LineStart {
+    /// The line is empty, and ends here.
+    EndOfHead(usize),
+    Folded,
+    Field,
 }
 
-/// `line` is the `header_count`th after the status line. The first has no field to continue.
-fn is_folded_line(line: &[u8], header_count: usize) -> bool {
-    header_count > 1 && matches!(line, [b' ' | b'\t', ..])
-}
-
-/// `after_colon` without the blanks before the value.
-fn value_start(after_colon: &[u8]) -> Result<&[u8], ParseError> {
-    match skip_blanks(after_colon) {
-        [] => Err(ParseError::Incomplete),
-        value_start => Ok(value_start),
+/// What the first bytes of the line at `at` tell about it. `header_count` lines came between it and the status line.
+#[inline(always)]
+fn line_start(buf: &[u8], at: usize, header_count: usize) -> Result<LineStart, ParseError> {
+    match buf.get(at..) {
+        None | Some([] | [b'\r']) => Err(ParseError::Incomplete),
+        Some([b'\r', b'\n', ..]) => Ok(LineStart::EndOfHead(at + 2)),
+        Some([b'\n', ..]) => Ok(LineStart::EndOfHead(at + 1)),
+        Some([b'\r', ..]) => Err(ParseError::Malformed),
+        Some([b' ' | b'\t', ..]) if header_count > 0 => Ok(LineStart::Folded),
+        Some(_) => Ok(LineStart::Field),
     }
 }
 
@@ -238,21 +240,24 @@ fn digit(byte: u8) -> Result<u8, ParseError> {
     }
 }
 
-/// The name before the colon, and what follows the colon. The first `known` bytes are known to be of the name.
+/// The name that starts at `from`, and where the byte after its colon is. `unsearched` is as for [`line`].
 #[inline(always)]
-fn field_name(buf: &[u8], known: usize) -> Result<(&[u8], &[u8]), ParseError> {
-    let unknown = buf.get(known..).ok_or(ParseError::Incomplete)?;
+fn field_name(buf: &[u8], from: usize, unsearched: usize) -> Result<(&[u8], usize), ParseError> {
     // Nearly every name is letters, digits and hyphens, and that takes far fewer compares than all of `is_token`.
-    let common = index_of(unknown, |byte| {
+    let mut end = index_of(buf, unsearched, |byte| {
         !(byte.is_ascii_alphabetic() | byte.is_ascii_digit() | (byte == b'-'))
     })
     .ok_or(ParseError::Incomplete)?;
-    let uncommon = unknown
-        .get(common..)
-        .and_then(|rest| rest.iter().position(|&byte| !is_token(byte)))
-        .ok_or(ParseError::Incomplete)?;
-    match buf.split_at_checked(known + common + uncommon) {
-        Some((name @ [_, ..], [b':', rest @ ..])) => Ok((name, rest)),
+    loop {
+        match buf.get(end) {
+            None => return Err(ParseError::Incomplete),
+            Some(b':') => break,
+            Some(&byte) if is_token(byte) => end += 1,
+            Some(_) => return Err(ParseError::Malformed),
+        }
+    }
+    match buf.get(from..end) {
+        Some(name @ [_, ..]) => Ok((name, end + 1)),
         _ => Err(ParseError::Malformed),
     }
 }
@@ -278,52 +283,56 @@ fn is_token(byte: u8) -> bool {
     byte.is_ascii() && (TOKENS >> byte) & 1 != 0
 }
 
-/// The bytes up to the end of the line, and the bytes of the next lines. The only control character a line may hold
-/// is a tab. The first `known` bytes are known to be of the line, which inlined costs `parse_response` nothing.
+/// The bytes from `from` up to the end of the line, and where the next line starts. The only control character a line
+/// may hold is a tab. The bytes from `from` up to `unsearched` are known to be of the line.
 #[inline(always)]
-fn line(buf: &[u8], known: usize) -> Result<(&[u8], &[u8]), ParseError> {
-    let len = buf
-        .get(known..)
-        .and_then(|unknown| {
-            index_of(unknown, |byte| {
-                ((byte < b' ') & (byte != b'\t')) | (byte == 0x7f)
-            })
-        })
-        .ok_or(ParseError::Incomplete)?;
-    match buf.split_at_checked(known + len) {
-        Some((line, [b'\r', b'\n', rest @ ..] | [b'\n', rest @ ..])) => Ok((line, rest)),
-        Some((_, [b'\r'])) => Err(ParseError::Incomplete),
+fn line(buf: &[u8], from: usize, unsearched: usize) -> Result<(&[u8], usize), ParseError> {
+    let end = index_of(buf, unsearched, |byte| {
+        ((byte < b' ') & (byte != b'\t')) | (byte == 0x7f)
+    })
+    .ok_or(ParseError::Incomplete)?;
+    match (buf.get(from..end), buf.get(end..)) {
+        (Some(line), Some([b'\r', b'\n', ..])) => Ok((line, end + 2)),
+        (Some(line), Some([b'\n', ..])) => Ok((line, end + 1)),
+        (_, Some([b'\r'])) => Err(ParseError::Incomplete),
         _ => Err(ParseError::Malformed),
     }
 }
 
-/// The first byte for which `predicate` holds. Parsing a head spends its time here.
+/// Where the first byte at or after `from` is for which `predicate` holds. Parsing a head spends its time here.
 #[inline(always)]
-fn index_of(buf: &[u8], predicate: impl Fn(u8) -> bool) -> Option<usize> {
-    let (blocks, tail) = buf.as_chunks::<16>();
+fn index_of(buf: &[u8], from: usize, predicate: impl Fn(u8) -> bool) -> Option<usize> {
+    let (blocks, tail) = buf.get(from..)?.as_chunks::<16>();
     for (i, block) in blocks.iter().enumerate() {
-        // Without a branch per byte, here or in `predicate`, this compiles to vector compares and a move-mask.
-        let mut matches = 0u16;
-        for (bit, &byte) in block.iter().enumerate() {
-            matches |= u16::from(predicate(byte)) << bit;
-        }
+        let matches = matches_in(block, &predicate);
         if matches != 0 {
-            return Some(i * 16 + matches.trailing_zeros() as usize);
+            return Some(from + i * 16 + matches.trailing_zeros() as usize);
         }
     }
-    let in_tail = tail.iter().position(|&byte| predicate(byte))?;
-    Some(blocks.len() * 16 + in_tail)
+    let in_tail = match buf.last_chunk() {
+        // The bytes before the tail fill up a block, and the shift drops them again.
+        Some(block) => match matches_in(block, &predicate) >> (16 - tail.len()) {
+            0 => return None,
+            matches => matches.trailing_zeros() as usize,
+        },
+        None => tail.iter().position(|&byte| predicate(byte))?,
+    };
+    Some(buf.len() - tail.len() + in_tail)
+}
+
+/// A bit for each byte for which `predicate` holds, the lowest for the first.
+#[inline(always)]
+fn matches_in(block: &[u8; 16], predicate: impl Fn(u8) -> bool) -> u32 {
+    // Without a branch per byte, here or in `predicate`, this compiles to vector compares and a move-mask.
+    let mut matches = 0;
+    for (bit, &byte) in block.iter().enumerate() {
+        matches |= u32::from(predicate(byte)) << bit;
+    }
+    matches
 }
 
 fn skip_spaces(mut buf: &[u8]) -> &[u8] {
     while let [b' ', rest @ ..] = buf {
-        buf = rest;
-    }
-    buf
-}
-
-fn skip_blanks(mut buf: &[u8]) -> &[u8] {
-    while let [b' ' | b'\t', rest @ ..] = buf {
         buf = rest;
     }
     buf

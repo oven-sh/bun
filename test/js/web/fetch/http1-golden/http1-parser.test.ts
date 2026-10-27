@@ -1,5 +1,5 @@
-// The HTTP client read responses with picohttpparser until it got a parser of its own (src/http1). These tests hold it
-// to what picohttpparser did. See record.ts for where the inputs and the recorded results come from.
+// Holds src/http1 to what picohttpparser, from which it derives, makes of the same bytes. See record.ts for where the
+// inputs and the recorded results come from.
 import { describe, expect, test } from "bun:test";
 import { decoded, loadParserCases, parsed, parserCasesHash, received } from "./observe";
 

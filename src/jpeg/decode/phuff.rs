@@ -3,8 +3,9 @@
 use super::bits::{self, BitReader, DerivedTables, TableKind, huff_extend};
 use super::coef::{CoefBits, McuBlocks};
 use super::input::Input;
-use super::{Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, coef_at};
+use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, coef_at};
 use crate::error::{Error, Result};
+use crate::lanes::nonzero;
 
 #[derive(Clone, Copy, Default)]
 enum Pass {
@@ -259,26 +260,31 @@ impl PHuffDecoder {
         let plus_one = 1i16 << self.al;
         let minus_one = -1i16 << self.al;
 
-        /// A correction bit of 1 moves a coefficient that is already nonzero away from zero.
-        #[inline(always)]
-        fn correct(
-            bits: &mut BitReader,
-            input: &mut Input,
-            coef: &mut i16,
-            plus_one: i16,
-            minus_one: i16,
-        ) {
-            bits.ensure(input, 1);
-            if bits.get(1) != 0 && *coef & plus_one == 0 {
-                *coef = coef.wrapping_add(if *coef >= 0 { plus_one } else { minus_one });
-            }
-        }
+        // Most coefficients are zero, so the band is gone through by bits, in zigzag order, instead of one by one.
+        let (rows, _) = block.as_chunks::<8>();
+        let rows = rows.try_into().map_err(|_| Error::Internal)?;
+        let band = (u64::MAX << self.ss) & (u64::MAX >> (63 - se));
+        let nonzero = nonzero(rows) & band;
+
+        // A correction bit for each coefficient in `coefs`: a 1 moves it away from zero.
+        let correct =
+            |bits: &mut BitReader, input: &mut Input, block: &mut Block, mut coefs: u64| {
+                while coefs != 0 {
+                    let coef = coef_at(block, coefs.trailing_zeros() as usize)?;
+                    coefs &= coefs - 1;
+                    bits.ensure(input, 1);
+                    if bits.get(1) != 0 && *coef & plus_one == 0 {
+                        *coef = coef.wrapping_add(if *coef >= 0 { plus_one } else { minus_one });
+                    }
+                }
+                Ok::<(), Error>(())
+            };
 
         let mut k = self.ss;
         if self.eobrun == 0 {
             while k <= se {
                 let symbol = bits.decode(input, table);
-                let mut r = i32::from(symbol >> 4);
+                let r = symbol >> 4;
                 let s = symbol & 15;
                 let mut value = 0;
                 if s != 0 {
@@ -292,27 +298,25 @@ impl PHuffDecoder {
                 } else if r != 15 {
                     self.eobrun = 1 << r;
                     if r != 0 {
-                        bits.ensure(input, r as u32);
-                        self.eobrun += bits.get(r as u32) as u32;
+                        bits.ensure(input, u32::from(r));
+                        self.eobrun += bits.get(u32::from(r)) as u32;
                     }
                     break;
                 }
-                // Go past the nonzero coefficients, correcting them, and past `r` zero ones.
-                loop {
-                    let coef = coef_at(block, k)?;
-                    if *coef != 0 {
-                        correct(&mut bits, input, coef, plus_one, minus_one);
-                    } else {
-                        r -= 1;
-                        if r < 0 {
-                            break;
-                        }
-                    }
-                    k += 1;
-                    if k > se {
-                        break;
-                    }
+                // Go past `r` zero coefficients and stop at the next one, correcting the nonzero ones on the way.
+                let mut zeros = !nonzero & band & (u64::MAX << k);
+                for _ in 0..r {
+                    zeros &= zeros.wrapping_sub(1);
                 }
+                // All ones if the band ends first.
+                let before_stop = zeros.isolate_lowest_one().wrapping_sub(1);
+                correct(
+                    &mut bits,
+                    input,
+                    block,
+                    nonzero & (u64::MAX << k) & before_stop,
+                )?;
+                k = (zeros.trailing_zeros() as usize).min(se + 1);
                 if value != 0 {
                     *coef_at(block, k)? = value;
                 }
@@ -322,12 +326,8 @@ impl PHuffDecoder {
 
         if self.eobrun > 0 {
             // What is left of the band only gets correction bits.
-            while k <= se {
-                let coef = coef_at(block, k)?;
-                if *coef != 0 {
-                    correct(&mut bits, input, coef, plus_one, minus_one);
-                }
-                k += 1;
+            if k <= se {
+                correct(&mut bits, input, block, nonzero & (u64::MAX << k))?;
             }
             self.eobrun -= 1;
         }

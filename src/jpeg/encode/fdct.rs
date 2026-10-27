@@ -1,8 +1,7 @@
 //! The forward DCT and quantization (jcdctmgr.c, jfdctint.c).
 
 use super::Block;
-use crate::lanes::{column, descale, from_columns, transpose};
-use crate::tables::NATURAL_ORDER;
+use crate::lanes::{column, descale, from_columns, nonzero, transpose};
 use crate::tables::dct::*;
 
 /// Division by the steps of a quantization table, done as multiplication. In row-major order.
@@ -132,53 +131,6 @@ fn quantize(coefs: &[[i16; 8]; 8], divisors: &Divisors) -> [[i16; 8]; 8] {
         *out = if coef < 0 { -quotient } else { quotient };
     }
     out
-}
-
-/// `ZIGZAG_BITS[row][bits]` has a bit for each bit of `bits`: the place in zigzag order of that column of `row`.
-#[allow(clippy::indexing_slicing, reason = "evaluated at compile time")]
-static ZIGZAG_BITS: [[u64; 256]; 8] = {
-    let mut place = [0u8; 64];
-    let mut k = 0;
-    while k < 64 {
-        place[NATURAL_ORDER[k] as usize] = k as u8;
-        k += 1;
-    }
-    let mut table = [[0u64; 256]; 8];
-    let mut row = 0;
-    while row < 8 {
-        let mut bits = 0;
-        while bits < 256 {
-            let mut column = 0;
-            while column < 8 {
-                if bits >> column & 1 != 0 {
-                    table[row][bits] |= 1 << place[row * 8 + column];
-                }
-                column += 1;
-            }
-            bits += 1;
-        }
-        row += 1;
-    }
-    table
-};
-
-#[inline(never)]
-fn nonzero(coefs: &[[i16; 8]; 8]) -> u64 {
-    let mut flags = [[0u8; 8]; 8];
-    for (flag, &coef) in flags
-        .as_flattened_mut()
-        .iter_mut()
-        .zip(coefs.as_flattened())
-    {
-        *flag = u8::from(coef != 0);
-    }
-    let mut nonzero = 0;
-    for (flags, table) in flags.iter().zip(&ZIGZAG_BITS) {
-        // The multiplication moves the low bit of byte `i` to bit `56 + i`, and nothing else gets there.
-        let bits = u64::from_le_bytes(*flags).wrapping_mul(0x0102_0408_1020_4080) >> 56;
-        nonzero |= table.get(bits as usize).copied().unwrap_or(0);
-    }
-    nonzero
 }
 
 /// The quantized coefficients of 8 rows of 8 samples.

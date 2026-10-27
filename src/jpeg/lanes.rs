@@ -6,6 +6,8 @@
 //! same function it goes about it the wrong way and ends up with scalar code several times as slow. So every pass and
 //! every transposition is a function of its own, and `#[inline(never)]`.
 
+use crate::tables::NATURAL_ORDER;
+
 /// psrad by `shift` of a sum that has the rounding in it already, and packssdw.
 #[inline(always)]
 pub(crate) fn descale(sum: i32, shift: u32) -> i16 {
@@ -75,4 +77,52 @@ pub(crate) fn transpose<
         }
     }
     out
+}
+
+/// `ZIGZAG_BITS[row][bits]` has a bit for each bit of `bits`: the place in zigzag order of that column of `row`.
+#[allow(clippy::indexing_slicing, reason = "evaluated at compile time")]
+static ZIGZAG_BITS: [[u64; 256]; 8] = {
+    let mut place = [0u8; 64];
+    let mut k = 0;
+    while k < 64 {
+        place[NATURAL_ORDER[k] as usize] = k as u8;
+        k += 1;
+    }
+    let mut table = [[0u64; 256]; 8];
+    let mut row = 0;
+    while row < 8 {
+        let mut bits = 0;
+        while bits < 256 {
+            let mut column = 0;
+            while column < 8 {
+                if bits >> column & 1 != 0 {
+                    table[row][bits] |= 1 << place[row * 8 + column];
+                }
+                column += 1;
+            }
+            bits += 1;
+        }
+        row += 1;
+    }
+    table
+};
+
+/// A bit for each coefficient that is not zero, at its place in zigzag order.
+#[inline(never)]
+pub(crate) fn nonzero(coefs: &[[i16; 8]; 8]) -> u64 {
+    let mut flags = [[0u8; 8]; 8];
+    for (flag, &coef) in flags
+        .as_flattened_mut()
+        .iter_mut()
+        .zip(coefs.as_flattened())
+    {
+        *flag = u8::from(coef != 0);
+    }
+    let mut nonzero = 0;
+    for (flags, table) in flags.iter().zip(&ZIGZAG_BITS) {
+        // The multiplication moves the low bit of byte `i` to bit `56 + i`, and nothing else gets there.
+        let bits = u64::from_le_bytes(*flags).wrapping_mul(0x0102_0408_1020_4080) >> 56;
+        nonzero |= table.get(bits as usize).copied().unwrap_or(0);
+    }
+    nonzero
 }

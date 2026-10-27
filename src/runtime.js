@@ -63,9 +63,7 @@ export var __toESM = (mod, isNodeMode, target) => {
     if (cached) return cached;
   }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
-  // Unlike esbuild, hide a "then" that "module.exports" inherits: a promise
-  // resolved with the namespace (`import()`, `await ns`) would call it. The
-  // property goes on an object in between, so the own names stay the same.
+  // `import()` and `await ns` must not call a "then" that "module.exports" inherits. Own names stay the same.
   if ("then" in target) target = __create(__defProp(target, "then", {}));
   const to =
     isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default")

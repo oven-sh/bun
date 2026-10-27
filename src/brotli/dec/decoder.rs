@@ -4,8 +4,9 @@
 use super::bit_reader::{BitReader, bit_mask};
 use super::huffman::{
     HUFFMAN_MAX_CODE_LENGTH, HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH, HUFFMAN_MAX_SIZE_26,
-    HUFFMAN_MAX_SIZE_258, HUFFMAN_MAX_SIZE_272, HuffmanCode, HuffmanTreeGroup, SYMBOL_LIST_BASE,
-    build_code_lengths_huffman_table, build_huffman_table, build_simple_huffman_table,
+    HUFFMAN_MAX_SIZE_258, HUFFMAN_MAX_SIZE_272, HUFFMAN_TABLE_BITS, HuffmanCode, HuffmanTreeGroup,
+    SYMBOL_LIST_BASE, build_code_lengths_huffman_table, build_huffman_table,
+    build_simple_huffman_table,
 };
 use super::prefix::CMD_LUT;
 use super::{DecoderErrorCode as E, DecoderParameter, DecoderResult};
@@ -22,12 +23,12 @@ use crate::common::dictionary::{self, MAX_DICTIONARY_WORD_LENGTH, MIN_DICTIONARY
 use crate::common::transform::{MAX_TRANSFORMED_LENGTH, NUM_TRANSFORMS, transform_dictionary_word};
 use crate::io::Output;
 use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_with_capacity, try_zeroed};
+use bun_core::AllocError;
 
 /// `Err` is everything that interrupts decoding: an error, or the need for more input or more room for output.
 type Step<T = ()> = Result<T, E>;
 
-const HUFFMAN_TABLE_BITS: u32 = 8;
-const HUFFMAN_TABLE_MASK: u64 = 0xFF;
+const HUFFMAN_TABLE_MASK: u64 = bit_mask(HUFFMAN_TABLE_BITS);
 
 /// What the ring buffer has room for past its end: two copies of 16 bytes, or a transformed dictionary word.
 const RING_BUFFER_WRITE_AHEAD_SLACK: usize = 542;
@@ -54,30 +55,26 @@ static CODE_LENGTH_PREFIX_VALUE: [u8; 16] = [0, 4, 3, 2, 0, 4, 3, 1, 0, 4, 3, 2,
 enum State {
     Uninited,
     LargeWindowBits,
-    Initialize,
-    MetaBlockBegin,
     MetaBlockHeader,
-    MetablockHeader2,
+    Uncompressed,
+    Metadata,
+    BlockTypeCount,
+    BlockTypeCode,
+    BlockLengthCode,
+    FirstBlockLength,
+    DistanceParameters,
     ContextModes,
+    LiteralContextMap,
+    DistanceContextMap,
+    TreeGroup,
     CommandBegin,
     CommandInner,
     CommandPostDecodeLiterals,
     CommandPostWrapCopy,
-    Uncompressed,
-    Metadata,
-    CommandInnerWrite,
+    WriteDuringInsert,
+    WriteAfterDictionaryCopy,
+    WriteDuringWrapCopy,
     MetaBlockDone,
-    CommandPostWrite1,
-    CommandPostWrite2,
-    BeforeCompressedMetaBlockHeader,
-    HuffmanCode0,
-    HuffmanCode1,
-    HuffmanCode2,
-    HuffmanCode3,
-    ContextMap1,
-    ContextMap2,
-    TreeGroup,
-    BeforeCompressedMetaBlockBody,
     Done,
 }
 
@@ -113,8 +110,8 @@ enum ContextMapState {
     Decode {
         /// How much of the map was filled in.
         context_index: u32,
-        /// The symbol of a run of zeros of which the extra bits were not read yet, or 0xFFFF.
-        code: u32,
+        /// The symbol of a run of zeros of which the extra bits were not read yet.
+        pending_run: Option<u32>,
     },
     Transform,
 }
@@ -136,12 +133,6 @@ enum DecodeUint8State {
     Long,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ReadBlockLengthState {
-    None,
-    Suffix,
-}
-
 /// Bytes that come before the start of the stream, as far as backward references go.
 struct CompoundDictionary {
     chunks: Vec<Box<[u8]>>,
@@ -149,16 +140,96 @@ struct CompoundDictionary {
     chunk_offsets: [i32; MAX_COMPOUND_DICTIONARY_CHUNKS + 1],
     total_size: i32,
     /// The copy in progress: the chunk and the offset in it to go on from, its length, and how much of it is done.
-    br_index: usize,
-    br_offset: i32,
-    br_length: i32,
-    br_copied: i32,
+    copy_chunk: usize,
+    copy_offset: i32,
+    copy_length: i32,
+    copied: i32,
     /// `block_map[address >> block_bits]` is a chunk at or before the one that holds `address`. -1 until it is filled.
     block_bits: i32,
     block_map: [u8; 256],
 }
 
 impl CompoundDictionary {
+    fn try_new() -> Result<Box<Self>, AllocError> {
+        try_box(Self {
+            chunks: try_with_capacity(MAX_COMPOUND_DICTIONARY_CHUNKS)?,
+            chunk_offsets: [0; MAX_COMPOUND_DICTIONARY_CHUNKS + 1],
+            total_size: 0,
+            copy_chunk: 0,
+            copy_offset: 0,
+            copy_length: 0,
+            copied: 0,
+            block_bits: -1,
+            block_map: [0; 256],
+        })
+    }
+
+    /// Adds `chunk` to the end, unless that makes too many chunks or too many bytes.
+    fn attach(&mut self, chunk: Box<[u8]>) -> bool {
+        if self.chunks.len() == MAX_COMPOUND_DICTIONARY_CHUNKS {
+            return false;
+        }
+        let Some(total_size) = i32::try_from(chunk.len())
+            .ok()
+            .and_then(|size| self.total_size.checked_add(size))
+        else {
+            return false;
+        };
+        self.chunks.push(chunk);
+        self.total_size = total_size;
+        self.chunk_offsets
+            .put(self.chunks.len(), total_size)
+            .is_ok()
+    }
+
+    fn ensure_initialized(&mut self) -> Checked {
+        if self.block_bits != -1 {
+            return Ok(());
+        }
+        let mut block_bits = 8;
+        while ((self.total_size - 1) >> block_bits) != 0 {
+            block_bits += 1;
+        }
+        block_bits -= 8;
+        self.block_bits = block_bits;
+        let mut cursor = 0i32;
+        let mut index = 0usize;
+        while cursor < self.total_size {
+            while self.chunk_offsets.at(index + 1)? < cursor {
+                index += 1;
+            }
+            self.block_map
+                .put((cursor >> block_bits) as usize, index as u8)?;
+            // Past `i32::MAX` is past `total_size`.
+            let Some(next) = cursor.checked_add(1 << block_bits) else {
+                break;
+            };
+            cursor = next;
+        }
+        Ok(())
+    }
+
+    /// Starts a copy of `length` bytes from `address`, which is inside.
+    fn start_copy(&mut self, address: i32, length: i32) -> Step {
+        self.ensure_initialized()?;
+        let mut chunk = usize::from(self.block_map.at((address >> self.block_bits) as usize)?);
+        while address >= self.chunk_offsets.at(chunk + 1)? {
+            chunk += 1;
+        }
+        if self.total_size - address < length {
+            return Err(E::CompoundDictionary);
+        }
+        self.copy_chunk = chunk;
+        self.copy_offset = address - self.chunk_offsets.at(chunk)?;
+        self.copy_length = length;
+        self.copied = 0;
+        Ok(())
+    }
+
+    fn is_copying(&self) -> bool {
+        self.copied != self.copy_length
+    }
+
     /// Goes on with the copy in progress, to `pos` and up to the end of the ring buffer. Returns how much was copied.
     fn copy_to(
         &mut self,
@@ -167,23 +238,24 @@ impl CompoundDictionary {
         mut pos: i32,
     ) -> Checked<i32> {
         let orig_pos = pos;
-        while self.br_length != self.br_copied {
+        while self.is_copying() {
             let space = ringbuffer_size - pos;
-            let chunk_length =
-                self.chunk_offsets.at(self.br_index + 1)? - self.chunk_offsets.at(self.br_index)?;
-            let rem_chunk_length = chunk_length - self.br_offset;
-            let length = (self.br_length - self.br_copied)
+            let chunk_length = self.chunk_offsets.at(self.copy_chunk + 1)?
+                - self.chunk_offsets.at(self.copy_chunk)?;
+            let rem_chunk_length = chunk_length - self.copy_offset;
+            let length = (self.copy_length - self.copied)
                 .min(rem_chunk_length)
                 .min(space);
-            let chunk = self.chunks.get(self.br_index).ok_or(Bug)?;
-            let source = chunk.sub(self.br_offset as usize..(self.br_offset + length) as usize)?;
+            let chunk = self.chunks.get(self.copy_chunk).ok_or(Bug)?;
+            let source =
+                chunk.sub(self.copy_offset as usize..(self.copy_offset + length) as usize)?;
             ringbuffer.write_at(pos as usize, source)?;
             pos += length;
-            self.br_offset += length;
-            self.br_copied += length;
+            self.copy_offset += length;
+            self.copied += length;
             if length == rem_chunk_length {
-                self.br_index += 1;
-                self.br_offset = 0;
+                self.copy_chunk += 1;
+                self.copy_offset = 0;
             }
             if pos == ringbuffer_size {
                 break;
@@ -194,10 +266,11 @@ impl CompoundDictionary {
 }
 
 /// What reading the prefix codes and context maps of a meta-block header needs.
-struct HeaderArena {
+struct HeaderReader {
     substate_tree_group: TreeGroupState,
     substate_context_map: ContextMapState,
     substate_huffman: HuffmanState,
+    substate_decode_uint8: DecodeUint8State,
 
     sub_loop_counter: u32,
 
@@ -275,7 +348,8 @@ pub struct Decoder {
     /// Valid from when a command is decoded until its distance is. A temporary after that.
     distance_context: i32,
     block_length: [u32; 3],
-    block_length_index: u32,
+    /// The symbol of a block count of which the extra bits were not read yet.
+    pending_block_length_symbol: Option<u32>,
     num_block_types: [u32; 3],
     /// The last two block types of each category.
     block_type_rb: [u32; 6],
@@ -301,8 +375,6 @@ pub struct Decoder {
 
     substate_meta_block_header: MetaBlockHeaderState,
     substate_uncompressed: UncompressedState,
-    substate_decode_uint8: DecodeUint8State,
-    substate_read_block_length: ReadBlockLengthState,
 
     new_ringbuffer_size: i32,
 
@@ -324,7 +396,8 @@ pub struct Decoder {
     /// One bit for each literal block type.
     trivial_literal_contexts: [u32; 8],
 
-    header: HeaderArena,
+    header: HeaderReader,
+    /// The code that a context map is written in.
     context_map_table: [HuffmanCode; HUFFMAN_MAX_SIZE_272],
 
     dist_symbols: [DistanceSymbol; MAX_DISTANCE_SYMBOLS],
@@ -545,12 +618,13 @@ fn decode_var_len_uint8(
     Ok(())
 }
 
-impl HeaderArena {
+impl HeaderReader {
     fn new() -> Self {
         Self {
             substate_tree_group: TreeGroupState::None,
             substate_context_map: ContextMapState::None,
             substate_huffman: HuffmanState::None,
+            substate_decode_uint8: DecodeUint8State::None,
             sub_loop_counter: 0,
             repeat_code_len: 0,
             prev_code_len: 0,
@@ -582,7 +656,6 @@ impl HeaderArena {
         while i <= num_symbols {
             let Some(v) = br.safe_read_bits(input, max_bits) else {
                 self.sub_loop_counter = i as u32;
-                self.substate_huffman = HuffmanState::SimpleRead;
                 return Err(E::NeedsMoreInput);
             };
             if v >= u64::from(alphabet_size_limit) {
@@ -766,7 +839,6 @@ impl HeaderArena {
                         self.sub_loop_counter = i as u32;
                         self.repeat = num_codes;
                         self.space = space;
-                        self.substate_huffman = HuffmanState::Complex;
                         return Err(E::NeedsMoreInput);
                     }
                     ix
@@ -841,12 +913,7 @@ impl HeaderArena {
                         self.symbol += br.safe_read_bits(input, 1).ok_or(E::NeedsMoreInput)? as u32;
                     }
                     let symbols = self.symbol_lists.array_at_mut(0)?;
-                    let table_size = build_simple_huffman_table(
-                        table,
-                        HUFFMAN_TABLE_BITS as usize,
-                        symbols,
-                        self.symbol,
-                    )?;
+                    let table_size = build_simple_huffman_table(table, symbols, self.symbol)?;
                     self.substate_huffman = HuffmanState::None;
                     return Ok(table_size);
                 }
@@ -889,7 +956,6 @@ impl HeaderArena {
                     }
                     let table_size = build_huffman_table(
                         table,
-                        HUFFMAN_TABLE_BITS as usize,
                         &self.symbol_lists,
                         &mut self.code_length_histo,
                     )?;
@@ -927,6 +993,110 @@ impl HeaderArena {
         self.substate_tree_group = TreeGroupState::None;
         Ok(())
     }
+
+    /// 7.3. Reads a context map of `context_map_size` entries into `context_map`, and into `num_htrees` how many trees
+    /// it refers to. Both keep intermediate results between calls, and so does `table`.
+    fn decode_context_map(
+        &mut self,
+        br: &mut BitReader,
+        input: &[u8],
+        table: &mut [HuffmanCode; HUFFMAN_MAX_SIZE_272],
+        context_map_size: u32,
+        num_htrees: &mut u32,
+        context_map: &mut Vec<u8>,
+    ) -> Step {
+        loop {
+            match self.substate_context_map {
+                ContextMapState::None => {
+                    decode_var_len_uint8(&mut self.substate_decode_uint8, br, input, num_htrees)?;
+                    *num_htrees += 1;
+                    *context_map =
+                        try_zeroed(context_map_size as usize).map_err(|_| E::AllocContextMap)?;
+                    if *num_htrees <= 1 {
+                        return Ok(());
+                    }
+                    self.substate_context_map = ContextMapState::ReadPrefix;
+                }
+
+                ContextMapState::ReadPrefix => {
+                    // The prefix code that follows takes at least 4 bits, so it is safe to peek that far.
+                    let bits = br.safe_get_bits(input, 5).ok_or(E::NeedsMoreInput)? as u32;
+                    if bits & 1 != 0 {
+                        self.max_run_length_prefix = (bits >> 1) + 1;
+                        br.drop_bits(5);
+                    } else {
+                        self.max_run_length_prefix = 0;
+                        br.drop_bits(1);
+                    }
+                    self.substate_context_map = ContextMapState::Huffman;
+                }
+
+                ContextMapState::Huffman => {
+                    let alphabet_size = *num_htrees + self.max_run_length_prefix;
+                    self.read_huffman_code(br, input, alphabet_size, alphabet_size, table)?;
+                    self.substate_context_map = ContextMapState::Decode {
+                        context_index: 0,
+                        pending_run: None,
+                    };
+                }
+
+                ContextMapState::Decode {
+                    mut context_index,
+                    mut pending_run,
+                } => {
+                    let max_run_length_prefix = self.max_run_length_prefix;
+                    while context_index < context_map_size || pending_run.is_some() {
+                        let run = match pending_run.take() {
+                            Some(run) => run,
+                            None => {
+                                let Some(symbol) =
+                                    safe_read_symbol(Tree::new(table, 0), br, input)?
+                                else {
+                                    self.substate_context_map = ContextMapState::Decode {
+                                        context_index,
+                                        pending_run: None,
+                                    };
+                                    return Err(E::NeedsMoreInput);
+                                };
+                                if symbol == 0 || symbol > max_run_length_prefix {
+                                    let tree = symbol.saturating_sub(max_run_length_prefix);
+                                    context_map.put(context_index as usize, tree as u8)?;
+                                    context_index += 1;
+                                    continue;
+                                }
+                                symbol
+                            }
+                        };
+                        let Some(reps) = br.safe_read_bits(input, run) else {
+                            self.substate_context_map = ContextMapState::Decode {
+                                context_index,
+                                pending_run: Some(run),
+                            };
+                            return Err(E::NeedsMoreInput);
+                        };
+                        let reps = reps as u32 + (1 << run);
+                        if context_index + reps > context_map_size {
+                            return Err(E::FormatContextMapRepeat);
+                        }
+                        context_map
+                            .sub_mut(context_index as usize..(context_index + reps) as usize)?
+                            .fill(0);
+                        context_index += reps;
+                    }
+                    self.substate_context_map = ContextMapState::Transform;
+                }
+
+                ContextMapState::Transform => {
+                    let bits = br.safe_read_bits(input, 1).ok_or(E::NeedsMoreInput)?;
+                    if bits != 0 {
+                        inverse_move_to_front_transform(context_map)?;
+                    }
+                    self.substate_context_map = ContextMapState::None;
+                    return Ok(());
+                }
+            }
+        }
+    }
 }
 
 /// Reads a block count, which takes 3 to 39 bits.
@@ -937,31 +1107,28 @@ fn read_block_length(table: Tree<'_>, br: &mut BitReader, input: &[u8]) -> Check
     Ok(u32::from(range.offset) + br.read_bits(input, u32::from(range.nbits))? as u32)
 }
 
-/// [`read_block_length`] up to the last bit of the input. `None` if the input ends before. If `substate` is then
-/// `Suffix`, the symbol was consumed and is kept in `block_length_index`.
+/// [`read_block_length`] up to the last bit of the input. `None` if the input ends before. The symbol is kept in
+/// `pending_symbol` if it was consumed by then.
 #[inline(always)]
 fn safe_read_block_length(
-    substate: &mut ReadBlockLengthState,
-    block_length_index: &mut u32,
+    pending_symbol: &mut Option<u32>,
     table: Tree<'_>,
     br: &mut BitReader,
     input: &[u8],
 ) -> Checked<Option<u32>> {
-    let index = if *substate == ReadBlockLengthState::None {
-        match safe_read_symbol(table, br, input)? {
-            Some(index) => index,
+    let symbol = match *pending_symbol {
+        Some(symbol) => symbol,
+        None => match safe_read_symbol(table, br, input)? {
+            Some(symbol) => symbol,
             None => return Ok(None),
-        }
-    } else {
-        *block_length_index
+        },
     };
-    let range = BLOCK_LENGTH_PREFIX_CODE.at(index as usize)?;
+    let range = BLOCK_LENGTH_PREFIX_CODE.at(symbol as usize)?;
     let Some(bits) = br.safe_read_bits(input, u32::from(range.nbits)) else {
-        *block_length_index = index;
-        *substate = ReadBlockLengthState::Suffix;
+        *pending_symbol = Some(symbol);
         return Ok(None);
     };
-    *substate = ReadBlockLengthState::None;
+    *pending_symbol = None;
     Ok(Some(u32::from(range.offset) + bits as u32))
 }
 
@@ -981,35 +1148,6 @@ fn inverse_move_to_front_transform(v: &mut [u8]) -> Checked {
         mtf[0] = value;
     }
     Ok(())
-}
-
-impl CompoundDictionary {
-    fn ensure_initialized(&mut self) -> Checked {
-        if self.block_bits != -1 {
-            return Ok(());
-        }
-        let mut block_bits = 8;
-        while ((self.total_size - 1) >> block_bits) != 0 {
-            block_bits += 1;
-        }
-        block_bits -= 8;
-        self.block_bits = block_bits;
-        let mut cursor = 0i32;
-        let mut index = 0usize;
-        while cursor < self.total_size {
-            while self.chunk_offsets.at(index + 1)? < cursor {
-                index += 1;
-            }
-            self.block_map
-                .put((cursor >> block_bits) as usize, index as u8)?;
-            // Past `i32::MAX` is past `total_size`.
-            let Some(next) = cursor.checked_add(1 << block_bits) else {
-                break;
-            };
-            cursor = next;
-        }
-        Ok(())
-    }
 }
 
 /// Where the loop of [`Decoder::process_commands_internal`] goes on.
@@ -1057,7 +1195,7 @@ impl Decoder {
             trivial_literal_context: false,
             distance_context: 0,
             block_length: [0; 3],
-            block_length_index: 0,
+            pending_block_length_symbol: None,
             num_block_types: [0; 3],
             block_type_rb: [0; 6],
             distance_postfix_bits: 0,
@@ -1073,8 +1211,6 @@ impl Decoder {
             dist_htree: 0,
             substate_meta_block_header: MetaBlockHeaderState::None,
             substate_uncompressed: UncompressedState::None,
-            substate_decode_uint8: DecodeUint8State::None,
-            substate_read_block_length: ReadBlockLengthState::None,
             new_ringbuffer_size: 0,
             is_last_meta_block: false,
             is_uncompressed: false,
@@ -1089,7 +1225,7 @@ impl Decoder {
             context_modes: Vec::new(),
             compound_dictionary: None,
             trivial_literal_contexts: [0; 8],
-            header: HeaderArena::new(),
+            header: HeaderReader::new(),
             context_map_table: [HuffmanCode::default(); HUFFMAN_MAX_SIZE_272],
             dist_symbols: [DistanceSymbol::default(); MAX_DISTANCE_SYMBOLS],
         }
@@ -1116,40 +1252,12 @@ impl Decoder {
             return false;
         }
         if self.compound_dictionary.is_none() {
-            let Ok(chunks) = try_with_capacity(MAX_COMPOUND_DICTIONARY_CHUNKS) else {
-                return false;
-            };
-            self.compound_dictionary = try_box(CompoundDictionary {
-                chunks,
-                chunk_offsets: [0; MAX_COMPOUND_DICTIONARY_CHUNKS + 1],
-                total_size: 0,
-                br_index: 0,
-                br_offset: 0,
-                br_length: 0,
-                br_copied: 0,
-                block_bits: -1,
-                block_map: [0; 256],
-            })
-            .ok();
+            self.compound_dictionary = CompoundDictionary::try_new().ok();
         }
-        let Some(addon) = &mut self.compound_dictionary else {
-            return false;
-        };
-        if addon.chunks.len() == MAX_COMPOUND_DICTIONARY_CHUNKS {
-            return false;
+        match &mut self.compound_dictionary {
+            Some(compound) => compound.attach(data),
+            None => false,
         }
-        let Some(total_size) = i32::try_from(data.len())
-            .ok()
-            .and_then(|size| addon.total_size.checked_add(size))
-        else {
-            return false;
-        };
-        addon.chunks.push(data);
-        addon.total_size = total_size;
-        addon
-            .chunk_offsets
-            .put(addon.chunks.len(), total_size)
-            .is_ok()
     }
 
     /// Why the last call of [`Self::decompress_stream`] returned.
@@ -1300,124 +1408,6 @@ impl Decoder {
         }
     }
 
-    /// 7.3. Reads a context map of `context_map_size` entries into `context_map`, and into `num_htrees` how many trees
-    /// it refers to. Both keep intermediate results between calls.
-    fn decode_context_map(
-        &mut self,
-        input: &[u8],
-        context_map_size: u32,
-        num_htrees: &mut u32,
-        context_map: &mut Vec<u8>,
-    ) -> Step {
-        let br = &mut self.br;
-        let h = &mut self.header;
-        loop {
-            match h.substate_context_map {
-                ContextMapState::None => {
-                    decode_var_len_uint8(&mut self.substate_decode_uint8, br, input, num_htrees)?;
-                    *num_htrees += 1;
-                    *context_map =
-                        try_zeroed(context_map_size as usize).map_err(|_| E::AllocContextMap)?;
-                    if *num_htrees <= 1 {
-                        return Ok(());
-                    }
-                    h.substate_context_map = ContextMapState::ReadPrefix;
-                }
-
-                ContextMapState::ReadPrefix => {
-                    // The prefix code that follows takes at least 4 bits, so it is safe to peek that far.
-                    let bits = br.safe_get_bits(input, 5).ok_or(E::NeedsMoreInput)? as u32;
-                    if bits & 1 != 0 {
-                        h.max_run_length_prefix = (bits >> 1) + 1;
-                        br.drop_bits(5);
-                    } else {
-                        h.max_run_length_prefix = 0;
-                        br.drop_bits(1);
-                    }
-                    h.substate_context_map = ContextMapState::Huffman;
-                }
-
-                ContextMapState::Huffman => {
-                    let alphabet_size = *num_htrees + h.max_run_length_prefix;
-                    h.read_huffman_code(
-                        br,
-                        input,
-                        alphabet_size,
-                        alphabet_size,
-                        &mut self.context_map_table,
-                    )?;
-                    h.substate_context_map = ContextMapState::Decode {
-                        context_index: 0,
-                        code: 0xFFFF,
-                    };
-                }
-
-                ContextMapState::Decode {
-                    mut context_index,
-                    mut code,
-                } => {
-                    let max_run_length_prefix = h.max_run_length_prefix;
-                    let mut skip_preamble = code != 0xFFFF;
-                    while context_index < context_map_size || skip_preamble {
-                        if !skip_preamble {
-                            let Some(symbol) =
-                                safe_read_symbol(Tree::new(&self.context_map_table, 0), br, input)?
-                            else {
-                                h.substate_context_map = ContextMapState::Decode {
-                                    context_index,
-                                    code: 0xFFFF,
-                                };
-                                return Err(E::NeedsMoreInput);
-                            };
-                            code = symbol;
-
-                            if code == 0 {
-                                context_map.put(context_index as usize, 0)?;
-                                context_index += 1;
-                                continue;
-                            }
-                            if code > max_run_length_prefix {
-                                context_map.put(
-                                    context_index as usize,
-                                    (code - max_run_length_prefix) as u8,
-                                )?;
-                                context_index += 1;
-                                continue;
-                            }
-                        } else {
-                            skip_preamble = false;
-                        }
-                        let Some(reps) = br.safe_read_bits(input, code) else {
-                            h.substate_context_map = ContextMapState::Decode {
-                                context_index,
-                                code,
-                            };
-                            return Err(E::NeedsMoreInput);
-                        };
-                        let reps = reps as u32 + (1 << code);
-                        if context_index + reps > context_map_size {
-                            return Err(E::FormatContextMapRepeat);
-                        }
-                        context_map
-                            .sub_mut(context_index as usize..(context_index + reps) as usize)?
-                            .fill(0);
-                        context_index += reps;
-                    }
-                    h.substate_context_map = ContextMapState::Transform;
-                }
-
-                ContextMapState::Transform => {
-                    let bits = br.safe_read_bits(input, 1).ok_or(E::NeedsMoreInput)?;
-                    if bits != 0 {
-                        inverse_move_to_front_transform(context_map)?;
-                    }
-                    h.substate_context_map = ContextMapState::None;
-                    return Ok(());
-                }
-            }
-        }
-    }
-
     /// 6. Reads a block switch command, which takes 3 to 54 bits, for literals (0), commands (1) or distances (2).
     #[inline(always)]
     fn decode_block_type_and_length<const SAFE: bool>(
@@ -1441,15 +1431,10 @@ impl Decoder {
         } else {
             let memento = *br;
             block_type = safe_read_symbol(type_tree, br, input)?.ok_or(E::NeedsMoreInput)?;
-            let Some(block_length) = safe_read_block_length(
-                &mut self.substate_read_block_length,
-                &mut self.block_length_index,
-                len_tree,
-                br,
-                input,
-            )?
+            let Some(block_length) =
+                safe_read_block_length(&mut self.pending_block_length_symbol, len_tree, br, input)?
             else {
-                self.substate_read_block_length = ReadBlockLengthState::None;
+                self.pending_block_length_symbol = None;
                 *br = memento;
                 return Err(E::NeedsMoreInput);
             };
@@ -1590,25 +1575,23 @@ impl Decoder {
         Ok(())
     }
 
-    /// Makes the ring buffer as large as [`Self::calculate_ring_buffer_size`] found it has to be. `false` if there is
-    /// no memory for that.
+    /// Makes the ring buffer as large as [`Self::calculate_ring_buffer_size`] found it has to be. Fails with
+    /// `out_of_memory` if there is no memory for that.
     #[inline(never)]
-    fn ensure_ring_buffer(&mut self) -> Checked<bool> {
+    fn ensure_ring_buffer(&mut self, out_of_memory: E) -> Step {
         if self.ringbuffer_size == self.new_ringbuffer_size {
-            return Ok(true);
+            return Ok(());
         }
-        let Ok(mut ringbuffer) =
+        let mut ringbuffer =
             try_zeroed::<u8>(self.new_ringbuffer_size as usize + RING_BUFFER_WRITE_AHEAD_SLACK)
-        else {
-            return Ok(false);
-        };
+                .map_err(|_| out_of_memory)?;
         if !self.ringbuffer.is_empty() {
             ringbuffer.write_at(0, self.ringbuffer.sub(..self.pos as usize)?)?;
         }
         self.ringbuffer = ringbuffer;
         self.ringbuffer_size = self.new_ringbuffer_size;
         self.ringbuffer_mask = self.new_ringbuffer_size - 1;
-        Ok(true)
+        Ok(())
     }
 
     #[inline(never)]
@@ -1624,9 +1607,7 @@ impl Decoder {
 
     #[inline(never)]
     fn copy_uncompressed_block_to_output(&mut self, input: &[u8], output: &mut dyn Output) -> Step {
-        if !self.ensure_ring_buffer()? {
-            return Err(E::AllocRingBuffer1);
-        }
+        self.ensure_ring_buffer(E::AllocRingBuffer1)?;
 
         loop {
             match self.substate_uncompressed {
@@ -1662,32 +1643,10 @@ impl Decoder {
         }
     }
 
-    /// Starts a copy of `length` bytes from `address` of the compound dictionary. `false` if it ends before that.
-    fn initialize_compound_dictionary_copy(&mut self, address: i32, length: i32) -> Checked<bool> {
-        let addon = self.compound_dictionary.as_deref_mut().ok_or(Bug)?;
-        addon.ensure_initialized()?;
-        let mut index = usize::from(addon.block_map.at((address >> addon.block_bits) as usize)?);
-        while address >= addon.chunk_offsets.at(index + 1)? {
-            index += 1;
-        }
-        if addon.total_size - address < length {
-            return Ok(false);
-        }
-        self.dist_rb
-            .put((self.dist_rb_idx & 3) as usize, self.distance_code)?;
-        self.dist_rb_idx = self.dist_rb_idx.wrapping_add(1);
-        self.meta_block_remaining_len -= length;
-        addon.br_index = index;
-        addon.br_offset = address - addon.chunk_offsets.at(index)?;
-        addon.br_length = length;
-        addon.br_copied = 0;
-        Ok(true)
-    }
-
     fn compound_dictionary_size(&self) -> i32 {
         self.compound_dictionary
             .as_ref()
-            .map_or(0, |addon| addon.total_size)
+            .map_or(0, |compound| compound.total_size)
     }
 
     /// Finds the smallest ring buffer that will do, now that the length and the flags of the meta-block are known: a
@@ -1890,11 +1849,13 @@ impl Decoder {
         let compound_dictionary_size = s.compound_dictionary_size();
         if s.distance_code - s.max_distance - 1 < compound_dictionary_size {
             let address = compound_dictionary_size - (s.distance_code - s.max_distance);
-            if !s.initialize_compound_dictionary_copy(address, length)? {
-                return Err(E::CompoundDictionary);
-            }
-            let addon = s.compound_dictionary.as_deref_mut().ok_or(Bug)?;
-            return Ok(pos + addon.copy_to(ringbuffer, s.ringbuffer_size, pos)?);
+            let compound = s.compound_dictionary.as_deref_mut().ok_or(Bug)?;
+            compound.start_copy(address, length)?;
+            s.dist_rb
+                .put((s.dist_rb_idx & 3) as usize, s.distance_code)?;
+            s.dist_rb_idx = s.dist_rb_idx.wrapping_add(1);
+            s.meta_block_remaining_len -= length;
+            return Ok(pos + compound.copy_to(ringbuffer, s.ringbuffer_size, pos)?);
         }
         if length < MIN_DICTIONARY_WORD_LENGTH as i32 || length > MAX_DICTIONARY_WORD_LENGTH as i32
         {
@@ -2037,7 +1998,7 @@ impl Decoder {
                                 s.block_length[0] -= 1;
                                 *pos += 1;
                                 if *pos == s.ringbuffer_size {
-                                    s.state = State::CommandInnerWrite;
+                                    s.state = State::WriteDuringInsert;
                                     *i -= 1;
                                     return Ok(());
                                 }
@@ -2059,7 +2020,7 @@ impl Decoder {
                                 s.block_length[0] -= 1;
                                 *pos += 1;
                                 if *pos == s.ringbuffer_size {
-                                    s.state = State::CommandInnerWrite;
+                                    s.state = State::WriteDuringInsert;
                                     *i -= 1;
                                     return Ok(());
                                 }
@@ -2095,7 +2056,7 @@ impl Decoder {
                             s.block_length[0] -= 1;
                             *pos += 1;
                             if *pos == s.ringbuffer_size {
-                                s.state = State::CommandInnerWrite;
+                                s.state = State::WriteDuringInsert;
                                 *i -= 1;
                                 return Ok(());
                             }
@@ -2138,7 +2099,7 @@ impl Decoder {
                     if s.distance_code > s.max_distance {
                         *pos = s.copy_from_dictionary(ringbuffer, *pos, *i)?;
                         if *pos >= s.ringbuffer_size {
-                            s.state = State::CommandPostWrite1;
+                            s.state = State::WriteAfterDictionaryCopy;
                             return Ok(());
                         }
                     } else {
@@ -2191,7 +2152,7 @@ impl Decoder {
                         *pos += 1;
                         wrap_guard -= 1;
                         if wrap_guard == 0 {
-                            s.state = State::CommandPostWrite2;
+                            s.state = State::WriteDuringWrapCopy;
                             return Ok(());
                         }
                     }
@@ -2231,13 +2192,28 @@ impl Decoder {
         result
     }
 
-    fn meta_block_begin(&mut self) {
-        self.meta_block_remaining_len = 0;
+    fn begin_meta_block(&mut self) {
         self.block_length = [BLOCK_SIZE_CAP; 3];
         self.num_block_types = [1; 3];
         self.block_type_rb = [1, 0, 1, 0, 1, 0];
-        self.context_map_slice = 0;
-        self.literal_htree = 0;
+        self.state = State::MetaBlockHeader;
+    }
+
+    /// The window size is known.
+    fn begin_stream(&mut self) {
+        self.max_backward_distance = max_backward_limit(self.window_bits) as i32;
+        self.begin_meta_block();
+    }
+
+    /// The header of a compressed meta-block was read.
+    fn begin_commands(&mut self) -> Step {
+        self.prepare_literal_decoding()?;
+        self.prepare_distance_decoding()?;
+        self.htree_command = self.insert_copy_hgroup.htrees.at(0)? as usize;
+        self.ensure_ring_buffer(E::AllocRingBuffer2)?;
+        self.calculate_distance_lut()?;
+        self.state = State::CommandBegin;
+        Ok(())
     }
 
     fn cleanup_after_meta_block(&mut self) {
@@ -2362,11 +2338,11 @@ impl Decoder {
                     return Err(E::NeedsMoreInput);
                 }
                 s.decode_window_bits()?;
-                s.state = if s.large_window {
-                    State::LargeWindowBits
+                if s.large_window {
+                    s.state = State::LargeWindowBits;
                 } else {
-                    State::Initialize
-                };
+                    s.begin_stream();
+                }
             }
 
             State::LargeWindowBits => {
@@ -2375,17 +2351,7 @@ impl Decoder {
                 if s.window_bits < LARGE_MIN_WBITS || s.window_bits > LARGE_MAX_WBITS {
                     return Err(E::FormatWindowBits);
                 }
-                s.state = State::Initialize;
-            }
-
-            State::Initialize => {
-                s.max_backward_distance = max_backward_limit(s.window_bits) as i32;
-                s.state = State::MetaBlockBegin;
-            }
-
-            State::MetaBlockBegin => {
-                s.meta_block_begin();
-                s.state = State::MetaBlockHeader;
+                s.begin_stream();
             }
 
             State::MetaBlockHeader => {
@@ -2402,30 +2368,32 @@ impl Decoder {
                     return Ok(Flow::Continue);
                 }
                 s.calculate_ring_buffer_size();
-                s.state = if s.is_uncompressed {
-                    State::Uncompressed
+                if s.is_uncompressed {
+                    s.state = State::Uncompressed;
                 } else {
-                    State::BeforeCompressedMetaBlockHeader
-                };
+                    s.loop_counter = 0;
+                    s.state = State::BlockTypeCount;
+                }
             }
 
-            State::BeforeCompressedMetaBlockHeader => {
-                s.loop_counter = 0;
-                s.header.sub_loop_counter = 0;
-                s.header.substate_huffman = HuffmanState::None;
-                s.header.substate_tree_group = TreeGroupState::None;
-                s.header.substate_context_map = ContextMapState::None;
-                s.state = State::HuffmanCode0;
+            State::Uncompressed => {
+                s.copy_uncompressed_block_to_output(input, output)?;
+                s.state = State::MetaBlockDone;
             }
 
-            State::HuffmanCode0 => {
+            State::Metadata => {
+                s.skip_metadata_block()?;
+                s.state = State::MetaBlockDone;
+            }
+
+            State::BlockTypeCount => {
                 if s.loop_counter >= 3 {
-                    s.state = State::MetablockHeader2;
+                    s.state = State::DistanceParameters;
                     return Ok(Flow::Continue);
                 }
                 let num_block_types = s.num_block_types.at_mut(s.loop_counter as usize)?;
                 decode_var_len_uint8(
-                    &mut s.substate_decode_uint8,
+                    &mut s.header.substate_decode_uint8,
                     &mut s.br,
                     input,
                     num_block_types,
@@ -2441,10 +2409,10 @@ impl Decoder {
                     s.block_type_trees = try_vec(HuffmanCode::default(), 3 * HUFFMAN_MAX_SIZE_258)
                         .map_err(|_| E::AllocBlockTypeTrees)?;
                 }
-                s.state = State::HuffmanCode1;
+                s.state = State::BlockTypeCode;
             }
 
-            State::HuffmanCode1 => {
+            State::BlockTypeCode => {
                 let alphabet_size = s.num_block_types.at(s.loop_counter as usize)? + 2;
                 let tree_offset = s.loop_counter as usize * HUFFMAN_MAX_SIZE_258;
                 let table = s.block_type_trees.sub_mut(tree_offset..)?;
@@ -2455,10 +2423,10 @@ impl Decoder {
                     alphabet_size,
                     table,
                 )?;
-                s.state = State::HuffmanCode2;
+                s.state = State::BlockLengthCode;
             }
 
-            State::HuffmanCode2 => {
+            State::BlockLengthCode => {
                 let alphabet_size = NUM_BLOCK_LEN_SYMBOLS as u32;
                 let tree_offset = s.loop_counter as usize * HUFFMAN_MAX_SIZE_26;
                 let table = s.block_len_trees.sub_mut(tree_offset..)?;
@@ -2469,14 +2437,13 @@ impl Decoder {
                     alphabet_size,
                     table,
                 )?;
-                s.state = State::HuffmanCode3;
+                s.state = State::FirstBlockLength;
             }
 
-            State::HuffmanCode3 => {
+            State::FirstBlockLength => {
                 let tree_offset = s.loop_counter as usize * HUFFMAN_MAX_SIZE_26;
                 let block_length = safe_read_block_length(
-                    &mut s.substate_read_block_length,
-                    &mut s.block_length_index,
+                    &mut s.pending_block_length_symbol,
                     Tree::new(&s.block_len_trees, tree_offset),
                     &mut s.br,
                     input,
@@ -2484,20 +2451,10 @@ impl Decoder {
                 .ok_or(E::NeedsMoreInput)?;
                 s.block_length.put(s.loop_counter as usize, block_length)?;
                 s.loop_counter += 1;
-                s.state = State::HuffmanCode0;
+                s.state = State::BlockTypeCount;
             }
 
-            State::Uncompressed => {
-                s.copy_uncompressed_block_to_output(input, output)?;
-                s.state = State::MetaBlockDone;
-            }
-
-            State::Metadata => {
-                s.skip_metadata_block()?;
-                s.state = State::MetaBlockDone;
-            }
-
-            State::MetablockHeader2 => {
+            State::DistanceParameters => {
                 let bits = s.br.safe_read_bits(input, 6).ok_or(E::NeedsMoreInput)? as u32;
                 s.distance_postfix_bits = bits & 3;
                 s.num_direct_distance_codes = (bits >> 2) << s.distance_postfix_bits;
@@ -2509,22 +2466,23 @@ impl Decoder {
 
             State::ContextModes => {
                 s.read_context_modes(input)?;
-                s.state = State::ContextMap1;
+                s.state = State::LiteralContextMap;
             }
 
-            State::ContextMap1 => {
-                let mut num_htrees = s.num_literal_htrees;
-                let mut context_map = core::mem::take(&mut s.context_map);
-                let size = s.num_block_types[0] << LITERAL_CONTEXT_BITS;
-                let result = s.decode_context_map(input, size, &mut num_htrees, &mut context_map);
-                s.num_literal_htrees = num_htrees;
-                s.context_map = context_map;
-                result?;
+            State::LiteralContextMap => {
+                s.header.decode_context_map(
+                    &mut s.br,
+                    input,
+                    &mut s.context_map_table,
+                    s.num_block_types[0] << LITERAL_CONTEXT_BITS,
+                    &mut s.num_literal_htrees,
+                    &mut s.context_map,
+                )?;
                 s.detect_trivial_literal_block_types()?;
-                s.state = State::ContextMap2;
+                s.state = State::DistanceContextMap;
             }
 
-            State::ContextMap2 => {
+            State::DistanceContextMap => {
                 let npostfix = s.distance_postfix_bits;
                 let ndirect = s.num_direct_distance_codes;
                 let mut distance_alphabet_size_max =
@@ -2537,13 +2495,14 @@ impl Decoder {
                         distance_alphabet_size(npostfix, ndirect, LARGE_MAX_DISTANCE_BITS);
                     distance_alphabet_size_limit = limit.max_alphabet_size;
                 }
-                let mut num_htrees = s.num_dist_htrees;
-                let mut context_map = core::mem::take(&mut s.dist_context_map);
-                let size = s.num_block_types[2] << DISTANCE_CONTEXT_BITS;
-                let result = s.decode_context_map(input, size, &mut num_htrees, &mut context_map);
-                s.num_dist_htrees = num_htrees;
-                s.dist_context_map = context_map;
-                result?;
+                s.header.decode_context_map(
+                    &mut s.br,
+                    input,
+                    &mut s.context_map_table,
+                    s.num_block_types[2] << DISTANCE_CONTEXT_BITS,
+                    &mut s.num_dist_htrees,
+                    &mut s.dist_context_map,
+                )?;
                 s.literal_hgroup = huffman_tree_group(
                     NUM_LITERAL_SYMBOLS as u32,
                     NUM_LITERAL_SYMBOLS as u32,
@@ -2574,19 +2533,8 @@ impl Decoder {
                     .huffman_tree_group_decode(&mut s.br, input, hgroup)?;
                 s.loop_counter += 1;
                 if s.loop_counter >= 3 {
-                    s.state = State::BeforeCompressedMetaBlockBody;
+                    s.begin_commands()?;
                 }
-            }
-
-            State::BeforeCompressedMetaBlockBody => {
-                s.prepare_literal_decoding()?;
-                s.prepare_distance_decoding()?;
-                s.htree_command = s.insert_copy_hgroup.htrees.at(0)? as usize;
-                if !s.ensure_ring_buffer()? {
-                    return Err(E::AllocRingBuffer2);
-                }
-                s.calculate_distance_lut()?;
-                s.state = State::CommandBegin;
             }
 
             State::CommandBegin
@@ -2600,18 +2548,21 @@ impl Decoder {
                 result?;
             }
 
-            State::CommandInnerWrite | State::CommandPostWrite1 | State::CommandPostWrite2 => {
+            State::WriteDuringInsert
+            | State::WriteAfterDictionaryCopy
+            | State::WriteDuringWrapCopy => {
                 s.write_ring_buffer(output, false)?;
                 s.wrap_ring_buffer()?;
                 if s.ringbuffer_size == 1 << s.window_bits {
                     s.max_distance = s.max_backward_distance;
                 }
                 match s.state {
-                    State::CommandPostWrite1 => {
-                        if let Some(addon) = &mut s.compound_dictionary
-                            && addon.br_length != addon.br_copied
+                    State::WriteAfterDictionaryCopy => {
+                        if let Some(compound) = &mut s.compound_dictionary
+                            && compound.is_copying()
                         {
-                            s.pos += addon.copy_to(&mut s.ringbuffer, s.ringbuffer_size, s.pos)?;
+                            s.pos +=
+                                compound.copy_to(&mut s.ringbuffer, s.ringbuffer_size, s.pos)?;
                             if s.pos >= s.ringbuffer_size {
                                 return Ok(Flow::Continue);
                             }
@@ -2622,7 +2573,7 @@ impl Decoder {
                             State::CommandBegin
                         };
                     }
-                    State::CommandPostWrite2 => s.state = State::CommandPostWrapCopy,
+                    State::WriteDuringWrapCopy => s.state = State::CommandPostWrapCopy,
                     _ => {
                         s.state = if s.loop_counter != 0 {
                             State::CommandInner
@@ -2641,7 +2592,7 @@ impl Decoder {
                 }
                 s.cleanup_after_meta_block();
                 if !s.is_last_meta_block {
-                    s.state = State::MetaBlockBegin;
+                    s.begin_meta_block();
                     return Ok(Flow::Continue);
                 }
                 if !s.br.jump_to_byte_boundary() {

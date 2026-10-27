@@ -5,7 +5,11 @@ use crate::util::{Bug, Checked, SliceExt};
 
 pub(crate) const HUFFMAN_MAX_CODE_LENGTH: usize = 15;
 
-/// The largest tables of alphabets of 26, 258 and 272 symbols, with 8 bits for the first level.
+/// How many bits the first level of a table is indexed with.
+pub(crate) const HUFFMAN_TABLE_BITS: u32 = 8;
+const ROOT_BITS: usize = HUFFMAN_TABLE_BITS as usize;
+
+/// The largest tables of alphabets of 26, 258 and 272 symbols.
 pub(crate) const HUFFMAN_MAX_SIZE_26: usize = 396;
 pub(crate) const HUFFMAN_MAX_SIZE_258: usize = 632;
 pub(crate) const HUFFMAN_MAX_SIZE_272: usize = 646;
@@ -50,14 +54,16 @@ pub(crate) struct HuffmanTreeGroup {
     pub(crate) alphabet_size_limit: u16,
 }
 
-/// The highest bit of a reversed key.
-const REVERSE_BITS_LOWEST: u32 = 1 << 7;
+/// A key holds up to 8 bits of a code, the first one in bit 7, so that adding to it gives the next code. A table is
+/// indexed with the first bit in bit 0: see [`reverse_bits`].
+const KEY_FIRST_BIT: u32 = 1 << 7;
 
 /// The 8 bits of `num` in reverse order.
 #[inline(always)]
 #[allow(clippy::indexing_slicing, reason = "a u8 is in range of 256 elements")]
 fn reverse_bits(num: u32) -> usize {
-    // x86 has no instruction for this.
+    // x86 has no instruction for this: with `u8::reverse_bits`, reading the prefix codes of a stream of 1 KB takes 18 %
+    // more instructions.
     static REVERSED: [u8; 256] = {
         let mut reversed = [0; 256];
         let mut i = 0;
@@ -91,9 +97,8 @@ fn replicate_value(
 fn next_table_bit_size(
     count: &[u16; HUFFMAN_MAX_CODE_LENGTH + 1],
     mut len: usize,
-    root_bits: usize,
 ) -> Checked<usize> {
-    let mut left = 1i32 << (len - root_bits);
+    let mut left = 1i32 << (len - ROOT_BITS);
     while len < HUFFMAN_MAX_CODE_LENGTH {
         left -= i32::from(count.at(len)?);
         if left <= 0 {
@@ -102,7 +107,7 @@ fn next_table_bit_size(
         len += 1;
         left <<= 1;
     }
-    Ok(len - root_bits)
+    Ok(len - ROOT_BITS)
 }
 
 /// The table for the code that the code lengths are written in. `count` is the histogram of `code_lengths`.
@@ -137,7 +142,7 @@ pub(crate) fn build_code_lengths_huffman_table(
     let table_size = table.len();
     let mut sorted = sorted.iter();
     let mut key = 0u32;
-    let mut key_step = REVERSE_BITS_LOWEST;
+    let mut key_step = KEY_FIRST_BIT;
     let mut step = 2usize;
     for bits in 1..=HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH {
         for _ in 0..count.at(bits)? {
@@ -154,7 +159,6 @@ pub(crate) fn build_code_lengths_huffman_table(
 /// Builds the table of a complete prefix code and returns its size. `count` is the histogram of the code lengths.
 pub(crate) fn build_huffman_table(
     root_table: &mut [HuffmanCode],
-    root_bits: usize,
     symbol_lists: &[u16],
     count: &mut [u16; HUFFMAN_MAX_CODE_LENGTH + 1],
 ) -> Checked<u32> {
@@ -163,7 +167,7 @@ pub(crate) fn build_huffman_table(
         max_length = max_length.checked_sub(1).ok_or(Bug)?;
     }
 
-    let mut table_bits = root_bits;
+    let mut table_bits = ROOT_BITS;
     let mut table_size = 1usize << table_bits;
     let mut total_size = table_size;
 
@@ -173,7 +177,7 @@ pub(crate) fn build_huffman_table(
         table_size = 1 << table_bits;
     }
     let mut key = 0u32;
-    let mut key_step = REVERSE_BITS_LOWEST;
+    let mut key_step = KEY_FIRST_BIT;
     let mut step = 2usize;
     for bits in 1..=table_bits {
         let mut link = bits;
@@ -193,30 +197,29 @@ pub(crate) fn build_huffman_table(
     }
 
     // Second level tables, and the links to them in the root table.
-    let key_step = REVERSE_BITS_LOWEST >> (root_bits - 1);
     let mut table = 0usize;
-    let mut sub_key = REVERSE_BITS_LOWEST << 1;
-    let mut sub_key_step = REVERSE_BITS_LOWEST;
+    let mut sub_key = KEY_FIRST_BIT << 1;
+    let mut sub_key_step = KEY_FIRST_BIT;
     let mut step = 2usize;
-    for len in root_bits + 1..=max_length {
+    for len in ROOT_BITS + 1..=max_length {
         let mut link = len;
         while count.at(len)? != 0 {
-            if sub_key == REVERSE_BITS_LOWEST << 1 {
+            if sub_key == KEY_FIRST_BIT << 1 {
                 table += table_size;
-                table_bits = next_table_bit_size(count, len, root_bits)?;
+                table_bits = next_table_bit_size(count, len)?;
                 table_size = 1 << table_bits;
                 total_size += table_size;
                 let root_key = reverse_bits(key);
-                key += key_step;
+                key += 1;
                 root_table.put(
                     root_key,
-                    HuffmanCode::new((table_bits + root_bits) as u8, (table - root_key) as u16),
+                    HuffmanCode::new((table_bits + ROOT_BITS) as u8, (table - root_key) as u16),
                 )?;
                 sub_key = 0;
             }
             let symbol = symbol_lists.at(link)?;
             link = SYMBOL_LIST_BASE + usize::from(symbol);
-            let code = HuffmanCode::new((len - root_bits) as u8, symbol);
+            let code = HuffmanCode::new((len - ROOT_BITS) as u8, symbol);
             replicate_value(
                 root_table.sub_mut(table..)?,
                 reverse_bits(sub_key),
@@ -237,11 +240,10 @@ pub(crate) fn build_huffman_table(
 /// symbols, except that 3 stands for four symbols of lengths 2, 2, 2, 2 and 4 for four of lengths 1, 2, 3, 3.
 pub(crate) fn build_simple_huffman_table(
     table: &mut [HuffmanCode],
-    root_bits: usize,
     val: &mut [u16; 4],
     num_symbols: u32,
 ) -> Checked<u32> {
-    let goal_size = 1usize << root_bits;
+    let goal_size = 1usize << ROOT_BITS;
     let code = HuffmanCode::new;
     let mut table_size = match num_symbols {
         0 => {

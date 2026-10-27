@@ -415,15 +415,18 @@ test("inspector.close() returns while a garbage collection of the calling thread
     String(rounds),
   );
 
-  // The first heap in the log is the calling thread's. Its collection is in flight at a close()
-  // when the marker follows its START and not yet its epilogue. JSC writes each of these two
-  // tokens in one piece. The rest of a log line can have another heap's text in the middle of it.
+  // The first heap in the log is the calling thread's. Its collection is in flight over a whole
+  // close() when its START comes before the first marker and its epilogue after the second one,
+  // or never. JSC writes each of these two tokens in one piece. The rest of a log line can have
+  // another heap's text in the middle of it.
   const callerHeap = log.match(/\[GC<([^>]+)>: starting /)?.[1];
   const start = `[GC<${callerHeap}>: START `;
   const epilogue = `[GC<${callerHeap}>: epilogue `;
-  const closedDuringACollection = [...log.matchAll(/\nCLOSING\n/g)].some(
-    ({ index }) => log.lastIndexOf(epilogue, index) < log.lastIndexOf(start, index),
-  );
+  const closedDuringACollection = [...log.matchAll(/\nCLOSING\n/g)].some(({ index }) => {
+    const started = log.lastIndexOf(start, index);
+    const ended = log.indexOf(epilogue, started);
+    return started !== -1 && (ended === -1 || ended > log.indexOf("\nCLOSED\n", index));
+  });
   expect({
     ...result,
     schedulerReadItsOptions: log.includes("tp=0.000000ms"),

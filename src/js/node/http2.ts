@@ -30,6 +30,7 @@ const { isTypedArray } = require("node:util/types");
 const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
 const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
+const { append, init, isEmpty, peek, remove } = require("internal/linkedlist");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -400,6 +401,9 @@ let priorityWeightDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
 const kNeverAnnounced = Symbol("neverAnnounced");
+// On a client request that waits in its session's pending queue: its record in that queue.
+const kPendingRequest = Symbol("pendingRequest");
+const kRemovePendingRequest = Symbol("removePendingRequest");
 const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
 // takes precedence over the destroy code when streams are torn down.
@@ -2611,6 +2615,15 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // push(null)) and a throwing listener would otherwise skip the clear and
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
+    const hasId = typeof this.#id === "number";
+    if (!hasId) {
+      // Also before the emit: a request that waits leaves its session's pending queue. node does it after.
+      const pending = this[kPendingRequest];
+      if (pending !== undefined) {
+        this[kPendingRequest] = undefined;
+        (this[bunHTTP2Session] as ClientHttp2Session)[kRemovePendingRequest](pending);
+      }
+    }
     const { ending } = this._writableState;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
@@ -2680,7 +2693,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // nghttp2 stack.
     if (
       session &&
-      typeof this.#id === "number" &&
+      hasId &&
       !this[kNeverAnnounced] &&
       // A cleanly closed stream the native side already freed has nothing to send:
       // the deferred rstStream would be a guaranteed no-op host call per request.
@@ -2983,6 +2996,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
 }
 class ClientHttp2Stream extends Http2Stream {
   declare authority: string | undefined;
+  [kPendingRequest]: PendingRequest | undefined = undefined;
 }
 
 // Wrap a native→JS #Handlers callback so its body runs inside the target
@@ -5007,6 +5021,25 @@ function streamRejectedByGoawaySession(stream: Http2Stream) {
     stream.destroy(err);
   }
 }
+// A record in a client session's pending queue, an internal/linkedlist: a destroyed request leaves in O(1).
+interface PendingRequest {
+  req: ClientHttp2Stream;
+  // The on-wire form: an array keeps the duplicate-header interleaving that the object form cannot.
+  wireHeaders: HeadersObject | any[];
+  sensitiveNames: Record<string, boolean>;
+  options: any;
+  _idleNext: object | null;
+  _idlePrev: object | null;
+}
+// Takes the oldest request off the queue. Returns null when the queue is empty.
+function shiftPendingRequest(queue: object): PendingRequest | null {
+  const pending: PendingRequest | null = peek(queue);
+  if (pending !== null) {
+    remove(pending);
+    pending.req[kPendingRequest] = undefined;
+  }
+  return pending;
+}
 class ClientHttp2Session extends Http2Session {
   /// close indicates that the session is shutting down (close() or destroy() was called)
   #closed: boolean = false;
@@ -5045,13 +5078,8 @@ class ClientHttp2Session extends Http2Session {
   // submitted and whose stream has not closed yet, plus the queue of requests waiting for a slot
   // (node returns a pending stream with no id and submits it once a slot frees).
   #activeRequestCount: number = 0;
-  #pendingRequests: Array<{
-    req: ClientHttp2Stream;
-    headers: HeadersObject;
-    wireHeaders: HeadersObject | any[];
-    sensitiveNames: Record<string, boolean>;
-    options: any;
-  }> | null = null;
+  // An internal/linkedlist of PendingRequest records. Null while no request waits.
+  #pendingRequests: object | null = null;
 
   static #Handlers = {
     binaryType: "buffer",
@@ -5309,15 +5337,7 @@ class ClientHttp2Session extends Http2Session {
                 clearTimeout(self[kSettingsAckGraceTimer]);
                 self[kSettingsAckGraceTimer] = undefined;
               }
-              if (
-                self.#closed &&
-                self.#connections === 0 &&
-                (self.#pendingRequests === null || self.#pendingRequests.length === 0) &&
-                !self.destroyed
-              ) {
-                captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
-                setImmediate(destroyIfNotDestroyedNT, self);
-              }
+              self.#maybeDestroy();
             }
           }
         }
@@ -5365,19 +5385,15 @@ class ClientHttp2Session extends Http2Session {
       self.#parser?.forEachStream(rejectStreamAboveGoawayLastId.bind(null, lastStreamId));
       // Requests still queued behind the concurrency limit never got a stream id; they can never
       // be submitted on this session, so reject them the same way.
-      const pendingRequests = self.#pendingRequests;
-      self.#pendingRequests = null;
-      if (pendingRequests !== null) {
-        for (let i = 0; i < pendingRequests.length; i++) {
-          streamRejectedByGoawaySession(pendingRequests[i].req);
-        }
-      }
+      self.#rejectPendingRequests();
       // A GOAWAY carrying an error code is a session error: the session and every open stream
       // error with ERR_HTTP2_SESSION_ERROR; like Node, our own goaway goes out with
       // NGHTTP2_NO_ERROR since this side had no error. A graceful GOAWAY (NO_ERROR) begins a
       // shutdown: no new streams permitted, existing streams may finish naturally.
       if (errorCode === constants.NGHTTP2_NO_ERROR) {
-        self.close();
+        // The request rejected above can be the last thing that a closed session waited for.
+        if (self.#closed) self.#maybeDestroy();
+        else self.close();
       } else if (self.closed && self.#connections === 0) {
         // Mutual teardown: this side already sent its own graceful GOAWAY
         // (close()) and every stream is done, so the peer's error code cannot
@@ -5470,13 +5486,7 @@ class ClientHttp2Session extends Http2Session {
       // close() was called while the socket was still connecting: requests made in the meantime
       // never reached the peer, so node rejects them with ERR_HTTP2_GOAWAY_SESSION once the
       // connect completes and then lets the session finish closing.
-      const pendingRequests = this.#pendingRequests;
-      this.#pendingRequests = null;
-      if (pendingRequests !== null) {
-        for (let i = 0; i < pendingRequests.length; i++) {
-          streamRejectedByGoawaySession(pendingRequests[i].req);
-        }
-      }
+      this.#rejectPendingRequests();
       this.#parser?.forEachStream(streamRejectedByGoawaySession);
       this.destroy();
       return;
@@ -5853,15 +5863,38 @@ class ClientHttp2Session extends Http2Session {
     // bounded: an ACK is mandatory (RFC 9113 6.5.3) and arrives one round-trip later; the
     // localSettings dispatch finishes the deferred destroy, and a dead socket still tears
     // the session down. destroy() remains immediate.
-    if (this.#connections === 0 && (this.#pendingRequests === null || this.#pendingRequests.length === 0)) {
-      // An unACKed ping gets the same bounded grace as an unACKed SETTINGS: node always
-      // delivers the ping callback its RTT on a healthy session, never a cancel error.
-      if (this.#pendingSettingsAckCount > 0 || (this.#pingCallbacks !== null && this.#pingCallbacks.length > 0)) {
-        scheduleSettingsAckGraceNT(this);
-      } else {
-        captureHttp2PerfFrameSnapshot(this, this.#parser);
-        setImmediate(destroyIfNotDestroyedNT, this);
-      }
+    this.#maybeDestroy();
+  }
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1659-L1675
+  #maybeDestroy() {
+    if (!this.#closed || this.#destroying || this.destroyed) return;
+    if (this.#connections !== 0 || this.#pendingRequests !== null) return;
+    // An unACKed PING gets the same bounded grace as an unACKed SETTINGS.
+    if (this.#pendingSettingsAckCount > 0 || (this.#pingCallbacks !== null && this.#pingCallbacks.length > 0)) {
+      scheduleSettingsAckGraceNT(this);
+    } else {
+      captureHttp2PerfFrameSnapshot(this, this.#parser);
+      setImmediate(destroyIfNotDestroyedNT, this);
+    }
+  }
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2468-L2499
+  [kRemovePendingRequest](pending: PendingRequest) {
+    remove(pending);
+    const pendingRequests = this.#pendingRequests;
+    if (pendingRequests !== null && isEmpty(pendingRequests)) this.#pendingRequests = null;
+    this.#maybeDestroy();
+  }
+
+  // Rejects every request that still waits with ERR_HTTP2_GOAWAY_SESSION.
+  #rejectPendingRequests() {
+    const pendingRequests = this.#pendingRequests;
+    if (pendingRequests === null) return;
+    this.#pendingRequests = null;
+    let pending: PendingRequest | null;
+    while ((pending = shiftPendingRequest(pendingRequests)) !== null) {
+      streamRejectedByGoawaySession(pending.req);
     }
   }
 
@@ -5919,10 +5952,11 @@ class ClientHttp2Session extends Http2Session {
         // as its cause).
         const pendingRequests = this.#pendingRequests;
         this.#pendingRequests = null;
-        if (pendingRequests !== null && pendingRequests.length > 0) {
+        if (pendingRequests !== null) {
           const cancelError = createPendingStreamCancelError(error);
-          for (let i = 0; i < pendingRequests.length; i++) {
-            const req = pendingRequests[i].req;
+          let pending: PendingRequest | null;
+          while ((pending = shiftPendingRequest(pendingRequests)) !== null) {
+            const req = pending.req;
             if (!req.destroyed) {
               req.rstCode = code !== undefined ? code : constants.NGHTTP2_CANCEL;
               req.destroy(cancelError);
@@ -6292,27 +6326,26 @@ class ClientHttp2Session extends Http2Session {
       const maxConcurrentStreams = this.#remoteSettings?.maxConcurrentStreams;
       if (
         !this.#connected ||
-        (this.#pendingRequests !== null && this.#pendingRequests.length > 0) ||
+        this.#pendingRequests !== null ||
         (typeof maxConcurrentStreams === "number" && this.#activeRequestCount >= maxConcurrentStreams)
       ) {
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-        if (onClientStreamCreatedChannel.hasSubscribers) {
-          onClientStreamCreatedChannel.publish({ stream: req, headers });
-        }
-        if (this.#pendingRequests === null) {
-          this.#pendingRequests = [];
-        }
-        // Preserve both forms: the on-wire (array) form keeps duplicate-header interleaving the
-        // object form cannot represent; the object form is what diagnostics channels publish.
-        this.#pendingRequests.push({
+        // Before the publish: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1909-L1934
+        const pending: PendingRequest = {
           req,
-          headers,
           wireHeaders: rawHeadersList !== null ? rawHeadersList : headers,
           sensitiveNames,
           options,
-        });
+          _idleNext: null,
+          _idlePrev: null,
+        };
+        req[kPendingRequest] = pending;
+        append((this.#pendingRequests ??= init({ _idleNext: null, _idlePrev: null })), pending);
+        if (onClientStreamCreatedChannel.hasSubscribers) {
+          onClientStreamCreatedChannel.publish({ stream: req, headers });
+        }
         // node corks every Http2Stream until its native handle is assigned; same here so
         // synchronous writes after a queued request() batch through _writev once the slot frees.
         req.cork();
@@ -6370,13 +6403,12 @@ class ClientHttp2Session extends Http2Session {
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots
   // are available, in the order they were made.
   #flushPendingRequests() {
-    const queue = this.#pendingRequests;
-    if (queue === null || queue.length === 0) return;
-    while (queue.length > 0) {
+    if (this.#pendingRequests === null) return;
+    for (let queue = this.#pendingRequests; queue !== null; queue = this.#pendingRequests) {
       const parser = this.#parser;
       if (this.destroyed || !parser) {
         // The session is gone: queued requests never reached the wire, cancel them.
-        const { req } = queue.shift()!;
+        const { req } = this.#takePendingRequest(queue);
         if (!req.destroyed) {
           req.rstCode = constants.NGHTTP2_CANCEL;
           req.destroy();
@@ -6387,9 +6419,9 @@ class ClientHttp2Session extends Http2Session {
       if (typeof maxConcurrentStreams === "number" && this.#activeRequestCount >= maxConcurrentStreams) {
         break;
       }
-      const { req, headers, wireHeaders, sensitiveNames, options } = queue.shift()!;
+      const { req, wireHeaders, sensitiveNames, options } = this.#takePendingRequest(queue);
       // A pending stream that was close()d (but not destroyed) is still submitted: node sends its
-      // HEADERS and follows up with the RST_STREAM once the id is known (see close()).
+      // HEADERS, then the RST_STREAM once the id is known, for a request made before the connect.
       if (req.destroyed) continue;
       const stream_id: number = parser.getNextStream();
       if (stream_id < 0) {
@@ -6416,11 +6448,20 @@ class ClientHttp2Session extends Http2Session {
         continue;
       }
       if (onClientStreamStartChannel.hasSubscribers) {
-        onClientStreamStartChannel.publish({ stream: req, headers });
+        onClientStreamStartChannel.publish({ stream: req, headers: req[bunHTTP2Headers] });
       }
       this.#trackActiveRequest(req);
       process.nextTick(emitEventNT, req, "ready");
     }
+    // The last request of a closed session can leave the queue above without a stream.
+    this.#maybeDestroy();
+  }
+
+  // Takes the oldest request off the queue, which is null again when that was the last one.
+  #takePendingRequest(queue: object): PendingRequest {
+    const pending = shiftPendingRequest(queue)!;
+    if (isEmpty(queue)) this.#pendingRequests = null;
+    return pending;
   }
   static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
     return new ClientHttp2Session(url, options, listener);

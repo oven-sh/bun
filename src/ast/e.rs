@@ -1985,8 +1985,9 @@ impl EString {
     /// `a` is the text of `b`, which has other bytes: bytes that are not WTF-8 are U+FFFD.
     fn is_text_of_other_bytes(a: &[u8], b: &[u8]) -> bool {
         // Two ASCII bytes at a first difference near the start are two code units: nothing is decoded.
-        let near = a.iter().zip(b).take(16).position(|(x, y)| x != y);
-        !near.is_some_and(|at| a[at].is_ascii() && b[at].is_ascii())
+        let near = a.len().min(b.len()).min(16);
+        let at = a[..near].iter().zip(&b[..near]).position(|(x, y)| x != y);
+        !at.is_some_and(|at| a[at].is_ascii() && b[at].is_ascii())
             && strings::order_utf16(a, b) == Ordering::Equal
     }
 

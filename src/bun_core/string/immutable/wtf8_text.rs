@@ -8,6 +8,7 @@ use super::{
     index_of_char_usize, is_valid_utf8, push_codepoint_wtf8, wtf8_byte_sequence_length,
     wtf8_to_utf16_alloc,
 };
+use bun_simdutf_sys::simdutf;
 
 /// The code point that starts at `at`, and its length in bytes, which is 0 at the end of `text`.
 /// Half of a surrogate pair is itself. A byte that is part of no sequence is U+FFFD, one byte long.
@@ -157,8 +158,8 @@ pub fn wtf8_len_utf16(text: &[u8]) -> u32 {
 pub fn wtf8_decoded_len_utf16(text: &[u8]) -> u32 {
     match first_non_ascii(text) {
         None => text.len() as u32,
-        // A text of 16 bytes or less is decoded: the two calls of simdutf cost more.
-        Some(_) if text.len() > 16 && is_valid_utf8(text) => {
+        // A short text is decoded: the two calls of simdutf cost more.
+        Some(_) if text.len() > DECODED_BLOCK && is_valid_utf8(text) => {
             element_length_utf8_into_utf16(text) as u32
         }
         Some(ascii) => match code_unit_at_from(text, ascii as usize, ascii, u32::MAX) {
@@ -197,35 +198,41 @@ pub fn wtf8_code_unit_at(text: &[u8], index: u32) -> Wtf8CodeUnitAt<'_> {
 }
 
 /// The most bytes that [`code_unit_at_from`] decodes one sequence at a time before it counts again.
-const DECODED_BLOCK: usize = 64;
+const DECODED_BLOCK: usize = 16;
 
 /// [`wtf8_code_unit_at`] from the sequence start `at`, which `seen <= index` code units are before.
 fn code_unit_at_from(text: &[u8], mut at: usize, mut seen: u32, index: u32) -> Wtf8CodeUnitAt<'_> {
-    // The block grows while the index is after it, and is halved from then on.
-    let (mut block, mut grows) = (2 * DECODED_BLOCK, true);
-    loop {
-        let span = block.min(text.len() - at);
+    while at < text.len() {
+        // UTF-8 has no more code units than bytes: a block of as many bytes as units are left ends before the index.
+        let span = ((index - seen) as usize).min(text.len() - at);
         if span > DECODED_BLOCK {
-            // A block of UTF-8 that ends before the index is counted, not decoded.
-            let end = sequence_start_before(text, at + span);
-            let counted = &text[at..end];
-            if is_valid_utf8(counted) {
+            let block = &text[at..sequence_start_before(text, at + span)];
+            let counted = &block[..simdutf::validate::with_errors::utf8(block).count];
+            if counted.len() > DECODED_BLOCK {
+                debug_assert!(is_valid_utf8(counted));
                 let units = element_length_utf8_into_utf16(counted) as u32;
-                if units <= index - seen {
-                    (at, seen) = (end, seen + units);
-                    if grows {
-                        block = (block * 2).min(64 * DECODED_BLOCK);
-                    }
-                    continue;
-                }
+                (at, seen) = (at + counted.len(), seen + units);
+                continue;
             }
-            (block, grows) = (span / 2, false);
-            continue;
         }
-        let end = at + span;
+        let end = at + span.clamp(1, DECODED_BLOCK);
         while at < end {
+            // An ASCII byte is its own code unit in every reading.
+            if text[at] < 0x80 {
+                if seen == index {
+                    let unit = u16::from(text[at]);
+                    return Wtf8CodeUnitAt::Unit {
+                        unit,
+                        sequence: Some(&text[at..=at]),
+                    };
+                }
+                (at, seen) = (at + 1, seen + 1);
+                continue;
+            }
             let mut decoded = wtf8_decoded_units(&text[at..]);
-            let Some(first) = decoded.next() else { break };
+            let Some(first) = decoded.next() else {
+                return Wtf8CodeUnitAt::Past(seen);
+            };
             // U+FFFD in the text has three bytes of its own.
             let is_text = first != 0xFFFD || text[at..].starts_with("\u{FFFD}".as_bytes());
             let sequence = is_text.then(|| &text[at..at + decoded.at]);
@@ -238,11 +245,8 @@ fn code_unit_at_from(text: &[u8], mut at: usize, mut seen: u32, index: u32) -> W
             }
             at += decoded.at;
         }
-        if at >= text.len() {
-            return Wtf8CodeUnitAt::Past(seen);
-        }
-        (block, grows) = (2 * DECODED_BLOCK, true);
     }
+    Wtf8CodeUnitAt::Past(seen)
 }
 
 /// `end`, or the start of the sequence that the byte at `end` goes on.
@@ -595,6 +599,33 @@ mod tests {
                 assert_eq!(wtf8_code_unit_at(&text, index), Past(len), "round {round}");
             }
             assert_eq!(wtf8_decoded_len_utf16(&text), len, "round {round}");
+        }
+    }
+
+    #[test]
+    fn a_code_unit_after_runs_of_utf8_is_the_one_that_a_decode_finds() {
+        // Long runs of UTF-8 are counted. Bytes that are not UTF-8 are between them.
+        let run = "The caf\u{E9} has \u{20AC}5 cr\u{E8}me br\u{FB}l\u{E9}e \u{1F600}. ".as_bytes();
+        let not_utf8: [&[u8]; 3] = [b"\xFF", b"\xE2\x82", b"\xED\xA0\xBD"];
+        for every in [1, 2, 7, 40] {
+            let mut text = Vec::new();
+            for chunk in 0..120 {
+                text.extend_from_slice(run);
+                if chunk % every == 0 {
+                    text.extend_from_slice(not_utf8[chunk % 3]);
+                }
+            }
+            let expected: Vec<u16> = wtf8_decoded_units(&text).collect();
+            for index in (0..expected.len()).step_by(37) {
+                let Wtf8CodeUnitAt::Unit { unit, .. } = wtf8_code_unit_at(&text, index as u32)
+                else {
+                    panic!("every {every} index {index}");
+                };
+                assert_eq!(unit, expected[index], "every {every} index {index}");
+            }
+            let len = expected.len() as u32;
+            assert_eq!(wtf8_code_unit_at(&text, len), Wtf8CodeUnitAt::Past(len));
+            assert_eq!(wtf8_decoded_len_utf16(&text), len, "every {every}");
         }
     }
 

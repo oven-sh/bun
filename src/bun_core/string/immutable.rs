@@ -2025,7 +2025,7 @@ fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
     let same_bytes = |a: &[u8], b: &[u8]| a.iter().zip(b).take_while(|(x, y)| x == y).count();
     let mut same = same_bytes(&a[..a.len().min(16)], b);
     if same == 16 {
-        for block in [256, 16] {
+        for block in [4096, 256, 16] {
             let blocks = a[same..]
                 .chunks_exact(block)
                 .zip(b[same..].chunks_exact(block));
@@ -2876,10 +2876,12 @@ mod tests {
 
     #[test]
     fn common_prefix_len_is_where_two_texts_first_differ() {
-        let text: Vec<u8> = (0..1000u32).map(|i| (i % 251) as u8).collect();
-        for len in [0, 1, 15, 16, 17, 255, 256, 257, 271, 272, 273, 999, 1000] {
+        let text: Vec<u8> = (0..9000u32).map(|i| (i % 251) as u8).collect();
+        for len in [
+            0, 1, 15, 16, 17, 255, 256, 257, 271, 272, 273, 4111, 4112, 4113, 9000,
+        ] {
             for at in [
-                0, 1, 7, 15, 16, 17, 31, 32, 255, 256, 257, 271, 272, 500, 998, 999,
+                0, 1, 7, 15, 16, 17, 31, 32, 255, 256, 257, 271, 272, 4111, 4112, 4368, 8999,
             ] {
                 if at < len {
                     let mut other = text[..len].to_vec();

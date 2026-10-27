@@ -96,7 +96,7 @@ fn create_page_outputs(
         }
 
         let has_page_errors = page_log.errors > 0;
-        page_log.append_to_with_recycled(log, true);
+        page_log.append_to(log);
 
         result.map_err(|error| {
             if !has_page_errors {
@@ -140,7 +140,7 @@ fn create_page_transpiler<'h>(
     transpiler
 }
 
-fn create_entry_source(pages: &[&[u8]], heap: &Arena) -> Source {
+fn create_entry_source<'h>(pages: &[&[u8]], heap: &'h Arena) -> Source<'h> {
     let mut text: Vec<u8> = Vec::new();
     for (index, page) in pages.iter().enumerate() {
         text.extend_from_slice(format!("import page{index} from ").as_bytes());
@@ -166,10 +166,10 @@ fn create_entry_source(pages: &[&[u8]], heap: &Arena) -> Source {
     source
 }
 
-fn run(
-    bundle: &mut BundleV2<'_>,
+fn run<'h>(
+    bundle: &mut BundleV2<'h>,
     pages: &[&[u8]],
-    heap: &Arena,
+    heap: &'h Arena,
 ) -> Result<PageOutputs, crate::Error> {
     bundle.unique_key = generate_unique_key();
     bundle.enqueue_entry_points_normal::<&[u8]>(&[])?;
@@ -221,7 +221,7 @@ fn run(
 
 fn write_page_manifests(
     bundle: &BundleV2<'_>,
-    chunks: &[Chunk],
+    chunks: &[Chunk<'_>],
     output_files: &[OutputFile],
     pages: &[&[u8]],
 ) -> Result<Vec<Vec<u8>>, crate::Error> {

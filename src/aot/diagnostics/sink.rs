@@ -42,7 +42,6 @@ impl Diagnostics {
     pub(crate) fn new() -> Diagnostics {
         Diagnostics {
             entries: Vec::new(),
-            owned_strings: Vec::new(),
             internal_errors: Vec::new(),
             int32_flows: FxHashMap::default(),
             error_count: 0,
@@ -153,7 +152,6 @@ impl Diagnostics {
         for message in lists.log.msgs {
             self.add_message(0, message);
         }
-        self.owned_strings.extend(lists.log.owned_strings);
         self.internal_errors.extend(lists.internal_errors);
     }
 
@@ -164,7 +162,6 @@ impl Diagnostics {
         for entry in self.entries {
             write_message(log, entry.message);
         }
-        log.owned_strings.append(&mut self.owned_strings);
         write_internal_errors(log, self.internal_errors);
     }
 }

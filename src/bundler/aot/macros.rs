@@ -89,7 +89,7 @@ impl MacroThread {
         });
         self.shared.push(Arc::clone(&job));
         let mut outcome = job.wait();
-        outcome.log.append_to_with_recycled(log, true);
+        outcome.log.append_to(log);
         outcome.answer
     }
 
@@ -216,7 +216,7 @@ fn thread_main(shared: Arc<Shared>, context: BuildContext) {
         let answer =
             context.with_worker(|transpiler, arena| call_macro(transpiler, arena, call, &mut log));
         let mut owned = Log::init();
-        log.append_to_with_recycled(&mut owned, true);
+        log.append_to(&mut owned);
         log.reset();
         Outcome { log: owned, answer }
     });

@@ -50,7 +50,7 @@ pub(crate) fn run_before_parse(
         let mut task = create_task(context, module, contents, loader);
         run_plugins(&mut task, loader, transpiler, arena, &mut plugin_log)
     });
-    plugin_log.append_to_with_recycled(log, true);
+    plugin_log.append_to(log);
     Ok(changed?.unwrap_or(loaded))
 }
 
@@ -59,19 +59,19 @@ fn create_task(
     module: ModuleName<'_>,
     contents: &[u8],
     loader: Loader,
-) -> ParseTask {
-    // SAFETY: the task is dropped inside `run_before_parse`, which borrows all three slices and
-    // copies the text of the task's messages, which can borrow `module.namespace`, out of its log.
-    let (path, contents) = unsafe {
+) -> ParseTask<'static> {
+    // SAFETY: the task is dropped inside `run_before_parse`, which borrows all three slices.
+    let (path, namespace, contents) = unsafe {
         (
-            Fs::Path::init_with_namespace(module.path, module.namespace).into_static(),
+            detach_lifetime(module.path),
+            detach_lifetime(module.namespace),
             detach_lifetime(contents),
         )
     };
     // SAFETY: the carrier outlives the build, and its pointer comes from a mutable reference.
     let carrier = unsafe { ParentRef::from_raw_mut(context.bundle_pointer().as_ptr()) };
     ParseTask {
-        path,
+        path: Fs::Path::init_with_namespace(path, namespace),
         ctx: Some(carrier),
         known_target: Target::Bun,
         contents_or_fd: ContentsOrFd::Contents(contents),
@@ -81,7 +81,7 @@ fn create_task(
 }
 
 fn run_plugins(
-    task: &mut ParseTask,
+    task: &mut ParseTask<'static>,
     mut loader: Loader,
     transpiler: &mut Transpiler<'static>,
     arena: &Arena,

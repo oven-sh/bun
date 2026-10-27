@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -25,7 +24,7 @@ pub(crate) fn print_report_log(mut log: bun_ast::Log) {
                 && bun_paths::is_absolute(&location.file)
             {
                 let shown = bun_paths::resolve_path::relative(directory, &location.file);
-                location.file = Cow::Owned(shown.to_vec());
+                location.file = Box::from(shown);
             }
         };
         for message in log.msgs.iter_mut() {

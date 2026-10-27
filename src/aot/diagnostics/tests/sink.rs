@@ -154,14 +154,13 @@ fn log_diagnostic_prints_number_and_counts() {
 fn with_log_keeps_strings_of_finished_calls() {
     let messages = LoadMessages::default();
     messages.with_log(|log| {
-        let file = log.dupe(b"/project/plugin.ts");
         log.errors += 1;
         log.add_msg(Msg {
             kind: Kind::Err,
             data: Data {
                 text: Cow::Borrowed(b"the plugin failed"),
                 location: Some(Location {
-                    file: Cow::Borrowed(file),
+                    file: Box::from(&b"/project/plugin.ts"[..]),
                     line: 3,
                     column: 4,
                     ..Default::default()

@@ -28,12 +28,12 @@ fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
     let line_text = || {
         let index = reported.line.checked_sub(reported.source_line)?;
         let line = reported.source.get(index as usize)?;
-        (line.len() <= MAX_SHOWN_LINE).then(|| Cow::Owned(line.clone()))
+        (line.len() <= MAX_SHOWN_LINE).then(|| Box::from(&line[..]))
     };
     bun_ast::Data {
         text: Cow::Owned(text),
         location: (!reported.path.is_empty()).then(|| bun_ast::Location {
-            file: Cow::Owned(to_native(&reported.path).to_vec()),
+            file: Box::from(&to_native(&reported.path)[..]),
             line_text: line_text(),
             length: reported.end.saturating_sub(reported.start) as usize,
             offset: reported.start as usize,

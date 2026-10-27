@@ -137,6 +137,7 @@ use crate::api::bun_process::Process;
 use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThreadTask;
 
 use bun_bundler::DeferredBatchTask::DeferredBatchTask as BundleV2DeferredBatchTask;
+type BundleV2ParseTaskResult = bun_bundler::parse_task::Result<'static>;
 
 use crate::socket::upgraded_duplex::UpgradedDuplex;
 #[cfg(windows)]
@@ -380,7 +381,7 @@ pub(crate) fn run_task(
             cast!(bun_bundler::bundle_v2::api::JSBundler::LoadDeferred).run();
         }
         task_tag::BundleV2ParseTaskResult => {
-            feature_arm!([Bundler], |result: bun_bundler::parse_task::Result| {
+            feature_arm!([Bundler], |result: BundleV2ParseTaskResult| {
                 // SAFETY: boxed by the parse worker; `on_complete` consumes it.
                 unsafe { bun_bundler::parse_task::on_complete(result) };
             })
@@ -1711,7 +1712,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             )
         }
         task_tag::BundleV2ParseTaskResult => {
-            release_in!([Bundler], bun_bundler::parse_task::Result)
+            release_in!([Bundler], BundleV2ParseTaskResult)
         }
         task_tag::FetchTaskletRequestDrain => {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)

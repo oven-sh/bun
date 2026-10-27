@@ -3,7 +3,7 @@ use bun_aot::load::source_provider::{
 };
 use bun_ast::{Kind, Loader, Log, Msg, Range};
 use bun_core::strings;
-use bun_ptr::ParentRef;
+use bun_ptr::{ParentRef, detach_lifetime};
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_threading::{Condvar, Guarded};
 use core::ptr::NonNull;
@@ -127,7 +127,7 @@ impl WaiterPool {
 
 struct PendingLoad {
     load: Box<Load>,
-    task: Box<ParseTask>,
+    task: Box<ParseTask<'static>>,
     path: Box<[u8]>,
     told_path: Box<[u8]>,
     namespace: Box<[u8]>,
@@ -345,8 +345,9 @@ impl PluginRequests {
         let namespace: Box<[u8]> = request.module.namespace.into();
         // SAFETY: both boxes go into the `PendingLoad` that owns the task and are freed after it.
         // Moving a box does not move its bytes.
-        let task_path =
-            unsafe { Fs::Path::init_with_namespace(&told_path, &namespace).into_static() };
+        let task_path = unsafe {
+            Fs::Path::init_with_namespace(detach_lifetime(&told_path), detach_lifetime(&namespace))
+        };
         let waiter = self.waiters.lock().acquire();
         self.with_bundle(|bundle| {
             let mut task = Box::new(ParseTask {

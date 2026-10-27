@@ -1398,8 +1398,8 @@ impl Default for PropertyOpts {
     }
 }
 
-pub struct ScanPassResult {
-    pub import_records: Vec<ImportRecord>,
+pub struct ScanPassResult<'a> {
+    pub import_records: Vec<ImportRecord<'a>>,
     pub(crate) named_imports: bun_ast::ast_result::NamedImports,
     pub(crate) used_symbols: ParsePassSymbolUsageMap,
 }
@@ -1412,8 +1412,8 @@ pub struct ParsePassSymbolUse {
 
 pub(crate) type ParsePassSymbolUsageMap = StringArrayHashMap<ParsePassSymbolUse>;
 
-impl ScanPassResult {
-    pub fn init() -> ScanPassResult {
+impl<'a> ScanPassResult<'a> {
+    pub fn init() -> ScanPassResult<'a> {
         ScanPassResult {
             import_records: Vec::new(),
             named_imports: Default::default(),
@@ -1421,10 +1421,21 @@ impl ScanPassResult {
         }
     }
 
-    pub fn reset(&mut self) {
+    /// Empties it, keeping capacity. Being empty it borrows nothing, so any lifetime fits.
+    pub fn recycle<'b>(mut self) -> ScanPassResult<'b> {
         self.named_imports.clear_retaining_capacity();
         self.import_records.clear();
         self.used_symbols.clear_retaining_capacity();
+        ScanPassResult {
+            // std collects this in place. Were it to stop, only the capacity would be lost.
+            import_records: self
+                .import_records
+                .into_iter()
+                .map(|_| unreachable!())
+                .collect(),
+            named_imports: self.named_imports,
+            used_symbols: self.used_symbols,
+        }
     }
 }
 
@@ -1703,7 +1714,7 @@ pub fn new_lazy_export_ast<'bump>(
     opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &'bump bun_ast::Source,
+    source: &'bump bun_ast::Source<'bump>,
     runtime_api_call: &'static [u8],
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
     new_lazy_export_ast_impl(
@@ -1724,7 +1735,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
     opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &'bump bun_ast::Source,
+    source: &'bump bun_ast::Source<'bump>,
     runtime_api_call: &'static [u8],
     symbols: js_ast::symbol::List<'bump>,
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
@@ -1751,13 +1762,13 @@ pub fn new_lazy_export_ast_impl<'bump>(
             if temp_log.errors == 0 {
                 log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
             }
-            let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+            temp_log.append_to(log_to_copy_into);
             return Ok(None);
         }
     };
     drop(parser);
 
-    let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+    temp_log.append_to(log_to_copy_into);
     match result {
         crate::Result::Ast(mut ast) => {
             ast.has_lazy_export = true;

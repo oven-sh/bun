@@ -452,7 +452,7 @@ impl Host for GenerationHost<'_> {
         &self.module_scope
     }
     // The state has the imports of the file as bindings, and nothing reads a record after `finish` adds it.
-    fn import_records(&self) -> &[ImportRecord] {
+    fn import_records(&self) -> &[ImportRecord<'_>] {
         &[]
     }
     fn type_casts(&self) -> &[(Loc, Loc)] {

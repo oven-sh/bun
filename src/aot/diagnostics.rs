@@ -222,8 +222,7 @@ impl LoadMessages {
     pub(crate) fn with_log<R>(&self, call: impl FnOnce(&mut Log) -> R) -> R {
         let mut log = Log::init();
         let result = call(&mut log);
-        // `true` copies every string, so no message points into memory of the call.
-        log.append_to_with_recycled(&mut self.lists.lock().log, true);
+        log.append_to(&mut self.lists.lock().log);
         result
     }
 }
@@ -326,7 +325,6 @@ struct Entry {
 
 pub(crate) struct Diagnostics {
     entries: Vec<Entry>,
-    owned_strings: Vec<Box<[u8]>>,
     internal_errors: Vec<InternalError>,
     int32_flows: FxHashMap<Int32FlowKey, Int32Flow>,
     error_count: u32,

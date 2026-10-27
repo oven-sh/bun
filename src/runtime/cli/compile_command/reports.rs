@@ -217,7 +217,6 @@ fn add_write_warning(log: &mut Log, path: &[u8], error: &bun_sys::Error) {
         Code::OutputNotWritten,
         &[path, reason.as_bytes()],
     );
-    log.owned_strings.append(&mut reported.owned_strings);
     for mut message in reported.msgs {
         message.kind = Kind::Warn;
         log.warnings += 1;

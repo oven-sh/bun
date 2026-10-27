@@ -2260,3 +2260,25 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+// `bun build` matches a file `external` as written, and a wildcard by path. A runtime does neither.
+test("a file `external` in bunfig.toml does not change which file a runtime import loads", async () => {
+  using dir = tempDir("bunfig-external-file-runtime", {
+    "bunfig.toml": `external = ["./lib.js", "./vendor/*"]`,
+    "src/entry.cjs": `console.log(JSON.stringify([require("./lib.js"), require("../vendor/b")]));`,
+    "src/lib.js": `module.exports = "src/lib.js";`,
+    "vendor/b.js": `module.exports = "vendor/b.js";`,
+    // What "./lib.js" names when it is read against the working directory.
+    "lib.js": `module.exports = "lib.js";`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "src/entry.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: `["src/lib.js","vendor/b.js"]\n`, stderr: "" });
+  expect(exitCode).toBe(0);
+});

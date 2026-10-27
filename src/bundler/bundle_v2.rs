@@ -2761,6 +2761,15 @@ pub mod bv2_impl {
             let mut had_busted_dir_cache = false;
             let resolve_result = loop {
                 // SAFETY: see `transpiler` note above.
+                if let Some(external) = self.external_file_result(
+                    unsafe { &(*transpiler).options },
+                    source_dir,
+                    &import_record.specifier,
+                    import_record.kind,
+                ) {
+                    break external;
+                }
+                // SAFETY: see `transpiler` note above.
                 match unsafe { &mut *transpiler }.resolver.resolve(
                     source_dir,
                     &import_record.specifier,
@@ -4559,6 +4568,8 @@ pub mod bv2_impl {
             event_loop: EventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
+            // A scan follows what a file loads. `ExternalFiles` is about a bundle's output.
+            transpiler.options.external_files = Default::default();
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
 
@@ -6425,6 +6436,61 @@ pub mod bv2_impl {
             )
         }
 
+        /// `options::ExternalFiles`: what the resolver gives for its own externals, for a
+        /// specifier that matches as written or names a path that a wildcard matches.
+        fn external_file_result<'r>(
+            &self,
+            options: &options::BundleOptions<'_>,
+            source_dir: &[u8],
+            specifier: &'r [u8],
+            kind: ImportKind,
+        ) -> Option<_resolver::Result<'r>>
+        where
+            'a: 'r,
+        {
+            let external_files = &options.external_files;
+            if external_files.is_empty() {
+                return None;
+            }
+            let text: &'r [u8] = if external_files.matches_specifier(specifier) {
+                specifier
+            } else if !external_files.has_path_patterns()
+                // The resolver keeps a specifier that a wildcard matches as written.
+                || options::ExternalFiles::any_matches(&options.external.patterns, specifier)
+            {
+                return None;
+            } else if bun_paths::is_absolute(specifier) {
+                if !external_files.matches_path(specifier) {
+                    return None;
+                }
+                specifier
+            } else if !is_package_path(specifier) || kind.is_from_css() {
+                // The path as the resolver joins it, before it looks for the file.
+                let mut spill = Vec::new();
+                let joined =
+                    bun_paths::resolve_path::join_abs_string_spill::<bun_paths::platform::Loose>(
+                        self.transpiler.fs().top_level_dir(),
+                        &mut spill,
+                        &[source_dir, specifier],
+                    );
+                if !external_files.matches_path(joined) {
+                    return None;
+                }
+                self.arena().alloc_slice_copy(joined)
+            } else {
+                return None;
+            };
+            Some(_resolver::Result {
+                import_kind: kind,
+                path_pair: _resolver::PathPair {
+                    primary: Fs::Path::init(text),
+                    secondary: None,
+                },
+                flags: _resolver::ResultFlags::IS_EXTERNAL,
+                ..Default::default()
+            })
+        }
+
         /// For a relative JS specifier that matched an `external` file by path: the absolute
         /// path to store on the record (`PRINT_PATH_RELATIVE_TO_OUTPUT`). `None` otherwise.
         fn external_file_path(
@@ -6442,10 +6508,20 @@ pub mod bv2_impl {
                 return None;
             }
             self.graph.has_output_relative_import_paths = true;
-            Some(
-                self.path_with_pretty_initialized(resolved, target)
-                    .expect("oom"),
-            )
+            let mut path = self
+                .path_with_pretty_initialized(resolved, target)
+                .expect("oom");
+            // "." and "./lib/" name a directory: the printer keeps the separator the join stripped.
+            if _resolver::Resolver::import_path_names_directory(specifier)
+                && path.text.last() != Some(&bun_paths::SEP)
+            {
+                let text = self
+                    .arena()
+                    .alloc_slice_fill_copy(path.text.len() + 1, bun_paths::SEP);
+                text[..path.text.len()].copy_from_slice(path.text);
+                path.text = text;
+            }
+            Some(path)
         }
 
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
@@ -6930,6 +7006,14 @@ pub mod bv2_impl {
 
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result<'a> = 'inner: loop {
+                    if let Some(external) = self.external_file_result(
+                        &transpiler.options,
+                        source_dir,
+                        import_record.path.text,
+                        import_record.kind,
+                    ) {
+                        break external;
+                    }
                     match transpiler.resolver.resolve_with_framework(
                         source_dir,
                         import_record.path.text,

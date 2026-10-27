@@ -119,10 +119,8 @@ pub(crate) fn init_external_modules(
 ) -> ExternalModules {
     let mut result = ExternalModules {
         node_modules: StringSet::default(),
-        exact: StringSet::default(),
         abs_paths: StringSet::default(),
         patterns: default_wildcard_patterns(),
-        abs_patterns: Vec::new(),
     };
 
     match target {
@@ -167,25 +165,11 @@ pub(crate) fn init_external_modules(
                 prefix: Box::from(&external[0..i]),
                 suffix: Box::from(&external[i + 1..]),
             });
-
-            // `./lib/*` also matches resolved paths (`../lib/x.js` from a subdirectory).
-            if !bun_paths::is_package_path(external) {
-                let normalized = validate_path(log, fs, cwd, external, b"external path");
-                if let Some(star) = strings::index_of_char(&normalized, b'*') {
-                    let star = star as usize;
-                    result.abs_patterns.push(WildcardPattern {
-                        prefix: Box::from(&normalized[0..star]),
-                        suffix: Box::from(&normalized[star + 1..]),
-                    });
-                }
-            }
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
-            // Matched as written (and then printed as written), or by resolved path below.
-            result.exact.insert(external).expect("unreachable");
-
             let normalized = validate_path(log, fs, cwd, external, b"external path");
+
             if !normalized.is_empty() {
                 result.abs_paths.insert(&normalized).expect("unreachable");
             }
@@ -195,6 +179,70 @@ pub(crate) fn init_external_modules(
     result.patterns = patterns;
 
     result
+}
+
+/// File-path `external` entries as only a bundle matches them, like esbuild: the
+/// specifier as written, or a wildcard against the path the specifier names.
+#[derive(Default)]
+pub struct ExternalFiles {
+    /// Entries as written. A specifier that matches stays in the output as written.
+    exact: StringSet,
+    /// `./`, `../` and absolute wildcards, made absolute.
+    abs_patterns: Vec<WildcardPattern>,
+}
+
+impl ExternalFiles {
+    pub(crate) fn init(
+        fs: &mut Fs::Implementation,
+        cwd: &[u8],
+        externals: &[Box<[u8]>],
+        log: &mut bun_ast::Log,
+    ) -> ExternalFiles {
+        let mut result = ExternalFiles::default();
+        for external in externals {
+            if bun_paths::is_package_path(external) {
+                continue;
+            }
+            if strings::index_of_char(external, b'*').is_none() {
+                result.exact.insert(external).expect("unreachable");
+                continue;
+            }
+            let normalized = validate_path(log, fs, cwd, external, b"external path");
+            if let Some(star) = strings::index_of_char(&normalized, b'*') {
+                let star = star as usize;
+                result.abs_patterns.push(WildcardPattern {
+                    prefix: Box::from(&normalized[0..star]),
+                    suffix: Box::from(&normalized[star + 1..]),
+                });
+            }
+        }
+        result
+    }
+
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.exact.count() == 0 && self.abs_patterns.is_empty()
+    }
+
+    pub(crate) fn matches_specifier(&self, specifier: &[u8]) -> bool {
+        self.exact.count() > 0 && self.exact.contains(specifier)
+    }
+
+    pub(crate) fn has_path_patterns(&self) -> bool {
+        !self.abs_patterns.is_empty()
+    }
+
+    pub(crate) fn matches_path(&self, abs_path: &[u8]) -> bool {
+        Self::any_matches(&self.abs_patterns, abs_path)
+    }
+
+    pub(crate) fn any_matches(patterns: &[WildcardPattern], text: &[u8]) -> bool {
+        patterns.iter().any(|pattern| {
+            text.len() >= pattern.prefix.len() + pattern.suffix.len()
+                && text.starts_with(&pattern.prefix)
+                && text.ends_with(&pattern.suffix)
+        })
+    }
 }
 
 pub use bun_resolve_builtins::node_builtins::{
@@ -1264,6 +1312,7 @@ pub struct BundleOptions<'a> {
     /// through those sibling raw pointers UB under stacked borrows.
     pub log: *mut bun_ast::Log,
     pub(crate) external: ExternalModules,
+    pub(crate) external_files: ExternalFiles,
     pub allow_unresolved: AllowUnresolved,
     pub entry_points: Box<[Box<[u8]>]>,
     pub entry_naming: Box<[u8]>,
@@ -1512,6 +1561,8 @@ impl<'a> BundleOptions<'a> {
             main_fields: self.main_fields.clone(),
             log: self.log,
             external: self.external.clone(),
+            // Import records resolve on the bundle thread, never on a worker.
+            external_files: ExternalFiles::default(),
             allow_unresolved: self.allow_unresolved.clone(),
             entry_points: self.entry_points.clone(),
             entry_naming: self.entry_naming.clone(),
@@ -1739,6 +1790,7 @@ impl<'a> BundleOptions<'a> {
             target,
             write: transform.write.unwrap_or(false),
             external: ExternalModules::default(), // filled below
+            external_files: ExternalFiles::default(),
             entry_points: transform.entry_points.clone().into_boxed_slice(),
             out_extensions: StringHashMap::default(), // filled below
             env: Env::default(),
@@ -1954,6 +2006,14 @@ impl<'a> BundleOptions<'a> {
             opts.log_mut(),
             opts.target,
         );
+        if !transform.external.is_empty() {
+            opts.external_files = ExternalFiles::init(
+                &mut fs.fs,
+                top_level_dir,
+                &transform.external,
+                opts.log_mut(),
+            );
+        }
         opts.out_extensions = opts.target.out_extensions();
 
         opts.source_map = SourceMapOption::from_api(transform.source_map);

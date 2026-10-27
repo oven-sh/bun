@@ -980,10 +980,19 @@ impl<'a> Resolver<'a> {
         self.matches_user_external_pattern(import_path)
     }
 
-    /// `import_path` as written matches a user `--external` file path or pattern.
-    /// Does NOT consider `packages = external`; see `is_external_pattern`.
+    /// True iff `import_path` matches a user-supplied `--external` wildcard
+    /// pattern. Does NOT consider `packages = external`; use
+    /// `isExternalPattern` for the combined check.
     pub(crate) fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
-        self.opts.external.matches_specifier(import_path)
+        for pattern in self.opts.external.patterns.iter() {
+            if import_path.len() >= pattern.prefix.len() + pattern.suffix.len()
+                && (import_path.starts_with(pattern.prefix.as_ref())
+                    && import_path.ends_with(pattern.suffix.as_ref()))
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Resolves `import_path` via the enclosing tsconfig's `paths`. Returns
@@ -1819,7 +1828,10 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if !kind.is_entry_point() && self.opts.external.matches_abs_path(import_path) {
+            if !kind.is_entry_point()
+                && self.opts.external.abs_paths.count() > 0
+                && self.opts.external.abs_paths.contains(import_path)
+            {
                 // If the string literal in the source text is an absolute path and has
                 // been marked as an external module, mark it as *not* an absolute path.
                 // That way we preserve the literal text in the output and don't generate
@@ -2046,7 +2058,7 @@ impl<'a> Resolver<'a> {
 
     /// Whether an import specifier explicitly names a directory: a trailing
     /// separator, `.`, `..`, or a path ending in `/.` or `/..`.
-    fn import_path_names_directory(import_path: &[u8]) -> bool {
+    pub fn import_path_names_directory(import_path: &[u8]) -> bool {
         let Some(&last) = import_path.last() else {
             return false;
         };
@@ -2077,26 +2089,20 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         };
 
-        if !kind.is_entry_point() && self.opts.external.matches_abs_path(abs_path) {
-            // Hand back the absolute path: the bundler prints it relative to the output.
+        if !kind.is_entry_point()
+            && self.opts.external.abs_paths.count() > 0
+            && self.opts.external.abs_paths.contains(abs_path)
+        {
+            // If the string literal in the source text is an absolute path and has
+            // been marked as an external module, mark it as *not* an absolute path.
+            // That way we preserve the literal text in the output and don't generate
+            // a relative path from the output directory to that path.
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note_fmt(format_args!(
                     "The path \"{}\" is marked as external by the user",
                     bstr::BStr::new(abs_path)
                 ));
             }
-
-            // "." and "./lib/" name a directory: keep the separator the join stripped.
-            let names_directory = Self::import_path_names_directory(import_path)
-                && !strings::ends_with_char(abs_path, SEP);
-            let len = abs_path.len();
-            let buf = bufs!(relative_abs_path);
-            let abs_path: &[u8] = if names_directory && len < buf.len() {
-                buf[len] = SEP;
-                &buf[..=len]
-            } else {
-                &buf[..len]
-            };
 
             return ResultUnion::Success(Result {
                 path_pair: PathPair {

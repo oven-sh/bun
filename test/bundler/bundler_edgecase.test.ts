@@ -2124,6 +2124,22 @@ describe("bundler", () => {
       expect(new Bun.Transpiler().scanImports(entry).map(i => i.path)).toEqual(["./vendor/a.js", "../vendor/b.js"]);
     },
   });
+  // A macro file runs at build time. An `external` that equals its specifier as
+  // written names another file, and does not change which file the macro is.
+  itBundled("edgecase/MacroFileSpecifierEqualsExternalAsWritten", {
+    files: {
+      "/src/entry.ts": /* js */ `
+        import { which } from "./macro.ts" with { type: "macro" };
+        console.log(which());
+      `,
+      "/src/macro.ts": `export const which = () => "src/macro.ts";`,
+      "/macro.ts": `export const which = () => "macro.ts";`,
+    },
+    entryPoints: ["/src/entry.ts"],
+    external: ["./macro.ts"],
+    target: "bun",
+    run: { stdout: "src/macro.ts" },
+  });
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
       "/entry.js": `

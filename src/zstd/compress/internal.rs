@@ -8,6 +8,7 @@ use crate::common::{
 };
 use crate::error::{ErrorCode, Result};
 use crate::util::{BUG, SliceExt, highbit32, read_le32, read_le64, write_le24};
+use core::hint::{Locality, prefetch_read};
 
 pub(crate) const K_SEARCH_STRENGTH: u32 = 8;
 pub(crate) const HASH_READ_SIZE: usize = 8;
@@ -459,7 +460,17 @@ impl<'a> SeqSink<'a> {
             )?,
         }
         self.lit_len += lit_length;
+        self.store_seq_only(lit_length, off_base, match_length)
+    }
 
+    /// `ZSTD_storeSeqOnly`
+    #[inline(always)]
+    pub(crate) fn store_seq_only(
+        &mut self,
+        lit_length: u32,
+        off_base: u32,
+        match_length: u32,
+    ) -> Result<()> {
         let ml_base = match_length.wrapping_sub(MINMATCH);
         if lit_length > 0xFFFF || ml_base > 0xFFFF {
             self.store.long_length_type = if ml_base > 0xFFFF {
@@ -804,6 +815,23 @@ impl<'a> Near<'a> {
         }
         len
     }
+}
+
+/// `table`, of `1 << BITS` cells, with that known to the compiler, which then neither has to keep the size around nor
+/// to check a hash of `BITS` bits against it. With 0, `table` as it is.
+#[inline(always)]
+pub(crate) fn table_of_size<const BITS: u32>(table: &mut [u32]) -> Option<&mut [u32]> {
+    if BITS > 0 {
+        table.get_mut(..1 << BITS)
+    } else {
+        Some(table)
+    }
+}
+
+/// Has `table[hash]` on its way.
+#[inline(always)]
+pub(crate) fn table_prefetch(table: &[u32], hash: usize) {
+    prefetch_read(table.as_ptr().wrapping_add(hash), Locality::L1);
 }
 
 /// `table[hash]`. `hash` is less than the size of `table`: to check that delays nothing, which a mask would.

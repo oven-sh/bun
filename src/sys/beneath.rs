@@ -105,6 +105,10 @@ pub fn mkdirat(dir: Fd, path: &[u8], mode: Mode, symlinks: Symlinks) -> Maybe<()
 
 pub fn symlinkat(target: &ZStr, dir: Fd, path: &[u8], symlinks: Symlinks) -> Maybe<()> {
     in_parent(dir, path, symlinks, Tag::symlinkat, |parent, name| {
+        // No kernel makes `a/l` of `a/l/`, and a caller that checked the target took the link to be in `a/l`.
+        if path.last() == Some(&b'/') {
+            return Err(Error::from_code(E::ENOENT, Tag::symlinkat).with_path(path));
+        }
         crate::symlinkat(target, parent, name)
     })
 }
@@ -146,18 +150,26 @@ fn in_parent<T>(
 fn open_component_by_component(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
     let with_path = |e: Error| e.with_path(path.as_bytes());
     let mut names = strings::split(path.as_bytes(), b"/")
-        .filter(|name| !matches!(*name, b"" | b"."))
+        .filter(|name| !name.is_empty())
         .peekable();
     let mut current = dir;
     let mut _close = None;
     while let Some(name) = names.next() {
         if names.peek().is_none() {
+            // `names` drops a last `/`, which the kernel takes to name a directory.
+            let flags = match path.as_bytes().last() {
+                Some(b'/') if flags & O::CREAT != 0 => {
+                    return Err(with_path(Error::from_code(E::EISDIR, Tag::open)));
+                }
+                Some(b'/') => flags | O::DIRECTORY,
+                _ => flags,
+            };
             return crate::openat_a(current, name, flags | O::NOFOLLOW, mode).map_err(with_path);
         }
         current = crate::openat_a(current, name, SEARCH | O::NOFOLLOW, 0).map_err(with_path)?;
         _close = Some(CloseOnDrop::new(current));
     }
-    crate::openat_a(dir, b".", flags | O::NOFOLLOW, mode).map_err(with_path)
+    Err(with_path(Error::from_code(E::ENOENT, Tag::open)))
 }
 
 fn refuse_absolute_and_dot_dot(path: &[u8], tag: Tag) -> Maybe<()> {
@@ -202,7 +214,14 @@ fn kernel_resolves_beneath(dir: Fd) -> Maybe<bool> {
             Err(err) => match i32::from(err.errno) {
                 ENOTCAPABLE => true,
                 // These say nothing about the flag, so they are not remembered.
-                libc::EMFILE | libc::ENFILE | libc::ENOMEM | libc::EBADF | libc::ENOTDIR => {
+                libc::EMFILE
+                | libc::ENFILE
+                | libc::ENOMEM
+                | libc::EBADF
+                | libc::ENOTDIR
+                | libc::EIO
+                | libc::ESTALE
+                | libc::ETIMEDOUT => {
                     return Err(err);
                 }
                 _ => false,

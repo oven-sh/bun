@@ -264,7 +264,7 @@ pub fn is_symlink_target_safe(
     }
 
     // Get the directory containing the symlink
-    let symlink_dir = bun_paths::dirname_simple(strings::trim_right(symlink_path, b"/"));
+    let symlink_dir = bun_paths::dirname_simple(symlink_path);
 
     let join_buf: &mut PathBuffer =
         symlink_join_buf.get_or_insert_with(bun_paths::path_buffer_pool::get);
@@ -307,7 +307,7 @@ pub struct DeferredSymlink {
 impl DeferredSymlink {
     pub fn new(path: &[u8], target: &[u8]) -> Self {
         Self {
-            path: bun_core::ZBox::from_bytes(strings::trim_right(path, b"/")),
+            path: bun_core::ZBox::from_bytes(path),
             target: bun_core::ZBox::from_bytes(target),
         }
     }

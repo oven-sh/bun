@@ -1301,7 +1301,6 @@ describe("Bun.Archive", () => {
           plain: [1, 1, 1],
           glob: [0, 0, 1],
         },
-        // It is in `a`, not in `a/l`.
         "a symlink whose name ends in a slash": {
           archives: [[ustarSymlink("a/l/", "../..")], [file("a/l/new.txt")]],
           plain: [1, 1],
@@ -1442,6 +1441,23 @@ describe("Bun.Archive", () => {
             absolute: { "alias": "-> " + join(list[2].dest, "real"), "real": "directory" },
           });
         });
+
+        test.concurrent.each(["plain", "glob"] as const)(
+          "a symlink whose name ends in a slash is not made (%s)",
+          async mode => {
+            using dir = tempDir("archive-symlinks", fixture);
+            const { list, results } = await extractAll(
+              String(dir),
+              { "slash": { archives: [[ustarSymlink("a/l/", "b")]] } },
+              mode,
+              env,
+            );
+            expect({ results, dest: tree(list[0].dest) }).toEqual({
+              results: { slash: [mode === "plain" ? 1 : 0] },
+              dest: { "a": "directory", ...(mode === "plain" && { [join("a", "l")]: "directory" }) },
+            });
+          },
+        );
 
         test.concurrent.each(["plain", "glob"] as const)(
           "directories that no entry names are 0755 (%s)",

@@ -516,8 +516,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::EString(str_) => {
                     if p.options.features.minify_syntax {
-                        // minify "long-string".length to 11
-                        if name == b"length" {
+                        // minify "long-string".length to 11, but not where it is assigned to or deleted
+                        if name == b"length"
+                            && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                            && !identifier_opts.is_delete_target()
+                        {
                             if let Some(len) = str_.javascript_length() {
                                 return Some(p.new_expr(E::Number::new(len as f64), loc));
                             }

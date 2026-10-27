@@ -517,6 +517,26 @@ describe("bundler", () => {
     capture: ['"d"', "99", '"abcd"[4]', '"ab".charCodeAt(2)'],
     minifySyntax: true,
   });
+  // `.length` of a string is not folded where it is assigned to, updated or deleted: `1 = 1` does not parse.
+  itBundled("minify/StringLengthFoldNotOnAssignTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        X.length = 1;
+        A.length++;
+        delete X.length;
+        console.log(X.length, A.length);
+      `,
+    },
+    define: { X: '"é"', A: '"abc"' },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('"é".length = 1');
+      expect(out).toContain('"abc".length++');
+      expect(out).toContain('delete "é".length');
+      expect(out).toContain("console.log(1, 3)");
+    },
+  });
   // An index that is negative, not whole, or 2**32 and more is left for run time. -0 is index 0.
   itBundled("minify/StringIndexFoldingBounds", {
     files: {
@@ -2399,6 +2419,7 @@ test.each(["transformSync", "transform"] as const)(
 const DEFINE_FOLD_SEED =
   process.env.BUN_DEFINE_FOLD_SEED !== undefined ? Number(process.env.BUN_DEFINE_FOLD_SEED) >>> 0 : 0x9e3779b9;
 const DEFINE_FOLD_CASES = Number(process.env.BUN_DEFINE_FOLD_CASES ?? 200);
+const DEFINE_FOLD_LONG_CASES = Number(process.env.BUN_DEFINE_FOLD_LONG_CASES ?? 8);
 
 test(`folds of non-ASCII define strings are what the engine computes (seed=${DEFINE_FOLD_SEED})`, async () => {
   let seed = DEFINE_FOLD_SEED;
@@ -2426,10 +2447,25 @@ test(`folds of non-ASCII define strings are what the engine computes (seed=${DEF
   const want: unknown[][] = [];
   // A read at or past the end is left for run time, and so is everything that is made of one.
   const left = { index: 0, charCodeAt: 0, booleans: 0 };
-  for (let k = 0; k < DEFINE_FOLD_CASES; k++) {
-    const x = str(),
-      y = rnd() < 0.15 ? x : str(),
+  // A long text: a read far into it counts blocks of it, and two texts that start alike are compared in blocks.
+  const long = () => {
+    let text = "";
+    for (let runs = 2 + Math.floor(rnd() * 6); runs > 0; runs--)
+      text += pick(atoms).repeat(Math.floor(rnd() * pick([8, 40, 400, 5000])));
+    return text;
+  };
+  for (let k = 0; k < DEFINE_FOLD_CASES + DEFINE_FOLD_LONG_CASES; k++) {
+    let x: string, y: string, z: string;
+    if (k < DEFINE_FOLD_CASES) {
+      x = str();
+      y = rnd() < 0.15 ? x : str();
       z = rnd() < 0.6 ? x + y : str();
+    } else {
+      x = long();
+      const cut = Math.floor(rnd() * (x.length + 1));
+      y = x.slice(0, cut) + pick(atoms) + x.slice(cut + 1);
+      z = rnd() < 0.6 ? x + y : y + x;
+    }
     const i = Math.floor(rnd() * (x.length + 2)),
       j = Math.floor(rnd() * (x.length + y.length + 2));
     const [X, Y, Z] = [`X${k}`, `Y${k}`, `Z${k}`];
@@ -2472,7 +2508,7 @@ test(`folds of non-ASCII define strings are what the engine computes (seed=${DEF
     for (let c = 0; c < want[k].length; c++)
       if (!Object.is(want[k][c], got[k]?.[c])) differ.push({ k, cell: c, want: want[k][c], got: got[k]?.[c] });
   expect({ rows: got.length, differ: differ.length, first: differ.slice(0, 5) }).toEqual({
-    rows: DEFINE_FOLD_CASES,
+    rows: DEFINE_FOLD_CASES + DEFINE_FOLD_LONG_CASES,
     differ: 0,
     first: [],
   });

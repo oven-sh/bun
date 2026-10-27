@@ -24,7 +24,7 @@ static const JSC::HashTableValue JSECDHConstructorTableValues[] = {
 void JSECDHConstructor::finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
 {
     Base::finishCreation(vm, 2, "ECDH"_s);
-    reifyStaticProperties(vm, JSECDHConstructor::info(), JSECDHConstructorTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSECDHConstructor::info(), JSECDHConstructorTableValues, *this);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 
@@ -43,10 +43,22 @@ JSC_DEFINE_HOST_FUNCTION(callECDH, (JSC::JSGlobalObject * lexicalGlobalObject, J
     return JSValue::encode(result);
 }
 
+// utf8() asserts on failure. A name too long to convert isn't a curve.
+static int curveNidFromShortName(const WTF::String& name)
+{
+    auto nameUtf8 = name.tryGetUTF8();
+    if (!nameUtf8) [[unlikely]]
+        return NID_undef;
+    return OBJ_sn2nid(nameUtf8->legacyCStringPointer());
+}
+
 JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::Structure* structure = structureForNewTarget(globalObject, callFrame->newTarget(), &Zig::GlobalObject::m_JSECDHClassStructure);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSValue curveValue = callFrame->argument(0);
 
@@ -56,9 +68,7 @@ JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC
     WTF::String curveString = curveValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto curve = curveString.utf8();
-
-    int nid = OBJ_sn2nid(curve.data());
+    int nid = curveNidFromShortName(curveString);
     if (nid == NID_undef) {
         return Bun::ERR::CRYPTO_INVALID_CURVE(scope, globalObject);
     }
@@ -67,9 +77,6 @@ JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC
     if (!key) {
         return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to create key using named curve"_s);
     }
-
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSECDHClassStructure.get(zigGlobalObject);
 
     const EC_GROUP* group = key.getGroup();
     return JSC::JSValue::encode(JSECDH::create(vm, structure, globalObject, WTF::move(key), group));
@@ -99,7 +106,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
 
     auto buffer = keyView->span();
 
-    int nid = OBJ_sn2nid(curveName.utf8().data());
+    int nid = curveNidFromShortName(curveName);
     if (nid == NID_undef)
         return Bun::ERR::CRYPTO_INVALID_CURVE(scope, lexicalGlobalObject);
 

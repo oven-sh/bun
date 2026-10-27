@@ -131,7 +131,7 @@ exports[`Intl.DisplayNames a few more region codes 1`] = `
 
 exports[`Intl.NumberFormat default grouping 1`] = `
 {
-  "ar": "١٬٢٣٤٬٥٦٧٫٨٩",
+  "ar": "1,234,567.89",
   "de": "1.234.567,89",
   "en": "1,234,567.89",
   "es-419": "1,234,567.89",
@@ -148,7 +148,7 @@ exports[`Intl.NumberFormat default grouping 1`] = `
 
 exports[`Intl.NumberFormat currency symbol 1`] = `
 {
-  "ar": "‏١٬٢٣٤٫٥٦ €",
+  "ar": "‏1,234.56 €",
   "de": "1.234,56 €",
   "en": "€1,234.56",
   "es-419": "EUR 1,234.56",
@@ -165,7 +165,7 @@ exports[`Intl.NumberFormat currency symbol 1`] = `
 
 exports[`Intl.NumberFormat currencyDisplay:'name' (curr/<loc>.res) 1`] = `
 {
-  "ar": "٢٫٠٠ دولار أمريكي",
+  "ar": "2.00 دولار أمريكي",
   "de": "2,00 US-Dollar",
   "en": "2.00 US dollars",
   "es-419": "2.00 dólares estadounidenses",
@@ -183,7 +183,7 @@ exports[`Intl.NumberFormat currencyDisplay:'name' (curr/<loc>.res) 1`] = `
 exports[`Intl.NumberFormat style:'unit' (unit/<loc>.res; ru is the largest item) 1`] = `
 {
   "celsius": {
-    "ar": "٥ درجة مئوية",
+    "ar": "5 درجة مئوية",
     "de": "5 Grad Celsius",
     "en": "5 degrees Celsius",
     "es-419": "5 grados Celsius",
@@ -197,7 +197,7 @@ exports[`Intl.NumberFormat style:'unit' (unit/<loc>.res; ru is the largest item)
     "zh-Hant": "攝氏 5 度",
   },
   "kilometer": {
-    "ar": "٥ كيلومترات",
+    "ar": "5 كيلومترات",
     "de": "5 Kilometer",
     "en": "5 kilometers",
     "es-419": "5 kilómetros",
@@ -211,7 +211,7 @@ exports[`Intl.NumberFormat style:'unit' (unit/<loc>.res; ru is the largest item)
     "zh-Hant": "5 公里",
   },
   "kilometer-per-hour": {
-    "ar": "٥ كيلومتر في الساعة",
+    "ar": "5 كيلومتر في الساعة",
     "de": "5 Kilometer pro Stunde",
     "en": "5 kilometers per hour",
     "es-419": "5 kilómetros por hora",
@@ -229,7 +229,7 @@ exports[`Intl.NumberFormat style:'unit' (unit/<loc>.res; ru is the largest item)
 
 exports[`Intl.DateTimeFormat default 1`] = `
 {
-  "ar": "١‏/١‏/١٩٧٠",
+  "ar": "1‏/1‏/1970",
   "de": "1.1.1970",
   "en": "1/1/1970",
   "es-419": "1/1/1970",
@@ -252,7 +252,7 @@ exports[`Intl.DateTimeFormat timeZoneName:'long' (zone/<loc>.res) 1`] = `
     "en": "Pacific Standard Time",
     "es-419": "hora estándar del Pacífico",
     "fr": "heure normale du Pacifique nord-américain",
-    "ja": "アメリカ太平洋標準時",
+    "ja": "米国太平洋標準時",
     "ko": "미 태평양 표준시",
     "pt-PT": "Hora padrão do Pacífico norte-americana",
     "ru": "Тихоокеанское стандартное время",
@@ -517,7 +517,7 @@ exports[`Intl.RelativeTimeFormat format across locales 1`] = `
   "ar": [
     "قبل يوم واحد",
     "خلال يومين",
-    "قبل ٣ أشهر",
+    "قبل 3 أشهر",
   ],
   "de": [
     "vor 1 Tag",

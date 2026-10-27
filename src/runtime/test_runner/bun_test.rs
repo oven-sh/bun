@@ -5,12 +5,17 @@ use std::rc::{Rc, Weak};
 
 use bun_collections::LinearFifo;
 use bun_core::{Output, Timespec};
-use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
+use bun_ptr::RefPtr;
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 use crate::cli::test_command::CommandLineReporter;
+use crate::generated_bindgen::bun_test::{
+    Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
+};
 use super::execution::TimespecExt as _;
 
 bun_core::declare_scope!(bun_test_group, hidden);
@@ -57,13 +62,14 @@ pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
     runner.bun_test_root.clone_active_file()
 }
 
-pub use super::done_callback::DoneCallback;
+pub(crate) use super::done_callback::DoneCallback;
 
-pub mod js_fns {
+pub(crate) mod js_fns {
     use super::*;
+    use crate::generated_bindgen::scope_functions::{CallbackOrOptions, DescriptionOrCallback};
 
     #[derive(Clone, Copy)]
-    pub enum Signature<'a> {
+    pub(crate) enum Signature<'a> {
         ScopeFunctions(&'a ScopeFunctions::ScopeFunctions),
         Str(&'static [u8]),
     }
@@ -76,43 +82,42 @@ pub mod js_fns {
         }
     }
 
-    pub(crate) struct GetActiveCfg<'a> {
-        pub(crate) signature: Signature<'a>,
-        pub(crate) allow_in_preload: bool,
-    }
-
-    fn get_active_test_root<'a>(
+    /// Only requires the runner: hooks are legal in preload scripts (they attach
+    /// to the root), so the preload check lives in `clone_active_strong`.
+    fn get_test_root(
         global_this: &JSGlobalObject,
-        cfg: &GetActiveCfg<'a>,
+        signature: Signature<'_>,
     ) -> JsResult<&'static mut BunTestRoot> {
         // `Jest.runner` is a process-global that outlives every caller, so the
         // unbounded `&'static mut` is the honest model here.
         let Some(runner) = Jest::runner() else {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} outside of the test runner. Run \"bun test\" to run tests.",
-                cfg.signature
+                signature
             )));
         };
-        let bun_test_root = &mut runner.bun_test_root;
-        let vm = global_this.bun_vm();
-        if vm.is_in_preload && !cfg.allow_in_preload {
-            return Err(global_this.throw(format_args!(
-                "Cannot use {} during preload.",
-                cfg.signature
-            )));
+        // The runner calls every registered callback on the main thread's VM.
+        if global_this.bun_vm().worker_ref().is_some() {
+            return Err(global_this.throw(format_args!("Cannot use {} in a Worker.", signature)));
         }
-        Ok(bun_test_root)
+        Ok(&mut runner.bun_test_root)
     }
 
     pub(crate) fn clone_active_strong(
         global_this: &JSGlobalObject,
-        cfg: &GetActiveCfg<'_>,
+        signature: Signature<'_>,
     ) -> JsResult<BunTestPtr> {
-        let bun_test_root = get_active_test_root(global_this, cfg)?;
+        let bun_test_root = get_test_root(global_this, signature)?;
+        if global_this.bun_vm().is_in_preload {
+            return Err(global_this.throw(format_args!(
+                "Cannot use {} during preload.",
+                signature
+            )));
+        }
         let Some(bun_test) = bun_test_root.clone_active_file() else {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} outside of a test file.",
-                cfg.signature
+                signature
             )));
         };
         Ok(bun_test)
@@ -120,8 +125,6 @@ pub mod js_fns {
 
     /// Tags accepted by `generic_hook`. Superset of `DescribeScope::HookTag`
     /// (adds `OnTestFinished`).
-    // was a const-generic param (`adt_const_params` is unstable);
-    // reshaped to runtime dispatch with per-tag thin host_fn wrappers below.
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum GenericHookTag {
         #[strum(serialize = "beforeAll")]
@@ -157,25 +160,26 @@ pub mod js_fns {
         }
     }
 
-    // `adt_const_params` is unstable, so the body takes `tag` at runtime and
-    // 5 thin `#[host_fn]` wrappers below supply the per-tag entry points
-    // (one fn per JS function so JSFunction::create gets a distinct address).
-    pub(crate) fn generic_hook_impl(
+    pub(crate) fn generic_hook_impl<'a>(
         tag: GenericHookTag,
         global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+        first: DescriptionOrCallback<'a>,
+        second: CallbackOrOptions<'a>,
+        third: CallbackOrOptions<'a>,
+    ) -> JsResult<()> {
         let _g = group_begin!();
         // Run the body in a closure so every error exit funnels through the
         // log below before the group guard closes.
-        let result = (|| -> JsResult<JSValue> {
+        let result = (|| -> JsResult<()> {
 
             let tag_name: &'static str = tag.into();
             let sig_bytes: &'static [u8] = tag.sig();
 
             let args = ScopeFunctions::parse_arguments(
                 global_this,
-                call_frame,
+                first,
+                second,
+                third,
                 Signature::Str(sig_bytes),
                 ScopeFunctions::ParseArgumentsCfg { callback: ScopeFunctions::CallbackMode::Require, kind: ScopeFunctions::FunctionKind::Hook },
             )?;
@@ -186,10 +190,7 @@ pub mod js_fns {
                 false
             };
 
-            let bun_test_root = get_active_test_root(
-                global_this,
-                &GetActiveCfg { signature: Signature::Str(sig_bytes), allow_in_preload: true },
-            )?;
+            let bun_test_root = get_test_root(global_this, Signature::Str(sig_bytes))?;
 
             let cfg = ExecutionEntryCfg {
                 has_done_parameter,
@@ -213,7 +214,7 @@ pub mod js_fns {
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
                 )?;
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             };
 
             match bun_test.phase {
@@ -231,7 +232,7 @@ pub mod js_fns {
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
                     )?;
-                    Ok(JSValue::UNDEFINED)
+                    Ok(())
                 }
                 Phase::Execution => {
                     let active = bun_test.get_current_state_data();
@@ -313,7 +314,7 @@ pub mod js_fns {
                     }
                     bun_test.extra_execution_entries.push(new_item_ptr);
 
-                    Ok(JSValue::UNDEFINED)
+                    Ok(())
                 }
                 Phase::Done => Err(global_this.throw(format_args!(
                     "Cannot call {}() after the test run has completed",
@@ -327,18 +328,18 @@ pub mod js_fns {
         result
     }
 
-    /// Per-tag `#[host_fn]` entry points (one fn per JS function so
-    /// `JSFunction::create` gets a distinct address).
+    /// One for each hook of `BunTest.bind.ts`.
     pub(crate) mod generic_hook {
         use super::*;
         macro_rules! hook {
             ($name:ident, $tag:ident) => {
-                #[bun_jsc::host_fn]
-                pub(crate) fn $name(
-                    global_this: &JSGlobalObject,
-                    call_frame: &CallFrame,
-                ) -> JsResult<JSValue> {
-                    super::generic_hook_impl(GenericHookTag::$tag, global_this, call_frame)
+                pub(crate) fn $name<'a>(
+                    cx: &mut JsScope<'a>,
+                    first: DescriptionOrCallback<'a>,
+                    second: CallbackOrOptions<'a>,
+                    third: CallbackOrOptions<'a>,
+                ) -> JsResult<()> {
+                    super::generic_hook_impl(GenericHookTag::$tag, cx.global(), first, second, third)
                 }
             };
         }
@@ -356,15 +357,15 @@ pub mod js_fns {
 /// `Rc<T>` does **not** wrap `T` in `UnsafeCell`, so the previous
 /// `Rc::as_ptr(&rc) as *mut T` + write was UB. The payload now lives in an
 /// explicit `UnsafeCell` so all writes go through interior-mutable provenance.
-pub type BunTestPtr = Rc<BunTestCell>;
-pub type BunTestPtrWeak = Weak<BunTestCell>;
-pub type BunTestPtrOptional = Option<Rc<BunTestCell>>;
+pub(crate) type BunTestPtr = Rc<BunTestCell>;
+pub(crate) type BunTestPtrWeak = Weak<BunTestCell>;
+pub(crate) type BunTestPtrOptional = Option<Rc<BunTestCell>>;
 
 /// `UnsafeCell` newtype so `Rc<BunTestCell>` permits mutation of the shared
 /// `BunTest` (`UnsafeCell` is required for any write reachable through a
 /// shared/`*const` path).
 #[repr(transparent)]
-pub struct BunTestCell(UnsafeCell<BunTest>);
+pub(crate) struct BunTestCell(UnsafeCell<BunTest>);
 
 impl BunTestCell {
     #[inline]
@@ -383,7 +384,7 @@ impl BunTestCell {
     /// for long-lived handles that span re-entrant calls.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn get(&self) -> &mut BunTest {
+    pub(crate) fn get(&self) -> &mut BunTest {
         // SAFETY: `UnsafeCell` interior; single-threaded JS VM. See contract above.
         unsafe { &mut *self.0.get() }
     }
@@ -419,7 +420,7 @@ pub(crate) unsafe fn buntest_as_mut(ptr: &BunTestPtr) -> &mut BunTest {
     ptr.get()
 }
 
-pub struct BunTestRoot {
+pub(crate) struct BunTestRoot {
     // gpa dropped — global mimalloc
     pub(crate) active_file: BunTestPtrOptional,
     pub(crate) hook_scope: Box<DescribeScope>,
@@ -487,14 +488,13 @@ impl BunTestRoot {
         // `bun_test_then_or_catch` when the promise settles — which it now
         // never will (the VM is going away). Release each orphan ourselves;
         // any reaction that is still queued is dropped wholesale by
-        // `destructOnExit`.
+        // `Zig__GlobalObject__destructOnExit`.
         for ptr in self.pending_then_refs.borrow_mut().drain(..) {
-            // SAFETY: `ptr` was produced by `IntrusiveRc::into_raw` in
+            // SAFETY: `ptr` was produced by `RefPtr::into_raw` in
             // `BunTest::run_test_callback`; it is live because the promise
             // never settled (the settle path removes the entry before
-            // `deref()`). `RefPtr<T>` has no `Drop`, so explicitly `.deref()`
-            // to release the `+1` and destroy the box. Single-threaded.
-            unsafe { RefDataPtr::from_raw(ptr.cast_mut()) }.deref();
+            // releasing). Single-threaded.
+            drop(unsafe { RefPtr::from_raw(ptr.cast_mut()) });
         }
     }
 
@@ -610,7 +610,7 @@ impl Drop for BunTestRoot {
 }
 
 #[derive(Copy, Clone)]
-pub struct FirstLast {
+pub(crate) struct FirstLast {
     pub(crate) first: bool,
     pub(crate) last: bool,
 }
@@ -625,7 +625,7 @@ pub enum Phase {
     Done,
 }
 
-pub struct BunTest {
+pub(crate) struct BunTest {
     pub(crate) bun_test_root: bun_ptr::BackRef<BunTestRoot>,
     pub(crate) in_run_loop: bool,
     // gpa / arena_allocator / arena dropped — see §Allocators (non-AST crate)
@@ -729,11 +729,11 @@ impl BunTest {
         }
     }
 
-    pub fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefDataPtr {
+    pub(crate) fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefPtr<RefData> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);
 
-        bun_ptr::IntrusiveRc::new(RefData {
+        RefPtr::new(RefData {
             buntest_weak: Rc::downgrade(this_strong),
             phase,
             ref_count: bun_ptr::RefCount::init(),
@@ -742,32 +742,22 @@ impl BunTest {
 
     fn bun_test_then_or_catch(
         global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        result: JSValue,
+        raw_ref: *mut RefData,
         is_catch: bool,
     ) -> JsResult<()> {
         let _g = group_begin!();
 
-        let [result, this_ptr] = callframe.arguments_as_array::<2>();
-        if this_ptr.is_empty_or_undefined_or_null() {
-            return Ok(());
-        }
-
-        let raw_ref: *mut RefData = this_ptr.as_promise_ptr::<RefData>();
-        // SAFETY: `raw_ref` was produced by `IntrusiveRc::into_raw` in `run_test_callback`
-        // and round-tripped via `asPromisePtr`; we adopt the +1 it carried.
-        let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(raw_ref) };
-        // Remove the pending_then_refs entry before `deref()` so a freed `RefData` never lingers.
+        // SAFETY: `raw_ref` was produced by `RefPtr::into_raw` in `run_test_callback`;
+        // we adopt the +1 it carried.
+        let refdata = unsafe { RefPtr::from_raw(raw_ref) };
+        // Remove the pending_then_refs entry first so it never holds a freed `RefData`.
         if let Some(runner) = Jest::runner() {
             let mut pending = runner.bun_test_root.pending_then_refs.borrow_mut();
             if let Some(pos) = pending.iter().position(|p| *p == raw_ref.cast_const()) {
                 pending.swap_remove(pos);
             }
         }
-        // refdata.deref() at scope exit — RefPtr<T> currently has NO Drop impl (src/ptr/ref_count.rs),
-        // so scope-exit drop is a silent no-op. Decrement the intrusive count explicitly so
-        // (a) RefData::destructor frees the box + Weak<BunTest>, and (b) a paired done() callback
-        // observes has_one_ref()==true on its turn instead of hanging.
-        let refdata = scopeguard::guard(refdata, |r: RefDataPtr| r.deref());
         let has_one_ref = refdata.has_one_ref();
         let Some(this_strong) = refdata.buntest_weak.upgrade() else {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> the BunTest is no longer active");
@@ -785,43 +775,44 @@ impl BunTest {
             return Ok(());
         }
 
-        this.add_result(refdata.phase.clone());
+        this.add_result(refdata.phase);
         // `this` borrow ends here (NLL); `run_next_tick` re-derives via `.get()`.
-        Self::run_next_tick(&refdata.buntest_weak, global_this, refdata.phase.clone());
+        Self::run_next_tick(&refdata.buntest_weak, global_this, refdata.phase);
         Ok(())
     }
 
-    // `#[bun_jsc::host_fn]` proc-macro emits a free-fn wrapper that
-    // calls the annotated item by bare name; that lookup fails for associated
-    // fns inside `impl` blocks. The extern-"C" trampoline is wired separately
-    // (see the gated `Bun__TestScope__Describe2__*` statics below), so the
-    // attribute is dropped here — these are plain JsResult fns.
-    fn bun_test_then(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        Self::bun_test_then_or_catch(global_this, callframe, false)?;
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn bun_test_then(
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+        context: *mut RefData,
+    ) -> JsResult<()> {
+        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, false)
     }
 
-    fn bun_test_catch(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        Self::bun_test_then_or_catch(global_this, callframe, true)?;
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn bun_test_catch(
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+        context: *mut RefData,
+    ) -> JsResult<()> {
+        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, true)
     }
 
     pub(crate) fn bun_test_done_callback(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        cx: &mut JsScope<'_>,
+        this_value: JsLocal<'_>,
+        error: JsLocal<'_>,
+    ) -> JsResult<()> {
         let _g = group_begin!();
 
-        let Some(this) = DoneCallback::from_js(callframe.this()) else {
+        let global_this = cx.global();
+        let Some(this) = this_value.to_js().as_class_ref::<DoneCallback>() else {
             return Err(global_this.throw(format_args!("Expected callee to be DoneCallback")));
         };
 
-        let [value] = callframe.arguments_as_array::<1>();
+        let value = error.to_js();
 
         let was_error = !value.is_empty_or_undefined_or_null();
-        // SAFETY: `this` is the live `*mut DoneCallback` returned by `from_js`;
-        // single-threaded JS VM, GC keeps the wrapper alive for the call frame.
-        if unsafe { (*this).called } {
+        if this.called.get() {
             // in Bun 1.2.20, this is a no-op
             // in Jest, this is "Expected done to be called once, but it was called multiple times."
             // Vitest does not support done callbacks
@@ -831,19 +822,10 @@ impl BunTest {
                 let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
             }
         }
-        // SAFETY: see above — `this` is a live `*mut DoneCallback`.
-        let ref_in = unsafe {
-            (*this).called = true;
-            (*this).r#ref.take()
+        this.called.set(true);
+        let Some(ref_in) = this.r#ref.take() else {
+            return Ok(());
         };
-        let Some(ref_in) = ref_in else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        // `this.ref` was already taken above.
-        // RefPtr<T> currently has NO Drop impl, so decrement the
-        // intrusive count explicitly at scope exit. Without this the
-        // paired promise then/catch path never sees has_one_ref()==true and the RefData leaks.
-        let ref_in = scopeguard::guard(ref_in, |r: RefDataPtr| r.deref());
 
         // dupe the ref and enqueue a task to call the done callback.
         // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.
@@ -852,18 +834,18 @@ impl BunTest {
         let should_run = has_one_ref || was_error;
 
         if !should_run {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let Some(strong): Option<BunTestPtr> = ref_in.buntest_weak.upgrade() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         };
         // SAFETY: `&mut` derived via `UnsafeCell`; borrow ends before
         // `run_next_tick` re-derives.
-        strong.get().add_result(ref_in.phase.clone());
-        Self::run_next_tick(&ref_in.buntest_weak, global_this, ref_in.phase.clone());
+        strong.get().add_result(ref_in.phase);
+        Self::run_next_tick(&ref_in.buntest_weak, global_this, ref_in.phase);
 
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     pub(crate) fn bun_test_timeout_callback(
@@ -906,18 +888,11 @@ impl BunTest {
             debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
             return; // but just in case
         };
-        let done_callback_test = bun_core::heap::into_raw(Box::new(RunTestsTask {
+        let task = jsc::Task::from_boxed(Box::new(RunTestsTask {
             weak: Weak::clone(weak),
             global_this: GlobalRef::from(global_this),
             phase,
         }));
-        fn call_erased(this: *mut RunTestsTask) -> bun_event_loop::JsResult<()> {
-            // `this` was `heap::into_raw`'d above (always non-null) and is
-            // invoked exactly once by `ManagedTask`.
-            RunTestsTask::call(NonNull::new(this).unwrap()).map_err(Into::into)
-        }
-        // `new_owned`: if the task never runs (VM teardown), the queue drainer frees `done_callback_test`.
-        let task = jsc::ManagedTask::ManagedTask::new_owned::<RunTestsTask>(done_callback_test, call_erased);
         // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.
         strong.get().wants_wakeup = true;
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
@@ -1155,7 +1130,7 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
+        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE, 
             cfg_callback,
             global_this,
             JSValue::UNDEFINED,
@@ -1188,7 +1163,7 @@ impl BunTest {
             }
 
             let prev_unhandled_count = vm.unhandled_error_counter;
-            global_this.handle_rejected_promises();
+            let _ = global_this.handle_rejected_promises();
             if vm.unhandled_error_counter == prev_unhandled_count {
                 break;
             }
@@ -1198,22 +1173,20 @@ impl BunTest {
         // counted handle. The single +1 from `ref()` is owned by
         // `dcb_data.ref`; `dcb_ref` just remembers the address so the
         // pending-promise branch can `dupe()` it and the tail can branch on
-        // "wait for done callback". `RefPtr<T>` has no `Drop`, so holding a
-        // second `RefDataPtr` here would over-count and the done-callback path
-        // would never observe `has_one_ref()`.
+        // "wait for done callback". Holding a second `RefPtr<RefData>` here would
+        // over-count and the done-callback path would never observe
+        // `has_one_ref()`.
         let mut dcb_ref: Option<NonNull<RefData>> = None;
         if !done_callback.is_empty() && !result.is_empty() {
-            if let Some(dcb_data) = DoneCallback::from_js(done_callback) {
-                // SAFETY: `dcb_data` is the live `*mut DoneCallback` from `from_js`;
-                // single-threaded JS VM, GC roots `done_callback` for this frame.
-                if unsafe { (*dcb_data).called } {
+            if let Some(dcb_data) = done_callback.as_class_ref::<DoneCallback>() {
+                if dcb_data.called.get() {
                     // done callback already called or the callback errored; add result immediately
                 } else {
-                    let r = Self::ref_(this_strong, cfg_data.clone());
+                    let r = Self::ref_(this_strong, cfg_data);
                     let alias = NonNull::new(r.as_ptr())
                         .expect("ref_() returns a freshly-boxed RefData");
-                    // SAFETY: see above. Move the sole +1 into the DoneCallback.
-                    unsafe { (*dcb_data).r#ref = Some(r) };
+                    // Move the sole +1 into the DoneCallback.
+                    dcb_data.r#ref.set(Some(r));
                     dcb_ref = Some(alias);
                 }
             } else {
@@ -1231,17 +1204,17 @@ impl BunTest {
                 match bun_jsc::JSPromise::opaque_mut(promise).status() {
                     PromiseStatus::Pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
-                        let this_ref: RefDataPtr = if let Some(dcb_ref_value) = dcb_ref {
+                        let this_ref: RefPtr<RefData> = if let Some(dcb_ref_value) = dcb_ref {
                             // SAFETY: `dcb_ref_value` aliases the live RefData
                             // owned by `dcb_data.r#ref` (set just above; GC
                             // roots `done_callback` for this frame). Bump the
                             // refcount 1→2.
-                            unsafe { bun_ptr::IntrusiveRc::init_ref(dcb_ref_value.as_ptr()) }
+                            unsafe { RefPtr::init_ref(dcb_ref_value.as_ptr()) }
                         } else {
                             Self::ref_(this_strong, cfg_data)
                         };
                         // Track the `+1` handed to `Promise.then()` in case the promise never settles.
-                        let raw_ref: *mut RefData = bun_ptr::IntrusiveRc::into_raw(this_ref);
+                        let raw_ref: *mut RefData = RefPtr::into_raw(this_ref);
                         this_strong
                             .bun_test_root
                             .get()
@@ -1312,7 +1285,7 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
-        let junit_ctx: *mut core::ffi::c_void = 'ctx: {
+        let failure_ctx: *mut core::ffi::c_void = 'ctx: {
             if handle_status != HandleUncaughtExceptionResult::ShowHandledError {
                 break 'ctx core::ptr::null_mut();
             }
@@ -1321,9 +1294,11 @@ impl BunTest {
             };
             // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
             // `&mut`; single-threaded test runner, no other borrow live here.
-            match unsafe { (*reporter.as_ptr()).reporters.junit.as_deref_mut() } {
-                Some(junit) => core::ptr::from_mut(junit).cast(),
-                None => core::ptr::null_mut(),
+            let reporter = unsafe { &mut *reporter.as_ptr() };
+            if reporter.jest.test_options.reporters.junit {
+                core::ptr::from_mut(&mut reporter.test_failure).cast()
+            } else {
+                core::ptr::null_mut()
             }
         };
 
@@ -1346,13 +1321,13 @@ impl BunTest {
         }
 
         let vm = global_this.bun_vm().as_mut();
-        if !junit_ctx.is_null() {
+        if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception =
-                Some(crate::cli::test_command::JunitReporter::record_failure_cb);
-            vm.on_print_error_zig_exception_ctx = junit_ctx;
+                Some(crate::cli::test_command::TestFailure::record_cb);
+            vm.on_print_error_zig_exception_ctx = failure_ctx;
         }
-        vm.run_error_handler(exception, None);
-        if !junit_ctx.is_null() {
+        print_error(vm, global_this, exception, None);
+        if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception = None;
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
         }
@@ -1365,6 +1340,29 @@ impl BunTest {
             bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
         }
 
+        Output::flush();
+    }
+}
+
+/// Prints `error`, then prints any exception the error's getters or `toString` threw during the print.
+pub(crate) fn print_error(
+    vm: &mut VirtualMachine,
+    global_this: &JSGlobalObject,
+    error: JSValue,
+    exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
+) {
+    vm.run_error_handler(error, exception_list);
+    // `BunTest::run` and `run_test_callback` clear termination exceptions.
+    if global_this.has_pending_termination_exception() {
+        return;
+    }
+    let Some(left) = global_this.try_take_exception() else {
+        return;
+    };
+    vm.run_error_handler(left, None);
+    // Printing this one could throw again, so just print a note.
+    if !global_this.has_pending_termination_exception() && global_this.try_take_exception().is_some() {
+        bun_core::pretty_errorln!("<blue>note<r><d>:<r> printing the error above threw another error");
         Output::flush();
     }
 }
@@ -1391,49 +1389,20 @@ impl Drop for BunTest {
     }
 }
 
-// `ZigGlobalObject::promiseHandlerID` (C++) compares the fn-ptr passed to
-// `JSValue::then` against `&Bun__TestScope__Describe2__bunTestThen` by
-// identity, so the Rust thunk MUST be the symbol itself — exporting a
-// `static JSHostFn = thunk` puts the name in `.data` (nm `d`), and the address
-// C++ sees never matches the local thunk we hand to `.then()`, tripping the
-// `RELEASE_ASSERT_NOT_REACHED` at the bottom of `promiseHandlerID`.
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub unsafe fn Bun__TestScope__Describe2__bunTestThen(
-        global: *mut JSGlobalObject,
-        frame: *mut CallFrame,
-    ) -> JSValue {
-        // SAFETY: JSC passes non-null live pointers for both.
-        let (global, frame) = unsafe { (&*global, &*frame) };
-        jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_then(global, frame))
-    }
-}
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub unsafe fn Bun__TestScope__Describe2__bunTestCatch(
-        global: *mut JSGlobalObject,
-        frame: *mut CallFrame,
-    ) -> JSValue {
-        // SAFETY: JSC passes non-null live pointers for both.
-        let (global, frame) = unsafe { (&*global, &*frame) };
-        jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_catch(global, frame))
-    }
-}
-
 // Clone/Copy: bitwise OK — `entry` is a non-owning erased borrow of an
 // `ExecutionEntry` owned by `BunTest::execution`.
 #[derive(Copy, Clone)]
-pub struct EntryData {
+pub(crate) struct EntryData {
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
     pub(crate) remaining_repeat_count: i64,
 }
 
-// Clone: bitwise OK — `active_scope` is a non-owning borrow of a
+// Clone/Copy: bitwise OK — `active_scope` is a non-owning borrow of a
 // `DescribeScope` whose lifetime spans the async boundary (see field note);
 // `EntryData.entry` likewise borrows.
-#[derive(Clone)]
-pub enum RefDataValue {
+#[derive(Clone, Copy)]
+pub(crate) enum RefDataValue {
     Start,
     Collection {
         // A borrowed `&'a DescribeScope` cannot work here: the pointer is stored
@@ -1507,28 +1476,18 @@ impl fmt::Display for RefDataValue {
 
 // Intrusive single-thread refcount.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = Self::destroy)]
-pub struct RefData {
+pub(crate) struct RefData {
     pub(crate) buntest_weak: BunTestPtrWeak,
     pub(crate) phase: RefDataValue,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
-// `*RefData` crosses FFI (asPromisePtr), so this MUST be `bun_ptr::IntrusiveRc` (= `RefPtr`), never `Rc`.
-pub type RefDataPtr = bun_ptr::IntrusiveRc<RefData>;
-impl RefData {
-    /// `RefCounted` destructor — last ref dropped.
-    ///
-    /// # Safety
-    /// `this` must be the sole owner of a `RefPtr::new`-boxed allocation.
-    unsafe fn destroy(this: *mut RefData) {
+impl Drop for RefData {
+    fn drop(&mut self) {
         let _g = group_begin!();
-        // SAFETY: caller contract — refcount hit zero.
-        unsafe {
-            bun_core::scoped_log!(bun_test_group, "refData: {}", (*this).phase);
-            // buntest_weak.deinit() → Weak::drop
-            drop(bun_core::heap::take(this));
-        }
+        bun_core::scoped_log!(bun_test_group, "refData: {}", self.phase);
     }
+}
+impl RefData {
     pub(crate) fn has_one_ref(&self) -> bool {
         self.ref_count.has_one_ref()
     }
@@ -1537,7 +1496,7 @@ impl RefData {
     }
 }
 
-pub struct RunTestsTask {
+pub(crate) struct RunTestsTask {
     pub(crate) weak: BunTestPtrWeak,
     // `GlobalRef` (not a borrow): the JSGlobalObject is stored across the task
     // tick, and the VM keeps it alive until shutdown.
@@ -1545,18 +1504,16 @@ pub struct RunTestsTask {
     pub(crate) phase: RefDataValue,
 }
 impl RunTestsTask {
-    /// `ManagedTask` callback ABI: `fn(*mut T) -> JsResult<()>`. The pointer
-    /// was `heap::alloc`'d in `run_next_tick`; reconstitute and drop here.
-    ///
-    /// `this` must be the pointer produced by `heap::into_raw` in
-    /// `run_next_tick`; ownership is consumed (the box is dropped on return).
-    pub fn call(this: NonNull<RunTestsTask>) -> JsResult<()> {
-        // SAFETY: `this` was produced by `heap::into_raw` in `run_next_tick` and
-        // is invoked exactly once by `ManagedTask`; ownership is reclaimed here.
-        let this = unsafe { bun_core::heap::take(this.as_ptr()) };
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn call(self: Box<Self>) -> JsResult<()> {
+        let this = self;
         // Box drops at end of scope; the Weak drops with it.
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
         if let Err(e) = BunTest::run(&strong, &this.global_this) {
+            // A termination is the tick's to fold, not a test failure.
+            if this.global_this.has_pending_termination_exception() {
+                return Err(e);
+            }
             // SAFETY: `&mut` derived via `UnsafeCell` after `run` returned; sole
             // borrow at this point.
             let bt = strong.get();
@@ -1568,6 +1525,18 @@ impl RunTestsTask {
             );
         }
         Ok(())
+    }
+}
+
+impl bun_event_loop::Taskable for RunTestsTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::RunTestsTask;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed in `run_next_tick`.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -1583,10 +1552,10 @@ pub enum HandleUncaughtExceptionResult {
     ShowUnhandledErrorInDescribe,
 }
 
-pub type ResultQueue = LinearFifo<RefDataValue, bun_collections::linear_fifo::DynamicBuffer<RefDataValue>>;
+pub(crate) type ResultQueue = LinearFifo<RefDataValue, bun_collections::linear_fifo::DynamicBuffer<RefDataValue>>;
 // bun.LinearFifo(.Dynamic) → second generic is the buffer strategy.
 
-pub enum StepResult {
+pub(crate) enum StepResult {
     Waiting { timeout: Timespec },
     Complete,
 }
@@ -1602,10 +1571,10 @@ enum Advance {
     Exit,
 }
 
-pub use super::collection::Collection;
+pub(crate) use super::collection::Collection;
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum ConcurrentMode {
+pub(crate) enum ConcurrentMode {
     #[default]
     Inherit,
     No,
@@ -1613,7 +1582,7 @@ pub enum ConcurrentMode {
 }
 
 #[derive(Copy, Clone, Default)]
-pub struct BaseScopeCfg {
+pub(crate) struct BaseScopeCfg {
     pub(crate) self_concurrent: ConcurrentMode,
     pub(crate) self_mode: ScopeMode,
     pub(crate) self_only: bool,
@@ -1647,7 +1616,7 @@ impl BaseScopeCfg {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum ScopeMode {
+pub(crate) enum ScopeMode {
     #[default]
     Normal,
     Skip,
@@ -1670,7 +1639,7 @@ impl ScopeMode {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum Only {
+pub(crate) enum Only {
     No,
     Contains,
     Yes,
@@ -1687,7 +1656,7 @@ impl Only {
     }
 }
 
-pub struct BaseScope {
+pub(crate) struct BaseScope {
     pub(crate) parent: Option<*mut DescribeScope>,
     pub name: Option<Box<[u8]>>,
     pub(crate) concurrent: bool,
@@ -1747,7 +1716,7 @@ impl BaseScope {
 }
 // deinit: only frees `name` → Box<[u8]> drops automatically; no explicit Drop needed.
 
-pub struct DescribeScope {
+pub(crate) struct DescribeScope {
     pub(crate) base: BaseScope,
     pub(crate) entries: Vec<TestScheduleEntry>,
     // The `Box` is load-bearing: `Order.rs` derives `*mut ExecutionEntry` from
@@ -1766,6 +1735,19 @@ pub struct DescribeScope {
     pub(crate) failed: bool,
 }
 
+impl Drop for DescribeScope {
+    /// Drops nested scopes iteratively. The default drop recurses once per nested `describe()`.
+    fn drop(&mut self) {
+        let mut pending: Vec<TestScheduleEntry> = core::mem::take(&mut self.entries);
+        while let Some(entry) = pending.pop() {
+            if let TestScheduleEntry::Describe(mut scope) = entry {
+                pending.append(&mut scope.entries);
+                // `scope.entries` is empty, so dropping `scope` here doesn't recurse.
+            }
+        }
+    }
+}
+
 impl DescribeScope {
     pub(crate) fn create(base: BaseScope) -> Box<DescribeScope> {
         Box::new(DescribeScope {
@@ -1778,7 +1760,6 @@ impl DescribeScope {
             failed: false,
         })
     }
-    // destroy → Drop on Box<DescribeScope>; all fields own their contents.
 
     fn mark_contains_only(&mut self) {
         let mut target: Option<*mut DescribeScope> = Some(std::ptr::from_mut(self));
@@ -1867,7 +1848,7 @@ impl DescribeScope {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum HookTag {
+pub(crate) enum HookTag {
     BeforeAll,
     BeforeEach,
     AfterEach,
@@ -1875,7 +1856,7 @@ pub enum HookTag {
 }
 
 #[derive(Copy, Clone, Default)]
-pub struct ExecutionEntryCfg {
+pub(crate) struct ExecutionEntryCfg {
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
     pub(crate) has_done_parameter: bool,
@@ -1886,13 +1867,13 @@ pub struct ExecutionEntryCfg {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum AddedInPhase {
+pub(crate) enum AddedInPhase {
     Preload,
     Collection,
     Execution,
 }
 
-pub struct ExecutionEntry {
+pub(crate) struct ExecutionEntry {
     pub(crate) base: BaseScope,
     pub callback: Option<Strong>,
     /// 0 = unlimited timeout
@@ -1977,7 +1958,7 @@ impl ExecutionEntry {
 }
 // destroy → Drop: callback (Strong) and base.name (Box) drop automatically.
 
-pub enum TestScheduleEntry {
+pub(crate) enum TestScheduleEntry {
     Describe(Box<DescribeScope>),
     TestCallback(Box<ExecutionEntry>),
 }
@@ -1993,8 +1974,8 @@ impl TestScheduleEntry {
 
 // Module aliases so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
 // resolve as module paths without per-reference rewrites.
-pub use super::execution as Execution;
-pub use super::debug;
-pub use super::scope_functions as ScopeFunctions;
-pub use super::order as Order;
+pub(crate) use super::execution as Execution;
+pub(crate) use super::debug;
+pub(crate) use super::scope_functions as ScopeFunctions;
+pub(crate) use super::order as Order;
 

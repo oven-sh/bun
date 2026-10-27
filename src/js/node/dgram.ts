@@ -146,25 +146,25 @@ const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
 // Unlike the codes above, ECANCELED's number differs across the POSIX
 // platforms (Linux 125, Darwin 89, FreeBSD 85) and is a libuv-synthetic
 // -4081 on Windows, so it has to come from native.
-const UV_ECANCELED = $newRustFunction("node_util_binding.rs", "ecanceledErrorCode", 0)();
+const UV_ECANCELED = $bindgen("node_util_binding.bind.ts", "ecanceledErrorCode");
 
 // Node's --test-udp-no-try-send makes udp_wrap skip uv_udp_try_send so every
 // request is counted until its callback runs. Only Node's own tests use it.
 const kNoTrySend = Array.prototype.indexOf.$call(process.execArgv, "--test-udp-no-try-send") !== -1;
 
-const getFdFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsGetFd", 0);
+const getFdFn = $bindgen("udp_socket.bind.ts", "getFd");
 // Read-only query of the process-wide DGRAM_FDS registry the native layer
 // already maintains, so bind({ fd }) can synchronously report EEXIST like
 // libuv's uv_udp_open() without keeping a second per-VM copy of the same fact.
-const isFdAdoptedFn = $newRustFunction("udp_socket.rs", "jsDgramIsFdAdopted", 1);
+const isFdAdoptedFn = $bindgen("udp_socket.bind.ts", "dgramIsFdAdopted");
 // Fresh getsockname on a live socket's descriptor: the cached `.address`
 // getter can be stale for an adopted-but-unbound fd once the kernel
 // auto-binds on first sendto(); Node calls getsockname on every address().
-const getSockNameFn = $newRustFunction("udp_socket.rs", "jsDgramGetSockNameFd", 1);
+const getSockNameFn = $bindgen("udp_socket.bind.ts", "dgramGetSockNameFd");
 
 let BlockList;
 function isBlockList(value) {
-  BlockList ??= $rust("node_net_binding.rs", "BlockList");
+  BlockList ??= $bindgen("BlockList.bind.ts", "BlockList");
   return BlockList.isBlockList(value);
 }
 
@@ -188,6 +188,36 @@ function lookup6(lookup, address, callback) {
 
 let dns;
 
+interface SendRequest {
+  oncomplete: ((err: unknown, sent: number) => void) | undefined;
+  address: string | undefined;
+  port: number | undefined;
+  callback: ((err: Error | null, sent?: number) => void) | undefined;
+}
+
+interface QueuedSend {
+  data: Buffer;
+  length: number;
+  port: number | undefined;
+  address: string | undefined;
+  req: SendRequest;
+}
+
+interface UDPHandle {
+  socket: import("bun").udp.Socket<"buffer"> | undefined;
+  queueSize: number;
+  queueCount: number;
+  sendQueue: (QueuedSend | undefined)[] | undefined;
+  sendQueueHead: number;
+  send: typeof handleSend;
+  drain: typeof handleDrain;
+  getSendQueueSize: typeof handleGetSendQueueSize;
+  getSendQueueCount: typeof handleGetSendQueueCount;
+  readonly fd: number;
+  lookup?: (address: string | undefined, callback: (err: Error | null, ip: string) => void) => void;
+  onmessage?: typeof onMessage;
+}
+
 function newHandle(type, lookup) {
   if (lookup === undefined) {
     if (dns === undefined) {
@@ -199,7 +229,7 @@ function newHandle(type, lookup) {
     validateFunction(lookup, "lookup");
   }
 
-  const handle = {
+  const handle: UDPHandle = {
     socket: undefined,
     // Bytes/requests the kernel has not yet accepted — the uv_udp_send fallback
     // queue. A synchronously accepted send (uv_udp_try_send fast path) never
@@ -215,7 +245,7 @@ function newHandle(type, lookup) {
     getSendQueueSize: handleGetSendQueueSize,
     getSendQueueCount: handleGetSendQueueCount,
     get fd() {
-      return this.socket ? getFdFn.$call(this.socket) : -1;
+      return this.socket ? getFdFn(this.socket) : -1;
     },
   };
   if (type === "udp4") {
@@ -393,7 +423,7 @@ function onMessage(nread, handle, buf, rinfo) {
 
 let udpSocketChannel;
 
-function Socket(type, listener) {
+function Socket(type, listener?) {
   EventEmitter.$call(this);
   let lookup;
   let recvBufferSize;
@@ -477,7 +507,7 @@ function createSocket(type, listener) {
   return new Socket(type, listener);
 }
 
-const bufferSizeFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsBufferSize", 2);
+const bufferSizeFn = $bindgen("udp_socket.bind.ts", "bufferSize");
 
 function bufferSize(self, size, buffer) {
   if (size >>> 0 !== size) throw $ERR_SOCKET_BAD_BUFFER_SIZE();
@@ -508,8 +538,8 @@ function bufferSize(self, size, buffer) {
   }
 
   try {
-    return bufferSizeFn.$call(socket, size, buffer === RECV_BUFFER);
-  } catch (err) {
+    return bufferSizeFn(socket, size, buffer === RECV_BUFFER);
+  } catch (err: any) {
     const known = kUvErrors[err.code];
     throw new ERR_SOCKET_BUFFER_SIZE({
       // err.errno is only libuv-semantic on POSIX; on Windows it is Bun's
@@ -553,11 +583,6 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
   if (port !== null && typeof port === "object" && typeof port.recvStart === "function") {
     throwNotImplemented("Socket.prototype.bind(handle)");
-    /*
-    replaceHandle(this, port);
-    startListening(this);
-    return this;
-    */
   }
 
   // Open an existing fd instead of creating a new one.
@@ -684,26 +709,34 @@ function bindServerHandle(self, options, errCb) {
     const closeWrap = handle.close;
     handle.close = function () {
       handle.close = closeWrap;
-      if (state.handle) {
+      if (state.sharedHandle === handle) {
         // Detach first so Socket#close() doesn't re-enter this handle and
         // invoke the original close twice.
         state.sharedHandle = undefined;
-        self.close();
+        if (state.handle) self.close();
       }
       return closeWrap.$apply(this, arguments);
     };
     state.sharedHandle = handle;
-    startBunSocket(self, state, { fd: handle.fd });
+    // Set before the async adoption so a close() racing it cannot free the fd; releaseSharedHandle() undoes it on failure.
+    handle.adopted = true;
+    startBunSocket(self, state, { fd: handle.sharedFd ?? handle.fd }, handle);
   });
+}
+
+function releaseSharedHandle(state, handle) {
+  if (state.sharedHandle === handle) state.sharedHandle = undefined;
+  handle.adopted = false;
+  handle.close();
 }
 
 // Creates the underlying Bun.udpSocket for `self` and completes the bind:
 // either from a resolved hostname/port or by adopting an existing descriptor
 // (`{ fd }`). Mirrors what Node's startListening() makes observable before
 // 'listening' fires.
-function startBunSocket(self, state, createOptions) {
+function startBunSocket(self, state, createOptions, sharedHandle?) {
   try {
-    Bun.udpSocket({
+    const udpOptions: any = {
       ...createOptions,
       socket: {
         data: (_socket, data, port, address, flags) => {
@@ -741,7 +774,10 @@ function startBunSocket(self, state, createOptions) {
           self.emit("error", error);
         },
       },
-    }).$then(
+    };
+    // Private name: a cluster-shared descriptor is read one datagram at a time so workers share the load.
+    if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
+    Bun.udpSocket(udpOptions).$then(
       socket => {
         if (!state.handle) {
           // Closed while the bind was in flight.
@@ -770,11 +806,13 @@ function startBunSocket(self, state, createOptions) {
       },
       err => {
         state.bindState = BIND_STATE_UNBOUND;
+        if (sharedHandle) releaseSharedHandle(state, sharedHandle);
         self.emit("error", err);
       },
     );
   } catch (err) {
     state.bindState = BIND_STATE_UNBOUND;
+    if (sharedHandle) releaseSharedHandle(state, sharedHandle);
     self.emit("error", err);
   }
 }
@@ -816,7 +854,7 @@ function _connect(port, address, callback) {
   state.handle.lookup(address, afterDns);
 }
 
-const connectFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsConnect", 2);
+const connectFn = $bindgen("udp_socket.bind.ts", "connect");
 
 function doConnect(ex, self, ip, address, port, callback) {
   const state = self[kStateSymbol];
@@ -828,7 +866,7 @@ function doConnect(ex, self, ip, address, port, callback) {
 
   if (!ex) {
     try {
-      connectFn.$call(state.handle.socket, ip, port);
+      connectFn(state.handle.socket, ip, port);
     } catch (e) {
       ex = e;
     }
@@ -850,13 +888,13 @@ function doConnect(ex, self, ip, address, port, callback) {
   process.nextTick(() => self.emit("connect"));
 }
 
-const disconnectFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsDisconnect", 0);
+const disconnectFn = $bindgen("udp_socket.bind.ts", "disconnect");
 
 Socket.prototype.disconnect = function () {
   const state = this[kStateSymbol];
   if (state.connectState !== CONNECT_STATE_CONNECTED) throw $ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
-  disconnectFn.$call(state.handle.socket);
+  disconnectFn(state.handle.socket);
   state.connectState = CONNECT_STATE_DISCONNECTED;
 };
 
@@ -1050,7 +1088,7 @@ function doSend(ex, self, ip, list, address, port, callback) {
 
   // The queued (async) path invokes req.oncomplete once the kernel accepts
   // the write; the synchronous path uses the numeric return.
-  const req = { oncomplete: undefined, address, port, callback };
+  const req: SendRequest = { oncomplete: undefined, address, port, callback };
   let err;
   if (port) err = state.handle.send(req, list, list.length, port, ip, !!callback);
   else err = state.handle.send(req, list, list.length, !!callback);
@@ -1131,11 +1169,12 @@ Socket.prototype.close = function (callback) {
     handle.sendQueueHead = 0;
     for (let i = head; i < queue.length; i++) completeQueuedSend(handle, queue[i], UV_ECANCELED);
   }
-  if (state.sharedHandle) {
+  const sharedHandle = state.sharedHandle;
+  if (sharedHandle) {
     // Tells the cluster primary this worker no longer uses the shared
     // descriptor (the descriptor itself was owned and closed by the socket).
-    state.sharedHandle.close();
     state.sharedHandle = undefined;
+    sharedHandle.close();
   }
   defaultTriggerAsyncIdScope(this[async_id_symbol], process.nextTick, socketCloseNT, this);
 
@@ -1146,17 +1185,19 @@ Socket.prototype[SymbolAsyncDispose] = async function () {
   if (!this[kStateSymbol].handle) {
     return;
   }
-  const { promise, resolve, reject } = $newPromiseCapability(Promise);
-  this.close(err => {
-    if (err) {
-      reject(err);
-    } else {
-      resolve();
-    }
-  });
+  const promise = $newPromise();
+  this.close(FunctionPrototypeBind.$call(onAsyncDisposeClosed, undefined, promise));
 
   return promise;
 };
+
+function onAsyncDisposeClosed(promise, err) {
+  if (err) {
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
+  } else {
+    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+  }
+}
 
 function socketCloseNT(self) {
   self.emit("close");
@@ -1176,7 +1217,7 @@ Socket.prototype.address = function () {
   }
   // Fresh getsockname each call, like Node — the cached `.address` can be
   // stale if an adopted-but-unbound fd auto-bound on the first sendto().
-  return getSockNameFn(getFdFn.$call(socket));
+  return getSockNameFn(getFdFn(socket));
 };
 
 Socket.prototype.remoteAddress = function () {
@@ -1211,7 +1252,7 @@ Socket.prototype.setTTL = function (ttl) {
   }
   try {
     handle.socket.setTTL(ttl);
-  } catch (err) {
+  } catch (err: any) {
     // Reuse the native error's platform-correct code, reported the way Node's
     // ErrnoException would ("setTTL EINVAL").
     err.syscall = "setTTL";
@@ -1230,7 +1271,7 @@ Socket.prototype.setMulticastTTL = function (ttl) {
   }
   try {
     handle.socket.setMulticastTTL(ttl);
-  } catch (err) {
+  } catch (err: any) {
     err.syscall = "setMulticastTTL";
     err.message = `setMulticastTTL ${err.code}`;
     throw err;

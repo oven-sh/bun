@@ -39,8 +39,10 @@ public:
     static Ref<EventEmitter> create(ScriptExecutionContext&);
     WEBCORE_EXPORT ~EventEmitter() = default;
 
-    using RefCounted::deref;
-    using RefCounted::ref;
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(CanMakeWeakPtr<EventEmitter>);
 
     ScriptExecutionContext* scriptExecutionContext() const { return ContextDestructionObserver::scriptExecutionContext(); };
 
@@ -50,7 +52,7 @@ public:
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
     WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
 
-    WEBCORE_EXPORT bool addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
+    WEBCORE_EXPORT void addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
@@ -70,9 +72,6 @@ public:
     unsigned getMaxListeners() const { return m_maxListeners; };
 
     void setMaxListeners(unsigned count);
-
-    Vector<Identifier> eventTypes();
-    const SimpleEventListenerVector& eventListeners(const Identifier& eventType);
 
     bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
@@ -103,6 +102,7 @@ private:
     {
     }
 
+    bool removeListener(const Identifier& eventType, SimpleRegisteredEventListener&);
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
 
     EventEmitterData m_eventTargetData;

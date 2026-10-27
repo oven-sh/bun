@@ -21,11 +21,11 @@ describe("Bun.markdown.react", () => {
 
   /** Helper: get the children array from the Fragment returned by react() */
   function children(md: string, components?: any, opts?: any): any[] {
-    return Markdown.react(md, components, opts).props.children;
+    return (Markdown.react(md, components, opts).props as { children: any[] }).children;
   }
 
   test("returns a Fragment element", () => {
-    const result = Markdown.react("# Hello\n");
+    const result: any = Markdown.react("# Hello\n");
     expect(result.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(result.type).toBe(REACT_FRAGMENT_SYMBOL);
     expect(result.key).toBeNull();
@@ -176,13 +176,13 @@ describe("Bun.markdown.react", () => {
   });
 
   test("default $$typeof is react.transitional.element", () => {
-    const result = Markdown.react("# Hi\n");
+    const result: any = Markdown.react("# Hi\n");
     expect(result.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(result.props.children[0].$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
   });
 
   test("reactVersion 18 uses react.element symbol on all elements", () => {
-    const result = Markdown.react("Hello **world**\n", undefined, { reactVersion: 18 });
+    const result: any = Markdown.react("Hello **world**\n", undefined, { reactVersion: 18 });
     expect(result.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     const p = result.props.children[0];
     expect(p.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
@@ -216,6 +216,84 @@ This is **bold** and *italic*.
     for (const el of els) {
       expect(el.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     }
+  });
+
+  test("every cached tag name resolves to its own tag", () => {
+    // Element types come from a per-global table of cached tag strings
+    // (BunMarkdownTagStrings), so one document exercising every tag the
+    // parser emits checks that each slot holds the right name.
+    const md = [
+      "# H1",
+      "## H2",
+      "### H3",
+      "#### H4",
+      "##### H5",
+      "###### H6",
+      "",
+      "Para *em* **strong** ~~del~~ `code` [a](x) ![i](y.png)  ",
+      "after br",
+      "",
+      "> quote",
+      "",
+      "- ul item",
+      "",
+      "1. ol item",
+      "",
+      "```",
+      "pre",
+      "```",
+      "",
+      "---",
+      "",
+      "<div>raw</div>",
+      "",
+      "| A |",
+      "|---|",
+      "| 1 |",
+      "",
+    ].join("\n");
+
+    const types: string[] = [];
+    function walk(node: any) {
+      if (typeof node !== "object" || node === null) return;
+      types.push(node.type);
+      const kids = node.props.children;
+      if (Array.isArray(kids)) kids.forEach(walk);
+    }
+    children(md).forEach(walk);
+
+    expect(types).toEqual([
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "h5",
+      "h6",
+      "p",
+      "em",
+      "strong",
+      "del",
+      "code",
+      "a",
+      "img",
+      "br",
+      "blockquote",
+      "p",
+      "ul",
+      "li",
+      "ol",
+      "li",
+      "pre",
+      "hr",
+      "html",
+      "table",
+      "thead",
+      "tr",
+      "th",
+      "tbody",
+      "tr",
+      "td",
+    ]);
   });
 
   test("blockquote contains nested React elements", () => {
@@ -438,7 +516,7 @@ Hello **world**, this is *important*.
 
   test("reactVersion 18 produces correct structure", () => {
     const result = Markdown.react("# Hello\n", undefined, { reactVersion: 18 });
-    const els = result.props.children;
+    const els = (result.props as { children: any[] }).children;
     expect(els[0].type).toBe("h1");
     expect(els[0].props.children).toEqual(["Hello"]);
   });
@@ -456,7 +534,7 @@ describe("Bun.markdown.react component overrides", () => {
 
   /** Helper: get fragment children */
   function children(md: string, components?: any, opts?: any): any[] {
-    return Markdown.react(md, components, opts).props.children;
+    return (Markdown.react(md, components, opts).props as { children: any[] }).children;
   }
 
   test("function component override replaces type", () => {

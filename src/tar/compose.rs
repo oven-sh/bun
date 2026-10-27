@@ -49,49 +49,27 @@ fn decode(bytes: &[u8]) -> Result<Option<Vec<u32>>> {
     let mut out = Vec::new();
     out.try_reserve(bytes.len())?;
     let mut rest = bytes;
-    let continuation = |b: u8| (b & 0xc0 == 0x80).then_some(u32::from(b & 0x3f));
-    let three = |a: u8, b: u8, c: u8| {
-        let value = (u32::from(a & 0x0f) << 12) | (continuation(b)? << 6) | continuation(c)?;
-        (value >= 0x800).then_some(value)
-    };
-    while let Some((&first, tail)) = rest.split_first() {
-        let (value, tail) = match (first, tail) {
-            (0..=0x7f, tail) => (u32::from(first), tail),
-            (0xc2..=0xdf, &[b, ref tail @ ..]) => {
-                let Some(b) = continuation(b) else {
-                    return Ok(None);
-                };
-                ((u32::from(first & 0x1f) << 6) | b, tail)
+    while let Some(chunk) = rest.utf8_chunks().next() {
+        out.extend(chunk.valid().chars().map(u32::from));
+        rest = match rest.get(chunk.valid().len()..) {
+            None | Some([]) => break,
+            Some(
+                &[
+                    0xed,
+                    a @ 0xa0..=0xaf,
+                    b @ 0x80..=0xbf,
+                    0xed,
+                    c @ 0xb0..=0xbf,
+                    d @ 0x80..=0xbf,
+                    ref tail @ ..,
+                ],
+            ) => {
+                let [a, b, c, d] = [a & 0x0f, b & 0x3f, c & 0x0f, d & 0x3f].map(u32::from);
+                out.push(0x10000 + ((a << 16) | (b << 10) | (c << 6) | d));
+                tail
             }
-            (0xe0..=0xef, &[b, c, ref tail @ ..]) => match three(first, b, c) {
-                Some(high @ 0xd800..=0xdbff) => {
-                    let &[d @ 0xe0..=0xef, e, f, ref tail @ ..] = tail else {
-                        return Ok(None);
-                    };
-                    let Some(low @ 0xdc00..=0xdfff) = three(d, e, f) else {
-                        return Ok(None);
-                    };
-                    (0x10000 + ((high - 0xd800) << 10) + (low - 0xdc00), tail)
-                }
-                Some(0xdc00..=0xdfff) | None => return Ok(None),
-                Some(value) => (value, tail),
-            },
-            (0xf0..=0xf4, &[b, c, d, ref tail @ ..]) => {
-                let (Some(b), Some(c), Some(d)) =
-                    (continuation(b), continuation(c), continuation(d))
-                else {
-                    return Ok(None);
-                };
-                let value = (u32::from(first & 0x07) << 18) | (b << 12) | (c << 6) | d;
-                if !(0x10000..=0x10ffff).contains(&value) {
-                    return Ok(None);
-                }
-                (value, tail)
-            }
-            _ => return Ok(None),
+            Some(_) => return Ok(None),
         };
-        out.push(value);
-        rest = tail;
     }
     Ok(Some(out))
 }

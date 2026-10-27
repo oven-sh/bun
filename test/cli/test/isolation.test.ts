@@ -1650,18 +1650,26 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
   // a parked pool (2 threads, both in read() of a FIFO) until a later file lets it run.
   test.skipIf(isWindows).each([
     // The finished file's realm is collected first. The conversion then had no realm: a crash.
+    // The realm of the file before the running one, or of the two before it, can still be alive
+    // (the plateau that the next describe block allows), so two files that do nothing come between.
     {
       name: "after its realm was collected",
       payload: `{"kty":"oct","k":"${Buffer.alloc(32).toString("base64url")}"}`,
-      collect: true,
+      idle: ["c-idle.test.ts", "d-idle.test.ts"],
     },
     // The realm is still there. The conversion ran in it, and its TypeError was the running file's.
-    { name: "with a payload that is not a JWK", payload: "123", collect: false },
-  ])(
-    "a finished file's unwrapKey that comes back $name does nothing in the next file",
-    async ({ payload, collect }) => {
-      using dir = tempDir("isolate-late-unwrap", {
-        "a-park.test.ts": `
+    { name: "with a payload that is not a JWK", payload: "123", idle: [] },
+  ])("a finished file's unwrapKey that comes back $name does nothing in a later file", async ({ payload, idle }) => {
+    const doesNothing = `
+        import { test, expect } from "bun:test";
+
+        test("does nothing", async () => {
+          await null;
+          expect().pass();
+        });
+      `;
+    using dir = tempDir("isolate-late-unwrap", {
+      "a-park.test.ts": `
         import { test, expect } from "bun:test";
         import fs from "node:fs";
 
@@ -1669,10 +1677,12 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
           const writers = [];
           for (const name of ["fifo1", "fifo2"]) {
             const fifo = import.meta.dir + "/" + name;
-            fs.promises.readFile(fifo).catch(() => {});
+            let failed;
+            fs.promises.readFile(fifo).catch(error => (failed = error));
             // The write end opens once a pool thread is in open() of the read end. That thread then
-            // waits in read() until c-release.test.ts closes this descriptor.
+            // waits in read() until e-release.test.ts closes this descriptor.
             for (;;) {
+              if (failed) throw failed;
               try {
                 writers.push(fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK));
                 break;
@@ -1686,7 +1696,7 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
           expect(writers).toHaveLength(2);
         });
       `,
-        "b-unwrap.test.ts": `
+      "b-unwrap.test.ts": `
         import { test, expect } from "bun:test";
         import { createCipheriv } from "node:crypto";
 
@@ -1695,24 +1705,26 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
           const iv = new Uint8Array(12);
           // Nothing else here needs the pool: importKey settles in the call, node:crypto wraps synchronously.
           const kek = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["unwrapKey"]);
+          // The only key of the run. It lives as long as this realm, which e-release.test.ts watches.
+          globalThis.kek = kek;
           const cipher = createCipheriv("aes-256-gcm", raw, iv);
           const wrapped = Buffer.concat([cipher.update(${JSON.stringify(payload)}), cipher.final(), cipher.getAuthTag()]);
           crypto.subtle.unwrapKey("jwk", wrapped, kek, { name: "AES-GCM", iv }, "AES-GCM", true, ["encrypt"]).catch(() => {});
           expect().pass();
         });
       `,
-        "c-release.test.ts": `
+      ...Object.fromEntries(idle.map(file => [file, doesNothing])),
+      "e-release.test.ts": `
         import { test, expect } from "bun:test";
         import { heapStats } from "bun:jsc";
         import fs from "node:fs";
 
         test("lets the decrypt of b-unwrap.test.ts run", async () => {
           try {
-            if (${collect}) {
-              // Left when that file's realm is gone: this file's global and a-park.test.ts's (its reads are in flight).
-              const globals = () => (Bun.gc(true), heapStats().objectTypeCounts.GlobalObject);
-              for (let turns = 0; turns < 100 && globals() > 2; turns++) await new Promise(resolve => setImmediate(resolve));
-              expect(globals()).toBe(2);
+            if (${idle.length > 0}) {
+              const keys = () => (Bun.gc(true), heapStats().objectTypeCounts.CryptoKey ?? 0);
+              for (let turns = 0; turns < 100 && keys() > 0; turns++) await new Promise(resolve => setImmediate(resolve));
+              expect(keys()).toBe(0);
             }
           } finally {
             for (const fd of JSON.parse(fs.readFileSync(import.meta.dir + "/writers.json", "utf8"))) fs.closeSync(fd);
@@ -1722,20 +1734,20 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
           expect().pass();
         });
       `,
-      });
-      for (const name of ["fifo1", "fifo2"]) mkfifo(join(String(dir), name));
-      const { stderr, exitCode } = await runTests(
-        String(dir),
-        ["--isolate"],
-        ["./a-park.test.ts", "./b-unwrap.test.ts", "./c-release.test.ts"],
-        { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
-      );
-      expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
-      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
-      if (exitCode !== 0) expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-    },
-  );
+    });
+    for (const name of ["fifo1", "fifo2"]) mkfifo(join(String(dir), name));
+    const files = ["a-park.test.ts", "b-unwrap.test.ts", ...idle, "e-release.test.ts"];
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      files.map(file => "./" + file),
+      { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain(`${files.length} pass`);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Each of these leaked handles used to pin its test file's ENTIRE global

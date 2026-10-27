@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSCJSValue.h>
@@ -29,6 +30,16 @@ template<typename T>
 ALWAYS_INLINE auto toExtern(T& value)
 {
     return ExternTraits<T>::convertToExtern(WTF::move(value));
+}
+
+// `value` as what Rust is passed a pointer to, where `toExtern` is a std::bit_cast. A copy would load in one piece
+// what the conversion has just stored in several, which waits for the stores to retire.
+template<typename T>
+ALWAYS_INLINE auto* asExtern(T& value)
+{
+    using ExternType = typename ExternTraits<T>::ExternType;
+    static_assert(std::is_trivially_copyable_v<T> && sizeof(T) == sizeof(ExternType) && alignof(T) == alignof(ExternType));
+    return reinterpret_cast<ExternType*>(&value);
 }
 
 template<typename T>

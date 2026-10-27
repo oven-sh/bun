@@ -892,6 +892,7 @@ function cppCallBody(
       ? `${externType(type)} { ${toExtern(`converted${i}`)}, JSC::JSValue::encode(argument${i}.value()) }`
       : toExtern(`converted${i}`);
     if (!byPointer[i]) return extern;
+    if (type.cppCanBitCastToExtern && !type.passesValue) return `Bun::Bindgen::asExtern(converted${i})`;
     lines.push(`auto extern${i} = ${extern};`);
     return `&extern${i}`;
   });

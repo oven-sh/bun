@@ -6,10 +6,8 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // `bun_core::WTFStringImpl` is the *pointer* type (= `*mut WTFStringImplStruct`).
 use bun_core::WTFStringImpl;
-use bun_jsc::StringJsc as _; // extension trait providing `.to_js()` on `bun_core::String`
 
 pub(crate) type Hash = u32;
 
@@ -17,7 +15,11 @@ pub(crate) type Hash = u32;
 // `bun.IdentityContext` is an identity hasher (key is already a hash). The `80`
 // max-load-percentage has no direct knob on the Rust side.
 pub type Map =
-    bun_collections::HashMap<Hash, *mut RefString, bun_collections::IdentityContext<Hash>>;
+    bun_collections::HashMap<Hash, NonNull<RefString>, bun_collections::IdentityContext<Hash>>;
+
+/// Error for bytes that aren't interned yet and are longer than [`bun_core::String::max_length`].
+#[derive(Debug)]
+pub struct StringTooLong;
 
 pub type Callback = unsafe fn(ctx: *mut c_void, str: *mut RefString);
 
@@ -36,13 +38,6 @@ pub struct RefString {
 }
 
 impl RefString {
-    pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // Wrap the raw
-        // `WTFStringImpl` pointer without bumping the refcount (`String` has
-        // no `Drop`, so this is adopt-then-forget).
-        bun_core::String::adopt_wtf_impl(self.impl_).to_js(global)
-    }
-
     pub(crate) fn compute_hash(input: &[u8]) -> u32 {
         bun_hash::XxHash32::hash(0, input)
     }
@@ -76,7 +71,7 @@ impl RefString {
     ///
     /// Frees the byte
     /// buffer and then the `RefString` itself (self-destroying). Because
-    /// `RefString` is heap-allocated and held as `*mut RefString` (see `Map`),
+    /// `RefString` is heap-allocated and held as `NonNull<RefString>` (see `Map`),
     /// this stays an explicit raw-pointer destroy rather than `impl Drop`.
     ///
     /// SAFETY: `this` must be the unique live reference to a `RefString`

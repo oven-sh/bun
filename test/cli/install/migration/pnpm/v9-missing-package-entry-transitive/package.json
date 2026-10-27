@@ -1,0 +1,7 @@
+{
+  "name": "v9-missing-package-entry-transitive",
+  "version": "1.0.0",
+  "dependencies": {
+    "pkg-a": "git+ssh://git@example.com/org/pkg-a.git#v1"
+  }
+}

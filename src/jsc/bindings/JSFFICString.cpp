@@ -3,6 +3,7 @@
 #include "JSFFICString.h"
 
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <cmath>
 
@@ -69,10 +70,7 @@ JSC_DEFINE_HOST_FUNCTION(constructFFICString, (JSGlobalObject * globalObject, Ca
     JSValue lengthArgument = isSafeIntegerValue(byteLength) ? byteLength : jsUndefined();
     JSValue transcoded = JSValue::decode(Bun__FFI__CString__transcode(globalObject, JSValue::encode(ptrValue), JSValue::encode(offsetArgument), JSValue::encode(lengthArgument)));
     RETURN_IF_EXCEPTION(scope, {});
-    if (transcoded.isString()) [[likely]]
-        return JSValue::encode(transcoded);
-    throwException(globalObject, scope, transcoded);
-    return {};
+    return JSValue::encode(transcoded);
 }
 
 }

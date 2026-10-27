@@ -22,6 +22,10 @@ pub(crate) const LOCAL_INITIAL_WINDOW_SIZE: u32 = 1 << 24;
 /// cap is checked locally regardless of what the server honors.
 pub(crate) const LOCAL_MAX_HEADER_LIST_SIZE: u32 = 256 * 1024;
 
+/// CONTINUATION frames allowed per header block. Matches nghttp2's
+/// `NGHTTP2_DEFAULT_MAX_CONTINUATIONS` (CVE-2024-28182).
+pub(crate) const LOCAL_MAX_CONTINUATIONS: u8 = 8;
+
 /// `write_buffer` high-water mark. `writeDataWindowed` stops queueing once the
 /// userland send buffer crosses this even if flow-control window remains, so a
 /// large grant doesn't duplicate the whole body in memory before the first
@@ -35,7 +39,7 @@ pub(crate) const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
 
 /// Live-object counters for the leak test in fetch-http2-leak.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
-/// via TestingAPIs.liveCounts so they must be atomic.
+/// via `bun_http_jsc`'s `h2_live_counts` so they must be atomic.
 // Lower-case names kept so cross-crate readers (`bun_http_jsc`) and the gated
 // submodules share one identifier; SCREAMING_SNAKE alias preserved for the
 // existing internal reference.
@@ -57,6 +61,7 @@ pub mod pending_connect;
 pub mod stream;
 
 pub use client_session::ClientSession;
+pub(crate) use client_session::SessionPtr;
 pub use pending_connect::PendingConnect;
 pub use stream::Stream;
 

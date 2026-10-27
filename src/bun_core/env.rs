@@ -3,10 +3,9 @@ pub use crate::build_options;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum BuildTarget {
+enum BuildTarget {
     Native,
     Wasm,
-    Wasi,
 }
 
 const BUILD_TARGET: BuildTarget = {
@@ -19,9 +18,8 @@ const BUILD_TARGET: BuildTarget = {
 
 const IS_WASM: bool = matches!(BUILD_TARGET, BuildTarget::Wasm);
 pub const IS_NATIVE: bool = matches!(BUILD_TARGET, BuildTarget::Native);
-const IS_WASI: bool = matches!(BUILD_TARGET, BuildTarget::Wasi);
 const IS_MAC: bool = IS_NATIVE && cfg!(target_os = "macos");
-pub(crate) const IS_BROWSER: bool = !IS_WASI && IS_WASM;
+pub(crate) const IS_BROWSER: bool = IS_WASM;
 pub const IS_WINDOWS: bool = cfg!(windows);
 pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
 /// `true` only for the `dev` cargo profile (Debug buildtype). Keyed on

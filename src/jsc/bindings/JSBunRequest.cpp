@@ -65,17 +65,12 @@ JSBunRequest* JSBunRequest::create(JSC::VM& vm, JSC::Structure* structure, void*
 
 JSC::Structure* JSBunRequest::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(WebCore::JSDOMWrapperType), StructureFlags), info());
 }
 
 JSC::GCClient::IsoSubspace* JSBunRequest::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSBunRequest, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForBunRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBunRequest = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForBunRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForBunRequest = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSBunRequest, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBunRequest, m_subspaceForBunRequest));
 }
 
 JSObject* JSBunRequest::params() const
@@ -124,7 +119,9 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
         for (auto& property : propertyNames) {
             auto value = params->get(globalObject, property);
             RETURN_IF_EXCEPTION(throwScope, nullptr);
-            paramsClone->putDirect(vm, property, value);
+            // User code can add an array-index key like "0" to `params`.
+            paramsClone->putDirectMayBeIndex(globalObject, property, value);
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
         }
 
         clone->setParams(paramsClone);
@@ -156,15 +153,6 @@ JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr
     , m_cookies(nullptr, JSC::WriteBarrierEarlyInit)
 {
 }
-extern SYSV_ABI "C" size_t Request__estimatedSize(void* requestPtr);
-extern "C" void Bun__JSRequest__calculateEstimatedByteSize(void* requestPtr);
-void JSBunRequest::finishCreation(JSC::VM& vm)
-{
-    Base::finishCreation(vm);
-
-    auto size = Request__estimatedSize(this->wrapped());
-    vm.heap.reportExtraMemoryAllocated(this, size);
-}
 
 template<typename Visitor>
 void JSBunRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -183,14 +171,14 @@ public:
 
     static JSBunRequestPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSBunRequestPrototype>(vm)) JSBunRequestPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBunRequestPrototype))) JSBunRequestPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
 
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        auto* structure = Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), NonArray);
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), NonArray);
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -213,13 +201,15 @@ private:
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
         Base::finishCreation(vm);
-        reifyStaticProperties(vm, JSBunRequest::info(), JSBunRequestPrototypeValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::reifyStaticPropertyTable(vm, JSBunRequest::info(), JSBunRequestPrototypeValues, *this);
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 };
 
 const JSC::ClassInfo JSBunRequestPrototype::s_info = { "BunRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBunRequestPrototype) };
 const JSC::ClassInfo JSBunRequest::s_info = { "BunRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBunRequest) };
+// `destroy` is JSRequest's.
+STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSBunRequest);
 
 JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetParams, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
@@ -284,8 +274,8 @@ JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObjec
 
     auto* request = dynamicDowncast<JSBunRequest>(callFrame->thisValue());
     if (!request) {
-        throwScope.throwException(globalObject, Bun::createInvalidThisError(globalObject, request, "BunRequest"));
-        RETURN_IF_EXCEPTION(throwScope, {});
+        Bun::throwInvalidThisError(globalObject, throwScope, callFrame->thisValue(), "BunRequest"_s);
+        return {};
     }
 
     auto clone = request->clone(vm, globalObject);
@@ -295,7 +285,7 @@ JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObjec
 
 Structure* createJSBunRequestStructure(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    auto prototypeStructure = JSBunRequestPrototype::createStructure(vm, globalObject, globalObject->JSRequestPrototype());
+    auto prototypeStructure = JSBunRequestPrototype::createStructure(vm, globalObject, Bun::Bindgen::prototypeForClass<JSBunRequest::Base>(globalObject));
     auto* prototype = JSBunRequestPrototype::create(vm, globalObject, prototypeStructure);
     return JSBunRequest::createStructure(vm, globalObject, prototype);
 }

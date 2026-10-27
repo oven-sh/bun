@@ -9,6 +9,16 @@ test("highlighter", () => {
   expect(highlighter("`can do ${123} ${'123'} ${`123`}`123").length).toBeLessThan(150);
 });
 
+// https://github.com/oven-sh/bun/issues/40637
+// The number scan used to stop at the first `_` or `n`, so only the leading
+// digits of `1_000` or `1000n` were colored.
+test.each(["1_000", "1_000_000.123_456", "0x1_F", "0X1_F", "0b1010_0001", "1_000n", "1000n", "0xF_Fn", "0XF_Fn"])(
+  "highlighter colors the whole numeric literal %p",
+  input => {
+    expect(highlighter(input)).toContain(`\x1b[33m${input}\x1b[0m`);
+  },
+);
+
 // https://github.com/oven-sh/bun/issues/31434
 // A trailing backslash inside an unterminated `${` interpolation used to run
 // the scanner past the end of the input (OOB read / crash).
@@ -51,6 +61,29 @@ test("redacting highlighter still redacts values", () => {
   const out = highlighterRedacted('_authToken = "npm_123456"');
   expect(out).not.toContain("npm_123456");
   expect(out).toContain("*");
+});
+
+// The userinfo of a URL is masked whatever the scheme is: dependency
+// specifiers are `git+https://` and `git+ssh://` URLs as often as `https://`.
+test.each([
+  ["https://user:hunter2@host/repo.git", "https://************@host/repo.git"],
+  ["git+https://user:hunter2@host/repo.git", "git+https://************@host/repo.git"],
+  ["git+ssh://user:hunter2@host:22/repo.git", "git+ssh://************@host:22/repo.git"],
+  ["https://hunter2@host/repo.git", "https://*******@host/repo.git"],
+  ["https://hunter2:@host/repo.git", "https://********@host/repo.git"],
+  // The userinfo ends at the last `@` of the authority.
+  ["https://user:hun@ter2@host/repo.git", "https://*************@host/repo.git"],
+  ["https://us%20er:hun%20ter2@host/repo.git", "https://******************@host/repo.git"],
+  // The URL ends at a space: what follows it is not its host.
+  ["https://host failed for pkg@1.0.0", "https://host failed for pkg@1.0.0"],
+  ["https://host: pkg@1.0.0", "https://host: pkg@1.0.0"],
+  // The ssh account. scp-like: the `:` after the host is a path separator.
+  ["git+ssh://git@host:org/repo.git", "git+ssh://git@host:org/repo.git"],
+  ["git+ssh://git@host/org/repo.git", "git+ssh://git@host/org/repo.git"],
+  // No scheme, so nothing is treated as a URL.
+  ["user:hunter2@host/repo.git", "user:hunter2@host/repo.git"],
+])("redacting highlighter masks the userinfo in %p", (input, expected) => {
+  expect(highlighterRedacted(`x = "${input}"`)).toContain(`"${expected}"`);
 });
 
 // End-to-end: an error in bunfig.toml whose source line ends with an

@@ -44,6 +44,13 @@ pub struct ExternalSlice<T> {
     _marker: PhantomData<T>,
 }
 
+// SAFETY: two `u32`s, whatever `T` is.
+unsafe impl<T> bun_core::Zeroable for ExternalSlice<T> {}
+// SAFETY: two `u32`s, whatever `T` is.
+unsafe impl<T: 'static> bun_core::NoUninit for ExternalSlice<T> {}
+// SAFETY: two `u32`s, whatever `T` is.
+unsafe impl<T: 'static> bun_core::AnyBitPattern for ExternalSlice<T> {}
+
 // Manual impls: the `(off, len)` pair is unconditionally
 // copyable/comparable regardless of `Type`. `#[derive]` would add spurious
 // `T: Copy/Clone/Default/PartialEq` bounds via `PhantomData<T>`, breaking
@@ -105,6 +112,12 @@ impl<T> ExternalSlice<T> {
     #[inline]
     pub fn contains(self, id: u32) -> bool {
         id >= self.off && (id as u64) < self.len as u64 + self.off as u64
+    }
+
+    /// Checks an offset and length that were read from a file. Call it before calling `get`.
+    #[inline]
+    pub fn is_within(self, in_: &[T]) -> bool {
+        self.off as usize + self.len as usize <= in_.len()
     }
 
     #[inline]
@@ -234,12 +247,6 @@ impl Behavior {
     }
 
     #[inline]
-    #[cfg(debug_assertions)]
-    pub fn eq(lhs: Behavior, rhs: Behavior) -> bool {
-        lhs.bits() == rhs.bits()
-    }
-
-    #[inline]
     pub fn add(self, kind: Behavior) -> Behavior {
         self | kind
     }
@@ -264,6 +271,12 @@ impl Behavior {
             || (features.dev_dependencies && self.is_dev())
             || (features.peer_dependencies && self.is_peer())
             || (features.workspaces && self.is_workspace())
+    }
+
+    /// False when the installers filter the dependency, and with it everything below.
+    #[inline]
+    pub fn is_placed(self, features: Features) -> bool {
+        !self.is_bundled() && self.is_enabled(features)
     }
 
     pub fn cmp(self, rhs: Self) -> core::cmp::Ordering {
@@ -390,15 +403,6 @@ pub struct TarballInfo {
     pub package_name: SemverString,
 }
 
-impl Default for TarballInfo {
-    fn default() -> Self {
-        TarballInfo {
-            uri: URI::Local(SemverString::default()),
-            package_name: SemverString::default(),
-        }
-    }
-}
-
 impl TarballInfo {
     pub fn eql(&self, that: &TarballInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
         URI::eql(self.uri, that.uri, this_buf, that_buf)
@@ -475,6 +479,7 @@ impl Clone for DependencyVersion {
 }
 
 impl Drop for DependencyVersion {
+    #[inline(never)]
     fn drop(&mut self) {
         if self.tag == DependencyVersionTag::Npm {
             // SAFETY: tag == Npm, so `npm` is the active arm.
@@ -551,18 +556,6 @@ impl Dependency {
     /// Lives here so the lockfile
     /// stringifier (`bun.lock.rs`) can sort `&[Dependency]` without an upward
     /// `bun_install` edge or an extension trait.
-    pub fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
-        let behavior = lhs.behavior.cmp(rhs.behavior);
-        if behavior != Ordering::Equal {
-            return behavior == Ordering::Less;
-        }
-        let lhs_name = lhs.name.slice(string_buf);
-        let rhs_name = rhs.name.slice(string_buf);
-        bun_core::strings::cmp_strings_asc((), lhs_name, rhs_name)
-    }
-
-    /// Total-order comparator for `slice::sort_by`. Same key as
-    /// [`is_less_than`](Self::is_less_than).
     pub fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
         let behavior = lhs.behavior.cmp(rhs.behavior);
         if behavior != Ordering::Equal {
@@ -701,7 +694,7 @@ impl<T: NegatableEnum> Negatable<T> {
     }
 
     /// writes to a one line json array with a trailing comma and space, or writes a string
-    pub fn to_json(field: T, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
+    pub fn to_json(field: T, writer: &mut dyn core::fmt::Write) -> core::fmt::Result {
         if field == T::NONE {
             // [] means everything, so unrecognized value
             return writer.write_str(r#""none""#);
@@ -845,14 +838,6 @@ impl OperatingSystem {
     // ("win32").
 
     #[inline]
-    pub const fn none() -> Self {
-        Self::NONE
-    }
-    #[inline]
-    pub const fn all() -> Self {
-        Self::ALL
-    }
-    #[inline]
     pub fn is_match(self, target: Self) -> bool {
         (self.0 & target.0) != 0
     }
@@ -873,6 +858,7 @@ negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Unlike `os`/`cpu`, zero is "not declared": such a package installs on every libc.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct Libc(pub u8);
@@ -886,11 +872,39 @@ impl Libc {
 
     pub(crate) const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
-    // TODO: runtime libc detection
+    /// The musl build is a separate binary, so the build target is the host libc.
+    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    pub const CURRENT: Self = Self(Self::MUSL);
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+    pub const CURRENT: Self = Self(Self::GLIBC);
+    #[cfg(not(target_os = "linux"))]
+    pub const CURRENT: Self = Self::ALL;
 
+    /// `self` is the package's declaration, `target` the libc being installed for.
+    #[inline]
+    pub fn is_match(self, target: Self) -> bool {
+        self.0 == 0 || (self.0 & target.0) != 0
+    }
+
+    /// `self` is the target libc (`--libc`), which filters only optional dependencies.
+    #[inline]
+    pub fn for_dependency(self, behavior: Behavior) -> Self {
+        if behavior.is_optional() {
+            self
+        } else {
+            Self::ALL
+        }
+    }
     #[inline]
     pub(crate) fn has(self, other: u8) -> bool {
         (self.0 & other) != 0
+    }
+    /// `"glibc"` / `"musl"` when the package is restricted to exactly one.
+    pub fn single_name(self) -> Option<&'static [u8]> {
+        Self::NAME_MAP_KVS
+            .iter()
+            .find(|(_, bit)| *bit == self.0)
+            .map(|(name, _)| *name)
     }
 }
 
@@ -937,14 +951,6 @@ impl Architecture {
     #[cfg(target_arch = "x86_64")]
     pub const CURRENT: Self = Self(Self::X64);
 
-    #[inline]
-    pub const fn none() -> Self {
-        Self::NONE
-    }
-    #[inline]
-    pub const fn all() -> Self {
-        Self::ALL
-    }
     #[inline]
     pub fn is_match(self, target: Self) -> bool {
         (self.0 & target.0) != 0
@@ -1003,7 +1009,13 @@ impl Repository {
         if repo_order != Ordering::Equal {
             return repo_order;
         }
-        self.committish.order(rhs.committish, lhs_buf, rhs_buf)
+        let committish_order = self.committish.order(rhs.committish, lhs_buf, rhs_buf);
+        if committish_order != Ordering::Equal {
+            return committish_order;
+        }
+        // Unconditional so the order stays transitive; an empty `resolved` is
+        // an ordinary value here, not a wildcard like in `eql`.
+        self.resolved.order(rhs.resolved, lhs_buf, rhs_buf)
     }
 
     pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
@@ -1046,7 +1058,6 @@ impl Repository {
 // can name the `npm` arm's payload without an upward edge.
 
 pub type VersionedURL = VersionedURLType<u64>;
-pub type OldV2VersionedURL = VersionedURLType<u32>;
 
 #[repr(C)]
 pub struct VersionedURLType<SemverInt: bun_semver::version::VersionInt> {
@@ -1150,13 +1161,6 @@ pub union ResolutionValue<I: VersionInt> {
     pub single_file_module: SemverString,
 }
 
-impl<I: VersionInt> Default for ResolutionValue<I> {
-    #[inline]
-    fn default() -> Self {
-        ResolutionValue { uninitialized: () }
-    }
-}
-
 /// Layout is `{ tag: u8, _pad: [7]u8, value: Value }` so the on-disk lockfile
 /// encoding stays byte-compatible.
 #[repr(C)]
@@ -1165,17 +1169,6 @@ pub struct Resolution {
     pub tag: ResolutionTag,
     pub _padding: [u8; 7],
     pub value: ResolutionValue<u64>,
-}
-
-impl Default for Resolution {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            tag: ResolutionTag::Uninitialized,
-            _padding: [0; 7],
-            value: ResolutionValue { uninitialized: () },
-        }
-    }
 }
 
 // ─── PreinstallState / Features / misc ────────────────────────────────────
@@ -1198,12 +1191,16 @@ pub struct Features {
     pub dependencies: bool,
     pub dev_dependencies: bool,
     pub is_main: bool,
+    pub is_workspace: bool,
+    pub is_folder: bool,
     pub optional_dependencies: bool,
     pub peer_dependencies: bool,
     pub trusted_dependencies: bool,
     pub workspaces: bool,
     pub patched_dependencies: bool,
     pub check_for_duplicate_dependencies: bool,
+    /// The members' versions are not known to this parse, so a `workspace:` range counts as satisfied.
+    pub unchecked_workspace_ranges: bool,
 }
 impl Default for Features {
     fn default() -> Self {
@@ -1211,12 +1208,15 @@ impl Default for Features {
             dependencies: true,
             dev_dependencies: false,
             is_main: false,
+            is_workspace: false,
+            is_folder: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
             workspaces: false,
             patched_dependencies: false,
             check_for_duplicate_dependencies: false,
+            unchecked_workspace_ranges: false,
         }
     }
 }
@@ -1232,12 +1232,15 @@ impl Features {
             dependencies: true,
             dev_dependencies: false,
             is_main: false,
+            is_workspace: false,
+            is_folder: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
             workspaces: false,
             patched_dependencies: false,
             check_for_duplicate_dependencies: false,
+            unchecked_workspace_ranges: false,
         }
     }
 
@@ -1254,12 +1257,14 @@ impl Features {
 
     pub const FOLDER: Self = Self {
         dev_dependencies: true,
+        is_folder: true,
         optional_dependencies: true,
         ..Self::base()
     };
 
     pub const WORKSPACE: Self = Self {
         dev_dependencies: true,
+        is_workspace: true,
         optional_dependencies: true,
         trusted_dependencies: true,
         ..Self::base()
@@ -1277,50 +1282,17 @@ impl Features {
     };
 }
 
-#[derive(Default, Clone, Copy)]
-pub struct TaskCallbackContext {
-    pub root_request_id: u32,
-}
-
-/// Opaque
-/// (ctx-ptr + 2 fn-ptrs) handle the runtime installs to nudge the JS event
-/// loop when a network task completes. The resolver only stores and forwards
-/// it; the fields are `Option` so `Default` is all-None.
-///
-/// `handler`'s second parameter (`*PackageManager`) is erased to
-/// `*mut c_void` because that concrete type lives in `bun_install` (a higher
-/// tier); `bun_install::PackageManager::wake` casts at the call site.
-/// `on_dependency_error`'s `Dependency` parameter is *not* erased — the type
-/// lives in this crate — so callers pass the borrow directly.
+/// What the runtime installs to nudge the JS event loop when a network task completes.
 // Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
-// installed; the handler fn-ptrs are POD.
+// installed; the fn-ptr is POD.
 #[derive(Default, Copy, Clone)]
-pub struct WakeHandler {
-    pub context: Option<NonNull<c_void>>,
-    pub handler: Option<fn(*mut c_void, *mut c_void)>,
-    pub on_dependency_error:
-        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str)>,
-}
+pub struct WakeHandler(pub Option<WakeTarget>);
 
-impl WakeHandler {
-    #[inline]
-    pub fn get_handler(&self) -> fn(*mut c_void, *mut c_void) {
-        // `handler` is Some whenever `context` is Some: the sole installer
-        // (runtime::jsc_hooks) sets `context`, `handler`, and
-        // `on_dependency_error` together in one struct literal, and callers
-        // gate on `context.is_some()` before invoking — so this unwrap cannot
-        // fire.
-        self.handler.unwrap()
-    }
-
-    #[inline]
-    pub fn get_on_dependency_error(
-        &self,
-    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str) {
-        // Same invariant as `get_handler`: set together with `context` by the
-        // sole installer; callers gate on `context.is_some()`.
-        self.on_dependency_error.unwrap()
-    }
+/// `handler`'s second parameter is a `*PackageManager`, which lives in a higher tier.
+#[derive(Copy, Clone)]
+pub struct WakeTarget {
+    pub context: NonNull<c_void>,
+    pub handler: fn(*mut c_void, *mut c_void),
 }
 
 // ─── DependencyGroup (lockfile::Package::DependencyGroup) ─────────────────
@@ -1338,6 +1310,11 @@ pub struct DependencyGroup {
     pub prop: &'static [u8],
     pub field: &'static [u8],
     pub behavior: Behavior,
+}
+impl Default for DependencyGroup {
+    fn default() -> Self {
+        Self::DEPENDENCIES
+    }
 }
 impl DependencyGroup {
     pub const DEPENDENCIES: Self = Self {
@@ -1425,32 +1402,34 @@ pub enum EnqueueResult {
 /// `Resolver::use_package_manager()`.
 pub trait AutoInstaller {
     // ── Lockfile reads ────────────────────────────────────────────────────
-    fn lockfile_packages_len(&self) -> usize;
     fn lockfile_package_dependencies(&self, id: PackageID) -> DependencySlice;
     fn lockfile_package_resolutions(&self, id: PackageID) -> ResolutionSlice;
     fn lockfile_package_resolution(&self, id: PackageID) -> Resolution;
     fn lockfile_dependencies_buf(&self) -> &[Dependency];
     fn lockfile_resolutions_buf(&self) -> &[PackageID];
     fn lockfile_string_bytes(&self) -> &[u8];
-    fn lockfile_resolve(&self, name: &[u8], version: &DependencyVersion) -> Option<PackageID>;
-    fn lockfile_legacy_package_to_dependency_id(
+    /// `version_buf` holds the strings `version` was parsed against.
+    fn lockfile_resolve(
         &self,
-        package_id: PackageID,
-    ) -> core::result::Result<DependencyID, bun_core::Error>;
-
-    // ── Lockfile writes ───────────────────────────────────────────────────
-    /// Port of `lockfile.appendPackage(Package.fromPackageJSON(...))` —
-    /// collapsed because `Package` itself is install-internal. Returns the
-    /// id assigned to the appended package.
-    fn lockfile_append_from_package_json(
-        &mut self,
-        package_json: &dyn PackageJsonView,
-        features: Features,
-    ) -> core::result::Result<PackageID, bun_core::Error>;
-    fn lockfile_append_root_stub(&mut self) -> core::result::Result<PackageID, bun_core::Error>;
+        name: &[u8],
+        version: &DependencyVersion,
+        version_buf: &[u8],
+    ) -> Option<PackageID>;
 
     // ── PackageManager ops ────────────────────────────────────────────────
     fn set_on_wake(&mut self, handler: WakeHandler);
+    /// Returns the folder that `bun install` would link `name` to: a workspace, or the target of
+    /// `file:` or `link:`. `package_json_dir` is `None` unless the package.json is the project's.
+    fn project_folder<'b>(
+        &mut self,
+        name: &[u8],
+        version: &DependencyVersion,
+        version_buf: &[u8],
+        package_json_dir: Option<&[u8]>,
+        buf: &'b mut [u8],
+    ) -> Option<&'b [u8]>;
+    /// Returns the package's folder in the cache. An npm package that is not cached yet is
+    /// downloaded first, and the call blocks until that finishes.
     fn path_for_resolution<'b>(
         &mut self,
         package_id: PackageID,
@@ -1458,32 +1437,19 @@ pub trait AutoInstaller {
         buf: &'b mut [u8],
     ) -> core::result::Result<&'b [u8], bun_core::Error>;
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState;
-    fn enqueue_package_for_download(
-        &mut self,
-        name: &[u8],
-        dependency_id: DependencyID,
-        package_id: PackageID,
-        resolution: &Resolution,
-        ctx: TaskCallbackContext,
-        patch_name_and_version_hash: Option<u64>,
-    ) -> core::result::Result<(), bun_core::Error>;
-    fn resolve_from_disk_cache(
-        &mut self,
-        name: &[u8],
-        version: &DependencyVersion,
-    ) -> Option<PackageID>;
+    /// `package_json_dir` means the same as in `project_folder`. The path of a `file:` tarball is
+    /// relative to it.
     fn enqueue_dependency_to_root(
         &mut self,
         name: &[u8],
         version: &DependencyVersion,
         version_buf: &[u8],
+        package_json_dir: Option<&[u8]>,
         behavior: Behavior,
     ) -> EnqueueResult;
 
     // ── Dependency parsing ─────────────────────────────────────────────────
-    // `&mut self`: `parse_with_tag` records `npm:`-aliased deps into
-    // `pm.known_npm_aliases`, so the impl needs a
-    // mutable manager handle even though parsing is otherwise pure.
+    // `&mut self`: the manager records an `npm:` alias.
     fn parse_dependency(
         &mut self,
         name: SemverString,
@@ -1492,8 +1458,9 @@ pub trait AutoInstaller {
         sliced: &bun_semver::SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
+    /// A package's own `version`: records nothing.
     fn parse_dependency_with_tag(
-        &mut self,
+        &self,
         name: SemverString,
         name_hash: u64,
         version: &[u8],
@@ -1504,19 +1471,4 @@ pub trait AutoInstaller {
     /// Pure string
     /// classification, but the table lives in `bun_install`.
     fn infer_dependency_tag(&self, dependency: &[u8]) -> DependencyVersionTag;
-}
-
-/// Read-only view of `bun_resolver::PackageJSON` that
-/// [`AutoInstaller::lockfile_append_from_package_json`] needs. Defined here
-/// (not in `bun_resolver`) so `bun_install` can name it without depending on
-/// the resolver crate at the trait-definition layer.
-pub trait PackageJsonView {
-    fn name(&self) -> &[u8];
-    fn version(&self) -> &[u8];
-    fn source_path(&self) -> &[u8];
-    /// Backing string-bytes buffer the dependency `SemverString`s slice into.
-    fn dependency_source_buf(&self) -> &[u8];
-    fn arch(&self) -> Architecture;
-    fn os(&self) -> OperatingSystem;
-    fn dependency_iter(&self) -> Box<dyn Iterator<Item = (&[u8], &Dependency)> + '_>;
 }

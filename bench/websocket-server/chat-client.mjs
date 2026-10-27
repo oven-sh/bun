@@ -4,6 +4,8 @@ const SERVER = env.SERVER || "ws://0.0.0.0:4001";
 const WebSocket = globalThis.WebSocket || (await import("ws")).WebSocket;
 const LOG_MESSAGES = env.LOG_MESSAGES === "1";
 const CLIENTS_TO_WAIT_FOR = parseInt(env.CLIENTS_COUNT || "", 10) || 32;
+// Total number of clients across every client process (see README); each echo fans out to all of them.
+const TOTAL_CLIENTS = parseInt(env.TOTAL_CLIENTS || "", 10) || CLIENTS_TO_WAIT_FOR;
 const DELAY = 64;
 const MESSAGES_TO_SEND = Array.from({ length: 32 }, () => [
   "Hello World!",
@@ -128,16 +130,8 @@ for (let i = 0; i < CLIENTS_TO_WAIT_FOR; i++) {
   };
 }
 
-// each message is supposed to be received
-// by each client
-// so its an extra loop
-for (let i = 0; i < CLIENTS_TO_WAIT_FOR; i++) {
-  for (let j = 0; j < MESSAGES_TO_SEND.length; j++) {
-    for (let k = 0; k < CLIENTS_TO_WAIT_FOR; k++) {
-      total++;
-    }
-  }
-}
+// every message sent by any of the TOTAL_CLIENTS senders is echoed to each of this process's clients
+total = CLIENTS_TO_WAIT_FOR * MESSAGES_TO_SEND.length * TOTAL_CLIENTS;
 remaining = total;
 
 function restart() {

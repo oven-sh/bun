@@ -1126,9 +1126,9 @@ pub(crate) mod serialize {
                     S::SingleButton => b":single-button",
                     S::NoButton => b":no-button",
                     S::CornerPresent => b":corner-present",
-                    S::WindowInactive => b":window-inactive",
                 })?;
             }
+            PseudoClass::WindowInactive => dest.write_str(b":window-inactive")?,
 
             PseudoClass::Lang { .. } => unreachable!(),
             PseudoClass::Dir { .. } => unreachable!(),

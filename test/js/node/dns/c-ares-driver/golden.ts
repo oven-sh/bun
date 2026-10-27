@@ -4,9 +4,13 @@ import { join } from "node:path";
 
 export const path = join(import.meta.dir, "../dns-simulation-c-ares.txt");
 
-/** A line that nothing understands after each command, so that `? @` in the log ends what the command did. */
+/**
+ * The script as it is run: `{x*n}` is `x` n times, and after each command comes a line that nothing understands, so that
+ * `? @` in the log ends what the command did.
+ */
 export const marked = (script: string) =>
   script
+    .replace(/\{([^*{}]+)\*(\d+)\}/g, (_, text, count) => Buffer.alloc(text.length * count, text).toString())
     .split("\n")
     .filter(line => line !== "")
     .flatMap(line => [line, "@"])

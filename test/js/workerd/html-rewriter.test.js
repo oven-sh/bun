@@ -4595,7 +4595,7 @@ describe("a rewrite that a Bun.ModuleGraph's script started is the graph's", () 
   });
 
   // What the client had was sent, and the rest is not. Before the first byte, the host's error() answers.
-  it.each([
+  it.concurrent.each([
     ["after the first byte", { first: "<p>1</p>", rest: "failed", errors: [] }],
     [
       "before the first byte",
@@ -4612,18 +4612,21 @@ describe("a rewrite that a Bun.ModuleGraph's script started is the graph's", () 
     expect({ stdout: stdout && JSON.parse(stdout), exitCode }).toEqual({ stdout: expected, exitCode: 0 });
   });
 
-  it("a worker terminated, and a process that exits, while rewrites their graphs started are running", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(dir, "rewrites-at-exit.mjs")],
-      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: `{"inWorker":["element","element"],"said":["element","element"]}\n`,
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+  it.concurrent(
+    "a worker terminated, and a process that exits, while rewrites their graphs started are running",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(dir, "rewrites-at-exit.mjs")],
+        env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: `{"inWorker":["element","element"],"said":["element","element"]}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });

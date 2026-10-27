@@ -20,7 +20,12 @@
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/NativeCallee.h>
 #include <JavaScriptCore/Interpreter.h>
+#include <JavaScriptCore/InternalFunction.h>
+#include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/JSRemoteFunction.h>
+#include <JavaScriptCore/VMEntryRecord.h>
 #include <wtf/IterationStatus.h>
+#include <wtf/ScopedLambda.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 
@@ -113,9 +118,56 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
     return JSCStackTrace(newFrames);
 }
 
-// Fills `stackTrace` from a walk of at most `maxRawFrames` stack frames. Returns false when the trace needs a longer walk.
-static bool getFramesForCallerWithin(JSC::VM& vm, JSC::JSCell* owner, JSC::JSObject* callerObject, const WTF::String& callerName, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit, size_t maxRawFrames)
+// Which entry into the VM the frames of suspended async functions follow is decided among all entries that resumed one.
+static bool severalEntriesResumedAsyncFunctions(JSC::VM& vm)
 {
+    bool hasFoundOne = false;
+    for (JSC::EntryFrame* entryFrame = vm.topEntryFrame; entryFrame; entryFrame = vmEntryRecord(entryFrame)->prevTopEntryFrame()) {
+        if (!JSC::Interpreter::asyncFunctionIn(vmEntryRecord(entryFrame)->m_context))
+            continue;
+        if (hasFoundOne)
+            return true;
+        hasFoundOne = true;
+    }
+    return false;
+}
+
+void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
+{
+    UNUSED_PARAM(callFrame);
+
+    // V8 searches the stack for a JSFunction only. A bound function, a Proxy and a value that is not callable select no frame.
+    JSC::JSObject* callerObject = nullptr;
+    if (caller.inherits<JSC::InternalFunction>() || (caller.inherits<JSC::JSFunction>() && !caller.inherits<JSC::JSBoundFunction>() && !caller.inherits<JSC::JSRemoteFunction>()))
+        callerObject = caller.getObject();
+    std::optional<WTF::String> nameOfCaller;
+
+    // The callee of a generator or async function body is not the function that the program holds, so only such a frame is matched by name.
+    auto isFrameOfCaller = [&](const JSC::StackFrame& frame) {
+        if (frame.callee() == callerObject)
+            return true;
+        auto* codeBlock = frame.codeBlock();
+        if (!codeBlock || !JSC::isGeneratorOrAsyncFunctionBodyParseMode(codeBlock->unlinkedCodeBlock()->parseMode()))
+            return false;
+        if (!nameOfCaller)
+            nameOfCaller = Zig::functionName(vm, callerObject);
+        return !nameOfCaller->isEmpty() && Zig::functionName(vm, frame, nullptr) == *nameOfCaller;
+    };
+
+    // stackTraceLimit applies to visible frames AFTER Bun's filter and AFTER caller removal, so both are decided while JSC walks.
+    bool hasFoundCaller = !callerObject;
+    auto isWanted = [&](const JSC::StackFrame& frame) {
+        if (isImplementationVisibilityPrivate(frame))
+            return false;
+        if (!hasFoundCaller)
+            hasFoundCaller = isFrameOfCaller(frame);
+        return hasFoundCaller;
+    };
+    JSC::Interpreter::StackFrameFilter filter = isWanted;
+
+    // The frame of the caller is kept until the walk is over: it tells whether the await chain comes in front of the caller.
+    size_t framesToCollect = callerObject ? stackTraceLimit + 1 : stackTraceLimit;
+
     // Delegate to Interpreter::getStackTrace which includes async stack frames
     // (from the await chain via getAsyncStackTrace). The previous hand-rolled
     // StackVisitor::visit walk only collected synchronous frames.
@@ -124,88 +176,53 @@ static bool getFramesForCallerWithin(JSC::VM& vm, JSC::JSCell* owner, JSC::JSObj
     // itself) and without the caller argument, because Interpreter::getStackTrace's
     // built-in caller filtering skips entry-frame tracking during the skip phase,
     // which loses async frames when the caller is the innermost sync frame.
-    // Instead we filter out frames up to and including the caller afterwards.
-    //
-    // stackTraceLimit applies to visible frames AFTER Bun's post-filter and AFTER caller removal, so the walk has its own limit.
-    WTF::Vector<JSC::StackFrame> rawFrames;
-    vm.interpreter.getStackTrace(owner, rawFrames, 1, maxRawFrames);
+    vm.interpreter.getStackTrace(owner, stackTrace, 1, framesToCollect, nullptr, nullptr, nullptr, &filter);
 
-    // The walk ended when it stopped with room left. The frames of the await chain take none of that room.
-    bool stackEnded = rawFrames.size() < maxRawFrames;
-    if (!stackEnded) {
-        size_t asyncFrameCount = 0;
-        for (auto& frame : rawFrames)
-            asyncFrameCount += frame.isAsyncFrame();
-        stackEnded = rawFrames.size() - asyncFrameCount < maxRawFrames;
-    }
+    if (hasFoundCaller && stackTrace.size() >= framesToCollect) {
+        stackTrace.shrink(framesToCollect);
+        bool hasAsyncFrame = stackTrace.containsIf([](const JSC::StackFrame& frame) {
+            return frame.isAsyncFrame();
+        });
 
-    // JSC's getStackTrace uses StackVisitor::isImplementationVisibilityPrivate
-    // which differs from Bun's helper — post-filter to keep behavior consistent
-    // with new Error() stack formatting.
-    stackTrace.reserveInitialCapacity(rawFrames.size());
-    for (auto& frame : rawFrames) {
-        if (!isImplementationVisibilityPrivate(frame))
-            stackTrace.append(WTF::move(frame));
-    }
+        // A walk that ends early can take the await chain of another entry into the VM than a walk of the whole stack takes.
+        if (hasAsyncFrame && severalEntriesResumedAsyncFunctions(vm)) {
+            size_t framesInFront = 0;
+            auto isWantedInFront = [&](const JSC::StackFrame& frame) {
+                if (framesInFront == framesToCollect || !isWanted(frame))
+                    return false;
+                framesInFront++;
+                return true;
+            };
+            JSC::Interpreter::StackFrameFilter filterInFront = isWantedInFront;
 
-    // Match V8: remove all frames up to and including the caller. If the caller
-    // is not found anywhere in the sync portion of the stack, remove everything.
-    // We match by cell identity first, then by name — name matching is needed
-    // because a resumed async function's frame callee is the generator's `next`
-    // function (a different cell) but Zig::functionName still reports the
-    // original async function's name.
-    size_t removeCount = callerObject ? stackTrace.size() : 0;
-    for (size_t i = 0; callerObject && i < stackTrace.size(); i++) {
-        const auto& frame = stackTrace.at(i);
-        if (frame.isAsyncFrame())
-            break;
-        if (frame.callee() == callerObject) {
-            removeCount = i + 1;
-            break;
-        }
-        if (!callerName.isEmpty()) {
-            WTF::String frameName = Zig::functionName(vm, frame, nullptr);
-            if (frameName == callerName) {
-                removeCount = i + 1;
-                break;
-            }
+            // This walk visits every frame and keeps as many as the first one, so its limit only ends the await chain.
+            hasFoundCaller = !callerObject;
+            stackTrace.shrink(0);
+            vm.interpreter.getStackTrace(owner, stackTrace, 1, framesToCollect + 1, nullptr, nullptr, nullptr, &filterInFront);
         }
     }
 
-    // A walk that its limit ended puts the await chain where it stopped, so only the frames in front of that chain are final.
-    if (!stackEnded) {
-        size_t end = removeCount + stackTraceLimit;
-        if (end > stackTrace.size())
-            return false;
-        for (size_t i = removeCount; i < end; i++) {
-            if (stackTrace.at(i).isAsyncFrame())
-                return false;
-        }
+    // Match V8: if the caller is not found anywhere in the sync portion of the stack, remove everything.
+    if (!hasFoundCaller) {
+        stackTrace.shrink(0);
+        return;
     }
 
-    if (removeCount > 0)
-        stackTrace.removeAt(0, removeCount);
+    stackTrace.removeAllMatching([](const JSC::StackFrame& frame) {
+        return frame.isAsyncFrame() && isImplementationVisibilityPrivate(frame);
+    });
+
+    // Match V8: remove all frames up to and including the caller.
+    if (callerObject) {
+        if (stackTrace.first().isAsyncFrame()) {
+            stackTrace.shrink(0);
+            return;
+        }
+        stackTrace.removeAt(0);
+    }
 
     if (stackTrace.size() > stackTraceLimit)
         stackTrace.shrink(stackTraceLimit);
-    return true;
-}
-
-void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
-{
-    UNUSED_PARAM(callFrame);
-
-    // A caller that is not callable selects no frame, as in V8 and in JSC's built-in function.
-    JSC::JSObject* callerObject = caller.isCallable() ? caller.getObject() : nullptr;
-    WTF::String callerName = callerObject ? Zig::functionName(vm, callerObject) : WTF::String();
-
-    // Only the limit of a walk ends JSC's pass over async functions that await each other in a cycle, so every walk has one.
-    size_t maxRawFrames = 2 * std::max<size_t>(stackTraceLimit, 8);
-    while (!getFramesForCallerWithin(vm, owner, callerObject, callerName, stackTrace, stackTraceLimit, maxRawFrames)) {
-        stackTrace.clear();
-        // A trace that needs more than the top of the stack needs all of it in most cases.
-        maxRawFrames *= 64;
-    }
 }
 
 static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)

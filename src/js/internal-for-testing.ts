@@ -13,7 +13,16 @@ export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight
 export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "highlight-javascript-redacted");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
-export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
+export const canonicalizeIP = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
+
+// Process-wide additions to the public keys no certificate chain may hold (blocked_spkis.cpp). `hash` is the SHA-256 of
+// a DER SubjectPublicKeyInfo.
+export const addBlockedSPKIForTesting: (hash: ArrayBufferView) => void = $newCppFunction(
+  "NodeTLS.cpp",
+  "addBlockedSPKIForTesting",
+  1,
+);
+export const clearBlockedSPKIsForTesting: () => void = $newCppFunction("NodeTLS.cpp", "clearBlockedSPKIsForTesting", 0);
 
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.
@@ -50,55 +59,48 @@ export const highwayStringsForTesting: (
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
+export const setSQLiteColumnNameTransform = (
+  statement: import("bun:sqlite").Statement,
+  transform: ((name: string) => string) | null | undefined,
+) => statement.native.$setColumnNameTransform(transform);
 
 export const patchInternals = {
-  parse: $newRustFunction("patch.rs", "TestingAPIs.parse", 1),
-  apply: $newRustFunction("patch.rs", "TestingAPIs.apply", 2),
-  makeDiff: $newRustFunction("patch.rs", "TestingAPIs.makeDiff", 2),
+  parse: $bindgen("patch_testing.bind.ts", "parse"),
+  apply: $bindgen("patch_testing.bind.ts", "apply"),
+  makeDiff: $bindgen("patch_testing.bind.ts", "makeDiff"),
 };
 
 export const internalSourceMap = {
-  fromVLQ: $newRustFunction("sourcemap/InternalSourceMap.rs", "TestingAPIs.fromVLQ", 1) as (vlq: string) => Uint8Array,
-  toVLQ: $newRustFunction("sourcemap/InternalSourceMap.rs", "TestingAPIs.toVLQ", 1) as (blob: Uint8Array) => string,
-  find: $newRustFunction("sourcemap/InternalSourceMap.rs", "TestingAPIs.find", 3) as (
-    blob: Uint8Array,
-    line: number,
-    col: number,
-  ) => {
-    generatedLine: number;
-    generatedColumn: number;
-    originalLine: number;
-    originalColumn: number;
-    sourceIndex: number;
-  } | null,
+  fromVLQ: $bindgen("InternalSourceMap.bind.ts", "fromVLQ") as (vlq: string) => Uint8Array,
+  toVLQ: $bindgen("InternalSourceMap.bind.ts", "toVLQ"),
+  find: $bindgen("InternalSourceMap.bind.ts", "find"),
 };
 
-const shellLex = $newRustFunction("shell.rs", "TestingAPIs.shellLex", 2);
-const shellParse = $newRustFunction("shell.rs", "TestingAPIs.shellParse", 2);
+const shellLex = $bindgen("shell_body.bind.ts", "shellLex");
+const shellParse = $bindgen("shell_body.bind.ts", "shellParse");
 
-export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount", 0);
+export const sslCtxLiveCount = $bindgen("SecureContext.bind.ts", "liveCount");
 
-export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", "jsThreadsafeFunctionLiveCount", 0);
+export const napiThreadsafeFunctionLiveCount = $bindgen("napi_body.bind.ts", "threadsafeFunctionLiveCount");
 
-export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
+export const bundlerWorkerLiveCount = $bindgen("JSBundler.bind.ts", "workerLiveCount");
 
-export const semverIntersects = $newRustFunction("SemverObject.rs", "intersectsForTesting", 2) as (
+export const semverIntersects = $bindgen("SemverObjectInternals.bind.ts", "intersects") as (
   left: string,
   right: string,
 ) => boolean;
 
 /** What a bytecode order file calls the code of `text`: `M <name>` and `<start> <kind> <name>` lines, or null. */
-export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "namesForTesting", 3) as (
+export const bytecodeOrderNames = $bindgen("BytecodeOrderRecorder.bind.ts", "namesForTesting") as (
   text: string,
   kind: "module" | "script" | "builtin" | "internal",
   chunkPaths?: string,
 ) => string | null | undefined;
 
-export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
-export const escapeRegExpForPackageNameMatching = $newRustFunction(
-  "escapeRegExp.rs",
-  "jsEscapeRegExpForPackageNameMatching",
-  1,
+export const escapeRegExp = $bindgen("bun_string_jsc.bind.ts", "escapeRegExp");
+export const escapeRegExpForPackageNameMatching = $bindgen(
+  "bun_string_jsc.bind.ts",
+  "escapeRegExpForPackageNameMatching",
 );
 
 export const shellInternals = {
@@ -112,53 +114,35 @@ export const shellInternals = {
    * const isDisabled = builtinDisabled("cp")
    * ```
    */
-  builtinDisabled: $newRustFunction("shell.rs", "TestingAPIs.disabledOnThisPlatform", 1),
+  builtinDisabled: $bindgen("shell_body.bind.ts", "disabledOnThisPlatform"),
 };
 
 export const subprocessInternals = {
-  injectStdioReadError: $newRustFunction("subprocess.rs", "TestingAPIs.injectStdioReadError", 2) as (
-    subprocess: import("bun").Subprocess,
-    kind: "stdout" | "stderr",
-  ) => boolean,
-  closeStdinWriter: $newRustFunction("subprocess.rs", "TestingAPIs.closeStdinWriter", 1) as (
-    subprocess: import("bun").Subprocess,
-  ) => boolean,
+  injectStdioReadError: $bindgen("subprocess.bind.ts", "injectStdioReadError"),
+  closeStdinWriter: $bindgen("subprocess.bind.ts", "closeStdinWriter"),
 };
 
 export const iniInternals = {
-  parse: $newRustFunction("ini.rs", "IniTestingAPIs.parse", 1),
-  loadNpmrc: $newRustFunction("ini.rs", "IniTestingAPIs.loadNpmrcFromJS", 2),
+  parse: $bindgen("ini_jsc.bind.ts", "parse"),
+  loadNpmrc: $bindgen("ini_jsc.bind.ts", "loadNpmrc"),
 };
 
 export const cssInternals = {
-  minifyTestWithOptions: $newRustFunction("css_internals.rs", "minifyTestWithOptions", 3),
-  minifyErrorTestWithOptions: $newRustFunction("css_internals.rs", "minifyErrorTestWithOptions", 3),
-  testWithOptions: $newRustFunction("css_internals.rs", "testWithOptions", 3),
-  prefixTestWithOptions: $newRustFunction("css_internals.rs", "prefixTestWithOptions", 3),
-  minifyTest: $newRustFunction("css_internals.rs", "minifyTest", 3),
-  prefixTest: $newRustFunction("css_internals.rs", "prefixTest", 3),
-  _test: $newRustFunction("css_internals.rs", "_test", 3),
-  attrTest: $newRustFunction("css_internals.rs", "attrTest", 3),
+  minifyTestWithOptions: $bindgen("css_internals.bind.ts", "minifyTestWithOptions"),
+  minifyErrorTestWithOptions: $bindgen("css_internals.bind.ts", "minifyErrorTestWithOptions"),
+  testWithOptions: $bindgen("css_internals.bind.ts", "testWithOptions"),
+  prefixTestWithOptions: $bindgen("css_internals.bind.ts", "prefixTestWithOptions"),
+  minifyTest: $bindgen("css_internals.bind.ts", "minifyTest"),
+  prefixTest: $bindgen("css_internals.bind.ts", "prefixTest"),
+  _test: $bindgen("css_internals.bind.ts", "test"),
+  attrTest: $bindgen("css_internals.bind.ts", "attrTest"),
 };
 
-export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") as {
-  getMachOImageZeroOffset: () => number;
-  segfault: () => void;
-  panic: () => void;
-  rootError: () => void;
-  outOfMemory: () => void;
-  abort: () => void;
-  fastfail: () => void;
-  trap: () => void;
-  raiseIgnoringPanicHandler: () => void;
-};
+export const crash_handler = $bindgen("crash_handler_jsc.bind.ts", "crashHandler");
 
-export const upgrade_test_helpers = $rust("upgrade_command.rs", "upgrade_js_bindings.generate") as {
-  openTempDirWithoutSharingDelete: () => void;
-  closeTempDirHandle: () => void;
-};
+export const upgrade_test_helpers = $bindgen("upgrade_command.bind.ts", "upgradeTestHelpers");
 
-export const install_test_helpers = $rust("install_binding.rs", "bun_install_js_bindings.generate") as {
+export const install_test_helpers = $bindgen("install_binding.bind.ts", "installTestHelpers") as {
   /**
    * Returns the lockfile at the given path as an object.
    */
@@ -174,60 +158,47 @@ export const nativeFrameForTesting: (callback: () => void) => void = $cpp(
 
 // Linux-only. Create an in-memory file descriptor with a preset size.
 // You should call fs.closeSync(fd) when you're done with it.
-export const memfd_create: (size: number) => number = $newRustFunction(
-  "node_fs_binding.rs",
-  "createMemfdForTesting",
-  1,
-);
+export const memfd_create = $bindgen("node_fs_binding.bind.ts", "createMemfdForTesting") as (size: number) => number;
 
-export const createStatsForIno: (ino: bigint, big: boolean) => any = $newRustFunction(
-  "Stat.rs",
-  "createStatsForIno",
-  2,
-);
+export const createStatsForIno: (ino: bigint, big: boolean) => any = $bindgen("Stat.bind.ts", "createStatsForIno");
 
-export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newRustFunction(
-  "virtual_machine_exports.rs",
-  "Bun__setSyntheticAllocationLimitForTesting",
-  1,
+export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $bindgen(
+  "virtual_machine_exports.bind.ts",
+  "setSyntheticAllocationLimitForTesting",
 );
 
 // Shrink the markdown parser's block-metadata cap (in bytes) so its
 // `TooManyBlocks` error is reachable without 4 GiB of input. The cap can only
 // be lowered, never raised past the real limit. Returns the previous value so
 // a test can restore it.
-export const setMaxMarkdownBlockBytesForTesting: (limit: number) => number = $newRustFunction(
-  "MarkdownObject.rs",
+export const setMaxMarkdownBlockBytesForTesting = $bindgen(
+  "MarkdownObjectInternals.bind.ts",
   "setMaxMarkdownBlockBytesForTesting",
-  1,
 );
 
-export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindings.generate") as {
+export const npm_manifest_test_helpers = $bindgen("npm_jsc.bind.ts", "npmManifestTestHelpers") as {
   /**
    * Returns the parsed manifest file. Currently only returns an array of available versions.
    */
   parseManifest: (manifestFileName: string, registryUrl: string) => any;
 };
 
-export const readTarball: (tarball: string) => any = $newRustFunction("pack_command.rs", "bindings.jsReadTarball", 1);
+export const readTarball = $bindgen("pack_command.bind.ts", "readTarball");
 
-export const isArchitectureMatch: (architecture: string[]) => boolean = $newRustFunction(
-  "npm.rs",
-  "Architecture.jsFunctionArchitectureIsMatch",
-  1,
+export const readTar = $bindgen("ArchiveInternals.bind.ts", "readTar");
+export const writeTar = $bindgen("ArchiveInternals.bind.ts", "writeTar");
+
+export const isArchitectureMatch: (architecture: string[]) => boolean = $bindgen(
+  "npm_jsc.bind.ts",
+  "architectureIsMatch",
 );
 
-export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $newRustFunction(
-  "npm.rs",
-  "OperatingSystem.jsFunctionOperatingSystemIsMatch",
-  1,
+export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $bindgen(
+  "npm_jsc.bind.ts",
+  "operatingSystemIsMatch",
 );
 
-export const createSocketPair: () => [number, number] = $newRustFunction(
-  "runtime/socket/socket.rs",
-  "jsCreateSocketPair",
-  0,
-);
+export const createSocketPair = $bindgen("socket_body.bind.ts", "createSocketPair") as () => [number, number];
 
 export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
   "NodeModuleModule.cpp",
@@ -235,11 +206,9 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
   0,
 );
 
-export const frameworkRouterInternals = $rust("FrameworkRouter.rs", "JSFrameworkRouter.getBindings") as {
-  parseRoutePattern: (style: string, pattern: string) => null | { kind: string; pattern: string };
-  FrameworkRouter: {
-    new (opts: any): any;
-  };
+export const frameworkRouterInternals = {
+  parseRoutePattern: $bindgen("FrameworkRouter.bind.ts", "parseRoutePattern"),
+  FrameworkRouter: $bindgen("filesystem_router.bind.ts", "FrameworkFileSystemRouter"),
 };
 
 // Only in a build with assertions: `isCompiled` in scripts/build/codegen.ts.
@@ -251,6 +220,9 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   utf8Optional: $bindgen("bindgen_test.bind.ts", "utf8Optional"),
   utf8Owned: $bindgen("bindgen_test.bind.ts", "utf8Owned"),
   stringEcho: $bindgen("bindgen_test.bind.ts", "stringEcho"),
+  stringLength: $bindgen("bindgen_test.bind.ts", "stringLength"),
+  expectedByNode: $bindgen("bindgen_test.bind.ts", "expectedByNode"),
+  expectedMessage: $bindgen("bindgen_test.bind.ts", "expectedMessage"),
   nextColor: $bindgen("bindgen_test.bind.ts", "nextColor"),
   optionsEcho: $bindgen("bindgen_test.bind.ts", "optionsEcho"),
   describeValue: $bindgen("bindgen_test.bind.ts", "describeValue"),
@@ -258,19 +230,53 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   overloaded: $bindgen("bindgen_test.bind.ts", "overloaded"),
   describeDefaults: $bindgen("bindgen_test.bind.ts", "describeDefaults"),
   names: $bindgen("bindgen_test.bind.ts", "names"),
+  bare: $bindgen("bindgen_test.bind.ts", "bare"),
+  dateOf: $bindgen("bindgen_test.bind.ts", "dateOf"),
+  latin1: $bindgen("bindgen_test.bind.ts", "latin1"),
+  textOrBytes: $bindgen("bindgen_test.bind.ts", "textOrBytes"),
+  positions: $bindgen("bindgen_test.bind.ts", "positions"),
   sumArray: $bindgen("bindgen_test.bind.ts", "sumArray"),
   range: $bindgen("bindgen_test.bind.ts", "range"),
   words: $bindgen("bindgen_test.bind.ts", "words"),
   sumBytes: $bindgen("bindgen_test.bind.ts", "sumBytes"),
   sumBytesThenText: $bindgen("bindgen_test.bind.ts", "sumBytesThenText"),
+  sumBytesIfAny: $bindgen("bindgen_test.bind.ts", "sumBytesIfAny"),
+  fillBuffer: $bindgen("bindgen_test.bind.ts", "fillBuffer"),
+  stringOrObjectEcho: $bindgen("bindgen_test.bind.ts", "stringOrObjectEcho"),
+  stringViewEcho: $bindgen("bindgen_test.bind.ts", "stringViewEcho"),
+  stringViewCloneOutlivesBytes: $bindgen("bindgen_test.bind.ts", "stringViewCloneOutlivesBytes"),
+  stringOrObjectViewEcho: $bindgen("bindgen_test.bind.ts", "stringOrObjectViewEcho"),
   sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
+  callOr: $bindgen("bindgen_test.bind.ts", "callOr"),
+  stringAsIsOrBytesIfAny: $bindgen("bindgen_test.bind.ts", "stringAsIsOrBytesIfAny"),
+  presentUnlessEmptyString: $bindgen("bindgen_test.bind.ts", "presentUnlessEmptyString"),
   fail: $bindgen("bindgen_test.bind.ts", "fail"),
   TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
-  TestHolder: $bindgen("bindgen_test.bind.ts", "TestHolder"),
+  TestMutates: $bindgen("bindgen_test.bind.ts", "TestMutates"),
+  TestRefCounted: $bindgen("bindgen_test.bind.ts", "TestRefCounted"),
   makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
+  TestError: $bindgen("bindgen_test.bind.ts", "TestError"),
+  TestReadOnly: $bindgen("bindgen_test.bind.ts", "TestReadOnly"),
+  TestMemberFunctions: $bindgen("bindgen_test.bind.ts", "TestMemberFunctions"),
+  TestBoundThis: $bindgen("bindgen_test.bind.ts", "TestBoundThis"),
+  TestNonFinal: $bindgen("bindgen_test.bind.ts", "TestNonFinal"),
+  TestShape: $bindgen("bindgen_test.bind.ts", "TestShape"),
+  TestSquare: $bindgen("bindgen_test.bind.ts", "TestSquare"),
+  makeShape: $bindgen("bindgen_test.bind.ts", "makeShape"),
+  makeSquare: $bindgen("bindgen_test.bind.ts", "makeSquare"),
+  makeSquareWrapper: $bindgen("bindgen_test.bind.ts", "makeSquareWrapper"),
+  shapeFromJS: $bindgen("bindgen_test.bind.ts", "shapeFromJS"),
+  droppedShapes: $bindgen("bindgen_test.bind.ts", "droppedShapes"),
+  TestNote: $bindgen("bindgen_test.bind.ts", "TestNote"),
+  TestRefCountedNote: $bindgen("bindgen_test.bind.ts", "TestRefCountedNote"),
+  isNoteFromJSDirect: $bindgen("bindgen_test.bind.ts", "isNoteFromJSDirect"),
+  tokenIdFromJS: $bindgen("bindgen_test.bind.ts", "tokenIdFromJS"),
+  errorConstructor: $bindgen("bindgen_test.bind.ts", "errorConstructor"),
+  afterFirst: $bindgen("bindgen_test.bind.ts", "afterFirst"),
   bytesOf: $bindgen("bindgen_test.bind.ts", "bytesOf"),
   bytesOfOrToString: $bindgen("bindgen_test.bind.ts", "bytesOfOrToString"),
   bytesOfString: $bindgen("bindgen_test.bind.ts", "bytesOfString"),
+  bytesOfRefusingStringObject: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingStringObject"),
   bytesOfBufferOrBlob: $bindgen("bindgen_test.bind.ts", "bytesOfBufferOrBlob"),
   bytesOfRefusingUndefined: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingUndefined"),
   bytesOfThen: $bindgen("bindgen_test.bind.ts", "bytesOfThen"),
@@ -286,11 +292,45 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   pinnedBytesAfterCallback: $bindgen("bindgen_test.bind.ts", "pinnedBytesAfterCallback"),
   stringAsIsOrBytes: $bindgen("bindgen_test.bind.ts", "stringAsIsOrBytes"),
   asBigInt: $bindgen("bindgen_test.bind.ts", "asBigInt"),
+  thisAndCallee: $bindgen("bindgen_test.bind.ts", "thisAndCallee"),
+  doubled: $bindgen("bindgen_test.bind.ts", "doubled"),
+  makeDoubled: $bindgen("bindgen_test.bind.ts", "makeDoubled"),
+  promisePtrContext: $bindgen("bindgen_test.bind.ts", "promisePtrContext"),
+  readPromisePtr: $bindgen("bindgen_test.bind.ts", "readPromisePtr"),
+  makeNativePromiseContext: $bindgen("bindgen_test.bind.ts", "makeNativePromiseContext"),
+  readNativePromiseContext: $bindgen("bindgen_test.bind.ts", "readNativePromiseContext"),
+  primes: $bindgen("bindgen_test.bind.ts", "primes"),
+  testNamespace: $bindgen("bindgen_test.bind.ts", "testNamespace"),
+  nodeOptionsSize: $bindgen("bindgen_test.bind.ts", "nodeOptionsSize"),
+  bareOptionsSize: $bindgen("bindgen_test.bind.ts", "bareOptionsSize"),
+  timeValue: $bindgen("bindgen_test.bind.ts", "timeValue"),
+  textIfPassed: $bindgen("bindgen_test.bind.ts", "textIfPassed"),
+  isPassed: $bindgen("bindgen_test.bind.ts", "isPassed"),
+  isPassedAfterRequired: $bindgen("bindgen_test.bind.ts", "isPassedAfterRequired"),
+  requiredPair: $bindgen("bindgen_test.bind.ts", "requiredPair"),
+  requiredOverloaded: $bindgen("bindgen_test.bind.ts", "requiredOverloaded"),
+  lengthWithValue: $bindgen("bindgen_test.bind.ts", "lengthWithValue"),
+  counterWithValue: $bindgen("bindgen_test.bind.ts", "counterWithValue"),
+  keptString: $bindgen("bindgen_test.bind.ts", "keptString"),
+  bracketEcho: $bindgen("bindgen_test.bind.ts", "bracketEcho"),
+  describeHandle: $bindgen("bindgen_test.bind.ts", "describeHandle"),
+  isObject: $bindgen("bindgen_test.bind.ts", "isObject"),
+  objectEcho: $bindgen("bindgen_test.bind.ts", "objectEcho"),
+  absenceEcho: $bindgen("bindgen_test.bind.ts", "absenceEcho"),
+  callbackOrDelay: $bindgen("bindgen_test.bind.ts", "callbackOrDelay"),
+  presentArguments: $bindgen("bindgen_test.bind.ts", "presentArguments"),
+  finiteLater: $bindgen("bindgen_test.bind.ts", "finiteLater"),
+  requiredFiniteLater: $bindgen("bindgen_test.bind.ts", "requiredFiniteLater"),
   integerOrBigInt: $bindgen("bindgen_test.bind.ts", "integerOrBigInt"),
   looseInteger: $bindgen("bindgen_test.bind.ts", "looseInteger"),
   looseIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "looseIntegerOrBigInt"),
   looseDoubleOrBigInt: $bindgen("bindgen_test.bind.ts", "looseDoubleOrBigInt"),
   wideIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "wideIntegerOrBigInt"),
+  portOf: $bindgen("imported_class_test.bind.ts", "portOf"),
+  portOfOrNull: $bindgen("imported_class_test.bind.ts", "portOfOrNull"),
+  portAfterCallback: $bindgen("imported_class_test.bind.ts", "portAfterCallback"),
+  describeAddressOrList: $bindgen("imported_class_test.bind.ts", "describeAddressOrList"),
+  isAddress: $bindgen("imported_class_test.bind.ts", "isAddress"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
@@ -309,7 +349,7 @@ export const Dequeue = require("internal/fifo");
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.
-const rustNormalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const rustNormalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
 const nodeKEmptyObject = require("internal/shared").kEmptyObject;
 function nodeNormalizeEncoding(enc) {
   if (enc == null) return "utf8";
@@ -575,8 +615,8 @@ export const exposedInternals = {
     // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
     // and args::Rm::from_js), not JS reimplementations -- vendored tests assert
     // the production behavior through these.
-    stringToFlags: $newRustFunction("node_fs_binding.rs", "string_to_flags_for_testing", 1),
-    validateRmOptionsSync: $newRustFunction("node_fs_binding.rs", "rm_options_for_testing", 2),
+    stringToFlags: $bindgen("node_fs_binding.bind.ts", "stringToFlagsForTesting"),
+    validateRmOptionsSync: $bindgen("node_fs_binding.bind.ts", "rmOptionsForTesting"),
   },
   // internalBinding() is served by the registered "internal/test/binding"
   // module (src/js/internal/test/binding.ts), not from here.
@@ -610,14 +650,17 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 );
 
 export const timerInternals = {
-  timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
+  timerClockMs: $bindgen("Timer.bind.ts", "timerClockMs"),
+  monotonicNowMs: $bindgen("Timer.bind.ts", "monotonicNowMs"),
+  // Sets the id of this thread's next timer. The counter can only move forward.
+  setNextTimerId: $bindgen("Timer.bind.ts", "setNextTimerId") as (id: number) => void,
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which
 // the internal/dgram UDP wrap does not expose — it binds on create).
 export const dgramInternals = {
-  newRawSocketFd: $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2),
-  closeRawFd: $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1),
+  newRawSocketFd: $bindgen("udp_socket.bind.ts", "dgramNewSocketFd"),
+  closeRawFd: $bindgen("udp_socket.bind.ts", "dgramCloseFd"),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(
@@ -627,18 +670,15 @@ export const decodeURIComponentSIMD = $newCppFunction(
 );
 
 export const getDevServerDeinitCount = $bindgen("DevServer.bind.ts", "getDeinitCountForTesting");
-export const getCounters = $newRustFunction("Counters.rs", "createCountersObject", 0);
-export const linearFifoOrderedRemoveProbe = $newRustFunction(
-  "collections/linear_fifo.rs",
-  "TestingAPIs.orderedRemoveProbe",
-  1,
-) as (scenario: number) => number[];
+export const getCounters = $bindgen("Counters.bind.ts", "createCountersObject");
+export const linearFifoOrderedRemoveProbe = $bindgen("linear_fifo_testing.bind.ts", "orderedRemoveProbe") as (
+  scenario: number,
+) => number[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
-const setNativeSocketOptions: (socket: unknown, option: 1 | 2, size: number) => void = $newRustFunction(
-  "runtime/socket/socket.rs",
-  "jsSetSocketOptions",
-  3,
+const setNativeSocketOptions: (socket: unknown, option: 1 | 2, size: number) => void = $bindgen(
+  "socket_body.bind.ts",
+  "setSocketOptions",
 );
 
 /**
@@ -681,7 +721,7 @@ export type SocketFaultSyscall =
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
-  action: "errno" | "short" | "zero" | "none";
+  action: "errno" | "short" | "zero" | "excess" | "none";
   /** errno name or numeric value (only used when action === "errno") */
   errno?:
     | "ECONNRESET"
@@ -710,17 +750,11 @@ export type SocketFaultRule = {
 
 export const socketFaultInjection = {
   /** True when the current binary was built with `--socket-fault-injection=on` (defaults to on for ASan builds). */
-  available: $newRustFunction(
-    "runtime/socket/socket.rs",
-    "TestingAPIs.jsSocketFaultInjectionAvailable",
-    0,
-  ) as () => boolean,
+  available: $bindgen("socket_body.bind.ts", "socketFaultInjectionAvailable"),
   /** Arm a process-wide fault rule for one usockets bsd_* syscall. */
-  set: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsSetSocketFault", 1) as (
-    rule: SocketFaultRule,
-  ) => boolean,
+  set: $bindgen("socket_body.bind.ts", "setSocketFault") as (rule: SocketFaultRule) => boolean,
   /** Disarm all fault rules. */
-  clear: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsClearSocketFaults", 0) as () => void,
+  clear: $bindgen("socket_body.bind.ts", "clearSocketFaults"),
 };
 
 export const namedPipeInternals = {
@@ -729,7 +763,16 @@ export const namedPipeInternals = {
    * connecting or connected `Bun.connect({ unix: "\\\\.\\pipe\\..." })` socket and
    * one per accepted pipe client. Always 0 on other platforms.
    */
-  liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeContextLiveCount", 0) as () => number,
+  liveCount: $bindgen("socket_body.bind.ts", "namedPipeContextLiveCount"),
+};
+
+export const duplexTLSInternals = {
+  /**
+   * Live native contexts behind TLS sockets that run over a JS stream
+   * (`tls.connect({ socket: duplex })`, `new tls.TLSSocket(duplex)`): one per
+   * socket, until the task that frees it after the close has run.
+   */
+  liveCount: $bindgen("socket_body.bind.ts", "duplexUpgradeContextLiveCount"),
 };
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
@@ -781,21 +824,16 @@ export const spawnThreadsForTesting: (iterations: number, fd: number, parallelis
 // True when the installed watcher registered a real OS source (a PSI trigger
 // on Linux). The watcher installs silently without one when the kernel
 // refuses the trigger, so isMemoryPressureWatcherInstalled() cannot tell.
-export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction(
-  "memory_pressure.rs",
-  "jsWatcherHasOsBackend",
-  0,
-);
+export const memoryPressureWatcherHasOsBackend = $bindgen("memory_pressure.bind.ts", "watcherHasOsBackend");
 
 // The exact bytes Bun writes to /proc/pressure/memory to arm its trigger.
 // null where there is no PSI backend (everything except Linux).
-export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
+export const memoryPressurePsiTrigger = $bindgen("memory_pressure.bind.ts", "psiTrigger") as () => Buffer | null;
 
 // The PSI event filter: `armed` is the file at arm time, `polls` one read per POLLPRI. null off Linux.
-export const memoryPressurePsiFilter: (armed: string, ...polls: string[]) => boolean[] | null = $newRustFunction(
-  "memory_pressure.rs",
-  "jsPsiFilter",
-  1,
+export const memoryPressurePsiFilter: (armed: string, ...polls: string[]) => boolean[] | null = $bindgen(
+  "memory_pressure.bind.ts",
+  "psiFilter",
 );
 
 export const getEventLoopStats: () => {
@@ -809,32 +847,18 @@ export const getEventLoopStats: () => {
   eventLoopAlive: boolean;
   /** usockets/libuv loop iterations so far (us_internal_loop_pre count). */
   iteration: number;
-} = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
+} = $bindgen("event_loop.bind.ts", "getActiveTasks");
 
 export const hostedGitInfo = {
-  parseUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsParseUrl", 1),
-  fromUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsFromUrl", 1),
+  parseUrl: $bindgen("hosted_git_info_jsc.bind.ts", "parseUrl"),
+  fromUrl: $bindgen("hosted_git_info_jsc.bind.ts", "fromUrl"),
 };
 
-export const translateUVErrorToE: (code: number) => string | undefined = $newRustFunction(
-  "sys.rs",
-  "TestingAPIs.translateUVErrorToE",
-  1,
-);
+export const translateUVErrorToE = $bindgen("error_jsc.bind.ts", "translateUVErrorToE");
 
-export const translateNtStatusToE: (status: number) => string | undefined = $newRustFunction(
-  "sys.rs",
-  "TestingAPIs.translateNtStatusToE",
-  1,
-);
+export const translateNtStatusToE = $bindgen("error_jsc.bind.ts", "translateNtStatusToE");
 
-export const sigactionLayout: () =>
-  | undefined
-  | {
-      installed: { handler: number; flags: number };
-      readback: { handler: number; flags: number };
-      sizeof: number;
-    } = $newRustFunction("sys.rs", "TestingAPIs.sigactionLayout", 0);
+export const sigactionLayout = $bindgen("error_jsc.bind.ts", "sigactionLayout");
 
 export const stringsInternals = {
   /**
@@ -843,68 +867,46 @@ export const stringsInternals = {
    * path is otherwise only reachable from Windows `bun build --compile`
    * metadata, so this binding lets us exercise it on all platforms.
    */
-  toUTF16AllocSentinel: $newRustFunction("string/immutable/unicode.rs", "TestingAPIs.toUTF16AllocSentinel", 1) as (
-    bytes: Uint8Array,
-  ) => string,
+  toUTF16AllocSentinel: $bindgen("bun_string_jsc.bind.ts", "toUTF16AllocSentinel"),
 };
 
 /** Seed the connect-path DNS cache for `hostname` via the real `process_results` interleave; returns family order. */
-export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.seedCacheForTesting", 2) as (
+export const dnsCacheSeed = $bindgen("dns_internals.bind.ts", "seedCacheForTesting") as (
   hostname: string,
   addresses: string[],
 ) => number[];
 
 /** Whether the connect-path resolver answers `hostname` with the loopback addresses itself instead of asking getaddrinfo. */
-export const dnsIsLocalhostName = $newRustFunction(
-  "runtime/dns_jsc/dns.rs",
-  "internal.isLocalhostNameForTesting",
-  1,
-) as (hostname: string) => boolean;
+export const dnsIsLocalhostName = $bindgen("dns_internals.bind.ts", "isLocalhostNameForTesting");
 
 /** Whether a getaddrinfo() answer made of `addresses` makes the connect-path resolver retry without AI_ADDRCONFIG. */
-export const dnsIsAllLoopbackOfOneFamily = $newRustFunction(
-  "runtime/dns_jsc/dns.rs",
-  "internal.isAllLoopbackOfOneFamilyForTesting",
-  1,
-) as (addresses: string[]) => boolean;
+export const dnsIsAllLoopbackOfOneFamily = $bindgen("dns_internals.bind.ts", "isAllLoopbackOfOneFamilyForTesting") as (
+  addresses: string[],
+) => boolean;
 
 /** The error a getaddrinfo lookup of `hostname` reports when getaddrinfo(3) returns the `EAI_*` status named `code` (`"EAI_AGAIN"`, `"EAI_FAIL"`, `"EAI_NONAME"`). */
-export const dnsGetaddrinfoError = $newRustFunction(
-  "runtime/dns_jsc/dns.rs",
-  "internal.getaddrinfoErrorForTesting",
-  2,
-) as (code: string, hostname: string) => Error & { code: string; errno: number; syscall: string; hostname: string };
+export const dnsGetaddrinfoError = $bindgen("dns_internals.bind.ts", "getaddrinfoErrorForTesting") as (
+  code: string,
+  hostname: string,
+) => Error & { code: string; errno: number; syscall: string; hostname: string };
 
 export const fetchH2Internals = {
-  liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
-    sessions: number;
-    streams: number;
-  },
+  liveCounts: $bindgen("headers_jsc.bind.ts", "h2LiveCounts"),
 };
 
 export const fetchH3Internals = {
-  liveCounts: $newRustFunction("http/H3Client.rs", "TestingAPIs.quicLiveCounts", 0) as () => {
-    sessions: number;
-    streams: number;
-  },
+  liveCounts: $bindgen("headers_jsc.bind.ts", "h3LiveCounts"),
 };
 
-const proxyFor = $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.proxyFor", 2) as (
-  entries: string[],
-  url: string,
-) => string | null;
+const proxyFor = $bindgen("proxy_testing.bind.ts", "proxyFor");
 
 export const proxyInternals = {
   /** Whether the `NO_PROXY` value `list` exempts `hostname` on `port`. */
-  noProxyMatches: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.noProxyMatches", 3) as (
-    list: string,
-    hostname: string,
-    port: number,
-  ) => boolean,
+  noProxyMatches: $bindgen("proxy_testing.bind.ts", "noProxyMatches"),
   /** The proxy an environment of exactly `env` selects for `url`, or null. */
   proxyFor: (env: Record<string, string>, url: string) => proxyFor(Object.entries(env).flat(), url),
   /** What the HTTP client's URL parser makes of `href`. */
-  parseURL: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.parseURL", 1) as (href: string) => {
+  parseURL: $bindgen("proxy_testing.bind.ts", "parseURL") as (href: string) => {
     username: string;
     password: string;
     hostname: string;
@@ -914,16 +916,14 @@ export const proxyInternals = {
 };
 
 export const fileSinkInternals = {
-  liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
+  liveCount: $bindgen("FileSink.bind.ts", "liveCount"),
 };
 
 export const byteStreamInternals = {
   // Swap a ByteStream-backed stream's producer for one whose drain signal
   // re-enters on_cancel, making consumed-during-signal_drained re-entrancy
   // deterministic in tests.
-  cancelOnDrain: $newRustFunction("runtime/webcore/ByteStream.rs", "TestingAPIs.byteStreamCancelOnDrain", 1) as (
-    stream: ReadableStream,
-  ) => void,
+  cancelOnDrain: $bindgen("ByteStream.bind.ts", "cancelOnDrain") as (stream: ReadableStream) => void,
 };
 
 // How many internal modules (node:fs etc.) this process created from bytecode embedded by `bun build --compile

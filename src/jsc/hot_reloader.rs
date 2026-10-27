@@ -713,11 +713,12 @@ where
         let watcher = match Watcher::init(reloader, unsafe { (*this).watcher_top_level_dir() }) {
             Ok(w) => w,
             Err(err) => {
-                bun_core::handle_error_return_trace(&err);
-                Output::panic(format_args!(
-                    "Failed to enable File Watcher: {}",
+                bun_core::pretty_errorln!(
+                    "<red>error<r><d>:<r> Failed to enable File Watcher: {}",
                     err.name()
-                ));
+                );
+                Output::flush();
+                bun_core::Global::exit(1);
             }
         };
 
@@ -802,14 +803,19 @@ where
                 Self::debug(format_args!(
                     "File change: {}",
                     bstr::BStr::new(bun_paths::resolve_path::relative(
-                        FileSystem::get().top_level_dir,
+                        FileSystem::get().top_level_dir(),
                         watched_path,
                     ))
                 ));
             }
             // SAFETY: see the File-arm call in `on_file_update`.
             unsafe {
-                (*ctx).remove_at_index::<false>(bun_watcher::Kind::File, entry_id as u16, 0, &[])
+                (*ctx).remove_at_index::<false>(
+                    bun_watcher::Kind::File,
+                    entry_id as bun_watcher::WatchItemIndex,
+                    0,
+                    &[],
+                )
             };
         }
         reloaded
@@ -887,7 +893,7 @@ where
             // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
             unsafe { (*ctx).flush_evictions() };
         });
-        let fs = FileSystem::get();
+        let top_level_dir = FileSystem::get().top_level_dir();
         #[cfg(windows)]
         let _ = (changed_files, file_descriptors);
 
@@ -908,8 +914,9 @@ where
 
             match kind {
                 bun_watcher::Kind::File => {
-                    if event.op.contains(WatchOp::DELETE)
-                        || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE)
+                    if !bun_watcher::WATCHES_BY_PATH
+                        && (event.op.contains(WatchOp::DELETE)
+                            || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE))
                     {
                         // SAFETY: the Watcher outlives this call (it owns the
                         // Reloader that calls us); `remove_at_index::<false>`
@@ -930,7 +937,7 @@ where
                         Self::debug(format_args!(
                             "File changed: {}",
                             bstr::BStr::new(bun_paths::resolve_path::relative(
-                                fs.top_level_dir,
+                                top_level_dir,
                                 file_path
                             ))
                         ));
@@ -1087,7 +1094,7 @@ where
                             Self::debug(format_args!(
                                 "Dir change: {} (affecting {})",
                                 bstr::BStr::new(bun_paths::resolve_path::relative(
-                                    fs.top_level_dir,
+                                    top_level_dir,
                                     file_path
                                 )),
                                 reloaded
@@ -1170,7 +1177,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn watcher_top_level_dir(&self) -> &'static [u8] {
-        FileSystem::get().top_level_dir
+        FileSystem::get().top_level_dir()
     }
 
     fn install_bun_watcher(

@@ -18,13 +18,13 @@ impl Rule for NoClassAssign {
         let Some(symbol) = class.symbol().filter(|it| it.has_modifying_references()) else {
             return;
         };
-        // oxlint points at the declaration.
+        // oxlint reports at the declaration.
         let declared = class.name().filter(|_| cx.language().is_oxlint).map(|it| it.span());
         for reference in ast_utils::get_modifying_references(symbol.references()) {
             let report = cx.report(declared.unwrap_or_else(|| reference.span()), CLASS).data("name", reference.name());
             let report = report.hint_with(|| {
                 let line = cx.line_of(class.name()?.span().start);
-                Some(format!("This assignment replaces the class declared on line {line}."))
+                Some(format!("Replaces the class declared on line {line}."))
             });
             report.labels_with(|labels| {
                 let name = bstr::BStr::new(reference.name().bytes());

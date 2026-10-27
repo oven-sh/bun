@@ -783,7 +783,7 @@ impl Watcher {
         Ok(FdOwnership::Watcher)
     }
 
-    /// Not `node_modules` or a directory inside it, and not outside the root directory.
+    /// Not a package store or a directory inside one, and not outside the root directory.
     #[inline]
     fn is_eligible_directory(&self, dir: &[u8]) -> bool {
         !bun_paths::strings::dir_is_or_is_inside_node_modules(dir)

@@ -54,7 +54,7 @@ impl ImportWatcher {
             .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
     }
 
-    /// No `node_modules` rule here: each caller decides.
+    /// No package rule here: each caller decides.
     #[inline]
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
         match self {
@@ -63,7 +63,7 @@ impl ImportWatcher {
         }
     }
 
-    /// Declines a file inside `node_modules`: the caller keeps `fd`.
+    /// Declines a package file: the caller keeps `fd`.
     #[inline]
     pub fn add_file<const COPY_FILE_PATH: bool>(
         &mut self,

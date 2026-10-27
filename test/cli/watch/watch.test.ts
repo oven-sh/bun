@@ -10,6 +10,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
 } from "node:fs";
 import { basename, join } from "node:path";
@@ -810,21 +811,24 @@ describe("a path that only holds the letters node_modules", () => {
   const kinds = {
     import: {
       load: (dep: string) => `import { v } from "./${dep}";\n`,
+      loadPackage: (name: string) => `import "${name}";\n`,
       testApi: `import { test } from "bun:test";\n`,
       source: (v: number) => `export const v = ${v};\n`,
     },
     require: {
       load: (dep: string) => `const { v } = require("./${dep}");\n`,
+      loadPackage: (name: string) => `require("${name}");\n`,
       testApi: `const { test } = require("bun:test");\n`,
       source: (v: number) => `module.exports = { v: ${v} };\n`,
     },
   };
-
-  for (const [mode, args] of [
+  const modes = [
     ["--watch", ["--watch", "--no-clear-screen", "main.js"]],
     ["--hot", ["--hot", "--no-clear-screen", "main.js"]],
     ["test --watch", ["test", "--watch", "main.test.js"]],
-  ] as const) {
+  ] as const;
+
+  for (const [mode, args] of modes) {
     describe(mode, () => {
       for (const [where, folder, dep] of layouts) {
         for (const [kind, { load, testApi, source }] of Object.entries(kinds)) {
@@ -957,6 +961,82 @@ describe("a path that only holds the letters node_modules", () => {
         await using run = spawnWatchee(cwd, ["--watch", "--no-clear-screen", "main.js"]);
         await run.waitFor("run 1");
         expect(openPaths(run.pid)).toContain(join(cwd, "empty"));
+      },
+    );
+  });
+
+  // iCloud Drive does not sync a name that ends in `.nosync`. Its users keep
+  // the store as `node_modules.nosync` behind a link named `node_modules`, and
+  // the module loader sees the real path, which has no component named
+  // `node_modules`. The watcher must hold nothing in that store, as in a real
+  // `node_modules`, and it must still reload a project file whose name holds
+  // the letters. A test for the bare letters loses the reload. A test for the
+  // one name `node_modules` holds the store. Not on Windows: `openPaths` has
+  // no listing there.
+  describe("a store behind the link node_modules -> node_modules.nosync", () => {
+    for (const [mode, args] of modes) {
+      for (const [kind, { load, loadPackage, testApi, source }] of Object.entries(kinds)) {
+        it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
+          `${mode} holds nothing in the store and reloads a project file loaded by ${kind}`,
+          async () => {
+            const dep = "src/list-node_modules.js";
+            using dir = tempDir("watch-linked-store", {
+              "main.js": `${loadPackage("p0")}${load(dep)}console.log("run", v);\n${keepAlive}`,
+              "main.test.js": `${testApi}${loadPackage("p0")}${load(dep)}test("run", () => console.log("run", v));\n`,
+              [dep]: source(1),
+              "node_modules.nosync/p0/package.json": JSON.stringify({ name: "p0", main: "index.js" }),
+              "node_modules.nosync/p0/index.js": load("lib/util.js"),
+              "node_modules.nosync/p0/lib/util.js": source(0),
+            });
+            const cwd = realpathSync(String(dir));
+            symlinkSync("node_modules.nosync", join(cwd, "node_modules"));
+
+            await using run = spawnWatchee(cwd, args);
+            await run.waitFor("run 1");
+            const held = openPaths(run.pid);
+            // stdin, stdout and stderr are always there, so an empty list
+            // means that the listing failed.
+            expect({
+              listed: held.length > 0,
+              inStore: held.filter(path => path.startsWith(join(cwd, "node_modules"))),
+            }).toEqual({ listed: true, inStore: [] });
+
+            await editUntil(run, "run 2", () => Bun.write(join(cwd, dep), source(2)));
+          },
+        );
+      }
+    }
+
+    // `bun build --watch` watches the files of a package on purpose, and not
+    // their directories. The watch on the directory of the project file is
+    // how it sees a save by rename.
+    it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
+      "build --watch holds no directory of the store and rebuilds a project file saved by rename",
+      async () => {
+        const dep = "src/node_modules_helpers/util.js";
+        const source = (v: number) => `export const v = "build ${v}";\n`;
+        using dir = tempDir("watch-linked-store", {
+          "main.js": `import "p0";\nimport { v } from "./${dep}";\nconsole.log(v);\n`,
+          [dep]: source(1),
+          "node_modules.nosync/p0/package.json": JSON.stringify({ name: "p0", main: "index.js" }),
+          "node_modules.nosync/p0/index.js": `import "./lib/util.js";\n`,
+          "node_modules.nosync/p0/lib/util.js": `console.log("p0");\n`,
+        });
+        const cwd = realpathSync(String(dir));
+        symlinkSync("node_modules.nosync", join(cwd, "node_modules"));
+
+        await using run = spawnWatchee(cwd, ["build", "--watch", "--no-clear-screen", "main.js"]);
+        await run.waitFor("build 1");
+        const held = openPaths(run.pid);
+        expect({
+          listed: held.length > 0,
+          storeDirectories: held.filter(
+            path =>
+              path.startsWith(join(cwd, "node_modules")) && statSync(path, { throwIfNoEntry: false })?.isDirectory(),
+          ),
+        }).toEqual({ listed: true, storeDirectories: [] });
+
+        await editUntil(run, "build 2", () => saveByRename(dep, source(2))(cwd));
       },
     );
   });

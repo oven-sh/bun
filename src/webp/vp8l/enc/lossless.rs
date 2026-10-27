@@ -1,11 +1,12 @@
-//! `lossless_enc.c`, `lossless_common.h`: fixed-point logarithms and entropies, prefix codes, pixel arithmetic, color transforms.
+//! `lossless_enc.c`, `lossless_common.h`: fixed-point logarithms, entropies, prefix codes, pixel and color arithmetic.
 
-use crate::util::{Checked, SliceExt};
+use super::MAX_SEARCH_TRANSFORM_BITS;
+use crate::util::{ByteHistogram, Checked, SliceExt, increment};
 use crate::vp8l::common::{ARGB_BLACK, Multipliers, color_transform_delta};
 use crate::vp8l::predictors::Pixels;
 
 /// The number of fractional bits of every logarithm, entropy and cost.
-pub(crate) const LOG_2_PRECISION_BITS: u32 = 23;
+pub(super) const LOG_2_PRECISION_BITS: u32 = 23;
 const LOG_LOOKUP_IDX_MAX: u32 = 256;
 const APPROX_LOG_WITH_CORRECTION_MAX: u32 = 65536;
 const APPROX_LOG_MAX: u32 = 4096;
@@ -91,7 +92,7 @@ static SLOG2_TABLE: [u64; LOG_LOOKUP_IDX_MAX as usize] = [
 
 /// `DivRound` by a positive constant.
 #[inline]
-pub(crate) const fn div_round<const B: i64>(a: i64) -> i64 {
+pub(super) const fn div_round<const B: i64>(a: i64) -> i64 {
     if a < 0 {
         a.wrapping_sub(B / 2) / B
     } else {
@@ -101,8 +102,8 @@ pub(crate) const fn div_round<const B: i64>(a: i64) -> i64 {
 
 /// `BitsLog2Floor`, and 0 for 0.
 #[inline]
-pub(crate) const fn bits_log2_floor(n: u32) -> u32 {
-    31 - (n | 1).leading_zeros()
+pub(super) const fn bits_log2_floor(n: u32) -> u32 {
+    (n | 1).ilog2()
 }
 
 /// `(small << log_cnt) + rest`, with `small` below `LOG_LOOKUP_IDX_MAX`.
@@ -165,7 +166,7 @@ fn fast_log2_slow(v: u32) -> u32 {
 
 /// `VP8LFastLog2`: `log2(v)`, and 0 for 0.
 #[inline]
-pub(crate) fn fast_log2(v: u32) -> u32 {
+pub(super) fn fast_log2(v: u32) -> u32 {
     match LOG2_TABLE.get(v as usize) {
         Some(&log) => log,
         None => fast_log2_slow(v),
@@ -174,7 +175,7 @@ pub(crate) fn fast_log2(v: u32) -> u32 {
 
 /// `VP8LFastSLog2`: `v * log2(v)`, and 0 for 0.
 #[inline]
-pub(crate) fn fast_slog2(v: u32) -> u64 {
+pub(super) fn fast_slog2(v: u32) -> u64 {
     match SLOG2_TABLE.get(v as usize) {
         Some(&slog) => slog,
         None => fast_slog2_slow(v),
@@ -183,17 +184,17 @@ pub(crate) fn fast_slog2(v: u32) -> u64 {
 
 /// `VP8LPrefixCode`: how a length or a distance is written.
 #[derive(Clone, Copy)]
-pub(crate) struct PrefixCode {
+pub(super) struct PrefixCode {
     /// The symbol that goes through the entropy coder.
-    pub(crate) code: usize,
+    pub(super) code: usize,
     /// How many bits follow it as they are.
-    pub(crate) extra_bits: u32,
-    pub(crate) extra_bits_value: u32,
+    pub(super) extra_bits: u32,
+    pub(super) extra_bits_value: u32,
 }
 
 /// `VP8LPrefixEncode`. 0 is not a length or a distance, but the cost model asks for it.
 #[inline]
-pub(crate) fn prefix_encode(distance: u32) -> PrefixCode {
+pub(super) fn prefix_encode(distance: u32) -> PrefixCode {
     if distance <= 2 {
         return PrefixCode {
             code: distance.saturating_sub(1) as usize,
@@ -213,16 +214,16 @@ pub(crate) fn prefix_encode(distance: u32) -> PrefixCode {
 }
 
 /// The histogram of the tiles done so far, with the terms of its entropy: every candidate is compared with it.
-pub(crate) struct Accumulated {
-    counts: [u32; 256],
+pub(super) struct AccumulatedHistogram {
+    counts: ByteHistogram,
     /// `fast_slog2` of each count.
     slog2: [u64; 256],
     sum: u32,
     slog2_sum: u64,
 }
 
-impl Accumulated {
-    pub(crate) const fn new() -> Self {
+impl AccumulatedHistogram {
+    pub(super) const fn new() -> Self {
         Self {
             counts: [0; 256],
             slog2: [0; 256],
@@ -231,7 +232,7 @@ impl Accumulated {
         }
     }
 
-    pub(crate) fn add(&mut self, x: &[u32; 256]) {
+    pub(super) fn add(&mut self, x: &ByteHistogram) {
         for ((&x, count), slog2) in x.iter().zip(&mut self.counts).zip(&mut self.slog2) {
             if x != 0 {
                 *count += x;
@@ -244,8 +245,8 @@ impl Accumulated {
 }
 
 /// `VP8LCombinedShannonEntropy`: the entropy of `x` plus that of `x + y`. Where `x` is 0, `y` has the term already.
-pub(crate) fn combined_shannon_entropy(x: &[u32; 256], y: &Accumulated) -> u64 {
-    let mut retval = y.slog2_sum;
+pub(super) fn combined_shannon_entropy(x: &ByteHistogram, y: &AccumulatedHistogram) -> u64 {
+    let mut slog2_sum = y.slog2_sum;
     let mut sum_x = 0u32;
     for ((x, y_counts), y_slog2) in x
         .as_chunks::<8>()
@@ -260,39 +261,37 @@ pub(crate) fn combined_shannon_entropy(x: &[u32; 256], y: &Accumulated) -> u64 {
         for ((&x, &y), &y_slog2) in x.iter().zip(y_counts).zip(y_slog2) {
             if x != 0 {
                 sum_x += x;
-                retval = retval
+                slog2_sum = slog2_sum
                     .wrapping_add(fast_slog2(x) + fast_slog2(x + y))
                     .wrapping_sub(y_slog2);
             }
         }
     }
-    (fast_slog2(sum_x) + fast_slog2(sum_x + y.sum)).wrapping_sub(retval)
+    (fast_slog2(sum_x) + fast_slog2(sum_x + y.sum)).wrapping_sub(slog2_sum)
 }
 
-/// `VP8LBitEntropy`
 #[derive(Clone, Copy, Default)]
-pub(crate) struct BitEntropy {
-    pub(crate) entropy: u64,
+pub(super) struct BitEntropy {
+    pub(super) entropy: u64,
     /// The sum of the population.
-    pub(crate) sum: u32,
+    pub(super) sum: u32,
     /// How many elements are not 0.
-    pub(crate) nonzeros: u32,
-    pub(crate) max_val: u32,
-    /// The start of the last run of elements that are not 0.
-    pub(crate) nonzero_code: usize,
+    pub(super) nonzeros: u32,
+    pub(super) max_val: u32,
+    /// An element that is not 0: the only one if `nonzeros` is 1.
+    pub(super) nonzero_code: usize,
 }
 
 /// `VP8LStreaks`: runs of equal elements. The first index says whether the elements are other than 0.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct Streaks {
+pub(super) struct Streaks {
     /// How many runs are longer than 3.
-    pub(crate) counts: [u32; 2],
+    pub(super) counts: [u32; 2],
     /// The total length of the runs, by whether they are longer than 3.
-    pub(crate) streaks: [[u32; 2]; 2],
+    pub(super) streaks: [[u32; 2]; 2],
 }
 
-/// `VP8LBitsEntropyUnrefined`
-pub(crate) fn bits_entropy_unrefined(array: &[u32]) -> BitEntropy {
+pub(super) fn bits_entropy_unrefined(array: &[u32]) -> BitEntropy {
     let mut entropy = BitEntropy::default();
     for (i, &count) in array.iter().enumerate() {
         if count != 0 {
@@ -312,7 +311,7 @@ const CHUNK_LEN: usize = 16;
 /// Splits a population into runs of equal values.
 struct Runs {
     bit_entropy: BitEntropy,
-    stats: Streaks,
+    streaks: Streaks,
     /// The value of the current run, where it starts, and where it ends so far.
     val: u32,
     start: usize,
@@ -323,7 +322,7 @@ impl Runs {
     fn new(first: u32) -> Self {
         Self {
             bit_entropy: BitEntropy::default(),
-            stats: Streaks::default(),
+            streaks: Streaks::default(),
             val: first,
             start: 0,
             end: 0,
@@ -334,8 +333,8 @@ impl Runs {
     #[inline]
     fn end_run(&mut self) {
         let streak = (self.end - self.start) as u32;
-        let [zero, nonzero] = &mut self.stats.streaks;
-        let [zero_count, nonzero_count] = &mut self.stats.counts;
+        let [zero, nonzero] = &mut self.streaks.streaks;
+        let [zero_count, nonzero_count] = &mut self.streaks.counts;
         let (streaks, count) = if self.val != 0 {
             let bit_entropy = &mut self.bit_entropy;
             bit_entropy.sum += self.val * streak;
@@ -385,12 +384,12 @@ impl Runs {
         self.end_run();
         self.bit_entropy.entropy =
             fast_slog2(self.bit_entropy.sum).wrapping_sub(self.bit_entropy.entropy);
-        (self.bit_entropy, self.stats)
+        (self.bit_entropy, self.streaks)
     }
 }
 
 /// `VP8LGetEntropyUnrefined`
-pub(crate) fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
+pub(super) fn entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
     let mut runs = Runs::new(x.first().copied().unwrap_or(0));
     let (chunks, rest) = x.as_chunks::<CHUNK_LEN>();
     for chunk in chunks {
@@ -401,7 +400,7 @@ pub(crate) fn get_entropy_unrefined(x: &[u32]) -> (BitEntropy, Streaks) {
 }
 
 /// `VP8LGetCombinedEntropyUnrefined`: of `x + y`, which are of the same length.
-pub(crate) fn get_combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntropy, Streaks) {
+pub(super) fn combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntropy, Streaks) {
     let first = x.iter().zip(y).next().map_or(0, |(x, y)| x + y);
     let mut runs = Runs::new(first);
     let (x_chunks, x_rest) = x.as_chunks::<CHUNK_LEN>();
@@ -417,7 +416,7 @@ pub(crate) fn get_combined_entropy_unrefined(x: &[u32], y: &[u32]) -> (BitEntrop
 
 /// `VP8LSubPixels`: the difference of each component, modulo 256.
 #[inline]
-pub(crate) const fn sub_pixels(a: u32, b: u32) -> u32 {
+pub(super) const fn sub_pixels(a: u32, b: u32) -> u32 {
     let alpha_and_green = 0x00ff_00ffu32
         .wrapping_add(a & 0xff00_ff00)
         .wrapping_sub(b & 0xff00_ff00);
@@ -474,8 +473,7 @@ impl Pixels for u32 {
     }
 }
 
-/// `VP8LSubtractGreenFromBlueAndRed`
-pub(crate) fn subtract_green_from_blue_and_red(argb_data: &mut [u32]) {
+pub(super) fn subtract_green_from_blue_and_red(argb_data: &mut [u32]) {
     for argb in argb_data {
         let green = (*argb >> 8) & 0xff;
         let new_r = ((*argb >> 16) & 0xff).wrapping_sub(green) & 0xff;
@@ -498,8 +496,7 @@ const fn transform_color_blue(green_to_blue: u8, red_to_blue: u8, argb: u32) -> 
         - color_transform_delta(red_to_blue as i8, red as i8)) as u8
 }
 
-/// `VP8LTransformColor`
-pub(crate) fn transform_color(m: Multipliers, data: &mut [u32]) {
+pub(super) fn transform_color(m: Multipliers, data: &mut [u32]) {
     for argb in data {
         let new_red = transform_color_red(m.green_to_red, *argb);
         let new_blue = transform_color_blue(m.green_to_blue, m.red_to_blue, *argb);
@@ -508,10 +505,10 @@ pub(crate) fn transform_color(m: Multipliers, data: &mut [u32]) {
 }
 
 /// The most pixels that a tile of the color transform has.
-const MAX_COLOR_TILE_SIZE: usize = 32 * 32;
+const MAX_COLOR_TILE_SIZE: usize = 1 << (2 * MAX_SEARCH_TRANSFORM_BITS);
 
 /// The pixels of a tile, one channel after another so that trying a multiplier on all of them vectorizes.
-pub(crate) struct ColorTile {
+pub(super) struct ColorTile {
     len: usize,
     /// Each is a signed byte.
     red: [i16; MAX_COLOR_TILE_SIZE],
@@ -526,21 +523,17 @@ const fn delta(color_pred: i16, color: i16) -> i16 {
 }
 
 /// Equal values often follow each other and an increment waits for the one before, so they go to different tables.
-fn histogram_of(values: &[u8]) -> [u32; 256] {
+fn histogram_of(values: &[u8]) -> ByteHistogram {
     let mut histos = [[0u32; 256]; 4];
     let (quads, rest) = values.as_chunks::<4>();
     for quad in quads {
         for (histo, &value) in histos.iter_mut().zip(quad) {
-            if let Some(count) = histo.get_mut(usize::from(value)) {
-                *count += 1;
-            }
+            increment(histo, value);
         }
     }
     let [mut sum, others @ ..] = histos;
     for &value in rest {
-        if let Some(count) = sum.get_mut(usize::from(value)) {
-            *count += 1;
-        }
+        increment(&mut sum, value);
     }
     for other in &others {
         add_vector_eq(other, &mut sum);
@@ -550,7 +543,7 @@ fn histogram_of(values: &[u8]) -> [u32; 256] {
 
 impl ColorTile {
     /// `argb` goes from the first pixel of the tile to its last.
-    pub(crate) fn new(argb: &[u32], stride: usize, tile_width: usize) -> Checked<Self> {
+    pub(super) fn new(argb: &[u32], stride: usize, tile_width: usize) -> Checked<Self> {
         let mut tile = Self {
             len: 0,
             red: [0; MAX_COLOR_TILE_SIZE],
@@ -577,7 +570,7 @@ impl ColorTile {
     }
 
     /// `VP8LCollectColorRedTransforms`: the histogram of red after the transform.
-    pub(crate) fn collect_color_red_transforms(&self, green_to_red: u8) -> [u32; 256] {
+    pub(super) fn collect_color_red_transforms(&self, green_to_red: u8) -> ByteHistogram {
         let green_to_red = i16::from(green_to_red as i8);
         let mut values = [0u8; MAX_COLOR_TILE_SIZE];
         for ((value, &red), &green) in values
@@ -592,11 +585,11 @@ impl ColorTile {
     }
 
     /// `VP8LCollectColorBlueTransforms`: the histogram of blue after the transform.
-    pub(crate) fn collect_color_blue_transforms(
+    pub(super) fn collect_color_blue_transforms(
         &self,
         green_to_blue: u8,
         red_to_blue: u8,
-    ) -> [u32; 256] {
+    ) -> ByteHistogram {
         let green_to_blue = i16::from(green_to_blue as i8);
         let red_to_blue = i16::from(red_to_blue as i8);
         let mut values = [0u8; MAX_COLOR_TILE_SIZE];
@@ -615,7 +608,7 @@ impl ColorTile {
 
 /// `VP8LVectorMismatch`: how many elements the two have in common at their start.
 #[inline]
-pub(crate) fn vector_mismatch(array1: &[u32], array2: &[u32]) -> usize {
+pub(super) fn vector_mismatch(array1: &[u32], array2: &[u32]) -> usize {
     // Most matches end at once.
     let pairs = array1.iter().zip(array2).take(8);
     match pairs.take_while(|(a, b)| a == b).count() {
@@ -633,7 +626,7 @@ fn long_vector_mismatch(array1: &[u32], array2: &[u32]) -> usize {
 }
 
 /// `VP8LBundleColorMap`: packs `1 << xbits` palette indices into the green channel of each pixel.
-pub(crate) fn bundle_color_map(row: &[u8], xbits: u32, dst: &mut [u32]) {
+pub(super) fn bundle_color_map(row: &[u8], xbits: u32, dst: &mut [u32]) {
     if xbits == 0 {
         for (&index, dst) in row.iter().zip(dst) {
             *dst = 0xff00_0000 | (u32::from(index) << 8);
@@ -653,7 +646,7 @@ pub(crate) fn bundle_color_map(row: &[u8], xbits: u32, dst: &mut [u32]) {
 }
 
 /// `VP8LExtraCost`: how many extra bits the lengths or distances counted in `population` take.
-pub(crate) fn extra_cost(population: &[u32]) -> u32 {
+pub(super) fn extra_cost(population: &[u32]) -> u32 {
     population
         .as_chunks()
         .0
@@ -664,9 +657,8 @@ pub(crate) fn extra_cost(population: &[u32]) -> u32 {
         .fold(0, u32::wrapping_add)
 }
 
-/// `VP8LAddVectorEq`
 #[inline]
-pub(crate) fn add_vector_eq(a: &[u32], out: &mut [u32]) {
+pub(super) fn add_vector_eq(a: &[u32], out: &mut [u32]) {
     for (out, a) in out.iter_mut().zip(a) {
         *out += a;
     }

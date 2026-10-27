@@ -15,6 +15,8 @@ pub(crate) const HUFFMAN_CODES_PER_META_CODE: usize = 5;
 /// What the code length before the first one counts as.
 pub(crate) const DEFAULT_CODE_LENGTH: u8 = 8;
 pub(crate) const MAX_ALLOWED_CODE_LENGTH: usize = 15;
+/// The same for the code length code, whose lengths are stored in 3 bits.
+pub(crate) const MAX_CODE_LENGTH_CODE_LENGTH: u32 = 7;
 
 pub(crate) const NUM_LITERAL_CODES: usize = 256;
 pub(crate) const NUM_LENGTH_CODES: usize = 24;

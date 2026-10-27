@@ -1,29 +1,31 @@
-//! `huffman_encode_utils.c`: builds prefix codes of limited length, and the run-length coding of their lengths.
+//! `huffman_encode_utils.c`: builds Huffman codes of limited length, and the run-length coding of their lengths.
 
 use crate::Result;
 use crate::util::{Bug, Checked, SliceExt, try_vec};
 use crate::vp8l::common::{DEFAULT_CODE_LENGTH, MAX_ALLOWED_CODE_LENGTH};
+use core::iter::repeat_n;
 
 /// One symbol of a `HuffmanTreeCode`, which is a slice of these.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct Symbol {
+pub(super) struct Symbol {
     /// The bits to write, first bit lowest.
-    pub(crate) code: u16,
+    pub(super) bits: u16,
     /// How many, or 0 if the symbol does not occur.
-    pub(crate) length: u8,
+    pub(super) length: u8,
 }
 
 /// `HuffmanTreeToken`: a symbol of the code that code lengths are written with.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct Token {
+pub(super) struct Token {
     /// Up to 15: a code length. 16: repeat the last one. 17 and 18: zeros.
-    pub(crate) code: u8,
-    /// For 16 and up, how many times.
-    pub(crate) extra_bits: u8,
+    pub(super) code: u8,
+    /// For 16 and up, how many times, less the fewest that the symbol can stand for.
+    pub(super) extra_bits_value: u8,
 }
 
+/// `HuffmanTree`: a leaf or an inner node.
 #[derive(Clone, Copy, Default)]
-struct HuffmanTree {
+struct Node {
     total_count: u32,
     /// The symbol of a leaf.
     value: usize,
@@ -32,19 +34,19 @@ struct HuffmanTree {
 }
 
 /// The working memory of `create_huffman_tree`.
-pub(crate) struct Scratch {
+pub(super) struct Scratch {
     good_for_rle: Vec<bool>,
-    tree: Vec<HuffmanTree>,
-    pool: Vec<HuffmanTree>,
+    tree: Vec<Node>,
+    pool: Vec<Node>,
 }
 
 impl Scratch {
     /// For codes of up to `max_num_symbols` symbols.
-    pub(crate) fn new(max_num_symbols: usize) -> Result<Self> {
+    pub(super) fn new(max_num_symbols: usize) -> Result<Self> {
         Ok(Self {
             good_for_rle: try_vec(false, max_num_symbols)?,
-            tree: try_vec(HuffmanTree::default(), max_num_symbols)?,
-            pool: try_vec(HuffmanTree::default(), 2 * max_num_symbols)?,
+            tree: try_vec(Node::default(), max_num_symbols)?,
+            pool: try_vec(Node::default(), 2 * max_num_symbols)?,
         })
     }
 }
@@ -80,7 +82,7 @@ fn optimize_huffman_for_rle(good_for_rle: &mut [bool], counts: &mut [u32]) -> Ch
             Some(count) => {
                 good_for_rle.at(i)?
                     || (i != 0 && good_for_rle.at(i - 1)?)
-                    || (i64::from(count) - i64::from(limit)).abs() >= 4
+                    || count.abs_diff(limit) >= 4
             }
         };
         if stride_ends {
@@ -111,13 +113,8 @@ fn optimize_huffman_for_rle(good_for_rle: &mut [bool], counts: &mut [u32]) -> Ch
     Ok(())
 }
 
-fn set_bit_depths(
-    tree: &HuffmanTree,
-    pool: &[HuffmanTree],
-    code: &mut [Symbol],
-    level: u8,
-) -> Checked {
-    match tree.children {
+fn set_bit_depths(node: &Node, pool: &[Node], code: &mut [Symbol], level: u8) -> Checked {
+    match node.children {
         Some((left, right)) => {
             // A tree this deep would take more pixels than an image has.
             let level = level.checked_add(1).ok_or(Bug)?;
@@ -125,7 +122,7 @@ fn set_bit_depths(
             set_bit_depths(pool.at_ref(right)?, pool, code, level)
         }
         None => {
-            code.at_mut(tree.value)?.length = level;
+            code.at_mut(node.value)?.length = level;
             Ok(())
         }
     }
@@ -152,7 +149,7 @@ fn generate_optimal_tree(
             .enumerate()
             .filter(|(_, count)| **count != 0);
         for (node, (value, &count)) in tree.iter_mut().zip(leaves) {
-            *node = HuffmanTree {
+            *node = Node {
                 total_count: count.max(count_min),
                 value,
                 children: None,
@@ -185,7 +182,7 @@ fn generate_optimal_tree(
                 tree.move_within(k, k + 1, tree_size - k)?;
                 tree.put(
                     k,
-                    HuffmanTree {
+                    Node {
                         total_count: count,
                         value: 0,
                         children: Some((pool_size - 1, pool_size - 2)),
@@ -211,7 +208,7 @@ fn code_repeated_values(
 ) {
     let plain = Token {
         code: value,
-        extra_bits: 0,
+        extra_bits_value: 0,
     };
     if value != prev_value {
         tokens.push(plain);
@@ -219,18 +216,18 @@ fn code_repeated_values(
     }
     while repetitions >= 1 {
         if repetitions < 3 {
-            tokens.extend((0..repetitions).map(|_| plain));
+            tokens.extend(repeat_n(plain, repetitions));
             break;
         } else if repetitions < 7 {
             tokens.push(Token {
                 code: 16,
-                extra_bits: (repetitions - 3) as u8,
+                extra_bits_value: (repetitions - 3) as u8,
             });
             break;
         }
         tokens.push(Token {
             code: 16,
-            extra_bits: 3,
+            extra_bits_value: 3,
         });
         repetitions -= 6;
     }
@@ -239,35 +236,35 @@ fn code_repeated_values(
 fn code_repeated_zeros(mut repetitions: usize, tokens: &mut Vec<Token>) {
     while repetitions >= 1 {
         if repetitions < 3 {
-            tokens.extend((0..repetitions).map(|_| Token::default()));
+            tokens.extend(repeat_n(Token::default(), repetitions));
             break;
         } else if repetitions < 11 {
             tokens.push(Token {
                 code: 17,
-                extra_bits: (repetitions - 3) as u8,
+                extra_bits_value: (repetitions - 3) as u8,
             });
             break;
         } else if repetitions < 139 {
             tokens.push(Token {
                 code: 18,
-                extra_bits: (repetitions - 11) as u8,
+                extra_bits_value: (repetitions - 11) as u8,
             });
             break;
         }
         tokens.push(Token {
             code: 18,
-            extra_bits: 0x7f,
+            extra_bits_value: 0x7f,
         });
         repetitions -= 138;
     }
 }
 
-/// `VP8LCreateCompressedHuffmanTree`: `tokens`, which has room for one per symbol, becomes the lengths of `tree`.
-pub(crate) fn create_compressed_huffman_tree(tree: &[Symbol], tokens: &mut Vec<Token>) {
-    debug_assert!(tokens.capacity() >= tree.len());
+/// `VP8LCreateCompressedHuffmanTree`: `tokens`, which has room for one per symbol, becomes the lengths of `code`.
+pub(super) fn create_compressed_huffman_tree(code: &[Symbol], tokens: &mut Vec<Token>) {
+    debug_assert!(tokens.capacity() >= code.len());
     tokens.clear();
     let mut prev_value = DEFAULT_CODE_LENGTH;
-    for run in tree.chunk_by(|a, b| a.length == b.length) {
+    for run in code.chunk_by(|a, b| a.length == b.length) {
         let value = run.first().map_or(0, |symbol| symbol.length);
         if value == 0 {
             code_repeated_zeros(run.len(), tokens);
@@ -279,22 +276,22 @@ pub(crate) fn create_compressed_huffman_tree(tree: &[Symbol], tokens: &mut Vec<T
 }
 
 /// Assigns the canonical codes for the lengths.
-fn convert_bit_depths_to_symbols(tree: &mut [Symbol]) -> Checked {
+fn convert_bit_depths_to_symbols(code: &mut [Symbol]) -> Checked {
     let mut depth_count = [0u32; MAX_ALLOWED_CODE_LENGTH + 1];
-    for symbol in tree.iter() {
+    for symbol in code.iter() {
         *depth_count.at_mut(symbol.length.into())? += 1;
     }
     depth_count[0] = 0;
     let mut next_code = [0u32; MAX_ALLOWED_CODE_LENGTH + 1];
-    let mut code = 0;
+    let mut first_code = 0;
     for (next, count) in next_code.iter_mut().skip(1).zip(depth_count) {
-        code = (code + count) << 1;
-        *next = code;
+        first_code = (first_code + count) << 1;
+        *next = first_code;
     }
-    for symbol in tree {
+    for symbol in code {
         let next = next_code.at_mut(symbol.length.into())?;
         // The decoder reads a code from its most significant bit on.
-        symbol.code = match symbol.length {
+        symbol.bits = match symbol.length {
             0 => 0,
             length => (*next as u16).reverse_bits() >> (16 - u32::from(length)),
         };
@@ -303,15 +300,15 @@ fn convert_bit_depths_to_symbols(tree: &mut [Symbol]) -> Checked {
     Ok(())
 }
 
-/// `VP8LCreateHuffmanTree`: `huff_code`, all lengths 0 so far, becomes the code for `histogram`, which gets smoothed.
-pub(crate) fn create_huffman_tree(
+/// `VP8LCreateHuffmanTree`: `code`, all lengths 0 so far, becomes the code for `histogram`, which gets smoothed.
+pub(super) fn create_huffman_tree(
     histogram: &mut [u32],
     tree_depth_limit: u8,
     scratch: &mut Scratch,
-    huff_code: &mut [Symbol],
+    code: &mut [Symbol],
 ) -> Checked {
     scratch.good_for_rle.fill(false);
     optimize_huffman_for_rle(&mut scratch.good_for_rle, histogram)?;
-    generate_optimal_tree(histogram, scratch, tree_depth_limit, huff_code)?;
-    convert_bit_depths_to_symbols(huff_code)
+    generate_optimal_tree(histogram, scratch, tree_depth_limit, code)?;
+    convert_bit_depths_to_symbols(code)
 }

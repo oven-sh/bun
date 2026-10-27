@@ -3,7 +3,7 @@
 use super::backward_references::{
     BackwardRefs, HashChain, MAX_LENGTH, PixOrCopy, distance_to_plane_code,
 };
-use super::histogram::{Histogram, histogram_num_codes};
+use super::histogram::Histogram;
 use super::lossless::{LOG_2_PRECISION_BITS, div_round, fast_log2, prefix_encode};
 use crate::Result;
 use crate::util::{Bug, Checked, SliceExt, try_vec, try_with_capacity};
@@ -34,15 +34,15 @@ fn convert_population_count_table_to_bit_estimates(population_counts: &[u32], ou
 
 impl CostModel {
     /// `CostModelBuild`
-    fn new(xsize: usize, cache_bits: u32, refs: &BackwardRefs) -> Result<Self> {
+    fn new(width: usize, cache_bits: u32, refs: &BackwardRefs) -> Result<Self> {
         let mut histo = Histogram::new(cache_bits)?;
-        histo.store_refs(refs, |distance| distance_to_plane_code(xsize, distance))?;
+        histo.store_refs(refs, |distance| distance_to_plane_code(width, distance))?;
         let mut m = Self {
             alpha: [0; NUM_LITERAL_CODES],
             red: [0; NUM_LITERAL_CODES],
             blue: [0; NUM_LITERAL_CODES],
             distance: [0; NUM_DISTANCE_CODES],
-            literal: try_vec(0, histogram_num_codes(cache_bits))?,
+            literal: try_vec(0, Histogram::num_codes(cache_bits))?,
         };
         convert_population_count_table_to_bit_estimates(&histo.literal, &mut m.literal);
         convert_population_count_table_to_bit_estimates(&histo.red, &mut m.red);
@@ -53,7 +53,7 @@ impl CostModel {
     }
 
     #[inline]
-    fn get_literal_cost(&self, v: u32) -> Checked<i64> {
+    fn literal_cost(&self, v: u32) -> Checked<i64> {
         let [b, g, r, a] = v.to_le_bytes().map(usize::from);
         Ok(i64::from(self.alpha.at(a)?)
             + i64::from(self.red.at(r)?)
@@ -62,36 +62,34 @@ impl CostModel {
     }
 
     #[inline]
-    fn get_cache_cost(&self, idx: u32) -> Checked<i64> {
+    fn cache_cost(&self, idx: u32) -> Checked<i64> {
         let literal_idx = FIRST_CACHE_CODE + idx as usize;
         Ok(self.literal.at(literal_idx)?.into())
     }
 
-    fn get_length_cost(&self, length: u32) -> Checked<i64> {
+    fn length_cost(&self, length: u32) -> Checked<i64> {
         let prefix = prefix_encode(length);
         Ok(i64::from(self.literal.at(NUM_LITERAL_CODES + prefix.code)?)
             + (i64::from(prefix.extra_bits) << LOG_2_PRECISION_BITS))
     }
 
-    fn get_distance_cost(&self, distance: u32) -> Checked<i64> {
+    fn distance_cost(&self, distance: u32) -> Checked<i64> {
         let prefix = prefix_encode(distance);
         Ok(i64::from(self.distance.at(prefix.code)?)
             + (i64::from(prefix.extra_bits) << LOG_2_PRECISION_BITS))
     }
 }
 
-// CostManager and interval handling
-
 /// The most intervals to keep. What does not fit goes into the costs at once.
 const COST_CACHE_INTERVAL_SIZE_MAX: usize = 500;
 
-/// A copy from `index` reaches `start..end` at `cost`, the least known. Sorted by `start`, without overlap.
+/// A copy from `position` reaches `start..end` at `cost`, the least known. Sorted by `start`, without overlap.
 #[derive(Clone, Copy, Default)]
 struct CostInterval {
     cost: i64,
     start: usize,
     end: usize,
-    index: usize,
+    position: usize,
     previous: Option<usize>,
     next: Option<usize>,
 }
@@ -108,12 +106,12 @@ struct CostCacheInterval {
 struct CostManager<'a> {
     head: Option<usize>,
     cache_intervals: Vec<CostCacheInterval>,
-    /// What a copy of `k + 1` pixels is taken to cost: `get_length_cost(k)`, which is one length off.
+    /// What a copy of `k + 1` pixels is taken to cost: `length_cost(k)`, which is one length off.
     cost_cache: Vec<i64>,
     /// The lowest cost known of reaching each pixel.
     costs: Vec<i64>,
-    /// The length of the step that reaches each pixel at that cost.
-    dist_array: &'a mut [u16],
+    /// `dist_array`: the length of the step that reaches each pixel at that cost.
+    step_lengths: &'a mut [u16],
     /// `previous` and `next` are positions in here.
     intervals: Vec<CostInterval>,
     /// The elements of `intervals` that are not in the list.
@@ -121,13 +119,13 @@ struct CostManager<'a> {
 }
 
 impl<'a> CostManager<'a> {
-    fn new(dist_array: &'a mut [u16], cost_model: &CostModel) -> Result<Self> {
-        let pix_count = dist_array.len();
+    fn new(step_lengths: &'a mut [u16], cost_model: &CostModel) -> Result<Self> {
+        let pix_count = step_lengths.len();
         let cost_cache_size = pix_count.min(MAX_LENGTH);
 
         let mut cost_cache = try_vec(0, cost_cache_size)?;
         for (cost, length) in cost_cache.iter_mut().zip(0..) {
-            *cost = cost_model.get_length_cost(length)?;
+            *cost = cost_model.length_cost(length)?;
         }
         let mut cache_intervals = try_with_capacity(cost_cache.chunk_by(|a, b| a == b).count())?;
         let mut start = 0;
@@ -148,7 +146,7 @@ impl<'a> CostManager<'a> {
             cache_intervals,
             cost_cache,
             costs: try_vec(i64::MAX, pix_count)?,
-            dist_array,
+            step_lengths,
             intervals: try_vec(CostInterval::default(), COST_CACHE_INTERVAL_SIZE_MAX)?,
             free_intervals,
         })
@@ -160,7 +158,7 @@ impl<'a> CostManager<'a> {
         let best = self.costs.at_mut(i)?;
         if *best > cost {
             *best = cost;
-            self.dist_array.put(i, (i - position + 1) as u16)?;
+            self.step_lengths.put(i, (i - position + 1) as u16)?;
         }
         Ok(())
     }
@@ -210,7 +208,7 @@ impl<'a> CostManager<'a> {
                     self.pop_interval(index)?;
                 }
             } else {
-                self.update_cost(i, interval.index, interval.cost)?;
+                self.update_cost(i, interval.position, interval.cost)?;
             }
             current = interval.next;
         }
@@ -263,7 +261,7 @@ impl<'a> CostManager<'a> {
                 cost,
                 start,
                 end,
-                index: position,
+                position,
                 previous: None,
                 next: None,
             },
@@ -321,7 +319,7 @@ impl<'a> CostManager<'a> {
                     self.intervals.at_mut(index)?.end = start;
                     if end < old.end {
                         // The new one splits the old one.
-                        self.insert_interval(interval, old.cost, old.index, end, old.end)?;
+                        self.insert_interval(interval, old.cost, old.position, end, old.end)?;
                         interval = self.intervals.at(index)?.next;
                         break;
                     }
@@ -334,58 +332,52 @@ impl<'a> CostManager<'a> {
     }
 }
 
-/// `AddSingleLiteralWithCostModel`: pixel `idx` can be reached from the one before, which costs `prev_cost`.
+/// `AddSingleLiteralWithCostModel`: pixel `i` can be reached from the one before, which costs `prev_cost`.
 #[inline]
 fn add_single_literal_with_cost_model(
     color: u32,
-    hashers: Option<&mut ColorCache>,
+    color_cache: Option<&mut ColorCache>,
     cost_model: &CostModel,
-    idx: usize,
+    i: usize,
     prev_cost: i64,
     manager: &mut CostManager<'_>,
 ) -> Checked {
-    let ix = match &hashers {
-        Some(hashers) => hashers.contains(color)?,
+    let cache_idx = match color_cache {
+        Some(color_cache) => color_cache.hit_or_insert(color)?,
         None => None,
     };
-    let cost_val = prev_cost
-        + match ix {
-            Some(ix) => div_round::<100>(cost_model.get_cache_cost(ix)? * 68),
-            None => {
-                if let Some(hashers) = hashers {
-                    hashers.insert(color)?;
-                }
-                div_round::<100>(cost_model.get_literal_cost(color)? * 82)
-            }
-        };
-    manager.update_cost(idx, idx, cost_val)
+    let cost = match cache_idx {
+        Some(idx) => div_round::<100>(cost_model.cache_cost(idx)? * 68),
+        None => div_round::<100>(cost_model.literal_cost(color)? * 82),
+    };
+    manager.update_cost(i, i, prev_cost + cost)
 }
 
-/// Sets `dist_array` to the length of the last step of the cheapest way to each pixel.
+/// Sets `step_lengths` to the length of the last step of the cheapest way to each pixel.
 fn backward_references_hash_chain_distance_only(
-    xsize: usize,
+    width: usize,
     argb: &[u32],
     cache_bits: u32,
     hash_chain: &HashChain,
     refs: &BackwardRefs,
-    dist_array: &mut [u16],
+    step_lengths: &mut [u16],
 ) -> Result<()> {
     let pix_count = argb.len();
-    let cost_model = CostModel::new(xsize, cache_bits, refs)?;
-    let mut hashers = match cache_bits {
+    let cost_model = CostModel::new(width, cache_bits, refs)?;
+    let mut color_cache = match cache_bits {
         0 => None,
         _ => Some(ColorCache::new(cache_bits)?),
     };
-    let mut cost_manager = CostManager::new(dist_array, &cost_model)?;
-    let mut offset_prev = None;
+    let mut cost_manager = CostManager::new(step_lengths, &cost_model)?;
+    let mut distance_prev = None;
     let mut len_prev = 0;
-    let mut offset_cost = 0;
-    let mut first_offset_is_constant = false;
+    let mut distance_cost = 0;
+    let mut first_distance_is_constant = false;
     let mut reach = 0;
 
     add_single_literal_with_cost_model(
         argb.at(0)?,
-        hashers.as_mut(),
+        color_cache.as_mut(),
         &cost_model,
         0,
         0,
@@ -394,11 +386,11 @@ fn backward_references_hash_chain_distance_only(
 
     for i in 1..pix_count {
         let prev_cost = cost_manager.costs.at(i - 1)?;
-        let (offset, len) = hash_chain.find_copy(i)?;
+        let (distance, len) = hash_chain.copy_at(i)?;
 
         add_single_literal_with_cost_model(
             argb.at(i)?,
-            hashers.as_mut(),
+            color_cache.as_mut(),
             &cost_model,
             i,
             prev_cost,
@@ -406,16 +398,16 @@ fn backward_references_hash_chain_distance_only(
         )?;
 
         if len >= 2 {
-            if Some(offset) != offset_prev {
-                let code = distance_to_plane_code(xsize, offset as u32);
-                offset_cost = cost_model.get_distance_cost(code)?;
-                first_offset_is_constant = true;
-                cost_manager.push_interval(prev_cost + offset_cost, i, len)?;
+            if Some(distance) != distance_prev {
+                let code = distance_to_plane_code(width, distance as u32);
+                distance_cost = cost_model.distance_cost(code)?;
+                first_distance_is_constant = true;
+                cost_manager.push_interval(prev_cost + distance_cost, i, len)?;
             } else {
                 // All copy from the same distance, as in a flat area: each interval is the last one moved by one.
-                if first_offset_is_constant {
+                if first_distance_is_constant {
                     reach = (i + len_prev).checked_sub(2).ok_or(Bug)?;
-                    first_offset_is_constant = false;
+                    first_distance_is_constant = false;
                 }
 
                 if i + len - 1 > reach {
@@ -423,10 +415,10 @@ fn backward_references_hash_chain_distance_only(
                     let mut j = i;
                     let mut len_j = 0;
                     while j <= reach {
-                        let (offset_j, len_next) = hash_chain.find_copy(j + 1)?;
+                        let (distance_j, len_next) = hash_chain.copy_at(j + 1)?;
                         len_j = len_next;
-                        if offset_j != offset {
-                            len_j = hash_chain.find_length(j)?;
+                        if distance_j != distance {
+                            len_j = hash_chain.length(j)?;
                             break;
                         }
                         j += 1;
@@ -434,7 +426,7 @@ fn backward_references_hash_chain_distance_only(
                     cost_manager.update_cost_at_index(j - 1, false)?;
                     cost_manager.update_cost_at_index(j, false)?;
 
-                    let cost = cost_manager.costs.at(j - 1)? + offset_cost;
+                    let cost = cost_manager.costs.at(j - 1)? + distance_cost;
                     cost_manager.push_interval(cost, j, len_j)?;
                     reach = (j + len_j).checked_sub(1).ok_or(Bug)?;
                 }
@@ -442,24 +434,24 @@ fn backward_references_hash_chain_distance_only(
         }
 
         cost_manager.update_cost_at_index(i, true)?;
-        offset_prev = Some(offset);
+        distance_prev = Some(distance);
         len_prev = len;
     }
     Ok(())
 }
 
-/// Follows the steps back from the last pixel and packs them at the end of `dist_array`. Returns where they start.
-fn trace_backwards(dist_array: &mut [u16]) -> Checked<usize> {
-    let mut path = dist_array.len();
+/// Follows the steps back from the last pixel and packs them at the end of `step_lengths`. Returns where they start.
+fn trace_backwards(step_lengths: &mut [u16]) -> Checked<usize> {
+    let mut path = step_lengths.len();
     // One more than the pixel that the path has got back to.
-    let mut cur = dist_array.len();
+    let mut cur = step_lengths.len();
     while cur > 0 {
-        let k = dist_array.at(cur - 1)?;
+        let k = step_lengths.at(cur - 1)?;
         if k == 0 {
             return Err(Bug);
         }
         path -= 1;
-        dist_array.put(path, k)?;
+        step_lengths.put(path, k)?;
         cur = cur.checked_sub(k.into()).ok_or(Bug)?;
     }
     Ok(path)
@@ -472,7 +464,7 @@ fn backward_references_hash_chain_follow_chosen_path(
     hash_chain: &HashChain,
     refs: &mut BackwardRefs,
 ) -> Result<()> {
-    let mut hashers = match cache_bits {
+    let mut color_cache = match cache_bits {
         0 => None,
         _ => Some(ColorCache::new(cache_bits)?),
     };
@@ -481,26 +473,21 @@ fn backward_references_hash_chain_follow_chosen_path(
     for &len in chosen_path {
         let len = usize::from(len);
         if len != 1 {
-            refs.push_copy(hash_chain.find_offset(i)?, len)?;
-            if let Some(hashers) = &mut hashers {
+            refs.push_copy(hash_chain.distance(i)?, len)?;
+            if let Some(color_cache) = &mut color_cache {
                 for &pixel in argb.sub(i..i + len)? {
-                    hashers.insert(pixel)?;
+                    color_cache.insert(pixel)?;
                 }
             }
         } else {
             let pixel = argb.at(i)?;
-            let idx = match &hashers {
-                Some(hashers) => hashers.contains(pixel)?,
+            let cache_idx = match &mut color_cache {
+                Some(color_cache) => color_cache.hit_or_insert(pixel)?,
                 None => None,
             };
-            refs.push(match idx {
+            refs.push(match cache_idx {
                 Some(idx) => PixOrCopy::CacheIdx(idx),
-                None => {
-                    if let Some(hashers) = &mut hashers {
-                        hashers.insert(pixel)?;
-                    }
-                    PixOrCopy::Literal(pixel)
-                }
+                None => PixOrCopy::Literal(pixel),
             })?;
         }
         i += len;
@@ -509,28 +496,28 @@ fn backward_references_hash_chain_follow_chosen_path(
 }
 
 /// `VP8LBackwardReferencesTraceBackwards`: `refs_src` says how frequent the symbols are.
-pub(crate) fn backward_references_trace_backwards(
-    xsize: usize,
+pub(super) fn backward_references_trace_backwards(
+    width: usize,
     argb: &[u32],
     cache_bits: u32,
     hash_chain: &HashChain,
     refs_src: &BackwardRefs,
     refs_dst: &mut BackwardRefs,
 ) -> Result<()> {
-    let mut dist_array = try_vec(0u16, argb.len())?;
+    let mut step_lengths = try_vec(0u16, argb.len())?;
     backward_references_hash_chain_distance_only(
-        xsize,
+        width,
         argb,
         cache_bits,
         hash_chain,
         refs_src,
-        &mut dist_array,
+        &mut step_lengths,
     )?;
-    let path = trace_backwards(&mut dist_array)?;
+    let path = trace_backwards(&mut step_lengths)?;
     backward_references_hash_chain_follow_chosen_path(
         argb,
         cache_bits,
-        dist_array.sub(path..)?,
+        step_lengths.sub(path..)?,
         hash_chain,
         refs_dst,
     )

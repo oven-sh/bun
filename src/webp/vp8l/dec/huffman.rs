@@ -3,14 +3,14 @@
 use crate::util::{Bug, Checked, SliceExt};
 use crate::vp8l::common::{
     CODE_LENGTH_CODES, FIRST_CACHE_CODE, HUFFMAN_CODES_PER_META_CODE, MAX_ALLOWED_CODE_LENGTH,
-    MAX_CACHE_BITS,
+    MAX_CACHE_BITS, MAX_CODE_LENGTH_CODE_LENGTH,
 };
 use crate::{Error, Result};
 
 pub(super) const HUFFMAN_TABLE_BITS: u32 = 8;
 pub(super) const HUFFMAN_TABLE_MASK: u32 = (1 << HUFFMAN_TABLE_BITS) - 1;
 
-const LENGTHS_TABLE_BITS: u32 = 7;
+const LENGTHS_TABLE_BITS: u32 = MAX_CODE_LENGTH_CODE_LENGTH;
 pub(super) const LENGTHS_TABLE_MASK: u32 = (1 << LENGTHS_TABLE_BITS) - 1;
 
 pub(super) const HUFFMAN_PACKED_BITS: u32 = 6;

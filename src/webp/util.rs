@@ -122,3 +122,13 @@ pub(crate) fn try_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>> {
     vec.resize(len, value);
     Ok(vec)
 }
+
+/// How often each value of a byte occurs.
+pub(crate) type ByteHistogram = [u32; 256];
+
+#[inline(always)]
+pub(crate) fn increment(histogram: &mut ByteHistogram, value: u8) {
+    if let Some(count) = histogram.get_mut(usize::from(value)) {
+        *count += 1;
+    }
+}

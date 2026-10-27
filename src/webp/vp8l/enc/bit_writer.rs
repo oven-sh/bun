@@ -16,7 +16,7 @@ pub(crate) struct BitWriter {
 
 /// Where a `BitWriter` was, to go back there.
 #[derive(Clone, Copy)]
-pub(crate) struct Position {
+pub(super) struct Position {
     len: usize,
     bits: u64,
     used: u32,
@@ -32,17 +32,17 @@ impl BitWriter {
         }
     }
 
-    pub(crate) fn try_clone(&self) -> Result<Self> {
+    pub(super) fn try_clone(&self) -> Result<Self> {
         let mut buf = try_with_capacity(self.buf.len())?;
         buf.extend_from_slice(&self.buf);
         Ok(Self { buf, ..*self })
     }
 
-    pub(crate) fn num_bytes(&self) -> usize {
+    pub(super) fn num_bytes(&self) -> usize {
         self.buf.len() + self.used.div_ceil(8) as usize
     }
 
-    pub(crate) fn position(&self) -> Position {
+    pub(super) fn position(&self) -> Position {
         Position {
             len: self.buf.len(),
             bits: self.bits,
@@ -51,7 +51,7 @@ impl BitWriter {
     }
 
     /// `VP8LBitWriterReset`: forgets what was written since `position`.
-    pub(crate) fn reset(&mut self, position: Position) {
+    pub(super) fn reset(&mut self, position: Position) {
         self.buf.truncate(position.len);
         self.bits = position.bits;
         self.used = position.used;

@@ -16,11 +16,11 @@ pub(crate) struct ColorCache {
 }
 
 impl ColorCache {
-    pub(crate) fn new(hash_bits: u32) -> Result<Self> {
-        debug_assert!((1..=MAX_CACHE_BITS).contains(&hash_bits));
+    pub(crate) fn new(cache_bits: u32) -> Result<Self> {
+        debug_assert!((1..=MAX_CACHE_BITS).contains(&cache_bits));
         Ok(Self {
-            colors: try_vec(0, 1 << hash_bits)?,
-            hash_shift: 32 - hash_bits,
+            colors: try_vec(0, 1 << cache_bits)?,
+            hash_shift: 32 - cache_bits,
         })
     }
 
@@ -30,19 +30,16 @@ impl ColorCache {
     }
 
     #[inline]
-    pub(crate) fn set(&mut self, key: u32, argb: u32) -> Checked {
-        self.colors.put(key as usize, argb)
-    }
-
-    #[inline]
     pub(crate) fn insert(&mut self, argb: u32) -> Checked {
-        self.set(hash_pix(argb, self.hash_shift), argb)
+        self.colors
+            .put(hash_pix(argb, self.hash_shift) as usize, argb)
     }
 
-    /// The key of `argb` if the cache holds it.
+    /// The key of `argb` if the cache holds it. If not, the cache takes it in.
     #[inline]
-    pub(crate) fn contains(&self, argb: u32) -> Checked<Option<u32>> {
+    pub(crate) fn hit_or_insert(&mut self, argb: u32) -> Checked<Option<u32>> {
         let key = hash_pix(argb, self.hash_shift);
-        Ok((self.lookup(key)? == argb).then_some(key))
+        let color = self.colors.at_mut(key as usize)?;
+        Ok((core::mem::replace(color, argb) == argb).then_some(key))
     }
 }

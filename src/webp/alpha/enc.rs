@@ -12,14 +12,9 @@ fn encode_lossless(header: u8, data: &[u8], width: usize, height: usize) -> Resu
     for (argb, &alpha) in argb.iter_mut().zip(data) {
         *argb = u32::from(alpha) << 8;
     }
-    // `exact`: every pixel has an alpha of 0, yet its green channel is the data. `quality` is 8 times the `method`, 4.
-    let config = Config {
-        quality: 32,
-        exact: true,
-    };
     let mut bw = BitWriter::new();
     bw.put_bits(header.into(), 8);
-    encode_stream(config, argb, width, height, &mut bw)?;
+    encode_stream(Config::ALPHA_PLANE, argb, width, height, &mut bw)?;
     bw.finish()
 }
 

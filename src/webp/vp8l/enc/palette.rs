@@ -1,19 +1,19 @@
 //! `palette.c`: collects the colors of an image and orders them.
 
+use super::lossless::sub_pixels;
 use crate::util::{Checked, SliceExt};
 use crate::vp8l::color_cache::hash_pix;
-use crate::vp8l::common::MAX_PALETTE_SIZE;
-use crate::vp8l::enc::lossless::sub_pixels;
+use crate::vp8l::common::{MAX_PALETTE_SIZE, color_index_bits};
 
 /// Up to `MAX_PALETTE_SIZE` colors.
 #[derive(Clone, Copy)]
-pub(crate) struct Palette {
+pub(super) struct Palette {
     colors: [u32; MAX_PALETTE_SIZE],
     size: usize,
 }
 
 impl Palette {
-    pub(crate) fn colors(&self) -> &[u32] {
+    pub(super) fn colors(&self) -> &[u32] {
         self.colors.get(..self.size).unwrap_or_default()
     }
 
@@ -22,21 +22,26 @@ impl Palette {
     }
 }
 
-const fn palette_component_distance(v: u32) -> u32 {
+/// Whether a pixel holds several indices of a palette of `num_colors`.
+pub(super) const fn is_packed(num_colors: usize) -> bool {
+    color_index_bits(num_colors) > 0
+}
+
+const fn component_distance(v: u32) -> u32 {
     if v <= 128 { v } else { 256 - v }
 }
 
 /// Goes up with the entropy that writing `col1` after `col2` adds.
-fn palette_color_distance(col1: u32, col2: u32) -> u32 {
+fn color_distance(col1: u32, col2: u32) -> u32 {
     const MORE_WEIGHT_FOR_RGB_THAN_FOR_ALPHA: u32 = 9;
     let [b, g, r, a] = sub_pixels(col1, col2)
         .to_le_bytes()
-        .map(|diff| palette_component_distance(diff.into()));
+        .map(|diff| component_distance(diff.into()));
     (b + g + r) * MORE_WEIGHT_FOR_RGB_THAN_FOR_ALPHA + a
 }
 
 /// `GetColorPalette`: the colors of `argb` in increasing order, if there are no more than `MAX_PALETTE_SIZE`.
-pub(crate) fn get_color_palette(argb: &[u32]) -> Checked<Option<Palette>> {
+pub(super) fn color_palette(argb: &[u32]) -> Checked<Option<Palette>> {
     const COLOR_HASH_SIZE: usize = MAX_PALETTE_SIZE * 4;
     const COLOR_HASH_RIGHT_SHIFT: u32 = 22;
     let mut colors = [None; COLOR_HASH_SIZE];
@@ -76,7 +81,7 @@ pub(crate) fn get_color_palette(argb: &[u32]) -> Checked<Option<Palette>> {
 }
 
 /// Whether a channel goes both up and down along the palette. If none does, as in a gray image, no order is better.
-fn palette_has_non_monotonous_deltas(palette: &[u32]) -> bool {
+fn has_non_monotonous_deltas(palette: &[u32]) -> bool {
     let mut predict = 0;
     let mut sign_found = 0u32;
     for &color in palette {
@@ -96,30 +101,32 @@ fn palette_has_non_monotonous_deltas(palette: &[u32]) -> bool {
 }
 
 /// `PaletteSortMinimizeDeltas`: each color is followed by the nearest one left, as the palette is written as deltas.
-pub(crate) fn palette_sort_minimize_deltas(palette_sorted: &Palette) -> Checked<Palette> {
+pub(super) fn sort_minimize_deltas(palette_sorted: &Palette) -> Checked<Palette> {
     let mut palette = *palette_sorted;
-    if !palette_has_non_monotonous_deltas(palette_sorted.colors()) {
+    if !has_non_monotonous_deltas(palette_sorted.colors()) {
         return Ok(palette);
     }
     let mut colors = palette.colors_mut();
-    // A transparent black at the end need not be written, if the indices are not packed.
-    if colors.len() > 17 && colors.first() == Some(&0) {
-        let last = colors.len() - 1;
+    // A transparent black at the end need not be written, if the indices are not packed without it either.
+    if let [0, rest @ ..] = &*colors
+        && !is_packed(rest.len())
+    {
+        let last = rest.len();
         colors.swap(0, last);
         colors = colors.sub_mut(..last)?;
     }
     let mut predict = 0;
     for i in 0..colors.len() {
-        let mut best_ix = i;
+        let mut best_idx = i;
         let mut best_score = u32::MAX;
         for (k, &color) in colors.iter().enumerate().skip(i) {
-            let cur_score = palette_color_distance(color, predict);
+            let cur_score = color_distance(color, predict);
             if best_score > cur_score {
                 best_score = cur_score;
-                best_ix = k;
+                best_idx = k;
             }
         }
-        colors.swap(best_ix, i);
+        colors.swap(best_idx, i);
         predict = colors.at(i)?;
     }
     Ok(palette)

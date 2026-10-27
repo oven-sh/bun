@@ -1,12 +1,13 @@
-//! `histogram_enc.c`: counts symbols, estimates their cost, and clusters the tiles that are to share prefix codes.
+//! `histogram_enc.c`: counts symbols, estimates their cost, and clusters the tiles that are to share Huffman codes.
 
+use super::Quality;
 use super::backward_references::{BackwardRefs, PixOrCopy};
 use super::lossless::{
-    BitEntropy, LOG_2_PRECISION_BITS, Streaks, add_vector_eq, bits_entropy_unrefined, div_round,
-    extra_cost, get_combined_entropy_unrefined, get_entropy_unrefined, prefix_encode,
+    BitEntropy, LOG_2_PRECISION_BITS, Streaks, add_vector_eq, bits_entropy_unrefined,
+    combined_entropy_unrefined, div_round, entropy_unrefined, extra_cost, prefix_encode,
 };
 use crate::Result;
-use crate::util::{Bug, Checked, SliceExt, try_vec, try_with_capacity};
+use crate::util::{Bug, ByteHistogram, Checked, SliceExt, increment, try_vec, try_with_capacity};
 use crate::vp8l::common::{
     CODE_LENGTH_CODES, FIRST_CACHE_CODE, HUFFMAN_CODES_PER_META_CODE, NUM_DISTANCE_CODES,
     NUM_LENGTH_CODES, NUM_LITERAL_CODES, sub_sample_size,
@@ -18,9 +19,9 @@ const BIN_SIZE: usize = NUM_PARTITIONS * NUM_PARTITIONS * NUM_PARTITIONS;
 /// The most histograms that the greedy combining can be given.
 const MAX_HISTO_GREEDY: i64 = 100;
 
-/// What `get_histo_image_symbols` knows about one kind of symbol of a histogram.
+/// What `histo_image_symbols` knows about one of the populations of a histogram.
 #[derive(Clone, Copy, Default)]
-struct Channel {
+struct PopulationStats {
     /// The only symbol that occurs.
     trivial_symbol: Option<u16>,
     cost: u64,
@@ -28,56 +29,50 @@ struct Channel {
     is_used: bool,
 }
 
-/// `VP8LHistogram`
-pub(crate) struct Histogram {
+pub(super) struct Histogram {
     /// Green, then the prefix codes of lengths, then color cache indices.
-    pub(crate) literal: Vec<u32>,
-    pub(crate) red: [u32; NUM_LITERAL_CODES],
-    pub(crate) blue: [u32; NUM_LITERAL_CODES],
-    pub(crate) alpha: [u32; NUM_LITERAL_CODES],
+    pub(super) literal: Vec<u32>,
+    pub(super) red: ByteHistogram,
+    pub(super) blue: ByteHistogram,
+    pub(super) alpha: ByteHistogram,
     /// The prefix codes of distances.
-    pub(crate) distance: [u32; NUM_DISTANCE_CODES],
-    channels: [Channel; HUFFMAN_CODES_PER_META_CODE],
-    /// The sum of the costs of the channels.
+    pub(super) distance: [u32; NUM_DISTANCE_CODES],
+    stats: [PopulationStats; HUFFMAN_CODES_PER_META_CODE],
+    /// The sum of the costs in `stats`.
     bit_cost: u64,
     bin_id: usize,
 }
 
-/// `VP8LHistogramNumCodes`
-pub(crate) const fn histogram_num_codes(palette_code_bits: u32) -> usize {
-    FIRST_CACHE_CODE
-        + if palette_code_bits > 0 {
-            1 << palette_code_bits
-        } else {
-            0
-        }
-}
-
 impl Histogram {
+    /// `VP8LHistogramNumCodes`: the size of `literal`.
+    pub(super) const fn num_codes(cache_bits: u32) -> usize {
+        FIRST_CACHE_CODE + if cache_bits > 0 { 1 << cache_bits } else { 0 }
+    }
+
     /// All counts are 0.
-    pub(crate) fn new(palette_code_bits: u32) -> Result<Self> {
+    pub(super) fn new(cache_bits: u32) -> Result<Self> {
         Ok(Self {
-            literal: try_vec(0, histogram_num_codes(palette_code_bits))?,
-            red: [0; NUM_LITERAL_CODES],
-            blue: [0; NUM_LITERAL_CODES],
-            alpha: [0; NUM_LITERAL_CODES],
+            literal: try_vec(0, Self::num_codes(cache_bits))?,
+            red: [0; 256],
+            blue: [0; 256],
+            alpha: [0; 256],
             distance: [0; NUM_DISTANCE_CODES],
-            channels: [Channel::default(); HUFFMAN_CODES_PER_META_CODE],
+            stats: [PopulationStats::default(); HUFFMAN_CODES_PER_META_CODE],
             bit_cost: 0,
             bin_id: 0,
         })
     }
 
     /// `VP8LHistogramCreate`
-    pub(crate) fn from_refs(refs: &BackwardRefs, palette_code_bits: u32) -> Result<Self> {
-        let mut histo = Self::new(palette_code_bits)?;
+    pub(super) fn from_refs(refs: &BackwardRefs, cache_bits: u32) -> Result<Self> {
+        let mut histo = Self::new(cache_bits)?;
         histo.store_refs(refs, |distance| distance)?;
         Ok(histo)
     }
 
     fn clear(&mut self) {
         self.populations_mut().into_iter().for_each(|p| p.fill(0));
-        self.channels = [Channel::default(); HUFFMAN_CODES_PER_META_CODE];
+        self.stats = [PopulationStats::default(); HUFFMAN_CODES_PER_META_CODE];
         self.bit_cost = 0;
         self.bin_id = 0;
     }
@@ -88,7 +83,7 @@ impl Histogram {
         self.blue = src.blue;
         self.alpha = src.alpha;
         self.distance = src.distance;
-        self.channels = src.channels;
+        self.stats = src.stats;
         self.bit_cost = src.bit_cost;
         self.bin_id = src.bin_id;
         Ok(())
@@ -104,7 +99,7 @@ impl Histogram {
         ]
     }
 
-    pub(crate) fn populations_mut(&mut self) -> [&mut [u32]; HUFFMAN_CODES_PER_META_CODE] {
+    pub(super) fn populations_mut(&mut self) -> [&mut [u32]; HUFFMAN_CODES_PER_META_CODE] {
         [
             &mut self.literal,
             &mut self.red,
@@ -115,10 +110,9 @@ impl Histogram {
     }
 
     fn is_used(&self) -> bool {
-        self.channels.iter().any(|channel| channel.is_used)
+        self.stats.iter().any(|stats| stats.is_used)
     }
 
-    /// `HistogramAddSinglePixOrCopy`
     #[inline]
     fn add_single_pix_or_copy(
         &mut self,
@@ -128,14 +122,14 @@ impl Histogram {
         match v {
             PixOrCopy::Literal(argb) => {
                 let [b, g, r, a] = argb.to_le_bytes();
-                *self.alpha.at_mut(a.into())? += 1;
-                *self.red.at_mut(r.into())? += 1;
+                increment(&mut self.alpha, a);
+                increment(&mut self.red, r);
                 *self.literal.at_mut(g.into())? += 1;
-                *self.blue.at_mut(b.into())? += 1;
+                increment(&mut self.blue, b);
             }
             PixOrCopy::CacheIdx(idx) => {
-                let literal_ix = FIRST_CACHE_CODE + idx as usize;
-                *self.literal.at_mut(literal_ix)? += 1;
+                let literal_idx = FIRST_CACHE_CODE + idx as usize;
+                *self.literal.at_mut(literal_idx)? += 1;
             }
             PixOrCopy::Copy { distance, len } => {
                 let code = prefix_encode(len.into()).code;
@@ -148,7 +142,7 @@ impl Histogram {
     }
 
     /// `VP8LHistogramStoreRefs`: `distance_modifier` is applied to the distances before they are counted.
-    pub(crate) fn store_refs(
+    pub(super) fn store_refs(
         &mut self,
         refs: &BackwardRefs,
         distance_modifier: impl Fn(u32) -> u32,
@@ -159,8 +153,8 @@ impl Histogram {
         Ok(())
     }
 
-    /// `VP8LHistogramEstimateBits`: the entropy, the prefix codes and the extra bits.
-    pub(crate) fn estimate_bits(&self) -> Checked<u64> {
+    /// `VP8LHistogramEstimateBits`: the entropy, the Huffman codes and the extra bits.
+    pub(super) fn estimate_bits(&self) -> Checked<u64> {
         let cost = add_costs(
             self.populations()
                 .map(|population| population_cost(population).cost),
@@ -175,28 +169,28 @@ impl Histogram {
 
     /// `ComputeHistogramCost`. The extra bits are left out: they stay the same however histograms are combined.
     fn compute_cost(&mut self) {
-        let channels = self.populations().map(population_cost);
-        self.bit_cost = add_costs(channels.map(|channel| channel.cost));
-        self.channels = channels;
+        let stats = self.populations().map(population_cost);
+        self.bit_cost = add_costs(stats.map(|stats| stats.cost));
+        self.stats = stats;
     }
 
     fn update_cost(&mut self, bit_cost: u64, costs: &[u64; HUFFMAN_CODES_PER_META_CODE]) {
         self.bit_cost = bit_cost;
-        for (channel, &cost) in self.channels.iter_mut().zip(costs) {
-            channel.cost = cost;
+        for (stats, &cost) in self.stats.iter_mut().zip(costs) {
+            stats.cost = cost;
         }
     }
 
     /// `HistogramAdd(h1, self, self)`
     fn add(&mut self, h1: &Self) -> Checked {
-        let channels = self.channels;
-        for ((pout, p1), (out, c1)) in self
+        let stats = self.stats;
+        for ((pout, p1), (out, s1)) in self
             .populations_mut()
             .into_iter()
             .zip(h1.populations())
-            .zip(channels.iter().zip(&h1.channels))
+            .zip(stats.iter().zip(&h1.stats))
         {
-            if c1.is_used {
+            if s1.is_used {
                 if out.is_used {
                     add_vector_eq(p1, pout);
                 } else {
@@ -204,20 +198,20 @@ impl Histogram {
                 }
             }
         }
-        self.channels = combined_channels(&h1.channels, &channels);
+        self.stats = combined_stats(&h1.stats, &stats);
         Ok(())
     }
 
     /// `HistogramAdd(h1, h2, self)`
     fn set_to_sum(&mut self, h1: &Self, h2: &Self) -> Checked {
-        for (((pout, p1), p2), (c1, c2)) in self
+        for (((pout, p1), p2), (s1, s2)) in self
             .populations_mut()
             .into_iter()
             .zip(h1.populations())
             .zip(h2.populations())
-            .zip(h1.channels.iter().zip(&h2.channels))
+            .zip(h1.stats.iter().zip(&h2.stats))
         {
-            match (c1.is_used, c2.is_used) {
+            match (s1.is_used, s2.is_used) {
                 (true, true) => {
                     for ((out, a), b) in pout.iter_mut().zip(p1).zip(p2) {
                         *out = a + b;
@@ -228,32 +222,30 @@ impl Histogram {
                 (false, false) => pout.fill(0),
             }
         }
-        self.channels = combined_channels(&h1.channels, &h2.channels);
+        self.stats = combined_stats(&h1.stats, &h2.stats);
         Ok(())
     }
 }
 
 /// The flags, not the costs, of the sum of two histograms. Trivial in one and unused in the other is not trivial.
-fn combined_channels(
-    c1: &[Channel; HUFFMAN_CODES_PER_META_CODE],
-    c2: &[Channel; HUFFMAN_CODES_PER_META_CODE],
-) -> [Channel; HUFFMAN_CODES_PER_META_CODE] {
-    let mut out = [Channel::default(); HUFFMAN_CODES_PER_META_CODE];
-    for ((out, c1), c2) in out.iter_mut().zip(c1).zip(c2) {
-        out.trivial_symbol = c1
+fn combined_stats(
+    s1: &[PopulationStats; HUFFMAN_CODES_PER_META_CODE],
+    s2: &[PopulationStats; HUFFMAN_CODES_PER_META_CODE],
+) -> [PopulationStats; HUFFMAN_CODES_PER_META_CODE] {
+    let mut out = [PopulationStats::default(); HUFFMAN_CODES_PER_META_CODE];
+    for ((out, s1), s2) in out.iter_mut().zip(s1).zip(s2) {
+        out.trivial_symbol = s1
             .trivial_symbol
-            .filter(|_| c1.trivial_symbol == c2.trivial_symbol);
-        out.is_used = c1.is_used || c2.is_used;
+            .filter(|_| s1.trivial_symbol == s2.trivial_symbol);
+        out.is_used = s1.is_used || s2.is_used;
     }
     out
 }
 
-// Entropy-related functions.
-
 /// Wraps below 0 from some 259 million symbols of noise on, as in libwebp: hence `add_costs` and `wrapping_add`.
 fn bits_entropy_refine(entropy: &BitEntropy) -> u64 {
     let sum = u64::from(entropy.sum) << LOG_2_PRECISION_BITS;
-    // A prefix code cannot reach the entropy of few symbols. Mixing some entropy into that limit clusters better.
+    // A Huffman code cannot reach the entropy of few symbols. Mixing some entropy into that limit clusters better.
     let mix: u64 = match entropy.nonzeros {
         0 | 1 => return 0,
         2 => return div_round::<100>((99 * sum).wrapping_add(entropy.entropy) as i64) as u64,
@@ -266,22 +258,21 @@ fn bits_entropy_refine(entropy: &BitEntropy) -> u64 {
     entropy.entropy.max(div_round::<1000>(mixed as i64) as u64)
 }
 
-pub(crate) fn add_costs<const N: usize>(costs: [u64; N]) -> u64 {
+pub(super) fn add_costs<const N: usize>(costs: [u64; N]) -> u64 {
     costs.into_iter().fold(0, u64::wrapping_add)
 }
 
-/// `VP8LBitsEntropy`
-pub(crate) fn bits_entropy(array: &[u32]) -> u64 {
+pub(super) fn bits_entropy(array: &[u32]) -> u64 {
     bits_entropy_refine(&bits_entropy_unrefined(array))
 }
 
-/// What the code lengths of a prefix code take, less a bias of 9.1 bits because they seldom are written in full.
+/// What the code lengths of a Huffman code take, less a bias of 9.1 bits because they seldom are written in full.
 const INITIAL_HUFFMAN_COST: u64 = ((CODE_LENGTH_CODES as u64 * 3) << LOG_2_PRECISION_BITS)
     - div_round::<10>(91 << LOG_2_PRECISION_BITS) as u64;
 
-fn final_huffman_cost(stats: &Streaks) -> u64 {
-    let [[zero_short, zero_long], [nonzero_short, nonzero_long]] = stats.streaks;
-    let [zero_count, nonzero_count] = stats.counts;
+fn final_huffman_cost(streaks: &Streaks) -> u64 {
+    let [[zero_short, zero_long], [nonzero_short, nonzero_long]] = streaks.streaks;
+    let [zero_count, nonzero_count] = streaks.counts;
     // In 1/1024 of a bit.
     let extra = zero_count * 1600
         + 240 * zero_long
@@ -292,29 +283,26 @@ fn final_huffman_cost(stats: &Streaks) -> u64 {
     INITIAL_HUFFMAN_COST + (u64::from(extra) << (LOG_2_PRECISION_BITS - 10))
 }
 
-/// `PopulationCost`
-fn population_cost(population: &[u32]) -> Channel {
-    let (bit_entropy, stats) = get_entropy_unrefined(population);
-    let [_, [nonzero_short, nonzero_long]] = stats.streaks;
-    Channel {
+fn population_cost(population: &[u32]) -> PopulationStats {
+    let (bit_entropy, streaks) = entropy_unrefined(population);
+    let [_, [nonzero_short, nonzero_long]] = streaks.streaks;
+    PopulationStats {
         trivial_symbol: (bit_entropy.nonzeros == 1).then_some(bit_entropy.nonzero_code as u16),
-        cost: bits_entropy_refine(&bit_entropy).wrapping_add(final_huffman_cost(&stats)),
+        cost: bits_entropy_refine(&bit_entropy).wrapping_add(final_huffman_cost(&streaks)),
         is_used: nonzero_short != 0 || nonzero_long != 0,
     }
 }
 
-/// The cost of one channel of the sum of two histograms.
+/// The cost of one population of the sum of two histograms.
 #[inline]
-fn get_combined_entropy(x: &[u32], c1: &Channel, y: &[u32], c2: &Channel) -> u64 {
-    let is_trivial = c1.trivial_symbol.is_some() && c1.trivial_symbol == c2.trivial_symbol;
-    if is_trivial || !c1.is_used || !c2.is_used {
-        return if c1.is_used { c1.cost } else { c2.cost };
+fn combined_entropy(x: &[u32], s1: &PopulationStats, y: &[u32], s2: &PopulationStats) -> u64 {
+    let is_trivial = s1.trivial_symbol.is_some() && s1.trivial_symbol == s2.trivial_symbol;
+    if is_trivial || !s1.is_used || !s2.is_used {
+        return if s1.is_used { s1.cost } else { s2.cost };
     }
-    let (bit_entropy, stats) = get_combined_entropy_unrefined(x, y);
-    bits_entropy_refine(&bit_entropy).wrapping_add(final_huffman_cost(&stats))
+    let (bit_entropy, streaks) = combined_entropy_unrefined(x, y);
+    bits_entropy_refine(&bit_entropy).wrapping_add(final_huffman_cost(&streaks))
 }
-
-// Various histogram combine/cost-eval functions
 
 /// `a + b`, or `i64::MAX` if that is less.
 const fn saturate_add(a: u64, b: i64) -> i64 {
@@ -325,8 +313,8 @@ const fn saturate_add(a: u64, b: i64) -> i64 {
     }
 }
 
-/// The cost of `a + b` and of each of its channels, unless that is `cost_threshold` or more.
-fn get_combined_histogram_entropy(
+/// The cost of `a + b` and of each of its populations, unless that is `cost_threshold` or more.
+fn combined_histogram_entropy(
     a: &Histogram,
     b: &Histogram,
     cost_threshold: i64,
@@ -336,13 +324,13 @@ fn get_combined_histogram_entropy(
     }
     let mut cost = 0u64;
     let mut costs = [0; HUFFMAN_CODES_PER_META_CODE];
-    for (((out, (x, c1)), y), c2) in costs
+    for (((out, (x, s1)), y), s2) in costs
         .iter_mut()
-        .zip(a.populations().into_iter().zip(&a.channels))
+        .zip(a.populations().into_iter().zip(&a.stats))
         .zip(b.populations())
-        .zip(&b.channels)
+        .zip(&b.stats)
     {
-        *out = get_combined_entropy(x, c1, y, c2);
+        *out = combined_entropy(x, s1, y, s2);
         cost = cost.wrapping_add(*out);
         if cost >= cost_threshold as u64 {
             return None;
@@ -351,14 +339,12 @@ fn get_combined_histogram_entropy(
     Some((cost, costs))
 }
 
-/// `C(a + b) - C(a)`, unless that is `cost_threshold` or more.
-fn histogram_add_thresh(a: &Histogram, b: &Histogram, cost_threshold: i64) -> Option<i64> {
+/// `HistogramAddThresh`: `C(a + b) - C(a)`, unless that is `cost_threshold` or more.
+fn add_thresh(a: &Histogram, b: &Histogram, cost_threshold: i64) -> Option<i64> {
     let cost_threshold = saturate_add(a.bit_cost, cost_threshold);
-    let (cost, _) = get_combined_histogram_entropy(a, b, cost_threshold)?;
+    let (cost, _) = combined_histogram_entropy(a, b, cost_threshold)?;
     Some(cost as i64 - a.bit_cost as i64)
 }
-
-// -----------------------------------------------------------------------------
 
 /// `VP8LHistogramSet`, where `VP8LGetHistoImageSymbols` combines histograms.
 struct HistogramSet {
@@ -417,7 +403,7 @@ impl HistogramSet {
         let slots = [self.slots.at(a)?, self.slots.at(b)?, self.spare];
         let [a, b, out] = self.histograms.get_disjoint_mut(slots).map_err(|_| Bug)?;
         let cost_threshold = saturate_add(a.bit_cost.wrapping_add(b.bit_cost), cost_threshold);
-        let Some((bit_cost, costs)) = get_combined_histogram_entropy(a, b, cost_threshold) else {
+        let Some((bit_cost, costs)) = combined_histogram_entropy(a, b, cost_threshold) else {
             return Ok(false);
         };
         out.set_to_sum(a, b)?;
@@ -426,7 +412,7 @@ impl HistogramSet {
     }
 }
 
-fn get_bin_id_for_entropy(min: u64, max: u64, val: u64) -> usize {
+fn bin_id_for_entropy(min: u64, max: u64, val: u64) -> usize {
     let range = max - min;
     if range > 0 {
         let delta = val - min;
@@ -438,21 +424,21 @@ fn get_bin_id_for_entropy(min: u64, max: u64, val: u64) -> usize {
 
 /// `HistogramBuild`: one histogram for each tile of `1 << histo_bits` pixels squared.
 fn histogram_build(
-    xsize: usize,
+    width: usize,
     histo_bits: u32,
     backward_refs: &BackwardRefs,
     histograms: &mut [Histogram],
 ) -> Checked {
-    let histo_xsize = sub_sample_size(xsize, histo_bits);
+    let tiles_per_row = sub_sample_size(width, histo_bits);
     let (mut x, mut y) = (0, 0);
     for &v in backward_refs.iter() {
-        let ix = (y >> histo_bits) * histo_xsize + (x >> histo_bits);
+        let idx = (y >> histo_bits) * tiles_per_row + (x >> histo_bits);
         histograms
-            .at_mut(ix)?
+            .at_mut(idx)?
             .add_single_pix_or_copy(v, |distance| distance)?;
         x += v.length();
-        while x >= xsize {
-            x -= xsize;
+        while x >= width {
+            x -= width;
             y += 1;
         }
     }
@@ -464,7 +450,6 @@ fn histogram_copy_and_analyze(
     orig_histo: &mut [Histogram],
     image_histo: &mut HistogramSet,
 ) -> Checked {
-    image_histo.size = 0;
     for histo in orig_histo {
         histo.compute_cost();
         if histo.is_used() {
@@ -475,18 +460,14 @@ fn histogram_copy_and_analyze(
     Ok(())
 }
 
-/// `HistogramAnalyzeEntropyBin`: sorts the histograms into bins by the costs of their three dominant channels.
+/// `HistogramAnalyzeEntropyBin`: sorts the histograms into bins by the costs of their first three populations.
 fn histogram_analyze_entropy_bin(image_histo: &mut HistogramSet) -> Checked {
     let mut min = [u64::MAX; 3];
     let mut max = [0u64; 3];
     for i in 0..image_histo.size {
-        for ((min, max), channel) in min
-            .iter_mut()
-            .zip(&mut max)
-            .zip(&image_histo.get(i)?.channels)
-        {
-            *min = (*min).min(channel.cost);
-            *max = (*max).max(channel.cost);
+        for ((min, max), stats) in min.iter_mut().zip(&mut max).zip(&image_histo.get(i)?.stats) {
+            *min = (*min).min(stats.cost);
+            *max = (*max).max(stats.cost);
         }
     }
     for i in 0..image_histo.size {
@@ -494,9 +475,9 @@ fn histogram_analyze_entropy_bin(image_histo: &mut HistogramSet) -> Checked {
         histo.bin_id =
             min.iter()
                 .zip(&max)
-                .zip(&histo.channels)
-                .fold(0, |bin_id, ((&min, &max), channel)| {
-                    bin_id * NUM_PARTITIONS + get_bin_id_for_entropy(min, max, channel.cost)
+                .zip(&histo.stats)
+                .fold(0, |bin_id, ((&min, &max), stats)| {
+                    bin_id * NUM_PARTITIONS + bin_id_for_entropy(min, max, stats.cost)
                 });
     }
     Ok(())
@@ -504,7 +485,7 @@ fn histogram_analyze_entropy_bin(image_histo: &mut HistogramSet) -> Checked {
 
 /// Red, blue and alpha each have a single value.
 fn is_trivial_but_for_literal(histo: &Histogram) -> bool {
-    let [_, red, blue, alpha, _] = &histo.channels;
+    let [_, red, blue, alpha, _] = &histo.stats;
     red.trivial_symbol.is_some() && blue.trivial_symbol.is_some() && alpha.trivial_symbol.is_some()
 }
 
@@ -536,7 +517,7 @@ fn histogram_combine_entropy_bin(
             idx += 1;
             continue;
         }
-        // Merging a trivial histogram into one that is not costs more than estimated, but too many codes cost more.
+        // Merge if the sum is trivial or neither part is. After many refusals in a bin, merge anyway: codes cost too.
         let try_combine =
             is_trivial_but_for_literal(image_histo.histograms.at_ref(image_histo.spare)?)
                 || (!is_trivial_but_for_literal(image_histo.get(idx)?)
@@ -552,8 +533,8 @@ fn histogram_combine_entropy_bin(
     Ok(())
 }
 
-/// A Lehmer random number generator: times 48271, modulo 2^31 - 1.
-fn my_rand(seed: &mut u32) -> u32 {
+/// `MyRand`: a Lehmer random number generator, times 48271, modulo 2^31 - 1.
+fn lehmer_rand(seed: &mut u32) -> u32 {
     *seed = ((u64::from(*seed) * 48271) % 2_147_483_647) as u32;
     *seed
 }
@@ -597,14 +578,12 @@ impl HistogramPair {
         let sum_cost = h1.bit_cost.wrapping_add(h2.bit_cost);
         let cost_threshold = saturate_add(sum_cost, cost_threshold);
         Ok(
-            get_combined_histogram_entropy(h1, h2, cost_threshold).map(|(cost_combo, costs)| {
-                Self {
-                    idx1,
-                    idx2,
-                    cost_diff: cost_combo as i64 - sum_cost as i64,
-                    cost_combo,
-                    costs,
-                }
+            combined_histogram_entropy(h1, h2, cost_threshold).map(|(cost_combo, costs)| Self {
+                idx1,
+                idx2,
+                cost_diff: cost_combo as i64 - sum_cost as i64,
+                cost_combo,
+                costs,
             }),
         )
     }
@@ -659,8 +638,6 @@ impl HistoQueue {
         Ok(pair.cost_diff)
     }
 }
-
-// -----------------------------------------------------------------------------
 
 /// Merges the pair that saves the most, over and over.
 fn histogram_combine_greedy(image_histo: &mut HistogramSet) -> Result<()> {
@@ -727,7 +704,7 @@ fn histogram_combine_stochastic(
         if size >= 2 {
             let rand_range = (size - 1) * size;
             for _ in 0..size / 2 {
-                let tmp = my_rand(&mut seed) % rand_range;
+                let tmp = lehmer_rand(&mut seed) % rand_range;
                 let idx1 = tmp / (size - 1);
                 let mut idx2 = tmp % (size - 1);
                 if idx2 >= idx1 {
@@ -777,8 +754,6 @@ fn histogram_combine_stochastic(
     Ok(image_histo.size <= min_cluster_size)
 }
 
-// Histogram refinement
-
 /// `HistogramRemap`: finds the best cluster for each tile. Returns the clusters, each the sum of its tiles.
 fn histogram_remap(
     in_histo: &[Histogram],
@@ -787,20 +762,20 @@ fn histogram_remap(
 ) -> Checked<Vec<Histogram>> {
     let out_size = out.size;
     if out_size > 1 {
-        let mut previous = 0;
+        let mut cluster = 0;
         for (histo, symbol) in in_histo.iter().zip(symbols.iter_mut()) {
             // A tile without symbols takes the cluster of the one before it, which is cheap to write.
             if histo.is_used() {
                 let mut best_bits = i64::MAX;
-                previous = 0;
+                cluster = 0;
                 for k in 0..out_size {
-                    if let Some(cur_bits) = histogram_add_thresh(out.get(k)?, histo, best_bits) {
+                    if let Some(cur_bits) = add_thresh(out.get(k)?, histo, best_bits) {
                         best_bits = cur_bits;
-                        previous = k as u32;
+                        cluster = k as u32;
                     }
                 }
             }
-            *symbol = previous;
+            *symbol = cluster;
         }
     } else {
         symbols.fill(0);
@@ -817,28 +792,29 @@ fn histogram_remap(
     Ok(clusters)
 }
 
-fn get_combine_cost_factor(histo_size: usize, quality: i32) -> i64 {
-    let mut combine_cost_factor = 16;
+/// `GetCombineCostFactor`. From a quality of 90 on libwebp leaves it at 16, and at 100 the caller does not use bins.
+fn combine_cost_factor(histo_size: usize, quality: Quality) -> i64 {
+    let mut factor = 16;
     if histo_size > 256 {
-        combine_cost_factor /= 2;
+        factor /= 2;
     }
     if histo_size > 512 {
-        combine_cost_factor /= 2;
+        factor /= 2;
     }
     if histo_size > 1024 {
-        combine_cost_factor /= 2;
+        factor /= 2;
     }
-    if quality <= 50 {
-        combine_cost_factor /= 2;
+    match quality {
+        Quality::Palette | Quality::AlphaPlane => factor / 2,
+        Quality::Image => factor,
     }
-    combine_cost_factor
 }
 
 /// `VP8LGetHistoImageSymbols`: returns the clusters' histograms, and each tile's cluster in `histogram_symbols`.
-pub(crate) fn get_histo_image_symbols(
-    xsize: usize,
+pub(super) fn histo_image_symbols(
+    width: usize,
     refs: &BackwardRefs,
-    quality: i32,
+    quality: Quality,
     histogram_bits: u32,
     cache_bits: u32,
     histogram_symbols: &mut [u32],
@@ -850,18 +826,20 @@ pub(crate) fn get_histo_image_symbols(
     }
     let mut image_histo = HistogramSet::new(image_histo_raw_size, cache_bits)?;
 
-    histogram_build(xsize, histogram_bits, refs, &mut orig_histo)?;
+    histogram_build(width, histogram_bits, refs, &mut orig_histo)?;
     histogram_copy_and_analyze(&mut orig_histo, &mut image_histo)?;
 
     // With few histograms the bins would be nearly empty.
     if image_histo.size > BIN_SIZE * 2 {
-        let combine_cost_factor = get_combine_cost_factor(image_histo_raw_size, quality);
         histogram_analyze_entropy_bin(&mut image_histo)?;
-        histogram_combine_entropy_bin(&mut image_histo, combine_cost_factor)?;
+        histogram_combine_entropy_bin(
+            &mut image_histo,
+            combine_cost_factor(image_histo_raw_size, quality),
+        )?;
     }
 
     // A cubic ramp between 1 and MAX_HISTO_GREEDY.
-    let quality = i64::from(quality);
+    let quality = i64::from(quality as i32);
     let threshold_size =
         1 + div_round::<1_000_000>(quality * quality * quality * (MAX_HISTO_GREEDY - 1));
     if histogram_combine_stochastic(&mut image_histo, threshold_size as usize)? {

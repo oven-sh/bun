@@ -1,17 +1,18 @@
 //! `backward_references_enc.c`: turns pixels into literals, color cache hits and copies of earlier pixels.
 
+use super::Quality;
 use super::backward_references_cost::backward_references_trace_backwards;
 use super::histogram::Histogram;
 use super::lossless::{prefix_encode, vector_mismatch};
 use crate::Result;
-use crate::util::{Bug, Checked, SliceExt, try_vec};
+use crate::util::{Bug, ByteHistogram, Checked, SliceExt, increment, try_vec};
 use crate::vp8l::color_cache::{ColorCache, hash_pix};
 use crate::vp8l::common::{
     CODE_TO_PLANE, CODE_TO_PLANE_CODES, FIRST_CACHE_CODE, NUM_LENGTH_CODES, NUM_LITERAL_CODES,
 };
 
 /// The format allows 11.
-pub(crate) const MAX_COLOR_CACHE_BITS: u32 = 10;
+pub(super) const MAX_COLOR_CACHE_BITS: u32 = 10;
 
 const HASH_BITS: u32 = 18;
 const HASH_SIZE: usize = 1 << HASH_BITS;
@@ -19,7 +20,7 @@ const HASH_SIZE: usize = 1 << HASH_BITS;
 const MAX_LENGTH_BITS: u32 = 12;
 const WINDOW_SIZE_BITS: u32 = 20;
 /// The longest copy.
-pub(crate) const MAX_LENGTH: usize = (1 << MAX_LENGTH_BITS) - 1;
+pub(super) const MAX_LENGTH: usize = (1 << MAX_LENGTH_BITS) - 1;
 /// The longest distance: the codes of the nearest pixels take up part of the range.
 const WINDOW_SIZE: usize = (1 << WINDOW_SIZE_BITS) - CODE_TO_PLANE_CODES;
 
@@ -27,7 +28,7 @@ const WINDOW_SIZE: usize = (1 << WINDOW_SIZE_BITS) - CODE_TO_PLANE_CODES;
 const MIN_LENGTH: usize = 4;
 
 #[derive(Clone, Copy)]
-pub(crate) enum PixOrCopy {
+pub(super) enum PixOrCopy {
     Literal(u32),
     CacheIdx(u32),
     Copy { distance: u32, len: u16 },
@@ -36,7 +37,7 @@ pub(crate) enum PixOrCopy {
 impl PixOrCopy {
     /// How many pixels it stands for.
     #[inline]
-    pub(crate) fn length(self) -> usize {
+    pub(super) fn length(self) -> usize {
         match self {
             Self::Literal(_) | Self::CacheIdx(_) => 1,
             Self::Copy { len, .. } => len.into(),
@@ -53,13 +54,12 @@ impl PixOrCopy {
     }
 }
 
-/// `VP8LBackwardRefs`
 #[derive(Default)]
-pub(crate) struct BackwardRefs(Vec<PixOrCopy>);
+pub(super) struct BackwardRefs(Vec<PixOrCopy>);
 
 impl BackwardRefs {
     #[inline]
-    pub(crate) fn push(&mut self, v: PixOrCopy) -> Result<()> {
+    pub(super) fn push(&mut self, v: PixOrCopy) -> Result<()> {
         if self.0.len() == self.0.capacity() {
             self.0.try_reserve(1)?;
         }
@@ -68,15 +68,15 @@ impl BackwardRefs {
     }
 
     #[inline]
-    pub(crate) fn push_copy(&mut self, distance: usize, len: usize) -> Result<()> {
+    pub(super) fn push_copy(&mut self, distance: usize, len: usize) -> Result<()> {
         self.push(PixOrCopy::copy(distance, len)?)
     }
 
-    pub(crate) fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         self.0.clear();
     }
 
-    pub(crate) fn iter(&self) -> core::slice::Iter<'_, PixOrCopy> {
+    pub(super) fn iter(&self) -> core::slice::Iter<'_, PixOrCopy> {
         self.0.iter()
     }
 }
@@ -98,14 +98,14 @@ static PLANE_TO_CODE_LUT: [u8; 128] = {
 
 /// `VP8LDistanceToPlaneCode`: the distances to the pixels nearest in two dimensions get the lowest codes.
 #[inline]
-pub(crate) fn distance_to_plane_code(xsize: usize, dist: u32) -> u32 {
-    let xsize = xsize.max(1) as u32;
-    let yoffset = dist / xsize;
-    let xoffset = dist - yoffset * xsize;
+pub(super) fn distance_to_plane_code(width: usize, dist: u32) -> u32 {
+    let width = width.max(1) as u32;
+    let yoffset = dist / width;
+    let xoffset = dist - yoffset * width;
     let index = if xoffset <= 8 && yoffset < 8 {
         yoffset * 16 + 8 - xoffset
-    } else if xoffset + 8 > xsize && yoffset < 7 {
-        (yoffset + 1) * 16 + 8 + (xsize - xoffset)
+    } else if xoffset + 8 > width && yoffset < 7 {
+        (yoffset + 1) * 16 + 8 + (width - xoffset)
     } else {
         return dist + CODE_TO_PLANE_CODES as u32;
     };
@@ -138,89 +138,91 @@ fn match_length(argb: &[u32], pos1: usize, pos2: usize, max_limit: usize) -> Che
     ))
 }
 
-// Hash chains
-
 /// `VP8LHashChain`: the best copy that can start at each pixel.
-pub(crate) struct HashChain {
+pub(super) struct HashChain {
     /// The distance in the upper 20 bits, the length in the lower 12.
-    offset_length: Vec<u32>,
+    distance_length: Vec<u32>,
 }
 
 /// The end of a chain of positions with the same hash.
 const NO_POSITION: u32 = u32::MAX;
 
+/// `GetPixPairHash64`
 #[inline]
-const fn get_pix_pair_hash64(argb0: u32, argb1: u32) -> usize {
+const fn pix_pair_hash(argb0: u32, argb1: u32) -> usize {
     let key = argb1
         .wrapping_mul(0xc6a4_a793)
         .wrapping_add(argb0.wrapping_mul(0x5bd1_e996));
     (key >> (32 - HASH_BITS)) as usize
 }
 
-/// How many positions of a hash chain to look at: 8 to 86.
-const fn get_max_iters_for_quality(quality: i32) -> i32 {
+/// `GetMaxItersForQuality`: how many positions of a hash chain to look at.
+const fn max_iters_for_quality(quality: Quality) -> i32 {
+    let quality = quality as i32;
     8 + (quality * quality) / 128
 }
 
-fn get_window_size_for_hash_chain(quality: i32, xsize: usize) -> usize {
-    let max_window_size = if quality > 50 {
-        xsize << 8
-    } else if quality > 25 {
-        xsize << 6
-    } else {
-        xsize << 4
+/// `GetWindowSizeForHashChain`: how far back to look. Above a quality of 75 libwebp goes as far as `WINDOW_SIZE`.
+fn window_size_for_hash_chain(quality: Quality, width: usize) -> usize {
+    let max_window_size = match quality {
+        Quality::Image => width << 8,
+        Quality::AlphaPlane => width << 6,
+        Quality::Palette => width << 4,
     };
     max_window_size.min(WINDOW_SIZE)
 }
 
+#[inline]
+const fn pack(distance: usize, length: usize) -> u32 {
+    ((distance as u32) << MAX_LENGTH_BITS) | length as u32
+}
+
 impl HashChain {
-    /// For images of up to `size` pixels.
-    pub(crate) fn new(size: usize) -> Result<Self> {
+    /// For `size` pixels, none of which has a copy yet.
+    fn zeroed(size: usize) -> Result<Self> {
         Ok(Self {
-            offset_length: try_vec(0, size)?,
+            distance_length: try_vec(0, size)?,
         })
     }
 
+    /// `VP8LHashChainFindOffset`
     #[inline]
-    pub(crate) fn find_offset(&self, base_position: usize) -> Checked<usize> {
-        Ok((self.offset_length.at(base_position)? >> MAX_LENGTH_BITS) as usize)
+    pub(super) fn distance(&self, base_position: usize) -> Checked<usize> {
+        Ok((self.distance_length.at(base_position)? >> MAX_LENGTH_BITS) as usize)
     }
 
+    /// `VP8LHashChainFindLength`
     #[inline]
-    pub(crate) fn find_length(&self, base_position: usize) -> Checked<usize> {
-        Ok((self.offset_length.at(base_position)? as usize) & MAX_LENGTH)
+    pub(super) fn length(&self, base_position: usize) -> Checked<usize> {
+        Ok((self.distance_length.at(base_position)? as usize) & MAX_LENGTH)
     }
 
-    /// The distance and the length.
+    /// `VP8LHashChainFindCopy`: the distance and the length.
     #[inline]
-    pub(crate) fn find_copy(&self, base_position: usize) -> Checked<(usize, usize)> {
-        let offset_length = self.offset_length.at(base_position)?;
+    pub(super) fn copy_at(&self, base_position: usize) -> Checked<(usize, usize)> {
+        let distance_length = self.distance_length.at(base_position)?;
         Ok((
-            (offset_length >> MAX_LENGTH_BITS) as usize,
-            offset_length as usize & MAX_LENGTH,
+            (distance_length >> MAX_LENGTH_BITS) as usize,
+            distance_length as usize & MAX_LENGTH,
         ))
     }
 
     #[inline]
-    fn set(&mut self, position: usize, offset: usize, length: usize) -> Checked {
-        self.offset_length.put(
-            position,
-            ((offset as u32) << MAX_LENGTH_BITS) | length as u32,
-        )
+    fn set(&mut self, position: usize, distance: usize, length: usize) -> Checked {
+        self.distance_length.put(position, pack(distance, length))
     }
 
     /// `VP8LHashChainFill`
-    pub(crate) fn fill(&mut self, quality: i32, argb: &[u32], xsize: usize) -> Result<()> {
+    pub(super) fn new(quality: Quality, argb: &[u32], width: usize) -> Result<Self> {
         let size = argb.len();
-        let iter_max = get_max_iters_for_quality(quality);
-        let window_size = get_window_size_for_hash_chain(quality, xsize);
-        // First it links each position to the previous one with the same hash.
-        let chain = self.offset_length.sub_mut(..size)?;
-
+        let iter_max = max_iters_for_quality(quality);
+        let window_size = window_size_for_hash_chain(quality, width);
+        let mut hash_chain = Self::zeroed(size)?;
         if size <= 2 {
-            chain.fill(0);
-            return Ok(());
+            return Ok(hash_chain);
         }
+        // At first `chain` links each position to the previous one with the same hash.
+        let chain = hash_chain.distance_length.as_mut_slice();
 
         {
             let mut hash_to_first_index = try_vec(NO_POSITION, HASH_SIZE)?;
@@ -249,22 +251,18 @@ impl HashChain {
                         len = MAX_LENGTH;
                     }
                     while len > 0 {
-                        link(chain, pos, get_pix_pair_hash64(color, len as u32))?;
+                        link(chain, pos, pix_pair_hash(color, len as u32))?;
                         pos += 1;
                         len -= 1;
                     }
                     argb_comp = false;
                 } else {
-                    link(
-                        chain,
-                        pos,
-                        get_pix_pair_hash64(argb.at(pos)?, argb.at(pos + 1)?),
-                    )?;
+                    link(chain, pos, pix_pair_hash(argb.at(pos)?, argb.at(pos + 1)?))?;
                     pos += 1;
                     argb_comp = argb_comp_next;
                 }
             }
-            let hash_code = get_pix_pair_hash64(argb.at(pos)?, argb.at(pos + 1)?);
+            let hash_code = pix_pair_hash(argb.at(pos)?, argb.at(pos + 1)?);
             chain.put(pos, hash_to_first_index.at(hash_code)?)?;
         }
 
@@ -282,12 +280,12 @@ impl HashChain {
 
             let mut pos = chain.at(base_position)?;
             // The pixel above and the one before are good guesses.
-            if base_position >= xsize {
+            if base_position >= width {
                 let curr_length =
-                    find_match_length(argb, base_position - xsize, base_position, 0, max_len)?;
+                    find_match_length(argb, base_position - width, base_position, 0, max_len)?;
                 if curr_length > best_length {
                     best_length = curr_length;
-                    best_distance = xsize;
+                    best_distance = width;
                 }
                 iter -= 1;
             }
@@ -327,10 +325,7 @@ impl HashChain {
             // If the pixels before the two intervals are the same too, this also is the best match for them.
             let mut max_base_position = base_position;
             loop {
-                chain.put(
-                    base_position,
-                    ((best_distance as u32) << MAX_LENGTH_BITS) | best_length as u32,
-                )?;
+                chain.put(base_position, pack(best_distance, best_length))?;
                 base_position -= 1;
                 if best_distance == 0 || base_position == 0 {
                     break;
@@ -353,14 +348,12 @@ impl HashChain {
                 }
             }
         }
-        Ok(())
+        Ok(hash_chain)
     }
 }
 
-// -----------------------------------------------------------------------------
-
 /// Copies from the pixel before and the pixel above only.
-fn backward_references_rle(xsize: usize, argb: &[u32], refs: &mut BackwardRefs) -> Result<()> {
+fn backward_references_rle(width: usize, argb: &[u32], refs: &mut BackwardRefs) -> Result<()> {
     let pix_count = argb.len();
     refs.clear();
     refs.push(PixOrCopy::Literal(argb.at(0)?))?;
@@ -368,16 +361,16 @@ fn backward_references_rle(xsize: usize, argb: &[u32], refs: &mut BackwardRefs) 
     while i < pix_count {
         let max_len = (pix_count - i).min(MAX_LENGTH);
         let rle_len = find_match_length(argb, i, i - 1, 0, max_len)?;
-        let prev_row_len = if i < xsize {
+        let prev_row_len = if i < width {
             0
         } else {
-            find_match_length(argb, i, i - xsize, 0, max_len)?
+            find_match_length(argb, i, i - width, 0, max_len)?
         };
         if rle_len >= prev_row_len && rle_len >= MIN_LENGTH {
             refs.push_copy(1, rle_len)?;
             i += rle_len;
         } else if prev_row_len >= MIN_LENGTH {
-            refs.push_copy(xsize, prev_row_len)?;
+            refs.push_copy(width, prev_row_len)?;
             i += prev_row_len;
         } else {
             refs.push(PixOrCopy::Literal(argb.at(i)?))?;
@@ -396,14 +389,14 @@ fn backward_references_lz77(
     refs.clear();
     let mut i = 0;
     while i < pix_count {
-        let (offset, mut len) = hash_chain.find_copy(i)?;
+        let (distance, mut len) = hash_chain.copy_at(i)?;
         if len >= MIN_LENGTH {
             let len_ini = len;
             let mut max_reach = 0;
             let j_max = (i + len_ini).min(pix_count - 1);
             // Rather than the longest copy from here, take the one after which the next copy gets furthest.
             for j in i + 1..=j_max {
-                let len_j = hash_chain.find_length(j)?;
+                let len_j = hash_chain.length(j)?;
                 let reach = j + if len_j >= MIN_LENGTH { len_j } else { 1 };
                 if reach > max_reach {
                     len = j - i;
@@ -419,18 +412,18 @@ fn backward_references_lz77(
         if len == 1 {
             refs.push(PixOrCopy::Literal(argb.at(i)?))?;
         } else {
-            refs.push_copy(offset, len)?;
+            refs.push_copy(distance, len)?;
         }
         i += len;
     }
     Ok(())
 }
 
-const WINDOW_OFFSETS_SIZE_MAX: usize = 32;
+const WINDOW_DISTANCES_SIZE_MAX: usize = 32;
 
 /// An LZ77 whose distances all are among the 32 cheapest. It fills `hash_chain` with the best copies at those.
 fn backward_references_lz77_box(
-    xsize: usize,
+    width: usize,
     argb: &[u32],
     hash_chain_best: &HashChain,
     hash_chain: &mut HashChain,
@@ -451,83 +444,83 @@ fn backward_references_lz77_box(
     }
 
     // The distances by their code. In a narrow image some codes are not used.
-    let mut by_plane_code = [0usize; WINDOW_OFFSETS_SIZE_MAX];
+    let mut by_plane_code = [0usize; WINDOW_DISTANCES_SIZE_MAX];
     for y in 0..=6isize {
         for x in -6..=6isize {
-            let offset = y * xsize as isize + x;
-            if offset <= 0 {
+            let distance = y * width as isize + x;
+            if distance <= 0 {
                 continue;
             }
-            let plane_code = distance_to_plane_code(xsize, offset as u32) - 1;
+            let plane_code = distance_to_plane_code(width, distance as u32) - 1;
             if let Some(slot) = by_plane_code.get_mut(plane_code as usize) {
-                *slot = offset as usize;
+                *slot = distance as usize;
             }
         }
     }
-    let mut window_offsets = [0usize; WINDOW_OFFSETS_SIZE_MAX];
-    let mut window_offsets_size = 0;
-    for offset in by_plane_code.into_iter().filter(|&offset| offset != 0) {
-        window_offsets.put(window_offsets_size, offset)?;
-        window_offsets_size += 1;
+    let mut window_distances = [0usize; WINDOW_DISTANCES_SIZE_MAX];
+    let mut window_distances_size = 0;
+    for distance in by_plane_code.into_iter().filter(|&distance| distance != 0) {
+        window_distances.put(window_distances_size, distance)?;
+        window_distances_size += 1;
     }
-    let window_offsets = window_offsets.sub(..window_offsets_size)?;
+    let window_distances = window_distances.sub(..window_distances_size)?;
     // Those that lead to a pixel which none of them leads to from the pixel before.
-    let mut window_offsets_new = [0usize; WINDOW_OFFSETS_SIZE_MAX];
-    let mut window_offsets_new_size = 0;
-    for &offset in window_offsets {
-        if !window_offsets.iter().any(|&other| offset == other + 1) {
-            window_offsets_new.put(window_offsets_new_size, offset)?;
-            window_offsets_new_size += 1;
+    let mut window_distances_new = [0usize; WINDOW_DISTANCES_SIZE_MAX];
+    let mut window_distances_new_size = 0;
+    for &distance in window_distances {
+        if !window_distances.iter().any(|&other| distance == other + 1) {
+            window_distances_new.put(window_distances_new_size, distance)?;
+            window_distances_new_size += 1;
         }
     }
-    let window_offsets_new = window_offsets_new.sub(..window_offsets_new_size)?;
+    let window_distances_new = window_distances_new.sub(..window_distances_new_size)?;
 
     hash_chain.set(0, 0, 0)?;
-    let (mut best_offset_prev, mut best_length_prev) = (0, 0);
+    let (mut best_distance_prev, mut best_length_prev) = (0, 0);
     for i in 1..pix_count {
-        let (mut best_offset, mut best_length) = hash_chain_best.find_copy(i)?;
+        let (mut best_distance, mut best_length) = hash_chain_best.copy_at(i)?;
         // A match of the longest length within the window cannot be improved on.
-        if best_length < MAX_LENGTH || !window_offsets.contains(&best_offset) {
+        if best_length < MAX_LENGTH || !window_distances.contains(&best_distance) {
             // Start from the rest of the previous pixel's match: only pixels it could not reach are worth a look.
             let use_prev = best_length_prev > 1 && best_length_prev < MAX_LENGTH;
-            let offsets = if use_prev {
+            let distances = if use_prev {
                 best_length = best_length_prev - 1;
-                best_offset = best_offset_prev;
-                window_offsets_new
+                best_distance = best_distance_prev;
+                window_distances_new
             } else {
                 best_length = 0;
-                best_offset = 0;
-                window_offsets
+                best_distance = 0;
+                window_distances
             };
-            for &offset in offsets {
-                let Some(mut j_offset) = i.checked_sub(offset) else {
+            for &distance in distances {
+                let Some(mut source) = i.checked_sub(distance) else {
                     continue;
                 };
-                if argb.at(j_offset)? != argb.at(i)? {
+                if argb.at(source)? != argb.at(i)? {
                     continue;
                 }
                 // Go from run to run of the same color.
                 let mut curr_length = 0;
                 let mut j = i;
                 loop {
-                    let counts_j_offset = usize::from(counts.at(j_offset)?);
+                    let counts_source = usize::from(counts.at(source)?);
                     let counts_j = usize::from(counts.at(j)?);
-                    if counts_j_offset != counts_j {
-                        curr_length += counts_j_offset.min(counts_j);
+                    if counts_source != counts_j {
+                        curr_length += counts_source.min(counts_j);
                         break;
                     }
-                    curr_length += counts_j_offset;
-                    j_offset += counts_j_offset;
-                    j += counts_j_offset;
+                    curr_length += counts_source;
+                    source += counts_source;
+                    j += counts_source;
                     if curr_length > MAX_LENGTH
                         || j >= pix_count
-                        || argb.at(j_offset)? != argb.at(j)?
+                        || argb.at(source)? != argb.at(j)?
                     {
                         break;
                     }
                 }
                 if best_length < curr_length {
-                    best_offset = offset;
+                    best_distance = distance;
                     if curr_length >= MAX_LENGTH {
                         best_length = MAX_LENGTH;
                         break;
@@ -538,23 +531,21 @@ fn backward_references_lz77_box(
         }
 
         if best_length <= MIN_LENGTH {
-            (best_offset, best_length) = (0, 0);
+            (best_distance, best_length) = (0, 0);
         }
-        hash_chain.set(i, best_offset, best_length)?;
-        best_offset_prev = best_offset;
+        hash_chain.set(i, best_distance, best_length)?;
+        best_distance_prev = best_distance;
         best_length_prev = best_length;
     }
 
     backward_references_lz77(argb, hash_chain, refs)
 }
 
-// -----------------------------------------------------------------------------
-
 /// `BackwardReferences2DLocality`: replaces the distances by their codes.
-fn backward_references_2d_locality(xsize: usize, refs: &mut BackwardRefs) {
+fn backward_references_2d_locality(width: usize, refs: &mut BackwardRefs) {
     for v in &mut refs.0 {
         if let PixOrCopy::Copy { distance, .. } = v {
-            *distance = distance_to_plane_code(xsize, *distance);
+            *distance = distance_to_plane_code(width, *distance);
         }
     }
 }
@@ -562,26 +553,20 @@ fn backward_references_2d_locality(xsize: usize, refs: &mut BackwardRefs) {
 /// How often each value of each channel occurs in some pixels.
 #[derive(Clone)]
 struct LiteralCounts {
-    blue: [u32; NUM_LITERAL_CODES],
-    green: [u32; NUM_LITERAL_CODES],
-    red: [u32; NUM_LITERAL_CODES],
-    alpha: [u32; NUM_LITERAL_CODES],
+    blue: ByteHistogram,
+    green: ByteHistogram,
+    red: ByteHistogram,
+    alpha: ByteHistogram,
 }
 
 impl LiteralCounts {
     #[inline]
     fn add(&mut self, pix: u32) {
         let [b, g, r, a] = pix.to_le_bytes();
-        for (counts, value) in [
-            (&mut self.blue, b),
-            (&mut self.green, g),
-            (&mut self.red, r),
-            (&mut self.alpha, a),
-        ] {
-            if let Some(count) = counts.get_mut(usize::from(value)) {
-                *count += 1;
-            }
-        }
+        increment(&mut self.blue, b);
+        increment(&mut self.green, g);
+        increment(&mut self.red, r);
+        increment(&mut self.alpha, a);
     }
 }
 
@@ -591,9 +576,14 @@ type PerCacheKey = [u32; 2 << MAX_COLOR_CACHE_BITS];
 /// The size of color cache, up to `cache_bits_max`, with which `refs` have the lowest entropy. 0 is none.
 fn calculate_best_cache_size(
     argb: &[u32],
+    quality: Quality,
     refs: &BackwardRefs,
     cache_bits_max: u32,
 ) -> Result<u32> {
+    let cache_bits_max = match quality {
+        Quality::Palette => 0,
+        Quality::AlphaPlane | Quality::Image => cache_bits_max,
+    };
     if cache_bits_max == 0 {
         return Ok(0);
     }
@@ -601,10 +591,10 @@ fn calculate_best_cache_size(
         return Err(Bug.into());
     }
     const EMPTY: LiteralCounts = LiteralCounts {
-        blue: [0; NUM_LITERAL_CODES],
-        green: [0; NUM_LITERAL_CODES],
-        red: [0; NUM_LITERAL_CODES],
-        alpha: [0; NUM_LITERAL_CODES],
+        blue: [0; 256],
+        green: [0; 256],
+        red: [0; 256],
+        alpha: [0; 256],
     };
     let mut literals = EMPTY;
     // Those of the literals that each cache holds, from the largest cache to the smallest.
@@ -686,20 +676,19 @@ fn backward_refs_with_local_cache(
     cache_bits: u32,
     refs: &mut BackwardRefs,
 ) -> Result<()> {
-    let mut hashers = ColorCache::new(cache_bits)?;
+    let mut color_cache = ColorCache::new(cache_bits)?;
     let mut pixels = argb.iter();
     for v in &mut refs.0 {
         match *v {
             PixOrCopy::Literal(argb_literal) => {
-                match hashers.contains(argb_literal)? {
-                    Some(ix) => *v = PixOrCopy::CacheIdx(ix),
-                    None => hashers.insert(argb_literal)?,
+                if let Some(idx) = color_cache.hit_or_insert(argb_literal)? {
+                    *v = PixOrCopy::CacheIdx(idx);
                 }
                 pixels.next();
             }
             PixOrCopy::Copy { len, .. } => {
                 for &pixel in pixels.by_ref().take(len.into()) {
-                    hashers.insert(pixel)?;
+                    color_cache.insert(pixel)?;
                 }
             }
             PixOrCopy::CacheIdx(_) => return Err(Bug.into()),
@@ -710,17 +699,17 @@ fn backward_refs_with_local_cache(
 
 /// `VP8LLZ77Type`
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Lz77 {
+pub(super) enum Lz77 {
     Standard,
     Rle,
     Box,
 }
 
 /// `VP8LGetBackwardReferences`: the cheapest of `lz77_types_to_try` goes to `refs_best`. Returns its color cache bits.
-pub(crate) fn get_backward_references(
+pub(super) fn best_backward_refs(
     width: usize,
     argb: &[u32],
-    quality: i32,
+    quality: Quality,
     lz77_types_to_try: &[Lz77],
     cache_bits_max: u32,
     hash_chain: &HashChain,
@@ -741,12 +730,12 @@ pub(crate) fn get_backward_references(
                 width,
                 argb,
                 hash_chain,
-                hash_chain_box.insert(HashChain::new(argb.len())?),
+                hash_chain_box.insert(HashChain::zeroed(argb.len())?),
                 refs_tmp,
             )?,
         }
 
-        let cache_bits = calculate_best_cache_size(argb, refs_tmp, cache_bits_max)?;
+        let cache_bits = calculate_best_cache_size(argb, quality, refs_tmp, cache_bits_max)?;
         if cache_bits > 0 {
             backward_refs_with_local_cache(argb, cache_bits, refs_tmp)?;
         }
@@ -764,8 +753,12 @@ pub(crate) fn get_backward_references(
         Some(Lz77::Box) => hash_chain_box.as_ref(),
         _ => None,
     };
+    let is_worth_tracing = match quality {
+        Quality::Palette => false,
+        Quality::AlphaPlane | Quality::Image => true,
+    };
     if let Some(hash_chain) = hash_chain_best
-        && quality >= 25
+        && is_worth_tracing
     {
         backward_references_trace_backwards(
             width,

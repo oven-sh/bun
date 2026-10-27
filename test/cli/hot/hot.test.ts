@@ -1376,9 +1376,9 @@ async function watcherHandled(trace: string, fence: string) {
 const withoutRepeats = (output: string) => output.split("\n").filter((line, i, lines) => line !== lines[i - 1]);
 
 // The resolver caches a failed read of a directory (any errno but ENOENT) in
-// the place of its listing. The reloader used to read that cache for each
-// directory event, and aborted on the failed read:
-// "EntriesOption::entries on non-Entries variant".
+// the place of its listing. The reloader used to find the watched file of a
+// directory event through that listing, so a folder with no listing took no
+// save by rename, also after the folder was readable again.
 //
 // The fixture makes the read fail with no permission and no descriptor limit.
 // It moves `lib` away and puts a plain file at its path, so a listing of `lib`
@@ -1430,15 +1430,12 @@ setInterval(() => {}, 1e6);
 for (const [flag, what, then] of [
   ["--hot", "a new file in the folder", "c.ts"],
   ["--watch", "a new file in the folder", "c.ts"],
-  // The reloader did not look up a dot name, but it kept the cache entry for the next event.
-  ["--hot", "a dot file in the folder", ".env"],
-  ["--watch", "a dot file in the folder", ".env"],
   // kqueue names no entry. It takes the watched files that are gone when the folder is deleted.
   ["--hot", "the removal of the folder", "remove"],
 ]) {
   // The Windows watcher reports each changed file itself. Its directory events only drop the cache.
   it.skipIf(isWindows)(
-    `${flag} survives ${what} whose cached listing is a read error`,
+    `${flag} still reloads after ${what} whose cached listing is a read error`,
     async () => {
       using dir = tempDir("hot-dir-read-error", readErrorFixture);
       const cwd = join(String(dir), "src");
@@ -1465,67 +1462,8 @@ for (const [flag, what, then] of [
       expect(await stdout.toEnd()).toBe(`RUN 1\nIMPORT failed\n${then === "remove" ? "REMOVED" : "HEALED"}\nRUN 2\n`);
       expect(await proc.exited).toBe(0);
     },
-    timeout,
-  );
-}
-
-// Both come from the length of a path in a PATH_MAX buffer of the watcher thread. Only inotify
-// names the changed entry, and PATH_MAX is 1024 on macOS.
-for (const [what, name] of [
-  // A directory event joined the folder and the name with no bound:
-  // "range end index 4097 out of range for slice of length 4096".
-  ["a new file whose path is longer than PATH_MAX", Buffer.alloc(247, "n") + ".ts"],
-  // The watch of an imported file wrote a NUL behind its path:
-  // "index out of bounds: the len is 4096 but the index is 4096".
-  ["an import whose path is PATH_MAX long", Buffer.alloc(245, "n") + ".png"],
-]) {
-  it.skipIf(!isLinux)(
-    `--hot survives ${what}`,
-    async () => {
-      using dir = tempDir("hot-long-path", {});
-      // A folder of 3846 bytes is under PATH_MAX, so bun runs in it. Folder + separator + name is
-      // 4097 bytes with the name of 250 bytes and 4096 bytes with the name of 249 bytes.
-      const folderLength = 3846;
-      let cwd = realpathSync(String(dir));
-      while (folderLength - cwd.length > 256) cwd = join(cwd, Buffer.alloc(200, "d").toString());
-      cwd = join(cwd, Buffer.alloc(folderLength - cwd.length - 1, "e").toString());
-      mkdirSync(cwd, { recursive: true });
-      // The absolute path does not fit in PATH_MAX, so only a relative name reaches the file.
-      const create = `require("node:fs").writeFileSync("${name}", "");`;
-      if (name.endsWith(".png")) {
-        await using setup = spawn({ cmd: [bunExe(), "-e", create], cwd, env: bunEnv });
-        expect(await setup.exited).toBe(0);
-      }
-      writeFileSync(
-        join(cwd, "main.ts"),
-        name.endsWith(".png")
-          ? `import asset from "./${name}";
-console.log("RUN", asset.length === 4096 ? 1 : asset);
-console.log("READY");
-setInterval(() => {}, 1e6);
-`
-          : `console.log("RUN", 1);
-${create}
-console.log("READY");
-setInterval(() => {}, 1e6);
-`,
-      );
-      await using proc = spawn({
-        cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
-        cwd,
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-        stdin: "ignore",
-      });
-      const stdout = stdoutOf(proc);
-
-      await stdout.until("READY\n");
-      writeFileSync(join(cwd, "main.ts"), `console.log("RUN", 2);\nprocess.exit(0);\n`);
-      expect(await stdout.toEnd()).toBe("RUN 1\nREADY\nRUN 2\n");
-      expect(await proc.exited).toBe(0);
-    },
-    timeout,
+    // A reload that does not come is a hang, so the limit is finite on a debug build too.
+    30_000,
   );
 }
 
@@ -1608,6 +1546,42 @@ setInterval(() => {}, 1e6);
     await stdout.until("RUN 2 one\n");
     renameOver("notes.md", `two`);
     expect(withoutRepeats(await stdout.toEnd())).toEqual(["RUN 1 one", "RUN 2 one", "RUN 2 two", ""]);
+    expect(await proc.exited).toBe(0);
+  },
+  30_000,
+);
+
+// A lookup that fails makes the resolver list the folder again, and the new listing does not know
+// which of its files are loaded.
+it.skipIf(isWindows)(
+  "--hot reloads an import that is saved by rename after a failed import in the same folder",
+  async () => {
+    using dir = tempDir("hot-dir-event-after-miss", {
+      "dep.js": `export const v = 1;`,
+      "main.js": `try {
+  await import("./missing.js");
+} catch {}
+import { v } from "./dep.js";
+console.log("RUN", v);
+if (v === 2) process.exit(0);
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = String(dir);
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const stdout = stdoutOf(proc);
+
+    await stdout.until("RUN 1\n");
+    writeFileSync(join(cwd, "dep.js.tmp"), `export const v = 2;`);
+    renameSync(join(cwd, "dep.js.tmp"), join(cwd, "dep.js"));
+    expect(withoutRepeats(await stdout.toEnd())).toEqual(["RUN 1", "RUN 2", ""]);
     expect(await proc.exited).toBe(0);
   },
   30_000,

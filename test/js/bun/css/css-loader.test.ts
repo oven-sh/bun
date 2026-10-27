@@ -135,6 +135,7 @@ describe.concurrent("css module exports", () => {
       s: "s_BLNoTg",
       l: "l_BLNoTg",
       c1: "c1_BLNoTg",
+      spin: "spin_BLNoTg",
       spinner: "spinner_BLNoTg",
       vt: "vt_BLNoTg",
       dashed: "dashed_BLNoTg",
@@ -147,17 +148,20 @@ describe.concurrent("css module exports", () => {
     });
   });
 
-  test(":local() and :global()", async () => {
+  test(":local and :global", async () => {
     using dir = tempDir("css-module-local-global", {
       "parity.ts": parity,
       "entry.ts": `export { default } from "./a.module.css";`,
       "a.module.css": `
         :global(.g1) .inner { color: green }
         :local(.loc) :global(.g2 .g3) { color: green }
+        :global .g4 .g5 { color: green }
+        .before :global .g6 { color: green }
+        :local .panel { color: green }
       `,
     });
-    expect(await runtimeAndBundled(String(dir))).toMatchObject({
-      default: { inner: "inner_BLNoTg", loc: "loc_BLNoTg" },
+    expect(await runtimeAndBundled(String(dir))).toEqual({
+      default: { inner: "inner_BLNoTg", loc: "loc_BLNoTg", before: "before_BLNoTg", panel: "panel_BLNoTg" },
     });
   });
 
@@ -316,7 +320,7 @@ describe.concurrent("css module exports", () => {
         export { default as noLocals } from "./no-locals.module.css";
       `,
       "empty.module.css": "",
-      "no-locals.module.css": `div { color: red } @keyframes k { to { opacity: 1 } }`,
+      "no-locals.module.css": `div { color: red } :global(.g) { color: red }`,
     });
     expect(await runtimeAndBundled(String(dir))).toEqual({ empty: {}, noLocals: {} });
   });
@@ -359,22 +363,11 @@ describe.concurrent("css module exports", () => {
 
   test("invalid rules and declarations are skipped", async () => {
     const emptySelector = "Invalid selector. Empty selector is not allowed";
-    const notSupported = (name: string) => `Invalid selector. CSS module class: '${name}' is currently not supported.`;
     const cases = {
-      "bare-global.module.css": {
-        css: `.btn { color: red }\n:global .dark .btn { color: white }`,
-        exports: { btn: "btn_2oH-8A" },
-        bundler: notSupported("global"),
-      },
       "global-block.module.css": {
         css: `:global { .reset { margin: 0 } }\n.card { margin: 0 }`,
         exports: { card: "card_zb_7FQ" },
-        bundler: notSupported("global"),
-      },
-      "bare-local.module.css": {
-        css: `:local .panel { color: red }\n.row { color: red }`,
-        exports: { row: "row_fzRKIQ" },
-        bundler: notSupported("local"),
+        bundler: emptySelector,
       },
       "global-keyframes.module.css": {
         css: `@keyframes :global(spin) { to { opacity: 1 } }\n.spinner { animation: spin 1s }`,
@@ -412,18 +405,13 @@ describe.concurrent("css module exports", () => {
         exports: { box: "box_OTTf4Q" },
         bundler: "Invalid selector. Expected identifier after '.' in class selector, found: rounded(",
       },
-      "star-hack.module.css": {
-        css: `.clearfix { *zoom: 1; color: red }\n.next { color: red }`,
-        exports: { clearfix: "clearfix_lvEdxw", next: "next_lvEdxw" },
-        bundler: "Unexpected token: ;",
-      },
       "late-import.module.css": {
         css: `.one { color: red }\n@import "./plain.css";\n.two { color: red }`,
         exports: { one: "one_r-liRw", two: "two_r-liRw" },
         bundler: "@import rules must come before any other rules except @charset and @layer",
       },
       "declaration-after-composes.module.css": {
-        css: `.base { color: red }\n.a { composes: base; *zoom: 1 }\n.b { *zoom: 1; composes: base }`,
+        css: `.base { color: red }\n.a { composes: base; $x: 1 }\n.b { $x: 1; composes: base }`,
         exports: { base: "base_dl5igQ", a: "base_dl5igQ a_dl5igQ", b: "base_dl5igQ b_dl5igQ" },
         bundler: "Unexpected end of input",
       },

@@ -94,6 +94,12 @@ impl<'a> BitWriter<'a> {
     }
 }
 
+pub(crate) struct Code {
+    pub(crate) code: u32,
+    /// In bits.
+    pub(crate) size: u32,
+}
+
 /// The code of every symbol.
 pub(crate) struct EncodeTable {
     code: [u16; 256],
@@ -137,12 +143,12 @@ impl EncodeTable {
     }
 
     #[inline(always)]
-    pub(crate) fn get(&self, symbol: u8) -> (u32, u32) {
+    pub(crate) fn get(&self, symbol: u8) -> Code {
         let symbol = usize::from(symbol);
-        (
-            u32::from(self.code.get(symbol).copied().unwrap_or(0)),
-            u32::from(self.size.get(symbol).copied().unwrap_or(0)),
-        )
+        Code {
+            code: u32::from(self.code.get(symbol).copied().unwrap_or(0)),
+            size: u32::from(self.size.get(symbol).copied().unwrap_or(0)),
+        }
     }
 }
 
@@ -170,7 +176,7 @@ pub(crate) fn encode_block(
     let [dc, ac @ ..] = block;
     let diff = i32::from(*dc) - i32::from(last_dc);
     let nbits = bit_length(diff.unsigned_abs());
-    let (code, size) = dc_table.get(nbits as u8);
+    let Code { code, size } = dc_table.get(nbits as u8);
     bits.put((code << nbits) | value_bits(diff, nbits), size + nbits);
 
     let mut run = 0u32;
@@ -180,18 +186,18 @@ pub(crate) fn encode_block(
             continue;
         }
         while run > 15 {
-            let (code, size) = ac_table.get(0xf0);
+            let Code { code, size } = ac_table.get(0xf0);
             bits.put(code, size);
             run -= 16;
         }
         let coef = i32::from(coef);
         let nbits = bit_length(coef.unsigned_abs());
-        let (code, size) = ac_table.get(((run << 4) + nbits) as u8);
+        let Code { code, size } = ac_table.get(((run << 4) + nbits) as u8);
         bits.put((code << nbits) | value_bits(coef, nbits), size + nbits);
         run = 0;
     }
     if run > 0 {
-        let (code, size) = ac_table.get(0);
+        let Code { code, size } = ac_table.get(0);
         bits.put(code, size);
     }
 }

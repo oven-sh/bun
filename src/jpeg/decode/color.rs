@@ -1,11 +1,6 @@
 //! From the components of the stream to pixels (jdcolor.c, jdcolext.c).
 
-const SCALEBITS: u32 = 16;
-const ONE_HALF: i32 = 1 << (SCALEBITS - 1);
-
-const fn fix(x: f64) -> i32 {
-    (x * (1 << SCALEBITS) as f64 + 0.5) as i32
-}
+use crate::tables::color::{ONE_HALF, SCALEBITS, fix};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Conversion {

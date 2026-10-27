@@ -7,7 +7,7 @@ use super::idct::{self, DctTable};
 use super::input::Input;
 use super::phuff::PHuffDecoder;
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, round_up};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, try_vec};
 
 /// Where an entropy decoder finds the blocks of the MCU it is decoding.
 pub(crate) trait McuBlocks {
@@ -82,10 +82,7 @@ pub(crate) struct Plane {
 
 impl Plane {
     pub(crate) fn new(stride: usize, rows: usize) -> Result<Self> {
-        let mut data = Vec::new();
-        data.try_reserve_exact(stride * rows)
-            .map_err(|_| Error::OutOfMemory)?;
-        data.resize(stride * rows, 0);
+        let data = try_vec(0, stride * rows)?;
         Ok(Plane { data, stride })
     }
 
@@ -202,11 +199,7 @@ impl CoefController {
             for comp in &d.comps {
                 let blocks_per_row = round_up(comp.width_in_blocks, comp.h_samp) as usize;
                 let rows = round_up(comp.height_in_blocks, comp.v_samp) as usize;
-                let mut blocks = Vec::new();
-                blocks
-                    .try_reserve_exact(blocks_per_row * rows)
-                    .map_err(|_| Error::OutOfMemory)?;
-                blocks.resize(blocks_per_row * rows, [0; 64]);
+                let blocks = try_vec([0; 64], blocks_per_row * rows)?;
                 whole_image.push(CoefArray {
                     blocks,
                     blocks_per_row,

@@ -1,7 +1,7 @@
 //! Huffman coding of progressive scans (jcphuff.c).
 
 use super::Block;
-use super::huff::{BitWriter, Counts, EncodeTable, bit_length, value_bits};
+use super::huff::{BitWriter, Code, Counts, EncodeTable, bit_length, value_bits};
 
 /// The most correction bits that wait for the end of a run of blocks. How long such a run gets depends on it.
 const MAX_CORR_BITS: usize = 1000;
@@ -26,7 +26,7 @@ impl Sink<'_, '_> {
             }
             Sink::Write(bits, tables) => {
                 if let Some(table) = tables.get(table) {
-                    let (code, size) = table.get(symbol);
+                    let Code { code, size } = table.get(symbol);
                     bits.put(code, size);
                 }
             }

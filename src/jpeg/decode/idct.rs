@@ -9,10 +9,8 @@
 
 use super::Block;
 use crate::lanes::{I16x8, add16, add32, descale, madd, mul16, sub16, sub32, transpose, widen_shl};
+use crate::tables::dct::*;
 use core::ops::{Add, Mul, Shl, Sub};
-
-const CONST_BITS: u32 = 13;
-const PASS1_BITS: u32 = 2;
 
 const fn fix(x: f64) -> i32 {
     (x * (1 << CONST_BITS) as f64 + 0.5) as i32
@@ -60,19 +58,6 @@ fn dequantize(coefs: &Block, table: &DctTable, ac_rows: [bool; 8]) -> ([I16x8; 8
 
 #[inline(always)]
 fn idct8_pass([in0, in1, in2, in3, in4, in5, in6, in7]: [I16x8; 8], shift: u32) -> [I16x8; 8] {
-    const F_0_298: i32 = 2446;
-    const F_0_390: i32 = 3196;
-    const F_0_541: i32 = 4433;
-    const F_0_765: i32 = 6270;
-    const F_0_899: i32 = 7373;
-    const F_1_175: i32 = 9633;
-    const F_1_501: i32 = 12299;
-    const F_1_847: i32 = 15137;
-    const F_1_961: i32 = 16069;
-    const F_2_053: i32 = 16819;
-    const F_2_562: i32 = 20995;
-    const F_3_072: i32 = 25172;
-
     let tmp3 = madd(in2, F_0_541 + F_0_765, in6, F_0_541);
     let tmp2 = madd(in2, F_0_541, in6, F_0_541 - F_1_847);
     let tmp0 = widen_shl(add16(in0, in4), CONST_BITS);

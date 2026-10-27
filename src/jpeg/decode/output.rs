@@ -10,7 +10,7 @@ use super::marker::Reached;
 use super::phuff::PHuffDecoder;
 use super::upsample::{self, Method};
 use super::{ColorSpace, DCTSIZE, Decoder, PixelFormat, div_round_up, round_up};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, try_vec};
 
 enum Source {
     Lossy(CoefController),
@@ -97,12 +97,7 @@ impl Decoder<'_> {
         };
 
         let row_bytes = output_width as usize * 4;
-        let mut pixels = Vec::new();
-        let size = row_bytes * output_height as usize;
-        pixels
-            .try_reserve_exact(size)
-            .map_err(|_| Error::OutOfMemory)?;
-        pixels.resize(size, 0);
+        let mut pixels = try_vec(0, row_bytes * output_height as usize)?;
 
         self.start_input_pass(&mut source)?;
         if self.has_multiple_scans {
@@ -164,8 +159,10 @@ impl Decoder<'_> {
             } else if imcu_row > 0 {
                 emitter.emit(&mut upsamplers, &current, Some(&next), imcu_row == 1, false);
                 for (up, plane) in upsamplers.iter_mut().zip(&current) {
-                    up.above.clear();
-                    up.above.extend_from_slice(plane.row(up.rows - 1));
+                    if up.method.needs_context() {
+                        up.above.clear();
+                        up.above.extend_from_slice(plane.row(up.rows - 1));
+                    }
                 }
                 core::mem::swap(&mut current, &mut next);
             }

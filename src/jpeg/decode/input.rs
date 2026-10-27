@@ -1,9 +1,6 @@
 //! The compressed bytes, and the part of marker reading that the entropy decoders need (jdatasrc-tj.c, jdmarker.c).
 
-pub(crate) const M_SOF0: u8 = 0xc0;
-pub(crate) const M_RST0: u8 = 0xd0;
-pub(crate) const M_RST7: u8 = 0xd7;
-pub(crate) const M_EOI: u8 = 0xd9;
+use crate::markers::{M_EOI, M_RST0, M_RST7, M_SOF0};
 
 /// A broken rule that libjpeg goes on from. TurboJPEG only remembered that there was one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

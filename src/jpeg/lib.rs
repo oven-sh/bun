@@ -23,6 +23,7 @@ mod decode;
 mod encode;
 mod error;
 mod lanes;
+mod markers;
 mod tables;
 
 pub use decode::{ColorSpace, Decoder, PixelFormat, Warning};

@@ -1,6 +1,6 @@
 //! Huffman decoding of progressive scans (jdphuff.c).
 
-use super::bits::{BitReader, DerivedTable, huff_extend};
+use super::bits::{BitReader, DerivedTable, TableKind, huff_extend};
 use super::coef::{CoefBits, McuBlocks};
 use super::input::{Input, Warning};
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPS_IN_SCAN, NUM_HUFF_TBLS};
@@ -122,18 +122,18 @@ impl PHuffDecoder {
 
         for i in 0..d.comps_in_scan {
             let comp = d.scan_comp(i)?;
-            let (specs, tbl) = if is_dc_band {
+            let (specs, tbl, kind) = if is_dc_band {
                 // DC refinement needs no table.
                 if d.ah != 0 {
                     continue;
                 }
-                (&d.dc_huff, comp.dc_tbl_no)
+                (&d.dc_huff, comp.dc_tbl_no, TableKind::Dc)
             } else {
                 self.ac_table = comp.ac_tbl_no;
-                (&d.ac_huff, comp.ac_tbl_no)
+                (&d.ac_huff, comp.ac_tbl_no, TableKind::Ac)
             };
             let spec = specs.get(usize::from(tbl)).and_then(|t| t.as_deref());
-            let table = DerivedTable::new(spec.ok_or(Error::NoHuffTable(tbl))?, is_dc_band, false)?;
+            let table = DerivedTable::new(spec.ok_or(Error::NoHuffTable(tbl))?, kind)?;
             *self
                 .tables
                 .get_mut(usize::from(tbl))

@@ -26,8 +26,17 @@ pub(crate) struct DerivedTable {
     lookup: [u16; 1 << LOOKAHEAD],
 }
 
+/// What the symbols of a table stand for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TableKind {
+    Dc,
+    Ac,
+    /// The differences of a lossless stream.
+    Lossless,
+}
+
 impl DerivedTable {
-    pub(crate) fn new(spec: &HuffSpec, is_dc: bool, lossless: bool) -> Result<Box<Self>> {
+    pub(crate) fn new(spec: &HuffSpec, kind: TableKind) -> Result<Box<Self>> {
         let mut table = Box::new(DerivedTable {
             maxcode: [-1; 18],
             valoffset: [0; 18],
@@ -73,14 +82,17 @@ impl DerivedTable {
             *sentinel = 0xfffff;
         }
 
-        // A DC symbol is a number of bits to read.
-        let max_symbol = if lossless { 16 } else { 15 };
-        if is_dc
-            && spec
-                .huffval
-                .iter()
-                .take(p)
-                .any(|&symbol| symbol > max_symbol)
+        // The symbol of a difference is a number of bits to read.
+        let max_symbol = match kind {
+            TableKind::Dc => 15,
+            TableKind::Ac => 255,
+            TableKind::Lossless => 16,
+        };
+        if spec
+            .huffval
+            .iter()
+            .take(p)
+            .any(|&symbol| symbol > max_symbol)
         {
             return Err(Error::BadHuffTable);
         }

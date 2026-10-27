@@ -1,9 +1,9 @@
 //! Lossless streams: Huffman-coded differences from a prediction (jdlhuff.c, jdlossls.c, jddiffct.c).
 
-use super::bits::{BitReader, DerivedTable, huff_extend};
+use super::bits::{BitReader, DerivedTable, TableKind, huff_extend};
 use super::coef::Plane;
 use super::{Decoder, MAX_BLOCKS_IN_MCU, NUM_HUFF_TBLS, round_up};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, try_vec};
 
 /// The rows of one component for one iMCU row, as numbers wider than a sample.
 struct Rows {
@@ -13,10 +13,7 @@ struct Rows {
 
 impl Rows {
     fn new(stride: usize, rows: usize) -> Result<Self> {
-        let mut data = Vec::new();
-        data.try_reserve_exact(stride * rows)
-            .map_err(|_| Error::OutOfMemory)?;
-        data.resize(stride * rows, 0);
+        let data = try_vec(0, stride * rows)?;
         Ok(Rows { data, stride })
     }
 
@@ -108,7 +105,8 @@ impl DiffController {
         for i in 0..d.comps_in_scan {
             let tbl = d.scan_comp(i)?.dc_tbl_no;
             let spec = d.dc_huff.get(usize::from(tbl)).and_then(|t| t.as_deref());
-            let table = DerivedTable::new(spec.ok_or(Error::NoHuffTable(tbl))?, true, true)?;
+            let table =
+                DerivedTable::new(spec.ok_or(Error::NoHuffTable(tbl))?, TableKind::Lossless)?;
             *self
                 .tables
                 .get_mut(usize::from(tbl))

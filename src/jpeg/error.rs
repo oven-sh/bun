@@ -81,3 +81,17 @@ pub enum Error {
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
+
+pub(crate) fn try_vec_with_capacity<T>(capacity: usize) -> Result<Vec<T>> {
+    let mut vec = Vec::new();
+    vec.try_reserve_exact(capacity)
+        .map_err(|_| Error::OutOfMemory)?;
+    Ok(vec)
+}
+
+/// `vec![value; len]`
+pub(crate) fn try_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>> {
+    let mut vec = try_vec_with_capacity(len)?;
+    vec.resize(len, value);
+    Ok(vec)
+}

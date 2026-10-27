@@ -1,40 +1,11 @@
 //! Marker segments (jdmarker.c) and the ICC profile they carry (jdicc.c).
 
-use super::input::{M_EOI, Warning};
+use super::input::Warning;
 use super::{Component, Decoder, MAX_COMPS_IN_SCAN, NUM_ARITH_TBLS, NUM_HUFF_TBLS, NUM_QUANT_TBLS};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, try_vec_with_capacity};
+use crate::markers::*;
 use crate::tables::{HuffSpec, NATURAL_ORDER};
 use std::borrow::Cow;
-
-const M_SOF0: u8 = 0xc0;
-const M_SOF1: u8 = 0xc1;
-const M_SOF2: u8 = 0xc2;
-const M_SOF3: u8 = 0xc3;
-const M_DHT: u8 = 0xc4;
-const M_SOF5: u8 = 0xc5;
-const M_SOF6: u8 = 0xc6;
-const M_SOF7: u8 = 0xc7;
-const M_JPG: u8 = 0xc8;
-const M_SOF9: u8 = 0xc9;
-const M_SOF10: u8 = 0xca;
-const M_SOF11: u8 = 0xcb;
-const M_DAC: u8 = 0xcc;
-const M_SOF13: u8 = 0xcd;
-const M_SOF14: u8 = 0xce;
-const M_SOF15: u8 = 0xcf;
-const M_RST0: u8 = 0xd0;
-const M_RST7: u8 = 0xd7;
-const M_SOI: u8 = 0xd8;
-const M_SOS: u8 = 0xda;
-const M_DQT: u8 = 0xdb;
-const M_DNL: u8 = 0xdc;
-const M_DRI: u8 = 0xdd;
-const M_APP0: u8 = 0xe0;
-const M_APP2: u8 = 0xe2;
-const M_APP14: u8 = 0xee;
-const M_APP15: u8 = 0xef;
-const M_COM: u8 = 0xfe;
-const M_TEM: u8 = 0x01;
 
 /// How much of an APP0 or APP14 segment is looked at.
 const APPN_DATA_LEN: usize = 14;
@@ -68,12 +39,9 @@ impl Decoder<'_> {
             let marker = self.inp.unread_marker;
             match marker {
                 M_SOI => self.get_soi()?,
-                M_SOF0 | M_SOF1 => self.get_sof(false, false, false)?,
-                M_SOF2 => self.get_sof(true, false, false)?,
-                M_SOF3 => self.get_sof(false, true, false)?,
-                M_SOF9 => self.get_sof(false, false, true)?,
-                M_SOF10 => self.get_sof(true, false, true)?,
-                M_SOF11 => self.get_sof(false, true, true)?,
+                M_SOF0 | M_SOF1 | M_SOF2 | M_SOF3 | M_SOF9 | M_SOF10 | M_SOF11 => {
+                    self.get_sof(marker)?;
+                }
                 M_SOF5 | M_SOF6 | M_SOF7 | M_JPG | M_SOF13 | M_SOF14 | M_SOF15 => {
                     return Err(Error::SofUnsupported(marker));
                 }
@@ -115,13 +83,13 @@ impl Decoder<'_> {
         Ok(())
     }
 
-    fn get_sof(&mut self, progressive: bool, lossless: bool, arith: bool) -> Result<()> {
+    fn get_sof(&mut self, marker: u8) -> Result<()> {
         if self.saw_sof {
             return Err(Error::SofDuplicate);
         }
-        self.progressive = progressive;
-        self.lossless = lossless;
-        self.arith_code = arith;
+        self.progressive = matches!(marker, M_SOF2 | M_SOF10);
+        self.lossless = matches!(marker, M_SOF3 | M_SOF11);
+        self.arith_code = matches!(marker, M_SOF9 | M_SOF10 | M_SOF11);
 
         let length = i32::from(self.inp.u16());
         self.precision = self.inp.byte();
@@ -348,9 +316,7 @@ impl Decoder<'_> {
             self.app2.push(Cow::Borrowed(data));
             self.inp.advance(length);
         } else {
-            let mut data = Vec::new();
-            data.try_reserve_exact(length)
-                .map_err(|_| Error::OutOfMemory)?;
+            let mut data = try_vec_with_capacity(length)?;
             data.extend((0..length).map(|_| self.inp.byte()));
             self.app2.push(Cow::Owned(data));
         }
@@ -412,10 +378,7 @@ impl Decoder<'_> {
             return Ok(None);
         }
 
-        let mut profile = Vec::new();
-        profile
-            .try_reserve_exact(total_length)
-            .map_err(|_| Error::OutOfMemory)?;
+        let mut profile = try_vec_with_capacity(total_length)?;
         for piece in pieces.flatten() {
             profile.extend_from_slice(piece);
         }

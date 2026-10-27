@@ -1,6 +1,6 @@
 //! Huffman decoding of sequential scans (jdhuff.c).
 
-use super::bits::{BitReader, DerivedTable, FastBitReader, huff_extend};
+use super::bits::{BitReader, DerivedTable, FastBitReader, TableKind, huff_extend};
 use super::coef::McuBlocks;
 use super::input::{Input, Warning};
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPS_IN_SCAN, NUM_HUFF_TBLS};
@@ -31,6 +31,11 @@ struct BlockInfo {
     ac_needed: bool,
 }
 
+struct Tables<'a> {
+    dc: &'a DerivedTable,
+    ac: &'a DerivedTable,
+}
+
 impl HuffDecoder {
     /// Motion JPEG frames usually leave out the tables of the standard, so they stand in for whatever is undefined when
     /// decoding begins.
@@ -54,13 +59,13 @@ impl HuffDecoder {
             let comp = d.scan_comp(i)?;
             let (dc, ac) = (comp.dc_tbl_no, comp.ac_tbl_no);
             let spec = d.dc_huff.get(usize::from(dc)).and_then(|t| t.as_deref());
-            let table = DerivedTable::new(spec.ok_or(Error::NoHuffTable(dc))?, true, false)?;
+            let table = DerivedTable::new(spec.ok_or(Error::NoHuffTable(dc))?, TableKind::Dc)?;
             *self
                 .dc_tables
                 .get_mut(usize::from(dc))
                 .ok_or(Error::Internal)? = Some(table);
             let spec = d.ac_huff.get(usize::from(ac)).and_then(|t| t.as_deref());
-            let table = DerivedTable::new(spec.ok_or(Error::NoHuffTable(ac))?, false, false)?;
+            let table = DerivedTable::new(spec.ok_or(Error::NoHuffTable(ac))?, TableKind::Ac)?;
             *self
                 .ac_tables
                 .get_mut(usize::from(ac))
@@ -112,19 +117,7 @@ impl HuffDecoder {
     /// decides when the fast one gets to see an FF and when it is used at all.
     #[inline]
     pub(crate) fn decode_mcu(&mut self, inp: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
-        /// The most that a block can take up, generously.
-        const BUFSIZE: usize = 64 * 8;
-
-        let mut use_fast = true;
-        if self.restart_interval != 0 {
-            if self.restarts_to_go == 0 {
-                self.process_restart(inp);
-            }
-            use_fast = false;
-        }
-        if inp.remaining().len() < BUFSIZE * self.blocks_in_mcu || inp.unread_marker != 0 {
-            use_fast = false;
-        }
+        let use_fast = self.start_mcu(inp);
 
         // Out of data, the rest of the segment stays zero.
         if !inp.insufficient_data && !(use_fast && self.decode_mcu_fast(inp, mcu)?) {
@@ -137,24 +130,46 @@ impl HuffDecoder {
         Ok(())
     }
 
+    /// Takes care of a restart marker that is due. Returns whether the fast way is safe: it does not look for the end of
+    /// the data.
+    #[inline]
+    fn start_mcu(&mut self, inp: &mut Input) -> bool {
+        /// The most that a block can take up, generously.
+        const BUFSIZE: usize = 64 * 8;
+
+        if self.restart_interval != 0 {
+            if self.restarts_to_go == 0 {
+                self.process_restart(inp);
+            }
+            return false;
+        }
+        inp.remaining().len() >= BUFSIZE * self.blocks_in_mcu && inp.unread_marker == 0
+    }
+
     #[inline(always)]
-    fn tables(&self, info: BlockInfo) -> Result<(&DerivedTable, &DerivedTable)> {
-        let dc_table = self
+    fn tables(&self, info: BlockInfo) -> Result<Tables<'_>> {
+        let dc = self
             .dc_tables
             .get(usize::from(info.dc_table))
             .and_then(|t| t.as_deref());
-        let ac_table = self
+        let ac = self
             .ac_tables
             .get(usize::from(info.ac_table))
             .and_then(|t| t.as_deref());
-        dc_table.zip(ac_table).ok_or(Error::Internal)
+        match (dc, ac) {
+            (Some(dc), Some(ac)) => Ok(Tables { dc, ac }),
+            _ => Err(Error::Internal),
+        }
     }
 
     fn decode_mcu_slow(&mut self, inp: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
         let mut bits = self.bits;
         let mut last_dc_val = self.last_dc_val;
         for (blkn, info) in self.blocks.iter().enumerate().take(self.blocks_in_mcu) {
-            let (dc_table, ac_table) = self.tables(*info)?;
+            let Tables {
+                dc: dc_table,
+                ac: ac_table,
+            } = self.tables(*info)?;
             let block = mcu.block(blkn).ok_or(Error::Internal)?;
             let last_dc = last_dc_val
                 .get_mut(usize::from(info.scan_comp))
@@ -203,7 +218,10 @@ impl HuffDecoder {
         let mut bits = FastBitReader::new(self.bits, inp.remaining());
         let mut last_dc_val = self.last_dc_val;
         for (blkn, info) in self.blocks.iter().enumerate().take(self.blocks_in_mcu) {
-            let (dc_table, ac_table) = self.tables(*info)?;
+            let Tables {
+                dc: dc_table,
+                ac: ac_table,
+            } = self.tables(*info)?;
             let block = mcu.block(blkn).ok_or(Error::Internal)?;
             let last_dc = last_dc_val
                 .get_mut(usize::from(info.scan_comp))

@@ -1,7 +1,8 @@
 //! From RGBA rows to the samples of one row of MCUs: color conversion, downsampling and padding at the edges (jccolor.c,
 //! jcsample.c, jcprepct.c).
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, try_vec};
+use crate::tables::color::{ONE_HALF, SCALEBITS, fix};
 
 /// Rows of pixels in a row of MCUs.
 pub(crate) const MCU_SIZE: usize = 16;
@@ -21,22 +22,15 @@ pub(crate) struct McuRowSamples {
     stride: usize,
 }
 
-fn zeroed(len: usize) -> Result<Vec<u8>> {
-    let mut v = Vec::new();
-    v.try_reserve_exact(len).map_err(|_| Error::OutOfMemory)?;
-    v.resize(len, 0);
-    Ok(v)
-}
-
 impl McuRowSamples {
     pub(crate) fn new(mcus_per_row: usize) -> Result<Self> {
         let stride = mcus_per_row * MCU_SIZE;
         Ok(McuRowSamples {
-            y: zeroed(stride * MCU_SIZE)?,
-            cb: zeroed(stride / 2 * (MCU_SIZE / 2))?,
-            cr: zeroed(stride / 2 * (MCU_SIZE / 2))?,
-            cb_full: zeroed(stride * 2)?,
-            cr_full: zeroed(stride * 2)?,
+            y: try_vec(0, stride * MCU_SIZE)?,
+            cb: try_vec(0, stride / 2 * (MCU_SIZE / 2))?,
+            cr: try_vec(0, stride / 2 * (MCU_SIZE / 2))?,
+            cb_full: try_vec(0, stride * 2)?,
+            cr_full: try_vec(0, stride * 2)?,
             stride,
         })
     }
@@ -84,14 +78,8 @@ impl McuRowSamples {
     }
 }
 
-const SCALEBITS: u32 = 16;
-const ONE_HALF: i32 = 1 << (SCALEBITS - 1);
 /// Half minus epsilon, so that the largest result rounds to 255 and not to 256.
 const CBCR_OFFSET: i32 = (128 << SCALEBITS) + ONE_HALF - 1;
-
-const fn fix(x: f64) -> i32 {
-    (x * (1 << SCALEBITS) as f64 + 0.5) as i32
-}
 
 fn convert(rgba: &[u8], y: &mut [u8], cb: &mut [u8], cr: &mut [u8]) {
     let (pixels, _) = rgba.as_chunks::<4>();

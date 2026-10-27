@@ -7,7 +7,7 @@ mod marker;
 mod phuff;
 mod sample;
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, try_vec};
 use crate::tables::{self, HuffSpec};
 use fdct::Divisors;
 use huff::{BitWriter, Counts, EncodeTable, Output};
@@ -114,14 +114,8 @@ struct BlockRows {
 
 impl BlockRows {
     fn new(blocks_per_row: usize, rows: usize) -> Result<Self> {
-        let len = blocks_per_row * rows;
-        let mut blocks = Vec::new();
-        blocks
-            .try_reserve_exact(len)
-            .map_err(|_| Error::OutOfMemory)?;
-        blocks.resize(len, [0; 64]);
         Ok(BlockRows {
-            blocks,
+            blocks: try_vec([0; 64], blocks_per_row * rows)?,
             blocks_per_row,
         })
     }

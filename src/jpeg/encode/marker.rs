@@ -3,17 +3,8 @@
 use super::huff::Output;
 use super::{COMPONENTS, Scan};
 use crate::error::{Error, Result};
+use crate::markers::{M_APP0, M_APP2, M_DHT, M_DQT, M_EOI, M_SOF0, M_SOF2, M_SOI, M_SOS};
 use crate::tables::{HuffSpec, NATURAL_ORDER};
-
-const SOF0: u8 = 0xc0;
-const SOF2: u8 = 0xc2;
-const DHT: u8 = 0xc4;
-const SOI: u8 = 0xd8;
-const EOI: u8 = 0xd9;
-const SOS: u8 = 0xda;
-const DQT: u8 = 0xdb;
-const APP0: u8 = 0xe0;
-const APP2: u8 = 0xe2;
 
 impl Output {
     fn marker(&mut self, marker: u8) {
@@ -27,8 +18,8 @@ impl Output {
     }
 
     pub(crate) fn file_header(&mut self) {
-        self.marker(SOI);
-        self.segment(APP0, 14);
+        self.marker(M_SOI);
+        self.segment(M_APP0, 14);
         self.extend(b"JFIF\0");
         // Version 1.01, a pixel aspect ratio of 1:1 and no thumbnail.
         self.extend(&[1, 1, 0, 0, 1, 0, 1, 0, 0]);
@@ -46,7 +37,7 @@ impl Output {
         // A profile that takes more than 255 segments is written all the same, with the numbers cut off.
         let count = chunks.len() as u8;
         for (i, chunk) in chunks.enumerate() {
-            self.segment(APP2, chunk.len() + 14);
+            self.segment(M_APP2, chunk.len() + 14);
             self.extend(b"ICC_PROFILE\0");
             self.extend(&[(i + 1) as u8, count]);
             self.extend(chunk);
@@ -56,7 +47,7 @@ impl Output {
 
     /// `quant` is in row-major order, each step from 1 to 255.
     fn quant_table(&mut self, index: u8, quant: &[u16; 64]) {
-        self.segment(DQT, 1 + 64);
+        self.segment(M_DQT, 1 + 64);
         self.extend(&[index]);
         let mut zigzag = [0u8; 64];
         for (out, &position) in zigzag.iter_mut().zip(&NATURAL_ORDER) {
@@ -76,7 +67,7 @@ impl Output {
             self.quant_table(index as u8, quant);
         }
         self.segment(
-            if progressive { SOF2 } else { SOF0 },
+            if progressive { M_SOF2 } else { M_SOF0 },
             6 + 3 * COMPONENTS.len(),
         );
         self.extend(&[8]);
@@ -91,14 +82,14 @@ impl Output {
     pub(crate) fn huff_table(&mut self, index: u8, is_ac: bool, spec: &HuffSpec) {
         let [_, bits @ ..] = &spec.bits;
         let length: usize = bits.iter().map(|&count| usize::from(count)).sum();
-        self.segment(DHT, 1 + 16 + length);
+        self.segment(M_DHT, 1 + 16 + length);
         self.extend(&[index + if is_ac { 0x10 } else { 0 }]);
         self.extend(bits);
         self.extend(spec.huffval.get(..length).unwrap_or(&[]));
     }
 
     pub(crate) fn scan_header(&mut self, scan: &Scan) {
-        self.segment(SOS, 1 + 2 * scan.comps.len() + 3);
+        self.segment(M_SOS, 1 + 2 * scan.comps.len() + 3);
         self.extend(&[scan.comps.len() as u8]);
         for comp in scan.comps.iter().filter_map(|&ci| COMPONENTS.get(ci)) {
             // A table that the scan does not use is given as 0.
@@ -114,6 +105,6 @@ impl Output {
     }
 
     pub(crate) fn file_trailer(&mut self) {
-        self.marker(EOI);
+        self.marker(M_EOI);
     }
 }

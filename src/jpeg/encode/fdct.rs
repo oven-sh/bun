@@ -3,9 +3,7 @@
 use super::Block;
 use crate::lanes::{I16x8, add16, add32, descale, madd, sub16, transpose, zip};
 use crate::tables::NATURAL_ORDER;
-
-const CONST_BITS: u32 = 13;
-const PASS1_BITS: u32 = 2;
+use crate::tables::dct::*;
 
 /// Division by the steps of a quantization table, done as multiplication. In row-major order.
 pub(crate) struct Divisors {
@@ -62,19 +60,6 @@ fn mul_high(a: [u16; 8], b: [u16; 8]) -> [u16; 8] {
 /// overflows.
 #[inline(always)]
 fn pass<const FIRST: bool>([d0, d1, d2, d3, d4, d5, d6, d7]: [I16x8; 8]) -> [I16x8; 8] {
-    const F_0_298: i32 = 2446;
-    const F_0_390: i32 = 3196;
-    const F_0_541: i32 = 4433;
-    const F_0_765: i32 = 6270;
-    const F_0_899: i32 = 7373;
-    const F_1_175: i32 = 9633;
-    const F_1_501: i32 = 12299;
-    const F_1_847: i32 = 15137;
-    const F_1_961: i32 = 16069;
-    const F_2_053: i32 = 16819;
-    const F_2_562: i32 = 20995;
-    const F_3_072: i32 = 25172;
-
     let shift = if FIRST {
         CONST_BITS - PASS1_BITS
     } else {

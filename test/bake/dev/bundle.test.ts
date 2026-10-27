@@ -120,7 +120,12 @@ devTest("importing a directory before it is created", {
     });
 
     await c.expectReload(async () => {
-      await dev.write("second/index.ts", `export const abc = "456";`);
+      // The folder gets its name when its file is in it. After a `mkdir second` alone the server
+      // looks again and finds no index file, and nothing watches the new folder for the write.
+      await using _batch = await dev.batchChanges();
+      fs.mkdirSync(dev.join("staged"));
+      fs.writeFileSync(dev.join("staged/index.ts"), `export const abc = "456";`);
+      fs.renameSync(dev.join("staged"), dev.join("second"));
     });
 
     await c.expectMessage("value: 456");

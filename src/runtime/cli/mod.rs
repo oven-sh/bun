@@ -382,9 +382,7 @@ pub(crate) mod cli {
             // message. The bake production path returns `error.BuildFailed`
             // with the actual parse/link errors sitting in `ctx.log` (== this
             // `log`); without this print, users see only the opaque error name.
-            let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                bun_core::Output::error_writer(),
-            ));
+            let _ = log.print_to_stderr();
             bun_crash_handler::handle_root_error(err);
         }
     }

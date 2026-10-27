@@ -179,15 +179,10 @@ impl ReplCommand {
 
     fn dump_build_error(vm: &VirtualMachine) {
         Output::flush();
-        let writer = Output::error_writer_buffered();
         let _flush = Output::flush_guard();
         if let Some(log) = vm.log {
             // SAFETY: log is a valid NonNull<Log> for the VM lifetime.
-            // `Log::print` accepts `*mut io::Writer` (IntoLogWrite is impl'd for the raw ptr,
-            // not the &mut), so coerce the `&mut Writer` from `error_writer_buffered`.
-            let _ = unsafe {
-                (*log.as_ptr()).print(std::ptr::from_mut::<bun_core::io::Writer>(writer))
-            };
+            let _ = unsafe { (*log.as_ptr()).print_to_stderr_buffered() };
         }
     }
 }

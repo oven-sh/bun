@@ -353,7 +353,7 @@ fn read_name_and_version(manager: &PackageManager, folder: &[u8]) -> (Vec<u8>, V
     let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
         Ok(p) => p,
         Err(err) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print_to_stderr();
             bun_core::pretty_errorln!(
                 "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                 err.name(),
@@ -712,7 +712,7 @@ fn patch_applies(
 ) -> bool {
     let mut log = bun_ast::Log::init();
     let patchfile = crate::patch_install::parse_patch_source(patch, &mut log);
-    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+    let _ = log.print_to_stderr();
     // An install only warns about the sections it skips, because older versions of Bun wrote patch
     // files that have them. A new patch must not have any.
     let Some(patchfile) = patchfile.filter(|patchfile| patchfile.skipped.is_empty()) else {
@@ -1129,9 +1129,7 @@ fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
         return;
     }
     if download_pinned_packages(manager, Some(pkg.meta.id), false).is_err() || !is_cached(manager) {
-        let _ = manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()));
+        let _ = manager.log_mut().print_to_stderr();
         bun_core::pretty_errorln!(
             "<r><red>error<r>: <b>{}<r> not in cache, re-download failed",
             bstr::BStr::new(&name),

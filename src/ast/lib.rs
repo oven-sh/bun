@@ -453,7 +453,7 @@ impl IntoText for Box<[u8]> {
 
 /// Sink adapter for [`Log::print`] — lets callers pass either a borrowed
 /// `fmt::Write` impl or the `*mut bun_core::io::Writer` returned by
-/// `Output::error_writer()` (the dominant call shape across the tree).
+/// `Output::error_writer()`. [`Log::print_to_stderr`] is the call for stderr.
 pub trait IntoLogWrite {
     type W: fmt::Write;
     fn into_log_write(self) -> Self::W;
@@ -472,9 +472,9 @@ impl fmt::Write for IoWriterAdapter {
         if self.0.is_null() {
             return Ok(());
         }
-        // SAFETY: `Output::error_writer()` returns a pointer to a long-lived
-        // adapter header (see bun_core::io::Writer); callers hold it only for
-        // the duration of this `print` call.
+        // SAFETY: non-null, checked above. `Log::print` drops this adapter before it
+        // returns, and the writer of each caller outlives that call: a thread-local
+        // stdio writer, or the stack adapter of `print_messages_to_stderr`.
         unsafe { (*self.0).write_all(s.as_bytes()) }.map_err(|_| fmt::Error)
     }
 }
@@ -928,10 +928,7 @@ fn width_before(line: &[u8], units: usize) -> usize {
 }
 
 fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
-    for _ in 0..n {
-        to.write_char(b as char)?;
-    }
-    Ok(())
+    bun_core::fmt::splat_byte_all(to, b, n)
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1912,6 +1909,33 @@ impl Log {
         } else {
             self.print_with_enable_ansi_colors::<false>(&mut w)
         }
+    }
+
+    /// On stderr when this returns, ahead of what `Output::error_writer_buffered()` still holds.
+    #[inline]
+    pub fn print_to_stderr(&self) -> fmt::Result {
+        if self.msgs.is_empty() {
+            return Ok(());
+        }
+        self.print_messages_to_stderr()
+    }
+
+    // Out of line: the 4 KB buffer stays out of the frames of the callers.
+    #[cold]
+    #[inline(never)]
+    fn print_messages_to_stderr(&self) -> fmt::Result {
+        let mut buf = [0u8; 4096];
+        let mut stderr = Output::raw_error_writer()
+            .quiet_writer()
+            .adapt_to_new_api(&mut buf);
+        let printed = self.print(std::ptr::from_mut(stderr.new_interface()));
+        let flushed = stderr.new_interface().flush().map_err(|_| fmt::Error);
+        printed.and(flushed)
+    }
+
+    /// Appends to `Output::error_writer_buffered()`, which `Output::flush()` writes out.
+    pub fn print_to_stderr_buffered(&self) -> fmt::Result {
+        self.print(std::ptr::from_mut(Output::error_writer_buffered()))
     }
 
     pub(crate) fn print_with_enable_ansi_colors<const ENABLE_ANSI_COLORS: bool>(
@@ -3110,6 +3134,41 @@ mod location_tests {
             })
             .collect();
         assert_eq!(lines, [1, -1, -1]);
+    }
+}
+
+#[cfg(test)]
+mod write_n_bytes_tests {
+    use super::*;
+
+    /// Keeps what it is given, and the length of each `write_str`.
+    #[derive(Default)]
+    struct Sink {
+        text: String,
+        calls: Vec<usize>,
+    }
+
+    impl fmt::Write for Sink {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            self.text.push_str(s);
+            self.calls.push(s.len());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn padding_reaches_the_sink_in_runs_of_256_bytes() {
+        let mut sink = Sink::default();
+        write_n_bytes(&mut sink, b' ', 1000).unwrap();
+        assert_eq!(sink.calls, [256, 256, 256, 232]);
+        assert_eq!(sink.text, " ".repeat(1000));
+    }
+
+    #[test]
+    fn no_padding_is_no_call() {
+        let mut sink = Sink::default();
+        write_n_bytes(&mut sink, b' ', 0).unwrap();
+        assert_eq!(sink.calls, [] as [usize; 0]);
     }
 }
 

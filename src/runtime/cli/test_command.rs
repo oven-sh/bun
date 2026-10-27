@@ -2884,7 +2884,7 @@ impl TestCommand {
                 // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.
                 let log = unsafe { &mut *log_ptr.as_ptr() };
                 if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
+                    let _ = log.print_to_stderr();
                     log.msgs.clear();
                     log.errors = 0;
                 }

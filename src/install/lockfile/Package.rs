@@ -2,8 +2,8 @@ use bun_collections::VecExt;
 use core::mem;
 
 use bun_collections::{ArrayHashMap, AutoBitSet, MultiArrayList, StringSet, index_sort};
+use bun_core::Global;
 use bun_core::strings;
-use bun_core::{Global, Output};
 use bun_paths::{self as path, MAX_PATH_BYTES, resolve_path};
 use bun_resolver::fs::FileSystem;
 use bun_semver::semver_query::Wildcard;
@@ -2013,7 +2013,7 @@ impl Package<u64> {
         let parsed = match crate::bun_json::ParsedJson::parse_package_json(source, log) {
             Ok(p) => p,
             Err(err) => {
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                let _ = log.print_to_stderr();
                 bun_core::pretty_errorln!(
                     "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                     err.name(),

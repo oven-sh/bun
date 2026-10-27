@@ -3,7 +3,6 @@ use std::io::Write as _;
 
 use crate::Error;
 use bun_collections::{HashMap, StringHashMap};
-use bun_core::output as bun_output;
 use bun_core::printer as js_printer;
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
@@ -392,9 +391,7 @@ impl Snapshots {
             // fall-through, AND `?` early-return).
             let mut log = scopeguard::guard(bun_ast::Log::init(), |log| {
                 if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        bun_output::error_writer(),
-                    ));
+                    let _ = log.print_to_stderr();
                     success.set(false);
                 }
             });

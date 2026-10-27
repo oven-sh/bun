@@ -384,7 +384,7 @@ pub fn print_fetch_failures(manager: &PackageManager) -> crate::Result<bool> {
     let failed_required = log.has_errors();
     if !log.msgs.is_empty() {
         Output::flush();
-        log.print(core::ptr::from_mut(Output::error_writer()))?;
+        log.print_to_stderr()?;
         log.reset();
     }
     Ok(failed_required)

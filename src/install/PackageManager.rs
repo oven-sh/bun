@@ -1083,10 +1083,7 @@ impl PackageManager {
             // not the pointee. `bun_ast::Log::print` takes `&self`,
             // so we only need a shared borrow here — the sole invariant is
             // that no `&mut bun_ast::Log` to the pointee is live, which holds on this path.
-            // `IntoLogWrite` is impl'd for `*mut io::Writer`, not `&mut`.
-            let _ = self
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()));
+            let _ = self.log_mut().print_to_stderr();
         }
         Global::crash();
     }

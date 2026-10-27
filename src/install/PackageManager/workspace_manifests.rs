@@ -598,7 +598,7 @@ fn crash_for_filter(log: &mut bun_ast::Log, pattern: &[u8], err: crate::Error) -
 /// If there are parse errors, they explain the failure. `what` and `err` are the fallback.
 fn crash(log: &mut bun_ast::Log, err: crate::Error, what: fmt::Arguments<'_>) -> ! {
     if log.has_errors() {
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = log.print_to_stderr();
     } else {
         Output::err_generic("{}: {}", (what, err.name()));
     }

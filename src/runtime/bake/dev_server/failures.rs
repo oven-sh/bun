@@ -151,7 +151,7 @@ impl DevServer {
             if cfg!(debug_assertions) {
                 bun_core::debug_warn!("dev.log should not be written into when using DevServer");
             }
-            let _ = self.log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = self.log.print_to_stderr();
         }
         Ok(())
     }

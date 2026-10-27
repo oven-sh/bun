@@ -301,7 +301,7 @@ impl UpgradeCommand {
                     refresher.expect("infallible: progress active").refresh();
 
                     if log.errors > 0 {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                        let _ = log.print_to_stderr();
                         Global::exit(1);
                     } else {
                         bun_core::pretty_errorln!(
@@ -321,7 +321,7 @@ impl UpgradeCommand {
                 progress.expect("infallible: progress active").end();
                 refresher.expect("infallible: progress active").refresh();
 
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                let _ = log.print_to_stderr();
                 Global::exit(1);
             }
 

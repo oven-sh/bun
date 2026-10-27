@@ -28,7 +28,7 @@ impl InstallCommand {
         ) {
             // SAFETY: `Cli::start()` initialised `Cli::LOG_`; no other `&mut` to it is live here.
             let log = unsafe { (*Cli::LOG_.get()).assume_init_mut() };
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print_to_stderr();
             Global::exit(1);
         }
         Err(e)

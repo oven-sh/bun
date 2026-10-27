@@ -51,9 +51,7 @@ pub(crate) fn init_for_link(
 
     // Print the messages from loading the config files, because nothing below does.
     if manager.log_mut().has_any() {
-        let _ = manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()));
+        let _ = manager.log_mut().print_to_stderr();
         manager.log_mut().reset();
     }
 

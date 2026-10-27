@@ -458,9 +458,7 @@ fn sync_lockfile(
     let parsed = match parse_edited(manager, &mut scratch, edited) {
         Ok(parsed) => parsed,
         Err(err) => {
-            let _ = scratch
-                .log
-                .print(std::ptr::from_mut(Output::error_writer()));
+            let _ = scratch.log.print_to_stderr();
             return Err(err);
         }
     };
@@ -484,7 +482,7 @@ fn sync_lockfile(
     // Explains why an override is gone: the workspaces no longer agree on the literal that its
     // `$name` refers to.
     if overrides_changed && !manager.options.log_level.is_silent() {
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = log.print_to_stderr();
     }
     let mut rewritten: Vec<DependencyID> = Vec::new();
     for (i, pkg) in &parsed {

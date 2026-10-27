@@ -1572,7 +1572,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // Errors print straight to the terminal; a stdio manager that could
         // re-render the error list alongside a REPL is a pending idea.
-        let _ = log.print(std::ptr::from_mut(bun_core::Output::error_writer()));
+        let _ = log.print_to_stderr();
 
         let failure = {
             let mut buf = bun_paths::path_buffer_pool::get();

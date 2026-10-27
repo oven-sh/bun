@@ -28,9 +28,7 @@ pub(crate) fn exec(
     let start_time = ctx.start_time;
     let summary = populate_package_cache::fetch(pm, ctx, original_cwd)?;
 
-    let _ = pm
-        .log_mut()
-        .print(std::ptr::from_mut(Output::error_writer()));
+    let _ = pm.log_mut().print_to_stderr();
     if pm.log_mut().has_errors() || pm.any_failed_to_install {
         Global::exit(1);
     }

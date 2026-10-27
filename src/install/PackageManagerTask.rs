@@ -471,9 +471,7 @@ impl<'a> Task<'a> {
                     unsafe { core::hint::unreachable_unchecked() }
                 };
                 // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
-                let _ = apply
-                    .logger
-                    .print(std::ptr::from_mut(Output::error_writer()));
+                let _ = apply.logger.print_to_stderr();
             }
         }
         // SAFETY: `UnboundedQueue::push` takes `&self` (lock-free), so reach it

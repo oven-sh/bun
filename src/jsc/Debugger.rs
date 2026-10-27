@@ -504,9 +504,7 @@ impl Debugger {
 
         if let Some(log) = this.log_ref() {
             if !log.msgs.is_empty() {
-                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                    bun_core::Output::error_writer(),
-                ));
+                let _ = log.print_to_stderr();
                 bun_core::pretty_errorln!("\n");
                 bun_core::Output::flush();
             }

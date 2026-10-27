@@ -2104,11 +2104,15 @@ describe("bundler", () => {
       const report = more =>
         console.log(JSON.stringify({ ...more, ...Object.fromEntries(Object.entries(seen).map(([step, stores]) => [step, [...stores]])) }));
     `;
+    // For a fixture that asks what keeps an object alive. Lifetimes reads the heap: a collection alone cannot say, because a word on the native stack can hold a dead cell.
+    const trackLifetimes = /* js */ `
+      import { Lifetimes } from ${JSON.stringify(join(import.meta.dir, "..", "js", "bun", "module-graph", "module-graph-lifetimes.ts"))};
+      const lifetimes = new Lifetimes();
+    `;
     // Runs the fixture beside an entry point that imports "virtual:a" and "virtual:b". Gives the JSON line it prints.
     async function runFixture(fixture: string) {
       using dir = tempDir("plugin-async-context", {
         "entry.js": `import a from "virtual:a";\nimport b from "virtual:b";\nconsole.log(a, b);`,
-        "plain.js": `console.log("plain");`,
         "fixture.mjs": prelude + fixture,
       });
       await using proc = Bun.spawn({
@@ -2353,10 +2357,11 @@ describe("bundler", () => {
     // Script can hold a plugin object after its build, through the builder or through what a hook was given.
     test.concurrent("a plugin object that script keeps does not keep the store of a finished build", async () => {
       const result = await runFixture(/* js */ `
+        ${trackLifetimes}
         const kept = [];
         let sawItsStore = 0;
         async function buildInAStore(id) {
-          const store = { id };
+          const store = lifetimes.track("store " + id, { id });
           const build = als.run(store, () =>
             Bun.build({
               entrypoints: ["./entry.js"],
@@ -2380,19 +2385,13 @@ describe("bundler", () => {
           // No hook has run yet, and nothing but the plugin object holds the context of the call.
           Bun.gc(true);
           await build;
-          return new WeakRef(store);
         }
-        const stores = [];
-        for (let id = 0; id < 5; id++) stores.push(await buildInAStore(id));
-        const collected = () => stores.filter(store => store.deref() === undefined).length;
-        for (let turn = 0; turn < 500 && collected() < stores.length; turn++) {
-          Bun.gc(true);
-          await tick();
-        }
-        report({ sawItsStore, collected: collected(), kept: kept.length });
+        for (let id = 0; id < 5; id++) await buildInAStore(id);
+        const storesKeptAliveBy = await lifetimes.stillAlive("store 0", "store 1", "store 2", "store 3", "store 4");
+        report({ sawItsStore, kept: kept.length, storesKeptAliveBy });
       `);
       expect(result).toEqual({
-        printed: { sawItsStore: 10, collected: 5, kept: 15 },
+        printed: { sawItsStore: 10, kept: 15, storesKeptAliveBy: [] },
         stderr: "",
         exitCode: 0,
       });
@@ -2459,6 +2458,7 @@ describe("bundler", () => {
     // The plugin object is protected while its build runs. It keeps the stores of the call, not the Bun.ModuleGraph.
     test.concurrent("a build that waits in a hook does not keep the Bun.ModuleGraph that started it", async () => {
       const result = await runFixture(/* js */ `
+        ${trackLifetimes}
         let waiting = 0;
         const plugin = {
           name: "never answers",
@@ -2471,31 +2471,19 @@ describe("bundler", () => {
             });
           },
         };
-        // Nothing but the build knows the graph once this returns.
-        function start() {
-          const graph = new Bun.ModuleGraph();
-          graph
-            .run(() => als.run("graph's store", () => Bun.build({ entrypoints: ["./entry.js"], plugins: [plugin] })))
-            .catch(() => {});
-          return new WeakRef(graph);
-        }
-        const graph = start();
+        let graph = lifetimes.track("graph", new Bun.ModuleGraph());
+        graph
+          .run(() => als.run("graph's store", () => Bun.build({ entrypoints: ["./entry.js"], plugins: [plugin] })))
+          .catch(() => {});
+        // The graph is held until a hook has run as it: a collection before that would give the build up.
         while (waiting === 0) await tick();
-        // Builds run one at a time: this one starts when the collected graph's build is given up.
-        let next = "pending";
-        Bun.build({ entrypoints: ["./plain.js"] }).then(
-          result => void (next = result.success ? "built" : "failed"),
-          () => void (next = "rejected"),
-        );
-        // Timer turns: a graph that the event loop has just run is collected only after the loop has waited once.
-        for (let turn = 0; turn < 200 && next === "pending"; turn++) {
-          Bun.gc(true);
-          await new Promise(resolve => setTimeout(resolve, 0));
-        }
-        report({ graphCollected: graph.deref() === undefined, next });
+        graph = undefined;
+        report({ graphKeptAliveBy: await lifetimes.stillAlive("graph") });
+        // The build still waits in its hook.
+        process.exit(0);
       `);
       expect(result).toEqual({
-        printed: { graphCollected: true, next: "built", "onLoad": ["graph's store"] },
+        printed: { graphKeptAliveBy: [], "onLoad": ["graph's store"] },
         stderr: "",
         exitCode: 0,
       });

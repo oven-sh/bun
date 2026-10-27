@@ -14,7 +14,7 @@ members = [
   "src/install/windows-shim",
   "src/parsers",
   "src/io",
-  "src/libarchive",
+  "src/archive",
   "src/md",
   "src/paths",
   "src/resolver",
@@ -44,6 +44,7 @@ members = [
   "src/sourcemap",
   "src/sql",
   "src/sys",
+  "src/tar",
   "src/threading",
   "src/valkey",
   "src/watcher",
@@ -384,7 +385,7 @@ bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
-bun_libarchive = { path = "src/libarchive" }
+bun_archive = { path = "src/archive" }
 bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
@@ -413,6 +414,7 @@ bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }
+bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }

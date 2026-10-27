@@ -12,6 +12,21 @@ pub enum Error {
     Paths(#[from] bun_paths::Error),
 }
 
+/// Why the contents of an entry did not reach the file.
+#[derive(Debug, thiserror::Error)]
+pub enum ReadDataError {
+    #[error(transparent)]
+    Archive(#[from] bun_tar::Error),
+    #[error("{0}")]
+    Sys(bun_sys::Error),
+}
+
+impl From<bun_sys::Error> for ReadDataError {
+    fn from(e: bun_sys::Error) -> Self {
+        Self::Sys(e)
+    }
+}
+
 impl Error {
     pub(crate) fn name(&self) -> &'static str {
         match self {
@@ -27,6 +42,15 @@ impl Error {
 impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
         (*self).name().as_bytes()
+    }
+}
+
+impl From<bun_tar::Error> for Error {
+    fn from(e: bun_tar::Error) -> Self {
+        match e {
+            bun_tar::Error::Alloc(e) => Self::Alloc(e),
+            _ => Self::Fail,
+        }
     }
 }
 

@@ -1,9 +1,9 @@
 // Verifies that `bun install` can extract a tarball while it is still
 // downloading. A local registry drip-feeds the .tgz body in small
 // chunks so the HTTP thread delivers multiple progress callbacks; the
-// streaming extractor (TarballStream.zig + the ARCHIVE_RETRY patches in
-// vendor/libarchive) must reassemble them into the same on-disk layout
-// the buffered extractor would produce.
+// streaming extractor (TarballStream.rs on top of bun_tar's push decoder)
+// must reassemble them into the same on-disk layout the buffered
+// extractor would produce.
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, readdirSorted, runCommandMaxRSS, tempDir } from "harness";
@@ -68,8 +68,8 @@ function pad512(len: number): Buffer {
 
 function tarFile(name: string, body: Buffer): Buffer[] {
   // ustar stores at most 100 bytes of name; longer paths need a pax
-  // 'x' record. npm's `tar` uses pax, so this exercises the resumable
-  // `tar_read_header` path in the libarchive patch.
+  // 'x' record. npm's `tar` uses pax, so this exercises a header that
+  // arrives in pieces.
   if (name.length > 100) {
     // Build the pax record so that the declared length includes the
     // length field itself. Iterate because adding digits to the length
@@ -133,7 +133,7 @@ function makeEntries(): Entry[] {
     { path: "index.js", body: Buffer.from("module.exports = 'ok';\n") },
     {
       // > 100 chars → pax extended header → exercises the resumable
-      // header path in the libarchive patch.
+      // header path.
       path: "very/deeply/nested/directory/structure/that/exceeds/the/one/hundred/byte/ustar/limit/long-name-file.txt",
       body: Buffer.from("long path ok\n"),
     },
@@ -540,7 +540,7 @@ describe("streaming tarball extraction", () => {
   test("streaming rejects a tarball whose integrity does not match", async () => {
     // Serve the valid tarball but advertise the integrity of a
     // *different* blob. Extraction will stream to completion (so we
-    // exercise the full ARCHIVE_RETRY path through libarchive), the
+    // exercise running out of input all the way through), the
     // incremental hasher produces the real SHA-512, and `finish()`
     // must notice the mismatch before the temp tree is promoted into
     // the cache.
@@ -569,7 +569,7 @@ describe("streaming tarball extraction", () => {
   // A connection that dies part-way through the body is a failed download,
   // whichever extractor is consuming it: report the transport error, retry
   // like any other failed download, and never hand the truncated body to
-  // libarchive (streaming) or the integrity check (buffered).
+  // the decoder (streaming) or the integrity check (buffered).
   describe.each([
     ["streaming", {}],
     ["buffered", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
@@ -638,9 +638,9 @@ describe("streaming tarball extraction", () => {
   });
 
   // A body that arrives in full but is not a valid archive is an extraction
-  // failure: not retried, and the message carries libarchive's reason and
+  // failure: not retried, and the message carries the decoder's reason and
   // the offset it gave up at.
-  test.concurrent("streaming reports libarchive's error for a corrupt tarball", async () => {
+  test.concurrent("streaming reports the decoder's error for a corrupt tarball", async () => {
     const corrupt = Buffer.from(tgz);
     corrupt.fill(0x55, corrupt.length >> 1, (corrupt.length >> 1) + 4096);
     const corruptIntegrity = "sha512-" + createHash("sha512").update(corrupt).digest("base64");
@@ -837,25 +837,17 @@ describe("streaming tarball extraction", () => {
 });
 
 // -------------------------------------------------------------------
-// Regression: the nonblocking-read patch routed upstream libarchive's
-// pre-existing damaged-block ARCHIVE_RETRY through the same `bun_retry`
-// path as a non-blocking yield, so `seen_headers` / entry state leaked
-// across the retry. A second pax 'g' global header after the damaged
-// block would then trip "Redundant 'g' header" → ARCHIVE_FATAL even
-// though upstream libarchive (and a `tar` CLI) accepts this layout.
+// A block with a bad checksum is skipped, and what was seen before it is
+// forgotten. If it were not, a second pax 'g' global header after the
+// damaged block would trip "Redundant 'g' header", though a `tar` CLI
+// accepts this layout.
 //
 // This test goes through the buffered extractor only: local `file:`
-// tarballs are read fully into memory by PackageManagerTask.readAndExtract
-// and handed to Archiver.extractToDir, which loops on readNextHeader with
-// `.retry => continue`. The streaming reader is never involved, so any
-// behaviour change here is the libarchive patch leaking into the shared
-// buffered codepath.
+// tarballs are read fully into memory.
 // -------------------------------------------------------------------
 test("buffered extract: damaged-block retry resets header state (upstream semantics)", async () => {
-  // One pax 'g' extended-header payload. libarchive's header_pax_global
-  // just skips it, but parsing it sets `seen_headers |= seen_g_header`;
-  // seeing a second one without an intervening state reset is what
-  // triggers the "Redundant 'g' header" FATAL.
+  // One pax 'g' extended-header payload. It is skipped, but remembered:
+  // a second one before the entry they belong to is refused.
   const pax = Buffer.from("16 comment=test\n", "utf8");
   expect(pax.length).toBe(16);
   const paxEntry = () => [tarHeader("pax_global_header", pax.length, "g"), pax, pad512(pax.length)];
@@ -889,10 +881,8 @@ test("buffered extract: damaged-block retry resets header state (upstream semant
 
   const { stderr, exitCode } = await runInstall(String(dir));
 
-  // With the broken patch the second 'g' header trips
-  // "Redundant 'g' header" → ARCHIVE_FATAL inside libarchive; the Zig
-  // extract loop surfaces that as `error.Fail` → "Fail extracting
-  // tarball". With upstream semantics restored the damaged block is
+  // If the first 'g' header were remembered across the damaged block, the
+  // second one would surface as "Fail extracting tarball". The damaged block is
   // skipped, state is fully reset, and the file following the second
   // 'g' header is extracted normally.
   expect(stderr).not.toContain("Fail extracting tarball");
@@ -905,13 +895,13 @@ test("buffered extract: damaged-block retry resets header state (upstream semant
 
 // -------------------------------------------------------------------
 // Buffered extract: the decompressed tar is never materialised in
-// memory. libarchive gunzips on the fly, so a highly compressible .tgz
+// memory. It is gunzipped on the fly, so a highly compressible .tgz
 // installs without an RSS spike of roughly its decompressed size.
 // Covers `file:` dependencies, which always take the buffered path.
 // -------------------------------------------------------------------
 test("buffered extract does not hold the decompressed local tarball in memory", async () => {
   // 256 MiB of zeros: above the 64 MB gzip ISIZE cutoff that gates the
-  // libdeflate fast path, so libarchive (not libdeflate) decompresses,
+  // libdeflate fast path, so zlib (not libdeflate) decompresses,
   // and a multiple of 512 so the tar entry needs no trailing pad block.
   // The old path inflated this into a ~256 MB Vec before extraction,
   // which shows up directly in the child's maxRSS.
@@ -975,7 +965,7 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
   // decompressed tar in memory. With the old pre-decompress path the
   // install's maxRSS was well over 3x PAYLOAD_SIZE (Vec growth
   // reallocations): ~780 MB release, ~1 GB debug+ASAN. Streaming
-  // through libarchive it stays at baseline (~40 MB release, ~240 MB
+  // through zlib it stays at baseline (~40 MB release, ~240 MB
   // debug+ASAN, reported as the spawner's ~320 MB floor), so the
   // midpoint gives wide margin both ways without needing to branch on
   // build type.
@@ -1038,7 +1028,7 @@ test("streaming extract skips a damaged header block and extracts the entries af
 });
 
 // Unlike registry tarballs, a `github:` tarball has its directory entries
-// created, with the mode libarchive reports for them. A GNU base-256 mode
+// created, with the mode the tar reader reports for them. A GNU base-256 mode
 // field can set bits far above the twelve mode bits; both extractors must
 // drop those instead of aborting on them.
 test.concurrent.each([
@@ -1552,11 +1542,11 @@ function readFiles(root: string): Record<string, string> {
 }
 
 // Installs `tgz` as `stream-pkg`, `installs` times with one cache, and returns what each install left.
-// "libdeflate" and "libarchive": a `file:` tarball, which the buffered extractor decompresses that way.
+// "libdeflate" and "zlib": a `file:` tarball, which the buffered extractor decompresses that way.
 // "buffered" and "streaming": downloaded, from the registry or as a URL dependency, and extracted that way.
 // `files`: also what `readFiles` finds in the installed package.
 // `gzipEncoded`: the server compresses `tgz` and says so with `Content-Encoding: gzip`.
-type ExtractPath = "libdeflate" | "libarchive" | "buffered" | "streaming";
+type ExtractPath = "libdeflate" | "zlib" | "buffered" | "streaming";
 async function installStreamPkg(
   path: ExtractPath,
   tgz: Buffer,
@@ -1605,12 +1595,12 @@ async function installStreamPkg(
       BUN_TMPDIR: tmp,
       BUN_INSTALL_STREAMING_MIN_SIZE: "1",
       BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
-      ...(path === "libarchive" ? { BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1" } : {}),
+      ...(path === "zlib" ? { BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1" } : {}),
       ...(path === "buffered" ? { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" } : {}),
     });
     results.push({
       // What another thread writes to the verbose log can come anywhere in this line.
-      error: stderr.replace(/\[stream-pkg\] Extract .*\n(libarchive error: .*\n)?/g, "").match(/^error: .*$/m)?.[0],
+      error: stderr.replace(/\[stream-pkg\] Extract .*\n(archive error: .*\n)?/g, "").match(/^error: .*$/m)?.[0],
       streamed: stderr.includes("Streamed "),
       installed: existsSync(join(String(dir), "node_modules", "stream-pkg")),
       cached: readdirSync(join(String(dir), ".cache")).filter(name => /^(stream-pkg@|@T@)/.test(name)).length,
@@ -1630,7 +1620,7 @@ async function installStreamPkg(
 // install, a registry without `dist.integrity`, `--no-verify`) that
 // trailer is the only thing that catches a damaged tarball. All three
 // ways to decompress one must check it: libdeflate in memory and
-// libarchive's gzip filter in the buffered extractor, and that filter
+// bun_tar's gzip decoder in the buffered extractor, and that decoder
 // again in the streaming extractor.
 // -------------------------------------------------------------------
 describe.concurrent("gzip trailer", () => {
@@ -1670,7 +1660,7 @@ describe.concurrent("gzip trailer", () => {
     // Too long for the attempt in memory.
     ["a wrong ISIZE", changed(good, good.length - 4, (b, i) => b.writeUInt32LE(100 * 1024 * 1024, i))],
   ];
-  const paths = ["libdeflate", "libarchive", "streaming"] as const;
+  const paths = ["libdeflate", "zlib", "streaming"] as const;
   const install = async (path: (typeof paths)[number], tgz: Buffer) => (await installStreamPkg(path, tgz))[0];
 
   test.each(paths)("a valid tarball installs (%s)", async path => {
@@ -1690,10 +1680,7 @@ describe.concurrent("gzip trailer", () => {
       expect(await install(path, tgz)).toEqual({
         error:
           path === "streaming"
-            ? // libarchive's tar reader overwrites the message of the filter that failed.
-              expect.stringMatching(
-                /^error: Fail extracting tarball for "stream-pkg": (gzip trailer mismatch|Truncated tar archive)/,
-              )
+            ? expect.stringMatching(/^error: Fail extracting tarball for "stream-pkg": gzip trailer mismatch/)
             : "error: Fail extracting tarball from stream-pkg",
         streamed: false,
         installed: false,
@@ -1792,6 +1779,56 @@ describe.concurrent("gzip trailer", () => {
       tmp: [".keep"],
       exitCode: 1,
     });
+  });
+});
+
+// -------------------------------------------------------------------
+// libarchive could wait for more of a download in some of its reads only.
+// A piece that ended inside one of the others failed the install.
+// -------------------------------------------------------------------
+describe.concurrent("a piece of the download may end anywhere", () => {
+  const index = `module.exports = "GOOD";\n`;
+  const json = JSON.stringify({ name: "stream-pkg", version: "1.0.0" });
+  const comment = Buffer.from(`1126417 comment=${Buffer.alloc(1100 * 1024, "c")}\n`);
+  expect(comment.length).toBe(1126417);
+  const tar = (...before: Buffer[]) =>
+    Buffer.concat([
+      ...tarFile("package/package.json", Buffer.from(json)),
+      ...before,
+      ...tarFile("package/index.js", Buffer.from(index)),
+      Buffer.alloc(1024),
+    ]);
+  const gz = gzipSync(tar(), { level: 0 });
+
+  test.each([
+    // The first piece is 512 bytes.
+    [
+      "in an optional field of the gzip header",
+      Buffer.concat([
+        gz.subarray(0, 3),
+        Buffer.from([4]),
+        gz.subarray(4, 10),
+        Buffer.from([0xe8, 3]),
+        Buffer.alloc(1000),
+        gz.subarray(10),
+      ]),
+    ],
+    [
+      "in a pax header of more than 1 MiB",
+      gzipSync(tar(tarHeader("PaxHeader", comment.length, "x"), comment, pad512(comment.length)), { level: 0 }),
+    ],
+  ])("%s", async (_, tgz) => {
+    expect(await installStreamPkg("streaming", tgz, { files: true })).toEqual([
+      {
+        error: undefined,
+        streamed: true,
+        installed: true,
+        cached: 1,
+        tmp: [".keep"],
+        exitCode: 0,
+        files: { "package.json": json, "index.js": index },
+      },
+    ]);
   });
 });
 

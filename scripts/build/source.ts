@@ -342,7 +342,7 @@ export interface NestedCmakeBuild {
    *
    * Most deps don't need this (we link statically into a non-PIE executable),
    * but some build intermediate tools or have internal shared libs that
-   * require PIC. cares/highway/libarchive set it.
+   * require PIC. cares/highway set it.
    */
   pic?: boolean;
   /**
@@ -446,7 +446,6 @@ export type DepName =
   | "brotli"
   | "cares"
   | "highway"
-  | "libarchive"
   | "libdeflate"
   | "libjpeg-turbo"
   | "libspng"
@@ -489,9 +488,9 @@ export interface Dependency {
 
   /**
    * Other deps that must be BUILT before this dep's configure runs.
-   * Used for header-level dependencies — e.g. libarchive needs zlib's
+   * Used for header-level dependencies — e.g. a dep that needs zlib's
    * headers at configure time (`check_include_file("zlib.h")`). zlib-ng
-   * generates `zlib.h` during its own cmake configure, so libarchive must
+   * generates `zlib.h` during its own cmake configure, so that dep must
    * wait for zlib's full build, not just its source fetch.
    *
    * Resolves to the named dep's build outputs (lib files for nested-cmake,
@@ -898,7 +897,7 @@ export function resolveDep(
 
   // ─── Resolve fetchDeps → extra inputs on configure + build ───
   // These are deps that must be BUILT before we configure (not link).
-  // E.g. libarchive's configure runs check_include_file("zlib.h"), and
+  // E.g. a dep's configure runs check_include_file("zlib.h"), and
   // zlib-ng generates zlib.h during its own cmake configure — so we depend
   // on zlib's lib output (which implies its configure ran).
   //
@@ -1187,7 +1186,7 @@ function emitNestedCmake(
     //
     // NOT setting TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY: it stops
     // try_compile from linking, which makes check_function_exists and
-    // check_library_exists always succeed → libarchive "finds" fork,
+    // check_library_exists always succeed → a dep "finds" fork,
     // posix_spawnp, libmd on Windows. If llvm-mt is missing, better to
     // fail fast at "compiler works" than mis-detect every feature.
     args.push(`-DCMAKE_LINKER=${slash(cfg.ld)}`);
@@ -1298,7 +1297,7 @@ function emitNestedCmake(
     inputs: [],
     // Configure re-runs if: source changed, cmake binary changed, preBuild
     // outputs changed. fetchDeps stamps are order-only — can't configure
-    // until cross-dep headers are on disk (libarchive's check_include_file
+    // until cross-dep headers are on disk (a check_include_file
     // for zlib.h runs at configure time).
     implicitInputs: [sourceStamp, cfg.cmake, ...preBuildOutputs],
     orderOnlyInputs: fetchDepStamps,

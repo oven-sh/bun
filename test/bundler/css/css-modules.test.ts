@@ -56,6 +56,37 @@ describe("css", () => {
     },
   });
 
+  // The name match is ASCII case-insensitive, like every other pseudo-class.
+  itBundled("css-module/BareUppercaseGlobalPseudoClassIsAnError", {
+    files: {
+      "/index.module.css": /* css */ `
+      :GLOBAL {
+        color: red;
+      }
+      `,
+    },
+    outdir: "/out",
+    entryPoints: ["/index.module.css"],
+    bundleErrors: {
+      "/index.module.css": ["CSS module class: 'GLOBAL' is currently not supported."],
+    },
+  });
+
+  itBundled("css-module/BareUppercaseLocalPseudoClassIsAnError", {
+    files: {
+      "/index.module.css": /* css */ `
+      :LOCAL {
+        color: red;
+      }
+      `,
+    },
+    outdir: "/out",
+    entryPoints: ["/index.module.css"],
+    bundleErrors: {
+      "/index.module.css": ["CSS module class: 'LOCAL' is currently not supported."],
+    },
+  });
+
   // Outside of a CSS module they are unknown pseudo-classes like any other and
   // are passed through unchanged.
   itBundled("css-module/BareGlobalAndLocalPseudoClassesInPlainCss", {

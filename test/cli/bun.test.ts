@@ -429,12 +429,16 @@ describe("bun", () => {
 
       // Sources completions/bun.bash and completes `bun <words...>` in cwd, like bash does on <TAB>.
       // The last word is the one under the cursor. Returns the completions, one per line.
+      // The shell options the script sets while it runs must not leak into the user's shell.
       async function complete(cwd: string, ...words: string[]) {
         await using proc = Bun.spawn({
           cmd: [
             "bash",
             "-c",
-            'source "$1"; shift; COMP_WORDS=(bun "$@"); COMP_CWORD=$#; _bun_completions; printf "%s\\n" "${COMPREPLY[@]}"',
+            'source "$1"; shift; COMP_WORDS=(bun "$@"); COMP_CWORD=$#; _bun_completions; ' +
+              'shopt -q extglob && { echo "extglob leaked" >&2; exit 1; }; ' +
+              'shopt -q nocasematch && { echo "nocasematch leaked" >&2; exit 1; }; ' +
+              'printf "%s\\n" "${COMPREPLY[@]}"',
             "bash",
             script,
             ...words,

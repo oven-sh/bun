@@ -12,7 +12,8 @@ use super::fast_log::{fast_log2, log2_floor_nonzero};
 use super::find_match_length::find_match_length_with_limit;
 use super::hash::HASH_MUL_32;
 use crate::common::constants::{
-    NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, WINDOW_GAP, max_backward_limit,
+    NUM_COMMAND_SYMBOLS, NUM_DISTANCE_SHORT_CODES, NUM_LITERAL_SYMBOLS, WINDOW_GAP,
+    max_backward_limit,
 };
 use crate::util::{Bug, Checked, SliceExt, load_u64_le, try_box};
 use bun_core::AllocError;
@@ -243,6 +244,7 @@ pub(crate) trait CommandSink {
     const FIRST_INSERT_SYMBOL: usize;
     const FIRST_COPY_AT_LAST_DISTANCE_SYMBOL: usize = (Self::FIRST_INSERT_SYMBOL + 24) % 64;
     const FIRST_COPY_SYMBOL: usize = (Self::FIRST_INSERT_SYMBOL + 40) % 64;
+    const FIRST_DISTANCE_SYMBOL: usize = 64;
 
     /// `symbol` and then the low `n_extra` bits of `extra`, at most 24. The others are 0.
     fn emit(&mut self, symbol: usize, n_extra: usize, extra: usize) -> Checked;
@@ -315,7 +317,7 @@ pub(crate) trait CommandSink {
 
     #[inline(always)]
     fn emit_last_distance(&mut self) -> Checked {
-        self.emit(64, 0, 0)
+        self.emit(Self::FIRST_DISTANCE_SYMBOL, 0, 0)
     }
 
     #[inline(always)]
@@ -324,7 +326,8 @@ pub(crate) trait CommandSink {
         let nbits = log2_floor_nonzero(d) as usize - 1;
         let prefix = (d >> nbits) & 1;
         let offset = (2 + prefix) << nbits;
-        self.emit(2 * (nbits - 1) + prefix + 80, nbits, d - offset)
+        let code = NUM_DISTANCE_SHORT_CODES as usize + 2 * (nbits - 1) + prefix;
+        self.emit(Self::FIRST_DISTANCE_SYMBOL + code, nbits, d - offset)
     }
 }
 
@@ -374,14 +377,6 @@ pub(crate) fn emit_literals(
         bw.write_bits(usize::from(depth.at(lit)?), u64::from(bits.at(lit)?))?;
     }
     Ok(())
-}
-
-pub(crate) fn write_empty_last_meta_block(bw: &mut BitWriter<'_>) -> Checked {
-    // ISLAST
-    bw.write_bits(1, 1)?;
-    // ISLASTEMPTY
-    bw.write_bits(1, 1)?;
-    bw.jump_to_byte_boundary()
 }
 
 /// Overwrites the `n_bits` bits from bit `pos` of `array` on.
@@ -740,6 +735,14 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
         s.cmd_code = cmd_code;
     }
     Ok(())
+}
+
+pub(crate) fn write_empty_last_meta_block(bw: &mut BitWriter<'_>) -> Checked {
+    // ISLAST
+    bw.write_bits(1, 1)?;
+    // ISLASTEMPTY
+    bw.write_bits(1, 1)?;
+    bw.jump_to_byte_boundary()
 }
 
 /// Writes `input`, of at most `1 << 24` bytes, as one or more meta-blocks, and an empty last meta-block if `is_last`.

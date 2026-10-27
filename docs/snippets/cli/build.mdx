@@ -227,11 +227,11 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--compile-autoload-package-json" type="boolean" default="false">
-  Enable autoloading of <code>package.json</code> at runtime in the standalone executable
+  Read the project's own <code>package.json</code> at runtime in the standalone executable. A dependency's <code>package.json</code> is always read
 </ParamField>
 
 <ParamField path="--no-compile-autoload-package-json" type="boolean">
-  Disable autoloading of <code>package.json</code> at runtime in the standalone executable
+  Do not read the project's own <code>package.json</code> at runtime in the standalone executable
 </ParamField>
 
 <ParamField path="--compile-executable-path" type="string">

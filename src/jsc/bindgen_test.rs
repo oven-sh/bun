@@ -13,7 +13,8 @@ use crate::generated_bindgen::bindgen_test::{
     TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestNames,
     TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOtherAsNullOptions,
     TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestMemberFunctions,
-    js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote,
+    js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote, js_TestShape,
+    js_TestSquare,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
@@ -62,22 +63,21 @@ pub(crate) fn string_echo(text: &bun_core::String) -> bun_core::String {
     text.clone()
 }
 
-fn copy_of(text: &bun_core::String) -> bun_core::String {
-    if text.is_utf16() {
-        bun_core::String::clone_utf16(text.utf16())
-    } else {
-        bun_core::String::clone_latin1(text.latin1())
-    }
+pub(crate) fn string_view_echo(text: &bun_core::StringView<'_>) -> bun_core::String {
+    bun_core::String::clone(text)
 }
 
-pub(crate) fn string_view_echo(text: &bun_core::StringView<'_>) -> bun_core::String {
-    copy_of(text)
+pub(crate) fn string_view_clone_outlives_bytes(text: &[u8]) -> bun_core::String {
+    let bytes = text.to_vec();
+    let clone = bun_core::String::clone(&bun_core::StringView::from_bytes(&bytes));
+    drop(bytes);
+    clone
 }
 
 pub(crate) fn string_or_object_view_echo(
     text: Option<bun_core::StringView<'_>>,
 ) -> Option<bun_core::String> {
-    text.map(|text| copy_of(&text))
+    text.map(|text| bun_core::String::clone(&text))
 }
 
 pub(crate) fn string_length(text: &bun_core::String) -> usize {
@@ -791,6 +791,75 @@ impl JsClass for TestNonFinal {
     fn from_js_direct(value: JSValue) -> Option<*mut Self> {
         js_TestNonFinal::from_js_direct(value).map(NonNull::as_ptr)
     }
+}
+
+pub(crate) struct TestShape {
+    sides: u32,
+    /// Of a `TestSquare`.
+    side: u32,
+}
+
+static DROPPED_SHAPES: AtomicUsize = AtomicUsize::new(0);
+
+impl Drop for TestShape {
+    fn drop(&mut self) {
+        DROPPED_SHAPES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl TestShape {
+    pub(crate) fn estimated_size(&self) -> usize {
+        self.sides as usize
+    }
+
+    pub(crate) fn get_sides(&self) -> u32 {
+        self.sides
+    }
+
+    pub(crate) fn describe(&self) -> String {
+        format!("{} sides", self.sides)
+    }
+
+    pub(crate) fn has_sides_of(&self, other: &TestShape) -> bool {
+        self.sides == other.sides
+    }
+
+    pub(crate) fn get_area(&self) -> u32 {
+        self.side * self.side
+    }
+
+    pub(crate) fn scale<'a>(&self, heap: &JsHeap<'a>, by: u32) -> JsWrapper<'a, Self> {
+        make_square(heap, self.side * by)
+    }
+
+    pub(crate) fn inspect_custom(&self) -> String {
+        format!("a square of {}", self.side)
+    }
+}
+
+pub(crate) fn make_shape<'a>(heap: &JsHeap<'a>, sides: u32) -> JsWrapper<'a, TestShape> {
+    TestShape { sides, side: 0 }.into_js(heap)
+}
+
+pub(crate) fn make_square<'a>(heap: &JsHeap<'a>, side: u32) -> JsWrapper<'a, TestShape> {
+    js_TestSquare::create(heap, TestShape { sides: 4, side })
+}
+
+pub(crate) fn make_square_wrapper<'a>(cx: &mut JsScope<'a>, side: u32) -> JSValue {
+    js_TestSquare::create_wrapper(cx.global(), TestShape { sides: 4, side }).to_js()
+}
+
+pub(crate) fn shape_from_js(shape: JsLocal<'_>) -> [bool; 3] {
+    let shape = shape.to_js();
+    [
+        js_TestShape::from_js(shape).is_some(),
+        js_TestSquare::from_js(shape).is_some(),
+        shape.is_cell() && js_TestShape::from_js_direct(shape).is_some(),
+    ]
+}
+
+pub(crate) fn dropped_shapes() -> usize {
+    DROPPED_SHAPES.load(Ordering::Relaxed)
 }
 
 pub(crate) fn token_id_from_js(token: JsLocal<'_>) -> Option<u32> {

@@ -29,7 +29,7 @@ import {
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { Socket } from "node:net";
-import { availableParallelism, userInfo } from "node:os";
+import { availableParallelism, hostname, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
@@ -68,10 +68,12 @@ import {
   markBuildkiteStepReported,
   parseJunitFileSuites,
   printEnvironment,
+  quarantineBuildkiteAgent,
   reportAnnotationToBuildkite,
   startGroup,
   stripAnsi,
   unescapeGitHubAction,
+  unfitAgentRetry,
   uploadArtifact,
   type JunitFileSuite,
 } from "./buildkite.ts";
@@ -266,6 +268,7 @@ const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
+const artifactDownloadTimeout = 2 * 60_000;
 
 const resolutionGatingFlags = new Set([
   "--expose-internals",
@@ -2889,12 +2892,16 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
     const { error } = await spawnWithTimeout({
       command: "buildkite-agent",
       args,
-      timeout: 120000,
+      timeout: artifactDownloadTimeout,
     });
     if (error === "timeout") {
+      const reason = `buildkite-agent artifact download timed out after ${artifactDownloadTimeout / 1000}s for step '${target}'`;
+      const quarantine = quarantineBuildkiteAgent(reason);
+      if (quarantine) {
+        exitForUnfitAgent(reason, quarantine);
+      }
       throw new Error(
-        `buildkite-agent artifact download timed out after 120s for step '${target}'. ` +
-          `Refusing to continue with a partial download (would silently fall back to the wrong binary).`,
+        `${reason}. Refusing to continue with a partial download (would silently fall back to the wrong binary).`,
       );
     }
 
@@ -2928,6 +2935,29 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
 
   console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`, releaseFiles);
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
+}
+
+/**
+ * Ends a job that ran no test because its machine could not, with the exit status that the step
+ * retries (unfitAgentRetry). `quarantine` is why that retry runs on another machine.
+ */
+function exitForUnfitAgent(reason: string, quarantine: string): never {
+  const agent = `${process.env.BUILDKITE_AGENT_NAME} (${process.env.BUILDKITE_AGENT_ID})`;
+  const details = `${reason}.\nHost ${hostname()}, agent ${agent}: ${quarantine}.`;
+  console.error(details);
+  console.error(`Exit status ${unfitAgentRetry.exit_status} asks Buildkite to run the job on another machine.`);
+
+  reportAnnotationToBuildkite({
+    context: "unfit-agent",
+    label: "unfit agent",
+    style: "warning",
+    content:
+      `<details><summary><a><code>unfit agent</code></a> - ${escapeHtml(reason)}` +
+      ` on <a href="${getBuildUrl()}">${getTestLabel()}</a></summary>\n\n` +
+      `\`\`\`terminal\n${escapeCodeBlock(details)}\n\`\`\`\n\n</details>\n\n`,
+  });
+  markBuildkiteStepReported();
+  process.exit(getExitCode("unfit-agent"));
 }
 
 function getRevision(execPath: string): string {
@@ -3098,7 +3128,7 @@ function isExecutable(execPath: string): boolean {
   return true;
 }
 
-function getExitCode(outcome?: "pass" | "fail" | "cancel"): number {
+function getExitCode(outcome?: "pass" | "fail" | "cancel" | "unfit-agent"): number {
   if (outcome === "pass") {
     return 0;
   }
@@ -3112,6 +3142,9 @@ function getExitCode(outcome?: "pass" | "fail" | "cancel"): number {
   }
   if (outcome === "cancel") {
     return 3;
+  }
+  if (outcome === "unfit-agent") {
+    return unfitAgentRetry.exit_status;
   }
   return 1;
 }

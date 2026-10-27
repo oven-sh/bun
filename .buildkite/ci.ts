@@ -37,6 +37,7 @@ import {
   isPullRequest,
   parseGitUrl,
   startGroup,
+  unfitAgentRetry,
   uploadArtifact,
 } from "../scripts/buildkite.ts";
 import { type ImageState, getImageState } from "../scripts/ci-image.ts";
@@ -423,27 +424,31 @@ function getImageName(platform: Platform): string {
 }
 
 /**
+ * @param automatic rules of one step, after the ones every step has
  * @link https://buildkite.com/docs/pipelines/configure/retry#retry-attributes-automatic-retry-attributes
  */
-function getRetry(): Retry {
+function getRetry(...automatic: AutomaticRetry[]): Retry {
   return {
     manual: {
       permit_on_passed: true,
     },
     // Self-heal agent/infra loss, and only that. Conditions within one rule
     // are ANDed, so `signal_reason` scopes each rule to the failure mode it
-    // names: `none` is an agent that dropped its connection mid-job,
-    // `agent_stop` is a graceful agent restart mid-job, `process_run_error`
-    // is the bootstrap failing before the command ever ran. A blanket
-    // `exit_status: -1` / `255` also matches `cancel`, which is what a
-    // `timeout_in_minutes` kill records, so a timed-out shard would be
-    // re-queued just to time out again on the next agent. User-canceled
+    // names: `none` with exit status -1 is an agent that dropped its
+    // connection mid-job, `agent_stop` is a graceful agent restart mid-job,
+    // `process_run_error` is the bootstrap failing before the command ever
+    // ran. A blanket `exit_status: -1` / `255` also matches `cancel`, which
+    // is what a `timeout_in_minutes` kill records, so a timed-out shard would
+    // be re-queued just to time out again on the next agent. User-canceled
     // builds are state=canceled and never auto-retry regardless of these
-    // rules.
+    // rules. A rule that a step adds is for a status its own command exits
+    // with when the agent could not do the job (`unfitAgentRetry`): there
+    // `none` is a plain exit, which a canceled or timed-out job never is.
     automatic: [
       { exit_status: -1, signal_reason: "none", limit: 1 },
       { signal_reason: "agent_stop", limit: 2 },
       { signal_reason: "process_run_error", limit: 1 },
+      ...automatic,
     ],
   };
 }
@@ -903,8 +908,11 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
 
     // No automatic retry on the beta tier: agent loss would re-queue the
     // job onto a single-box queue with nobody to take it, and a job that
-    // never starts is not something soft_fail can convert.
-    retry: platform.tier === "beta" ? { manual: { permit_on_passed: true }, automatic: false } : getRetry(),
+    // never starts is not something soft_fail can convert. Elsewhere the
+    // runner exits with the status of `unfitAgentRetry` when its machine
+    // cannot download the build and a retry cannot land on that machine.
+    retry:
+      platform.tier === "beta" ? { manual: { permit_on_passed: true }, automatic: false } : getRetry(unfitAgentRetry),
     cancel_on_build_failing: isMergeQueue(),
     // One beta box: one shard. soft_fail keeps a failing run from
     // failing the build, and the lane is never added on the merge queue

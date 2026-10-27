@@ -688,6 +688,71 @@ export function markBuildkiteStepReported(): void {
   }
 }
 
+/**
+ * How a step retries a job whose machine, and not its commit, is why it could not run. The job
+ * exits with `exit_status` (EX_TEMPFAIL of sysexits.h, which nothing else in CI exits with) only
+ * after quarantineBuildkiteAgent() gave a reason. By default a queue retries a job on the agent
+ * that finished one last, which is the agent that just failed it, and its other setting falls
+ * back to that agent when no other is idle:
+ * https://buildkite.com/docs/agent/self-hosted/prioritization#retry-agent-affinity
+ */
+export const unfitAgentRetry = { exit_status: 75, signal_reason: "none", limit: 1 } as const;
+
+/** Longer than the host of a bare-metal agent stays up: the service of scripts/agent.ts reboots it every night. */
+const unfitAgentPauseMinutes = 24 * 60;
+
+/**
+ * Keeps a retry of this job, and the jobs after it, off the machine that runs this job.
+ *
+ * A cloud agent and a tart guest serve one job, so there is nothing to do. A bare-metal mac on
+ * macOS 26 or later takes its next job on the same host seconds later, and once a download stalls
+ * there, nearly every job fails until the host reboots (#43462). So its agent is paused: it
+ * finishes this job and gets no other until the reboot (the agent then registers again, not
+ * paused) or until a person resumes it on its page. A job pauses an agent only where the
+ * environment of the pipeline has `BUN_RUNNER_PAUSE_UNFIT_AGENT=1`, which turns the pause on
+ * and off for every branch at once.
+ *
+ * @returns why a retry runs somewhere else, or undefined when none is left or it could run here again
+ */
+export function quarantineBuildkiteAgent(reason: string): string | undefined {
+  // The step retries a job once. A job that fails again fails as it did before: it is red with either
+  // status, and a build that two machines could not download is a likelier cause than the second machine.
+  if (!isBuildkite || Number(process.env.BUILDKITE_RETRY_COUNT || 0) >= unfitAgentRetry.limit) {
+    return undefined;
+  }
+  const {
+    BUILDKITE_AGENT_META_DATA_EPHEMERAL: ephemeral,
+    BUILDKITE_AGENT_META_DATA_TART: tart,
+    BUILDKITE_AGENT_META_DATA_RELEASE_TIER: tier,
+    BUILDKITE_AGENT_META_DATA_RELEASE: release,
+    BUN_RUNNER_PAUSE_UNFIT_AGENT: pause,
+  } = process.env;
+  if (ephemeral === "true") {
+    return "its machine runs no other job";
+  }
+  if (tart === "true") {
+    return "its guest runs no other job";
+  }
+  // `ephemeral=false` is a bare-metal agent of scripts/agent.ts. The beta tier is one box, and
+  // darwinBetaQueueIdle() in .buildkite/ci.ts would still add a step for it while it is paused.
+  if (ephemeral !== "false" || tier === "beta" || !(Number(release) >= 26) || pause !== "1") {
+    return undefined;
+  }
+  const note = `${reason} (${getBuildUrl()}). Resume the agent if its host is healthy.`;
+  const { error, status, signal, stderr } = spawnSync(
+    "buildkite-agent",
+    ["pause", "--note", note, "--timeout-in-minutes", `${unfitAgentPauseMinutes}`],
+    { stdio: ["ignore", "ignore", "pipe"], encoding: "utf-8", timeout: 30_000 },
+  );
+  if (status === 0) {
+    return "the agent is paused until its host reboots or a person resumes it";
+  }
+  const cause = error?.message || signal || `exit code ${status}`;
+  console.error(`buildkite-agent pause failed (${cause}): a retry would come back to this agent, so the job fails`);
+  if (stderr) console.error(stderr);
+  return undefined;
+}
+
 export function startGroup<T>(title: string, fn: () => Promise<T>): Promise<T>;
 
 export function startGroup(title: string, fn?: () => unknown): void;

@@ -3073,7 +3073,7 @@ mod posix_impl {
     pub fn get_file_size(fd: Fd) -> Maybe<u64> {
         Ok(fstat(fd)?.st_size.max(0) as u64)
     }
-    /// Resolve through the kernel without releasing process-owned POSIX locks.
+    /// Resolve without releasing process-owned POSIX locks.
     pub fn realpath_fast<'a>(path: &ZStr, buf: &'a mut bun_core::PathBuffer) -> Maybe<&'a [u8]> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -3101,55 +3101,7 @@ mod posix_impl {
             }
             // /proc may be unavailable; never retry with an ordinary descriptor.
         }
-        #[cfg(target_os = "macos")]
-        {
-            // ATTR_CMN_FULLPATH uses the same firmlink spelling as F_GETPATH, without an fd.
-            #[repr(C)]
-            struct FullPath {
-                length: u32,
-                reference: libc::attrreference_t,
-                path: [u8; libc::PATH_MAX as usize],
-            }
-            let mut attrs = libc::attrlist {
-                bitmapcount: libc::ATTR_BIT_MAP_COUNT as _,
-                reserved: 0,
-                commonattr: libc::ATTR_CMN_FULLPATH,
-                volattr: 0,
-                dirattr: 0,
-                fileattr: 0,
-                forkattr: 0,
-            };
-            // SAFETY: FullPath contains only integer fields and a byte array.
-            let mut result: FullPath = unsafe { core::mem::zeroed() };
-            loop {
-                // SAFETY: path is NUL-terminated; attrs and result are correctly sized C structs.
-                let rc = unsafe {
-                    libc::getattrlist(
-                        path.as_ptr(),
-                        core::ptr::from_mut(&mut attrs).cast(),
-                        core::ptr::from_mut(&mut result).cast(),
-                        core::mem::size_of::<FullPath>(),
-                        0,
-                    )
-                };
-                if rc == 0 {
-                    let len = result.reference.attr_length as usize;
-                    if result.reference.attr_dataoffset
-                        == core::mem::size_of::<libc::attrreference_t>() as i32
-                        && (1..=result.path.len()).contains(&len)
-                        && result.length as usize >= core::mem::offset_of!(FullPath, path) + len
-                        && result.path[len - 1] == 0
-                    {
-                        buf.0[..len - 1].copy_from_slice(&result.path[..len - 1]);
-                        return Ok(&buf.0[..len - 1]);
-                    }
-                    break;
-                }
-                if last_errno() != libc::EINTR {
-                    break;
-                }
-            }
-        }
+        // On macOS, libc also preserves firmlink spelling, unlike F_GETPATH.
         realpath(path, buf)
     }
 

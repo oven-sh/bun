@@ -3373,43 +3373,37 @@ describe.each(realpathImplementations)("realpath %s POSIX paths", (_name, realpa
     }
   });
 
-  it.skipIf(process.platform !== "darwin" || !posixCc)("matches F_GETPATH through symlinks and firmlinks", async () => {
-    using dir = tempDir("fs-realpath-fullpath", {
-      "path.c": `
-        #include <fcntl.h>
-        int fd_path(int fd, char *buf) { return fcntl(fd, F_GETPATH, buf); }
-      `,
-      "file.txt": "target",
-    });
-    const root = String(dir);
-    const libraryPath = join(root, "path.dylib");
-    const compile = spawnSync({ cmd: [posixCc!, "-dynamiclib", "-o", libraryPath, join(root, "path.c")], env: bunEnv });
-    expect(compile.stderr.toString()).toBe("");
-    expect(compile.exitCode).toBe(0);
-    const library = dlopen(libraryPath, { fd_path: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i32 } });
-    try {
-      const file = join(root, "file.txt");
-      const first = join(root, "first");
-      const second = join(root, "second");
-      symlinkSync(file, first);
-      symlinkSync(first, second);
-      const inputs = [file, root, second, "/Users", "/System/Volumes/Data/Users"];
-      for (const input of inputs) {
-        const fd = openSync(input, "r");
-        try {
-          const output = Buffer.alloc(1024);
-          expect(library.symbols.fd_path(fd, ptr(output))).toBe(0);
-          const expected = output.subarray(0, output.indexOf(0)).toString();
-          expect(await realpath(input)).toBe(expected);
-          expect(await realpath(Buffer.from(input), { encoding: "buffer" })).toEqual(Buffer.from(expected));
-        } finally {
-          closeSync(fd);
-        }
-      }
-    } finally {
-      library.close();
+  it.skipIf(!isPosix)("preserves the selected hard-link name through symlink chains", async () => {
+    using dir = tempDir("fs-realpath-hardlink", { "original.txt": "target" });
+    const root = await realpath(String(dir));
+    const original = join(root, "original.txt");
+    const alias = join(root, "alias.txt");
+    const first = join(root, "first");
+    const second = join(root, "second");
+    fs.linkSync(original, alias);
+    symlinkSync(alias, first);
+    symlinkSync(first, second);
+    expect(statSync(original).nlink).toBe(2);
+    for (const [input, expected] of [
+      [original, original],
+      [alias, alias],
+      [second, alias],
+    ]) {
+      expect(await realpath(input)).toBe(expected);
+      expect(await realpath(Buffer.from(input), { encoding: "buffer" })).toEqual(Buffer.from(expected));
     }
   });
+
+  // The physical Data volume prefix exists only on macOS installations using firmlinks.
+  it.skipIf(process.platform !== "darwin" || !existsSync("/System/Volumes/Data/Users"))(
+    "preserves the firmlink spelling used by Node realpath",
+    async () => {
+      for (const input of ["/Users", "/System/Volumes/Data/Users"]) {
+        expect(await realpath(input)).toBe(input);
+        expect(await realpath(Buffer.from(input), { encoding: "buffer" })).toEqual(Buffer.from(input));
+      }
+    },
+  );
 });
 
 describe.each(realpathImplementations)("realpath %s POSIX locks", (_name, realpath) => {

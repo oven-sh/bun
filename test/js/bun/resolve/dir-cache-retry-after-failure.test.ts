@@ -188,15 +188,20 @@ const files = {
 
       async symlink() {
         // A package symlinked in after the miss resolves to its real path.
+        // The link type is for Windows, where a link to a directory is a junction.
         write(path.join("vendor", "linked-pkg", "index.js"), "");
         res("N1", () => require.resolve("linked-pkg"));
-        fs.symlinkSync(path.resolve("vendor", "linked-pkg"), nm("linked-pkg"));
+        fs.symlinkSync(path.resolve("vendor", "linked-pkg"), nm("linked-pkg"), "junction");
         res("N2", () => require.resolve("linked-pkg"));
         // A link whose target does not exist yet. Its directory is read for the
         // first time with the link in it, so the listing has the name all along.
         fs.mkdirSync(path.join("links", "node_modules"), { recursive: true });
-        fs.symlinkSync(path.join("..", "late-target", "lib.cjs"), path.join("links", "late-link.cjs"));
-        fs.symlinkSync(path.join("..", "..", "late-target", "pkg"), path.join("links", "node_modules", "late-linked"));
+        fs.symlinkSync(path.join("..", "late-target", "lib.cjs"), path.join("links", "late-link.cjs"), "file");
+        fs.symlinkSync(
+          path.join("..", "..", "late-target", "pkg"),
+          path.join("links", "node_modules", "late-linked"),
+          "junction",
+        );
         const links = requireFrom("links");
         res("N3", () => links.resolve("./late-link.cjs"));
         res("N4", () => links.resolve("./late-link"));
@@ -585,10 +590,8 @@ describe.concurrent("a failed resolution sees files and packages created after t
     `);
   });
 
-  test.skipIf(isWindows)(
-    "a package symlinked in after the miss, and a link whose target is written later",
-    async () => {
-      expect(await runGroup("symlink")).toMatchInlineSnapshot(`
+  test("a package symlinked in after the miss, and a link whose target is written later", async () => {
+    expect(await runGroup("symlink")).toMatchInlineSnapshot(`
       {
         "exitCode": 0,
         "stderr": "",
@@ -604,8 +607,7 @@ describe.concurrent("a failed resolution sees files and packages created after t
       ,
       }
     `);
-    },
-  );
+  });
 
   test("tsconfig paths aliases onto directories that gain files later", async () => {
     expect(await runGroup("tsconfig")).toMatchInlineSnapshot(`
@@ -624,10 +626,10 @@ describe.concurrent("a failed resolution sees files and packages created after t
     `);
   });
 
-  test.skipIf(isWindows)("a file URL through a symlinked root, with no importer", async () => {
+  test("a file URL through a symlinked root, with no importer", async () => {
     const linkedRoot = (dir: string) => {
       mkdirSync(join(dir, "private", "var", "folders"), { recursive: true });
-      symlinkSync(join("private", "var"), join(dir, "var"));
+      symlinkSync(join("private", "var"), join(dir, "var"), "junction");
     };
     expect(await runGroup("fileurl", undefined, linkedRoot)).toMatchInlineSnapshot(`
       {

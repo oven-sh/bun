@@ -29,14 +29,15 @@ use crate::common::context::{ContextType, context_lut};
 use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_zeroed};
 use bun_core::AllocError;
 
-pub(crate) const MAX_HUFFMAN_TREE_SIZE: usize = 2 * NUM_COMMAND_SYMBOLS + 1;
+const MAX_HUFFMAN_TREE_SIZE: usize = 2 * NUM_COMMAND_SYMBOLS + 1;
 
 /// The size of the distance alphabet with `NPOSTFIX` = 0 and `NDIRECT` = 0.
 const MAX_SIMPLE_DISTANCE_ALPHABET_SIZE: usize =
     distance_alphabet_size(0, 0, LARGE_MAX_DISTANCE_BITS) as usize;
 
+/// The symbol for a block count.
 #[inline(always)]
-fn block_length_prefix_code(len: u32) -> usize {
+fn block_length_symbol(len: u32) -> usize {
     let mut code = if len >= 177 {
         if len >= 753 { 20 } else { 14 }
     } else if len >= 41 {
@@ -51,14 +52,6 @@ fn block_length_prefix_code(len: u32) -> usize {
         code += 1;
     }
     code
-}
-
-/// The symbol for a block count, the number of its extra bits, and the extra bits.
-#[inline(always)]
-fn get_block_length_prefix_code(len: u32) -> Checked<(usize, u32, u32)> {
-    let code = block_length_prefix_code(len);
-    let range = BLOCK_LENGTH_PREFIX_CODE.at(code)?;
-    Ok((code, u32::from(range.nbits), len - u32::from(range.offset)))
 }
 
 #[derive(Clone, Copy)]
@@ -76,32 +69,19 @@ impl BlockTypeCodeCalculator {
     }
 
     #[inline(always)]
-    fn next_block_type_code(&mut self, type_: u8) -> usize {
-        let type_ = usize::from(type_);
-        let type_code = if type_ == self.last_type + 1 {
+    fn next_block_type_code(&mut self, block_type: u8) -> usize {
+        let block_type = usize::from(block_type);
+        let type_code = if block_type == self.last_type + 1 {
             1
-        } else if type_ == self.second_last_type {
+        } else if block_type == self.second_last_type {
             0
         } else {
-            type_ + 2
+            block_type + 2
         };
         self.second_last_type = self.last_type;
-        self.last_type = type_;
+        self.last_type = block_type;
         type_code
     }
-}
-
-/// Writes `MNIBBLES` and `MLEN - 1`. `length` is from 1 to `1 << 24`.
-fn store_mlen(length: usize, bw: &mut BitWriter<'_>) -> Checked {
-    let lg = if length == 1 {
-        1
-    } else {
-        log2_floor_nonzero(length - 1) as usize + 1
-    };
-    let mnibbles = (if lg < 16 { 16 } else { lg + 3 }) / 4;
-    debug_assert!(length > 0 && length <= 1 << 24);
-    bw.write_bits(2, (mnibbles - 4) as u64)?;
-    bw.write_bits(mnibbles * 4, (length - 1) as u64)
 }
 
 #[inline(always)]
@@ -138,33 +118,64 @@ fn store_var_len_uint8(n: usize, bw: &mut BitWriter<'_>) -> Checked {
     }
 }
 
-fn store_compressed_meta_block_header(
-    is_final_block: bool,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MetaBlockKind {
+    Compressed,
+    /// Compressed as well: an uncompressed meta-block cannot be the last one.
+    Last,
+    Uncompressed,
+}
+
+/// 9.2. The header of a meta-block of `length` bytes, from 1 to `1 << 24`, up to `ISUNCOMPRESSED`.
+// The loop of `compress_fragment_fast` takes fewer instructions with this as a part of the function.
+#[inline(always)]
+pub(crate) fn store_meta_block_header(
     length: usize,
+    kind: MetaBlockKind,
     bw: &mut BitWriter<'_>,
 ) -> Checked {
+    let nibbles = match length {
+        1..=0x1_0000 => 4,
+        0x1_0001..=0x10_0000 => 5,
+        0x10_0001..=0x100_0000 => 6,
+        _ => return Err(Bug),
+    };
+    let is_last = kind == MetaBlockKind::Last;
     // ISLAST
-    bw.write_bits(1, u64::from(is_final_block))?;
-    if is_final_block {
+    bw.write_bits(1, u64::from(is_last))?;
+    if is_last {
         // ISLASTEMPTY
         bw.write_bits(1, 0)?;
     }
-
-    store_mlen(length, bw)?;
-
-    if !is_final_block {
+    // MNIBBLES
+    bw.write_bits(2, nibbles - 4)?;
+    // MLEN - 1
+    bw.write_bits(nibbles as usize * 4, length as u64 - 1)?;
+    if !is_last {
         // ISUNCOMPRESSED
-        bw.write_bits(1, 0)?;
+        bw.write_bits(1, u64::from(kind == MetaBlockKind::Uncompressed))?;
     }
     Ok(())
 }
 
-fn store_uncompressed_meta_block_header(length: usize, bw: &mut BitWriter<'_>) -> Checked {
-    // ISLAST. An uncompressed meta-block cannot be the last one.
-    bw.write_bits(1, 0)?;
-    store_mlen(length, bw)?;
-    // ISUNCOMPRESSED
-    bw.write_bits(1, 1)
+fn store_compressed_meta_block_header(
+    length: usize,
+    is_last: bool,
+    bw: &mut BitWriter<'_>,
+) -> Checked {
+    let kind = if is_last {
+        MetaBlockKind::Last
+    } else {
+        MetaBlockKind::Compressed
+    };
+    store_meta_block_header(length, kind, bw)
+}
+
+/// 9.2. What follows in the header of a compressed meta-block that has one block type and one prefix code for each
+/// category: 1 as `NBLTYPESL`, `NBLTYPESI` and `NBLTYPESD` (a bit each), 0 as `NPOSTFIX` and `NDIRECT` (6 bits) and as the
+/// context mode of the literals (2 bits), 1 as `NTREESL` and `NTREESD` (a bit each).
+fn store_trivial_splits_and_contexts(bw: &mut BitWriter<'_>) -> Checked {
+    bw.write_bits(13, 0)
 }
 
 /// Writes the code lengths `depths` of the code that code lengths are written in. The zeros at the end are left out if
@@ -432,10 +443,11 @@ fn move_to_front_transform(v_in: &[u32], v_out: &mut [u32]) -> Checked {
 const SYMBOL_BITS: u32 = 9;
 const SYMBOL_MASK: u32 = (1 << SYMBOL_BITS) - 1;
 
-/// Replaces each run of zeros in `v` by the floor of `log2` of its length, which is at most `max_run_length_prefix`, in
+/// Replaces each run of zeros in `v` by the floor of `log2` of its length, which is at most `MAX_RUN_LENGTH_PREFIX`, in
 /// the low [`SYMBOL_BITS`] and as many extra bits above. Other values grow by the largest such symbol in use, which
 /// is returned after the new length of `v`.
-fn run_length_code_zeros(v: &mut [u32], max_run_length_prefix: u32) -> Checked<(usize, u32)> {
+fn run_length_code_zeros(v: &mut [u32]) -> Checked<(usize, u32)> {
+    const MAX_RUN_LENGTH_PREFIX: u32 = 6;
     let in_size = v.len();
     let max_reps = v
         .split(|&value| value != 0)
@@ -447,7 +459,7 @@ fn run_length_code_zeros(v: &mut [u32], max_run_length_prefix: u32) -> Checked<(
     } else {
         0
     }
-    .min(max_run_length_prefix);
+    .min(MAX_RUN_LENGTH_PREFIX);
     let mut out_size = 0usize;
     let mut i = 0usize;
     while i < in_size {
@@ -477,15 +489,8 @@ fn run_length_code_zeros(v: &mut [u32], max_run_length_prefix: u32) -> Checked<(
     Ok((out_size, max_prefix))
 }
 
-struct EncodeContextMapArena {
-    histogram: [u32; MAX_CONTEXT_MAP_SYMBOLS],
-    depths: [u8; MAX_CONTEXT_MAP_SYMBOLS],
-    bits: [u16; MAX_CONTEXT_MAP_SYMBOLS],
-}
-
 /// 7.3. Encoding of the context map.
 fn encode_context_map(
-    arena: &mut EncodeContextMapArena,
     context_map: &[u32],
     num_clusters: usize,
     tree: &mut [HuffmanTree],
@@ -499,11 +504,13 @@ fn encode_context_map(
 
     let mut rle_symbols = try_zeroed::<u32>(context_map.len())?;
     move_to_front_transform(context_map, &mut rle_symbols)?;
-    let (num_rle_symbols, max_run_length_prefix) = run_length_code_zeros(&mut rle_symbols, 6)?;
+    let (num_rle_symbols, max_run_length_prefix) = run_length_code_zeros(&mut rle_symbols)?;
     let rle_symbols = rle_symbols.sub(..num_rle_symbols)?;
-    arena.histogram.fill(0);
+    let mut histogram = [0u32; MAX_CONTEXT_MAP_SYMBOLS];
+    let mut depths = [0u8; MAX_CONTEXT_MAP_SYMBOLS];
+    let mut bits = [0u16; MAX_CONTEXT_MAP_SYMBOLS];
     for &symbol in rle_symbols {
-        *arena.histogram.at_mut((symbol & SYMBOL_MASK) as usize)? += 1;
+        *histogram.at_mut((symbol & SYMBOL_MASK) as usize)? += 1;
     }
     let use_rle = max_run_length_prefix > 0;
     bw.write_bits(1, u64::from(use_rle))?;
@@ -512,19 +519,19 @@ fn encode_context_map(
     }
     let alphabet_size = num_clusters + max_run_length_prefix as usize;
     build_and_store_huffman_tree(
-        arena.histogram.sub(..alphabet_size)?,
+        histogram.sub(..alphabet_size)?,
         alphabet_size,
         tree,
-        &mut arena.depths,
-        &mut arena.bits,
+        &mut depths,
+        &mut bits,
         bw,
     )?;
     for &symbol in rle_symbols {
         let rle_symbol = symbol & SYMBOL_MASK;
         let extra_bits_val = symbol >> SYMBOL_BITS;
         bw.write_bits(
-            usize::from(arena.depths.at(rle_symbol as usize)?),
-            u64::from(arena.bits.at(rle_symbol as usize)?),
+            usize::from(depths.at(rle_symbol as usize)?),
+            u64::from(bits.at(rle_symbol as usize)?),
         )?;
         if rle_symbol > 0 && rle_symbol <= max_run_length_prefix {
             bw.write_bits(rle_symbol as usize, u64::from(extra_bits_val))?;
@@ -552,12 +559,16 @@ impl BlockSplitCode {
                 u64::from(self.type_bits.at(typecode)?),
             )?;
         }
-        let (lencode, len_nextra, len_extra) = get_block_length_prefix_code(block_len)?;
+        let lencode = block_length_symbol(block_len);
+        let range = BLOCK_LENGTH_PREFIX_CODE.at(lencode)?;
         bw.write_bits(
             usize::from(self.length_depths.at(lencode)?),
             u64::from(self.length_bits.at(lencode)?),
         )?;
-        bw.write_bits(len_nextra as usize, u64::from(len_extra))
+        bw.write_bits(
+            usize::from(range.nbits),
+            u64::from(block_len - u32::from(range.offset)),
+        )
     }
 
     /// Builds the codes for the block types and block counts of `split`, and writes them.
@@ -576,12 +587,12 @@ impl BlockSplitCode {
         let mut type_histo = [0u32; MAX_BLOCK_TYPE_SYMBOLS];
         let mut length_histo = [0u32; NUM_BLOCK_LEN_SYMBOLS];
         let mut type_code_calculator = BlockTypeCodeCalculator::new();
-        for (i, (&type_, &length)) in types.iter().zip(lengths).enumerate() {
-            let type_code = type_code_calculator.next_block_type_code(type_);
+        for (i, (&block_type, &length)) in types.iter().zip(lengths).enumerate() {
+            let type_code = type_code_calculator.next_block_type_code(block_type);
             if i != 0 {
                 *type_histo.at_mut(type_code)? += 1;
             }
-            *length_histo.at_mut(block_length_prefix_code(length))? += 1;
+            *length_histo.at_mut(block_length_symbol(length))? += 1;
         }
         store_var_len_uint8(num_types - 1, bw)?;
         if num_types > 1 {
@@ -609,7 +620,6 @@ impl BlockSplitCode {
 
 /// Writes a context map in which every block type has a histogram of its own, whatever the context.
 fn store_trivial_context_map(
-    arena: &mut EncodeContextMapArena,
     num_types: usize,
     context_bits: usize,
     tree: &mut [HuffmanTree],
@@ -620,31 +630,23 @@ fn store_trivial_context_map(
         let repeat_code = context_bits - 1;
         let repeat_bits = (1u64 << repeat_code) - 1;
         let alphabet_size = num_types + repeat_code;
-        let histogram = arena.histogram.sub_mut(..alphabet_size)?;
-        histogram.fill(0);
+        let mut histogram = [0u32; MAX_CONTEXT_MAP_SYMBOLS];
+        let mut depths = [0u8; MAX_CONTEXT_MAP_SYMBOLS];
+        let mut bits = [0u16; MAX_CONTEXT_MAP_SYMBOLS];
+        let histogram = histogram.sub_mut(..alphabet_size)?;
         // RLEMAX
         bw.write_bits(1, 1)?;
         bw.write_bits(4, repeat_code as u64 - 1)?;
         histogram.put(repeat_code, num_types as u32)?;
         histogram.put(0, 1)?;
         histogram.sub_mut(context_bits..)?.fill(1);
-        build_and_store_huffman_tree(
-            histogram,
-            alphabet_size,
-            tree,
-            &mut arena.depths,
-            &mut arena.bits,
-            bw,
-        )?;
+        build_and_store_huffman_tree(histogram, alphabet_size, tree, &mut depths, &mut bits, bw)?;
         for i in 0..num_types {
             let code = if i == 0 { 0 } else { i + context_bits - 1 };
+            bw.write_bits(usize::from(depths.at(code)?), u64::from(bits.at(code)?))?;
             bw.write_bits(
-                usize::from(arena.depths.at(code)?),
-                u64::from(arena.bits.at(code)?),
-            )?;
-            bw.write_bits(
-                usize::from(arena.depths.at(repeat_code)?),
-                u64::from(arena.bits.at(repeat_code)?),
+                usize::from(depths.at(repeat_code)?),
+                u64::from(bits.at(repeat_code)?),
             )?;
             bw.write_bits(repeat_code, repeat_bits)?;
         }
@@ -684,14 +686,6 @@ impl<'a> BlockEncoder<'a> {
             depths: Vec::new(),
             bits: Vec::new(),
         }
-    }
-
-    fn build_and_store_block_switch_entropy_codes(
-        &mut self,
-        tree: &mut [HuffmanTree],
-        bw: &mut BitWriter<'_>,
-    ) -> Checked {
-        self.block_split_code.build_and_store(self.split, tree, bw)
     }
 
     /// At the end of a block, writes the switch to the next one and returns its type.
@@ -793,21 +787,17 @@ pub(crate) fn store_meta_block(
     let num_effective_distance_symbols = dist.alphabet_size_limit as usize;
     let literal_context_lut = context_lut(literal_context_mode);
 
-    store_compressed_meta_block_header(is_last, length, bw)?;
+    store_compressed_meta_block_header(length, is_last, bw)?;
 
     let mut tree = try_vec(HuffmanTree::default(), MAX_HUFFMAN_TREE_SIZE)?;
-    let mut context_map_arena = EncodeContextMapArena {
-        histogram: [0; MAX_CONTEXT_MAP_SYMBOLS],
-        depths: [0; MAX_CONTEXT_MAP_SYMBOLS],
-        bits: [0; MAX_CONTEXT_MAP_SYMBOLS],
-    };
     let mut literal_enc = BlockEncoder::new(NUM_LITERAL_SYMBOLS, &mb.literal_split);
     let mut command_enc = BlockEncoder::new(NUM_COMMAND_SYMBOLS, &mb.command_split);
     let mut distance_enc = BlockEncoder::new(num_effective_distance_symbols, &mb.distance_split);
 
-    literal_enc.build_and_store_block_switch_entropy_codes(&mut tree, bw)?;
-    command_enc.build_and_store_block_switch_entropy_codes(&mut tree, bw)?;
-    distance_enc.build_and_store_block_switch_entropy_codes(&mut tree, bw)?;
+    for enc in [&mut literal_enc, &mut command_enc, &mut distance_enc] {
+        enc.block_split_code
+            .build_and_store(enc.split, &mut tree, bw)?;
+    }
 
     bw.write_bits(2, u64::from(dist.distance_postfix_bits))?;
     bw.write_bits(
@@ -820,7 +810,6 @@ pub(crate) fn store_meta_block(
 
     if mb.literal_context_map.is_empty() {
         store_trivial_context_map(
-            &mut context_map_arena,
             mb.literal_histograms.len(),
             LITERAL_CONTEXT_BITS as usize,
             &mut tree,
@@ -828,7 +817,6 @@ pub(crate) fn store_meta_block(
         )?;
     } else {
         encode_context_map(
-            &mut context_map_arena,
             &mb.literal_context_map,
             mb.literal_histograms.len(),
             &mut tree,
@@ -838,7 +826,6 @@ pub(crate) fn store_meta_block(
 
     if mb.distance_context_map.is_empty() {
         store_trivial_context_map(
-            &mut context_map_arena,
             mb.distance_histograms.len(),
             DISTANCE_CONTEXT_BITS as usize,
             &mut tree,
@@ -846,7 +833,6 @@ pub(crate) fn store_meta_block(
         )?;
     } else {
         encode_context_map(
-            &mut context_map_arena,
             &mb.distance_context_map,
             mb.distance_histograms.len(),
             &mut tree,
@@ -993,7 +979,8 @@ fn store_data_with_huffman_codes(
     Ok(())
 }
 
-struct MetaBlockArena {
+/// What it takes to write a meta-block with one prefix code for each category.
+struct MetaBlockScratch {
     lit_histo: HistogramLiteral,
     cmd_histo: HistogramCommand,
     dist_histo: HistogramDistance,
@@ -1003,10 +990,10 @@ struct MetaBlockArena {
     cmd_bits: [u16; NUM_COMMAND_SYMBOLS],
     dist_depth: [u8; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
     dist_bits: [u16; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
-    tree: [HuffmanTree; MAX_HUFFMAN_TREE_SIZE],
+    tree: Vec<HuffmanTree>,
 }
 
-impl MetaBlockArena {
+impl MetaBlockScratch {
     fn new() -> Result<Box<Self>, AllocError> {
         try_box(Self {
             lit_histo: Histogram::new(),
@@ -1018,7 +1005,7 @@ impl MetaBlockArena {
             cmd_bits: [0; NUM_COMMAND_SYMBOLS],
             dist_depth: [0; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
             dist_bits: [0; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
-            tree: [HuffmanTree::new(0, 0, 0); MAX_HUFFMAN_TREE_SIZE],
+            tree: try_vec(HuffmanTree::default(), MAX_HUFFMAN_TREE_SIZE)?,
         })
     }
 }
@@ -1034,48 +1021,45 @@ pub(crate) fn store_meta_block_trivial(
     commands: &[Command],
     bw: &mut BitWriter<'_>,
 ) -> Fallible {
-    let arena = &mut *MetaBlockArena::new()?;
+    let s = &mut *MetaBlockScratch::new()?;
     let num_distance_symbols = dist.alphabet_size_max as usize;
 
-    store_compressed_meta_block_header(is_last, length, bw)?;
+    store_compressed_meta_block_header(length, is_last, bw)?;
 
     build_histograms(
         input,
         start_pos,
         mask,
         commands,
-        &mut arena.lit_histo,
-        &mut arena.cmd_histo,
-        &mut arena.dist_histo,
+        &mut s.lit_histo,
+        &mut s.cmd_histo,
+        &mut s.dist_histo,
     )?;
 
-    bw.write_bits(13, 0)?;
+    store_trivial_splits_and_contexts(bw)?;
 
     build_and_store_huffman_tree(
-        &arena.lit_histo.data,
+        &s.lit_histo.data,
         NUM_LITERAL_SYMBOLS,
-        &mut arena.tree,
-        &mut arena.lit_depth,
-        &mut arena.lit_bits,
+        &mut s.tree,
+        &mut s.lit_depth,
+        &mut s.lit_bits,
         bw,
     )?;
     build_and_store_huffman_tree(
-        &arena.cmd_histo.data,
+        &s.cmd_histo.data,
         NUM_COMMAND_SYMBOLS,
-        &mut arena.tree,
-        &mut arena.cmd_depth,
-        &mut arena.cmd_bits,
+        &mut s.tree,
+        &mut s.cmd_depth,
+        &mut s.cmd_bits,
         bw,
     )?;
     build_and_store_huffman_tree(
-        arena
-            .dist_histo
-            .data
-            .sub(..MAX_SIMPLE_DISTANCE_ALPHABET_SIZE)?,
+        s.dist_histo.data.sub(..MAX_SIMPLE_DISTANCE_ALPHABET_SIZE)?,
         num_distance_symbols,
-        &mut arena.tree,
-        &mut arena.dist_depth,
-        &mut arena.dist_bits,
+        &mut s.tree,
+        &mut s.dist_depth,
+        &mut s.dist_bits,
         bw,
     )?;
     store_data_with_huffman_codes(
@@ -1083,12 +1067,12 @@ pub(crate) fn store_meta_block_trivial(
         start_pos,
         mask,
         commands,
-        &arena.lit_depth,
-        &arena.lit_bits,
-        &arena.cmd_depth,
-        &arena.cmd_bits,
-        &arena.dist_depth,
-        &arena.dist_bits,
+        &s.lit_depth,
+        &s.lit_bits,
+        &s.cmd_depth,
+        &s.cmd_bits,
+        &s.dist_depth,
+        &s.dist_bits,
         bw,
     )?;
     if is_last {
@@ -1109,13 +1093,13 @@ pub(crate) fn store_meta_block_fast(
     commands: &[Command],
     bw: &mut BitWriter<'_>,
 ) -> Fallible {
-    let arena = &mut *MetaBlockArena::new()?;
+    let s = &mut *MetaBlockScratch::new()?;
     let num_distance_symbols = dist.alphabet_size_max as usize;
     let distance_alphabet_bits = log2_floor_nonzero(num_distance_symbols - 1) as usize + 1;
 
-    store_compressed_meta_block_header(is_last, length, bw)?;
+    store_compressed_meta_block_header(length, is_last, bw)?;
 
-    bw.write_bits(13, 0)?;
+    store_trivial_splits_and_contexts(bw)?;
 
     if commands.len() <= 128 {
         let mut histogram = [0u32; NUM_LITERAL_SYMBOLS];
@@ -1130,12 +1114,12 @@ pub(crate) fn store_meta_block_fast(
             pos += cmd.copy_len() as usize;
         }
         build_and_store_huffman_tree_fast(
-            &mut arena.tree,
+            &mut s.tree,
             &histogram,
             num_literals,
             8,
-            &mut arena.lit_depth,
-            &mut arena.lit_bits,
+            &mut s.lit_depth,
+            &mut s.lit_bits,
             bw,
         )?;
         store_static_command_huffman_tree(bw)?;
@@ -1145,8 +1129,8 @@ pub(crate) fn store_meta_block_fast(
             start_pos,
             mask,
             commands,
-            &arena.lit_depth,
-            &arena.lit_bits,
+            &s.lit_depth,
+            &s.lit_bits,
             &STATIC_COMMAND_CODE_DEPTH,
             &STATIC_COMMAND_CODE_BITS,
             &STATIC_DISTANCE_CODE_DEPTH,
@@ -1159,35 +1143,35 @@ pub(crate) fn store_meta_block_fast(
             start_pos,
             mask,
             commands,
-            &mut arena.lit_histo,
-            &mut arena.cmd_histo,
-            &mut arena.dist_histo,
+            &mut s.lit_histo,
+            &mut s.cmd_histo,
+            &mut s.dist_histo,
         )?;
         build_and_store_huffman_tree_fast(
-            &mut arena.tree,
-            &arena.lit_histo.data,
-            arena.lit_histo.total_count,
+            &mut s.tree,
+            &s.lit_histo.data,
+            s.lit_histo.total_count,
             8,
-            &mut arena.lit_depth,
-            &mut arena.lit_bits,
+            &mut s.lit_depth,
+            &mut s.lit_bits,
             bw,
         )?;
         build_and_store_huffman_tree_fast(
-            &mut arena.tree,
-            &arena.cmd_histo.data,
-            arena.cmd_histo.total_count,
+            &mut s.tree,
+            &s.cmd_histo.data,
+            s.cmd_histo.total_count,
             10,
-            &mut arena.cmd_depth,
-            &mut arena.cmd_bits,
+            &mut s.cmd_depth,
+            &mut s.cmd_bits,
             bw,
         )?;
         build_and_store_huffman_tree_fast(
-            &mut arena.tree,
-            &arena.dist_histo.data,
-            arena.dist_histo.total_count,
+            &mut s.tree,
+            &s.dist_histo.data,
+            s.dist_histo.total_count,
             distance_alphabet_bits,
-            &mut arena.dist_depth,
-            &mut arena.dist_bits,
+            &mut s.dist_depth,
+            &mut s.dist_bits,
             bw,
         )?;
         store_data_with_huffman_codes(
@@ -1195,12 +1179,12 @@ pub(crate) fn store_meta_block_fast(
             start_pos,
             mask,
             commands,
-            &arena.lit_depth,
-            &arena.lit_bits,
-            &arena.cmd_depth,
-            &arena.cmd_bits,
-            &arena.dist_depth,
-            &arena.dist_bits,
+            &s.lit_depth,
+            &s.lit_bits,
+            &s.cmd_depth,
+            &s.cmd_bits,
+            &s.dist_depth,
+            &s.dist_bits,
             bw,
         )?;
     }
@@ -1221,7 +1205,7 @@ pub(crate) fn store_uncompressed_meta_block(
     bw: &mut BitWriter<'_>,
 ) -> Checked {
     let mut masked_pos = position & mask;
-    store_uncompressed_meta_block_header(len, bw)?;
+    store_meta_block_header(len, MetaBlockKind::Uncompressed, bw)?;
     bw.jump_to_byte_boundary()?;
 
     if masked_pos + len > mask + 1 {

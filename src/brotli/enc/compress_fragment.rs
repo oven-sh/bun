@@ -3,7 +3,9 @@
 //! The prefix code for literals is built from a sample of the block it is used for. The ones for commands and distances
 //! are built from the statistics of the block before.
 
-use super::bit_stream::{build_and_store_huffman_tree_fast, store_huffman_tree};
+use super::bit_stream::{
+    MetaBlockKind, build_and_store_huffman_tree_fast, store_huffman_tree, store_meta_block_header,
+};
 use super::bit_writer::BitWriter;
 use super::entropy_encode::{HuffmanTree, convert_bit_depths_to_symbols, create_huffman_tree};
 use super::fast_log::{fast_log2, log2_floor_nonzero};
@@ -367,27 +369,6 @@ pub(crate) fn emit_literals(
     Ok(())
 }
 
-/// `len` is at most `1 << 24`.
-pub(crate) fn store_meta_block_header(
-    len: usize,
-    is_uncompressed: bool,
-    bw: &mut BitWriter<'_>,
-) -> Checked {
-    let nibbles = if len <= (1 << 16) {
-        4
-    } else if len <= (1 << 20) {
-        5
-    } else {
-        6
-    };
-    // ISLAST
-    bw.write_bits(1, 0)?;
-    bw.write_bits(2, nibbles - 4)?;
-    bw.write_bits(nibbles as usize * 4, len as u64 - 1)?;
-    // ISUNCOMPRESSED
-    bw.write_bits(1, u64::from(is_uncompressed))
-}
-
 /// Overwrites the `n_bits` bits from bit `pos` of `array` on.
 fn update_bits(mut n_bits: usize, mut bits: u32, mut pos: usize, array: &mut [u8]) -> Checked {
     while n_bits > 0 {
@@ -444,7 +425,7 @@ fn emit_uncompressed_meta_block(
     bw: &mut BitWriter<'_>,
 ) -> Checked {
     bw.rewind(storage_ix_start)?;
-    store_meta_block_header(bytes.len(), true, bw)?;
+    store_meta_block_header(bytes.len(), MetaBlockKind::Uncompressed, bw)?;
     bw.jump_to_byte_boundary()?;
     bw.write_bytes(bytes)
 }
@@ -492,7 +473,7 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
     // Where the MLEN field of the meta-block header is, in case the meta-block is made longer.
     let mut mlen_storage_ix = bw.pos() + 3;
 
-    store_meta_block_header(block_size, false, bw)?;
+    store_meta_block_header(block_size, MetaBlockKind::Compressed, bw)?;
     // No block splits, no contexts.
     bw.write_bits(13, 0)?;
 
@@ -715,7 +696,7 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
         block_size = input_size.min(FIRST_BLOCK_SIZE);
         total_block_size = block_size;
         mlen_storage_ix = bw.pos() + 3;
-        store_meta_block_header(block_size, false, bw)?;
+        store_meta_block_header(block_size, MetaBlockKind::Compressed, bw)?;
         // No block splits, no contexts.
         bw.write_bits(13, 0)?;
         literal_ratio =

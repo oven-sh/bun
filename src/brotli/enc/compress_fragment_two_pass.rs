@@ -2,9 +2,11 @@
 //! their statistics.
 
 use super::bit_cost::bits_entropy;
-use super::bit_stream::{build_and_store_huffman_tree_fast, store_huffman_tree};
+use super::bit_stream::{
+    MetaBlockKind, build_and_store_huffman_tree_fast, store_huffman_tree, store_meta_block_header,
+};
 use super::bit_writer::BitWriter;
-use super::compress_fragment::{emit_literals, store_meta_block_header};
+use super::compress_fragment::emit_literals;
 use super::entropy_encode::{HuffmanTree, convert_bit_depths_to_symbols, create_huffman_tree};
 use super::fast_log::log2_floor_nonzero;
 use super::find_match_length::find_match_length_with_limit;
@@ -502,7 +504,7 @@ fn should_compress(s: &mut TwoPassArena, input: &[u8], num_literals: usize) -> C
 }
 
 fn emit_uncompressed_meta_block(input: &[u8], bw: &mut BitWriter<'_>) -> Checked {
-    store_meta_block_header(input.len(), true, bw)?;
+    store_meta_block_header(input.len(), MetaBlockKind::Uncompressed, bw)?;
     bw.jump_to_byte_boundary()?;
     bw.write_bytes(input)
 }
@@ -554,7 +556,7 @@ pub(crate) fn compress_fragment_two_pass(
             _ => Err(Bug),
         }?;
         if should_compress(s, block, num_literals)? {
-            store_meta_block_header(block_size, false, bw)?;
+            store_meta_block_header(block_size, MetaBlockKind::Compressed, bw)?;
             // No block splits, no contexts.
             bw.write_bits(13, 0)?;
             store_commands(

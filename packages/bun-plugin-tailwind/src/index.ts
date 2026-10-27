@@ -1,6 +1,12 @@
 import type { BunPlugin } from "bun";
 import { native } from "./native.ts";
 
+/** A key of `Bun.build({ files })` as Bun stores it. `onLoad` gets the stored key as the path. */
+function storedKey(key: string): string {
+  key = key.replaceAll("\\", "/");
+  return process.platform === "win32" && /^[a-z]:\//.test(key) ? key[0].toUpperCase() + key.slice(1) : key;
+}
+
 const plugin: BunPlugin = {
   name: "bun-plugin-tailwind",
   setup(build) {
@@ -22,11 +28,8 @@ const plugin: BunPlugin = {
     }
 
     build.onLoad({ filter: /\.css$/ }, async ({ defer, loader, path }) => {
-      // Bun keeps the keys of `Bun.build({ files })` with `/` separators, and gives `onLoad` such a key as the path. It
-      // reads them after `setup` of every plugin, and a later one may have added to them.
-      files ??= new Map(
-        Object.entries(build.config?.files ?? {}).map(([key, contents]) => [key.replaceAll("\\", "/"), contents]),
-      );
+      // Bun reads them after `setup` of every plugin, and a later one may have added to them.
+      files ??= new Map(Object.entries(build.config?.files ?? {}).map(([key, contents]) => [storedKey(key), contents]));
       const file = new Blob([files.get(path.replaceAll("\\", "/")) ?? Bun.file(path)]);
 
       const { Root } = await loading;

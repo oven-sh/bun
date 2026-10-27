@@ -243,8 +243,9 @@ describe("Bun.build", () => {
       root: dir.root,
       entrypoints: ["index.css", "virtual.css", "late.css"].map(name => path.join(dir.root, name)),
       files: {
-        [path.join(dir.root, "index.css")]: `@import "tailwindcss/utilities";`,
-        // Bun takes either separator in a key, on every platform.
+        // Bun takes a drive letter in either case,
+        [dir.root[0].toLowerCase() + path.join(dir.root, "index.css").slice(1)]: `@import "tailwindcss/utilities";`,
+        // and either separator, on every platform.
         [path.join(dir.root, "virtual.css").replaceAll("/", "\\")]: new TextEncoder().encode(
           `.virtual { @apply overline; }`,
         ),

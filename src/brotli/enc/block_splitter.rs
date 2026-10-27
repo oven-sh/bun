@@ -53,9 +53,16 @@ impl BlockSplit {
         })
     }
 
-    pub(crate) fn push(&mut self, block_type: u8, length: u32) {
+    /// Appends a block, which there has to be room for.
+    pub(crate) fn push(&mut self, block_type: u8, length: u32) -> Checked {
+        if self.types.len() == self.types.capacity()
+            || self.lengths.len() == self.lengths.capacity()
+        {
+            return Err(Bug);
+        }
         self.types.push(block_type);
         self.lengths.push(length);
+        Ok(())
     }
 }
 
@@ -454,7 +461,7 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
         let symbol = histogram_symbols.at(i)?;
         if i + 1 == num_blocks || symbol != histogram_symbols.at(i + 1)? {
             let id = new_index.at(symbol as usize)? as u8;
-            split.push(id, cur_length);
+            split.push(id, cur_length)?;
             max_type = max_type.max(id);
             cur_length = 0;
         }
@@ -480,7 +487,7 @@ fn split_symbols<T: Copy + Into<usize>, const N: usize>(
         let mut split = BlockSplit::with_capacity(1)?;
         split.num_types = 1;
         if length != 0 {
-            split.push(0, length as u32);
+            split.push(0, length as u32)?;
         }
         return Ok(split);
     }

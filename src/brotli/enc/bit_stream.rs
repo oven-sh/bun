@@ -116,6 +116,7 @@ fn store_var_len_uint8(n: usize, bw: &mut BitWriter<'_>) -> Checked {
     }
 }
 
+/// What the header of a meta-block that is not empty says about it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MetaBlockKind {
     Compressed,
@@ -278,8 +279,11 @@ pub(crate) fn store_huffman_tree(depths: &[u8], bw: &mut BitWriter<'_>) -> Check
     for &symbol in code_lengths.get()?.0 {
         *histogram.at_mut(usize::from(symbol))? += 1;
     }
-    let mut used = (0..CODE_LENGTH_CODES).filter(|&i| histogram.get(i) != Some(&0));
-    let only_symbol = used.next().filter(|_| used.next().is_none());
+    let mut used = histogram.iter().enumerate().filter(|&(_, &n)| n != 0);
+    let only_symbol = match (used.next(), used.next()) {
+        (Some((symbol, _)), None) => Some(symbol),
+        _ => None,
+    };
 
     // The code that the code lengths are written in.
     let mut tree = [HuffmanTree::default(); 2 * CODE_LENGTH_CODES + 1];
@@ -575,16 +579,11 @@ impl BlockSplitCode {
         tree: &mut [HuffmanTree],
         bw: &mut BitWriter<'_>,
     ) -> Checked {
-        let BlockSplit {
-            num_types,
-            types,
-            lengths,
-        } = split;
-        let num_types = *num_types;
+        let num_types = split.num_types;
         let mut type_histogram = [0u32; MAX_BLOCK_TYPE_SYMBOLS];
         let mut length_histogram = [0u32; NUM_BLOCK_LEN_SYMBOLS];
         let mut type_code_calculator = BlockTypeCodeCalculator::new();
-        for (i, (&block_type, &length)) in types.iter().zip(lengths).enumerate() {
+        for (i, (&block_type, &length)) in split.types.iter().zip(&split.lengths).enumerate() {
             let type_code = type_code_calculator.next_block_type_code(block_type);
             if i != 0 {
                 *type_histogram.at_mut(type_code)? += 1;
@@ -609,7 +608,7 @@ impl BlockSplitCode {
                 &mut self.length_bits,
                 bw,
             )?;
-            self.store_block_switch(lengths.at(0)?, types.at(0)?, true, bw)?;
+            self.store_block_switch(split.lengths.at(0)?, split.types.at(0)?, true, bw)?;
         }
         Ok(())
     }

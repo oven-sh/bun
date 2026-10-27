@@ -283,7 +283,7 @@ impl<const N: usize> GreedyBlockSplitter<N> {
         // lengths in the output depend on it.
         self.block_size = self.block_size.max(self.min_block_size);
         if self.split.types.is_empty() {
-            self.split.push(0, self.block_size as u32);
+            self.split.push(0, self.block_size as u32)?;
             for i in 0..num_contexts {
                 let histogram = self.histograms.get(i).ok_or(Bug)?;
                 let entropy = bits_entropy(histogram.data.sub(..self.alphabet_size)?);
@@ -323,7 +323,7 @@ impl<const N: usize> GreedyBlockSplitter<N> {
         {
             // A new block type. The histograms after the current ones are still empty.
             self.split
-                .push(self.split.num_types as u8, self.block_size as u32);
+                .push(self.split.num_types as u8, self.block_size as u32)?;
             self.last_histogram_ix[1] = self.last_histogram_ix[0];
             self.last_histogram_ix[0] = self.split.num_types * num_contexts;
             for i in 0..num_contexts {
@@ -340,7 +340,7 @@ impl<const N: usize> GreedyBlockSplitter<N> {
             // The type of the second last block.
             let num_blocks = self.split.types.len();
             let second_last_type = self.split.types.at(num_blocks.wrapping_sub(2))?;
-            self.split.push(second_last_type, self.block_size as u32);
+            self.split.push(second_last_type, self.block_size as u32)?;
             self.last_histogram_ix.swap(0, 1);
             for i in 0..num_contexts {
                 self.histograms

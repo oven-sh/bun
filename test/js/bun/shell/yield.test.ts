@@ -477,9 +477,9 @@ describe("yield", async () => {
           });
 
           // The member that throws runs a command substitution first, and the
-          // `cat` in it is over before its start returns: epoll does not take
-          // a regular file, and the reader reports that at once. (kqueue takes
-          // the file, so this is for Linux.) The failure is then handled under
+          // `cat` in it is over as soon as it starts: epoll does not take a
+          // regular file, and the reader reports that at once. (kqueue takes
+          // the file, so this is for Linux.) The failure is then handled by
           // the trampoline that is still starting the pipeline, and that one
           // names the pipeline again afterwards: a stop that reported the first
           // `cat` at once would free the pipeline under it.
@@ -487,8 +487,8 @@ describe("yield", async () => {
             const throws = `echo $(cat ${js(import.meta.path)}) > \${new Blob(["x"])}`;
             const shapes = {
               "after a cat": `$\`cat | ${throws}\`.quiet().nothrow()`,
-              // No other member is left in these: reporting the failed one
-              // there would end the pipeline under the trampoline that starts it.
+              // No other member is left in these: the pipeline ends when the
+              // failed one is reported.
               "as the first member": `$\`${throws} | cat\`.quiet().nothrow()`,
               "as the last member": `$\`true | ${throws}\`.quiet().nothrow()`,
             };
@@ -557,48 +557,58 @@ describe("yield", async () => {
         });
 
         // `expect().resolves` turns the event loop where it stands, here inside
-        // the catch block. The promise used to be rejected under the shell's
-        // own frames, so that turn ran the exit of the killed member, or the
-        // report of a stopped builtin, under them: the frames then named nodes
-        // that were freed. The rejection now comes from a task of the event
-        // loop. The child reports before its stdin ends (see the next test).
-        test.concurrent("a catch block that turns the event loop", async () => {
-          await using proc = Bun.spawn({
-            cmd: child(`
+        // the catch block. The rejection comes from the task that reports the
+        // stopped builtins, so no frame of the shell is below the catch block
+        // and that turn frees nothing a frame still names. The child reports
+        // before its stdin ends (see the next test).
+        describe("a catch block that turns the event loop", () => {
+          /** A child that runs `script`, and turns the event loop in the catch block of its rejection. */
+          const turning = (script: string) =>
+            child(`
               import { expect } from "bun:test";
-              const idle = "setTimeout(() => {}, 100_000)";
-              // The pipeline starts from the exit of the command before it: a callback of the event loop's poll.
-              const scripts = {
-                "a subprocess": () => $\`\${bun} --version; \${bun} -e \${idle} | ${failing}\`.quiet(),
-                "a builtin": () => $\`\${bun} --version; cat | ${failing}\`.quiet(),
-              };
-              const out = {};
-              for (const [name, script] of Object.entries(scripts)) {
-                try {
-                  await script();
-                  out[name] = "resolved";
-                } catch (error) {
-                  // Long enough for the exit of the killed member to be there.
-                  await expect(Bun.sleep(50).then(() => "turned")).resolves.toBe("turned");
-                  out[name] = "rejected " + error.constructor.name + ": " + error.message;
-                }
+              try {
+                await $\`${script}\`.quiet();
+                console.log("resolved");
+              } catch (error) {
+                await expect(Bun.sleep(50).then(() => "turned")).resolves.toBe("turned");
+                console.log("rejected " + error.constructor.name + ": " + error.message);
               }
-              console.log(JSON.stringify(out));
-            `),
-            env,
-            stdin: "pipe",
-            stdout: "pipe",
-            stderr: "pipe",
+            `);
+
+          // The pipeline starts from the exit of the command before it: a callback of the event loop's poll.
+          test.concurrent("after a builtin was stopped", async () => {
+            await using proc = Bun.spawn({
+              cmd: turning(`\${bun} --version; cat | ${failing}`),
+              env,
+              stdin: "pipe",
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+
+            const stdout = await firstLine(proc.stdout);
+            await proc.stdin.end();
+            const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+            expect({ result: stdout.line, stderr, exitCode }).toEqual({ result: builtin, stderr: "", exitCode: 0 });
           });
 
-          const stdout = await firstLine(proc.stdout);
-          await proc.stdin.end();
-          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          // The member throws under the reader that reports the end of stdin
+          // to two `cat`s (see "a cat that is stopped while its reader is
+          // reporting"). A rejection from there would run the catch block, and
+          // the report of the second `cat`, before the reader has told it.
+          test.concurrent.skipIf(isWindows)("while the reader of a stopped cat is reporting", async () => {
+            await using proc = Bun.spawn({
+              cmd: turning(`echo $(cat) > \${new Blob(["x"])} | echo $(cat)`),
+              env,
+              stdin: "pipe",
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            await proc.stdin.end();
 
-          expect({ result: JSON.parse(stdout.line || "null"), stderr, exitCode }).toEqual({
-            result: { "a subprocess": builtin, "a builtin": builtin },
-            stderr: "",
-            exitCode: 0,
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+            expect({ result: stdout.trim(), stderr, exitCode }).toEqual({ result: builtin, stderr: "", exitCode: 0 });
           });
         });
 
@@ -956,6 +966,29 @@ describe("yield", async () => {
             exitCode: 0,
             started: false,
           });
+        });
+
+        // The `[[ ]]` waits for its command substitution when the graph is
+        // disposed. The substitution then ends with no word and no error.
+        test.concurrent("in a [[ ]] whose substitution a disposed Bun.ModuleGraph cuts short", async () => {
+          await using proc = Bun.spawn({
+            cmd: child(`
+              const graph = new Bun.ModuleGraph();
+              const settled = () => console.log("settled");
+              graph.run(() => {
+                $\`[[ -z $(\${bun} -e \${"setInterval(() => {}, 100_000)"}) ]]\`.quiet().then(settled, settled);
+              });
+              graph.dispose();
+              console.log("disposed");
+            `),
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "disposed\n", stderr: "", exitCode: 0 });
         });
 
         // A microtask that the graph queued runs once after the dispose. The

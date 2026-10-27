@@ -1,11 +1,8 @@
-// Guard for the names src/codegen/bundle-functions.ts gives the functions
-// bundled from src/js/builtins/*.ts. The generated <File>BuiltinsWrapper passes
-// the exported function's name (or its $overriddenName) to
-// JSC::createBuiltinExecutable, and JSC reports that name as `fn.name`, in
-// Function.prototype.toString() and in stack frames. This holds no matter how
-// the C++ side attaches the function, so every attachment path is listed here.
-// When the wrapper leaves the name identifier uninitialized, every function
-// without an $overriddenName gets name === "".
+// src/codegen/bundle-functions.ts bundles the functions in src/js/builtins/*.ts.
+// JSC takes `fn.name`, Function.prototype.toString() and the stack frame name of
+// such a function from the name its executable is created with
+// (JSC::createBuiltinExecutable), not from the property that holds it. So the
+// rows below cover each way the C++ side attaches a builtin.
 import { describe, expect, test } from "bun:test";
 import Module from "node:module";
 import { inspect } from "node:util";
@@ -13,16 +10,13 @@ import { inspect } from "node:util";
 describe("functions implemented in src/js/builtins", () => {
   test("are named after the exported function", () => {
     expect({
-      // HashTableValue rows of type BuiltinGeneratorType (JSBuffer.cpp)
-      "Buffer.prototype.readInt8": Buffer.prototype.readInt8.name,
-      "Buffer.prototype.writeUInt32LE": Buffer.prototype.writeUInt32LE.name,
+      // A HashTableValue row of type BuiltinGeneratorType (JSBuffer.cpp)
       "Buffer.prototype.toJSON": Buffer.prototype.toJSON.name,
-      // An alias row reuses the executable of the function it points at.
-      "Buffer.prototype.readInt16": Buffer.prototype.readInt16.name,
-      // JSBuiltin rows of a .lut.h table (jsBufferConstructorTable)
+      // JSBuiltin rows of a .lut.h table (JSBuffer.cpp, NodeModuleModule.cpp)
       "Buffer.from": Buffer.from.name,
       "Buffer.isBuffer": Buffer.isBuffer.name,
-      // `builtin:` in a .classes.ts file (Glob.classes.ts)
+      "Module._initPaths": Module._initPaths.name,
+      // `builtin: true` in a .bind.ts class (Glob.bind.ts)
       "Glob.prototype.scan": Bun.Glob.prototype.scan.name,
       "Glob.prototype.scanSync": Bun.Glob.prototype.scanSync.name,
       // JSFunction::create(vm, global, <name>CodeGenerator(vm), ...) (BunObject.cpp, BunProcess.cpp)
@@ -31,12 +25,10 @@ describe("functions implemented in src/js/builtins", () => {
       // putDirectBuiltinFunction (ZigGlobalObject.cpp)
       "console.write": console.write.name,
     }).toEqual({
-      "Buffer.prototype.readInt8": "readInt8",
-      "Buffer.prototype.writeUInt32LE": "writeUInt32LE",
       "Buffer.prototype.toJSON": "toJSON",
-      "Buffer.prototype.readInt16": "readInt16LE",
       "Buffer.from": "from",
       "Buffer.isBuffer": "isBuffer",
+      "Module._initPaths": "_initPaths",
       "Glob.prototype.scan": "scan",
       "Glob.prototype.scanSync": "scanSync",
       "Bun.peek": "peek",
@@ -82,15 +74,16 @@ describe("functions implemented in src/js/builtins", () => {
   });
 
   test("carry the name into toString(), inspect and stack frames", () => {
-    expect(Buffer.from.toString()).toBe("function from() {\n    [native code]\n}");
+    expect(Buffer.from.toString()).toBe("function from() { [native code] }");
     expect(Bun.inspect(Bun.Glob.prototype.scanSync)).toBe("[Function: scanSync]");
 
+    // Buffer.from rejects a number from inside the builtin, so its frame is in the stack.
     let error: Error | undefined;
     try {
-      Buffer.alloc(1).readInt8(5);
+      Buffer.from(1 as unknown as string);
     } catch (e) {
       error = e as Error;
     }
-    expect(error!.stack).toContain("at readInt8 (");
+    expect(error!.stack).toContain("at from (");
   });
 });

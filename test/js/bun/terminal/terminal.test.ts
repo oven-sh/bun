@@ -251,8 +251,8 @@ describe("Bun.Terminal", () => {
         ["toString calls [Symbol.asyncDispose]()", dispose, hook => stringObject({ toString: () => hook("hello") })],
       ];
 
-      test.each(closingData)("throws when %s", (_, closeTerminal, makeData) => {
-        const terminal = new Bun.Terminal({});
+      test.each(closingData)("throws when %s", async (_, closeTerminal, makeData) => {
+        await using terminal = new Bun.Terminal({});
         let calls = 0;
         const data = makeData(result => {
           calls++;
@@ -266,8 +266,8 @@ describe("Bun.Terminal", () => {
         expect(terminal.closed).toBe(true);
       });
 
-      test("an exception from the hook wins over the closed error", () => {
-        const terminal = new Bun.Terminal({});
+      test("an exception from the hook wins over the closed error", async () => {
+        await using terminal = new Bun.Terminal({});
         const data = stringObject({
           toString() {
             terminal.close();
@@ -305,7 +305,7 @@ describe("Bun.Terminal", () => {
       test.skipIf(isWindows)("after PTY EOF, only a hook that closes the terminal makes write() throw", async () => {
         const { promise: ptyClosed, resolve } = Promise.withResolvers<void>();
         const proc = Bun.spawn(["sh", "-c", "exit 0"], { terminal: { data() {}, exit: () => resolve() } });
-        const terminal = proc.terminal!;
+        await using terminal = proc.terminal!;
         await proc.exited;
         await ptyClosed;
 

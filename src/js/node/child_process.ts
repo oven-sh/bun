@@ -17,6 +17,7 @@ var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
 var BufferConcat = Buffer.concat;
 var BufferIsEncoding = Buffer.isEncoding;
+const setImmediateGlobal = globalThis.setImmediate;
 
 var kEmptyObject = ObjectCreate(null);
 let signals;
@@ -1188,13 +1189,13 @@ class ChildProcess extends EventEmitter {
         stderr = this.#stderr;
 
       if (stdout === undefined) {
-        this.#stdout = this.#getBunSpawnIo(1, true);
+        this.#stdout = this.#getBunSpawnIo(1);
       } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout.destroyed && stdout.readable) {
         stdout.resume?.();
       }
 
       if (stderr === undefined) {
-        this.#stderr = this.#getBunSpawnIo(2, true);
+        this.#stderr = this.#getBunSpawnIo(2);
       } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
         stderr.resume?.();
       }
@@ -1227,7 +1228,7 @@ class ChildProcess extends EventEmitter {
     this.#maybeClose();
   }
 
-  #getBunSpawnIo(i, autoResume = false) {
+  #getBunSpawnIo(i) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1300,7 +1301,6 @@ class ChildProcess extends EventEmitter {
             const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
-            if (autoResume) pipe.resume();
             return pipe;
           }
           case "destroyed": {
@@ -1363,7 +1363,7 @@ class ChildProcess extends EventEmitter {
           result[i] = this.stderr;
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, false);
+          result[i] = this.#getBunSpawnIo(i);
           continue;
       }
     }
@@ -1371,15 +1371,15 @@ class ChildProcess extends EventEmitter {
   }
 
   get stdin() {
-    return (this.#stdin ??= this.#getBunSpawnIo(0, false));
+    return (this.#stdin ??= this.#getBunSpawnIo(0));
   }
 
   get stdout() {
-    return (this.#stdout ??= this.#getBunSpawnIo(1, false));
+    return (this.#stdout ??= this.#getBunSpawnIo(1));
   }
 
   get stderr() {
-    return (this.#stderr ??= this.#getBunSpawnIo(2, false));
+    return (this.#stderr ??= this.#getBunSpawnIo(2));
   }
 
   get stdio() {
@@ -1432,8 +1432,6 @@ class ChildProcess extends EventEmitter {
 
     const detachedOption = options.detached;
     this.#stdioOptions = bunStdio;
-    const stdioCount = stdio.length;
-    const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
     validateString(options.file, "options.file");
     var file;
@@ -1478,13 +1476,6 @@ class ChildProcess extends EventEmitter {
           this.pid = this.#handle.pid;
           $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
 
-          if (hasSocketsToEagerlyLoad) {
-            process.nextTick(() => {
-              void this.stdio;
-              $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
-            });
-          }
-
           process.nextTick(
             (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
             exitCode,
@@ -1523,10 +1514,9 @@ class ChildProcess extends EventEmitter {
         if (options[kFromNode]) this.#closesNeeded += 1;
       }
 
-      if (hasSocketsToEagerlyLoad) {
-        for (let item of this.stdio) {
-          item?.ref?.();
-        }
+      // Like Node, create every stdio stream at spawn.
+      for (let item of this.stdio) {
+        item?.ref?.();
       }
     } catch (ex) {
       const exCode =
@@ -1667,6 +1657,11 @@ class ChildProcess extends EventEmitter {
   }
 
   unref() {
+    // As in Node, an open stdout or stderr pipe holds the loop after unref(): start its read.
+    const stdout = this.#stdout,
+      stderr = this.#stderr;
+    if (stdout) setImmediateGlobal(startReading, stdout);
+    if (stderr) setImmediateGlobal(startReading, stderr);
     if (this.#handle) this.#handle.unref();
   }
 
@@ -1676,7 +1671,7 @@ class ChildProcess extends EventEmitter {
     Object.defineProperties(this.prototype, {
       stdin: {
         get: function () {
-          const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
+          const value = (this.#stdin ??= this.#getBunSpawnIo(0));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdin", {
             value: value,
@@ -1691,7 +1686,7 @@ class ChildProcess extends EventEmitter {
       },
       stdout: {
         get: function () {
-          const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
+          const value = (this.#stdout ??= this.#getBunSpawnIo(1));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdout", {
             value: value,
@@ -1706,7 +1701,7 @@ class ChildProcess extends EventEmitter {
       },
       stderr: {
         get: function () {
-          const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
+          const value = (this.#stderr ??= this.#getBunSpawnIo(2));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stderr", {
             value: value,
@@ -1750,6 +1745,10 @@ const nodeToBunLookup = {
 };
 
 const INTERNAL_IPC_PREFIX = "NODE_";
+
+function startReading(stream) {
+  if (!stream.destroyed) stream.read(0);
+}
 
 function isInternalIpcMessage(message) {
   if (message === null || typeof message !== "object") return false;

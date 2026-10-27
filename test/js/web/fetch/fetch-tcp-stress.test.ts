@@ -2,7 +2,7 @@
 // If a socket never closes, the fixture runs into its deadline and these tests fail on its counts.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isDebug, isMacOS } from "harness";
+import { bunEnv, bunExe, isArm64, isCI, isDebug, isMacOS, isWindows } from "harness";
 import { join } from "node:path";
 
 // Since we bumped MAX_CONNECTIONS to 4, we should halve the threshold on macOS.
@@ -15,8 +15,8 @@ const connections = batches * batchSize;
 
 type CloseMethod = "end" | "shutdown" | "terminate";
 
-// One fetch-tcp-stress-fixture.ts process for each case: the cases run at the
-// same time, and each one measures only its own file descriptors.
+// One fetch-tcp-stress-fixture.ts process for each case: the cases can run at
+// the same time, and each one measures only its own file descriptors.
 const cases: [name: string, afterWrite: CloseMethod, afterFetch: CloseMethod | "none"][] = [
   ["shutdown after timeout", "end", "none"],
   ["close after TCP fin", "shutdown", "end"],
@@ -25,8 +25,14 @@ const cases: [name: string, afterWrite: CloseMethod, afterFetch: CloseMethod | "
   ["gently close", "end", "none"],
 ];
 
+// On the Windows arm64 CI machines a case takes 7 s by itself and 22 s when the four overlap.
+const overlap = !(isWindows && isArm64);
+
 // Fails on the macOS CI hosts only (#14514).
-test.todoIf(isCI && isMacOS).concurrent.each(cases)(
+test
+  .todoIf(isCI && isMacOS)
+  .concurrentIf(overlap)
+  .each(cases)(
   "%s",
   async (_, afterWrite, afterFetch) => {
     const deadline = 26_000;

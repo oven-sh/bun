@@ -1632,7 +1632,7 @@ const server = serve({
     expect(result.stderr.toString()).toBe("");
     expect(result.stdout.toString().trim()).toBe('["util-main","util-feature"]');
     expect(result.exitCode).toBe(0);
-  }, 30_000);
+  });
 
   // A directory on NODE_PATH is not the project's config, so its package.json is read.
   test("compile resolves a NODE_PATH package through its package.json main", async () => {
@@ -1654,7 +1654,7 @@ const server = serve({
     expect(result.stderr.toString()).toBe("");
     expect(result.stdout.toString().trim()).toBe("from-node-path");
     expect(result.exitCode).toBe(0);
-  }, 30_000);
+  });
 
   test("compile with 8+ entry points runs main entry correctly", async () => {
     await using dir = tempDir("compile-many-entries", {

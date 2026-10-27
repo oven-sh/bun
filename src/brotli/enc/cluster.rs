@@ -7,6 +7,18 @@ use super::histogram::Histogram;
 use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_with_capacity, try_zeroed};
 use bun_core::AllocError;
 
+/// Histograms are clustered in batches of this many, and then the clusters of all batches.
+pub(crate) const HISTOGRAMS_PER_BATCH: usize = 64;
+
+/// Enough for all pairs of a batch.
+pub(crate) const MAX_PAIRS_PER_BATCH: usize = HISTOGRAMS_PER_BATCH * HISTOGRAMS_PER_BATCH / 2;
+
+/// How many pairs to keep of `num_clusters` clusters from all batches. Once there are that many, only the best pair is
+/// kept up to date.
+pub(crate) fn max_pairs_of_all_batches(num_clusters: usize) -> usize {
+    (64 * num_clusters).min((num_clusters / 2) * num_clusters)
+}
+
 /// Two clusters that could be merged.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct HistogramPair {
@@ -18,13 +30,15 @@ pub(crate) struct HistogramPair {
     cost_diff: f64,
 }
 
-/// Whether `p2` is the better pair to merge.
-#[inline(always)]
-fn histogram_pair_is_less(p1: &HistogramPair, p2: &HistogramPair) -> bool {
-    if p1.cost_diff != p2.cost_diff {
-        return p1.cost_diff > p2.cost_diff;
+impl HistogramPair {
+    /// Whether this is the better pair to merge.
+    #[inline(always)]
+    fn is_better_than(&self, other: &Self) -> bool {
+        if self.cost_diff != other.cost_diff {
+            return self.cost_diff < other.cost_diff;
+        }
+        self.idx2 - self.idx1 < other.idx2 - other.idx1
     }
-    p1.idx2.wrapping_sub(p1.idx1) > p2.idx2.wrapping_sub(p2.idx1)
 }
 
 /// How much the entropy of the context map goes down when two clusters are merged.
@@ -96,7 +110,7 @@ fn compare_and_push_to_queue<const N: usize>(
     }
 
     p.cost_diff += p.cost_combo;
-    if *num_pairs > 0 && histogram_pair_is_less(&pairs.at(0)?, &p) {
+    if *num_pairs > 0 && p.is_better_than(&pairs.at(0)?) {
         // The new pair is the best one. When the queue is full, the one that was is forgotten.
         if *num_pairs < max_num_pairs {
             pairs.put(*num_pairs, pairs.at(0)?)?;
@@ -110,9 +124,9 @@ fn compare_and_push_to_queue<const N: usize>(
     Ok(())
 }
 
-/// Merges the clusters `clusters[..num_clusters]`, which are indexes into `out` and `cluster_size`, for as long as that
-/// saves bits, and then until there are no more than `max_clusters`. Returns how many are left at the start of
-/// `clusters`, and updates the indexes in `symbols[..symbols_size]`. `pairs` has room for `max_num_pairs + 1`.
+/// Merges the clusters `clusters`, which are indexes into `out` and `cluster_size`, for as long as that saves bits, and
+/// then until there are no more than `max_clusters`. Returns how many are left at the start of `clusters`, and updates
+/// the indexes in `symbols`. `pairs` is scratch space for one more pair than are kept at a time.
 pub(crate) fn histogram_combine<const N: usize>(
     out: &mut [Histogram<N>],
     tmp: &mut Histogram<N>,
@@ -120,11 +134,10 @@ pub(crate) fn histogram_combine<const N: usize>(
     symbols: &mut [u32],
     clusters: &mut [u32],
     pairs: &mut [HistogramPair],
-    mut num_clusters: usize,
-    symbols_size: usize,
     max_clusters: usize,
-    max_num_pairs: usize,
 ) -> Checked<usize> {
+    let mut num_clusters = clusters.len();
+    let max_num_pairs = pairs.len().checked_sub(1).ok_or(Bug)?;
     let mut cost_diff_threshold = 0.0;
     let mut min_cluster_size = 1usize;
     let mut num_pairs = 0usize;
@@ -163,7 +176,7 @@ pub(crate) fn histogram_combine<const N: usize>(
         let size2 = cluster_size.at(best_idx2 as usize)?;
         let size1 = cluster_size.at_mut(best_idx1 as usize)?;
         *size1 += size2;
-        for symbol in symbols.sub_mut(..symbols_size)? {
+        for symbol in symbols.iter_mut() {
             if *symbol == best_idx2 {
                 *symbol = best_idx1;
             }
@@ -189,7 +202,7 @@ pub(crate) fn histogram_combine<const N: usize>(
                 continue;
             }
             let front = pairs.at(0)?;
-            if histogram_pair_is_less(&front, &p) {
+            if p.is_better_than(&front) {
                 pairs.put(0, p)?;
                 pairs.put(copy_to_idx, front)?;
             } else {
@@ -301,15 +314,12 @@ pub(crate) fn cluster_histograms<const N: usize>(
 ) -> Fallible<Vec<Histogram<N>>> {
     // The index of a cluster has to fit in a byte.
     const MAX_CLUSTERS: usize = 256;
-    const MAX_INPUT_HISTOGRAMS: usize = 64;
     let in_size = input.len();
     let histogram_symbols = histogram_symbols.sub_mut(..in_size)?;
     let mut cluster_size = try_vec(1u32, in_size)?;
     let mut clusters = try_zeroed::<u32>(in_size)?;
     let mut num_clusters = 0usize;
-    // In the first pass all pairs are allowed.
-    let pairs_capacity = MAX_INPUT_HISTOGRAMS * MAX_INPUT_HISTOGRAMS / 2;
-    let mut pairs = try_vec(HistogramPair::default(), pairs_capacity + 1)?;
+    let mut pairs = try_vec(HistogramPair::default(), MAX_PAIRS_PER_BATCH + 1)?;
     let mut tmp = try_box(Histogram::new())?;
 
     let mut out = try_with_capacity(in_size)?;
@@ -319,28 +329,24 @@ pub(crate) fn cluster_histograms<const N: usize>(
         *symbol = i as u32;
     }
 
-    for i in (0..in_size).step_by(MAX_INPUT_HISTOGRAMS) {
-        let num_to_combine = (in_size - i).min(MAX_INPUT_HISTOGRAMS);
-        let new_clusters = clusters.sub_mut(num_clusters..)?;
-        for (j, cluster) in new_clusters.iter_mut().take(num_to_combine).enumerate() {
+    for i in (0..in_size).step_by(HISTOGRAMS_PER_BATCH) {
+        let num_to_combine = (in_size - i).min(HISTOGRAMS_PER_BATCH);
+        let new_clusters = clusters.sub_mut(num_clusters..num_clusters + num_to_combine)?;
+        for (j, cluster) in new_clusters.iter_mut().enumerate() {
             *cluster = (i + j) as u32;
         }
         num_clusters += histogram_combine(
             &mut out,
             &mut tmp,
             &mut cluster_size,
-            histogram_symbols.sub_mut(i..)?,
+            histogram_symbols.sub_mut(i..i + num_to_combine)?,
             new_clusters,
             &mut pairs,
-            num_to_combine,
-            num_to_combine,
             MAX_CLUSTERS,
-            pairs_capacity,
         )?;
     }
 
-    // In the second pass the number of pairs is limited. Once it is reached, only the best pair is kept up to date.
-    let max_num_pairs = (64 * num_clusters).min((num_clusters / 2) * num_clusters);
+    let max_num_pairs = max_pairs_of_all_batches(num_clusters);
     if pairs.len() < max_num_pairs + 1 {
         pairs
             .try_reserve_exact(max_num_pairs + 1 - pairs.len())
@@ -352,12 +358,9 @@ pub(crate) fn cluster_histograms<const N: usize>(
         &mut tmp,
         &mut cluster_size,
         histogram_symbols,
-        &mut clusters,
-        &mut pairs,
-        num_clusters,
-        in_size,
+        clusters.sub_mut(..num_clusters)?,
+        pairs.sub_mut(..max_num_pairs + 1)?,
         MAX_CLUSTERS,
-        max_num_pairs,
     )?;
     drop(pairs);
     drop(cluster_size);

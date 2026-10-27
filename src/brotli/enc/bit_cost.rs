@@ -22,7 +22,8 @@ pub(crate) fn bits_entropy(population: &[u32]) -> f64 {
 
 const ONE_SYMBOL_HISTOGRAM_COST: f64 = 12.0;
 
-/// [`population_cost`] where only `count` symbols occur, which is at most 4. `histo` starts with how often each does.
+/// [`population_cost`] of a histogram in which `count` symbols occur, if that is from 1 to 4. `histo` starts with how
+/// often each of them does.
 fn simple_population_cost(histo: [u32; 5], count: usize, total_count: usize) -> Option<f64> {
     const TWO_SYMBOL_HISTOGRAM_COST: f64 = 20.0;
     const THREE_SYMBOL_HISTOGRAM_COST: f64 = 28.0;

@@ -3,7 +3,10 @@
 
 use super::Fallible;
 use super::bit_cost::population_cost;
-use super::cluster::{HistogramPair, histogram_bit_cost_distance, histogram_combine};
+use super::cluster::{
+    HISTOGRAMS_PER_BATCH, HistogramPair, MAX_PAIRS_PER_BATCH, histogram_bit_cost_distance,
+    histogram_combine, max_pairs_of_all_batches,
+};
 use super::command::Command;
 use super::fast_log::fast_log2;
 use super::histogram::{Histogram, NUM_HISTOGRAM_DISTANCE_SYMBOLS};
@@ -28,8 +31,6 @@ const SYMBOLS_PER_DISTANCE_HISTOGRAM: usize = 544;
 const MIN_LENGTH_FOR_BLOCK_SPLITTING: usize = 128;
 const ITER_MUL_FOR_REFINING: usize = 2;
 const MIN_ITERS_FOR_REFINING: usize = 100;
-
-const HISTOGRAMS_PER_BATCH: usize = 64;
 const CLUSTERS_PER_BATCH: usize = 16;
 
 /// The blocks of one category, in their order.
@@ -63,7 +64,7 @@ pub(crate) fn count_literals(cmds: &[Command]) -> usize {
 }
 
 /// Appends the literals of `cmds` to `literals`, which has room for them. `data` is a ring buffer of `mask + 1` bytes.
-fn copy_literals_to_byte_array(
+fn copy_literals(
     cmds: &[Command],
     data: &[u8],
     offset: usize,
@@ -88,14 +89,14 @@ fn copy_literals_to_byte_array(
 }
 
 /// With a seed of 7 the numbers repeat after `1 << 29`.
-#[inline(always)]
-fn my_rand(seed: &mut u32) -> u32 {
+fn next_random(seed: &mut u32) -> u32 {
     *seed = seed.wrapping_mul(16807);
     *seed
 }
 
+/// `log2(count)`, where a symbol that does not occur counts as a quarter of one.
 #[inline(always)]
-fn bit_cost(count: usize) -> f64 {
+fn log2_count(count: usize) -> f64 {
     if count == 0 { -2.0 } else { fast_log2(count) }
 }
 
@@ -113,7 +114,7 @@ fn initial_entropy_codes<T: Copy + Into<usize>, const N: usize>(
         histogram.clear();
         let mut pos = length * i / num_histograms;
         if i != 0 {
-            pos += (my_rand(&mut seed) as usize)
+            pos += (next_random(&mut seed) as usize)
                 .checked_rem(block_length)
                 .ok_or(Bug)?;
         }
@@ -137,7 +138,7 @@ fn random_sample<T: Copy + Into<usize>, const N: usize>(
     if stride >= length {
         stride = length;
     } else {
-        pos = my_rand(seed) as usize % (length - stride + 1);
+        pos = next_random(seed) as usize % (length - stride + 1);
     }
     sample.add_vector(data.sub(pos..pos + stride)?)
 }
@@ -212,7 +213,7 @@ fn find_blocks<T: Copy + Into<usize>, const N: usize>(
     }
     for i in (0..N).rev() {
         for (j, histogram) in histograms.iter().enumerate() {
-            let value = insert_cost.at(j)? - bit_cost(histogram.data.at(i)? as usize);
+            let value = insert_cost.at(j)? - log2_count(histogram.data.at(i)? as usize);
             insert_cost.put(i * num_histograms + j, value)?;
         }
     }
@@ -330,8 +331,7 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
     let mut cluster_size = try_with_capacity::<u32>(expected_num_clusters)?;
     let mut num_clusters = 0usize;
     let mut histograms = try_vec(Histogram::<N>::new(), num_blocks.min(HISTOGRAMS_PER_BATCH))?;
-    let mut max_num_pairs = HISTOGRAMS_PER_BATCH * HISTOGRAMS_PER_BATCH / 2;
-    let mut pairs = try_vec(HistogramPair::default(), max_num_pairs + 1)?;
+    let mut pairs = try_vec(HistogramPair::default(), MAX_PAIRS_PER_BATCH + 1)?;
     let mut tmp = try_box(Histogram::<N>::new())?;
     let mut tmp2 = try_box(Histogram::<N>::new())?;
 
@@ -366,13 +366,10 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
             &mut histograms,
             &mut tmp,
             &mut sizes,
-            &mut symbols,
-            &mut new_clusters,
+            symbols.sub_mut(..num_to_combine)?,
+            new_clusters.sub_mut(..num_to_combine)?,
             &mut pairs,
-            num_to_combine,
-            num_to_combine,
             HISTOGRAMS_PER_BATCH,
-            max_num_pairs,
         )?;
         all_histograms
             .try_reserve(num_new_clusters)
@@ -393,7 +390,7 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
     drop(histograms);
 
     // Cluster the clusters of all batches.
-    max_num_pairs = (64 * num_clusters).min((num_clusters / 2) * num_clusters);
+    let max_num_pairs = max_pairs_of_all_batches(num_clusters);
     if pairs.len() < max_num_pairs + 1 {
         drop(pairs);
         pairs = try_vec(HistogramPair::default(), max_num_pairs + 1)?;
@@ -406,11 +403,8 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
         &mut cluster_size,
         &mut histogram_symbols,
         &mut clusters,
-        &mut pairs,
-        num_clusters,
-        num_blocks,
+        pairs.sub_mut(..max_num_pairs + 1)?,
         MAX_NUMBER_OF_BLOCK_TYPES,
-        max_num_pairs,
     )?;
     drop(pairs);
     drop(cluster_size);
@@ -471,7 +465,7 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
 
 /// Splits `data` into blocks. `max_histograms` is less than the format allows, to leave some for the contexts, which
 /// are not taken into account here.
-fn split_byte_vector<T: Copy + Into<usize>, const N: usize>(
+fn split_symbols<T: Copy + Into<usize>, const N: usize>(
     data: &[T],
     symbols_per_histogram: usize,
     max_histograms: usize,
@@ -539,8 +533,8 @@ pub(crate) fn split_block(
 ) -> Fallible<(BlockSplit, BlockSplit, BlockSplit)> {
     let literal_split = {
         let mut literals = try_with_capacity(count_literals(cmds))?;
-        copy_literals_to_byte_array(cmds, data, offset, mask, &mut literals)?;
-        split_byte_vector::<u8, NUM_LITERAL_SYMBOLS>(
+        copy_literals(cmds, data, offset, mask, &mut literals)?;
+        split_symbols::<u8, NUM_LITERAL_SYMBOLS>(
             &literals,
             SYMBOLS_PER_LITERAL_HISTOGRAM,
             MAX_LITERAL_HISTOGRAMS,
@@ -553,7 +547,7 @@ pub(crate) fn split_block(
     let command_split = {
         let mut command_symbols = try_with_capacity(cmds.len())?;
         command_symbols.extend(cmds.iter().map(|cmd| cmd.cmd_prefix));
-        split_byte_vector::<u16, NUM_COMMAND_SYMBOLS>(
+        split_symbols::<u16, NUM_COMMAND_SYMBOLS>(
             &command_symbols,
             SYMBOLS_PER_COMMAND_HISTOGRAM,
             MAX_COMMAND_HISTOGRAMS,
@@ -570,7 +564,7 @@ pub(crate) fn split_block(
                 .filter(|cmd| cmd.has_distance_symbol())
                 .map(|cmd| cmd.dist_prefix.symbol() as u16),
         );
-        split_byte_vector::<u16, NUM_HISTOGRAM_DISTANCE_SYMBOLS>(
+        split_symbols::<u16, NUM_HISTOGRAM_DISTANCE_SYMBOLS>(
             &distance_symbols,
             SYMBOLS_PER_DISTANCE_HISTOGRAM,
             MAX_COMMAND_HISTOGRAMS,

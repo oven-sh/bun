@@ -6,7 +6,6 @@ pub(crate) struct BitWriter<'a> {
     /// Every write sets the 8 bytes from the current one on, so there has to be room for 7 more bytes than are used. The
     /// bits of the current byte that are not written yet are 0.
     storage: &'a mut [u8],
-    /// How many bits were written.
     pos: usize,
 }
 

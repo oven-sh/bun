@@ -78,7 +78,7 @@ pub mod config_version;
 pub mod dependency;
 pub mod hosted_git_info;
 pub mod integrity;
-pub mod padding_checker;
+mod padding_checker;
 pub mod postinstall_optimizer;
 
 /// `ExternalSlice<T>` and `VersionedURLType<I>` live in `bun_install_types`

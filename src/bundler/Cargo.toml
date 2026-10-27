@@ -10,7 +10,6 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bytemuck = "1"
 bun_opaque.workspace = true
 bun_dispatch.workspace = true
 strum.workspace = true

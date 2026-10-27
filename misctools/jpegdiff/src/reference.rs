@@ -158,3 +158,28 @@ pub fn encode(rgba: &[u8], w: u32, ht: u32, quality: u8, progressive: bool, icc:
         Ok(v)
     }
 }
+
+/// A 4-component file, which cjpeg cannot make. `colorspace` is 3 for CMYK and 4 for YCCK, `subsamp` a TJSAMP value.
+pub fn encode_cmyk(cmyk: &[u8], w: u32, ht: u32, colorspace: c_int, subsamp: c_int, progressive: bool, arithmetic: bool) -> Result<Vec<u8>, String> {
+    unsafe {
+        let handle = H(tj3Init(0));
+        let h = handle.0;
+        tj3Set(h, TJPARAM_QUALITY, 85);
+        tj3Set(h, TJPARAM_SUBSAMP, subsamp);
+        tj3Set(h, TJPARAM_COLORSPACE, colorspace);
+        tj3Set(h, TJPARAM_PROGRESSIVE, c_int::from(progressive));
+        tj3Set(h, 14, c_int::from(arithmetic));
+        let mut out_ptr: *mut u8 = core::ptr::null_mut();
+        let mut out_len = 0usize;
+        let rc = tj3Compress8(h, cmyk.as_ptr(), w as c_int, 0, ht as c_int, TJPF_CMYK, &raw mut out_ptr, &raw mut out_len);
+        if rc != 0 {
+            if !out_ptr.is_null() {
+                tj3Free(out_ptr.cast());
+            }
+            return Err(message(h));
+        }
+        let v = core::slice::from_raw_parts(out_ptr, out_len).to_vec();
+        tj3Free(out_ptr.cast());
+        Ok(v)
+    }
+}

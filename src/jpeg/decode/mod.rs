@@ -76,7 +76,6 @@ pub(crate) struct Component {
     // These depend on the scan.
     pub(crate) mcu_width: u32,
     pub(crate) mcu_height: u32,
-    pub(crate) mcu_blocks: u32,
     pub(crate) last_col_width: u32,
     pub(crate) last_row_height: u32,
 }
@@ -367,7 +366,6 @@ impl<'a> Decoder<'a> {
             self.mcu_rows_in_scan = comp.height_in_blocks;
             comp.mcu_width = 1;
             comp.mcu_height = 1;
-            comp.mcu_blocks = 1;
             comp.last_col_width = 1;
             // Here this is the number of block rows in the last iMCU row.
             comp.last_row_height = match comp.height_in_blocks % comp.v_samp {
@@ -385,7 +383,6 @@ impl<'a> Decoder<'a> {
                 let comp = self.comps.get_mut(ci).ok_or(Error::Internal)?;
                 comp.mcu_width = comp.h_samp;
                 comp.mcu_height = comp.v_samp;
-                comp.mcu_blocks = comp.mcu_width * comp.mcu_height;
                 comp.last_col_width = match comp.width_in_blocks % comp.mcu_width {
                     0 => comp.mcu_width,
                     n => n,
@@ -394,7 +391,7 @@ impl<'a> Decoder<'a> {
                     0 => comp.mcu_height,
                     n => n,
                 };
-                for _ in 0..comp.mcu_blocks {
+                for _ in 0..comp.mcu_width * comp.mcu_height {
                     *self
                         .mcu_membership
                         .get_mut(self.blocks_in_mcu)

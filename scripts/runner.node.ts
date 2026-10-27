@@ -718,14 +718,12 @@ async function runTests(): Promise<TestResult[]> {
   }
   !isQuiet && console.log("Bun:", execPath);
 
-  const revision = getRevision(execPath);
-  !isQuiet && console.log("Revision:", revision);
-
   const expectations = getTestExpectations();
   const modifiers = getTestModifiers(execPath);
-  // "1.2.3+abcdef123", and not "1.2.3-canary.1+abcdef123" or "1.2.3-debug+abcdef123".
-  if (/^\d+\.\d+\.\d+(\+|$)/.test(revision)) modifiers.push("STABLE");
   !isQuiet && console.log("Modifiers:", modifiers);
+
+  const revision = getRevision(execPath);
+  !isQuiet && console.log("Revision:", revision);
 
   const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);

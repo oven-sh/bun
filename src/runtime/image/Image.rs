@@ -1540,15 +1540,8 @@ impl PipelineTask {
             //   • st_size cap → file-based decompression-bomb fails up
             //     front with a clear error instead of materialising a
             //     multi-GB encoded buffer before `maxPixels` even runs.
-            // O_NONBLOCK so the open itself can't block on a FIFO. POSIX-only:
-            // on Windows it omits FILE_SYNCHRONOUS_IO_NONALERT (overlapped
-            // handle) and the subsequent sync read fails EINVAL. Windows has
-            // no open-blocking FIFOs in the same sense; the !S_ISREG check
-            // below still rejects pipes/devices.
-            #[cfg(unix)]
+            // O_NONBLOCK so the open itself can't block on a FIFO.
             let oflags = sys::O::RDONLY | sys::O::NONBLOCK;
-            #[cfg(not(unix))]
-            let oflags = sys::O::RDONLY;
             let file = match sys::File::openat(sys::Fd::cwd(), p, oflags, 0) {
                 sys::Result::Ok(f) => f,
                 sys::Result::Err(e) => {

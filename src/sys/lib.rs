@@ -1150,7 +1150,7 @@ pub mod O {
     pub const NONBLOCK: i32 = libc::O_NONBLOCK;
     #[cfg(unix)]
     pub const CLOEXEC: i32 = libc::O_CLOEXEC;
-    // Windows libc has no `O_NONBLOCK`/`O_CLOEXEC`; libuv ignores them. Values
+    // Windows libc has no `O_NONBLOCK`/`O_CLOEXEC`; libuv and `openat` ignore them. Values
     // chosen to round-trip through `uv::O::from_bun_o` without colliding with
     // the `_O_*` flags MSVCRT defines.
     #[cfg(windows)]
@@ -7029,8 +7029,6 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         );
     }
 
-    let nonblock = (flags & O::NONBLOCK) != 0;
-
     // Matches libuv fs__open: O_RDONLY asks for read access only. GENERIC_WRITE
     // already includes FILE_WRITE_ATTRIBUTES for the write-mode branches; the
     // fs.futimes path goes through uv_fs_futime which ReOpenFiles for it.
@@ -7062,17 +7060,11 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         (false, _, false) => w::FILE_OPEN,
     };
 
-    let blocking_flag: u32 = if !nonblock {
-        w::FILE_SYNCHRONOUS_IO_NONALERT
-    } else {
-        0
-    };
-    let follow = (flags & O::NOFOLLOW) == 0;
-    let opts: u32 = if follow {
-        blocking_flag
-    } else {
-        blocking_flag | w::FILE_OPEN_REPARSE_POINT
-    };
+    // Always a synchronous handle, whatever `O::NONBLOCK` says: `read`/`write` pass no OVERLAPPED.
+    let mut opts: u32 = w::FILE_SYNCHRONOUS_IO_NONALERT;
+    if (flags & O::NOFOLLOW) != 0 {
+        opts |= w::FILE_OPEN_REPARSE_POINT;
+    }
 
     let mut attributes: u32 = w::FILE_ATTRIBUTE_NORMAL;
     if (flags & O::CREAT) != 0 && (perm & 0x80) == 0 && perm != 0 {

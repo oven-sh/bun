@@ -110,8 +110,7 @@ fn too_large() -> bun_sys::Error {
 
 /// Opens `path` for reading without blocking. A blocking open of a named pipe waits for a writer that may never come.
 fn open_nonblocking(path: &[u8]) -> bun_sys::Result<File> {
-    let nonblocking = if cfg!(unix) { O::NONBLOCK } else { 0 };
-    File::openat(Fd::cwd(), path, O::RDONLY | nonblocking, 0)
+    File::openat(Fd::cwd(), path, O::RDONLY | O::NONBLOCK, 0)
 }
 
 /// Reads `file` to the end. `file` isn't a regular file and was opened by [`open_nonblocking`].

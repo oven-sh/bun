@@ -762,12 +762,8 @@ impl RuntimeTranspilerCache {
         input_stat_size: u64,
     ) -> crate::CrateResult<Entry> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
-        // NONBLOCK: a FIFO must not block the open. On Windows it would make the handle overlapped.
-        #[cfg(unix)]
-        let open_flags = sys::O::RDONLY | sys::O::NONBLOCK;
-        #[cfg(not(unix))]
-        let open_flags = sys::O::RDONLY;
-        let cache_fd = sys::open(cache_file_path, open_flags, 0)?;
+        // NONBLOCK: a FIFO must not block the open.
+        let cache_fd = sys::open(cache_file_path, sys::O::RDONLY | sys::O::NONBLOCK, 0)?;
         let file = sys::File::from_fd(cache_fd);
         // On any error, delete the cache file.
         let unlink_guard = scopeguard::guard(cache_file_path, |p| {

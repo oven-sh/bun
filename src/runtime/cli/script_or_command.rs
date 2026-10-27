@@ -393,8 +393,7 @@ fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
 pub(super) fn read_package_json(path: &[u8]) -> Option<Vec<u8>> {
     use bun_sys::{EntryKind, O};
     // Otherwise opening a named pipe waits for somebody to open it for writing, who may never come.
-    let without_waiting = if cfg!(unix) { O::NONBLOCK } else { 0 };
-    let flags = O::RDONLY | without_waiting;
+    let flags = O::RDONLY | O::NONBLOCK;
     let file = bun_sys::File::openat(bun_core::Fd::cwd(), path, flags, 0).ok()?;
     let found = file.stat().ok()?;
     match bun_sys::kind_from_mode(found.st_mode as _) {

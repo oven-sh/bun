@@ -21,7 +21,13 @@ use crate::cli::command::{Context, Tag};
 
 const MAX_SUGGESTION_DISTANCE: usize = 3;
 const CODE_GENERATION_FLAG: &[u8] = b"--disallow-code-generation-from-strings";
-pub(crate) const COMPILE_AOT_KEYS: &[&str] = &["aot", "aotExplain", "aotLogTypeMismatches"];
+pub(crate) const COMPILE_AOT_KEYS: &[&str] = &[
+    "aot",
+    "aotDisable",
+    "aotExplain",
+    "aotHeat",
+    "aotLogTypeMismatches",
+];
 const EXPLAIN_ALLOWED: &str =
     "one of text, json, guards, guards-json, trim, missed-optimizations, allocations, statistics";
 const LOCALES_ALLOWED: &str = "a list of locale tags, like en,de-AT";
@@ -186,6 +192,7 @@ pub(crate) enum OptionError<'a> {
         value: &'a [u8],
     },
     DeveloperWord {
+        key: &'static str,
         word: Vec<u8>,
         sentence: Vec<u8>,
     },
@@ -253,6 +260,8 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
         (Name::Report, _) => "--aot-report",
         (Name::ReportDetail, _) => "--aot-report-detail",
         (Name::List, _) => "--aot-list",
+        (Name::Developer("disable"), BuildApi) => "compile.aotDisable",
+        (Name::Developer("heat"), BuildApi) => "compile.aotHeat",
         (Name::Developer(key), _) => developer_flag_name(key),
     };
     out.extend_from_slice(spelling.as_bytes());
@@ -311,9 +320,17 @@ impl OptionError<'_> {
                 out.extend_from_slice(b"\". Must be ");
                 out.extend_from_slice(allowed_values(*option).as_bytes());
             }
-            OptionError::DeveloperWord { word, sentence } => {
-                out.extend_from_slice(b"--aot-");
-                out.extend_from_slice(word);
+            OptionError::DeveloperWord {
+                key,
+                word,
+                sentence,
+            } => {
+                if origin == RequestOrigin::BuildApi {
+                    write_spelling(OptionName::Developer(*key), origin, out);
+                } else {
+                    out.extend_from_slice(b"--aot-");
+                    out.extend_from_slice(word);
+                }
                 out.extend_from_slice(b": ");
                 out.extend_from_slice(sentence);
             }
@@ -615,6 +632,7 @@ pub(crate) fn apply_developer_word<'a>(
         "refuse-code-from-disk" => options.loads_code_from_disk = false,
         "symbols" if options.obfuscates => {
             return Err(OptionError::DeveloperWord {
+                key,
                 word: key.as_bytes().to_vec(),
                 sentence: b"cannot be used with --obfuscate or --sourcemap=external, which keep function names out of the executable".to_vec(),
             });
@@ -624,12 +642,16 @@ pub(crate) fn apply_developer_word<'a>(
         "out" => options.ir_output_path = Some(Box::from(text)),
         _ => {
             let word = option_word(key, value);
-            // Only the command line passes such a word. The engine's table of them names every pass of the compiler.
-            let checked = bun_removable_features::removable_body!(AotCompiler, Abort, {
-                engine::check_option_word(&options.option_words, &word)
+            // The engine's table of these words names every pass of the compiler. Without the compiler the build fails whatever the word is.
+            let rejected = bun_removable_features::removable_body!(AotCompiler, ReturnDefault, {
+                engine::check_option_word(&options.option_words, &word).err()
             });
-            if let Err(RejectedOptionWord { word, sentence }) = checked {
-                return Err(OptionError::DeveloperWord { word, sentence });
+            if let Some(RejectedOptionWord { word, sentence }) = rejected {
+                return Err(OptionError::DeveloperWord {
+                    key,
+                    word,
+                    sentence,
+                });
             }
             options.option_words.push(word.into_boxed_slice());
         }

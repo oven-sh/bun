@@ -455,6 +455,9 @@ const verifiesEachPass = (flags: string[]) =>
 export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>, limit?: number) {
   const behindTheFlag = cmd.indexOf("--aot") + 1 || (cmd[1] === "compile" && !cmd.includes("--library") ? 2 : 0);
   if (moreBuildFlags.length && behindTheFlag) cmd = cmd.toSpliced(behindTheFlag, 0, ...moreBuildFlags);
+  // Where collections are forced a sweep overwrites dead cells.
+  if (env.BUN_JSC_slowPathAllocsBetweenGCs || collectsEveryMillisecond(env))
+    env = { BUN_JSC_useZombieMode: "1", ...env };
   // A child that hangs is killed here, and the signal fails the test. A test that merely timed out would leave it running.
   // A build that verifies the IR after every pass takes sixteen times as long as one that does not. --aot-validate checks each built-in module that a program holds: one that starts a Worker holds most of them, one that may load code from disk all.
   const isLong = verifiesEachPass(cmd) || cmd.includes("--aot-validate");
@@ -1181,9 +1184,10 @@ export function programsBuiltWith(
  * It is split into `parts` as a large folder is. A build with a sanitizer takes a third of them. The programs `always` are taken in any case.
  * `stubCopies`: each program is laid out so that it needs about that many copies of the shared stubs.
  * A list of environments: the one executable runs once in each.
+ * A list of labels: the flags of those variants together. It leaves out what any of them leaves out.
  */
 export function variant(
-  label: string,
+  labels: string | string[],
   buildFlags: string[],
   runEnv: Record<string, string> | Record<string, string>[] = {},
   part = 1,
@@ -1191,6 +1195,7 @@ export function variant(
   always: string | string[] = [],
   stubCopies?: number,
 ) {
+  const label = [labels].flat().join("-and-");
   const isAlwaysTaken = (path: string) =>
     takesWhatIsFixed && [always].flat().includes(besideOf(inPrograms(path)).replaceAll("\\", "/"));
   // Two draws, since a group is drawn before its programs have names: one path or group in forty, then one program in ten.
@@ -1215,7 +1220,7 @@ export function variant(
       .filter(path => {
         if (!existsSync(besideOf(path) + ".json")) return true;
         const { skipInVariants, skipInVariant } = JSON.parse(readFileSync(besideOf(path) + ".json", "utf8"));
-        return !skipInVariants && !skipInVariant?.[label];
+        return !skipInVariants && ![label, labels].flat().some(skipped => skipInVariant?.[skipped]);
       }),
     { buildFlags, runEnv, erasesTypes: false, stubCopies },
   );

@@ -358,6 +358,28 @@ fn top_level_says_what_the_whole_file_says() {
             "/project/a.ts",
             "export function f() { // }\n return 1; /* } */ }\nimport './effect';",
         ),
+        (
+            "/project/a.ts",
+            "import a from './a';\nimport type { B } from './b';\nexport { c } from './c';\nexport const d: B = a;\nexport { d as e };",
+        ),
+        (
+            "/project/a.ts",
+            "// import\nimport a from './a';\nexport type A = typeof a;\nexport default a;",
+        ),
+        (
+            "/project/a.ts",
+            "export const a = 1;\nnamespace N { export const b = a; }\nexport type { C } from './c';",
+        ),
+        (
+            "/project/a.ts",
+            "import a = require('./a');\nexport const b = a;\nconst c = require('./c');",
+        ),
+        ("/project/a.ts", "import './a';\nexport as namespace b;"),
+        (
+            "/project/a.tsx",
+            "import a from './a';\nexport const b = <p>it's {a}</p>;",
+        ),
+        ("/project/a.ts", "const a = 1;\nexport { a };"),
     ] {
         let [of_top, of_whole] = specifiers_by_both_parses(path, text);
         assert!(
@@ -377,13 +399,57 @@ fn top_level_is_enough_for_plain_modules() {
 }
 
 #[test]
+fn statements_behind_the_head_are_parsed_only_where_they_may_name_a_file() {
+    let count_statements = |text: &str| {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let options = Options::default().for_parsing();
+        let disk = project_disk(&[], 1);
+        let top = disk.parse_top_level(arena, b"/project/a.ts", text.as_bytes(), &atoms, options);
+        top.map(|file| (file.stmts.len(), file.has_module_syntax))
+    };
+    let head = "import a from './a';\nexport { b } from './b';\n";
+    for (rest, statements) in [
+        ("", 2),
+        (
+            "export const c = a;\nfunction f(module: number) { return module; }\nexport { f };",
+            2,
+        ),
+        (
+            "/** What a module requires. */\nexport default class { m() { return a.import; } }",
+            2,
+        ),
+        ("export const c = a;\nexport { d } from './d';", 4),
+        ("export const c = () => import('./c');", 3),
+        ("export const c = 'import';", 3),
+    ] {
+        let text = format!("{head}{rest}");
+        assert_eq!(count_statements(&text), Some((statements, true)), "{rest}");
+    }
+    assert_eq!(
+        count_statements("export const a = 1;\nconst b = 2;"),
+        Some((0, true))
+    );
+    assert_eq!(
+        count_statements("const b = 2;\nexport const a = 1;"),
+        Some((2, true))
+    );
+}
+
+#[test]
 fn files_that_are_not_typescript_modules_have_no_parse_of_the_top_level() {
     for (path, text) in [
         ("/project/a.js", "export function f() { return 1; }"),
         ("/project/a.d.ts", "export function f(): number;"),
         ("/project/a.json", "{}"),
-        ("/project/a.ts", "export function f() { return 1; } }"),
-        ("/project/a.ts", "export function f() { return 1; "),
+        (
+            "/project/a.ts",
+            "export function f() { return import('./a'); } }",
+        ),
+        (
+            "/project/a.ts",
+            "export function f() { return import('./a'); ",
+        ),
     ] {
         assert_eq!(specifiers_by_both_parses(path, text)[0], None, "{text}");
     }

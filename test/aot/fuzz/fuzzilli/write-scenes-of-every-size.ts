@@ -676,11 +676,13 @@ class Sizes {
       2,
     );
     const tag = this.pick(["kind", "type", "tag", "t"]);
+    const width = this.pick([2, 3, 4, 30]);
     const tagOf = this.pick([
       (at: number) => `"k${at}"`,
       (at: number) => `"k${at}"`,
       (at: number) => String(at),
       (at: number) => (at < 2 ? String(at === 0) : `"k${at}"`),
+      (at: number) => `"kind-${String(at).padStart(width, "0")}"`,
     ]);
     if (this.isTypeScript) {
       for (const at of this.upTo(size))
@@ -1835,9 +1837,17 @@ class Sizes {
       `(await WebAssembly.instantiate(bytes)).instance`,
       `await WebAssembly.instantiate(await WebAssembly.compile(bytes))`,
     ]);
+    const text = Buffer.from(bytes).toString("base64");
+    const written = this.pick([
+      `new Uint8Array([${bytes.join(", ")}])`,
+      `new Uint8Array(Buffer.from("${text}", "base64"))`,
+      `Uint8Array.from(atob("${text}"), unit => unit.charCodeAt(0))`,
+      `new Uint8Array(Buffer.from("data:application/wasm;base64,${text}".split(",")[1], "base64"))`,
+      `new Uint8Array(await (await fetch("data:application/wasm;base64,${text}")).arrayBuffer())`,
+    ]);
     this.emit(
       `{`,
-      `  const bytes = new Uint8Array([${bytes.join(", ")}]);`,
+      `  const bytes = ${written};`,
       `  let said; try { const add${this.typed("any")} = ${this.cast(made)}.exports.add; said = [add(1, 2), add(2147483647, 1), add(${this.odd()}, 1), add(), WebAssembly.validate(bytes)].join(); } catch (error) { said = (error${this.isTypeScript ? " as any" : ""}).name; }`,
       `  printValue("machine code ${n}", said);`,
       `}`,
@@ -2038,7 +2048,326 @@ class Sizes {
     );
   }
 
+  /** `new Response(body, { status, statusText, headers })` with the members written out, and with one that is not. */
+  answersMadeFromLiterals() {
+    const n = this.next();
+    const any = this.typed("any");
+    const body = () =>
+      this.pick([
+        '"text"',
+        '""',
+        "null",
+        "undefined",
+        "x",
+        "JSON.stringify({ a: x })",
+        "new Uint8Array([104, 105])",
+        'new Blob(["b"])',
+        "`<${x}>`",
+      ]);
+    const status = () =>
+      this.plainly(70, this.pick(["200", "201", "404", "500", "204"]), () =>
+        this.pick(["199", "600", "200.5", this.cast('"201"'), "x", "undefined", "NaN", "101", "0"]),
+      );
+    const headers = () =>
+      this.pick([
+        '{ "content-type": "text/plain" }',
+        '{ "x-a": "1", "x-b": "2" }',
+        '[["x-a", "1"]]',
+        'new Headers({ "x-a": "1" })',
+        "undefined",
+        "{}",
+        this.cast('{ "x-a": 1 }'),
+        this.cast('{ "bad name": "1" }'),
+        '{ "x-a": "\\u00e9" }',
+        "shared",
+      ]);
+    const members = [
+      `status: ${status()}`,
+      `statusText: ${this.pick(['"Fine"', '""', "undefined", this.cast("1"), '"\\u0101"'])}`,
+      `headers: ${headers()}`,
+    ].filter(() => this.chance(70));
+    const oddly = this.plainly(50, members, () => [
+      ...members,
+      this.pick([
+        "...more",
+        "extra: 1",
+        "__proto__: more",
+        ...(this.isTypeScript ? [] : [`get status() { seen${n}++; return 202; }`, `["status"]: 203`, "status: 205"]),
+      ]),
+    ]);
+    const made = this.pick([
+      (init: string) => `new Response(${body()}, ${init})`,
+      (init: string) => `new Response(${body()}, ${init})`,
+      (init: string) => `Response.json({ a: x }, ${init})`,
+      (init: string) => `new Response(${body()}, ${this.cast(`Object.freeze(${init})`)})`,
+    ]);
+    this.emit(
+      `let seen${n} = 0;`,
+      `async function answer${n}(x${any}) {`,
+      `  const shared = new Headers({ "x-s": "1" });`,
+      `  const more${any} = { status: 207, statusText: "More" };`,
+      `  const one = ${made(this.cast(`{ ${oddly.join(", ")} }`))};`,
+      `  shared.set("x-s", "2");`,
+      `  return [one.status, one.statusText, one.ok, one.headers.get("x-a"), one.headers.get("x-s"), one.headers.get("content-type"), ${this.pick(["await one.text()", "(await one.arrayBuffer()).byteLength", "one.bodyUsed", "(await one.clone().text()).length"])}].join("|");`,
+      `}`,
+      `{`,
+      `  const said = [];`,
+      `  for (const x of [1, ${this.odd()}]) { try { said.push(await answer${n}(x)); } catch (error) { said.push((error${this.isTypeScript ? " as any" : ""})?.constructor?.name); } }`,
+      `  printValue("answers ${n}", said.join(" "), seen${n});`,
+      `}`,
+    );
+  }
+
+  /** CommonJS files that require each other: at the top, inside functions, in a circle, in a `try`. */
+  oldModulesThatRequireEachOther() {
+    const n = this.next();
+    const size = this.size(
+      this.plainly(90, 8, () => 32),
+      2,
+    );
+    const file = (at: number) => `./old-${n}-${at}.cjs`;
+    for (const at of this.upTo(size)) {
+      const lines = [`exports.order = "${at % 10}";`];
+      if (at > 0)
+        lines.push(
+          this.pick([
+            `const before = require("${file(at - 1)}");`,
+            `const before = require("${file(at - 1)}");`,
+            `const { order: beforeOrder, value: beforeValue } = require("${file(at - 1)}"); const before = { order: beforeOrder, value: beforeValue };`,
+            `let before; try { before = require("${file(at - 1)}"); } catch (error) { before = { order: "!", value: () => -1 }; }`,
+          ]),
+        );
+      else lines.push(`const before = { order: "", value: () => 0 };`);
+      lines.push(
+        this.pick([
+          `exports.value = () => before.value() + 1;`,
+          `exports.value = () => before.value() + 1;`,
+          `exports.value = function () { return require("${file((at + 1) % size)}").order.length + before.value(); };`,
+          `module.exports = { order: exports.order + before.order, value: () => before.value() + 2 };`,
+          `exports.value = () => (typeof before.value === "function" ? before.value() : -100) + require("${file(size - 1)}").order.length;`,
+          `if (before.order) exports.value = () => before.value() + 3; else exports.value = () => require("node:path").sep.length;`,
+        ]),
+      );
+      if (at === 0 && this.chance(40))
+        lines.splice(1, 0, `const last = require("${file(size - 1)}"); exports.early = typeof last.value;`);
+      if (at === this.place(size) && this.chance(25))
+        lines.push(
+          this.pick([
+            `throw new Error("file ${at}");`,
+            `module.exports = require("${file(0)}");`,
+            `exports.__esModule = true; exports.default = 5;`,
+            `delete require.cache[module.id];`,
+          ]),
+        );
+      if (this.chance(30))
+        lines.push(
+          `exports.asked = String(${this.pick(["!module.parent", "typeof module.parent", "module.children.length", "require.main === module", "module.loaded", "module.children.map(each => each.loaded).join()", "module.parent === require.main"])});`,
+        );
+      if (at === size - 1 && this.chance(40)) {
+        this.files.push([
+          `./new-${n}.mjs`,
+          `export const a = 1;\n${this.pick(["", "export default 2;\n", "export const __esModule = false;\n"])}`,
+        ]);
+        lines.push(
+          `const es = require("./new-${n}.mjs"); exports.es = [es.__esModule, es.a, Object.keys(es).join()].join(":");`,
+        );
+      }
+      this.files.push([file(at), lines.join("\n") + "\n"]);
+    }
+    this.imports.push(
+      this.pick([
+        `import last${n} from "${file(size - 1)}";`,
+        `import * as last${n} from "${file(size - 1)}";`,
+        `import { createRequire } from "node:module";\nconst last${n} = createRequire(import.meta.url)("${file(size - 1)}");`,
+        `const last${n} = require("${file(size - 1)}");`,
+      ]),
+    );
+    this.emit(
+      `printValue("old modules ${n}", ${this.cast(`last${n}`)}.order, typeof ${this.cast(`last${n}`)}.value === "function" ? ${this.cast(`last${n}`)}.value() : "none", Object.keys(last${n}).join(), ${this.cast(`last${n}`)}.asked, ${this.cast(`last${n}`)}.es);`,
+    );
+  }
+
+  /** Many modules of the runtime, one member of each. */
+  modulesOfTheRuntime() {
+    const n = this.next();
+    const every = [
+      "path",
+      "os",
+      "util",
+      "events",
+      "url",
+      "fs",
+      "assert",
+      "buffer",
+      "querystring",
+      "string_decoder",
+      "crypto",
+      "zlib",
+      "stream",
+      "timers",
+      "perf_hooks",
+      "async_hooks",
+      "module",
+      "punycode",
+      "v8",
+      "vm",
+      "tty",
+      "readline",
+      "net",
+      "dns",
+      "constants",
+      "process",
+      "worker_threads",
+      "diagnostics_channel",
+    ];
+    const size = Math.min(this.size(24), every.length);
+    const first = this.below(every.length);
+    const names = this.upTo(size).map(at => every[(first + at) % every.length]);
+    names.forEach((name, at) =>
+      this.imports.push(
+        this.pick([
+          `import * as m${n}_${at} from "node:${name}";`,
+          `import m${n}_${at} from "node:${name}";`,
+          `import * as m${n}_${at} from "${name}";`,
+          `const m${n}_${at} = require("node:${name}");`,
+        ]),
+      ),
+    );
+    this.emit(
+      `printValue("runtime ${n}", [${names.map((_, at) => `m${n}_${at}`).join(", ")}].map(each => typeof each + Object.keys(each).length.toString().length).join());`,
+    );
+  }
+
+  /** Loops whose counter leaves the 32-bit integers, or steps by much. */
+  countersPastInt32() {
+    const n = this.next();
+    const step = this.pick([
+      "1",
+      "2",
+      "1023",
+      "1024",
+      "1025",
+      "4096",
+      "65536",
+      "1000000000",
+      "2147483647",
+      "2147483648",
+      "0.5",
+      "-1",
+      "-1025",
+    ]);
+    const start = this.pick(["0", "2147483640", "2147483647", "4294967290", "-2147483650", "9007199254740980", "x"]);
+    const turns = this.pick([3, 10, 40]);
+    const down = step.startsWith("-");
+    this.emit(
+      `function count${n}(x${this.typed("number")}) {`,
+      `  let sum = 0, turns = 0, last = 0;`,
+      `  const list = [1, 2, 3, 4];`,
+      `  for (let i = ${start}; ${down ? `i > ${start} - ${turns} * ${step.slice(1)}` : `i < ${start} + ${turns} * ${step}`}; i += ${step}) { sum += ${this.pick(["i", "i % 7", "i | 0", "i >>> 0", "list[i & 3]", "list[i % 4] ?? -1", "i * 2", "(i / 2) | 0"])}; last = i; if (++turns > 100) break; }`,
+      `  return [sum, turns, last].join();`,
+      `}`,
+      `printValue("counter ${n}", count${n}(0), count${n}(2147483646), count${n}(${this.oddNumber()}));`,
+    );
+  }
+
+  /** Nodes of many kinds that one constructor makes: it stores its first parameter under the tag, and makers add the fields of their kind. */
+  kindsMadeByOneConstructor() {
+    const n = this.next();
+    const size = this.size(
+      this.plainly(85, 12, () => 128),
+      2,
+    );
+    const any = this.typed("any");
+    const at = this.place(size);
+    if (this.isTypeScript) {
+      this.emit(
+        `const enum Kind${n} { ${this.upTo(size)
+          .map(each => `K${each}`)
+          .join(", ")} }`,
+        `interface Base${n} { kind: Kind${n}; pos: number; flags: number }`,
+      );
+      for (const each of this.upTo(size))
+        this.emit(
+          `interface Node${n}_${each} extends Base${n} { kind: Kind${n}.K${each}; ${each % 3 === 0 ? "text: string" : each % 3 === 1 ? `left: Each${n}; right: Each${n} | undefined` : "value: number"} }`,
+        );
+      this.emit(
+        `type Each${n} = ${this.upTo(size)
+          .map(each => `Node${n}_${each}`)
+          .join(" | ")};`,
+      );
+    }
+    const kind = (each: number) => (this.isTypeScript ? `Kind${n}.K${each}` : String(each));
+    const isDirect = this.isTypeScript && this.chance(60);
+    const isClass = !isDirect && this.chance(40);
+    const fresh = (each: number) =>
+      isDirect
+        ? `new Maker${n}(${kind(each)}, ${each}) as Node${n}_${each}`
+        : `base${n}${this.isTypeScript ? `<Node${n}_${each}>` : ""}(${kind(each)}, ${each})`;
+    if (isDirect)
+      this.emit(
+        `function Direct${n}(this: Base${n}, kind: Kind${n}, pos: number) { this.kind = kind; this.pos = pos; this.flags = 0; }`,
+        `const Maker${n} = Direct${n} as any as new (kind: Kind${n}, pos: number) => Base${n};`,
+      );
+    this.emit(
+      isClass
+        ? `class Made${n} { kind${any}; pos${this.typed("number")}; flags = 0; constructor(kind${any}, pos${this.typed("number")}) { this.kind = kind; this.pos = pos; } }`
+        : `function Made${n}(${this.isTypeScript ? "this: any, " : ""}kind${any}, pos${this.typed("number")}) { this.kind = kind; this.pos = pos; this.flags = 0; }`,
+      `function base${n}${this.isTypeScript ? `<T extends Each${n}>` : ""}(kind${this.typed('T["kind"]')}, pos${this.typed("number")})${this.typed("T")} { return new ${this.cast(`Made${n}`)}(kind, pos); }`,
+    );
+    for (const each of this.upTo(size))
+      this.emit(
+        each % 3 === 0
+          ? `function make${n}_${each}(text${this.typed("string")}) { const node = ${fresh(each)}; node.text = text; return node; }`
+          : each % 3 === 1
+            ? `function make${n}_${each}(left${this.typed(`Each${n}`)}, right${this.isTypeScript ? `?: Each${n}` : ""}) { const node = ${fresh(each)}; node.left = left; node.right = right; return node; }`
+            : `function make${n}_${each}(value${this.typed("number")}) { const node = ${fresh(each)}; node.value = value; return node; }`,
+      );
+    this.emit(`function weigh${n}(node${this.typed(`Each${n}`)})${this.typed("number")} {`, `  switch (node.kind) {`);
+    for (const each of this.upTo(size))
+      this.emit(
+        `    case ${kind(each)}: return ${each % 3 === 0 ? "node.text.length" : each % 3 === 1 ? `weigh${n}(node.left) + (node.right ? weigh${n}(node.right) : 0)` : "node.value"} + node.pos;`,
+      );
+    const liar = this.pick([
+      `new ${this.cast(`Made${n}`)}(${kind(at)}, 1)`,
+      `new ${this.cast(`Made${n}`)}(${size + 5}, 1)`,
+      `{ kind: ${kind(at)}, pos: 1, flags: 0, text: "lit", value: 2, left: leaf }`,
+      `Object.assign(make${n}_0("t"), { kind: ${kind(Math.min(2, size - 1))} })`,
+      `Object.assign(make${n}_0("t"), { text: 5 })`,
+      `${this.cast(`Made${n}`)}.call({ text: "called", value: 3 }, ${kind(0)}, 2) ?? leaf`,
+      `Reflect.construct(Made${n}, [${kind(0)}, 3], class { })`,
+      `make${n}_0(${this.odd()})`,
+    ]);
+    this.emit(
+      `  }`,
+      `  return -1;`,
+      `}`,
+      `{`,
+      `  const leaf = make${n}_0("leaf");`,
+      `  const all${this.typed(`Each${n}[]`)} = [${this.upTo(size)
+        .map(each =>
+          each % 3 === 0
+            ? `make${n}_${each}("t${each}")`
+            : each % 3 === 1
+              ? `make${n}_${each}(leaf${each % 2 ? ", leaf" : ""})`
+              : `make${n}_${each}(${each}.5)`,
+        )
+        .join(", ")}];`,
+      `  let sum = 0; for (let turn = 0; turn < ${this.pick([1, 100])}; turn++) for (const node of all) sum += weigh${n}(node);`,
+      `  let odd${any}; try { odd = weigh${n}(${this.cast(liar)}); } catch (error) { odd = (error${this.isTypeScript ? " as any" : ""})?.constructor?.name; }`,
+      `  printValue("nodes ${n}", sum, odd, Object.keys(all[${at}]).join(), JSON.stringify(all[0]));`,
+      `}`,
+    );
+  }
+
   all = [
+    () => this.kindsMadeByOneConstructor(),
+    () => this.kindsMadeByOneConstructor(),
+    () => this.answersMadeFromLiterals(),
+    () => this.answersMadeFromLiterals(),
+    () => this.oldModulesThatRequireEachOther(),
+    () => this.oldModulesThatRequireEachOther(),
+    () => this.modulesOfTheRuntime(),
+    () => this.countersPastInt32(),
     () => this.valuesThatAreNotWhatTheirTypeSays(),
     () => this.valuesThatAreNotWhatTheirTypeSays(),
     () => this.valuesThatAreNotWhatTheirTypeSays(),

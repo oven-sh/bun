@@ -1,1 +1,5 @@
-{ "entryPoints": ["./file.cjs", "./plain.cjs"], "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" }, "skipInShell": "it needs require()" }
+{
+  "entryPoints": ["./file.cjs", "./plain.cjs"],
+  "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" },
+  "skipInShell": "it needs require()"
+}

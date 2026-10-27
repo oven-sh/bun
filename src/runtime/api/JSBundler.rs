@@ -421,6 +421,8 @@ pub(crate) mod js_bundler {
         aot: bool,
         logs_type_mismatches: bool,
         explain: Vec<Vec<u8>>,
+        disable: Vec<Vec<u8>>,
+        heat: Option<Vec<u8>>,
         omits_function_source: bool,
         obfuscates: bool,
         admits_inspector: bool,
@@ -470,8 +472,54 @@ pub(crate) mod js_bundler {
                 }
             }
 
+            raw.read_developer_words(global_this, compile)?;
             raw.read_trim(global_this, compile)?;
             Ok(raw)
+        }
+
+        fn read_developer_words(
+            &mut self,
+            global_this: &JSGlobalObject,
+            compile: JSValue,
+        ) -> JsResult<()> {
+            if let Some(disable) = compile.get(global_this, "aotDisable")?
+                && !disable.is_undefined_or_null()
+            {
+                let mut push = |names: JSValue| -> JsResult<()> {
+                    if !names.is_string() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.aotDisable",
+                            b"string or array of strings",
+                            names,
+                        ));
+                    }
+                    self.disable
+                        .push(names.to_utf8(global_this)?.slice().to_vec());
+                    Ok(())
+                };
+                if disable.is_array() {
+                    let mut iter = disable.array_iterator(global_this)?;
+                    while let Some(names) = iter.next()? {
+                        push(names)?;
+                    }
+                } else {
+                    push(disable)?;
+                }
+            }
+
+            if let Some(heat) = compile.get(global_this, "aotHeat")?
+                && !heat.is_undefined_or_null()
+            {
+                if !heat.is_string() {
+                    return Err(global_this.throw_invalid_property_type_value(
+                        b"compile.aotHeat",
+                        b"string",
+                        heat,
+                    ));
+                }
+                self.heat = Some(heat.to_utf8(global_this)?.slice().to_vec());
+            }
+            Ok(())
         }
 
         fn read_trim(&mut self, global_this: &JSGlobalObject, compile: JSValue) -> JsResult<()> {
@@ -533,7 +581,12 @@ pub(crate) mod js_bundler {
                     logs: self.logs,
                     is_template: false,
                 },
-                developer_words: vec![],
+                developer_words: self
+                    .disable
+                    .iter()
+                    .map(|names| ("disable", Some(names.as_slice())))
+                    .chain(self.heat.iter().map(|word| ("heat", Some(word.as_slice()))))
+                    .collect(),
                 is_cross_compile: !compile.compile_target.is_this_bun(),
                 exec_argv: &compile.exec_argv.list,
             }

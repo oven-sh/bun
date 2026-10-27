@@ -1,1 +1,1 @@
-export const deep = 1;
+export const deep = [1];

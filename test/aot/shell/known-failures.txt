@@ -877,7 +877,6 @@ structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration
 structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 0 sumPoint = TypeTest
 structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 1 sumPair = TypeTest
 structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 2 sumPoint = GetSlot v\d+ key="[xy]" receivers=\[L\d+\] level=Proven
-structural-types/an-instance-under-a-computed-key-of-a-union-type-passes-for-the-index-signature	// IRT= 0 barkIn testedType=undefined.null.object
 typed-objects/one-rest-copy-leaves-plain-literals-filled-at-birth	// IRT= 0 readRest GetSlotOrUndefined
 untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 read = TypeTest
 untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 read GetSlotOrUndefined

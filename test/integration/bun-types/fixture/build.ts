@@ -51,6 +51,28 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
+  compile: { aot: true, aotDisable: ["flow-results", "pass:InlineCalls"], aotHeat: "everything-is-cold" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotDisable: "flow-results,pass:InlineCalls" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, aotHeat: "lukewarm" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, aotDisable: [1] },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
   plugins: [
     {
       name: "my-terrible-plugin",

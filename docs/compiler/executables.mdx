@@ -1410,6 +1410,8 @@ interface CompileBuildOptions {
   aot?: boolean; // Compile the program to machine code ahead of time (default: false)
   aotLogTypeMismatches?: boolean; // With aot: log every value that doesn't match its declared type (default: false)
   aotExplain?: AotReport | AotReport[]; // With aot: reports to add to BuildOutput.logs, such as "guards" or "trim"
+  aotDisable?: string | string[]; // With aot: steps of the compiler to build without, such as "pass:PlaceTypeTests"
+  aotHeat?: AotHeat; // With aot: replaces the estimate of how often code runs, such as "everything-is-cold"
   functionSource?: boolean; // With aot: embed function source code, so that fn.toString() returns it (default: true)
   allowCodeFromDisk?: boolean; // With aot: let import() and require() load code that isn't in the executable from disk (default: false)
   inspector?: boolean; // With aot: let a debugger attach to the executable (default: false)

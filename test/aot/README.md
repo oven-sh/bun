@@ -131,10 +131,14 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   `<program>.json` leaves it out. A red says whether the program is red alone too. Windows limits the length of a command line, so a part is several
   executables there; Linux arm64 builds the same groups, and `AOT_SMALL_GROUPS=1` does on any system. The line `GROUPS:` says how many programs each executable holds. A build of a part may hold 3.2 GB at most: the two builds of a part run at once, and the
   smallest machines that run them have 8 GB. It is in the step that holds up nothing until CI has shown it green.
-- **A tenth of the programs, each as it is alone.** `every-program-alone-<part>` (`programs-as-separate-entry-points.ts`) also makes many programs the entry points of one executable, but
-  starts each in a Worker, so each is a program of its own and is compiled as it is when it is built alone: a program cannot lean on what a neighbor names. That costs three times the
-  processor time, and such a build uses one thread, so a run takes a tenth, another for each commit; `AOT_SHARE=all` takes all. Left out: what terminates Workers of its own, and the
-  programs in `programs-as-separate-entry-points.known.txt`, which depart there today. It is in the step that holds up nothing.
+- **A quarter of the programs a day, each as it is alone.** What `--aot` proves about a program it proves while it has seen all the code that can ever run, and the executable of
+  `every-program-<part>` begins with an `import()` of a computed name: nothing in it is compiled that way. `every-program-alone-<part>` (`programs-as-separate-entry-points.ts`) also makes
+  many programs the entry points of one executable, but starts each in a Worker, so each is a program of its own and is compiled as it is when it is built alone. A program that may load
+  any module would be one program with all its neighbors: it has an executable of its own and runs on the main thread, and so has what a Worker cannot run. The report of each build
+  says how often the compiler ran, and the line `WORLD:` how many programs were built in either way and how many may run code that their build has not seen. That costs thirteen times
+  the processor time, so a run takes a quarter, by the day and the lane: the two lanes that run every file have taken every program in two days; `AOT_SHARE=all` takes all. Left out:
+  what is built with flags or entry points of its own. The programs in `programs-as-separate-entry-points.known.txt` do not print what is expected today and are todos. It is in the step that holds
+  up nothing.
 - **The check of references.** `run-programs.ts` builds every program with `--aot-check=validate-references`.
 - **What the back end is told.** `--aot-check=ClaimsToBackEnd` leaves the code of an ordinary build as it is up to the last phase that moves a value and adds code that finds out in
   the run whether a word that was said never to change has changed, a number lies in its range, a cell in the frame is read before it is filled. An ASAN or debug build of Bun builds

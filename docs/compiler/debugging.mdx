@@ -462,7 +462,7 @@ note: This is a bug in Bun. Please report it at https://github.com/oven-sh/bun/i
  https://bun.report/...
 ```
 
-[Open an issue](https://github.com/oven-sh/bun/issues) with these lines and, if you can share it, the function. If the error names an option, you can build with it until the bug is fixed. The executable behaves the same and may be slower. These lines only go to stderr. The link has none of your names or paths.
+[Open an issue](https://github.com/oven-sh/bun/issues) with these lines and, if you can share it, the function. If the error names an option, you can build with it until the bug is fixed. In `Bun.build`, the option is `compile: { aotDisable: ["pass:PlaceTypeTests"] }`. The executable behaves the same and may be slower. These lines only go to stderr. The link has none of your names or paths.
 
 If a build seems stuck, press Ctrl+C, or end it with `kill` or `timeout`. Before it exits, it prints what each thread was working on and for how long.
 

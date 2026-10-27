@@ -244,7 +244,7 @@ pub(super) fn predicted_type_files<'r>(
     let imports = loaded.imports.iter().filter(|it| {
         it.should_add_file
             && it.unsupported_extension.is_none()
-            && !(is_javascript_file(host, it.path) && strings::contains(it.path, b"/node_modules/"))
+            && !(strings::contains(it.path, b"/node_modules/") && is_javascript_file(host, it.path))
     });
     let imports = imports.map(|it| (it.path, false));
     references.chain(imports).collect()

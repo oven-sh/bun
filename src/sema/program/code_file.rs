@@ -3,7 +3,7 @@ use super::code_imports::resolve_code_imports;
 use super::code_load::{Analyzed, CodeTarget, LoadKey, ParsedCodeFile};
 use super::*;
 use crate::bind::{BindOptions, RuntimeBindOptions};
-use crate::file_analysis::{FileAnalysis, FileInputs, analyze_file};
+use crate::file_analysis::{FileAnalysis, FileInputs, analyze_file, fold_file_again};
 use crate::fold::FoldInputs;
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{AutomaticJsx, JsxMode, find_exported_requires};
@@ -51,6 +51,7 @@ pub(super) fn load_code_file<'s, 'r>(
     text: Cow<'static, [u8]>,
     is_called_before_it_runs: bool,
     imported_requires: &[ImportedRequire],
+    imported_constants: &[ImportedConstant],
 ) -> ParsedCodeFile<'s, 'r> {
     let &CodeLoadContext {
         resolver,
@@ -65,6 +66,7 @@ pub(super) fn load_code_file<'s, 'r>(
     let mut tree = accept_tree(context, arena, key, settings, text);
     debug_assert!(tree.hir.kind != FileKind::Declaration);
     tree.hir.imported_requires = ArenaFew::from_iter_in(imported_requires.iter().copied(), arena);
+    tree.hir.imported_constants = ArenaFew::from_iter_in(imported_constants.iter().copied(), arena);
     let is_script_for_project = match tree.request.options.written_module_detection {
         ModuleDetection::Force => false,
         ModuleDetection::Legacy => true,
@@ -86,10 +88,7 @@ pub(super) fn load_code_file<'s, 'r>(
     if tree.hir.text.is_empty() && tree.hir.source_len as usize == tree.text.len() {
         tree.hir.text = std::mem::take(&mut tree.text);
     }
-    let fold = match is_called_before_it_runs {
-        true => &*arena.alloc(context.inputs.fold.for_file_called_before_it_runs()),
-        false => context.inputs.fold,
-    };
+    let fold = fold_inputs_of(context, arena, is_called_before_it_runs);
     let (bound, analyzed) = analyze(context, arena, key, settings, fold, &mut tree);
     if !tree.request.options.keeps_comments {
         tree.hir.comments = Default::default();
@@ -97,21 +96,94 @@ pub(super) fn load_code_file<'s, 'r>(
     rename_private_names_with(&mut tree.hir, &bound, atoms, path, |reference, _| {
         bound.runtime.private_class(reference)
     });
-    let mut code = resolve_code_imports(context, key, &tree.hir, analyzed);
-    code.add_implied(context, key, &tree.hir, &bound, &mut tree.payload);
-    code.requests = summarize_requests(context, key, &tree.hir, &bound, &code);
+    let parse = Parse {
+        hir: tree.hir,
+        bound,
+        is_shared: false,
+    };
+    resolve_analyzed_file(context, key, parse, analyzed, specifies_esm, tree.payload)
+}
+
+fn fold_inputs_of<'c, 's: 'c>(
+    context: &'c CodeLoadContext<'_, 's, '_>,
+    arena: &'s Arena,
+    is_called_before_it_runs: bool,
+) -> &'c FoldInputs<'s> {
+    match is_called_before_it_runs {
+        true => &*arena.alloc(context.inputs.fold.for_file_called_before_it_runs()),
+        false => context.inputs.fold,
+    }
+}
+
+fn resolve_analyzed_file<'s, 'r>(
+    context: &CodeLoadContext<'_, 's, 'r>,
+    key: LoadKey<'r>,
+    parse: Parse<'s>,
+    analyzed: Analyzed<'s, 'r>,
+    specifies_esm: bool,
+    mut payload: Option<HostPayload>,
+) -> ParsedCodeFile<'s, 'r> {
+    let (hir, bound) = (&parse.hir, &parse.bound);
+    let mut code = resolve_code_imports(context, key, hir, analyzed);
+    code.add_implied(context, key, hir, bound, &mut payload);
+    code.requests = summarize_requests(context, key, hir, bound, &code);
     let decisions = &code.analyzed.analysis.decisions;
-    code.exported_requires = find_exported_requires(&tree.hir, &bound, decisions);
+    code.exported_requires = find_exported_requires(hir, bound, decisions);
     ParsedCodeFile {
-        parse: Parse {
-            hir: tree.hir,
-            bound,
-            is_shared: false,
-        },
+        parse,
         specifies_esm,
         code: Box::new(code),
-        payload: tree.payload,
+        payload,
     }
+}
+
+/// The tree and its bindings stay. `None`: the file is to be loaded anew.
+pub(super) fn fold_code_file_again<'s, 'r>(
+    context: &CodeLoadContext<'_, 's, 'r>,
+    arena: &'s Arena,
+    target: CodeTarget<'r>,
+    loaded: ParsedCodeFile<'s, 'r>,
+    is_called_before_it_runs: bool,
+    imported_constants: &[ImportedConstant],
+) -> Option<ParsedCodeFile<'s, 'r>> {
+    let key = target.key;
+    let ParsedCodeFile {
+        mut parse,
+        specifies_esm,
+        code,
+        payload,
+    } = loaded;
+    parse.hir.imported_constants =
+        ArenaFew::from_iter_in(imported_constants.iter().copied(), arena);
+    let previous = code.analyzed;
+    let file = FileInputs {
+        declared_module_type: previous.declared_module_type,
+        import_meta_main: import_meta_main(context, key),
+        is_library: context.host.is_library_file(key.path),
+        host_values: previous.host_values,
+        jsx: previous.jsx_mode,
+    };
+    let analysis = fold_file_again(
+        &parse.hir,
+        &parse.bound,
+        fold_inputs_of(context, arena, is_called_before_it_runs),
+        file,
+        &previous.analysis,
+        &context.atoms,
+        arena,
+    )?;
+    let analyzed = Analyzed {
+        analysis,
+        ..previous
+    };
+    Some(resolve_analyzed_file(
+        context,
+        key,
+        parse,
+        analyzed,
+        specifies_esm,
+        payload,
+    ))
 }
 
 fn parse_options_of(
@@ -254,9 +326,11 @@ fn analyze<'s, 'r>(
         host_values: tree.host_values,
         jsx: jsx_mode,
     };
-    let (bound, analysis) = analyze_with_host(context, arena, path, bind, fold, file, tree);
+    let (bound, analysis, host_values) =
+        analyze_with_host(context, arena, path, bind, fold, file, tree);
     let analyzed = Analyzed {
         analysis,
+        host_values,
         settings,
         jsx,
         jsx_mode,
@@ -277,7 +351,7 @@ fn analyze_with_host<'s>(
     fold: &FoldInputs<'s>,
     mut file: FileInputs<'s>,
     tree: &mut AcceptedTree<'s, '_>,
-) -> (Bound<'s>, FileAnalysis<'s>) {
+) -> (Bound<'s>, FileAnalysis<'s>, &'s [(ExprId, HostValue<'s>)]) {
     let &CodeLoadContext {
         host, ref atoms, ..
     } = context;
@@ -290,7 +364,8 @@ fn analyze_with_host<'s>(
             drop(bound);
             tree.replace_after_stack_overflow(context, arena);
             file.host_values = &[];
-            return analyze_file(&mut tree.hir, bind, fold, file, atoms, arena);
+            let (bound, analysis) = analyze_file(&mut tree.hir, bind, fold, file, atoms, arena);
+            return (bound, analysis, file.host_values);
         }
         if !analysis.pending_macro_calls.is_empty() {
             let request = MacroRequest {
@@ -320,7 +395,7 @@ fn analyze_with_host<'s>(
                 TreeChange::Unchanged => {}
             }
         }
-        return (bound, analysis);
+        return (bound, analysis, file.host_values);
     }
 }
 

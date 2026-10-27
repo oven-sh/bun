@@ -17,6 +17,7 @@
 //
 // A program in which plain Bun runs a CommonJS module a second time, because it threw the first time, is counted and is no finding where the two part: an executable runs a module once.
 // So is one in which the two part where a module that threw is asked for again, by itself or through a module that needs it, and the executable throws: plain Bun answers with the namespace object there if an ES module imported the file while it ran.
+// Where nobody got the error, an executable answers with that object too.
 //
 // Plain Bun reads files on several threads, and the order in which the texts arrive can show in what a program prints. The reference reads on one thread; an executable that prints what plain Bun prints on several, in one of forty runs, is counted and is no finding.
 //
@@ -252,7 +253,7 @@ if (import.meta.main) {
     return new Set(begun).size < begun.length;
   };
 
-  // Where an ES module imported the file while it ran, plain Bun runs nothing again: the next request gets the namespace object of that import. An executable throws the same error there too,
+  // Where an ES module imported the file while it ran, plain Bun runs nothing again: the next request gets the namespace object of that import. An executable does the same where nobody got the error. Where somebody did it throws the same error,
   // also where the request is for a module that needs the file. Where nobody catches the error, the module that goes on under plain Bun never ends in the executable.
   const throwsForModuleThatThrew = (plain: string, compiled: string, notes: string) => {
     const [expected, got] = [plain.split("\n"), compiled.split("\n")];

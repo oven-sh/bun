@@ -1,4 +1,7 @@
 {
+  "a program of one line": {
+    "megabytes": 132
+  },
   "ES modules that import one another in a row": {
     "millionInstructions": 6640,
     "megabytes": 218
@@ -164,10 +167,10 @@
     }
   },
   "functions that each make a class below the one that the function before has made": {
-    "millionInstructions": 21702,
+    "millionInstructions": 17344,
     "megabytes": 396,
     "growth": {
-      "instructions": 3.49,
+      "instructions": 3.4,
       "peakBytes": 5.3
     }
   },
@@ -179,15 +182,18 @@
     }
   },
   "rows of classes that functions make one below the other, by the length of a row": {
-    "millionInstructions": 7199,
+    "millionInstructions": 6586,
     "megabytes": 139
   },
   "classes that each extend what a function of their own makes of one base class": {
-    "millionInstructions": 16680,
-    "megabytes": 250,
+    "millionInstructions": 5857,
+    "megabytes": 140
+  },
+  "functions that are stored one after another under one name of one object and called there": {
+    "millionInstructions": 8683,
+    "megabytes": 132,
     "growth": {
-      "instructions": 3.23,
-      "peakBytes": 3.5
+      "instructions": 3.23
     }
   },
   "functions on one line after non-ASCII text": {
@@ -257,12 +263,16 @@
     "millionInstructions": 5178,
     "megabytes": 220
   },
+  "rows of constants that are each named after the one before, at the top of a file and in a function": {
+    "millionInstructions": 12894,
+    "megabytes": 215
+  },
   "classes below a function that makes their base, kept in a list and constructed for the classes of another list": {
-    "millionInstructions": 9643,
+    "millionInstructions": 9047,
     "megabytes": 129
   },
   "classes below one function that makes their base, each constructed for a class beside it, that store through this": {
-    "millionInstructions": 6964,
+    "millionInstructions": 6448,
     "megabytes": 153
   },
   "classes that are all declared before the first is constructed, in a build that validates": {

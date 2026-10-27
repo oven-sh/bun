@@ -34,6 +34,7 @@ const programFolders: Record<string, number> = {
   "awaited-objects": 0,
   "built-ins-alone": 108,
   "built-ins-asked-in-place": 0,
+  "callees-replaced-behind-their-test": 2,
   "calls": 2,
   "classes-below-built-in-classes": 8,
   "code-that-built-ins-run": 8,
@@ -43,6 +44,7 @@ const programFolders: Record<string, number> = {
   "impostors": 20,
   "kept-attacks": 6,
   "language": 2,
+  "lists-changed-behind-their-test": 4,
   "method-table": 4,
   "native-callbacks": 0,
   "relations-at-random": 0,
@@ -52,6 +54,7 @@ const programFolders: Record<string, number> = {
   "typed-objects": 3,
   "untyped-code": 3,
   "untyped-stress": 2,
+  "values-that-are-there-only-behind-a-test": 2,
   "ways-into-library-modules": 8,
   "writes-to-host-objects": 7,
 };
@@ -84,8 +87,8 @@ const collecting = (every: number, young: boolean) => ({
 });
 const underCollections = { BUN_JSC_slowPathAllocsBetweenGCs: "3", BUN_JSC_scribbleFreeCells: "1" };
 
-const variant = (label: string, flags: string[], env: object = {}, parts = 3, behind?: unknown[][]): Row => [
-  `aot/variant-${label}`,
+const variant = (label: string | string[], flags: string[], env: object = {}, parts = 3, behind?: unknown[][]): Row => [
+  `aot/variant-${[label].flat().join("-and-")}`,
   parts,
   "./run-programs",
   "variant",
@@ -159,6 +162,7 @@ export const rows: Row[] = [
       ],
     ],
   ]),
+  variant(["every-function-cold", "no-flow-results"], ["--aot-heat=everything-is-cold", "--aot-disable=flow-results"]),
   variant("every-function-hot", ["--aot-heat=everything-is-hot"]),
   variant("every-function-neither-hot-nor-cold", ["--aot-heat=nothing-is-hottest"]),
   variant("every-stage-verified", ["--aot-check=verify-each-stage,used-values-are-listed"]),
@@ -234,7 +238,9 @@ export const rows: Row[] = [
   ["aot/variant-without-flow-result", 8, "./flow-result-kinds", "variantsWithoutOneFlowResult"],
 
   builtWith("built-ins-asked-in-place", "validated", ["--aot-validate"]),
+  builtWith("callees-replaced-behind-their-test", "validated", ["--aot-validate"]),
   builtWith("kept-attacks", "validated", ["--aot-validate"], {}, 4),
+  builtWith("lists-changed-behind-their-test", "validated", ["--aot-validate"], {}, 2),
   builtWith("relational-summaries", "collector-verifies", ["--aot-validate"], { BUN_JSC_verifyGC: "1" }),
   builtWith("relational-summaries", "under-collections", [withoutInlining], underCollections),
   builtWith("relational-summaries", "validated", ["--aot-validate", withoutInlining]),
@@ -243,6 +249,7 @@ export const rows: Row[] = [
   builtWith("relations-at-random", "without-inlining", ["--aot-validate", withoutInlining]),
   builtWith("site-records", "every-function-cold", ["--aot-heat=everything-is-cold"]),
   builtWith("site-records", "every-function-cold-types-erased", ["--aot-heat=everything-is-cold", "--aot-erase-types"]),
+  builtWith("values-that-are-there-only-behind-a-test", "validated", ["--aot-validate"]),
 
   births(
     "a value of another kind arrives in the middle of the work",
@@ -382,7 +389,7 @@ export const rows: Row[] = [
   ["aot/compile-exec-argv-as-without-aot", 3, "./compile-exec-argv-as-without-aot-cases", "execArgvAsWithoutAot"],
   ["aot/each-case-alone", 20, "./each-case-alone-cases", "eachCaseAlone"],
   ["aot/every-program", 64, "./programs-as-entry-points", "programsAsEntryPoints"],
-  ["aot/every-program-alone", 32, "./programs-as-separate-entry-points", "programsAsSeparateEntryPoints"],
+  ["aot/every-program-alone", 96, "./programs-as-separate-entry-points", "programsAsSeparateEntryPoints"],
   [
     "aot/every-way-to-a-loader-finds-the-built-in-module-that-the-program-names",
     3,
@@ -498,6 +505,7 @@ export const rows: Row[] = [
   ["aot/trimmed-against-whole", 4, "./trimmed-against-whole-cases", "trimmedAgainstWhole"],
   ["aot/trimmed-is-whole/environment", 3, "./trimmed-is-whole/environment-in-parts", "testEnvironments"],
   ["aot/trimmed-matches-untrimmed", 4, "./trimmed-is-whole/run", "testTrimmedMatchesUntrimmed"],
+  ["aot/what-is-moved-ahead-of-a-loop", 3, "./what-is-moved-ahead-of-a-loop-cases", "whatIsMovedAheadOfALoop"],
 
   [
     "bundler/compile-trim-never-exits",

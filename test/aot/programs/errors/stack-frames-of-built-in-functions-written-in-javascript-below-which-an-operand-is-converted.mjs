@@ -4,7 +4,8 @@ const framesOf = stack => {
     .split("\n")
     .slice(1)
     .map(line => line.trim().replace(/^at /, ""))
-    .map(frame => (frame.includes(" (") ? frame.replace(/\(.*?([a-z]*)(:\d+:\d+)?\)$/, "($1$2)") : "(file)"));
+    .map(frame => (frame.includes(" (") ? frame.replace(/\(.*?([a-z]*)(:\d+:\d+)?\)$/, "($1$2)") : "(file)"))
+    .map(frame => frame.replace(/native:\d+:\d+/, "native"));
   const end = frames.findIndex(frame => frame.startsWith("start "));
   return frames.slice(0, end + 1).join(" < ");
 };

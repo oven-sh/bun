@@ -29,7 +29,7 @@ use super::{
     AssetError, BundlerInputs, CompileFailure, CompileOutcome, CompileProduct, CompileRequest,
     configuration, reports, trimming,
 };
-use crate::cli::build_command::collect_compile_assets;
+use crate::cli::build_command::{collect_compile_assets, to_embedded_name};
 
 unsafe extern "C" {
     fn Bun__AOT__describeWhereThisThreadStopped(buffer: *mut u8, capacity: usize) -> usize;
@@ -437,7 +437,7 @@ fn add_asset(
     asset: OutputFile,
     modules_without_text: &mut ModulesWithoutText,
     output_files: &mut Vec<OutputFile>,
-) {
+) -> usize {
     match modules_without_text.remove(&asset.dest_path) {
         Some(index) => {
             let module = &mut output_files[index];
@@ -445,8 +445,12 @@ fn add_asset(
             module.size = asset.size;
             module.size_without_sourcemap = asset.size_without_sourcemap;
             module.value = asset.value;
+            index
         }
-        None => output_files.push(asset),
+        None => {
+            output_files.push(asset);
+            output_files.len() - 1
+        }
     }
 }
 
@@ -476,9 +480,9 @@ fn add_assets_under_root(
             .map_err(AssetError::NotCollected)?;
 
         let asset_path = trim_trailing_separators(asset);
-        let asset_name = bun_paths::basename(asset_path);
+        let asset_name = to_embedded_name(bun_paths::basename(asset_path));
         let under_root = path_under_root(root_directory, working_directory.as_bytes(), asset_path);
-        let embedded_path = under_root.as_deref().unwrap_or(asset_name);
+        let embedded_path = under_root.as_deref().unwrap_or(&asset_name);
         let first_name_length = bun_core::strings::index_of_char_usize(embedded_path, b'/')
             .unwrap_or(embedded_path.len());
         if &embedded_path[..first_name_length] == bun_paths::basename(entry_name) {
@@ -490,7 +494,7 @@ fn add_assets_under_root(
             if let Some(under_root) = &under_root {
                 let path_in_asset = file
                     .dest_path
-                    .strip_prefix(asset_name)
+                    .strip_prefix(&asset_name[..])
                     .expect("collect_compile_assets names files under the asset's name");
                 file.dest_path = graph_path(under_root, path_in_asset).into_boxed_slice();
             }
@@ -550,13 +554,14 @@ fn add_assets_in_place(
         .map(|file| file.dest_path.clone())
         .collect();
     let mut modules_without_text = modules_without_text(output_files);
+    let mut added: std::collections::BTreeMap<Box<[u8]>, usize> = Default::default();
     for asset in assets {
         let mut files = Vec::new();
         collect_compile_assets(core::slice::from_ref(asset), b"", &mut files)
             .map_err(AssetError::NotCollected)?;
 
         let asset_path = trim_trailing_separators(asset);
-        let asset_name = bun_paths::basename(asset_path);
+        let asset_name = to_embedded_name(bun_paths::basename(asset_path));
         let written_path = resolve_path::join_abs_string::<platform::Auto>(
             working_directory.as_bytes(),
             &[asset_path],
@@ -571,19 +576,33 @@ fn add_assets_in_place(
         for mut file in files {
             let path_in_asset = file
                 .dest_path
-                .strip_prefix(asset_name)
+                .strip_prefix(&asset_name[..])
                 .expect("collect_compile_assets names files under the asset's name");
             let written_dest = graph_path(&written_path, path_in_asset);
             if embedded.contains(&written_dest[..]) {
                 continue;
             }
-            if real_path != written_path.as_slice() {
+            let at_real_path = (real_path != written_path.as_slice()).then(|| {
                 let real_dest = graph_path(real_path, path_in_asset);
-                let at_real_path = asset_output_file(real_dest, file.value.as_slice().to_vec());
-                add_asset(at_real_path, &mut modules_without_text, output_files);
-            }
+                asset_output_file(real_dest, file.value.as_slice().to_vec())
+            });
             file.dest_path = written_dest.into_boxed_slice();
-            add_asset(file, &mut modules_without_text, output_files);
+            for file in at_real_path.into_iter().chain([file]) {
+                let Some(&earlier) = added.get(&file.dest_path) else {
+                    let path = file.dest_path.clone();
+                    added.insert(
+                        path,
+                        add_asset(file, &mut modules_without_text, output_files),
+                    );
+                    continue;
+                };
+                if output_files[earlier].value.as_slice() != file.value.as_slice() {
+                    return Err(AssetError::Collides {
+                        asset: asset.clone(),
+                        path: file.dest_path,
+                    });
+                }
+            }
         }
     }
     Ok(())
@@ -597,7 +616,7 @@ pub(super) fn trim_trailing_separators(mut path: &[u8]) -> &[u8] {
 }
 
 pub(super) fn graph_path(asset_path: &[u8], path_in_asset: &[u8]) -> Vec<u8> {
-    let mut path = [asset_path, path_in_asset].concat();
+    let mut path = to_embedded_name(&[asset_path, path_in_asset].concat());
     resolve_path::platform_to_posix_in_place(&mut path[..]);
     path
 }

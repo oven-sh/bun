@@ -196,6 +196,7 @@ impl EvaluationOrder {
         self.is_code_of_program(referrer)
             && self.is_code_of_program(target)
             && !self.has(&self.needs_loader, target)
+            && !self.has(&self.parts.may_be_imported_while_it_runs, target)
             && is_seen_whole
     }
 }
@@ -207,6 +208,7 @@ pub(super) struct OrderParts {
     pub is_half: Vec<bool>,
     pub is_loaded_by_loader: Vec<bool>,
     pub is_required_during_load: Vec<bool>,
+    pub may_be_imported_while_it_runs: Vec<bool>,
     pub prefix_roots: Vec<FileId>,
 }
 
@@ -220,6 +222,7 @@ impl OrderParts {
             is_half: vec![false; file_count],
             is_loaded_by_loader: vec![false; file_count],
             is_required_during_load: vec![false; file_count],
+            may_be_imported_while_it_runs: vec![false; file_count],
             prefix_roots: Vec::new(),
         }
     }
@@ -721,10 +724,12 @@ fn find_program_code(
 struct LoadsSeenByProgram {
     is_loaded_by_loader: Vec<bool>,
     is_required_during_load: Vec<bool>,
+    may_be_imported_while_it_runs: Vec<bool>,
 }
 
 // `bun run` loads a graph in steps, and an imported CommonJS file runs in one of them. What such a file reaches runs while the graph is loaded, in the file or in a job that it queues.
 // A `require` of an ES module there asks the run time. Where the ES module leads back to the file that requires it, the loader of the run time loads the program from its start.
+// An ES module on such a way back imports its CommonJS file while the file runs. If the file then throws, nobody gets the error and a later `require` of the file is answered with the names of that import: it asks the run time too.
 fn find_loads_seen_by_program(
     scans: &Scans,
     modules: &ModuleSet,
@@ -737,6 +742,7 @@ fn find_loads_seen_by_program(
     let mut seen = LoadsSeenByProgram {
         is_loaded_by_loader: vec![false; count],
         is_required_during_load: vec![false; count],
+        may_be_imported_while_it_runs: vec![false; count],
     };
     let kind_of = |module: ModuleRef| match module {
         ModuleRef::File(file) if is_code_of_program[file.idx()] => {
@@ -749,14 +755,19 @@ fn find_loads_seen_by_program(
     let es_modules = files_of_program
         .clone()
         .filter(|known| known.1 == ModuleKind::SourceText);
-    let imported = es_modules.flat_map(|(file, _)| scans.of(file).requests.iter());
-    let imported = imported.filter_map(|request| kind_of(request.target));
-    let imported = imported.filter(|known| known.1 == ModuleKind::CommonJs);
-    let imported: Vec<u32> = imported.map(|known| known.0.0).collect();
-    if imported.is_empty() {
+    let imports = es_modules.flat_map(|(importer, _)| {
+        let requests = scans.of(importer).requests.iter();
+        requests.filter_map(move |request| Some((importer, kind_of(request.target)?)))
+    });
+    let imports = imports.filter(|(_, known)| known.1 == ModuleKind::CommonJs);
+    let imports: Vec<(FileId, FileId)> = imports
+        .map(|(importer, known)| (importer, known.0))
+        .collect();
+    if imports.is_empty() {
         return seen;
     }
 
+    let imported = imports.iter().map(|(_, file)| file.0).collect();
     let runs_during_load = find_reached(edges, imported);
     let mut component_of = None;
     let mut leads_back = false;
@@ -782,9 +793,13 @@ fn find_loads_seen_by_program(
             leads_back |= component_of[referrer] == component_of[target.idx()];
         }
     }
-    if leads_back {
+    if let (true, Some(component_of)) = (leads_back, component_of) {
         for (file, _) in files_of_program {
             seen.is_loaded_by_loader[file.idx()] = true;
+        }
+        for (importer, file) in imports {
+            seen.may_be_imported_while_it_runs[file.idx()] |=
+                component_of[importer.idx()] == component_of[file.idx()];
         }
     }
     seen
@@ -909,6 +924,7 @@ pub(super) fn compute_order(
         is_half,
         is_loaded_by_loader: loads.is_loaded_by_loader,
         is_required_during_load: loads.is_required_during_load,
+        may_be_imported_while_it_runs: loads.may_be_imported_while_it_runs,
         prefix_roots,
     };
     let order = EvaluationOrder {

@@ -204,6 +204,9 @@ export default b.declarations(
   b.class("Event", {
     instanceCppClass: b.cppClass("JSEvent"),
     types: [b.viewType("Event")],
+    // `isTrusted` is an own property of every event, not a member of Event.prototype.
+    namesDefinedOnNewInstances: ["isTrusted"],
+    typesOfNamesDefinedOnNewInstances: b.typesByName({ isTrusted: b.bool }),
     call: { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
     construct: [
       // The type is required: it counts the operands, so a type that is not passed is not one that is undefined.

@@ -49,6 +49,7 @@ pub fn parse_for_compile<'s>(
         compiles: true,
         keeps_function_directives: options.keeps_function_directives,
         skips_function_blocks: false,
+        reads_module_statements_alone: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         let scratch = all[0].get_or_insert_default();

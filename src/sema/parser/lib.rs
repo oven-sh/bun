@@ -156,6 +156,9 @@ pub struct Options {
     pub keeps_function_directives: bool,
     /// Functions have empty bodies wherever `parser/skipped_blocks.rs` can step over their blocks.
     pub skips_function_blocks: bool,
+    /// Of a TypeScript module only the `import` and `export` statements in front of the others are parsed. A text whose
+    /// other statements may name a file, or declare what other files see, is rejected (`parser/skipped_blocks.rs`).
+    pub reads_module_statements_alone: bool,
 }
 
 /// A part of a text, parsed like acorn's `parseExpressionAt`: whatever follows it isn't checked, and only one token of

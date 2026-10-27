@@ -389,7 +389,10 @@ export class ProductBed implements Bed {
   #run(folder: string, cmd: string[], flags: string[]) {
     const drawn = flags.filter(flag => flag.startsWith(inTheRun)).map(flag => flag.slice(inTheRun.length).split("="));
     const seconds = (flags.includes("--aot-validate") ? this.options.validatedRunSeconds : undefined) ?? this.options.compiledRunSeconds ?? this.options.runSeconds;
-    return spawned(cmd, folder, seconds, { ...this.options.runEnvironment, ...Object.fromEntries(drawn) }, this.options.memory);
+    const set: Record<string, string> = { ...this.options.runEnvironment, ...Object.fromEntries(drawn) };
+    // Where collections are forced a sweep overwrites dead cells.
+    if (set.BUN_JSC_slowPathAllocsBetweenGCs || set.BUN_JSC_collectContinuously === "1") set.BUN_JSC_useZombieMode ??= "1";
+    return spawned(cmd, folder, seconds, set, this.options.memory);
   }
 
   #build(folder: string, entry: string, flags: string[]) {

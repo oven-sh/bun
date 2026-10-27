@@ -145,7 +145,8 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     UNUSED_PARAM(callFrame);
 
     JSC::JSObject* callerObject = caller.getObject();
-    WTF::String callerName = callerObject ? Zig::functionName(vm, callerObject) : WTF::String();
+    // Made at the first frame that is not the caller's by identity.
+    std::optional<WTF::String> nameOfCaller;
 
     // A deep stack holds the same few functions over and over, and their names take
     // longer to make than to compare.
@@ -167,15 +168,20 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 #if ENABLE(AOT)
         if (frame.isCompiledFrame()) {
             const auto& compiledFrame = frame.compiledFrame();
-            if (JSC::AOT::isClosureOf(callerObject, compiledFrame.function))
-                return true;
             function.code = static_cast<uintptr_t>(compiledFrame.function.index()) << 2 | (compiledFrame.calleeLiesInFrame ? 2 : 0) | 1;
         }
 #endif
-        if (callerName.isEmpty())
-            return false;
         auto& functionWithOtherName = functionsWithOtherNames[((std::bit_cast<uintptr_t>(function.callee) >> 4) + (function.code >> 2)) % functionsWithOtherNames.size()];
         if (functionWithOtherName == function)
+            return false;
+#if ENABLE(AOT)
+        if (frame.isCompiledFrame() && JSC::AOT::isClosureOf(callerObject, frame.compiledFrame().function))
+            return true;
+#endif
+        if (!nameOfCaller)
+            nameOfCaller = Zig::functionName(vm, callerObject);
+        const WTF::String& callerName = *nameOfCaller;
+        if (callerName.isEmpty())
             return false;
         if (Zig::functionName(vm, frame, nullptr) == callerName)
             return true;

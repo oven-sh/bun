@@ -1,9 +1,9 @@
-// A generator stands at a `yield*` while what it iterates over throws. Each row prints the line and column of every frame.
+// A generator stands at a `yield*` while what it iterates over throws. Each row prints the line and column of every frame of the program.
 const places = error =>
   String(error.stack)
     .split("\n")
     .slice(1)
-    .map(line => (/(\d+:\d+)\)?$/.exec(line) || [, "?"])[1])
+    .map(line => (/(native|\d+:\d+)\)?$/.exec(line.replace(/native:\d+:\d+/, "native")) || [, "?"])[1])
     .join(" < ");
 function fail() {
   throw new TypeError("thrown below");

@@ -240,6 +240,8 @@ enum LiteralKind {
 pub(in crate::lower) struct PrintedOperators {
     literals: RefCell<FxHashMap<ExprId, bool>>,
     kinds: RefCell<FxHashMap<ExprId, Option<LiteralKind>>>,
+    // By the only use of a variable whose initializer is printed there: the initializer, if it is a literal.
+    literals_visited_again: RefCell<FxHashMap<ExprId, Option<ExprId>>>,
     // Whether a variable that is used once is being asked about. What that question asks of other such variables is answered without them.
     is_asking_about_variable_used_once: Cell<bool>,
 }
@@ -251,6 +253,10 @@ impl PrintedOperators {
 
     fn find_kind(&self, operator: ExprId) -> Option<Option<LiteralKind>> {
         self.kinds.borrow().get(&operator).copied()
+    }
+
+    pub(in crate::lower) fn is_asking_about_variable_used_once(&self) -> bool {
+        self.is_asking_about_variable_used_once.get()
     }
 }
 
@@ -812,12 +818,20 @@ impl FileLowering<'_, '_, '_, '_> {
     // what has become an operator over literals.
     fn find_literal_visited_again(&self, name: ExprId) -> Option<ExprId> {
         let is_asking = &self.printed_operators.is_asking_about_variable_used_once;
-        if is_asking.replace(true) {
+        if is_asking.get() {
             return None;
         }
+        let remembered = &self.printed_operators.literals_visited_again;
+        if let Some(&literal) = remembered.borrow().get(&name) {
+            return literal;
+        }
+        is_asking.set(true);
         let initializer = self.find_initializer_visited_again(name);
         is_asking.set(false);
-        initializer.filter(|&initializer| self.is_literal_operand(initializer))
+        let initializer = initializer?;
+        let literal = self.is_literal_operand(initializer).then_some(initializer);
+        remembered.borrow_mut().insert(name, literal);
+        literal
     }
 
     // `1 + "ab".length` and `Level.High`, of which Bun's transpiler prints the value.

@@ -15,7 +15,7 @@
 //   AOT_GENERATED_OPENS=all bun test ..                      every program opens the world (../fuzz/the-world-is-open.ts)
 //   AOT_GENERATED_IN_ONE_EXECUTABLE=1 bun test ..            an executable for each program, also where programs share one
 import { afterAll, describe, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { dirname, join, sep } from "path";
 import { withCollectionsInsideCalls } from "../fuzz/collections-inside-calls";
@@ -45,8 +45,14 @@ export type Generated = {
   isAlwaysRun: boolean;
   /** It once showed a fault. It is meant for every run, and no run leaves it to another commit. once-wrong.json marks programs by title and name too. */
   wasOnceWrong?: boolean;
-  /** `file` is what runs. `entryPoints` are files that the build is given behind it. */
-  make: () => { file: string; text: string; files?: Record<string, string>; entryPoints?: string[] };
+  /** `file` is what runs. `entryPoints` are files that the build is given behind it. `links`: where a link lies, and what it points to, as seen from the folder that it lies in. */
+  make: () => {
+    file: string;
+    text: string;
+    files?: Record<string, string>;
+    links?: Record<string, string>;
+    entryPoints?: string[];
+  };
   /** The program tries what --aot does not allow. It may fail to build, or catch a TypeError and print "THROWS TypeError". It may not print anything else that plain Bun does not. */
   mayBeRefused?: true;
   /**
@@ -170,22 +176,7 @@ function inItsWorker(run: Run): Run {
 
 export function generated(title: string, given: Generated[]) {
   const listed = (onceWrong as Record<string, string[]>)[title] ?? [];
-  // One program in four that takes no flags of its own is built with --aot-validate: its executable checks while it runs what the compiler took for granted, and stops where that does not hold,
-  // also where the program would have printed the right lines all the same.
-  const isDrawnToValidate = (program: Generated) =>
-    !program.flags?.length &&
-    !program.isNeverValidated &&
-    !program.mayStopOutOfMemory &&
-    !program.failsToday &&
-    !program.linesDepartToday &&
-    !moreFlags.length &&
-    Bun.hash.crc32(`${title} ? ${program.name}`) % 4 === 0 &&
-    // A very large program takes many times as long that way.
-    !/\bvery (many|large|long)\b/.test(title) &&
-    program.make().text.length < 32 * 1024;
-  const programs = given
-    .map(program => (listed.includes(program.name) ? { ...program, wasOnceWrong: true } : program))
-    .map(program => (isDrawnToValidate(program) ? { ...program, flags: ["--aot-validate"] } : program));
+  const programs = given.map(program => (listed.includes(program.name) ? { ...program, wasOnceWrong: true } : program));
   const unknown = listed.filter(name => !given.some(program => program.name === name));
   if (unknown.length) test(`once-wrong.json names programs of "${title}"`, () => expect(unknown).toEqual([]));
   const kept = process.env.AOT_GENERATED_KEEP;
@@ -254,13 +245,72 @@ export function generated(title: string, given: Generated[]) {
     if (draw % 2 === 0) return false;
     return (draw >>> 1) % 3 === 0 ? byItself : changes[(draw >>> 3) % changes.length] === change;
   };
-  const isDrawnToOpenTheWorld = (program: Generated) =>
-    !staysAsItIs(program) &&
-    (process.env.AOT_GENERATED_OPENS === "all" ||
-      isDrawn(program, "open", Bun.hash.crc32(`${program.name} : ${title}`) % 6 === 0));
+  // A flag holds for a whole build, and so does an open world. Where a draw would leave too few programs on either side to fill an executable, the programs that could share one stay
+  // together: the draw of the first that may be drawn holds for all that may, or for none.
+  function drawnAmong(
+    alike: Generated[],
+    mayBeDrawn: (program: Generated) => boolean,
+    isTaken: (program: Generated) => boolean,
+  ) {
+    const fills = (count: number) => count === 0 || count >= fewestInOneExecutable;
+    const all = alike.filter(mayBeDrawn);
+    const drawn = all.filter(isTaken);
+    if (alike.length < fewestInOneExecutable || (fills(drawn.length) && fills(alike.length - drawn.length)))
+      return drawn;
+    return all.length && isTaken(all[0]) && fills(all.length) && fills(alike.length - all.length) ? all : [];
+  }
+  const couldShare = (program: Generated) => !program.failsToday && sharesAnExecutable(program);
+  const flagsOf = (program: Generated) => (program.flags ?? []).join(" ");
+  const isOpenAsWritten = (program: Generated) => opensTheWorld(program.make().text);
+  const isDrawnByItselfToOpenTheWorld = (program: Generated) =>
+    isDrawn(program, "open", Bun.hash.crc32(`${program.name} : ${title}`) % 6 === 0);
+  const opened = new Set(
+    process.env.AOT_GENERATED_OPENS === "all"
+      ? chosen.filter(program => !staysAsItIs(program))
+      : [
+          ...chosen.filter(
+            program =>
+              (!couldShare(program) || isOpenAsWritten(program)) &&
+              !staysAsItIs(program) &&
+              isDrawnByItselfToOpenTheWorld(program),
+          ),
+          ...Map.groupBy(
+            chosen.filter(program => couldShare(program) && !isOpenAsWritten(program)),
+            flagsOf,
+          )
+            .values()
+            .flatMap(alike => drawnAmong(alike, program => !staysAsItIs(program), isDrawnByItselfToOpenTheWorld)),
+        ],
+  );
+  // One program in four that takes no flags of its own is built with --aot-validate: its executable checks while it runs what the compiler took for granted, and stops where that does not hold,
+  // also where the program would have printed the right lines all the same.
+  const mayBeValidated = (program: Generated) =>
+    !program.flags?.length &&
+    !program.isNeverValidated &&
+    !program.mayStopOutOfMemory &&
+    !program.failsToday &&
+    !program.linesDepartToday &&
+    !moreFlags.length &&
+    // A very large program takes many times as long that way.
+    !/\bvery (many|large|long)\b/.test(title) &&
+    program.make().text.length < 32 * 1024;
+  const isDrawnByItselfToValidate = (program: Generated) => Bun.hash.crc32(`${title} ? ${program.name}`) % 4 === 0;
+  const validated = new Set([
+    ...chosen.filter(program => !couldShare(program) && mayBeValidated(program) && isDrawnByItselfToValidate(program)),
+    ...Map.groupBy(
+      chosen.filter(program => couldShare(program) && !program.flags?.length),
+      program => opened.has(program) || isOpenAsWritten(program),
+    )
+      .values()
+      .flatMap(alike => drawnAmong(alike, mayBeValidated, isDrawnByItselfToValidate)),
+  ]);
+  const namesOfOpened = new Set(Array.from(opened, program => program.name));
+  const isDrawnToOpenTheWorld = (program: Generated) => namesOfOpened.has(program.name);
+  for (const [index, program] of chosen.entries())
+    if (validated.has(program)) chosen[index] = { ...program, flags: ["--aot-validate"] };
 
   function write(program: Generated, folder: string) {
-    const { file, text, files, entryPoints = [] } = program.make();
+    const { file, text, files, links, entryPoints = [] } = program.make();
     // The changes: a program keeps its short loops as loops, collects inside its calls, hands its functions to the host, stands inside a function, a try, a loop or the like, or opens the world.
     const isChanged = !staysAsItIs(program);
     const keepsItsLoops = isChanged && isDrawn(program, "turns", Bun.hash.crc32(`${title} ${program.name}`) % 2 === 1);
@@ -293,6 +343,12 @@ export function generated(title: string, given: Generated[]) {
         if (standsInside && name === file) written = withTheWholeFileInside(written, loader, place);
       }
       writeFileSync(join(folder, name), written);
+    }
+    for (const [name, target] of Object.entries(links ?? {})) {
+      const link = join(folder, name);
+      mkdirSync(dirname(link), { recursive: true });
+      rmSync(link, { force: true });
+      symlinkSync(isWindows ? join(dirname(link), target) : target, link, "junction");
     }
     // In an executable that programs share, each runs in a Worker.
     const asksForItsThread = /\bisMainThread\b/.test(text);
@@ -445,9 +501,8 @@ export function generated(title: string, given: Generated[]) {
         }
         for (const member of mine) started!.set(member.program, run);
       };
-      // A flag holds for a whole build, and so does an open world.
       const kindOf = ({ program }: (typeof sharing)[number]) =>
-        `${(program.flags ?? []).join(" ")} ${isDrawnToOpenTheWorld(program) || opensTheWorld(program.make().text)}`;
+        `${flagsOf(program)} ${isDrawnToOpenTheWorld(program) || isOpenAsWritten(program)}`;
       for (const alike of Map.groupBy(sharing, kindOf).values()) {
         for (const member of alike) {
           const size = member.program.make().text.length;

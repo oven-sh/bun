@@ -308,7 +308,16 @@ impl Checker<'_, '_> {
         node: impl ToNode,
     ) -> Option<GrammarError> {
         let location = self.hir(file).node(node);
-        let error = self.grammar_error_in_modifiers_of_node(file, location)?;
+        self.grammar_error_in_modifiers_of_node(file, location)
+    }
+
+    /// `grammar_error_in_modifiers` for the node `location`.
+    fn grammar_error_in_modifiers_of_node(
+        &mut self,
+        file: FileId,
+        location: Node,
+    ) -> Option<GrammarError> {
+        let error = self.find_grammar_error_in_modifiers(file, location)?;
         let class = if is_syntax_error_in_bun_run(self.hir(file), location, error.code) {
             DiagnosticClass::EarlyError
         } else {
@@ -317,8 +326,8 @@ impl Checker<'_, '_> {
         Some(GrammarError { class, ..error })
     }
 
-    /// `grammar_error_in_modifiers` for the node `location`.
-    fn grammar_error_in_modifiers_of_node(
+    /// The error of `grammar_error_in_modifiers_of_node` with the class TypeScript gives it.
+    fn find_grammar_error_in_modifiers(
         &mut self,
         file: FileId,
         location: Node,

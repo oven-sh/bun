@@ -600,3 +600,63 @@ async function descend(levels: number, error: Error): Promise<number> {
 async function turn(i: number): Promise<number> {
   return (await descend(500, new Error("deep"))) + (i & 1);
 }
+//// capture-a-stack-trace-ten-calls-deep
+function descend(levels: number, error: Error): number {
+  if (levels === 0) {
+    Error.captureStackTrace(error);
+    return 0;
+  }
+  return descend(levels - 1, error) + 1;
+}
+function turn(i: number): number {
+  return descend(10, new Error("near")) + (i & 1);
+}
+//// construct-an-error-that-captures-below-its-class-ten-calls-deep
+class Refused extends Error {
+  constructor(message: string) {
+    super(message);
+    Error.captureStackTrace(this, Refused);
+  }
+}
+function descend(levels: number): number {
+  if (levels === 0) return new Refused("near").message.length;
+  return descend(levels - 1) + 1;
+}
+function turn(i: number): number {
+  return descend(10) + (i & 1);
+}
+//// capture-a-stack-trace-below-a-function-that-is-not-on-the-stack
+function absent(): void {}
+function descend(levels: number, error: Error): number {
+  if (levels === 0) {
+    Error.captureStackTrace(error, absent);
+    return 0;
+  }
+  return descend(levels - 1, error) + 1;
+}
+function turn(i: number): number {
+  return descend(200, new Error("nowhere")) + (i & 1);
+}
+//// make-an-error-behind-ten-suspended-functions
+async function descend(levels: number): Promise<number> {
+  if (levels === 0) {
+    await 0;
+    return new Error("behind").message.length;
+  }
+  return (await descend(levels - 1)) + 1;
+}
+async function turn(i: number): Promise<number> {
+  return (await descend(10)) + (i & 1);
+}
+//// capture-a-stack-trace-behind-ten-suspended-functions
+async function descend(levels: number, error: Error): Promise<number> {
+  if (levels === 0) {
+    await 0;
+    Error.captureStackTrace(error);
+    return 0;
+  }
+  return (await descend(levels - 1, error)) + 1;
+}
+async function turn(i: number): Promise<number> {
+  return (await descend(10, new Error("behind"))) + (i & 1);
+}

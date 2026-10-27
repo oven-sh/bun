@@ -2,6 +2,7 @@ use super::dead_code::{DeadRoots, mark_nodes_below};
 use super::evaluate::{Evaluator, Value};
 use super::feature_flags::find_feature_import;
 use super::folder_commonjs::LoaderNames;
+use super::folder_imports::ImportedNames;
 use super::inputs::{FoldInputs, PathState};
 use super::known_to_bun_run::ExcludedOperand;
 use super::run_order::RunOrder;
@@ -67,6 +68,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) run_order: OnceCell<RunOrder>,
     pub(super) initializers_in_constant_prefixes: OnceCell<Vec<ExprId>>,
     pub(super) process_imports: OnceCell<Vec<SymbolId>>,
+    pub(super) imported_names: ImportedNames,
     pub(super) relies_on_running_before_calls: Cell<bool>,
     pub(super) values: Vec<Value>,
     pub(super) effects: Vec<Effects>,
@@ -108,6 +110,7 @@ pub(super) fn run<'s>(
         run_order: OnceCell::new(),
         initializers_in_constant_prefixes: OnceCell::new(),
         process_imports: OnceCell::new(),
+        imported_names: ImportedNames::default(),
         relies_on_running_before_calls: Cell::new(false),
         values: vec![Value::Unknown; hir.exprs.len()],
         effects: vec![Effects::Unknown; hir.exprs.len()],
@@ -304,6 +307,7 @@ impl<'s> Folder<'_, 's> {
             errors: slice_in(&errors, arena),
             strings_over_limit: slice_in(&self.strings_over_limit, arena),
             relies_on_running_before_calls: self.relies_on_running_before_calls.get(),
+            imported_names: slice_in(&self.imported_names.into_asked_for(), arena),
         }
     }
 }

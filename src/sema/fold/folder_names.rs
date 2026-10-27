@@ -37,7 +37,10 @@ impl<'s> Folder<'_, 's> {
                 });
                 self.try_decide_define(e, state).unwrap_or(Folded::UNKNOWN)
             }
-            Binding::Symbol(symbol) => self.fold_const_read(e, symbol),
+            Binding::Symbol(symbol) => match self.fold_import_read(e, symbol) {
+                Some(folded) => folded,
+                None => self.fold_const_read(e, symbol),
+            },
             Binding::CommonJs(_) => self.fold_loader_name(e),
             Binding::Free | Binding::Arguments(_) => Folded::UNKNOWN,
         }
@@ -76,6 +79,9 @@ impl<'s> Folder<'_, 's> {
             object_state.filter(|_| hir.is_name_resolved_by_transpiler(e, self.atoms.bytes(name)));
         let state = object_state.and_then(|&state| self.inputs.child(state, name, form));
         if let Some(folded) = self.try_decide_define(e, state) {
+            return folded;
+        }
+        if let Some(folded) = self.fold_imported_member(e, obj, name) {
             return folded;
         }
         let object_kind = hir[hir.skip_type_assertions(obj)].kind;
@@ -259,7 +265,7 @@ impl<'s> Folder<'_, 's> {
         )
     }
 
-    fn has_static_lookup(&self, ident: ExprId) -> bool {
+    pub(super) fn has_static_lookup(&self, ident: ExprId) -> bool {
         let scope = self.bound.dynamic_lookup_scope(NodeData::Expr(ident));
         scope.is_none()
     }
@@ -274,12 +280,12 @@ impl<'s> Folder<'_, 's> {
         outermost
     }
 
-    fn is_assignment_target(&self, e: ExprId) -> bool {
+    pub(super) fn is_assignment_target(&self, e: ExprId) -> bool {
         let target = self.find_outermost_cast(e);
         self.bound.get_assignment_target(self.hir, target).is_some()
     }
 
-    fn is_delete_operand(&self, e: ExprId) -> bool {
+    pub(super) fn is_delete_operand(&self, e: ExprId) -> bool {
         let parent = self.parent_expr(self.find_outermost_cast(e));
         let parent_kind = parent.map(|parent| self.hir[parent].kind);
         matches!(

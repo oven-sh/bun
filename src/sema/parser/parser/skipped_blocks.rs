@@ -1,4 +1,4 @@
-//! Finds the end of a function's block without parsing it.
+//! Finds the end of a function's block without parsing it, and tells whether the rest of a module names no file.
 
 use bun_core::strings;
 
@@ -62,20 +62,75 @@ fn find_what_stands_before(code: &[u8]) -> Before {
     }
 }
 
-fn names_what_loads_modules(block: &[u8]) -> bool {
-    [&b"import"[..], b"require"].iter().any(|&word| {
-        let mut from = 0;
-        while let Some(found) = strings::index_of(&block[from..], word) {
-            let (start, end) = (from + found, from + found + word.len());
-            let begins_a_name = start == 0
-                || !(is_name_byte(block[start - 1]) || matches!(block[start - 1], b'.' | b'#'));
-            if begins_a_name && !block.get(end).copied().is_some_and(is_name_byte) {
-                return true;
+/// True if `word` stands in `text` as a name of its own that is no member's, with one of `starts` behind it, or with
+/// whatever behind it if there are none. Without `starts`: with what `may_export_from_a_file` behind it.
+#[inline(never)]
+fn holds_word(text: &[u8], word: &[u8], starts: Option<&[u8]>) -> bool {
+    let mut from = 0;
+    while let Some(found) = strings::index_of(&text[from..], word) {
+        let (start, end) = (from + found, from + found + word.len());
+        let begins_a_name = start == 0
+            || !(is_name_byte(text[start - 1]) || matches!(text[start - 1], b'.' | b'#'));
+        let is_whole = !text.get(end).copied().is_some_and(is_name_byte);
+        let rest = &text[end..];
+        if begins_a_name
+            && is_whole
+            && match starts {
+                Some([]) => true,
+                Some(starts) => (without_blanks_in_front(rest).first())
+                    .is_some_and(|first| starts.contains(first)),
+                None => may_export_from_a_file(rest),
             }
-            from = end;
+        {
+            return true;
         }
-        false
-    })
+        from = end;
+    }
+    false
+}
+
+fn names_what_loads_modules(block: &[u8]) -> bool {
+    holds_word(block, b"import", Some(b"")) || holds_word(block, b"require", Some(b""))
+}
+
+fn without_blanks_in_front(text: &[u8]) -> &[u8] {
+    let is_blank = |byte: &u8| matches!(byte, b' ' | b'\t' | b'\n' | b'\r');
+    &text[text.iter().take_while(|&it| is_blank(it)).count()..]
+}
+
+/// True if the statement that starts with `export` and goes on with `rest` may name a file, or can't be told from one that does.
+pub(crate) fn may_export_from_a_file(rest: &[u8]) -> bool {
+    let Some(rest) = rest.strip_prefix(b" ") else {
+        return true;
+    };
+    let (word, rest) = rest.split_at(rest.iter().take_while(|&&it| is_name_byte(it)).count());
+    match (word, rest) {
+        (b"", [b'{', names @ ..]) => match strings::index_of_any(names, b"}'\"/") {
+            Some(close) if names[close] == b'}' => {
+                matches!(
+                    without_blanks_in_front(&names[close + 1..]),
+                    [b'f' | b'/', ..]
+                )
+            }
+            Some(_) | None => true,
+        },
+        (b"" | b"import" | b"as", _) => true,
+        (b"type", _) => !matches!(*rest, [b' ', first, ..] if is_name_byte(first)),
+        _ => false,
+    }
+}
+
+/// False if no statement in `text` names a file and none declares what other files see, whatever is code in it.
+pub(crate) fn may_reach_beyond_the_module(text: &[u8]) -> bool {
+    // A comment may stand behind the word.
+    names_what_loads_modules_in_statements(text)
+        || holds_word(text, b"module", Some(b"'\"/"))
+        || holds_word(text, b"global", Some(b"{/"))
+        || holds_word(text, b"export", None)
+}
+
+fn names_what_loads_modules_in_statements(text: &[u8]) -> bool {
+    holds_word(text, b"import", Some(b"")) || holds_word(text, b"require", Some(b"(/"))
 }
 
 fn skip_string(text: &[u8], at: usize) -> Option<usize> {
@@ -185,7 +240,7 @@ pub(crate) fn find_end_of_block(text: &[u8], open: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::find_end_of_block;
+    use super::{find_end_of_block, may_export_from_a_file, may_reach_beyond_the_module};
 
     fn block(text: &str) -> Option<&str> {
         find_end_of_block(text.as_bytes(), 0).map(|close| &text[..=close])
@@ -271,6 +326,74 @@ mod tests {
             "{ imports(); required = 1; reimport(); }",
         ] {
             assert!(block(text).is_some(), "{text}");
+        }
+    }
+
+    #[test]
+    fn exports_that_may_name_a_file() {
+        for rest in [
+            " { a } from './a';",
+            " { a }\nfrom './a';",
+            " { a } /* b */ from './a';",
+            " { a as 'b' };",
+            " { a, // b\n c };",
+            " * from './a';",
+            " * as a from './a';",
+            " type { A } from './a';",
+            " type * from './a';",
+            " type\n{ A } from './a';",
+            " import a = require('./a');",
+            " as namespace a;",
+            " = a;",
+            "{ a } from './a';",
+            "\n{ a } from './a';",
+            " { a",
+        ] {
+            assert!(may_export_from_a_file(rest.as_bytes()), "{rest}");
+        }
+        for rest in [
+            " { a, b as c };",
+            " { a }\nconst b = 1;",
+            " {};",
+            " const a = 1;",
+            " default a;",
+            " type A = { b: 1 };",
+            " type Type = 1;",
+            " async function a() {}",
+            " abstract class A {}",
+        ] {
+            assert!(!may_export_from_a_file(rest.as_bytes()), "{rest}");
+        }
+    }
+
+    #[test]
+    fn what_reaches_beyond_a_module() {
+        for text in [
+            "a(); import b from './b';",
+            "const a = await import('./a');",
+            "let a: import('./a').A;",
+            "// import\n",
+            "const a = require('./a');",
+            "const a = require /* b */ ('./a');",
+            "declare module 'a' {}",
+            "declare module\n\"a\" {}",
+            "declare global { var a: 1 }",
+            "declare global\n{ var a: 1 }",
+            "const a = 1; export { b } from './b';",
+            "const a = 1; export * from './b';",
+        ] {
+            assert!(may_reach_beyond_the_module(text.as_bytes()), "{text}");
+        }
+        for text in [
+            "",
+            "const a = 1; export { a };",
+            "/** What a module requires of a global. */ export function a(module: A, global: B) {}",
+            "a.import(); a.require('b'); imports(); required(1); a.export;",
+            "namespace A { export const b = 1; }",
+            "declare const a: 1; export default a;",
+            "const global = 1, module = 2; f(global, module);",
+        ] {
+            assert!(!may_reach_beyond_the_module(text.as_bytes()), "{text}");
         }
     }
 }

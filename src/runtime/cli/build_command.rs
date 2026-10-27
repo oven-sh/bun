@@ -1395,6 +1395,11 @@ fn print_summary(
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
 
+/// Names are stored as valid UTF-8, so two names that differ only in invalid bytes collide.
+pub(crate) fn to_embedded_name(name: &[u8]) -> Vec<u8> {
+    bstr::BStr::new(name).to_string().into_bytes()
+}
+
 pub(crate) fn collect_compile_assets(
     assets: &[Box<[u8]>],
     outfile: &[u8],
@@ -1422,8 +1427,7 @@ pub(crate) fn collect_compile_assets(
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
-            // Names are stored as valid UTF-8, so two names that differ only in invalid bytes collide.
-            let dest = bstr::BStr::new(&dest).to_string().into_bytes();
+            let dest = to_embedded_name(&dest);
             if seen.contains_key(&dest) {
                 return Err(format!(
                     "asset {} collides with another embedded file at {}",

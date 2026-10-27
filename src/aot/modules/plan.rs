@@ -393,6 +393,14 @@ impl ModuleGraph {
                 .has(&self.plan.order.is_required_during_load, module)
     }
 
+    /// An ES module that the CommonJS file leads to by a `require` imports the file.
+    pub fn may_be_imported_while_it_runs(&self, module: ModuleRef) -> bool {
+        matches!(module, ModuleRef::File(_))
+            && self
+                .plan
+                .has(&self.plan.order.may_be_imported_while_it_runs, module)
+    }
+
     /// A later site of a module whose body threw throws the same error again.
     pub fn keeps_error(&self, module: ModuleRef) -> bool {
         match module {

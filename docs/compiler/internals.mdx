@@ -75,7 +75,7 @@ Nothing is bundled. Each module stays a module, and no JavaScript text is printe
 
 **Load** (`src/aot/load`). Bun walks the imports from the entry points with the resolver, loaders, macros and `Bun.build` plugins that `bun build` uses, and parses each file once. The tree is the type checker's own, so there's no second parser and no conversion between trees. A build has two projects, `ProjectId::Application` and `ProjectId::Runtime`. The second one is Bun itself: the `node:*` and `bun:*` modules that are written in TypeScript in `src/js`. They're compiled with your program, from source, and only the ones that your program reaches.
 
-**Bind modules** (`src/aot/modules`, `src/sema/fold`). This stage links each ES import to the variable it names, works out which names a CommonJS file exports, and fixes the order of evaluation. It also folds what is known about the target, such as `process.platform` and `--define` values. A branch that folding kills is dropped, and a file that only such a branch loads is never checked or compiled.
+**Bind modules** (`src/aot/modules`, `src/sema/fold`). This stage links each ES import to the variable it names, works out which names a CommonJS file exports, and fixes the order of evaluation. It also folds what is known about the target, such as `process.platform` and `--define` values. An exported `const` whose value folding finds is folded in the files that import it too, by name, through `export .. from` and `export *`, or as a member of `import * as`. A branch that folding kills is dropped, and a file that only such a branch loads is never checked or compiled.
 
 **Check and lower** (`src/sema`, `src/aot/lower`). Each thread has a type checker of its own and takes one file at a time. It checks the file, then walks the same tree again and writes IR, asking the checker questions as it goes. A type error stops the build. [How it uses the type checker](#how-it-uses-the-type-checker) has the questions.
 
@@ -1909,6 +1909,7 @@ A test program is small, so by default it only meets the compiler's forms for ho
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | Every function hot, every function cold                                   | Bugs in the forms that small programs never get                                            |
 | No inlining, no flow results                                              | Passes that only work because an earlier one cleaned up                                    |
+| Every function cold and no flow results, together                         | The forms for cold code where nothing about a value is proven                              |
 | Every prediction fails, or every second one, or every seventh             | The slow paths, the generic versions and the ways back, which ordinary input rarely enters |
 | The verifier after every pass                                             | The pass that broke the IR, not the one that tripped over it                               |
 | 64-bit references                                                         | Assumptions about the cage                                                                 |
@@ -2044,8 +2045,11 @@ These flags have no entry in `--help`. They exist for working on the compiler.
 | `testaot list passes`, `options`, `limits`, `statistics`, `diagnostics`               | What there is                                                                       |
 | `bun compile --aot-symbols app.ts`, then `objdump -d`                                 | Machine code with the names of your functions and of the stubs                      |
 | `bun compile --aot-disable=pass:<PassID>`, `--aot-disable=flow:<FlowResultKind>`      | The program without one optimization                                                |
+| `bun compile --aot-heat=everything-is-cold`, `--aot-heat=everything-is-hot`           | The program in the forms for cold code alone, or for hot code alone                 |
 | `bun compile --aot-verify-each-pass`, `--aot-validate`                                | The two checking modes                                                              |
 | `bun compile --explain`, `--explain=guards`, `--explain=trim`, `--explain=statistics` | The compiler's own account: see [Get more of your program typed](/compiler/explain) |
+
+`Bun.build` takes `--aot-disable` and `--aot-heat` as `compile: { aotDisable: ["pass:<PassID>", "flow-results"], aotHeat: "everything-is-cold" }`. One function reads the words of both spellings, so the same words build the same executable, byte for byte.
 
 `testaot` is built with the engine (`aot/tests/README.md`). It isn't part of `bun`.
 

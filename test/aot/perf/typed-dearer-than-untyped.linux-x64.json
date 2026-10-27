@@ -97,6 +97,8 @@
   "everyday-lists-of-objects-read-by-name-in-a-loop/the-objects-with-a-number-under-a-name.filter": 1.6,
   "everyday-lists-of-objects-read-by-name-in-a-loop/the-sum-of-a-number-under-a-name.reduce": 3.43,
   "everyday-lists-of-objects-read-by-name-in-a-loop/whether-each-object-has-a-name.in": 1.64,
+  "everyday-loops-over-lists-and-typed-arrays/float64-dot-product-of-a-thousand": 1.83,
+  "everyday-loops-over-lists-and-typed-arrays/uint8-array-copied-by-index": 4.41,
   "everyday-numbers/digits-in-arrays-made-with-new-array": 1.31,
   "everyday-numbers/field-counter-past-two-to-the-31": 1.05,
   "everyday-numbers/words-in-an-array-made-with-new-array": 1.69,

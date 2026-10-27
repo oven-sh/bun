@@ -323,6 +323,21 @@ unsafe extern "C" fn BunString__fromLatin1(_bytes: *const u8, _len: usize) -> bu
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn BunString__fromUTF16(_units: *const u16, _len: usize) -> bun_core::String {
+    panic!("this program has no WTF strings")
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn BunString__fromUTF16ToLatin1(
+    _units: *const u16,
+    _len: usize,
+) -> bun_core::String {
+    panic!("this program has no WTF strings")
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn Bun__WTFStringImpl__destroy(_this: *const WTFStringImplStruct) {
     panic!("this program has no WTF strings")
 }

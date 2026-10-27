@@ -5,7 +5,6 @@ use bun_sema::hir::{
     Chain, ExprId, ExprKind, Flags, FnBody, FnId, IdList, NameKind, PatKind, PropKey, PropKind,
     StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::ir::generated::LimitId;
@@ -57,8 +56,14 @@ struct Found {
 }
 
 // The statement around each expression on the way from a name out to its statement. Every name of a long row of operators goes out through the same operators.
+// By expression: 0 where nothing is remembered yet, 1 where no statement is around it, or else the number of the statement and 2.
 #[derive(Default)]
-pub(in crate::lower) struct StatementsAround(RefCell<FxHashMap<ExprId, Option<StmtId>>>);
+pub(in crate::lower) struct StatementsAround(RefCell<Vec<u32>>);
+
+// Whether Bun's transpiler prints the value of a constant in place of its name. Each constant is asked once, however many constants are named after it.
+// By declaration: the answer to a question about a variable that is used once stands apart, since that is answered without other such variables.
+#[derive(Default)]
+pub(in crate::lower) struct ConstantsNamedByValue(RefCell<Vec<[Option<bool>; 2]>>);
 
 // What stands around an expression.
 enum Around {
@@ -177,6 +182,23 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn is_named_by_its_value(&self, declaration: VarDeclId) -> bool {
+        let question = usize::from(self.printed_operators.is_asking_about_variable_used_once());
+        let remembered = {
+            let mut answers = self.constants_named_by_value.0.borrow_mut();
+            if answers.is_empty() {
+                answers.resize(self.bound.var_stmt.len(), [None; 2]);
+            }
+            answers[declaration.idx()][question]
+        };
+        remembered.unwrap_or_else(|| {
+            let answer = self.is_constant_behind_constants(declaration);
+            let mut answers = self.constants_named_by_value.0.borrow_mut();
+            answers[declaration.idx()][question] = Some(answer);
+            answer
+        })
+    }
+
+    fn is_constant_behind_constants(&self, declaration: VarDeclId) -> bool {
         if !self.is_constant_with_literal(declaration) {
             return false;
         }
@@ -193,7 +215,7 @@ impl FileLowering<'_, '_, '_, '_> {
             .limits
             .get(LimitId::MaxStepsToPrintedInitializer);
         let budget = Budget(Cell::new(steps));
-        self.is_printed_as_its_value(declaration, siblings, &budget)
+        self.is_behind_constants(siblings, &budget)
     }
 
     fn find_printed(&self, name: ExprId, budget: &Budget) -> Option<Found> {
@@ -334,6 +356,10 @@ impl FileLowering<'_, '_, '_, '_> {
         siblings: Siblings,
         budget: &Budget,
     ) -> bool {
+        self.is_constant_with_literal(declaration) && self.is_behind_constants(siblings, budget)
+    }
+
+    fn is_behind_constants(&self, siblings: Siblings, budget: &Budget) -> bool {
         let hir = self.hir;
         let is_constant =
             |declaration: VarDeclId| self.bound.variable_kind(hir, declaration) == VarKind::Const;
@@ -344,16 +370,14 @@ impl FileLowering<'_, '_, '_, '_> {
                     !budget.take_step() || self.find_function_moved_to_start(other).is_some()
                 })
         };
-        self.is_constant_with_literal(declaration)
-            && hir.ids(siblings.earlier).rev().all(|earlier| {
-                budget.take_step()
-                    && match hir[earlier].kind {
-                        StmtKind::Var(declarations) => declarations.iter().all(is_constant),
-                        StmtKind::Directive { .. } | StmtKind::Enum(_) => true,
-                        _ => !self.is_printed(earlier),
-                    }
-            })
-            && !is_behind_moved_function()
+        hir.ids(siblings.earlier).rev().all(|earlier| {
+            budget.take_step()
+                && match hir[earlier].kind {
+                    StmtKind::Var(declarations) => declarations.iter().all(is_constant),
+                    StmtKind::Directive { .. } | StmtKind::Enum(_) => true,
+                    _ => !self.is_printed(earlier),
+                }
+        }) && !is_behind_moved_function()
     }
 
     fn is_constant_with_literal(&self, declaration: VarDeclId) -> bool {
@@ -371,24 +395,28 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn find_statement_around(&self, expression: ExprId) -> Option<StmtId> {
         let mut remembered = self.statements_around.0.borrow_mut();
+        if remembered.is_empty() {
+            remembered.resize(self.hir.exprs.len(), 0);
+        }
         let mut child = expression;
-        let statement = loop {
-            if let Some(&statement) = remembered.get(&child) {
-                break statement;
+        let found = loop {
+            if remembered[child.idx()] != 0 {
+                break remembered[child.idx()];
             }
             child = match self.find_around(child) {
                 Around::Expression(parent) => parent,
-                Around::Statement(statement) => break statement,
+                Around::Statement(statement) => break statement.map_or(1, |it| it.0 + 2),
             };
         };
         let mut child = expression;
-        while remembered.insert(child, statement).is_none() {
+        while remembered[child.idx()] == 0 {
+            remembered[child.idx()] = found;
             let Around::Expression(parent) = self.find_around(child) else {
                 break;
             };
             child = parent;
         }
-        statement
+        found.checked_sub(2).map(StmtId)
     }
 
     fn find_around(&self, expression: ExprId) -> Around {

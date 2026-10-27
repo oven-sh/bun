@@ -4,7 +4,8 @@
 // it may exit, change a built-in or read the clock. Each is judged as run-programs.ts judges it: with its types and with its types erased it prints what plain Bun prints, or its .expected.txt.
 //
 // The compiler sees the whole program, so a program among hundreds is not compiled as it is alone: what one of them does to a class or a built-in holds for all. This is beside the share of
-// run-programs.ts and programs-in-every-run.txt, which build each program alone, and not in their place.
+// run-programs.ts and programs-in-every-run.txt, which build each program alone, and not in their place. The starter loads by a name that the build does not know, so the build has not seen
+// all the code that can ever run, and what --aot proves only of a program that it has seen whole it does not prove here: programs-as-separate-entry-points.ts builds the programs that way.
 //
 // Left out: a program that is built with flags, entry points or an environment of its own; one whose build is meant to fail; one below a tsconfig.json of its own, because the first entry
 // point's governs a build; one that declares types for everybody (`declare global`, a declaration file); and one with "alone" in its <program>.json: what it prints hangs on being the

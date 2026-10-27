@@ -455,6 +455,10 @@ export abstract class Type {
   get holdsJSValue(): boolean {
     return this.dependencies.some(type => type.holdsJSValue);
   }
+  /** The value that is made of it is an object without a prototype, or holds one. */
+  get makesObjectWithoutPrototype(): boolean {
+    return this.dependencies.some(type => type.makesObjectWithoutPrototype);
+  }
   /** The conversion returns the value unchanged, so Rust holds the value itself. */
   get returnsValueUnchanged(): boolean {
     return false;
@@ -2351,9 +2355,9 @@ export class RecordResultType extends ResultType {
   get tsType(): string {
     return `Record<string, ${this.value.tsType}>`;
   }
-  /** With no JS value in it, it is new objects, new arrays and primitives. */
+  /** With no JS value in it, it is new objects, new arrays and primitives. Plain data inherits from Object.prototype and Array.prototype. */
   get resultType(): TypeSpec {
-    return { type: "PlainData" };
+    return this.makesObjectWithoutPrototype ? { type: "Object", freshness: "Yes" } : { type: "PlainData" };
   }
   get dependencies(): readonly Type[] {
     return [this.value];
@@ -2586,6 +2590,9 @@ export class DictionaryType extends NamedType {
   get nullPrototype(): boolean {
     return !!this.options.nullPrototype;
   }
+  get makesObjectWithoutPrototype(): boolean {
+    return this.nullPrototype || super.makesObjectWithoutPrototype;
+  }
   get idlType(): string {
     return `WebCore::IDLDictionary<${this.cpp}>`;
   }
@@ -2597,9 +2604,11 @@ export class DictionaryType extends NamedType {
     );
     return { ...convertingType(accepted, "Dictionary", unionType(accepted, { type: "Object" })), members: this.names };
   }
-  /** With no JS value in it, it is new objects, new arrays and primitives. */
+  /** With no JS value in it, it is new objects, new arrays and primitives. Plain data inherits from Object.prototype and Array.prototype. */
   get resultType(): TypeSpec {
-    return this.holdsJSValue ? { type: "Object", freshness: "Yes" } : { type: "PlainData" };
+    return this.holdsJSValue || this.makesObjectWithoutPrototype
+      ? { type: "Object", freshness: "Yes" }
+      : { type: "PlainData" };
   }
   get dependencies(): readonly Type[] {
     return this.members.map(member => member.type);

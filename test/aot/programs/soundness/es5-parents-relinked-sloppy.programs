@@ -2723,7 +2723,6 @@ console.log(JSON.stringify(copyStatics({}, Heir)));
 //// format-of-a-formatter-and-import-value-asked-in-place.js
 // `format` of an Intl.NumberFormat | DateTimeFormat is a getter that answers a function bound to the formatter, the same one each time; ShadowRealm.prototype.importValue answers a promise.
 // Each case is a function of its own; what the built-in answers is stored and read again right behind the call, and every question stands in place.
-// A compiled program differs in two lines, on purpose: a module that was compiled ahead of time cannot be imported inside a ShadowRealm, so the promise is rejected with a TypeError that says so.
 function formatOfNumberFormat() {
   const formatter = new Intl.NumberFormat("en");
   const format = formatter.format;

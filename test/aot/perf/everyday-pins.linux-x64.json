@@ -947,6 +947,18 @@
     "typed": 152910.5,
     "untyped": 152953.7
   },
+  "everyday-iteration-and-async/capture-a-stack-trace-behind-ten-suspended-functions": {
+    "typed": 9202.6,
+    "untyped": 9132.4
+  },
+  "everyday-iteration-and-async/capture-a-stack-trace-below-a-function-that-is-not-on-the-stack": {
+    "typed": 72155.9,
+    "untyped": 72146.2
+  },
+  "everyday-iteration-and-async/capture-a-stack-trace-ten-calls-deep": {
+    "typed": 6007.5,
+    "untyped": 6004.9
+  },
   "everyday-iteration-and-async/capture-a-stack-trace-two-thousand-calls-deep": {
     "typed": 36330.2,
     "untyped": 36327.5
@@ -970,6 +982,10 @@
   "everyday-iteration-and-async/catch-the-error-of-a-built-in-function": {
     "typed": 4469.1,
     "untyped": 4478.7
+  },
+  "everyday-iteration-and-async/construct-an-error-that-captures-below-its-class-ten-calls-deep": {
+    "typed": 9391.2,
+    "untyped": 9380.6
   },
   "everyday-iteration-and-async/construct-an-error-that-captures-below-its-class-two-thousand-calls-deep": {
     "typed": 40574.4,
@@ -998,6 +1014,10 @@
   "everyday-iteration-and-async/iterator-object-by-hand": {
     "typed": 57.5,
     "untyped": 48.5
+  },
+  "everyday-iteration-and-async/make-an-error-behind-ten-suspended-functions": {
+    "typed": 6312.5,
+    "untyped": 6319.1
   },
   "everyday-iteration-and-async/new-promise-resolved-at-once": {
     "typed": 1198.5,
@@ -1086,6 +1106,102 @@
   "everyday-kinds-of-types/tuple.of-a-record-and-a-number": {
     "typed": 59.0,
     "untyped": 26.0
+  },
+  "everyday-loops-over-lists-and-typed-arrays/buffer-sum-of-a-thousand": {
+    "typed": 7025,
+    "untyped": 7025.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/data-view-sum-of-floats": {
+    "typed": 58488.7,
+    "untyped": 58493.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float32-array-scaled-in-place": {
+    "typed": 3115.4,
+    "untyped": 3120.5
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-in-a-field": {
+    "typed": 4028.1,
+    "untyped": 4029.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-in-a-parameter": {
+    "typed": 4024.4,
+    "untyped": 153407.8
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-mean-of-three-neighbors": {
+    "typed": 14911.9,
+    "untyped": 14885.7
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-running-sums": {
+    "typed": 4182,
+    "untyped": 4184.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-that-a-closure-captured": {
+    "typed": 4026.8,
+    "untyped": 4029.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-walked-downward": {
+    "typed": 7030.5,
+    "untyped": 13045
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-dot-product-of-a-thousand": {
+    "typed": 11043,
+    "untyped": 6047
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-matrix-transposed-flat": {
+    "typed": 4631.9,
+    "untyped": 4460.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/int32-array-reversed-in-place": {
+    "typed": 5687.9,
+    "untyped": 5673.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/int32-array-sum-of-a-thousand": {
+    "typed": 7028.8,
+    "untyped": 7035.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-fractions-sum-of-a-thousand": {
+    "typed": 4018.9,
+    "untyped": 4020.8
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-integers-in-a-parameter": {
+    "typed": 4016.9,
+    "untyped": 4017
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-integers-stored-to-in-place": {
+    "typed": 6170.1,
+    "untyped": 6170.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-integers-sum-of-a-thousand": {
+    "typed": 4019,
+    "untyped": 4021
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-objects-one-field-summed": {
+    "typed": 3604,
+    "untyped": 5140.8
+  },
+  "everyday-loops-over-lists-and-typed-arrays/rows-of-float64-arrays": {
+    "typed": 4580.1,
+    "untyped": 178108.5
+  },
+  "everyday-loops-over-lists-and-typed-arrays/text-sum-of-char-codes": {
+    "typed": 4251,
+    "untyped": 4254.7
+  },
+  "everyday-loops-over-lists-and-typed-arrays/uint16-array-greatest-of-a-thousand": {
+    "typed": 6021.9,
+    "untyped": 6028.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/uint8-array-copied-by-index": {
+    "typed": 13855,
+    "untyped": 3141
+  },
+  "everyday-loops-over-lists-and-typed-arrays/uint8-array-counted-into-bins": {
+    "typed": 10285.9,
+    "untyped": 12826.4
+  },
+  "everyday-loops-over-lists-and-typed-arrays/uint8-clamped-array-brightened": {
+    "typed": 5669.3,
+    "untyped": 6186.4
   },
   "everyday-microtasks-and-promises/async-arrow-that-captures": {
     "typed": 1293.5,

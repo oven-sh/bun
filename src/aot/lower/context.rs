@@ -22,7 +22,7 @@ use super::fragment::{FragmentBuilder, ModuleFragment};
 use super::layouts::{DefinedObjectTypes, LayoutState};
 use super::module::{LibraryFunctions, ModuleState};
 use super::scope::{ScopeAnalysis, ScopeInput, analyze_scopes};
-use super::statement::StatementsAround;
+use super::statement::{ConstantsNamedByValue, StatementsAround};
 use super::types::TypeState;
 use crate::builtins::id::RuntimeModule;
 use crate::builtins::{BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table};
@@ -148,6 +148,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     has_bundled_positions: bool,
     pub(in crate::lower) printed_operators: PrintedOperators,
     pub(in crate::lower) statements_around: StatementsAround,
+    pub(in crate::lower) constants_named_by_value: ConstantsNamedByValue,
     counters: Counters,
     scratch: BuilderScratch,
     pub(crate) has_chain_past_nesting_limit: bool,
@@ -220,6 +221,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             has_bundled_positions: inputs.sources.bundled_positions(file).is_some(),
             printed_operators: PrintedOperators::default(),
             statements_around: StatementsAround::default(),
+            constants_named_by_value: ConstantsNamedByValue::default(),
             counters: Counters::default(),
             scratch: BuilderScratch::default(),
             has_chain_past_nesting_limit: false,

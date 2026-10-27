@@ -1570,6 +1570,42 @@ fn decode_rune(text: &[u8]) -> (u32, usize) {
     (ch, size)
 }
 
+#[inline(never)]
+fn runes_of(text: &[u8]) -> Vec<char> {
+    let invalid = |chunk: &std::str::Utf8Chunk| !chunk.invalid().is_empty();
+    text.utf8_chunks()
+        .flat_map(|c| c.valid().chars().chain(invalid(&c).then_some('\u{FFFD}')))
+        .collect()
+}
+
+/// How far `candidate_name` is from `name`, unless it's farther away than `best_distance` or isn't compared at all.
+#[inline(never)]
+fn distance_of_candidate(
+    (name, name_runes): (&[u8], &[char]),
+    candidate_name: &[u8],
+    best_distance: f64,
+) -> Option<f64> {
+    let maximum_length_difference = 2.max((name_runes.len() as f64 * 0.34) as usize);
+    if candidate_name.is_empty()
+        || candidate_name.len().abs_diff(name_runes.len()) > maximum_length_difference
+        || candidate_name == name
+    {
+        return None;
+    }
+    let candidate_runes = runes_of(candidate_name);
+    // Two-letter names are easy to distinguish, unless they differ only by case.
+    let lower = |runes: &[char]| {
+        runes
+            .iter()
+            .flat_map(|c| c.to_lowercase())
+            .collect::<Vec<_>>()
+    };
+    if candidate_name.len() < 3 && lower(&candidate_runes) != lower(name_runes) {
+        return None;
+    }
+    levenshtein_with_max(name_runes, &candidate_runes, best_distance)
+}
+
 /// `GetSpellingSuggestion`
 pub fn get_spelling_suggestion<'c, T: Copy>(
     name: &[u8],
@@ -1577,37 +1613,13 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
     get_name: impl Fn(T) -> &'c [u8],
     compare: impl Fn(T, T) -> std::cmp::Ordering,
 ) -> Option<T> {
-    let runes = |text: &[u8]| -> Vec<char> {
-        let invalid = |chunk: &std::str::Utf8Chunk| !chunk.invalid().is_empty();
-        text.utf8_chunks()
-            .flat_map(|c| c.valid().chars().chain(invalid(&c).then_some('\u{FFFD}')))
-            .collect()
-    };
-    let name_runes = runes(name);
-    let maximum_length_difference = 2.max((name_runes.len() as f64 * 0.34) as usize);
+    let name_runes = runes_of(name);
     // Candidates farther away than this aren't suggested.
     let mut best_distance = (name_runes.len() as f64 * 0.4).floor() + 0.9;
     let mut best: Option<T> = None;
     for candidate in candidates {
-        let candidate_name = get_name(candidate);
-        if candidate_name.is_empty()
-            || candidate_name.len().abs_diff(name_runes.len()) > maximum_length_difference
-            || candidate_name == name
-        {
-            continue;
-        }
-        let candidate_runes = runes(candidate_name);
-        // Two-letter names are easy to distinguish, unless they differ only by case.
-        let lower = |runes: &[char]| {
-            runes
-                .iter()
-                .flat_map(|c| c.to_lowercase())
-                .collect::<Vec<_>>()
-        };
-        if candidate_name.len() < 3 && lower(&candidate_runes) != lower(&name_runes) {
-            continue;
-        }
-        let Some(distance) = levenshtein_with_max(&name_runes, &candidate_runes, best_distance)
+        let named = (name, &name_runes[..]);
+        let Some(distance) = distance_of_candidate(named, get_name(candidate), best_distance)
         else {
             continue;
         };

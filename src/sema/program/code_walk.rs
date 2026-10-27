@@ -1,5 +1,8 @@
+mod imported_constants;
+
+use self::imported_constants::fold_files_that_import_constants_again;
 use super::code_barrels::{BarrelRequests, NOT_LOADED, erase_waiting_sites};
-use super::code_file::load_code_file;
+use super::code_file::{fold_code_file_again, load_code_file};
 use super::code_imports::files_of;
 use super::code_load::{CodeEntry, CodeTarget, LoadKey, ParsedCodeFile};
 use super::code_types::predicted_type_files;
@@ -23,9 +26,13 @@ type EntryUpdate<'r> = (Option<HostPayload>, Vec<(&'r [u8], bool)>);
 struct WalkedFile<'s, 'r> {
     target: CodeTarget<'r>,
     parsed: Option<Box<ParsedCodeFile<'s, 'r>>>,
+    /// What is to be folded once more.
+    folded_before: Option<Box<ParsedCodeFile<'s, 'r>>>,
     targets: Vec<u32>,
     is_called_before_it_runs: bool,
     imported_requires: Vec<ImportedRequire>,
+    imported_constants: Vec<ImportedConstant>,
+    foldings_with_constants: u32,
 }
 
 impl<'r> WalkedFile<'_, 'r> {
@@ -207,9 +214,12 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         state.files.push(WalkedFile {
             target,
             parsed: None,
+            folded_before: None,
             targets: Vec::new(),
             is_called_before_it_runs: false,
             imported_requires: Vec::new(),
+            imported_constants: Vec::new(),
+            foldings_with_constants: 0,
         });
         let key = context.canonical_key(target.key);
         state.index_of.insert(key, index);
@@ -441,15 +451,38 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 if state.ready.len() == MAX_READY_TEXTS {
                     self.has_to_read.notify_all();
                 }
-                let file = &state.files[index as usize];
+                let file = &mut state.files[index as usize];
                 let (target, is_called_early) = (file.target, file.is_called_before_it_runs);
+                let folded_before = file.folded_before.take();
                 let requires = file.imported_requires.clone();
+                let constants = file.imported_constants.clone();
                 drop(state);
                 let arena = *arena.get_or_insert_with(|| context.session.arena());
-                let parsed =
-                    load_code_file(context, arena, target, text, is_called_early, &requires);
-                let parsed = Box::new(parsed);
-                self.add_parsed_file(&mut self.state.lock(), index, parsed);
+                let parsed = match folded_before {
+                    Some(loaded) => fold_code_file_again(
+                        context,
+                        arena,
+                        target,
+                        *loaded,
+                        is_called_early,
+                        &constants,
+                    ),
+                    None => Some(load_code_file(
+                        context,
+                        arena,
+                        target,
+                        text,
+                        is_called_early,
+                        &requires,
+                        &constants,
+                    )),
+                };
+                match parsed {
+                    Some(parsed) => {
+                        self.add_parsed_file(&mut self.state.lock(), index, Box::new(parsed));
+                    }
+                    None => self.state.lock().found.push(index),
+                }
                 let has_more = self.queue_found_files(start.plugin_reader);
                 state = self.state.lock();
                 state.in_progress -= 1;
@@ -478,7 +511,8 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 }
                 if state.deferred.is_empty()
                     && (forget_files_called_before_they_run(&mut state)
-                        || forget_files_that_import_requires(&context.atoms, &mut state))
+                        || forget_files_that_import_requires(&context.atoms, &mut state)
+                        || fold_files_that_import_constants_again(context, &mut state))
                 {
                     state.in_progress += 1;
                     drop(state);
@@ -636,6 +670,15 @@ fn forget_parsed_file(state: &mut WalkState<'_, '_>, index: u32) {
     state.found.push(index);
 }
 
+fn fold_parsed_file_again(state: &mut WalkState<'_, '_>, index: u32) {
+    let file = &mut state.files[index as usize];
+    file.folded_before = file.parsed.take();
+    file.targets.clear();
+    state.barrels.forget_parsed_file(index);
+    state.ready.push((index, Cow::Borrowed(&[])));
+    state.in_progress += 1;
+}
+
 fn names_export(hir: &hir::File<'_>, site: ImportSiteKind, export: Atom) -> bool {
     match site {
         ImportSiteKind::Import(import) => {
@@ -722,10 +765,10 @@ fn erase_sites_nothing_asked_for(state: &mut WalkState<'_, '_>) {
     }
 }
 
-fn import_what_is_required<'r>(
+fn find_files_required_in_place_of_others<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
-    state: &mut WalkState<'_, 'r>,
-) {
+    state: &WalkState<'_, 'r>,
+) -> FxHashMap<u32, u32> {
     let mut replacements: FxHashMap<u32, u32> = FxHashMap::default();
     for (index, file) in state.files.iter().enumerate() {
         let key = file.target.key;
@@ -744,6 +787,14 @@ fn import_what_is_required<'r>(
             replacements.insert(index as u32, required);
         }
     }
+    replacements
+}
+
+fn import_what_is_required<'r>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    state: &mut WalkState<'_, 'r>,
+) {
+    let replacements = find_files_required_in_place_of_others(context, state);
     if replacements.is_empty() {
         return;
     }

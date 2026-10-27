@@ -598,6 +598,31 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         GENERAL && self.reads_jsdoc
     }
 
+    /// `Options::reads_module_statements_alone`, at the start of a statement. True if the statement is to be parsed. Otherwise
+    /// the text ends here, or is rejected.
+    #[inline(never)]
+    fn is_at_module_statement(&mut self) -> bool {
+        use skipped_blocks::{may_export_from_a_file, may_reach_beyond_the_module};
+        let src = self.lx.src;
+        let rest = match self.token() {
+            T::Import => return true,
+            T::Export => {
+                let rest = src.get(self.lx.end as usize..).unwrap_or_default();
+                if may_export_from_a_file(rest) {
+                    return true;
+                }
+                self.f.has_module_syntax = true;
+                rest
+            }
+            _ => src.get(self.pos() as usize..).unwrap_or_default(),
+        };
+        match self.f.has_module_syntax && !may_reach_beyond_the_module(rest) {
+            true => self.lx.stop(),
+            false => self.reject(Rejection::Unsupported),
+        }
+        false
+    }
+
     /// `parseSourceFileWorker`
     fn source_file(&mut self) {
         self.f.source_len = self.lx.src.len() as u32;
@@ -629,6 +654,13 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let mut is_in_prologue = !self.options.is_json && self.options.part.is_none();
         let mut has_module_declaration = false;
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
+            if !GENERAL
+                && !COMMENTS
+                && self.options.reads_module_statements_alone
+                && !self.is_at_module_statement()
+            {
+                break;
+            }
             let statement = match self.recovers() {
                 true => self.top_level_statement(),
                 false => self.statement(),

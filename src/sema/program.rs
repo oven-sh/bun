@@ -1577,8 +1577,8 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
                         let it = &loaded.imports[at];
                         it.should_add_file
                             && it.unsupported_extension.is_none()
-                            && !(is_javascript_file(host, it.path)
-                                && strings::contains(it.path, b"/node_modules/"))
+                            && !(strings::contains(it.path, b"/node_modules/")
+                                && is_javascript_file(host, it.path))
                     })
                     .collect();
                 let found: Vec<(&'r [u8], bool, Option<PackageId<'r>>)> = loaded
@@ -7065,8 +7065,11 @@ impl<'s> Files<'s> {
         debug_assert!(cell.is_leaf || cell.is_read_by_every_task);
         // SAFETY: no file refers to it, so no other task reads its HIR.
         let module: &mut Module<'s> = unsafe { &mut *cell.0.get() };
-        module.hir = stub_of(&mut module.hir);
-        module.bound = Bound::empty_in(module.hir.arena());
+        // The load has left a stub of a module that was never bound.
+        if module.bound.symbols.len() > 0 || !module.hir.stmts.is_empty() {
+            module.hir = stub_of(&mut module.hir);
+            module.bound = Bound::empty_in(module.hir.arena());
+        }
         module.transient_symbols.clear();
     }
 

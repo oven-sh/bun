@@ -72,3 +72,17 @@ test("what stands in the bodies of functions in files that nobody imports", asyn
   });
   expect(ran).toEqual({ stdout: "1\n", stderr: "", exitCode: 0, signalCode: null });
 }, 120_000);
+
+test("what a file that nobody imports names at its head, and what it declares for other files behind it", async () => {
+  const ran = await buildAndRun("aot-heads-nobody-reads", {
+    "main.ts": `globalThis.fromTheHead = 7;\nglobalThis.fromTheRest = 1;\nglobalThis.fromAnExport = 2;\nconsole.log(fromTheHead + fromTheRest + fromAnExport);\n`,
+    "head.ts": `// import\nimport "./outside/adds-from-the-head";\n/** What a module requires of a global. */\nexport function f(module: number, global: number) { return module + global; }\nexport { f as g };\n`,
+    "rest.ts": `export const a = 1;\nexport function f() { return a; }\ndeclare global { var fromTheRest: number; }\n`,
+    "export.ts": `export const a = 1;\nexport function f() { return a; }\nexport { b } from "./outside/adds-from-an-export";\n`,
+    "tags.tsx": `import "./outside/adds-from-the-head";\ndeclare namespace JSX { interface IntrinsicElements { p: {}; } }\nexport const p = <p>it's {1} } text</p>;\n`,
+    "broken.ts": `import "./outside/adds-from-the-head";\nexport function f() { return 1; } }\n`,
+    "outside/adds-from-the-head.ts": `export {};\ndeclare global { var fromTheHead: number; }\n`,
+    "outside/adds-from-an-export.ts": `export const b = 1;\ndeclare global { var fromAnExport: number; }\n`,
+  });
+  expect(ran).toEqual({ stdout: "10\n", stderr: "", exitCode: 0, signalCode: null });
+}, 120_000);

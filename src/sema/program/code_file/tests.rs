@@ -29,7 +29,15 @@ fn load_with_loader<'s, 'r>(
 ) -> ParsedCodeFile<'s, 'r> {
     let target = CodeTarget::of_path(context.resolver.keep(path.as_bytes()), loader);
     let text = context.host.read_source(target.key.path);
-    load_code_file(context, context.session.arena(), target, text, false, &[])
+    load_code_file(
+        context,
+        context.session.arena(),
+        target,
+        text,
+        false,
+        &[],
+        &[],
+    )
 }
 
 fn load<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> ParsedCodeFile<'s, 'r> {

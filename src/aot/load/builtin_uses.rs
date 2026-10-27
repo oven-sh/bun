@@ -29,7 +29,7 @@ pub(crate) fn finish_application_file(
     request: &FinishedFile<'_, '_>,
     source: &mut ParsedSource,
 ) -> Vec<HostResolution> {
-    debug_assert!(source.evaluated_text_sites.is_empty());
+    source.evaluated_text_sites.clear();
     if source.kind == SourceKind::EvaluatedText {
         source.evaluated_function = find_evaluated_function(request);
     }

@@ -1,4 +1,4 @@
-// `name in proxy` reads `has` off the handler and calls it with the target and the key; `proxy.name = value` reads `set` and calls it with the target, the key, the value and the receiver. Compiled code does both itself, and asks the run time only where there is no trap to call, where the answer is no boolean, or where the target may bind the answer.
+// `name in proxy` reads `has` off the handler and calls it with the target and the key; `proxy.name = value` reads `set` and calls it with the target, the key, the value and the receiver. Compiled code does both itself. Where there is no `has` trap it asks the target the same question. It asks the run time only where there is no `set` trap to call, where the answer is no boolean, or where the target may bind the answer.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const operations = ["InByIdAndCache", "InByValAndCache", "InByValGeneric", "PutById", "PutByIdSloppy", "PutByIdAndCache", "PutByVal", "PutByValAndCache", "PutByValAndCacheSloppy", "PutByValGeneric", "HasWithProxyTrap", "FinishHasThroughProxy", "SetWithProxyTrap", "FinishSetThroughProxy"];
 const asked = () => operations.reduce((sum, name) => sum + count("operationAOT" + name), 0);
@@ -46,7 +46,7 @@ measure("arrows", new Proxy({}, { has: (target, key) => key === "other", set: (t
 const inherited = { stores: 0 };
 measure("inherited traps", new Proxy({}, Object.create({ has() { return true; }, set() { inherited.stores++; return true; } })), 20, () => inherited.stores);
 const passedOn = { wanted: 0 };
-measure("no traps", new Proxy(passedOn, {}), 8020, () => [passedOn.wanted, passedOn.other, passedOn[mark]].join(" "));
+measure("no traps", new Proxy(passedOn, {}), 4020, () => [passedOn.wanted, passedOn.other, passedOn[mark]].join(" "));
 measure("answers that are no booleans", new Proxy({}, { has() { return "yes"; }, set() { return 1; } }), 8020, () => "");
 const sealed = Object.seal({ wanted: 0, other: 0, [mark]: 0 });
 measure("a sealed target", new Proxy(sealed, { has(target, key) { return target[key] !== undefined; }, set(target, key, value) { target[key] = value; return true; } }), 8020, () => [sealed.wanted, sealed.other].join(" "));

@@ -2305,6 +2305,12 @@ impl LeftOutCode {
         }
     }
 
+    pub(crate) fn leave_out_files(&mut self, files: impl Iterator<Item = FileId>) {
+        self.files.extend(files);
+        self.files.sort_unstable();
+        self.files.dedup();
+    }
+
     // An import by a name is bound to the variable and asks nothing of the object of the module.
     pub(crate) fn find_export_use(&self, file: FileId, export: &ModuleExport) -> ExportUse {
         if self.files_read_by_name.binary_search(&file).is_err()

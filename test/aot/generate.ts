@@ -195,6 +195,7 @@ export const generators: Record<string, () => Generator> = {
   "built-ins-asked-in-place": () => require("./generate-built-ins-asked-in-place"),
   "built-ins-on-written-structure": () => require("./programs/generate-replaced-iteration"),
   "builtin-modules": () => require("./generate/builtin-modules"),
+  "callees-replaced-behind-their-test": () => require("./generate/callees-replaced-behind-their-test"),
   "calls": () => require("./generate/calls"),
   "classes": () => require("./generate/classes"),
   "classes-and-closures": () => ({
@@ -231,6 +232,7 @@ export const generators: Record<string, () => Generator> = {
         part => (require(`./generate/${part}`) as Generator).programs(),
       ),
   }),
+  "lists-changed-behind-their-test": () => require("./generate/lists-changed-behind-their-test"),
   "method-table": () => require("./generate/method-table"),
   "modules": () => require("./generate/modules"),
   "native-callbacks": () => ({
@@ -261,6 +263,7 @@ export const generators: Record<string, () => Generator> = {
   "untyped-code": () => require("./generate/untyped-code"),
   "untyped-loops": () => require("./generate/untyped-loops"),
   "untyped-stress": () => require("./generate/untyped-stress"),
+  "values-that-are-there-only-behind-a-test": () => require("./generate/values-that-are-there-only-behind-a-test"),
   "ways-into-library-modules": () => require("./generate/ways-into-library-modules"),
   "writes-to-host-objects": () => require("./generate/writes-to-host-objects"),
 };

@@ -9,7 +9,7 @@ pub(crate) use top_level_await::has_live_top_level_await;
 use crate::atom::{Atom, Interner};
 use crate::bind::{BindOptions, Bound, SymbolId};
 use crate::fold::{Decisions, FoldError, FoldInputs};
-use crate::hir::{ExprId, File};
+use crate::hir::{ExprId, File, ImportedName};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{ImportSite, ImportSiteKind, JsxImportSet, JsxMode};
 use crate::module_format::{DeclaredModuleType, ModuleFormat};
@@ -40,6 +40,8 @@ pub struct FileAnalysis<'s> {
     pub errors: &'s [FoldError],
     pub strings_over_limit: &'s [ExprId],
     pub relies_on_running_before_calls: bool,
+    /// What the code reads of other files through its import statements, each name once, in the order of the first reads.
+    pub imported_names: &'s [ImportedName],
     requires_of_other_files: &'s [(u32, Atom)],
     sites_by_kind: &'s [u32],
     first_call_site: u32,
@@ -85,4 +87,17 @@ pub fn analyze_file<'s>(
     arena: &'s Arena,
 ) -> (Bound<'s>, FileAnalysis<'s>) {
     analyze::run(hir, options, inputs, &file, atoms, arena)
+}
+
+/// Folds a file that `analyze_file` has analyzed once more, with other `inputs` or other constants of other files. `None`: it is to be analyzed anew.
+pub fn fold_file_again<'s>(
+    hir: &File<'s>,
+    bound: &Bound<'s>,
+    inputs: &FoldInputs<'s>,
+    file: FileInputs<'s>,
+    previous: &FileAnalysis<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> Option<FileAnalysis<'s>> {
+    analyze::run_again(hir, bound, inputs, &file, previous, atoms, arena)
 }

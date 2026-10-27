@@ -30,7 +30,7 @@
 # CHECK-NEXT: v2 = GetConstructPrototype v0 layout=L1
 # CHECK-NEXT: v3 = SuperConstruct v1, v0, v1, v1 layout=L1 accessSite=1 callees=[f2, builtin(MathMax), ..]
 # CHECK-NEXT: v4 = SuperConstruct v1, v0 layout=L1
-# CHECK-NEXT: v5 = NewArray contents=anything capacity=v0 allocationSite=2 literalStorage=Profiled staticsOffset=3
+# CHECK-NEXT: v5 = NewArray contents=anything capacity=v0 allocationSite=2 literalStorage=Profiled staticsOffset=3 [contentsAreProven]
 # CHECK-NEXT: v6 = SuperConstructList v1, v0, v5 layout=L1 accessSite=4 callees=[f2, builtin(MathMax), ..]
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
@@ -485,7 +485,7 @@ function f3 name="Derived" module=m0 position=10 kind=DerivedConstructor flags=[
     v2 = GetConstructPrototype v0 layout=L1
     v3 = SuperConstruct v1, v0, v1, v1 layout=L1 accessSite=1 callees=[f2, builtin(MathMax), ..]
     v4 = SuperConstruct v1, v0 layout=L1
-    v5 = NewArray contents=anything capacity=v0 allocationSite=2 literalStorage=Profiled staticsOffset=3
+    v5 = NewArray contents=anything capacity=v0 allocationSite=2 literalStorage=Profiled staticsOffset=3 [contentsAreProven]
     v6 = SuperConstructList v1, v0, v5 layout=L1 accessSite=4 callees=[f2, builtin(MathMax), ..]
     Return v3
 }

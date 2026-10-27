@@ -43,6 +43,7 @@ export default b.declarations(
   marked("IsSpy", ["bun:test.spyOn", "bun:test.jest.spyOn", "bun:test.vi.spyOn"]),
   marked("IsNotEnumerable", ["console._stdout", "console._stderr"]),
   marked("IsReplacedBySetter", ["self"]),
+  marked("RunsWaitingJobs", ["%Expect%", "Bun.jest", "HTMLRewriter", "bun:jsc.drainMicrotasks", "bun:test"]),
 
   b.extend("process.dlopen", { loadsMachineCodeAs: "process.dlopen" }),
   b.extend("%NativeFunctions%.FfiBindTsCc", { loadsMachineCodeAs: "bun:ffi.cc" }),

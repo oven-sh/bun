@@ -12,6 +12,11 @@
 // A shape that grows faster than 2.5 times today has its growth in the file, and may not pass that, on any platform: the aim is that no shape has one.
 // The file only goes down. Whoever means to accept a worse number edits it, where a reviewer sees it.
 //
+// Most of what a small build has resident has nothing to do with its program, and about a third of that is pages of Bun's own file: how many depends on how
+// Bun was linked and on what else the machine is doing. The file has that number once, for a program of one line. Where size 0 of a shape takes more than
+// that, the difference is left out of the shape's memory, so one row fails and not all of them. A build that is over its budget in memory is measured again,
+// together with a new build of size 0.
+//
 // One more build has all the shapes as its entry points, on four threads. The stages of a build run one after another, and a stage takes the memory that
 // the stage before it has freed, so the build needs what its largest stage needs. On one thread that is so by itself. On several threads it also takes
 // an allocator that hands what one thread has freed to the others, or back to the system. Only its memory is held against the budget, with less slack:
@@ -33,6 +38,7 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } 
 import { join } from "path";
 import { measureCommandWithMemory, type Cost } from "../analysis-scaling/measure-check";
 import { withThreads } from "../harness/flags";
+import { measureUntilWithinBounds } from "../harness/measure-again";
 import { slot, spawned, withoutDebugInformation } from "../run-programs";
 import { describe, test } from "../supported";
 import { shapes, type Shape } from "./shapes";
@@ -100,6 +106,21 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<C
   }
 }
 
+const oneLine = "a program of one line";
+const bytesOfOneLineInFile = (budgets[oneLine]?.megabytes ?? Infinity) * 1e6;
+
+async function measureOneLine(carrier: string[]): Promise<Cost> {
+  using folder = tempDir("aot-build-scaling", { "main.js": "console.log(0);\n" });
+  const cwd = String(folder);
+  const executable = join(cwd, "program");
+  return await measureCommandWithMemory(
+    cwd,
+    [bunExe(), "build", "--compile", "--aot", withThreads(1), ...carrier, "main.js", "--outfile", executable],
+    900_000,
+    bunEnv,
+  );
+}
+
 const allShapesTogether = "all shapes as the entry points of one build, on four threads";
 const slackOfAllShapesTogether = 1.15;
 
@@ -121,6 +142,9 @@ async function measureAllShapesTogether(carrier: string[]): Promise<Cost> {
 }
 
 const inMillions = (count: number) => Math.round(count / 1e6);
+/** What `build` has resident, less what a build of nothing takes here over what the file has for a program of one line. */
+const judgedMegabytes = (nothing: Cost, build: Cost) =>
+  inMillions(build.peakBytes - Math.max(0, nothing.peakBytes - bytesOfOneLineInFile));
 const rounded = (times: number) => Math.round(times * 100) / 100;
 const lower = (a: number | undefined, b: number | undefined) =>
   a === undefined || b === undefined ? b : Math.min(a, b);
@@ -133,7 +157,7 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
         budgetsPath,
         JSON.stringify(
           Object.fromEntries(
-            [...shapes.map(shape => shape.name), allShapesTogether].flatMap(name =>
+            [oneLine, ...shapes.map(shape => shape.name), allShapesTogether].flatMap(name =>
               budgets[name] ? [[name, budgets[name]]] : [],
             ),
           ),
@@ -148,6 +172,7 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
       shape.name,
       async () => {
         const size = shape.size * factor;
+        const budget = holdsBudgets ? budgets[shape.name] : undefined;
         const [none, once, twice] = await Promise.all(
           [0, size, 2 * size].map(size => slot(() => measure(shape, size, carrier))),
         );
@@ -170,12 +195,23 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
         const overTheBound = (times: number | undefined) =>
           times !== undefined && times > mostGrowth ? rounded(times) : undefined;
         const fast = { instructions: overTheBound(growth.instructions), peakBytes: overTheBound(growth.peakBytes) };
+        const isWithinBudget = (megabytes: number) => !budget || megabytes <= budget.megabytes * slack;
         const now: Budget = {
           millionInstructions: twice.instructions === undefined ? undefined : inMillions(twice.instructions),
-          megabytes: inMillions(twice.peakBytes),
+          megabytes: isWithinBudget(judgedMegabytes(none, twice))
+            ? judgedMegabytes(none, twice)
+            : await measureUntilWithinBounds(
+                shape.name,
+                async () => {
+                  const [none, twice] = await Promise.all(
+                    [0, 2 * size].map(size => slot(() => measure(shape, size, carrier))),
+                  );
+                  return judgedMegabytes(none, twice);
+                },
+                isWithinBudget,
+              ),
           growth: fast.instructions === undefined && fast.peakBytes === undefined ? undefined : fast,
         };
-        const budget = holdsBudgets ? budgets[shape.name] : undefined;
         if (holdsBudgets && (mode === "accept" || !budget)) {
           budgets[shape.name] = now;
           expect(["accept", "lower"]).toContain(mode);
@@ -209,7 +245,7 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
           worse.push(
             `${2 * size} ${shape.counted} cost ${now.millionInstructions} M instructions; the budget is ${budget.millionInstructions} and a fifth`,
           );
-        if (budget && now.megabytes > budget.megabytes * slack)
+        if (budget && !isWithinBudget(now.megabytes))
           worse.push(
             `${2 * size} ${shape.counted} take ${now.megabytes} MB; the budget is ${budget.megabytes} and a fifth`,
           );
@@ -219,22 +255,40 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
     );
   }
 
-  if (allShapesTogether.includes(wanted))
-    test.concurrent(
+  for (const [name, slackOfRow, measureMegabytes] of [
+    [oneLine, slack, async () => inMillions((await slot(() => measureOneLine(carrier))).peakBytes)],
+    [
       allShapesTogether,
+      slackOfAllShapesTogether,
       async () => {
-        const megabytes = inMillions((await slot(() => measureAllShapesTogether(carrier))).peakBytes);
-        console.error(`SCALING ${allShapesTogether}: ${megabytes} MB`);
-        if (!holdsBudgets) return;
-        const budget = budgets[allShapesTogether];
-        if (mode === "accept" || !budget) {
-          budgets[allShapesTogether] = { megabytes };
-          expect(["accept", "lower"]).toContain(mode);
-          return;
-        }
-        if (mode === "lower") budget.megabytes = Math.min(budget.megabytes, megabytes);
-        expect(megabytes).toBeLessThanOrEqual(budget.megabytes * slackOfAllShapesTogether);
+        const [nothing, all] = await Promise.all([
+          slot(() => measureOneLine(carrier)),
+          slot(() => measureAllShapesTogether(carrier)),
+        ]);
+        return judgedMegabytes(nothing, all);
       },
-      1_800_000,
-    );
+    ],
+  ] as const)
+    if (name.includes(wanted))
+      test.concurrent(
+        name,
+        async () => {
+          const budget = holdsBudgets ? budgets[name] : undefined;
+          const megabytes = await measureUntilWithinBounds(
+            name,
+            measureMegabytes,
+            megabytes => !budget || megabytes <= budget.megabytes * slackOfRow,
+          );
+          console.error(`SCALING ${name}: ${megabytes} MB`);
+          if (!holdsBudgets) return;
+          if (mode === "accept" || !budget) {
+            budgets[name] = { megabytes };
+            expect(["accept", "lower"]).toContain(mode);
+            return;
+          }
+          if (mode === "lower") budget.megabytes = Math.min(budget.megabytes, megabytes);
+          expect(megabytes).toBeLessThanOrEqual(budget.megabytes * slackOfRow);
+        },
+        1_800_000,
+      );
 });

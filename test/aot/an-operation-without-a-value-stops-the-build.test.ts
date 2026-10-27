@@ -51,6 +51,14 @@ for (const f of [call, construct]) try { f(); } catch (e) { console.log((e as Er
 const o = { get poison(): number { throw new Error("poison"); } };
 function read() { return o.poison; }
 try { read(); } catch (e) { console.log((e as Error).message); }`,
+  // The value is an object that the compiler does not follow. No such object passes the test, so nothing reaches the read, though a list that unseen code gets has a length.
+  "a read behind a test that its receiver never passes": `
+declare const unknownFunction: (list: number[]) => void;
+function lengthOf(v: unknown): number { return typeof v === "string" ? v.length : 0; }
+console.log(lengthOf(new Proxy((a: number) => a, {})));
+const answers: number[] = [];
+answers.push(1);
+try { unknownFunction(answers); } catch {}`,
   "a loop over what is not iterable, a private name on what lacks it, a symbol added to a number": `
 class Holder { #held = 1; static heldBy(o: any) { return o.#held; } }
 const cases = [() => { for (const x of undefined as any) console.log(x); }, () => Holder.heldBy({}), () => (Symbol() as any) + 1];

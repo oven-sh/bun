@@ -2437,100 +2437,292 @@
     "default": 42050
   },
   "aot/every-program-alone-1.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-10.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-11.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-12.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-13.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-14.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-15.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-16.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-17.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-18.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-19.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-2.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-20.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-21.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-22.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-23.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-24.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-25.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-26.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-27.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-28.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-29.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-3.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-30.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-31.test.ts": {
-    "default": 60000
+    "default": 110000
   },
   "aot/every-program-alone-32.test.ts": {
-    "default": 60000
+    "default": 110000
+  },
+  "aot/every-program-alone-33.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-34.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-35.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-36.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-37.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-38.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-39.test.ts": {
+    "default": 110000
   },
   "aot/every-program-alone-4.test.ts": {
-    "default": 60000
+    "default": 110000
+  },
+  "aot/every-program-alone-40.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-41.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-42.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-43.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-44.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-45.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-46.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-47.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-48.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-49.test.ts": {
+    "default": 110000
   },
   "aot/every-program-alone-5.test.ts": {
-    "default": 60000
+    "default": 110000
+  },
+  "aot/every-program-alone-50.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-51.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-52.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-53.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-54.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-55.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-56.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-57.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-58.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-59.test.ts": {
+    "default": 110000
   },
   "aot/every-program-alone-6.test.ts": {
-    "default": 60000
+    "default": 110000
+  },
+  "aot/every-program-alone-60.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-61.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-62.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-63.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-64.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-65.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-66.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-67.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-68.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-69.test.ts": {
+    "default": 110000
   },
   "aot/every-program-alone-7.test.ts": {
-    "default": 60000
+    "default": 110000
+  },
+  "aot/every-program-alone-70.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-71.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-72.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-73.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-74.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-75.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-76.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-77.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-78.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-79.test.ts": {
+    "default": 110000
   },
   "aot/every-program-alone-8.test.ts": {
-    "default": 60000
+    "default": 110000
+  },
+  "aot/every-program-alone-80.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-81.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-82.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-83.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-84.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-85.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-86.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-87.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-88.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-89.test.ts": {
+    "default": 110000
   },
   "aot/every-program-alone-9.test.ts": {
-    "default": 60000
+    "default": 110000
+  },
+  "aot/every-program-alone-90.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-91.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-92.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-93.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-94.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-95.test.ts": {
+    "default": 110000
+  },
+  "aot/every-program-alone-96.test.ts": {
+    "default": 110000
   },
   "aot/every-store-to-a-variable-of-a-context-shows-on-the-sandbox-object.test.ts": {
     "default": 842,

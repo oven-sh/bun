@@ -433,6 +433,8 @@ export function signatureOfBindgen(
 // The object that is made of a dictionary has a property for each member that is there, in their order, and the file that declares the dictionary declares the layout.
 function findLayoutOfResult({ returns }: Signature, fn: FunctionDefinition): DictionaryType | null {
   if (!(returns instanceof DictionaryType) || returns.origin?.stem !== fn.origin?.stem) return null;
+  // An object of a layout inherits from Object.prototype.
+  if (returns.nullPrototype) return null;
   return returns.members.every(({ type }) => !type.takesUndefined) ? returns : null;
 }
 

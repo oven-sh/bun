@@ -75,6 +75,8 @@ const documentedOptions = {
     "inspector",
     "aotLogTypeMismatches",
     "aotExplain",
+    "aotDisable",
+    "aotHeat",
   ],
   TrimOptions: ["allow", "locales", "log"],
 };

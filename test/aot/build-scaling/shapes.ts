@@ -474,7 +474,7 @@ export const shapes: Shape[] = [
         `console.log(sum);\n`,
     }),
   },
-  // What is found above a class under a name is remembered by class and name: each constructor may meet the objects of every class, and asks under its own name.
+  // What the base class allocates for a class below what a function makes is an object of that class: a constructor meets the objects of the classes below it and of no other.
   {
     name: "classes that each extend what a function of their own makes of one base class",
     counted: "classes",
@@ -493,6 +493,21 @@ export const shapes: Shape[] = [
         ) +
         `let sum = 0;\n` +
         lines(size, index => `sum += new Below${index}().below${index};`) +
+        `console.log(sum);\n`,
+    }),
+  },
+  // Each place may call every function. They are too many to be told apart there, which is seen before they are put in order.
+  {
+    name: "functions that are stored one after another under one name of one object and called there",
+    counted: "functions",
+    size: 250,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js":
+        `const holder = { run: null };\nlet sum = 0;\n` +
+        lines(size, index => `holder.run = function () {\n  return ${index};\n};\nsum += holder.run();`) +
         `console.log(sum);\n`,
     }),
   },
@@ -621,6 +636,33 @@ export const shapes: Shape[] = [
     write: size => ({
       "main.js": `let sum = 0;\n${lines(size, index => `function f${index}() {\n  const c0 = ${index};\n${lines(24, step => `  const c${step + 1} = c${step} + c${step};`)}  return c24;\n}\nsum += f${index}();`)}console.log(sum);\n`,
     }),
+  },
+  {
+    name: "rows of constants that are each named after the one before, at the top of a file and in a function",
+    counted: "constants in each row",
+    size: 3000,
+    entry: "main.js",
+    write: size => {
+      const rows: [string, string, (earlier: string) => string][] = [
+        ["name", `"node:path"`, earlier => earlier],
+        ["negated", "1", earlier => `-${earlier}`],
+        ["inverted", "true", earlier => `!${earlier}`],
+        ["nothing", "undefined", earlier => `void ${earlier}`],
+        ["kind", "1", earlier => `typeof ${earlier}`],
+        ["chosen", "true", earlier => `${earlier} ? true : false`],
+      ];
+      const declared =
+        rows.map(([name, first]) => `const ${name}0 = ${first};`).join(" ") +
+        "\n" +
+        lines(size, index => rows.map(([name, , next]) => `const ${name}${index + 1} = ${next(`${name}${index}`)};`).join(" "));
+      const last = rows.map(([name]) => `${name}${size}`).join(", ");
+      return {
+        "main.js":
+          `${declared}console.log(require(name${size}).sep, process.getBuiltinModule(name${size}).sep, ${last});\n` +
+          `function inFunction() {\n${declared}  return [require(name${size}).sep, process.getBuiltinModule(name${size}).sep, ${last}];\n}\nconsole.log(...inFunction());\n` +
+          `import(name${size}).then(loaded => console.log(loaded.sep));\n`,
+      };
+    },
   },
   // Each place constructs any class of one list for any class of the other, and who allocates for a class below a call is found among the class objects above it.
   {

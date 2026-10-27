@@ -3861,6 +3861,8 @@ declare module "bun" {
 
   type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "missed-optimizations" | "allocations";
 
+  type AotHeat = "everything-is-hot" | "everything-is-cold" | "only-loops-are-hot" | "nothing-is-hottest" | "shuffled";
+
   interface TrimOptions {
     /**
      * Features to keep even if your code never uses them, along with the features they need.
@@ -4074,6 +4076,38 @@ declare module "bun" {
      * Equivalent CLI flag: `--explain`
      */
     aotExplain?: AotReport | AotReport[];
+    /**
+     * With `aot`: build without some steps of the compiler. The program behaves the same. The
+     * executable can be larger and slower.
+     *
+     * When the compiler can't finish a build, the error names the step to list here, such as
+     * `"pass:PlaceTypeTests"`. Apart from that, the option is for working on the compiler.
+     *
+     * - `"pass:<name>"`: one optimization pass
+     * - `"flow:<name>"`: one kind of result of the whole-program analysis
+     * - `"flow-results"`: the whole-program analysis and all its results
+     *
+     * Takes a list of names, or one string with commas between the names. `Bun.build` throws if
+     * the compiler doesn't know a name.
+     *
+     * Equivalent CLI flag: `--aot-disable`
+     */
+    aotDisable?: string | string[];
+    /**
+     * With `aot`: replace the compiler's estimate of how often each part of the program runs. The
+     * program behaves the same. The option is for working on the compiler.
+     *
+     * The compiler makes code that it expects to run often fast, and the rest small.
+     *
+     * - `"everything-is-hot"`: all code runs often
+     * - `"everything-is-cold"`: all code runs rarely
+     * - `"only-loops-are-hot"`: every function is entered equally often, so only loops run often
+     * - `"nothing-is-hottest"`: the estimate, without its list of the hottest functions
+     * - `"shuffled"`: each function gets an estimate at random, the same one in every build
+     *
+     * Equivalent CLI flag: `--aot-heat`
+     */
+    aotHeat?: AotHeat;
     /**
      * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
      *

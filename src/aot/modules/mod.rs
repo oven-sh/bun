@@ -92,6 +92,11 @@ impl ApplicationGraph<'_> {
     fn application_module(&self, module: ModuleRef) -> Option<ModuleRef> {
         module.map_file(self.to_application)
     }
+
+    /// A program of its own asks its files for every name, so it loads code that a file hands on and nobody in the application asks for.
+    pub fn has_module(&self, local: FileId) -> bool {
+        (self.to_application)(local).is_some_and(|file| self.graph.has_record(file))
+    }
 }
 
 pub struct BoundModules {

@@ -344,6 +344,9 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.is_required_during_load(module) {
             flags |= ModuleFlags::IS_REQUIRED_DURING_LOAD;
         }
+        if graph.may_be_imported_while_it_runs(module) {
+            flags |= ModuleFlags::MAY_BE_IMPORTED_WHILE_IT_RUNS;
+        }
         if graph.names_way_to_module_objects(module) {
             flags |= ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
         }

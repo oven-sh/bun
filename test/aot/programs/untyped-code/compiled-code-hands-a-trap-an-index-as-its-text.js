@@ -1,6 +1,6 @@
-// proxy[index] hands the get trap the index as a string. Compiled code takes the strings of small indexes from where they are kept and calls the trap itself. It asks the run time the first time, behind a collection, and for an index that is large, negative or no integer.
+// proxy[index] hands the get trap the index as a string, and proxy[index] = value the set trap. Compiled code takes the strings of small indexes from where they are kept and calls the trap itself. It asks the run time the first time, behind a collection, and for an index that is large, negative or no integer.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const asked = () => count("operationAOTGetByVal") + count("operationAOTGetByValAndCache") + count("operationAOTGetWithProxyTrap");
+const asked = () => count("operationAOTGetByVal") + count("operationAOTGetByValAndCache") + count("operationAOTGetWithProxyTrap") + count("operationAOTPutByVal") + count("operationAOTPutByValAndCache") + count("operationAOTPutByValAndCacheSloppy") + count("operationAOTSetWithProxyTrap") + count("operationAOTFinishSetThroughProxy");
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 const readAt = (object, index) => object[index];
 
@@ -51,3 +51,32 @@ attempt("a proxy above an array", () => { let answer; const list = [1, , 3]; Obj
 attempt("bytes behind a proxy", () => { let sum = 0; const bytes = new Proxy(new Uint8Array([1, 2, 3]), { get(target, key) { return target[key]; } }); for (let i = 0; i < 40; i++) sum += readAt(bytes, i % 3); return sum + " " + readAt(bytes, 3); });
 attempt("a text behind a proxy", () => { let text = ""; const letters = new Proxy(new String("abc"), { get(target, key) { return target[key]; } }); for (let i = 0; i < 40; i++) text = readAt(letters, i % 3) + readAt(letters, 3); return text; });
 attempt("the same site meets other things", () => [readAt(numbers, 1), readAt("text", 1), readAt({ 1: "own" }, 1), readAt(noting, 1), readAt(new Uint8Array([4, 5]), 1), readAt(many, 1)].join());
+
+// Stores.
+const storeAt = (object, index, value) => { "use strict"; object[index] = value; };
+const storeAtSloppy = new Function("object", "index", "value", "object[index] = value; return 'stored';");
+const written = [0, 0, 0, 0, 0, 0, 0, 0];
+const storedUnder = new Set;
+const storing = new Proxy(written, { set(target, key, value, receiver) { storedUnder.add(typeof key + " " + key + " " + (receiver === storing)); target[key] = value + 1; return true; } });
+measure("the trap stores to the target", i => { storeAt(storing, i & 7, i); storeAt(storing, (i + 1) & 7, -i); return written.join(); }, 20);
+console.log([...storedUnder].sort().join());
+const storingOn = new Proxy(written, { set(target, key, value, receiver) { return Reflect.set(target, key, value, receiver); } });
+attempt("the trap hands on", () => { for (let i = 0; i < 100; i++) storeAt(storingOn, i & 7, i); return written.join(); });
+const keysStored = [];
+const listing = new Proxy({}, { set(target, key, value) { keysStored.push(typeof key + " " + String(key)); return true; } });
+for (const index of [0, 10, 1023, 1024, 4294967294, 4294967295, -1, -0, 0.5, NaN, "7", 7n])
+  attempt("store under " + (Object.is(index, -0) ? "-0" : typeof index + " " + String(index)), () => { keysStored.length = 0; for (let i = 0; i < 40; i++) storeAt(listing, index, i); return keysStored.length + " " + keysStored[39]; });
+const refusing = new Proxy([], { set() { return false; } });
+for (let round = 0; round < 3; round++) { attempt("a trap that says no, strict", () => { for (let i = 0; i < 20; i++) storeAt(refusing, 1, i); }); attempt("a trap that says no, sloppy", () => { let answer; for (let i = 0; i < 20; i++) answer = storeAtSloppy(refusing, 1, i); return answer; }); }
+const bareStores = new Proxy([1, 2, 3], {});
+attempt("no trap", () => { for (let i = 0; i < 40; i++) storeAt(bareStores, i % 5, i); return [bareStores.length, bareStores[4], bareStores[0]].join(); });
+const frozenStores = new Proxy(Object.freeze([1, 2]), { set() { return true; } });
+for (let round = 0; round < 3; round++) { attempt("a frozen target, the same value", () => storeAt(frozenStores, 0, 1)); attempt("a frozen target, another value", () => storeAt(frozenStores, 0, 5)); }
+const stores = Proxy.revocable([], { set() { return true; } });
+attempt("before it is revoked", () => { for (let i = 0; i < 40; i++) storeAt(stores.proxy, i & 3, i); return "stored"; });
+stores.revoke();
+for (let round = 0; round < 3; round++) attempt("revoked", () => storeAt(stores.proxy, 1, 1));
+attempt("a set trap that throws", () => { let caught = 0; const thrower = new Proxy([], { set(target, key) { throw new RangeError("no " + key); } }); for (let i = 0; i < 40; i++) try { storeAt(thrower, i & 3, i); } catch (error) { if (error.message === "no " + (i & 3)) caught++; } return caught; });
+attempt("a proxy above the receiver", () => { const seenAbove = []; const heir = Object.create(new Proxy({}, { set(target, key, value, receiver) { seenAbove.push(key + (receiver === heir)); return true; } })); for (let i = 0; i < 40; i++) storeAt(heir, i & 3, i); return seenAbove.length + " " + seenAbove[39] + " " + Object.keys(heir).length; });
+attempt("stores behind collections", () => { for (let round = 0; round < 5; round++) { collect(); for (let i = 0; i < 300; i++) storeAt(storing, i & 7, i); } return written.join(); });
+attempt("the same site stores to other things", () => { const list = [0, 0], bytes = new Uint8Array(2), record = {}; for (const each of [list, bytes, record, storing]) storeAt(each, 1, 9); return [list[1], bytes[1], record[1], written[1]].join(); });

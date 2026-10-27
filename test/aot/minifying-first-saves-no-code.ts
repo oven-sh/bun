@@ -20,9 +20,11 @@
 // has none: so every form has that function, and it is not what is compared. Nor is the call of each further file.
 //
 // The cases of a group are the entry points of one executable, behind ./minifying-first-saves-no-code/run-in-a-worker.mjs. An entry point begins a program
-// of its own, so each case is compiled as it is alone, and an executable is written once for all of them.
+// of its own, so each case is compiled as it is alone, and an executable is written once for all of them. Not quite alone: files that are scripts share their globals, and what is
+// counted in a run can move by one with the neighbors. So a case that is larger beside the others is asked again in executables of its own, and that answer counts.
 //
-// The cases that are larger as written today stand in ./minifying-first-saves-no-code/known-today.ts with their numbers and are todo.
+// The cases that are larger as written today stand in ./minifying-first-saves-no-code/known-today.ts with their numbers and are todo. They share executables with each other
+// alone, which only a run with --todo builds.
 //
 //   AOT_MINIFYING_FIRST=<text>    only the cases whose name contains the text
 //   AOT_REDS=<file>               gets a line for each case that is larger as written: its name, a tab, what the bundler saves
@@ -188,7 +190,10 @@ async function run(
   return programs.map((_, index) => (parts[2 * index + 1] === undefined ? `the process ended: ${ran.signal ?? ran.exitCode} ${firstLines(ran.stderr)}` : `${parts[2 * index]}\nexit ${parts[2 * index + 1]}`)); // prettier-ignore
 }
 
-/** Builds one form of every case into one executable and measures each. A case that the compiler refuses is left out, and the others are built again. */
+/**
+ * Builds one form of the cases into one executable and measures each. A case that the compiler refuses is left out, and the others are built again. Where nothing says which case
+ * stops a build, each half of the cases gets an executable of its own.
+ */
 async function measureForm(
   form: Form,
   cases: Case[],
@@ -227,40 +232,15 @@ async function measureForm(
       };
     return built;
   };
-  /** The cases that stop the compiler without an error that names a file: found by halves. */
-  const findWhatStopsTheBuild = async (among: number[], stderr: string): Promise<[number, string][]> => {
-    if (among.length === 1) return [[among[0], stderr]];
-    const found: [number, string][] = [];
-    for (const half of [among.slice(0, among.length >> 1), among.slice(among.length >> 1)]) {
-      const built = await build(half);
-      if (built.exitCode !== 0) found.push(...(await findWhatStopsTheBuild(half, built.stderr)));
-    }
-    return found.length ? found : among.map(index => [index, "only beside the others: " + stderr]);
-  };
-  let taken: number[] = [];
-  for (;;) {
-    taken = cases.map((_, index) => index).filter(index => failures[index] === undefined);
-    if (!taken.length) break;
-    const built = await build(taken);
-    if (built.exitCode === 0) break;
-    const lines = built.stderr.split("\n");
-    const named = new Map<number, string>();
-    for (const [at, line] of lines.entries()) {
-      const index = /^\s+at .*\bc(\d{3})[\\/]/.exec(line)?.[1];
-      if (index !== undefined && !named.has(Number(index)))
-        named.set(Number(index), lines.slice(0, at).findLast(each => each.startsWith("error")) ?? line);
-    }
-    for (const [index, stderr] of named.size ? named : await findWhatStopsTheBuild(taken, built.stderr))
-      failures[index] = "the build: " + firstLines(stderr);
-  }
-  const running = taken.filter(index => cases[index].runs !== false);
-  const outputs = new Map<number, string>();
-  const calls = new Map<number, number>();
-  if (running.length) {
-    const printed = await run([executable], folder, running.map(entryIn), {
-      [runtimeEnvironment.forbidsInterpreter]: "1",
-    });
-    running.forEach((index, at) => outputs.set(index, printed[at]));
+  const measured = new Map<number, Measured & { output: string | undefined }>();
+  const measureExecutable = async (taken: number[]) => {
+    // The runner's image has the first map.
+    const maps = taken.map((_, at) => readMap(`${map}.${at + 1}`));
+    const running = taken.filter(index => cases[index].runs !== false);
+    const printed = running.length
+      ? await run([executable], folder, running.map(entryIn), { [runtimeEnvironment.forbidsInterpreter]: "1" })
+      : [];
+    const calls = new Map<number, number>();
     const waiting = isWindows ? [] : [...running];
     await Promise.all(
       Array.from({ length: countedRunsAtOnce }, async () => {
@@ -277,16 +257,32 @@ async function measureForm(
         }
       }),
     );
-  }
-  return cases.map((_, index) => {
-    if (failures[index] !== undefined) return { failure: failures[index]! };
-    // The runner's image has the first map.
-    return {
-      ...readMap(`${map}.${taken.indexOf(index) + 1}`),
-      runtimeOperations: calls.get(index),
-      output: outputs.get(index),
-    };
-  });
+    for (const [at, index] of taken.entries())
+      measured.set(index, {
+        ...maps[at],
+        runtimeOperations: calls.get(index),
+        output: running.includes(index) ? printed[running.indexOf(index)] : undefined,
+      });
+  };
+  const measureTogether = async (among: number[]): Promise<void> => {
+    if (!among.length) return;
+    const built = await build(among);
+    if (built.exitCode === 0) return measureExecutable(among);
+    const lines = built.stderr.split("\n");
+    const named = new Map<number, string>();
+    for (const [at, line] of lines.entries()) {
+      const index = /^\s+at .*\bc(\d{3})[\\/]/.exec(line)?.[1];
+      if (index !== undefined && among.includes(Number(index)) && !named.has(Number(index)))
+        named.set(Number(index), lines.slice(0, at).findLast(each => each.startsWith("error")) ?? line);
+    }
+    if (among.length === 1) named.set(among[0], built.stderr);
+    for (const [index, stderr] of named) failures[index] = "the build: " + firstLines(stderr);
+    if (named.size) return measureTogether(among.filter(index => !named.has(index)));
+    await measureTogether(among.slice(0, among.length >> 1));
+    await measureTogether(among.slice(among.length >> 1));
+  };
+  await measureTogether(cases.map((_, index) => index).filter(index => failures[index] === undefined));
+  return cases.map((_, index) => measured.get(index) ?? { failure: failures[index]! });
 }
 
 type Compared = { plain: string | undefined; furtherFiles: number } & Record<Form, Outcome>;
@@ -370,16 +366,24 @@ export function minifyingFirstSavesNoCode(
   parts = 1,
 ) {
   const names = Object.keys(cases).filter(name => !only || name.includes(only));
-  // A case with flags of its own is built beside cases with the same flags: the flags of a build hold for all its entry points.
-  const groups = [...Map.groupBy(names, name => flagsOf(cases[name]).join(" ")).values()].flatMap(alike =>
-    Array.from({ length: Math.ceil(alike.length / casesInOneExecutable) }, (_, index) =>
-      alike.slice(index * casesInOneExecutable, (index + 1) * casesInOneExecutable),
-    ),
+  // A case with flags of its own is built beside cases with the same flags: the flags of a build hold for all its entry points. And a case that is known today is built beside
+  // others that are: many of them stop a build, and only a run with --todo asks them.
+  const groups = [false, true].flatMap(isKnown =>
+    [
+      ...Map.groupBy(
+        names.filter(name => name in knownToday === isKnown),
+        name => flagsOf(cases[name]).join(" "),
+      ).values(),
+    ]
+      .flatMap(alike =>
+        Array.from({ length: Math.ceil(alike.length / casesInOneExecutable) }, (_, index) =>
+          alike.slice(index * casesInOneExecutable, (index + 1) * casesInOneExecutable),
+        ),
+      )
+      .filter((_, index) => index % parts === part - 1 && Math.floor(index / parts) % oneExecutableIn === 0),
   );
   describe.concurrent(title, () => {
-    for (const group of groups.filter(
-      (_, index) => index % parts === part - 1 && Math.floor(index / parts) % oneExecutableIn === 0,
-    )) {
+    for (const group of groups) {
       let measured: Promise<Compared[]> | undefined;
       for (const [index, name] of group.entries()) {
         const isKnown = name in knownToday;
@@ -387,7 +391,9 @@ export function minifyingFirstSavesNoCode(
           isKnown ? `${name} (${knownToday[name]})` : name,
           async () => {
             measured ??= measureGroup(group.map(each => cases[each]));
-            const saved = savedByMinifyingFirst((await measured)[index]);
+            let saved = savedByMinifyingFirst((await measured)[index]);
+            if (saved.length && group.length > 1)
+              saved = savedByMinifyingFirst((await measureGroup([cases[name]]))[0]);
             if (saved.length && process.env.AOT_REDS)
               appendFileSync(process.env.AOT_REDS, `${name}\t${saved.join("; ")}\n`);
             expect(saved).toEqual([]);

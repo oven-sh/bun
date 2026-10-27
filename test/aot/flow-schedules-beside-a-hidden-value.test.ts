@@ -35,6 +35,9 @@ for (const program of [
   "evaluators-and-a-loader-arrive-late-beside-a-hidden-value-and-are-called",
   "members-of-process-are-stored-where-process-arrives-late-beside-a-hidden-value",
   "members-of-string-prototype-are-replaced-where-it-arrives-late-beside-a-hidden-value",
+  "util-extend-replaces-members-of-string-prototype-that-arrives-late-beside-a-hidden-value",
+  // Of another kind: a bound function is handed to the host, and which other functions are handed out at the same time is the schedule's.
+  "a-listener-object-holds-object-assign-bound-to-an-object-that-is-read-behind-the-event",
 ]) {
   // TODO: on macOS the third schedule makes 3,385,852 bytes of code of this program and the usual one 2,680,588: 26 percent more, and ./harness/flow-schedules.ts allows 25. The answers agree.
   const movesTooFar = isMacOS && program === "the-global-object-is-printed";

@@ -91,6 +91,8 @@ struct ParseSettings<'a> {
     keeps_function_directives: bool,
     /// `Options::skips_function_blocks`
     skips_function_blocks: bool,
+    /// `Options::reads_module_statements_alone`
+    reads_module_statements_alone: bool,
 }
 
 /// True if `path` ends in `.json` and no `script_kind` overrides that.
@@ -266,6 +268,7 @@ fn parse_file_as(
         compiles: how.compiles,
         keeps_function_directives: how.keeps_function_directives,
         skips_function_blocks: how.skips_function_blocks,
+        reads_module_statements_alone: how.reads_module_statements_alone,
     };
     let once = |options, scratch: &mut Scratch| match atoms {
         Some(atoms) => crate::parse(text, options, atoms, scratch),
@@ -446,6 +449,7 @@ pub fn summarize<'s>(
         compiles: false,
         keeps_function_directives: false,
         skips_function_blocks: false,
+        reads_module_statements_alone: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         let scratch = all[0].get_or_insert_default();
@@ -453,7 +457,7 @@ pub fn summarize<'s>(
     })
 }
 
-/// [`summarize`] for a caller that reads the top level of a TypeScript file alone: the functions have empty bodies wherever their blocks could be stepped over.
+/// [`summarize`] for a caller that reads of a TypeScript file only which files it names and whether it is a module: the tree holds the `import` and `export` statements in front alone, or else the functions have empty bodies wherever their blocks could be stepped over.
 pub fn summarize_top_level<'s>(
     arena: &'s Arena,
     path: &[u8],
@@ -470,24 +474,32 @@ pub fn summarize_top_level<'s>(
     {
         return None;
     }
-    let how = ParseSettings {
-        dialect: Dialect::default(),
-        path,
-        script_kind,
-        experimental_decorators,
-        every_file_is_a_module,
-        jsdoc: JsDoc::Read,
-        attach_comments: false,
-        compiles: false,
-        keeps_function_directives: false,
-        skips_function_blocks: true,
-    };
-    let file = SCRATCH.with_borrow_mut(|all| {
-        let scratch = all[0].get_or_insert_default();
-        parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
-    });
-    (!file.has_errors && !file.has_parse_diagnostics && !file.has_parse_or_grammar_diagnostics())
-        .then_some(file)
+    for reads_module_statements_alone in [true, false] {
+        let how = ParseSettings {
+            dialect: Dialect::default(),
+            path,
+            script_kind,
+            experimental_decorators,
+            every_file_is_a_module,
+            jsdoc: JsDoc::Read,
+            attach_comments: false,
+            compiles: false,
+            keeps_function_directives: false,
+            skips_function_blocks: true,
+            reads_module_statements_alone,
+        };
+        let file = SCRATCH.with_borrow_mut(|all| {
+            let scratch = all[0].get_or_insert_default();
+            parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
+        });
+        if !file.has_errors
+            && !file.has_parse_diagnostics
+            && !file.has_parse_or_grammar_diagnostics()
+        {
+            return Some(file);
+        }
+    }
+    None
 }
 
 /// [`summarize`] for a tool that follows a parser other than `tsc`'s and doesn't read types from JSDoc comments.
@@ -536,6 +548,7 @@ pub fn summarize_in<'s>(
         compiles: false,
         keeps_function_directives: false,
         skips_function_blocks: false,
+        reads_module_statements_alone: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         parse_into_arena(all[0].get_or_insert_default(), how, memory, text, atoms)
@@ -629,6 +642,7 @@ pub fn with_summary_in_place<'s, R>(
         compiles: false,
         keeps_function_directives: false,
         skips_function_blocks: false,
+        reads_module_statements_alone: false,
     };
     // `then` may parse another text.
     let mut scratch = take_scratch();

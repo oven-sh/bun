@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { renameSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
@@ -175,3 +175,57 @@ console.log(fs.existsSync(path.join(__dirname, "..", "elsewhere", "note.txt")), 
   expect(plain).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0 });
   expect(compiled).toEqual({ ...plain, stdout: "false true\n" });
 }, 120_000);
+
+// macOS and Windows have no such names.
+test.skipIf(!isLinux).each([[[]], [["--compile-in-place"]]])(
+  "an asset whose name is not UTF-8 has U+FFFD in place of each such byte %j",
+  async flags => {
+    using dir = tempDir("aot-asset-name-is-not-utf-8", {
+      "app/main.cjs": `const fs = require("node:fs");
+const path = require("node:path");
+console.log(fs.readFileSync(path.join(__dirname, "folder\\ufffd", "note.txt"), "utf8"), fs.readFileSync(path.join(__dirname, "file\\ufffd.txt"), "utf8"), fs.readdirSync(__dirname).sort().join());
+`,
+    });
+    const app = join(String(dir), "app");
+    const inApp = (before: string, byte: number, behind: string) =>
+      Buffer.concat([Buffer.from(join(app, before)), Buffer.from([byte]), Buffer.from(behind)]);
+    for (const [byte, text] of [
+      [0xff, "a note"],
+      [0xfe, "another note"],
+    ] as const) {
+      mkdirSync(inApp("folder", byte, ""));
+      writeFileSync(inApp("folder", byte, "/note.txt"), text);
+    }
+    writeFileSync(inApp("file", 0xfe, ".txt"), "a file");
+    const build = (...assets: string[]) =>
+      run(app, [
+        "sh",
+        "-c",
+        `exec "$0" build --compile --aot ./main.cjs "$@" ${assets.map(asset => `--asset "$(printf '${asset}')"`).join(" ")} --outfile ../built.exe`,
+        bunExe(),
+        ...flags,
+      ]);
+    const refused = await build("./folder\\377", "./folder\\376");
+    expect({
+      stderr: refused.stderr.split("\n").filter(line => line.startsWith("error")),
+      exitCode: refused.exitCode,
+    }).toEqual({
+      stderr: [
+        expect.stringMatching(/^error: asset .* collides with another embedded file at ".*folder\ufffd\/note\.txt"$/),
+      ],
+      exitCode: 1,
+    });
+    const built = await build("./folder\\377", "./file\\376.txt");
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    renameSync(app, join(String(dir), "moved-away"));
+    expect(await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual({
+      stdout: "a note a file file\ufffd.txt,folder\ufffd,main.cjs\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  120_000,
+);

@@ -2,7 +2,7 @@ mod declarations;
 mod loops;
 mod substitution;
 
-pub(in crate::lower) use substitution::{Printed, StatementsAround};
+pub(in crate::lower) use substitution::{ConstantsNamedByValue, Printed, StatementsAround};
 
 use bun_sema::bind::{Binding, ScopeId, SymbolId};
 use bun_sema::fold::{Decision, is_removed_where_never_run};

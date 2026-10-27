@@ -2358,7 +2358,7 @@ say(new WebAssembly.Global({ value: "externref", mutable: true }, holder).value 
 say(Bun.enableANSIColors === true || Bun.enableANSIColors === false, Bun.dns.ADDRCONFIG + Bun.dns.ALL + Bun.dns.V4MAPPED > 0, typeof (Bun.dns as any).resolve, require("node:module").builtinModules.includes("fs"));
 process.exit(0);
 //// one-evaluation-for-import-and-native-require.ts
-// node:events and node:stream reached through import, require, process.getBuiltinModule and process.stdout are each evaluated once. A node:vm context runs its own built-ins. A ShadowRealm cannot import a module that was compiled, and Bun's own modules are: importValue throws a TypeError, where plain Bun evaluates the module once more from text.
+// node:events and node:stream reached through import, require, process.getBuiltinModule and process.stdout are each evaluated once. A node:vm context runs its own built-ins. A ShadowRealm evaluates the module once more, from its text.
 import events, { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import vm from "node:vm";

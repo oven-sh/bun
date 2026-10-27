@@ -101,7 +101,11 @@ impl Build<'_> {
         let left_out = match (project, application) {
             (_, Some(application)) => {
                 let left_out = application.left_out;
-                let left_out = left_out.in_other_program(application.graph.to_local);
+                let mut left_out = left_out.in_other_program(application.graph.to_local);
+                let compiled_files = view.files().compiled_files().iter().copied();
+                left_out.leave_out_files(
+                    compiled_files.filter(|&file| !application.graph.has_module(file)),
+                );
                 graph.adopt_plan(&application.graph);
                 graph.leave_out_files(&left_out.files, &in_parallel);
                 graph.limit_exports(&in_parallel, &|file, export| {

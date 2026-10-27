@@ -3,6 +3,7 @@ use super::projects::Projects;
 use super::*;
 use crate::file_analysis::FileAnalysis;
 use crate::fold::FoldInputs;
+use crate::hir_from_data::HostValue;
 use crate::import_sites::{ExportedRequire, JsxMode};
 use crate::module_format::DeclaredModuleType;
 use crate::resolve::{
@@ -139,6 +140,7 @@ impl<'r> CodeTarget<'r> {
 
 pub(super) struct Analyzed<'s, 'r> {
     pub(super) analysis: FileAnalysis<'s>,
+    pub(super) host_values: &'s [(ExprId, HostValue<'s>)],
     pub(super) settings: &'r TranspileSettings,
     pub(super) jsx: Option<JsxSettings>,
     pub(super) jsx_mode: JsxMode,

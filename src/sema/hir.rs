@@ -2413,6 +2413,22 @@ pub struct ImportedRequire {
     pub path: Atom,
 }
 
+/// What code reads through the import statement `import`: the export `export` of the file that the statement names, or, with a
+/// `member`, that member of the namespace object which `export` holds. `export` is `NONE` for the name behind `* as`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct ImportedName {
+    pub import: ImportId,
+    pub export: Atom,
+    pub member: Atom,
+}
+
+/// The name holds `value` from the moment it is initialized.
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct ImportedConstant {
+    pub name: ImportedName,
+    pub value: crate::fold::Constant,
+}
+
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
@@ -2432,6 +2448,8 @@ pub struct FileIn<S: Storage> {
     pub is_script_with_code: bool,
     /// The imports that bind the `require` of another file. Set by the loader.
     pub imported_requires: S::Few<ImportedRequire>,
+    /// The names of other files that hold a constant, among those that folding the file asked for. Set by the loader.
+    pub imported_constants: S::Few<ImportedConstant>,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -3114,6 +3132,7 @@ macro_rules! file_in_storage {
             is_forced_module: $this.is_forced_module,
             is_script_with_code: $this.is_script_with_code,
             imported_requires: $few!($this.imported_requires),
+            imported_constants: $few!($this.imported_constants),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,

@@ -25,23 +25,25 @@ export const knownToday: Record<string, string> = {
     "each file: code bytes 377 -> 321, operations 34 -> 31; bundled: code bytes 377 -> 321, operations 34 -> 31",
   "bundler_minify: minify/AdditionalGlobalConstructorOptimization":
     "each file: operations 253 -> 251; bundled: operations 253 -> 251",
-  "bundler_minify: minify/BunRequireStatement": "written: the build: at entry.js:2:18",
+  "bundler_minify: minify/BunRequireStatement":
+    "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "bundler_minify: minify/IdentifiersDollarStillUsableWhenReferenced": "bundled: code bytes 2739 -> 2684",
-  "bundler_minify: minify/ImportMetaHotTreeShaking": "written: the build: at entry.ts:17:16",
+  "bundler_minify: minify/ImportMetaHotTreeShaking":
+    'each file: the build: 1 | import"./other.ts"; |     ^ | error: TS100150: Could not resolve: "./other.ts"; bundled: code bytes 2970 -> 233, operations 169 -> 19',
   "bundler_minify: minify/Infinity":
     "each file: code bytes 386 -> 321, operations 34 -> 31; bundled: code bytes 386 -> 321, operations 34 -> 31",
   "bundler_minify: minify/NoBundleExportNameNotReusedAtTopLevel": "bundled: code bytes 378 -> 353, operations 24 -> 22",
   "bundler_minify: minify/NumericPropertyKeysPrintedAsComputed":
-    "bundled: code bytes 614 -> 493, operations 36 -> 26, run-time operations 257 -> 250",
+    "bundled: code bytes 614 -> 493, operations 36 -> 26, run-time operations 256 -> 249",
   "bundler_minify: minify/RequireBunAfterKeyword":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "bundler_minify: minify/RequireEsmWithoutInitAfterKeyword":
-    "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: code bytes 176952 -> 176431, run-time operations 325 -> 321",
+    "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: code bytes 176809 -> 176292, run-time operations 323 -> 319",
   "bundler_minify: minify/RequireEsmWithoutInitAfterKeywordAllMinify":
-    "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: code bytes 176952 -> 176431, run-time operations 325 -> 312",
+    "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: code bytes 176809 -> 176292, run-time operations 323 -> 319",
   "bundler_minify: minify/RequireMainToImportMetaMain":
     "each file: code bytes 315 -> 235, operations 27 -> 23; bundled: code bytes 315 -> 212, operations 27 -> 21",
-  "bundler_minify: minify/SameTargetDestructuringSkipsUnstableTarget": "bundled: operations 9598 -> 9560",
+  "bundler_minify: minify/SameTargetDestructuringSkipsUnstableTarget": "bundled: operations 9600 -> 9562",
   "bundler_minify: minify/SingleUseSubstitutionIntoEachChild":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "bundler_minify: minify/StringAdditionFolding":
@@ -50,17 +52,17 @@ export const knownToday: Record<string, string> = {
     "each file: code bytes 190 -> 110, operations 11 -> 7; bundled: code bytes 190 -> 110, operations 11 -> 7",
   "bundler_minify: minify/UnusedInCommaExpression": "each file: code bytes 390 -> 362; bundled: code bytes 390 -> 362",
   "bundler_minify: minify/WithStatementPinnedNameNotReusedByEnclosingScope":
-    "bundled: the build: error: TS1101: 'with' statements are not allowed in strict mode.",
+    "bundled: the build: 6 |   with (obj) |       ^ | error: TS1101: 'with' statements are not allowed i",
   "bundler_minify: minify/WithStatementPinnedNameNotReusedByEnclosingScopeNoBundle":
-    "bundled: the build: error: TS1101: 'with' statements are not allowed in strict mode.",
+    "bundled: the build: 6 |   with (obj) |       ^ | error: TS1101: 'with' statements are not allowed i",
   "bundler_minify: minify/WithStatementPinnedNameNotReusedWithoutMinify":
-    "bundled: the build: error: TS1101: 'with' statements are not allowed in strict mode.",
+    "bundled: the build: 13 |     with (obj) |          ^ | error: TS1101: 'with' statements are not all",
   "bundler_minify_symbol_for: minify/SymbolForEdgeCases":
     "each file: code bytes 232 -> 192, operations 15 -> 12; bundled: code bytes 232 -> 192, operations 15 -> 12",
   "bundler_minify_symbol_for: minify/SymbolForProduction":
     "each file: code bytes 158 -> 141, operations 10 -> 9; bundled: code bytes 158 -> 141, operations 10 -> 9",
   "bundler_minify_symbol_for: minify/SymbolForRuntimeOverride":
-    "written: the build: error: TS100014: this assignment always throws: built-in objects are read-only ",
+    "written: the build: 5 | Symbol.for = function(key) { |     ^ | error: TS100014: this assignment alw",
   "bundler_minify_symbol_for: minify/SymbolForTreeShaking": "bundled: code bytes 166 -> 131, operations 12 -> 8",
   "bundler_string: string/StringAddition2":
     "each file: run-time operations 241 -> 240; bundled: run-time operations 241 -> 240",
@@ -98,7 +100,7 @@ export const knownToday: Record<string, string> = {
     "bundled: code bytes 381 -> 207, operations 20 -> 10, run-time operations 245 -> 240",
   "enums: a const enum [ts]": "bundled: code bytes 400 -> 207, operations 18 -> 10, run-time operations 245 -> 240",
   "enums: a declared const enum [ts]":
-    'written: "error: ReferenceError: Outside is not defined\\n      at /$bunfs/root/c002/entry.ts:2:13\\n; each file: "error: ReferenceError: Outside is not defined\\n      at /$bunfs/root/c002/entry.js:1:13\\n; bundled: "error: ReferenceError: Outside is not defined\\n      at /$bunfs/root/c002/entry.js:3:20\\n',
+    'written: "error: ReferenceError: Outside is not defined\\n      at /$bunfs/root/c000/entry.ts:2:13\\n; each file: "error: ReferenceError: Outside is not defined\\n      at /$bunfs/root/c000/entry.js:1:13\\n; bundled: "error: ReferenceError: Outside is not defined\\n      at /$bunfs/root/c000/entry.js:3:20\\n',
   "enums: a member as a case label [ts, two files]":
     "bundled: code bytes 513 -> 339, operations 24 -> 10, run-time operations 245 -> 241",
   "enums: a member as a case label [ts]":
@@ -147,7 +149,7 @@ export const knownToday: Record<string, string> = {
   "enums: the name of a member [ts, two files]": "bundled: code bytes 268 -> 240, operations 16 -> 14",
   "esbuild/dce: dce/ConstValueInliningBundle #7": "each file: code bytes 153 -> 102, operations 8 -> 5",
   "esbuild/dce: dce/ConstValueInliningBundle #9": "each file: code bytes 153 -> 102, operations 8 -> 5",
-  "esbuild/dce: dce/ConstValueInliningDirectEval #6": "each file: operations 9285 -> 9284",
+  "esbuild/dce: dce/ConstValueInliningDirectEval #6": "each file: operations 9287 -> 9286",
   "esbuild/dce: dce/CrossModuleConstantFolding": "bundled: code bytes 1601 -> 1069, operations 66 -> 34",
   "esbuild/dce: dce/CrossModuleConstantFolding #3": "bundled: code bytes 321 -> 120, operations 21 -> 5",
   "esbuild/dce: dce/DCEOfDestructuringOfUnwrappedRequire":
@@ -158,11 +160,11 @@ export const knownToday: Record<string, string> = {
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/dce: dce/DestructuringOfForOfReboundUnwrappedRequire":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
-  "esbuild/dce: dce/DestructuringOfImportNamespaceDirectEval": "bundled: code bytes 193655 -> 190519",
+  "esbuild/dce: dce/DestructuringOfImportNamespaceDirectEval": "bundled: code bytes 193669 -> 190533",
   "esbuild/dce: dce/DestructuringOfReboundUnwrappedRequire":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/dce: dce/JSONLoaderRemoveUnused":
-    "bundled: code bytes 157 -> 105, operations 9 -> 5, run-time operations 242 -> 240",
+    "bundled: code bytes 157 -> 105, operations 9 -> 5, run-time operations 241 -> 239",
   "esbuild/dce: dce/PackageJsonSideEffectsArrayGlob":
     'bundled: "this should be kept\\n\\nexit 0", bun run "this should be kept\\nTEST FAILED\\n\\nexit 0"; bundled: code bytes 144 -> 105, operations 8 -> 5, run-time operations 240 -> 239',
   "esbuild/dce: dce/PackageJsonSideEffectsArrayKeepMainImplicitModule":
@@ -215,101 +217,97 @@ export const knownToday: Record<string, string> = {
   "esbuild/dce: dce/PackageJsonSideEffectsTrueKeepCommonJS":
     "bundled: code bytes 232 -> 147, operations 12 -> 7, run-time operations 241 -> 240",
   "esbuild/dce: dce/PureCallsWithSpread":
-    "each file: the build: error: TS1128: Declaration or statement expected.; bundled: the build: error: TS1128: Declaration or statement expected.",
+    "each file: the build: 1 | ...args; |     ^ | error: TS1128: Declaration or statement expected.; |     ^; bundled: the build: 3 | ...args; |     ^ | error: TS1128: Declaration or statement expected.; |     ^",
   "esbuild/dce: dce/RemoveUnusedImportsEval":
-    'written: the build: error: TS100151: Could not resolve: "a". Maybe you need to "bun install"?',
+    "written: the build: 1 | import keep_a from 'a' |     ^ | error: TS100151: Could not resolve: \"a\". M",
   "esbuild/dce: dce/TextLoaderRemoveUnused": "bundled: code bytes 130 -> 105, operations 7 -> 5",
   "esbuild/dce: dce/TreeShakingClassEnumKey": "bundled: operations 15 -> 13",
   "esbuild/dce: dce/TreeShakingImportIdentifier": "bundled: code bytes 201 -> 129, operations 8 -> 5",
   "esbuild/dce: dce/TreeShakingInESMWrapper":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/dce: dce/TreeShakingUnaryOperators":
-    "written: the build: error: TS1102: 'delete' cannot be called on an identifier in strict mode.",
+    "written: the build: 6 |       delete keep; |                  ^ | error: TS1102: 'delete' cannot be called on an identifier",
   "esbuild/dce: dce/UnreferencedObjectLiteral":
     "each file: code bytes 225 -> 147, operations 14 -> 7, run-time operations 246 -> 240; bundled: code bytes 225 -> 147, operations 14 -> 7, run-time operations 246 -> 240",
   "esbuild/default: default/ArgumentsSpecialCaseNoBundle":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/AutoExternalBun":
-    "written: the build: error: TS100152: No such built-in module: node:what-is-this",
+    'written: the build: 12 |       import "node:what-is-this"; |            ^ | error: TS100152: No such built-in module: node:what-is-this |  ; |            ^',
   "esbuild/default: default/AutoExternalNode":
-    "written: the build: error: TS100152: No such built-in module: node:what-is-this",
+    'written: the build: 10 |       import "node:what-is-this"; |            ^ | error: TS100152: No such built-in module: node:what-is-this |  ',
   "esbuild/default: default/AwaitImportInsideTry":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
-  "esbuild/default: default/BundlerUsesMainFieldForCjs": "bundled: run-time operations 240 -> 236",
   "esbuild/default: default/BundlerUsesModuleFieldForEsm":
-    'written: "hello index.esm.js\\n\\nexit 0", bun run "hello index.cjs.js\\n\\nexit 0"; each file: "hello index.esm.js\\n\\nexit 0", bun run "hello index.cjs.js\\n\\nexit 0"; bundled: "hello index.esm.js\\n\\nexit 0", bun run "hello index.cjs.js\\n\\nexit 0"; bundled: code bytes 186 -> 105, operations 9 -> 5, run-time operations 239 -> 234',
-  "esbuild/default: default/BundlerUsesModuleFieldIfMainDoesNotExistEsm":
-    "bundled: code bytes 215 -> 105, operations 11 -> 5, run-time operations 239 -> 234",
+    'written: "hello index.esm.js\\n\\nexit 0", bun run "hello index.cjs.js\\n\\nexit 0"; each file: "hello index.esm.js\\n\\nexit 0", bun run "hello index.cjs.js\\n\\nexit 0"; bundled: "hello index.esm.js\\n\\nexit 0", bun run "hello index.cjs.js\\n\\nexit 0"',
   "esbuild/default: default/CircularTLADependency2":
-    'written: "error: ReferenceError: Cannot access \'c\' before initialization.\\n      at /$bunfs/root/c0; each file: the build: at entry.js:1:14; bundled: "c\\ng\\ne\\nf\\nd\\nc\\n\\nexit 0", bun run "error: 1 | // @ts-nocheck\\n2 | import { c } from \\"',
-  "esbuild/default: default/ConstDeclNotRemovedIfReferencedBeforeDecl": "bundled: run-time operations 238 -> 233",
-  "esbuild/default: default/ConstDeclRemovedIfReferencedBeforeAllUses": "bundled: run-time operations 238 -> 233",
+    'written: "error: ReferenceError: Cannot access \'c\' before initialization.\\n      at /$bunfs/root/c0; each file: "error: error: Cannot find module \'./b.ts\' from \'/$bunfs/root/c000/entry.js\'\\n\\nexit 1", b; each file: code bytes 14799 -> 14257, operations 873 -> 850; bundled: "c\\ng\\ne\\nf\\nd\\nc\\n\\nexit 0", bun run "error: 1 | // @ts-nocheck\\n2 | import { c } from \\"',
   "esbuild/default: default/DefineImportMeta":
     'written: "the process ended: 1 TypeError: Invalid URL |  input: \\"./c000/start-the-case.mjs\\", |   ; | 4 |  | 5 | const mark = process.env.AOT_MARK; | 6 | for (const program of JSON.parse(readFileSync(process.env.AOT_TASKS, \\"utf; each file: "the process ended: 1 TypeError: Invalid URL |  input: \\"./c000/start-the-case.mjs\\", |   ; | 4 |  | 5 | const mark = process.env.AOT_MARK; | 6 | for (const program of JSON.parse(readFileSync(process.env.AOT_TASKS, \\"utf; each file: code bytes 229 -> 169, operations 11 -> 9; bundled: "the process ended: 1 TypeError: Invalid URL |  input: \\"./c000/start-the-case.mjs\\", |   ; | 4 |  | 5 | const mark = process.env.AOT_MARK; | 6 | for (const program of JSON.parse(readFileSync(process.env.AOT_TASKS, \\"utf; bundled: code bytes 229 -> 169, operations 11 -> 9',
   "esbuild/default: default/DefineOptionalChain":
-    "each file: code bytes 173487 -> 173462, operations 8241 -> 8239; bundled: code bytes 173487 -> 173462, operations 8241 -> 8239",
+    "each file: code bytes 173362 -> 173337, operations 8241 -> 8239; bundled: code bytes 173362 -> 173337, operations 8241 -> 8239",
   "esbuild/default: default/DefineOptionalChainLowered":
-    "each file: code bytes 173667 -> 173642, operations 8253 -> 8251; bundled: code bytes 173667 -> 173642, operations 8253 -> 8251",
+    "each file: code bytes 173547 -> 173522, operations 8253 -> 8251; bundled: code bytes 173547 -> 173522, operations 8253 -> 8251",
   "esbuild/default: default/DirectEvalTainting2NoBundle":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/DirectEvalTaintingNoBundle":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
-  "esbuild/default: default/DotImport": "bundled: code bytes 197 -> 102, operations 10 -> 5",
-  "esbuild/default: default/DynamicImportWithExpressionCJS": "written: the build: at a.js:1:8",
-  "esbuild/default: default/ES6FromCommonJS": "bundled: run-time operations 243 -> 239",
+  "esbuild/default: default/DotImport":
+    "bundled: code bytes 197 -> 102, operations 10 -> 5, run-time operations 239 -> 238",
+  "esbuild/default: default/DynamicImportWithExpressionCJS":
+    "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/ExportFSNodeInCommonJSModule":
-    "written: the build: error: TS100106: Cannot use import statement with CommonJS-only features",
+    "written: the build: 1 | import * as fs from 'fs' |     ^ | error: TS100106: Cannot use import state",
   "esbuild/default: default/ExportFormsWithMinifyIdentifiersAndNoBundle":
-    'written: the build: error: TS100150: Could not resolve: "./f"',
+    "written: the build: 10 | export * from './f' |      ^ | error: TS100150: Could not resolve: \"./f\" |",
   "esbuild/default: default/ExportsAndModuleFormatCommonJS":
-    "written: the build: error: TS100106: Cannot use import statement with CommonJS-only features",
+    "written: the build: 1 | import * as foo from './foo/test' |     ^ | error: TS100106: Cannot use imp",
   "esbuild/default: default/ExternalWildcardDoesNotMatchEntryPoint":
-    'written: the build: error: TS100151: Could not resolve: "foo". Maybe you need to "bun install"?',
-  "esbuild/default: default/ImportFormsWithMinifyIdentifiersAndNoBundle": "written: the build: at entry.js:9:22",
-  "esbuild/default: default/ImportFormsWithNoBundle": "written: the build: at entry.js:9:22",
+    'written: the build: 1 | import "foo" |     ^ | error: TS100151: Could not resolve: "foo". Maybe you',
+  "esbuild/default: default/ImportFormsWithMinifyIdentifiersAndNoBundle":
+    "written: the build: 9 |         await import('./c'), |                          ^ | warn: TS100150:",
+  "esbuild/default: default/ImportFormsWithNoBundle":
+    "written: the build: 9 |         await import('./c'), |                          ^ | warn: TS100150:",
   "esbuild/default: default/ImportMissingCommonJS":
-    "written: \"error: SyntaxError: Export named 'y' not found in module '/$bunfs/root/c011/foo.js'.\\n   ; each file: \"error: SyntaxError: Export named 'y' not found in module '/$bunfs/root/c011/foo.js'.\\n   ; bundled: \"123 123 undefined\\n\\nexit 0\", bun run \"error: SyntaxError: Export named 'y' not found in ; bundled: code bytes 354 -> 110, operations 22 -> 5",
+    "written: \"error: SyntaxError: Export named 'y' not found in module '/$bunfs/root/c000/foo.js'.\\n   ; each file: \"error: SyntaxError: Export named 'y' not found in module '/$bunfs/root/c000/foo.js'.\\n   ; bundled: \"123 123 undefined\\n\\nexit 0\", bun run \"error: SyntaxError: Export named 'y' not found in ; bundled: code bytes 354 -> 110, operations 22 -> 5, run-time operations 241 -> 238",
   "esbuild/default: default/ImportMissingNeitherES6NorCommonJS":
-    'written: the build: error: TS100200: No matching export in "c012/foo.js" for import "default"',
+    "written: the build: 1 | import fn, {x as a, y as b} from './foo' |            ^ | error: TS100200: ",
   "esbuild/default: default/ImportThenCatch":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/ImportWithHashInPath": "bundled: code bytes 165 -> 115, operations 10 -> 6",
   "esbuild/default: default/ImportWithHashParameter":
-    'written: the build: error: TS100150: Could not resolve: "./file.txt#foo"',
+    "written: the build: 2 | import foo from './file.txt#foo' |     ^ | error: TS100150: Could not resol",
   "esbuild/default: default/ImportWithQueryParameter":
-    "written: the build: error: TS100159: bun compile does not support a query string in an import path:",
-  "esbuild/default: default/MinifiedDynamicImportWithExpressionCJS": "written: the build: at a.js:1:8",
+    "written: the build: 2 | import foo from './file.txt?foo' |     ^ | error: TS100159: bun compile doe",
+  "esbuild/default: default/MinifiedDynamicImportWithExpressionCJS":
+    "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/MinifiedExportsAndModuleFormatCommonJS":
-    "written: the build: error: TS100106: Cannot use import statement with CommonJS-only features",
+    "written: the build: 1 | import * as foo from './foo/test' |     ^ | error: TS100106: Cannot use imp",
   "esbuild/default: default/MinifyArguments":
-    "written: the build: error: TS1215: Invalid use of 'arguments'. Modules are automatically in strict ",
-  "esbuild/default: default/NestedES6FromCommonJS": "bundled: run-time operations 241 -> 239",
-  "esbuild/default: default/NonDeterminismESBuildIssue2537": "bundled: code bytes 102 -> 12, operations 5 -> 0",
-  "esbuild/default: default/ReExportDefaultNoBundle": 'written: the build: error: TS100150: Could not resolve: "./foo"',
-  "esbuild/default: default/RequireAndDynamicImportInvalidTemplate": "written: the build: at test.js:3:8",
-  "esbuild/default: default/RequireBadArgumentCount": "written: the build: at entry.js:2:15",
-  "esbuild/default: default/RequireFSBrowser": "bundled: code bytes 1850887 -> 1848842",
-  "esbuild/default: default/RequireProperlyHandlesNamedExportDeclsInCjsModule":
-    "bundled: operations 34 -> 24, run-time operations 240 -> 235",
+    "written: the build: 2 |   let arguments |           ^ | error: TS1215: Invalid use of 'arguments'. ",
+  "esbuild/default: default/ReExportDefaultNoBundle":
+    "written: the build: 1 | export {default as foo} from './foo' |     ^ | error: TS100150: Could not r",
+  "esbuild/default: default/RequireAndDynamicImportInvalidTemplate":
+    "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
+  "esbuild/default: default/RequireBadArgumentCount":
+    "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
+  "esbuild/default: default/RequireFSBrowser": "bundled: code bytes 1848858 -> 1847330",
   "esbuild/default: default/RequirePropertyAccessCommonJS":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/RequireTxt":
     'written: "This is a` test.\\n\\n\\nexit 0", bun run "Module {\\n  default: \\"This is a` test.\\\\n\\",\\n}\\; each file: "This is a` test.\\n\\n\\nexit 0", bun run "Module {\\n  default: \\"This is a` test.\\\\n\\",\\n}\\; bundled: "This is a` test.\\n\\n\\nexit 0", bun run "Module {\\n  default: \\"This is a` test.\\\\n\\",\\n}\\',
-  "esbuild/default: default/RequireWithCallInsideTry": "written: the build: at entry.js:2:33",
-  "esbuild/default: default/RuntimeUsesMainFieldForCjs": "bundled: run-time operations 240 -> 236",
+  "esbuild/default: default/RequireWithCallInsideTry": "bundled: code bytes 585 -> 381, operations 25 -> 23",
   "esbuild/default: default/RuntimeUsesMainFieldForEsm":
-    'written: "hello index.esm.js\\n\\nexit 0", bun run "hello index.cjs.js\\n\\nexit 0"; each file: "hello index.esm.js\\n\\nexit 0", bun run "hello index.cjs.js\\n\\nexit 0"; bundled: "hello index.esm.js\\n\\nexit 0", bun run "hello index.cjs.js\\n\\nexit 0"; bundled: code bytes 215 -> 105, operations 11 -> 5, run-time operations 239 -> 234',
-  "esbuild/default: default/RuntimeUsesModuleFieldIfMainDoesNotExistEsm":
-    "bundled: code bytes 503 -> 105, operations 21 -> 5, run-time operations 239 -> 234",
+    'written: "hello index.esm.js\\n\\nexit 0", bun run "hello index.cjs.js\\n\\nexit 0"; each file: "hello index.esm.js\\n\\nexit 0", bun run "hello index.cjs.js\\n\\nexit 0"; bundled: "hello index.esm.js\\n\\nexit 0", bun run "hello index.cjs.js\\n\\nexit 0"',
   "esbuild/default: default/ThisOutsideFunctionNotRenamed":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/ThisOutsideFunctionRenamedToExports":
-    "each file: operations 8267 -> 8266; bundled: operations 8267 -> 8261",
+    "each file: operations 8271 -> 8270; bundled: operations 8271 -> 8265",
   "esbuild/default: default/ThisUndefinedWarningESM":
-    'written: "[ undefined, undefined ] [ undefined, undefined ]\\n\\nexit 0", bun run "[ null, null ] [ n; bundled: code bytes 874 -> 807, operations 35 -> 29, run-time operations 240 -> 235',
+    'written: "[ undefined, undefined ] [ undefined, undefined ]\\n\\nexit 0", bun run "[ null, null ] [ n; bundled: code bytes 874 -> 807, operations 35 -> 29',
   "esbuild/default: default/ThisWithES6Syntax":
     'written: "cjs.js: {}\\nes6-import-assign.ts: {}\\nes6-import-dynamic.js: {}\\nes6-expr-import-dynamic.; each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: "cjs.js: {}\\nes6-import-stmt.js: null\\nes6-import-assign.ts: {}\\nes6-import-dynamic.js: {}',
-  "esbuild/default: default/ToESMWrapperOmission": "written: the build: at entry.js:29:18",
+  "esbuild/default: default/ToESMWrapperOmission":
+    'written: the build: 29 |       x = import("k_WRAP") |                       ^ | warn: TS100151: Cou',
   "esbuild/default: default/TopLevelAwaitAllowedImportWithoutSplitting":
     'bundled: "0\\n1\\n\\nexit 0", bun run "1\\n0\\n\\nexit 0"',
   "esbuild/default: default/TopLevelAwaitWithNestedRequire":
@@ -318,27 +316,27 @@ export const knownToday: Record<string, string> = {
   "esbuild/default: default/UseStrictDirectiveMinifyNoBundle":
     "each file: code bytes 178 -> 99, operations 10 -> 6; bundled: code bytes 178 -> 99, operations 10 -> 6",
   "esbuild/default: default/WarningsInsideNodeModules":
-    "written: the build: error: TS1108: A 'return' statement can only be used within a function body.",
+    "written: the build: 1 | return |     ^ | error: TS1108: A 'return' statement can only be used withi",
   "esbuild/default: default/WithStatementTaintingNoBundle":
-    "bundled: the build: error: TS1101: 'with' statements are not allowed in strict mode.",
+    "bundled: the build: 6 |   with ({ outer: 100, local: 150, hoisted: 200, extra: 500 }) { |       ^ |",
   "esbuild/extra: extra/ArbitraryModuleNamespaceIdentifiers1":
-    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 229",
+    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/ArbitraryModuleNamespaceIdentifiers2":
-    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 229",
+    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/ArbitraryModuleNamespaceIdentifiers3":
-    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 229",
+    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/ArbitraryModuleNamespaceIdentifiers4":
-    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 229",
+    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/ArbitraryModuleNamespaceIdentifiers5":
-    "bundled: code bytes 94 -> 12, operations 5 -> 0, run-time operations 236 -> 229",
+    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/ArbitraryModuleNamespaceIdentifiers6":
-    "bundled: code bytes 272 -> 12, operations 11 -> 0, run-time operations 236 -> 229",
+    "bundled: code bytes 94 -> 12, operations 5 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/BracketAccess1":
     "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/BracketAccess2":
     "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/BracketAccess20":
-    "written: the build: error: TS100014: this assignment always throws: built-in objects are read-only ",
+    "written: the build: 1 | Object.defineProperty(Object.prototype, 'MIN_OBJ_LIT', {value: 1}) |       ",
   "esbuild/extra: extra/BracketAccess3":
     "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/BracketAccess4":
@@ -388,95 +386,91 @@ export const knownToday: Record<string, string> = {
   "esbuild/extra: extra/DotAccess2":
     "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/DotAccess20":
-    "written: the build: error: TS100014: this assignment always throws: built-in objects are read-only ",
+    "written: the build: 1 | Object.defineProperty(Object.prototype, 'MIN_OBJ_LIT', {value: 1}) |       ",
   "esbuild/extra: extra/DotAccess3":
     "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/DotAccess4":
     "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
-  "esbuild/extra: extra/DoubleExportStar1": "bundled: code bytes 67 -> 12, run-time operations 236 -> 235",
+  "esbuild/extra: extra/DoubleExportStar1": "bundled: code bytes 67 -> 12, run-time operations 236 -> 234",
   "esbuild/extra: extra/DoubleExportStar2":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/extra: extra/DoubleExportStar3":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/extra: extra/FunctionHoisting1":
-    'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: run-time operations 240 -> 238',
+    'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: run-time operations 238 -> 237',
   "esbuild/extra: extra/FunctionHoisting11":
     "bundled: code bytes 153 -> 12, operations 7 -> 0, run-time operations 237 -> 234",
   "esbuild/extra: extra/FunctionHoisting13":
-    'written: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c002/in.js:2:5\\n\\n\\nexit 1; each file: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c002/in.js:6:5\\n\\n\\nexit 1; bundled: "\\nexit 0", bun run "error: 1 | x: function f() { return 1 }\\n2 | if (f() !== 1) throw \'fa; bundled: code bytes 126 -> 65, operations 8 -> 2, run-time operations 240 -> 236',
+    'written: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c000/in.js:2:5\\n\\n\\nexit 1; each file: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c000/in.js:6:5\\n\\n\\nexit 1; bundled: "\\nexit 0", bun run "error: 1 | x: function f() { return 1 }\\n2 | if (f() !== 1) throw \'fa; bundled: code bytes 126 -> 65, operations 8 -> 2, run-time operations 240 -> 236',
   "esbuild/extra: extra/FunctionHoisting14":
-    'written: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c003/in.ts:10:53\\n\\n\\nexit; each file: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c003/in.js:21:53\\n\\n\\nexit; bundled: "\\nexit 0", bun run "error:  5 |   for (var c in { c: 0 }) ;\\n 6 |   for (var d of [\'d\']) ; bundled: code bytes 1765 -> 1740, operations 50 -> 46, run-time operations 244 -> 243',
+    'written: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c000/in.ts:10:53\\n\\n\\nexit; each file: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c000/in.js:21:53\\n\\n\\nexit; bundled: "\\nexit 0", bun run "error:  5 |   for (var c in { c: 0 }) ;\\n 6 |   for (var d of [\'d\']) ; bundled: code bytes 1765 -> 1740, operations 50 -> 46, run-time operations 244 -> 243',
   "esbuild/extra: extra/FunctionHoisting15":
-    'written: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c004/in.ts:10:53\\n\\n\\nexit; each file: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c004/in.js:21:53\\n\\n\\nexit; bundled: "\\nexit 0", bun run "error:  5 |   for (var c in { c: 0 }) ;\\n 6 |   for (var d of [\'d\']) ; bundled: code bytes 1765 -> 1740, operations 50 -> 46, run-time operations 244 -> 243',
-  "esbuild/extra: extra/FunctionHoisting2":
-    "each file: run-time operations 239 -> 238; bundled: run-time operations 239 -> 238",
+    'written: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c000/in.ts:10:53\\n\\n\\nexit; each file: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c000/in.js:21:53\\n\\n\\nexit; bundled: "\\nexit 0", bun run "error:  5 |   for (var c in { c: 0 }) ;\\n 6 |   for (var d of [\'d\']) ; bundled: code bytes 1765 -> 1740, operations 50 -> 46, run-time operations 244 -> 243',
   "esbuild/extra: extra/FunctionHoisting4":
-    'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: run-time operations 240 -> 238',
+    'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: run-time operations 238 -> 237',
   "esbuild/extra: extra/FunctionHoisting5":
-    'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: run-time operations 239 -> 238',
-  "esbuild/extra: extra/FunctionHoisting6":
-    "each file: run-time operations 239 -> 238; bundled: run-time operations 239 -> 238",
+    'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: run-time operations 238 -> 237',
   "esbuild/extra: extra/FunctionHoisting8":
-    'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: run-time operations 239 -> 238',
+    'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: run-time operations 238 -> 237',
   "esbuild/extra: extra/FunctionHoistingKeepNames1":
     'written: "error: TypeError: undefined is not an object (evaluating \'undefined.name\')\\n      at /$bu; each file: "error: TypeError: undefined is not an object (evaluating \'undefined.name\')\\n      at /$bu; bundled: "error: fail: f2\\n\\nexit 1", bun run "error: 1 | var f\\n2 | if (1) function f() { return f',
   "esbuild/extra: extra/FunctionHoistingKeepNames2":
     'written: "error: TypeError: undefined is not an object (evaluating \'undefined.name\')\\n      at /$bu; each file: "error: TypeError: undefined is not an object (evaluating \'undefined.name\')\\n      at /$bu; bundled: "error: fail: f2\\n\\nexit 1", bun run "error: 1 | var f\\n2 | if (1) function f() { return f',
   "esbuild/extra: extra/FunctionHoistingKeepNames3":
-    'written: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c007/in.ts:10:53\\n\\n\\nexit; each file: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c007/in.js:19:53\\n\\n\\nexit; bundled: "\\nexit 0", bun run "error:  5 |   for (var c in { c: 0 }) ;\\n 6 |   for (var d of [\'d\']) ',
+    'written: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c000/in.ts:10:53\\n\\n\\nexit; each file: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c000/in.js:19:53\\n\\n\\nexit; bundled: "\\nexit 0", bun run "error:  5 |   for (var c in { c: 0 }) ;\\n 6 |   for (var d of [\'d\']) ',
   "esbuild/extra: extra/FunctionHoistingKeepNames4":
-    'written: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c008/in.ts:10:53\\n\\n\\nexit; each file: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c008/in.js:19:53\\n\\n\\nexit; bundled: "\\nexit 0", bun run "error:  5 |   for (var c in { c: 0 }) ;\\n 6 |   for (var d of [\'d\']) ',
+    'written: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c000/in.ts:10:53\\n\\n\\nexit; each file: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c000/in.js:19:53\\n\\n\\nexit; bundled: "\\nexit 0", bun run "error:  5 |   for (var c in { c: 0 }) ;\\n 6 |   for (var d of [\'d\']) ',
   "esbuild/extra: extra/ImportOrder1":
-    "bundled: code bytes 316 -> 137, operations 16 -> 7, run-time operations 239 -> 233",
-  "esbuild/extra: extra/ImportOrder2": "bundled: run-time operations 239 -> 233",
+    "bundled: code bytes 311 -> 137, operations 15 -> 7, run-time operations 239 -> 238",
+  "esbuild/extra: extra/ImportOrder2":
+    "bundled: code bytes 316 -> 146, operations 16 -> 8, run-time operations 239 -> 238",
   "esbuild/extra: extra/MinifyBracketAccess1":
-    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235",
+    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/MinifyBracketAccess2":
-    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235",
+    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/MinifyBracketAccess20":
-    "written: the build: error: TS100014: this assignment always throws: built-in objects are read-only ",
+    "written: the build: 1 | Object.defineProperty(Object.prototype, 'MIN_OBJ_LIT', {value: 1}) |       ",
   "esbuild/extra: extra/MinifyBracketAccess3":
-    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235",
+    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/MinifyBracketAccess4":
-    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235",
+    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/MinifyCatchScope4": "bundled: operations 15 -> 14",
   "esbuild/extra: extra/MinifyCatchScope5": "bundled: operations 105 -> 104",
   "esbuild/extra: extra/MinifyDotAccess1":
-    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 235",
+    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/MinifyDotAccess2":
-    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235",
+    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/MinifyDotAccess20":
-    "written: the build: error: TS100014: this assignment always throws: built-in objects are read-only ",
+    "written: the build: 1 | Object.defineProperty(Object.prototype, 'MIN_OBJ_LIT', {value: 1}) |       ",
   "esbuild/extra: extra/MinifyDotAccess3":
-    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235",
+    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/MinifyDotAccess4":
-    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 237 -> 235",
+    "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/NoMinifyCatchScope4": "bundled: operations 15 -> 14",
   "esbuild/extra: extra/NoMinifyCatchScope5": "bundled: operations 105 -> 104",
-  "esbuild/extra: extra/NoMinifyGlobalConstructorBehavior2": "bundled: run-time operations 270 -> 269",
   "esbuild/extra: extra/ObjectRestPattern1":
     "each file: code bytes 2720 -> 2658, operations 116 -> 115; bundled: code bytes 2720 -> 2658, operations 116 -> 115",
   "esbuild/extra: extra/ObjectRestPattern2": "each file: run-time operations 242 -> 241",
   "esbuild/extra: extra/PathWithQuestionMark":
-    "written: the build: error: TS100159: bun compile does not support a query string in an import path:",
+    'written: the build: 1 | import foo from "./file.js?ignore-me"; |     ^ | error: TS100159: bun compile does not support a query string in an imp',
   "esbuild/extra: extra/PrototypeChain1":
-    "written: \"error: SyntaxError: Export named 'prop' not found in module '/$bunfs/root/c027/cjs-proto.; each file: \"error: SyntaxError: Export named 'prop' not found in module '/$bunfs/root/c027/cjs-proto.; bundled: \"\\nexit 0\", bun run \"error: SyntaxError: Export named 'prop' not found in module <path>",
+    "written: \"error: SyntaxError: Export named 'prop' not found in module '/$bunfs/root/c000/cjs-proto.; each file: \"error: SyntaxError: Export named 'prop' not found in module '/$bunfs/root/c000/cjs-proto.; bundled: \"\\nexit 0\", bun run \"error: SyntaxError: Export named 'prop' not found in module",
   "esbuild/extra: extra/PrototypeChain2":
-    "written: \"error: SyntaxError: Export named 'prop' not found in module '/$bunfs/root/c028/cjs-proto.; each file: \"error: SyntaxError: Export named 'prop' not found in module '/$bunfs/root/c028/cjs-proto.; bundled: \"\\nexit 0\", bun run \"error: SyntaxError: Export named 'prop' not found in module <path>",
+    "written: \"error: SyntaxError: Export named 'prop' not found in module '/$bunfs/root/c000/cjs-proto.; each file: \"error: SyntaxError: Export named 'prop' not found in module '/$bunfs/root/c000/cjs-proto.; bundled: \"\\nexit 0\", bun run \"error: SyntaxError: Export named 'prop' not found in module",
   "esbuild/extra: extra/PrototypeChain2'": 'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"',
   "esbuild/extra: extra/RemoveASMDirective":
-    'written: "error: fail\\n\\nexit 1", bun run "\\nexit 0"; each file: run-time operations 241 -> 239; bundled: run-time operations 241 -> 239',
+    'written: "error: fail\\n\\nexit 1", bun run "\\nexit 0"; each file: run-time operations 241 -> 239',
   "esbuild/extra: extra/ToplevelSymbolHoisting":
     "each file: code bytes 902 -> 313, operations 33 -> 18; bundled: code bytes 902 -> 313, operations 33 -> 18",
   "esbuild/extra: extra/TreeShaking1": "bundled: operations 10 -> 8",
   "esbuild/extra: extra/TreeShaking2":
-    'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: code bytes 145 -> 12, operations 8 -> 0, run-time operations 241 -> 238',
+    'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: code bytes 145 -> 12, operations 8 -> 0, run-time operations 240 -> 234',
   "esbuild/extra: extra/TreeShaking4":
-    "bundled: code bytes 241 -> 149, operations 13 -> 8, run-time operations 240 -> 239",
+    "bundled: code bytes 241 -> 149, operations 13 -> 8, run-time operations 239 -> 238",
   "esbuild/extra: extra/TreeShaking5":
-    'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: code bytes 232 -> 12, operations 12 -> 0, run-time operations 242 -> 238',
+    'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: code bytes 232 -> 12, operations 12 -> 0, run-time operations 241 -> 234',
   "esbuild/extra: extra/TreeShaking6":
-    "bundled: code bytes 241 -> 149, operations 13 -> 8, run-time operations 240 -> 239",
+    "bundled: code bytes 241 -> 149, operations 13 -> 8, run-time operations 239 -> 238",
   "esbuild/extra: extra/TreeShaking7":
     'bundled: "\\nexit 0", bun run "error: expected \\"foo\\" to be tree-shaken\\n\\nexit 1"',
   "esbuild/extra: extra/TreeShaking8":
@@ -484,15 +478,15 @@ export const knownToday: Record<string, string> = {
   "esbuild/extra: extra/TypeofRequireESM":
     "each file: code bytes 190 -> 110, operations 11 -> 7; bundled: code bytes 190 -> 110, operations 11 -> 7",
   "esbuild/extra: extra/UnminifiedNamedModuleFunctions1":
-    'written: "error: error: Error: fail\\n    at /$bunfs/root/c031/src/b.ts:2:11\\n    at unknown\\n    at; each file: "error: error: Error: fail\\n    at /$bunfs/root/c031/src/b.js:1:7\\n    at unknown\\n    at ; bundled: "error: error: Error: fail\\n    at <anonymous> (/$bunfs/root/c031/entry.js:17:14)\\n    at ; bundled: run-time operations 248 -> 246',
+    'written: "error: error: Error: fail\\n    at /$bunfs/root/c000/src/b.ts:2:11\\n    at unknown\\n    at; each file: "error: error: Error: fail\\n    at /$bunfs/root/c000/src/b.js:1:7\\n    at unknown\\n    at ; bundled: "error: error: Error: fail\\n    at <anonymous> (/$bunfs/root/c000/entry.js:17:14)\\n    at ; bundled: run-time operations 248 -> 245',
   "esbuild/extra: extra/UnminifiedNamedModuleFunctions2":
-    'written: "error: error: Error: fail\\n    at /$bunfs/root/c032/src/b.ts:2:11\\n    at unknown\\n    at; each file: "\\nexit 0", bun run "error: 1 | try {\\n2 |   require(\'./src/a\')\\n3 | } catch (e) {\\n4 |   ; bundled: "\\nexit 0", bun run "error: 1 | try {\\n2 |   require(\'./src/a\')\\n3 | } catch (e) {\\n4 |   ; bundled: run-time operations 251 -> 250',
+    'written: "error: error: Error: fail\\n    at /$bunfs/root/c000/src/b.ts:2:11\\n    at unknown\\n    at; each file: "\\nexit 0", bun run "error: 1 | try {\\n2 |   require(\'./src/a\')\\n3 | } catch (e) {\\n4 |   ; bundled: "\\nexit 0", bun run "error: 1 | try {\\n2 |   require(\'./src/a\')\\n3 | } catch (e) {\\n4 |   ; bundled: run-time operations 251 -> 249',
   "esbuild/extra: extra/UnminifiedNamedModuleFunctions3":
-    'written: "error: error: Error: fail\\n    at /$bunfs/root/c033/src/b.ts:2:34\\n    at unknown\\n    at; each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: "error: error: Error: fail\\n    at <anonymous> (/$bunfs/root/c033/entry.js:17:14)\\n    at ',
+    'written: "error: error: Error: fail\\n    at /$bunfs/root/c000/src/b.ts:2:34\\n    at unknown\\n    at; each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: "error: error: Error: fail\\n    at <anonymous> (/$bunfs/root/c000/entry.js:17:14)\\n    at ',
   "esbuild/extra: extra/UnminifiedNamedModuleFunctions4":
-    'written: "error: error: Error: fail\\n    at /$bunfs/root/c034/src/b.ts:2:34\\n    at unknown\\n    at; each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: "\\nexit 0", bun run "error: 1 | try {\\n2 |   require(\'./src/a\')\\n3 | } catch (e) {\\n4 |   ',
+    'written: "error: error: Error: fail\\n    at /$bunfs/root/c000/src/b.ts:2:34\\n    at unknown\\n    at; each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: "\\nexit 0", bun run "error: 1 | try {\\n2 |   require(\'./src/a\')\\n3 | } catch (e) {\\n4 |   ',
   "esbuild/importstar: importstar/ExportOtherCommonJS":
-    "bundled: the build: error: TS2661: Cannot export '__INVALID__REF__'. Only local declarations can be",
+    "bundled: the build: 3 |   __INVALID__REF__ as bar |       ^ | error: TS2661: Cannot export '__INVAL",
   "esbuild/importstar: importstar/ExportOtherNestedCommonJS": "bundled: code bytes 249 -> 12, operations 14 -> 0",
   "esbuild/importstar: importstar/ExportSelfAndRequireSelfCommonJS":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
@@ -501,7 +495,7 @@ export const knownToday: Record<string, string> = {
   "esbuild/importstar: importstar/ImportNamespaceUndefinedPropertyEmptyFile #2":
     "bundled: code bytes 303 -> 128, operations 16 -> 6",
   "esbuild/importstar: importstar/ImportSelfCommonJS":
-    "written: the build: error: TS100106: Cannot use import statement with CommonJS-only features",
+    "written: the build: 2 | import {foo} from './entry' |     ^ | error: TS100106: Cannot use import st",
   "esbuild/importstar: importstar/ImportStarAndCommonJS":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: operations 7 -> 5",
   "esbuild/importstar: importstar/ImportStarCommonJSCapture":
@@ -509,7 +503,7 @@ export const knownToday: Record<string, string> = {
   "esbuild/importstar: importstar/ImportStarCommonJSNoCapture":
     "bundled: code bytes 204 -> 109, operations 11 -> 6, run-time operations 239 -> 238",
   "esbuild/importstar: importstar/ImportStarNoBundleUnused":
-    'written: the build: error: TS100150: Could not resolve: "./foo"',
+    "written: the build: 1 | import * as ns from './foo' |     ^ | error: TS100150: Could not resolve: \"",
   "esbuild/importstar: importstar/ImportStarNoCapture": "bundled: operations 8 -> 6",
   "esbuild/importstar: importstar/MemberOfExportDefaultImportChain":
     "bundled: code bytes 206 -> 118, operations 13 -> 6, run-time operations 240 -> 239",
@@ -517,7 +511,6 @@ export const knownToday: Record<string, string> = {
     'bundled: "function object 1\\n\\nexit 0", bun run "ReferenceError object 1\\n\\nexit 0"; bundled: code bytes 465 -> 210, operations 34 -> 13, run-time operations 243 -> 239',
   "esbuild/importstar: importstar/MemberOfExportDefaultImportSnapshot":
     "bundled: code bytes 200 -> 154, operations 14 -> 9",
-  "esbuild/importstar: importstar/MemberOfExportStarAsDefaultFromSelf": "bundled: code bytes 144 -> 118",
   "esbuild/importstar: importstar/MemberOfNamespaceAssignThroughMember":
     "bundled: code bytes 181 -> 105, operations 11 -> 5, run-time operations 241 -> 239",
   "esbuild/importstar: importstar/MemberOfReExportedImportStar": "bundled: code bytes 181 -> 118, operations 10 -> 6",
@@ -532,28 +525,23 @@ export const knownToday: Record<string, string> = {
   "esbuild/importstar_ts: importstar_ts/CommonJSNoCapture":
     "bundled: code bytes 204 -> 109, operations 11 -> 6, run-time operations 239 -> 238",
   "esbuild/importstar_ts: importstar_ts/MangleNoBundleCapture":
-    'written: the build: error: TS100150: Could not resolve: "./foo"',
+    "written: the build: 2 | import * as ns from './foo' |     ^ | error: TS100150: Could not resolve: \"",
   "esbuild/importstar_ts: importstar_ts/MangleNoBundleNoCapture":
-    'written: the build: error: TS100150: Could not resolve: "./foo"',
+    "written: the build: 2 | import * as ns from './foo' |     ^ | error: TS100150: Could not resolve: \"",
   "esbuild/importstar_ts: importstar_ts/NoBundleCapture":
-    'written: the build: error: TS100150: Could not resolve: "./foo"',
+    "written: the build: 2 | import * as ns from './foo' |     ^ | error: TS100150: Could not resolve: \"",
   "esbuild/importstar_ts: importstar_ts/NoBundleNoCapture":
-    'written: the build: error: TS100150: Could not resolve: "./foo"',
-  "esbuild/importstar_ts: importstar_ts/NoCapture": "bundled: operations 8 -> 6",
+    "written: the build: 2 | import * as ns from './foo' |     ^ | error: TS100150: Could not resolve: \"",
   "esbuild/importstar_ts: importstar_ts/ReExportTypeOnlyFileES6":
-    'each file: the build: error: TS100200: No matching export in "c023/type.js" for import "Foo"; bundled: operations 16 -> 9',
+    'each file: the build: 1 | import { Foo } from "./type"; |              ^ | error: TS100200: No matching export in "c000/type.js" for imp; |              ^; bundled: operations 16 -> 9',
   "esbuild/importstar_ts: importstar_ts/TSAndCommonJS":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: operations 7 -> 5",
   "esbuild/ts: ts/ConstEnumComments":
     "bundled: code bytes 346 -> 166, operations 19 -> 8, run-time operations 249 -> 243",
-  "esbuild/ts: ts/EnumCrossModuleInliningAccess":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/EnumCrossModuleInliningDefinitions":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/EnumCrossModuleInliningReExport":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/EnumCrossModuleTreeShaking":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
+  "esbuild/ts: ts/EnumCrossModuleInliningAccess": "bundled: operations 28 -> 20",
+  "esbuild/ts: ts/EnumCrossModuleInliningDefinitions": "bundled: code bytes 194085 -> 193979, operations 9315 -> 9310",
+  "esbuild/ts: ts/EnumCrossModuleInliningReExport": "bundled: code bytes 944 -> 898",
+  "esbuild/ts: ts/EnumCrossModuleTreeShaking": "bundled: code bytes 1592 -> 1396, operations 83 -> 68",
   "esbuild/ts: ts/EnumDefine":
     'written: "error: ReferenceError: b is not defined\\n      at /$bunfs/root/c000/entry.ts:2:23\\n\\n\\nex; each file: "error: ReferenceError: b is not defined\\n      at <anonymous> (/$bunfs/root/c000/entry.js; bundled: "error: ReferenceError: b is not defined\\n      at <anonymous> (/$bunfs/root/c000/entry.js',
   "esbuild/ts: ts/EnumExportClause": "bundled: code bytes 1215 -> 925, operations 58 -> 39",
@@ -561,113 +549,26 @@ export const knownToday: Record<string, string> = {
     "each file: code bytes 1836 -> 1274, operations 80 -> 79; bundled: code bytes 1836 -> 126, operations 80 -> 6",
   "esbuild/ts: ts/EnumRulesFrom_TypeScript_5_0 #2":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
-  "esbuild/ts: ts/EnumSameModuleInliningAccess":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/EnumTreeShaking":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/EnumTreeShaking #2":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/EnumTreeShaking #3":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/EnumTreeShaking #4":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/EnumTreeShaking #5":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/EnumTreeShaking #6":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/EnumTreeShaking #7":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/EnumTreeShaking #8":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/ExportDefaultTypeESBuildIssue316":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/ExportEquals": 'each file: the build: error: TS100150: Could not resolve: "./b.ts"',
+  "esbuild/ts: ts/EnumSameModuleInliningAccess": "bundled: run-time operations 250 -> 246",
+  "esbuild/ts: ts/EnumTreeShaking #3": "bundled: code bytes 193 -> 106",
+  "esbuild/ts: ts/ExportEquals":
+    'each file: the build: 1 | import b from "./b.ts"; |     ^ | error: TS100150: Could not resolve: "./b.ts"',
   "esbuild/ts: ts/ExportMissingES6":
-    'written: the build: error: TS100200: No matching export in "c036/bar.js" for import "nope"',
+    "written: the build: 2 | export {nope} from './bar' |             ^ | error: TS100200: No matching e",
   "esbuild/ts: ts/ExportNamespace":
-    'each file: the build: error: TS100150: Could not resolve: "./b.ts"; bundled: code bytes 342 -> 302, operations 20 -> 15, run-time operations 247 -> 246',
-  "esbuild/ts: ts/ExportTypeSTAR":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/ImportCTS":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/ImportEqualsEliminationTest":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/ImportMTS":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/ImportVsLocalCollisionAllTypes":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
+    'each file: the build: 1 | import { Foo } from "./b.ts"; |     ^ | error: TS100150: Could not resolve: "./b.ts"; bundled: code bytes 342 -> 302, operations 20 -> 15, run-time operations 247 -> 246',
   "esbuild/ts: ts/ImportVsLocalCollisionMixed":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/MinifiedBundleCommonJS":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/MinifiedBundleES6":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/MinifyDerivedClass":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/MinifyNamespace":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/MinifyNamespace #2":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/MinifyNamespaceNoArrow":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/MinifyNamespaceNoArrow #2":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/MinifyNamespaceNoLogicalAssignment":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/MinifyNamespaceNoLogicalAssignment #2":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/SiblingEnum":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/SiblingEnum #2":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/SiblingEnum #3":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/SiblingEnum #4":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/SiblingEnum #5":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/SiblingEnum #6":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/SiblingNamespaceClass":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/SiblingNamespaceEnum":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/SiblingNamespaceFunction":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/SiblingNamespaceLet":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/SiblingNamespaceNamespace":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
+    'each file: the build: 6 | import { real } from "./other.ts"; |     ^ | error: TS100150: Could not resolve: "./other.ts"',
   "esbuild/ts: ts/SideEffectsFalseWarningTypeDeclarations":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/ThisInsideFunctionTS":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/ThisInsideFunctionTSNoBundle":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/ThisInsideFunctionTSNoBundleUseDefineForClassFields":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/TypeScriptDecoratorScopeESBuildIssue2147":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
+    'each file: the build: 2 | import"some-ts"; |     ^ | error: TS100151: Could not resolve: "some-ts". Maybe you need to "bun ; |     ^; bundled: code bytes 150 -> 12, operations 8 -> 0',
   "esbuild/ts: ts/TypeScriptDecorators":
-    "written: the build: error: TS1209: Invalid optional chain from new expression. Did you mean to call",
+    "written: the build: 3 |         @new y?.[_ + 'x']() |                   ^ | error: TS1209: Invalid ",
   "esbuild/ts: ts/TypeScriptDecoratorsKeepNames":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "esbuild/ts: ts/TypeScriptDecoratorsSimpleCase":
-    "written: the build: only beside the others: it may load any file of the executable, so nothing besi",
-  "expressions nobody reads: unused built-in constructions [js]":
-    "each file: operations 6 -> 5, run-time operations 239 -> 238; bundled: operations 6 -> 5, run-time operations 239 -> 238",
-  "expressions nobody reads: unused built-in constructions [ts]":
-    "each file: operations 6 -> 5, run-time operations 239 -> 238; bundled: operations 6 -> 5, run-time operations 239 -> 238",
-  "expressions nobody reads: unused collections [js]":
-    "each file: code bytes 822 -> 105, operations 30 -> 5, run-time operations 240 -> 238; bundled: code bytes 822 -> 105, operations 30 -> 5, run-time operations 240 -> 238",
-  "expressions nobody reads: unused collections [ts]":
-    "each file: code bytes 822 -> 105, operations 30 -> 5, run-time operations 240 -> 238; bundled: code bytes 822 -> 105, operations 30 -> 5, run-time operations 240 -> 238",
+    "each file: code bytes 16993 -> 3093, operations 984 -> 178; bundled: code bytes 16993 -> 2857, operations 984 -> 131",
   "files are linked: a const enum of another file [ts]":
     "bundled: code bytes 242 -> 105, operations 13 -> 5, run-time operations 242 -> 238",
   "files are linked: a constant read before its file has run [js]": "bundled: code bytes 162 -> 129, operations 9 -> 5",
   "files are linked: a constant read before its file has run [ts]": "bundled: code bytes 162 -> 129, operations 9 -> 5",
-  "files are linked: a flag of another file decides what is required [js]":
-    "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: code bytes 975122 -> 105, operations 54676 -> 5",
   "files are linked: a member of a JSON file [js]":
     "bundled: code bytes 292 -> 115, operations 17 -> 6, run-time operations 243 -> 239",
   "files are linked: a member of a JSON file [ts]":
@@ -702,18 +603,18 @@ export const knownToday: Record<string, string> = {
   "names in brackets, keys and shorthand: joined texts in brackets [ts]":
     "each file: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240; bundled: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240",
   "namespaces: a constant of a namespace [ts, two files]":
-    "bundled: code bytes 294 -> 115, operations 17 -> 6, run-time operations 241 -> 240",
+    "each file: run-time operations 241 -> 240; bundled: code bytes 294 -> 115, operations 17 -> 6, run-time operations 241 -> 239",
   "namespaces: a function of a namespace [ts, two files]":
     "each file: operations 22 -> 20; bundled: code bytes 335 -> 293, operations 22 -> 15",
   "namespaces: a namespace in a namespace [ts, two files]": "bundled: operations 17 -> 15",
   "namespaces: a namespace nobody reads [ts, two files]":
-    "bundled: code bytes 199 -> 103, operations 10 -> 5, run-time operations 240 -> 239",
+    "bundled: code bytes 199 -> 103, operations 10 -> 5, run-time operations 239 -> 238",
   "namespaces: a namespace of types alone [ts, two files]":
-    "each file: code bytes 190 -> 128, operations 9 -> 6; bundled: code bytes 190 -> 128, operations 9 -> 6",
+    "each file: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240; bundled: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240",
   "namespaces: a namespace of types alone [ts]":
-    "each file: code bytes 190 -> 128, operations 9 -> 6; bundled: code bytes 190 -> 128, operations 9 -> 6",
+    "each file: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240; bundled: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240",
   "namespaces: an alias of a member [ts, two files]":
-    "bundled: code bytes 224 -> 102, operations 11 -> 5, run-time operations 240 -> 239",
+    "bundled: code bytes 224 -> 102, operations 11 -> 5, run-time operations 239 -> 238",
   "process.env, NODE_ENV and what the build knows of the target: process.env.NODE_ENV in brackets [js]":
     "each file: code bytes 171 -> 105, operations 9 -> 5, run-time operations 240 -> 239; bundled: code bytes 171 -> 105, operations 9 -> 5, run-time operations 240 -> 239",
   "process.env, NODE_ENV and what the build knows of the target: process.env.NODE_ENV in brackets [ts]":
@@ -745,5 +646,5 @@ export const knownToday: Record<string, string> = {
   "what only the checker reads: declared fields [ts]":
     "each file: code bytes 490 -> 468, operations 13 -> 9; bundled: code bytes 490 -> 468, operations 13 -> 9",
   "what only the checker reads: parameter properties [ts]":
-    "each file: code bytes 492 -> 207, operations 19 -> 7; bundled: code bytes 492 -> 207, operations 19 -> 7",
+    "each file: code bytes 492 -> 207, operations 19 -> 7, run-time operations 241 -> 240; bundled: code bytes 492 -> 207, operations 19 -> 7, run-time operations 241 -> 240",
 };

@@ -460,6 +460,33 @@ fn the_loader_loads_a_program_where_a_required_module_imports_the_file_that_requ
 }
 
 #[test]
+fn the_run_time_answers_a_require_of_a_file_that_a_module_it_requires_imports() {
+    let files = [
+        (
+            "main.mjs",
+            "import './k.cjs'; import './late.cjs'; import './beside.cjs';",
+        ),
+        ("k.cjs", "exports.one = 1; require('./other.mjs');"),
+        ("other.mjs", "import './k.cjs';"),
+        ("beside.cjs", "exports.two = 2;"),
+        (
+            "late.cjs",
+            "exports.f = () => require('./k.cjs').one + require('./beside.cjs').two;",
+        ),
+    ];
+    with_plan(&files, |plan| {
+        let graph = &plan.graph;
+        assert!(graph.may_be_imported_while_it_runs(plan.module("k.cjs")));
+        for file in ["main.mjs", "other.mjs", "beside.cjs", "late.cjs"] {
+            assert!(!graph.may_be_imported_while_it_runs(plan.module(file)));
+        }
+        let sites = [Site::AsToday, plan.evaluates("beside.cjs", false)];
+        assert_eq!(plan.sites("late.cjs"), sites);
+        assert_eq!(plan.requests("late.cjs"), ["request beside.cjs require"]);
+    });
+}
+
+#[test]
 fn a_request_to_a_file_that_is_left_out_goes() {
     let files = [
         (

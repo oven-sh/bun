@@ -7,6 +7,7 @@ mod feature_flags;
 mod folder;
 mod folder_calls;
 mod folder_commonjs;
+mod folder_imports;
 mod folder_names;
 mod folder_operators;
 mod inputs;
@@ -27,7 +28,7 @@ pub use removed_by_bun_run::is_removed_where_never_run;
 use crate::atom::{Atom, Interner};
 use crate::bind::Bound;
 use crate::file_analysis::FileInputs;
-use crate::hir::{ExprId, ExprKind, File, FnId, NodeData, StmtId};
+use crate::hir::{ExprId, ExprKind, File, FnId, ImportedName, NodeData, StmtId};
 use crate::hir_from_data::DataValue;
 use crate::import_sites::ImportSpecifier;
 use crate::module_format::CommonJsEvidence;
@@ -260,6 +261,7 @@ pub(crate) struct FoldResult<'s> {
     pub errors: &'s [FoldError],
     pub strings_over_limit: &'s [ExprId],
     pub relies_on_running_before_calls: bool,
+    pub imported_names: &'s [ImportedName],
 }
 
 pub(crate) fn fold_file<'s>(

@@ -274,26 +274,12 @@ impl<'a> FastBitReader<'a> {
                 return;
             }
         }
-        self.fill_bytewise();
-    }
-
-    #[inline(never)]
-    fn fill_bytewise(&mut self) {
-        for _ in 0..6 {
-            let c0 = self.data.get(self.at).copied().unwrap_or(0);
-            let c1 = self.data.get(self.at + 1).copied().unwrap_or(0);
-            let mut byte = c0;
-            if c0 != 0xff {
-                self.at += 1;
-            } else if c1 == 0 {
-                self.at += 2;
-            } else {
-                self.saw_marker = true;
-                byte = 0;
-            }
-            self.bits.buf = (self.bits.buf << 8) | u64::from(byte);
-            self.bits.bits_left += 8;
-        }
+        // By value, so that the reader can stay in registers.
+        let (buf, at, saw_marker) = fill_bytewise(self.data, self.at, self.bits.buf);
+        self.bits.buf = buf;
+        self.bits.bits_left += 48;
+        self.at = at;
+        self.saw_marker |= saw_marker;
     }
 
     /// After `fill`, at most 16 bits.
@@ -327,4 +313,25 @@ impl<'a> FastBitReader<'a> {
             .copied()
             .unwrap_or(0)
     }
+}
+
+/// Six more bytes for `buf`, from `data[at..]`. Returns the new `buf` and `at`, and whether there was a marker.
+#[inline(never)]
+fn fill_bytewise(data: &[u8], mut at: usize, mut buf: u64) -> (u64, usize, bool) {
+    let mut saw_marker = false;
+    for _ in 0..6 {
+        let c0 = data.get(at).copied().unwrap_or(0);
+        let c1 = data.get(at + 1).copied().unwrap_or(0);
+        let mut byte = c0;
+        if c0 != 0xff {
+            at += 1;
+        } else if c1 == 0 {
+            at += 2;
+        } else {
+            saw_marker = true;
+            byte = 0;
+        }
+        buf = (buf << 8) | u64::from(byte);
+    }
+    (buf, at, saw_marker)
 }

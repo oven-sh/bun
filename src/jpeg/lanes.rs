@@ -28,20 +28,45 @@ pub(crate) fn from_columns<T: Copy + Default, const R: usize, const C: usize>(
     out
 }
 
+/// `array::map`, which is not always inlined.
 #[inline(always)]
-pub(crate) fn column<T: Copy + Default, const R: usize, const C: usize>(
-    m: &[[T; C]; R],
-    lane: usize,
-) -> [T; R] {
-    m.each_ref()
-        .map(|row| row.get(lane).copied().unwrap_or_default())
+pub(crate) fn map<A: Copy, B: Copy + Default, const N: usize>(
+    array: [A; N],
+    f: impl Fn(A) -> B,
+) -> [B; N] {
+    let mut out = [B::default(); N];
+    for (out, v) in out.iter_mut().zip(array) {
+        *out = f(v);
+    }
+    out
 }
 
-#[inline(never)]
-pub(crate) fn transpose<T: Copy + Default, const R: usize, const C: usize>(
+/// The first `N` numbers of column `lane`.
+#[inline(always)]
+pub(crate) fn column<T: Copy + Default, const N: usize, const R: usize, const C: usize>(
     m: &[[T; C]; R],
-) -> [[T; R]; C] {
-    let mut out = [[T::default(); R]; C];
+    lane: usize,
+) -> [T; N] {
+    let mut out = [T::default(); N];
+    for (out, row) in out.iter_mut().zip(m) {
+        *out = row.get(lane).copied().unwrap_or_default();
+    }
+    out
+}
+
+/// What does not fit in the result is left out, and what is not there is 0. A number of columns that is a multiple of 4
+/// makes for better vector code in what follows.
+#[inline(never)]
+pub(crate) fn transpose<
+    T: Copy + Default,
+    const R: usize,
+    const C: usize,
+    const R2: usize,
+    const C2: usize,
+>(
+    m: &[[T; C]; R],
+) -> [[T; C2]; R2] {
+    let mut out = [[T::default(); C2]; R2];
     for (r, row) in m.iter().enumerate() {
         for (out, &v) in out.iter_mut().zip(row) {
             if let Some(out) = out.get_mut(r) {

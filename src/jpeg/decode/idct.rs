@@ -8,7 +8,7 @@
 //! - The other sizes ran as C with 64-bit `long`.
 
 use super::Block;
-use crate::lanes::{column, descale, from_columns, transpose};
+use crate::lanes::{column, descale, from_columns, map, transpose};
 use crate::tables::dct::*;
 use core::ops::{Add, Mul, Shl, Sub};
 
@@ -103,17 +103,19 @@ fn idct8([in0, in1, in2, in3, in4, in5, in6, in7]: [i16; 8], shift: u32) -> [i16
     let tmp1 = madd(in5, F_2_053 - F_2_562, in3, -F_2_562).wrapping_add(z4);
     let tmp2 = madd(in5, -F_2_562, in3, F_3_072 - F_2_562).wrapping_add(z3);
 
-    [
-        tmp10.wrapping_add(tmp3),
-        tmp11.wrapping_add(tmp2),
-        tmp12.wrapping_add(tmp1),
-        tmp13.wrapping_add(tmp0),
-        tmp13.wrapping_sub(tmp0),
-        tmp12.wrapping_sub(tmp1),
-        tmp11.wrapping_sub(tmp2),
-        tmp10.wrapping_sub(tmp3),
-    ]
-    .map(|sum| descale(sum, shift))
+    map(
+        [
+            tmp10.wrapping_add(tmp3),
+            tmp11.wrapping_add(tmp2),
+            tmp12.wrapping_add(tmp1),
+            tmp13.wrapping_add(tmp0),
+            tmp13.wrapping_sub(tmp0),
+            tmp12.wrapping_sub(tmp1),
+            tmp11.wrapping_sub(tmp2),
+            tmp10.wrapping_sub(tmp3),
+        ],
+        |sum| descale(sum, shift),
+    )
 }
 
 /// `idct8` of four numbers and four zeros.
@@ -133,7 +135,7 @@ fn idct8x8_pass1(coefs: &Block, table: &DctTable) -> [[i16; 8]; 8] {
 /// Each column of `rows` is a row of the block, and so it is with the result.
 #[inline(never)]
 fn idct8x8_pass2(rows: &[[i16; 8]; 8]) -> [[u8; 8]; 8] {
-    from_columns(|lane| idct8(column(rows, lane), PASS2_SHIFT).map(to_sample))
+    from_columns(|lane| map(idct8(column(rows, lane), PASS2_SHIFT), to_sample))
 }
 
 /// Of the upper left quarter of the block.
@@ -147,7 +149,7 @@ fn idct8x8_pass1_of_4x4(coefs: &Block, table: &DctTable) -> [[i16; 4]; 8] {
 
 #[inline(never)]
 fn idct8x8_pass2_of_4(rows: &[[i16; 8]; 4]) -> [[u8; 8]; 8] {
-    from_columns(|lane| idct8_of_4(column(rows, lane), PASS2_SHIFT).map(to_sample))
+    from_columns(|lane| map(idct8_of_4(column(rows, lane), PASS2_SHIFT), to_sample))
 }
 
 pub(crate) fn idct8x8(coefs: &Block, table: &DctTable) -> [[u8; 8]; 8] {
@@ -190,13 +192,15 @@ fn idct4([in0, in1, in2, in3, in5, in6, in7]: [i16; 7], shift: u32) -> [i16; 4] 
     let even2 = madd(in2, F_1_847, in6, -F_0_765);
     let tmp10 = even0.wrapping_add(even2);
     let tmp12 = even0.wrapping_sub(even2);
-    [
-        tmp10.wrapping_add(tmp2),
-        tmp12.wrapping_add(tmp0),
-        tmp12.wrapping_sub(tmp0),
-        tmp10.wrapping_sub(tmp2),
-    ]
-    .map(|sum| descale(sum, shift))
+    map(
+        [
+            tmp10.wrapping_add(tmp2),
+            tmp12.wrapping_add(tmp0),
+            tmp12.wrapping_sub(tmp0),
+            tmp10.wrapping_sub(tmp2),
+        ],
+        |sum| descale(sum, shift),
+    )
 }
 
 #[inline(never)]
@@ -211,7 +215,10 @@ fn idct4x4_pass1(coefs: &Block, table: &DctTable) -> [[i16; 8]; 4] {
 fn idct4x4_pass2(rows: &[[i16; 4]; 8]) -> [[u8; 4]; 4] {
     from_columns(|lane| {
         let [in0, in1, in2, in3, _, in5, in6, in7] = column(rows, lane);
-        idct4([in0, in1, in2, in3, in5, in6, in7], PASS2_SHIFT + 1).map(to_sample)
+        map(
+            idct4([in0, in1, in2, in3, in5, in6, in7], PASS2_SHIFT + 1),
+            to_sample,
+        )
     })
 }
 
@@ -275,7 +282,12 @@ pub(crate) fn idct1x1(coefs: &Block, table: &DctTable) -> [[u8; 1]; 1] {
 
 /// An integer that wraps around.
 trait Int:
-    Copy + Add<Output = Self> + Sub<Output = Self> + Mul<i32, Output = Self> + Shl<u32, Output = Self>
+    Copy
+    + Default
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Mul<i32, Output = Self>
+    + Shl<u32, Output = Self>
 {
     fn from_i32(v: i32) -> Self;
     /// The low 32 bits of `self >> n`.
@@ -284,7 +296,7 @@ trait Int:
 
 macro_rules! int {
     ($name:ident, $inner:ty) => {
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, Default)]
         struct $name($inner);
         impl Add for $name {
             type Output = Self;
@@ -337,11 +349,11 @@ fn pass<T: Int, const K: usize, const N: usize>(
     shift: u32,
     f: impl Fn([T; K]) -> [T; N],
 ) -> [i32; N] {
-    let mut x = input.map(T::from_i32);
+    let mut x = map(*input, T::from_i32);
     if let Some(dc) = x.first_mut() {
         *dc = (*dc << CONST_BITS) + T::from_i32(1 << (shift - 1));
     }
-    f(x).map(|v| v.shr(shift))
+    map(f(x), |v| v.shr(shift))
 }
 
 /// The sums of the first pass fit in 32 bits if its inputs are smaller than this. A sum is linear in the inputs, and the
@@ -349,15 +361,33 @@ fn pass<T: Int, const K: usize, const N: usize>(
 /// wraps on the way to a sum that fits does no harm.
 const MAX_INPUT_FOR_32_BITS: i32 = 1 << 14;
 
-/// `K` is how many rows and columns of the block have a part in the result.
+#[inline(never)]
+fn scaled_pass1<T: Int, const K: usize, const N: usize>(
+    input: &[[i32; 8]; K],
+    f: impl Fn([T; K]) -> [T; N],
+) -> [[i32; 8]; N] {
+    from_columns(|lane| pass(&column(input, lane), PASS1_SHIFT, &f))
+}
+
+/// Each column of `rows` is a row of the block, and so it is with the result.
+#[inline(never)]
+fn scaled_pass2<const K: usize, const N: usize, const LANES: usize>(
+    rows: &[[i32; LANES]; K],
+    f: impl Fn([W32; K]) -> [W32; N],
+) -> [[u8; LANES]; N] {
+    from_columns(|lane| map(pass(&column(rows, lane), PASS2_SHIFT, &f), range_limit))
+}
+
+/// `K` is how many rows and columns of the block have a part in the result, and `LANES` is `N` rounded up.
 #[inline(always)]
-fn scaled<const K: usize, const N: usize>(
+fn scaled<const K: usize, const N: usize, const LANES: usize>(
     coefs: &Block,
     table: &DctTable,
     narrow: impl Fn([W32; K]) -> [W32; N],
     wide: impl Fn([W64; K]) -> [W64; N],
 ) -> [[u8; N]; N] {
-    let mut input = [[0i32; K]; K];
+    // With the columns that have no part in the result, for the sake of the vector code.
+    let mut input = [[0i32; 8]; K];
     let mut largest = 0;
     for ((input, coefs), table) in input.iter_mut().zip(rows(coefs)).zip(rows(table)) {
         for ((input, &coef), &q) in input.iter_mut().zip(coefs).zip(table) {
@@ -368,31 +398,29 @@ fn scaled<const K: usize, const N: usize>(
 
     // The second pass keeps bits 18 to 27 of its sums, which 32-bit arithmetic gets right whatever is above them. They
     // depend on more bits of the first pass's sums than 32-bit arithmetic has, unless those sums fit.
-    const SHIFT1: u32 = CONST_BITS - PASS1_BITS;
-    const SHIFT2: u32 = CONST_BITS + PASS1_BITS + 3;
-    let columns = transpose(&input);
-    let workspace: [[i32; N]; K] = if largest < MAX_INPUT_FOR_32_BITS as u32 {
-        columns.map(|column| pass(&column, SHIFT1, &narrow))
+    let workspace = if largest < MAX_INPUT_FOR_32_BITS as u32 {
+        scaled_pass1(&input, &narrow)
     } else {
-        columns.map(|column| pass(&column, SHIFT1, &wide))
+        scaled_pass1(&input, &wide)
     };
-    transpose(&workspace).map(|row| pass(&row, SHIFT2, &narrow).map(range_limit))
+    let rows: [[i32; LANES]; K] = transpose(&workspace);
+    transpose(&scaled_pass2(&rows, &narrow))
 }
 
 macro_rules! scaled_idct {
-    ($name:ident, $f:ident, $n:literal) => {
+    ($name:ident, $f:ident, $n:literal, $lanes:literal) => {
         pub(crate) fn $name(coefs: &Block, table: &DctTable) -> [[u8; $n]; $n] {
-            scaled(coefs, table, $f, $f)
+            scaled::<_, $n, $lanes>(coefs, table, $f, $f)
         }
     };
 }
-scaled_idct!(idct3x3, idct3, 3);
-scaled_idct!(idct5x5, idct5, 5);
-scaled_idct!(idct6x6, idct6, 6);
-scaled_idct!(idct7x7, idct7, 7);
-scaled_idct!(idct10x10, idct10, 10);
-scaled_idct!(idct12x12, idct12, 12);
-scaled_idct!(idct14x14, idct14, 14);
+scaled_idct!(idct3x3, idct3, 3, 4);
+scaled_idct!(idct5x5, idct5, 5, 8);
+scaled_idct!(idct6x6, idct6, 6, 8);
+scaled_idct!(idct7x7, idct7, 7, 8);
+scaled_idct!(idct10x10, idct10, 10, 12);
+scaled_idct!(idct12x12, idct12, 12, 12);
+scaled_idct!(idct14x14, idct14, 14, 16);
 
 // The transforms below are jidctint.c's, statement by statement.
 

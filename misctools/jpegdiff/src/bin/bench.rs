@@ -41,7 +41,7 @@ fn main() {
         let jpeg = jpegdiff::reference::encode(&px, w as u32, h as u32, 80, progressive, None).unwrap();
         for _ in 0..40 {
             if what.starts_with("decode") {
-                std::hint::black_box(jpegdiff::ours(&jpeg, 8, u64::MAX).ok().unwrap().pixels.len());
+                std::hint::black_box(jpegdiff::ours(&jpeg, std::env::var("SCALE").map_or(8, |s| s.parse().unwrap()), u64::MAX).ok().unwrap().pixels.len());
             } else {
                 std::hint::black_box(bun_jpeg::encode(&px, w as u32, h as u32, &bun_jpeg::EncodeOptions { quality: 80, progressive, icc_profile: None }).unwrap());
             }
@@ -56,7 +56,7 @@ fn main() {
     }
     for f in files { inputs.push((f.clone(), std::fs::read(&f).unwrap())); }
     for (name, bytes) in &inputs {
-        for eighths in [8u32, 4, 1] {
+        for eighths in std::env::var("SCALES").map_or(vec![8u32, 4, 1], |s| s.split(',').map(|v| v.parse().unwrap()).collect()) {
             let r = best(5, || jpegdiff::reference::decode(bytes, eighths, u64::MAX).ok().unwrap().pixels.len());
             let o = best(5, || jpegdiff::ours(bytes, eighths, u64::MAX).ok().unwrap().pixels.len());
             println!("decode {name} ({} KB) at {eighths}/8: ref {r:.1} ms, ours {o:.1} ms, {:.2}x", bytes.len() / 1024, o / r);

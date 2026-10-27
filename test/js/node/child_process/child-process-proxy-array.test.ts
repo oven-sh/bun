@@ -155,6 +155,16 @@ describe("child_process takes a Proxy of an array", () => {
       assert.strictEqual(code, 0);
     });
 
+    test("spawnSync() converts the `length` of the Proxy to a length", () => {
+      // Node reads `length` with ToLength (ArrayPrototypeReduce), so 3.5 is 3.
+      const stdio = new Proxy(["ignore", "pipe", "inherit"], {
+        get: (target, key, receiver) => (key === "length" ? 3.5 : Reflect.get(target, key, receiver)),
+      });
+      const { stdout, status } = spawnSync(process.execPath, ["-e", "console.log('spawnSync')"], { env, stdio });
+      assert.strictEqual(String(stdout), "spawnSync\n");
+      assert.strictEqual(status, 0);
+    });
+
     test("spawn() keeps a hole of the target a hole", async () => {
       // A hole is not `undefined`: `undefined` in slot 0 is a pipe, and a hole is not.
       const child = spawn(process.execPath, ["-e", ""], { env, stdio: indexedOnly([, "ignore", "ignore"]) });

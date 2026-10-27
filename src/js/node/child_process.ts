@@ -1884,7 +1884,7 @@ function getBunStdioFromOptions(stdio) {
 
 // Node takes a Proxy of an array as `stdio`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L998. The `$isJSArray` tests after the call need this copy.
 function toPlainArray(array) {
-  const length = array.length;
+  const length = $toLength(array.length);
   const copy = $newArrayWithSize(length);
   for (let i = 0; i < length; i++) {
     if (i in array) $putByValDirect(copy, i, array[i]);

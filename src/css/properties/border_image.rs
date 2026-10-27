@@ -432,7 +432,7 @@ impl BorderImageSlice {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub(crate) struct BorderImageProperty: u8 {
         const SOURCE = 1 << 0;

@@ -211,7 +211,7 @@ pub use rules::import::ImportConditions;
 // Hoisted from css_parser.rs so leaf modules (targets, prefixes) can compile
 // without pulling in the 6k-line parser hub.
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
     pub struct VendorPrefix: u8 {
         /// No vendor prefixes. 0b00000001

@@ -469,7 +469,7 @@ pub enum SkipTypeParameterResult {
     DefinitelyTypeParameters,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct TypeParameterFlag: u8 {
         /// TypeScript 4.7

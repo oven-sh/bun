@@ -22,7 +22,6 @@ bstr.workspace = true
 hashbrown.workspace = true
 rustc-hash = "2"
 smallvec.workspace = true
-bitflags.workspace = true
 
 [dev-dependencies]
 # The native symbols that Bun's C and C++ side provides to `bun_core`.

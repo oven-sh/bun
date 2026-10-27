@@ -523,7 +523,7 @@ impl BackgroundClip {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct BackgroundProperty: u16 {
         const COLOR      = 1 << 0;

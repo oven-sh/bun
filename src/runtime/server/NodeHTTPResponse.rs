@@ -2,8 +2,8 @@ use core::cell::Cell;
 use core::ffi::{c_uint, c_void};
 use core::ptr;
 
-use bitflags::bitflags;
 use bstr::BStr;
+use bun_core::bitflags;
 
 use bun_collections::VecExt;
 use bun_core::scoped_log;

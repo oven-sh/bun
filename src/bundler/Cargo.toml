@@ -16,7 +16,6 @@ strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 enum-map.workspace = true
-bitflags.workspace = true
 thiserror.workspace = true
 bun_base64.workspace = true
 bun_alloc.workspace = true

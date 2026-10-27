@@ -221,7 +221,7 @@ impl<'a> Subprocess<'a> {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {

@@ -68,7 +68,7 @@ impl RecordKind {
 // Flags
 // ──────────────────────────────────────────────────────────────────────────
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct Flags: u8 {

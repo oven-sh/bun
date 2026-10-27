@@ -3825,7 +3825,7 @@ pub(crate) struct StoredVerifyError {
 // Flags
 // ──────────────────────────────────────────────────────────────────────────
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct Flags: u16 {
         const IS_ACTIVE            = 1 << 0;

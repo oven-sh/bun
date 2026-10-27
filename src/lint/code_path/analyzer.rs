@@ -22,7 +22,7 @@ pub(super) use crate::utils::ast_utils::is_property_definition;
 use bun_sema::atom::Atom;
 use bun_sema::hir;
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// Facts about a node that has been entered.
     #[derive(Copy, Clone, PartialEq, Eq)]
     struct Is: u16 {

@@ -17,7 +17,6 @@ bun_io.workspace = true
 strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
-bitflags.workspace = true
 bun_analytics.workspace = true
 bun_base64.workspace = true
 bun_boringssl.workspace = true

@@ -8888,7 +8888,7 @@ pub use make_path as MakePath;
 // open helpers (additional)
 // ──────────────────────────────────────────────────────────────────────────
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// Convenience flagset for `open_file*` helpers.
     #[derive(Clone, Copy, Default)]
     pub struct OpenFlags: i32 {

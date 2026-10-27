@@ -176,7 +176,7 @@ pub type ResolutionSlice = ExternalSlice<PackageID>;
 // ─── Dependency / Behavior ────────────────────────────────────────────────
 
 pub mod behavior {
-    bitflags::bitflags! {
+    bun_core::bitflags! {
         /// Bit 0 and
         /// bit 7 are reserved so the on-disk
         /// lockfile encoding stays byte-compatible.

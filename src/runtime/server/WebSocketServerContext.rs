@@ -48,7 +48,7 @@ pub(crate) struct Handler {
     pub(crate) flags: HandlerFlags,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
     pub struct HandlerFlags: u8 {

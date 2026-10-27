@@ -193,7 +193,7 @@ impl PartialEq for MediaType {
 }
 
 // Flags for `parse_query_condition`.
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct QueryConditionFlags: u8 {
         /// Whether to allow top-level "or" boolean logic.

@@ -384,7 +384,7 @@ fn parse_fit_content(input: &mut css::Parser) -> css::Result<LengthPercentage> {
     input.parse_nested_block(LengthPercentage::parse)
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
     pub struct SizeProperty: u16 {
         const WIDTH           = 1 << 0;

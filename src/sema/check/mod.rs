@@ -1240,7 +1240,7 @@ impl Query {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// `CheckMode`. `CheckModeNormal` is `empty()`.
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     struct CheckMode: u8 {
@@ -1254,7 +1254,7 @@ bitflags::bitflags! {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// `ContextFlags`
     #[derive(Copy, Clone, PartialEq, Eq)]
     struct ContextFlags: u8 {

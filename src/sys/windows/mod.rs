@@ -293,7 +293,7 @@ pub const FILE_ACTION_MODIFIED: DWORD = 0x0000_0003;
 pub const FILE_ACTION_RENAMED_OLD_NAME: DWORD = 0x0000_0004;
 pub const FILE_ACTION_RENAMED_NEW_NAME: DWORD = 0x0000_0005;
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// `dwNotifyFilter` flags for
     /// `ReadDirectoryChangesW` (`winnt.h` `FILE_NOTIFY_CHANGE_*`).
     ///

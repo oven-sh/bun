@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "src/opaque",
   "src/pod",
+  "src/bitflags",
   "src/analytics",
   "src/base64",
   "src/bundler",
@@ -366,7 +367,6 @@ enum-map = "2"
 enumset = "1"
 libc = "0.2"
 rustix = { version = "0.38", default-features = false, features = ["std", "fs", "event", "process", "net"] }
-bitflags = "2"
 thiserror = "2"
 smallvec = "1"
 itoa = "1"
@@ -375,6 +375,7 @@ encoding_rs = "0.8.35"
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
 bun_pod = { path = "src/pod" }
+bun_bitflags = { path = "src/bitflags" }
 bun_analytics = { path = "src/analytics" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }

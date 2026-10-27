@@ -111,7 +111,7 @@ impl Entry {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct Meta: u8 {

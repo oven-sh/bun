@@ -378,7 +378,7 @@ pub(crate) unsafe fn slot_ptr_at(index: Index) -> Option<*mut DirInfo> {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
     pub struct Flags: u8 {
         /// This directory is a node_modules directory

@@ -896,7 +896,7 @@ fn take_dark_free_light(light: Box<CssColor>, dark: Box<CssColor>) -> Box<CssCol
 }
 
 // ──────────────────────────── ColorFallbackKind ──────────────────────────
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// A color type that is used as a fallback when compiling colors for
     /// older browsers.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -2146,7 +2146,7 @@ impl RelativeComponentParser {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// A channel type for a color space.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct ChannelType: u8 {

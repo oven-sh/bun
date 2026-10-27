@@ -35,7 +35,7 @@ pub(crate) type Id = u32;
 /// Used as an `Id` when there's no such node.
 const NONE: Id = Id::MAX;
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
     pub(crate) struct Flags: u32 {
         const HAS_START_SPAN = 1;

@@ -2221,7 +2221,7 @@ pub struct ParserExtra {
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct CssRef(pub u32);
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct CssRefTag: u8 {
         const CLASS         = 0b00_0001;
@@ -3051,7 +3051,7 @@ impl<'a> ParserOptions<'a> {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// Parser feature flags to enable.
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct ParserFlags: u8 {
@@ -3072,7 +3072,7 @@ pub enum ParseUntilErrorBehavior {
 
 // ───────────────────────────── Parser ─────────────────────────────
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct ParserOpts: u8 {
         const CSS_MODULES = 0b1;
@@ -3926,7 +3926,7 @@ impl<'a> Parser<'a> {
 
 // ───────────────────────────── Delimiters ─────────────────────────────
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// A set of characters, to be used with the `Parser::parse_until*`
     /// methods. The union of two sets can be obtained with `|`.
     #[derive(Clone, Copy, PartialEq, Eq, Default)]

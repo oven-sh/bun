@@ -74,7 +74,7 @@ pub(crate) struct WindowsNamedPipe {
 
 bun_event_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop_timer);
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {

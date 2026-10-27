@@ -106,7 +106,7 @@ pub struct Symbol {
     pub flags: SymbolFlags,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct SymbolFlags: u8 {
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;

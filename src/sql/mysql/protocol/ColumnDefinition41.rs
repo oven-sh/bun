@@ -36,7 +36,7 @@ impl Default for ColumnDefinition41 {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
     pub struct ColumnFlags: u16 {
         const NOT_NULL         = 1 << 0;

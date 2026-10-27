@@ -485,7 +485,7 @@ fn clone_utf8_or_null(bytes: &[u8]) -> WTFStringImpl {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[repr(transparent)]
     #[derive(Copy, Clone, Default)]
     pub struct Flags: u32 {

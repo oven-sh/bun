@@ -14,7 +14,7 @@ pub(crate) struct CPUFeatures {
 // this directly (unknown bits = padding). Bit order is LSB-first.
 
 #[cfg(target_arch = "x86_64")]
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[repr(transparent)]
     #[derive(Copy, Clone)]
     pub struct Flags: u8 {
@@ -29,7 +29,7 @@ bitflags::bitflags! {
 }
 
 #[cfg(target_arch = "aarch64")]
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[repr(transparent)]
     #[derive(Copy, Clone)]
     pub struct Flags: u8 {

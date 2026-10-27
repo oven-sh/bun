@@ -176,7 +176,7 @@ impl AnyRoute {
 pub(crate) use server_body::ServePlugins;
 
 // ─── ServerFlags ─────────────────────────────────────────────────────────────
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Default, Clone, Copy)]
     pub struct ServerFlags: u8 {
         /// See [`NewServer::hold_open_ref`].

@@ -2260,7 +2260,7 @@ pub mod syntax {
         }
     }
 
-    bitflags::bitflags! {
+    bun_core::bitflags! {
         /// The facts recorded about a type's node. The node itself isn't stored.
         #[derive(Copy, Clone, PartialEq, Eq)]
         pub struct TypeShape: u8 {

@@ -242,7 +242,7 @@ pub(crate) fn validate_boolean(
     Ok(value.as_boolean())
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub(crate) struct ValidateObjectOptions: u8 {
         const ALLOW_NULLABLE = 1 << 0;

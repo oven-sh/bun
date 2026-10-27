@@ -198,7 +198,7 @@ pub struct PosixBufferedReader {
     pub maxbuf: Option<NonNull<MaxBuf>>,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct PosixFlags: u16 {
         const IS_DONE                  = 1 << 0;
@@ -1030,7 +1030,7 @@ pub struct WindowsBufferedReader {
     pub(crate) vtable: BufferedReaderVTable,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct WindowsFlags: u16 {
         const IS_DONE                  = 1 << 0;

@@ -124,7 +124,7 @@ impl Default for Result<'_> {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Default, Clone, Copy)]
     pub struct ResultFlags: u8 {
         // Bits 0..=1 encode [`ExternalKind`]; write via `set_external_kind`.

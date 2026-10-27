@@ -331,7 +331,7 @@ impl Plugin {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// Frameworks and test runners that have their own lint plugin. `bun lint` detects them from package.json, so that
     /// `[lint.categories]` doesn't enable Next.js rules in a project that doesn't use Next.js.
     #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -386,7 +386,7 @@ pub enum Fixable {
     Whitespace,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// The configs published by ESLint and typescript-eslint that enable the rule.
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub struct Presets: u8 {

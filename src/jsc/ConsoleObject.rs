@@ -2020,7 +2020,7 @@ pub mod formatter {
 
     // It sounds silly to make this packed, but `Tag::get_advanced` is
     // extremely recursive.
-    bitflags::bitflags! {
+    bun_core::bitflags! {
         #[derive(Copy, Clone, Default)]
         pub struct TagOptions: u8 {
             const HIDE_GLOBAL = 1 << 0;

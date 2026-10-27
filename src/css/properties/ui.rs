@@ -8,7 +8,7 @@ use css::css_values::ident::DashedIdent;
 
 // bumpalo::Bump re-export (CSS is an arena crate)
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// A value for the [color-scheme](https://drafts.csswg.org/css-color-adjust/#color-scheme-prop) property.
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct ColorScheme: u8 {

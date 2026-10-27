@@ -94,7 +94,7 @@ pub struct Chunk<'a> {
     pub(crate) flags: Flags,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
         const IS_EXECUTABLE = 1 << 0;

@@ -29,7 +29,7 @@ pub struct ImportRecord<'a> {
     pub flags: Flags,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct Flags: u32 {
         /// require() / await import() / require.resolve() inside the try or

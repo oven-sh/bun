@@ -112,7 +112,7 @@ impl HmrTopic {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     // bitflags! requires explicit power-of-two values; field names match enum variants.
     #[derive(Default, Copy, Clone)]
     pub struct HmrTopicBits: u8 {

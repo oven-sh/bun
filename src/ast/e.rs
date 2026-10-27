@@ -134,7 +134,7 @@ pub struct Unary {
     pub flags: UnaryFlags,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
     #[repr(transparent)]
     pub struct UnaryFlags: u8 {

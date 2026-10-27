@@ -1212,7 +1212,7 @@ impl From<*mut H2Response> for AnyResponse {
 pub(crate) type H3Response = crate::h3::Response;
 pub(crate) type H2Response = crate::h2::Response;
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// Non-exhaustive bitset — values may carry
     /// unnamed bit combinations.
     /// Mirrors `uWS::HttpResponseData::state`. That word is wider than a byte —

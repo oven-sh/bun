@@ -617,7 +617,7 @@ pub(crate) fn few_to_arena<'s, T>(list: Vec<T>, arena: &'s Arena) -> ArenaFew<'s
     ArenaFew::from_iter_in(list.into_iter(), arena)
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// Modifiers, for every kind of node that can have them.
     #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
     pub struct Flags: u32 {

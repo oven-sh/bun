@@ -56,6 +56,7 @@ const MIRI_CRATES = [
   "bun_threading",
   "bun_url",
   "bun_wyhash",
+  "bun_bitflags",
 ];
 
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {

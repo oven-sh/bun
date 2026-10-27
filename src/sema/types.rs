@@ -270,7 +270,7 @@ pub enum Intrinsic {
     NonInferrableAny,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ElemFlags: u128 {
         const REQUIRED = 1;
@@ -281,7 +281,7 @@ bitflags::bitflags! {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct IndexFlags: u8 {
         const NO_INDEX_SIGNATURES = 1 << 1;
@@ -289,7 +289,7 @@ bitflags::bitflags! {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct AccessFlags: u16 {
         const INCLUDE_UNDEFINED = 1 << 0;
@@ -663,7 +663,7 @@ pub enum TypeData<'s> {
     },
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct PropFlags: u32 {
         const OPTIONAL = 1;
@@ -1303,7 +1303,7 @@ pub mod tf {
     pub const INCLUDES_ERROR: u32 = 1 << 31;
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// The `ObjectFlags` that are derived from a type's constituents, plus five that are specific
     /// to this checker.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]

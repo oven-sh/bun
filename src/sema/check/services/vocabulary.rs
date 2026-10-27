@@ -7,7 +7,7 @@ use crate::node::{Node, Part};
 use crate::program::FileId;
 use crate::types::{TypeId, tf};
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// `ts.TypeFlags`. The names and meanings are TypeScript's, but the values differ from
     /// TypeScript 5's.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
@@ -82,7 +82,7 @@ bitflags::bitflags! {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// The `ts.ObjectFlags` that describe what kind of object type a type is.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ObjectFlags: u32 {
@@ -113,7 +113,7 @@ bitflags::bitflags! {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// `ts.SymbolFlags`, with TypeScript's values.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct SymbolFlags: u32 {
@@ -213,7 +213,7 @@ impl From<SymbolFlags> for SymFlags {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// The `ts.CheckFlags` of a property the checker created.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct CheckFlags: u32 {
@@ -240,7 +240,7 @@ bitflags::bitflags! {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// `ts.ModifierFlags`, with TypeScript's values.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ModifierFlags: u32 {
@@ -291,7 +291,7 @@ impl From<Flags> for ModifierFlags {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// The `ts.NodeFlags` that rules look at.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct NodeFlags: u32 {
@@ -309,7 +309,7 @@ bitflags::bitflags! {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// `ts.ElementFlags`: the kind of a tuple type's element.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ElementFlags: u8 {
@@ -325,7 +325,7 @@ bitflags::bitflags! {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// The `ts.TypeFormatFlags` that change what `typeToString` prints.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct TypeFormatFlags: u32 {

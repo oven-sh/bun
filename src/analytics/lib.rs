@@ -135,7 +135,7 @@ pub mod features {
             // Note: nightly `${index()}` (macro_metavar_expr) is unavailable
             // on stable, so each feature carries an explicit `$idx` literal at the
             // call site. The dense-index assertion below catches gaps/duplicates.
-            ::bitflags::bitflags! {
+            ::bun_core::bitflags! {
                 #[repr(transparent)]
                 #[derive(Default, Copy, Clone, PartialEq, Eq)]
                 pub struct PackedFeatures: u64 {

@@ -145,7 +145,7 @@ bun_collections::multi_array_columns! {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
     pub struct InputFileFlags: u8 {
         /// Set when a barrel-eligible file has `export * from` this file.

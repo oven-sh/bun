@@ -8,7 +8,7 @@ use super::super::spans::{
 };
 use super::*;
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// The kinds of tags found.
     #[derive(Copy, Clone, PartialEq, Eq, Default)]
     struct TagSet: u8 {

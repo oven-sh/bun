@@ -185,7 +185,7 @@ pub(crate) struct EntryPointList {
 }
 
 pub(crate) mod entry_point_list {
-    bitflags::bitflags! {
+    bun_core::bitflags! {
         #[derive(Default, Copy, Clone)]
         #[repr(transparent)]
         pub struct Flags: u8 {

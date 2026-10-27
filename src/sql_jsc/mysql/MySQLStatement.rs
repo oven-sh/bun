@@ -90,7 +90,7 @@ impl MySQLStatement {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct ExecutionFlags: u8 {

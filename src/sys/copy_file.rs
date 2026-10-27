@@ -50,7 +50,7 @@ type InputType<'a> = Fd;
 // and in general on macOS, it doesn't seem to have much performance impact.
 // `packed struct(u8)` with all-bool fields → bitflags!; field reads/writes
 // reshaped to `.contains()`/`.insert()` below.
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct LinuxCopyFileState: u8 {
         /// This is the most important flag for reducing the system call count

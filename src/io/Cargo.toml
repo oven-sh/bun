@@ -16,7 +16,6 @@ bstr.workspace = true
 scopeguard.workspace = true
 enumset.workspace = true
 libc.workspace = true
-bitflags.workspace = true
 bun_core.workspace = true
 bun_dispatch.workspace = true
 bun_ptr.workspace = true

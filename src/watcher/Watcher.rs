@@ -1008,7 +1008,7 @@ impl WatchEvent {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct Op: u8 {
         const DELETE   = 1 << 0;

@@ -85,7 +85,7 @@ impl Default for Sendfile {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Default, Copy, Clone)]
     #[repr(transparent)]
     struct State: u8 {

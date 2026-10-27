@@ -115,7 +115,7 @@ jsc::impl_abort_handle_owner!(Terminal, abort_handle, |this, _cause| {
     unsafe { (*this).close_without_callbacks() }
 });
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
         const CLOSED         = 1 << 0;

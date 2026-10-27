@@ -42,6 +42,7 @@ or don't match the cross-platform behavior the runtime needs.
 | `std::process::Command`                 | `bun_core::util::spawn_sync_inherit` (CLI helpers) or `bun_spawn_sys` (full control) |
 | `Box::new` + raw ptr round-trip         | `bun_core::heap::{into_raw, take, destroy}`                                          |
 | `from_raw_parts` / `transmute` on bytes | `bun_core::{bytes_of, slice_as_bytes, cast_slice, read_prefix}` (see below)          |
+| `bitflags::bitflags!`                   | `bun_core::bitflags!` (the same macro; two flags written as one bit do not compile)  |
 
 ## `bun_sys` — System Calls (`src/sys/`)
 

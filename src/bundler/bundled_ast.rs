@@ -140,7 +140,7 @@ bun_collections::multi_array_columns! {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct Flags: u16 {
         // This is a list of CommonJS features. When a file uses CommonJS features,

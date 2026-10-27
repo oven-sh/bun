@@ -536,7 +536,7 @@ pub enum DeclarationKind {
     Type,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// A set of [`DeclarationKind`]s.
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub struct DeclarationKinds: u16 {
@@ -688,7 +688,7 @@ impl<'a> Declaration<'a> {
 
 // ───────────────────────────── references ─────────────────────────────
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub struct ReferenceFlags: u8 {
         const READ = 1 << 0;

@@ -4574,7 +4574,7 @@ pub(crate) struct SendfileContext {
 // All flags are bool (with two debug-conditional ones). We keep all bits in
 // every build and just gate the `is_web_browser_navigation` / `has_finalized`
 // accessors on the const params.
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Default, Clone, Copy)]
     struct FlagsBits: u32 {
         const HAS_MARKED_COMPLETE         = 1 << 0;

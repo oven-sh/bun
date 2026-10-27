@@ -791,7 +791,7 @@ impl Font {
     // deepClone → css::implementDeepClone (generics blanket impl)
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
     pub(crate) struct FontProperty: u8 {
         const FONT_FAMILY       = 1 << 0;

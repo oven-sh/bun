@@ -148,7 +148,6 @@ dependencies = [
 name = "bun_analytics"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bun_core",
  "bun_semver",
  "libc",
@@ -174,7 +173,6 @@ dependencies = [
 name = "bun_ast"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_collections",
@@ -210,6 +208,13 @@ dependencies = [
  "bun_wyhash",
  "strum",
  "thiserror",
+]
+
+[[package]]
+name = "bun_bitflags"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
 ]
 
 [[package]]
@@ -252,7 +257,6 @@ dependencies = [
 name = "bun_bundler"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_analytics",
@@ -385,6 +389,7 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_alloc",
+ "bun_bitflags",
  "bun_core_macros",
  "bun_dispatch",
  "bun_hash",
@@ -416,7 +421,6 @@ dependencies = [
 name = "bun_crash_handler"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_analytics",
@@ -452,7 +456,6 @@ dependencies = [
 name = "bun_css"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_ast",
@@ -573,7 +576,6 @@ dependencies = [
 name = "bun_format"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_ast",
  "bun_collections",
@@ -731,7 +733,6 @@ dependencies = [
 name = "bun_install"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_analytics",
@@ -805,7 +806,6 @@ dependencies = [
 name = "bun_install_types"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_ast",
@@ -819,7 +819,6 @@ dependencies = [
 name = "bun_io"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_collections",
  "bun_core",
@@ -841,7 +840,6 @@ dependencies = [
 name = "bun_js_parser"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_ast",
@@ -912,7 +910,6 @@ dependencies = [
 name = "bun_jsc"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_analytics",
@@ -991,7 +988,6 @@ dependencies = [
 name = "bun_lint"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_ast",
@@ -1398,7 +1394,6 @@ dependencies = [
 name = "bun_resolver"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_analytics",
@@ -1462,7 +1457,6 @@ name = "bun_runtime"
 version = "0.0.0"
 dependencies = [
  "bcrypt",
- "bitflags",
  "blake2",
  "bstr",
  "bun_alloc",
@@ -1592,7 +1586,6 @@ dependencies = [
 name = "bun_sema"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_collections",
@@ -1698,7 +1691,6 @@ dependencies = [
 name = "bun_shell_parser"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_core",
@@ -1805,7 +1797,6 @@ dependencies = [
 name = "bun_sql"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_boringssl",
@@ -1822,7 +1813,6 @@ dependencies = [
 name = "bun_sql_jsc"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_analytics",
@@ -1848,7 +1838,6 @@ dependencies = [
 name = "bun_standalone_graph"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_archive",
@@ -1883,7 +1872,6 @@ dependencies = [
 name = "bun_sys"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_core",
@@ -1995,7 +1983,6 @@ dependencies = [
 name = "bun_uws_sys"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_boringssl_sys",
@@ -2025,7 +2012,6 @@ dependencies = [
 name = "bun_watcher"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_collections",
  "bun_core",

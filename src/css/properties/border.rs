@@ -457,7 +457,7 @@ impl BorderShorthand {
 // BorderProperty bitflags
 // ──────────────────────────────────────────────────────────────────────────
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Default, Clone, Copy)]
     struct BorderProperty: u32 {
         const TOP_COLOR          = 1 << 0;

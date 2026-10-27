@@ -2746,7 +2746,7 @@ pub(crate) struct Pattern {
     pub(crate) flags: PatternFlags,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct PatternFlags: u8 {
         /// beginning or middle slash (leading slash was trimmed)

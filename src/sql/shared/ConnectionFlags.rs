@@ -1,4 +1,4 @@
-use bitflags::bitflags;
+use bun_core::bitflags;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

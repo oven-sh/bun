@@ -938,7 +938,7 @@ pub(crate) struct Offsets {
     pub flags: Flags,
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u32 {

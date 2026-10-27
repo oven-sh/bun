@@ -1291,7 +1291,7 @@ impl Options {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub struct Do: u16 {
         const SAVE_LOCKFILE                = 1 << 0;
@@ -1328,7 +1328,7 @@ impl Default for Do {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub struct Enable: u16 {
         const MANIFEST_CACHE         = 1 << 0;

@@ -414,7 +414,7 @@ pub mod ast {
         pub redirect_file: Option<Redirect<'arena>>,
     }
 
-    bitflags::bitflags! {
+    bun_core::bitflags! {
         /// Bit flags for redirects:
         /// -  `>`  = Redirect.Stdout
         /// -  `1>` = Redirect.Stdout

@@ -2609,7 +2609,7 @@ impl<Impl: BunSelectorImpl> NthOfSelectorData<Impl> {
 // SelectorParsingState (packed struct(u16) — all-bool → bitflags!)
 // ─────────────────────────────────────────────────────────────────────────────
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct SelectorParsingState: u16 {
         /// Whether we should avoid adding default namespaces to selectors that
@@ -2715,7 +2715,7 @@ impl SpecificityAndFlags {
     }
 }
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct SelectorFlags: u8 {
         const HAS_PSEUDO = 1 << 0;

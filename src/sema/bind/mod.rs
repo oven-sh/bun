@@ -17,7 +17,7 @@ use std::hint::cold_path;
 
 define_id!(SymbolId, ScopeId, TableId, FlowId);
 
-bitflags::bitflags! {
+bun_core::bitflags! {
     /// `ast.SymbolFlags`
     #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
     pub struct SymFlags: u32 {

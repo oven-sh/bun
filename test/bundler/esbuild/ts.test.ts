@@ -458,19 +458,32 @@ describe("bundler", () => {
       "/barrel.ts": [`Browser polyfill for module "node:net" doesn't have a matching export named "createServer"`],
     },
   });
-  // The bundle reads `exports_foo.nope` and never declares `exports_foo`: ReferenceError. esbuild 0.25.1 does the same.
+  // The namespace does not have the dropped name, so a read of it is `undefined`. esbuild 0.25.1 prints a read of
+  // `foo_exports.nope` here and never declares `foo_exports`.
   itBundled("ts/ExportMissingES6NamespaceRead", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
-        console.log(typeof ns.nope, ns.yep)
+        console.log(typeof ns.nope, ns.nope?.(), ns.yep)
+      `,
+      "/foo.ts": `export {nope, yep} from './bar'`,
+      "/bar.js": `export const yep = 123`,
+    },
+    run: {
+      stdout: `undefined undefined 123`,
+    },
+  });
+  itBundled("ts/ExportMissingES6NamespaceReadOfTSFile", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './foo'
+        console.log(typeof ns.nope, ns.nope?.(), ns.yep)
       `,
       "/foo.ts": `export {nope, yep} from './bar'`,
       "/bar.ts": `export const yep = 123`,
     },
     run: {
-      stdout: `undefined 123`,
+      stdout: `undefined undefined 123`,
     },
   });
   itBundled("ts/ImportMissingFile", {

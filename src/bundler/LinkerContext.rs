@@ -4659,6 +4659,13 @@ impl<'a> LinkerContext<'a> {
                     );
                 }
                 MatchImportKind::ProbablyTypescriptType => {
+                    // SAFETY: the mutated symbol slot is disjoint from `named_import`
+                    // (graph.ast SoA) and `result` (stack local).
+                    let symbol = unsafe { self.graph.symbol_mut(import_ref) };
+                    // `ns.T`: the namespace does not have the name, so the read is `undefined`.
+                    if symbol.import_item_status == ImportItemStatus::Generated {
+                        symbol.import_item_status = ImportItemStatus::Missing;
+                    }
                     self.graph.meta.items_probably_typescript_type_mut()[source_index as usize]
                         .put(import_ref, ())
                         .expect("unreachable");

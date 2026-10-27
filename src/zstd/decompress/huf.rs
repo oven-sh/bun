@@ -25,9 +25,11 @@ pub(super) struct Code {
     pub(super) table_log: u32,
 }
 
-/// The loop that decodes four streams at once takes a table of this log, or one more.
+/// No fewer bits are looked up at once.
+const MIN_LOG: u32 = 8;
+/// How many are if there are enough literals to make up for the time that it takes to fill the table.
 const FAST_LOG: u32 = 11;
-/// From how many literals on that loop makes up for the time that it takes to fill such a table.
+/// How many literals are enough for that.
 const FAST_MIN_LITERALS: usize = 2048;
 /// From how many literals on the larger table is considered.
 const LARGE_MIN_LITERALS: usize = 1 << 14;
@@ -74,7 +76,7 @@ impl Code {
     /// How many bits to look up at once to decode `nb_literals`.
     fn best_log(&self, nb_literals: usize) -> u32 {
         if nb_literals < FAST_MIN_LITERALS {
-            return self.table_log;
+            return self.table_log.max(MIN_LOG);
         }
         // The larger table takes twice the time to fill, half of the cache, and a refill for 4 lookups and not 5.
         if self.table_log > FAST_LOG
@@ -390,9 +392,11 @@ impl HufDTable {
     #[inline(never)]
     fn decode_most(&self, streams: &mut Streams<'_>) {
         match self.log {
-            11 => streams.decode_most::<11, 5>(&self.table, 0),
-            12 => streams.decode_most::<12, 4>(&self.table, 0),
-            log => streams.decode_most::<0, 5>(&self.table, 64 - log),
+            8 => streams.decode_most::<8, 5>(&self.table),
+            9 => streams.decode_most::<9, 5>(&self.table),
+            10 => streams.decode_most::<10, 5>(&self.table),
+            11 => streams.decode_most::<11, 5>(&self.table),
+            _ => streams.decode_most::<12, 4>(&self.table),
         }
     }
 
@@ -758,28 +762,18 @@ impl<'a> Streams<'a> {
         ]))
     }
 
-    /// Decodes for as long as no stream is close to its start and no output to its end. A lookup is of `LOG` bits, or of
-    /// `64 - shift` if that is 0, and `LOOKUPS` of them are at most 55 bits.
+    /// Decodes for as long as no stream is close to its start and no output to its end. `LOOKUPS` of `LOG` bits are at
+    /// most 55 bits.
     #[inline(always)]
-    fn decode_most<const LOG: u32, const LOOKUPS: usize>(
-        &mut self,
-        table: &[Entry; TABLE_SIZE],
-        shift: u32,
-    ) {
+    fn decode_most<const LOG: u32, const LOOKUPS: usize>(&mut self, table: &[Entry; TABLE_SIZE]) {
         #[inline(always)]
         fn lookup<const LOG: u32>(
             table: &[Entry; TABLE_SIZE],
-            shift: u32,
             bits: &mut u64,
             window: &mut [u8; WINDOW],
             done: &mut usize,
         ) {
-            let index = if LOG == 0 {
-                (*bits >> shift) as usize % TABLE_SIZE
-            } else {
-                (*bits >> (64 - LOG)) as usize
-            };
-            if let Some(entry) = table.get(index) {
+            if let Some(entry) = table.get((*bits >> (64 - LOG)) as usize) {
                 *bits <<= (entry >> 24) & 63;
                 if let Some(to) = window.get_mut(*done..*done + 4) {
                     to.copy_from_slice(&entry.to_le_bytes());
@@ -809,10 +803,10 @@ impl<'a> Streams<'a> {
             };
             let (mut done0, mut done1, mut done2, mut done3) = (0, 0, 0, 0);
             for _ in 0..LOOKUPS {
-                lookup::<LOG>(table, shift, &mut bits0, window0, &mut done0);
-                lookup::<LOG>(table, shift, &mut bits1, window1, &mut done1);
-                lookup::<LOG>(table, shift, &mut bits2, window2, &mut done2);
-                lookup::<LOG>(table, shift, &mut bits3, window3, &mut done3);
+                lookup::<LOG>(table, &mut bits0, window0, &mut done0);
+                lookup::<LOG>(table, &mut bits1, window1, &mut done1);
+                lookup::<LOG>(table, &mut bits2, window2, &mut done2);
+                lookup::<LOG>(table, &mut bits3, window3, &mut done3);
             }
             let mut more = reload(s0.src, &mut ip0, &mut bits0)
                 && reload(s1.src, &mut ip1, &mut bits1)
@@ -820,10 +814,10 @@ impl<'a> Streams<'a> {
                 && reload(s3.src, &mut ip3, &mut bits3);
             if more {
                 for _ in 0..LOOKUPS {
-                    lookup::<LOG>(table, shift, &mut bits0, window0, &mut done0);
-                    lookup::<LOG>(table, shift, &mut bits1, window1, &mut done1);
-                    lookup::<LOG>(table, shift, &mut bits2, window2, &mut done2);
-                    lookup::<LOG>(table, shift, &mut bits3, window3, &mut done3);
+                    lookup::<LOG>(table, &mut bits0, window0, &mut done0);
+                    lookup::<LOG>(table, &mut bits1, window1, &mut done1);
+                    lookup::<LOG>(table, &mut bits2, window2, &mut done2);
+                    lookup::<LOG>(table, &mut bits3, window3, &mut done3);
                 }
                 more = reload(s0.src, &mut ip0, &mut bits0)
                     && reload(s1.src, &mut ip1, &mut bits1)

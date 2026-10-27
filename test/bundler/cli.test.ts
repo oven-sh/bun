@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -1749,6 +1749,310 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     });
     expect(await Bun.file(path.join(String(dir), "b.js")).text()).toBe(`console.log("B-SOURCE");\n`);
     expect(exitCode).toBe(0);
+  });
+
+  // On POSIX a `\` is a byte of a file name, not a separator.
+  describe.skipIf(isWindows)("a backslash in an output path", () => {
+    const files = {
+      "a.js": `import "./b.js";\nconsole.log("A");\n`,
+      "b.js": `console.log("B-SOURCE");\n`,
+    };
+
+    test.each([
+      ["--outfile '\\b.js'", ["--outfile", "\\b.js"], "\\b.js"],
+      ["--outdir 'out\\..'", ["--outdir", "out\\.."], "out\\../a.js"],
+    ])("%s names no input and is written", async (_, args, output) => {
+      using dir = tempDir("build-overwrite-backslash", files);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./a.js", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(await Bun.file(path.join(String(dir), output)).text()).toContain("B-SOURCE");
+      expect(await Bun.file(path.join(String(dir), "a.js")).text()).toBe(files["a.js"]);
+      expect(await Bun.file(path.join(String(dir), "b.js")).text()).toBe(files["b.js"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("an output name that goes up from a new --outdir with a backslash in its name", async () => {
+      using dir = tempDir("build-overwrite-backslash-dotdot", files);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./a.js", "--outdir", "o\\p", "--entry-naming", "../[name].[ext]"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('Refusing to overwrite input file "a.js"');
+      expect(stdout).toBe("");
+      expect(await Bun.file(path.join(String(dir), "a.js")).text()).toBe(files["a.js"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a symlink to the source directory with a backslash in its name", async () => {
+      using dir = tempDir("build-overwrite-backslash-link", { ...files, "out/.keep": "" });
+      fs.symlinkSync("..", path.join(String(dir), "out", "l\\x"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./a.js", "--outdir", "out", "--entry-naming", "l\\x/b.[ext]"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('Refusing to overwrite input file "b.js"');
+      expect(stdout).toBe("");
+      expect(await Bun.file(path.join(String(dir), "b.js")).text()).toBe(files["b.js"]);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  // The check reads every output path before the writer does. A path buffer does not hold these paths.
+  describe("an output path that does not fit a path buffer", () => {
+    const component = Buffer.alloc(200, "a").toString();
+    const long = Array(Math.ceil((MAX_PATH_BYTES * 1.25) / 201))
+      .fill(component)
+      .join("/");
+    // Fits a path buffer. Two of them do not.
+    const half = Array(Math.ceil((MAX_PATH_BYTES * 0.6) / 201))
+      .fill(component)
+      .join("/");
+    const name = Buffer.alloc(100, "n").toString();
+    const short = Buffer.alloc(20, "n").toString();
+    const files = {
+      "a.js": `import "./b.js";\nconsole.log("A");\n`,
+      "b.js": `console.log("B-SOURCE");\n`,
+      "assets/one.txt": `ASSET\n`,
+    };
+
+    /** Creates a directory under `base` whose absolute path is `length` bytes, and returns its path relative to `base`. */
+    function deepDir(base: string, length: number): string {
+      let rest = length - base.length - 1;
+      const names: string[] = [];
+      for (; rest > 202; rest -= 201) names.push(component);
+      names.push(Buffer.alloc(rest, "d").toString());
+      const relative = names.join("/");
+      fs.mkdirSync(path.join(base, relative), { recursive: true });
+      return relative;
+    }
+
+    async function build(cwd: string, args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", ...args],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // A Windows command line holds 32,767 characters.
+    test.skipIf(isWindows).each([
+      ["--outdir", ["--outdir", long], "Failed to create output directory"],
+      ["--outfile", ["--outfile", long + "/out.js"], "could not open output directory"],
+      ["--metafile", ["--outdir", "out", "--metafile=" + long + "/meta.json"], "could not open metafile"],
+      [
+        "--metafile under an --asset directory",
+        ["--compile", "--asset", "assets", "--outfile", "app", "--metafile=assets/" + long + "/meta.json"],
+        "could not open metafile",
+      ],
+    ])("%s that is too long fails as the writer reports it", async (_, args, message) => {
+      using dir = tempDir("build-overwrite-long-path", files);
+
+      const { stdout, stderr, exitCode } = await build(String(dir), ["./a.js", ...args]);
+      expect(stderr).toContain(message);
+      expect(stdout).toBe("");
+      expect(await Bun.file(path.join(String(dir), "b.js")).text()).toBe(files["b.js"]);
+      expect(exitCode).toBe(1);
+    });
+
+    // Windows opens no path that is longer than its path buffer.
+    test.skipIf(isWindows)("an output directory and an output name that only fit apart are written", async () => {
+      using dir = tempDir("build-overwrite-long-joined-path", files);
+
+      const { stderr, exitCode } = await build(String(dir), [
+        "./a.js",
+        "--outdir",
+        half,
+        "--entry-naming",
+        half + "/[name].[ext]",
+      ]);
+      expect(stderr).toBe("");
+      // The output is too deep to open by its absolute path. Move the inner half up.
+      fs.renameSync(path.join(String(dir), half), path.join(String(dir), "inner"));
+      expect(await Bun.file(path.join(String(dir), "inner", half, "a.js")).text()).toContain("B-SOURCE");
+      expect(await Bun.file(path.join(String(dir), "b.js")).text()).toBe(files["b.js"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // The inputs are at the longest path that can be opened.
+    describe.skipIf(isWindows)("from a working directory next to the path limit", () => {
+      const deepest = MAX_PATH_BYTES - 1 - "/a.js".length;
+
+      function fixture(dir: string, length: number, sources: Record<string, string>) {
+        const cwd = path.join(dir, deepDir(dir, length));
+        for (const [file, text] of Object.entries(sources)) fs.writeFileSync(path.join(cwd, file), text);
+        return cwd;
+      }
+
+      test("--outfile that names a dependency is refused", async () => {
+        using dir = tempDir("build-overwrite-deep-cwd-outfile", {});
+        const cwd = fixture(String(dir), deepest, { "a.js": files["a.js"], "b.js": files["b.js"] });
+
+        const { stdout, stderr, exitCode } = await build(cwd, ["./a.js", "--outfile", "b.js"]);
+        expect(stderr).toContain('Refusing to overwrite input file "b.js"');
+        expect(stdout).toBe("");
+        expect(await Bun.file(path.join(cwd, "b.js")).text()).toBe(files["b.js"]);
+        expect(exitCode).toBe(1);
+      });
+
+      test("--outdir out is written", async () => {
+        using dir = tempDir("build-overwrite-deep-cwd-outdir", {});
+        const cwd = fixture(String(dir), deepest, { "a.js": files["a.js"], "b.js": files["b.js"] });
+
+        const { stderr, exitCode } = await build(cwd, ["./a.js", "--outdir", "out"]);
+        expect(stderr).toBe("");
+        // `out/a.js` is too deep to open by its absolute path.
+        fs.renameSync(path.join(cwd, "out"), path.join(String(dir), "out"));
+        expect(await Bun.file(path.join(String(dir), "out", "a.js")).text()).toContain("B-SOURCE");
+        expect(await Bun.file(path.join(cwd, "b.js")).text()).toBe(files["b.js"]);
+        expect(exitCode).toBe(0);
+      });
+
+      // `link/..` is `sub`. By name it is the working directory, which holds the inputs.
+      test("--outdir that goes up from a symlink and holds no input is written", async () => {
+        const app = `import { v } from "./lib.js";\nconsole.log(v);\n`;
+        using dir = tempDir("build-overwrite-deep-cwd-dotdot", {});
+        const cwd = fixture(String(dir), MAX_PATH_BYTES - 16, { "app.js": app, "lib.js": `export const v = 42;\n` });
+        // `sub/innermost-dir` does not fit a path buffer, so it is made outside and moved in.
+        fs.mkdirSync(path.join(String(dir), "sub", "innermost-dir"), { recursive: true });
+        fs.renameSync(path.join(String(dir), "sub"), path.join(cwd, "sub"));
+        fs.symlinkSync("sub/innermost-dir", path.join(cwd, "link"));
+
+        const { stderr, exitCode } = await build(cwd, ["./app.js", "--outdir", "link/.."]);
+        expect(stderr).toBe("");
+        expect(await Bun.file(path.join(cwd, "sub", "app.js")).text()).toContain("console.log(");
+        expect(await Bun.file(path.join(cwd, "app.js")).text()).toBe(app);
+        expect(exitCode).toBe(0);
+      });
+
+      // `out/sub` is a symlink to `real`. The path of `real` fits a path buffer, and the path of a file in it does not.
+      const real = Buffer.alloc(50, "r").toString();
+      test.each([
+        ["an output name under it", ["--outdir", "out", "--entry-naming", `sub/${short}.[ext]`], `${short}.js`],
+        [
+          "an output name that goes up from a new directory under it",
+          ["--outdir", "out", "--entry-naming", `sub/new-directory/../${short}.[ext]`],
+          `${short}.js`,
+        ],
+        ["a new --outdir under it", ["--outdir", `out/sub/new-directory/${short}`], `new-directory/${short}/a.js`],
+        [
+          "a new --outdir that goes up from a new directory under it",
+          ["--outdir", `out/sub/new-directory/../${short}`],
+          `${short}/a.js`,
+        ],
+      ])("a symlink to a directory next to the path limit: %s is written", async (_, args, output) => {
+        using dir = tempDir("build-overwrite-deep-cwd-real-path", {});
+        const cwd = fixture(String(dir), MAX_PATH_BYTES - 60, { "a.js": files["a.js"], "b.js": files["b.js"] });
+        fs.mkdirSync(path.join(cwd, real));
+        fs.mkdirSync(path.join(cwd, "out"));
+        fs.symlinkSync("../" + real, path.join(cwd, "out", "sub"));
+
+        const { stderr, exitCode } = await build(cwd, ["./a.js", ...args]);
+        expect(stderr).toBe("");
+        // The output is too deep to open by its absolute path.
+        fs.renameSync(path.join(cwd, real), path.join(String(dir), "real"));
+        expect(await Bun.file(path.join(String(dir), "real", output)).text()).toContain("B-SOURCE");
+        expect(await Bun.file(path.join(cwd, "b.js")).text()).toBe(files["b.js"]);
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    // `out/<deep>/L` is a symlink to the source directory. Its path fits a path buffer, and the path of a file in it does not.
+    describe.skipIf(isWindows)("through a symlinked directory next to the path limit", () => {
+      function fixture(dir: string) {
+        const deep = deepDir(path.join(dir, "out"), MAX_PATH_BYTES - 3 - "/L".length);
+        fs.symlinkSync(dir, path.join(dir, "out", deep, "L"));
+        fs.linkSync(path.join(dir, "b.js"), path.join(dir, "hard.js"));
+        fs.symlinkSync("b.js", path.join(dir, "soft.js"));
+        return deep;
+      }
+
+      test.each([
+        ["an input", "b"],
+        ["a hard link to an input", "hard"],
+        ["a symlink to an input", "soft"],
+      ])("%s at the output path is not replaced", async (_, output) => {
+        using dir = tempDir("build-overwrite-long-link", files);
+        const deep = fixture(String(dir));
+
+        const { stdout, stderr, exitCode } = await build(String(dir), [
+          "./a.js",
+          "--outdir",
+          "out",
+          "--entry-naming",
+          `${deep}/L/${output}.[ext]`,
+        ]);
+        expect(stderr).toContain('Refusing to overwrite input file "b.js"');
+        expect(stdout).toBe("");
+        expect(await Bun.file(path.join(String(dir), "b.js")).text()).toBe(files["b.js"]);
+        expect(exitCode).toBe(1);
+      });
+
+      test("a new file in the --outdir that the symlink names is written", async () => {
+        using dir = tempDir("build-overwrite-long-link-root", files);
+        const deep = fixture(String(dir));
+
+        const { stderr, exitCode } = await build(String(dir), [
+          "./a.js",
+          "--outdir",
+          `out/${deep}/L`,
+          "--entry-naming",
+          name + ".[ext]",
+        ]);
+        expect(stderr).toBe("");
+        expect(await Bun.file(path.join(String(dir), name + ".js")).text()).toContain("B-SOURCE");
+        expect(await Bun.file(path.join(String(dir), "b.js")).text()).toBe(files["b.js"]);
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    test.each([
+      ["a compile.outfile", `compile: { outfile: long }`, /^Failed to (open|create) output directory/],
+      ["a compile.assets path", `compile: { outfile: "app", assets: [long] }`, /^failed to read asset/],
+    ])("Bun.build with %s that is too long fails as the writer reports it", async (_, options, message) => {
+      using dir = tempDir("build-api-overwrite-long-path", {
+        ...files,
+        "run.js": `
+          const long = Array(${long.split("/").length}).fill(Buffer.alloc(200, "a").toString()).join("/");
+          const result = await Bun.build({ entrypoints: ["./a.js"], ${options}, throw: false });
+          console.log(JSON.stringify({ success: result.success, logs: result.logs.map(l => l.message) }));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ success: false, logs: [expect.stringMatching(message)] });
+      expect(await Bun.file(path.join(String(dir), "b.js")).text()).toBe(files["b.js"]);
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

@@ -5881,8 +5881,7 @@ pub mod bv2_impl {
         }
     }
 
-    /// The path, relative to the working directory, that `write_metafile_output` writes. `None` when it does not fit
-    /// `buf`: that metafile is not written.
+    /// The path, relative to the working directory, that `write_metafile_output` writes. `None`: it does not fit `buf`.
     fn metafile_disk_path<'a>(
         outdir: &[u8],
         file_path: &[u8],

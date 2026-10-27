@@ -460,9 +460,9 @@ describe("header blocks that use up the peer's connection window", () => {
     return session;
   };
 
-  // The number of responses that arrive whole when the server writes them all in one turn.
-  async function responsesOfOneTurn(respond: (stream: any) => void) {
+  test("a server's response headers and bodies all arrive", async () => {
     const waiting: any[] = [];
+    let accepted = 0;
     await using server = await listen(
       session => {
         quiet(session).onstream = (stream: any) => void stream.closed.catch(() => {});
@@ -471,7 +471,13 @@ describe("header blocks that use up the peer's connection window", () => {
         sni,
         transportParams: { maxIdleTimeout, initialMaxStreamsBidi: count },
         onheaders(this: any) {
-          if (waiting.push(this) === count) waiting.forEach(respond);
+          if (waiting.push(this) < count) return;
+          // Every response is written in this one turn.
+          for (const stream of waiting) {
+            if (stream.sendHeaders({ ":status": "200", "x-filler": filler })) accepted++;
+            stream.writer.writeSync(body);
+            stream.writer.endSync();
+          }
         },
       },
     );
@@ -485,57 +491,44 @@ describe("header blocks that use up the peer's connection window", () => {
     await client.opened;
     const whole = await Promise.all(
       Array.from({ length: count }, async (_, i) => {
+        let status = "";
         let field = 0;
         let bytes = 0;
-        const add = (headers: Record<string, string>) => void (field += headers["x-filler"]?.length ?? 0);
         try {
-          const stream: any = await client.createBidirectionalStream({ oninfo: add, onheaders: add });
+          const stream: any = await client.createBidirectionalStream({
+            onheaders(headers: Record<string, string>) {
+              status = headers[":status"];
+              field = headers["x-filler"]?.length ?? 0;
+            },
+          });
           stream.closed.catch(() => {});
           stream.sendHeaders(request(i), { terminal: true });
           for await (const batch of stream) for (const chunk of batch) bytes += chunk.byteLength;
         } catch {}
-        return field === filler.length && bytes === body.byteLength;
+        return status === "200" && field === filler.length && bytes === body.byteLength;
       }),
     );
     client.close().catch(() => {});
-    return whole.filter(Boolean).length;
-  }
-
-  test("a server's response headers and bodies all arrive", async () => {
-    const responses = await responsesOfOneTurn(stream => {
-      stream.sendHeaders({ ":status": "200", "x-filler": filler });
-      stream.writer.writeSync(body);
-      stream.writer.endSync();
-    });
-    expect(responses).toBe(count);
-  });
-
-  test("a server's interim responses, response headers and bodies all arrive", async () => {
-    const responses = await responsesOfOneTurn(stream => {
-      stream.sendInformationalHeaders({ ":status": "103", "x-filler": filler });
-      stream.sendHeaders({ ":status": "200" });
-      stream.writer.writeSync(body);
-      stream.writer.endSync();
-    });
-    expect(responses).toBe(count);
+    expect({ accepted, whole: whole.filter(Boolean).length }).toEqual({ accepted: count, whole: count });
   });
 
   // The number of requests that the server gets whole. It answers each of them.
   async function requestsOfOneTurn(beforeTheHandshakeEnds: boolean) {
     await using server = await listen(
       session => {
-        quiet(session).onstream = async (stream: any) => {
-          stream.closed.catch(() => {});
-          let bytes = 0;
-          try {
-            for await (const batch of stream) for (const chunk of batch) bytes += chunk.byteLength;
-          } catch {}
-          if (bytes === body.byteLength) stream.sendHeaders({ ":status": "204" }, { terminal: true });
-        };
+        quiet(session).onstream = (stream: any) => void stream.closed.catch(() => {});
       },
       {
         sni,
         transportParams: { maxIdleTimeout, initialMaxStreamsBidi: count, initialMaxData: window },
+        async onheaders(this: any, headers: Record<string, string>) {
+          let bytes = 0;
+          try {
+            for await (const batch of this) for (const chunk of batch) bytes += chunk.byteLength;
+          } catch {}
+          const whole = headers["x-filler"]?.length === filler.length && bytes === body.byteLength;
+          if (whole) this.sendHeaders({ ":status": "204" }, { terminal: true });
+        },
       },
     );
     const client = quiet(

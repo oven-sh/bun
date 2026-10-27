@@ -2306,19 +2306,23 @@ test("Bun.serve HTTP/3 responses that use up the client's connection window in o
   await client.opened;
   const whole = await Promise.all(
     Array.from({ length: count }, async (_, i) => {
+      let status = "";
       let field = 0;
       let bytes = 0;
       try {
         const stream = await client.createBidirectionalStream({
           headers: requestHeaders(`/${i}`),
-          onheaders: received => void (field = String(received["x-filler"] ?? "").length),
+          onheaders(received) {
+            status = String(received[":status"]);
+            field = String(received["x-filler"] ?? "").length;
+          },
         });
         stream.closed.catch(() => {});
         for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
           for (const chunk of batch) bytes += chunk.byteLength;
         }
       } catch {}
-      return field === filler.length && bytes === body.byteLength;
+      return status === "200" && field === filler.length && bytes === body.byteLength;
     }),
   );
   if (!client.destroyed) client.close().catch(() => {});

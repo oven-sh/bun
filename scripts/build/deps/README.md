@@ -6,10 +6,11 @@ libraries/headers it provides.
 
 ## Adding a dependency
 
-1. Copy `hdrhistogram.ts` (the simplest direct dep) to `<name>.ts`
+1. Copy `libdeflate.ts` (the simplest direct dep) to `<name>.ts`
 2. Fill in `name`, `repo`, `commit`, `sources`, `includes`, `provides.includes`
 3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
-4. `bun run scripts/build/phase3-test.ts` to verify it builds
+4. Add the name to `DepName` in `../source.ts`
+5. `bun run scripts/build/phase3-test.ts` to verify it builds
 
 That's it. For most deps you're done. If the dep's build is too entangled
 to list sources by hand (zlib-ng's per-file SIMD flags are about the
@@ -28,7 +29,7 @@ Case-sensitive filesystems enforce this.
 ## Removing a dependency
 
 1. Delete `<name>.ts`
-2. Remove from `allDeps` in `index.ts`
+2. Remove from `allDeps` in `index.ts`, and from `DepName` in `../source.ts`
 3. If any other dep has `fetchDeps: ["<name>"]`, remove that reference
 
 ## Updating a commit
@@ -98,7 +99,7 @@ export const mydep: Dependency = {
   patches: ["patches/mydep/fix-something.patch"],
 
   // Optional: deps whose SOURCE must be ready before this one builds
-  // (for -I cross-dep headers). See libarchive for an example.
+  // (for -I cross-dep headers). See libspng for an example.
   fetchDeps: ["zlib"],
 
   // How to build. `direct` lists sources explicitly; emitDirect compiles
@@ -143,11 +144,11 @@ export const mydep: Dependency = {
 
 ## Worked examples
 
-- **hdrhistogram.ts** / **libdeflate.ts** — simplest direct deps
+- **libdeflate.ts** — simplest direct dep
 - **mimalloc.ts** — direct build, single unity TU compiled as C++
 - **tinycc.ts** — direct build with a build-time codegen tool
 - **zlib.ts** — direct build with per-source SIMD `-m` flags + `.h.in` substitution
-- **libarchive.ts** / **cares.ts** — direct build with hand-written per-target config.h
+- **cares.ts** — direct build with hand-written per-target config.h
 - **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest; `forbidUndefined` (with libuv.ts) keeps a dep that bun points at mimalloc from calling libc's allocator behind its back
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep

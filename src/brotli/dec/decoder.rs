@@ -10,11 +10,12 @@ use super::huffman::{
 use super::prefix::CMD_LUT;
 use super::{DecoderErrorCode as E, DecoderParameter, DecoderResult};
 use crate::common::constants::{
-    BLOCK_LENGTH_PREFIX_CODE, CODE_LENGTH_CODES, DISTANCE_CONTEXT_BITS,
+    BLOCK_LENGTH_PREFIX_CODE, CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES, DISTANCE_CONTEXT_BITS,
     INITIAL_REPEATED_CODE_LENGTH, LARGE_MAX_DISTANCE_BITS, LARGE_MAX_WBITS, LARGE_MIN_WBITS,
     LITERAL_CONTEXT_BITS, MAX_ALLOWED_DISTANCE, MAX_DISTANCE_BITS, NUM_BLOCK_LEN_SYMBOLS,
     NUM_COMMAND_SYMBOLS, NUM_DISTANCE_SHORT_CODES, NUM_LITERAL_SYMBOLS,
-    REPEAT_PREVIOUS_CODE_LENGTH, WINDOW_GAP, calculate_distance_code_limit, distance_alphabet_size,
+    REPEAT_PREVIOUS_CODE_LENGTH, calculate_distance_code_limit, distance_alphabet_size,
+    max_backward_limit,
 };
 use crate::common::context::{ContextLut, ContextType, context_lut};
 use crate::common::dictionary::{self, MAX_DICTIONARY_WORD_LENGTH, MIN_DICTIONARY_WORD_LENGTH};
@@ -38,9 +39,6 @@ const BLOCK_SIZE_CAP: u32 = 1 << 24;
 const MAX_DISTANCE_SYMBOLS: usize = 544;
 
 const MAX_COMPOUND_DICTIONARY_CHUNKS: usize = 15;
-
-static CODE_LENGTH_CODE_ORDER: [u8; CODE_LENGTH_CODES] =
-    [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 /// The fixed prefix code that the code lengths of the code length code are written in, indexed by the next 4 bits.
 static CODE_LENGTH_PREFIX_LENGTH: [u8; 16] = [2, 2, 2, 3, 2, 2, 2, 4, 2, 2, 2, 3, 2, 2, 2, 4];
@@ -1555,11 +1553,10 @@ impl Decoder {
     fn write_ring_buffer(&mut self, output: &mut dyn Output, force: bool) -> Step {
         let start = self.partial_pos_out & self.ringbuffer_mask as usize;
         let to_write = self.unwritten_bytes(true);
-        let num_written = output.available().min(to_write);
         if self.meta_block_remaining_len < 0 {
             return Err(E::FormatBlockLength1);
         }
-        output.write(self.ringbuffer.sub(start..start + num_written)?);
+        let num_written = output.write(self.ringbuffer.sub(start..start + to_write)?);
         self.partial_pos_out += num_written;
         let at_full_size = self.ringbuffer_size == 1 << self.window_bits;
         if num_written < to_write {
@@ -2398,7 +2395,7 @@ impl Decoder {
             }
 
             State::Initialize => {
-                s.max_backward_distance = (1 << s.window_bits) - WINDOW_GAP as i32;
+                s.max_backward_distance = max_backward_limit(s.window_bits) as i32;
                 s.state = State::MetaBlockBegin;
             }
 

@@ -368,19 +368,11 @@ mod _impl {
         }
 
         pub(crate) fn flush_value_is_valid(flush: u32) -> bool {
-            flush <= 3
+            Op::from_raw(flush).is_some()
         }
 
         pub(crate) fn set_flush(&mut self, flush: c_int) {
-            // Caller passes a valid BrotliEncoderOperation discriminant (Node
-            // zlib constants 0..=3). Out-of-range traps.
-            self.flush = match flush {
-                0 => Op::Process,
-                1 => Op::Flush,
-                2 => Op::Finish,
-                3 => Op::EmitMetadata,
-                n => unreachable!("invalid BrotliEncoderOperation {n}"),
-            };
+            self.flush = Op::from_raw(flush as u32).expect("checked by flush_value_is_valid");
         }
 
         pub(crate) fn do_work(&mut self) {
@@ -406,7 +398,9 @@ mod _impl {
                 // A handle driven before `init()`.
                 State::None => return,
                 State::Encoder(encoder) => {
-                    self.encode_ok = encoder.compress_stream(self.flush, &mut input, &mut output);
+                    self.encode_ok = encoder
+                        .compress_stream(self.flush, &mut input, &mut output)
+                        .is_ok();
                 }
                 State::Decoder(decoder) => {
                     self.decode_result = decoder.decompress_stream(&mut input, &mut output);

@@ -133,7 +133,7 @@ fn one_shot(text: &[u8]) -> Result<usize, String> {
             }
             for mode in 0..3 {
                 for data in [&text[..0], &text[..1], &text[..2], &text[..100], text, &random[..]] {
-                    let bound = bun_brotli::max_compressed_size(data.len());
+                    let bound = bun_brotli::max_compressed_size(data.len()).unwrap();
                     for cap in [0, 1, 2, 3, data.len() / 3, bound.saturating_sub(1), bound, bound + 1, bound + 1000] {
                         crate::enc::compare_one_shot(quality, lgwin, mode, data, cap)?;
                         n += 1;
@@ -143,7 +143,7 @@ fn one_shot(text: &[u8]) -> Result<usize, String> {
         }
     }
     for size in [0usize, 1, (1 << 14) - 1, 1 << 14, 1 << 24, u32::MAX as usize, 1 << 40, usize::MAX - (1 << 50), usize::MAX >> 1, usize::MAX - 7, usize::MAX - 6, usize::MAX] {
-        let (a, b) = (unsafe { crate::ffi::BrotliEncoderMaxCompressedSize(size) }, bun_brotli::max_compressed_size(size));
+        let (a, b) = (unsafe { crate::ffi::BrotliEncoderMaxCompressedSize(size) }, bun_brotli::max_compressed_size(size).unwrap_or(0));
         if a != b {
             return Err(format!("max_compressed_size({size}): C {a} Rust {b}"));
         }
@@ -215,6 +215,17 @@ fn long_call(corpus: &r#gen::Corpus) -> Result<usize, String> {
     Ok(3)
 }
 
+const ERROR_CODES: &[bun_brotli::DecoderErrorCode] = {
+    use bun_brotli::DecoderErrorCode::*;
+    &[
+        NoError, Success, NeedsMoreInput, NeedsMoreOutput, FormatExuberantNibble, FormatReserved, FormatExuberantMetaNibble,
+        FormatSimpleHuffmanAlphabet, FormatSimpleHuffmanSame, FormatClSpace, FormatHuffmanSpace, FormatContextMapRepeat, FormatBlockLength1,
+        FormatBlockLength2, FormatTransform, FormatDictionary, FormatWindowBits, FormatPadding1, FormatPadding2, FormatDistance, FormatBlockSwitch,
+        CompoundDictionary, DictionaryNotSet, InvalidArguments, AllocContextModes, AllocTreeGroups, AllocContextMap, AllocRingBuffer1,
+        AllocRingBuffer2, AllocBlockTypeTrees, Unreachable,
+    ]
+};
+
 /// The names of the error codes, which JavaScript gets to see.
 fn error_names() -> Result<usize, String> {
     let name_in_c = |code: i32| unsafe { std::ffi::CStr::from_ptr(crate::ffi::BrotliDecoderErrorString(code)) }.to_str().unwrap().to_string();
@@ -222,7 +233,7 @@ fn error_names() -> Result<usize, String> {
     let mut n = 0;
     for code in -40..10 {
         let c = name_in_c(code);
-        match bun_brotli::DecoderErrorCode::ALL.iter().find(|&&e| e as i32 == code) {
+        match ERROR_CODES.iter().find(|&&e| e as i32 == code) {
             Some(e) => {
                 if e.name() != c || e.node_code().to_str().unwrap() != format!("ERR_{c}") {
                     return Err(format!("error {code}: C {c:?}, Rust {:?} and {:?}", e.name(), e.node_code()));
@@ -284,8 +295,8 @@ fn spare_capacity(rng: &mut Rng, corpus: &r#gen::Corpus) -> Result<(), String> {
     let data = r#gen::data(rng, corpus, len);
     let quality = rng.below(12) as u32;
     let (mut a, mut b) = (Encoder::new(), Encoder::new());
-    a.set_parameter(EncoderParameter::Quality, quality);
-    b.set_parameter(EncoderParameter::Quality, quality);
+    assert!(a.set_parameter(EncoderParameter::Quality, quality));
+    assert!(b.set_parameter(EncoderParameter::Quality, quality));
     let mut rest: &[u8] = &data;
     let (mut out_a, mut out_b) = (Vec::new(), Vec::<u8>::new());
     loop {
@@ -311,7 +322,7 @@ fn spare_capacity(rng: &mut Rng, corpus: &r#gen::Corpus) -> Result<(), String> {
         };
         let ok_b = b.compress_stream(op, &mut in_b, &mut SpareCapacity::new(&mut out_b, limit));
         if ok_a != ok_b || in_a.len() != in_b.len() || out_a != out_b || a.has_more_output() != b.has_more_output() || a.is_finished() != b.is_finished() {
-            return Err(format!("SpareCapacity: quality {quality} len {len}: ok {ok_a}/{ok_b} left {}/{} out {}/{}", in_a.len(), in_b.len(), out_a.len(), out_b.len()));
+            return Err(format!("SpareCapacity: quality {quality} len {len}: ok {ok_a:?}/{ok_b:?} left {}/{} out {}/{}", in_a.len(), in_b.len(), out_a.len(), out_b.len()));
         }
         rest = &rest[n - in_a.len()..];
         if a.is_finished() {

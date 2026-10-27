@@ -492,9 +492,12 @@ impl CompressionStreamCoder {
                         });
                     }
                     let mut spare = brotli_spare(out, cap)?;
-                    if !encoder.compress_stream(op, &mut remaining, &mut spare) {
-                        return Err(CodecError::Message("brotli encode failed"));
-                    }
+                    encoder
+                        .compress_stream(op, &mut remaining, &mut spare)
+                        .map_err(|error| match error {
+                            bun_brotli::EncoderError::OutOfMemory => CodecError::OutOfMemory,
+                            _ => CodecError::Message("brotli encode failed"),
+                        })?;
                     if remaining.is_empty() && spare.available() != 0 {
                         return Ok(Progress::Done);
                     }

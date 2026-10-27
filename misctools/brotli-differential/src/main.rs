@@ -233,8 +233,8 @@ fn enc_fuzz(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
             let lgwin = rng.range(8, 26) as i32;
             let cap = match rng.below(4) {
                 0 => rng.below(data.len() + 20),
-                1 => bun_brotli::max_compressed_size(data.len()),
-                2 => bun_brotli::max_compressed_size(data.len()).saturating_sub(1),
+                1 => bun_brotli::max_compressed_size(data.len()).unwrap(),
+                2 => bun_brotli::max_compressed_size(data.len()).unwrap().saturating_sub(1),
                 _ => data.len() * 2 + 1024,
             };
             if let Err(e) = enc::compare_one_shot(q as i32, lgwin, rng.below(3) as i32, &data, cap) {
@@ -280,7 +280,7 @@ fn enc_one(path: &str, params: &[String]) {
 
 fn bench_enc(path: &str, quality: u32, lgwin: u32, reps: usize) {
     let data = std::fs::read(path).unwrap();
-    let cap = bun_brotli::max_compressed_size(data.len());
+    let cap = bun_brotli::max_compressed_size(data.len()).unwrap();
     let mut out = vec![0u8; cap];
     let mut best = [f64::MAX; 2];
     let mut sizes = [0usize; 2];
@@ -308,7 +308,7 @@ fn bench_enc(path: &str, quality: u32, lgwin: u32, reps: usize) {
 fn bench_first(path: &str, len: usize, quality: u32) {
     let data = std::fs::read(path).unwrap();
     let data = &data[..len.min(data.len())];
-    let cap = bun_brotli::max_compressed_size(data.len());
+    let cap = bun_brotli::max_compressed_size(data.len()).unwrap();
     let mut out = vec![0u8; cap];
     let rust = std::env::var("ONLY").unwrap_or_default() != "c";
     let mut times = Vec::new();
@@ -329,7 +329,7 @@ fn bench_first(path: &str, len: usize, quality: u32) {
 fn bench_small(path: &str, len: usize, quality: u32, lgwin: u32, reps: usize) {
     let data = std::fs::read(path).unwrap();
     let data = &data[..len.min(data.len())];
-    let cap = bun_brotli::max_compressed_size(data.len());
+    let cap = bun_brotli::max_compressed_size(data.len()).unwrap();
     let mut out = vec![0u8; cap];
     let mut back = vec![0u8; data.len() + 16];
     let mut t = [0f64; 4];

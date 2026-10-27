@@ -29,21 +29,43 @@ mod utf8_util;
 
 pub use compound_dictionary::PreparedDictionary;
 pub use encoder::{Encoder, compress, compress_append, max_compressed_size};
-pub use params::EncoderMode;
 
 use crate::util::Bug;
 use bun_core::AllocError;
 
-pub const MIN_WINDOW_BITS: i32 = 10;
+const MIN_WINDOW_BITS: i32 = 10;
 /// Without [`EncoderParameter::LargeWindow`].
-pub const MAX_WINDOW_BITS: i32 = 24;
-pub const LARGE_MAX_WINDOW_BITS: i32 = 30;
-pub const MIN_INPUT_BLOCK_BITS: i32 = 16;
-pub const MAX_INPUT_BLOCK_BITS: i32 = 24;
+const MAX_WINDOW_BITS: i32 = 24;
+const LARGE_MAX_WINDOW_BITS: i32 = 30;
+const MIN_INPUT_BLOCK_BITS: i32 = 16;
+const MAX_INPUT_BLOCK_BITS: i32 = 24;
 pub const MIN_QUALITY: i32 = 0;
 pub const MAX_QUALITY: i32 = 11;
-pub const DEFAULT_QUALITY: i32 = 11;
+const DEFAULT_QUALITY: i32 = 11;
 pub const DEFAULT_WINDOW: i32 = 22;
+
+/// `BrotliEncoderMode`: what kind of data to tune for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u32)]
+pub enum EncoderMode {
+    /// Nothing is known about the input.
+    Generic = 0,
+    /// UTF-8 text.
+    Text = 1,
+    /// WOFF 2.0 fonts.
+    Font = 2,
+}
+
+impl EncoderMode {
+    pub const fn from_raw(raw: u32) -> Option<Self> {
+        Some(match raw {
+            0 => Self::Generic,
+            1 => Self::Text,
+            2 => Self::Font,
+            _ => return None,
+        })
+    }
+}
 
 /// `BrotliEncoderOperation`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -57,6 +79,18 @@ pub enum EncoderOperation {
     Finish = 2,
     /// Write the input as a metadata block, which a decoder skips.
     EmitMetadata = 3,
+}
+
+impl EncoderOperation {
+    pub const fn from_raw(raw: u32) -> Option<Self> {
+        Some(match raw {
+            0 => Self::Process,
+            1 => Self::Flush,
+            2 => Self::Finish,
+            3 => Self::EmitMetadata,
+            _ => return None,
+        })
+    }
 }
 
 /// `BrotliEncoderParameter`.
@@ -74,7 +108,7 @@ pub enum EncoderParameter {
     DisableLiteralContextModeling = 4,
     /// An estimate of the total input size, or 0 if it is not known.
     SizeHint = 5,
-    /// Allow windows over [`MAX_WINDOW_BITS`], which is not RFC 7932.
+    /// Allow windows of more than 24 bits, which is not RFC 7932.
     LargeWindow = 6,
     Npostfix = 7,
     Ndirect = 8,
@@ -100,25 +134,32 @@ impl EncoderParameter {
     }
 }
 
-/// Why the encoder gave up. It cannot be used after that.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Failure {
-    Bug,
+/// Why [`Encoder::compress_stream`] failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum EncoderError {
+    /// The call is out of order, like input after [`EncoderOperation::Finish`]. It had no effect.
+    #[error("InvalidCall")]
+    InvalidCall,
+    /// Every later call fails in the same way.
+    #[error("OutOfMemory")]
     OutOfMemory,
+    /// The encoder has a bug. Every later call fails in the same way.
+    #[error("Internal")]
+    Internal,
 }
 
-impl From<Bug> for Failure {
+impl From<Bug> for EncoderError {
     #[cold]
     fn from(_: Bug) -> Self {
-        Self::Bug
+        Self::Internal
     }
 }
 
-impl From<AllocError> for Failure {
+impl From<AllocError> for EncoderError {
     #[cold]
     fn from(_: AllocError) -> Self {
         Self::OutOfMemory
     }
 }
 
-pub(crate) type Fallible<T = ()> = Result<T, Failure>;
+pub(crate) type Fallible<T = ()> = Result<T, EncoderError>;

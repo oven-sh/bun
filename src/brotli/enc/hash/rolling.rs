@@ -166,7 +166,9 @@ impl<const JUMP: usize> HasherImpl for HashRolling<JUMP> {
                 if pos == cur_ix && found_ix != INVALID_POS {
                     // In 32 bits, so that distances up to 4 GiB work whatever `cur_ix` is.
                     let backward = (cur_ix as u32).wrapping_sub(found_ix) as usize;
-                    if backward <= max_backward {
+                    // Positions repeat every 2 GiB and the table is never cleared, so this can be `cur_ix` of the lap
+                    // before. The reference encoder takes that for a match at distance 0.
+                    if backward != 0 && backward <= max_backward {
                         let found_ix_masked = found_ix as usize & ring_buffer_mask;
                         let len = find_match_length_with_limit(
                             data.sub(found_ix_masked..)?,

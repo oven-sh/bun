@@ -3,21 +3,9 @@
 
 use super::compound_dictionary::CompoundDictionary;
 use super::{
-    LARGE_MAX_WINDOW_BITS, MAX_INPUT_BLOCK_BITS, MAX_QUALITY, MAX_WINDOW_BITS,
+    EncoderMode, LARGE_MAX_WINDOW_BITS, MAX_INPUT_BLOCK_BITS, MAX_QUALITY, MAX_WINDOW_BITS,
     MIN_INPUT_BLOCK_BITS, MIN_QUALITY, MIN_WINDOW_BITS,
 };
-
-/// `BrotliEncoderMode`: what kind of data to tune for.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u32)]
-pub enum EncoderMode {
-    /// Nothing is known about the input.
-    Generic = 0,
-    /// UTF-8 text.
-    Text = 1,
-    /// WOFF 2.0 fonts.
-    Font = 2,
-}
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct HasherParams {

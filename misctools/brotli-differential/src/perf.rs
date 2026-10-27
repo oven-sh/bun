@@ -49,7 +49,7 @@ fn c_encode(data: &[u8], params: &[(i32, u32)], chunk: usize, flush: bool, buf: 
 fn r_encode(data: &[u8], params: &[(i32, u32)], chunk: usize, flush: bool, buf: &mut [u8]) -> Vec<u8> {
     let mut e = Encoder::new();
     for &(k, v) in params {
-        e.set_parameter(EncoderParameter::from_raw(k as u32).unwrap(), v);
+        assert!(e.set_parameter(EncoderParameter::from_raw(k as u32).unwrap(), v));
     }
     let mut out = Vec::new();
     let mut pieces = data.chunks(chunk.max(1)).peekable();
@@ -59,7 +59,7 @@ fn r_encode(data: &[u8], params: &[(i32, u32)], chunk: usize, flush: bool, buf: 
         loop {
             let cap = buf.len();
             let mut o: &mut [u8] = buf;
-            assert!(e.compress_stream(op, &mut piece, &mut o));
+            e.compress_stream(op, &mut piece, &mut o).unwrap();
             let made = cap - o.len();
             out.extend_from_slice(&buf[..made]);
             if piece.is_empty() && !e.has_more_output() {

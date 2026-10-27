@@ -35,8 +35,6 @@ macro_rules! error_codes {
         }
 
         impl DecoderErrorCode {
-            pub const ALL: &[Self] = &[$(Self::$variant,)*];
-
             /// What `BrotliDecoderErrorString` returns.
             pub const fn name(self) -> &'static str {
                 match self {

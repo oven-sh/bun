@@ -2,22 +2,7 @@
 
 use super::fast_log::log2_floor_nonzero;
 use super::params::DistanceParams;
-use crate::common::constants::{NUM_DISTANCE_SHORT_CODES, NUM_INS_COPY_CODES};
-use crate::util::{Checked, SliceExt};
-
-static INS_BASE: [u32; NUM_INS_COPY_CODES] = [
-    0, 1, 2, 3, 4, 5, 6, 8, 10, 14, 18, 26, 34, 50, 66, 98, 130, 194, 322, 578, 1090, 2114, 6210,
-    22594,
-];
-static INS_EXTRA: [u32; NUM_INS_COPY_CODES] = [
-    0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 12, 14, 24,
-];
-static COPY_BASE: [u32; NUM_INS_COPY_CODES] = [
-    2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54, 70, 102, 134, 198, 326, 582, 1094, 2118,
-];
-static COPY_EXTRA: [u32; NUM_INS_COPY_CODES] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 24,
-];
+use crate::common::constants::NUM_DISTANCE_SHORT_CODES;
 
 /// A distance symbol in the low 10 bits and the number of its extra bits in the high 6.
 #[derive(Clone, Copy, Default)]
@@ -116,26 +101,6 @@ pub(crate) fn get_length_code(insertlen: usize, copylen: usize, use_last_distanc
         get_copy_length_code(copylen),
         use_last_distance,
     )
-}
-
-#[inline(always)]
-pub(crate) fn get_insert_base(inscode: u16) -> Checked<u32> {
-    INS_BASE.at(usize::from(inscode))
-}
-
-#[inline(always)]
-pub(crate) fn get_insert_extra(inscode: u16) -> Checked<u32> {
-    INS_EXTRA.at(usize::from(inscode))
-}
-
-#[inline(always)]
-pub(crate) fn get_copy_base(copycode: u16) -> Checked<u32> {
-    COPY_BASE.at(usize::from(copycode))
-}
-
-#[inline(always)]
-pub(crate) fn get_copy_extra(copycode: u16) -> Checked<u32> {
-    COPY_EXTRA.at(usize::from(copycode))
 }
 
 #[derive(Clone, Copy, Default)]

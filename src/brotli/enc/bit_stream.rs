@@ -2,10 +2,7 @@
 
 use super::Fallible;
 use super::bit_writer::BitWriter;
-use super::command::{
-    Command, get_copy_base, get_copy_extra, get_copy_length_code, get_insert_base,
-    get_insert_extra, get_insert_length_code,
-};
+use super::command::{Command, get_copy_length_code, get_insert_length_code};
 use super::entropy_encode::{
     HuffmanTree, HuffmanTreeCode, convert_bit_depths_to_symbols, create_huffman_tree, set_depth,
     sort_huffman_tree_items,
@@ -21,7 +18,8 @@ use super::histogram::{Histogram, HistogramCommand, HistogramDistance, Histogram
 use super::meta_block::MetaBlockSplit;
 use super::params::DistanceParams;
 use crate::common::constants::{
-    BLOCK_LENGTH_PREFIX_CODE, CODE_LENGTH_CODES, DISTANCE_CONTEXT_BITS, LARGE_MAX_DISTANCE_BITS,
+    BLOCK_LENGTH_PREFIX_CODE, CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES, COPY_LENGTH_PREFIX_CODE,
+    DISTANCE_CONTEXT_BITS, INSERT_LENGTH_PREFIX_CODE, LARGE_MAX_DISTANCE_BITS,
     LITERAL_CONTEXT_BITS, MAX_BLOCK_TYPE_SYMBOLS, MAX_CONTEXT_MAP_SYMBOLS, NUM_BLOCK_LEN_SYMBOLS,
     NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, REPEAT_PREVIOUS_CODE_LENGTH, REPEAT_ZERO_CODE_LENGTH,
     distance_alphabet_size,
@@ -110,11 +108,12 @@ fn store_command_extra(cmd: &Command, bw: &mut BitWriter<'_>) -> Checked {
     let copylen_code = cmd.copy_len_code();
     let inscode = get_insert_length_code(cmd.insert_len as usize);
     let copycode = get_copy_length_code(copylen_code as usize);
-    let insnumextra = get_insert_extra(inscode)?;
-    let insextraval = u64::from(cmd.insert_len - get_insert_base(inscode)?);
-    let copyextraval = u64::from(copylen_code - get_copy_base(copycode)?);
-    let bits = (copyextraval << insnumextra) | insextraval;
-    bw.write_bits((insnumextra + get_copy_extra(copycode)?) as usize, bits)
+    let insert = INSERT_LENGTH_PREFIX_CODE.at(usize::from(inscode))?;
+    let copy = COPY_LENGTH_PREFIX_CODE.at(usize::from(copycode))?;
+    let insextraval = u64::from(cmd.insert_len - u32::from(insert.offset));
+    let copyextraval = u64::from(copylen_code - u32::from(copy.offset));
+    let bits = (copyextraval << insert.nbits) | insextraval;
+    bw.write_bits(usize::from(insert.nbits + copy.nbits), bits)
 }
 
 /// What it takes to write the block switch commands of one category.
@@ -172,13 +171,11 @@ fn store_huffman_tree_of_huffman_tree_to_bit_mask(
     code_length_bitdepth: &[u8; CODE_LENGTH_CODES],
     bw: &mut BitWriter<'_>,
 ) -> Checked {
-    static STORAGE_ORDER: [u8; CODE_LENGTH_CODES] =
-        [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
     // The fixed code that the code lengths 0 to 5 are written in: 00, 1110, 110, 01, 10, 1111.
     static HUFFMAN_BIT_LENGTH_HUFFMAN_CODE_SYMBOLS: [u8; 6] = [0, 7, 3, 2, 1, 15];
     static HUFFMAN_BIT_LENGTH_HUFFMAN_CODE_BIT_LENGTHS: [u8; 6] = [2, 4, 3, 2, 2, 4];
 
-    let in_order = |i: usize| code_length_bitdepth.at(usize::from(STORAGE_ORDER.at(i)?));
+    let in_order = |i: usize| code_length_bitdepth.at(usize::from(CODE_LENGTH_CODE_ORDER.at(i)?));
 
     // The zeros at the end are not written.
     let mut codes_to_store = CODE_LENGTH_CODES;

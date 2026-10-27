@@ -15,12 +15,7 @@ pub struct EncCase {
 }
 
 fn op_of(op: i32) -> EncoderOperation {
-    match op {
-        0 => EncoderOperation::Process,
-        1 => EncoderOperation::Flush,
-        2 => EncoderOperation::Finish,
-        _ => EncoderOperation::EmitMetadata,
-    }
+    EncoderOperation::from_raw(op as u32).unwrap()
 }
 
 pub struct Pair {
@@ -70,7 +65,7 @@ impl Pair {
         let (c_ok, c_used, c_made) = self.c.stream(op, input, &mut self.cbuf[..cap]);
         let mut rin = input;
         let mut rout: &mut [u8] = &mut self.rbuf[..cap];
-        let r_ok = self.r.compress_stream(op_of(op), &mut rin, &mut rout);
+        let r_ok = self.r.compress_stream(op_of(op), &mut rin, &mut rout).is_ok();
         let r_made = cap - rout.len();
         let r_used = input.len() - rin.len();
         let at = format!("call {} (op {op}, in {}, cap {cap}, total out {})", self.calls, input.len(), self.out.len());
@@ -246,11 +241,7 @@ pub fn compare_one_shot(quality: i32, lgwin: i32, mode: i32, data: &[u8], cap: u
     let mut rbuf = vec![0u8; cap];
     let mut n = cap;
     let ok = unsafe { crate::ffi::BrotliEncoderCompress(quality, lgwin, mode, data.len(), data.as_ptr(), &mut n, cbuf.as_mut_ptr()) } != 0;
-    let m = match mode {
-        1 => bun_brotli::EncoderMode::Text,
-        2 => bun_brotli::EncoderMode::Font,
-        _ => bun_brotli::EncoderMode::Generic,
-    };
+    let m = bun_brotli::EncoderMode::from_raw(mode as u32).unwrap();
     let r = bun_brotli::compress(quality, lgwin, m, data, &mut rbuf);
     let c = ok.then_some(n);
     if c != r {
@@ -270,7 +261,7 @@ pub fn compare_one_shot(quality: i32, lgwin: i32, mode: i32, data: &[u8], cap: u
             return Err(format!("compress_append q{quality} w{lgwin} m{mode} len {} cap {cap}: C {c:?} Rust {r2:?}", data.len()));
         }
     }
-    let (a, b) = (unsafe { crate::ffi::BrotliEncoderMaxCompressedSize(data.len()) }, bun_brotli::max_compressed_size(data.len()));
+    let (a, b) = (unsafe { crate::ffi::BrotliEncoderMaxCompressedSize(data.len()) }, bun_brotli::max_compressed_size(data.len()).unwrap_or(0));
     if a != b {
         return Err(format!("max_compressed_size({}): C {a} Rust {b}", data.len()));
     }

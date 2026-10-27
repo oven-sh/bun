@@ -3,8 +3,8 @@
 
 use super::Fallible;
 use super::command::{
-    Command, combine_length_codes, get_copy_extra, get_copy_length_code, get_insert_extra,
-    get_insert_length_code, prefix_encode_copy_distance,
+    Command, combine_length_codes, get_copy_length_code, get_insert_length_code,
+    prefix_encode_copy_distance,
 };
 use super::fast_log::fast_log2;
 use super::find_match_length::find_match_length_with_limit;
@@ -14,9 +14,9 @@ use super::hash::{
 use super::literal_cost::estimate_bit_costs_for_literals;
 use super::params::{DistanceParams, EncoderParams, LONG_COPY_QUICK_STEP};
 use crate::common::constants::{
-    NUM_COMMAND_SYMBOLS, NUM_DISTANCE_SHORT_CODES, NUM_LITERAL_SYMBOLS, max_backward_limit,
+    COPY_LENGTH_PREFIX_CODE, INSERT_LENGTH_PREFIX_CODE, NUM_COMMAND_SYMBOLS,
+    NUM_DISTANCE_SHORT_CODES, NUM_LITERAL_SYMBOLS, max_backward_limit,
 };
-use crate::common::context::ContextLut;
 use crate::util::{Bug, Checked, SliceExt, try_vec, try_zeroed};
 use bun_core::AllocError;
 
@@ -512,8 +512,9 @@ fn update_nodes(
         let start = posdata.pos;
         let inscode = get_insert_length_code(pos - start);
         let start_costdiff = posdata.costdiff;
-        let base_cost =
-            start_costdiff + get_insert_extra(inscode)? as f32 + model.literal_costs(0, pos)?;
+        let base_cost = start_costdiff
+            + f32::from(INSERT_LENGTH_PREFIX_CODE.at(usize::from(inscode))?.nbits)
+            + model.literal_costs(0, pos)?;
 
         // The distances that have a short code at that position.
         let mut best_len = min_len - 1;
@@ -568,7 +569,7 @@ fn update_nodes(
                 let copycode = get_copy_length_code(l);
                 let cmdcode = combine_length_codes(inscode, copycode, j == 0);
                 let cost = (if cmdcode < 128 { base_cost } else { dist_cost })
-                    + get_copy_extra(copycode)? as f32
+                    + f32::from(COPY_LENGTH_PREFIX_CODE.at(usize::from(copycode))?.nbits)
                     + model.command_cost(cmdcode)?;
                 if cost < nodes.at(pos + l)?.cost() {
                     update_zopfli_node(nodes, pos, start, l, l, backward, j + 1, cost)?;
@@ -611,8 +612,9 @@ fn update_nodes(
                 };
                 let copycode = get_copy_length_code(len_code);
                 let cmdcode = combine_length_codes(inscode, copycode, false);
-                let cost =
-                    dist_cost + get_copy_extra(copycode)? as f32 + model.command_cost(cmdcode)?;
+                let cost = dist_cost
+                    + f32::from(COPY_LENGTH_PREFIX_CODE.at(usize::from(copycode))?.nbits)
+                    + model.command_cost(cmdcode)?;
                 if cost < nodes.at(pos + len)?.cost() {
                     update_zopfli_node(nodes, pos, start, len, len_code, dist, 0, cost)?;
                     result = result.max(len);
@@ -986,7 +988,6 @@ pub(crate) fn create_zopfli_backward_references(
     position: usize,
     ringbuffer: &[u8],
     ringbuffer_mask: usize,
-    _literal_context_lut: &ContextLut,
     params: &EncoderParams,
     hasher: &mut Hasher,
     dist_cache: &mut [i32; 16],
@@ -1025,7 +1026,6 @@ pub(crate) fn create_hq_zopfli_backward_references(
     position: usize,
     ringbuffer: &[u8],
     ringbuffer_mask: usize,
-    _literal_context_lut: &ContextLut,
     params: &EncoderParams,
     hasher: &mut Hasher,
     dist_cache: &mut [i32; 16],

@@ -9,7 +9,6 @@ use super::hash::{
 };
 use super::params::{EncoderParams, MIN_QUALITY_FOR_EXTENSIVE_REFERENCE_SEARCH};
 use crate::common::constants::{NUM_DISTANCE_SHORT_CODES, max_backward_limit};
-use crate::common::context::ContextLut;
 use crate::util::{Bug, Checked};
 
 /// One of the 16 short codes if `distance` is one of, or close to one of, the last distances. Else the distance + 15.
@@ -237,7 +236,6 @@ pub(crate) fn create_backward_references(
     position: usize,
     ringbuffer: &[u8],
     ringbuffer_mask: usize,
-    _literal_context_lut: &ContextLut,
     params: &EncoderParams,
     hasher: &mut Hasher,
     dist_cache: &mut [i32; 16],

@@ -23,7 +23,7 @@ use super::meta_block::{
     init_distance_params, optimize_histograms,
 };
 use super::params::{
-    DistanceParams, EncoderMode, EncoderParams, FAST_ONE_PASS_COMPRESSION_QUALITY,
+    DistanceParams, EncoderParams, FAST_ONE_PASS_COMPRESSION_QUALITY,
     FAST_TWO_PASS_COMPRESSION_QUALITY, HQ_ZOPFLIFICATION_QUALITY, HasherParams,
     MAX_NUM_DELAYED_SYMBOLS, MAX_QUALITY_FOR_STATIC_ENTROPY_CODES, MIN_QUALITY_FOR_BLOCK_SPLIT,
     MIN_QUALITY_FOR_CONTEXT_MODELING, MIN_QUALITY_FOR_HQ_BLOCK_SPLITTING,
@@ -33,14 +33,15 @@ use super::params::{
 use super::ring_buffer::RingBuffer;
 use super::utf8_util::{MIN_UTF8_RATIO, is_mostly_utf8};
 use super::{
-    DEFAULT_QUALITY, DEFAULT_WINDOW, EncoderOperation, EncoderParameter, Fallible, MAX_WINDOW_BITS,
+    DEFAULT_QUALITY, DEFAULT_WINDOW, EncoderError, EncoderMode, EncoderOperation, EncoderParameter,
+    Fallible, MAX_WINDOW_BITS,
 };
 use crate::common::constants::{
     MAX_DISTANCE, MAX_DISTANCE_BITS, MAX_NDIRECT, MAX_NPOSTFIX, NUM_DISTANCE_SHORT_CODES,
     WINDOW_GAP, distance_alphabet_size, max_backward_limit,
 };
 use crate::common::context::{ContextType, context_lut};
-use crate::io::{Output, SpareCapacity};
+use crate::io::{Cursor, Output, Rewind, SpareCapacity};
 use crate::util::{Bug, Checked, SliceExt, try_zeroed};
 use bun_core::AllocError;
 
@@ -123,7 +124,8 @@ pub struct Encoder {
     is_last_block_emitted: bool,
     is_initialized: bool,
     /// Memory ran out, or there is a bug. The state is not consistent and every call fails.
-    is_broken: bool,
+    /// Set by a failure after which the state is not consistent.
+    broken: Option<EncoderError>,
 }
 
 /// Wraps a position to 32 bits so that it still tells whether the ring buffer was filled once: the first 3 GiB map to
@@ -750,25 +752,22 @@ impl Encoder {
             stream_state: StreamState::Processing,
             is_last_block_emitted: false,
             is_initialized: false,
-            is_broken: false,
+            broken: None,
         }
     }
 
     /// `BrotliEncoderSetParameter`. `false` if the value is not valid, or after the first [`Self::compress_stream`].
     /// Most values are not checked here but brought into range later.
+    #[must_use]
     pub fn set_parameter(&mut self, parameter: EncoderParameter, value: u32) -> bool {
-        if self.is_initialized || self.is_broken {
+        if self.is_initialized || self.broken.is_some() {
             return false;
         }
         let params = &mut self.params;
         match parameter {
             // Any other value has the effect of `Generic`.
             EncoderParameter::Mode => {
-                params.mode = match value {
-                    1 => EncoderMode::Text,
-                    2 => EncoderMode::Font,
-                    _ => EncoderMode::Generic,
-                };
+                params.mode = EncoderMode::from_raw(value).unwrap_or(EncoderMode::Generic);
             }
             EncoderParameter::Quality => params.quality = value as i32,
             EncoderParameter::Lgwin => params.lgwin = value as i32,
@@ -795,8 +794,9 @@ impl Encoder {
 
     /// `BrotliEncoderAttachPreparedDictionary`. The decoder has to be given the same bytes. `false` if there are 15
     /// dictionaries already, or no memory.
+    #[must_use]
     pub fn attach_prepared_dictionary(&mut self, dictionary: PreparedDictionary) -> bool {
-        !self.is_broken && self.params.dictionary.attach(dictionary)
+        self.broken.is_none() && self.params.dictionary.attach(dictionary)
     }
 
     /// `BrotliEncoderIsFinished`.
@@ -958,15 +958,6 @@ impl Encoder {
             is_last,
         )?;
 
-        let literal_context_mode = choose_context_mode(
-            &self.params,
-            data,
-            wrap_position(self.last_flush_pos) as usize,
-            mask as usize,
-            (self.input_pos - self.last_flush_pos) as usize,
-        )?;
-        let literal_context_lut = context_lut(literal_context_mode);
-
         if self.last_insert_len == 0
             && let Some(last_command) = self.commands.last_mut()
         {
@@ -982,49 +973,23 @@ impl Encoder {
             )?;
         }
 
-        if self.params.quality == ZOPFLIFICATION_QUALITY {
-            create_zopfli_backward_references(
-                bytes as usize,
-                wrapped_last_processed_pos as usize,
-                data,
-                mask as usize,
-                literal_context_lut,
-                &self.params,
-                &mut self.hasher,
-                &mut self.dist_cache,
-                &mut self.last_insert_len,
-                &mut self.commands,
-                &mut self.num_literals,
-            )?;
-        } else if self.params.quality == HQ_ZOPFLIFICATION_QUALITY {
-            create_hq_zopfli_backward_references(
-                bytes as usize,
-                wrapped_last_processed_pos as usize,
-                data,
-                mask as usize,
-                literal_context_lut,
-                &self.params,
-                &mut self.hasher,
-                &mut self.dist_cache,
-                &mut self.last_insert_len,
-                &mut self.commands,
-                &mut self.num_literals,
-            )?;
-        } else {
-            create_backward_references(
-                bytes as usize,
-                wrapped_last_processed_pos as usize,
-                data,
-                mask as usize,
-                literal_context_lut,
-                &self.params,
-                &mut self.hasher,
-                &mut self.dist_cache,
-                &mut self.last_insert_len,
-                &mut self.commands,
-                &mut self.num_literals,
-            )?;
-        }
+        let create = match self.params.quality {
+            ZOPFLIFICATION_QUALITY => create_zopfli_backward_references,
+            HQ_ZOPFLIFICATION_QUALITY => create_hq_zopfli_backward_references,
+            _ => create_backward_references,
+        };
+        create(
+            bytes as usize,
+            wrapped_last_processed_pos as usize,
+            data,
+            mask as usize,
+            &self.params,
+            &mut self.hasher,
+            &mut self.dist_cache,
+            &mut self.last_insert_len,
+            &mut self.commands,
+            &mut self.num_literals,
+        )?;
 
         {
             let max_length = self.params.max_meta_block_size();
@@ -1067,6 +1032,13 @@ impl Encoder {
         debug_assert!(self.input_pos - self.last_flush_pos <= 1 << 24);
 
         let meta_block_size = (self.input_pos - self.last_flush_pos) as usize;
+        let literal_context_mode = choose_context_mode(
+            &self.params,
+            data,
+            wrap_position(self.last_flush_pos) as usize,
+            mask as usize,
+            meta_block_size,
+        )?;
         let storage = get_storage(&mut self.storage, 2 * meta_block_size + 503)?;
         storage.write_at(0, &self.last_bytes.to_le_bytes())?;
         let mut bw = BitWriter::new(storage, usize::from(self.last_bytes_bits))?;
@@ -1171,16 +1143,15 @@ impl Encoder {
             return Ok(true);
         }
 
-        let copy_output_size = self.available_out.min(output.available());
-        if copy_output_size != 0 {
+        if self.available_out != 0 && output.available() != 0 {
             let (buffer, start): (&[u8], &mut usize) = match &mut self.next_out {
                 NextOut::Storage(start) => (&self.storage, start),
                 NextOut::TinyBuf(start) => (&self.tiny_buf, start),
                 NextOut::None => return Err(Bug),
             };
-            output.write(buffer.sub(*start..*start + copy_output_size)?);
-            *start += copy_output_size;
-            self.available_out -= copy_output_size;
+            let written = output.write(buffer.sub(*start..*start + self.available_out)?);
+            *start += written;
+            self.available_out -= written;
             return Ok(true);
         }
 
@@ -1317,22 +1288,17 @@ impl Encoder {
                 self.stream_state = StreamState::Processing;
                 break;
             }
-            let available = output.available();
-            let copy = if available != 0 {
-                (self.remaining_metadata_bytes as usize).min(available)
+            let copy = if output.available() != 0 {
+                output.write(input.sub(..self.remaining_metadata_bytes as usize)?)
             } else {
                 // So that there is progress even without room for output.
-                (self.remaining_metadata_bytes as usize).min(self.tiny_buf.len())
-            };
-            let (body, rest) = input.split_at_checked(copy).ok_or(Bug)?;
-            if available != 0 {
-                output.write(body);
-            } else {
+                let copy = (self.remaining_metadata_bytes as usize).min(self.tiny_buf.len());
                 self.next_out = NextOut::TinyBuf(0);
-                self.tiny_buf.write_at(0, body)?;
+                self.tiny_buf.write_at(0, input.sub(..copy)?)?;
                 self.available_out = copy;
-            }
-            *input = rest;
+                copy
+            };
+            *input = input.sub(copy..)?;
             self.remaining_metadata_bytes -= copy as u32;
         }
 
@@ -1357,22 +1323,22 @@ impl Encoder {
     /// `BrotliEncoderCompressStream`. Takes bytes off the front of `input` and appends to `output`. All the input was
     /// taken and `op` was carried out once `input` is empty and [`Self::has_more_output`] is `false`; until then, call
     /// again with the same `op` and the rest of the input.
-    ///
-    /// `false` for a call that is out of order, like input after [`EncoderOperation::Finish`], or if memory ran out.
     pub fn compress_stream(
         &mut self,
         op: EncoderOperation,
         input: &mut &[u8],
         output: &mut dyn Output,
-    ) -> bool {
-        if self.is_broken {
-            return false;
+    ) -> Result<(), EncoderError> {
+        if let Some(error) = self.broken {
+            return Err(error);
         }
         match self.compress_stream_internal(op, input, output) {
-            Ok(result) => result,
-            Err(_) => {
-                self.is_broken = true;
-                false
+            Ok(true) => Ok(()),
+            Ok(false) => Err(EncoderError::InvalidCall),
+            Err(error) => {
+                debug_assert!(error != EncoderError::Internal);
+                self.broken = Some(error);
+                Err(error)
             }
         }
     }
@@ -1471,22 +1437,30 @@ impl Encoder {
     }
 }
 
-/// `BrotliEncoderMaxCompressedSize`: an upper bound for what [`compress`] writes, or 0 if that overflows.
-pub fn max_compressed_size(input_size: usize) -> usize {
+/// `BrotliEncoderMaxCompressedSize`: an upper bound for what [`compress`] writes, unless that overflows.
+pub fn max_compressed_size(input_size: usize) -> Option<usize> {
+    if input_size == 0 {
+        return Some(2);
+    }
     // [window bits / empty metadata] + N * [uncompressed] + [last empty]
     let num_large_blocks = input_size >> 14;
     let overhead = 2 + (4 * num_large_blocks) + 3 + 1;
-    if input_size == 0 {
-        return 2;
+    input_size.checked_add(overhead)
+}
+
+fn write_all(output: &mut dyn Output, bytes: &[u8]) -> Checked {
+    if output.write(bytes) == bytes.len() {
+        Ok(())
+    } else {
+        Err(Bug)
     }
-    input_size.checked_add(overhead).unwrap_or(0)
 }
 
 /// Writes `input`, which is not empty, as a stream of uncompressed meta-blocks with the smallest window. That takes at most
-/// [`max_compressed_size`].
-fn make_uncompressed_stream(input: &[u8], output: &mut dyn Output) {
+/// [`max_compressed_size`], for which `output` has room.
+fn make_uncompressed_stream(input: &[u8], output: &mut dyn Output) -> Checked {
     // Window bits = 10, ISLAST = 0. Then an empty metadata block as padding.
-    output.write(&[0x21, 0x03]);
+    write_all(output, &[0x21, 0x03])?;
     for chunk in input.chunks(1 << 24) {
         let chunk_size = chunk.len() as u32;
         let nibbles: u32 = if chunk_size > (1 << 20) {
@@ -1497,14 +1471,11 @@ fn make_uncompressed_stream(input: &[u8], output: &mut dyn Output) {
             0
         };
         let bits = (nibbles << 1) | ((chunk_size - 1) << 3) | (1 << (19 + 4 * nibbles));
-        let [b0, b1, b2, b3] = bits.to_le_bytes();
-        output.write(&[b0, b1, b2]);
-        if nibbles == 2 {
-            output.write(&[b3]);
-        }
-        output.write(chunk);
+        let header = bits.to_le_bytes();
+        write_all(output, header.sub(..if nibbles == 2 { 4 } else { 3 })?)?;
+        write_all(output, chunk)?;
     }
-    output.write(&[3]);
+    write_all(output, &[3])
 }
 
 /// Whether all of `input` was compressed to `output`.
@@ -1516,14 +1487,43 @@ fn compress_all(
     output: &mut dyn Output,
 ) -> bool {
     let mut s = Encoder::new();
-    s.set_parameter(EncoderParameter::Quality, quality as u32);
-    s.set_parameter(EncoderParameter::Lgwin, lgwin as u32);
-    s.set_parameter(EncoderParameter::Mode, mode as u32);
-    s.set_parameter(EncoderParameter::SizeHint, input.len() as u32);
-    if lgwin > MAX_WINDOW_BITS {
-        s.set_parameter(EncoderParameter::LargeWindow, 1);
+    [
+        (EncoderParameter::Quality, quality as u32),
+        (EncoderParameter::Lgwin, lgwin as u32),
+        (EncoderParameter::Mode, mode as u32),
+        (EncoderParameter::SizeHint, input.len() as u32),
+        (
+            EncoderParameter::LargeWindow,
+            u32::from(lgwin > MAX_WINDOW_BITS),
+        ),
+    ]
+    .into_iter()
+    .all(|(parameter, value)| s.set_parameter(parameter, value))
+        && s.compress_stream(EncoderOperation::Finish, &mut input, output)
+            .is_ok()
+        && s.is_finished()
+}
+
+fn compress_to(
+    quality: i32,
+    lgwin: i32,
+    mode: EncoderMode,
+    input: &[u8],
+    output: &mut dyn Rewind,
+) -> Option<usize> {
+    if input.is_empty() {
+        return (output.write(&[6]) == 1).then_some(1);
     }
-    s.compress_stream(EncoderOperation::Finish, &mut input, output) && s.is_finished()
+    let max_out_size = max_compressed_size(input.len())?;
+    if compress_all(quality, lgwin, mode, input, output) && output.written() <= max_out_size {
+        return Some(output.written());
+    }
+    output.rewind();
+    if output.available() < max_out_size {
+        return None;
+    }
+    make_uncompressed_stream(input, output).ok()?;
+    Some(output.written())
 }
 
 /// `BrotliEncoderCompress`. Returns how much of `output` was written, or `None` if it is too small, which it is not
@@ -1535,28 +1535,7 @@ pub fn compress(
     input: &[u8],
     output: &mut [u8],
 ) -> Option<usize> {
-    let out_size = output.len();
-    if input.is_empty() {
-        *output.first_mut()? = 6;
-        return Some(1);
-    }
-    if out_size == 0 {
-        return None;
-    }
-    let max_out_size = max_compressed_size(input.len());
-    let mut rest = &mut *output;
-    if compress_all(quality, lgwin, mode, input, &mut rest) {
-        let encoded_size = out_size - rest.len();
-        if max_out_size == 0 || encoded_size <= max_out_size {
-            return Some(encoded_size);
-        }
-    }
-    if max_out_size == 0 || out_size < max_out_size {
-        return None;
-    }
-    let mut rest = &mut *output;
-    make_uncompressed_stream(input, &mut rest);
-    Some(out_size - rest.len())
+    compress_to(quality, lgwin, mode, input, &mut Cursor::new(output))
 }
 
 /// [`compress`] into the spare capacity of `output`, which is not reallocated. Returns how much was appended.
@@ -1567,32 +1546,6 @@ pub fn compress_append(
     input: &[u8],
     output: &mut Vec<u8>,
 ) -> Option<usize> {
-    let start = output.len();
-    let out_size = output.capacity() - start;
-    if out_size == 0 {
-        return None;
-    }
-    if input.is_empty() {
-        output.push(6);
-        return Some(1);
-    }
-    let max_out_size = max_compressed_size(input.len());
-    if compress_all(
-        quality,
-        lgwin,
-        mode,
-        input,
-        &mut SpareCapacity::new(output, usize::MAX),
-    ) {
-        let encoded_size = output.len() - start;
-        if max_out_size == 0 || encoded_size <= max_out_size {
-            return Some(encoded_size);
-        }
-    }
-    output.truncate(start);
-    if max_out_size == 0 || out_size < max_out_size {
-        return None;
-    }
-    make_uncompressed_stream(input, &mut SpareCapacity::new(output, usize::MAX));
-    Some(output.len() - start)
+    let output = &mut SpareCapacity::new(output, usize::MAX);
+    compress_to(quality, lgwin, mode, input, output)
 }

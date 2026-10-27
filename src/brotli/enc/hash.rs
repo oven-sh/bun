@@ -23,8 +23,9 @@ use super::dictionary_hash::DictionaryHash;
 use super::fast_log::log2_floor_nonzero;
 use super::find_match_length::find_match_length_with_limit;
 use super::params::EncoderParams;
-use super::{Failure, Fallible};
+use super::{EncoderError, Fallible};
 use crate::common::dictionary::{DATA, OFFSETS_BY_LENGTH, SIZE_BITS_BY_LENGTH};
+use crate::common::transform::CUT_OFF_TRANSFORMS;
 use crate::util::{Bug, Checked, SliceExt, load_u32_le, load_u64_le, try_box};
 use bun_core::AllocError;
 
@@ -37,11 +38,6 @@ const HASH_MUL_64: u64 = 0x1FE3_5A7B_D357_9BD3;
 fn hash14(data: &[u8]) -> Checked<u32> {
     Ok(load_u32_le(data, 0)?.wrapping_mul(HASH_MUL_32) >> (32 - 14))
 }
-
-/// How many of the transforms that only drop the end of a word exist, and for each of them 6 bits: its number less
-/// 4 times how many bytes it drops.
-const CUTOFF_TRANSFORMS_COUNT: usize = 10;
-const CUTOFF_TRANSFORMS: u64 = 0x071B_520A_DA2D_3200;
 
 #[derive(Clone, Copy)]
 pub(crate) struct HasherSearchResult {
@@ -81,9 +77,10 @@ const DISTANCE_BIT_PENALTY: usize = 30;
 pub(crate) const SCORE_BASE: usize = DISTANCE_BIT_PENALTY * 8 * size_of::<u64>();
 
 /// The longest match is not always the best one: a distance takes about `log2` of it bits, which can be more than
-/// what the extra literals would take. `backward_reference_offset` is not 0.
+/// what the extra literals would take.
 #[inline(always)]
 fn backward_reference_score(copy_length: usize, backward_reference_offset: usize) -> usize {
+    debug_assert!(backward_reference_offset != 0);
     (SCORE_BASE + LITERAL_BYTE_SCORE.wrapping_mul(copy_length))
         .wrapping_sub(DISTANCE_BIT_PENALTY * log2_floor_nonzero(backward_reference_offset) as usize)
 }
@@ -138,11 +135,13 @@ fn test_static_dictionary_item(
     // Most words differ from the data in their first few bytes.
     let word = DATA.sub(offset..offset + len)?;
     let matchlen = word.iter().zip(data).take_while(|(a, b)| a == b).count();
-    if matchlen + CUTOFF_TRANSFORMS_COUNT <= len || matchlen == 0 {
+    if matchlen == 0 {
         return Ok(false);
     }
-    let cut = len - matchlen;
-    let transform_id = (cut << 2) + ((CUTOFF_TRANSFORMS >> (cut * 6)) & 0x3F) as usize;
+    let Some(&transform_id) = CUT_OFF_TRANSFORMS.get(len - matchlen) else {
+        return Ok(false);
+    };
+    let transform_id = usize::from(transform_id);
     let backward = max_backward + 1 + word_idx + (transform_id << SIZE_BITS_BY_LENGTH.at(len)?);
     if backward > max_distance {
         return Ok(false);
@@ -569,7 +568,7 @@ impl Hasher {
             _ => {}
         }
 
-        with_hasher!(&mut self.kind, hasher => hasher.reserve(input_end).map_err(Failure::from))?;
+        with_hasher!(&mut self.kind, hasher => hasher.reserve(input_end).map_err(EncoderError::from))?;
 
         if !self.common.is_prepared {
             with_hasher!(&mut self.kind, hasher => hasher.prepare(one_shot, input_size, data))?;

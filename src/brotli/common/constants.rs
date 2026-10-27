@@ -19,6 +19,9 @@ pub(crate) const REPEAT_ZERO_CODE_LENGTH: usize = 17;
 pub(crate) const CODE_LENGTH_CODES: usize = REPEAT_ZERO_CODE_LENGTH + 1;
 /// "code length of 8 is repeated"
 pub(crate) const INITIAL_REPEATED_CODE_LENGTH: usize = 8;
+/// The order in which the lengths of the code length code are written.
+pub(crate) static CODE_LENGTH_CODE_ORDER: [u8; CODE_LENGTH_CODES] =
+    [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 /// The number of distance bits of "large window brotli". It is 62 although no more than 30 are supported, because it
 /// decides how a simple prefix code for distances is written (3.4).
@@ -43,7 +46,7 @@ pub(crate) const MAX_DISTANCE: usize = 0x3FF_FFFC;
 /// Up to here a distance can be computed in a signed 32-bit integer without overflow.
 pub(crate) const MAX_ALLOWED_DISTANCE: u32 = 0x7FFF_FFFC;
 
-/// 4. Encoding of Literal Insertion Lengths and Copy Lengths
+/// 5. Encoding of literal insertion lengths and copy lengths
 pub(crate) const NUM_INS_COPY_CODES: usize = 24;
 
 /// 7.1. "context IDs for literals are in the range of 0..63"
@@ -112,36 +115,48 @@ pub(crate) struct PrefixCodeRange {
     pub(crate) nbits: u8,
 }
 
-const fn range(offset: u16, nbits: u8) -> PrefixCodeRange {
-    PrefixCodeRange { offset, nbits }
+/// The ranges of a code whose symbols stand for ever larger values, without gaps, from `first` on.
+#[allow(clippy::indexing_slicing, reason = "evaluated by the compiler")]
+const fn consecutive_ranges<const N: usize>(first: u16, nbits: [u8; N]) -> [PrefixCodeRange; N] {
+    let mut ranges = [PrefixCodeRange {
+        offset: first,
+        nbits: 0,
+    }; N];
+    let mut offset = first;
+    let mut i = 0;
+    while i < N {
+        ranges[i] = PrefixCodeRange {
+            offset,
+            nbits: nbits[i],
+        };
+        // The last range is only limited by the size of a meta-block.
+        offset = offset.wrapping_add(1u16.wrapping_shl(nbits[i] as u32));
+        i += 1;
+    }
+    ranges
 }
 
+/// 5. Encoding of literal insertion lengths and copy lengths
+pub(crate) static INSERT_LENGTH_PREFIX_CODE: [PrefixCodeRange; NUM_INS_COPY_CODES] =
+    consecutive_ranges(
+        0,
+        [
+            0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 12, 14, 24,
+        ],
+    );
+pub(crate) static COPY_LENGTH_PREFIX_CODE: [PrefixCodeRange; NUM_INS_COPY_CODES] =
+    consecutive_ranges(
+        2,
+        [
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 24,
+        ],
+    );
+
 /// 6. Encoding of block-switch commands: block counts.
-pub(crate) static BLOCK_LENGTH_PREFIX_CODE: [PrefixCodeRange; NUM_BLOCK_LEN_SYMBOLS] = [
-    range(1, 2),
-    range(5, 2),
-    range(9, 2),
-    range(13, 2),
-    range(17, 3),
-    range(25, 3),
-    range(33, 3),
-    range(41, 3),
-    range(49, 4),
-    range(65, 4),
-    range(81, 4),
-    range(97, 4),
-    range(113, 5),
-    range(145, 5),
-    range(177, 5),
-    range(209, 5),
-    range(241, 6),
-    range(305, 6),
-    range(369, 7),
-    range(497, 8),
-    range(753, 9),
-    range(1265, 10),
-    range(2289, 11),
-    range(4337, 12),
-    range(8433, 13),
-    range(16625, 24),
-];
+pub(crate) static BLOCK_LENGTH_PREFIX_CODE: [PrefixCodeRange; NUM_BLOCK_LEN_SYMBOLS] =
+    consecutive_ranges(
+        1,
+        [
+            2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 7, 8, 9, 10, 11, 12, 13, 24,
+        ],
+    );

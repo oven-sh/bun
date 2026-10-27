@@ -1,7 +1,7 @@
 //! Allocations that fail. Every one has to end in an error that is reported, never in an abort.
 use crate::r#gen;
 use crate::rng::Rng;
-use bun_brotli::{Decoder, DecoderParameter, DecoderResult, Encoder, EncoderOperation, EncoderParameter, PreparedDictionary};
+use bun_brotli::{Decoder, DecoderParameter, DecoderResult, Encoder, EncoderError, EncoderOperation, EncoderParameter, PreparedDictionary};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::Relaxed};
 
@@ -67,7 +67,7 @@ fn encode(c: &Case) -> Option<Vec<u8>> {
     let dict = c.dict.clone().map(Vec::into_boxed_slice);
     let mut e = armed(Encoder::new);
     for &(k, v) in &c.params {
-        e.set_parameter(EncoderParameter::from_raw(k).unwrap(), v);
+        assert!(e.set_parameter(EncoderParameter::from_raw(k).unwrap(), v));
     }
     if let Some(d) = dict {
         if !armed(|| PreparedDictionary::new(d).is_some_and(|p| e.attach_prepared_dictionary(p))) {
@@ -83,11 +83,12 @@ fn encode(c: &Case) -> Option<Vec<u8>> {
             let mut o: &mut [u8] = &mut buf;
             let ok = armed(|| e.compress_stream(op, &mut input, &mut o));
             let made = c.cap - o.len();
-            if !ok {
+            if let Err(error) = ok {
+                assert_eq!(error, EncoderError::OutOfMemory);
                 // It stays that way.
                 let mut o: &mut [u8] = &mut buf;
                 ARMED.store(false, Relaxed);
-                assert!(!e.compress_stream(op, &mut input, &mut o), "a call after a failed one succeeded");
+                assert_eq!(e.compress_stream(op, &mut input, &mut o), Err(error), "a call after a failed one");
                 return None;
             }
             out.extend_from_slice(&buf[..made]);
@@ -164,7 +165,7 @@ fn fallback() {
     for len in [1usize, 2, 65535, 65536, 65537, (1 << 20) - 1, 1 << 20, (1 << 20) + 1, (1 << 24) - 1, 1 << 24, (1 << 24) + 1, (2 << 24) + 5] {
         let input = &data[..len];
         let expect = uncompressed_stream(input);
-        let bound = bun_brotli::max_compressed_size(len);
+        let bound = bun_brotli::max_compressed_size(len).unwrap();
         assert!(expect.len() <= bound, "len {len}");
         for quality in [0, 1, 5, 11] {
             let mut out = vec![0u8; bound];
@@ -316,7 +317,7 @@ pub fn cold_probe(quality: i32, at: i64, persistent: bool) {
     });
     let data = b"The quick brown fox jumps over the lazy dog, time and time again. Internet information.".repeat(40);
     // One byte less than the bound, so that there is no falling back to an uncompressed stream.
-    let cap = bun_brotli::max_compressed_size(data.len()) - 1;
+    let cap = bun_brotli::max_compressed_size(data.len()).unwrap() - 1;
     let mut out = vec![0u8; cap];
     let mut expect = vec![0u8; cap];
     let mut n = cap;

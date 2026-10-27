@@ -2,7 +2,7 @@
 use crate::enc::{self, EncCase};
 use crate::r#gen;
 use crate::rng::Rng;
-use bun_brotli::{Encoder, EncoderOperation, EncoderParameter, PreparedDictionary};
+use bun_brotli::{Decoder, DecoderResult, Encoder, EncoderOperation, EncoderParameter, PreparedDictionary};
 
 /// Without the reference.
 fn rust_stream(data: &[u8], params: &[(i32, u32)], dicts: &[Vec<u8>], op: EncoderOperation) -> Result<Vec<u8>, String> {
@@ -405,4 +405,246 @@ pub fn run_offset_dict(seed0: u64, iters: u64, qualities: u64) {
         enc::round_trip(&stream, &[first, second].concat(), &dicts, false, 0).unwrap_or_else(|e| fail(e));
     }
     println!("ok: {iters} iterations");
+}
+
+/// One part of a stream, by both encoders in lock step. All parts but the last end with a flush.
+fn part_in_lock_step(rng: &mut Rng, data: &[u8], params: &[(i32, u32)], dicts: &[Vec<u8>], last: bool) -> Result<Vec<u8>, String> {
+    let mut p = enc::Pair::new(&EncCase { data: Vec::new(), params: params.to_vec(), dicts: dicts.to_vec(), schedule: 0, misuse: false })?;
+    let mut rest = data;
+    if rng.chance(1, 2) {
+        let most = *rng.pick(&[7, 300, 70_000]);
+        while !rest.is_empty() {
+            let n = rng.range(1, most).min(rest.len());
+            let (op, big) = (i32::from(rng.chance(1, 12)), rng.chance(1, 2));
+            let before = rest.len();
+            let mut piece = &rest[..n];
+            while !piece.is_empty() {
+                let cap = if big { 1 << 20 } else { *rng.pick(&[0, 1, 3, 5, 600, 1 << 16]) };
+                let (ok, used) = p.step(op, piece, cap)?;
+                piece = &piece[used..];
+                if !ok {
+                    return Err(format!("both refuse a call, {} bytes into the part", data.len() - before));
+                }
+            }
+            if !enc::run_op(&mut p, rng, op, &[], true)? {
+                return Err("both refuse to complete a call".into());
+            }
+            rest = &rest[n..];
+        }
+    }
+    if !enc::run_op(&mut p, rng, if last { 2 } else { 1 }, rest, true)? {
+        return Err("both refuse the last call".into());
+    }
+    Ok(p.out)
+}
+
+/// `into_prepared_dictionaries` and `into_dictionaries`: what an encoder or a decoder gives back, wherever in a stream it
+/// is and whether or not it has failed, has to serve the next one like new.
+fn handed_on(rng: &mut Rng, data: &[u8], params: &[(i32, u32)], dicts: &[Vec<u8>]) -> Result<(), String> {
+    let fresh = rust_stream(data, params, dicts, EncoderOperation::Finish)?;
+    let with_params = || {
+        let mut e = Encoder::new();
+        for &(k, v) in params {
+            assert!(e.set_parameter(EncoderParameter::from_raw(k as u32).unwrap(), v));
+        }
+        e
+    };
+    let mut buf = vec![0u8; 1 << 16];
+    let mut used = with_params();
+    for d in dicts {
+        assert!(used.attach_prepared_dictionary(PreparedDictionary::new(d.clone().into_boxed_slice()).unwrap()));
+    }
+    for _ in 0..rng.below(5) {
+        let mut input = &data[..rng.below(data.len() + 1).min(70_000)];
+        let mut room: &mut [u8] = &mut buf[..*rng.pick(&[0, 5, 1 << 16])];
+        let _ = used.compress_stream(EncoderOperation::from_raw(rng.below(4) as u32).unwrap(), &mut input, &mut room);
+    }
+    let taken = used.into_prepared_dictionaries();
+    if taken.len() != dicts.len() {
+        return Err(format!("into_prepared_dictionaries: {} of {}", taken.len(), dicts.len()));
+    }
+    let mut e = with_params();
+    for p in taken {
+        if !e.attach_prepared_dictionary(p) {
+            return Err("a dictionary that was in use is refused".into());
+        }
+    }
+    let (mut out, mut input) = (Vec::new(), data);
+    while !e.is_finished() {
+        let mut room: &mut [u8] = &mut buf;
+        e.compress_stream(EncoderOperation::Finish, &mut input, &mut room).map_err(|e| format!("with dictionaries that were in use: {e}"))?;
+        let made = (1 << 16) - room.len();
+        out.extend_from_slice(&buf[..made]);
+    }
+    if out != fresh {
+        return Err(format!("with dictionaries that were in use the stream is another: {} and {} bytes", out.len(), fresh.len()));
+    }
+
+    let mut used = Decoder::new();
+    for d in dicts {
+        assert!(used.attach_dictionary(d.clone().into_boxed_slice()));
+    }
+    let mut start = fresh[..rng.below(fresh.len() + 1)].to_vec();
+    if !start.is_empty() && rng.chance(1, 3) {
+        let at = rng.below(start.len());
+        start[at] ^= 1 << rng.below(8);
+    }
+    let mut input = &start[..];
+    let mut room: &mut [u8] = &mut buf[..*rng.pick(&[0, 5, 1 << 16])];
+    let _ = used.decompress_stream(&mut input, &mut room);
+    let taken = used.into_dictionaries();
+    if !taken.iter().map(|d| &d[..]).eq(dicts.iter().map(|d| &d[..])) {
+        return Err("into_dictionaries gives something else than was attached".into());
+    }
+    let mut d = Decoder::new();
+    for dictionary in taken {
+        if !d.attach_dictionary(dictionary) {
+            return Err("a dictionary that was in use is refused by the decoder".into());
+        }
+    }
+    let (mut back, mut input) = (Vec::new(), &fresh[..]);
+    loop {
+        let mut room: &mut [u8] = &mut buf;
+        let result = d.decompress_stream(&mut input, &mut room);
+        let made = (1 << 16) - room.len();
+        back.extend_from_slice(&buf[..made]);
+        match result {
+            DecoderResult::NeedsMoreOutput => {}
+            DecoderResult::Success if back == data => return Ok(()),
+            _ => return Err(format!("with dictionaries that were in use: {result:?} after {} of {} bytes", back.len(), data.len())),
+        }
+    }
+}
+
+/// A stream in parts, each by an encoder of its own that is told how much came before (`BROTLI_PARAM_STREAM_OFFSET`), with
+/// dictionaries, and with more input than the window holds. That both encoders write the same is not enough here: what
+/// they write has to decode to the input. After a copy from a dictionary comes what could be taken for more of it.
+pub fn run_parts(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus: &r#gen::Corpus) {
+    let qs = crate::args::qualities(qualities, 0..12);
+    let mut totals = (0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let lgwin = if rng.chance(3, 4) { rng.range(10, 16) } else { rng.range(17, 22) };
+        let window = (1usize << lgwin) - 16;
+        let lgblock = if rng.chance(1, 4) { rng.range(16, 18) } else { 0 };
+        let block = 1usize << if q < 4 { 14 } else if lgblock != 0 { lgblock } else if q >= 9 && lgwin > 16 { lgwin.min(18) } else { 16 };
+        let mut params = vec![(1, q), (2, lgwin as u32)];
+        if lgblock != 0 {
+            params.push((3, lgblock as u32));
+        }
+        if rng.chance(1, 4) {
+            params.push((5, *rng.pick(&[1 << 20, (1 << 20) - 1, 100])));
+        }
+        let mut dicts: Vec<Vec<u8>> = Vec::new();
+        for _ in 0..*rng.pick(&[0, 1, 1, 1, 2, 3, 15]) {
+            let n = match rng.below(4) {
+                0 => rng.range(1, 40),
+                1 | 2 => rng.range(1, 3000),
+                _ => rng.range(1000, 60_000),
+            };
+            dicts.push(match rng.below(3) {
+                0 | 1 => (0..n).map(|_| rng.next() as u8).collect(),
+                _ => r#gen::data(&mut rng, corpus, n),
+            });
+        }
+        if !dicts.is_empty() && rng.chance(1, 10) {
+            for _ in 0..rng.range(1, 3).min(15 - dicts.len()) {
+                dicts.insert(rng.below(dicts.len() + 1), Vec::new());
+            }
+        }
+        let all = dicts.concat();
+        let most = max_len.min(if q >= 10 { 150_000 } else { max_len });
+        let edge = |rng: &mut Rng, v: usize| (v + rng.below(5)).saturating_sub(2).max(1);
+        let mut whole: Vec<u8> = Vec::new();
+        let mut stream: Vec<u8> = Vec::new();
+        let parts = *rng.pick(&[1, 1, 2, 2, 2, 3, 4]);
+        let sparse = rng.chance(2, 3);
+        let fail = |e: String, whole: &[u8], part: usize, params: &[(i32, u32)]| -> ! {
+            let path = format!("{}/brotli-partsfail-{seed}.bin", std::env::temp_dir().display());
+            std::fs::write(&path, whole).unwrap();
+            panic!("seed {seed} part {part} of {parts}: {e}\nlen {} params {params:?} dicts {:?}\ndata saved to {path}", whole.len(), dicts.iter().map(Vec::len).collect::<Vec<_>>());
+        };
+        for part in 0..parts {
+            let offset = whole.len();
+            let len = match rng.below(8) {
+                0 => rng.range(1, 5),
+                1 => edge(&mut rng, window),
+                2 => edge(&mut rng, block),
+                3 => block + rng.range(1, 600),
+                4 => rng.range(1, 3000),
+                5 => rng.range(1, (4 * window).min(most)),
+                _ => rng.range(1, most),
+            }
+            .min(most);
+            // With an offset, the first two bytes get a block of their own.
+            let phase = if offset == 0 { 0 } else { 2 };
+            while whole.len() - offset < len {
+                let here = whole.len() - offset;
+                let to_end = block - (here + block - phase) % block;
+                // A copy is only taken up again in the next block if that goes into the same meta-block, which it does not
+                // after many literals: an eighth of the ring buffer's size.
+                let straddle = to_end <= 300 && rng.chance(3, 4);
+                // How much of the copy is in this block.
+                let before_end = to_end;
+                let literals = if straddle { 0 } else if sparse { *rng.pick(&[0, 0, 0, 1, 2, 5]) } else { *rng.pick(&[0, 0, 1, 3, 9, 40, 700]) };
+                whole.extend((0..literals).map(|_| rng.next() as u8));
+                if all.is_empty() || rng.chance(1, 4) {
+                    // From the input, also from the parts before.
+                    let distance = if rng.chance(1, 3) { edge(&mut rng, window).min(whole.len()) } else { rng.range(1, whole.len().max(1)) };
+                    for _ in 0..if whole.is_empty() { 0 } else { rng.range(4, 300) } {
+                        whole.push(whole[whole.len() - distance]);
+                    }
+                    continue;
+                }
+                let n = if straddle { (before_end + rng.below(3)).saturating_sub(1).max(1) } else { rng.range(4, 400) }.min(all.len());
+                // The first and the last byte of the dictionaries are the limits of what is a distance into them.
+                let address = match rng.below(if straddle { 3 } else { 8 }) {
+                    0 => 0,
+                    1 => all.len() - n,
+                    _ => rng.below(all.len() - n + 1),
+                };
+                // The distance that stands for `address`.
+                let distance = whole.len().min(window) + all.len() - address;
+                whole.extend_from_slice(&all[address..address + n]);
+                let more = rng.range(4, 400);
+                match rng.below(if straddle { 8 } else { 6 }) {
+                    // More of the dictionary.
+                    0 | 6 | 7 => whole.extend_from_slice(&all[address + n..(address + n + more).min(all.len())]),
+                    // The dictionary as many bytes earlier or later as there were before this part.
+                    1 if address + n >= offset => whole.extend_from_slice(&all[address + n - offset..(address + n - offset + more).min(all.len())]),
+                    2 if address + n + offset < all.len() => whole.extend_from_slice(&all[address + n + offset..(address + n + offset + more).min(all.len())]),
+                    // What is that far back in the input.
+                    3 | 4 if whole.len() >= distance => {
+                        for _ in 0..more {
+                            whole.push(whole[whole.len() - distance]);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            whole.truncate(offset + len);
+            let last = part + 1 == parts;
+            let mut params = params.clone();
+            if offset != 0 {
+                params.push((9, offset as u32));
+            }
+            let data = &whole[offset..];
+            // When a copy goes on into an empty dictionary, the reference reads past its end.
+            let out = if dicts.iter().any(Vec::is_empty) {
+                rust_stream(data, &params, &dicts, if last { EncoderOperation::Finish } else { EncoderOperation::Flush })
+            } else {
+                part_in_lock_step(&mut rng, data, &params, &dicts, last)
+            };
+            stream.extend(out.unwrap_or_else(|e| fail(e, &whole, part, &params)));
+        }
+        enc::round_trip(&stream, &whole, &dicts, false, rng.next()).unwrap_or_else(|e| fail(e, &whole, parts, &params));
+        if !dicts.is_empty() && rng.chance(1, 3) {
+            handed_on(&mut rng, &whole[..whole.len().min(200_000)], &params, &dicts).unwrap_or_else(|e| fail(e, &whole, parts, &params));
+        }
+        totals.0 += whole.len();
+        totals.1 += stream.len();
+    }
+    println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
 }

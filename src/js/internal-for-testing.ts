@@ -919,6 +919,15 @@ export const fileSinkInternals = {
   liveCount: $bindgen("FileSink.bind.ts", "liveCount"),
 };
 
+// node:test run(): the parent's decoder of the frames a child writes on stdout.
+export const nodeTestRunFrames: {
+  createRunOutputDecoder(
+    onText: (message: string) => void,
+    onEvent: (event: import("internal/test_runner/run_frames").RunEvent) => void,
+    onDamaged: () => void,
+  ): { write(chunk: Uint8Array): void; end(): void };
+} = require("internal/test_runner/run_frames");
+
 export const byteStreamInternals = {
   // Swap a ByteStream-backed stream's producer for one whose drain signal
   // re-enters on_cancel, making consumed-during-signal_drained re-entrancy

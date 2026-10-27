@@ -6,6 +6,8 @@
 // that Node's TestContext semantics (subtests, hooks, plan, mock tracker,
 // getTestContext) are observable without a separate runner process.
 
+import type { RunEvent } from "internal/test_runner/run_frames";
+
 const { jest } = Bun;
 const { kEmptyObject, throwNotImplemented } = require("internal/shared");
 const {
@@ -40,7 +42,7 @@ const kJoinSeparator = " > ";
 //
 // Port of Node.js lib/internal/test_runner/{runner,tests_stream}.js (v26.3.0).
 // Files run in child processes (node's isolation:'process'); the child is spawned
-// with kRunChildEnv set, which makes this module stream one JSON event per line
+// with kRunFramesEnv set, which makes this module write one frame per event
 // on stdout. Unmarked stdout/stderr lines become test:stdout/test:stderr, the
 // same split node makes around its V8-serializer framing.
 // -----------------------------------------------------------------------------
@@ -49,7 +51,8 @@ const kJoinSeparator = " > ";
 // spawned child, so use node's variable and value rather than a bun-specific one.
 const kRunChildEnv = "NODE_TEST_CONTEXT";
 const kRunChildEnvValue = "child-v8";
-const kRunEventPrefix = "\0bun:test:run\0";
+// Only the run() of this module sets it. node sets NODE_TEST_CONTEXT in its own test processes, which read no frames.
+const kRunFramesEnv = "BUN_NODE_TEST_RUN_FRAMES";
 
 // Created lazily on the first run() call so the common test()/describe()
 // path never loads node:stream.
@@ -119,9 +122,6 @@ function getTestsStreamClass() {
     }
     summary(data: unknown) {
       this.#emit("test:summary", data);
-    }
-    republish(type: string, data: unknown) {
-      this.#emit(type, data);
     }
 
     endStream() {
@@ -306,7 +306,7 @@ function run(options: Record<string, unknown> = kEmptyObject) {
 
   // A test file that calls run() on itself would otherwise fork forever; node
   // skips the files and returns an empty stream instead.
-  if (runChildReporterEnabled) {
+  if (isRunChild) {
     process.emitWarning("node:test run() is being called recursively within a test file. skipping running files.");
     reporter.endStream();
     return reporter;
@@ -476,7 +476,12 @@ async function runOneFile(
   const proc = Bun.spawn({
     cmd: args,
     cwd: opts.cwd as string,
-    env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
+    env: {
+      ...(opts.env ?? process.env),
+      BUN_TEST_DRAIN_EVENT_LOOP: "1",
+      [kRunChildEnv]: kRunChildEnvValue,
+      [kRunFramesEnv]: "1",
+    },
     stdout: "pipe",
     stderr: "pipe",
     signal: opts.signal,
@@ -505,43 +510,14 @@ async function runOneFile(
     // loop is still suspended on I/O, before the finally's .catch attaches.
     drainStderr.catch(() => {});
 
-    const handleStdoutLine = (line: string) => {
-      if (line.length === 0) return;
-      // bun:test's own reporter can leave an unterminated line, so the marker is
-      // not always at column 0; take everything from the marker on.
-      const marker = line.indexOf(kRunEventPrefix);
-      if (marker === -1) {
-        reporter.stdout({ __proto__: null, file: absolute, message: line + "\n" });
-        return;
-      }
-      if (marker > 0) {
-        const before = line.slice(0, marker).trimEnd();
-        if (before.length > 0) {
-          reporter.stdout({ __proto__: null, file: absolute, message: before + "\n" });
-        }
-      }
-      let event;
-      try {
-        event = JSON.parse(line.slice(marker + kRunEventPrefix.length));
-      } catch {
-        return;
-      }
-      if (event == null || typeof event.data !== "object" || event.data === null) return;
-      republishChildEvent(event, absolute, reporter, fileCounts);
-    };
-
-    const decoder = new TextDecoder();
-    let carry = "";
-    for await (const chunk of proc.stdout as any) {
-      carry += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-      let nl;
-      while ((nl = carry.indexOf("\n")) !== -1) {
-        const line = carry.slice(0, nl);
-        carry = carry.slice(nl + 1);
-        handleStdoutLine(line);
-      }
-    }
-    if (carry.length > 0) handleStdoutLine(carry);
+    let damagedFrames = 0;
+    const output = require("internal/test_runner/run_frames").createRunOutputDecoder(
+      (message: string) => reporter.stdout({ __proto__: null, file: absolute, message }),
+      (event: RunEvent) => republishChildEvent(event, absolute, reporter, fileCounts),
+      () => damagedFrames++,
+    );
+    for await (const chunk of proc.stdout as any) output.write(chunk);
+    output.end();
 
     await drainStderr;
     const exitCode = await proc.exited;
@@ -549,7 +525,9 @@ async function runOneFile(
     // A nonzero exit with no child-reported failures means the file itself died
     // (top-level throw); child-reported failures are already covered by the
     // republished events and need no file-level verdict.
-    const fileFailed = exitCode !== 0 && fileCounts.failed === 0;
+    const died = exitCode !== 0 && fileCounts.failed === 0;
+    // A damaged frame is a verdict that did not arrive, so the file cannot be reported as passed.
+    const fileFailed = died || damagedFrames > 0;
     const fileDuration = Date.now() - fileStarted;
     // Node's FileTest.#skipReporting(): no file-level complete/pass/fail when
     // the child reported at least one test and the only error is subtestsFailed
@@ -568,7 +546,18 @@ async function runOneFile(
     }
 
     if (fileFailed) {
-      error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
+      const stderr = stderrText.trim();
+      if (damagedFrames > 0) {
+        error = makeTestFailure(
+          `${damagedFrames} test result${damagedFrames > 1 ? "s" : ""} of this file did not arrive: ` +
+            "another writer of its stdout printed inside the result, or its process ended while writing it " +
+            `(${proc.signalCode ?? `exit code ${exitCode}`})`,
+          "testCodeFailure",
+        );
+        if (stderr.length > 0) error.cause = stderr;
+      } else {
+        error = makeTestFailure(stderr || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
+      }
     } else {
       reporter.summary({
         __proto__: null,
@@ -607,70 +596,46 @@ async function runOneFile(
   }
 }
 
-function rebuildError(serialized: any, depth = 0): Error {
-  const { message, stack, name, code, failureType, cause } = serialized;
-  const error = new Error(message);
-  error.stack = stack;
-  if (name !== undefined && name !== "Error") error.name = name;
-  if (code !== undefined) (error as any).code = code;
-  if (failureType !== undefined) (error as any).failureType = failureType;
-  if (cause !== undefined && depth < 8) (error as any).cause = rebuildError(cause, depth + 1);
-  return error;
-}
-
-function republishChildEvent(
-  event: { type: string; data: any },
-  file: string,
-  reporter: TestsStream,
-  counts: Record<string, number>,
-) {
+function republishChildEvent(event: RunEvent, file: string, reporter: TestsStream, counts: Record<string, number>) {
   const { type, data } = event;
-  Object.setPrototypeOf(data, null);
   data.file = file;
   data.nesting = (data.nesting ?? 0) + 1;
-  if (type === "test:pass" || type === "test:fail") {
-    const isSuite = data.type === "suite";
-    // node counts a suite in `suites` and stops there: a skipped or todo suite
-    // never lands in skipped/todo/passed/tests (countCompletedTest, test.js).
-    if (isSuite) counts.suites++;
-    else {
-      counts.tests++;
-      if (data.skip) counts.skipped++;
-      else if (data.todo) counts.todo++;
-      else if (type === "test:pass") counts.passed++;
-      else counts.failed++;
-    }
-    // node carries the node kind on `details`, not on the event itself.
-    const detailType = isSuite ? "suite" : "test";
-    const serialized = data.error;
-    if (serialized !== undefined) {
-      data.details = {
-        __proto__: null,
-        duration_ms: data.duration_ms,
-        type: detailType,
-        error: rebuildError(serialized),
-      };
-    } else {
-      data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType };
-    }
-    delete data.error;
-    delete data.duration_ms;
-    delete data.type;
-    if (type === "test:pass") reporter.pass(data);
-    else reporter.fail(data);
-    return;
+  const isSuite = data.type === "suite";
+  // node counts a suite only in `suites`, also a skipped or todo one (countCompletedTest, test.js).
+  if (isSuite) counts.suites++;
+  else {
+    counts.tests++;
+    if (data.skip) counts.skipped++;
+    else if (data.todo) counts.todo++;
+    else if (type === "test:pass") counts.passed++;
+    else counts.failed++;
   }
-  reporter.republish(type, data);
+  // node carries the node kind on `details`, not on the event itself.
+  const detailType = isSuite ? "suite" : "test";
+  const { error } = data;
+  if (error !== undefined) {
+    data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType, error };
+  } else {
+    data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType };
+  }
+  delete data.error;
+  delete data.duration_ms;
+  delete data.type;
+  if (type === "test:pass") reporter.pass(data);
+  else reporter.fail(data);
 }
 
-// Child side: with kRunChildEnv set, stream one JSON event per line so the
+// Child side: in a child of run(), write one frame per event on stdout so the
 // spawning parent can rebuild node's event stream.
-const runChildReporterEnabled = process.env[kRunChildEnv] !== undefined;
+const isRunChild = process.env[kRunChildEnv] !== undefined;
+const runChildReporterEnabled = isRunChild && process.env[kRunFramesEnv] !== undefined;
+// Loaded now, not at the first verdict: the writer keeps the builtins that are there before the file under test runs.
+const runFrames: typeof import("internal/test_runner/run_frames").default | undefined = runChildReporterEnabled
+  ? require("internal/test_runner/run_frames")
+  : undefined;
 
-function emitRunChildEvent(type: string, data: unknown) {
-  try {
-    process.stdout.write(kRunEventPrefix + JSON.stringify({ type, data }) + "\n");
-  } catch {}
+function emitRunChildEvent(type: RunEvent["type"], data: Record<string, unknown>) {
+  runFrames!.writeRunFrame(type, data);
 }
 
 // node's top-level tests are nesting 0, so the root node itself doesn't count.
@@ -680,21 +645,8 @@ function nestingOf(node: TestNode) {
   return depth;
 }
 
-// Errors cross the process boundary as plain JSON; the parent rebuilds an Error.
-function serializeRunError(error: unknown, depth = 0) {
-  if (Error.isError(error)) {
-    const cause = (error as { cause?: unknown }).cause;
-    return {
-      __proto__: null,
-      message: (error as Error).message,
-      stack: (error as Error).stack,
-      code: (error as { code?: string }).code,
-      failureType: (error as { failureType?: string }).failureType,
-      name: (error as Error).name,
-      cause: cause !== undefined && depth < 8 ? serializeRunError(cause, depth + 1) : undefined,
-    };
-  }
-  return { __proto__: null, message: String(error), stack: undefined, code: undefined, name: "Error" };
+function serializeRunError(error: unknown) {
+  return runFrames!.serializeRunError(error);
 }
 
 // A test or suite that bun:test will never invoke (the `skip` and `todo`

@@ -18,7 +18,7 @@ use cost::Proba;
 use dsp::QuantMatrix;
 use picture::Picture;
 
-use crate::container::Image;
+use crate::container::Bitstream;
 use crate::util::{Checked, SliceExt, try_vec};
 use crate::vp8::common::NUM_MB_SEGMENTS;
 use crate::{Error, Input, Result};
@@ -156,7 +156,7 @@ impl<'a> Encoder<'a> {
 }
 
 /// `WebPEncodeRGBA`, without the container.
-pub(crate) fn encode(input: &Input<'_>, quality: f32) -> Result<Image> {
+pub(crate) fn encode(input: &Input<'_>, quality: f32) -> Result<Bitstream> {
     if !(0.0..=100.0).contains(&quality) {
         return Err(Error::InvalidConfiguration);
     }
@@ -171,12 +171,5 @@ pub(crate) fn encode(input: &Input<'_>, quality: f32) -> Result<Image> {
         None => None,
     };
     let tokens = frame::token_loop(&mut enc)?;
-    Ok(Image {
-        width: pic.width,
-        height: pic.height,
-        bitstream: syntax::write(&enc, tokens)?,
-        is_lossless: false,
-        alpha,
-        lossless_has_alpha: false,
-    })
+    syntax::write(&enc, tokens, alpha)
 }

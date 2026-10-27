@@ -4,6 +4,7 @@ use super::Encoder;
 use super::bit_writer::BitWriter;
 use super::quant::DQ_UV_DC;
 use super::tree::{code_intra_modes, write_probas};
+use crate::container::Bitstream;
 use crate::vp8::common::{FRAME_HEADER_SIZE, SIGNATURE};
 use crate::{Error, Result};
 
@@ -86,13 +87,22 @@ fn generate_partition0(enc: &Encoder<'_>) -> Result<Vec<u8>> {
     bw.finish()
 }
 
-/// `VP8EncWrite`: the payload of the `VP8 ` chunk, in pieces. libwebp counts the padding to an even size as part of it.
-pub(super) fn write(enc: &Encoder<'_>, mut tokens: Vec<u8>) -> Result<Vec<Vec<u8>>> {
-    let part0 = generate_partition0(enc)?;
-    let header = frame_header(enc, part0.len())?;
-    if (header.len() + part0.len() + tokens.len()) & 1 != 0 {
+/// `VP8EncWrite`. libwebp counts the padding to an even size as part of the payload of the `VP8 ` chunk.
+pub(super) fn write(
+    enc: &Encoder<'_>,
+    mut tokens: Vec<u8>,
+    alpha: Option<Vec<u8>>,
+) -> Result<Bitstream> {
+    let partition0 = generate_partition0(enc)?;
+    let header = frame_header(enc, partition0.len())?;
+    if (header.len() + partition0.len() + tokens.len()) & 1 != 0 {
         tokens.try_reserve_exact(1)?;
         tokens.push(0);
     }
-    Ok(vec![header.to_vec(), part0, tokens])
+    Ok(Bitstream::Lossy {
+        header,
+        partition0,
+        tokens,
+        alpha,
+    })
 }

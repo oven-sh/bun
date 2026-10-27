@@ -202,7 +202,7 @@ impl<'a> Prefix<'a> {
             }
             vp8l::dec::get_info(data).ok_or(Error::BitstreamError)?
         } else {
-            if data.len() < vp8::dec::FRAME_HEADER_SIZE {
+            if data.len() < vp8::common::FRAME_HEADER_SIZE {
                 return Err(Error::NotEnoughData);
             }
             vp8::dec::get_info(data, compressed_size).ok_or(Error::BitstreamError)?

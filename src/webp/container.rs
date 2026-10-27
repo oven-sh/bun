@@ -1,104 +1,142 @@
 //! Writing the RIFF container (`syntax_enc.c`, `vp8l_enc.c` and, for a profile, `mux/`).
 
+use core::slice::from_ref;
+
 use crate::riff::{
     ALPHA_FLAG, CHUNK_HEADER_SIZE, ICCP_FLAG, MAX_CHUNK_PAYLOAD, RIFF_HEADER_SIZE, TAG_SIZE,
-    VP8X_CHUNK_SIZE,
+    VP8X_CHUNK_SIZE, padded,
 };
 use crate::util::try_with_capacity;
-use crate::{Error, Result};
+use crate::vp8::common::FRAME_HEADER_SIZE;
+use crate::{Error, Info, Result};
+
+/// The largest even number that fits the size field of the RIFF header.
+const MAX_RIFF_SIZE: u64 = 0xffff_fffe;
 
 /// What the encoders return.
-pub(crate) struct Image {
-    pub(crate) width: usize,
-    pub(crate) height: usize,
-    /// The payload of the `VP8 ` or `VP8L` chunk, in pieces.
-    pub(crate) bitstream: Vec<Vec<u8>>,
-    pub(crate) is_lossless: bool,
-    /// Lossy: the payload of the `ALPH` chunk.
-    pub(crate) alpha: Option<Vec<u8>>,
-    /// Lossless: the bitstream says that it has alpha.
-    pub(crate) lossless_has_alpha: bool,
+pub(crate) enum Bitstream {
+    Lossy {
+        header: [u8; FRAME_HEADER_SIZE],
+        partition0: Vec<u8>,
+        /// The token partition, and what pads the three pieces to an even size.
+        tokens: Vec<u8>,
+        /// The payload of the `ALPH` chunk.
+        alpha: Option<Vec<u8>>,
+    },
+    Lossless {
+        data: Vec<u8>,
+        /// What `data` says about itself.
+        has_alpha: bool,
+    },
+}
+
+impl Bitstream {
+    fn tag(&self) -> &'static [u8; TAG_SIZE] {
+        match self {
+            Self::Lossy { .. } => b"VP8 ",
+            Self::Lossless { .. } => b"VP8L",
+        }
+    }
+
+    /// The payload of the chunk.
+    fn pieces(&self) -> [&[u8]; 3] {
+        match self {
+            Self::Lossy {
+                header,
+                partition0,
+                tokens,
+                ..
+            } => [header, partition0, tokens],
+            Self::Lossless { data, .. } => [data, &[], &[]],
+        }
+    }
 }
 
 /// A chunk whose payload is in pieces.
-struct Chunk<'a, T> {
-    tag: [u8; TAG_SIZE],
-    payload: &'a [T],
+struct Chunk<'a> {
+    tag: &'static [u8; TAG_SIZE],
+    payload: &'a [&'a [u8]],
 }
 
-impl<T: AsRef<[u8]>> Chunk<'_, T> {
-    fn payload_size(&self) -> u64 {
-        self.payload
-            .iter()
-            .map(|piece| piece.as_ref().len() as u64)
-            .sum()
-    }
-
-    fn disk_size(&self) -> Result<u64> {
-        let size = self.payload_size();
+impl Chunk<'_> {
+    fn payload_size(&self) -> Result<u32> {
+        let size: u64 = self.payload.iter().map(|piece| piece.len() as u64).sum();
         if size > u64::from(MAX_CHUNK_PAYLOAD) {
             return Err(Error::FileTooBig);
         }
-        Ok((CHUNK_HEADER_SIZE as u64 + size + 1) & !1)
+        Ok(size as u32)
+    }
+
+    fn disk_size(&self) -> Result<u64> {
+        Ok(CHUNK_HEADER_SIZE as u64 + u64::from(padded(self.payload_size()?)))
     }
 
     /// `out` has room for `disk_size` bytes.
-    fn put(&self, out: &mut Vec<u8>) {
-        let size = self.payload_size();
-        out.extend_from_slice(&self.tag);
-        out.extend_from_slice(&(size as u32).to_le_bytes());
+    fn put(&self, out: &mut Vec<u8>) -> Result<()> {
+        let size = self.payload_size()?;
+        out.extend_from_slice(self.tag);
+        out.extend_from_slice(&size.to_le_bytes());
         for piece in self.payload {
-            out.extend_from_slice(piece.as_ref());
+            out.extend_from_slice(piece);
         }
-        if size & 1 != 0 {
+        if padded(size) != size {
             out.push(0);
         }
+        Ok(())
     }
 }
 
-pub(crate) fn assemble(image: &Image, icc_profile: Option<&[u8]>) -> Result<Vec<u8>> {
+/// The file of an image of the size `canvas`, which is not empty.
+pub(crate) fn assemble(
+    canvas: Info,
+    bitstream: &Bitstream,
+    icc_profile: Option<&[u8]>,
+) -> Result<Vec<u8>> {
     let icc_profile = icc_profile.filter(|profile| !profile.is_empty());
+    // A lossless image says itself whether it has alpha. A VP8X chunk repeats it if something else calls for one.
+    let (alpha, has_alpha) = match bitstream {
+        Bitstream::Lossy { alpha, .. } => (alpha.as_deref(), alpha.is_some()),
+        Bitstream::Lossless { has_alpha, .. } => (None, *has_alpha && icc_profile.is_some()),
+    };
     let mut flags = 0;
     if icc_profile.is_some() {
         flags |= ICCP_FLAG;
     }
-    // A lossless image says so itself, and only repeats it in a VP8X chunk that something else calls for.
-    if image.alpha.is_some() || (flags != 0 && image.lossless_has_alpha) {
+    if has_alpha {
         flags |= ALPHA_FLAG;
     }
-    let [w0, w1, w2, _] = (image.width as u32 - 1).to_le_bytes();
-    let [h0, h1, h2, _] = (image.height as u32 - 1).to_le_bytes();
+    let [w0, w1, w2, _] = (canvas.width - 1).to_le_bytes();
+    let [h0, h1, h2, _] = (canvas.height - 1).to_le_bytes();
     let [f0, f1, f2, f3] = flags.to_le_bytes();
     let vp8x: [u8; VP8X_CHUNK_SIZE] = [f0, f1, f2, f3, w0, w1, w2, h0, h1, h2];
+    let vp8x = (flags != 0).then_some(vp8x.as_slice());
 
-    let one_piece = |tag: &[u8; TAG_SIZE], payload| Chunk { tag: *tag, payload };
-    let vp8x = [vp8x.as_slice()];
-    let icc_profile = icc_profile.map(|profile| [profile]);
-    let alpha = image.alpha.as_deref().map(|alpha| [alpha]);
-    let before = [
-        (flags != 0).then(|| one_piece(b"VP8X", vp8x.as_slice())),
-        icc_profile
-            .as_ref()
-            .map(|profile| one_piece(b"ICCP", profile.as_slice())),
-        alpha
-            .as_ref()
-            .map(|alpha| one_piece(b"ALPH", alpha.as_slice())),
+    let pieces = bitstream.pieces();
+    let chunks = [
+        vp8x.as_ref().map(|vp8x| Chunk {
+            tag: b"VP8X",
+            payload: from_ref(vp8x),
+        }),
+        icc_profile.as_ref().map(|profile| Chunk {
+            tag: b"ICCP",
+            payload: from_ref(profile),
+        }),
+        alpha.as_ref().map(|alpha| Chunk {
+            tag: b"ALPH",
+            payload: from_ref(alpha),
+        }),
+        Some(Chunk {
+            tag: bitstream.tag(),
+            payload: &pieces,
+        }),
     ];
-    let bitstream = Chunk {
-        tag: if image.is_lossless {
-            *b"VP8L"
-        } else {
-            *b"VP8 "
-        },
-        payload: image.bitstream.as_slice(),
-    };
 
-    let mut size = RIFF_HEADER_SIZE as u64 + bitstream.disk_size()?;
-    for chunk in before.iter().flatten() {
+    let mut size = RIFF_HEADER_SIZE as u64;
+    for chunk in chunks.iter().flatten() {
         size += chunk.disk_size()?;
     }
     let riff_size = size - CHUNK_HEADER_SIZE as u64;
-    if riff_size > 0xffff_fffe {
+    if riff_size > MAX_RIFF_SIZE {
         return Err(Error::FileTooBig);
     }
 
@@ -106,9 +144,8 @@ pub(crate) fn assemble(image: &Image, icc_profile: Option<&[u8]>) -> Result<Vec<
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(riff_size as u32).to_le_bytes());
     out.extend_from_slice(b"WEBP");
-    for chunk in before.iter().flatten() {
-        chunk.put(&mut out);
+    for chunk in chunks.iter().flatten() {
+        chunk.put(&mut out)?;
     }
-    bitstream.put(&mut out);
     Ok(out)
 }

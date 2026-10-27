@@ -22,7 +22,7 @@ use lossless::{
 use palette::{Palette, color_palette, is_packed, sort_minimize_deltas};
 use predictor::{color_space_transform, optimize_sampling, residual_image};
 
-use crate::container::Image;
+use crate::container::Bitstream;
 use crate::util::{Bug, ByteHistogram, Checked, SliceExt, increment, try_vec, try_with_capacity};
 use crate::vp8l::common::{
     CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES, CODE_LENGTH_EXTRA_BITS, CODE_LENGTH_LITERALS,
@@ -125,7 +125,7 @@ fn analyze_entropy(
     }
 
     const EMPTY: ByteHistogram = [0; 256];
-    let mut histo = Box::new(Histograms {
+    let mut histo = Histograms {
         alpha: EMPTY,
         alpha_pred: EMPTY,
         green: EMPTY,
@@ -139,7 +139,7 @@ fn analyze_entropy(
         blue_sub_green: EMPTY,
         blue_pred_sub_green: EMPTY,
         palette: EMPTY,
-    });
+    };
     let mut pix_prev = argb.at(0)?;
     let mut prev_row: &[u32] = &[];
     for curr_row in argb.chunks_exact(width.max(1)) {
@@ -1006,7 +1006,7 @@ pub(crate) fn encode_stream(
 }
 
 /// `WebPEncodeLosslessRGBA`, without the container.
-pub(crate) fn encode(input: &Input<'_>) -> Result<Image> {
+pub(crate) fn encode(input: &Input<'_>) -> Result<Bitstream> {
     let (width, height) = (input.width, input.height);
     let mut argb = try_vec(0u32, width * height)?;
     let mut has_alpha = false;
@@ -1030,12 +1030,8 @@ pub(crate) fn encode(input: &Input<'_>) -> Result<Image> {
     bw.put_bits(VERSION, VERSION_BITS);
     encode_stream(Config::Image, argb, width, height, &mut bw)?;
 
-    Ok(Image {
-        width,
-        height,
-        bitstream: vec![bw.finish()?],
-        is_lossless: true,
-        alpha: None,
-        lossless_has_alpha: has_alpha,
+    Ok(Bitstream::Lossless {
+        data: bw.finish()?,
+        has_alpha,
     })
 }

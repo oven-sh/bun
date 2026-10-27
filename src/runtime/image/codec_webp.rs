@@ -60,7 +60,7 @@ pub(crate) fn encode(
             quality: f32::from(quality),
         }
     };
-    bun_webp::encode_rgba(rgba, w, h, (w as usize) * 4, compression, icc_profile)
+    bun_webp::encode_rgba(rgba, w, h, compression, icc_profile)
         .map(codecs::Encoded::from_owned)
         .map_err(convert(codecs::Error::EncodeFailed))
 }

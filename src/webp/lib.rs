@@ -79,21 +79,20 @@ pub enum Compression {
     Lossless,
 }
 
-/// Non-premultiplied RGBA, rows `stride` bytes apart, to a WebP file, with the ICC profile if there is one.
+/// Non-premultiplied RGBA, rows one after the other, to a WebP file, with the ICC profile if there is one.
 pub fn encode_rgba(
     rgba: &[u8],
     width: u32,
     height: u32,
-    stride: usize,
     compression: Compression,
     icc_profile: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
-    let input = Input::new(rgba, width, height, stride)?;
-    let image = match compression {
+    let input = Input::new(rgba, width, height)?;
+    let bitstream = match compression {
         Compression::Lossy { quality } => vp8::enc::encode(&input, quality)?,
         Compression::Lossless => vp8l::enc::encode(&input)?,
     };
-    container::assemble(&image, icc_profile)
+    container::assemble(Info { width, height }, &bitstream, icc_profile)
 }
 
 /// The largest width and height of a bitstream.
@@ -104,31 +103,28 @@ pub(crate) struct Input<'a> {
     rgba: &'a [u8],
     pub(crate) width: usize,
     pub(crate) height: usize,
-    stride: usize,
 }
 
 impl<'a> Input<'a> {
-    fn new(rgba: &'a [u8], width: u32, height: u32, stride: usize) -> Result<Self> {
+    fn new(rgba: &'a [u8], width: u32, height: u32) -> Result<Self> {
         if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
             return Err(Error::BadDimension);
         }
         let (width, height) = (width as usize, height as usize);
-        let size = min_buffer_size(width, height, stride).ok_or(Error::BadDimension)?;
-        if stride < 4 * width || rgba.len() < size {
+        let size = width.checked_mul(height).and_then(|n| n.checked_mul(4));
+        if size.is_none_or(|size| rgba.len() < size) {
             return Err(Error::BadDimension);
         }
         Ok(Self {
             rgba,
             width,
             height,
-            stride,
         })
     }
 
     /// The `4 * width` bytes of row `y`.
     #[inline]
     pub(crate) fn row(&self, y: usize) -> Checked<&'a [u8]> {
-        let start = y.checked_mul(self.stride).ok_or(Bug)?;
-        self.rgba.sub(start..)?.sub(..4 * self.width)
+        self.rgba.chunks_exact(4 * self.width).nth(y).ok_or(Bug)
     }
 }

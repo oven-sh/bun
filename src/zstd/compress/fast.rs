@@ -3,8 +3,8 @@
 use super::internal::{
     BlockSrc, CompressionParameters, DictTableLoadMethod, HASH_READ_SIZE, K_SEARCH_STRENGTH,
     MatchState, Near, Prefix, REPCODE1_TO_OFFBASE, SeqSink, SeqStore, TableFillPurpose,
-    ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, hash_of, hash_ptr, le32_at, le64_at,
-    offset_to_offbase, table_get, table_of_size, table_put, table_swap, write_tagged_index,
+    ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, hash_of, hash_ptr, hashed_get, hashed_put,
+    hashed_swap, le32_at, le64_at, offset_to_offbase, table_of_size, write_tagged_index,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
@@ -481,24 +481,24 @@ impl Finder {
                 let Some(ahead) = near.window::<{ HASH_READ_SIZE + 2 }>(ip2) else {
                     break 'block;
                 };
-                let idx0 = table_swap(hash_table, hash_of::<MLS>(bytes0, hlog), current0);
+                let idx0 = hashed_swap(hash_table, hash_of::<MLS>(bytes0, hlog), current0);
 
                 if sink.read32_before(ip2, rep_offset1) == Some(le32_at::<0, _>(ahead))
                     && rep_offset1 > 0
                 {
-                    table_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
+                    hashed_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
                     let back = u32::from(sink.same_byte_before(ip2, rep_offset1));
                     let end = ip2 + 4 + sink.count_before(ip2 + 4, rep_offset1);
                     break (ip2 - back, end, REPCODE1_TO_OFFBASE);
                 }
                 let mut match0 = idx0.wrapping_sub(base_index);
                 if near.has::<0xFFFF_FFFF>(match0, bytes0) {
-                    table_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
+                    hashed_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
                 } else {
                     // As far as they are hashed or compared.
                     let bytes1 = bytes0 >> 8;
                     current0 += 1;
-                    let idx1 = table_swap(hash_table, hash_of::<MLS>(bytes1, hlog), current0);
+                    let idx1 = hashed_swap(hash_table, hash_of::<MLS>(bytes1, hlog), current0);
                     match0 = idx1.wrapping_sub(base_index);
                     if !near.has::<0xFFFF_FFFF>(match0, bytes1) {
                         current0 = base_index.wrapping_add(ip2);
@@ -513,7 +513,7 @@ impl Finder {
                     }
                     // `ip2` is certain to be before the end of the match only if the step is small.
                     if step <= 4 {
-                        table_put(
+                        hashed_put(
                             hash_table,
                             hash_of::<MLS>(le64_at::<0, _>(ahead), hlog),
                             base_index.wrapping_add(ip2),
@@ -537,10 +537,10 @@ impl Finder {
             };
             bytes0 = bytes;
             if let Some(to_insert) = near.read64((current0 + 2).wrapping_sub(base_index)) {
-                table_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
+                hashed_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
             }
             if let Some(before) = near.read64(ip0 - 2) {
-                table_put(
+                hashed_put(
                     hash_table,
                     hash_of::<MLS>(before, hlog),
                     base_index.wrapping_add(ip0 - 2),
@@ -550,7 +550,7 @@ impl Finder {
             while rep_offset2 > 0 && sink.read32_before(ip0, rep_offset2) == Some(bytes0 as u32) {
                 let end = ip0 + 4 + sink.count_before(ip0 + 4, rep_offset2);
                 core::mem::swap(&mut rep_offset1, &mut rep_offset2);
-                table_put(
+                hashed_put(
                     hash_table,
                     hash_of::<MLS>(bytes0, hlog),
                     base_index.wrapping_add(ip0),
@@ -610,7 +610,7 @@ impl Finder {
                 let Some(ahead) = near.window::<{ HASH_READ_SIZE + 2 }>(ip2) else {
                     break 'block;
                 };
-                let idx0 = table_swap(hash_table, hash_of::<MLS>(bytes0, hlog), current0);
+                let idx0 = hashed_swap(hash_table, hash_of::<MLS>(bytes0, hlog), current0);
 
                 // The 4 bytes have to be in one segment, with a byte before them.
                 let rep_place = window.place_of(ip2).wrapping_sub(rep_offset1);
@@ -618,7 +618,7 @@ impl Finder {
                     && rep_place != older_len
                     && rep_offset1 > 0
                 {
-                    table_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
+                    hashed_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
                     let back =
                         u32::from(near.read8(ip2 - 1) == window.read8(rep_place.wrapping_sub(1)));
                     break (ip2, rep_place, back, REPCODE1_TO_OFFBASE, u32::MAX);
@@ -626,11 +626,11 @@ impl Finder {
                 let mut place = idx0.wrapping_sub(origin_index);
                 let mut next = u32::MAX;
                 if window.has::<0xFFFF_FFFF>(place, bytes0) {
-                    table_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
+                    hashed_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
                 } else {
                     let bytes1 = bytes0 >> 8;
                     current0 += 1;
-                    let idx1 = table_swap(hash_table, hash_of::<MLS>(bytes1, hlog), current0);
+                    let idx1 = hashed_swap(hash_table, hash_of::<MLS>(bytes1, hlog), current0);
                     place = idx1.wrapping_sub(origin_index);
                     if !window.has::<0xFFFF_FFFF>(place, bytes1) {
                         current0 = base_index.wrapping_add(ip2);
@@ -658,7 +658,7 @@ impl Finder {
             if next < ip0
                 && let Some(bytes) = near.read64(next)
             {
-                table_put(
+                hashed_put(
                     hash_table,
                     hash_of::<MLS>(bytes, hlog),
                     base_index.wrapping_add(next),
@@ -671,10 +671,10 @@ impl Finder {
             };
             bytes0 = bytes;
             if let Some(to_insert) = near.read64((current0 + 2).wrapping_sub(base_index)) {
-                table_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
+                hashed_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
             }
             if let Some(before) = near.read64(ip0 - 2) {
-                table_put(
+                hashed_put(
                     hash_table,
                     hash_of::<MLS>(before, hlog),
                     base_index.wrapping_add(ip0 - 2),
@@ -685,7 +685,7 @@ impl Finder {
                 let rep_place = window.place_of(ip0).wrapping_sub(rep_offset2);
                 let end = ip0 + 4 + window.count(ip0 + 4, rep_place + 4);
                 core::mem::swap(&mut rep_offset1, &mut rep_offset2);
-                table_put(
+                hashed_put(
                     hash_table,
                     hash_of::<MLS>(bytes0, hlog),
                     base_index.wrapping_add(ip0),
@@ -804,7 +804,7 @@ impl<'a> TaggedTable<'a> {
     #[inline(always)]
     pub(super) fn get<const MLS: u32>(self, bytes: u64) -> Option<u32> {
         let hash_and_tag = hash_of::<MLS>(bytes, self.h_bits);
-        let index_and_tag = table_get(self.table, hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS);
+        let index_and_tag = hashed_get(self.table, hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS);
         let index = index_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS;
         (compare_packed_tags(index_and_tag as usize, hash_and_tag) && index > self.start_index)
             .then(|| index - self.start_index)
@@ -850,7 +850,7 @@ impl Finder {
                     break 'block;
                 };
                 curr = base_index.wrapping_add(ip0);
-                let match_index = table_swap(hash_table, hash_of::<MLS>(bytes0, hlog), curr);
+                let match_index = hashed_swap(hash_table, hash_of::<MLS>(bytes0, hlog), curr);
 
                 if window.read32_before(ip0 + 1, rep_offset1) == Some((bytes0 >> 8) as u32) {
                     ip0 += 1;
@@ -898,10 +898,10 @@ impl Finder {
             };
             bytes0 = bytes;
             if let Some(to_insert) = near.read64((curr + 2).wrapping_sub(base_index)) {
-                table_put(hash_table, hash_of::<MLS>(to_insert, hlog), curr + 2);
+                hashed_put(hash_table, hash_of::<MLS>(to_insert, hlog), curr + 2);
             }
             if let Some(before) = near.read64(ip0 - 2) {
-                table_put(
+                hashed_put(
                     hash_table,
                     hash_of::<MLS>(before, hlog),
                     base_index.wrapping_add(ip0 - 2),
@@ -912,7 +912,7 @@ impl Finder {
                 let rep_place = window.place_of(ip0).wrapping_sub(rep_offset2);
                 let end = ip0 + 4 + window.count(ip0 + 4, rep_place + 4);
                 core::mem::swap(&mut rep_offset1, &mut rep_offset2);
-                table_put(
+                hashed_put(
                     hash_table,
                     hash_of::<MLS>(bytes0, hlog),
                     base_index.wrapping_add(ip0),

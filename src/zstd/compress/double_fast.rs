@@ -7,8 +7,8 @@ use super::fast::{
 use super::internal::{
     BlockSrc, DictTableLoadMethod, HASH_READ_SIZE, K_SEARCH_STRENGTH, MatchState, Near, Prefix,
     REPCODE1_TO_OFFBASE, SeqStore, TableFillPurpose, ZSTD_SHORT_CACHE_TAG_BITS, hash_of, hash_ptr,
-    hash8, le64_at, offset_to_offbase, table_get, table_of_size, table_prefetch, table_put,
-    table_swap, write_tagged_index,
+    hash8, hashed_get, hashed_put, hashed_swap, le64_at, offset_to_offbase, table_of_size,
+    table_prefetch, write_tagged_index,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
@@ -184,8 +184,8 @@ impl Finder {
                     break 'block;
                 };
                 curr = base_index.wrapping_add(ip);
-                let idxl0 = table_swap(hash_long, hash8(bytes0, h_bits_l, 0), curr);
-                let idxs0 = table_swap(hash_small, hash_of::<MLS>(bytes0, h_bits_s), curr);
+                let idxl0 = hashed_swap(hash_long, hash8(bytes0, h_bits_l, 0), curr);
+                let idxs0 = hashed_swap(hash_small, hash_of::<MLS>(bytes0, h_bits_s), curr);
 
                 if sink.read32_before(ip + 1, offset_1) == Some((bytes0 >> 8) as u32)
                     && offset_1 > 0
@@ -205,7 +205,7 @@ impl Finder {
                 } else if near.has::<0xFFFF_FFFF>(matchs0, bytes0) {
                     // A short match: a longer one at the next position is preferred.
                     let end = ip + 4 + near.count(ip + 4, matchs0 + 4);
-                    let idxl1 = table_get(hash_long, hash8(bytes1, h_bits_l, 0));
+                    let idxl1 = hashed_get(hash_long, hash8(bytes1, h_bits_l, 0));
                     let matchl1 = idxl1.wrapping_sub(base_index);
                     if near.has::<{ u64::MAX }>(matchl1, bytes1) && matchl1 > 0 {
                         let end1 = ip1 + 8 + near.count(ip1 + 8, matchl1 + 8);
@@ -235,7 +235,7 @@ impl Finder {
                 offset_1 = ip - match0;
                 // With a larger step, ip1 may be past the end of the match.
                 if step < 4 {
-                    table_put(
+                    hashed_put(
                         hash_long,
                         hash8(bytes1, h_bits_l, 0),
                         base_index.wrapping_add(ip1),
@@ -257,19 +257,19 @@ impl Finder {
             };
             let index_to_insert = curr + 2;
             if let Some(to_insert) = near.read64(index_to_insert.wrapping_sub(base_index)) {
-                table_put(hash_long, hash8(to_insert, h_bits_l, 0), index_to_insert);
-                table_put(
+                hashed_put(hash_long, hash8(to_insert, h_bits_l, 0), index_to_insert);
+                hashed_put(
                     hash_small,
                     hash_of::<MLS>(to_insert, h_bits_s),
                     index_to_insert,
                 );
             }
-            table_put(
+            hashed_put(
                 hash_long,
                 hash8(le64_at::<0, _>(around), h_bits_l, 0),
                 base_index.wrapping_add(ip - 2),
             );
-            table_put(
+            hashed_put(
                 hash_small,
                 hash_of::<MLS>(le64_at::<1, _>(around), h_bits_s),
                 base_index.wrapping_add(ip - 1),
@@ -279,8 +279,8 @@ impl Finder {
                 let end = ip + 4 + sink.count_before(ip + 4, offset_2);
                 core::mem::swap(&mut offset_1, &mut offset_2);
                 let index = base_index.wrapping_add(ip);
-                table_put(hash_small, hash_of::<MLS>(bytes0, h_bits_s), index);
-                table_put(hash_long, hash8(bytes0, h_bits_l, 0), index);
+                hashed_put(hash_small, hash_of::<MLS>(bytes0, h_bits_s), index);
+                hashed_put(hash_long, hash8(bytes0, h_bits_l, 0), index);
                 sink.store_repeat(end);
                 ip = end;
                 let Some(bytes) = near.read64(ip) else {
@@ -368,8 +368,8 @@ impl Finder {
             let bytes0 = le64_at::<0, _>(here);
             let curr = base_index.wrapping_add(ip);
             let match_long =
-                table_swap(hash_long, hash8(bytes0, h_bits_l, 0), curr).wrapping_sub(base_index);
-            let match_index_s = table_swap(hash_small, hash_of::<MLS>(bytes0, h_bits_s), curr);
+                hashed_swap(hash_long, hash8(bytes0, h_bits_l, 0), curr).wrapping_sub(base_index);
+            let match_index_s = hashed_swap(hash_small, hash_of::<MLS>(bytes0, h_bits_s), curr);
 
             if window.read32_before(ip + 1, offset_1) == Some((bytes0 >> 8) as u32) {
                 ip += 1;
@@ -404,7 +404,7 @@ impl Finder {
 
                     // A short match: a long one at the next position is preferred.
                     let bytes1 = le64_at::<1, _>(here);
-                    let match_long1 = table_swap(hash_long, hash8(bytes1, h_bits_l, 0), curr + 1)
+                    let match_long1 = hashed_swap(hash_long, hash8(bytes1, h_bits_l, 0), curr + 1)
                         .wrapping_sub(base_index);
                     if near.has::<{ u64::MAX }>(match_long1, bytes1) {
                         ip += 1;
@@ -432,19 +432,19 @@ impl Finder {
             };
             let index_to_insert = curr + 2;
             if let Some(to_insert) = near.read64(index_to_insert.wrapping_sub(base_index)) {
-                table_put(hash_long, hash8(to_insert, h_bits_l, 0), index_to_insert);
-                table_put(
+                hashed_put(hash_long, hash8(to_insert, h_bits_l, 0), index_to_insert);
+                hashed_put(
                     hash_small,
                     hash_of::<MLS>(to_insert, h_bits_s),
                     index_to_insert,
                 );
             }
-            table_put(
+            hashed_put(
                 hash_long,
                 hash8(le64_at::<0, _>(around), h_bits_l, 0),
                 base_index.wrapping_add(ip - 2),
             );
-            table_put(
+            hashed_put(
                 hash_small,
                 hash_of::<MLS>(le64_at::<1, _>(around), h_bits_s),
                 base_index.wrapping_add(ip - 1),
@@ -457,8 +457,8 @@ impl Finder {
                 let end = ip + 4 + window.count(ip + 4, rep_place + 4);
                 core::mem::swap(&mut offset_1, &mut offset_2);
                 let index = base_index.wrapping_add(ip);
-                table_put(hash_small, hash_of::<MLS>(bytes, h_bits_s), index);
-                table_put(hash_long, hash8(bytes, h_bits_l, 0), index);
+                hashed_put(hash_small, hash_of::<MLS>(bytes, h_bits_s), index);
+                hashed_put(hash_long, hash8(bytes, h_bits_l, 0), index);
                 sink.store::<16>(ip, end, REPCODE1_TO_OFFBASE);
                 ip = end;
             }
@@ -561,8 +561,8 @@ impl Finder {
             let bytes0 = le64_at::<0, _>(here);
             let curr = base_index.wrapping_add(ip);
             let place_long =
-                table_swap(hash_long, hash8(bytes0, h_bits_l, 0), curr).wrapping_sub(origin_index);
-            let place_short = table_swap(hash_small, hash_of::<MLS>(bytes0, h_bits_s), curr)
+                hashed_swap(hash_long, hash8(bytes0, h_bits_l, 0), curr).wrapping_sub(origin_index);
+            let place_short = hashed_swap(hash_small, hash_of::<MLS>(bytes0, h_bits_s), curr)
                 .wrapping_sub(origin_index);
 
             if window.read32_before(ip + 1, offset_1) == Some((bytes0 >> 8) as u32)
@@ -582,7 +582,7 @@ impl Finder {
                     } else if window.has::<0xFFFF_FFFF>(place_short, bytes0) && place_short > 0 {
                         // A short match: a long one at the next position is preferred.
                         let bytes1 = le64_at::<1, _>(here);
-                        let place3 = table_swap(hash_long, hash8(bytes1, h_bits_l, 0), curr + 1)
+                        let place3 = hashed_swap(hash_long, hash8(bytes1, h_bits_l, 0), curr + 1)
                             .wrapping_sub(origin_index);
                         if window.has::<{ u64::MAX }>(place3, bytes1) && place3 > 0 {
                             ip += 1;
@@ -609,19 +609,19 @@ impl Finder {
             };
             let index_to_insert = curr + 2;
             if let Some(to_insert) = near.read64(index_to_insert.wrapping_sub(base_index)) {
-                table_put(hash_long, hash8(to_insert, h_bits_l, 0), index_to_insert);
-                table_put(
+                hashed_put(hash_long, hash8(to_insert, h_bits_l, 0), index_to_insert);
+                hashed_put(
                     hash_small,
                     hash_of::<MLS>(to_insert, h_bits_s),
                     index_to_insert,
                 );
             }
-            table_put(
+            hashed_put(
                 hash_long,
                 hash8(le64_at::<0, _>(around), h_bits_l, 0),
                 base_index.wrapping_add(ip - 2),
             );
-            table_put(
+            hashed_put(
                 hash_small,
                 hash_of::<MLS>(le64_at::<1, _>(around), h_bits_s),
                 base_index.wrapping_add(ip - 1),
@@ -637,8 +637,8 @@ impl Finder {
                 let end = ip + 4 + window.count(ip + 4, rep_place + 4);
                 core::mem::swap(&mut offset_1, &mut offset_2);
                 let index = base_index.wrapping_add(ip);
-                table_put(hash_small, hash_of::<MLS>(bytes, h_bits_s), index);
-                table_put(hash_long, hash8(bytes, h_bits_l, 0), index);
+                hashed_put(hash_small, hash_of::<MLS>(bytes, h_bits_s), index);
+                hashed_put(hash_long, hash8(bytes, h_bits_l, 0), index);
                 sink.store_repeat(end);
                 ip = end;
             }

@@ -34,7 +34,7 @@ const ZSTD_MAXWINDOWSIZE_DEFAULT: usize = (1 << ZSTD_WINDOWLOG_LIMIT_DEFAULT) + 
 const ZSTD_NO_FORWARD_PROGRESS_MAX: u32 = 16;
 
 /// `ZSTD_d_windowLogMax`, the only parameter of a [`DCtx`] that `node:zlib` can name.
-const ZSTD_D_WINDOW_LOG_MAX: i32 = 100;
+pub const ZSTD_D_WINDOW_LOG_MAX: i32 = 100;
 
 // ── frame headers ─────────────────────────────────────────────────────────
 

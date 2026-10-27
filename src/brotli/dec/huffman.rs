@@ -55,8 +55,19 @@ const REVERSE_BITS_LOWEST: u32 = 1 << 7;
 
 /// The 8 bits of `num` in reverse order.
 #[inline(always)]
+#[allow(clippy::indexing_slicing, reason = "a u8 is in range of 256 elements")]
 fn reverse_bits(num: u32) -> usize {
-    usize::from((num as u8).reverse_bits())
+    // x86 has no instruction for this.
+    static REVERSED: [u8; 256] = {
+        let mut reversed = [0; 256];
+        let mut i = 0;
+        while i < 256 {
+            reversed[i] = (i as u8).reverse_bits();
+            i += 1;
+        }
+        reversed
+    };
+    usize::from(REVERSED[num as u8 as usize])
 }
 
 /// Stores `code` in `table[start]`, `table[start + step]` and so on, up to `end`.

@@ -262,9 +262,9 @@ pub struct Decoder {
     literal_hgroup: HuffmanTreeGroup,
     insert_copy_hgroup: HuffmanTreeGroup,
     distance_hgroup: HuffmanTreeGroup,
-    /// Three tables of [`HUFFMAN_MAX_SIZE_258`] entries.
+    /// Three tables of [`HUFFMAN_MAX_SIZE_258`] entries. Empty until a meta-block has more than one block type.
     block_type_trees: Vec<HuffmanCode>,
-    /// Three tables of [`HUFFMAN_MAX_SIZE_26`] entries.
+    /// Three tables of [`HUFFMAN_MAX_SIZE_26`] entries, allocated with `block_type_trees`.
     block_len_trees: Vec<HuffmanCode>,
     /// All contexts of the current literal block type use the same tree, so the context need not be computed.
     trivial_literal_context: bool,
@@ -2399,12 +2399,6 @@ impl Decoder {
 
             State::Initialize => {
                 s.max_backward_distance = (1 << s.window_bits) - WINDOW_GAP as i32;
-
-                s.block_type_trees = try_vec(HuffmanCode::default(), 3 * HUFFMAN_MAX_SIZE_258)
-                    .map_err(|_| E::AllocBlockTypeTrees)?;
-                s.block_len_trees = try_vec(HuffmanCode::default(), 3 * HUFFMAN_MAX_SIZE_26)
-                    .map_err(|_| E::AllocBlockTypeTrees)?;
-
                 s.state = State::MetablockBegin;
             }
 
@@ -2459,6 +2453,12 @@ impl Decoder {
                 if *num_block_types < 2 {
                     s.loop_counter += 1;
                     return Ok(Flow::Continue);
+                }
+                if s.block_type_trees.is_empty() {
+                    s.block_len_trees = try_vec(HuffmanCode::default(), 3 * HUFFMAN_MAX_SIZE_26)
+                        .map_err(|_| E::AllocBlockTypeTrees)?;
+                    s.block_type_trees = try_vec(HuffmanCode::default(), 3 * HUFFMAN_MAX_SIZE_258)
+                        .map_err(|_| E::AllocBlockTypeTrees)?;
                 }
                 s.state = State::HuffmanCode1;
             }

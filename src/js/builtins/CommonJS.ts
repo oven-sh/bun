@@ -1,5 +1,10 @@
 // This file contains functions used for the CommonJS module loader
 
+interface RequiredESMNamespace {
+  __esModule?: unknown;
+  "module.exports"?: unknown;
+}
+
 $getter;
 export function main() {
   return $requireMap.$get(Bun.main);
@@ -7,19 +12,21 @@ export function main() {
 
 // This function is bound when constructing instances of CommonJSModule
 $visibility = "Private";
-export function require(this: JSCommonJSModule, _: string) {
+export function require(this: JSCommonJSModule, _id: string) {
   // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
   return $overridableRequire.$apply(this, arguments);
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`
+// Like Node, `this` is only used as the parent module and can be any value, even null.
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
-  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
+  // `filename` can be a user getter, so read it once, before the module is added to the require map.
+  const parentFilename = this?.filename;
+  const id = $resolveSync(originalId, parentFilename, false, false, options ? options.paths : undefined, this, options);
   // The global require cache, or the one of the Bun.ModuleGraph this module belongs to.
-  // (`this` need not be a module: Module.prototype.require.call({ filename }, id).)
-  const requireMap: RequireMap = this.$requireMap || $requireMap;
+  const requireMap: RequireMap = this?.$requireMap || $requireMap;
   if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -34,7 +41,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       }
     }
 
-    return this.$requireNativeModule(id);
+    return $requireNativeModule(id);
   } else {
     const existing = requireMap.$get(id);
     if (existing) {
@@ -71,7 +78,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   }
 
   if (id === "bun:test") {
-    return Bun.jest(this.filename);
+    return Bun.jest(parentFilename);
   }
 
   // To handle import/export cycles, we need to create a module object and put
@@ -79,7 +86,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   const mod = $createCommonJSModule(id, {}, false, this);
   requireMap.$set(id, mod);
 
-  var out: LoaderModule | -1;
+  var out: JSCommonJSModule | RequiredESMNamespace | -1;
 
   // This is where we load the module. We will see if Module._load and
   // Module._compile are actually important for compatibility.
@@ -90,9 +97,10 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   if (IS_BUN_DEVELOPMENT) {
     $assert(mod.id === id);
     try {
-      out = this.$require(
+      out = $requireCommonJS(
         id,
         mod,
+        parentFilename,
         // did they pass a { type } object?
         $argumentCount(),
         // the object containing a "type" attribute, if they passed one
@@ -104,13 +112,13 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       throw E;
     }
   } else {
-    out = this.$require(id, mod, $argumentCount(), $argument(1));
+    out = $requireCommonJS(id, mod, parentFilename, $argumentCount(), $argument(1));
   }
 
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
     try {
-      out = $requireESM(id, this);
+      out = $requireESM(id, this) as RequiredESMNamespace;
     } catch (exception) {
       // Since the ESM code is mostly JS, we need to handle exceptions here.
       requireMap.$delete(id);
@@ -208,14 +216,8 @@ export function requireESM(this, resolved: string, requirer?: JSCommonJSModule) 
 
 export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
   $assert(this);
-  let namespace;
-  try {
-    namespace = $requireESM(id, this);
-  } catch (exception) {
-    // Since the ESM code is mostly JS, we need to handle exceptions here.
-    (this.$requireMap || $requireMap).$delete(id);
-    throw exception;
-  }
+  // Runs inside `$require`, which removes the require map entry if the user's handler lets this throw.
+  const namespace = $requireESM(id, this);
 
   // See `overridableRequire`: TDZ-safe reads for the require-cycle case.
   let esModule, moduleExports;
@@ -245,7 +247,6 @@ $visibility = "Private";
 // `requireMap`: the global require cache, or a Bun.ModuleGraph's together with one of
 // the graph's modules (`owner`, which names the loader whose ES modules it also lists).
 export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSModule) {
-  var moduleMap = new Map();
   var inner = {
     [Symbol.for("nodejs.util.inspect.custom")]() {
       return { ...proxy };
@@ -286,7 +287,6 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
     },
 
     deleteProperty(_target, key: string) {
-      moduleMap.$delete(key);
       requireMap.$delete(key);
       $esmRegistryDelete(key, owner);
       $evictIsolationSourceProviderCache(key);
@@ -324,21 +324,36 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
 type WrapperMutate = (start: string, end: string) => void;
 export function getWrapperArrayProxy(onMutate: WrapperMutate, start: string, end: string) {
   const wrapper = [start, end];
+  // onMutate throws what it refuses (--disallow-code-generation-from-strings=strict), which is then
+  // not left in the array.
+  function didMutate(previousStart: string, previousEnd: string) {
+    try {
+      onMutate(wrapper[0], wrapper[1]);
+    } catch (error) {
+      wrapper[0] = previousStart;
+      wrapper[1] = previousEnd;
+      throw error;
+    }
+    return true;
+  }
   return new Proxy(wrapper, {
     set(_target, prop, value, receiver) {
+      const previousStart = wrapper[0];
+      const previousEnd = wrapper[1];
       Reflect.set(wrapper, prop, value, receiver);
-      onMutate(wrapper[0], wrapper[1]);
-      return true;
+      return didMutate(previousStart, previousEnd);
     },
     defineProperty(_target, prop, descriptor) {
+      const previousStart = wrapper[0];
+      const previousEnd = wrapper[1];
       Reflect.defineProperty(wrapper, prop, descriptor);
-      onMutate(wrapper[0], wrapper[1]);
-      return true;
+      return didMutate(previousStart, previousEnd);
     },
     deleteProperty(_target, prop) {
+      const previousStart = wrapper[0];
+      const previousEnd = wrapper[1];
       Reflect.deleteProperty(wrapper, prop);
-      onMutate(wrapper[0], wrapper[1]);
-      return true;
+      return didMutate(previousStart, previousEnd);
     },
   });
 }

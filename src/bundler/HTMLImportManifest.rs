@@ -55,7 +55,7 @@ use crate::{BundleV2, Chunk, LinkerGraph};
 pub struct HTMLImportManifest<'a> {
     pub(crate) index: u32,
     pub(crate) graph: &'a Graph<'a>,
-    pub(crate) chunks: &'a [Chunk],
+    pub(crate) chunks: &'a [Chunk<'a>],
     pub(crate) linker_graph: &'a LinkerGraph<'a>,
 }
 
@@ -191,7 +191,7 @@ pub(crate) fn write<W: Write + ?Sized>(
         &options.root_dir[..]
     } else {
         // SAFETY: FileSystem singleton is initialized before bundling.
-        FileSystem::get().top_level_dir
+        FileSystem::get().top_level_dir()
     };
 
     writer.write_all(b"{")?;

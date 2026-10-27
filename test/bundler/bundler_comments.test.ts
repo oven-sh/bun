@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { SourceMap } from "node:module";
+import { SourceMap, type SourceMapping } from "node:module";
 import { itBundled } from "./expectBundled";
 
 describe("single-line comments", () => {
@@ -426,7 +426,7 @@ describe("multi-line comments", () => {
       expect(commentLineIndex).toBeGreaterThanOrEqual(0);
 
       // The multi-line legal comment should have a sourcemap entry
-      const entry = sm.findEntry(commentLineIndex, 0);
+      const entry = sm.findEntry(commentLineIndex, 0) as SourceMapping;
 
       // Verify we found a mapping for the comment
       expect(entry).toBeTruthy();

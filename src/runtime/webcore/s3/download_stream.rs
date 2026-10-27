@@ -414,7 +414,7 @@ impl Drop for S3HttpDownloadStreamingTask {
 ///   bits 49..64 : _reserved (u15)
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-pub struct State(pub(crate) u64);
+pub(crate) struct State(pub(crate) u64);
 
 impl State {
     const STATUS_CODE_SHIFT: u32 = 0;

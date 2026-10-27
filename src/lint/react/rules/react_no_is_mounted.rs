@@ -15,7 +15,7 @@ const OXLINT: Message = Message::new("", "Do not use `isMounted`.");
 impl Rule for NoIsMounted {
     const META: Meta = Meta::plugin(Plugin::React, "no-is-mounted", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// Whether something is in a property of an object or in a method of a class.
+    /// Caches whether a node is inside an object's property or a class's method.
     type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(_: &Options) -> Self {
@@ -23,7 +23,7 @@ impl Rule for NoIsMounted {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        // oxlint looks at files that can have JSX, and passes over `this.#isMounted()`.
+        // oxlint only checks files that can contain JSX, and skips `this.#isMounted()`.
         let is_candidate = match file.language().is_oxlint {
             true => is_jsx(file) && file.mentions("isMounted"),
             false => file.mentions("isMounted") || file.mentions("#isMounted"),
@@ -36,7 +36,7 @@ impl Rule for NoIsMounted {
         let Some(callee) = e.callee() else {
             return;
         };
-        // oxlint: `this["isMounted"]` and not `this[isMounted]`. It has a node for parentheses.
+        // oxlint accepts `this["isMounted"]` but not `this[isMounted]`. Its AST has a node for parentheses.
         let is_called = match is_oxlint {
             true => as_member_expression(callee).and_then(static_property_name).is_some_and(|it| it.is("isMounted")),
             false => is_member_called(callee, "isMounted"),
@@ -45,7 +45,7 @@ impl Rule for NoIsMounted {
         if !is_called || !callee.object().is_some_and(is_this) {
             return;
         }
-        // oxlint: not the property of a pattern.
+        // oxlint doesn't count a pattern's property.
         let is_method = |node: Node<'a>| match is_oxlint {
             true => as_object_property(node).is_some() || as_method_definition(node).is_some(),
             false => matches!(estree_type_name(node), "Property" | "MethodDefinition"),
@@ -53,7 +53,7 @@ impl Rule for NoIsMounted {
         if cx.state.find(Node::Expr(e), |_, parent| is_method(parent).then_some(())).is_none() {
             return;
         }
-        // oxlint points at the call.
+        // oxlint reports the call.
         match is_oxlint {
             true => cx.report(e, OXLINT),
             false => cx.report(callee, NO_IS_MOUNTED),

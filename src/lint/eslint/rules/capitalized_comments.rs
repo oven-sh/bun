@@ -18,7 +18,7 @@ struct CommentOptions {
 }
 
 impl CommentOptions {
-    /// `which`: `"line"` or `"block"`, whose options replace those for both.
+    /// `which` is `"line"` or `"block"`. Its options, if present, replace the shared ones.
     fn new(raw: Object, which: &str) -> CommentOptions {
         let options = match raw.has(which) {
             true => raw.object(which),
@@ -82,7 +82,7 @@ fn oxlint_is_url(text: &[u8]) -> bool {
     scheme_len > 0 && text.get(scheme_len..).is_some_and(|it| it.starts_with(b"://"))
 }
 
-/// What oxlint passes over: its `is_directive_comment`. In a block the URL can come after the `*` of a line.
+/// oxlint's `is_directive_comment`: the comments it skips. In a block comment the URL can come after a line's `*`.
 fn oxlint_is_directive(comment: Token, value: &[u8]) -> bool {
     const DIRECTIVES: [&[u8]; 11] = [
         b"eslint-",
@@ -98,8 +98,8 @@ fn oxlint_is_directive(comment: Token, value: &[u8]) -> bool {
         b"oxfmt-ignore",
     ];
     let rest = strings::trim_js_whitespace_start(value);
-    let may_be_named = matches!(rest.first(), Some(b'e' | b'o' | b'j' | b'i' | b'g' | b'p'));
-    if may_be_named && DIRECTIVES.iter().any(|it| rest.starts_with(it)) || oxlint_is_url(rest) {
+    let may_be_directive = matches!(rest.first(), Some(b'e' | b'o' | b'j' | b'i' | b'g' | b'p'));
+    if may_be_directive && DIRECTIVES.iter().any(|it| rest.starts_with(it)) || oxlint_is_url(rest) {
         return true;
     }
     let mut lines = strings::split(value, b"\n").map(|line| {
@@ -109,7 +109,7 @@ fn oxlint_is_directive(comment: Token, value: &[u8]) -> bool {
     comment.kind() == TokenKind::Block && lines.find(|it| !it.is_empty()).is_some_and(oxlint_is_url)
 }
 
-/// It has a token or a comment before it and one after it, on the lines where it starts and ends.
+/// True if `comment` has a token or comment before it on its first line and one after it on its last line.
 fn is_inline_comment<'a>(file: &'a File<'a>, comment: Token<'a>) -> bool {
     let previous = file.tokens_before(comment).with_comments().next();
     let next = file.tokens_after(comment).with_comments().next();
@@ -123,8 +123,8 @@ fn is_consecutive_comment<'a>(file: &'a File<'a>, comment: Token<'a>) -> bool {
 }
 
 impl CapitalizedComments {
-    /// Whether `comment` plainly starts with no letter, or with one of ASCII as it is expected.
-    fn is_plainly_right(&self, comment: Token) -> bool {
+    /// Fast path: true if `comment` obviously starts with a non-letter, or with an ASCII letter in the expected case.
+    fn is_obviously_valid(&self, comment: Token) -> bool {
         let [b'/', b'/' | b'*', rest @ ..] = comment.text() else {
             return false;
         };
@@ -136,7 +136,7 @@ impl CapitalizedComments {
     }
 
     fn process_comment<'a>(&self, comment: Token<'a>, cx: &Cx<'a, Self>) {
-        if self.is_plainly_right(comment) {
+        if self.is_obviously_valid(comment) {
             return;
         }
         let options = match comment.kind() {
@@ -170,8 +170,8 @@ impl CapitalizedComments {
         }
         let is_directive = match cx.language().is_oxlint {
             true => oxlint_is_directive(comment, value),
-            // Both tools' comments count there.
-            false if cx.language().stands_alone && oxlint_is_directive(comment, value) => true,
+            // Without a config, both tools' directive comments count.
+            false if cx.language().has_no_foreign_config && oxlint_is_directive(comment, value) => true,
             false => ast_utils::matches_comments_ignore_pattern(value) || is_maybe_url(value),
         };
         if is_directive
@@ -185,7 +185,7 @@ impl CapitalizedComments {
             true => UNEXPECTED_LOWERCASE_COMMENT,
             false => UNEXPECTED_UPPERCASE_COMMENT,
         };
-        // The 2 is the `//` or the `/*`, for ESLint of a `<!--` too.
+        // The 2 skips the `//` or `/*`. ESLint also uses 2 for a `<!--`.
         let start = match cx.language().is_oxlint {
             true => comment.comment_value_span().start + at as u32,
             false => comment.start() + 2 + at as u32,

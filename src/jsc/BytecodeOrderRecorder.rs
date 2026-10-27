@@ -7,6 +7,9 @@
 
 use bun_bundler::bytecode_order::{self, CodeNames, RecordedFunction, RecordedSource, Recording};
 
+use crate::generated_bindgen::bytecode_order_recorder::{
+    BytecodeOrderNames, BytecodeOrderTextKind,
+};
 use crate::virtual_machine::VirtualMachine;
 use crate::vm::VM;
 
@@ -396,60 +399,44 @@ fn write_replacing(path: &[u8], text: &[u8]) -> bun_sys::Maybe<()> {
 /// `bun:internal-for-testing`: what an order file calls the code of `text` (a `"module"` or `"script"` whose other chunks'
 /// paths start with the third argument, a `"builtin"`, or the specifier of an `"internal"` module, undefined if there is
 /// none), as `M <name>` and `<start> <kind> <name>` lines, or null for a text that has no names.
-#[crate::host_fn]
-pub fn names_for_testing(
-    global: &crate::JSGlobalObject,
-    frame: &crate::CallFrame,
-) -> crate::JsResult<crate::JSValue> {
-    let text = frame.argument(0).to_utf8(global)?;
-    let kind = frame.argument(1).to_utf8(global)?;
-    let chunk_paths = frame.argument(2);
-    let chunk_paths = if chunk_paths.is_undefined() {
-        None
-    } else {
-        Some(chunk_paths.to_utf8(global)?)
-    };
+pub(crate) fn names_for_testing(
+    text: &[u8],
+    kind: BytecodeOrderTextKind,
+    chunk_paths: Option<&[u8]>,
+) -> BytecodeOrderNames {
     // One path to a line.
-    let mut chunk_paths: Vec<&[u8]> = bun_core::strings::split(
-        chunk_paths.as_ref().map_or(&b""[..], |paths| paths.slice()),
-        b"\n",
-    )
-    .filter(|path| !path.is_empty())
-    .collect();
+    let mut chunk_paths: Vec<&[u8]> = bun_core::strings::split(chunk_paths.unwrap_or(b""), b"\n")
+        .filter(|path| !path.is_empty())
+        .collect();
     chunk_paths.sort_unstable();
     let chunk = |is_esm| bytecode_order::Named::Chunk {
-        text: text.slice(),
+        text,
         is_esm,
         chunk_paths: &chunk_paths,
     };
-    let names = match kind.slice() {
-        b"module" => chunk(true).names(),
-        b"script" => chunk(false).names(),
-        b"builtin" => bytecode_order::Named::InternalModule(text.slice()).names(),
+    let names = match kind {
+        BytecodeOrderTextKind::Module => chunk(true).names(),
+        BytecodeOrderTextKind::Script => chunk(false).names(),
+        BytecodeOrderTextKind::Builtin => bytecode_order::Named::InternalModule(text).names(),
         // `text` is the specifier of one of this executable's internal modules, which are all ASCII.
-        b"internal" => {
+        BytecodeOrderTextKind::Internal => {
             let builtins = bun_exe_format::builtins::Builtins::parse(
                 crate::cached_bytecode::__bun_jsc_host_builtins(),
             )
             .ok();
             let Some(module) = builtins
                 .as_ref()
-                .and_then(|builtins| builtins.module(builtins.find(text.slice())?))
+                .and_then(|builtins| builtins.module(builtins.find(text)?))
             else {
-                return Ok(crate::JSValue::UNDEFINED);
+                return BytecodeOrderNames::Unknown;
             };
             bytecode_order::Named::InternalModule(module.source).names()
         }
-        _ => {
-            return Err(global.throw(format_args!(
-                "expected \"module\", \"script\", \"builtin\" or \"internal\""
-            )));
-        }
     };
     let Some(names) = names else {
-        return Ok(crate::JSValue::NULL);
+        return BytecodeOrderNames::Unnamed;
     };
     let mut lines = Vec::new();
     bytecode_order::write_names(&mut lines, &names);
-    crate::bun_string_jsc::create_utf8_for_js(global, &lines)
+    BytecodeOrderNames::Lines(lines)
 }

@@ -27,7 +27,7 @@ impl NoExtraNonNullAssertion {
             ExprKind::NonNull(_) => true,
             _ => false,
         };
-        // `(a?.b!)!`: there is a `ChainExpression` between the two.
+        // `(a?.b!)!` has a `ChainExpression` between the two.
         if !is_extra || e.is_chain_root() {
             return;
         }

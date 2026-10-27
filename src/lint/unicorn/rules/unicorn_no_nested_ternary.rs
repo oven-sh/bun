@@ -19,18 +19,18 @@ impl Rule for NoNestedTernary {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let conditional_around = |it: Expr<'a>| it.parent().as_expr().filter(|parent| parent.tag() == ExprTag::Cond);
-        let Some(parent) = conditional_around(e) else {
+        let parent_conditional = |it: Expr<'a>| it.parent().as_expr().filter(|parent| parent.tag() == ExprTag::Cond);
+        let Some(parent) = parent_conditional(e) else {
             return;
         };
         let Some((test, yes, no)) = e.as_cond() else {
             return;
         };
-        // The innermost is what is reported.
+        // Only the innermost one is reported.
         if [test, yes, no].into_iter().any(|it| get_inner_expression(it).tag() == ExprTag::Cond) {
             return;
         }
-        if conditional_around(parent).is_some() {
+        if parent_conditional(parent).is_some() {
             cx.report(e, DEEPLY_NESTED_TERNARY);
         } else if !e.is_parenthesized() {
             cx.report(e, UNPARENTHESIZED_NESTED_TERNARY).fix(|fixer| fixer.replace(e, concat(&[b"(", e.text(), b")"])));

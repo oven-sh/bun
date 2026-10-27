@@ -75,7 +75,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
       - name: Install Dependencies
         run: bun install
       - name: Sign Release
@@ -104,7 +104,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -135,7 +135,7 @@ jobs:
         if: ${{ env.BUN_VERSION != 'canary' }}
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
       - name: Setup Bun
         if: ${{ env.BUN_VERSION == 'canary' }}
         uses: ./.github/actions/setup-bun
@@ -189,7 +189,7 @@ jobs:
       - name: Setup Bun
         uses: ./bun/.github/actions/setup-bun
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
       - id: bun-version
         run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
       - name: Update bun-types version in package.json
@@ -304,7 +304,7 @@ jobs:
       - name: Setup Ruby
         uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1
         with:
-          ruby-version: "2.6"
+          ruby-version: "3.4"
       - name: Update Tap
         run: ruby scripts/release.rb "$BUN_VERSION"
       - name: Commit Tap
@@ -333,7 +333,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
       - name: Install Dependencies
         run: bun install
       - name: Release

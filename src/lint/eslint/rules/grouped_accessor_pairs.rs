@@ -24,10 +24,9 @@ const INVALID_ORDER: Message = Message::new(
     "Expected {{ latterName }} to be before {{ formerName }}.",
 );
 
-/// A getter or a setter.
 #[derive(Copy, Clone)]
 struct Accessor<'a> {
-    /// Among all that is in the object literal, the class or the type.
+    /// Its index among all the members of the object literal, class or type.
     index: usize,
     is_getter: bool,
     key: Key<'a>,
@@ -44,17 +43,16 @@ impl<'a> Accessor<'a> {
         }
     }
 
-    fn of_member(index: usize, member: Member<'a>) -> Option<Self> {
-        accessor_pairs::Accessor::of_member(member).map(|it| Accessor::at(index, it))
+    fn from_member(index: usize, member: Member<'a>) -> Option<Self> {
+        accessor_pairs::Accessor::from_member(member).map(|it| Accessor::at(index, it))
     }
 
-    fn of_prop(index: usize, prop: Prop<'a>) -> Option<Self> {
-        accessor_pairs::Accessor::of_prop(prop).map(|it| Accessor::at(index, it))
+    fn from_prop(index: usize, prop: Prop<'a>) -> Option<Self> {
+        accessor_pairs::Accessor::from_prop(prop).map(|it| Accessor::at(index, it))
     }
 }
 
-/// ESLint's `areEqualKeys`: the same name if both are known without evaluating anything, the same
-/// tokens if neither is.
+/// ESLint's `areEqualKeys`: the same static name, or the same tokens if neither name is static.
 fn are_equal_keys<'a>(file: &'a File<'a>, left: Key<'a>, right: Key<'a>) -> bool {
     match (left.kind(), right.kind()) {
         (KeyKind::Private(left), KeyKind::Private(right)) => return left == right,
@@ -69,7 +67,7 @@ fn are_equal_keys<'a>(file: &'a File<'a>, left: Key<'a>, right: Key<'a>) -> bool
 }
 
 impl GroupedAccessorPairs {
-    /// ESLint's `checkList`, for the one setter `func` of the list.
+    /// ESLint's `checkList`, for `func`, one setter in the list.
     fn check_list<'a>(&self, func: Func<'a>, accessors: &mut dyn Iterator<Item = Accessor<'a>>, cx: &Cx<'a, Self>) {
         let all: SmallVec<[Accessor<'a>; 8]> = accessors.collect();
         let Some(setter) = all.iter().find(|it| it.func == func) else {
@@ -83,7 +81,7 @@ impl GroupedAccessorPairs {
         }
     }
 
-    /// `getter`, and the only other accessor of that name.
+    /// Checks `getter` and `setter`, the only two accessors with that name.
     fn check_pair<'a>(&self, getter: Accessor<'a>, setter: Accessor<'a>, cx: &Cx<'a, Self>) {
         if setter.is_getter || !getter.is_getter {
             return;
@@ -97,20 +95,20 @@ impl GroupedAccessorPairs {
             Order::SetBeforeGet => !is_getter_first,
             Order::Any => true,
         };
-        // oxlint points at the getter.
+        // oxlint reports at the getter.
         let at = if is_oxlint { getter.func } else { latter.func };
         let head = ast_utils::get_function_head_loc(at);
-        // For oxlint it ends with the key: before the `]`.
+        // For oxlint the span ends with the key, before the `]`.
         let end = if is_oxlint { getter.key.inner_span(cx.file()).end } else { head.end };
-        // oxlint says both of a pair that is neither grouped nor in order.
-        let says_order = !is_in_order && (is_grouped || is_oxlint);
-        for (is_said, message) in [(!is_grouped, NOT_GROUPED), (says_order, INVALID_ORDER)] {
-            // Of a pair that is not grouped oxlint names the getter first.
+        // oxlint reports both problems for a pair that's neither grouped nor in order.
+        let reports_order = !is_in_order && (is_grouped || is_oxlint);
+        for (is_reported, message) in [(!is_grouped, NOT_GROUPED), (reports_order, INVALID_ORDER)] {
+            // For a pair that isn't grouped, oxlint's message mentions the getter first.
             let (first, second) = match is_oxlint && message.id == NOT_GROUPED.id {
                 true => (getter, setter),
                 false => (former, latter),
             };
-            if is_said {
+            if is_reported {
                 cx.report(Span::new(head.start, end), message)
                     .data("formerName", ast_utils::get_function_name_with_kind(first.func))
                     .data("latterName", ast_utils::get_function_name_with_kind(second.func))
@@ -131,7 +129,7 @@ impl GroupedAccessorPairs {
     fn check_signatures<'a>(&self, func: Func<'a>, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
         self.check_list(
             func,
-            &mut members.iter().enumerate().filter_map(|(index, member)| Accessor::of_member(index, member)),
+            &mut members.iter().enumerate().filter_map(|(index, member)| Accessor::from_member(index, member)),
             cx,
         );
     }
@@ -153,7 +151,7 @@ impl Rule for GroupedAccessorPairs {
         }
     }
 
-    /// A pair has one setter.
+    /// Only setters are visited, because a pair has exactly one.
     #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if func.kind() == FnKind::Setter {
@@ -173,7 +171,7 @@ impl GroupedAccessorPairs {
                 {
                     self.check_list(
                         func,
-                        &mut props.iter().enumerate().filter_map(|(index, prop)| Accessor::of_prop(index, prop)),
+                        &mut props.iter().enumerate().filter_map(|(index, prop)| Accessor::from_prop(index, prop)),
                         cx,
                     );
                 }
@@ -181,11 +179,11 @@ impl GroupedAccessorPairs {
             Node::Member(member) => match member.parent() {
                 Node::Class(class) => {
                     let is_static = member.is_static();
-                    // An abstract accessor is not a `MethodDefinition`.
+                    // An abstract accessor isn't a `MethodDefinition`.
                     let mut accessors = class.members().iter().enumerate().filter_map(move |(index, member)| {
                         let flags = member.flags();
                         (flags.contains(Flags::STATIC) == is_static && !flags.contains(Flags::ABSTRACT))
-                            .then(|| Accessor::of_member(index, member))
+                            .then(|| Accessor::from_member(index, member))
                             .flatten()
                     });
                     self.check_list(func, &mut accessors, cx);

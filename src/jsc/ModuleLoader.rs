@@ -24,7 +24,7 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 #[derive(Default)]
 pub struct ModuleLoader {
     pub transpile_source_code_arena: Option<Box<ArenaAllocator>>,
-    pub eval_source: Option<Box<bun_ast::Source>>,
+    pub eval_source: Option<Box<bun_ast::Source<'static>>>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
     pub interactive_eval_script: Option<Box<[u8]>>,
 }
@@ -118,15 +118,15 @@ pub struct TranspileArgs<'a> {
     pub referrer: &'a [u8],
     pub input_specifier: &'a bun_core::String,
     pub log: *mut bun_ast::Log,
-    pub virtual_source: Option<&'a bun_ast::Source>,
+    pub virtual_source: Option<&'a bun_ast::Source<'a>>,
     pub global_object: &'a JSGlobalObject,
     pub flags: FetchFlags,
     /// Raw so the `.wasm` re-entry can mutate `loader` and recurse.
-    pub extra: *mut TranspileExtra,
+    pub extra: *mut TranspileExtra<'a>,
 }
 
-pub struct TranspileExtra {
-    pub path: bun_resolver::fs::Path<'static>,
+pub struct TranspileExtra<'a> {
+    pub path: bun_resolver::fs::Path<'a>,
     pub loader: bun_ast::Loader,
     pub module_type: bun_bundler::options::ModuleType,
     /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null.
@@ -310,8 +310,8 @@ unsafe extern "C" fn Bun__runVirtualModule(
     };
 
     match global.run_on_load_plugins(
-        &bun_core::String::from_bytes(namespace),
-        &bun_core::String::from_bytes(after_namespace),
+        &bun_core::StringView::from_bytes(namespace),
+        &bun_core::StringView::from_bytes(after_namespace),
     ) {
         Ok(Some(v)) => v,
         Ok(None) | Err(_) => JSValue::ZERO,

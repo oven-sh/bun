@@ -21,11 +21,12 @@ struct Pass<'a> {
     groups: &'a [Vec<PackageID>],
     group_of: &'a [u32],
     pinned: &'a DynamicBitSet,
-    /// Versions no edge may move onto; see `dedupe_lockfile`.
+    /// Versions that no dependency may move onto. See `dedupe_lockfile`.
     closed: &'a DynamicBitSet,
-    /// `collapse_appended`: edges onto loaded packages (ids below) and root/workspace rows stay.
+    /// For `collapse_appended`: dependencies on loaded packages (ids below this) and the
+    /// dependencies of the root and workspaces don't move.
     frozen_below: Option<PackageID>,
-    /// Per group: each edge with the package that owns it.
+    /// For each group, every dependency with the package that owns it.
     edges: Vec<Vec<(DependencyID, PackageID)>>,
     candidates: Vec<PackageID>,
     edge_count: usize,
@@ -143,12 +144,13 @@ impl<'a> Pass<'a> {
         (0..n).find(|&c| self.survivors.is_set(c) && self.sat.is_set(row + c))
     }
 
-    // `collapse_appended`: a bundled edge neither votes nor holds its target.
+    // For `collapse_appended`: a bundled dependency doesn't vote and doesn't keep its target.
     fn counts(&self, dep: &Dependency) -> bool {
         self.frozen_below.is_none() || !dep.behavior.is_bundled()
     }
 
-    // Like `placement`, but a version that stays whatever else resolved (`required`) is first.
+    // Like `placement`, but prefers a version that stays no matter what else is resolved
+    // (`required`).
     fn anchored_placement(&self, e: usize) -> Option<usize> {
         let n = self.candidates.len();
         let row = e * n;
@@ -280,7 +282,8 @@ impl<'a> Pass<'a> {
                                 can_move |= c != cur_c;
                             }
                         }
-                        // No version in range: an unmet peer goes along (`existing_peer_target`).
+                        // No version is in range. An unmet peer follows the others (see
+                        // `installed_peer_target`).
                         if !self.movable.is_set(e) && dep.behavior.is_peer() {
                             self.movable.set(e);
                             can_move = true;
@@ -741,17 +744,12 @@ fn version_under(
     dep: &Dependency,
     rule: Option<OverrideRule<'_>>,
 ) -> Option<dependency::Version> {
-    let mut version = rule.map_or_else(|| dep.version.clone(), |rule| rule.version().clone());
-    if version.tag == DependencyVersionTag::Catalog {
-        version = lockfile
-            .catalogs
-            .get(lockfile, *version.catalog(), dep.name)?
-            .version;
-    }
-    Some(version)
+    // A rule's `catalog:` names the catalog entry of its key, as in the resolver.
+    lockfile.resolve_catalog_dependency(rule.map_or(dep, OverrideRule::dep))
 }
 
-// `collapse_appended` skips bundled edges: sharing what ships in a tarball costs a download.
+// `collapse_appended` skips bundled dependencies, because sharing a package that ships in a tarball
+// would cost a download.
 fn reachable(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
@@ -1031,7 +1029,8 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         .set(Enable::FORCE_SAVE_LOCKFILE, true);
 }
 
-/// After resolution: the versions appended this session, onto the fewest that satisfy their edges.
+/// Runs after resolution. Collapses the versions that were appended in this session onto the fewest
+/// versions that satisfy their dependents.
 pub fn collapse_appended(manager: &mut PackageManager) {
     let lockfile = &mut *manager.lockfile;
     let frozen_below = lockfile.loaded_package_count;

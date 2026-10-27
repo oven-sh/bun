@@ -8,7 +8,7 @@ const UNEXPECTED: Message = Message::new(
     "A regular expression literal can be confused with '/='.",
 );
 
-/// oxlint says nothing about `/=+$/`: there the pattern starts with what is repeated, not with a character.
+/// oxlint doesn't report `/=+$/`, where the pattern starts with a quantified term instead of a character.
 fn oxlint_has_quantifier_at(text: &[u8], at: usize) -> bool {
     match text.get(at) {
         Some(b'*' | b'+' | b'?') => true,

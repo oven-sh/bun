@@ -1,104 +1,88 @@
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, StringOrJsBytes};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
-use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsClass, JsResult, StringJsc};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{JSGlobalObject, JSType, JSValue, JsClass as _};
 
-use crate::generated_bindgen::crypto::UUIDEncoding;
+use crate::generated_bindgen::crypto::{EncodedUUID, UUIDEncodingOrTimestamp, UUIDTimestamp};
 use crate::node::Encoding;
 
-// `.classes.ts`-backed type: the C++ JSCell wrapper stays generated C++.
-// This struct is the `m_ctx` payload. `toJS`/`fromJS`/`fromJSDirect` are
-// provided by the attribute macro — do not hand-port the `pub const js = jsc.Codegen.JSCrypto`
-// alias block.
-#[bun_jsc::JsClass]
-#[derive(Default)]
-pub(crate) struct Crypto {}
+pub(crate) struct Crypto;
 
 impl Crypto {
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn timing_safe_equal(
+    pub(crate) fn get_random_values<'a>(
         &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        crate::node::crypto::timing_safe_equal(global, callframe)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_random_values(
-        &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        if arguments.is_empty() {
-            return Err(global.throw_dom_exception(
-                bun_jsc::DOMExceptionCode::TypeMismatchError,
-                format_args!("The data argument must be an integer-type TypedArray"),
-            ));
-        }
-
-        let Some(mut array_buffer) = arguments[0].as_array_buffer(global) else {
-            return Err(global.throw_dom_exception(
-                bun_jsc::DOMExceptionCode::TypeMismatchError,
-                format_args!("The data argument must be an integer-type TypedArray"),
-            ));
-        };
-
+        cx: &mut JsScope<'a>,
+        array: JsLocal<'a>,
+    ) -> bindgen::Result<'a, JsLocal<'a>> {
+        let global = cx.global();
         // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only
         // integer-typed views. This is an allow-list: DataView, ArrayBuffer and SharedArrayBuffer
-        // all pass `as_array_buffer` above but must still raise TypeMismatchError.
-        if !matches!(
-            arguments[0].js_type(),
-            JSType::Int8Array
-                | JSType::Uint8Array
-                | JSType::Uint8ClampedArray
-                | JSType::Int16Array
-                | JSType::Uint16Array
-                | JSType::Int32Array
-                | JSType::Uint32Array
-                | JSType::BigInt64Array
-                | JSType::BigUint64Array
-        ) {
-            return Err(global.throw_dom_exception(
-                bun_jsc::DOMExceptionCode::TypeMismatchError,
-                format_args!("The data argument must be an integer-type TypedArray"),
-            ));
-        }
+        // all pass `as_array_buffer` but must still raise TypeMismatchError.
+        let array_buffer = array.to_js().as_array_buffer(global).filter(|_| {
+            matches!(
+                array.to_js().js_type(),
+                JSType::Int8Array
+                    | JSType::Uint8Array
+                    | JSType::Uint8ClampedArray
+                    | JSType::Int16Array
+                    | JSType::Uint16Array
+                    | JSType::Int32Array
+                    | JSType::Uint32Array
+                    | JSType::BigInt64Array
+                    | JSType::BigUint64Array
+            )
+        });
+        let Some(mut array_buffer) = array_buffer else {
+            return Err(global
+                .throw_dom_exception(
+                    bun_jsc::DOMExceptionCode::TypeMismatchError,
+                    format_args!("The data argument must be an integer-type TypedArray"),
+                )
+                .into());
+        };
 
-        let slice = array_buffer.byte_slice_mut();
+        random_data(global, array_buffer.byte_slice_mut());
 
-        random_data(global, slice);
-
-        Ok(arguments[0])
+        Ok(array)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn random_uuid(
-        &self,
-        global: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn random_uuid(&self) -> BunString {
         let (str, bytes) = BunString::create_uninitialized_latin1(36);
 
-        // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-        let uuid = global.bun_vm().as_mut().rare_data().next_uuid();
+        let uuid = VirtualMachine::get().as_mut().rare_data().next_uuid();
 
         uuid.print(
             (&mut bytes[0..36])
                 .try_into()
                 .expect("infallible: size matches"),
         );
-        str.into_js(global)
+        str
     }
 
-    // `#[JsClass]` emits `CryptoClass__construct` calling this.
-    pub(crate) fn constructor(
-        global: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<*mut Crypto> {
-        Err(global.throw_illegal_constructor())
+    pub(crate) fn timing_safe_equal<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+        buf1: &'a [u8],
+        buf2: &'a [u8],
+    ) -> bindgen::Result<'a, bool> {
+        timing_safe_equal(heap, buf1, buf2)
     }
+}
+
+pub(crate) fn timing_safe_equal<'a>(
+    heap: &JsHeap<'a>,
+    buf1: &[u8],
+    buf2: &[u8],
+) -> bindgen::Result<'a, bool> {
+    if buf1.len() != buf2.len() {
+        return Err(heap.error_with_code(
+            bun_jsc::ErrorCode::CRYPTO_TIMING_SAFE_EQUAL_LENGTH,
+            format_args!("Input buffers must have the same byte length"),
+        ));
+    }
+
+    Ok(bun_boringssl::c::constant_time_eq(buf1, buf2))
 }
 
 fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
@@ -107,7 +91,6 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
         0 => {}
         // 512 bytes or less we reuse from the same cache as UUID generation.
         1..=ENTROPY_CACHE_FAST_PATH_MAX => {
-            // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
             let src = global
                 .bun_vm()
                 .as_mut()
@@ -121,91 +104,68 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
     }
 }
 
-// The #[bun_jsc::host_fn] attribute macro emits the `extern "C"` shim with the
-// correct calling convention and `#[unsafe(no_mangle)]` under the exported name.
-#[bun_jsc::host_fn(export = "Bun__randomUUIDv7")]
-fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_undef::<2>();
+fn encoding_from_label<'a>(heap: &JsHeap<'a>, label: &[u8]) -> bindgen::Result<'a, Encoding> {
+    Encoding::from(label).ok_or_else(|| {
+        heap.error_with_code(
+            bun_jsc::ErrorCode::UNKNOWN_ENCODING,
+            format_args!("Encoding must be one of base64, base64url, hex, or buffer"),
+        )
+    })
+}
 
-    let mut encoding_value: JSValue = JSValue::UNDEFINED;
-
-    let encoding: Encoding = 'brk: {
-        if arguments.len > 0 {
-            if !arguments.ptr[0].is_undefined() {
-                if arguments.ptr[0].is_string() {
-                    encoding_value = arguments.ptr[0];
-                    break 'brk match Encoding::from_js(encoding_value, global)? {
-                        Some(e) => e,
-                        None => {
-                            return Err(global
-                                .err(
-                                    bun_jsc::ErrorCode::UNKNOWN_ENCODING,
-                                    format_args!(
-                                        "Encoding must be one of base64, base64url, hex, or buffer"
-                                    ),
-                                )
-                                .throw());
-                        }
-                    };
-                }
-            }
-        }
-
-        break 'brk Encoding::Hex;
+pub(crate) fn random_uuid_v7<'a>(
+    heap: &JsHeap<'a>,
+    encoding: UUIDEncodingOrTimestamp<'a>,
+    timestamp: Option<UUIDTimestamp>,
+) -> bindgen::Result<'a, EncodedUUID<'a>> {
+    let (encoding, alone) = match encoding {
+        UUIDEncodingOrTimestamp::Label(label) => (
+            encoding_from_label(heap, label)?,
+            Some(UUIDTimestamp::Clock),
+        ),
+        UUIDEncodingOrTimestamp::Clock => (Encoding::Hex, Some(UUIDTimestamp::Clock)),
+        UUIDEncodingOrTimestamp::Time(time) => (Encoding::Hex, Some(UUIDTimestamp::Time(time))),
+        UUIDEncodingOrTimestamp::Ignored(_) => (Encoding::Hex, None),
+    };
+    let Some(timestamp) = timestamp.or(alone) else {
+        return Err(heap.invalid_arguments(format_args!("timestamp must be a number or Date")));
     };
 
-    let (timestamp, timestamp_source): (u64, uuid::TimestampSource) = 'brk: {
-        let timestamp_value: JSValue = if arguments.len > 1 {
-            arguments.ptr[1]
-        } else if arguments.len == 1 && encoding_value.is_undefined() {
-            arguments.ptr[0]
-        } else {
-            JSValue::UNDEFINED
-        };
-
-        if !timestamp_value.is_undefined() {
+    let (timestamp, timestamp_source): (u64, uuid::TimestampSource) = match timestamp {
+        UUIDTimestamp::Time(time) => {
             // UUIDv7's unix_ts_ms field is 48 bits (RFC 9562 §5.7).
             const MAX_TIMESTAMP: i64 = (1i64 << 48) - 1;
-            let range_opts = bun_jsc::RangeErrorOptions {
-                min: 0,
-                max: MAX_TIMESTAMP,
-                field_name: b"timestamp",
-                ..Default::default()
-            };
-            if timestamp_value.is_date() {
-                let date = timestamp_value.get_unix_timestamp();
-                if !date.is_finite() || date < 0.0 || date > MAX_TIMESTAMP as f64 {
-                    return Err(global.throw_range_error(date, range_opts));
-                }
-                break 'brk (date as u64, uuid::TimestampSource::Explicit);
+            if !(0.0..=MAX_TIMESTAMP as f64).contains(&time) {
+                return Err(heap.error_with_code(
+                    bun_jsc::ErrorCode::OUT_OF_RANGE,
+                    format_args!(
+                        "{}",
+                        bun_core::fmt::out_of_range(
+                            time,
+                            bun_jsc::RangeErrorOptions {
+                                min: 0,
+                                max: MAX_TIMESTAMP,
+                                field_name: b"timestamp",
+                                ..Default::default()
+                            },
+                        )
+                    ),
+                ));
             }
-            if timestamp_value.is_number() && timestamp_value.as_number().is_nan() {
-                return Err(global.throw_range_error(f64::NAN, range_opts));
+            if time.floor() != time {
+                return Err(heap.invalid_arguments(format_args!(
+                    "The \"timestamp\" property must be of type integer. Received number"
+                )));
             }
-            break 'brk (
-                u64::try_from(global.validate_integer_range::<i64>(
-                    timestamp_value,
-                    0,
-                    bun_jsc::IntegerRange {
-                        min: 0,
-                        max: i128::from(MAX_TIMESTAMP),
-                        field_name: b"timestamp",
-                        ..Default::default()
-                    },
-                )?)
-                .unwrap(),
-                uuid::TimestampSource::Explicit,
-            );
+            (time as u64, uuid::TimestampSource::Explicit)
         }
-
-        break 'brk (
+        UUIDTimestamp::Clock => (
             u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast"),
             uuid::TimestampSource::Clock,
-        );
+        ),
     };
 
-    // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-    let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(10);
+    let entropy = VirtualMachine::get().as_mut().rare_data().entropy_slice(10);
 
     let uuid = UUID7::init(
         timestamp,
@@ -213,33 +173,33 @@ fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         timestamp_source,
     );
 
-    if encoding == Encoding::Hex {
-        let (str, bytes) = BunString::create_uninitialized_latin1(36);
-        uuid.print(
-            (&mut bytes[0..36])
-                .try_into()
-                .expect("infallible: size matches"),
-        );
-        return str.into_js(global);
+    match encoding {
+        Encoding::Hex => {
+            let (str, bytes) = BunString::create_uninitialized_latin1(36);
+            uuid.print(
+                (&mut bytes[0..36])
+                    .try_into()
+                    .expect("infallible: size matches"),
+            );
+            Ok(EncodedUUID::Text(str))
+        }
+        Encoding::Buffer => Ok(EncodedUUID::Bytes(heap.create_buffer(&uuid.bytes)?)),
+        encoding => Ok(EncodedUUID::Text(crate::webcore::encoding::to_bun_string(
+            &uuid.bytes,
+            encoding,
+        ))),
     }
-
-    encoding.encode_with_max_size(global, 32, &uuid.bytes)
 }
 
 pub(crate) fn random_uuid_v5<'a>(
     heap: &JsHeap<'a>,
     name: &[u8],
     namespace: StringOrJsBytes<'a>,
-    encoding: UUIDEncoding<'a>,
-) -> bindgen::Result<'a, JsLocal<'a>> {
+    encoding: Option<&[u8]>,
+) -> bindgen::Result<'a, EncodedUUID<'a>> {
     let encoding = match encoding {
-        UUIDEncoding::Label(label) => Encoding::from(label).ok_or_else(|| {
-            heap.error_with_code(
-                bun_jsc::ErrorCode::UNKNOWN_ENCODING,
-                format_args!("Encoding must be one of base64, base64url, hex, or buffer"),
-            )
-        })?,
-        UUIDEncoding::Ignored(_) => Encoding::Hex,
+        Some(label) => encoding_from_label(heap, label)?,
+        None => Encoding::Hex,
     };
     let invalid_value = |message: &str| {
         heap.error_with_code(
@@ -276,15 +236,15 @@ pub(crate) fn random_uuid_v5<'a>(
                     .try_into()
                     .expect("infallible: size matches"),
             );
-            bindgen::to_js::string(heap, str)
+            Ok(EncodedUUID::Text(str))
         }
-        Encoding::Buffer => Ok(heap
-            .create_buffer_from_box(Box::from(uuid.bytes))?
-            .as_value()),
-        encoding => bindgen::to_js::string(
-            heap,
-            crate::webcore::encoding::to_bun_string(&uuid.bytes, encoding),
-        ),
+        Encoding::Buffer => Ok(EncodedUUID::Bytes(
+            heap.create_buffer_from_box(Box::from(uuid.bytes))?,
+        )),
+        encoding => Ok(EncodedUUID::Text(crate::webcore::encoding::to_bun_string(
+            &uuid.bytes,
+            encoding,
+        ))),
     }
 }
 
@@ -292,7 +252,5 @@ pub(crate) fn random_uuid_v5<'a>(
 extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::mark_binding!();
 
-    // Box::new aborts on OOM, so an out-of-memory throw arm is unreachable.
-    // `JsClass::to_js` boxes `self` internally and transfers ownership to the JS wrapper.
-    Crypto::default().to_js(global)
+    Crypto.to_js(global)
 }

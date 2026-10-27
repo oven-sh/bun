@@ -3,9 +3,9 @@ use bun_lint::prelude::*;
 
 /// Require `default` cases in `switch` statements.
 pub struct DefaultCase {
-    /// `None`: `/^no default$/iu`
+    /// `None` means `/^no default$/iu`.
     comment_pattern: Option<Regex>,
-    /// The same for oxlint, which ignores the case.
+    /// Same for oxlint, which ignores case.
     oxlint_comment_pattern: Option<Regex>,
 }
 

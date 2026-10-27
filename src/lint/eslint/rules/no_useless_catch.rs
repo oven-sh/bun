@@ -39,7 +39,7 @@ impl Rule for NoUselessCatch {
         if argument.as_ident() != Some(name) {
             return;
         }
-        // oxlint points at the parameter, and does not see through parentheses.
+        // oxlint points at the parameter, and doesn't look through parentheses.
         if cx.language().is_oxlint {
             if !argument.is_parenthesized() {
                 let message = if finalizer.is_some() { UNNECESSARY_CATCH_CLAUSE } else { UNNECESSARY_CATCH };
@@ -50,11 +50,11 @@ impl Rule for NoUselessCatch {
         match stmt.catch_clause_span() {
             Some(clause) if finalizer.is_some() => {
                 cx.report(clause, UNNECESSARY_CATCH_CLAUSE)
-                    .hint("It only throws the error again. Without it, try and finally do the same.");
+                    .hint("It only rethrows. Remove the catch.");
             }
             _ => {
                 cx.report(stmt, UNNECESSARY_CATCH)
-                    .hint("It only throws the error again. Without try and catch, the code does the same.");
+                    .hint("It only rethrows. Remove the try and catch.");
             }
         }
     }

@@ -11,7 +11,7 @@ pub(super) struct FormatOpeningElement<'a> {
     pub(super) jsx: Jsx<'a>,
 }
 
-/// The value of `a="b"`.
+/// The value in `a="b"`.
 fn as_string_literal_attribute_value(attribute: Prop<'_>) -> Option<Expr<'_>> {
     attribute.value().filter(|value| {
         attribute.kind() != PropKind::Spread
@@ -31,13 +31,13 @@ fn has_line_break<'a>(string: Expr<'a>, f: &Formatter<'a>) -> bool {
 /// />
 /// ```
 ///
-/// Prettier on the left: any comment of the name or the type arguments counts. oxfmt on the right.
+/// Prettier is on the left: any comment on the name or the type arguments counts. oxfmt is on the right.
 fn only_comment_after_name_counts(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
 impl<'a> FormatOpeningElement<'a> {
-    /// `<a b /⏎// comment⏎>`. Only for oxfmt: see `handle_comment_after_slash_of_jsx_tag_for_oxfmt`.
+    /// `<a b /⏎// comment⏎>`. oxfmt only: see `handle_comment_after_slash_of_jsx_tag_for_oxfmt`.
     fn comments_after_slash(&self, f: &Formatter<'a>) -> CommentList<'a> {
         (f.comments())
             .of_node(AstNodes::JSXOpeningElement(self.expr))
@@ -110,7 +110,7 @@ impl<'a> Format<'a> for FormatOpeningElement<'a> {
             };
             let mut previous: Option<Prop<'a>> = None;
             for attribute in attributes {
-                // An empty line between two attributes is kept.
+                // Keep an empty line between two attributes.
                 match previous.replace(attribute) {
                     Some(previous)
                         if is_next_line_empty(
@@ -130,7 +130,7 @@ impl<'a> Format<'a> for FormatOpeningElement<'a> {
         match self.compute_layout(f) {
             OpeningElementLayout::Inline => write!(f, [format_open, space(), format_close]),
             OpeningElementLayout::SingleStringAttribute => {
-                // Nothing in the group breaks. After a line break in a fill, it is the group that is measured.
+                // Nothing in the group breaks. It's a group because that's what a fill measures after a line break.
                 write!(
                     f,
                     group(&format_args!(
@@ -191,9 +191,9 @@ impl<'a> Format<'a> for FormatOpeningElement<'a> {
 enum OpeningElementLayout {
     /// `<a />`
     Inline,
-    /// `<a b="c">`: it never breaks.
+    /// `<a b="c">`, which never breaks.
     SingleStringAttribute,
-    /// Each attribute is on its own line if they do not fit on one.
+    /// Each attribute goes on its own line if they don't all fit on one.
     IndentAttributes {
         name_has_comments: bool,
         last_attribute_has_trailing_comments: bool,

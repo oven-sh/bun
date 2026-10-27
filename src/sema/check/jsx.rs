@@ -5,15 +5,15 @@
 //! `instantiateAliasOrInterfaceWithDefaults`, `getStaticTypeOfReferencedJsxConstructor`,
 //! `getNameFromJsxElementAttributesContainer`, `getUninstantiatedJsxSignaturesOfType`,
 //! `getIntrinsicAttributesTypeFromStringLiteralType` and
-//! `createJsxAttributesTypeFromAttributesProperty` of TypeScript 7.0.2's jsx.go.
+//! `createJsxAttributesTypeFromAttributesProperty` in TypeScript 7.0.2's jsx.go.
 
 use super::*;
 use crate::resolve::JsxEmit;
 
-/// The one property of `JSX.ElementAttributesProperty` or `JSX.ElementChildrenAttribute`.
+/// The single property of `JSX.ElementAttributesProperty` or `JSX.ElementChildrenAttribute`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum JsxName {
-    /// There is no such interface.
+    /// There's no such interface.
     Missing,
     /// It has no property.
     Empty,
@@ -38,8 +38,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The `JsxOpeningElement`, `JsxSelfClosingElement` or `JsxOpeningFragment` of the element or
-    /// fragment `e`.
+    /// Returns the `JsxOpeningElement`, `JsxSelfClosingElement` or `JsxOpeningFragment` of the
+    /// element or fragment `e`.
     pub(super) fn jsx_opening_like(&self, file: FileId, e: ExprId) -> Node {
         let hir = self.hir(file);
         let node = hir.node(e);
@@ -49,7 +49,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getJsxType`. `None`: the error type.
+    /// `getJsxType`. `None` is the error type.
     pub(super) fn jsx_type(&mut self, file: FileId, location: Node, name: Atom) -> Option<TypeId> {
         let namespace = self.jsx_namespace_at(file, location)?;
         let type_symbol = self.files().namespace_member(namespace, name)?;
@@ -60,9 +60,10 @@ impl<'p, 's> Checker<'p, 's> {
         (!self.is_error_type(ty)).then_some(ty)
     }
 
-    /// `getSymbol(jsxNamespace.Exports, name, SymbolFlagsType)`: `getJsxLibraryManagedAttributes`,
-    /// `getJsxElementTypeSymbol` and the start of `getNameFromJsxElementAttributesContainer`. That
-    /// table lacks what arrives through `export *`, and an alias found in it stays an alias.
+    /// `getSymbol(jsxNamespace.Exports, name, SymbolFlagsType)`, as in
+    /// `getJsxLibraryManagedAttributes`, `getJsxElementTypeSymbol` and the start of
+    /// `getNameFromJsxElementAttributesContainer`. That table lacks what arrives through
+    /// `export *`, and an alias found in it stays an alias.
     fn jsx_symbol(&mut self, file: FileId, location: Node, name: Atom) -> Option<Sym> {
         let jsx_namespace = self.jsx_namespace_at(file, location)?;
         let symbol = self.files().export(jsx_namespace, name)?;
@@ -88,7 +89,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return Some(self.type_reference(managed_sym, &args));
             }
         }
-        // `ObjectFlagsClassOrInterface`: the declared type of a class or an interface, and no other
+        // `ObjectFlagsClassOrInterface`: a class's or interface's declared type, and no other
         // reference to it.
         let declared_managed_type = self.declared_type_of_jsx_symbol(managed_sym);
         let TypeData::Ref { target, .. } = *self.data(declared_managed_type) else {
@@ -133,7 +134,7 @@ impl<'p, 's> Checker<'p, 's> {
             [] => JsxName::Empty,
             [only] => JsxName::Name(only.name),
             _ => {
-                if let Some(at) = self.place_of_symbol(symbol) {
+                if let Some(at) = self.span_of_symbol(symbol) {
                     self.error_at(at, 2608, &[Arg::Atom(container)]);
                 }
                 JsxName::Missing
@@ -152,7 +153,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.jsx_name_from_container(file, location, known::ElementChildrenAttribute)
     }
 
-    /// `isJsxIntrinsicTagName`, and the name used to look up the element.
+    /// `isJsxIntrinsicTagName`. Returns the name used to look up the element.
     pub(super) fn jsx_intrinsic_tag_name(&self, file: FileId, tag: ExprId) -> Option<Atom> {
         match self.hir(file)[tag].kind {
             ExprKind::String(name) => Some(name),
@@ -181,7 +182,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getUninstantiatedJsxSignaturesOfType`. `None`: unresolved.
+    /// `getUninstantiatedJsxSignaturesOfType`. `None` means unresolved.
     pub(super) fn uninstantiated_jsx_signatures_of_type(
         &mut self,
         file: FileId,
@@ -244,7 +245,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `createSignatureForJSXIntrinsic`: `(props: attributes) => JSX.Element`, the signature that a
-    /// tag that is not a component resolves to.
+    /// tag resolves to if it isn't a component.
     pub(super) fn jsx_intrinsic_signature(
         &mut self,
         file: FileId,
@@ -270,8 +271,8 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `getOrCreateTypeFromSignature` of that. It has no declaration, which makes `isConstructor`
-    /// true.
+    /// `getOrCreateTypeFromSignature` of `jsx_intrinsic_signature`'s result. It has no declaration,
+    /// which makes `isConstructor` true.
     fn jsx_intrinsic_function_type(
         &mut self,
         file: FileId,
@@ -282,8 +283,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.type_of_signature(sig, true)
     }
 
-    /// `getIntrinsicAttributesTypeFromJsxOpeningLikeElement`: the type `JSX.IntrinsicElements`
-    /// declares for the tag `name`.
+    /// `getIntrinsicAttributesTypeFromJsxOpeningLikeElement`. Returns the type
+    /// `JSX.IntrinsicElements` declares for the tag `name`.
     pub(super) fn jsx_intrinsic_attributes(
         &mut self,
         file: FileId,
@@ -294,9 +295,9 @@ impl<'p, 's> Checker<'p, 's> {
         self.type_of_intrinsic_tag_symbol(intrinsic_elements_type, name)
     }
 
-    /// `getIntrinsicTagSymbol`, and the type that
-    /// `getIntrinsicAttributesTypeFromJsxOpeningLikeElement` takes from what it finds.
-    /// `None`: `unknownSymbol`.
+    /// `getIntrinsicTagSymbol`, plus the type that
+    /// `getIntrinsicAttributesTypeFromJsxOpeningLikeElement` takes from what it finds. `None` is
+    /// `unknownSymbol`.
     pub(super) fn type_of_intrinsic_tag_symbol(
         &mut self,
         intrinsic_elements_type: TypeId,
@@ -314,8 +315,7 @@ impl<'p, 's> Checker<'p, 's> {
         Some(index_info.value)
     }
 
-    /// `TypeFlagsStringLiteral`: the value of a string literal type, including that of an enum
-    /// member.
+    /// `TypeFlagsStringLiteral`. Returns a string literal type's value, including an enum member's.
     pub(super) fn string_literal_value(&self, ty: TypeId) -> Option<Atom> {
         match *self.data(ty) {
             TypeData::StringLit { value, .. }
@@ -327,9 +327,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getIntrinsicAttributesTypeFromStringLiteralType`: the attributes accepted by a tag that is
-    /// a value whose type is the string literal `name`.
-    /// `None`: `JSX.IntrinsicElements` has no entry for it.
+    /// `getIntrinsicAttributesTypeFromStringLiteralType`. Returns the attributes accepted by a tag
+    /// that's a value whose type is the string literal `name`, or `None` if `JSX.IntrinsicElements`
+    /// has no entry for it.
     fn jsx_attributes_of_literal_tag(
         &mut self,
         file: FileId,
@@ -348,8 +348,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.index_type_of_type(intrinsic_elements_type, TypeId::STRING)
     }
 
-    /// `getJSXFragmentType`: the type of the component that the fragments of `file` are created
-    /// with. The names are resolved from `e`, the fragment that asks first.
+    /// `getJSXFragmentType`. Returns the type of the component that `file`'s fragments are created
+    /// with. The names are resolved from `e`, the first fragment that requests it.
     pub(super) fn jsx_fragment_type(&mut self, file: FileId, e: ExprId) -> TypeId {
         if let Some(known) = (self.p.jsx_fragment_types).get(&self.task, &file) {
             return known;
@@ -360,7 +360,7 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
-    /// `None`: `errorType`.
+    /// `None` is `errorType`.
     fn resolve_jsx_fragment_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (hir, files) = (self.hir(file), self.files());
         let (options, atoms) = (&files.options, self.atoms());
@@ -371,7 +371,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(TypeId::ANY);
         }
         let fragment = atoms.intern(b"Fragment");
-        // `getJsxNamespaceContainerForImplicitImport`, or else the name as it is in scope.
+        // `getJsxNamespaceContainerForImplicitImport`, or else the name as it's in scope.
         let runtime = files
             .jsx_runtime(file)
             .and_then(|spec| files.module_of_specifier(file, spec));
@@ -459,15 +459,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getJsxPropsTypeForSignatureFromMember`: the property `name` of the instance type of `sig`.
-    /// `None`: it has none.
+    /// `getJsxPropsTypeForSignatureFromMember`. Returns the property `name` of `sig`'s instance
+    /// type, or `None` if it has none.
     fn jsx_props_from_member(&mut self, sig: SigId, name: Atom) -> Option<TypeId> {
-        // For a signature that represents those of the members of a union, the instance type of
-        // each of them is considered.
-        let alone = [sig];
+        // If the signature represents the signatures of a union's members, each member's instance
+        // type is considered.
+        let single_sig = [sig];
         let parts: &[SigId] = match self.types().sig(sig) {
             SigData::Synth { of, .. } if !of.is_empty() => &of[..],
-            _ => &alone[..],
+            _ => &single_sig[..],
         };
         let mut results = Vec::with_capacity(parts.len());
         for &part in parts {
@@ -475,7 +475,7 @@ impl<'p, 's> Checker<'p, 's> {
             if self.is_any(instance) {
                 return Some(instance);
             }
-            // `getTypeOfPropertyOfType`: an index signature is not a property.
+            // `getTypeOfPropertyOfType`: an index signature isn't a property.
             let apparent = self.apparent_type(instance);
             if !self.is_union(apparent) && self.prop_ref(apparent, name).is_none() {
                 return None;
@@ -531,9 +531,9 @@ impl<'p, 's> Checker<'p, 's> {
         let mut parts = Vec::with_capacity(3);
         parts.extend(self.jsx_type(file, context, known::IntrinsicAttributes));
         if let Some(declared) = self.jsx_type(file, context, known::IntrinsicClassAttributes) {
-            // The type parameters are those of the symbol of the type: those of the aliased type,
-            // and an alias's own stay uninstantiated.
-            let of_instance = match *self.data(declared) {
+            // The type parameters are those of the type's symbol, so the aliased type's. An alias's
+            // own stay uninstantiated.
+            let class_attributes = match *self.data(declared) {
                 TypeData::Ref { target, .. } => {
                     let params = self.type_params_of_symbol(target);
                     if params.is_empty() {
@@ -548,7 +548,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => declared,
             };
-            parts.push(of_instance);
+            parts.push(class_attributes);
         }
         parts.push(attributes);
         // `intersectTypes`
@@ -558,7 +558,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `checkJsxChildren`: the children that count, and the type of each.
+    /// `checkJsxChildren`. Returns the children that count, and the type of each.
     pub(super) fn jsx_child_types(&mut self, file: FileId, e: ExprId) -> Vec<(ExprId, TypeId)> {
         let hir = self.hir(file);
         let ExprKind::Jsx(j) = hir[e].kind else {
@@ -567,13 +567,14 @@ impl<'p, 's> Checker<'p, 's> {
         let mut types = Vec::new();
         for child in hir.ids(hir[j].children) {
             match hir[child].kind {
-                // `{}` is nothing.
+                // `{}` doesn't count.
                 ExprKind::Missing => {}
-                // Text is `string`, and so is a string literal in braces once it is widened.
+                // Text is `string`, and so is a string literal in braces once it's widened.
                 ExprKind::String(_) => types.push((child, TypeId::STRING)),
                 _ => {
-                    // `checkExpressionForMutableLocation` gets the `JsxExpression`, and `getContextualType` has no case for a child of
-                    // an element. A fresh literal type is widened even if the children property expects a literal.
+                    // `checkExpressionForMutableLocation` gets the `JsxExpression`, and
+                    // `getContextualType` has no case for a child of an element. A fresh literal
+                    // type is widened even if the children property expects a literal.
                     let ty = self.type_of_expr(file, child);
                     types.push((child, self.widen_literal_for_context(ty, None)));
                 }
@@ -587,7 +588,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_tuple(ty) {
             return true;
         }
-        let zero = self.atoms().intern(b"0");
+        let zero = self.number_name(0.0);
         if self.get_property_of_type(ty, zero).is_some() {
             return true;
         }
@@ -595,11 +596,12 @@ impl<'p, 's> Checker<'p, 's> {
             && self
                 .type_of_property_of_type(ty, known::length)
                 .is_some_and(|length_type| {
-                    self.every_type(length_type, |c, t| c.flags(t) & tf::NUMBER_LITERAL != 0)
+                    self.is_every_type_of_kind(length_type, tf::NUMBER_LITERAL)
                 })
     }
 
-    /// `createJsxAttributesTypeFromAttributesProperty`: the attributes and the children of `e` as one object.
+    /// `createJsxAttributesTypeFromAttributesProperty`. Returns `e`'s attributes and children as
+    /// one object.
     pub(super) fn jsx_attributes_type(&mut self, file: FileId, e: ExprId) -> TypeId {
         let hir = self.hir(file);
         let ExprKind::Jsx(j) = hir[e].kind else {
@@ -623,7 +625,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let mut spread: Option<TypeId> = None;
         let mut has_spread_any_type = false;
-        // `typeToIntersect`: the types that cannot be spread.
+        // `typeToIntersect`: the types that can't be spread.
         let mut not_spread: Vec<TypeId> = Vec::new();
         let mut pending = Shape {
             literal: run,
@@ -658,8 +660,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 if self.is_valid_spread_type(ty) {
                     spread = Some(self.spread(spread.unwrap_or(empty), ty));
-                    // `checkSpreadPropOverrides`: `getPropertiesOfType` creates the properties of a
-                    // union, which resolves the type that each member has for them.
+                    // `checkSpreadPropOverrides`. `getPropertiesOfType` creates a union's
+                    // properties, which resolves each member's type for them.
                     if self.p.files.options.strict_null_checks {
                         self.reduced_apparent_type_as_object(ty);
                     }
@@ -682,8 +684,8 @@ impl<'p, 's> Checker<'p, 's> {
                 mapper: MapperId::IDENTITY,
                 name_type: TypeId::UNRESOLVED,
             };
-            // Attributes of one name are declarations of one symbol, and `compareSymbols` orders
-            // by the first declaration.
+            // Attributes with the same name are declarations of one symbol, and `compareSymbols`
+            // orders by the first declaration.
             match pending.props.iter_mut().find(|x| x.name == name) {
                 Some(earlier) => *earlier = attribute,
                 None => pending.props.push(attribute),
@@ -700,7 +702,8 @@ impl<'p, 's> Checker<'p, 's> {
                 only
             } else {
                 let types: Vec<TypeId> = children.iter().map(|c| c.1).collect();
-                // `getApparentTypeOfContextualType`: the attributes narrow a union of props types first.
+                // `getApparentTypeOfContextualType`: the attributes narrow a union of props types
+                // first.
                 let expected = self
                     .apparent_type_of_contextual_type_of_jsx_attributes(
                         file,
@@ -724,8 +727,8 @@ impl<'p, 's> Checker<'p, 's> {
             };
             // The synthesized declaration of the children has the attributes as its parent, so
             // `shouldCheckAsExcessProperty` accepts it. The check only runs on a fresh type, and
-            // only `createJsxAttributesType` sets `ObjectFlagsFreshLiteral`: it needs an explicit
-            // attribute.
+            // only `createJsxAttributesType` sets `ObjectFlagsFreshLiteral`, which requires an
+            // explicit attribute.
             let has_source_attribute = jsx.attrs.iter().any(|p| hir[p].kind != PropKind::Spread);
             let flags = if has_source_attribute {
                 PropFlags::JSX_CHILDREN
@@ -758,7 +761,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.intersection(&not_spread)
     }
 
-    /// `ty`, the result of a spread into the attributes of an element, marked as JSX attributes.
+    /// Marks `ty`, the result of a spread into an element's attributes, as JSX attributes.
     fn as_jsx_attributes(&mut self, ty: TypeId) -> TypeId {
         match self.data(ty) {
             TypeData::Synth(shape)
@@ -772,7 +775,7 @@ impl<'p, 's> Checker<'p, 's> {
                     ..(**shape).clone_in(self.arena)
                 })
             }
-            // A generic type is not spread but intersected with the rest.
+            // A generic type isn't spread but intersected with the rest.
             TypeData::Intersection(parts) => {
                 let parts: Vec<TypeId> = parts
                     .iter()

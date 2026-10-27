@@ -225,8 +225,8 @@ impl<'a> BundleV2<'a> {
         // SAFETY: BACKREF — heap-owned by hot_reloader / DevServer (set via
         // `install_bun_watcher`), live for the process under `--watch`. The
         // watcher storage is disjoint from `self`; `&mut self` excludes any
-        // other safe projection from this `BundleV2`, and `add_file` is only
-        // ever driven from the single bundle thread (`thread_lock`-asserted).
+        // other safe projection from this `BundleV2`, and this projection is
+        // only used on the single bundle thread (`thread_lock`-asserted).
         self.bun_watcher.map(|mut p| unsafe { p.as_mut() })
     }
 
@@ -5822,6 +5822,20 @@ pub mod bv2_impl {
             }
         }
 
+        /// See `Watcher::add_file_before_read`. Runs on parse worker threads.
+        pub(crate) fn watch_file_before_read(&self, path: &Fs::Path) {
+            let Some(mut bun_watcher) = self.bun_watcher else {
+                return;
+            };
+            if !self.should_add_watcher_plugin(path.namespace, path.text) {
+                return;
+            }
+            // SAFETY: BACKREF — see `bun_watcher_mut`. This runs on parse
+            // worker threads; `Watcher` serializes watchlist writes with its
+            // own mutex, as it does for the runtime transpiler's workers.
+            let _ = unsafe { bun_watcher.as_mut() }.add_file_before_read(path.text);
+        }
+
         /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
         pub fn start_from_bake_dev_server(
             &mut self,
@@ -7648,7 +7662,7 @@ pub mod bv2_impl {
                 }
             }
 
-            // To minimize contention, watchers are appended on the bundle thread.
+            // The parse worker already watches the file (`watch_file_before_read`); settle who owns the read fd.
             if this.bun_watcher.is_some() {
                 if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
                     let source_index = parse_result.value.source_index();

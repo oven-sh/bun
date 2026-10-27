@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, emptyProcessMaxRSS, gcTick, isASAN, isDebug, rss, runFixtureMaxRSS, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -484,6 +484,31 @@ describe("malformed PNG structure", () => {
     // A profile of an ordinary size is fine under any limit.
     expect(await new Bun.Image(withProfile(1 << 20), { maxPixels: 64 }).metadata()).toMatchObject({ format: "png" });
     await new Bun.Image(withProfile(1 << 20), { maxPixels: 64 }).png().bytes();
+  });
+
+  test.each([
+    ["an interlaced", 1, 2048],
+    ["a plain", 0, 16383],
+  ])("%s image takes memory as its rows come, not when its header does", async (_, interlace, firstRowPixels) => {
+    // The largest image the default maxPixels allows, 1 GiB of RGBA, and its first row.
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(16383, 0);
+    ihdr.writeUInt32BE(16383, 4);
+    ihdr.set([1, 0, 0, 0, interlace], 8);
+    const png = Buffer.concat([
+      tinyPng.subarray(0, 8),
+      pngChunk("IHDR", ihdr),
+      pngChunk("IDAT", zlib.deflateSync(Buffer.alloc(1 + Math.ceil(firstRowPixels / 8)))),
+    ]);
+    const fixture = `
+      const png = Buffer.from("${png.toString("base64")}", "base64");
+      console.log(JSON.stringify(await new Bun.Image(png).png().bytes().then(() => "decoded", e => e.code)));
+    `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, "ERR_IMAGE_DECODE_FAILED"),
+      emptyProcessMaxRSS(),
+    ]);
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 64);
   });
 });
 

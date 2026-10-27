@@ -240,14 +240,19 @@ describe("chunks before the image", () => {
   });
 
   test("a profile that inflates to more than the limit costs the image too", async () => {
-    const file = png(rgba[0], iccp(Buffer.alloc(9 << 20, "p").toString()), rgba[1], iend);
-    expect((await decode(file)).profile?.length).toBe(9 << 20);
-    await expect(decode(file, { maxPixels: 64 })).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
+    const file = (size: number) => png(rgba[0], iccp(Buffer.alloc(size, "p").toString()), rgba[1], iend);
+    // 8 MiB is the least the limit can be.
+    expect((await decode(file(8 << 20), { maxPixels: 64 })).profile?.length).toBe(8 << 20);
+    await expect(decode(file((8 << 20) + 1), { maxPixels: 64 })).rejects.toMatchObject({
+      code: "ERR_IMAGE_DECODE_FAILED",
+    });
+    expect((await decode(file((8 << 20) + 1))).profile?.length).toBe((8 << 20) + 1);
   });
 
-  test("compressed text may inflate to as much as a profile may", async () => {
-    const big = zlib.deflateSync(Buffer.alloc(9 << 20));
-    const small = zlib.deflateSync(Buffer.alloc(1 << 20));
+  test("so does compressed text, of which nothing is kept", async () => {
+    // libspng's buffer only ever doubled, and its terminator took a byte of the 8 MiB.
+    const big = zlib.deflateSync(Buffer.alloc((4 << 20) + 1));
+    const small = zlib.deflateSync(Buffer.alloc(4 << 20));
     for (const before of ["zTXt key\0\0", "iTXt key\0\x01\0en\0word\0"]) {
       const text = (stream: Buffer) =>
         png(rgba[0], chunk(before.slice(0, 4), Buffer.concat([Buffer.from(before.slice(5)), stream])), rgba[1], iend);

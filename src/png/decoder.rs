@@ -46,7 +46,8 @@ impl<'a> Decoder<'a> {
         self.header
     }
 
-    /// `max_inflated` bounds what an iCCP, zTXt or iTXt chunk may inflate to. One that needs more fails the decode.
+    /// `max_inflated` bounds what an iCCP, zTXt or iTXt chunk may inflate to, rounded down as `inflate` says.
+    /// One that needs more fails the decode.
     pub fn decode(self, max_inflated: usize) -> Result<Image> {
         let Self { header, mut reader } = self;
         let mut chunks = Chunks::new(header, max_inflated);
@@ -267,7 +268,7 @@ enum Keep {
     No,
 }
 
-/// Inflates the zlib stream of an ancillary chunk. `None`: the stream is damaged, cut short or empty.
+/// Inflates the zlib stream of an ancillary chunk. `None`: the stream is damaged, cut short, empty or not kept.
 ///
 /// libspng inflated into a buffer of 8 KiB that it doubled when full, unless that made it larger than `max`.
 /// So the limit on the output is the largest `8 KiB << n` that `max` allows.
@@ -311,7 +312,7 @@ fn inflate(mut input: &[u8], max: usize, keep: Keep) -> Result<Option<Vec<u8>>> 
             size *= 2;
         }
     }
-    if total == 0 {
+    if total == 0 || keep == Keep::No {
         return Ok(None);
     }
     out.shrink_to_fit();
@@ -585,7 +586,6 @@ fn read_image(header: Header, expand: &Expand, idat: &mut Idat) -> Result<Vec<u8
                     unfiltered.resize(unfiltered_len(&pass), 0);
                 }
                 if header.interlaced {
-                    image.resize(size, 0);
                     pass_rgba.resize(pass.width as usize * 4, 0);
                 }
             }
@@ -597,6 +597,11 @@ fn read_image(header: Header, expand: &Expand, idat: &mut Idat) -> Result<Vec<u8
                 filter::undo(filter, bytes_per_pixel, filtered, &row_above, &mut row)?;
                 expand.row(&row, &mut pass_rgba);
                 let start = (pass.y_start + y * pass.y_step) * stride;
+                // The first pass has a row in every eight, so the image is whole at the end of it.
+                let reached = size.min(start + pass.y_step * stride);
+                if image.len() < reached {
+                    image.resize(reached, 0);
+                }
                 let image_row = image.get_mut(start..).unwrap_or_default();
                 let pixels = image_row.as_chunks_mut::<4>().0.iter_mut();
                 let places = pixels.take(header.width as usize).skip(pass.x_start);

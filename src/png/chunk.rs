@@ -27,7 +27,6 @@ pub(crate) const fn is_critical(kind: Type) -> bool {
 }
 
 /// What is left of the file.
-#[derive(Clone, Copy)]
 pub(crate) struct Reader<'a> {
     rest: &'a [u8],
 }

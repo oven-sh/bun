@@ -303,9 +303,10 @@ pub(crate) struct Lines {
 }
 
 impl Lines {
-    pub(crate) fn new(row_bytes: usize, filtering: bool) -> Result<Self> {
+    /// Without `choosing` there is only `unfiltered`.
+    pub(crate) fn new(row_bytes: usize, choosing: bool) -> Result<Self> {
         let mut lines: [Vec<u8>; 5] = Default::default();
-        let used = if filtering { lines.len() } else { 1 };
+        let used = if choosing { lines.len() } else { 1 };
         for (filter, line) in (NONE..).zip(&mut lines).take(used) {
             line.try_reserve_exact(row_bytes.saturating_add(1))?;
             line.push(filter);
@@ -326,10 +327,6 @@ impl Lines {
     /// `row` behind the byte of the filter that libspng picks for it, filtered.
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1666
     pub(crate) fn best(&mut self, bytes_per_pixel: usize, above: &[u8], row: &[u8]) -> &[u8] {
-        // libspng does not add up a row this long, and so leaves it as it is.
-        if row.len() > (i32::MAX / 128) as usize {
-            return self.unfiltered(row);
-        }
         self.unfiltered(row);
         for line in self.lines.iter_mut().skip(1) {
             let Some((&mut filter, out)) = line.split_first_mut() else {

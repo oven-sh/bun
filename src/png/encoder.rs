@@ -91,15 +91,18 @@ fn encode(
         out,
     };
 
-    let mut lines = Lines::new(row_bytes, filtering)?;
+    // libspng does not add up a row longer than this, and so leaves it as it is.
+    // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1608
+    let choosing = filtering && row_bytes <= (i32::MAX / 128) as usize;
+    let mut lines = Lines::new(row_bytes, choosing)?;
     let mut zeros = Vec::new();
-    if filtering {
+    if choosing {
         zeros.try_reserve_exact(row_bytes)?;
         zeros.resize(row_bytes, 0);
     }
     let mut above = zeros.as_slice();
     for row in image.chunks_exact(row_bytes) {
-        idat.write(if filtering {
+        idat.write(if choosing {
             lines.best(header.bytes_per_pixel(), above, row)
         } else {
             lines.unfiltered(row)
@@ -173,13 +176,12 @@ impl Idat {
         Ok((used, code))
     }
 
-    fn next_chunk_if_full(&mut self) -> Result<bool> {
-        if self.room() != 0 {
-            return Ok(false);
+    fn next_chunk_if_full(&mut self) -> Result<()> {
+        if self.room() == 0 {
+            chunk::end(&mut self.out, self.start)?;
+            self.start = chunk::begin(&mut self.out, chunk::IDAT)?;
         }
-        chunk::end(&mut self.out, self.start)?;
-        self.start = chunk::begin(&mut self.out, chunk::IDAT)?;
-        Ok(true)
+        Ok(())
     }
 
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L4487

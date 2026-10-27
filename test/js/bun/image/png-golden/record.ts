@@ -18,8 +18,18 @@ const [newCases] = args.filter(arg => arg !== "--accept");
 const cases: Cases = newCases ? await Bun.file(newCases).json() : await loadCases(fixture);
 
 const files = new Map(cases.decode.map(c => [c.name, Buffer.from(c.data, "base64")]));
-for (const c of cases.decode) c.result = await observeDecode(files.get(c.name)!, c.maxPixels);
-for (const c of cases.encode) c.result = await observeEncode(files.get(c.source)!, c.options);
+// The fixture does not show in a diff, so say which results are no longer the recorded ones.
+const changed: string[] = [];
+function record(c: { result: string }, name: string, result: string) {
+  const exceptCompression = (text = "") => text.replace(/^file .*\n/m, "");
+  if (c.result !== undefined && exceptCompression(c.result) !== exceptCompression(result)) changed.push(name);
+  c.result = result;
+}
+for (const c of cases.decode) record(c, c.name, await observeDecode(files.get(c.name)!, c.maxPixels));
+for (const c of cases.encode) {
+  record(c, `${c.source} ${JSON.stringify(c.options)}`, await observeEncode(files.get(c.source)!, c.options));
+}
 
 await Bun.write(fixture, Bun.gzipSync(Buffer.from(JSON.stringify(cases)), { level: 9 }));
 console.log(`recorded ${cases.decode.length} + ${cases.encode.length} cases with Bun ${Bun.revision}`);
+console.log(`${changed.length} changed in more than how zlib compressed them\n${changed.join("\n")}`);

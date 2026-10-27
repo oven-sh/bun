@@ -1,6 +1,6 @@
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::VecExt;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JsResult};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::FdExt as _;
 #[cfg(windows)]
@@ -436,7 +436,7 @@ impl Stdio {
                 return Ok(());
             }
             StdioValue::Fd(value) => {
-                let value = JSValue::js_number(value);
+                let value = value.to_js();
                 // `bun.FD.fromUV(this.toInt32())` inlined here since the
                 // upstream `bun_jsc::JSValue` doesn't expose a wrapper.
                 let fd = Fd::from_uv(value.to_int32());

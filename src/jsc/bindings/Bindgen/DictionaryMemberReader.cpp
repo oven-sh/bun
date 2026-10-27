@@ -34,7 +34,7 @@ JSValue DictionaryMemberReader::get(const Identifier& name)
     return getMember(m_vm, m_globalObject, m_object, name);
 }
 
-JSValue DictionaryMemberReader::get(JSGlobalObject* globalObject, JSObject* object, unsigned memberNameIndex)
+JSValue getDictionaryMember(JSGlobalObject* globalObject, JSObject* object, unsigned memberNameIndex)
 {
     auto& vm = getVM(globalObject);
     return getMember(vm, globalObject, object, schemaStrings(vm).memberNames(memberNameIndex, 1)[0]);

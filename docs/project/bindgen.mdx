@@ -248,6 +248,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.jsString`                             | `JsLocal<'a, JSString>`          | a primitive string, as itself; `b.string` is its text         |
 | `b.stringObject`                         | `JsLocal<'a, JSObject>`          | a `String` object, not converted: that runs its `toString`    |
 | `b.stringLike`                           | `JsLocal<'a, StringLike>`        | either of the two, as itself                                  |
+| `b.jsNumber`                             | `JsLocal<'a, Number>`            | a number, as itself; `b.f64` is its value                     |
 | `b.bigInt`                               | `JsLocal<'a, JSBigInt>`          | a BigInt, as itself                                           |
 | `b.symbol`                               | `JsLocal<'a, Symbol>`            | a symbol, as itself                                           |
 | `b.cell(class, header, options)`         | `JsLocal<'a, T>`                 | an instance of that `JSCell` class, as itself                 |
@@ -560,7 +561,8 @@ So the order only matters between alternatives that overlap, and one that takes 
 value goes last. An alternative that can never be chosen is an error when the schema is
 loaded. Choosing tests whether the value is a cell once, loads the type byte once and
 repeats no test. Strings as UTF-8, dictionaries and unions are then converted in the
-place they end up in.
+place they end up in. A union whose conversion cannot throw is returned instead: every value goes to an
+alternative that only tests it, and each alternative is a number, a boolean or a handle.
 
 A union is returned as what the alternative it holds is. One that is only returned owns its
 strings: `b.string.utf8` in it is a `Vec<u8>`.

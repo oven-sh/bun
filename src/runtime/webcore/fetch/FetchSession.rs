@@ -74,11 +74,11 @@ pub(crate) fn parse_tls(
     Ok(parsed)
 }
 
-impl FlagOrNumber {
+impl FlagOrNumber<'_> {
     pub(crate) fn to_bool(self) -> Option<bool> {
         match self {
             FlagOrNumber::Flag(flag) => Some(flag),
-            FlagOrNumber::Number(number) => Some(JSValue::js_number(number).to_int32() != 0),
+            FlagOrNumber::Number(number) => Some(number.to_js().to_int32() != 0),
             FlagOrNumber::Other => None,
         }
     }

@@ -353,6 +353,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   nameOrKind: $bindgen("bindgen_test.bind.ts", "nameOrKind"),
   takeSymbol: $bindgen("bindgen_test.bind.ts", "takeSymbol"),
   isStringLike: $bindgen("bindgen_test.bind.ts", "isStringLike"),
+  takeNumber: $bindgen("bindgen_test.bind.ts", "takeNumber"),
   countOfMaybe: $bindgen("bindgen_test.bind.ts", "countOfMaybe"),
   describeNested: $bindgen("bindgen_test.bind.ts", "describeNested"),
   echoNested: $bindgen("bindgen_test.bind.ts", "echoNested"),

@@ -663,10 +663,11 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
                 FlagOrNumber::Flag(timeout_value) => {
                     break 'extract_disable_timeout !timeout_value;
                 }
-                FlagOrNumber::Number(ms) => {
+                FlagOrNumber::Number(timeout_value) => {
                     // A finite positive `timeout` (in ms) also governs the
                     // socket idle deadline, overriding the global
                     // `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default.
+                    let ms = timeout_value.to_js().as_number();
                     if ms.is_finite() && ms > 0.0 {
                         idle_timeout_seconds =
                             Some((ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
@@ -678,7 +679,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
                     // disables the timer instead of silently falling back
                     // to the global default.
                     break 'extract_disable_timeout !ms.is_finite()
-                        || JSValue::js_number(ms).to_int32() == 0;
+                        || timeout_value.to_js().to_int32() == 0;
                 }
                 FlagOrNumber::Other => {}
             }

@@ -8,7 +8,7 @@ export const BlockListAddress = b.union({ address: SocketAddress, text: b.string
 /** `"ipv4"` or `"ipv6"` in any case. It is not looked at if the address is a `SocketAddress`. */
 export const BlockListFamily = b.union({ ipv4: b.undefined, text: b.stringLike, other: b.opaque });
 /** The range depends on the family of the network. */
-export const BlockListPrefix = b.union({ number: b.f64, other: b.opaque });
+export const BlockListPrefix = b.union({ number: b.jsNumber, other: b.opaque });
 
 /** `net.BlockList`. A structured clone shares the struct. */
 export const BlockList = b.class({

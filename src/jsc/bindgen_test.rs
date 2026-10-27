@@ -1495,6 +1495,13 @@ pub(crate) fn take_symbol<'a>(
     symbol
 }
 
+pub(crate) fn take_number<'a>(
+    _: &JsHeap<'a>,
+    number: JsLocal<'a, bindgen::Number>,
+) -> JsLocal<'a, bindgen::Number> {
+    number
+}
+
 pub(crate) fn is_string_like(value: Option<JsLocal<'_, bindgen::StringLike>>) -> bool {
     value.is_some()
 }

@@ -4,7 +4,7 @@ import { Headers, JSDOMURL } from "../response.bind.ts";
 const js = { capability: "js", throws: true } as const;
 
 /** A number is `false` when `ToInt32` of it is 0. */
-export const FlagOrNumber = b.union({ flag: b.bool, number: b.f64, other: b.ignored });
+export const FlagOrNumber = b.union({ flag: b.bool, number: b.jsNumber, other: b.ignored });
 export const CheckServerIdentity = b.union({ missing: b.null, callback: b.callable, other: b.opaque });
 /** The `tls` option of `fetch` and `Bun.FetchSession`, which is read as a `TLSOptions` too. */
 export const FetchTLS = b.dictionary(

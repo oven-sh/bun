@@ -1,5 +1,5 @@
-use bun_jsc::bindgen::{JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, Number};
+use bun_jsc::JsResult;
 
 use super::{throw, Expect};
 
@@ -8,8 +8,8 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        start: Option<f64>,
-        end: Option<f64>,
+        start: Option<JsLocal<'_, Number>>,
+        end: Option<JsLocal<'_, Number>>,
     ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) = self.matcher_prelude(
@@ -24,17 +24,19 @@ impl Expect {
                 "toBeWithin() requires the first argument to be a number"
             )));
         };
+        let start = start.to_js();
 
         let Some(end) = end else {
             return Err(global.throw(format_args!(
                 "toBeWithin() requires the second argument to be a number"
             )));
         };
+        let end = end.to_js();
 
         let mut pass = value.is_number();
         if pass {
             let num = value.as_number();
-            pass = num >= start && num < end;
+            pass = num >= start.as_number() && num < end.as_number();
         }
 
         if not {
@@ -50,8 +52,8 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let mut formatter3 = super::make_formatter(global);
-        let start_fmt = JSValue::js_double_number(start).to_fmt(&mut formatter);
-        let end_fmt = JSValue::js_double_number(end).to_fmt(&mut formatter2);
+        let start_fmt = start.to_fmt(&mut formatter);
+        let end_fmt = end.to_fmt(&mut formatter2);
         let received_fmt = value.to_fmt(&mut formatter3);
 
         if not {

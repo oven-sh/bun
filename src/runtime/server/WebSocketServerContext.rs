@@ -273,8 +273,8 @@ pub(crate) fn on_create(
 
     match object.max_payload_length(global_object)? {
         OptionNumber::Missing => {}
-        OptionNumber::Number(value) if JSValue::js_number(value).is_any_int() => {
-            server.max_payload_length = JSValue::js_number(value).to_u32();
+        OptionNumber::Number(value) if value.to_js().is_any_int() => {
+            server.max_payload_length = value.to_js().to_u32();
         }
         _ => {
             return Err(global_object.throw_invalid_arguments(format_args!(
@@ -285,8 +285,8 @@ pub(crate) fn on_create(
 
     match object.idle_timeout(global_object)? {
         OptionNumber::Missing => {}
-        OptionNumber::Number(value) if JSValue::js_number(value).is_any_int() => {
-            let idle_timeout = (value as i64).max(0);
+        OptionNumber::Number(value) if value.to_js().is_any_int() => {
+            let idle_timeout = value.to_js().to_int64().max(0);
             if idle_timeout > 960 {
                 return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects idleTimeout to be 960 or less"
@@ -309,8 +309,8 @@ pub(crate) fn on_create(
     }
     match object.backpressure_limit(global_object)? {
         OptionNumber::Missing => {}
-        OptionNumber::Number(value) if JSValue::js_number(value).is_any_int() => {
-            server.backpressure_limit = JSValue::js_number(value).to_u32();
+        OptionNumber::Number(value) if value.to_js().is_any_int() => {
+            server.backpressure_limit = value.to_js().to_u32();
         }
         _ => {
             return Err(global_object.throw_invalid_arguments(format_args!(

@@ -71,7 +71,7 @@ impl Options {
             SocketAddressFamily::Missing => AF::INET,
             // "ipv4" or "ipv6", ignoring case
             SocketAddressFamily::Name(name) => AF::from_name(global, &name)?,
-            SocketAddressFamily::Number(number) => AF::from_number(global, number)?,
+            SocketAddressFamily::Number(number) => AF::from_number(global, number.to_js())?,
             SocketAddressFamily::Other(fam) => {
                 return Err(global.throw_invalid_argument_property_value(
                     b"options.family",
@@ -84,12 +84,12 @@ impl Options {
         // required. Validated by `validatePort`.
         let _port: u16 = match obj.port(global)? {
             SocketAddressNumber::Missing => 0,
-            SocketAddressNumber::Number(number) => {
-                let p = JSValue::js_double_number(number);
-                if !number.is_finite() {
+            SocketAddressNumber::Number(p) => {
+                let p = p.to_js();
+                if !p.as_number().is_finite() {
                     return Err(Self::throw_bad_port(global, p));
                 }
-                let port32 = number as i32;
+                let port32 = p.to_int32();
                 if port32 < 0 || port32 > i32::from(u16::MAX) {
                     return Err(Self::throw_bad_port(global, p));
                 }
@@ -100,11 +100,11 @@ impl Options {
 
         let _flowlabel = match obj.flowlabel(global)? {
             SocketAddressNumber::Missing => None,
-            SocketAddressNumber::Number(number) => {
-                let fl = JSValue::js_double_number(number);
+            SocketAddressNumber::Number(fl) => {
+                let fl = fl.to_js();
                 if !fl.is_uint32_as_any_int() {
                     return Err(global.throw_range_error(
-                        number,
+                        fl.as_number(),
                         bun_jsc::RangeErrorOptions {
                             field_name: b"options.flowlabel",
                             min: 0,
@@ -712,8 +712,7 @@ impl AF {
         ))
     }
 
-    fn from_number(global: &JSGlobalObject, number: f64) -> JsResult<AF> {
-        let value = JSValue::js_double_number(number);
+    fn from_number(global: &JSGlobalObject, value: JSValue) -> JsResult<AF> {
         if !value.is_uint32_as_any_int() {
             return Err(global.throw_invalid_argument_property_value(
                 b"options.family",

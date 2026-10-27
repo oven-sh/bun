@@ -184,6 +184,9 @@ struct IDLRawArray : IDLRawAny {};
 // A string or a `String` object as the `JSValue` itself. See IDLRawAny.
 struct IDLRawStringLike : IDLRawAny {};
 
+// A number as the `JSValue` itself. See IDLRawAny.
+struct IDLRawNumber : IDLRawAny {};
+
 // An instance of a `JSCell` subclass as the `JSValue` itself. See IDLRawAny.
 template<typename JSClass, auto name>
 struct IDLRawCell : IDLRawAny {};

@@ -5,10 +5,8 @@ mod _impl {
     use core::ffi::{c_int, c_uint, c_void};
     use core::ptr;
 
-    use bun_jsc::bindgen::{BufferSource, Callable, Deferred, JsLocal, JsScope, JsWrapper};
-    use bun_jsc::{
-        self as jsc, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
-    };
+    use bun_jsc::bindgen::{BufferSource, Callable, Deferred, JsLocal, JsScope, JsWrapper, Number};
+    use bun_jsc::{self as jsc, JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
     use bun_ptr::RefPtr;
     use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
@@ -111,7 +109,7 @@ mod _impl {
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
             init_params_array: Deferred<'_, JsLocal<'_, BufferSource>>,
-            pledged_src_size: Option<f64>,
+            pledged_src_size: Option<JsLocal<'_, Number>>,
             write_state: Deferred<'_, JsLocal<'_, BufferSource>>,
             process_callback: Deferred<'_, JsLocal<'_, Callable>>,
             dictionary: Deferred<'_, Option<JsLocal<'_, BufferSource>>>,
@@ -145,7 +143,7 @@ mod _impl {
             let pledged_src_size: u64 = match pledged_src_size {
                 Some(size) => u64::from(validators::validate_uint32(
                     global,
-                    JSValue::js_number(size),
+                    size.to_js(),
                     format_args!("pledgedSrcSize"),
                     false,
                 )?),

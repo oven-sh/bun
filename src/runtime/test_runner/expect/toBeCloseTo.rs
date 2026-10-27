@@ -1,4 +1,4 @@
-use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, Number};
 use bun_jsc::{JSValue, JsResult};
 
 use super::Expect;
@@ -11,7 +11,7 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: Option<f64>,
+        expected: Option<JsLocal<'_, Number>>,
         precision: ExpectPrecision,
     ) -> JsResult<()> {
         let global = cx.global();
@@ -21,10 +21,10 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let Some(mut expected) = expected else {
+        let Some(expected_value) = expected else {
             return Err(global.throw_invalid_argument_type("toBeCloseTo", "expected", "number"));
         };
-        let expected_value = JSValue::js_double_number(expected);
+        let expected_value = expected_value.to_js();
 
         let precision: f64 = match precision {
             ExpectPrecision::Missing => 2.0,
@@ -44,6 +44,7 @@ impl Expect {
             return Err(global.throw_invalid_argument_type("expect", "received", "number"));
         }
 
+        let mut expected = expected_value.as_number();
         let mut received = received_.as_number();
 
         if expected == f64::NEG_INFINITY {

@@ -58,7 +58,7 @@ export const webSocketMessageText = b.conversion(b.string.loose);
 export const WebSocketCompress = b.union({ missing: b.undefined, flag: b.bool, other: b.ignored });
 
 /** The body refuses `other` with the text it also has for a number out of range. */
-export const OptionNumber = b.union({ missing: b.null, number: b.f64, other: b.ignored });
+export const OptionNumber = b.union({ missing: b.null, number: b.jsNumber, other: b.ignored });
 /** `false` is as good as missing. */
 export const Stringish = b.union({
   missing: b.null,
@@ -426,7 +426,7 @@ export const ServerWebSocket = b.class({
   proto: {
     binaryType: { getter: BinaryType, setter: true },
     close: {
-      args: { code: b.f64.optional.deferred, reason: b.string.loose.utf8.owned.optional.deferred },
+      args: { code: b.jsNumber.optional.deferred, reason: b.string.loose.utf8.owned.optional.deferred },
       expected: { code: "close requires a numeric code or undefined" },
       capability: "js",
       throws: true,

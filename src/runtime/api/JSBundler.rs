@@ -634,15 +634,16 @@ pub(crate) mod js_bundler {
             }
 
             if let Some(value) = config.bytecode_depth(global_this)? {
-                if value.is_nan() {
+                let value = value.to_js();
+                if value.as_number().is_nan() {
                     return Err(global_this.throw_invalid_property_type_value(
                         b"bytecodeDepth",
                         b"integer",
-                        JSValue::js_number(value),
+                        value,
                     ));
                 }
                 this.bytecode_depth = global_this.validate_integer_range::<u32>(
-                    JSValue::js_number(value),
+                    value,
                     u32::MAX,
                     bun_jsc::IntegerRange {
                         min: 0,

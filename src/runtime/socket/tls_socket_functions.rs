@@ -6,7 +6,7 @@ use crate::generated_bindgen::socket_body::{
 };
 use bun_boringssl_sys as boringssl;
 use bun_core::{EncodedSlice, String as BunString, strings};
-use bun_jsc::bindgen::{self, Deferred, JsHeap, JsScope};
+use bun_jsc::bindgen::{self, Deferred, JsHeap, JsLocal, JsScope, Number};
 use bun_jsc::{self as jsc, CommonString, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult};
 
 use crate::api::bun_x509 as X509;
@@ -856,7 +856,7 @@ impl TLSSocket {
     pub(crate) fn export_keying_material(
         &self,
         cx: &mut JsScope<'_>,
-        length: Option<f64>,
+        length: Option<JsLocal<'_, Number>>,
         label: Deferred<'_, Option<BunString>>,
         context: TextOrBytes<'_>,
     ) -> JsResult<Option<JSValue>> {
@@ -869,7 +869,7 @@ impl TLSSocket {
             return Err(global.throw(format_args!("Expected length to be a number")));
         };
 
-        let length = JSValue::js_double_number(length).coerce_to_int64(global)?;
+        let length = length.to_js().coerce_to_int64(global)?;
         if length < 0 {
             return Err(global.throw(format_args!("Expected length to be a positive number")));
         }

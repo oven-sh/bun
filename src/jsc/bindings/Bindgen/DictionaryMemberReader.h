@@ -22,8 +22,6 @@ public:
     JSC::JSValue get(unsigned index) { return get(m_memberNames[index]); }
     // Inlined, it is most of the size of every generated dictionary converter.
     NEVER_INLINE JSC::JSValue get(const JSC::Identifier&);
-    // As `get`, for a conversion that reads one member: it has no reader to set up.
-    static JSC::JSValue get(JSC::JSGlobalObject*, JSC::JSObject*, unsigned memberNameIndex);
     // As `get`, of the object's own properties.
     JSC::JSValue getOwn(unsigned index);
     // Empty also if the object has no such own property.
@@ -35,5 +33,8 @@ private:
     JSC::JSObject* m_object;
     const JSC::Identifier* m_memberNames;
 };
+
+// As `DictionaryMemberReader::get`, by index into Tables::memberNames: for a conversion that reads one member.
+JSC::JSValue getDictionaryMember(JSC::JSGlobalObject*, JSC::JSObject*, unsigned memberNameIndex);
 
 }

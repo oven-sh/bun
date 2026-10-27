@@ -628,8 +628,10 @@ fn spawn_maybe_sync<'a>(
                 }
             }
 
-            if let Some(n) = args.timeout(cx.global())? {
+            if let Some(timeout_value) = args.timeout(cx.global())? {
                 'brk: {
+                    let timeout_value = timeout_value.to_js();
+                    let n = timeout_value.as_number();
                     // +Infinity is accepted as "no timeout"; NaN is always a
                     // caller-side bug (validate_integer_range would map it to 0).
                     if n.is_nan() {
@@ -647,7 +649,7 @@ fn spawn_maybe_sync<'a>(
                     }
 
                     let timeout_int = cx.global().validate_integer_range::<u64>(
-                        JSValue::js_number(n),
+                        timeout_value,
                         0,
                         bun_sql_jsc::jsc::IntegerRange {
                             min: 0,
@@ -675,9 +677,10 @@ fn spawn_maybe_sync<'a>(
             }
 
             if let Some(val) = args.max_buffer(cx.global())? {
-                if val.is_finite() {
+                let val = val.to_js();
+                if val.as_number().is_finite() {
                     // 'Infinity' does not set maxBuffer
-                    let value = JSValue::js_number(val).coerce_to_int64(cx.global())?;
+                    let value = val.coerce_to_int64(cx.global())?;
                     if value > 0
                         && (stdio[0].is_piped() || stdio[1].is_piped() || stdio[2].is_piped())
                     {

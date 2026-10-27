@@ -45,6 +45,19 @@ ALWAYS_INLINE std::optional<typename WebCore::Converter<T>::ReturnType> tryConve
     return WebCore::Converter<T>::tryConvert(globalObject, value, ctx);
 }
 
+// As uncheckedDowncast is to dynamicDowncast: the caller has tested that `tryConvert` takes the value.
+template<typename T, IDLConversionContext Ctx>
+ALWAYS_INLINE typename WebCore::Converter<T>::ReturnType uncheckedConvertIDL(
+    JSC::JSGlobalObject& globalObject,
+    JSC::JSValue value,
+    Ctx& ctx)
+{
+    if constexpr (requires { WebCore::Converter<T>::uncheckedConvert(globalObject, value, ctx); })
+        return WebCore::Converter<T>::uncheckedConvert(globalObject, value, ctx);
+    else
+        return *tryConvertIDL<T>(globalObject, value, ctx);
+}
+
 template<typename IDL>
 struct DefaultContextConverter : WebCore::DefaultConverter<IDL> {
     using typename WebCore::DefaultConverter<IDL>::ReturnType;

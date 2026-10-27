@@ -39,6 +39,10 @@ struct TrivialExtern {
     }
 };
 
+// `convertToExtern` changes the type of a `T`, which is trivially copyable, and no bits.
+template<typename T>
+inline constexpr bool toExternIsBitCast = std::derived_from<ExternTraits<T>, TrivialExtern<T>>;
+
 template<> struct ExternTraits<bool> : TrivialExtern<bool> {};
 template<> struct ExternTraits<uint8_t> : TrivialExtern<uint8_t> {};
 template<> struct ExternTraits<uint16_t> : TrivialExtern<uint16_t> {};
@@ -102,6 +106,7 @@ template<> struct ExternTraits<JSC::JSValue> {
         return JSC::JSValue::encode(cppValue);
     }
 };
+template<> inline constexpr bool toExternIsBitCast<JSC::JSValue> = true;
 
 struct ExternBytes {
     const uint8_t* data;
@@ -210,6 +215,7 @@ template<typename T> struct ExternTraits<WithValue<T>> {
         return { ExternTraits<T>::convertToExtern(WTF::move(cppValue.converted)), JSC::JSValue::encode(cppValue.value) };
     }
 };
+template<typename T> inline constexpr bool toExternIsBitCast<WithValue<T>> = toExternIsBitCast<T>;
 
 template<typename T, typename P, typename R> struct ExternTraits<WTF::RefPtr<T, P, R>> {
     using ExternType = T*;

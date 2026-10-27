@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 use bun_core::{StringView, Utf8Bytes};
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{
-    self, Callable, Deferred, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper,
+    self, Callable, Deferred, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, Number,
 };
 use bun_jsc::bun_string_jsc;
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
@@ -1109,7 +1109,7 @@ impl ServerWebSocket {
     pub(crate) fn close<'a>(
         &self,
         cx: &mut JsScope<'a>,
-        code: Deferred<'a, Option<f64>>,
+        code: Deferred<'a, Option<JsLocal<'a, Number>>>,
         reason: Deferred<'a, Option<Utf8Bytes<'static>>>,
     ) -> bindgen::Result<'a, ()> {
         bun_output::scoped_log!(WebSocketServer, "close()");
@@ -1120,7 +1120,7 @@ impl ServerWebSocket {
 
         let code: i32 = match code.convert(cx.global())? {
             None => 1000,
-            Some(code) => JSValue::js_number(code).coerce_to_i32(cx.global())?,
+            Some(code) => code.to_js().coerce_to_i32(cx.global())?,
         };
         let reason = reason.convert(cx.global())?.unwrap_or(Utf8Bytes::EMPTY);
         let reason = bun_core::strings::truncate_to_char_boundary(reason.slice(), MAX_CLOSE_REASON);

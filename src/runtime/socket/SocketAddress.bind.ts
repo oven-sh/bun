@@ -4,11 +4,11 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export const SocketAddressFamily = b.union({
   missing: b.undefined,
   name: b.string.allowStringObject,
-  number: b.f64,
+  number: b.jsNumber,
   other: b.opaque,
 });
 /** An error shows what is not a number. */
-export const SocketAddressNumber = b.union({ missing: b.undefined, number: b.f64, other: b.opaque });
+export const SocketAddressNumber = b.union({ missing: b.undefined, number: b.jsNumber, other: b.opaque });
 export const SocketAddressOptions = b.dictionary(
   {
     address: { type: b.string.allowStringObject.optional, expected: ["string"] },

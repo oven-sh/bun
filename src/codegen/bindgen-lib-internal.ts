@@ -35,7 +35,7 @@ function structLayout(fields: readonly Layout[]): Layout {
   return { size: roundUp(size, align), align };
 }
 
-/** `{ union data; uint8_t tag; }`. */
+/** `{ uint8_t tag; union data; }`. */
 function taggedUnionLayout(alternatives: readonly Layout[]): Layout {
   const align = Math.max(...alternatives.map(a => a.align));
   const union = { size: roundUp(Math.max(...alternatives.map(a => a.size)), align), align };
@@ -414,9 +414,13 @@ export abstract class Type {
   rustFromExtern(expr: string, scope: RustScope): string {
     return expr;
   }
-  /** `rustType` is laid out as `rustExternType`: `rustFromExtern` changes the type and no bits. */
-  get rustLayoutIsExtern(): boolean {
-    return this.rustFromExtern === Type.prototype.rustFromExtern;
+  /** `Bun::Bindgen::toExtern` changes the type of the C++ value, which is trivially copyable, and no bits. */
+  get cppToExternIsBitCast(): boolean {
+    return this.returnsValueUnchanged;
+  }
+  /** `rustFromExtern` changes the type and no bits. */
+  get rustFromExternIsTransmute(): boolean {
+    return false;
   }
 
   /** The type of a member of a returned dictionary, and of an alternative of a returned union. */
@@ -479,6 +483,12 @@ export class PrimitiveType extends Type {
   }
   rustType(): string {
     return this.rustName;
+  }
+  get cppToExternIsBitCast(): boolean {
+    return true;
+  }
+  get rustFromExternIsTransmute(): boolean {
+    return true;
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::${this.rustName}(heap, ${value})`;
@@ -734,7 +744,7 @@ export class DoubleType extends PrimitiveType {
     );
   }
   get tryConvertThrows(): boolean {
-    return false;
+    return this.valueKinds === "any";
   }
   /** A `Date` too, as its time value, which is NaN for an invalid one. */
   get allowDate(): DoubleType {
@@ -807,9 +817,6 @@ export class UnitType extends Type {
   }
   rustFromExtern(): string {
     return "()";
-  }
-  get rustLayoutIsExtern(): boolean {
-    return true;
   }
   rustToJS(value: string): string {
     assert(this.unit === "undefined", "leave `returns` out, or return a nullable type");
@@ -1299,7 +1306,7 @@ export class BufferSourceType extends Type {
   rustFromExtern(expr: string): string {
     return `bindgen::JsLocal::from_extern(${expr}, heap)`;
   }
-  get rustLayoutIsExtern(): boolean {
+  get rustFromExternIsTransmute(): boolean {
     return true;
   }
   rustToJS(value: string): string {
@@ -1358,7 +1365,7 @@ export class LocalType extends Type {
   rustFromExtern(expr: string): string {
     return `bindgen::JsLocal::from_extern(${expr}, heap)`;
   }
-  get rustLayoutIsExtern(): boolean {
+  get rustFromExternIsTransmute(): boolean {
     return true;
   }
   rustToJS(value: string): string {
@@ -1389,6 +1396,7 @@ export const stringLikeType = new LocalType(
   ["string", "stringObject"],
   null,
 );
+export const jsNumberType = new LocalType("Bun::Bindgen::IDLRawNumber", "number", "bindgen::Number", ["number"], null);
 /** A function, or a proxy of one, for the body to call or to store. */
 export const callableType = new LocalType(
   "Bun::Bindgen::IDLRawCallable",
@@ -1469,7 +1477,7 @@ export class OpaqueType extends Type {
   rustFromExtern(expr: string): string {
     return `bindgen::JsLocal::from_extern(${expr}, heap)`;
   }
-  get rustLayoutIsExtern(): boolean {
+  get rustFromExternIsTransmute(): boolean {
     return true;
   }
   rustToJS(value: string): string {
@@ -1748,7 +1756,10 @@ export class WrappedType extends Type {
   rustFromExtern(expr: string): string {
     return `bindgen::class_ref_from_extern::<${this.options.rustPath}>(${expr}, heap)`;
   }
-  get rustLayoutIsExtern(): boolean {
+  get cppToExternIsBitCast(): boolean {
+    return true;
+  }
+  get rustFromExternIsTransmute(): boolean {
     return true;
   }
 }
@@ -2019,6 +2030,9 @@ export class WithValueType extends Type {
   }
   get convertsInPlace(): boolean {
     return this.inner.convertsInPlace;
+  }
+  get cppToExternIsBitCast(): boolean {
+    return this.#isInstance;
   }
   cppConvert(value: string, ctx: string): string {
     return this.#isInstance ? super.cppConvert(value, ctx) : this.inner.cppConvert(value, ctx);
@@ -2350,6 +2364,12 @@ export class EnumerationType extends NamedType {
   rustExternType(scope: RustScope): string {
     return this.path(scope, this.name);
   }
+  get cppToExternIsBitCast(): boolean {
+    return true;
+  }
+  get rustFromExternIsTransmute(): boolean {
+    return true;
+  }
   rustToJS(value: string, scope: RustScope): string {
     return `${value}.to_js(heap)`;
   }
@@ -2633,7 +2653,7 @@ export class DeferredDictionaryType extends NamedType {
   rustFromExtern(expr: string, scope: RustScope): string {
     return `${this.path(scope, this.name)}::new(${objectType.rustFromExtern(expr)})`;
   }
-  get rustLayoutIsExtern(): boolean {
+  get rustFromExternIsTransmute(): boolean {
     return true;
   }
 }
@@ -2729,7 +2749,7 @@ export class UnionType extends NamedType {
     return `Bun::Bindgen::IDLTaggedUnion<${this.cpp}>`;
   }
   get convertsInPlace(): boolean {
-    return true;
+    return this.conversionThrows;
   }
   get tsType(): string {
     return this.alternatives.map(a => a.type.tsType).join(" | ");
@@ -2795,22 +2815,37 @@ export class UnionType extends NamedType {
   rustFromExtern(expr: string, scope: RustScope): string {
     return `${this.path(scope, this.name)}::from_extern(&${expr}${this.needsLifetime ? ", heap" : ""})`;
   }
-  /** Not if every value goes to an alternative that only tests it. C++ then returns it, which takes a trivial type. */
+  /** The last of `candidates`, indices of alternatives that are offered a value in turn. */
+  #lastOf(candidates: readonly number[]): Type | undefined {
+    return this.alternatives[candidates.at(-1) ?? -1]?.type;
+  }
+  /** None of `candidates` may take the value. As the last, one that takes every object reports what is not an object itself. */
+  mayMatchNone(candidates: readonly number[]): boolean {
+    const last = this.#lastOf(candidates);
+    return !last || (!!last.refuses && !refusesNonObjects(last));
+  }
+  /** A conversion that cannot throw returns the union, which takes a trivially copyable one. */
   get conversionThrows(): boolean {
-    const everyValueIsTaken = [...this.alternativesByKind.values()].every(
-      candidates => candidates.length > 0 && !this.alternatives[candidates.at(-1)!].type.refuses,
-    );
-    return !(
-      this.rustLayoutIsExtern &&
-      everyValueIsTaken &&
-      this.alternatives.every(a => a.type instanceof UnitType || !a.type.tryConvertThrows)
+    return (
+      !this.cppToExternIsBitCast ||
+      this.#held.some(type => type.tryConvertThrows) ||
+      [...this.alternativesByKind.values()]
+        .map(candidates => this.#lastOf(candidates))
+        .some(last => !last || last.refuses)
     );
   }
-  /** The enum is `#[repr(C, u8)]`, so neither language switches on the tag to hand the value over. */
-  get rustLayoutIsExtern(): boolean {
+  get #held(): Type[] {
+    return this.alternatives.map(a => a.type).filter(type => !(type instanceof UnitType));
+  }
+  get cppToExternIsBitCast(): boolean {
+    return this.#held.length > 0 && this.#held.every(type => type.cppToExternIsBitCast);
+  }
+  /** The enum is then `#[repr(C, u8)]`. */
+  get rustFromExternIsTransmute(): boolean {
     return (
-      this.alternatives.some(a => !(a.type instanceof UnitType)) &&
-      this.alternatives.every(a => !a.nested && a.type.rustLayoutIsExtern)
+      this.#held.length > 0 &&
+      this.#held.every(type => type.rustFromExternIsTransmute) &&
+      !this.alternatives.some(a => a.nested)
     );
   }
   rustToJS(value: string): string {
@@ -2863,8 +2898,6 @@ export class Signature {
   readonly requiredArguments: number;
   readonly rustPath: string | undefined;
   readonly length: number | undefined;
-  /** The C++ function that converts the arguments and calls the thunk it is given, where several of the file's functions take the same arguments. */
-  sharedCall?: string;
   /** `hasThisValue`: the body is also handed its own JS object. `isProperty`: JS can call it, so each argument is converted from a JS value. */
   constructor(options: SignatureOptions, hasThisValue = false, isProperty = true) {
     this.length = options.length;
@@ -3716,7 +3749,10 @@ export class ClassType extends NamedType {
   rustFromExtern(expr: string): string {
     return `bindgen::class_ref_from_extern::<${this.rustPath}>(${expr}, heap)`;
   }
-  get rustLayoutIsExtern(): boolean {
+  get cppToExternIsBitCast(): boolean {
+    return true;
+  }
+  get rustFromExternIsTransmute(): boolean {
     return true;
   }
   rustToJS(value: string): string {

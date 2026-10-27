@@ -131,7 +131,7 @@ export const BuildConfig = b.dictionary(
     plugins: b.jsArray.nullable,
     macros: flag,
     bytecode: flag,
-    bytecodeDepth: b.f64.optional,
+    bytecodeDepth: b.jsNumber.optional,
     optimize: BuildOptimize.emptyStringAsNull,
     reactFastRefresh: flag,
     reactCompiler: flag,

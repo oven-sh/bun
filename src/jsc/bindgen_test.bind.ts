@@ -838,6 +838,7 @@ export const nameOrKind = b.fn({
 });
 export const takeSymbol = b.fn({ args: { symbol: b.symbol }, returns: b.symbol, capability: "heap" });
 export const isStringLike = b.fn({ args: { value: b.stringLike.otherAsNull }, returns: b.bool });
+export const takeNumber = b.fn({ args: { number: b.jsNumber }, returns: b.jsNumber, capability: "heap" });
 export const TestMaybeCounter = b.dictionary({ counter: TestCounter.withValue.otherAsNull });
 /** -1 without a counter. */
 export const countOfMaybe = b.fn({ args: { options: TestMaybeCounter }, returns: b.i32 });

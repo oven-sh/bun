@@ -1,12 +1,10 @@
-use bun_jsc::JSValue;
-
 use crate::generated_bindgen::hash_object::HashSeed;
 
 /// Each hasher truncates it to its native seed width.
 fn seed_of(seed: HashSeed<'_>) -> u64 {
     match seed {
-        HashSeed::Number(number) => JSValue::js_number(number).to_uint64_no_truncate(),
-        HashSeed::BigInt(bigint) => bigint.to_js().to_uint64_no_truncate(),
+        HashSeed::Number(seed) => seed.to_js().to_uint64_no_truncate(),
+        HashSeed::BigInt(seed) => seed.to_js().to_uint64_no_truncate(),
         HashSeed::Other => 0,
     }
 }

@@ -49,8 +49,8 @@ impl TimeoutObject {
     ) {
         match value {
             IdleStart::Ms(ms) => {
-                this.internals.set_idle_start(ms);
-                js::idle_start_set_cached(this_value.to_js(), cx.global(), JSValue::js_number(ms));
+                this.internals.set_idle_start(ms.to_js().as_number());
+                js::idle_start_set_cached(this_value.to_js(), cx.global(), ms.to_js());
             }
             IdleStart::Other(other) => {
                 js::idle_start_set_cached(this_value.to_js(), cx.global(), other.to_js());

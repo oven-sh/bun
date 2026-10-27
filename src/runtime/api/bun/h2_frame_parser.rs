@@ -23,7 +23,7 @@ use bun_jsc::AbortSignalRef;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
 use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::bindgen::{BufferSource, Callable, JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{BufferSource, Callable, JsLocal, JsScope, JsStructure, JsWrapper, Number};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     GlobalRef, JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult, StrongOptional,
@@ -6261,13 +6261,14 @@ impl H2FrameParser {
     pub(crate) fn emit_error_to_all_streams(
         &self,
         cx: &mut JsScope<'_>,
-        code: Option<f64>,
+        code: Option<JsLocal<'_, Number>>,
     ) -> JsResult<()> {
         let global_object = cx.global();
         let Some(code) = code else {
             return Err(global_object.throw(format_args!("Expected errorCode to be a number")));
         };
-        let rst_code = code as u32;
+        let code = code.to_js();
+        let rst_code = code.to_u32();
 
         // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `self` directly.
@@ -6282,11 +6283,7 @@ impl H2FrameParser {
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
                 stream.free_resources::<false>(self);
-                self.dispatch_with_extra(
-                    js::on_stream_error_get_cached,
-                    identifier,
-                    JSValue::js_number(code),
-                );
+                self.dispatch_with_extra(js::on_stream_error_get_cached, identifier, code);
             }
         }
         Ok(())
@@ -7142,8 +7139,8 @@ impl H2FrameParser {
     }
 
     /// Saturating read of a numeric session limit into its u32 field.
-    fn session_option_u32(value: f64) -> u32 {
-        u32::try_from(JSValue::js_number(value).to_uint64_no_truncate()).unwrap_or(u32::MAX)
+    fn session_option_u32(value: JsLocal<'_, Number>) -> u32 {
+        u32::try_from(value.to_js().to_uint64_no_truncate()).unwrap_or(u32::MAX)
     }
 
     pub(crate) fn constructor<'a>(
@@ -7304,7 +7301,7 @@ impl H2FrameParser {
                 if let Some(max_pings) = settings_js.max_outstanding_pings(global_object)? {
                     this_ref
                         .max_outstanding_pings
-                        .set(JSValue::js_number(max_pings).to_uint64_no_truncate());
+                        .set(max_pings.to_js().to_uint64_no_truncate());
                 }
                 if let Some(max_memory) = settings_js.max_session_memory(global_object)? {
                     this_ref

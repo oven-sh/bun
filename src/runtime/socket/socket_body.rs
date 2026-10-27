@@ -14,7 +14,7 @@ use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{self, Deferred, JsHeap, JsLocal, JsScope};
+use bun_jsc::bindgen::{self, Deferred, JsHeap, JsLocal, JsScope, Number};
 use bun_ptr::RefPtr;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
@@ -2811,19 +2811,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         debug_assert!(self.buffered_data_for_node_net.get().len() == 0);
-        let is_string = |value: &SocketWriteOption<'a>| {
-            matches!(
-                value,
-                SocketWriteOption::Text(_) | SocketWriteOption::StringObject(_)
-            )
-        };
-        let (offset_value, length_value, encoding_value) = if is_string(&byte_length) {
-            (byte_offset, SocketWriteOption::Missing, byte_length)
-        } else if is_string(&byte_offset) {
-            (SocketWriteOption::Missing, byte_length, byte_offset)
-        } else {
-            (byte_offset, byte_length, encoding)
-        };
+        let (offset_value, length_value, encoding_value) =
+            if matches!(byte_length, SocketWriteOption::String(_)) {
+                (byte_offset, SocketWriteOption::Missing, byte_length)
+            } else if matches!(byte_offset, SocketWriteOption::String(_)) {
+                (SocketWriteOption::Missing, byte_length, byte_offset)
+            } else {
+                (byte_offset, byte_length, encoding)
+            };
 
         if !matches!(encoding_value, SocketWriteOption::Missing)
             && (!matches!(offset_value, SocketWriteOption::Missing)
@@ -2862,9 +2857,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let byte_offset: usize = 'brk: {
             let i = match offset_value {
                 SocketWriteOption::Missing => break 'brk 0,
-                SocketWriteOption::Number(i) if JSValue::js_double_number(i).is_any_int() => {
-                    i as i64
-                }
+                SocketWriteOption::Number(i) if i.to_js().is_any_int() => i.to_js().to_int64(),
                 _ => {
                     let _ = global.throw_invalid_argument_type(label, "byteOffset", "integer");
                     return WriteResult::Fail;
@@ -2888,9 +2881,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let byte_length: usize = 'brk: {
             let l = match length_value {
                 SocketWriteOption::Missing => break 'brk buffer.slice().len(),
-                SocketWriteOption::Number(l) if JSValue::js_double_number(l).is_any_int() => {
-                    l as i64
-                }
+                SocketWriteOption::Number(l) if l.to_js().is_any_int() => l.to_js().to_int64(),
                 _ => {
                     let _ = global.throw_invalid_argument_type(label, "byteLength", "integer");
                     return WriteResult::Fail;
@@ -3680,7 +3671,7 @@ impl TCPSocket {
     pub(crate) fn export_keying_material(
         &self,
         _: &mut JsScope<'_>,
-        _: Option<f64>,
+        _: Option<JsLocal<'_, Number>>,
         _: Deferred<'_, Option<BunString>>,
         _: TextOrBytes<'_>,
     ) -> JsResult<Option<JSValue>> {
@@ -3791,17 +3782,14 @@ fn string_or_buffer_to_write<'a>(
 ) -> JsResult<Option<StringOrBuffer<'static>>> {
     let encoding = match encoding {
         SocketWriteOption::Missing | SocketWriteOption::Number(_) => None,
-        SocketWriteOption::Text(name) => Encoding::from_bun_string(&loose_string(global, name)?),
-        SocketWriteOption::StringObject(name) => {
-            Encoding::from_bun_string(&loose_string(global, name)?)
-        }
+        SocketWriteOption::String(name) => Encoding::from_bun_string(&loose_string(global, name)?),
         SocketWriteOption::Other(name) => Encoding::from_bun_string(&loose_string(global, name)?),
     }
     .unwrap_or(Encoding::Utf8);
     tls_socket_functions::string_or_buffer(global, data, encoding)
 }
 
-/// As [`string_or_buffer_to_write`], and the bytes of a blob or of a body.
+/// As [`string_or_buffer_to_write`], and the bytes of a blob or of a body. Outside `NewSocket`, which is generic.
 fn data_to_write<'a>(
     global: &JSGlobalObject,
     data: SocketData<'a>,

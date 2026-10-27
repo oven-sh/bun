@@ -15,7 +15,7 @@ const dispose = { capability: "js", invalidThis: "undefined", name: "" } as cons
 const toPrimitive = { returns: b.u64, throws: true, invalidThis: "undefined", name: "" } as const;
 
 /** Only a number moves the start of the timer. Anything is read back. */
-export const IdleStart = b.union({ ms: b.f64, other: b.opaque });
+export const IdleStart = b.union({ ms: b.jsNumber, other: b.opaque });
 
 export const Timeout = b.class({
   rustPath: "crate::timer::TimeoutObject",

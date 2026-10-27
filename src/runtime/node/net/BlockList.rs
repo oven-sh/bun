@@ -174,7 +174,7 @@ impl BlockList {
         let global = cx.global();
         let network = sockaddr_from_js(global, network, "network", family)??;
         let prefix_js = match prefix {
-            BlockListPrefix::Number(prefix) => JSValue::js_number(prefix),
+            BlockListPrefix::Number(prefix) => prefix.to_js(),
             BlockListPrefix::Other(prefix) => {
                 return Err(validators::throw_err_invalid_arg_type(
                     global,

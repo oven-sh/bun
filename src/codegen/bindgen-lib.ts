@@ -54,6 +54,9 @@ export const { u8, u16, i32, u32, i64, u64, usize } = integers;
 /** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. As a result, `b.f64.asDate`. */
 export const f64 = new DoubleType();
 
+/** A number kept as a JS value, as a `JsLocal<'a, Number>`, for a body that stores it, reports it or has JSC convert it. */
+export { jsNumberType as jsNumber } from "./bindgen-lib-internal.ts";
+
 /** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. As a result, `b.string.local`. */
 export const string = new StringType();
 

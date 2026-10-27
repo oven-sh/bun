@@ -1226,6 +1226,12 @@ describe("b.cell", () => {
     for (const value of [undefined, 1, {}, Symbol()]) expect(bindgen.isStringLike(value)).toBe(false);
   });
 
+  it("b.jsNumber is a number, as itself", () => {
+    for (const value of [1, -0, 1.5, NaN, Infinity]) expect(bindgen.takeNumber(value)).toBe(value);
+    for (const value of [undefined, "1", 1n, new Number(1)])
+      expect(() => bindgen.takeNumber(value)).toThrow(new TypeError("number must be a number"));
+  });
+
   itAlways("without a rustPath is only an internal field of C++", () => {
     const cell = b.cell("JSC::JSMap", "JavaScriptCore/JSMap.h");
     expect(() => cell.rustType()).toThrow("JSC::JSMap needs a rustPath");

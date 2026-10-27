@@ -77,6 +77,7 @@ template<> struct IDLHumanReadableName<Bindgen::IDLRawArray> : BaseIDLHumanReada
 };
 
 template<> struct IDLHumanReadableName<Bindgen::IDLRawStringLike> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
+template<> struct IDLHumanReadableName<Bindgen::IDLRawNumber> : IDLHumanReadableName<Bindgen::IDLStrictDouble> {};
 
 template<> struct IDLHumanReadableName<Bindgen::IDLStrictUndefined> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("undefined");
@@ -363,6 +364,22 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLRawStringLike> : Bun::Defa
     }
 };
 
+template<> struct WebCore::Converter<Bun::Bindgen::IDLRawNumber> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawNumber> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (!value.isNumber())
+            return std::nullopt;
+        return value;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwNotNumber(globalObject, scope);
+    }
+};
+
 template<typename JSClass, auto name>
 struct WebCore::Converter<Bun::Bindgen::IDLRawCell<JSClass, name>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawCell<JSClass, name>> {
     template<Bun::IDLConversionContext Ctx>
@@ -370,6 +387,13 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawCell<JSClass, name>> : Bun::Defaul
     {
         if (!value.inherits<JSClass>())
             return std::nullopt;
+        return value;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static JSC::JSValue uncheckedConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        ASSERT(value.inherits<JSClass>());
         return value;
     }
 
@@ -389,21 +413,32 @@ struct WebCore::Converter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> : Bu
     template<Bun::IDLConversionContext Ctx>
     static std::optional<void*> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
     {
-        if (auto* object = dynamicDowncast<JSClass>(value)) {
-            if constexpr (requires { object->payload(); })
-                return object->payload();
-            else if constexpr (std::is_pointer_v<decltype(object->wrapped())>)
-                return object->wrapped();
-            else
-                return &object->wrapped();
-        }
+        if (auto* object = dynamicDowncast<JSClass>(value))
+            return wrappedBy(object);
         return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void* uncheckedConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        return wrappedBy(uncheckedDowncast<JSClass>(value));
     }
 
     template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
         ctx.throwNotInstanceOf(globalObject, scope, Bun::idlHumanReadableName<Bun::Bindgen::IDLWrappedInterface<JSClass, name>>());
+    }
+
+private:
+    static void* wrappedBy(JSClass* object)
+    {
+        if constexpr (requires { object->payload(); })
+            return object->payload();
+        else if constexpr (std::is_pointer_v<decltype(object->wrapped())>)
+            return object->wrapped();
+        else
+            return &object->wrapped();
     }
 };
 
@@ -415,6 +450,12 @@ struct WebCore::Converter<Bun::Bindgen::IDLWithValue<IDL>> : Bun::DefaultTryConv
         if (auto converted = Converter<IDL>::tryConvert(globalObject, value, ctx))
             return { { *converted, value } };
         return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static typename Bun::Bindgen::IDLWithValue<IDL>::ImplementationType uncheckedConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        return { Bun::uncheckedConvertIDL<IDL>(globalObject, value, ctx), value };
     }
 
     template<Bun::IDLConversionContext Ctx>

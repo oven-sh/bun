@@ -35,13 +35,12 @@ export const SocketData = b.union({
 });
 /**
  * `byteOffset`, `byteLength` or `encoding`. A string or a `String` object in the place of the first two is the encoding.
- * What is not a number is converted only as the encoding of data that an open socket writes.
+ * `string` and `other` are converted only as the encoding of data that an open socket writes.
  */
 export const SocketWriteOption = b.union({
   missing: b.undefined,
-  number: b.f64,
-  text: b.jsString,
-  stringObject: b.stringObject,
+  number: b.jsNumber,
+  string: b.stringLike,
   other: b.opaque,
 });
 const write = {
@@ -123,7 +122,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
       exportKeyingMaterial: {
         ...buffer,
         args: {
-          length: b.f64.otherAsNull,
+          length: b.jsNumber.otherAsNull,
           label: b.string.allowStringObject.otherAsNull.deferred,
           context: TextOrBytes,
         },

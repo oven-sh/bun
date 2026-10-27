@@ -989,10 +989,11 @@ impl ServerConfig {
 
         match arg.idle_timeout(global)? {
             OptionNumber::Missing => {}
-            OptionNumber::Number(value) if JSValue::js_number(value).is_any_int() => {
+            OptionNumber::Number(value) if value.to_js().is_any_int() => {
                 args.has_idle_timeout = true;
 
-                let idle_timeout: u64 = u64::try_from((value as i64).max(0)).expect("int cast");
+                let idle_timeout: u64 =
+                    u64::try_from(value.to_js().to_int64().max(0)).expect("int cast");
                 if idle_timeout > 255 {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Bun.serve expects idleTimeout to be 255 or less",

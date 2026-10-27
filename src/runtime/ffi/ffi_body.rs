@@ -1749,9 +1749,9 @@ pub(super) fn generate_symbol_for_function(
     'brk: {
         if let Some(ret_value) = value.returns(global)? {
             if let &FFIReturnType::Number(ret_value) = &ret_value
-                && JSValue::js_number(ret_value).is_any_int()
+                && ret_value.to_js().is_any_int()
             {
-                let int = JSValue::js_number(ret_value).to_int32();
+                let int = ret_value.to_js().to_int32();
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     return_type = t;
                     break 'brk;
@@ -1763,9 +1763,7 @@ pub(super) fn generate_symbol_for_function(
             }
 
             let ret_slice = match ret_value {
-                FFIReturnType::Number(ret_value) => {
-                    JSValue::js_number(ret_value).to_utf8(global)?
-                }
+                FFIReturnType::Number(ret_value) => ret_value.to_js().to_utf8(global)?,
                 FFIReturnType::Name(ret_value) => ret_value.into_utf8(),
             };
             return_type = match ABIType::LABEL.get(ret_slice.slice()).copied() {

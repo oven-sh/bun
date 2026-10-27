@@ -113,7 +113,7 @@ export const NativeZstd = compressionStream(
   {
     args: {
       initParamsArray: uint32Array,
-      pledgedSrcSize: b.f64.otherAsNull,
+      pledgedSrcSize: b.jsNumber.otherAsNull,
       writeState: uint32Array,
       processCallback: callback,
       dictionary,

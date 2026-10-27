@@ -578,6 +578,9 @@ pub enum Symbol {}
 /// Marks a [`JsLocal`] that is a string or a `String` object.
 pub enum StringLike {}
 
+/// Marks a [`JsLocal`] that is a number.
+pub enum Number {}
+
 /// Marks a [`JsLocal`] that can be called: a function, or a proxy of one.
 pub enum Callable {}
 

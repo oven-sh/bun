@@ -1026,6 +1026,22 @@ impl Listener {
             Some((local_addr_bytes.to_vec().into_boxed_slice(), local_port))
         };
 
+        // Past the last option getter: script cannot give the handle a socket after this check.
+        let refusal = match (prev_maybe_tcp, prev_maybe_tls) {
+            // SAFETY: the caller passes a live socket, owned by its JS wrapper.
+            (Some(prev), _) => unsafe { &*prev }.connect_refusal(&connection),
+            // SAFETY: as above.
+            (_, Some(prev)) => unsafe { &*prev }.connect_refusal(&connection),
+            _ => None,
+        };
+        if let Some(errno) = refusal {
+            #[cfg(windows)]
+            let uv_errno = uv::e_discriminant_to_uv(errno as u16).unwrap_or(uv::UV_EISCONN);
+            #[cfg(not(windows))]
+            let uv_errno = -(errno as c_int);
+            return Ok(JSValue::js_number_from_int32(uv_errno));
+        }
+
         #[cfg(windows)]
         let mut connection = connection;
         #[cfg(windows)]

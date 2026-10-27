@@ -7,6 +7,24 @@ typedef struct SIMDUTFResult {
 
 extern "C" {
 
+// When CPUID advertises none of the compiled-in kernels (QEMU's default CPU
+// model hides SSE4.2 that the host executes), simdutf installs a stub whose
+// every method returns 0 / false. WTF builds simdutf without the scalar
+// fallback, so pick the last kernel in the priority-ordered list: on x64 that
+// is westmere, the same -march=nehalem baseline the whole binary runs.
+void simdutf__init()
+{
+    if (simdutf::get_active_implementation()->name() != "unsupported")
+        return;
+
+    const simdutf::implementation* least_demanding = nullptr;
+    for (const simdutf::implementation* impl : simdutf::get_available_implementations())
+        least_demanding = impl;
+
+    if (least_demanding)
+        simdutf::get_active_implementation() = least_demanding;
+}
+
 bool simdutf__validate_utf8(const char* buf, size_t len)
 {
     return simdutf::validate_utf8(buf, len);

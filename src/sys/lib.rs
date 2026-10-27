@@ -1399,7 +1399,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 114] = [
+        const NAMES: [&str; 115] = [
             "TODO",
             "dup",
             "access",

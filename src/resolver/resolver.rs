@@ -6700,8 +6700,7 @@ impl<'a> Resolver<'a> {
         Ok(None)
     }
 
-    /// `dir` is the cwd or one of its parents. Their `package.json` is the project's config,
-    /// which `load_package_json` gates. Any other `package.json` is a resolution target.
+    /// `dir` is the cwd or one of its parents, whose `package.json` is `load_package_json`'s.
     fn is_project_config_dir(&self, dir: &[u8]) -> bool {
         use ResolvePath::resolve_path::{ParentEqual, is_parent_or_equal};
         is_parent_or_equal(dir, self.fs_ref().top_level_dir()) != ParentEqual::Unrelated

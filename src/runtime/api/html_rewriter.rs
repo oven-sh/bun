@@ -492,6 +492,28 @@ enum RewritePhase {
     Done,
 }
 
+/// The pipe's place among what the context of its `transform()` call stops. The pipe owns the box.
+struct ContextHandle {
+    abort_handle: jsc::AbortHandle,
+    pipe: BackRef<RewriterPipe>,
+}
+
+jsc::impl_abort_handle_owner!(
+    ContextHandle,
+    abort_handle,
+    // A stopping context's stack reaches neither the pipe nor its cell.
+    keep_alive = |this| -> (PipePin, Option<jsc::EnsureStillAlive>) {
+        // SAFETY: trait contract: `this` is live, and so is the pipe that owns it.
+        let pipe = unsafe { (*this).pipe };
+        (pipe.pin(), pipe.cell.try_get().map(jsc::EnsureStillAlive))
+    },
+    |this, _cause| {
+        // SAFETY: as above. The pipe drops `this` as it ends: nothing reads it after this line.
+        let pipe = unsafe { (*this).pipe };
+        pipe.handle_stopped();
+    }
+);
+
 /// The JS wrapper a suspended handler is still using, plus the ref
 /// `handler_callback` took on it; dropping it detaches the wrapper first.
 enum SuspendedWrapper {
@@ -540,6 +562,7 @@ struct ActiveSinkGuard {
 
 impl ActiveSinkGuard {
     fn enter(pipe: &RewriterPipe) -> Self {
+        debug_assert!(!pipe.stopped_by_context.get());
         let vm: &mut VirtualMachine = pipe.global.bun_vm().as_mut();
         Self {
             prev: core::mem::replace(
@@ -618,6 +641,12 @@ pub struct RewriterPipe {
     context: Rc<RefCell<LOLHTMLContext>>,
     /// The context of the script that called `transform()`.
     script_context: bun_jsc::ContextId,
+    /// Armed in that context, a `Bun.ModuleGraph`'s, while the rewrite outlives `transform()`.
+    context_handle: JsCell<Option<Box<ContextHandle>>>,
+    /// That context stopped the rewrite, for good: what would end it again changes nothing.
+    stopped_by_context: Cell<bool>,
+    /// Whose script reads the output of a rewrite in a graph's context: a stop tells it.
+    reader_context: Cell<bun_jsc::ContextId>,
 
     // ── input side ───────────────────────────────────────────────────────
     /// Upstream to resume (`ready()`) once output drains, or `close()` once
@@ -694,6 +723,9 @@ pub struct RewriterPipe {
     pump_controller_attached: Cell<bool>,
 }
 
+// One allocation per `transform()`, in mimalloc's 320-byte size class. The next class is 384.
+const _: () = assert!(size_of::<RewriterPipe>() <= 320);
+
 impl RewriterPipe {
     /// How far the output may run ahead of its reader before the input is
     /// held (or, unobserved, before the turn is yielded). The same distance
@@ -768,7 +800,7 @@ impl RewriterPipe {
             this.output.set(None);
         }
         if vm_stopped {
-            this.phase.set(RewritePhase::Done);
+            this.mark_done();
             this.done.set(true);
         } else {
             this.fail(webcore::body::ValueError::Message(BunString::static_(
@@ -776,6 +808,110 @@ impl RewriterPipe {
             )));
         }
         Self::deref_nn(pipe.into());
+    }
+
+    /// The rewrite is over: it leaves the context that stops it, once no pass is running.
+    fn mark_done(&self) {
+        self.phase.set(RewritePhase::Done);
+        if self.context_handle.get().is_some() && !self.driving.get() {
+            self.leave_context();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn leave_context(&self) {
+        self.context_handle.set(None);
+    }
+
+    /// The rewrite outlives `transform()`: from here `context`, a `Bun.ModuleGraph`'s, stops it.
+    #[cold]
+    #[inline(never)]
+    fn join_context(&self, context: &jsc::ScriptExecutionContext) {
+        if context.is_stopped() {
+            // A handler of the first pass had the graph disposed.
+            return self.context_stopped();
+        }
+        let handle: *mut ContextHandle = self.context_handle.with_mut(|slot| {
+            &raw mut **slot.insert(Box::new(ContextHandle {
+                abort_handle: jsc::AbortHandle::for_owner::<ContextHandle>(),
+                pipe: BackRef::new(self),
+            }))
+        });
+        // SAFETY: the box stays in `context_handle` until the pipe takes it out, which disarms it.
+        unsafe { jsc::AbortHandle::arm_owner(handle, context) };
+        if let Some(response) = self.response.get().as_deref()
+            && let webcore::body::Value::Locked(locked) = response.get_body_value()
+            && locked.on_start_buffering.is_some()
+        {
+            locked.on_start_buffering = Some(Self::on_start_buffering_in_graph);
+            locked.on_readable_stream_available = Some(Self::on_readable_stream_available_in_graph);
+        }
+    }
+
+    /// The pipe's own handle: the context of `transform()` stopped.
+    fn handle_stopped(&self) {
+        if self.global.bun_vm().context_of_caller().id() == bun_jsc::ContextId::DEAD {
+            // The graph was collected, not disposed: the rewrite goes on, as one with no graph.
+            return self.leave_context();
+        }
+        self.context_stopped()
+    }
+
+    /// The context of `transform()` is stopping, and a newer handle of it reached the pipe first.
+    fn context_is_stopping(&self) -> bool {
+        self.context_handle.get().is_some()
+            && !self.global.bun_vm().is_context_live(self.script_context)
+    }
+
+    /// The context of `transform()` stopped: the rewrite ends as for a cancelled input, for good.
+    fn context_stopped(&self) {
+        self.stopped_by_context.set(true);
+        if self.phase.get() == RewritePhase::Done {
+            // Over, with its last pass still running: that pass calls no handler again.
+            debug_assert!(self.driving.get());
+            self.forget_pump_promise();
+            return self.release_handlers();
+        }
+        if self.cell.try_get().is_none() {
+            // Collected, with every stream that could still reach the pipe.
+            self.input_source.set(SourceHandle::None);
+            self.output.set(None);
+        }
+        self.fail_now(webcore::body::ValueError::AbortReason(
+            CommonAbortReason::UserAbort,
+        ));
+    }
+
+    /// A JS pump parked on `flush_from_js` is not told that its promise settled: let go of it.
+    fn forget_pump_promise(&self) {
+        if let Some(cell) = self.cell.try_get() {
+            js_HTMLRewriterTransform::pending_promise_take_cached(cell, &self.global);
+        }
+    }
+
+    /// `transform()` of an arriving body by leftover script of a disposed graph: nothing starts.
+    #[cold]
+    fn refuse(&self) {
+        self.stopped_by_context.set(true);
+        self.mark_done();
+        self.done.set(true);
+        self.rewriter.set(None);
+        self.release_handlers();
+        if let Some(response) = self.response.get().as_deref() {
+            self.fail_output_when_read(response.get_body_value());
+        }
+    }
+
+    /// Nobody reads the stopped output yet: its first read fails it, in the reader's own call.
+    fn fail_output_when_read(&self, body: &mut webcore::body::Value) {
+        self.output_buffer.set(Vec::new());
+        if let webcore::body::Value::Locked(locked) = body {
+            locked.on_start_buffering = Some(Self::on_start_buffering_stopped);
+            locked.on_start_streaming = None;
+            locked.on_readable_stream_available = Some(Self::on_readable_stream_available_stopped);
+            locked.producer = SourceHandle::None;
+        }
     }
 
     /// Record a handler's exception for the enclosing lol-html call to pick
@@ -935,6 +1071,9 @@ impl RewriterPipe {
             rewriter: JsCell::new(None),
             context,
             script_context: cx.context().id(),
+            context_handle: JsCell::new(None),
+            stopped_by_context: Cell::new(false),
+            reader_context: Cell::new(bun_jsc::ContextId::NONE),
             input_source: Cell::new(SourceHandle::None),
             input_ended: Cell::new(false),
             js_pump_reaction_pending: Cell::new(false),
@@ -1056,10 +1195,16 @@ impl RewriterPipe {
         // drive it again; the cell and its slots are ordinary garbage now.
         if let Some(captured) = this.take_handler_error() {
             captured.ensure_still_alive();
-            this.phase.set(RewritePhase::Done);
+            this.mark_done();
             this.done.set(true);
             this.detach_output();
             return Err(cx.global().throw_value(captured));
+        }
+
+        if this.phase.get() != RewritePhase::Done
+            && let Some(context) = cx.vm().as_graph_context(cx.context())
+        {
+            this.join_context(context);
         }
 
         response_js_value.ensure_still_alive();
@@ -1082,23 +1227,25 @@ impl RewriterPipe {
         // a file/S3-backed Blob, must be turned into a ReadableStream first so
         // the ByteStream/FileReader wiring below can drive it.
         let mut stream = stream;
-        if stream.is_none() {
-            let needs_stream = match value {
+        let needs_stream = stream.is_none()
+            && match value {
                 webcore::body::Value::Locked(_) => true,
                 webcore::body::Value::Blob(b) => b.needs_to_read_file() || b.is_s3(),
                 _ => false,
             };
-            if needs_stream {
-                match value
-                    .to_readable_stream(cx)
-                    .and_then(|v| ReadableStream::from_js(v, cx.global()))
-                {
-                    Ok(s) => stream = s,
-                    Err(e) => {
-                        let err = cx.global().take_exception(e);
-                        this.set_handler_error(err);
-                        return;
-                    }
+        if (needs_stream || stream.is_some()) && cx.context().is_stopped() {
+            return this.refuse();
+        }
+        if needs_stream {
+            match value
+                .to_readable_stream(cx)
+                .and_then(|v| ReadableStream::from_js(v, cx.global()))
+            {
+                Ok(s) => stream = s,
+                Err(e) => {
+                    let err = cx.global().take_exception(e);
+                    this.set_handler_error(err);
+                    return;
                 }
             }
         }
@@ -1210,6 +1357,52 @@ impl RewriterPipe {
         let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
         this.buffered_consumer.set(true);
         this.resume();
+    }
+
+    /// As [`Self::on_start_buffering`], in a graph's context: a stop tells whoever asked.
+    fn on_start_buffering_in_graph(ctx: NonNull<c_void>) {
+        let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
+        this.reader_context
+            .set(this.global.bun_vm().context_of_caller().id());
+        Self::on_start_buffering(ctx);
+    }
+
+    /// As [`Self::on_readable_stream_available`], in a graph's context: a stop tells the reader.
+    fn on_readable_stream_available_in_graph(
+        ctx: NonNull<c_void>,
+        global_this: &JSGlobalObject,
+        readable: ReadableStream,
+    ) {
+        let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
+        this.reader_context
+            .set(global_this.bun_vm().context_of_caller().id());
+        Self::on_readable_stream_available(ctx, global_this, readable);
+    }
+
+    /// The whole output of a stopped rewrite is asked for: the read fails, for whoever can be told.
+    fn on_start_buffering_stopped(ctx: NonNull<c_void>) {
+        let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
+        if let Some(response) = this.response.get().as_deref() {
+            let _ = response.get_body_value().to_error_instance(
+                webcore::body::ValueError::AbortReason(CommonAbortReason::UserAbort),
+                &this.global,
+            );
+        }
+    }
+
+    /// A stopped rewrite's output becomes a stream: it fails, unless leftover script made it.
+    fn on_readable_stream_available_stopped(
+        _: NonNull<c_void>,
+        global_this: &JSGlobalObject,
+        readable: ReadableStream,
+    ) {
+        if !global_this.bun_vm().reports_to_nobody()
+            && let Some(bytes) = readable.ptr.bytes()
+        {
+            bytes.on_data(StreamResult::Err(StreamError::AbortReason(
+                CommonAbortReason::UserAbort,
+            )));
+        }
     }
 
     /// Hold a ref on the pipe across an externally-entered call whose work
@@ -1405,7 +1598,11 @@ impl RewriterPipe {
                 }
                 StreamError::AbortReason(r) => webcore::body::ValueError::AbortReason(r),
             };
-            self.fail(value_error);
+            if self.context_is_stopping() {
+                self.context_stopped();
+            } else {
+                self.fail(value_error);
+            }
         } else if self.driving.get() || self.is_suspended() || !self.pending_input.get().is_empty()
         {
             self.input_ended.set(true);
@@ -1432,7 +1629,11 @@ impl RewriterPipe {
     /// `SourceHandle::on_close` entry — the output reader cancelled.
     pub fn cancel_from_output(&self, _err: Option<SysError>) {
         let _pin = self.pin();
-        self.phase.set(RewritePhase::Done);
+        if self.context_is_stopping() {
+            // A stream that the stopping context's script made of the output is stopped first.
+            self.stopped_by_context.set(true);
+        }
+        self.mark_done();
         self.done.set(true);
         self.release_handlers();
         // The reader's cancel reason does not travel through the output
@@ -1443,6 +1644,9 @@ impl RewriterPipe {
             p.result = Writable::Done;
             p.run();
         });
+        if self.stopped_by_context.get() {
+            self.forget_pump_promise();
+        }
         // After the input's close: the reader that cancels may reach the cell only through `owner`.
         self.detach_output();
         self.release_input_roots(src);
@@ -1519,8 +1723,9 @@ impl RewriterPipe {
     /// The rewrite is over: an output `Response` that outlives it stops retaining the handlers.
     fn release_handlers(&self) {
         debug_assert!(self.phase.get() == RewritePhase::Done);
-        if self.driving.get() {
+        if self.driving.get() && !self.stopped_by_context.get() {
             // lol-html runs the handlers for the rest of this chunk. `drive_rewriter` calls again.
+            // (Not those of a rewrite its context stopped: `handler_callback` finds none.)
             return;
         }
         self.free_end_tag_slots.set(Vec::new());
@@ -1532,6 +1737,10 @@ impl RewriterPipe {
                 JSValue::UNDEFINED,
             );
         }
+        if self.context_handle.get().is_some() && !self.driving.get() {
+            // Its last pass is over too.
+            self.leave_context();
+        }
     }
 
     /// Holds `callback` for the end-tag handler that names the slot. `None`: no end tag can come.
@@ -1542,7 +1751,10 @@ impl RewriterPipe {
         callback: JSValue,
     ) -> JsResult<Option<EndTagSlot>> {
         // A parked element can call this after its rewrite is over, or (until the abandon) collected.
-        if self.phase.get() == RewritePhase::Done && !self.driving.get() {
+        // So can the handler that had the context stopped: nothing runs after it.
+        if self.phase.get() == RewritePhase::Done
+            && (!self.driving.get() || self.stopped_by_context.get())
+        {
             return Ok(None);
         }
         let Some(cell) = self.cell.try_get() else {
@@ -1578,7 +1790,10 @@ impl RewriterPipe {
             .try_get()
             .and_then(js_HTMLRewriterTransform::end_tag_handlers_get_cached)
             .filter(|list| list.is_cell());
-        debug_assert!(list.is_some(), "HTMLRewriter end-tag handler has no array");
+        debug_assert!(
+            list.is_some() || self.stopped_by_context.get(),
+            "HTMLRewriter end-tag handler has no array"
+        );
         let Some(list) = list else {
             return Ok(None);
         };
@@ -1622,14 +1837,16 @@ impl RewriterPipe {
         // `end_mut` (unlike the consuming `end`) keeps the rewriter alive: a
         // document-end handler can suspend it, and `Drop` is what frees it.
         match self.drive_rewriter(|r| r.end_mut()) {
-            None => self.phase.set(RewritePhase::Done),
+            None => self.mark_done(),
             Some(Err(e)) => self.on_rewriting_error(&e),
+            // A handler of this pass had the context stopped: the rewrite has failed.
+            Some(Ok(())) if self.stopped_by_context.get() => {}
             Some(Ok(())) => self.finish(),
         }
     }
 
     fn finish(&self) {
-        self.phase.set(RewritePhase::Done);
+        self.mark_done();
         // The rewrite completed: free the boxed lol-html state machine now
         // instead of at cell collection, so a long-lived output Response does
         // not retain the parser arena. Safe here: every driver null-checks
@@ -1734,7 +1951,7 @@ impl RewriterPipe {
             return self.begin_suspension();
         }
 
-        self.phase.set(RewritePhase::Done);
+        self.mark_done();
         let captured = self.take_handler_error();
 
         if self.sync_only_noun.get().is_some() {
@@ -1804,9 +2021,17 @@ impl RewriterPipe {
     }
 
     /// Put `err` on the output `Response`'s body / ByteStream.
-    fn fail(&self, mut err: webcore::body::ValueError) {
+    fn fail(&self, err: webcore::body::ValueError) {
+        // The stop is final: a handler that settles or is collected later does not replace it.
+        if self.stopped_by_context.get() {
+            return;
+        }
+        self.fail_now(err)
+    }
+
+    fn fail_now(&self, mut err: webcore::body::ValueError) {
         let _pin = self.pin();
-        self.phase.set(RewritePhase::Done);
+        self.mark_done();
         self.done.set(true);
         self.release_handlers();
         let src = self.detach_input_source(Some(err.to_js(&self.global)));
@@ -1818,9 +2043,22 @@ impl RewriterPipe {
             p.run();
         });
 
+        let stopped = self.stopped_by_context.get();
+        if stopped {
+            self.forget_pump_promise();
+        }
+        // A stop is told to whoever reads the output, in the reader's own context.
+        let reader = self.reader_context.get();
+        let _reader = (stopped && reader != bun_jsc::ContextId::NONE)
+            .then(|| self.global.bun_vm().enter_context(reader));
         if let Some(out) = self.output.get() {
-            // Output emitted before the failure still precedes the error.
-            self.flush_output();
+            if stopped {
+                // The stop cut this pass short: its output is not handed on.
+                self.output_buffer.set(Vec::new());
+            } else {
+                // Output emitted before the failure still precedes the error.
+                self.flush_output();
+            }
             out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
             self.detach_output();
         } else if let Some(response) = self.response.get().as_deref() {
@@ -1829,13 +2067,17 @@ impl RewriterPipe {
                 webcore::body::Value::Locked(l) => l.readable.has(),
                 _ => false,
             };
-            if !has_readable
+            let unread = !has_readable
                 && matches!(body_value, webcore::body::Value::Locked(l)
-                    if l.promise.is_none() && l.on_receive_value.is_none())
-            {
-                *body_value = webcore::body::Value::Empty;
+                    if l.promise.is_none() && l.on_receive_value.is_none());
+            if unread && stopped {
+                self.fail_output_when_read(body_value);
+            } else {
+                if unread {
+                    *body_value = webcore::body::Value::Empty;
+                }
+                let _ = body_value.to_error_instance(err, &self.global);
             }
-            let _ = body_value.to_error_instance(err, &self.global);
         }
         self.release_input_roots(src);
     }
@@ -2273,7 +2515,11 @@ where
         } => {
             // `drive_rewriter` keeps the cell that holds the list alive.
             let Some(list) = sink.handler_list() else {
-                debug_assert!(false, "HTMLRewriter handler ran without its handler list");
+                // A rewrite its context stopped in the middle of this pass has let go of the list.
+                debug_assert!(
+                    sink.stopped_by_context.get(),
+                    "HTMLRewriter handler ran without its handler list"
+                );
                 return HandlerOutcome::Stop;
             };
             // A pending termination stays pending, as when it stops the callback itself.

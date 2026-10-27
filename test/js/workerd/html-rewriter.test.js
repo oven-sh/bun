@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "async_hooks";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
@@ -16,7 +17,11 @@ import {
 import { createConnection, createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
-import { asyncIterableBodyShapes, settled as settledBody } from "../web/streams/async-iterable-body-shapes";
+import {
+  asyncIterableBodyShapes,
+  handWrittenBodyShapes,
+  settled as settledBody,
+} from "../web/streams/async-iterable-body-shapes";
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
     setTimeout(() => {
@@ -3535,6 +3540,1088 @@ describe("GC pressure mid-rewrite", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: JSON.stringify({ seen: 20, ended: true }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// A rewrite that `transform(response)` starts outlives the call: it is its caller's, like anything
+// else the caller opened, whoever made the body it reads. (`transform(string)` is over when it returns.)
+describe("a rewrite that a Bun.ModuleGraph's script started is the graph's", () => {
+  const pieces = ["<p>1</p><script>1</script>", "<p>2</p><script>2</script>"];
+  const rewritten = "<p>1</p><p>2</p>";
+  const aborted = "AbortError: The operation was aborted.";
+  const encode = text => new TextEncoder().encode(text);
+  const decode = bytes => new TextDecoder().decode(bytes);
+  const outcome = promise => promise.then(value => "fulfilled: " + value, String);
+  /** What `outcome(promise)` has come to by now. */
+  const outcomeSoFar = settled => (Bun.peek.status(settled) === "pending" ? "pending" : Bun.peek(settled));
+
+  const fixtures = tempDir("hr-graph", {
+    "rewrites.mjs": `
+      const pieces = ${JSON.stringify(pieces)};
+      // Removes every <script>, and says what it is called for.
+      export const rewrite = (input, say) =>
+        new HTMLRewriter()
+          .on("script", { element(element) { say("element"); element.remove(); } })
+          .onDocument({ end() { say("end"); } })
+          .transform(input);
+      export const rewriteWhatItFetches = async (url, say) => rewrite(await fetch(url), say);
+      export const readAndSay = (output, say) =>
+        void output.text().then(() => say("read"), error => say("read failed: " + error.name));
+      export const rewriteAndRead = (input, say) => readAndSay(rewrite(input, say), say);
+      // Tries again when the rewrite fails, as a script does that expects its input to come back. \`limit\` times at most.
+      export const rewriteUntilItWorks = async (makeInput, tries, limit) => {
+        while (tries.count < limit) {
+          tries.count++;
+          try {
+            return await rewrite(makeInput(), () => {}).text();
+          } catch {}
+        }
+      };
+      // A graph that this graph's script makes is this graph's, and so is what that one starts with \`start\`.
+      export const inAGraphOfItsOwn = async (start, takesBody) => {
+        const inner = new Bun.ModuleGraph();
+        const app = await inner.import(import.meta.path);
+        const output = inner.run(() => start(app));
+        if (takesBody) void output.body;
+        return output;
+      };
+      // What the graph's own script does with the output: each makes a stream or a sink of the graph's.
+      export const uses = {
+        "took the body of its output": (input, say) => { const output = rewrite(input, say); void output.body; return output; },
+        "is rewriting its output again": (input, say) =>
+          new HTMLRewriter().on("p", { element() { say("second element"); } }).transform(rewrite(input, say)),
+        "is writing its output to a file": (input, say, path) =>
+          void Bun.write(path, rewrite(input, say)).then(() => say("written"), () => say("not written")),
+      };
+      // A stream of the graph's own: its second piece waits for the host, and it says what its cancel() hears.
+      export function rewriteItsOwnStream(say, more) {
+        let pulls = 0;
+        const stream = new ReadableStream({
+          async pull(controller) {
+            if (pulls++ === 0) return controller.enqueue(new TextEncoder().encode(pieces[0]));
+            await more;
+            controller.enqueue(new TextEncoder().encode(pieces[1]));
+            controller.close();
+          },
+          cancel(reason) { say("cancel: " + reason); },
+        });
+        return rewrite(new Response(stream), say);
+      }
+      // Every <script> handler waits: for the host, or for a promise that nobody holds.
+      export const rewriteWaitingFor = (input, say, wait) =>
+        new HTMLRewriter()
+          .on("script", { async element() { say("element"); await (wait ?? new Promise(() => {})); say("resumed"); } })
+          .transform(input);
+      // The handler of <script id="…"> \`at\`, or the end of the document, calls \`then\`.
+      export const rewriteThen = (input, say, at, then, takesBody) => {
+        const output = new HTMLRewriter()
+          .on("script", { element(element) { const id = element.getAttribute("id"); say("element " + id); if (id === at) then(); } })
+          .onDocument({ end() { say("end"); if (at === "end") then(); } })
+          .transform(input);
+        if (takesBody) void output.body;
+        return output;
+      };
+      // <b> calls \`then\`, and asks for its own end tag as its id says. A <div> asked for its end tag before.
+      export const rewriteWithEndTags = (input, say, then) =>
+        new HTMLRewriter()
+          .on("div", { element(element) { element.onEndTag(() => say("end tag of div")); } })
+          .on("b", {
+            element(element) {
+              const id = element.getAttribute("id");
+              if (id === "asks again") element.onEndTag(() => say("end tag of b, asked for before"));
+              then();
+              if (id !== "does not ask") element.onEndTag(() => say("end tag of b, asked for after"));
+            },
+          })
+          .transform(input);
+      // Adds a <script> after every <p>; <i> calls \`then\`.
+      export const rewriteAdding = (input, then) =>
+        new HTMLRewriter()
+          .on("p", { element(element) { element.after("<script>added()</script>", { html: true }); } })
+          .on("i", { element() { then(); } })
+          .transform(input);
+      export const rewriteText = (text, say) =>
+        new HTMLRewriter().on("script", { element(element) { say("element"); element.remove(); } }).transform(text);
+    `,
+    // A server of the host's is sending the output when the graph is disposed: after its first byte, or before.
+    "rewrite-served.mjs": `
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/rewrites.mjs");
+      const pieces = ${JSON.stringify(pieces)}.map(piece => new TextEncoder().encode(piece));
+      const sent = process.argv[2] === "after the first byte";
+      let body;
+      const input = new Response(new ReadableStream({ start(controller) { body = controller; if (sent) controller.enqueue(pieces[0]); } }));
+      let output;
+      const errors = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        idleTimeout: 0,
+        fetch: () => (output = graph.run(() => app.rewrite(input, () => {}))),
+        error(error) {
+          errors.push(String(error));
+          return new Response("the host's error()", { status: 500 });
+        },
+      });
+      const decode = bytes => new TextDecoder().decode(bytes);
+      const result = {};
+      if (sent) {
+        const response = await fetch(server.url);
+        const reader = response.body.getReader();
+        result.first = decode((await reader.read()).value);
+        graph.dispose();
+        try { body.enqueue(pieces[1]); body.close(); } catch {}
+        result.rest = await reader.read().then(({ done, value }) => (done ? "the end" : decode(value)), () => "failed");
+      } else {
+        const response = fetch(server.url);
+        // The server has the output's stream: the response is under way, with nothing sent.
+        while (!output?.bodyUsed) await new Promise(resolve => setImmediate(resolve));
+        graph.dispose();
+        try { body.enqueue(pieces[0]); body.close(); } catch {}
+        result.response = await response.then(async answer => answer.status + " " + (await answer.text()));
+      }
+      console.log(JSON.stringify({ ...result, errors }));
+      process.exit(0);
+    `,
+    // A worker, and the process, go while a rewrite a graph started in each is running.
+    "rewrites-at-exit.mjs": `
+      import { isMainThread } from "node:worker_threads";
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/rewrites.mjs");
+      const held = new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(${JSON.stringify(pieces[0])})); } }));
+      const said = [];
+      globalThis.outputs = [
+        graph.run(() => app.rewrite(held, what => said.push(what))),
+        graph.run(() => app.rewriteWaitingFor(new Response(${JSON.stringify(pieces.join(""))}), what => said.push(what), new Promise(() => {}))),
+      ];
+      if (!isMainThread) postMessage(said);
+      else {
+        const worker = new Worker(import.meta.path);
+        const inWorker = await new Promise(resolve => (worker.onmessage = event => resolve(event.data)));
+        await worker.terminate();
+        console.log(JSON.stringify({ inWorker, said }));
+        process.exit(0);
+      }
+    `,
+  });
+  const dir = String(fixtures);
+  afterAll(() => fixtures[Symbol.dispose]());
+
+  /** Resolves after a 1ms timer of the host's fired `turns` times: a rewrite that was still running has gone on by then. */
+  async function hostTimerTurns(turns = 5) {
+    let fired = 0;
+    const { promise, resolve } = Promise.withResolvers();
+    const interval = setInterval(() => {
+      if (++fired >= turns) resolve();
+    }, 1);
+    try {
+      await promise;
+    } finally {
+      clearInterval(interval);
+    }
+  }
+
+  /** What the rewrite's handlers said, and promises for the first and the second thing. */
+  function listener() {
+    const said = [];
+    const heard = Promise.withResolvers();
+    const again = Promise.withResolvers();
+    return {
+      said,
+      heard: heard.promise,
+      again: again.promise,
+      say(what) {
+        said.push(what);
+        (said.length === 1 ? heard : again).resolve();
+      },
+    };
+  }
+
+  async function graphWithRewrites() {
+    const graph = new Bun.ModuleGraph();
+    return { graph, app: await graph.import(join(dir, "rewrites.mjs")) };
+  }
+
+  /** Serves a body that stays open: its first piece is sent, and `more()` sends the second (and ends it, with `true`). */
+  function heldResponse() {
+    const clientLeft = Promise.withResolvers();
+    let body;
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              body = controller;
+              controller.enqueue(encode(pieces[0]));
+            },
+            cancel: () => clientLeft.resolve("the client left"),
+          }),
+        ),
+    });
+    return {
+      url: server.url.href,
+      clientLeft: clientLeft.promise,
+      more(end = false) {
+        try {
+          body.enqueue(encode(pieces[1]));
+          if (end) body.close();
+        } catch {
+          // Cancelled: the client left.
+        }
+      },
+      [Symbol.asyncDispose]: () => server.stop(true),
+    };
+  }
+
+  /** A stream of the host's that stays open: it holds the first piece, and `more()` enqueues the second. */
+  function heldStream() {
+    let stream;
+    const cancels = [];
+    let disposing = false;
+    const input = new Response(
+      new ReadableStream({
+        start(controller) {
+          stream = controller;
+          controller.enqueue(encode(pieces[0]));
+        },
+        cancel(reason) {
+          const where = Bun.ModuleGraph.current ? "the graph's context" : "the host's context";
+          cancels.push(`${reason} in ${where}, ${disposing ? "under" : "after"} dispose()`);
+        },
+      }),
+    );
+    return {
+      input,
+      cancels,
+      dispose(graph) {
+        disposing = true;
+        graph.dispose();
+        disposing = false;
+      },
+      more(end = false) {
+        try {
+          stream.enqueue(encode(pieces[1]));
+          if (end) stream.close();
+        } catch {
+          // Cancelled with the rewrite.
+        }
+      },
+      fail: error => stream.error(error),
+    };
+  }
+
+  // `output`: what the graph's script made of the body. `more()` sends the second piece. `unread()` resolves
+  // with what the source of a body that nobody reads any more found out.
+  const bodies = [
+    [
+      "fetch() response of the host's",
+      "the client left",
+      async start => {
+        const served = heldResponse();
+        const input = await fetch(served.url);
+        // Made here: the stream is the host's, whoever reads it.
+        void input.body;
+        return {
+          output: start(input),
+          more: served.more,
+          unread: () => served.clientLeft,
+          [Symbol.asyncDispose]: served[Symbol.asyncDispose],
+        };
+      },
+    ],
+    [
+      "child's stdout of the host's",
+      "its write failed: nobody reads it",
+      async start => {
+        // Writes the first piece. Once told to, it writes the second every 10 ms until a write fails, for 3 s at most.
+        const child = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const unread = ["EPIPE", "ENOTCONN", "ECONNRESET"];
+             process.stdout.on("error", error => process.exit(unread.includes(error.code) ? 42 : 43));
+             process.stdout.write(${JSON.stringify(pieces[0])});
+             process.stdin.once("data", () => {
+               setInterval(() => process.stdout.write(${JSON.stringify(pieces[1])}), 10);
+               setTimeout(() => process.exit(7), 3000);
+             });`,
+          ],
+          env: bunEnv,
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const exited = child.exited.then(code =>
+          code === 42 ? "its write failed: nobody reads it" : `it exited with ${code}, ${child.signalCode}`,
+        );
+        return {
+          output: start(new Response(child.stdout)),
+          more() {
+            child.stdin.write("more");
+            child.stdin.end();
+          },
+          unread: () => exited,
+          async [Symbol.asyncDispose]() {
+            child.kill();
+            await child.exited;
+          },
+        };
+      },
+    ],
+  ];
+
+  for (const [what, unread, open] of bodies) {
+    it(`dispose() stops the rewrite of a ${what}: no handler is called again, the body is closed, and the output fails`, async () => {
+      const { graph, app } = await graphWithRewrites();
+      const { said, say, heard, again } = listener();
+      await using body = await open(input => graph.run(() => app.rewrite(input, say)));
+      await heard;
+      graph.dispose();
+      body.more();
+      // Either the rewrite takes the second piece, or its source finds out that nobody reads it.
+      await Promise.race([again, body.unread()]);
+      expect(said).toEqual(["element"]);
+      expect({ output: await outcome(body.output.text()), source: await body.unread() }).toEqual({
+        output: aborted,
+        source: unread,
+      });
+    });
+  }
+
+  it("dispose() stops the rewrite of a fetch() response the graph's script fetched, in the same way", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say, heard, again } = listener();
+    await using served = heldResponse();
+    const output = await graph.run(() => app.rewriteWhatItFetches(served.url, say));
+    await heard;
+    graph.dispose();
+    served.more();
+    await Promise.race([again, served.clientLeft]);
+    expect(said).toEqual(["element"]);
+    expect(await outcome(output.text())).toBe(aborted);
+  });
+
+  it("dispose() stops the rewrite that a graph of the graph's own making started", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say, heard } = listener();
+    const held = heldStream();
+    const output = await graph.run(() => app.inAGraphOfItsOwn(inner => inner.rewrite(held.input, say)));
+    await heard;
+    graph.dispose();
+    held.more(true);
+    const text = outcome(output.text());
+    await hostTimerTurns();
+    expect({ output: outcomeSoFar(text), said, cancels: held.cancels.length }).toEqual({
+      output: aborted,
+      said: ["element"],
+      cancels: 1,
+    });
+  });
+
+  // The graph hears nothing of what it was waiting for. Anyone else who was waiting is told.
+  it("dispose() stops a rewrite whose output the graph's script was reading: the graph hears nothing", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say, heard, again } = listener();
+    await using served = heldResponse();
+    const input = await fetch(served.url);
+    void input.body;
+    graph.run(() => app.rewriteAndRead(input, say));
+    await heard;
+    graph.dispose();
+    served.more();
+    await Promise.race([again, served.clientLeft]);
+    await hostTimerTurns();
+    expect(said).toEqual(["element"]);
+  });
+
+  // Nor does it hear of the stop later: what its leftover script reads of the stopped rewrite stays pending.
+  it("dispose() leaves the output of a rewrite that it stopped pending for the graph's leftover script", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say } = listener();
+    const inputs = [heldStream(), heldStream(), heldStream()];
+    const outputs = inputs.map(held => graph.run(() => app.rewrite(held.input, say)));
+    const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
+    graph.dispose();
+    const reads = [
+      inGraph(() => outcome(outputs[0].text())),
+      inGraph(() => outcome(outputs[1].body.getReader().read())),
+      inGraph(() => outcome(new Response(outputs[2].body).text())),
+    ];
+    await hostTimerTurns();
+    expect({ said, reads: reads.map(outcomeSoFar) }).toEqual({
+      said: ["element", "element", "element"],
+      reads: ["pending", "pending", "pending"],
+    });
+  });
+
+  it.each([
+    ["text()", output => ({ read: output.text() })],
+    ["json()", output => ({ read: output.json() })],
+    ["text(), after its body was taken", output => (void output.body, { read: output.text() })],
+    [
+      "a read() of its body, after what was rewritten",
+      async output => {
+        const reader = output.body.getReader();
+        expect(decode((await reader.read()).value)).toBe("<p>1</p>");
+        return { read: reader.read() };
+      },
+    ],
+    ["Bun.write() of it", output => ({ read: Bun.write(join(dir, "written-by-the-host.html"), output) })],
+    ["pipeTo() of its body", output => ({ read: output.body.pipeTo(new WritableStream()) })],
+  ])("dispose() stops a rewrite whose output the host was reading with %s: that read fails", async (_, begin) => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say, heard, again } = listener();
+    await using served = heldResponse();
+    const input = await fetch(served.url);
+    void input.body;
+    const output = graph.run(() => app.rewrite(input, say));
+    await heard;
+    const { read } = await begin(output);
+    const settled = outcome(read);
+    graph.dispose();
+    served.more();
+    await Promise.race([again, settled]);
+    expect({ said, read: outcomeSoFar(settled) }).toEqual({ said: ["element"], read: aborted });
+  });
+
+  it("dispose() tells another graph's script that was waiting for the output, in that graph's context", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const reader = await graphWithRewrites();
+    const { said, say, heard } = listener();
+    const held = heldStream();
+    const output = graph.run(() => app.rewrite(held.input, say));
+    await heard;
+    const told = Promise.withResolvers();
+    const where = () => (Bun.ModuleGraph.current === reader.graph ? "its own context" : "another context");
+    reader.graph.run(() => reader.app.readAndSay(output, what => told.resolve(`${what}, in ${where()}`)));
+    graph.dispose();
+    held.more(true);
+    await Promise.race([told.promise, hostTimerTurns(20)]);
+    expect({ told: outcomeSoFar(told.promise), said }).toEqual({
+      told: "read failed: AbortError, in its own context",
+      said: ["element"],
+    });
+    reader.graph.dispose();
+  });
+
+  // What the output's stream had queued when the rewrite stopped comes before the failure.
+  it("a reader that the host took of the output before dispose() reads what was rewritten, and then the failure", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say, heard } = listener();
+    const held = heldStream();
+    const output = graph.run(() => app.rewrite(held.input, say));
+    const reader = output.body.getReader();
+    await heard;
+    graph.dispose();
+    held.more(true);
+    expect({ first: decode((await reader.read()).value), then: await outcome(reader.read()), said }).toEqual({
+      first: "<p>1</p>",
+      then: aborted,
+      said: ["element"],
+    });
+  });
+
+  // What cancel() of a JS stream hears: once, with the reason the output fails with. (It runs where the rewrite
+  // stops, as it does on every other path that ends a rewrite. Whether it should is one rule for every sink.)
+  it("dispose() stops the rewrite of a ReadableStream of the host's: what the host enqueues afterwards reaches no handler, and the stream is cancelled", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say, heard } = listener();
+    const held = heldStream();
+    const output = graph.run(() => app.rewrite(held.input, say));
+    await heard;
+    held.dispose(graph);
+    held.more(true);
+    await hostTimerTurns();
+    expect({ said, cancels: held.cancels }).toEqual({
+      said: ["element"],
+      cancels: [aborted + " in the graph's context, under dispose()"],
+    });
+    expect(await outcome(output.text())).toBe(aborted);
+  });
+
+  // What the graph left behind still runs, and still enqueues: none of it reaches a handler.
+  it("dispose() stops the rewrite of a ReadableStream of the graph's own: what its leftover script enqueues reaches no handler", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const said = [];
+    const heard = Promise.withResolvers();
+    let disposing = false;
+    const say = what => {
+      said.push(disposing ? what + ", under dispose()" : what);
+      heard.resolve();
+    };
+    const more = Promise.withResolvers();
+    const output = graph.run(() => app.rewriteItsOwnStream(say, more.promise));
+    await heard.promise;
+    disposing = true;
+    graph.dispose();
+    disposing = false;
+    more.resolve();
+    await hostTimerTurns();
+    expect(said).toEqual(["element", "cancel: " + aborted + ", under dispose()"]);
+    expect(await outcome(output.text())).toBe(aborted);
+  });
+
+  it("dispose() stops the rewrite of a direct ReadableStream of the host's: it is cancelled, and a later write() writes nothing", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say, heard } = listener();
+    const events = [];
+    const hold = Promise.withResolvers();
+    const settled = Promise.withResolvers();
+    const input = new Response(
+      new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          try {
+            controller.write(pieces[0]);
+            controller.flush();
+            await hold.promise;
+            events.push("write after: " + controller.write(pieces[1]));
+          } catch (error) {
+            events.push("pull threw: " + error.message);
+          } finally {
+            settled.resolve();
+          }
+        },
+        cancel: reason => void events.push("cancel: " + reason),
+      }),
+    );
+    const output = graph.run(() => app.rewrite(input, say));
+    await heard;
+    graph.dispose();
+    hold.resolve();
+    await settled.promise;
+    expect({ said, events }).toEqual({ said: ["element"], events: ["cancel: " + aborted, "write after: 0"] });
+    expect(await outcome(output.text())).toBe(aborted);
+  });
+
+  // An async-iterable body is closed the way `for await` leaves an iterator: return().
+  describe.each(handWrittenBodyShapes)("an async-iterable body of the host's (%s)", (_, make) => {
+    it("is closed with return() when the graph of its rewrite is disposed, and no handler is called again", async () => {
+      const { graph, app } = await graphWithRewrites();
+      const { said, say, heard } = listener();
+      const shape = make({ chunk: pieces[0] });
+      const output = graph.run(() => app.rewrite(new Response(shape.body), say));
+      await heard;
+      graph.dispose();
+      const heardAtDispose = said.length;
+      expect(await settledBody(shape)).toEqual(shape.expected);
+      expect(said.length).toBe(heardAtDispose);
+      expect(await outcome(output.text())).toBe(aborted);
+    });
+  });
+
+  // A generator is closed the same way, once what it awaits lets it go on. (A timer that it set went with the
+  // graph: the graph's rewrite called its next(), so what that started was the graph's.)
+  it("an async generator of the host's is closed when the graph of its rewrite is disposed: its finally runs once its await settles", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say, heard } = listener();
+    const calls = [];
+    const more = Promise.withResolvers();
+    const closed = Promise.withResolvers();
+    async function* body() {
+      try {
+        yield pieces[0];
+        await more.promise;
+        yield pieces[1];
+        calls.push("gave the second piece");
+      } finally {
+        calls.push("finally");
+        closed.resolve();
+      }
+    }
+    const output = graph.run(() => app.rewrite(new Response(body()), say));
+    await heard;
+    graph.dispose();
+    more.resolve();
+    await closed.promise;
+    await hostTimerTurns();
+    expect({ said, calls, text: await outcome(output.text()) }).toEqual({
+      said: ["element"],
+      calls: ["finally"],
+      text: aborted,
+    });
+  });
+
+  it("dispose() stops the rewrite of the readable side of a TextEncoderStream of the host's: its writer is told", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say, heard, again } = listener();
+    const { readable, writable } = new TextEncoderStream();
+    const writer = writable.getWriter();
+    void writer.write(pieces[0]);
+    const output = graph.run(() => app.rewrite(new Response(readable), say));
+    await heard;
+    graph.dispose();
+    void writer.write(pieces[1]).catch(() => {});
+    const closed = outcome(writer.closed);
+    await Promise.race([again, closed]);
+    expect({ said, closed: outcomeSoFar(closed) }).toEqual({ said: ["element"], closed: aborted });
+    expect(await outcome(output.text())).toBe(aborted);
+  });
+
+  // Only the branch that the rewrite was reading is cancelled: the host reads its own copy to the end.
+  it("dispose() stops the rewrite of a clone() of a fetch() response of the host's, and the host's copy is whole", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say, heard, again } = listener();
+    await using served = heldResponse();
+    const original = await fetch(served.url);
+    // Cloned here, not inside run(): both branches are the host's.
+    const clone = original.clone();
+    const output = graph.run(() => app.rewrite(clone, say));
+    await heard;
+    graph.dispose();
+    served.more();
+    const reader = original.body.getReader();
+    let read = "";
+    while (read !== pieces.join("")) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      read += decode(value);
+    }
+    expect(read).toBe(pieces.join(""));
+    void reader.cancel();
+    await Promise.race([again, served.clientLeft]);
+    expect({ said, source: outcomeSoFar(served.clientLeft) }).toEqual({ said: ["element"], source: "the client left" });
+    expect(await outcome(output.text())).toBe(aborted);
+  });
+
+  // The handler's own script goes on when the host settles what it awaits; the rewrite does not, and the
+  // failure the host can read stays the one of the stop.
+  for (const how of ["resolves", "rejects"]) {
+    it(`dispose() stops a rewrite whose handler is waiting: when the host ${how} what it waits for, no other handler is called and the output has failed`, async () => {
+      const { graph, app } = await graphWithRewrites();
+      const { said, say } = listener();
+      const wait = Promise.withResolvers();
+      wait.promise.catch(() => {});
+      const output = graph.run(() => app.rewriteWaitingFor(new Response(pieces.join("")), say, wait.promise));
+      expect(said).toEqual(["element"]);
+      graph.dispose();
+      how === "resolves" ? wait.resolve() : wait.reject(new Error("the host gave up"));
+      await hostTimerTurns();
+      expect(said).toEqual(how === "resolves" ? ["element", "resumed"] : ["element"]);
+      expect(await outcome(output.text())).toBe(aborted);
+    });
+  }
+
+  // A rewrite gives up a handler whose promise is collected. The host's own rewrite shows when that has happened.
+  it("dispose() stops a rewrite whose handler is waiting: when what it waits for is collected, the output keeps the failure of the stop", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say } = listener();
+    const output = graph.run(() => app.rewriteWaitingFor(new Response(pieces.join("")), say));
+    const theHosts = outcome(app.rewriteWaitingFor(new Response(pieces.join("")), () => {}).text());
+    graph.dispose();
+    let givenUp;
+    for (let turn = 0; turn < 100 && givenUp === undefined; turn++) {
+      Bun.gc(true);
+      await hostTimerTurns(1);
+      givenUp = await Promise.race([theHosts, undefined]);
+    }
+    expect({ said, theHosts: givenUp, output: await outcome(output.text()) }).toEqual({
+      said: ["element"],
+      theHosts: "Error: HTMLRewriter content handler returned a Promise that will never settle",
+      output: aborted,
+    });
+  });
+
+  // One piece with three <script>s is one pass over the document: the handlers after the one that had the
+  // graph disposed are part of it. So is the end of the document, when the stream ends in the same turn.
+  describe.each([
+    ["an element", "2", ["element 1", "element 2"]],
+    ["the end of the document", "end", ["element 1", "element 2", "element 3", "end"]],
+  ])("a rewrite whose graph is disposed from inside its handler (%s)", (_, at, heard) => {
+    it.each([
+      ["nobody has read the output", false],
+      ["the graph's script took the body of the output", true],
+    ])("calls no handler after it, and its output fails: %s", async (_, takesBody) => {
+      const { graph, app } = await graphWithRewrites();
+      const { said, say } = listener();
+      let stream;
+      const input = new Response(new ReadableStream({ start: controller => void (stream = controller) }));
+      const disposed = Promise.withResolvers();
+      const dispose = () => (graph.dispose(), disposed.resolve());
+      const output = graph.run(() => app.rewriteThen(input, say, at, dispose, takesBody));
+      stream.enqueue(encode(`<script id="1"></script><script id="2"></script><script id="3"></script>`));
+      try {
+        stream.close();
+      } catch {
+        // Cancelled with the rewrite.
+      }
+      await disposed.promise;
+      const read = outcome(output.text());
+      await hostTimerTurns();
+      // A stream of the output that the graph's script took is the graph's: the host's read of it does not complete.
+      expect({ said, read: Bun.peek.status(read) === "pending" ? "pending" : await read }).toEqual({
+        said: [...heard],
+        read: takesBody ? "pending" : aborted,
+      });
+    });
+  });
+
+  // The rewrite stays among what its graph stops for as long as its last pass runs. What ends it first there:
+  // the stop of the outer graph's stream of the output, before the graph that started the rewrite is stopped;
+  // or the handler itself, when it cancels the output before it has the graph disposed.
+  it.each([
+    [
+      "that a graph of the graph's own making started, when the outer graph's script took the body of the output",
+      (graph, app, start) => graph.run(() => app.inAGraphOfItsOwn(inner => start(inner), true)),
+      () => {},
+    ],
+    [
+      "when its handler cancelled the host's reader of the output first",
+      async (graph, app, start) => {
+        const output = graph.run(() => start(app));
+        return { reader: output.body.getReader() };
+      },
+      made => void made.reader.cancel().catch(() => {}),
+    ],
+  ])("a rewrite %s calls no handler after the one that has the graph disposed", async (_, make, first) => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say } = listener();
+    let stream;
+    const input = new Response(new ReadableStream({ start: controller => void (stream = controller) }));
+    const disposed = Promise.withResolvers();
+    let made;
+    made = await make(graph, app, inner =>
+      inner.rewriteThen(input, say, "2", () => (first(made), graph.dispose(), disposed.resolve())),
+    );
+    stream.enqueue(encode(`<script id="1"></script><script id="2"></script><script id="3"></script>`));
+    await disposed.promise;
+    await hostTimerTurns();
+    expect(said).toEqual(["element 1", "element 2"]);
+  });
+
+  // What transform() runs before it returns is the script that called it, whatever that script does to its graph.
+  describe("a rewrite whose graph is disposed by a handler that transform() itself calls", () => {
+    const document = `<script id="1"></script><script id="2"></script><script id="3"></script>`;
+
+    it("is still that script to its end when the body was in memory", async () => {
+      const { graph, app } = await graphWithRewrites();
+      const { said, say } = listener();
+      const output = graph.run(() => app.rewriteThen(new Response(document), say, "2", () => graph.dispose()));
+      expect({ said, text: await outcome(output.text()) }).toEqual({
+        said: ["element 1", "element 2", "element 3", "end"],
+        text: "fulfilled: " + document,
+      });
+    });
+
+    it("stops when transform() returns, if its body is still arriving then", async () => {
+      const { graph, app } = await graphWithRewrites();
+      const { said, say } = listener();
+      let stream;
+      const cancels = [];
+      const input = new Response(
+        new ReadableStream({
+          start: controller => void ((stream = controller), controller.enqueue(encode(document))),
+          cancel: reason => void cancels.push(String(reason)),
+        }),
+      );
+      const output = graph.run(() => app.rewriteThen(input, say, "2", () => graph.dispose()));
+      expect({ said, cancels }).toEqual({ said: ["element 1", "element 2", "element 3"], cancels: [aborted] });
+      try {
+        stream.close();
+      } catch {
+        // Cancelled with the rewrite.
+      }
+      expect({ said, text: await outcome(output.text()) }).toEqual({
+        said: ["element 1", "element 2", "element 3"],
+        text: aborted,
+      });
+    });
+  });
+
+  it.each([
+    ["whose <div> had asked for its end tag", `<div><b id="does not ask"></b></div>`],
+    ["that asks for its end tag afterwards", `<b id="asks"></b>`],
+    ["that had asked for its end tag, and asks again", `<b id="asks again"></b>`],
+  ])(
+    "a rewrite whose graph is disposed from inside an element handler %s calls no end-tag handler",
+    async (_, html) => {
+      const { graph, app } = await graphWithRewrites();
+      const { said, say } = listener();
+      let stream;
+      const input = new Response(new ReadableStream({ start: controller => void (stream = controller) }));
+      const disposed = Promise.withResolvers();
+      const output = graph.run(() => app.rewriteWithEndTags(input, say, () => (graph.dispose(), disposed.resolve())));
+      stream.enqueue(encode(html));
+      await disposed.promise;
+      await hostTimerTurns();
+      expect(said).toEqual([]);
+      expect(await outcome(output.text())).toBe(aborted);
+    },
+  );
+
+  // The host removes every <script> from what the graph's rewrite gives it. The stopped rewrite does not hand on
+  // the output of the pass that the stop cut short: the host's handlers cannot be called while the graph is stopped.
+  // What the host's own handlers had made of a pass is the host's, and is read before the failure.
+  it.each([
+    ["from inside a handler of the graph's", "", []],
+    ["between two pieces", `<p>0</p><i></i><p>1</p>`, ["removed", "removed"]],
+    ["from inside a handler of the host's", `<p>0</p>`, ["removed", "removed"]],
+  ])(
+    "a rewrite of the host's over a graph's rewrite, when the graph is disposed %s: the host reads %p, then the failure",
+    async (when, sanitized, removed) => {
+      const { graph, app } = await graphWithRewrites();
+      let stream;
+      const input = new Response(new ReadableStream({ start: controller => void (stream = controller) }));
+      const inHandler = when.endsWith("of the graph's");
+      const inner = graph.run(() => app.rewriteAdding(input, () => inHandler && graph.dispose()));
+      const scripts = [];
+      const reader = new HTMLRewriter()
+        .on("script", { element: element => void (scripts.push("removed"), element.remove()) })
+        .on("i", { element: () => void (when.endsWith("of the host's") && graph.dispose()) })
+        .transform(inner)
+        .body.getReader();
+      let read = "";
+      const ended = (async () => {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) return "done";
+          read += decode(value);
+        }
+      })().catch(String);
+      stream.enqueue(encode(`<p>0</p><i></i><p>1</p>`));
+      if (when === "between two pieces") {
+        let over = false;
+        void ended.then(() => (over = true));
+        while (read !== sanitized && !over) await hostTimerTurns(1);
+        graph.dispose();
+      }
+      try {
+        stream.close();
+      } catch {
+        // Cancelled with the graph's rewrite.
+      }
+      expect({ ended: await ended, read, scripts }).toEqual({ ended: aborted, read: sanitized, scripts: removed });
+    },
+  );
+
+  // Each of these is a stream or a sink of the graph's own, made after the rewrite: it is stopped first.
+  it.each(["took the body of its output", "is rewriting its output again", "is writing its output to a file"])(
+    "dispose() stops a rewrite when the graph's script %s: no handler is called again",
+    async use => {
+      const { graph, app } = await graphWithRewrites();
+      const { said, say, heard, again } = listener();
+      await using served = heldResponse();
+      const input = await fetch(served.url);
+      void input.body;
+      graph.run(() => app.uses[use](input, say, join(dir, "written-by-the-graph.html")));
+      await heard;
+      if (use === "is rewriting its output again") await again;
+      const heardAtDispose = [...said];
+      graph.dispose();
+      served.more();
+      await served.clientLeft;
+      await hostTimerTurns();
+      expect(said).toEqual(heardAtDispose);
+    },
+  );
+
+  // A handle of the graph's that is newer than the rewrite is stopped first. A server with a response in flight runs
+  // a microtask checkpoint as it closes that request, and the failure of the input, which the host had queued by
+  // failing its stream, reaches the rewrite there: before the rewrite's own handle. The stop is the graph's all the same.
+  it("dispose() stops a rewrite whose input had just failed when a newer server of the graph's is stopped first: the output has the failure of the stop", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say, heard } = listener();
+    const held = heldStream();
+    const output = graph.run(() => app.rewrite(held.input, say));
+    await heard;
+    const server = graph.run(() =>
+      Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        idleTimeout: 0,
+        fetch: () => new Response(new ReadableStream({ start: controller => controller.enqueue(encode("held")) })),
+      }),
+    );
+    const response = await fetch(server.url);
+    let checkpoint = false;
+    void Promise.resolve().then(() => (checkpoint = true));
+    held.fail(new Error("the host's"));
+    graph.dispose();
+    // What this row is for happens only under that checkpoint.
+    expect(checkpoint).toBe(true);
+    expect({ said, output: await outcome(output.text()), response: await outcome(response.text()) }).toEqual({
+      said: ["element"],
+      output: aborted,
+      response: expect.not.stringMatching(/^fulfilled/),
+    });
+  });
+
+  // A rewrite that is over when its graph is disposed is left as it ended.
+  describe("dispose() leaves a rewrite that was over as it ended", () => {
+    it("completed, and nobody has read the output: the whole document", async () => {
+      const { graph, app } = await graphWithRewrites();
+      const { said, say } = listener();
+      const ended = Promise.withResolvers();
+      const held = heldStream();
+      const output = graph.run(() => app.rewrite(held.input, what => (say(what), what === "end" && ended.resolve())));
+      held.more(true);
+      await ended.promise;
+      await hostTimerTurns();
+      graph.dispose();
+      expect({ said, status: output.status, text: await outcome(output.text()) }).toEqual({
+        said: ["element", "element", "end"],
+        status: 200,
+        text: "fulfilled: " + rewritten,
+      });
+    });
+
+    it("completed, and the host took the body of the output: the whole document", async () => {
+      const { graph, app } = await graphWithRewrites();
+      const { said, say } = listener();
+      const ended = Promise.withResolvers();
+      const held = heldStream();
+      const output = graph.run(() => app.rewrite(held.input, what => (say(what), what === "end" && ended.resolve())));
+      const body = output.body;
+      held.more(true);
+      await ended.promise;
+      await hostTimerTurns();
+      graph.dispose();
+      expect({ said, text: await outcome(new Response(body).text()) }).toEqual({
+        said: ["element", "element", "end"],
+        text: "fulfilled: " + rewritten,
+      });
+    });
+
+    it("over inside transform(), for a body that was in memory: the whole document", async () => {
+      const { graph, app } = await graphWithRewrites();
+      const { said, say } = listener();
+      const output = graph.run(() => app.rewrite(new Response(pieces.join("")), say));
+      graph.dispose();
+      expect({ said, text: await outcome(output.text()) }).toEqual({
+        said: ["element", "element", "end"],
+        text: "fulfilled: " + rewritten,
+      });
+    });
+
+    it("failed with its input: the output keeps that error", async () => {
+      const { graph, app } = await graphWithRewrites();
+      const { said, say, heard } = listener();
+      const held = heldStream();
+      const output = graph.run(() => app.rewrite(held.input, say));
+      await heard;
+      held.fail(new Error("the input broke"));
+      await hostTimerTurns();
+      graph.dispose();
+      expect({ said, text: await outcome(output.text()) }).toEqual({
+        said: ["element"],
+        text: "Error: the input broke",
+      });
+    });
+  });
+
+  // The whole document was there, and its end had not been read yet: that rewrite is still running.
+  it("dispose() stops a rewrite that has only the end of its input left", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say } = listener();
+    const input = new Response(pieces.join(""));
+    void input.body;
+    const output = graph.run(() => app.rewrite(input, say));
+    graph.dispose();
+    await hostTimerTurns();
+    expect({ said, text: await outcome(output.text()) }).toEqual({ said: ["element", "element"], text: aborted });
+  });
+
+  // What a disposed graph's leftover script starts does not start. What is over when transform() returns is that
+  // script still running. (run() throws once the graph is disposed: a snapshot enters what it left behind.)
+  it("what a disposed graph's leftover script transforms: a string and a body in memory are rewritten, and the rewrite of a body that is still arriving does not start", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say } = listener();
+    const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
+    graph.dispose();
+    expect(inGraph(() => app.rewriteText(pieces.join(""), say))).toBe(rewritten);
+    expect(await inGraph(() => app.rewrite(new Response(pieces.join("")), say)).text()).toBe(rewritten);
+    expect(said.splice(0)).toEqual(["element", "element", "element", "element", "end"]);
+
+    const inputs = [heldStream(), heldStream()];
+    const [itsOwn, theHosts] = inputs.map(held => inGraph(() => app.rewrite(held.input, say)));
+    // Its own read stays pending, as everything that it starts. Anyone else is told.
+    const itsRead = inGraph(() => outcome(itsOwn.text()));
+    inputs[1].more(true);
+    const theirRead = outcome(theHosts.text());
+    await hostTimerTurns();
+    expect({
+      said,
+      itsRead: outcomeSoFar(itsRead),
+      theirRead: outcomeSoFar(theirRead),
+      inputs: inputs.map(held => ({ cancels: held.cancels, used: held.input.bodyUsed })),
+    }).toEqual({
+      said: [],
+      itsRead: "pending",
+      theirRead: aborted,
+      inputs: [
+        { cancels: [], used: false },
+        { cancels: [], used: false },
+      ],
+    });
+
+    // A body that nobody had made a stream of is not made one: the host reads all of it afterwards.
+    await using served = heldResponse();
+    const untouched = await fetch(served.url);
+    inGraph(() => app.rewrite(untouched, say));
+    served.more(true);
+    expect({ said, text: await outcome(untouched.text()) }).toEqual({
+      said: [],
+      text: "fulfilled: " + pieces.join(""),
+    });
+  });
+
+  it("a disposed graph's leftover script that tries a rewrite again when it fails tries once", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
+    graph.dispose();
+    const tries = { count: 0 };
+    inGraph(() => void app.rewriteUntilItWorks(() => heldStream().input, tries, 100));
+    await hostTimerTurns();
+    expect(tries).toEqual({ count: 1 });
+  });
+
+  // A function runs in its caller's context, whichever graph defined it.
+  it("a rewrite the host starts with a function of the graph's is the host's: dispose() does not stop it", async () => {
+    const { graph, app } = await graphWithRewrites();
+    const { said, say, heard } = listener();
+    const held = heldStream();
+    const output = app.rewrite(held.input, say);
+    await heard;
+    graph.dispose();
+    held.more(true);
+    expect(await outcome(output.text())).toBe("fulfilled: " + rewritten);
+    expect({ said, cancels: held.cancels }).toEqual({ said: ["element", "element", "end"], cancels: [] });
+  });
+
+  // What the client had was sent, and the rest is not. Before the first byte, the host's error() answers.
+  it.each([
+    ["after the first byte", { first: "<p>1</p>", rest: "failed", errors: [] }],
+    [
+      "before the first byte",
+      { response: "500 the host's error()", errors: ["AbortError: The operation was aborted."] },
+    ],
+  ])("dispose() cuts a response of the host's Bun.serve() that is sending the output, %s", async (when, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "rewrite-served.mjs"), when],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), exitCode }).toEqual({ stdout: expected, exitCode: 0 });
+  });
+
+  it("a worker terminated, and a process that exits, while rewrites their graphs started are running", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "rewrites-at-exit.mjs")],
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `{"inWorker":["element","element"],"said":["element","element"]}\n`,
       stderr: "",
       exitCode: 0,
     });

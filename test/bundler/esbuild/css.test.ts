@@ -2436,7 +2436,9 @@ describe("bundler", () => {
       const block = (condition: string) => `/* foo.css */ @supports (${condition}) { body { color: red; } }`;
       api
         .expectFile("/out.css")
-        .toEqualIgnoringWhitespace(["zoom: 1", "line-clamp: 1", "--a: 1", "--b: 1"].map(block).join("") + "/* entry.css */");
+        .toEqualIgnoringWhitespace(
+          ["zoom: 1", "line-clamp: 1", "--a: 1", "--b: 1"].map(block).join("") + "/* entry.css */",
+        );
     },
   });
 

@@ -356,22 +356,6 @@ fn vendor_prefix_to_css(prefix: css::VendorPrefix, dest: &mut Printer) -> Result
     }
 }
 
-/// Port of `CustomIdentFns.toCss` → `Printer.writeIdent` with CSS-module
-/// custom-ident scoping.
-#[inline]
-fn custom_ident_to_css(
-    ident: &css::css_values::ident::CustomIdent,
-    dest: &mut Printer,
-) -> Result<(), PrintErr> {
-    // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
-    let v = unsafe { crate::arena_str(ident.v) };
-    let enabled = dest
-        .css_module
-        .as_ref()
-        .is_some_and(|m| m.config.custom_idents);
-    dest.write_ident(v, enabled)
-}
-
 /// Port of `DashedIdentFns.toCss` → `Printer.writeDashedIdent`. The
 /// non-css-module path (the only one any current rule reaches) is
 /// `--` + `serialize_name(rest)`.

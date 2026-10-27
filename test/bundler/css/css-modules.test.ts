@@ -749,6 +749,12 @@ describe("css modules", () => {
 
   test.each([
     {
+      name: "a @counter-style name stays global, as the list-style that names it does",
+      css: `@counter-style thumbs { system: cyclic; symbols: "x" } .a { list-style: thumbs }`,
+      out: `@counter-style thumbs { system: cyclic; symbols: "x"; } .a_H { list-style: thumbs; }`,
+      styles: { a: "a_H" },
+    },
+    {
       name: "a @keyframes name is exported",
       css: `${keyframes} .a { animation: spin 1s }`,
       out: `${keyframesOut} .a_H { animation: 1s spin_H; }`,

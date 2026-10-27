@@ -2,8 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -16,8 +17,6 @@ import {
   ParserOptions,
   prefix_test,
 } from "./util";
-import { cssInternals } from "bun:internal-for-testing";
-import { tempDir } from "harness";
 
 function Some(n: number): number {
   return n;
@@ -8488,9 +8487,9 @@ describe("blocks of declarations reject at-rules and qualified rules", () => {
   cssTest("@keyframes k { @bogus; 0% { opacity: 0 } }", "@keyframes k { 0% { opacity: 0; } }");
   cssTest("@font-palette-values --p { font-family: A; @bogus; }", "@font-palette-values --p { font-family: A; }");
   test("@property", () => {
-    expect(() =>
-      minify_test_with_options('@property --x { syntax: "*"; inherits: false; @bogus; }', ""),
-    ).toThrow("Unknown at-rule @bogus");
+    expect(() => minify_test_with_options('@property --x { syntax: "*"; inherits: false; @bogus; }', "")).toThrow(
+      "Unknown at-rule @bogus",
+    );
   });
 });
 
@@ -9049,11 +9048,7 @@ describe("@scope", () => {
       ".p{@scope(& .a){.c{& .d{color:red}}}}",
       "@scope(.p .a){.c .d{color:red}}",
     ],
-    [
-      "@scope (.a) { > .c { color: red } }",
-      "@scope(.a){&>.c{color:red}}",
-      "@scope(.a){:where(:scope)>.c{color:red}}",
-    ],
+    ["@scope (.a) { > .c { color: red } }", "@scope(.a){&>.c{color:red}}", "@scope(.a){:where(:scope)>.c{color:red}}"],
     ["@scope (.a) { color: red }", "@scope(.a){color:red}", "@scope(.a){:where(:scope){color:red}}"],
     [
       "@scope (.a) { @media screen { color: red } }",
@@ -9148,7 +9143,11 @@ describe("rules", () => {
         ".a{color:red;& .b{color:#00f}color:green;top:0}",
         ".a{color:red}.a .b{color:#00f}.a{color:green;top:0}",
       ],
-      [".a{.b{top:0}color:red;.c{top:1px}}", ".a{& .b{top:0}color:red;& .c{top:1px}}", ".a .b{top:0}.a{color:red}.a .c{top:1px}"],
+      [
+        ".a{.b{top:0}color:red;.c{top:1px}}",
+        ".a{& .b{top:0}color:red;& .c{top:1px}}",
+        ".a .b{top:0}.a{color:red}.a .c{top:1px}",
+      ],
       // `&{}` would match no pseudo-element and weigh as much as `.h1` for an `h1`.
       [
         '.a::after{content:"x";@media (min-width:1px){color:blue}}',
@@ -9166,7 +9165,11 @@ describe("rules", () => {
         "@supports (display:grid){.a{color:red}}@supports (display:grid){.a .b{color:#00f}}",
       ],
       [".a{@starting-style{opacity:0}}", ".a{@starting-style{opacity:0}}", "@starting-style{.a{opacity:0}}"],
-      [".a{@container (width>1px){color:red}}", ".a{@container (width>1px){color:red}}", "@container (width>1px){.a{color:red}}"],
+      [
+        ".a{@container (width>1px){color:red}}",
+        ".a{@container (width>1px){color:red}}",
+        "@container (width>1px){.a{color:red}}",
+      ],
       [".a{@layer x{color:red}}", ".a{@layer x{color:red}}", "@layer x{.a{color:red}}"],
       // A minified `@media all` prints no block, so the `;` is owed to what follows in the outer block.
       [
@@ -9225,13 +9228,18 @@ describe("rules", () => {
       [77, ".a:-webkit-any(.b,.c){color:red}.a:-moz-any(.b,.c){color:red}.a:is(.b,.c){color:red}"],
       [78, ".a:-webkit-any(.b,.c){color:red}.a:is(.b,.c){color:red}"],
     ])(":is() for Chrome 80 and Firefox %d", (firefox, expected) => {
-      expect(cssInternals.minifyTest(".a:is(.b,.c){color:red}", "", { ...chrome80, firefox: firefox << 16 })).toBe(expected);
+      expect(cssInternals.minifyTest(".a:is(.b,.c){color:red}", "", { ...chrome80, firefox: firefox << 16 })).toBe(
+        expected,
+      );
     });
   });
 
   describe("a run of @media rules with one query", () => {
     rows(undefined, [
-      ["@media (min-width:1px){.a{color:red}}@media (min-width:1px){.a{color:blue}}", "@media (width>=1px){.a{color:#00f}}"],
+      [
+        "@media (min-width:1px){.a{color:red}}@media (min-width:1px){.a{color:blue}}",
+        "@media (width>=1px){.a{color:#00f}}",
+      ],
       [
         "@media (min-width:1px){.a{color:red}}@media print{.c{top:0}}@media (min-width:1px){.a{color:blue}}",
         "@media (width>=1px){.a{color:red}}@media print{.c{top:0}}@media (width>=1px){.a{color:#00f}}",
@@ -9266,7 +9274,9 @@ describe("rules", () => {
     // No selector stays in the rule, which printed `@supports (…){{…}}`.
     const copy = (selector: string) =>
       `${selector}{color:var(--c,#a16945)}@supports (color:lab(0% 0 0)){${selector}{color:var(--c,lab(50% 20 30))}}`;
-    rows(chrome80, [[".x:where(a),.y:where(b){color:var(--c,lab(50% 20 30))}", copy(".x:where(a)") + copy(".y:where(b)")]]);
+    rows(chrome80, [
+      [".x:where(a),.y:where(b){color:var(--c,lab(50% 20 30))}", copy(".x:where(a)") + copy(".y:where(b)")],
+    ]);
   });
 
   describe("generated rules", () => {
@@ -9345,7 +9355,9 @@ describe("rules", () => {
       ]);
       test("output that is minified again does not grow", () => {
         const first = cssInternals.minifyTest(".a{color:var(--a,lab(50% 20 30))}", "", chrome80);
-        expect(first).toBe(".a{color:var(--a,#a16945)}@supports (color:lab(0% 0 0)){.a{color:var(--a,lab(50% 20 30))}}");
+        expect(first).toBe(
+          ".a{color:var(--a,#a16945)}@supports (color:lab(0% 0 0)){.a{color:var(--a,lab(50% 20 30))}}",
+        );
         expect(cssInternals.minifyTest(first, "", chrome80)).toBe(first);
       });
     });
@@ -9597,6 +9609,20 @@ describe("media queries", () => {
         "@container scroll-state(stuck: top){.b{color:red}}" +
         "@media not all,print{.c{color:red}}\n",
     );
+  });
+
+  test.each([
+    ['source("../src")', "source("],
+    ["layer(theme) theme(inline)", "theme("],
+    ["prefix(tw)", "prefix("],
+  ])("bun build refuses the function of another tool in @import: %s", async (condition, token) => {
+    using dir = tempDir("css-import-function", {
+      "entry.css": `@import "./dep.css" ${condition};`,
+      "dep.css": ".dep { color: red }",
+    });
+    const result = await Bun.build({ entrypoints: [join(String(dir), "entry.css")], throw: false });
+    expect(result.logs.map(log => [log.level, log.message])).toEqual([["error", `Unexpected token: ${token}`]]);
+    expect(result.success).toBe(false);
   });
 });
 

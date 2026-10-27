@@ -200,6 +200,12 @@ pub struct RuntimeTranspilerStore {
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
     pub(crate) queue: Queue,
+    /// The VM inherited an IPC channel: its reads are held while jobs are out, as Node loads a graph without a loop turn.
+    pub has_ipc_channel: bool,
+    /// Jobs out on the pool, counted only with `has_ipc_channel`.
+    in_flight: u32,
+    /// From the first job out until a batch is back and the loader has asked for nothing more.
+    ipc_reads_held: bool,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -211,6 +217,9 @@ impl Default for RuntimeTranspilerStore {
             store: TranspilerJobStore::init(),
             enabled: true,
             queue: Queue::new(),
+            has_ipc_channel: false,
+            in_flight: 0,
+            ipc_reads_held: false,
         }
     }
 }
@@ -233,6 +242,18 @@ impl RuntimeTranspilerStore {
         Self::default()
     }
 
+    #[inline]
+    pub fn ipc_reads_held(&self) -> bool {
+        self.ipc_reads_held
+    }
+
+    fn set_ipc_reads_held(&mut self, held: bool) {
+        self.ipc_reads_held = held;
+        if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
+            (hooks.hold_ipc_reads)(held);
+        }
+    }
+
     /// VM teardown (JS thread, heap alive, script forbidden; called on every
     /// turn of the wait): jobs already handed back whose completion will not
     /// run release their source, log and module promise here instead. Queued ⇒
@@ -245,6 +266,10 @@ impl RuntimeTranspilerStore {
             let job = iter.next();
             if job.is_null() {
                 break;
+            }
+            if self.has_ipc_channel {
+                debug_assert!(self.in_flight > 0);
+                self.in_flight -= 1;
             }
             // SAFETY: a live job popped from the intrusive queue; see fn doc.
             unsafe {
@@ -262,43 +287,73 @@ impl RuntimeTranspilerStore {
     /// the rest of the batch back on the queue (each still has its own posted
     /// task, or the teardown release, to pick it up).
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
-    // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
-    // a field of `VirtualMachine`). Field-level derefs only.
-    pub fn run_from_js_thread(
-        &mut self,
+    // and a raw `this` (the VM's live store, JS thread): the VM owns the store, and the drains below re-enter `transpile()` through it.
+    pub unsafe fn run_from_js_thread(
+        this: *mut Self,
         event_loop: NonNull<EventLoop>,
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
     ) {
-        let batch = self.queue.pop_batch();
+        // SAFETY: fn contract.
+        let batch = unsafe { (*this).queue.pop_batch() };
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
+        let drain_microtasks = || {
+            // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
+            unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }
+        };
         let mut iter = batch.iterator();
         let mut job = iter.next();
         let mut first = true;
         while !job.is_null() {
             if !first {
                 // if there are more, we need to drain the microtasks from the previous run
-                // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-                let drained =
-                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
-                if drained.is_err() {
-                    self.requeue(job, &mut iter);
+                if drain_microtasks().is_err() {
+                    // SAFETY: as above; the borrows end with the calls.
+                    unsafe {
+                        (*this).requeue(job, &mut iter);
+                        (*this).end_ipc_hold_if_idle();
+                    }
                     return;
                 }
             }
             first = false;
+            // SAFETY: as above.
+            unsafe {
+                if (*this).has_ipc_channel {
+                    debug_assert!((*this).in_flight > 0);
+                    (*this).in_flight -= 1;
+                }
+            }
             // SAFETY: `job` is a live job popped from the intrusive queue.
             let fulfilled = unsafe { (*job).run_from_js_thread() };
             job = iter.next();
             if let Err(err) = fulfilled {
                 if crate::task::report_error_or_terminate(global, err).is_err() {
-                    self.requeue(job, &mut iter);
+                    // SAFETY: as above.
+                    unsafe {
+                        (*this).requeue(job, &mut iter);
+                        (*this).end_ipc_hold_if_idle();
+                    }
                     return;
                 }
             }
         }
+        // SAFETY: as above.
+        if unsafe { (*this).ipc_reads_held } {
+            // The loader asks for its next modules in these microtasks, so a chain of imports stays one hold.
+            let _ = drain_microtasks();
+        }
+        // SAFETY: as above.
+        unsafe { (*this).end_ipc_hold_if_idle() };
         // immediately after this is called, the microtasks will be drained again.
+    }
+
+    /// Every way out of the store task passes here, so the hold never outlives the jobs.
+    fn end_ipc_hold_if_idle(&mut self) {
+        if self.ipc_reads_held && self.in_flight == 0 {
+            self.set_ipc_reads_held(false);
+        }
     }
 
     /// Put `job` and the rest of a popped batch back: each still has its posted
@@ -393,6 +448,13 @@ impl RuntimeTranspilerStore {
         }
         // SAFETY: job fully initialized above
         unsafe { (*job).schedule() };
+        // Node reads module sources synchronously: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/load.js#L32-L41
+        if self.has_ipc_channel {
+            self.in_flight += 1;
+            if !self.ipc_reads_held {
+                self.set_ipc_reads_held(true);
+            }
+        }
         promise.cast::<c_void>()
     }
 }

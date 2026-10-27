@@ -7,7 +7,7 @@ use crate::common::{
     ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
 };
 use crate::error::{ErrorCode, Result};
-use crate::util::{BUG, SliceExt, highbit32, read_le32, read_le64, write_le24};
+use crate::util::{BUG, SliceExt, highbit32, read_le32, read_le64, try_zeroed, write_le24};
 
 pub(crate) const K_SEARCH_STRENGTH: u32 = 8;
 pub(crate) const HASH_READ_SIZE: usize = 8;
@@ -675,6 +675,19 @@ impl<'a> Near<'a> {
         Some(u32::from_le_bytes(*bytes))
     }
 
+    /// [`Self::read32`] at a position that may not fit in 32 bits, but is far from the most a `usize` can be.
+    #[inline(always)]
+    pub(crate) fn read32_at(self, pos: usize) -> Option<u32> {
+        let bytes = self.0.get(pos..pos + 4)?.first_chunk()?;
+        Some(u32::from_le_bytes(*bytes))
+    }
+
+    /// What there is from `start` on.
+    #[inline(always)]
+    pub(crate) fn tail(self, start: u32) -> Option<Self> {
+        self.0.get(start as usize..).map(Self)
+    }
+
     #[inline(always)]
     pub(crate) fn read64(self, pos: u32) -> Option<u64> {
         let pos = pos as usize;
@@ -713,6 +726,35 @@ impl<'a> Near<'a> {
             len += 1;
         }
         len
+    }
+
+    /// How many of the 16 bytes at `match_pos` are the same as `bytes`, from the first on. It takes no branch.
+    #[inline(always)]
+    fn count16(self, bytes: &[u8; 16], match_pos: u32) -> Option<u32> {
+        let mut same = 0u16;
+        for (i, (byte, match_byte)) in bytes.iter().zip(self.chunk16(match_pos)?).enumerate() {
+            same |= u16::from(byte == match_byte) << i;
+        }
+        Some((!u32::from(same)).trailing_zeros())
+    }
+
+    /// [`Self::count`], of which only the comparison of the first 16 bytes is inlined. It takes few registers of a loop
+    /// that has other uses for them.
+    #[inline(always)]
+    pub(crate) fn count_short(self, pos: u32, match_pos: u32) -> u32 {
+        match self
+            .chunk16(pos)
+            .and_then(|bytes| self.count16(bytes, match_pos))
+        {
+            None => self.count_outlined(pos, match_pos),
+            Some(16) => 16 + self.count_outlined(pos + 16, match_pos + 16),
+            Some(len) => len,
+        }
+    }
+
+    #[inline(never)]
+    fn count_outlined(self, pos: u32, match_pos: u32) -> u32 {
+        self.count(pos, match_pos)
     }
 
     /// How many bytes before `pos`, down to `anchor`, are the same as those before `match_pos`, down to `match_low`.
@@ -862,13 +904,7 @@ pub(crate) fn hash_ptr(buf: &[u8], pos: usize, h_bits: u32, mls: u32) -> Result<
 
 /// `ZSTD_hashPtrSalted`
 #[inline(always)]
-pub(crate) fn hash_ptr_salted(
-    buf: &[u8],
-    pos: usize,
-    h_bits: u32,
-    mls: u32,
-    hash_salt: u64,
-) -> Result<usize> {
+fn hash_ptr_salted(buf: &[u8], pos: usize, h_bits: u32, mls: u32, hash_salt: u64) -> Result<usize> {
     Ok(match mls {
         5 => hash5(read_le64(buf, pos)?, h_bits, hash_salt),
         6 => hash6(read_le64(buf, pos)?, h_bits, hash_salt),
@@ -876,6 +912,44 @@ pub(crate) fn hash_ptr_salted(
         8 => hash8(read_le64(buf, pos)?, h_bits, hash_salt),
         _ => hash4(read_le32(buf, pos)?, h_bits, hash_salt as u32) as usize,
     })
+}
+
+/// [`hash_ptr_salted`] of 4 to 6 bytes, out of the 8 bytes at the position: the multiplication also does the shift that
+/// leaves the other bytes out.
+#[derive(Clone, Copy)]
+pub(crate) struct Hash8 {
+    mul: u64,
+    salt: u64,
+    shift: u32,
+}
+
+impl Hash8 {
+    /// `mls` is 4 if it is not 5 or 6, and `h_bits` is from 1 to 32.
+    pub(crate) const fn new(mls: u32, h_bits: u32, hash_salt: u64) -> Self {
+        let shift = 64 - h_bits;
+        match mls {
+            5 => Self {
+                mul: PRIME_5_BYTES << (64 - 40),
+                salt: hash_salt,
+                shift,
+            },
+            6 => Self {
+                mul: PRIME_6_BYTES << (64 - 48),
+                salt: hash_salt,
+                shift,
+            },
+            _ => Self {
+                mul: (PRIME_4_BYTES as u64) << 32,
+                salt: hash_salt << 32,
+                shift,
+            },
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn of(self, bytes: u64) -> u32 {
+        (bytes.wrapping_mul(self.mul) ^ self.salt).wrapping_shr(self.shift) as u32
+    }
 }
 
 // ── the window ────────────────────────────────────────────────────────────
@@ -1225,6 +1299,98 @@ impl OptState {
 
 pub(crate) const ZSTD_ROW_HASH_CACHE_SIZE: usize = 8;
 
+/// A table that starts where a cache line does, as those of the C code do: a row of the row-based match finder is then
+/// in as few cache lines as can be.
+pub(crate) struct Table<T> {
+    /// Longer than the table, by what it takes to have such a start.
+    storage: Vec<T>,
+    start: usize,
+    len: usize,
+}
+
+impl<T> Table<T> {
+    const CACHE_LINE: usize = 64;
+
+    pub(crate) const fn new() -> Self {
+        Self {
+            storage: Vec::new(),
+            start: 0,
+            len: 0,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn as_slice(&self) -> &[T] {
+        let table = self.storage.get(self.start..self.start + self.len);
+        table.unwrap_or_default()
+    }
+
+    #[inline]
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [T] {
+        let table = self.storage.get_mut(self.start..self.start + self.len);
+        table.unwrap_or_default()
+    }
+}
+
+impl<T: bun_pod::Zeroable + Copy + Default> Table<T> {
+    /// Gives it the length `len`. What it holds is 0, or if `clean` is false possibly what it held before.
+    ///
+    /// `read_first` tells that most of it is to be read before it is written. New memory is then written to right away:
+    /// else the system would provide each page twice, once to be read and once to be written.
+    pub(crate) fn reset(&mut self, len: usize, clean: bool, read_first: bool) -> Result<()> {
+        let is_new = self.len != len;
+        if is_new {
+            // First, so that both are not allocated at once.
+            *self = Self::new();
+            let slack = Self::CACHE_LINE / size_of::<T>();
+            let storage = try_zeroed::<T>(len + slack)?;
+            let start = storage.as_ptr().align_offset(Self::CACHE_LINE);
+            *self = Self {
+                storage,
+                start: if start <= slack { start } else { 0 },
+                len,
+            };
+        }
+        if if is_new { read_first } else { clean } {
+            self.fill(T::default());
+        }
+        Ok(())
+    }
+}
+
+impl<T> core::ops::Deref for Table<T> {
+    type Target = [T];
+
+    #[inline]
+    fn deref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T> core::ops::DerefMut for Table<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
+
+/// What the second tags of the row-based match finder have been good for, in a frame.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SecondTagStats {
+    pub(crate) nb_positions: u64,
+    /// How many candidates they ruled out.
+    pub(crate) nb_ruled_out: u64,
+}
+
+/// How `MatchState::tag_table` is laid out. See `lazy.rs`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RowTags {
+    /// As in the C code.
+    Flat,
+    /// The tags of each row are followed by its second tags.
+    Second(SecondTagStats),
+}
+
 /// `ZSTD_MatchState_t`. `dictMatchState`, `ldmSeqStore` and `opt.symbolCosts`, which point to what other structures
 /// own, are in [`BlockSrc`].
 pub(crate) struct MatchState {
@@ -1237,12 +1403,12 @@ pub(crate) struct MatchState {
     pub(crate) hash_log3: u32,
     pub(crate) row_hash_log: u32,
     /// For the row-based match finder: a byte of hash for each entry of `hash_table`.
-    pub(crate) tag_table: Vec<u8>,
-    pub(crate) hash_cache: [u32; ZSTD_ROW_HASH_CACHE_SIZE],
+    pub(crate) tag_table: Table<u8>,
+    pub(crate) row_tags: RowTags,
     /// Makes what a previous frame left in `tag_table` meaningless.
     pub(crate) hash_salt: u64,
     pub(crate) hash_salt_entropy: u32,
-    pub(crate) hash_table: Vec<u32>,
+    pub(crate) hash_table: Table<u32>,
     pub(crate) hash_table3: Vec<u32>,
     pub(crate) chain_table: Vec<u32>,
     pub(crate) force_non_contiguous: bool,
@@ -1250,7 +1416,6 @@ pub(crate) struct MatchState {
     /// `dictMatchState != NULL`: the match state of the dictionary is searched beside this one.
     pub(crate) has_dict_match_state: bool,
     pub(crate) c_params: CompressionParameters,
-    pub(crate) lazy_skipping: bool,
 }
 
 impl MatchState {
@@ -1261,11 +1426,11 @@ impl MatchState {
             next_to_update: 0,
             hash_log3: 0,
             row_hash_log: 0,
-            tag_table: Vec::new(),
-            hash_cache: [0; ZSTD_ROW_HASH_CACHE_SIZE],
+            tag_table: Table::new(),
+            row_tags: RowTags::Flat,
             hash_salt: 0,
             hash_salt_entropy: 0,
-            hash_table: Vec::new(),
+            hash_table: Table::new(),
             hash_table3: Vec::new(),
             chain_table: Vec::new(),
             force_non_contiguous: false,
@@ -1280,7 +1445,6 @@ impl MatchState {
                 target_length: 0,
                 strategy: None,
             },
-            lazy_skipping: false,
         }
     }
 

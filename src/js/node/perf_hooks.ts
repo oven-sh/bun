@@ -203,7 +203,7 @@ function createSlidingWindowHistogram(
     rotateAt = BigInt(chunkDuration) * 1_000_000n;
   } else {
     validateInteger(recordsPerChunk, "options.recordsPerChunk", 1, NumberMAX_SAFE_INTEGER);
-    rotateAt = BigInt(recordsPerChunk);
+    rotateAt = BigInt(recordsPerChunk!);
   }
   return createSlidingWindow(lowest, highest, figures, chunks, timeBased, rotateAt);
 }

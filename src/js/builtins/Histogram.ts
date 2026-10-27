@@ -1,4 +1,4 @@
-type Histogram = import("node:perf_hooks").Histogram;
+type Histogram = $Bindgen.Histogram;
 
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/histogram.js#L77
 $overriddenName = "[nodejs.util.inspect.custom]";
@@ -30,7 +30,7 @@ export function percentilesAt(this: Histogram, percentiles: number[]) {
   if (!$bindgen("histogram.bind.ts", "isHistogram")(this)) throw $ERR_INVALID_THIS("Histogram");
   const { validateArray, validateNumber } = require("internal/validators");
   validateArray(percentiles, "percentiles");
-  const copy = $newArrayWithSize(percentiles.length);
+  const copy = $newArrayWithSize<number>(percentiles.length);
   for (let i = 0; i < percentiles.length; i++) {
     const percentile = percentiles[i];
     validateNumber(percentile, `percentiles[${i}]`);

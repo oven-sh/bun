@@ -780,3 +780,5 @@ impl Symbol {
         kind.is_private()
     }
 }
+
+bun_core::assert_distinct_flag_bits!(SymbolFlags);

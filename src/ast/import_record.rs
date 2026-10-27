@@ -139,14 +139,30 @@ impl Tag {
 // sensible defaults. Construction sites must supply required fields explicitly
 // (struct-update or a `new(range, path, kind)` helper).
 
-// Two flags on one bit would each read as the other. The panic message is the second flag's name.
-const _: () = {
-    let flags = <Flags as bitflags::Flags>::FLAGS;
-    let (mut taken, mut i) = (0, 0);
-    while i < flags.len() {
-        let bits = flags[i].value().bits();
-        assert!(taken & bits == 0, "{}", flags[i].name());
-        taken |= bits;
-        i += 1;
+bun_core::assert_distinct_flag_bits!(Flags);
+
+#[cfg(doctest)]
+#[doc = "
+```
+bitflags::bitflags! {
+    struct Flags: u8 {
+        const A = 1 << 0;
+        const B = 1 << 1;
+        const A_OR_B = Self::A.bits() | Self::B.bits();
     }
-};
+}
+bun_core::assert_distinct_flag_bits!(Flags);
+```
+
+```compile_fail,E0080
+bitflags::bitflags! {
+    struct Flags: u8 {
+        const A = 1 << 0;
+        const B = 1 << 1;
+        const ALSO_B = 1 << 1;
+    }
+}
+bun_core::assert_distinct_flag_bits!(Flags);
+```
+"]
+struct AssertDistinctFlagBitsDoctests;

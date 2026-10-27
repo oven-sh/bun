@@ -1076,6 +1076,25 @@ macro_rules! enum_unwrap {
     };
 }
 
+/// Fails the build when two single-bit flags of a `bitflags!` set share a bit, naming the second.
+#[macro_export]
+macro_rules! assert_distinct_flag_bits {
+    ($Flags:ty) => {
+        const _: () = {
+            let flags = <$Flags as ::bitflags::Flags>::FLAGS;
+            let (mut taken, mut i) = (0, 0);
+            while i < flags.len() {
+                let bits = flags[i].value().bits();
+                if bits.count_ones() == 1 {
+                    ::core::assert!(taken & bits == 0, "{}", flags[i].name());
+                    taken |= bits;
+                }
+                i += 1;
+            }
+        };
+    };
+}
+
 /// Unwrap a `Result`, calling `outOfMemory()` on **any** `Err`. The
 /// `AllocError`-only version lives in `bun_crash_handler::handle_oom` (that
 /// crate sits *above* `bun_core` in the dep graph).

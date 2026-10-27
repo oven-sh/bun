@@ -103,6 +103,9 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// `__toESM(value, 1)` (`isNodeMode`). Set with `WRAP_WITH_TO_ESM` by `LinkerContext::set_to_esm_interop`.
+        const TO_ESM_NODE_MODE = 1 << 19;
     }
 }
 

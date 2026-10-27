@@ -374,6 +374,12 @@ _Runtime helper usage examples_:
 // __toESM: Used when importing CommonJS with ES6 syntax
 import utils from "./commonjs-module.js";
 // Generates: __toESM(require('./commonjs-module.js'))
+// From an ES module by type (`.mjs`, `"type": "module"`), Node's interop:
+// Generates: __toESM(require('./commonjs-module.js'), 1)
+
+// `require("bun:sqlite")` has `__esModule` and its own `default`: never Node's interop
+import Database from "bun:sqlite";
+// Generates: __toESM(require("bun:sqlite"))
 
 // __toCommonJS: Used when requiring ES6 module
 const utils = require("./es6-module.js");
@@ -415,9 +421,10 @@ if (targetModule.needsWrapper) {
     ref: targetModule.wrapperRef, // Points to require_moduleName() function
   });
 
-  // For ES6 imports of CommonJS, add __toESM wrapper
+  // For ES6 imports of CommonJS, add __toESM wrapper. `setToESMInterop` is
+  // the one place that sets the wrapper and its `isNodeMode` argument.
   if (importKind !== "require" && targetModule.isCommonJS) {
-    record.wrapWithToESM = true;
+    setToESMInterop(importer.moduleType, record);
     generateRuntimeSymbolImport("__toESM");
   }
 }

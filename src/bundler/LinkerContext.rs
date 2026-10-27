@@ -2457,7 +2457,6 @@ impl<'a> LinkerContext<'a> {
 
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
-            input_module_type: ast.module_type,
             module_type: self.options.output_format,
             print_dce_annotations: self.options.emit_dce_annotations,
             has_run_symbol_renamer: true,
@@ -4425,6 +4424,27 @@ impl<'a> LinkerContext<'a> {
         importer_module_type != crate::options::ModuleType::Esm
             && exports.contains(b"__esModule")
             && exports.contains(b"default")
+    }
+
+    /// The one writer of `WRAP_WITH_TO_ESM` and `TO_ESM_NODE_MODE` on an ES import of a `require()` value.
+    pub(crate) fn set_to_esm_interop(
+        importer_module_type: crate::options::ModuleType,
+        record: &mut ImportRecord<'_>,
+    ) {
+        use bun_ast::ImportRecordFlags as Flags;
+        record.flags.insert(Flags::WRAP_WITH_TO_ESM);
+        if importer_module_type == crate::options::ModuleType::Esm
+            && !Self::require_value_has_own_default(record)
+        {
+            record.flags.insert(Flags::TO_ESM_NODE_MODE);
+        }
+    }
+
+    /// Externals whose `require()` value Bun builds with `__esModule` and an own `default`: `bun:sqlite` and a sqlite file.
+    fn require_value_has_own_default(record: &ImportRecord<'_>) -> bool {
+        !record.source_index.is_valid()
+            && (matches!(record.loader, Some(Loader::Sqlite | Loader::SqliteEmbedded))
+                || bun_resolve_builtins::Alias::require_has_own_default(record.path.text))
     }
 
     /// `const { a } = ns` where `ns` is an import namespace. The parser

@@ -17,6 +17,10 @@ import { itBundled } from "./expectBundled";
 //   `module.exports`. This matches `bun run`. esbuild matches it too, except
 //   that it gives `undefined` when the `default` property is missing.
 //
+// One external never gets isNodeMode: `bun:sqlite`. Its `require()` value has
+// `__esModule` and an own `default`, and Bun's loader serves that `default` as
+// the ES default export to every importer.
+//
 // A bare `require()` never goes through `__toESM`.
 
 describe("bundler", () => {
@@ -1233,6 +1237,222 @@ describe("bundler", () => {
     },
     run: {
       stdout: "function/undefined",
+    },
+  });
+
+  // ============================================================================
+  // `require("bun:sqlite")` is `{ __esModule: true, default: Database, .. }`.
+  // Bun's loader makes that own `default` the ES default export for every
+  // importer, so isNodeMode never applies to this external.
+  // ============================================================================
+
+  const bunSqliteDefaultAndStar = /* js */ `
+    import Database from "bun:sqlite";
+    import * as ns from "bun:sqlite";
+    import fs from "node:fs";
+    const db = new Database(":memory:");
+    console.log(typeof Database, ns.default === Database, db instanceof ns.Database, typeof fs.readFileSync);
+    db.close();
+  `;
+
+  // Test 63: `.mjs` importer, CJS output. `node:fs` keeps isNodeMode.
+  itBundled("cjs/__toESM_bun_builtin_mjs_importer_format_cjs", {
+    files: {
+      "/entry.mjs": bunSqliteDefaultAndStar,
+    },
+    target: "bun",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('var import_bun_sqlite = __toESM(require("bun:sqlite"));');
+      api.expectFile("/out.js").toContain('var ns = __toESM(require("bun:sqlite"));');
+      api.expectFile("/out.js").toContain('__toESM(require("fs"), 1)');
+    },
+    run: {
+      stdout: "function true true function",
+    },
+  });
+
+  // Test 64: `"type": "module"` importer, IIFE output
+  itBundled("cjs/__toESM_bun_builtin_type_module_importer_format_iife", {
+    files: {
+      "/entry.ts": bunSqliteDefaultAndStar,
+      "/package.json": `{ "name": "app", "type": "module" }`,
+    },
+    target: "bun",
+    format: "iife",
+    run: {
+      stdout: "function true true function",
+    },
+  });
+
+  // Test 65: `.mts` importer, target node. Only Bun can load the output.
+  itBundled("cjs/__toESM_bun_builtin_mts_importer_target_node", {
+    files: {
+      "/entry.mts": bunSqliteDefaultAndStar,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('var import_bun_sqlite = __toESM(require("bun:sqlite"));');
+      api.expectFile("/out.js").toContain('var ns = __toESM(require("bun:sqlite"));');
+      api.expectFile("/out.js").toContain('__toESM(require("node:fs"), 1)');
+    },
+    run: {
+      stdout: "function true true function",
+    },
+  });
+
+  // Test 66: every syntax that reads the default export or the namespace
+  itBundled("cjs/__toESM_bun_builtin_import_forms", {
+    backend: "cli",
+    files: {
+      "/entry.mjs": /* js */ `
+        import D1 from "bun:sqlite";
+        import D2, { Statement } from "bun:sqlite";
+        import { default as D3, __esModule } from "bun:sqlite";
+        import * as ns from "bun:sqlite";
+        import D4, * as ns2 from "bun:sqlite";
+        import D5, { D6, star } from "./reexport.mjs";
+        const exports = require("bun:sqlite");
+        const defaults = [D2, D3, D4, D5, D6, ns.default, ns2.default, star.default];
+        console.log(typeof D1, defaults.every(d => d === D1), typeof Statement, __esModule);
+        // A write to the namespace must not reach the exports of the built-in.
+        Reflect.set(ns, "written", true);
+        console.log(ns !== exports, "written" in exports);
+      `,
+      "/reexport.mjs": /* js */ `
+        export { default } from "bun:sqlite";
+        export { default as D6 } from "bun:sqlite";
+        export * as star from "bun:sqlite";
+      `,
+    },
+    target: "bun",
+    format: "cjs",
+    run: {
+      stdout: "function true function true\ntrue false",
+    },
+  });
+
+  // Test 67: a `.ts` and an `.mjs` importer in one bundle get one default
+  itBundled("cjs/__toESM_bun_builtin_ts_and_mjs_importers", {
+    files: {
+      "/entry.ts": /* js */ `
+        import A from "bun:sqlite";
+        import * as nsA from "bun:sqlite";
+        import { B, nsB } from "./b.mjs";
+        console.log(typeof A, typeof B, A === B, nsA.default === nsB.default);
+      `,
+      "/b.mjs": /* js */ `
+        import B from "bun:sqlite";
+        import * as nsB from "bun:sqlite";
+        export { B, nsB };
+      `,
+    },
+    target: "bun",
+    format: "cjs",
+    run: {
+      stdout: "function function true true",
+    },
+  });
+
+  // Test 68: `bytecode` output is CommonJS
+  itBundled("cjs/__toESM_bun_builtin_bytecode", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import Database from "bun:sqlite";
+        console.log(typeof Database);
+      `,
+    },
+    target: "bun",
+    format: "cjs",
+    bytecode: true,
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain('__toESM(require("bun:sqlite"))');
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "function",
+    },
+  });
+
+  // Test 69: reached through a package.json "imports" alias
+  itBundled("cjs/__toESM_bun_builtin_package_imports_alias", {
+    files: {
+      "/entry.js": /* js */ `
+        import Database from "#db";
+        import * as ns from "#db";
+        console.log(typeof Database, ns.default === Database);
+      `,
+      "/package.json": `{ "name": "app", "type": "module", "imports": { "#db": "bun:sqlite" } }`,
+    },
+    target: "bun",
+    format: "cjs",
+    run: {
+      stdout: "function true",
+    },
+  });
+
+  // Test 70: a plugin resolves another specifier to the built-in
+  itBundled("cjs/__toESM_bun_builtin_plugin_external", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import Database from "the-database";
+        import * as ns from "the-database";
+        console.log(typeof Database, ns.default === Database);
+      `,
+    },
+    target: "bun",
+    format: "cjs",
+    plugins(builder) {
+      builder.onResolve({ filter: /^the-database$/ }, () => ({ path: "bun:sqlite", external: true }));
+    },
+    run: {
+      stdout: "function true",
+    },
+  });
+
+  // Test 71: an explicit external under target browser, run by Bun
+  itBundled("cjs/__toESM_bun_builtin_target_browser_external", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import Database from "bun:sqlite";
+        import * as ns from "bun:sqlite";
+        console.log(typeof Database, ns.default === Database);
+      `,
+    },
+    target: "browser",
+    external: ["bun:sqlite"],
+    format: "cjs",
+    run: {
+      stdout: "function true",
+    },
+  });
+
+  // Test 72: a module that a plugin bundles in place of the built-in is not
+  // the built-in. It keeps the importer's rule.
+  itBundled("cjs/__toESM_bun_builtin_specifier_bundled_by_plugin", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import Database from "bun:sqlite";
+        console.log(typeof Database, new Database("x").kind);
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    plugins(builder) {
+      builder.onResolve({ filter: /^bun:sqlite$/ }, args => ({ path: args.path, namespace: "polyfill" }));
+      builder.onLoad({ filter: /.*/, namespace: "polyfill" }, () => ({
+        contents: `module.exports = class Database { constructor(name) { this.kind = "shim:" + name; } };`,
+        loader: "js",
+      }));
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var import_bun_sqlite = __toESM(require_bun_sqlite(), 1);");
+    },
+    run: {
+      stdout: "function shim:x",
     },
   });
 });

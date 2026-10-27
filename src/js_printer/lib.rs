@@ -1368,8 +1368,6 @@ pub struct Options<'a> {
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
-    /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
-    pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
 
     // /// Used for cross-module inlining of import items when bundling
@@ -1442,7 +1440,6 @@ impl<'a> Default for Options<'a> {
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
-            input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
             import_member_bindings: None,
@@ -2804,7 +2801,7 @@ pub(crate) mod __gated_printer {
                             }
                             self.print_symbol(meta.exports_ref);
                             if wrap_with_to_esm {
-                                self.print_to_esm_suffix();
+                                self.print_to_esm_suffix(record);
                             }
                         }
                         self.print_dot_then_suffix();
@@ -2899,7 +2896,7 @@ pub(crate) mod __gated_printer {
                     self.print(b")");
                 }
                 if wrap_with_to_esm {
-                    self.print_to_esm_suffix();
+                    self.print_to_esm_suffix(record);
                 }
                 if record.kind == ImportKind::Dynamic && has_side_effects {
                     self.print_dot_then_suffix();
@@ -2992,7 +2989,7 @@ pub(crate) mod __gated_printer {
                 }
 
                 if wrap_with_to_esm {
-                    self.print_to_esm_suffix();
+                    self.print_to_esm_suffix(record);
                 }
                 if wrap {
                     self.print(b")");
@@ -3047,7 +3044,7 @@ pub(crate) mod __gated_printer {
                 self.print(b".then((m)=>");
                 self.print_symbol(self.options.to_esm_ref);
                 self.print(b"(m.default");
-                if self.options.input_module_type == bundle_opts::ModuleType::Esm {
+                if record.flags.contains(ImportRecordFlags::TO_ESM_NODE_MODE) {
                     self.print(b",1");
                 }
                 self.print(b"))");
@@ -3058,10 +3055,9 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// Closes a `__toESM(` call: `, 1` (`isNodeMode`) for an ES module by
-        /// type, then `)`.
-        fn print_to_esm_suffix(&mut self) {
-            if self.options.input_module_type == bundle_opts::ModuleType::Esm {
+        /// Closes a `__toESM(` call: `, 1` (`isNodeMode`) when the linker set it on the record, then `)`.
+        fn print_to_esm_suffix(&mut self, record: &ImportRecord) {
+            if record.flags.contains(ImportRecordFlags::TO_ESM_NODE_MODE) {
                 self.print(b",");
                 self.print_space();
                 self.print(b"1");

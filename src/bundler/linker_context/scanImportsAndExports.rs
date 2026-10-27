@@ -1190,23 +1190,16 @@ pub(crate) fn scan_imports_and_exports(
                                 // For dynamic imports to cross-chunk CJS modules, we need extra
                                 // unwrapping in js_printer (.then((m)=>__toESM(m.default))).
                                 // For other cases (static imports, truly external), use standard wrapping.
-                                if rec_source_index.is_valid()
+                                let is_cross_chunk_import_of_cjs = rec_source_index.is_valid()
                                     && is_external_dyn
                                     && col_ref!(exports_kind)[rec_source_index.get() as usize]
-                                        == ExportsKind::Cjs
-                                {
-                                    // Cross-chunk dynamic import to CJS - needs special handling in printer
-                                    col!(import_records_list)[id].as_mut_slice()
-                                        [import_record_index as usize]
-                                        .flags
-                                        .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
-                                    to_esm_uses += 1;
-                                } else if kind != ImportKind::Dynamic {
-                                    // Static imports to external CJS modules need __toESM wrapping
-                                    col!(import_records_list)[id].as_mut_slice()
-                                        [import_record_index as usize]
-                                        .flags
-                                        .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
+                                        == ExportsKind::Cjs;
+                                if is_cross_chunk_import_of_cjs || kind != ImportKind::Dynamic {
+                                    LinkerContext::set_to_esm_interop(
+                                        col_ref!(module_types)[id],
+                                        &mut col!(import_records_list)[id].as_mut_slice()
+                                            [import_record_index as usize],
+                                    );
                                     to_esm_uses += 1;
                                 }
                                 // Dynamic imports of an ES module chunk or a truly external module: no wrapping
@@ -1245,10 +1238,11 @@ pub(crate) fn scan_imports_and_exports(
                                         .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)))
                             && output_format != Format::InternalBakeDev
                         {
-                            col!(import_records_list)[id].as_mut_slice()
-                                [import_record_index as usize]
-                                .flags
-                                .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
+                            LinkerContext::set_to_esm_interop(
+                                col_ref!(module_types)[id],
+                                &mut col!(import_records_list)[id].as_mut_slice()
+                                    [import_record_index as usize],
+                            );
                             to_esm_uses += 1;
                         }
 

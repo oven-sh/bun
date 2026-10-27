@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
+import { builtinModules } from "node:module";
 import { itBundled } from "./expectBundled";
 
 const nestedFunctions = /* js */ `
@@ -113,6 +114,89 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  // `require()` of the database is `{ __esModule: true, db, default: db }`: as for
+  // `bun:sqlite`, the own `default` is the default import for every importer.
+  itBundled("bun/sqlite-file-format-cjs-mjs-importer", {
+    target: "bun",
+    format: "cjs",
+    files: {
+      "/entry.mjs": /* js */ `
+        import db from './db.sqlite' with {type: "sqlite"};
+        import * as ns from './db.sqlite' with {type: "sqlite"};
+        console.log(db.query("select message from messages LIMIT 1").get().message, ns.default === db, ns.db === db);
+      `,
+    },
+    runtimeFiles: {
+      "/db.sqlite": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('var import_db = __toESM(require("./db.sqlite"));');
+      api.expectFile("/out.js").toContain('var ns = __toESM(require("./db.sqlite"));');
+    },
+    run: { stdout: "Hello, world! true true", setCwd: true },
+  });
+  itBundled("bun/embedded-sqlite-file-external-format-cjs-mjs-importer", {
+    target: "bun",
+    format: "cjs",
+    external: ["./db.sqlite"],
+    files: {
+      "/entry.mjs": /* js */ `
+        import db from './db.sqlite' with {type: "sqlite", embed: "true"};
+        console.log(db.query("select message from messages LIMIT 1").get().message);
+      `,
+    },
+    runtimeFiles: {
+      "/db.sqlite": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('var import_db = __toESM(require("./db.sqlite"));');
+    },
+    run: { stdout: "Hello, world!", setCwd: true },
+  });
+  {
+    // `Alias::require_has_own_default` (src/resolve_builtins/HardcodedModule.rs)
+    // lists the built-ins whose `require()` value has its own `default` that is
+    // not the value itself. The list is complete when every default import in
+    // CommonJS output is the ES default export.
+    // "bun" is left out: it is `globalThis.Bun` in the output, not a `require()`.
+    const specifiers = builtinModules.filter(specifier => specifier !== "bun");
+    itBundled("bun/BuiltinDefaultImportCJS", {
+      target: "bun",
+      format: "cjs",
+      files: {
+        "/entry.mjs": /* js */ `
+          ${specifiers.map((specifier, i) => `import d${i} from ${JSON.stringify(specifier)};`).join("\n")}
+          const bundled = { ${specifiers.map((specifier, i) => `${JSON.stringify(specifier)}: d${i}`).join(", ")} };
+          (async () => {
+            const wrongDefault = [];
+            const ownDefault = [];
+            for (const specifier in bundled) {
+              const { default: esDefault } = await import(specifier);
+              if (bundled[specifier] !== esDefault) wrongDefault.push(specifier);
+              const value = require(specifier);
+              if (Object.hasOwn(value, "default") && value.default !== value) {
+                ownDefault.push({ specifier, esModule: value.__esModule === true });
+              }
+            }
+            console.log(JSON.stringify({ wrongDefault, ownDefault }));
+          })();
+        `,
+      },
+      run: {
+        stdout: JSON.stringify({ wrongDefault: [], ownDefault: [{ specifier: "bun:sqlite", esModule: true }] }),
+      },
+    });
+  }
   itBundled("bun/TargetBunNoSourcemapMessage", {
     target: "bun",
     files: {

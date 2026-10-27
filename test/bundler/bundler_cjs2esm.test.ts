@@ -2076,6 +2076,33 @@ describe("bundler", () => {
       stdout: "object true i",
     },
   });
+  // A lifted module with an async dependency: `import()` waits for the
+  // initializer and then wraps the namespace. isNodeMode follows the importer.
+  for (const [entry, wrapped] of [
+    ["/entry.js", "__toESM(exports_react)"],
+    ["/entry.mjs", "__toESM(exports_react, 1)"],
+  ] as const) {
+    itBundled(`cjs2esm/DynamicImportOfAsyncLiftedCommonJS${entry === "/entry.mjs" ? "FromMjs" : ""}`, {
+      files: {
+        [entry]: /* js */ `
+          import("react").then(m => console.log(typeof m.default, m.default.x, m.x));
+        `,
+        "/node_modules/react/package.json": /* json */ `{ "name": "react", "main": "index.js" }`,
+        "/node_modules/react/index.js": /* js */ `
+          const t = require("./tla.mjs");
+          exports.x = t.y + 1;
+        `,
+        "/node_modules/react/tla.mjs": /* js */ `export const y = await Promise.resolve(2);`,
+      },
+      target: "bun",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain(`init_react().then(() => ${wrapped})`);
+      },
+      run: {
+        stdout: "object 3 3",
+      },
+    });
+  }
   itBundled("cjs2esm/DefaultImportWithDynamicImport", {
     files: {
       "/entry.js": /* js */ `

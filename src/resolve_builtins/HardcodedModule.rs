@@ -950,6 +950,12 @@ impl Alias {
         Self::bare_node_builtin(specifier.strip_prefix(b"bun:")?)
     }
 
+    /// Built-ins whose `require()` value has `__esModule` and an own `default` that is not the value (`bun/BuiltinDefaultImportCJS` fails when one is missing).
+    #[inline]
+    pub fn require_has_own_default(path: &[u8]) -> bool {
+        path == b"bun:sqlite"
+    }
+
     // Reads no flag or mode: the answer goes into cached output. A name behind a flag is not kept.
     #[cold]
     #[inline(never)]

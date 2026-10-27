@@ -1194,7 +1194,7 @@ where
                                                             unsafe {
                                                                 (*ctx).remove_at_index::<false>(
                                                                     bun_watcher::Kind::File,
-                                                                    entry_id as u16,
+                                                                    entry_id as bun_watcher::WatchItemIndex,
                                                                     0,
                                                                     &[],
                                                                 )

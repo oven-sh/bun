@@ -35,12 +35,12 @@ use bun_paths::fs::{Path as FsPath, PathName};
 
 pub(crate) struct AstBuilder<'a, 'bump> {
     pub(crate) bump: &'bump Bump,
-    pub(crate) source: &'a Source,
+    pub(crate) source: &'a Source<'a>,
     pub(crate) source_index: u32,
     pub(crate) stmts: Vec<Stmt>,
     pub(crate) scopes: Vec<*mut Scope>,
     pub(crate) symbols: Vec<Symbol>,
-    pub(crate) import_records: Vec<ImportRecord>,
+    pub(crate) import_records: Vec<ImportRecord<'bump>>,
     pub(crate) named_imports: NamedImports,
     pub(crate) named_exports: NamedExports,
     pub(crate) import_records_for_current_part: Vec<u32>,
@@ -60,7 +60,7 @@ pub(crate) struct AstBuilder<'a, 'bump> {
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub(crate) fn init(
         bump: &'bump Bump,
-        source: &'a Source,
+        source: &'a Source<'a>,
         hot_reloading: bool,
     ) -> Result<Self, OOM> {
         let scope: *mut Scope = bump.alloc(Scope {

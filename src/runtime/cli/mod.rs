@@ -1789,11 +1789,12 @@ To create a project with the official Next.js scaffolding tool, run
 
         if use_bunx {
             let mut bunx_args: Vec<&ZStr> =
-                Vec::with_capacity(2 + args.len() - template_name_start + (dash_dash_bun as usize));
+                Vec::with_capacity(3 + args.len() - template_name_start + (dash_dash_bun as usize));
             bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
                 bunx_args.push(bun_core::zstr!("--bun"));
             }
+            bunx_args.extend(Global::ca_store_flag());
             // `add_create_prefix` returns an owned NUL-terminated buffer.
             // `bun create` is a one-shot CLI subcommand (ends in exec/exit), so
             // the prefixed package name is a process singleton — park the owning
@@ -1925,7 +1926,11 @@ Flags:
   <cyan>--cwd <blue>\\<path\\><r>            Set the working directory
   <cyan>--env-file <blue>\\<file\\><r>       Load environment variables from the specified file(s)
   <cyan>--minimum-release-age <blue>\\<seconds\\><r>  Only install packages published at least N seconds ago (security feature)
+  <cyan>--registry <blue>\\<url\\><r>        Install from a specific registry
+  <cyan>--ca <blue>\\<cert\\><r>, <cyan>--cafile <blue>\\<path\\><r>  Trust a Certificate Authority signing certificate during installation
+  <cyan>--use-system-ca<r>, <cyan>--use-openssl-ca<r>, <cyan>--use-bundled-ca<r>  Choose the CA store to trust during installation
   <cyan>--trust<r>                Run the lifecycle scripts of the package and of ALL of its dependencies during installation
+  <cyan>--ignore-scripts<r>       Run no lifecycle scripts during installation
   <cyan>--verbose<r>              Enable verbose output during installation
   <cyan>--silent<r>               Suppress output during installation
 
@@ -2227,6 +2232,9 @@ Full documentation is available at <magenta>https://bun.com/docs/lint<r>
   <cyan>-r, --react<r>            Initialize a React project
       <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS
       <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
+      <cyan>--use-system-ca<r>    Use the system's trusted certificate authorities during installation
+      <cyan>--use-openssl-ca<r>   Use OpenSSL's default CA store instead of the bundled one during installation
+      <cyan>--use-bundled-ca<r>   Use bundled CA store during installation
 
 <b>Examples:<r>
   <b><green>bun init<r>

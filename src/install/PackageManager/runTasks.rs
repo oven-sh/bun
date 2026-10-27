@@ -1190,8 +1190,7 @@ fn run_tasks_erased(
                 if task.status == Task::Status::Fail {
                     let log_mark = manager.log_mut().msgs.len();
                     if holds_log {
-                        task.log.append_to_with_recycled(manager.log_mut(), false);
-                        task.log.reset();
+                        task.log.append_to(manager.log_mut());
                     }
                     let req = task.request_package_manifest();
                     let name = req.name.slice();
@@ -1316,7 +1315,7 @@ fn run_tasks_erased(
                             _ => unreachable!(),
                         }
                     };
-                    // The mark is a no-op for `local_tarball` tasks (they never populate the map).
+                    // A linker's `local_tarball` task is not in the map, so it gets no mark.
                     let Some(is_required) = cb.dispatch_tarball_error(
                         manager,
                         extract_ctx,
@@ -1563,7 +1562,12 @@ fn run_tasks_erased(
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
                     let is_required = manager.is_network_task_required(task.id);
-                    let _ = forget_failed_git_task(manager, task.id, name);
+                    // The repository (with `--offline`, its cached clone) has no such commit.
+                    for waiter in forget_failed_git_task(manager, task.id, name).iter() {
+                        if let &bun_install::TaskCallbackContext::Dependency(id) = waiter {
+                            manager.lockfile.unbind_refreshing(id);
+                        }
+                    }
                     if cb.has_on_package_manifest_error {
                         (cb.on_package_manifest_error)(extract_ctx, name, err, url);
                     } else {
@@ -2011,7 +2015,9 @@ pub(crate) fn fail_update_requests(
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let waiters = this.task_queue.get(&task_id).map_or(&[][..], Vec::as_slice);
     // An npm tarball task has no waiters: the dependencies it was for already resolved to its package.
+    // A dependency that is refreshed still has the package of bun.lock, which the task was not for.
     let package_id = tarball_dependency_id
+        .filter(|&id| !lockfile.is_refreshing(id))
         .and_then(|id| resolutions.get(id as usize).copied())
         .filter(|&package_id| package_id != INVALID_PACKAGE_ID);
     let was_for = |id: DependencyID| {

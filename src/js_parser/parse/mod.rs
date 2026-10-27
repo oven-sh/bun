@@ -523,11 +523,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Are these arguments to an arrow function?
         let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
+        // Not in esbuild: a cast, "!", type arguments or more parentheses cannot be parameters, so a ":" behind them is not a return type.
         if is_arrow_fn
             || opts.force_arrow_fn
             || (Self::IS_TYPESCRIPT_ENABLED
                 && p.lexer.token == T::TColon
-                && level.lte(Level::Assign))
+                && level.lte(Level::Assign)
+                && !errors.has_erased_syntax)
         {
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
@@ -583,6 +585,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if Self::IS_TYPESCRIPT_ENABLED
                 && p.lexer.token == T::TColon
                 && (invalid_log.is_empty() || Self::has_only_rest_initializers(&invalid_log))
+                && !errors.has_erased_syntax
             {
                 if opts.is_after_question_and_before_colon {
                     // Only do this very expensive check if we must
@@ -659,7 +662,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.log_expr_errors(&mut errors);
             if spread_range.len > 0 {
                 p.log()
-                    .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
+                    .add_range_error(Some(p.source), spread_range, b"Unexpected \"...\"");
                 return Err(crate::Error::SyntaxError);
             }
 

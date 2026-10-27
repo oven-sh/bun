@@ -34,6 +34,9 @@ pub fn ours(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<Ours, OurFail
 pub fn compare(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<&'static str, String> {
     let r = reference::decode(bytes, eighths, max_pixels);
     let o = ours(bytes, eighths, max_pixels);
+    if let Err(OurFailure::Header(bun_jpeg::Error::Internal) | OurFailure::Decode(bun_jpeg::Error::Internal)) = o {
+        return Err("ours failed with Error::Internal, which no input should get to".into());
+    }
     match (r, o) {
         (Err(reference::Failure::Header(_)), Err(OurFailure::Header(_))) => Ok("header-fail"),
         (Err(reference::Failure::Decode(_)), Err(OurFailure::Decode(_))) => Ok("decode-fail"),

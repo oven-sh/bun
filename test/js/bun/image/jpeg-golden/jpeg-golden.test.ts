@@ -1,4 +1,7 @@
 // `Bun.Image` decodes and encodes JPEG as it did when it used libjpeg-turbo. See record.ts.
+//
+// The files named history/ are for bugs that libjpeg-turbo has fixed, named after the CVE, the ChangeLog entry or the
+// commit. Those in history/seed-corpora/ are the project's own, from bugs/decompress in libjpeg-turbo/seed-corpora.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { join } from "node:path";
 import { encodeCases, load, observeDecodeCase, observeEncode, type DecodeCase } from "./observe";
@@ -27,7 +30,7 @@ async function mapConcurrently<T, R>(items: T[], run: (item: T, index: number) =
 }
 
 const cases = await load<DecodeCase[]>(join(import.meta.dir, "cases.json.gz"));
-const parts = 8;
+const parts = 16;
 test.each(Array.from({ length: parts }, (_, part) => part))(
   "decodes files, whole and damaged (part %d)",
   async part => {

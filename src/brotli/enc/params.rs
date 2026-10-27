@@ -69,6 +69,8 @@ pub(crate) struct EncoderParams {
 
 pub(crate) const FAST_ONE_PASS_COMPRESSION_QUALITY: i32 = 0;
 pub(crate) const FAST_TWO_PASS_COMPRESSION_QUALITY: i32 = 1;
+/// Those two refer back as far as a window of this many bits allows, even if `lgwin` is less.
+pub(crate) const FAST_COMPRESSION_WINDOW_BITS: i32 = 18;
 pub(crate) const ZOPFLIFICATION_QUALITY: i32 = 10;
 pub(crate) const HQ_ZOPFLIFICATION_QUALITY: i32 = 11;
 
@@ -137,7 +139,7 @@ impl EncoderParams {
             || self.quality == FAST_TWO_PASS_COMPRESSION_QUALITY
     }
 
-    pub(crate) fn compute_lg_block(&self) -> i32 {
+    pub(crate) fn compute_lgblock(&self) -> i32 {
         if self.is_fast() {
             self.lgwin
         } else if self.quality < MIN_QUALITY_FOR_BLOCK_SPLIT {
@@ -156,12 +158,12 @@ impl EncoderParams {
 
     /// `log2` of the size of the ring buffer. It has to hold the window and a new block at the same time, and be larger
     /// than the copy of its start that is kept after its end.
-    pub(crate) fn compute_rb_bits(&self) -> i32 {
+    pub(crate) fn ring_buffer_bits(&self) -> i32 {
         1 + self.lgwin.max(self.lgblock)
     }
 
     pub(crate) fn max_meta_block_size(&self) -> usize {
-        1 << self.compute_rb_bits().min(MAX_INPUT_BLOCK_BITS)
+        1 << self.ring_buffer_bits().min(MAX_INPUT_BLOCK_BITS)
     }
 
     /// After this many literals in a row, qualities 2 to 9 no longer look for a match at every position: a failed lookup

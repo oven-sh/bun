@@ -23,7 +23,7 @@ use super::meta_block::{
     optimize_histograms,
 };
 use super::params::{
-    DistanceParams, EncoderParams, FAST_ONE_PASS_COMPRESSION_QUALITY,
+    DistanceParams, EncoderParams, FAST_COMPRESSION_WINDOW_BITS, FAST_ONE_PASS_COMPRESSION_QUALITY,
     FAST_TWO_PASS_COMPRESSION_QUALITY, HQ_ZOPFLIFICATION_QUALITY, HasherParams,
     MAX_NUM_DELAYED_SYMBOLS, MAX_QUALITY_FOR_STATIC_ENTROPY_CODES, MIN_QUALITY_FOR_BLOCK_SPLIT,
     MIN_QUALITY_FOR_CONTEXT_MODELING, MIN_QUALITY_FOR_HQ_BLOCK_SPLITTING,
@@ -43,6 +43,9 @@ use crate::common::context::{ContextType, context_lut};
 use crate::io::{Cursor, Output, Rewind, SpareCapacity};
 use crate::util::{Bug, Checked, SliceExt, try_zeroed};
 use bun_core::AllocError;
+
+/// 9.2. How many bytes a meta-block can hold, of data or of metadata.
+const MAX_META_BLOCK_SIZE: usize = 1 << 24;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StreamState {
@@ -150,8 +153,10 @@ fn wrap_position(position: u64) -> u32 {
     result
 }
 
-/// Makes `storage` at least `size` long. What it held is lost.
-fn get_storage(storage: &mut Vec<u8>, size: usize) -> Result<&mut [u8], AllocError> {
+/// Makes room in `storage` for what `input_size` bytes are compressed to, by the bound of the reference encoder. What it
+/// held is lost.
+fn reserve_storage(storage: &mut Vec<u8>, input_size: usize) -> Result<&mut [u8], AllocError> {
+    let size = 2 * input_size + 503;
     if storage.len() < size {
         *storage = Vec::new();
         *storage = try_zeroed(size)?;
@@ -168,11 +173,15 @@ fn hash_table_size(max_table_size: usize, input_size: usize) -> usize {
 }
 
 /// A cleared table. It is smaller for a short input, which does not need many entries, since clearing takes time.
-fn get_hash_table(table: &mut Vec<i32>, quality: i32, input_size: usize) -> Fallible<&mut [i32]> {
+fn cleared_hash_table(
+    table: &mut Vec<i32>,
+    quality: i32,
+    input_size: usize,
+) -> Fallible<&mut [i32]> {
     let max_table_size = max_hash_table_size(quality);
     let mut htsize = hash_table_size(max_table_size, input_size);
-    // Quality 0 only supports odd shifts.
-    if quality == FAST_ONE_PASS_COMPRESSION_QUALITY && htsize & 0xAAAAA == 0 {
+    // Quality 0 only supports sizes that are an odd power of 2.
+    if quality == FAST_ONE_PASS_COMPRESSION_QUALITY && htsize.trailing_zeros().is_multiple_of(2) {
         htsize <<= 1;
     }
     if htsize > table.len() {
@@ -267,8 +276,8 @@ fn choose_context_map(quality: i32, bigram_histo: &[u32; 9]) -> (usize, Option<S
     }
 }
 
-/// Whether a context map with 13 contexts pays off, judged by the entropy of the 5 highest bits of the literals.
-fn should_use_complex_static_context_map(
+/// A context map with 13 contexts, if it pays off, judged by the entropy of the 5 highest bits of the literals.
+fn complex_static_context_map(
     input: &[u8],
     mut start_pos: usize,
     length: usize,
@@ -351,9 +360,7 @@ fn decide_over_literal_context_modeling(
     if quality < MIN_QUALITY_FOR_CONTEXT_MODELING || length < 64 {
         return Ok((1, None));
     }
-    if let Some(map) =
-        should_use_complex_static_context_map(input, start_pos, length, mask, size_hint)?
-    {
+    if let Some(map) = complex_static_context_map(input, start_pos, length, mask, size_hint)? {
         return Ok((MAX_STATIC_CONTEXTS, Some(map)));
     }
     // Count pairs of UTF-8 byte kinds, in 64 bytes of every 4 KiB.
@@ -421,7 +428,7 @@ fn choose_context_mode(
 }
 
 /// Writes the `bytes` bytes from `last_flush_pos` on as a meta-block, after the up to 14 bits already in `bw`.
-fn write_meta_block_internal(
+fn write_meta_block(
     data: &[u8],
     mask: usize,
     last_flush_pos: u64,
@@ -784,7 +791,7 @@ impl Encoder {
         }
 
         self.params.sanitize();
-        self.params.lgblock = self.params.compute_lg_block();
+        self.params.lgblock = self.params.compute_lgblock();
         choose_distance_params(&mut self.params);
 
         if self.params.stream_offset != 0 {
@@ -798,7 +805,7 @@ impl Encoder {
 
         let mut lgwin = self.params.lgwin;
         if self.params.is_fast() {
-            lgwin = lgwin.max(18);
+            lgwin = lgwin.max(FAST_COMPRESSION_WINDOW_BITS);
         }
         if self.params.stream_offset == 0 {
             (self.last_bytes, self.last_bytes_bits) =
@@ -967,7 +974,7 @@ impl Encoder {
             self.available_out = 0;
             return Ok(());
         }
-        debug_assert!(self.input_pos - self.last_flush_pos <= 1 << 24);
+        debug_assert!(self.input_pos - self.last_flush_pos <= MAX_META_BLOCK_SIZE as u64);
 
         let meta_block_size = (self.input_pos - self.last_flush_pos) as usize;
         let literal_context_mode = choose_context_mode(
@@ -977,10 +984,10 @@ impl Encoder {
             mask as usize,
             meta_block_size,
         )?;
-        let storage = get_storage(&mut self.storage, 2 * meta_block_size + 503)?;
+        let storage = reserve_storage(&mut self.storage, meta_block_size)?;
         storage.write_at(0, &self.last_bytes.to_le_bytes())?;
         let mut bw = BitWriter::new(storage, usize::from(self.last_bytes_bits))?;
-        write_meta_block_internal(
+        write_meta_block(
             self.ringbuffer.buffer(),
             mask as usize,
             self.last_flush_pos,
@@ -1020,8 +1027,8 @@ impl Encoder {
         Ok(())
     }
 
-    /// Writes the pending bits and the header of a metadata block of `block_size` bytes, at most `1 << 24`, to
-    /// `tiny_buf`. Returns how many bytes that is.
+    /// Writes the pending bits and the header of a metadata block of `block_size` bytes, at most
+    /// [`MAX_META_BLOCK_SIZE`], to `tiny_buf`. Returns how many bytes that is.
     fn write_metadata_header(&mut self, block_size: usize) -> Checked<usize> {
         self.tiny_buf.write_at(0, &self.last_bytes.to_le_bytes())?;
         let mut bw = BitWriter::new(&mut self.tiny_buf, usize::from(self.last_bytes_bits))?;
@@ -1144,16 +1151,15 @@ impl Encoder {
             let block_size = block_size_limit.min(input.len());
             let is_last = input.len() == block_size && op == EncoderOperation::Finish;
             let force_flush = input.len() == block_size && op == EncoderOperation::Flush;
-            let max_out_size = 2 * block_size + 503;
 
             if force_flush && block_size == 0 {
                 self.stream_state = StreamState::FlushRequested;
                 continue;
             }
-            let storage = get_storage(&mut self.storage, max_out_size)?;
+            let storage = reserve_storage(&mut self.storage, block_size)?;
             storage.write_at(0, &self.last_bytes.to_le_bytes())?;
             let mut bw = BitWriter::new(storage, usize::from(self.last_bytes_bits))?;
-            let table = get_hash_table(&mut self.table, self.params.quality, block_size)?;
+            let table = cleared_hash_table(&mut self.table, self.params.quality, block_size)?;
             let (block, rest) = input.split_at_checked(block_size).ok_or(Bug)?;
 
             match fast {
@@ -1193,7 +1199,7 @@ impl Encoder {
     }
 
     fn process_metadata(&mut self, input: &mut &[u8], output: &mut dyn Output) -> Fallible {
-        if input.len() > (1 << 24) {
+        if input.len() > MAX_META_BLOCK_SIZE {
             return Err(EncoderError::InvalidCall);
         }
         match self.stream_state {
@@ -1401,7 +1407,7 @@ fn write_all(output: &mut dyn Output, bytes: &[u8]) -> Checked {
 fn make_uncompressed_stream(input: &[u8], output: &mut dyn Output) -> Checked {
     // Window bits = 10, ISLAST = 0. Then an empty metadata block as padding.
     write_all(output, &[0x21, 0x03])?;
-    for chunk in input.chunks(1 << 24) {
+    for chunk in input.chunks(MAX_META_BLOCK_SIZE) {
         let chunk_size = chunk.len() as u32;
         let nibbles: u32 = if chunk_size > (1 << 20) {
             2

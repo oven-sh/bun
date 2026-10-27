@@ -50,17 +50,17 @@ pub(crate) fn prefix_encode_copy_distance(
 }
 
 #[inline(always)]
-pub(crate) fn get_insert_length_code(insertlen: usize) -> u16 {
-    if insertlen < 6 {
-        insertlen as u16
-    } else if insertlen < 130 {
-        let nbits = log2_floor_nonzero(insertlen - 2) - 1;
-        ((nbits << 1) as usize + ((insertlen - 2) >> nbits) + 2) as u16
-    } else if insertlen < 2114 {
-        (log2_floor_nonzero(insertlen - 66) + 10) as u16
-    } else if insertlen < 6210 {
+pub(crate) fn get_insert_length_code(insert_len: usize) -> u16 {
+    if insert_len < 6 {
+        insert_len as u16
+    } else if insert_len < 130 {
+        let nbits = log2_floor_nonzero(insert_len - 2) - 1;
+        ((nbits << 1) as usize + ((insert_len - 2) >> nbits) + 2) as u16
+    } else if insert_len < 2114 {
+        (log2_floor_nonzero(insert_len - 66) + 10) as u16
+    } else if insert_len < 6210 {
         21
-    } else if insertlen < 22594 {
+    } else if insert_len < 22594 {
         22
     } else {
         23
@@ -68,37 +68,41 @@ pub(crate) fn get_insert_length_code(insertlen: usize) -> u16 {
 }
 
 #[inline(always)]
-pub(crate) fn get_copy_length_code(copylen: usize) -> u16 {
-    if copylen < 10 {
-        copylen.wrapping_sub(2) as u16
-    } else if copylen < 134 {
-        let nbits = log2_floor_nonzero(copylen - 6) - 1;
-        ((nbits << 1) as usize + ((copylen - 6) >> nbits) + 4) as u16
-    } else if copylen < 2118 {
-        (log2_floor_nonzero(copylen - 70) + 12) as u16
+pub(crate) fn get_copy_length_code(copy_len: usize) -> u16 {
+    if copy_len < 10 {
+        copy_len.wrapping_sub(2) as u16
+    } else if copy_len < 134 {
+        let nbits = log2_floor_nonzero(copy_len - 6) - 1;
+        ((nbits << 1) as usize + ((copy_len - 6) >> nbits) + 4) as u16
+    } else if copy_len < 2118 {
+        (log2_floor_nonzero(copy_len - 70) + 12) as u16
     } else {
         23
     }
 }
 
 #[inline(always)]
-pub(crate) fn combine_length_codes(inscode: u16, copycode: u16, use_last_distance: bool) -> u16 {
-    let bits64 = (copycode & 7) | ((inscode & 7) << 3);
-    if use_last_distance && inscode < 8 && copycode < 16 {
-        return if copycode < 8 { bits64 } else { bits64 | 64 };
+pub(crate) fn combine_length_codes(
+    insert_code: u16,
+    copy_code: u16,
+    use_last_distance: bool,
+) -> u16 {
+    let bits64 = (copy_code & 7) | ((insert_code & 7) << 3);
+    if use_last_distance && insert_code < 8 && copy_code < 16 {
+        return if copy_code < 8 { bits64 } else { bits64 | 64 };
     }
     // The cells of the last table of section 5 start at K * 64 with K = 2, 3, 6, 4, 5, 8, 7, 9, 10. K less its position
     // in that list takes 2 bits, and the constant holds those, already shifted by 6.
-    let offset = 2 * (u32::from(copycode >> 3) + 3 * u32::from(inscode >> 3));
+    let offset = 2 * (u32::from(copy_code >> 3) + 3 * u32::from(insert_code >> 3));
     let offset = (offset << 5) + 0x40 + ((0x52_0D40 >> offset) & 0xC0);
     offset as u16 | bits64
 }
 
 #[inline(always)]
-pub(crate) fn get_length_code(insertlen: usize, copylen: usize, use_last_distance: bool) -> u16 {
+fn length_code(insert_len: usize, copy_len: usize, use_last_distance: bool) -> u16 {
     combine_length_codes(
-        get_insert_length_code(insertlen),
-        get_copy_length_code(copylen),
+        get_insert_length_code(insert_len),
+        get_copy_length_code(copy_len),
         use_last_distance,
     )
 }
@@ -120,25 +124,25 @@ impl Command {
     #[inline(always)]
     pub(crate) fn new(
         dist: &DistanceParams,
-        insertlen: usize,
-        copylen: usize,
-        copylen_code_delta: i32,
+        insert_len: usize,
+        copy_len: usize,
+        copy_len_code_delta: i32,
         distance_code: usize,
     ) -> Self {
-        let delta = u32::from(copylen_code_delta as i8 as u8);
+        let delta = u32::from(copy_len_code_delta as i8 as u8);
         let (dist_prefix, dist_extra) = prefix_encode_copy_distance(
             distance_code,
             dist.num_direct_distance_codes as usize,
             dist.distance_postfix_bits as usize,
         );
-        let cmd_prefix = get_length_code(
-            insertlen,
-            (copylen as i32).wrapping_add(copylen_code_delta) as usize,
+        let cmd_prefix = length_code(
+            insert_len,
+            (copy_len as i32).wrapping_add(copy_len_code_delta) as usize,
             dist_prefix.symbol() == 0,
         );
         Self {
-            insert_len: insertlen as u32,
-            copy_len_and_delta: copylen as u32 | (delta << 25),
+            insert_len: insert_len as u32,
+            copy_len_and_delta: copy_len as u32 | (delta << 25),
             dist_extra,
             cmd_prefix,
             dist_prefix,
@@ -146,13 +150,12 @@ impl Command {
     }
 
     /// Literals at the end of a meta-block, with no copy after them.
-    #[inline(always)]
-    pub(crate) fn new_insert(insertlen: usize) -> Self {
+    pub(crate) fn new_insert(insert_len: usize) -> Self {
         Self {
-            insert_len: insertlen as u32,
+            insert_len: insert_len as u32,
             copy_len_and_delta: 4 << 25,
             dist_extra: 0,
-            cmd_prefix: get_length_code(insertlen, 4, false),
+            cmd_prefix: length_code(insert_len, 4, false),
             dist_prefix: DistancePrefix(NUM_DISTANCE_SHORT_CODES as u16),
         }
     }
@@ -211,7 +214,7 @@ impl Command {
     pub(crate) fn lengthen_copy(&mut self, extra: u32) {
         self.copy_len_and_delta += extra;
         // The reference encoder adds the high 7 bits as an unsigned number here, and the output depends on it.
-        self.cmd_prefix = get_length_code(
+        self.cmd_prefix = length_code(
             self.insert_len as usize,
             (self.copy_len() as i32 + (self.copy_len_and_delta >> 25) as i32) as usize,
             self.dist_prefix.symbol() == 0,

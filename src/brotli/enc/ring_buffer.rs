@@ -5,13 +5,13 @@ use super::params::EncoderParams;
 use crate::util::{Checked, SliceExt};
 use bun_core::AllocError;
 
-/// So that 8 bytes can be hashed at every position.
-const SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE: usize = 7;
+/// Follows the last byte, so that 8 bytes can be hashed at every position.
+const SLACK: [u8; 7] = [0; 7];
 
 /// `size` bytes in which byte `n` of the input is at `n % size`, followed by a copy of the first `tail_size` bytes.
 #[derive(Default)]
 pub(crate) struct RingBuffer {
-    pub(crate) size: u32,
+    size: u32,
     pub(crate) mask: u32,
     tail_size: u32,
     total_size: u32,
@@ -19,7 +19,7 @@ pub(crate) struct RingBuffer {
     /// How much room was asked for.
     cur_size: u32,
     /// How much was written, modulo 2^31. The highest bit is set once that has wrapped around.
-    pub(crate) pos: u32,
+    pos: u32,
     /// `total_size` bytes and the slack once the input gets near `size`. Until then only the input and the slack, with
     /// the capacity for the rest, so that memory which a short input does not need is never touched.
     buffer: Vec<u8>,
@@ -29,7 +29,7 @@ pub(crate) struct RingBuffer {
 
 impl RingBuffer {
     pub(crate) fn setup(&mut self, params: &EncoderParams) {
-        let window_bits = params.compute_rb_bits();
+        let window_bits = params.ring_buffer_bits();
         let tail_bits = params.lgblock;
         self.size = 1 << window_bits;
         self.mask = (1 << window_bits) - 1;
@@ -37,13 +37,11 @@ impl RingBuffer {
         self.total_size = self.size + self.tail_size;
     }
 
-    #[inline(always)]
     pub(crate) fn buffer(&self) -> &[u8] {
         &self.buffer
     }
 
     /// Whether anything was written yet.
-    #[inline(always)]
     pub(crate) fn is_allocated(&self) -> bool {
         !self.buffer.is_empty()
     }
@@ -52,8 +50,7 @@ impl RingBuffer {
     /// positions reads. Later on these hold older input.
     pub(crate) fn clear_after_end(&mut self) -> Checked {
         if self.pos <= self.mask {
-            *self.buffer.array_at_mut(self.pos as usize)? =
-                [0; SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE];
+            *self.buffer.array_at_mut(self.pos as usize)? = SLACK;
         }
         Ok(())
     }
@@ -61,7 +58,7 @@ impl RingBuffer {
     /// Makes room for `buflen` bytes and keeps the `pos` bytes that are there.
     fn init_buffer(&mut self, buflen: u32) -> Result<(), AllocError> {
         self.buffer.truncate(self.pos as usize);
-        let capacity = buflen as usize + SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE;
+        let capacity = buflen as usize + SLACK.len();
         self.buffer
             .try_reserve_exact(capacity - self.buffer.len())
             .map_err(|_| AllocError)?;
@@ -87,12 +84,11 @@ impl RingBuffer {
         if self.not_in_tail != 0 {
             self.buffer.put(size, 241)?;
         }
-        self.buffer
-            .extend_from_slice(&[0; SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE]);
+        self.buffer.extend_from_slice(&SLACK);
         Ok(())
     }
 
-    fn write_tail(&mut self, bytes: &[u8]) -> Fallible {
+    fn write_tail(&mut self, bytes: &[u8]) -> Checked {
         let masked_pos = (self.pos & self.mask) as usize;
         if masked_pos < self.tail_size as usize {
             let p = self.size as usize + masked_pos;
@@ -104,8 +100,6 @@ impl RingBuffer {
 
     /// Appends `bytes`, which is no longer than `tail_size`.
     pub(crate) fn write(&mut self, bytes: &[u8]) -> Fallible {
-        const SLACK: [u8; SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE] =
-            [0; SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE];
         let n = bytes.len();
         if self.pos == 0 && n < self.tail_size as usize {
             // A first write that is shorter than a block is likely to be the only one, and then neither the whole ring
@@ -143,7 +137,7 @@ impl RingBuffer {
         }
         let not_first_lap = self.pos & (1 << 31) != 0;
         let rb_pos_mask = (1u32 << 31) - 1;
-        self.pos = (self.pos & rb_pos_mask).wrapping_add(n as u32 & rb_pos_mask);
+        self.pos = (self.pos & rb_pos_mask) + (n as u32 & rb_pos_mask);
         if not_first_lap {
             self.pos |= 1 << 31;
         }

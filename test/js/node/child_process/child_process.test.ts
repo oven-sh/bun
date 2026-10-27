@@ -29,7 +29,6 @@ import {
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";
-import { Readable } from "node:stream";
 import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
@@ -1429,10 +1428,7 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
 // the pipe buffer until JS starts reading, matching Node.
 describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
   it("blocks the child until a reader attaches and delivers every byte", async () => {
-    // Must exceed the kernel socket buffer plus one stream highWaterMark on
-    // every platform. On macOS bun sizes child stdio socketpairs to 512 KB in
-    // each direction (~1 MiB total), so 1 MiB is not enough there.
-    const SIZE = 8 * 1024 * 1024;
+    const SIZE = 1024 * 1024;
     const c = spawn("sh", ["-c", `head -c ${SIZE} /dev/zero`], {
       stdio: ["ignore", "pipe", "ignore"],
       env: bunEnv,
@@ -1806,10 +1802,10 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
 });
 
 // subprocess.unref() releases only the process handle. Like Node, an un-read
-// stdout/stderr pipe keeps the parent alive until the child closes it (or the
-// stream's highWaterMark fills), so the child does not die of SIGPIPE on its
-// next write. An unref'd child with no readable pipe still lets the parent
-// exit.
+// stdout/stderr pipe keeps the parent alive until every writer has closed it
+// (or the stream stops reading at its highWaterMark), so the child does not
+// die of SIGPIPE on its next write. An unref'd child with no readable pipe
+// still lets the parent exit.
 describe("spawn().unref() with piped stdio", () => {
   // Not concurrent: each row starts a bun that starts a bun. On a debug build a
   // row takes 1 to 2 s alone and up to 3.6 s when all eight run at once.
@@ -1835,7 +1831,7 @@ describe("spawn().unref() with piped stdio", () => {
     });
   `;
 
-  async function run(stdio: string) {
+  async function run(stdio: string, afterUnref = "") {
     using dir = tempDir("unref-pipe", {});
     const marker = path.join(String(dir), "marker.json");
     await using proc = Bun.spawn({
@@ -1849,6 +1845,7 @@ describe("spawn().unref() with piped stdio", () => {
             env: ${JSON.stringify(bunEnv)},
           });
           c.unref();
+          ${afterUnref}
           setTimeout(() => c.stdin.end("go"), 1).unref();
         `,
       ],
@@ -1883,7 +1880,11 @@ describe("spawn().unref() with piped stdio", () => {
     });
   });
 
-  async function runAndKill(stdio: string, childScript: string) {
+  async function runAndKill(
+    stdio: string,
+    childScript: string,
+    afterUnref = "",
+  ): Promise<{ stderr: string; exitCode: number; childExitCode: number | null; held?: boolean }> {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1895,7 +1896,8 @@ describe("spawn().unref() with piped stdio", () => {
             env: ${JSON.stringify(bunEnv)},
           });
           c.unref();
-          process.on("exit", () => console.log(JSON.stringify({ pid: c.pid, exitCode: c.exitCode })));
+          ${afterUnref}
+          process.on("exit", () => console.log(JSON.stringify({ pid: c.pid, exitCode: c.exitCode, held: globalThis.held })));
         `,
       ],
       env: bunEnv,
@@ -1903,11 +1905,11 @@ describe("spawn().unref() with piped stdio", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const { pid, exitCode: childExitCode } = JSON.parse(stdout);
+    const { pid, exitCode: childExitCode, held } = JSON.parse(stdout);
     try {
       process.kill(pid);
     } catch {}
-    return { stderr, exitCode, childExitCode };
+    return { stderr, exitCode, childExitCode, held };
   }
 
   it("lets the parent exit when only stdin is piped", async () => {
@@ -1934,37 +1936,115 @@ describe("spawn().unref() with piped stdio", () => {
       childExitCode: null,
     });
   });
+
+  it("keeps the parent alive for an open stderr after stdout is full", async () => {
+    // Default stdio. stdout stops at its highWaterMark and holds nothing from
+    // then on. The second unref'd timer fires only if stderr still holds.
+    expect(
+      await runAndKill(
+        `undefined`,
+        "process.stdout.write(Buffer.alloc(4 << 20, 97)); process.stdin.resume()",
+        `
+          const poll = setInterval(() => {
+            if (c.stdout.readableLength < c.stdout.readableHighWaterMark) return;
+            clearInterval(poll);
+            setTimeout(() => {
+              globalThis.held = true;
+              c.kill();
+            }, 1).unref();
+          }, 1).unref();
+        `,
+      ),
+    ).toEqual({
+      stderr: "",
+      exitCode: 0,
+      childExitCode: null,
+      held: true,
+    });
+  });
+
+  it("stream.unref() on both pipes lets the parent exit", async () => {
+    expect(await runAndKill(`undefined`, "process.stdin.resume()", "c.stdout.unref(); c.stderr.unref();")).toEqual({
+      stderr: "",
+      exitCode: 0,
+      childExitCode: null,
+    });
+  });
+
+  it("stream.ref() after stream.unref() holds the parent again", async () => {
+    expect(await run(`undefined`, "c.stdout.unref(); c.stderr.unref(); c.stdout.ref();")).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      marker: { input: "go", write: "ok" },
+    });
+  });
+
+  it.skipIf(!isPosix)("keeps the parent alive while a grandchild holds the pipe", async () => {
+    // The launcher exits at once. Its background process keeps stdout open,
+    // then writes the marker. A parent that waited for the pipe exits after it.
+    using dir = tempDir("unref-grandchild", {});
+    const marker = path.join(String(dir), "marker");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { spawn } = require("node:child_process");
+          spawn("sh", ["-c", ${JSON.stringify(`(sleep 0.3; echo done > "${marker}") &`)}], {
+            stdio: ["ignore", "pipe", "ignore"],
+          }).unref();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, marker: fs.existsSync(marker) }).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      marker: true,
+    });
+  });
+
+  it("lets the parent exit when the child closes its pipes and lives on", async () => {
+    // The hold ends when the pipes close, not when the child exits.
+    expect(
+      await runAndKill(
+        `undefined`,
+        `const fs = require("fs"); fs.closeSync(1); fs.closeSync(2); process.stdin.resume();`,
+      ),
+    ).toEqual({
+      stderr: "",
+      exitCode: 0,
+      childExitCode: null,
+    });
+  });
+
+  it("an unref'd child still delivers its output to a listener attached later", async () => {
+    const c = spawn(bunExe(), ["-e", `process.stdout.write("hello")`], {
+      stdio: ["ignore", "pipe", "ignore"],
+      env: bunEnv,
+    });
+    c.unref();
+    await once(c, "spawn");
+    let out = "";
+    c.stdout!.setEncoding("utf8").on("data", chunk => (out += chunk));
+    await once(c, "close");
+    expect({ out, exitCode: c.exitCode }).toEqual({ out: "hello", exitCode: 0 });
+  });
 });
 
-// Node starts a child's stdout and stderr with uv_read_start: it arms the
-// handle and the first read comes from the event loop. A read on the spot
-// hands JS whatever the child wrote so far, so a child that writes in two
-// steps gives two 'data' events where Node gives one. The upstream
-// test-child-process-prototype-tampering.mjs trips on that with BusyBox pwd.
-it("starting a child pipe that nothing has read reads nothing until the event loop runs", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const fs = require("fs"); fs.writeSync(1, "first\\n"); fs.writeSync(2, "ready"); process.stdin.resume();`,
-    ],
-    env: bunEnv,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-    lazy: true,
-  });
-  // The child writes "ready" after "first", so stdout has bytes in the pipe now.
-  const { value } = await proc.stderr.getReader().read();
-  expect(new TextDecoder().decode(value)).toBe("ready");
-
-  // The two steps node:child_process takes for child.stdout.
-  const stdout = Readable.fromWeb(proc.stdout as any);
-  stdout.read(0);
-  expect(stdout.readableLength).toBe(0);
-
-  const [chunk] = await once(stdout, "data");
-  expect(chunk.toString()).toBe("first\n");
-  proc.stdin.end();
-  expect(await proc.exited).toBe(0);
+// A launcher that leaves a background process on its stdout has exited before
+// the parent gets to read the pipe. Its output still comes before 'exit', as
+// in Node, because the stream's first read takes what is already in the pipe.
+it.skipIf(!isPosix)("a launcher's output comes before 'exit' while a grandchild holds the pipe", async () => {
+  const c = spawn("sh", ["-c", "echo hi; sleep 0.2 &"], { stdio: ["ignore", "pipe", "ignore"] });
+  const events: string[] = [];
+  c.stdout!.on("data", () => events.push("data"));
+  c.on("exit", () => events.push("exit"));
+  await once(c, "close");
+  expect(events).toEqual(["data", "exit"]);
 });

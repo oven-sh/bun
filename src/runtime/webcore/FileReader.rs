@@ -472,22 +472,12 @@ impl FileReader {
             {
                 use bun_io::pipe_reader::PosixFlags;
                 if !was_lazy && self.reader().flags.contains(PosixFlags::POLLABLE) {
-                    // A lazy subprocess pipe starts like uv_read_start: the event loop delivers
-                    // its first read, so a live child's writes are not split. Once the writer is
-                    // gone the child's exit is already queued: read now, so JS gets the data first.
-                    let from_loop = self.reader().flags.contains(PosixFlags::IS_PAUSED)
-                        && !matches!(
-                            bun_core::is_readable(self.reader().get_fd()),
-                            bun_core::Pollable::Hup
-                        );
+                    // A from_pipe() reader may arrive with IS_PAUSED set (lazy
+                    // subprocess stdio); clear it so read() does not no-op.
                     self.reader().unpause();
-                    if from_loop {
-                        self.reader().watch();
-                    } else {
-                        // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                        // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                        unsafe { IOReader::read(self.reader.get()) };
-                    }
+                    // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                    // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                    unsafe { IOReader::read(self.reader.get()) };
                 }
             }
         }

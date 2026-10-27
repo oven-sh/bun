@@ -1300,9 +1300,6 @@ class ChildProcess extends EventEmitter {
             const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
-            // Like net.Socket: start reading now. The pending read holds the
-            // loop after child.unref(), until EOF or the highWaterMark.
-            pipe.read(0);
             return pipe;
           }
           case "destroyed": {
@@ -1659,6 +1656,10 @@ class ChildProcess extends EventEmitter {
   }
 
   unref() {
+    // Node's unref() releases only the process: an open stdout or stderr pipe
+    // still holds the loop. read(0) starts the read that gives a pipe that hold.
+    this.#stdout?.read?.(0);
+    this.#stderr?.read?.(0);
     if (this.#handle) this.#handle.unref();
   }
 

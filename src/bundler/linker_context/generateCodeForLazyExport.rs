@@ -77,7 +77,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 all_import_records: &'a [bun_ast::import_record::List<'a>],
                 // `BundledAst.css` SoA column.
                 all_css_asts: &'a [crate::bundled_ast::CssCol],
-                all_sources: &'a [Source],
+                all_sources: &'a [Source<'a>],
             }
 
             impl ComposesGraph for Graph<'_> {
@@ -85,11 +85,15 @@ pub(crate) fn generate_code_for_lazy_export(
                     self.all_css_asts[idx as usize].as_deref()
                 }
 
-                fn source(&self, idx: IndexInt) -> &Source {
+                fn source(&self, idx: IndexInt) -> &Source<'_> {
                     &self.all_sources[idx as usize]
                 }
 
-                fn import_record(&self, idx: IndexInt, import_record_idx: u32) -> &ImportRecord {
+                fn import_record(
+                    &self,
+                    idx: IndexInt,
+                    import_record_idx: u32,
+                ) -> &ImportRecord<'_> {
                     &self.all_import_records[idx as usize][import_record_idx as usize]
                 }
             }

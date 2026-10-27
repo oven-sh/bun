@@ -465,8 +465,8 @@ pub enum ExportedName<'a> {
 
 pub trait ComposesGraph {
     fn stylesheet(&self, source_index: u32) -> Option<&BundlerStyleSheet>;
-    fn source(&self, source_index: u32) -> &Source;
-    fn import_record(&self, source_index: u32, import_record_index: u32) -> &ImportRecord;
+    fn source(&self, source_index: u32) -> &Source<'_>;
+    fn import_record(&self, source_index: u32, import_record_index: u32) -> &ImportRecord<'_>;
 }
 
 pub struct ComposesVisitor<'a> {

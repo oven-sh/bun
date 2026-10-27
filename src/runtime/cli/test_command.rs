@@ -3179,7 +3179,8 @@ impl TestCommand {
             reporter,
         };
 
-        let resolution = vm.transpiler.resolve_entry_point(file_name)?;
+        let dot_slash = core::cell::OnceCell::new();
+        let resolution = vm.transpiler.resolve_entry_point(file_name, &dot_slash)?;
         vm.clear_entry_point()?;
         vm.enter_module_graph_for_test_isolation()?;
 

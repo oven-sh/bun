@@ -336,7 +336,6 @@ pub struct VirtualMachine {
 
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
-    pub(crate) resolved_path_dups: Vec<Box<[u8]>>,
     pending_internal_promise: crate::strong::Optional,
     pub pending_internal_promise_reported_at: u32,
     pub hot_reload_deferred: bool,
@@ -2151,16 +2150,10 @@ impl VirtualMachine {
             Entry::Occupied(e) => (*e.get()).cast(),
             Entry::Vacant(v) => {
                 let mut ep = Box::new(MacroEntryPoint::default());
-                // SAFETY: PathName stores slices with an artificial 'static
-                // bound; the generated entry point is
-                // boxed into `macro_entry_points` and lives for the VM
-                // lifetime, and `entry_path` is only borrowed for the
-                // duration of `generate` (it copies into `code_buffer`).
-                let entry_path_static: &'static [u8] = bun_ast::IntoStr::into_str(entry_path);
                 MacroEntryPoint::generate(
                     &mut *ep,
                     &mut self.transpiler,
-                    &Fs::PathName::init(entry_path_static),
+                    &Fs::PathName::init(entry_path),
                     function_name,
                     hash,
                     specifier,
@@ -2173,7 +2166,7 @@ impl VirtualMachine {
 
         // SAFETY: `entry_point` was just inserted (heap-allocated) or fetched
         // from the cache; it lives for the VM lifetime.
-        let path: &[u8] = unsafe { &*entry_point }.source.path.text;
+        let path: &[u8] = unsafe { &*entry_point }.label();
         let promise = self.run_with_api_lock(|| {
             // SAFETY: per-thread VM; the API lock guarantees JSC is held.
             VirtualMachine::get().as_mut()._load_macro_entry_point(path)
@@ -3459,7 +3452,6 @@ impl VirtualMachine {
             addr_of_mut!((*vm).handle)
                 .write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
             addr_of_mut!((*vm).argv).write(Vec::new());
-            addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
@@ -4198,12 +4190,9 @@ impl ResolveMode {
 
 /// Output slot for module resolution: the resolved path and query string.
 #[derive(Default)]
-pub struct ResolveFunctionResult {
-    // LIFETIME-ERASED: `path`/`query_string` borrow argv or the resolver's
-    // process-lifetime arena (`detach_lifetime` in `resolve_maybe_need_dirname_uncached`),
-    // which outlives every `ResolveFunctionResult`.
-    pub path: &'static [u8],
-    pub(crate) query_string: &'static [u8],
+pub struct ResolveFunctionResult<'r> {
+    pub path: &'r [u8],
+    pub(crate) query_string: &'r [u8],
 }
 
 /// Per-thread `BufferPrinter` used when printing transpiled module source.
@@ -5307,12 +5296,7 @@ impl VirtualMachine {
         // promise_ptr bundled as `TranspileExtra` behind `args.extra` (see
         // ModuleLoader.rs `TranspileArgs`).
         let mut extra = ModuleLoader::TranspileExtra {
-            // SAFETY: `lr.path` borrows from `specifier_clone` (and the VM's
-            // resolver caches), both of which outlive the synchronous
-            // `transpile_source_code` call below; `TranspileExtra` declares
-            // `'static` only because it crosses the §Dispatch boundary as
-            // `*mut c_void` — the hook never retains the borrow.
-            path: unsafe { lr.path.into_static() },
+            path: lr.path,
             loader: loader.or(lr.loader).unwrap_or(if lr.is_main {
                 bun_ast::Loader::Js
             } else {
@@ -5343,22 +5327,12 @@ impl VirtualMachine {
         result
     }
 
-    /// Dupe `s` into a VM-owned allocation for the `_resolve` fast-paths.
-    fn dupe_resolved_path(&mut self, s: &[u8]) -> &'static [u8] {
-        let boxed: Box<[u8]> = s.to_vec().into_boxed_slice();
-        // SAFETY: `boxed`'s heap allocation has a stable address for as long
-        // as the owning `Box` lives in `resolved_path_dups` (drained in `destroy()`).
-        let slice: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&*boxed) };
-        self.resolved_path_dups.push(boxed);
-        slice
-    }
-
     /// Note: `is_a_file_path` is a runtime
     /// arg to avoid duplicating the body for both monomorphizations.
-    pub(crate) fn _resolve(
+    pub(crate) fn _resolve<'r>(
         &mut self,
-        ret: &mut ResolveFunctionResult,
-        specifier: &[u8],
+        ret: &mut ResolveFunctionResult<'r>,
+        specifier: &'r [u8],
         source: &[u8],
         is_esm: bool,
         is_a_file_path: bool,
@@ -5366,12 +5340,6 @@ impl VirtualMachine {
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
-
-        // SAFETY: `specifier`/`source` borrow argv / resolver-arena bytes that
-        // outlive `ResolveFunctionResult` (see the struct's lifetime-erasure
-        // note). Erase to `'static` to seat the result paths without threading
-        // a lifetime parameter through the VM.
-        let specifier: &'static [u8] = unsafe { bun_ptr::detach_lifetime(specifier) };
 
         // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
         // (see js_parser/runtime.rs).
@@ -5384,11 +5352,11 @@ impl VirtualMachine {
             return Ok(());
         }
         if specifier.starts_with(Macro::NAMESPACE_WITH_COLON) {
-            ret.path = self.dupe_resolved_path(specifier);
+            ret.path = specifier;
             return Ok(());
         }
         if specifier.starts_with(node_fallbacks::IMPORT_PATH) {
-            ret.path = self.dupe_resolved_path(specifier);
+            ret.path = specifier;
             return Ok(());
         }
         if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
@@ -5403,7 +5371,7 @@ impl VirtualMachine {
             && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
                 || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
         {
-            ret.path = self.dupe_resolved_path(specifier);
+            ret.path = specifier;
             return Ok(());
         }
         if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
@@ -5413,7 +5381,7 @@ impl VirtualMachine {
                 .map(|h| (h.has_blob_url)(blob_id))
                 .unwrap_or(false);
             if has {
-                ret.path = self.dupe_resolved_path(specifier);
+                ret.path = specifier;
                 return Ok(());
             }
             return Err(crate::CrateError::ModuleNotFound);
@@ -5425,18 +5393,9 @@ impl VirtualMachine {
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
-                // SAFETY: PORT — `dir_with_trailing_slash()` returns a
-                // re-slice of `source`, which the caller guarantees outlives
-                // the resolve call (and the resolver only borrows it for the
-                // synchronous `resolve_and_auto_install`).
-                unsafe {
-                    bun_ptr::detach_lifetime(
-                        bun_resolver::fs::PathName::init(source).dir_with_trailing_slash(),
-                    )
-                }
+                bun_resolver::fs::PathName::init(source).dir_with_trailing_slash()
             } else {
-                // SAFETY: see `specifier` lifetime erasure note above.
-                unsafe { bun_ptr::detach_lifetime(source) }
+                source
             }
         } else {
             top_level_dir
@@ -5534,16 +5493,11 @@ impl VirtualMachine {
             self.has_any_macro_remappings =
                 self.has_any_macro_remappings || self.transpiler.options.macro_remap.count() > 0;
         }
-        // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
-        // see lifetime erasure note above).
-        ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
+        ret.query_string = query_string;
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
-        // SAFETY: `result_path.text` borrows the resolver's arena, which
-        // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
-        // note).
-        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        ret.path = result_path.text;
 
         Ok(())
     }
@@ -5554,7 +5508,7 @@ impl VirtualMachine {
         specifier: &[u8],
         source_dir: &[u8],
         kind: bun_ast::ImportKind,
-    ) -> Option<bun_resolver::Result> {
+    ) -> Option<bun_resolver::Result<'static>> {
         use bun_resolver::{GlobalCache, ResultUnion};
         if specifier != b"chai" || !self.transpiler.options.rewrite_jest_for_tests {
             return None;
@@ -5922,7 +5876,6 @@ impl VirtualMachine {
         // `transpiler` is never auto-dropped after `deinit` clears its fields.
         unsafe { self.transpiler.deinit() };
 
-        drop(core::mem::take(&mut self.resolved_path_dups));
         drop(core::mem::take(&mut self.main_resolved_path));
         drop(self.sampling_profiler_directory.take());
 

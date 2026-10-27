@@ -241,6 +241,81 @@ describe("WriteStream end()", () => {
   });
 });
 
+describe("WriteStream write callbacks", () => {
+  // moveCursor(0, 0) moves nothing and reports from process.nextTick(). The callback of
+  // a write must not run inside write(), or it comes before that report whatever the
+  // call order was. Checked on process.stdout and on a stream that the program made.
+  test("run after write() returned, in call order with the cursor methods", async () => {
+    let output = "";
+    const decoder = new TextDecoder();
+    const done = Promise.withResolvers<void>();
+    const eof = Promise.withResolvers<void>();
+
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const tty = require("node:tty");
+          function check(out, then) {
+            const order = [];
+            let inside = true;
+            let pending = 5;
+            const record = name => () => {
+              order.push(inside ? "inside write(): " + name : name);
+              if (--pending === 0) then(order.join(","));
+            };
+            out.write("A", record("w1"));
+            out.moveCursor(0, 0, record("m0"));
+            out.write("B", record("w2"));
+            out.cursorTo(3, undefined, record("c"));
+            out.moveCursor(1, 0, record("m1"));
+            inside = false;
+          }
+          check(process.stdout, stdout => {
+            check(new tty.WriteStream(1), writeStream => {
+              const result = { isTTY: process.stdout.isTTY, stdout, writeStream };
+              process.stdout.write("\\nRESULT " + JSON.stringify(result) + "\\n", () => process.exit(0));
+            });
+          });
+        `,
+      ],
+      env: bunEnv,
+      terminal: {
+        // Wide enough that ConPTY does not hard-wrap the RESULT line.
+        cols: 200,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("RESULT ") && output.includes("}")) done.resolve();
+        },
+        exit() {
+          eof.resolve();
+        },
+      },
+    });
+
+    await Promise.race([done.promise, eof.promise]);
+    proc.kill();
+    await proc.exited;
+    proc.terminal?.close();
+    output += decoder.decode();
+
+    // ConPTY injects VT escape sequences and CR around the payload.
+    const match = Bun.stripANSI(output)
+      .replace(/[\r\n]/g, "")
+      .match(/RESULT (\{[^}]*\})/);
+    if (!match) {
+      throw new Error("child did not emit RESULT; terminal output was: " + JSON.stringify(output));
+    }
+    expect(JSON.parse(match[1])).toEqual({
+      isTTY: true,
+      stdout: "w1,m0,w2,c,m1",
+      writeStream: "w1,m0,w2,c,m1",
+    });
+  });
+});
+
 describe("WriteStream.prototype.getColorDepth", () => {
   const getColorDepth = (env: Record<string, string>) => WriteStream.prototype.getColorDepth.call(undefined, env);
 

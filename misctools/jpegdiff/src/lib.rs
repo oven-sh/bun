@@ -1,0 +1,72 @@
+pub mod reference;
+use bun_jpeg::{ColorSpace, Decoder, PixelFormat, Warning};
+
+pub struct Ours {
+    pub pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub cmyk: bool,
+    pub icc: Option<Vec<u8>>,
+    pub header_warnings: u32,
+    pub warnings: u32,
+}
+#[derive(Debug)]
+pub enum OurFailure {
+    Header(bun_jpeg::Error),
+    Decode(bun_jpeg::Error),
+}
+pub fn ours(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<Ours, OurFailure> {
+    let mut d = Decoder::new(bytes).map_err(OurFailure::Header)?;
+    if d.width() as u64 * d.height() as u64 > max_pixels {
+        return Err(OurFailure::Header(bun_jpeg::Error::InvalidArgument));
+    }
+    let header_warnings = d.warnings();
+    let cmyk = matches!(d.color_space(), ColorSpace::Cmyk | ColorSpace::Ycck);
+    let scale = if d.scalable() { eighths } else { 8 };
+    let (width, height) = d.scaled_size(scale);
+    let icc = d.take_icc_profile();
+    let pixels = d.decode(scale, if cmyk { PixelFormat::Cmyk } else { PixelFormat::Rgba }).map_err(OurFailure::Decode)?;
+    Ok(Ours { pixels, width, height, cmyk, icc, header_warnings, warnings: d.warnings() })
+}
+
+/// Returns a description of the first difference.
+pub fn compare(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<&'static str, String> {
+    let r = reference::decode(bytes, eighths, max_pixels);
+    let o = ours(bytes, eighths, max_pixels);
+    match (r, o) {
+        (Err(reference::Failure::Header(_)), Err(OurFailure::Header(_))) => Ok("header-fail"),
+        (Err(reference::Failure::Decode(_)), Err(OurFailure::Decode(_))) => Ok("decode-fail"),
+        (Err(r), Err(o)) => Err(format!("failed at different stages: ref {r:?}, ours {o:?}")),
+        (Err(r), Ok(_)) => Err(format!("ref failed ({r:?}), ours succeeded")),
+        (Ok(r), Err(o)) => Err(format!("ref succeeded (warn: {:?}), ours failed: {o:?}", r.last_message)),
+        (Ok(r), Ok(o)) => {
+            if (r.width, r.height, r.cmyk) != (o.width, o.height, o.cmyk) {
+                return Err(format!("shape: ref {}x{} cmyk={}, ours {}x{} cmyk={}", r.width, r.height, r.cmyk, o.width, o.height, o.cmyk));
+            }
+            if r.icc != o.icc {
+                return Err(format!("icc: ref {:?}, ours {:?}", r.icc.map(|v| v.len()), o.icc.map(|v| v.len())));
+            }
+            if r.pixels != o.pixels {
+                let i = r.pixels.iter().zip(&o.pixels).position(|(a, b)| a != b).unwrap();
+                let n = r.pixels.iter().zip(&o.pixels).filter(|(a, b)| a != b).count();
+                let px = i / 4;
+                return Err(format!(
+                    "pixels: {n} bytes differ, first at x={} y={} c={}: ref {} ours {} ({}x{})",
+                    px as u32 % r.width, px as u32 / r.width, i % 4, r.pixels[i], o.pixels[i], r.width, r.height
+                ));
+            }
+            // Whether these two are reported depends on how far ahead the bytes are read, and on which of its two paths
+            // the reference took. The ICC profile is only looked at by the reference's header call.
+            let unsure = Warning::BadHuffCode as u32 | Warning::ExtraneousData as u32;
+            let icc = Warning::BogusIcc as u32;
+            if r.header_warned != (o.header_warnings != 0) {
+                return Err(format!("header warning: ref {}, ours {:#x}", r.header_warned, o.header_warnings));
+            }
+            let excused = r.last_message.contains("extraneous bytes") || r.last_message.contains("bad Huffman code");
+            if (o.warnings & !unsure & !icc != 0 && !r.decode_warned) || (r.decode_warned && o.warnings & !icc == 0 && !excused) {
+                return Err(format!("warning: ref {} ({:?}), ours {:#x}", r.decode_warned, r.last_message, o.warnings));
+            }
+            Ok(if r.decode_warned { "ok-warned" } else { "ok" })
+        }
+    }
+}

@@ -2447,11 +2447,7 @@ impl PackageManifest {
         // `initialize_mini_store` in lib.rs for why.
         let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
-            Err(_) => {
-                // It knows a source by its address, and `json_buffer` is about to be freed.
-                log.line_column_tracker = None;
-                return Ok(None);
-            }
+            Err(_) => return Ok(None),
         };
         let json = parsed.root;
 

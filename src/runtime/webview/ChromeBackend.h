@@ -453,8 +453,8 @@ public:
     WTF::HashMap<uint32_t, Pending> m_pending;
     // viewId → JSWebView. ONE Weak per view (not per CDP request).
     // Mirrors WebKitBackend's HostClient::viewsById. All routing
-    // dereferences through here. Populated in createChrome (reserveView,
-    // then bindView), erased in Ops::close. The Weak's owner predicate reads
+    // dereferences through here. Populated in createChrome, erased in
+    // Ops::close. The Weak's owner predicate reads
     // m_pendingActivityCount — same GC-root pattern as HostClient.
     WTF::HashMap<uint32_t, JSC::Weak<JSWebView>> m_views;
     // sessionId → viewId. The string is the raw slice from
@@ -485,10 +485,7 @@ public:
         return it->value.get();
     }
 
-    // reserveView() adds a view's id with an empty Weak before createChrome
-    // allocates its cell: the allocation can run ~JSWebView of the last other
-    // view, and updateKeepAlive() must not find m_views empty there.
-    // bindView() stores the Weak once the cell exists.
+    // reserveView() adds the id with an empty Weak before the view's cell exists, bindView() stores the Weak.
     uint32_t reserveView();
     void bindView(uint32_t viewId, JSWebView*);
 };

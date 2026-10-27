@@ -1396,8 +1396,6 @@ uint32_t Transport::reserveView()
 
 void Transport::bindView(uint32_t viewId, JSWebView* v)
 {
-    // By id, not through an iterator kept from reserveView(): a ~JSWebView in
-    // between removes its own entry, and that can rehash the table.
     ASSERT(m_views.contains(viewId));
     m_views.set(viewId, JSC::Weak<JSWebView>(v, &webViewWeakOwner()));
 }
@@ -1430,8 +1428,8 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     auto& vm = g->vm();
     auto& t = transport();
     auto* promise = JSPromise::create(vm, g->promiseStructure());
-    // An open view never gets here: it is in m_views from reserveView() on,
-    // and the paths that kill or release the transport (rejectAllAndMarkDead,
+    // Unreachable for an open view: the constructor spawned or connected, and the paths that
+    // kill or release the transport afterwards (rejectAllAndMarkDead,
     // updateKeepAlive) leave no open view behind. WebSocket mode doesn't need
     // m_wsOpen here — send() queues until onOpen fires.
     if (t.m_dead || t.m_mode == TransportMode::None) {

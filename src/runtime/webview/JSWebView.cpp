@@ -374,7 +374,7 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     }
     if (!ok) return nullptr;
 
-    // Before create(): see Transport::reserveView.
+    // Before create(): that allocation can run ~JSWebView of the last other view, which releases a transport with no view.
     uint32_t viewId = t.reserveView();
     auto impl = WebViewEventTarget::create(*zig->scriptExecutionContext());
     JSWebView* view = create(structure, zig, WTF::move(impl));

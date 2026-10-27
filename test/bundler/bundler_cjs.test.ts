@@ -3,9 +3,11 @@ import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
 //
-// `__toESM(mod, isNodeMode)` builds the ESM view of a CommonJS module. The
-// bundler picks `isNodeMode` from the module type of the *importing* file, the
-// same way esbuild does. The syntax the importer uses does not matter.
+// `__toESM(mod, isNodeMode)` builds the ESM view of a CommonJS module. For a
+// bundled import, the bundler picks `isNodeMode` from the module type of the
+// *importing* file, the same way esbuild does. The syntax the importer uses
+// does not matter. For an external import, other targets use the same rule,
+// and a file whose target is bun never sets `isNodeMode`.
 //
 // - `.mjs`, `.mts`, or a `.js`/`.ts` file under package.json `"type": "module"`:
 //   isNodeMode=1. The default import is the whole `module.exports`, as in
@@ -134,7 +136,8 @@ describe("bundler", () => {
 
   // ============================================================================
   // Tests with different targets
-  // Target doesn't affect isNodeMode - it's based on the importer's module type.
+  // For a bundled import the target doesn't affect isNodeMode - it's based on
+  // the importer's module type.
   // The fixture assigns `module.exports` so the module keeps its CommonJS
   // wrapper and the default import goes through __toESM.
   // ============================================================================
@@ -966,6 +969,110 @@ describe("bundler", () => {
     },
     run: {
       stdout: "function function true true",
+    },
+  });
+
+  // A dual package: `require()` loads its CommonJS build, which sets `__esModule`.
+  itBundled("cjs/__toESM_external_dual_package_target_bun", {
+    files: {
+      "/entry.js": /* js */ `
+        import Dual, { kind } from "dual-ext";
+        console.log(typeof Dual, kind);
+      `,
+      "/package.json": `{ "name": "app", "type": "module" }`,
+    },
+    runtimeFiles: {
+      "/node_modules/dual-ext/package.json": `{
+        "name": "dual-ext",
+        "type": "module",
+        "exports": { "import": "./index.js", "require": "./index.cjs" }
+      }`,
+      "/node_modules/dual-ext/index.js": /* js */ `
+        export default class Dual {}
+        export const kind = "import";
+      `,
+      "/node_modules/dual-ext/index.cjs": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.default = class Dual {};
+        exports.kind = "require";
+      `,
+    },
+    external: ["dual-ext"],
+    target: "bun",
+    format: "cjs",
+    run: {
+      stdout: "function require",
+    },
+  });
+
+  // A CommonJS file under a `"type": "module"` package.json. `bun run` and Node
+  // give the whole `module.exports` here. `require()` returns the same value
+  // as for the dual package above, so the bundle gives `exports.default`.
+  itBundled("cjs/__toESM_external_commonjs_in_type_module_package_target_bun", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import d from "tm-cjs";
+        console.log(typeof d);
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/tm-cjs/package.json": `{ "name": "tm-cjs", "type": "module", "main": "./index.cjs" }`,
+      "/node_modules/tm-cjs/index.cjs": esModuleDep,
+    },
+    external: ["tm-cjs"],
+    target: "bun",
+    format: "cjs",
+    run: {
+      stdout: "function",
+    },
+  });
+
+  // A bundled import keeps the importer rule. Only the external import changes.
+  itBundled("cjs/__toESM_external_and_bundled_in_one_entry_target_bun", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import ext from "ext";
+        import dep from "./dep.cjs";
+        console.log(typeof ext, typeof dep);
+      `,
+      "/dep.cjs": esModuleDep,
+    },
+    runtimeFiles: externalRuntimeFiles,
+    external: ["ext"],
+    target: "bun",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("ext"))');
+      api.expectFile("/out.js").toContain("__toESM(require_dep(), 1)");
+    },
+    run: {
+      stdout: "function object",
+    },
+  });
+
+  // What a CommonJS bundle re-exports to the file that requires it.
+  itBundled("cjs/__toESM_external_reexports_target_bun", {
+    files: {
+      "/entry.mjs": /* js */ `
+        export { default } from "ext";
+        export { default as renamed, named } from "ext";
+        export * as ns from "ext";
+        export { default as Database } from "bun:sqlite";
+      `,
+    },
+    runtimeFiles: {
+      ...externalRuntimeFiles,
+      "/consumer.cjs": /* js */ `
+        const m = require("./out.js");
+        console.log(typeof m.default, typeof m.renamed, m.named, typeof m.ns.default, typeof m.Database);
+      `,
+    },
+    external: ["ext"],
+    target: "bun",
+    format: "cjs",
+    run: {
+      file: "/consumer.cjs",
+      stdout: "function function 1 function function",
     },
   });
 

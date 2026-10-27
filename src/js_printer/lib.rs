@@ -1368,8 +1368,7 @@ pub struct Options<'a> {
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
-    /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
-    /// An external import in a file whose target is bun never takes the `1`.
+    /// Module type of the file being printed. See `print_to_esm_suffix`.
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
 

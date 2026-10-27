@@ -24,6 +24,8 @@ const buffered = {
   blob: read,
   bytes: read,
   json: read,
+  /** What `json` parses, for the JSON parser of a compiled program. */
+  jsonSource: read,
   text: read,
 } as const;
 
@@ -35,6 +37,7 @@ const bufferedSource = {
   drain: members.drain,
   isClosed: members.isClosed,
   json: buffered.json,
+  jsonSource: buffered.jsonSource,
   pull: members.pull,
   start: members.start,
   text: buffered.text,

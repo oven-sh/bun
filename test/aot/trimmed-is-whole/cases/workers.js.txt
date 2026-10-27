@@ -17,6 +17,7 @@ worker.on("error", error => console.log("error", error.message.replace(/blob:[-0
 //// globalThis-Worker
 listen(new globalThis.Worker("data:application/javascript," + encodeURIComponent(text)));
 //// Reflect-construct
+//@ trimmed-says it isn't in this executable
 listen(Reflect.construct(Worker, ["data:application/javascript," + encodeURIComponent(text)]));
 //// alias
 const W = Worker;

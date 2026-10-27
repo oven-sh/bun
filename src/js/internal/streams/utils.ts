@@ -250,7 +250,9 @@ function isReadable(stream: $Node.MaybeStream) {
   return (
     isReadableNodeStream(stream) &&
     stream.readable &&
-    !($isProxyObject(stream) ? isReadableFinished(stream) : isReadableSideFinished(stream))
+    !(!IS_COMPILED_AHEAD_OF_TIME || $isProxyObject(stream)
+      ? isReadableFinished(stream)
+      : isReadableSideFinished(stream))
   );
 }
 
@@ -261,7 +263,7 @@ function isWritable(stream: $Node.MaybeStream) {
   return (
     isWritableNodeStream(stream) &&
     stream.writable &&
-    !($isProxyObject(stream) ? isWritableEnded(stream) : isWritableSideEnded(stream))
+    !(!IS_COMPILED_AHEAD_OF_TIME || $isProxyObject(stream) ? isWritableEnded(stream) : isWritableSideEnded(stream))
   );
 }
 

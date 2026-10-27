@@ -138,6 +138,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             _ => return None,
         };
         let length = self.file.find_written_length(items)?;
+        self.emit_locked_builtin(BuiltinId::ArrayFrom);
         let length = self.lower_expression(length);
         let Some(mapper) = mapper else {
             let maker = BuiltinId::CompilerHelpersArrayOfUndefined;

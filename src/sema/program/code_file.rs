@@ -1,9 +1,9 @@
 use super::code_barrels::summarize_requests;
 use super::code_imports::resolve_code_imports;
-use super::code_load::{Analyzed, CodeTarget, LoadKey, ParsedCodeFile};
+use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode, ParsedCodeFile};
 use super::*;
 use crate::bind::{BindOptions, RuntimeBindOptions};
-use crate::file_analysis::{FileAnalysis, FileInputs, analyze_file, fold_file_again};
+use crate::file_analysis::{FileAnalysis, FileInputs, FoldedAgain, analyze_file, fold_file_again};
 use crate::fold::FoldInputs;
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{AutomaticJsx, JsxMode, find_exported_requires};
@@ -121,10 +121,22 @@ fn resolve_analyzed_file<'s, 'r>(
     parse: Parse<'s>,
     analyzed: Analyzed<'s, 'r>,
     specifies_esm: bool,
+    payload: Option<HostPayload>,
+) -> ParsedCodeFile<'s, 'r> {
+    let code = Box::new(resolve_code_imports(context, key, &parse.hir, analyzed));
+    summarize_resolved_file(context, key, parse, code, specifies_esm, payload)
+}
+
+#[inline(never)]
+fn summarize_resolved_file<'s, 'r>(
+    context: &CodeLoadContext<'_, 's, 'r>,
+    key: LoadKey<'r>,
+    parse: Parse<'s>,
+    mut code: Box<LoadedCode<'s, 'r>>,
+    specifies_esm: bool,
     mut payload: Option<HostPayload>,
 ) -> ParsedCodeFile<'s, 'r> {
     let (hir, bound) = (&parse.hir, &parse.bound);
-    let mut code = resolve_code_imports(context, key, hir, analyzed);
     if !is_finished_later(&code.analyzed.analysis) {
         code.add_implied(context, key, hir, bound, &mut payload);
     }
@@ -134,7 +146,7 @@ fn resolve_analyzed_file<'s, 'r>(
     ParsedCodeFile {
         parse,
         specifies_esm,
-        code: Box::new(code),
+        code,
         payload,
     }
 }
@@ -170,12 +182,12 @@ pub(super) fn fold_code_file_again<'s, 'r>(
     let ParsedCodeFile {
         mut parse,
         specifies_esm,
-        code,
+        mut code,
         payload,
     } = loaded;
     parse.hir.imported_constants =
         ArenaFew::from_iter_in(imported_constants.iter().copied(), arena);
-    let previous = code.analyzed;
+    let previous = &code.analyzed;
     let file = FileInputs {
         declared_module_type: previous.declared_module_type,
         import_meta_main: import_meta_main(context, key),
@@ -183,7 +195,10 @@ pub(super) fn fold_code_file_again<'s, 'r>(
         host_values: previous.host_values,
         jsx: previous.jsx_mode,
     };
-    let analysis = fold_file_again(
+    let FoldedAgain {
+        analysis,
+        has_same_import_sites,
+    } = fold_file_again(
         &parse.hir,
         &parse.bound,
         fold_inputs_of(context, arena, is_called_before_it_runs),
@@ -192,15 +207,17 @@ pub(super) fn fold_code_file_again<'s, 'r>(
         &context.atoms,
         arena,
     )?;
-    let analyzed = Analyzed {
-        analysis,
-        ..previous
-    };
-    Some(resolve_analyzed_file(
+    code.analyzed.analysis = analysis;
+    // The same sites lead where they led. What the host implied comes again when it looks at the file.
+    match has_same_import_sites {
+        true => code.forget_implied(),
+        false => *code = resolve_code_imports(context, key, &parse.hir, code.analyzed),
+    }
+    Some(summarize_resolved_file(
         context,
         key,
         parse,
-        analyzed,
+        code,
         specifies_esm,
         payload,
     ))

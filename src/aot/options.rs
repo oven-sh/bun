@@ -42,10 +42,21 @@ pub struct LoadOptions {
     pub in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
     /// Sorted. The key of each of `in_memory_files` as the build's options write it, and its path. An import that spells the key means the file, wherever the import stands.
     pub in_memory_file_keys: Vec<(Vec<u8>, Vec<u8>)>,
+    /// The entry points that are no files.
+    pub entry_texts: Vec<EntryText>,
     pub omits_builtin_modules: bool,
     pub runs_tests: bool,
     /// What the run time provides is of type `any` where `@types/bun` is not installed.
     pub takes_runtime_as_any: bool,
+}
+
+/// Code that the program holds as a text and starts a Worker with.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct EntryText {
+    /// How `Options::entry_points` writes it, and what the run time knows the module by.
+    pub name: Vec<u8>,
+    pub contents: Vec<u8>,
+    pub loader: Loader,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -96,6 +107,7 @@ impl LoadOptions {
             runs_macros: true,
             in_memory_files: Vec::new(),
             in_memory_file_keys: Vec::new(),
+            entry_texts: Vec::new(),
             omits_builtin_modules: false,
             runs_tests: false,
             takes_runtime_as_any: false,

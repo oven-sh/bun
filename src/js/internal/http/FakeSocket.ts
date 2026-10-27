@@ -1,28 +1,25 @@
-const http = require("internal/http");
+const { kInternalSocketData, serverSymbol } = require("internal/http");
 const { kAutoDestroyed } = require("internal/shared");
-// A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
-const kInternalSocketData: typeof http.kInternalSocketData = http.kInternalSocketData;
-const serverSymbol: typeof http.serverSymbol = http.serverSymbol;
-const Duplex = require("internal/streams/duplex");
+const { Duplex } = require("internal/stream");
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]?: [$Node.HttpServer, $Node.ServerResponse, Request];
+  [kInternalSocketData]?: [import("node:http").Server, import("node:http").ServerResponse, Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
   timeout = 0;
   isServer = false;
 
-  #address: Partial<$Node.SocketAddressInfo> | undefined;
-  _httpMessage: $Node.OutgoingMessage | null | undefined;
-  constructor(httpMessage: $Node.OutgoingMessage | null | undefined) {
+  #address;
+  _httpMessage: any;
+  constructor(httpMessage: any) {
     super();
     this._httpMessage = httpMessage;
   }
   address() {
     // Call server.requestIP() without doing any property getter twice.
-    var internalData: [$Node.HttpServer, $Node.ServerResponse, Request] | undefined;
+    var internalData;
     return (this.#address ??=
       (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol]?.requestIP(internalData[2]) ?? {});
   }
@@ -31,20 +28,20 @@ var FakeSocket = class Socket extends Duplex {
     return this.writableLength;
   }
 
-  connect(_port?: unknown, _host?: unknown, _connectListener?: unknown) {
+  connect(_port, _host, _connectListener) {
     return this;
   }
-  _onTimeout = function (this: $Node.Duplex) {
+  _onTimeout = function () {
     this.emit("timeout");
   };
 
-  _destroy(_err: Error | null, _callback: $Node.ErrorCallback) {
+  _destroy(_err, _callback) {
     const socketData = this[kInternalSocketData];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
     if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
   }
 
-  _final(_callback: $Node.ErrorCallback) {}
+  _final(_callback) {}
 
   get localAddress() {
     return this.address() ? "127.0.0.1" : undefined;
@@ -62,7 +59,7 @@ var FakeSocket = class Socket extends Duplex {
     return this.connecting;
   }
 
-  _read(_size: number) {}
+  _read(_size) {}
 
   get readyState() {
     if (this.connecting) return "opening";
@@ -81,7 +78,7 @@ var FakeSocket = class Socket extends Duplex {
     return this.address()?.address;
   }
 
-  set remoteAddress(val: string | undefined) {
+  set remoteAddress(val) {
     // initialize the object so that other properties wouldn't be lost
     this.address().address = val;
   }
@@ -90,7 +87,7 @@ var FakeSocket = class Socket extends Duplex {
     return this.address()?.port;
   }
 
-  set remotePort(val: number | undefined) {
+  set remotePort(val) {
     // initialize the object so that other properties wouldn't be lost
     this.address().port = val;
   }
@@ -99,7 +96,7 @@ var FakeSocket = class Socket extends Duplex {
     return this.address()?.family;
   }
 
-  set remoteFamily(val: string | undefined) {
+  set remoteFamily(val) {
     // initialize the object so that other properties wouldn't be lost
     this.address().family = val;
   }
@@ -116,7 +113,7 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  setTimeout(timeout: number, callback?: () => void) {
+  setTimeout(timeout, callback) {
     const socketData = this[kInternalSocketData];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
 
@@ -129,7 +126,7 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  _write(_chunk: unknown, _encoding: string, _callback: $Node.ErrorCallback) {}
+  _write(_chunk, _encoding, _callback) {}
 
   destroy() {
     this._httpMessage?.destroy?.();

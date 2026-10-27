@@ -8,6 +8,7 @@
 //   what plain Bun does not get through is not run again for every mode
 //   a program of several files lies in a folder of its own, by itself and in a shared build, and TypeScript is asked about all its files
 //   a finding in several files is tried in one file first; where it takes the files, files are cut first, then lines
+//   a shared build is one program of many modules, but in the mode each-a-program: there the compiler runs once for each program, as it does for a program alone
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -546,6 +547,30 @@ test(
     expect(acrossFiles).toMatchObject({ source, failsInOneFile: false });
     expect(acrossFiles.reduced).toContain("main.ts");
     expect(acrossFiles.reduced.length).toBe(2);
+  },
+  timeout,
+);
+
+test(
+  "in the mode each-a-program every program of a shared build is a program of its own",
+  async () => {
+    using folder = tempDir("aot-fuzzer-each-a-program", {});
+    const bed = new ProductBed(bunExe(), options);
+    const programs: Program[] = [
+      { text: `console.log("first", [1, 2].length);\n`, extension: "js" },
+      { text: `const n: number = 2;\nconsole.log("second", n);\n`, extension: "ts" },
+      { text: `import { third } from "./other";\nconsole.log(third);\nprocess.exitCode = 3;\n`, extension: "ts", files: { "other.ts": `export const third = "third";\n` } }, // prettier-ignore
+    ];
+    const runsOfTheCompiler = async (name: string) => {
+      const { flags } = bed.modes(programs[0]).find(mode => mode.name === name)!;
+      const judged = await bed.judge(String(folder), programs, [...flags, "--aot-report=report.json"]);
+      expect(judged.map(({ verdict }) => verdict.kind)).toEqual(["same", "same", "same"]);
+      expect(judged.map(({ compiled }) => [compiled!.run!.stdout.trim(), compiled!.run!.exitCode])).toEqual([["first 2", 0], ["second 2", 0], ["third", 3]]); // prettier-ignore
+      return JSON.parse(readFileSync(join(String(folder), "report.json"), "utf8")).statistics.EngineRuns;
+    };
+    expect(await runsOfTheCompiler("default")).toBe(1);
+    // One more for the file that starts them.
+    expect(await runsOfTheCompiler("each-a-program")).toBe(programs.length + 1);
   },
   timeout,
 );

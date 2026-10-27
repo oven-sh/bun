@@ -79,11 +79,16 @@ static bool hasPublicPath(const JSC::AOT::BuiltinTable& table, JSC::AOT::Builtin
 }
 #endif
 
-static JSC::EncodedJSValue throwFeatureRemovedError(JSC::JSGlobalObject* globalObject, const WTF::String& message)
+static JSC::EncodedJSValue throwFeatureRemovedError(JSC::JSGlobalObject* globalObject, const WTF::String& api, uint16_t feature)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* error = JSC::createError(globalObject, message);
+    // A compiled program that refuses text refuses it with the interpreter too, so keeping the interpreter is no advice.
+    if (feature == static_cast<uint16_t>(JSC::RemovableFeature::Interpreter) && isCodeGenerationDisallowedByCompiledProgram()) {
+        JSC::throwException(globalObject, scope, createCodeGenerationFromStringsError(globalObject));
+        return {};
+    }
+    auto* error = JSC::createError(globalObject, messageOfRemovedFeature(api, feature));
     error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, WTF::String("ERR_FEATURE_REMOVED"_s)));
     JSC::throwException(globalObject, scope, error);
     return {};
@@ -120,12 +125,12 @@ static void writeFeatureNumber(uint16_t feature)
 
 extern "C" JSC::EncodedJSValue Bun__throwForRemovedFeature(JSC::JSGlobalObject* globalObject, uint16_t feature)
 {
-    return Bun::throwFeatureRemovedError(globalObject, Bun::messageOfRemovedFeature(WTF::String(), feature));
+    return Bun::throwFeatureRemovedError(globalObject, WTF::String(), feature);
 }
 
 extern "C" JSC::EncodedJSValue Bun__throwForRemovedFunction(JSC::JSGlobalObject* globalObject, uint16_t feature, WTF::StringImpl* name)
 {
-    return Bun::throwFeatureRemovedError(globalObject, Bun::messageOfRemovedFeature(WTF::String(name), feature));
+    return Bun::throwFeatureRemovedError(globalObject, WTF::String(name), feature);
 }
 
 extern "C" JSC::EncodedJSValue Bun__throwForRemovedBuiltin(JSC::JSGlobalObject* globalObject, uint16_t feature, uint32_t builtin)
@@ -135,7 +140,7 @@ extern "C" JSC::EncodedJSValue Bun__throwForRemovedBuiltin(JSC::JSGlobalObject* 
     JSC::AOT::BuiltinID id { builtin };
     if (!Bun::hasPublicPath(table, id))
         return Bun__throwForRemovedFeature(globalObject, feature);
-    return Bun::throwFeatureRemovedError(globalObject, Bun::messageOfRemovedFeature(table.textOf(id), feature));
+    return Bun::throwFeatureRemovedError(globalObject, table.textOf(id), feature);
 #else
     UNUSED_PARAM(builtin);
     return Bun__throwForRemovedFeature(globalObject, feature);

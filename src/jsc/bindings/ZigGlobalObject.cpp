@@ -492,6 +492,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // The boundary of "=strict": see JSC::SourceProvenance.
             if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
                 JSC::Options::disallowNonStaticCode() = true;
+            if (Bun::isCodeGenerationStrictOnlyBesideCompiledProgram()) [[unlikely]]
+                JSC::Options::disallowNonStaticCodeOnlyBesideCompiledCode() = true;
             if (JSC::isFeatureRemoved(JSC::RemovableFeature::Interpreter)) [[unlikely]] {
                 JSC::Options::functionOverrides() = nullptr;
                 JSC::Options::validateBytecode() = false;

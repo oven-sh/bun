@@ -2407,55 +2407,298 @@ class Scenes {
     this.emit(1, `printValue("steps ${number}", out);`);
     this.lines.push("}");
   }
+
+  /**
+   * A small package and a program that uses it for many turns: classes whose methods call each other through `this`, async methods and awaits, an options object with defaults, a parameter whose
+   * default is an empty literal, a table that is a function, an object or nothing, handlers that are called with `this`. In half of the draws the classes are in a file of their own and what
+   * they call is in a CommonJS file.
+   */
+  sceneOfASmallPackage() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    const fields = (declared: string) => (this.isTypeScript ? declared + " " : "");
+    const turns = this.pick([8, 24, 40, 64, 64]);
+    const classes: string[] = [];
+    const helpers: string[] = [];
+    const uses: string[] = [];
+    const names: string[] = [];
+    const parts = this.several(1, 3, () => this.pick(["finder", "finder", "span", "span", "makers", "hub", "log"]));
+    for (const part of new Set(parts)) {
+      const C = part[0].toUpperCase() + part.slice(1) + number;
+      names.push(C);
+      if (part === "finder") {
+        const test = this.pick([
+          "Array.isArray(result)",
+          "Array.isArray(result)",
+          "result",
+          "result?.length",
+          `typeof result === "object" && result`,
+        ]);
+        const made = this.pick([
+          "{ host: result[0], port: Number(result[1]) }",
+          "{ host: result[0], port: Number(result[1]) }",
+          "{ host: result?.[0], port: 1 }",
+          "{ ...this.options.base, host: result[0], port: Number(result[1]) }",
+          "{ host: result[0], port: Number(result[1]), ...(this.options.renews ? { fresh: true } : {}) }",
+        ]);
+        const none = this.pick(["null", "null", "undefined", "{}", "false", "this.options.fallback"]);
+        const waits = this.pick([
+          "",
+          "await this.renew(client);",
+          "await this.renew(client);",
+          "await null; await this.renew(client);",
+          "await this.renew(client); await this.renew(client);",
+        ]);
+        const handsOn = (item: string) =>
+          this.pick([
+            `this.translate(${item})`,
+            `this.translate(${item})`,
+            `this.translate(${item})`,
+            `this["translate"](${item})`,
+            `this.translate?.(${item})`,
+            `${C}.prototype.translate.call(this, ${item})`,
+          ]);
+        classes.push(
+          `class ${C} {`,
+          `  ${fields("options: any; renewed: number;")}constructor(table${any}, options${any} = {}) { this.options = { name: "main", table, renews: true, ...options }; this.renewed = 0; }`,
+          `  translate(item${any})${any} {`,
+          `    if (!item || !this.options.table) return item;`,
+          "    const key = `${item.host}:${item.port}`;",
+          `    let result = item;`,
+          `    if (typeof this.options.table === "function") result = this.options.table(key) || item;`,
+          `    else if (typeof this.options.table === "object") result = this.options.table[key] || item;`,
+          `    return result;`,
+          `  }`,
+          `  async renew(client${any})${any} {`,
+          `    if (!this.options.renews) return;`,
+          `    const result = await client.ask("others", this.options.name);`,
+          `    if (!Array.isArray(result)) return;`,
+          `    this.renewed += result.length;`,
+          `  }`,
+          `  async find(client${any})${any} {`,
+          `    const result = await client.ask("address", this.options.name);`,
+          `    ${waits}`,
+          this.chance(70)
+            ? `    return ${handsOn(`${test} ? ${made} : ${none}`)};`
+            : `    const item = ${test} ? ${made} : ${none};\n    return ${handsOn("item")};`,
+          `  }`,
+          `  *each(items${any})${any} { for (const item of items) yield ${handsOn("item")}; }`,
+          `}`,
+        );
+        uses.push(
+          `const answers${number}${any} = { address: [["a.example", "7000"], null, ["b.example", "7001"], "no list"], others: [[1, 2], undefined, [3], []] };`,
+          `function clientOf${number}(turn${any})${any} { return { ask: async (what${any}, name${any}) => (name === "main" ? answers${number}[what][turn & 3] : undefined) }; }`,
+          `const tables${number}${any} = [undefined, { "a.example:7000": { host: "inside", port: 1 } }, (key${any}) => (key.startsWith("b.") ? { host: "made", port: key.length } : null), "neither"];`,
+          `for (let turn = 0; turn < ${turns}; turn++) {`,
+          `  const table = tables${number}[(turn >> 2) & 3];`,
+          `  const finder = new ${C}(table${this.pick(["", "", ", {}", ", { renews: turn % 3 > 0 }", `, { base: { kind: "b" }, fallback: null }`])});`,
+          `  const client = clientOf${number}(turn);`,
+          `  const found = await finder.find(client);`,
+          `  if (turn < 16) note(turn + ":" + JSON.stringify(found) + finder.renewed);`,
+          this.chance(40)
+            ? `  if (turn < 4) note(JSON.stringify([...finder.each([found, null, { host: "a.example", port: 7000 }])]));`
+            : "",
+          `}`,
+        );
+      } else if (part === "span") {
+        const before = this.several(0, 3, () =>
+          this.pick(["short: false", "prefix: false", `form: "long"`, "extra: undefined"]),
+        );
+        const after = this.several(0, 2, () => this.pick(["offset: false", "short: true", `form: "brief"`]));
+        const merged = `{ ${[...new Set(before), "...options", ...new Set(after)].join(", ")} }`;
+        const early = this.pick([
+          "",
+          "if (!this.isValid) return null;",
+          "if (!this.isValid) return null;\n    if (length < 0 || length >= 86400) return null;",
+        ]);
+        const writes = this.pick([
+          `write${number}(length, options)`,
+          `write${number}(length, options)`,
+          "this.write(length, options)",
+          "JSON.stringify(options) + length",
+        ]);
+        helpers.push(
+          `function write${number}(length${any}, { short, prefix, form, offset, extra }${any})${any} { return (prefix ? "T" : "") + (form === "long" ? length + " s" : length) + (short ? "" : ".000") + (offset ? "Z" : "") + (extra ?? ""); }`,
+        );
+        classes.push(
+          `class ${C} {`,
+          `  ${fields("length: any;")}constructor(length${any}) { this.length = length; }`,
+          `  get isValid()${any} { return this.length === this.length; }`,
+          `  write(length${any}, options${any})${any} { return write${number}(length, options); }`,
+          `  describe(options${any} = {})${any} {`,
+          `    const length = this.length | 0;`,
+          `    ${early}`,
+          this.chance(60)
+            ? `    options = ${merged};`
+            : `    { const given = options; options = ${merged.replace("...options", "...given")}; }`,
+          `    return ${writes};`,
+          `  }`,
+          `}`,
+        );
+        uses.push(
+          `const given${number}${any} = [undefined, {}, { short: true }, { prefix: true, form: "brief", offset: true }, { extra: "!" }, null];`,
+          `for (let turn = 0; turn < ${turns}; turn++) {`,
+          `  const span = new ${C}([11, -1, 86400, NaN, 3599][turn % 5]);`,
+          `  const options = given${number}[turn % 6];`,
+          `  const text = options === undefined ? span.describe() : span.describe(options);`,
+          `  if (turn < 30) note(text);`,
+          `}`,
+        );
+      } else if (part === "makers") {
+        classes.push(
+          `class ${C} {`,
+          `  #made = new Map${this.isTypeScript ? "<any, any>" : ""}();`,
+          `  isClosed = false;`,
+          `  get(nameOrOptions${any}, version${this.isTypeScript ? "?: any" : ""}, options${any} = {})${any} {`,
+          `    if (this.isClosed) return "closed";`,
+          `    let name${any}, given${any};`,
+          `    if (typeof nameOrOptions === "string") { name = nameOrOptions; given = ${this.pick(["{ version, ...options }", "{ ...options, version }", "{ version, ...options, ...(version ? {} : { none: true }) }"])}; }`,
+          `    else { name = nameOrOptions.name; given = nameOrOptions; }`,
+          '    const key = `${name}@${given.version || ""}`;',
+          `    if (!this.#made.has(key)) this.#made.set(key, { key, address: given?.address || "" });`,
+          `    return this.#made.get(key);`,
+          `  }`,
+          `}`,
+        );
+        uses.push(
+          `const makers${number} = new ${C}();`,
+          `for (let turn = 0; turn < ${turns}; turn++) {`,
+          `  const made = turn % 4 === 0 ? makers${number}.get("a", "1") : turn % 4 === 1 ? makers${number}.get("b", "2", { address: "x", version: "3" }) : turn % 4 === 2 ? makers${number}.get({ name: "c", address: "y" }) : makers${number}.get("d");`,
+          `  if (turn < 4) note(made.key + " " + made.address);`,
+          `}`,
+          `makers${number}.isClosed = true;`,
+          `note(makers${number}.get("e"));`,
+        );
+      } else if (part === "hub") {
+        classes.push(
+          `class ${C} {`,
+          `  ${fields("handlers: any; seen: number;")}constructor() { this.handlers = {}; this.seen = 0; }`,
+          `  on(type${any}, handler${any})${any} { (this.handlers[type] ??= []).push(handler); return this; }`,
+          `  dispatch(event${any})${any} { let out = ""; for (const handler of this.handlers[event.type] ?? []) out += handler.call(this, event) ?? ""; return out; }`,
+          `  emit(type${any}, detail${this.isTypeScript ? "?: any" : ""})${any} { this.seen++; return this.dispatch(${this.pick(["detail === undefined ? { type } : { type, detail }", "{ type, ...(detail === undefined ? {} : { detail }) }", "detail ? { type, detail } : { type }"])}); }`,
+          `}`,
+        );
+        uses.push(
+          `const hub${number} = new ${C}();`,
+          `hub${number}.on("a", function (${this.isTypeScript ? "this: any, " : ""}event${any}) { return event.type + this.seen; }).on("a", (event${any}) => event.detail?.x).on("b", (event${any}) => ("detail" in event ? "d" : "n"));`,
+          `for (let turn = 0; turn < ${turns}; turn++) {`,
+          `  const said = hub${number}.emit(["a", "b", "c"][turn % 3], [undefined, { x: turn }, 0, null][turn & 3]);`,
+          `  if (turn < 12) note(said);`,
+          `}`,
+        );
+      } else {
+        classes.push(
+          `class ${C} {`,
+          `  ${fields("options: any; count: number;")}constructor(options${any} = {}) { this.options = { level: "info", ...options }; this.count = 0; }`,
+          `  format(entry${any})${any} { return Object.keys(entry).join() + ":" + (entry.level ?? this.options.level); }`,
+          `  log(level${any}, ...rest${this.isTypeScript ? ": any[]" : ""})${any} { const entry = { at: this.count++, ...(level ? { level } : {}), ...(rest.length ? { rest } : {}) }; return this.format(entry); }`,
+          `  child(options${any} = {})${any} { return new (this.constructor${asAny})({ ...this.options, ...options }); }`,
+          `}`,
+        );
+        uses.push(
+          `const log${number} = new ${C}();`,
+          `for (let turn = 0; turn < ${turns}; turn++) {`,
+          `  const logger = turn % 5 === 4 ? log${number}.child(turn % 2 ? { level: "debug" } : undefined) : log${number};`,
+          `  const line = turn % 3 === 0 ? logger.log("warn", turn) : turn % 3 === 1 ? logger.log(undefined) : logger.log("", 1, 2);`,
+          `  if (turn < 12) note(line);`,
+          `}`,
+        );
+      }
+    }
+    const ignore = this.isTypeScript ? "// @ts-ignore\n" : "";
+    if (this.chance(50)) {
+      // The classes are in a module, and what they call is in a CommonJS file.
+      const [module, common] = [
+        `./${this.nameOfItsOwn("package")}.${this.isTypeScript ? "ts" : "mjs"}`,
+        `./${this.nameOfItsOwn("helpers")}.cjs`,
+      ];
+      const helperNames = helpers.map(each => /^function ([\w$]+)/.exec(each)![1]);
+      const plain = helpers.map(each => each.replace(/: any/g, ""));
+      if (helpers.length)
+        this.files.push([common, [...plain, `module.exports = { ${helperNames.join(", ")} };`, ""].join("\n")]);
+      this.files.push([
+        module,
+        [
+          ...(helpers.length
+            ? [`${ignore}import helpers from "${common}";`, `const { ${helperNames.join(", ")} }${any} = helpers;`]
+            : []),
+          ...classes,
+          `export { ${names.join(", ")} };`,
+          "",
+        ].join("\n"),
+      ]);
+      this.imports.push(`${ignore}import { ${names.join(", ")} } from "${module}";`);
+      this.lines.push("{");
+    } else {
+      this.lines.push("{");
+      this.emit(1, ...helpers, ...classes.join("\n").split("\n"));
+    }
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += String(value) + ";"; }`,
+      ...uses.filter(Boolean),
+      `printValue("package ${number}", out);`,
+    );
+    this.lines.push("}");
+  }
 }
 
 /**
  * `text` with one to three scenes of ordinary code. In six programs of ten they are the whole program: what the compiler knows about a function of the library depends on all its callers.
  * What is drawn depends on `text` alone.
  */
-export function writeOrdinaryScenes(text: string, isTypeScript: boolean) {
+export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: string) {
   const [program, ...otherFiles] = text.split(/^(?=\/\/ @filename: )/m);
   const first = "const printValue = console.log;\n";
   if (!program.startsWith(first)) return text;
   const random = randomFrom("ordinary" + text);
   const scenes = new Scenes(random, isTypeScript);
   for (let count = scenes.pick([1, 1, 1, 2, 2, 3]); count > 0; count--)
-    scenes.pick([
-      () => scenes.sceneOfParsedData(),
-      () => scenes.sceneOfParsedData(),
-      () => scenes.sceneOfWalks(),
-      () => scenes.sceneOfWalks(),
-      () => scenes.sceneOfIdioms(),
-      () => scenes.sceneOfStepsOnOneObject(),
-      () => scenes.sceneOfStepsOnOneObject(),
-      () => scenes.sceneOfStepsOnOneObject(),
-      () => scenes.sceneOfStepsOnOneObject(),
-      () => scenes.sceneOfStepsOnOneObject(),
-      () => scenes.sceneOfStepsOnOneObject(),
-      () => scenes.sceneOfPresenceBehindStores(),
-      () => scenes.sceneOfPresenceBehindStores(),
-      () => scenes.sceneOfPresenceBehindStores(),
-      () => scenes.sceneOfMembersOverSpreads(),
-      () => scenes.sceneOfMembersOverSpreads(),
-      () => scenes.sceneOfMembersOverSpreads(),
-      () => scenes.sceneOfOnePlaceForSeveralKinds(),
-      () => scenes.sceneOfOnePlaceForSeveralKinds(),
-      () => scenes.sceneOfOnePlaceForSeveralKinds(),
-      () => scenes.sceneOfBuiltInCallees(),
-      () => scenes.sceneOfBuiltInCallees(),
-      () => scenes.sceneOfBuiltInCallees(),
-      () => scenes.sceneOfCalls(),
-      () => scenes.sceneOfCalls(),
-      () => scenes.sceneOfOperatorsOnPairs(),
-      () => scenes.sceneOfOperatorsOnPairs(),
-      () => scenes.sceneOfAssignmentsToPlaces(),
-      () => scenes.sceneOfAssignmentsToPlaces(),
-      () => scenes.sceneOfKeysInVariables(),
-      () => scenes.sceneOfKeysInVariables(),
-      () => scenes.sceneOfChangesInTheMiddle(),
-      () => scenes.sceneOfChangesInTheMiddle(),
-      () => scenes.sceneOfNamespaces(Bun.hash.crc32(text).toString(36)),
-    ])();
+    if (only) (scenes as unknown as Record<string, () => void>)[only]();
+    else
+      scenes.pick([
+        () => scenes.sceneOfParsedData(),
+        () => scenes.sceneOfParsedData(),
+        () => scenes.sceneOfWalks(),
+        () => scenes.sceneOfWalks(),
+        () => scenes.sceneOfIdioms(),
+        () => scenes.sceneOfASmallPackage(),
+        () => scenes.sceneOfASmallPackage(),
+        () => scenes.sceneOfASmallPackage(),
+        () => scenes.sceneOfASmallPackage(),
+        () => scenes.sceneOfASmallPackage(),
+        () => scenes.sceneOfStepsOnOneObject(),
+        () => scenes.sceneOfStepsOnOneObject(),
+        () => scenes.sceneOfStepsOnOneObject(),
+        () => scenes.sceneOfStepsOnOneObject(),
+        () => scenes.sceneOfStepsOnOneObject(),
+        () => scenes.sceneOfStepsOnOneObject(),
+        () => scenes.sceneOfPresenceBehindStores(),
+        () => scenes.sceneOfPresenceBehindStores(),
+        () => scenes.sceneOfPresenceBehindStores(),
+        () => scenes.sceneOfMembersOverSpreads(),
+        () => scenes.sceneOfMembersOverSpreads(),
+        () => scenes.sceneOfMembersOverSpreads(),
+        () => scenes.sceneOfOnePlaceForSeveralKinds(),
+        () => scenes.sceneOfOnePlaceForSeveralKinds(),
+        () => scenes.sceneOfOnePlaceForSeveralKinds(),
+        () => scenes.sceneOfBuiltInCallees(),
+        () => scenes.sceneOfBuiltInCallees(),
+        () => scenes.sceneOfBuiltInCallees(),
+        () => scenes.sceneOfCalls(),
+        () => scenes.sceneOfCalls(),
+        () => scenes.sceneOfOperatorsOnPairs(),
+        () => scenes.sceneOfOperatorsOnPairs(),
+        () => scenes.sceneOfAssignmentsToPlaces(),
+        () => scenes.sceneOfAssignmentsToPlaces(),
+        () => scenes.sceneOfKeysInVariables(),
+        () => scenes.sceneOfKeysInVariables(),
+        () => scenes.sceneOfChangesInTheMiddle(),
+        () => scenes.sceneOfChangesInTheMiddle(),
+        () => scenes.sceneOfNamespaces(Bun.hash.crc32(text).toString(36)),
+      ])();
   const written = [...scenes.imports, ...scenes.lines].join("\n") + "\n";
   const files = scenes.files.map(([name, content]) => `// @filename: ${name}\n${content}`).join("");
   if (scenes.chance(60)) return first + written + "export {};\n" + files;

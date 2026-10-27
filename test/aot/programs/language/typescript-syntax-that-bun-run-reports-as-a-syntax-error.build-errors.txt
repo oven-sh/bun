@@ -32,6 +32,8 @@ error: TS2451: Cannot redeclare block-scoped variable 'N8'.
 error: TS2300: Duplicate identifier 'N9'.
 error: TS2300: Duplicate identifier 'i2'.
 error: TS2451: Cannot redeclare block-scoped variable 'i3'.
+error: TS1214: Identifier expected. 'let' is a reserved word in strict mode. Modules are automatically in strict mode.
+error: TS2480: 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
 error: TS2331: 'this' cannot be referenced in a module or namespace body.
 error: TS2332: 'this' cannot be referenced in current location.
 error: TS17013: Meta-property 'new.target' is only allowed in the body of a function declaration, function expression, or constructor.

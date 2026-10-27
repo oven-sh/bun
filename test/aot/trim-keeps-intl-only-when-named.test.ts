@@ -91,6 +91,76 @@ describe.concurrent("Intl, Temporal and WebAssembly stay only in a program that 
   });
 });
 
+// A text of the program names what it spells wherever it stands: the compiler may keep a list or an object of constants as one piece of data.
+const namedByText: [text: string, feature: string][] = [
+  [`new Intl.Collator()`, collation],
+  [`new Intl.NumberFormat()`, numbers],
+  [`new Intl.DateTimeFormat()`, dates],
+  [`new Intl.Segmenter()`, segmenter],
+  [`new Intl.DisplayNames()`, displayNames],
+  [`Temporal.Now.instant()`, temporal],
+  [`WebAssembly.validate(bytes)`, webAssembly],
+];
+const run = `const run = text => new Function(text)();\n`;
+const placesOfText: [place: string, program: (text: string) => string][] = [
+  ["by itself", text => `run(${text});`],
+  ["in a constant", text => `const text = ${text};\nrun(text);`],
+  ["in a list", text => `for (const text of [${text}, "1"]) run(text);`],
+  ["alone in a list", text => `for (const text of [${text}]) run(text);`],
+  ["in a list of a constant of the module", text => `const texts = ["1", ${text}];\nrun(texts[process.argv.length]);`],
+  ["in a list marked as const", text => `const texts = ["1", ${text}] as const;\nrun(texts[process.argv.length]);`],
+  ["in a frozen list", text => `const texts = Object.freeze(["1", ${text}]);\ntexts.forEach(run);`],
+  ["in a list in a list", text => `for (const [label, text] of [["a", "1"], ["b", ${text}]]) run(text);`],
+  ["in an object", text => `run({ a: "1", b: ${text} }[process.argv[3]]);`],
+  ["in an object in a list", text => `for (const { text } of [{ text: "1" }, { text: ${text} }]) run(text);`],
+  ["in a list in an object", text => `for (const text of { a: ["1"], b: [${text}] }[process.argv[3]]) run(text);`],
+  [
+    "in the list that makes a Map",
+    text => `for (const text of new Map([["a", "1"], ["b", ${text}]]).values()) run(text);`,
+  ],
+  ["in the list that makes a Set", text => `new Set(["1", ${text}]).forEach(run);`],
+  ["in a list that is spread", text => `[...["1", ${text}]].forEach(run);`],
+  ["in a list that a function returns", text => `const texts = () => ["1", ${text}];\ntexts().forEach(run);`],
+  ["as the default of a parameter", text => `function evaluate(text = ${text}) {\n  run(text);\n}\nevaluate();`],
+  [
+    "in the list that is the default of a parameter",
+    text => `function evaluate(texts = ["1", ${text}]) {\n  texts.forEach(run);\n}\nevaluate();`,
+  ],
+  ["in a field", text => `class Texts {\n  text = ${text};\n}\nrun(new Texts().text);`],
+  [
+    "in the list of a static field",
+    text => `class Texts {\n  static all = ["1", ${text}];\n}\nTexts.all.forEach(run);`,
+  ],
+  ["in an enum", text => `enum Texts {\n  One = "1",\n  Two = ${text},\n}\nrun(Texts[process.argv[3]]);`],
+  ["in a list beside a number", text => `for (const text of [1, ${text}]) run(String(text));`],
+  ["in a list that is joined", text => `run(["return", ${text}].join(" "));`],
+];
+
+describe.concurrent("a text of the program names what it spells", () => {
+  const everyName = JSON.stringify(namedByText.map(([text]) => text).join("; "));
+  test.each(placesOfText)("%s", async (_, program) => {
+    expect(await keptOf(run + program(everyName))).toEqual(all);
+  });
+
+  test.each(namedByText)("%s in a list keeps that alone", async (text, feature) => {
+    expect(await keptOf(`${run}for (const text of ["1", ${JSON.stringify(text)}]) run(text);`)).toEqual([feature]);
+  });
+
+  test("a template literal", async () => {
+    const texts = namedByText.map(([text]) => text).join("; ");
+    expect(await keptOf(`${run}run(\`\${process.argv[3]}; ${texts}\`);`)).toEqual(all);
+    expect(await keptOf(`${run}for (const text of ["1", \`${texts}\`]) run(text);`)).toEqual(all);
+  });
+
+  // Such a list is a list of keys. A class is read under its key from its namespace, and `Intl[key]` keeps all of Intl.
+  test("a list of words that are the names of classes and namespaces names none of them", async () => {
+    const words = `["Collator", "NumberFormat", "DateTimeFormat", "Segmenter", "DisplayNames", "Temporal", "WebAssembly"]`;
+    expect(
+      await keptOf(`${evaluatesText}\nfor (const word of ${words}) console.log(word in globalThis.input);`),
+    ).toEqual([]);
+  });
+});
+
 const buildScript = `const [entry, outfile, trim] = process.argv.slice(2);
 const result = await Bun.build({ entrypoints: [entry], compile: { outfile, aot: true, trim: JSON.parse(trim) } });
 console.log(result.success ? "built" : "failed");`;

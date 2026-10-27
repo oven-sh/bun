@@ -268,6 +268,36 @@ const cases: Record<string, Case> = {
     },
     prints: `function\nimport(): {"hash":"2d711642","served":"served"}\nrequire(): {"kind":"cjs","named":"cjs"} cjs\n`,
   },
+  "built-in modules that are written for each other, of which the program names one": {
+    program: {
+      "main.ts":
+        prelude +
+        `import { validateHeaderName } from "node:_http_common";
+        console.log(typeof validateHeaderName);
+        await shown("import()", () => import(folder + "/plugin.ts"));`,
+    },
+    disk: {
+      "plugin.ts": `import * as http from "node:http";
+        const server = http.createServer((request, response) => {
+          let body = "";
+          request.on("data", chunk => (body += chunk));
+          request.on("end", () => response.setHeader("x-a", "b").end("got " + body));
+        });
+        await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+        const answer = await new Promise<string>(resolve => {
+          const options = { method: "POST", port: (server.address() as { port: number }).port, host: "127.0.0.1", agent: false };
+          const request = http.request(options, response => {
+            let text = "";
+            response.on("data", chunk => (text += chunk));
+            response.on("end", () => resolve([response.statusCode, response.headers["x-a"], text].join(" ")));
+          });
+          request.end("body");
+        });
+        server.close();
+        export default { answer };`,
+    },
+    prints: `function\nimport(): {"answer":"200 b got body"}\n`,
+  },
   "the two sides call each other, share objects, throw and await across the border": {
     program: {
       "main.ts":

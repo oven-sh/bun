@@ -1,5 +1,7 @@
 // What the compiler reads in place of src/js/internal/primordials.js. A stack trace shows the places of that file: a line that both
 // files have stands for the line there, and a comment `as:` in front of a word quotes that file up to the word it stands for.
+// Written against that file with the SHA-256 1707be69cea78abd175b76624ec9b7f6845993ca22b53f3405095b7e654e113e.
+// When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectFreeze = Object.freeze;

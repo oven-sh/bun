@@ -168,6 +168,8 @@ impl Declarations<'_, '_> {
 
     fn compute_symbol_tables(&mut self) {
         let hir = self.hir;
+        let import_equals = find_import_equals_symbols(hir, self.bound);
+        self.bound.runtime.declarations.import_equals_symbols = import_equals;
         let bound = &*self.bound;
         let mut valueless_symbols = Vec::new();
         for (index, symbol) in bound.symbols.iter().enumerate() {
@@ -308,12 +310,10 @@ impl Declarations<'_, '_> {
                 specifiers[specifier.idx()] = find(hir[specifier].local);
             }
         }
-        let import_equals = find_import_equals_symbols(hir, bound);
         let declarations = &mut self.bound.runtime.declarations;
         declarations.import_default_symbols = defaults;
         declarations.import_namespace_symbols = namespaces;
         declarations.import_spec_symbols = specifiers;
-        declarations.import_equals_symbols = import_equals;
     }
 
     fn compute_parameter_expressions(&mut self) {

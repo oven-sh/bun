@@ -1,8 +1,10 @@
 use std::cell::{Cell, RefCell};
 
+use bun_core::fmt::pow10_exp_1e4_to_1e9;
 use bun_core::strings::contains_char;
+use bun_js_parser::defines_table::{is_pure_global_identifier, is_pure_global_property_access};
 use bun_sema::atom::{Atom, known, written_name};
-use bun_sema::bind::{Binding, BindingInitializer, BindingKind, Decl, FnOwner, Parent};
+use bun_sema::bind::{Binding, Decl, FnOwner, Parent};
 use bun_sema::check::spans::skip_trivia;
 use bun_sema::fold::{self, Constant, Decision, FoldedValue, TreeNode, push_children};
 use bun_sema::hir::{
@@ -19,7 +21,6 @@ use crate::builtins::id::BuiltinId;
 use crate::ir::generated::LimitId;
 use crate::ir::{BlockId, StringId, ValueId};
 use crate::lower::member::{self, KeyConversion, PropertyName};
-use crate::lower::module;
 use crate::lower::operator::needs_parentheses;
 use crate::lower::statement::Printed;
 use crate::lower::{FileLowering, FunctionLowering};
@@ -1034,8 +1035,11 @@ impl FileLowering<'_, '_, '_, '_> {
         while let Some(part) = parts.pop() {
             let inner = self.skip_type_syntax(part);
             let is_removed = match hir[inner].kind {
-                ExprKind::Ident(_) => match self.bound.binding(inner) {
-                    Binding::Free => self.is_literal_operand(inner),
+                ExprKind::Ident(name) => match self.bound.binding(inner) {
+                    Binding::Free => {
+                        self.is_literal_operand(inner)
+                            || is_pure_global_identifier(self.queries.atom_bytes(name))
+                    }
                     // It keeps a read of what `import { name }` or `import name` binds.
                     Binding::Symbol(symbol) => {
                         let mut declarations = self.bound.symbol(symbol).decls.iter();
@@ -1046,6 +1050,11 @@ impl FileLowering<'_, '_, '_, '_> {
                     Binding::Arguments(_) | Binding::CommonJs(_) => true,
                 },
                 ExprKind::This | ExprKind::BigInt(_) | ExprKind::Fn(_) => true,
+                ExprKind::Dot { .. } | ExprKind::Index { .. }
+                    if self.is_pure_member_of_global(inner) =>
+                {
+                    true
+                }
                 ExprKind::Unary {
                     op: UnOp::Typeof,
                     operand,
@@ -1094,6 +1103,23 @@ impl FileLowering<'_, '_, '_, '_> {
             }
         }
         true
+    }
+
+    // `Array.from`, `Math.max`: a path of names below a free name that the transpiler's table lists.
+    fn is_pure_member_of_global(&self, access: ExprId) -> bool {
+        let hir = self.hir;
+        let mut parts: SmallVec<[&[u8]; 4]> = SmallVec::new();
+        let mut current = access;
+        while let Some((object, MemberKey::Name(name))) = hir.member_key(current) {
+            parts.push(self.queries.atom_bytes(name));
+            current = self.skip_type_syntax(object);
+        }
+        let ExprKind::Ident(root) = hir[current].kind else {
+            return false;
+        };
+        parts.push(self.queries.atom_bytes(root));
+        parts.reverse();
+        self.bound.binding(current) == Binding::Free && is_pure_global_property_access(&parts)
     }
 
     // Of `!a` and `void a` whose value nobody takes it prints `a`.
@@ -1351,9 +1377,12 @@ impl FileLowering<'_, '_, '_, '_> {
     // `[a, b][1]` is printed `b` if evaluating the other elements does nothing.
     fn find_printed_element(&self, list: ExprId, index: ExprId) -> Option<ExprId> {
         let hir = self.hir;
-        let ExprKind::Array(elements) = hir[self.skip_type_syntax(list)].kind else {
+        let ExprKind::Array(elements) = hir[self.skip_to_initializer_visited_again(list)].kind
+        else {
             return None;
         };
+        let index = self.skip_type_syntax(index);
+        let index = self.find_printed_value(index).unwrap_or(index);
         let ExprKind::Number(_) = hir[self.skip_type_syntax(index)].kind else {
             return None;
         };
@@ -1540,6 +1569,14 @@ impl FileLowering<'_, '_, '_, '_> {
                 Some(Constant::Number(value)) if value.is_nan()
             ),
             _ => false,
+        }
+    }
+
+    // Bun's transpiler prints the name `NaN` for the number, and JSC records the read of a free name.
+    pub(in crate::lower) fn find_position_of_printed_nan(&self, expression: ExprId) -> Option<u32> {
+        match self.find_literal_value(expression)? {
+            Constant::Number(number) if number.is_nan() => Some(self.first_position(expression)),
+            _ => None,
         }
     }
 
@@ -1774,12 +1811,17 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn find_callee_name(&mut self, callee: ExprId) -> Option<StringId> {
         let hir = self.hir;
         let inner = self.skip_type_syntax(callee);
-        if let ExprKind::Ident(name) = hir[inner].kind {
+        if let ExprKind::Ident(name) = hir[inner].kind
+            && !self.is_name_printed_otherwise(inner)
+        {
             return Some(self.intern_binding_name(self.bound.binding(inner), name));
         }
         let mut path = Vec::new();
         if self.append_written_path(inner, &mut path) {
             return Some(self.intern_bytes(&path));
+        }
+        if self.is_literal_operand(inner) || matches!(hir[inner].kind, ExprKind::Ident(_)) {
+            return None;
         }
         match hir.member_key(inner) {
             Some((_, MemberKey::Name(name))) => Some(self.intern_atom(name)),
@@ -1824,40 +1866,10 @@ impl FileLowering<'_, '_, '_, '_> {
                     _ => return self.append_written_path(printed, text),
                 }
             }
-            _ => {
-                return self.names_what_is_printed(printed)
-                    && self.append_written_path(printed, text);
-            }
+            _ => return self.append_written_path(printed, text),
         };
         text.extend_from_slice(literal);
         true
-    }
-
-    // Bun's transpiler may print the initializer of a local `let` or `const` in place of its only use.
-    fn names_what_is_printed(&self, path: ExprId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        let inner = self.skip_type_syntax(path);
-        match hir.written_kind(inner) {
-            ExprKind::Ident(_) => {
-                let Binding::Symbol(symbol) = bound.binding(inner) else {
-                    return true;
-                };
-                !(matches!(
-                    bound.binding_kind(symbol),
-                    BindingKind::Let | BindingKind::Const
-                ) && self.scopes.is_used_once(symbol)
-                    && bound.symbol_scope(symbol) != module::file_scope(self)
-                    && matches!(
-                        bound.binding_initializer(hir, symbol),
-                        BindingInitializer::Expression(_)
-                    ))
-            }
-            ExprKind::Dot { obj, .. } => self.names_what_is_printed(obj),
-            ExprKind::Index { obj, index, .. } => {
-                self.names_what_is_printed(obj) && self.names_what_is_printed(index)
-            }
-            _ => true,
-        }
     }
 
     /// `a.b.c`, `this.#x`, `a?.b[key]`: a callee that consists of names, as plain Bun quotes it in "a.b.c is not a function".
@@ -1866,24 +1878,37 @@ impl FileLowering<'_, '_, '_, '_> {
         const LONGEST_PATH: usize = 80;
         let hir = self.hir;
         let inner = self.skip_type_syntax(expression);
+        if self.is_literal_operand(inner) {
+            return self.append_printed_literal(inner, path);
+        }
         match hir.written_kind(inner) {
+            ExprKind::Ident(_) if self.is_name_printed_otherwise(inner) => {
+                return match self.find_printed_in_place(inner) {
+                    Some(Printed::Initializer(initializer)) => {
+                        self.append_written_path(initializer, path)
+                    }
+                    Some(Printed::Function(_)) | None => false,
+                };
+            }
             ExprKind::Ident(name) => self.append_identifier(inner, name, path),
             ExprKind::This => path.extend_from_slice(b"this"),
             ExprKind::Super => path.extend_from_slice(b"super"),
             ExprKind::Dot {
                 obj, name, chain, ..
             } => {
-                if !self.append_written_path(obj, path) {
+                if self.is_literal_operand(obj) || !self.append_written_path(obj, path) {
                     return false;
                 }
                 path.extend_from_slice(if chain == Chain::Start { b"?." } else { b"." });
                 path.extend_from_slice(written_name(self.queries.atom_bytes(name)));
             }
             ExprKind::Index { obj, index, chain } => {
-                if !self.append_written_path(obj, path) {
+                if self.is_literal_operand(obj) || !self.append_written_path(obj, path) {
                     return false;
                 }
+                let index = self.find_printed_value(index).unwrap_or(index);
                 match hir[index].kind {
+                    ExprKind::Ident(_) if self.is_name_printed_otherwise(index) => return false,
                     ExprKind::Ident(key) => {
                         if chain == Chain::Start {
                             path.extend_from_slice(b"?.");
@@ -1921,6 +1946,38 @@ impl FileLowering<'_, '_, '_, '_> {
             _ => return false,
         }
         path.len() <= LONGEST_PATH
+    }
+
+    // Bun's transpiler prints an initializer or a value in place of the name.
+    fn is_name_printed_otherwise(&self, name: ExprId) -> bool {
+        !self.runs_as_written()
+            && (self.find_printed_in_place(name).is_some()
+                || self.find_printed_value(name).is_some())
+    }
+
+    // A number or a text that is called, as Bun's transpiler prints it there. Whatever else it prints in parentheses.
+    fn append_printed_literal(&self, literal: ExprId, path: &mut Vec<u8>) -> bool {
+        match self.find_literal_value(literal) {
+            Some(Constant::Number(number)) if number.is_nan() => path.extend_from_slice(b"NaN"),
+            Some(Constant::Number(number)) if number.is_finite() && !number.is_sign_negative() => {
+                let is_integer = number.fract() == 0.0 && number < (u64::MAX >> 12) as f64;
+                match is_integer
+                    .then(|| pow10_exp_1e4_to_1e9(number as u64))
+                    .flatten()
+                {
+                    Some(exponent) => path.extend_from_slice(&[b'1', b'e', b'0' + exponent]),
+                    None => path.extend_from_slice(format!("{number}").as_bytes()),
+                }
+            }
+            Some(Constant::String(text)) if needs_no_escape(self.queries.atom_bytes(text)) => {
+                path.push(b'"');
+                path.extend_from_slice(self.queries.atom_bytes(text));
+                path.push(b'"');
+            }
+            Some(Constant::Null) => path.extend_from_slice(b"null"),
+            _ => return false,
+        }
+        true
     }
 
     fn append_identifier(&self, identifier: ExprId, name: Atom, path: &mut Vec<u8>) {

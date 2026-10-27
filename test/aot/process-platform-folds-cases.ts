@@ -353,6 +353,69 @@ console.log(new CustomEvent("opaque", { detail: branch }).detail());
       expect(branch).not.toContain(`"platform"`);
     }), 600_000);
 
+  // The value whose keys are listed could be `process`.
+  const listsKeysOfAnything = `const anything = globalThis[process.argv[2] ?? "Object"];
+console.log(Reflect.ownKeys(anything).length, Object.keys({ ...anything }).length, Object.entries(anything).length);`;
+  const another = here === "win32" ? "linux" : "win32";
+  const readsOfPlatform: Record<string, string> = {
+    "written out": `const platform = process.platform;`,
+    "in brackets": `const platform = process["platform"];`,
+    "by a pattern": `const { platform } = process;`,
+    "through globalThis": `const platform = globalThis.process.platform;`,
+    "through a variable": `const host = process;\n  const platform = host.platform;`,
+  };
+  for (const [way, read] of Object.entries(readsOfPlatform)) {
+    testOfIR(`a branch for another platform leaves no code in a program that lists the keys of any value: the read is ${way}`, () =>
+      slot(async () => {
+        const branch = await selectedCodeOf("branch", {
+          files: {
+            "main.mjs": `function branch() {
+  ${read}
+  if (platform === "${another}") return "${branchForAnotherPlatform}";
+  return "${branchForThisPlatform}";
+}
+${listsKeysOfAnything}
+console.log(new CustomEvent("opaque", { detail: branch }).detail());
+`,
+          },
+        });
+        expect(branch).toContain(branchForThisPlatform);
+        expect(branch).not.toContain(branchForAnotherPlatform);
+        expect(branch).not.toContain(`"platform"`);
+      }), 600_000);
+  }
+
+  testOfIR("the same in a module of Bun's library", () =>
+    slot(async () => {
+      const code = await selectedCodeOf("normalizeSpawnArguments", {
+        files: {
+          "main.mjs": `import { spawnSync } from "node:child_process";
+${listsKeysOfAnything}
+console.log(spawnSync(process.execPath, ["--version"], { shell: process.argv.length > 9 }).status);
+`,
+        },
+      });
+      expect(code).not.toContain(`"platform"`);
+      expect(code.includes("cmd.exe")).toBe(here === "win32");
+    }), 600_000);
+
+  const knownAtBuildTime = ["process.platform", "process.arch", "process.isBun", "process.versions.bun", "process.versions.node", "process.release.name"];
+  testOfIR("a test of any member whose value the build knows is decided at build time in such a program", () =>
+    slot(async () => {
+      const program = {
+        files: {
+          "main.mjs": `${knownAtBuildTime.map((path, index) => `function known${index}() {\n  return ${path} ? "${branchForThisPlatform}" : "${branchForAnotherPlatform}";\n}`).join("\n")}
+${listsKeysOfAnything}
+console.log(new CustomEvent("opaque", { detail: [${knownAtBuildTime.map((_, index) => `known${index}`).join(", ")}] }).detail.map(known => known()).join());
+`,
+        },
+      };
+      for (const [index, path] of knownAtBuildTime.entries()) {
+        const code = await selectedCodeOf(`known${index}`, program);
+        expect({ path, hasBranchTaken: code.includes(branchForThisPlatform), hasOtherBranch: code.includes(branchForAnotherPlatform) }).toEqual({ path, hasBranchTaken: true, hasOtherBranch: false });
+      }
+    }), 600_000);
+
   testOfIR("the reads and both branches stay if the program assigns to the properties", () =>
     slot(async () => {
       const program = programThatChanges(changes["an assignment"]);

@@ -219,6 +219,7 @@
     "Symbol 1, null, promises"
   ],
   "odd callables at every way to call or construct them": ["construct extends"],
+  "operands": ["an element of (number | null)[]"],
   "text parsed as a type gives what plain JSON.parse gives": [
     "seed 117.",
     "seed 12.",

@@ -284,4 +284,19 @@ impl PureGlobalIdentifierValue {
     }
 }
 
+/// Whether the read of a free name is dropped where nothing takes its value.
+pub fn is_pure_global_identifier(name: &[u8]) -> bool {
+    lookup_pure_global_identifier(name)
+        .is_some_and(|found| found.value().can_be_removed_if_unused())
+}
+
+/// Whether the read of `a.b.c`, with `a` a free name, is dropped where nothing takes its value.
+pub fn is_pure_global_property_access(parts: &[&[u8]]) -> bool {
+    let tables = [
+        GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES,
+        GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
+    ];
+    tables.iter().any(|table| table.contains(&parts))
+}
+
 include!("defines_table.generated.rs");

@@ -156,7 +156,7 @@ static constexpr bool hostHasTwoSeparators = true;
 static constexpr bool hostHasTwoSeparators = false;
 #endif
 
-std::optional<AOT::ModuleID> compiledModuleForPath(const String& path)
+static std::optional<AOT::ModuleID> moduleThatAnswersToPath(const String& path)
 {
     if (!hasCompiledModules())
         return std::nullopt;
@@ -171,11 +171,30 @@ std::optional<AOT::ModuleID> compiledModuleForPath(const String& path)
     return found;
 }
 
+// The executable holds no code of a module that is native code. Whoever asks for that module gets the one that the program imports.
+std::optional<AOT::ModuleID> compiledModuleForPath(const String& path)
+{
+    auto module = moduleThatAnswersToPath(path);
+    return module && AOT::isNativeModule(*module) ? std::nullopt : module;
+}
+
+static bool replacesNativeModule(JSGlobalObject* globalObject, const String& path)
+{
+    auto& plugins = uncheckedDowncast<Zig::GlobalObject>(globalObject)->onLoadPlugins;
+    return plugins.hasVirtualModules() && plugins.virtualModules->contains(path);
+}
+
+static std::optional<AOT::ModuleID> moduleForRequest(Zig::GlobalObject* globalObject, const String& path)
+{
+    auto module = moduleThatAnswersToPath(path);
+    return module && AOT::isNativeModule(*module) && replacesNativeModule(globalObject, path) ? std::nullopt : module;
+}
+
 static std::optional<AOT::ModuleID> compiledModuleForRequest(Zig::GlobalObject* globalObject, const String& path, bool hasImportAttributes)
 {
     if (hasImportAttributes)
         return std::nullopt;
-    auto module = compiledModuleForPath(path);
+    auto module = moduleForRequest(globalObject, path);
     if (module && AOT::leavesModuleToHost(globalObject, *module))
         return std::nullopt;
     return module;
@@ -287,7 +306,7 @@ JSObject* loaderOfCompiledESModule(Zig::GlobalObject* globalObject, const String
 
 JSValue loadCompiledModuleNamespace(Zig::GlobalObject* globalObject, const String& path)
 {
-    auto module = compiledModuleForPath(path);
+    auto module = moduleForRequest(globalObject, path);
     if (!module)
         return {};
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -604,6 +623,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &showChildren,
     &findModuleWithAttributes,
     &resolveFunctionOf,
+    &replacesNativeModule,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)

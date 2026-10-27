@@ -479,3 +479,11 @@ function turn(i: number): number {
   cursor = (cursor + 1) & 15;
   return ring[cursor]!;
 }
+//// texts-to-numbers-by-the-built-in
+const fields = "3,1,4,1,5,9,2,6,5,3,5,8".split(",");
+function turn(i: number): number {
+  const parsed = fields.map(Number);
+  let sum = i & 1;
+  for (let k = 0; k < parsed.length; k++) sum += parsed[k]!;
+  return sum;
+}

@@ -48,7 +48,7 @@ try {
   });
 } catch (error) {
   const frames = ((error as Error).stack ?? "").split("\n").slice(0, 3);
-  lines.push(frames.map(frame => frame.trim().replace(/\(.*[\\/]/, "(")).join(" | "));
+  lines.push(frames.map(frame => frame.trim().replace(/\(.*[\\/]/, "(").replace(/native:\d+:\d+/, "native")).join(" | "));
 }
 const seen: unknown[] = [];
 const late = Array.from({ length: 3 }, function (this: unknown, first: unknown, index: number) {

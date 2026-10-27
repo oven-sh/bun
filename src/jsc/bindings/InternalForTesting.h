@@ -9,6 +9,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_arrayBufferViewHasBuffer);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_hasReifiedStatic);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_isASANEnabled);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_readFreedStringUnderASAN);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_nativeStackTrace);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_describeRejectedValuesWithoutScript);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_aotBuiltinMismatches);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_aotBuiltinEntries);

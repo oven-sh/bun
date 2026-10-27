@@ -11,7 +11,7 @@ use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, object};
 
-// A call of a built-in that writes out the structure of what it takes makes what the text says.
+// A call of a built-in that writes out the structure of what it takes makes what the text says. The function that the text names is read all the same.
 
 pub(super) fn find_locked_builtin(
     file: &FileLowering<'_, '_, '_, '_>,
@@ -135,6 +135,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if pairs.is_empty() {
             return None;
         }
+        self.emit_locked_builtin(BuiltinId::ObjectFromEntries);
         let mut entries: SmallVec<[(PropertyName, ValueId); 8]> = SmallVec::new();
         for pair in &pairs {
             let key = self.lower_computed_key(pair[0]);
@@ -192,7 +193,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let source = self.file.find_only_argument(description)?;
 
+        self.emit_locked_builtin(BuiltinId::ObjectDefineProperties);
         let target = self.lower_expression(target);
+        self.emit_locked_builtin(BuiltinId::ObjectGetOwnPropertyDescriptors);
         let source = self.lower_expression(source);
         self.set_position(self.file.last_mapped_position(description.callee));
         let describe = BuiltinId::CompilerHelpersDescribeUnlessOrdinary;

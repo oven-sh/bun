@@ -114,6 +114,16 @@ pub trait SourceProvider: Sync {
         None
     }
 
+    /// How the run time reads the text of `new Blob(parts, { type })` as a module.
+    fn loader_of_blob(&self, _type: Option<&[u8]>) -> Option<Loader> {
+        None
+    }
+
+    /// The `href` of `new URL(text, base)`. `None`: the constructor throws.
+    fn write_url(&self, _text: &[u8], _base: Option<&[u8]>) -> Option<Vec<u8>> {
+        None
+    }
+
     fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad>;
 
     /// True if the embedded path of a `file` loader module does not depend on its contents.

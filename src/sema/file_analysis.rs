@@ -108,6 +108,12 @@ pub fn analyze_file<'s>(
     analyze::run(hir, options, inputs, &file, atoms, arena)
 }
 
+pub struct FoldedAgain<'s> {
+    pub analysis: FileAnalysis<'s>,
+    /// The import sites, the format and the uses of the imports are those of the analysis before.
+    pub has_same_import_sites: bool,
+}
+
 /// Folds a file that `analyze_file` has analyzed once more, with other `inputs` or other constants of other files. `None`: it is to be analyzed anew.
 pub fn fold_file_again<'s>(
     hir: &File<'s>,
@@ -117,6 +123,6 @@ pub fn fold_file_again<'s>(
     previous: &FileAnalysis<'s>,
     atoms: &Interner<'s>,
     arena: &'s Arena,
-) -> Option<FileAnalysis<'s>> {
+) -> Option<FoldedAgain<'s>> {
     analyze::run_again(hir, bound, inputs, &file, previous, atoms, arena)
 }

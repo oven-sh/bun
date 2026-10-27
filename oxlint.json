@@ -70,7 +70,8 @@
 
     // TODO: fix these
     "src/js/node/http2.ts",
-    "src/js/node/http.ts"
+    "src/js/node/http.ts",
+    "src/js/ahead-of-time/node/http.ts"
   ],
 
   "overrides": [

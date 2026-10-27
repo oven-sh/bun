@@ -1,5 +1,5 @@
 // A request to end a Worker is taken wherever the engine looks for an exception, so any call that looks may come back with one.
-// Code that states that nothing was thrown (releaseAssertNoException) puts such a request off while it runs
+// Code that states that nothing was thrown (assertNoException, releaseAssertNoException) puts such a request off while it runs
 // (DeferTerminationForAWhile), and the request is taken at the next look behind it. Goes by the text of the engine's sources.
 import { expect, test } from "bun:test";
 import { closingOf, filesOfCompiler, lineOf, sayWhenSkipped, sources } from "./harness/engine-text";
@@ -13,9 +13,17 @@ test.skipIf(!sources)("each statement that nothing was thrown stands behind a de
     // A function's body opens at the start of a line.
     for (const { index } of text.matchAll(/^\{/gm)) {
       const body = text.slice(index, closingOf(text, index));
-      for (const statement of body.matchAll(/\breleaseAssertNoException\s*\(/g)) {
+      for (const statement of body.matchAll(/\b(\w+)\s*\.\s*(?:releaseAssertNoException|assertNoException)\s*\(/g)) {
         statements++;
-        if (!/\bDeferTermination(?:ForAWhile)?\b/.test(body.slice(0, statement.index)))
+        const before = body.slice(0, statement.index);
+        // Right behind the declaration of its scope it speaks of what the caller hands over: nothing has been called yet.
+        if (
+          new RegExp(`\\bauto\\s+${statement[1]}\\s*=\\s*DECLARE_\\w+_SCOPE\\s*\\(\\s*\\w+\\s*\\)\\s*;\\s*$`).test(
+            before,
+          )
+        )
+          continue;
+        if (!/\bDeferTermination(?:ForAWhile)?\b/.test(before))
           found.push(`${name}:${lineOf(text, index + statement.index)}`);
       }
     }

@@ -40,11 +40,16 @@ pub const CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD: bool =
 #[cfg(not(bun_disallow_code_generation_from_strings))]
 mod level {
     use super::CodeGenerationFromStrings;
+    use core::cell::Cell;
     use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
     static LEVEL: AtomicU8 = AtomicU8::new(CodeGenerationFromStrings::Allowed as u8);
     static IS_DISALLOWED_BY_COMPILED_PROGRAM: AtomicBool = AtomicBool::new(false);
     static IS_INTERPRETER_REMOVED: AtomicBool = AtomicBool::new(false);
+
+    thread_local! {
+        static RUNS_NO_COMPILED_PROGRAM: Cell<bool> = const { Cell::new(false) };
+    }
 
     pub fn code_generation_from_strings_by_flags() -> CodeGenerationFromStrings {
         match LEVEL.load(Ordering::Relaxed) {
@@ -75,7 +80,24 @@ mod level {
     }
 
     pub fn is_code_generation_disallowed_by_compiled_program() -> bool {
+        IS_DISALLOWED_BY_COMPILED_PROGRAM.load(Ordering::Relaxed) && !runs_no_compiled_program()
+    }
+
+    /// Whether nothing but the compiled program asks for [`CodeGenerationFromStrings::Strict`]: a VM that runs none of it runs text.
+    pub fn is_strict_only_beside_compiled_program() -> bool {
         IS_DISALLOWED_BY_COMPILED_PROGRAM.load(Ordering::Relaxed)
+            && !is_interpreter_removed()
+            && code_generation_from_strings_by_flags() != CodeGenerationFromStrings::Strict
+    }
+
+    /// Whether this is the thread of a Worker that started from text.
+    pub fn runs_no_compiled_program() -> bool {
+        RUNS_NO_COMPILED_PROGRAM.get()
+    }
+
+    /// No object of the compiled program is reachable from this thread.
+    pub fn run_no_compiled_program_on_this_thread() {
+        RUNS_NO_COMPILED_PROGRAM.set(true);
     }
 
     /// The compiled code in this executable is only correct while no other script runs beside it.
@@ -121,6 +143,19 @@ mod level {
     pub fn disallow_code_generation_for_compiled_program() {}
 
     #[inline(always)]
+    pub const fn is_strict_only_beside_compiled_program() -> bool {
+        false
+    }
+
+    #[inline(always)]
+    pub const fn runs_no_compiled_program() -> bool {
+        false
+    }
+
+    #[inline(always)]
+    pub fn run_no_compiled_program_on_this_thread() {}
+
+    #[inline(always)]
     pub fn disallow_code_generation_for_removed_interpreter() {}
 }
 
@@ -129,6 +164,8 @@ pub use level::{
     disallow_code_generation_for_compiled_program,
     disallow_code_generation_for_removed_interpreter, disallow_code_generation_from_strings,
     is_code_generation_disallowed_by_compiled_program, is_code_generation_disallowed_by_trimming,
+    is_strict_only_beside_compiled_program, run_no_compiled_program_on_this_thread,
+    runs_no_compiled_program,
 };
 
 #[cfg(all(test, not(bun_disallow_code_generation_from_strings)))]

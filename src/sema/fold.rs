@@ -206,6 +206,16 @@ impl<'s> Decisions<'s> {
         self.dead_stmts.has(stmt.idx())
     }
 
+    /// Whether both remove the same code and know the same specifiers. Whoever looks for the import sites of a file, for its format and
+    /// for what it asks of other files reads nothing else of them.
+    pub(crate) fn has_same_code_and_specifiers(&self, other: &Decisions<'_>) -> bool {
+        self.dead_exprs.0 == other.dead_exprs.0
+            && self.dead_stmts.0 == other.dead_stmts.0
+            && self.dead_exprs_in_bun_run.0 == other.dead_exprs_in_bun_run.0
+            && self.dead_stmts_in_bun_run.0 == other.dead_stmts_in_bun_run.0
+            && self.specifiers == other.specifiers
+    }
+
     /// `bun run` folds less than a build does. In the result, only the code that `bun run` removes too is dead.
     pub fn as_folded_by_bun_run(&self) -> Decisions<'s> {
         Decisions {

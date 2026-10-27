@@ -105,7 +105,7 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         match classify_prefix(self.request.prefix, self.request.suffix) {
             PrefixKind::NeverResolves | PrefixKind::HostScheme => Ok(()),
             PrefixKind::Empty | PrefixKind::Unclear => Err(ComputedUnknown::NoConstantPrefix),
-            PrefixKind::IncompletePackageName => Err(ComputedUnknown::IncompletePackageName),
+            PrefixKind::IncompletePackageName => self.add_candidates_by_start_of_name(),
             PrefixKind::PackageImports => Err(ComputedUnknown::PackageImports),
             PrefixKind::Url => Err(ComputedUnknown::ExternalCandidate),
             PrefixKind::Path => self.add_path_candidates(),
@@ -202,6 +202,64 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             self.walk_below(node_path, b"", SpecifierForm::Path)?;
         }
         Ok(())
+    }
+
+    /// The prefix ends inside the name of a package: every installed package whose name begins so may be meant.
+    fn add_candidates_by_start_of_name(&mut self) -> Result<(), ComputedUnknown> {
+        let (resolver, prefix) = (self.resolver, self.request.prefix);
+        let config = resolver.enclosing_code_config(self.directory);
+        if config.is_some_and(|it| it.base_url.is_some() || it.can_match_prefix(prefix)) {
+            return Err(ComputedUnknown::ConfigPaths);
+        }
+        self.try_empty_middle()?;
+        let Some(start) = ancestors(self.directory).find(|it| resolver.is_dir(it)) else {
+            return Ok(());
+        };
+        if let Some(manifest) = resolver.nearest_code_manifest(start)
+            && let Some(exports) = &manifest.exports
+            && manifest.name.starts_with(prefix)
+        {
+            self.try_specifier(manifest.name)?;
+            self.add_exported_candidates(manifest, exports, manifest.name)?;
+        }
+        for ancestor in ancestors(start) {
+            let Some(node_modules) = resolver.find_node_modules(ancestor) else {
+                continue;
+            };
+            for name in self.list_installed_names(&node_modules) {
+                let manifest = resolver.code_manifest(&join_unrooted(&node_modules, &name));
+                if let Some(manifest) = manifest
+                    && let Some(exports) = &manifest.exports
+                {
+                    self.try_specifier(&name)?;
+                    self.add_exported_candidates(manifest, exports, &name)?;
+                }
+            }
+            // It comes to the folder of each package, which is its name, and finds nothing in one that has `exports`.
+            self.walk_below(&node_modules, b"", SpecifierForm::Path)?;
+        }
+        for node_path in &resolver.code_options().node_paths {
+            self.walk_below(node_path, b"", SpecifierForm::Path)?;
+        }
+        Ok(())
+    }
+
+    fn list_installed_names(&self, node_modules: &[u8]) -> Vec<Vec<u8>> {
+        let host = self.resolver.host;
+        let (scope, start_of_name) = split_after_last_slash(self.request.prefix);
+        let mut names = Vec::new();
+        for name in host.entries(&join_unrooted(node_modules, scope)).1 {
+            if !name.starts_with(start_of_name) || name.starts_with(b".") {
+                continue;
+            }
+            if !scope.is_empty() || !name.starts_with(b"@") {
+                names.push([scope, name.as_slice()].concat());
+                continue;
+            }
+            let inner = host.entries(&inside(node_modules, &name)).1;
+            names.extend(inner.iter().map(|it| [&name[..], b"/", &it[..]].concat()));
+        }
+        names
     }
 
     fn add_installed_candidates(

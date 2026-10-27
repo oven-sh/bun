@@ -328,7 +328,7 @@
     "peakKilobytes": 28392
   },
   "interpreter streams-made.js": {
-    "thousandInstructions": 5332219,
+    "thousandInstructions": 5709000,
     "pageFaults": 3754,
     "peakKilobytes": 30688
   },

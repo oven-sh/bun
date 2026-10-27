@@ -205,7 +205,7 @@ These three are large: `Intl` and its data are 11 MB on Linux. So they follow th
 - `new Intl.Segmenter()`, `globalThis.Intl.Collator`, `Temporal.Now`, `WebAssembly.instantiate(bytes)`
 - `value.toLocaleString()`, `a.localeCompare(b)`, `date.toLocaleDateString()`, whatever the type of the value
 - a string literal that has the name in it, such as `"return new Intl.NumberFormat()." + method`, because it may end up in `new Function` or be used as a key
-- a method's name in a list of constants, such as `["localeCompare", "toLocaleString"]`, because the list may be a list of keys
+- a method's name in a list of constants, such as `["localeCompare", "toLocaleString"]`, because the list may be a list of keys. The name of a class by itself in such a list, as in `["Segmenter", "Collator"]`, keeps nothing: as a key it needs `Intl[name]`
 - `Intl[name]`, which keeps all of `Intl`
 
 A `new Function(text)` whose text comes from somewhere else, and a call like `value[name]()`, name nothing. They used to keep all three in every program that has zod in it.
@@ -300,7 +300,6 @@ bun check --aot --explain=trim ./lookup.ts
 aot: trim: the compiler can't tell which API this program uses at lookup.ts:2:15, because the name is only known at run time
 aot: trim: uses property constructor
 aot: trim: uses property match
-aot: trim: kept eval, new Function and the JavaScript interpreter (interpreter): used (Function)
 aot: trim: kept regular expressions: used (String.prototype.match) at lookup.ts:2:15
 ```
 

@@ -15,7 +15,8 @@ use crate::ir::{InParallel, for_each_mut};
 use crate::load::loaders::{BY_NAME, loader_by_name};
 use crate::load::module_paths::{
     FileMaps, PathContext, PathInput, check_unique_public_paths, collect_entry_point_paths,
-    compute_display_path, compute_public_path, file_ids, is_linkable,
+    compute_display_path, compute_name_of_third_party_file, compute_public_path, file_ids,
+    is_linkable,
 };
 use crate::load::project::{PerProject, ProjectId};
 use crate::options::Options;
@@ -248,7 +249,11 @@ fn freeze_file(
         | (
             SourceKind::EvaluatedText | SourceKind::RuntimeModule(_) | SourceKind::RuntimeFunctions,
             Some(_) | None,
-        ) => (public_path.clone(), public_path.clone()),
+        ) => {
+            let shown = compute_name_of_third_party_file(context.manifest, kind);
+            let shown = shown.unwrap_or_else(|| public_path.clone());
+            (public_path.clone(), shown)
+        }
     };
     if let (Some(compiled), Some(payload)) = (compiled, payload) {
         run.add_compiled_file(files, file, compiled, payload)?;

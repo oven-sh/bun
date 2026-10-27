@@ -25,6 +25,10 @@
 // Only a program that prints something else there than under `bun run` goes on into a batch as above, and so does one that doesn't end by itself and without an error.
 // `--throwers 20`, with `--together`, takes 20 of 100 programs that end in an error. Such a program is the last of its entry point, and an entry point costs a build as much as twenty programs.
 // `--slow 10`, with `--together`, takes 10 of 100 programs that don't end in time under `bun run`. Each of them needs an entry point to itself.
+// `--scene sceneOfASmallPackage`: the ordinary scenes are all of that kind.
+// `--each-a-program 25`: a quarter of the runs of this script leave --together aside: each program is an entry point, which begins a program of its own, at most 120 to a build.
+// `--launders 50`: in half of the runs of this script every program has values handed through a function that the build knows nothing about (launder-values.ts). Such programs share executables.
+// `--checks 50`: half of the other runs, and every run that launders, build with the compiler's checks that move no output: every pass is verified, and references are validated.
 // `--ignores-type-errors 100` writes `// @ts-ignore` above every line of a TypeScript program. One error of the type checker in one program costs the whole batch a build.
 import {
   appendFileSync,
@@ -46,6 +50,7 @@ import {
   keepWhatIsPrintedInAText,
   unwrapTryBlocks,
 } from "./hand-over-built-ins.ts";
+import { launderValues } from "./launder-values.ts";
 import { endHooksInErrors, keepOneScene, printMembersOfObjects, randomFrom } from "./print-members-of-objects.ts";
 import { splitIntoFiles } from "./split-into-files.ts";
 import { writeOrdinaryScenes } from "./write-ordinary-scenes.ts";
@@ -82,6 +87,10 @@ const { values: options } = parseArgs({
     throwers: { type: "string", default: "100" },
     slow: { type: "string", default: "100" },
     "ignores-type-errors": { type: "string", default: "0" },
+    launders: { type: "string", default: "0" },
+    scene: { type: "string", default: "" },
+    "each-a-program": { type: "string", default: "0" },
+    checks: { type: "string", default: "0" },
     "hides-function-text": { type: "boolean", default: false },
     // Kinds of outcomes that are only counted otherwise, separated by commas.
     "also-keep": { type: "string", default: "" },
@@ -90,15 +99,17 @@ const { values: options } = parseArgs({
 const { bun, programs: source, work, finds } = options as Record<string, string>;
 if ((!source && !options.draws) || !work || !finds)
   throw new Error("Expected --programs or --draws, --work and --finds");
-const [groupSize, batches, milliseconds, together] = [
-  options.group,
-  options.batches,
-  options.milliseconds,
-  options.together,
-].map(Number);
+const [groupSize, batches, milliseconds] = [options.group, options.batches, options.milliseconds].map(Number);
+/** Whether every program of this run has values handed through a function that the build knows nothing about. All of them have the world open then, and none waits for others like it. */
+const launders = Math.random() * 100 < Number(options.launders);
+// The programs that an entry point imports are one program of many modules. What a build proves only of a small program, it never proves there.
+const isEachAProgram = !launders && Math.random() * 100 < Number(options["each-a-program"]);
+const together = isEachAProgram ? 1 : Number(options.together);
 if (together > 1 && groupSize !== 1) throw new Error("--together goes with --group 1");
 /** How many programs a batch takes. The batches go through the list in turn. */
-const countsOfPrograms = options.count.split(",").map(Number);
+const countsOfPrograms = options.count
+  .split(",")
+  .map(each => (isEachAProgram ? Math.min(Number(each), 120) : Number(each)));
 let count = countsOfPrograms[0];
 const hidesFunctionText = options["hides-function-text"];
 const alsoKept = options["also-keep"].split(",").filter(Boolean);
@@ -109,6 +120,8 @@ const buildFlags = [
 /** A package that stays outside the executable. Beside it the compiler counts on code that it hasn't seen, which can reach every built-in module. */
 const packageOutside = Math.random() * 100 < Number(options["beside-an-external"]) ? "a-package-outside" : "";
 if (packageOutside) buildFlags.push("--external", packageOutside);
+if (launders || Math.random() * 100 < Number(options.checks))
+  buildFlags.push("--aot-check=verify-each-pass,validate-references");
 const importOfThePackageOutside = packageOutside && `import "${packageOutside}";\n`;
 const runner = "run-each-program-in-a-worker.ts";
 const mark = `=== ${Math.random().toString(36).slice(2)} ended`;
@@ -895,10 +908,13 @@ function ignoreTypeErrors(text: string) {
 function rewritten(text: string, extension: string) {
   const random = randomFrom("rewritten" + text);
   const isTypeScript = extension.endsWith("ts");
+  // `bun run` turns an object literal that nothing uses into its computed keys, each made a string, which throws where a key is a symbol. As the operand of a call the literal stays.
+  text = text.replace(/^(\s*)\((\{ \[.*)\);$/gm, "$1Object($2);");
   // Such scenes bring files of their own, and the splitter knows only functions that end in a line of their own.
   const hasSizes = random() * 100 < Number(options["scenes-of-every-size"]);
   if (hasSizes) text = writeScenesOfEverySize(text, isTypeScript);
-  else if (random() * 100 < Number(options["ordinary-scenes"])) text = writeOrdinaryScenes(text, isTypeScript);
+  else if (random() * 100 < Number(options["ordinary-scenes"]))
+    text = writeOrdinaryScenes(text, isTypeScript, options.scene || undefined);
   if (random() * 100 < Number(options["one-scene"])) text = keepOneScene(text);
   if (random() * 100 < Number(options["hands-over-built-ins"])) text = handOverBuiltIns(text, isTypeScript);
   if (random() * 100 < Number(options["hooks-fail"])) text = endHooksInErrors(text, isTypeScript);
@@ -912,6 +928,7 @@ function rewritten(text: string, extension: string) {
       text = splitIntoFiles(text, extension);
     } catch {}
   }
+  if (launders) text = launderValues(text, isTypeScript, random);
   if (isTypeScript && random() * 100 < Number(options["ignores-type-errors"])) text = ignoreTypeErrors(text);
   return text;
 }
@@ -951,7 +968,8 @@ async function drawPrograms(extension: string) {
     if (!drawn || "." + drawn.extension !== extension || drawn.flags?.length || drawn.standsAlone) continue;
     // As the bed of those sources does: a text is a module unless it says that it stays a script.
     const isAScript = !isAModule(drawn.text) && !drawn.text.startsWith("// stays a script\n");
-    texts.push(`${drawn.text}\n${isAScript ? "export {};\n" : ""}// ${name} ${seed % 2 ** 31}\n`);
+    const text = `${drawn.text}\n${isAScript ? "export {};\n" : ""}// ${name} ${seed % 2 ** 31}\n`;
+    texts.push(launders ? launderValues(text, extension.endsWith("ts"), randomFrom("laundered" + text)) : text);
   }
   return texts;
 }
@@ -1094,7 +1112,7 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
       programs = programs.filter((_, index) => !refused.has(index));
       continue;
     }
-    if (built.areOneProgram && built.openers?.length) {
+    if (built.areOneProgram && built.openers?.length && !launders) {
       const openers = new Set(built.openers);
       add("builds that programs opened");
       add("opens the world", openers.size);
@@ -1381,7 +1399,8 @@ for (
   count = countsOfPrograms[batch % countsOfPrograms.length];
   const isBehindTheLast = batches !== 0 && batch >= batches;
   // With several programs to an entry point, a batch in which each is one holds as many as a build takes.
-  const atOnce = together > 1 ? Math.min(count, maxEntryPoints) : count;
+  // With the world open each entry point holds much of the library, and the checks take four times as long.
+  const atOnce = together > 1 ? Math.min(count, launders ? 24 : maxEntryPoints) : count;
   const areOnTheirOwn =
     waitingForABatchOfTheirOwn.length >= atOnce || (isBehindTheLast && waitingForABatchOfTheirOwn.length > 0);
   const haveTheWorldOpen = !areOnTheirOwn && (waitingWithTheWorldOpen.length >= atOnce || isBehindTheLast);
@@ -1392,13 +1411,13 @@ for (
     if (options.draws) {
       extension = "." + options.draws;
       for (const text of await drawPrograms(extension))
-        (isWrittenToOpenTheWorld(text) ? waitingWithTheWorldOpen : texts).push(text);
+        (isWrittenToOpenTheWorld(text) && !launders ? waitingWithTheWorldOpen : texts).push(text);
     } else {
       const paths = await takePrograms();
       extension = extname(paths[0]);
       for (const path of paths) {
         const text = rewritten(readFileSync(path, "latin1"), extension);
-        (isWrittenToOpenTheWorld(text) ? waitingWithTheWorldOpen : texts).push(text);
+        (isWrittenToOpenTheWorld(text) && !launders ? waitingWithTheWorldOpen : texts).push(text);
         rmSync(path, { force: true });
       }
     }
@@ -1510,7 +1529,7 @@ for (
       continue;
     }
     // The program that made one program of all leaves for an executable of such programs.
-    if (built.areOneProgram && built.openedBy !== undefined && !haveTheWorldOpen && texts.length > 1) {
+    if (built.areOneProgram && built.openedBy !== undefined && !haveTheWorldOpen && !launders && texts.length > 1) {
       add("builds that one program opened");
       waitingWithTheWorldOpen.push(...texts.splice(built.openedBy, 1));
       counts.taken--;

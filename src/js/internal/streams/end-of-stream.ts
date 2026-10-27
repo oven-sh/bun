@@ -80,9 +80,10 @@ function hasAsyncContext() {
  * Returns the current stream error tracked by eos(), if any.
  */
 function getEosErrored(stream: $Node.AnyStream): Error | null {
-  const errored = $isProxyObject(stream)
-    ? isWritableErrored(stream) || isReadableErrored(stream)
-    : errorOfWritableSide(stream) || errorOfReadableSide(stream);
+  const errored =
+    !IS_COMPILED_AHEAD_OF_TIME || $isProxyObject(stream)
+      ? isWritableErrored(stream) || isReadableErrored(stream)
+      : errorOfWritableSide(stream) || errorOfReadableSide(stream);
   return (typeof errored !== "boolean" && errored) || null;
 }
 
@@ -103,7 +104,11 @@ function getEosOnCloseError(
   }
 
   if (readable && !readableFinished && isReadableNodeStream(stream, true)) {
-    if (!($isProxyObject(stream) ? isReadableFinished(stream, false) : isReadableSideFinished(stream, false))) {
+    if (
+      !(!IS_COMPILED_AHEAD_OF_TIME || $isProxyObject(stream)
+        ? isReadableFinished(stream, false)
+        : isReadableSideFinished(stream, false))
+    ) {
       return $ERR_STREAM_PREMATURE_CLOSE();
     }
   }
@@ -147,7 +152,7 @@ function eos(stream: $Node.AnyStream | ReadableStream | WritableStream, options,
     throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
   }
 
-  const isProxy = $isProxyObject(stream);
+  const repeatsReads = !IS_COMPILED_AHEAD_OF_TIME || $isProxyObject(stream);
   let readable: boolean;
   let writable: boolean;
   // TODO (ronag): Improve soft detection to include core modules and
@@ -156,7 +161,7 @@ function eos(stream: $Node.AnyStream | ReadableStream | WritableStream, options,
   let willEmitClose: boolean | null;
   let writableFinished: boolean | null;
   let readableFinished: boolean | null;
-  if (isProxy) {
+  if (repeatsReads) {
     ("unlikely");
     readable = options.readable ?? isReadableNodeStream(stream);
     writable = options.writable ?? isWritableNodeStream(stream);
@@ -183,7 +188,7 @@ function eos(stream: $Node.AnyStream | ReadableStream | WritableStream, options,
    * Error: an error occurred
    */
   let immediateResult: Error | null | undefined;
-  if (isProxy ? isClosed(stream) : isNodeStreamClosed(stream)) {
+  if (repeatsReads ? isClosed(stream) : isNodeStreamClosed(stream)) {
     immediateResult = getEosOnCloseError(stream, readable, readableFinished, writable, writableFinished);
   } else if (
     (isWritableState(wState) ? (wState[kState] & Flag.ErrorEmitted) !== 0 : wState?.errorEmitted) ||

@@ -13,6 +13,7 @@ use crate::ir::{FunctionKey, PropertyKeyId, Type, TypeId, ValueId, VariableId, V
 use crate::lower::member::PropertyName;
 use crate::lower::scope::{ArgumentsObject, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering, module};
+use crate::module_keys::is_name_of_text;
 use crate::modules::{ModuleKind, ModuleRef, Shape};
 
 const fn variable_of(parameter: CommonJsParameter) -> CommonJsVariable {
@@ -207,14 +208,19 @@ impl FileLowering<'_, '_, '_, '_> {
     // The path of a file and its folder, as the record of the file has them.
     fn find_path_text(&self, owner: FileId, builtin: BuiltinId) -> Option<Vec<u8>> {
         let path = self.inputs.sources.module_paths(owner).public_path;
-        if !path.starts_with(b"/") || bun_core::strings::contains_char(path, b'\\') {
+        // `import.meta.path` of a text that is no file begins with a `/`, and `__filename` of one that is CommonJS is its name.
+        let is_commonjs_text =
+            is_name_of_text(path) && self.inputs.modules.kind(owner) == ModuleKind::CommonJs;
+        if !is_commonjs_text
+            && (!path.starts_with(b"/") || bun_core::strings::contains_char(path, b'\\'))
+        {
             return None;
         }
         match builtin {
             BuiltinId::ImportMetaPath => Some(path.to_vec()),
             BuiltinId::ImportMetaDir => {
-                let end = bun_core::strings::last_index_of_char(path, b'/')?;
-                Some(path[..end].to_vec())
+                let end = bun_core::strings::last_index_of_char(path, b'/');
+                Some(path[..end.or(is_commonjs_text.then_some(0))?].to_vec())
             }
             _ => None,
         }

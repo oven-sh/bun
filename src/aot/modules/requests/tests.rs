@@ -587,7 +587,6 @@ fn site_over_candidate_limit_is_recorded() {
         let other_causes = [
             ComputedUnknown::NoPattern,
             ComputedUnknown::NoConstantPrefix,
-            ComputedUnknown::IncompletePackageName,
             ComputedUnknown::PackageImports,
             ComputedUnknown::ConfigPaths,
             ComputedUnknown::ExternalCandidate,

@@ -170,7 +170,8 @@ const startsWorkerRightAfterTerminating = `if (Bun.isMainThread) {
 }
 `;
 
-// Workers start one by one until the constructor throws. An earlier one is then held up for eight seconds on its way out. Two more are constructed meanwhile, and the second is terminated at once.
+// Workers start one by one until the constructor throws. An earlier one is then held up for eight seconds on its way out. One more is constructed meanwhile and terminated at once, then another.
+// No more wait than are ending, so for a third the constructor throws.
 const constructsWorkersWhileAnotherIsHeldUp = `declare var self: Worker;
 const how = process.argv[2];
 if (Bun.isMainThread) {
@@ -207,17 +208,23 @@ if (Bun.isMainThread) {
   const heldUpClosed = new Promise<number>(resolve => heldUp.addEventListener("close", () => resolve(since())));
   if (how !== "its exit handler") heldUp.terminate();
   const first = new Worker(new URL(import.meta.url));
+  const firstClosed = new Promise<number>(resolve => first.addEventListener("close", () => resolve(since())));
+  first.terminate();
   const second = new Worker(new URL(import.meta.url));
-  const constructed = since();
-  const firstStartedOrFoundNoRoom = new Promise<boolean>(resolve => {
-    first.onmessage = () => resolve(true);
-    first.onerror = event => resolve(event.message === "TypeError: Failed to spawn worker thread");
+  const secondStartedOrFoundNoRoom = new Promise<boolean>(resolve => {
+    second.onmessage = () => resolve(true);
+    second.onerror = event => resolve(event.message === "TypeError: Failed to spawn worker thread");
   });
-  const secondClosed = new Promise<number>(resolve => second.addEventListener("close", () => resolve(since())));
-  second.terminate();
-  console.log("two are constructed within 4 s:", constructed < 4000);
-  console.log("the one that is terminated closes within 4 s:", (await secondClosed) < 4000);
-  console.log("the other starts, or finds no room:", await firstStartedOrFoundNoRoom);
+  let thrown: unknown;
+  try {
+    for (let i = 0; i < 64; i++) new Worker(new URL(import.meta.url));
+  } catch (error) {
+    thrown = error;
+  }
+  const constructed = since();
+  console.log("two are constructed, and the constructor throws, within 4 s:", thrown instanceof TypeError && constructed < 4000);
+  console.log("the one that is terminated closes within 4 s:", (await firstClosed) < 4000);
+  console.log("the other starts, or finds no room:", await secondStartedOrFoundNoRoom);
   console.log("the one that is held up takes over 4 s to close:", (await heldUpClosed) > 4000);
   console.log("a timer fired at least every 4 s:", longestGap < 4000);
   process.exit(0);
@@ -247,34 +254,79 @@ if (Bun.isMainThread) {
 }
 `;
 
-// Workers start one by one until one does not. Two are terminated, and twelve are constructed in the same turn.
-const constructsMoreWorkersThanFindRoom = `import { Worker as NodeWorker, parentPort } from "node:worker_threads";
+// Workers start one by one until the constructor has thrown three times in a row. The first is held up for two seconds on its way out, and another is constructed meanwhile: it waits for that room.
+// When the first has closed, its listener takes what room there is: it constructs Workers until the constructor throws.
+const takesRoomThatWorkerWaitsFor = `import { Worker as NodeWorker, parentPort } from "node:worker_threads";
+declare var self: Worker;
 const isNode = process.argv[2] === "node";
 function construct() {
   let error = "no error";
+  let hear = (_: string) => {};
+  let hearThatItIsHeldUp = () => {};
+  const heard = new Promise<string>(resolve => (hear = resolve));
+  const isHeldUp = new Promise<void>(resolve => (hearThatItIsHeldUp = resolve));
+  const onMessage = (message: string) => (message === "held up" ? hearThatItIsHeldUp() : hear("started"));
   if (isNode) {
     const worker = new NodeWorker(new URL(import.meta.url), { argv: ["node"] });
-    const heard = new Promise<string>(resolve => {
-      worker.once("message", () => resolve("started"));
-      worker.once("error", (thrown: Error) => (error = thrown.name + ": " + thrown.message));
-      worker.once("exit", code => resolve(error + ", code " + code));
-    });
-    return { heard, terminate: () => void worker.terminate() };
+    worker.on("message", onMessage);
+    worker.once("error", (thrown: Error) => (error = thrown.name + ": " + thrown.message));
+    worker.once("exit", code => hear(error + ", code " + code));
+    return { worker, heard, isHeldUp, whenClosed: (listener: () => void) => void worker.once("exit", listener) };
   }
   const worker = new Worker(new URL(import.meta.url));
-  const heard = new Promise<string>(resolve => {
-    worker.onmessage = () => resolve("started");
-    worker.onerror = event => void (error = event.message);
-    worker.addEventListener("close", event => resolve(error + ", code " + (event as unknown as { code: number }).code));
-  });
-  return { heard, terminate: () => worker.terminate() };
+  worker.onmessage = event => onMessage(event.data);
+  worker.onerror = event => void (error = event.message);
+  worker.addEventListener("close", event => hear(error + ", code " + (event as unknown as { code: number }).code));
+  return { worker, heard, isHeldUp, whenClosed: (listener: () => void) => worker.addEventListener("close", listener) };
 }
 if (Bun.isMainThread) {
-  const workers: ReturnType<typeof construct>[] = [];
+  const heldUp = construct();
+  await heldUp.heard;
+  for (let thrownInARow = 0; thrownInARow < 3; ) {
+    try {
+      if ((await construct().heard) !== "started") break;
+      thrownInARow = 0;
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      thrownInARow++;
+    }
+  }
+  let taken = 0;
+  heldUp.whenClosed(() => {
+    try {
+      for (; taken < 64; taken++) construct();
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+    }
+  });
+  heldUp.worker.postMessage("block");
+  await heldUp.isHeldUp;
+  await Bun.sleep(200);
+  heldUp.worker.terminate();
+  console.log(await construct().heard);
+  console.log("the listener constructed Workers until the constructor threw:", taken < 64);
+  process.exit(0);
+} else {
+  const post = (message: string) => (isNode ? parentPort!.postMessage(message) : postMessage(message));
+  const block = () => {
+    post("held up");
+    Bun.sleepSync(2000);
+  };
+  if (isNode) parentPort!.on("message", block);
+  else self.onmessage = block;
+  setInterval(() => {}, 1000);
+  post("ready");
+}
+`;
+
+// Workers start one by one until the constructor throws. Two are terminated, and the thread runs nothing for two seconds: they end, and it has not heard of it.
+// Then it constructs Workers in the same turn.
+const constructsWorkersBeforeItHearsThatOthersEnded = `if (Bun.isMainThread) {
+  const workers: Worker[] = [];
   for (;;) {
     try {
-      const worker = construct();
-      if ((await worker.heard) !== "started") break;
+      const worker = new Worker(new URL(import.meta.url));
+      await new Promise(resolve => (worker.onmessage = resolve));
       workers.push(worker);
     } catch (error) {
       if (!(error instanceof TypeError)) throw error;
@@ -283,13 +335,23 @@ if (Bun.isMainThread) {
   }
   workers[0].terminate();
   workers[1].terminate();
-  const constructed = Array.from({ length: 12 }, construct);
-  for (const worker of constructed) console.log(await worker.heard);
+  Bun.sleepSync(2000);
+  let answered = 0;
+  let constructed = 0;
+  let thrown: unknown;
+  try {
+    for (; constructed < 64; constructed++) new Worker(new URL(import.meta.url)).onmessage = () => answered++;
+  } catch (error) {
+    thrown = error;
+  }
+  console.log("some are constructed, and then the constructor throws:", constructed > 0 && thrown instanceof TypeError);
+  if (!thrown) process.exit(1);
+  while (answered < constructed) await Bun.sleep(10);
+  console.log("each of them starts");
   process.exit(0);
 } else {
   setInterval(() => {}, 1000);
-  if (isNode) parentPort!.postMessage(1);
-  else postMessage(1);
+  postMessage(1);
 }
 `;
 
@@ -713,7 +775,7 @@ describe.concurrent("Workers of a compiled program within a limit on the address
     async how => {
       expect(await runWithin(GB, constructsWorkersWhileAnotherIsHeldUp, how)).toEqual({
         stdout:
-          "two are constructed within 4 s: true\n" +
+          "two are constructed, and the constructor throws, within 4 s: true\n" +
           "the one that is terminated closes within 4 s: true\n" +
           "the other starts, or finds no room: true\n" +
           "the one that is held up takes over 4 s to close: true\n" +
@@ -727,18 +789,26 @@ describe.concurrent("Workers of a compiled program within a limit on the address
 
   // On arm64 a Worker of node:worker_threads may start in less room than it then takes.
   test.skipIf(!isLinux || isASAN).each(isArm64 ? ["web"] : ["web", "node"])(
-    "of more Workers than find room once others have ended some start and the rest get an error (%s)",
+    "a Worker that waits for room that others take first gets an error (%s)",
     async kind => {
-      const { stdout, stderr, exitCode } = await runWithin(GB, constructsMoreWorkersThanFindRoom, kind);
-      const lines = stdout.split("\n").slice(0, -1);
-      // One that starts in the last of the room may find too little there, and ends alone.
-      const different = [...new Set(lines)].filter(line => !/^RangeError: Out of memory.*, code 1$/.test(line)).sort();
-      expect({ stdout, stderr, exitCode, count: lines.length, different }).toEqual({
-        stdout,
+      expect(await runWithin(GB, takesRoomThatWorkerWaitsFor, kind)).toEqual({
+        stdout:
+          "TypeError: Failed to spawn worker thread, code 1\n" +
+          "the listener constructed Workers until the constructor threw: true\n",
         stderr: "",
         exitCode: 0,
-        count: 12,
-        different: ["TypeError: Failed to spawn worker thread, code 1", "started"],
+      });
+    },
+    240_000,
+  );
+
+  test.skipIf(!isLinux || isASAN)(
+    "the constructor throws in the turn in which there is no room, though the thread has not heard yet that Workers have ended",
+    async () => {
+      expect(await runWithin(GB, constructsWorkersBeforeItHearsThatOthersEnded)).toEqual({
+        stdout: "some are constructed, and then the constructor throws: true\neach of them starts\n",
+        stderr: "",
+        exitCode: 0,
       });
     },
     240_000,

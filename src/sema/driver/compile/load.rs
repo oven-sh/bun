@@ -190,6 +190,17 @@ fn configuration_diagnostics<'e>(
         .collect()
 }
 
+/// The file that a load takes for an entry point which is written so. `None`: it takes none.
+pub fn resolve_entry_point(
+    host: &dyn CodeHost,
+    code: &CodeOptions,
+    specifier: &[u8],
+) -> Option<Vec<u8>> {
+    resolve_entry_points(host, code, &[specifier.to_vec()])
+        .ok()?
+        .pop()
+}
+
 fn resolve_entry_points(
     host: &dyn CodeHost,
     code: &CodeOptions,

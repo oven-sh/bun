@@ -10,7 +10,7 @@ use bun_aot::load::source_provider::{
     SourceFile,
 };
 use bun_aot::{SourceProvider, WithoutServices};
-use bun_ast::{ASTMemoryAllocator, Log};
+use bun_ast::{ASTMemoryAllocator, Loader, Log};
 use bun_paths::resolve_path::posix_to_platform_in_place;
 use bun_resolver::options::{ExternalModules, Packages};
 use bun_resolver::package_json::Status;
@@ -296,6 +296,34 @@ impl SourceProvider for BundlerServices {
 
     fn decode_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
         DataURL::parse(url).ok()??.decode_data().ok()
+    }
+
+    // As `Blob::constructor` takes the type and `Blob::get_loader` reads it.
+    fn loader_of_blob(&self, r#type: Option<&[u8]>) -> Option<Loader> {
+        use crate::options::LoaderExt as _;
+        use bun_http_types::MimeType;
+        let is_taken = |written: &&[u8]| {
+            !written.is_empty() && written.iter().all(|&byte| matches!(byte, 0x20..=0x7E))
+        };
+        let Some(written) = r#type.filter(is_taken) else {
+            return Some(Loader::from_mime_type(MimeType::NONE));
+        };
+        let kept = match MimeType::by_name_static(written) {
+            Some(known) => known.value.to_vec(),
+            None => written.to_ascii_lowercase(),
+        };
+        Some(Loader::from_mime_type(MimeType::MimeType::init(
+            &kept, false, None,
+        )))
+    }
+
+    fn write_url(&self, text: &[u8], base: Option<&[u8]>) -> Option<Vec<u8>> {
+        let text = bun_core::StringView::borrow_utf8(text);
+        let href = match base {
+            None => bun_url::href_from_string(&text),
+            Some(base) => bun_url::join(&bun_core::StringView::borrow_utf8(base), &text),
+        };
+        (!href.is_dead()).then(|| href.to_owned_slice())
     }
 
     fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {

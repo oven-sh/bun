@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunExe } from "harness";
 import { run } from "../../../aot/harness/run";
 
-test("a class stored in `net.Socket` is not the base of an HTTP server's connections", async () => {
+test("a class stored in `net.Socket` before the first connection is the base of an HTTP server's connections", async () => {
   const { stdout, stderr, exitCode } = await run([
     bunExe(),
     "-e",
@@ -22,5 +22,5 @@ test("a class stored in `net.Socket` is not the base of an HTTP server's connect
       });
       `,
   ]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "true false", stderr: "", exitCode: 0 });
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "true true", stderr: "", exitCode: 0 });
 });

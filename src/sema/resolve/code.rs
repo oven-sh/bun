@@ -122,7 +122,6 @@ pub enum CodeResolution<'h> {
 pub enum ComputedUnknown {
     NoPattern,
     NoConstantPrefix,
-    IncompletePackageName,
     PackageImports,
     ConfigPaths,
     ExternalCandidate,

@@ -1216,6 +1216,122 @@ console.log(kept.map(count => count > 10_000 && count * 2 > kept[0]).join());
     240_000,
   );
 
+  // TODO: not yet run on arm64.
+  test.skipIf(!isLinux || isASAN || isArm64)(
+    "a program that runs out of room for the shapes of objects and of address space in one stretch is told once, and fills the room for shapes as far again",
+    async () => {
+      // Once the program has been told, half of what is left for shapes is set aside again. The room ends a second time about 1,200 shapes later, and about 1,000 more fit.
+      const shapes = 1700;
+      const copies = 800;
+      using folder = tempDir("aot-heap-limit", {
+        "program.js": `const kindOf = error =>
+  !(error instanceof RangeError) ? String(error) : error.message.includes("(Structures)") ? "shapes" : error.message.includes("address space") ? "address space" : error.message;
+
+let wide = {};
+for (let member = 0; member < 200; member++) wide["m" + member] = member;
+const spare = [];
+for (let i = 0; i < 200_000; i++) spare.push({});
+const more = new Array(${shapes + copies}).fill(null);
+
+let keep = [];
+let made = 0;
+function fill() {
+  for (;;) {
+    const object = {};
+    object["p" + made++] = 1;
+    keep.push(object);
+  }
+}
+try {
+  fill();
+} catch (error) {
+  console.log("filled:", kindOf(error), keep.length > 10_000);
+}
+
+// All the address space, and then what malloc still holds.
+Bun.gc(true);
+const taken = [];
+for (let size = 64 * 1024 * 1024; size >= 64 * 1024; size /= 2) {
+  try {
+    for (;;) taken.push(new ArrayBuffer(size));
+  } catch {}
+}
+for (let size = 16 * 1024 * 1024; size >= 256; size /= 2) {
+  try {
+    for (;;) taken.push("x".repeat(size));
+  } catch {}
+}
+spare.fill(null);
+
+// A function that has a try of its own is given the error at a call or at the end of a turn of a loop. Here is neither.
+function withoutPause(keep, wide, made) {
+  let object;
+  try {
+${Array.from({ length: shapes }, (_, i) => `    object = {}; object["p" + (made + ${i})] = 1; keep[${i}] = object;`).join("\n")}
+${Array.from({ length: copies }, (_, i) => `    keep[${shapes + i}] = { ...wide };`).join("\n")}
+  } catch (error) {
+    console.log("inside");
+    throw error;
+  }
+}
+try {
+  withoutPause(more, wide, made);
+  for (let turn = 0; turn < 3; turn++) console.log("not told in turn", turn);
+} catch (error) {
+  console.log("both:", kindOf(error), more[${shapes + copies - 1}] !== null);
+}
+made += ${shapes};
+
+for (let attempt = 0; attempt < 8; attempt++) {
+  try {
+    if (taken.length < 100 || spare.length !== 200_000) console.log("not held");
+    taken.fill(null);
+    Bun.gc(true);
+    keep.fill(null);
+    more.fill(null);
+    keep = [];
+    wide = null;
+    Bun.gc(true);
+    break;
+  } catch (error) {
+    if (kindOf(error) !== "address space") console.log("letting go:", kindOf(error));
+  }
+}
+for (let attempt = 0; attempt < 2; attempt++) {
+  try {
+    fill();
+  } catch (error) {
+    console.log("filled again:", kindOf(error), keep.length > 10_000);
+    keep = [];
+  }
+}
+`,
+      });
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
+        String(folder),
+      );
+      expect(built.exitCode).toBe(0);
+      // How much address space is left for the run time itself differs from run to run. A run that ends for lack of it says nothing about shapes.
+      for (let attempt = 0; ; attempt++) {
+        const { stdout, stderr, exitCode } = await run(
+          ["sh", "-c", "ulimit -c 0 && ulimit -v 1048576 && exec ./program"],
+          String(folder),
+          { BUN_JSC_structureHeapSizeInKB: "16384" },
+        );
+        if (attempt < 4 && exitCode && stderr.includes("The limit on address space (ulimit -v) leaves no room"))
+          continue;
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: "filled: shapes true\nboth: shapes true\nfilled again: shapes true\nfilled again: shapes true\n",
+          stderr: "",
+          exitCode: 0,
+        });
+        break;
+      }
+    },
+    240_000,
+  );
+
   test.skipIf(!isLinux)(
     "the range of a Worker that has ended is given back",
     async () => {

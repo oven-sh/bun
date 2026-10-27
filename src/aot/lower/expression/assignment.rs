@@ -246,6 +246,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 Some((object, MemberKey::Computed(key)))
                     if !self.file.is_printed_as_number_or_text(key) =>
                 {
+                    if let Some(name) = self.file.find_position_of_printed_nan(key) {
+                        self.builder.record_position(name);
+                    }
                     self.set_position_to_last_recorded();
                     let position = self.file.member_position(object);
                     self.builder.set_position_for_callers(position);

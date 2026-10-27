@@ -4,6 +4,7 @@ use crate::load::source_provider::{
     Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest, SourceProvider,
 };
 use crate::load::{HOST_ROOT, is_host_path, read_file_bytes};
+use crate::options::EntryText;
 use bun_ast::{ImportKind, Loader};
 use bun_core::fmt::hex_byte_lower;
 use bun_paths::platform::Posix;
@@ -19,6 +20,7 @@ use std::sync::OnceLock;
 
 const FILE_NAMESPACE: &[u8] = b"file";
 pub(super) const DATA_URL_NAMESPACE: &[u8] = b"dataurl";
+pub(super) const ENTRY_TEXT_NAMESPACE: &[u8] = b"entrytext";
 const VIRTUAL_DIRECTORY: &[u8] = b"plugin/";
 const ENCODED_EMPTY_SEGMENT: &[u8] = b"%2f";
 
@@ -172,6 +174,29 @@ impl<'a> PluginModules<'a> {
         Some(virtual_path)
     }
 
+    /// Returns the path of a module with the text.
+    pub(crate) fn add_entry_text(&self, text: &EntryText) -> Vec<u8> {
+        let virtual_path = create_virtual_path(ENTRY_TEXT_NAMESPACE, &text.name);
+        let module = StoredModule {
+            loader: text.loader,
+            is_from_plugin: false,
+            contents: Some(Cow::Owned(text.contents.clone())),
+        };
+        let load = OnceLock::from(ModuleLoad::Loaded(module));
+        self.modules.insert_ref(virtual_path.clone(), load);
+        let name = (ENTRY_TEXT_NAMESPACE.to_vec(), text.name.clone());
+        self.virtual_modules.insert_ref(virtual_path.clone(), name);
+        virtual_path
+    }
+
+    pub(crate) fn loader_of_entry_text(&self, path: &[u8]) -> Option<Loader> {
+        let (namespace, _) = self.virtual_module(path)?;
+        match namespace == ENTRY_TEXT_NAMESPACE {
+            true => Some(self.loaded(path)?.loader),
+            false => None,
+        }
+    }
+
     pub(crate) fn read(&self, path: &[u8], default_loader: Loader) -> ModuleText {
         let cell = match self.modules.get_ref(path) {
             Some(cell) => cell,
@@ -315,7 +340,11 @@ impl<'a> PluginModules<'a> {
         path: &[u8],
         working_directory: &[u8],
     ) -> Option<Vec<u8>> {
-        let (_, plugin_path) = self.virtual_module(path)?;
+        let (namespace, plugin_path) = self.virtual_module(path)?;
+        // `bun run` looks from the working directory for what such a text imports.
+        if namespace == ENTRY_TEXT_NAMESPACE {
+            return Some(working_directory.to_vec());
+        }
         let as_file = from_argument(working_directory, plugin_path);
         Some(dirname::<Posix>(&as_file).to_vec())
     }
@@ -366,6 +395,11 @@ impl<'a> PluginModules<'a> {
             ModuleLoad::Loaded(_) | ModuleLoad::Missing | ModuleLoad::Failed => None,
         }
     }
+}
+
+/// Whether a message names the text so: by its name, or by the path of its module.
+pub(crate) fn is_path_of_entry_text(path: &[u8], name: &[u8]) -> bool {
+    path == name || from_native(path) == create_virtual_path(ENTRY_TEXT_NAMESPACE, name)
 }
 
 fn import_kind(kind: CodeImportKind, form: CodeImportForm) -> ImportKind {

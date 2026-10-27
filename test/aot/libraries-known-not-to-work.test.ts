@@ -363,6 +363,25 @@ const programs: Record<string, Program> = {
     plain: "5\n",
     stopsBuild: true,
   },
+  "next": {
+    files: {
+      "main.js": `
+        const builtIn = Date;
+        function createDate(originalConstructor) {
+          const properties = Object.getOwnPropertyDescriptors(originalConstructor);
+          const newConstructor = Object.defineProperties(function Date1() {
+            if (new.target === undefined) return Reflect.apply(originalConstructor, undefined, arguments);
+            return Reflect.construct(originalConstructor, arguments, new.target);
+          }, properties);
+          Object.defineProperty(originalConstructor.prototype, 'constructor', { value: newConstructor });
+          return newConstructor;
+        }
+        try { Date = createDate(Date); } catch { console.log("Failed to install"); }
+        console.log(Date === builtIn, new Date(0).constructor === Date, new Date(0).toISOString());`,
+    },
+    plain: "false true 1970-01-01T00:00:00.000Z\n",
+    compiled: "Failed to install\ntrue true 1970-01-01T00:00:00.000Z\n",
+  },
 };
 
 const env = { ...bunEnv, NO_COLOR: "1" };

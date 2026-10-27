@@ -27,14 +27,10 @@ class A { get got() { return this.constructor; } }
 class B extends A {}
 console.log(Reflect.get(B.prototype, "got", function () {})(text)());
 //// Reflect-set-class-setter
-//@ not-seen
-//@ todo the compiler sees no use of Function where Reflect.set hands a setter its receiver, so --trim removes it, and the refusal has other words
 //@ evaluated-code-uses-removed-api
 class A { set put(given) { console.log(this.constructor(given)()); } }
 Reflect.set(A.prototype, "put", text, function () {});
 //// Reflect-set-object-setter
-//@ not-seen
-//@ todo the compiler sees no use of Function where Reflect.set hands a setter its receiver, so --trim removes it, and the refusal has other words
 //@ evaluated-code-uses-removed-api
 const o = { a: 1, set put(given) { console.log(this.constructor(given)()); } };
 Reflect.set(o, "put", text, function () {});

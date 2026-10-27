@@ -799,37 +799,25 @@ function callFinishedCallbacks(state: WritableState, err): void {
   }
 }
 
-function getStateForAccessor(stream: $Node.Writable) {
-  const state = stream._writableState as WritableState | $Node.ForeignState | undefined;
-  if (state && $isProxyObject(stream)) {
-    ("unlikely");
-    return stream._writableState as WritableState | $Node.ForeignState | undefined;
-  }
-  return state;
-}
-
 const accessors = {
   closed: {
     __proto__: null,
     get(this: $Node.Writable) {
-      const state = getStateForAccessor(this);
-      return state ? (flagsOf(state) & Flag.Closed) !== 0 : false;
+      return this._writableState ? (flagsOf(this._writableState) & Flag.Closed) !== 0 : false;
     },
   },
 
   destroyed: {
     __proto__: null,
     get(this: $Node.Writable) {
-      const state = getStateForAccessor(this);
-      return state ? (flagsOf(state) & Flag.Destroyed) !== 0 : false;
+      return this._writableState ? (flagsOf(this._writableState) & Flag.Destroyed) !== 0 : false;
     },
     set(this: $Node.Writable, value) {
       // Backward compatibility, the user is explicitly managing destroyed.
-      const state = getStateForAccessor(this);
-      if (!state) return;
+      if (!this._writableState) return;
 
-      if (value) addFlags(state, Flag.Destroyed);
-      else removeFlags(state, Flag.Destroyed);
+      if (value) addFlags(this._writableState, Flag.Destroyed);
+      else removeFlags(this._writableState, Flag.Destroyed);
     },
   },
 

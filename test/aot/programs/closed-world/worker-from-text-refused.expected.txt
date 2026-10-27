@@ -1,2 +1,0 @@
-a Worker from a blob: URL: refused: it isn't in this executable
-a Worker from a data: URL: refused: it isn't in this executable

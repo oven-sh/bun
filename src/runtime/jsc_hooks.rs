@@ -1368,6 +1368,15 @@ fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
 }
 
+fn name_text_of_blob_url(blob_id: &[u8], vm: &VirtualMachine) -> Option<Vec<u8>> {
+    let registry = crate::webcore::object_url_registry::ObjectURLRegistry::singleton();
+    let mut blob = registry.resolve_and_dupe(blob_id, vm.global())?;
+    let loader = blob.get_loader(vm).filter(|_| !blob.needs_to_read_file());
+    let name = loader.map(|it| bun_aot::module_keys::name_of_text(it, blob.shared_view()));
+    blob.deinit();
+    name
+}
+
 /// `Response::get_blob_without_call_frame` /
 /// `Request::get_blob_without_call_frame`. Downcasts
 /// `value` to a `Response`/`Request` (whose data shapes + `BodyMixin` impl live
@@ -1546,6 +1555,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     ssl_ctx_cache_get_or_create,
     create_node_fs,
     has_blob_url,
+    name_text_of_blob_url,
     body_mixin_get_blob,
     process_exit,
     console_on_before_print,
@@ -3707,7 +3717,9 @@ fn get_hardcoded_module(
             if !bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis() {
                 return None;
             }
-            if !matches!(hardcoded, HardcodedModule::BunInternalForTesting)
+            // A compiled program gets the module for Bun's own tests where its build compiled it in. Text beside one has no build.
+            if (!matches!(hardcoded, HardcodedModule::BunInternalForTesting)
+                || bun_core::runs_no_compiled_program())
                 && bun_resolve_builtins::are_internals_sealed()
             {
                 return None;
@@ -3720,7 +3732,10 @@ fn get_hardcoded_module(
             // same as `bun:internal-for-testing`. The tag key uses the
             // generated `internal:`-prefixed canonical specifier (see
             // `generated_resolved_source_tag.rs`).
-            if !bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis() {
+            if !bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
+                || (bun_core::runs_no_compiled_program()
+                    && bun_resolve_builtins::are_internals_sealed())
+            {
                 return None;
             }
             Some(js_synthetic_module(b"internal:test/binding"))

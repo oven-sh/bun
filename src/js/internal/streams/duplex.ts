@@ -143,13 +143,6 @@ Duplex.prototype.destroy = Writable.prototype.destroy;
   }
 }
 
-function getDestroyedForProxy(stream: any) {
-  if (stream._readableState === undefined || stream._writableState === undefined) {
-    return false;
-  }
-  return stream._readableState.destroyed && stream._writableState.destroyed;
-}
-
 const writableAccessors = internals.writableAccessors!;
 ObjectDefineProperties(Duplex.prototype, {
   writable: writableAccessors.writable,
@@ -165,19 +158,16 @@ ObjectDefineProperties(Duplex.prototype, {
   destroyed: {
     __proto__: null,
     get(this: $Node.Duplex) {
-      if ($isProxyObject(this)) {
-        ("unlikely");
-        return getDestroyedForProxy(this);
-      }
-      const readableState = this._readableState as ReadableState | $Node.ForeignState | undefined;
-      const writableState = this._writableState as WritableState | $Node.ForeignState | undefined;
-      if (readableState === undefined || writableState === undefined) {
+      if (this._readableState === undefined || this._writableState === undefined) {
         return false;
       }
-      if (isReadableState(readableState) && isWritableState(writableState)) {
-        return (readableState[kState] & writableState[kState] & Flag.Destroyed) !== 0;
-      }
-      return readableState.destroyed && writableState.destroyed;
+      const readableState = this._readableState as ReadableState | $Node.ForeignState;
+      const isReadableSideDestroyed = isReadableState(readableState)
+        ? (readableState[kState] & Flag.Destroyed) !== 0
+        : readableState.destroyed;
+      if (!isReadableSideDestroyed) return isReadableSideDestroyed;
+      const writableState = this._writableState as WritableState | $Node.ForeignState;
+      return isWritableState(writableState) ? (writableState[kState] & Flag.Destroyed) !== 0 : writableState.destroyed;
     },
     set(this: $Node.Duplex, value) {
       // Backward compatibility, the user is explicitly

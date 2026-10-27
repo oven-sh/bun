@@ -138,9 +138,6 @@ fn prefix_without_known_form_is_unknown() {
         ("./a\\", "", "All(NoConstantPrefix)"),
         ("h", "", "All(NoConstantPrefix)"),
         ("/", "", "All(NoConstantPrefix)"),
-        ("lod", "", "All(IncompletePackageName)"),
-        ("@scope", "", "All(IncompletePackageName)"),
-        ("@scope/", "", "All(IncompletePackageName)"),
         ("#x/", "", "All(PackageImports)"),
         ("https://x/", "", "All(ExternalCandidate)"),
         ("//cdn/", "", "All(ExternalCandidate)"),
@@ -232,10 +229,7 @@ fn unknown_answer_keeps_matching_host_modules() {
         .module("fs", 3)
         .module("node:fs", 3)
         .module("path", 5);
-    assert_eq!(
-        import_pattern(&host, "f", ""),
-        "All(IncompletePackageName), host:3"
-    );
+    assert_eq!(import_pattern(&host, "f", ""), "host:3");
     assert_eq!(
         import_pattern(&host, "", "fs"),
         "All(NoConstantPrefix), host:3"
@@ -244,6 +238,55 @@ fn unknown_answer_keeps_matching_host_modules() {
         import_pattern(&host, "", ""),
         "All(NoConstantPrefix), host:3, host:5"
     );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn start_of_package_name_lists_installed_packages_that_begin_so() {
+    let host = MemoryHost::new(&[
+        ("/p/main.ts", ""),
+        (
+            "/p/node_modules/app-linux-x64/package.json",
+            r#"{"name": "app-linux-x64", "main": "app.node"}"#,
+        ),
+        ("/p/node_modules/app-linux-x64/app.node", ""),
+        (
+            "/p/node_modules/app-darwin-arm64/package.json",
+            r#"{"name": "app-darwin-arm64", "exports": {".": "./lib/app.js", "./extra": "./lib/extra.js"}}"#,
+        ),
+        ("/p/node_modules/app-darwin-arm64/lib/app.js", ""),
+        ("/p/node_modules/app-darwin-arm64/lib/extra.js", ""),
+        ("/p/node_modules/app-darwin-arm64/lib/hidden.js", ""),
+        ("/p/node_modules/apple/index.js", ""),
+        ("/p/node_modules/other/index.js", ""),
+        (
+            "/p/node_modules/@my/app-linux-x64/package.json",
+            r#"{"name": "@my/app-linux-x64", "main": "app.node"}"#,
+        ),
+        ("/p/node_modules/@my/app-linux-x64/app.node", ""),
+        ("/p/node_modules/@my/other/index.js", ""),
+    ]);
+    let darwin = "/p/node_modules/app-darwin-arm64/lib/app.js, /p/node_modules/app-darwin-arm64/lib/extra.js, /p/node_modules/app-darwin-arm64/package.json";
+    let linux =
+        "/p/node_modules/app-linux-x64/app.node, /p/node_modules/app-linux-x64/package.json";
+    assert_eq!(
+        import_pattern(&host, "app-", ""),
+        format!("{darwin}, {linux}")
+    );
+    assert_eq!(import_pattern(&host, "app-linux-", ""), linux);
+    assert_eq!(
+        import_pattern(&host, "app-", "/app.node"),
+        "/p/node_modules/app-linux-x64/app.node"
+    );
+    assert_eq!(
+        import_pattern(&host, "@my/app-", "x64"),
+        "/p/node_modules/@my/app-linux-x64/app.node"
+    );
+    assert_eq!(
+        import_pattern(&host, "@m", "/index.js"),
+        "/p/node_modules/@my/other/index.js"
+    );
+    assert_eq!(import_pattern(&host, "absent-", ""), "");
 }
 
 #[test]

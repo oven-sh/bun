@@ -150,7 +150,7 @@ const neverOffered: Record<string, string> = {
   "it has no name yet":
     "NodeWorker Bunfig CliOptions CompressionFunctions BunZstdCompress BunDeflate CompressionStreams CompressionStream DecompressionStream Histogram LegacyEncodings LibdeflateCompressor MessageChannel NodeZlib NodeZlibBrotli NodeZlibZstd PerformanceTimeline PerformanceMarks PostMessage Tls TlsSockets X509 ZstdCompressor",
   "its built-ins still work when the features used with it are removed":
-    "ElementsToLocaleString ProcessListeners ProcessListenerRemoval ProcessConnected",
+    "ElementsToLocaleString ProcessListeners ProcessListenerRemoval",
 };
 
 test("every feature has a public name, or a reason why it has none", () => {

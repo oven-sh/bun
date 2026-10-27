@@ -12,6 +12,7 @@ extern "C" uint8_t Bun__codeGenerationFromStrings();
 extern "C" bool Bun__isCodeGenerationDisallowedByTrimming();
 extern "C" bool Bun__isCodeGenerationDisallowedByCompiledProgram();
 extern "C" bool Bun__isCodeGenerationFromStringsStrictByFlags();
+extern "C" bool Bun__isCodeGenerationStrictOnlyBesideCompiledProgram();
 #endif
 
 namespace Bun {
@@ -78,6 +79,16 @@ inline bool isCodeGenerationDisallowedByCompiledProgram()
     return false;
 #else
     return Bun__isCodeGenerationDisallowedByCompiledProgram();
+#endif
+}
+
+// A VM that runs nothing of the compiled program, the one of a Worker that starts from text, runs text.
+inline bool isCodeGenerationStrictOnlyBesideCompiledProgram()
+{
+#if defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
+    return false;
+#else
+    return Bun__isCodeGenerationStrictOnlyBesideCompiledProgram();
 #endif
 }
 

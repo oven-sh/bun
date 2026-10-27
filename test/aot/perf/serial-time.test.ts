@@ -1,7 +1,9 @@
 // How much of `bun build --compile --aot` runs on one thread while the other cores wait.
 //
 // With BUN_JSC_logAOTPhaseTimes=1 the compiler prints, for each named phase, the CPU time its coordinating thread spent
-// outside parallel loops. Only the phases of the stages count: the lines of a pass lie inside them. A generated program is
+// outside parallel loops. Only the phases of the stages count: the lines of a pass lie inside them. The flow analysis is
+// the longest of them, so the steps of its solver are judged too, each by itself: they are not added to the sum. A step
+// that runs beside another one is left out, because its thread also takes work of the other. A generated program is
 // built at two sizes. What one more module adds to a phase's serial time is
 // divided by what it adds to the CPU time of the whole build, so the number does not depend on the machine's speed. It is
 // given in parts per million. For scale: one walk over every value of the program on one thread is about 500, and between
@@ -9,6 +11,7 @@
 //
 //   bun test test/aot/perf/serial-time.test.ts                   prints the table; fails if a phase takes more than twice
 //                                                                its number in ./serial-time.<os>-<arch>.json plus 500,
+//                                                                a step of the solver more than twice plus 60,
 //                                                                or if all phases together do, in each of four measurements
 //   AOT_PERF=update bun test test/aot/perf/serial-time.test.ts   rewrites that file
 //
@@ -26,6 +29,8 @@ const pinsPath = join(import.meta.dir, `serial-time.${process.platform}-${proces
 const sizes = [150, 600];
 const runs = 2;
 const slack = 500;
+const slackOfStep = 60;
+const isStepOfSolver = (name: string) => name.startsWith("flow step | ");
 
 function moduleSource(i: number): string {
   const imports = i > 1 ? [...new Set([(i * 7 + 3) % i, i - 1])].sort((a, b) => a - b) : i === 1 ? [0] : [];
@@ -76,12 +81,22 @@ function program(modules: number): Record<string, string> {
   const files: Record<string, string> = {};
   for (let i = 0; i < modules; i++) files[`m${i}.ts`] = moduleSource(i);
   const main = Array.from({ length: modules }, (_, i) => `import * as M${i} from "./m${i}";`);
+  main.push('import { EventEmitter } from "node:events";');
   main.push("let total = 0;", "const keep: unknown[] = [];");
   for (let first = 0; first < modules; first += 50) {
     const some = Array.from({ length: Math.min(50, modules - first) }, (_, k) => first + k);
     main.push(`function k${first}(a: unknown[]) { ${some.map(i => `a.push(M${i});`).join(" ")} }`, `k${first}(keep);`);
     main.push(`total += M${first}.f${first}_9(3);`);
   }
+  // Some steps of the flow analysis have work only where a value nobody knows is read and an object that a library constructs is handed out.
+  main.push(
+    "const emitter = new EventEmitter();",
+    'emitter.on("given", (value: any) => { total += value.id; });',
+    "(globalThis as any).emitter = emitter;",
+    'const given: any = JSON.parse(process.env.GIVEN ?? "{}");',
+    "total += given.id + String(given.name).length;",
+    "given.take(emitter);",
+  );
   main.push("console.log(total, keep.length);");
   files["main.ts"] = main.join("\n") + "\n";
   return files;
@@ -108,6 +123,11 @@ function build(folder: string, logs: boolean): Build {
     const found =
       /^AOT phase times: (?!pass )(.+?) \| wall [-\d.e]+ ms \| .*\| outside parallel loops ([-\d.e]+) ms \|/.exec(line);
     if (found) phases.set(found[1], (phases.get(found[1]) ?? 0) + Number(found[2]));
+    const step =
+      /^AOT (flow step \| .+?) \| [-\d.e]+ ms \| this thread's CPU [-\d.e]+ ms \| outside parallel loops ([-\d.e]+) ms$/.exec(
+        line,
+      );
+    if (step && !step[1].includes("beside")) phases.set(step[1], (phases.get(step[1]) ?? 0) + Number(step[2]));
   }
   return { cpu: Number(built.resourceUsage!.cpuTime.total) / 1000, phases, hash: Bun.hash(readFileSync(executable)) };
 }
@@ -131,7 +151,7 @@ function measure(): Record<string, number> {
   const now: Record<string, number> = { "all phases": 0 };
   for (const [name, time] of large.phases) {
     now[name] = Math.max(0, Math.round(((time - (small.phases.get(name) ?? 0)) / cpu) * 1e6));
-    now["all phases"] += now[name];
+    if (!isStepOfSolver(name)) now["all phases"] += now[name];
   }
   return now;
 }
@@ -140,7 +160,8 @@ test("compile/aot/perf/serial-time", async () => {
   const isUpdate = process.env.AOT_PERF === "update";
   const isJudged = (isUpdate || existsSync(pinsPath)) && !isMusl;
   const stored: Record<string, number> = isJudged && !isUpdate ? JSON.parse(readFileSync(pinsPath, "utf8")) : {};
-  const isOver = (now: Record<string, number>, name: string) => now[name] > 2 * (stored[name] ?? 0) + slack;
+  const isOver = (now: Record<string, number>, name: string, pins = stored) =>
+    now[name] > 2 * (pins[name] ?? 0) + (isStepOfSolver(name) ? slackOfStep : slack);
   const now = await measureUntilWithinBounds(
     "serial-time",
     measure,
@@ -155,7 +176,7 @@ test("compile/aot/perf/serial-time", async () => {
   if (!isJudged)
     return void console.error(`NOT JUDGED: ${isMusl ? "the pins are those of glibc" : `${pinsPath} is missing`}`);
   const worse = names
-    .filter(name => now[name] > 2 * (pins[name] ?? 0) + slack)
+    .filter(name => isOver(now, name, pins))
     .map(name => `${name}: ${now[name]}, pinned ${pins[name] ?? 0}`);
   expect(worse).toEqual([]);
 }, 1_200_000);

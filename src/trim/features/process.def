@@ -21,7 +21,7 @@ feature Ipc "IPC with a parent or child process"
 
 feature ProcessIpc "process.send, process.disconnect and process.channel"
 
-feature ProcessInformation "process.versions, release, config, features, allowedNodeEnvironmentFlags, revision, mainModule, finalization, assert, ref, unref, loadEnvFile, getBuiltinModule, setSourceMapsEnabled, setUncaughtExceptionCaptureCallback and hasUncaughtExceptionCaptureCallback"
+feature ProcessInformation "process.versions, release, config, features, allowedNodeEnvironmentFlags, revision, mainModule, finalization, assert, ref, unref, loadEnvFile, setSourceMapsEnabled, setUncaughtExceptionCaptureCallback and hasUncaughtExceptionCaptureCallback"
 
 feature ProcessControl "process.chdir, umask, title, getuid, setuid and the other user and group ID functions"
 
@@ -54,5 +54,3 @@ feature ConsoleConstructor "console.Console"
 feature ProcessListeners "process.on, once, addListener, prependListener and prependOnceListener"
 
 feature ProcessListenerRemoval "process.off, removeListener and removeAllListeners"
-
-feature ProcessConnected "process.connected"

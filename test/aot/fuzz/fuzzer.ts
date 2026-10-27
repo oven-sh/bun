@@ -392,6 +392,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     const modes = new Map<string, { mode: Mode; members: Generated[] }>();
     for (const generated of usable) {
       for (const mode of bed.modes(generated)) {
+        if (mode.isForSharedBuilds && (usable.length === 1 || generated.standsAlone)) continue;
         if (generated.base && !baseIsSame.get(inMode(generated.base, mode))) bump(counts.skipped, `base differs in mode ${mode.name}`);
         else (modes.get(mode.name) ?? modes.set(mode.name, { mode, members: [] }).get(mode.name)!).members.push(generated);
       }

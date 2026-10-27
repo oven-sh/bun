@@ -397,9 +397,9 @@ impl PendingValue {
                             global_this.readable_stream_to_array_buffer(readable.value)
                         }
                         Action::GetBytes => global_this.readable_stream_to_bytes(readable.value),
-                        // The JSON of a stream is parsed out of its text.
-                        Action::GetText | Action::GetJSONSource => {
-                            global_this.readable_stream_to_text(readable.value)
+                        Action::GetText => global_this.readable_stream_to_text(readable.value),
+                        Action::GetJSONSource => {
+                            global_this.readable_stream_to_json_source(readable.value)
                         }
                         Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
                         Action::GetFormData(form_data) => 'brk: {

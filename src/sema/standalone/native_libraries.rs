@@ -3,6 +3,7 @@
 use bun_alloc::WTFStringImplStruct;
 use bun_boringssl_sys::{ENGINE, EVP_MD, EVP_MD_CTX, SHA256_CTX, env_md_ctx_md_data};
 use bun_core::ffi::zeroed;
+use bun_core::fmt::js_string_to_number;
 use core::ffi::{c_int, c_uint, c_void};
 use core::sync::atomic::{AtomicI32, Ordering};
 
@@ -382,6 +383,58 @@ unsafe extern "C" fn Bun__collateUTF16(
     _b_len: usize,
 ) -> i32 {
     panic!("this program has no ICU")
+}
+
+// What Bun's transpiler asks of the rest of Bun. The compiler's front end runs it on the files that it lowers.
+
+/// `operationMathPow`
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn Bun__JSC__operationMathPow(base: f64, exponent: f64) -> f64 {
+    if exponent.is_nan() || (base.abs() == 1.0 && exponent.is_infinite()) {
+        return f64::NAN;
+    }
+    base.powf(exponent)
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn JSC__jsToNumber(text: *const u8, len: usize) -> f64 {
+    // SAFETY: the caller passes the pointer and the length of a slice that it holds.
+    js_string_to_number(unsafe { bytes(text, len) })
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn Bun__linux_trace_init() -> c_int {
+    0
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn Bun__linux_trace_emit(
+    _event_name: *const core::ffi::c_char,
+    _duration_ns: i64,
+) -> c_int {
+    0
+}
+
+macro_rules! not_asked_by_the_front_end {
+    ($($name:ident)*) => {$(
+        #[unsafe(no_mangle)]
+        #[linkage = "weak"]
+        extern "C" fn $name() -> ! {
+            panic!("{}: this program has no JavaScript engine", stringify!($name))
+        }
+    )*};
+}
+
+not_asked_by_the_front_end! {
+    URL__getFileURLString
+    __bun_macro_context_call
+    __bun_dispatch__TranspilerCacheImpl__Jsc__get
 }
 
 #[cfg(test)]

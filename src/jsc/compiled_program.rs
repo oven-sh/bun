@@ -44,6 +44,7 @@ unsafe extern "C" {
     fn Bun__AOT__admitsUnknownJavaScript(image: Bytes) -> bool;
     fn Bun__AOT__loadsCodeOutsideImage(image: Bytes) -> bool;
     fn Bun__AOT__omitsFunctionSource(image: Bytes) -> bool;
+    safe fn Bun__AOT__useNoImageOnThisThread() -> bool;
     safe fn Bun__AOT__imageCode() -> Bytes;
     safe fn Bun__AOT__takePagesForTablesOfFirstThread();
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
@@ -69,7 +70,15 @@ unsafe extern "C" {
     fn mi_is_read_from_environment(name_in_lower_case: *const core::ffi::c_char) -> bool;
 }
 
+/// The program that this thread runs.
 pub fn compiled_program() -> Option<&'static CompiledProgram> {
+    if bun_core::runs_no_compiled_program() {
+        return None;
+    }
+    program_of_executable()
+}
+
+pub(crate) fn program_of_executable() -> Option<&'static CompiledProgram> {
     standalone_module_graph()?.compiled_program()
 }
 
@@ -153,11 +162,11 @@ pub fn can_load_unused_library_modules() -> bool {
 }
 
 pub fn find_entry_point_by_source_path(path: &[u8]) -> Option<&'static CompiledEntryPoint> {
-    compiled_program()?.entry_point_by_source_path(path)
+    program_of_executable()?.entry_point_by_source_path(path)
 }
 
 pub fn find_entry_point_by_module_path(path: &[u8]) -> Option<&'static CompiledEntryPoint> {
-    compiled_program()?.entry_point_by_module_path(path)
+    program_of_executable()?.entry_point_by_module_path(path)
 }
 
 pub fn module_key(entry: &'static CompiledEntryPoint) -> &'static [u8] {
@@ -564,7 +573,31 @@ fn use_image_on_this_thread(program: &'static CompiledProgram, image: &'static [
 }
 
 pub(crate) fn has_image_for_each_entry_point() -> bool {
-    compiled_program().is_some_and(|program| program.images().nth(1).is_some())
+    program_of_executable().is_some_and(|program| program.images().nth(1).is_some())
+}
+
+/// Whether a Worker that starts from text runs it apart from the compiled program. That takes the interpreter, the transpiler and the
+/// text of Bun's own modules. Where the program itself loads code that no build has seen, such a Worker is one more realm of the program.
+pub(crate) fn runs_worker_of_text_apart() -> bool {
+    let Some(program) = program_of_executable() else {
+        return false;
+    };
+    let admits_inspector = admitted_code_of(program)
+        .is_some_and(|admitted| admitted.contains(AdmittedCode::INSPECTOR));
+    !admits_inspector
+        && !loads_code_outside_image(program)
+        && bun_removable_features::RuntimeRequirement::WholeRuntime.is_available()
+        && bun_core::code_generation_from_strings_by_flags()
+            != bun_core::CodeGenerationFromStrings::Strict
+}
+
+/// On the thread of a Worker that starts from text, before its VM is created. False where this Bun runs nothing but compiled code.
+pub(crate) fn use_no_image_on_this_thread() -> bool {
+    let uses_none = Bun__AOT__useNoImageOnThisThread();
+    if uses_none {
+        bun_core::run_no_compiled_program_on_this_thread();
+    }
+    uses_none
 }
 
 /// The image of the program that a Worker runs whose entry point resolves to `path`.
@@ -580,7 +613,7 @@ pub(crate) fn image_of_worker(path: Option<&[u8]>) -> &'static [u8] {
 
 /// On the thread of a Worker, before its VM is created.
 pub(crate) fn use_image_of_worker(image: &'static [u8]) {
-    if let Some(program) = compiled_program() {
+    if let Some(program) = program_of_executable() {
         use_image_on_this_thread(program, image);
     }
 }

@@ -823,6 +823,27 @@ export const shapes: Shape[] = [
       "main.ts": `const list = [1, 2, 3];\nlist.forEach(x => ${"type T = A extends B ? ".repeat(size)}1${" : C".repeat(size + 1)});\nconsole.log(list.length);\n`,
     }),
   },
+  // Each name asks whether the iterator has ended, and every way to that question knows the answer. The names taken so far are all read at the end.
+  ...(
+    [
+      ["names that a list pattern takes from a typed array or a list", (index: number) => `e${index}`, "", ""],
+      ["names with defaults that a list pattern takes from a typed array or a list", (index: number) => `e${index} = ${index}`, "", ""],
+      ["names that a list pattern takes from a typed array or a list, in front of a rest element", (index: number) => `e${index}`, ", ...more", " + more.length"],
+    ] as const
+  ).map(
+    ([name, element, rest, readsRest]): Shape => ({
+      name,
+      counted: "names",
+      size: 1000,
+      entry: "main.js",
+      isExcludedFromCombinedBuild: true,
+      write: size => ({
+        "main.js":
+          `function apart(list) {\n  const [first, ${upTo(size, element).join(", ")}${rest}] = list;\n  return [first, ${upTo(size, index => `e${index}`).join(", ")}].join()${readsRest};\n}\n` +
+          `console.log(apart(new Uint8Array(${size})).length, apart([${upTo(size, index => index).join(", ")}]).length, apart([]).length);\n`,
+      }),
+    }),
+  ),
   packagesWithOwnCompilerOptions,
 ];
 

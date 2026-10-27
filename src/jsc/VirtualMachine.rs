@@ -2621,6 +2621,9 @@ impl VirtualMachine {
         teardown_log!("teardown: script forbidden, resources cancelled, off-thread work back");
 
         // ---- C. JSC VM -------------------------------------------------------
+        if let Some(worker) = vm.worker_ref() {
+            worker.will_wait_for_nothing_more();
+        }
         // SAFETY: fn contract (statement-scoped exclusive access).
         unsafe {
             (*this).regular_event_loop.release_without_global();
@@ -2953,6 +2956,8 @@ pub struct RuntimeHooks {
     pub create_node_fs: unsafe fn(vm: *mut VirtualMachine) -> *mut c_void,
     /// `ObjectURLRegistry` lookup. Registry lives in `bun_runtime::webcore`.
     pub has_blob_url: fn(blob_id: &[u8]) -> bool,
+    /// `bun_aot::module_keys::name_of_text` of the text behind an object URL.
+    pub name_text_of_blob_url: fn(blob_id: &[u8], vm: &VirtualMachine) -> Option<Vec<u8>>,
     /// `Response::get_blob_without_call_frame` /
     /// `Request::get_blob_without_call_frame`. If
     /// `value` downcasts to a `Response` or `Request` (both live in
@@ -4377,6 +4382,12 @@ impl VirtualMachine {
         bun_core::is_code_generation_disallowed_by_compiled_program()
             && bun_core::code_generation_from_strings_by_flags()
                 == bun_core::CodeGenerationFromStrings::Allowed
+    }
+
+    #[cfg(not(bun_disallow_code_generation_from_strings))]
+    #[unsafe(export_name = "Bun__isCodeGenerationStrictOnlyBesideCompiledProgram")]
+    pub(crate) extern "C" fn is_strict_only_beside_compiled_program_for_cpp() -> bool {
+        bun_core::is_strict_only_beside_compiled_program()
     }
 
     #[cfg(not(bun_disallow_code_generation_from_strings))]

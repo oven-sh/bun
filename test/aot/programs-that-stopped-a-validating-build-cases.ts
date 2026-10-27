@@ -136,6 +136,10 @@ const stopped: Record<string, string[]> = {
     "sql-typed-rows-optional-and-wide",
     "sql-typed-rows-unboxed-columns",
   ],
+  "definitions-by-descriptor": [
+    "a-description-holds-what-stands-elsewhere-in-the-call-that-takes-it",
+    "the-own-properties-of-object-prototype-are-defined-on-an-object-without-a-prototype",
+  ],
   "function-prototypes": [
     "a-bound-plain-function-is-constructed-and-the-function-went-through-a-call",
     "one-literal-string-is-bound-and-the-function-is-constructed",

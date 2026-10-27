@@ -85,6 +85,10 @@ const tooSlowBesideOthers = new Set([
   "arrays/a-spread-of-an-array-longer-than-any-storage-is-out-of-memory-at-once.js",
   "async-and-generators/a-generator-that-has-begun-where-the-stack-ends-is-also-left.js",
 ]);
+// It needs 3.2 GB alone.
+const tooLargeBesideOthers = new Set([
+  "strings/texts-too-long-that-nobody-reads-made-by-built-ins-and-in-many-places.js",
+]);
 const isOneFile = (name: string) => /^[^/]+\/[^/]+(?<!\.d)\.(ts|tsx|js)$/.test(name);
 
 /** By their paths alone: what a program says is read only where its group is taken, and what a script writes is written there. */
@@ -259,6 +263,7 @@ const joinable = (listed: string[]) =>
   taken(listed, () => true).filter(
     path =>
       isOneFile(inPrograms(path).replaceAll("\\", "/")) &&
+      !tooLargeBesideOthers.has(inPrograms(path).replaceAll("\\", "/")) &&
       !filesBeside.some(
         suffix => existsSync(path.replace(/\.[a-z]+$/, suffix)) && keepsOutOfGroups(path.replace(/\.[a-z]+$/, suffix)),
       ),

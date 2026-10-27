@@ -591,6 +591,18 @@ export function toSorted<T>(this: T[], comparator: unknown): T[] {
       sortDoubles(doubles, length, comparator);
       return $truncateNewArray<T>(doubles as unknown as T[], length);
     }
+  } else if ($arrayStorageKind(this) === $arrayStorageInt32) {
+    const doubles: number[] = $newDoubleArray(length);
+    let index = 0;
+    for (; index < length; index++) {
+      const value = $getContiguousIndex<number | undefined>(this, index);
+      if (value === undefined) break;
+      $putDoubleIndex(doubles, index, value);
+    }
+    if (index === length) {
+      sortDoubles(doubles, length, comparator);
+      return $truncateNewArray<T>(doubles as unknown as T[], length);
+    }
   }
   const from: T[] = $newContiguousArray<T>(length);
   let count = 0;

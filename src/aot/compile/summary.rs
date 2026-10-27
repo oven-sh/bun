@@ -2,7 +2,7 @@ use super::{EntryPointPaths, FolderPaths, LoadedBuild, LoadedProject};
 use crate::ir::{InParallel, for_each_mut};
 use crate::link::ProgramModule;
 use crate::load::module_paths::with_separators_of_host;
-use crate::load::{EntryPointKind, PerProject, ProgramFile, Sources};
+use crate::load::{EntryPointKind, PerProject, ProgramFile, Sources, is_host_path};
 use crate::report::{ModuleSource, SourceTexts};
 use bun_sema::program::Files;
 use bun_sema::util::SharedSort;
@@ -13,12 +13,17 @@ pub(super) fn collect_entry_point_paths(project: &LoadedProject<'_, '_>) -> Vec<
     let entry_points = sources.entry_points().iter();
     entry_points
         .filter(|it| matches!(it.kind, EntryPointKind::Main | EntryPointKind::Additional))
-        .map(|it| EntryPointPaths {
-            public_path: sources.module_paths(it.file).public_path.to_vec(),
-            source_path: with_separators_of_host(
-                to_native(files.module(it.file).file_name()),
-                cfg!(windows),
-            ),
+        .map(|it| {
+            let public_path = sources.module_paths(it.file).public_path.to_vec();
+            let file_name = files.module(it.file).file_name();
+            EntryPointPaths {
+                source_path: match is_host_path(file_name) {
+                    // A text that the program holds is nowhere on the disk.
+                    true => public_path.clone(),
+                    false => with_separators_of_host(to_native(file_name), cfg!(windows)),
+                },
+                public_path,
+            }
         })
         .collect()
 }

@@ -12,7 +12,7 @@ use crate::diagnostics::InternalError;
 use crate::load::loaders::{
     BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path, to_host_loader,
 };
-use crate::load::plugin_modules::DATA_URL_NAMESPACE;
+use crate::load::plugin_modules::{DATA_URL_NAMESPACE, ENTRY_TEXT_NAMESPACE};
 use crate::load::sources::{ModulePaths, PluginModuleName, SourceKind};
 use crate::module_keys::path_of_form;
 use crate::options::PathOptions;
@@ -120,18 +120,13 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
             let loader = requested_loader(input.host_loader, input.file_name);
             return path_of_form(&module.path, loader).into();
         }
+        Some(module) if *module.namespace == *ENTRY_TEXT_NAMESPACE => return module.path.clone(),
         Some(module) => plugin_public_path(&module.namespace, &module.path),
         None => match input.kind {
             SourceKind::RuntimeModule(runtime_module) => {
                 let runtime_module = context.manifest.module(runtime_module.registry_id());
                 let specifier = runtime_module.and_then(|module| module.specifier.as_deref());
-                // `bun run` shows a module of src/js/thirdparty under the name of its file.
-                let file = runtime_module.and_then(|module| module.path.as_deref());
-                if let Some(name) = file.and_then(|it| it.strip_prefix(b"thirdparty/")) {
-                    let end = strings::last_index_of_char(name, b'.').unwrap_or(name.len());
-                    return name[..end].into();
-                }
-                // It shows a module of src/js/internal as internal:<name>.
+                // `bun run` shows a module of src/js/internal as internal:<name>.
                 return match (
                     specifier,
                     specifier.and_then(|it| it.strip_prefix(b"internal/")),
@@ -169,6 +164,20 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
         true => path_of_form(&path, requested_loader(input.host_loader, input.file_name)).into(),
         false => path.into(),
     }
+}
+
+/// `bun run` shows a module of src/js/thirdparty under the name of its file, and its loader knows the module by the specifier.
+pub(super) fn compute_name_of_third_party_file(
+    manifest: &Manifest,
+    kind: SourceKind,
+) -> Option<Box<[u8]>> {
+    let SourceKind::RuntimeModule(module) = kind else {
+        return None;
+    };
+    let file = manifest.module(module.registry_id())?.path.as_deref()?;
+    let name = file.strip_prefix(b"thirdparty/")?;
+    let end = strings::last_index_of_char(name, b'.').unwrap_or(name.len());
+    Some(name[..end].into())
 }
 
 fn requested_loader(host_loader: HostLoader, file_name: &[u8]) -> Loader {
@@ -247,7 +256,7 @@ pub(super) fn compute_display_path(project_root: &[u8], native_path: &[u8]) -> B
     relative_path.map_or_else(|| native_path.into(), Vec::into_boxed_slice)
 }
 
-fn compute_relative_path(directory: &[u8], native_path: &[u8]) -> Option<Vec<u8>> {
+pub(super) fn compute_relative_path(directory: &[u8], native_path: &[u8]) -> Option<Vec<u8>> {
     if !fits_path_buffer(directory) || !fits_path_buffer(native_path) {
         return None;
     }
@@ -265,7 +274,7 @@ fn fits_path_buffer(path: &[u8]) -> bool {
     path.len() + MAX_NORMALIZATION_GROWTH <= MAX_PATH_BYTES
 }
 
-fn compute_module_path(paths: &PathOptions, relative_path: &[u8]) -> Vec<u8> {
+pub(super) fn compute_module_path(paths: &PathOptions, relative_path: &[u8]) -> Vec<u8> {
     let mut path = paths.module_prefix.clone();
     append_sanitized_path(&mut path, relative_path);
     // `__dirname` in an executable for Windows is `B:\~BUN\root`, and a program compares what it joins to that with the path of a module.
@@ -676,8 +685,12 @@ mod tests {
             ..program_file(1, b"/$bun/js/thirdparty/a_b.js", BY_NAME)
         };
         assert_eq!(
+            compute_name_of_third_party_file(&manifest, input.kind).as_deref(),
+            Some(&b"a_b"[..])
+        );
+        assert_eq!(
             public_path_with_manifest(&manifest, &FileMaps::default(), input),
-            b"a_b"
+            b"@a/b"
         );
     }
 

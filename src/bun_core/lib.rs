@@ -252,6 +252,8 @@ pub use code_generation::{
     disallow_code_generation_for_compiled_program,
     disallow_code_generation_for_removed_interpreter, disallow_code_generation_from_strings,
     is_code_generation_disallowed_by_compiled_program, is_code_generation_disallowed_by_trimming,
+    is_strict_only_beside_compiled_program, run_no_compiled_program_on_this_thread,
+    runs_no_compiled_program,
 };
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`

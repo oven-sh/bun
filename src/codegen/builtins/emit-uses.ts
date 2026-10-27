@@ -30,6 +30,9 @@ function usesOf(lines: readonly ModelFeatureUse[]): BuiltinFeatureUse[] {
   return Array.from(isConditional, ([feature, isConditionalUse]) => ({ feature, isConditional: isConditionalUse }));
 }
 
+const hasUnconditionalUse = (lines: readonly ModelFeatureUse[]) =>
+  lines.some(line => line.overload === null && line.condition === null);
+
 export function builtinUsesOf(model: TableModel, target: TargetPlatform): BuiltinUses {
   const moduleOfRoot = findModulesByRoot(model.modules);
   const entries = model.builtins
@@ -45,6 +48,7 @@ export function builtinUsesOf(model: TableModel, target: TargetPlatform): Builti
         nativeSymbols: [...nativeSymbols],
         ...(creationSymbol === null ? {} : { creationSymbol }),
         hasHiddenRoot: isHiddenRootComponent(builtin.path[0]),
+        ...(hasUnconditionalUse(featureUses) && !featureUses.some(use => use.isGuard) ? { isReadByName: true } : {}),
       };
     });
   return { entries, namedByEngine: namedBuiltinsOf(model).map(({ id }) => id) };

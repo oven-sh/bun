@@ -10,6 +10,7 @@
 #include "webcore/JSWebSocket.h"
 #include "webcore/WebSocket.h"
 #include "node/JSNodeHTTPServerSocket.h"
+#include <wtf/StackTrace.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringImpl.h>
@@ -96,6 +97,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_readFreedStringUnderASAN, (JSC::JSGlobalObje
 #else
     return JSValue::encode(jsUndefined());
 #endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_nativeStackTrace, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSValue::encode(jsString(globalObject->vm(), WTF::StackTrace::captureStackTrace(31)->toString()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_describeRejectedValuesWithoutScript, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

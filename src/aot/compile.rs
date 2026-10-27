@@ -53,13 +53,14 @@ use crate::ir::Program;
 use crate::ir::generated::{FeatureUseKind, UnseenCodeCause};
 use crate::known_helpers::KnownHelpers;
 use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_the_other};
+use crate::load::plugin_modules::is_path_of_entry_text;
 use crate::load::source_provider::SourceProvider;
 use crate::load::sources::parsed_source;
 use crate::load::worker_files::WorkerFile;
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
-use crate::options::{Options, PathOptions};
+use crate::options::{EntryText, Options, PathOptions};
 use crate::report::{ModuleLocator, SourceTexts};
 use crate::statistics::{LimitId, LimitValues, Stage, StageClock, StatisticId, Statistics};
 use bun_ast::{Kind, Loader, Log, Msg};
@@ -119,7 +120,7 @@ pub struct Compilation {
 /// What the programs that are compiled say about the Workers that they start.
 #[derive(Default)]
 pub(crate) struct StartedWorkers {
-    /// What `find_embedded_files_that_start_workers` found, and the `copies` that the engine saw passed to `new Worker()`.
+    /// What `find_code_that_starts_workers` found, and the `copies` that the engine saw passed to `new Worker()`.
     pub files: Vec<WorkerFile>,
     /// What `find_embedded_code_files` found.
     pub copies: Vec<WorkerFile>,
@@ -571,24 +572,147 @@ fn compile_with_options(
 ) -> Result<Compilation, BuildFailed> {
     let said_before = (log.msgs.len(), log.warnings, log.errors);
     let mut with_worker_files: Option<Options<'_>> = None;
+    let mut left_out = TextsLeftOut::default();
     loop {
         let options = with_worker_files.as_ref().unwrap_or(options);
         let compiled = match with_worker_files {
-            None => compile_written_entry_points(options, provider, log)?,
-            Some(_) => compile_program(options, ProgramPlace::Only, provider, log)?,
+            None => Ok(compile_written_entry_points(options, provider, log)?),
+            Some(_) => compile_program(options, ProgramPlace::Only, provider, log),
         };
         let splits = with_worker_files.is_none() && can_have_several_programs(options);
-        let found = match add_programs_of_worker_files(options, compiled, splits, provider, log)? {
-            Ok(compiled) => return Ok(compiled),
-            Err(found) => found,
+        let longer = match compiled {
+            Ok(compiled) => {
+                let added = add_programs_of_worker_files(
+                    options,
+                    compiled,
+                    splits,
+                    &mut left_out,
+                    provider,
+                    log,
+                )?;
+                match added {
+                    Ok(compiled) => {
+                        left_out.said.append_to(log);
+                        return Ok(compiled);
+                    }
+                    Err(found) => {
+                        let named = found.iter().filter(|file| file.is_named_by_path);
+                        (left_out.named_by_paths)
+                            .extend(named.map(|file| file.source_path.clone()));
+                        options_with_worker_files(options, &found)
+                    }
+                }
+            }
+            Err(failure) => {
+                let texts = &options.load.entry_texts;
+                if !left_out.take_texts_with_errors(log, said_before.0, texts, &failure)
+                    && !left_out.take_files_named_by_paths(log, said_before.0, &failure)
+                {
+                    return Err(failure);
+                }
+                options_without_entry_points(options, &left_out.names)
+            }
         };
         log.msgs.truncate(said_before.0);
         (log.warnings, log.errors) = (said_before.1, said_before.2);
         provider.clear_embedded_files();
-        let longer = options_with_worker_files(options, &found);
         remove_program_files_of_further_entry_points(&longer);
         with_worker_files = Some(longer);
     }
+}
+
+/// The texts and the files named by paths that Workers start from and that are no programs. `bun run` says what is wrong with one where the Worker starts, so the build goes on without it.
+#[derive(Default)]
+struct TextsLeftOut {
+    names: Vec<Vec<u8>>,
+    /// What the build says about them when it ends.
+    said: Log,
+    /// `WorkerFile::source_path` of the files named by paths that are entry points of the one program of the build.
+    named_by_paths: Vec<Vec<u8>>,
+}
+
+impl TextsLeftOut {
+    /// False: the build has failed for another reason. `first`: where the messages of the failed program begin.
+    fn take_texts_with_errors(
+        &mut self,
+        log: &mut Log,
+        first: usize,
+        texts: &[EntryText],
+        failure: &BuildFailed,
+    ) -> bool {
+        let file_of = |message: &Msg| message.data.location.as_ref().map(|it| it.file.clone());
+        let text_of = |message: &Msg| {
+            let file = file_of(message)?;
+            texts
+                .iter()
+                .find(|text| is_path_of_entry_text(&file, &text.name))
+        };
+        let mut errors = log.msgs[first..].iter().filter(|it| it.kind == Kind::Err);
+        if failure.is_internal_error || !errors.clone().all(|it| text_of(it).is_some()) {
+            return false;
+        }
+        let Some(first_error) = errors.next() else {
+            return false;
+        };
+        debug_assert!(text_of(first_error).is_some());
+        for mut message in log.msgs.split_off(first) {
+            let Some(text) = text_of(&message) else {
+                continue;
+            };
+            if !self.names.contains(&text.name) {
+                self.names.push(text.name.clone());
+            }
+            if let Some(location) = &mut message.data.location {
+                location.file = text.name.clone().into();
+            }
+            self.say_as_warning(message);
+        }
+        true
+    }
+
+    /// Nothing says which of them the errors come from, so the one program of the build is compiled without any. False: it holds none.
+    fn take_files_named_by_paths(
+        &mut self,
+        log: &mut Log,
+        first: usize,
+        failure: &BuildFailed,
+    ) -> bool {
+        if failure.is_internal_error || self.named_by_paths.is_empty() {
+            return false;
+        }
+        self.names.append(&mut self.named_by_paths);
+        self.take_errors(log, first);
+        true
+    }
+
+    fn take_errors(&mut self, log: &mut Log, first: usize) {
+        for message in log.msgs.split_off(first) {
+            if message.kind == Kind::Err {
+                self.say_as_warning(message);
+            }
+        }
+    }
+
+    fn say_as_warning(&mut self, mut message: Msg) {
+        message.kind = match message.kind {
+            Kind::Err => Kind::Warn,
+            kind => kind,
+        };
+        self.said.warnings += u32::from(message.kind == Kind::Warn);
+        self.said.add_msg(message);
+    }
+}
+
+fn options_without_entry_points<'a>(options: &Options<'a>, names: &[Vec<u8>]) -> Options<'a> {
+    let kept: Vec<usize> = (0..options.entry_points.len())
+        .filter(|&index| !names.contains(&options.entry_points[index]))
+        .collect();
+    let mut shorter = options_with_entry_points(options, &kept);
+    shorter
+        .load
+        .entry_texts
+        .retain(|text| !names.contains(&text.name));
+    shorter
 }
 
 fn options_with_worker_files<'a>(options: &Options<'a>, files: &[WorkerFile]) -> Options<'a> {
@@ -600,6 +724,7 @@ fn options_with_worker_files<'a>(options: &Options<'a>, files: &[WorkerFile]) ->
         longer.entry_points.push(file.source_path.clone());
         let names = &mut longer.paths.entry_point_names;
         names.push(name.unwrap_or(&file.embedded_path).to_vec());
+        longer.load.entry_texts.extend(file.entry_text());
     }
     longer
 }
@@ -611,6 +736,7 @@ fn add_programs_of_worker_files(
     options: &Options<'_>,
     mut first: Compilation,
     splits: bool,
+    left_out: &mut TextsLeftOut,
     provider: &dyn SourceProvider,
     log: &mut Log,
 ) -> Result<Result<Compilation, Vec<WorkerFile>>, BuildFailed> {
@@ -625,6 +751,7 @@ fn add_programs_of_worker_files(
     }
     let mut pending: VecDeque<WorkerFile> = files.into();
     let mut found: Vec<WorkerFile> = Vec::new();
+    let mut texts_not_started: Vec<WorkerFile> = Vec::new();
     let mut are_one_program = !splits;
     while let Some(file) = pending.pop_front() {
         let mut entry_points = first.summary.entry_points.iter();
@@ -632,10 +759,15 @@ fn add_programs_of_worker_files(
             || found.iter().any(|it| it.source_path == file.source_path);
         // A guess is worth one small program, not a second build of everything else.
         let is_guess = file.is_guess;
+        let is_named_by_path = file.is_named_by_path;
         let index = first.summary.entry_points.len();
         // The host loads what `preload` names into the global of the Worker.
         let must_be_one_program =
             are_one_program || (first.started_workers.writes_preload && file.has_options);
+        if left_out.names.contains(&file.source_path) {
+            texts_not_started.push(file);
+            continue;
+        }
         if is_known {
             continue;
         }
@@ -669,6 +801,27 @@ fn add_programs_of_worker_files(
                 continue;
             }
             Err(failure) if failure.is_one_program => None,
+            Err(failure)
+                if left_out.take_texts_with_errors(
+                    log,
+                    said_before,
+                    &own.load.entry_texts,
+                    &failure,
+                ) =>
+            {
+                (log.warnings, log.errors) = counted_before;
+                texts_not_started.extend(found.pop());
+                continue;
+            }
+            Err(failure) if is_named_by_path && !failure.is_internal_error => {
+                left_out.take_errors(log, said_before);
+                (log.warnings, log.errors) = counted_before;
+                left_out
+                    .names
+                    .extend(found.last().map(|file| file.source_path.clone()));
+                texts_not_started.extend(found.pop());
+                continue;
+            }
             Err(failure) => return Err(failure),
             Ok(mut compiled) => compiled.programs.pop().map(|it| it.1),
         };
@@ -695,6 +848,12 @@ fn add_programs_of_worker_files(
         return Ok(Err(found));
     }
     warn_about_worker_files_left_out(&mut first, log);
+    texts_not_started.sort_unstable();
+    texts_not_started.dedup();
+    for text in &texts_not_started {
+        let place = text.started_at.as_ref();
+        log_diagnostic_at(&mut left_out.said, Code::WorkerTextNotCompiled, &[], place);
+    }
     Ok(Ok(first))
 }
 

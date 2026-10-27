@@ -44,7 +44,7 @@ export function entriesById(uses: BuiltinUses): Map<number, BuiltinEntry> {
 
 // The one use that guards the pointer of an entry (`Guards` in src/codegen/builtins/guards.ts).
 export function guardFeatureOf(entry: BuiltinEntry): FeatureName | undefined {
-  return entry.uses.find(use => !use.isConditional)?.feature;
+  return entry.isReadByName ? undefined : entry.uses.find(use => !use.isConditional)?.feature;
 }
 
 export function featuresWithDeclaredUse(uses: BuiltinUses, model: FeatureModel): Set<number> {

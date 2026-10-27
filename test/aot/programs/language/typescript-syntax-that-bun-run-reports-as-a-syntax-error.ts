@@ -47,6 +47,7 @@ namespace N8 { var a = 1; } class N8 {}
 namespace N9 { export var a = 1; } function N9() {}
 import i2 = require("node:fs"); import i2 = require("node:fs");
 import i3 = require("node:fs"); let i3;
+import let = require("node:fs");
 namespace N10 { this; }
 enum E7 { A = this }
 namespace N11 { new.target; }

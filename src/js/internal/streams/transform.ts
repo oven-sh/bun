@@ -189,9 +189,14 @@ Transform.prototype._write = function (
     }
 
     if (val != null) {
-      const push = this.push;
-      if (push === internals.pushingMethod) internals.pushToReadable!(this, this._readableState, val, undefined);
-      else push.$call(this, val);
+      if (IS_COMPILED_AHEAD_OF_TIME) {
+        const push = this.push;
+        if (push === internals.pushingMethod) internals.pushToReadable!(this, this._readableState, val, undefined);
+        else if (typeof push === "function") push.$call(this, val);
+        else this.push(val);
+      } else {
+        this.push(val);
+      }
     }
 
     if ((rState[kState] & ReadableFlag.Ended) !== 0) {

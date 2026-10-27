@@ -61,6 +61,12 @@ pub(super) fn resolve_code_imports<'s, 'r>(
 }
 
 impl<'s, 'r> LoadedCode<'s, 'r> {
+    pub(super) fn forget_implied(&mut self) {
+        let of_sites = self.resolutions.iter().map(|&it| files_of(it).count());
+        self.targets.truncate(of_sites.sum());
+        self.implied.clear();
+    }
+
     pub(super) fn index_targets_by_specifier(&mut self) {
         self.targets_by_specifier.clear();
         let mut target = 0;

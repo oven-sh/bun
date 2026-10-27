@@ -62,6 +62,10 @@ pub(super) fn declaration_symbol<S: Storage>(bound: &BoundIn<S>, decl: Decl) -> 
         Decl::Class(c) => bound.class_symbol[c.idx()],
         Decl::Enum(e) => bound.enum_symbol[e.idx()],
         Decl::Module(m) => bound.module_symbol[m.idx()],
+        Decl::ImportEquals(import) => {
+            let symbols = &bound.runtime.declarations.import_equals_symbols;
+            symbols.get(import.idx()).copied().unwrap_or(SymbolId::NONE)
+        }
         _ => SymbolId::NONE,
     }
 }

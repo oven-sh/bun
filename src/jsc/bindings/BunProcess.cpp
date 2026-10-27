@@ -3240,6 +3240,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lex
     };
 
     JSValue holder;
+    bool isStreamLeftUnmade = false;
     for (unsigned index : { 1u, 2u }) {
         // Nothing of the program has run since the first read of `process`, unless the first stream was read the long way: the second read finds the same.
         if (!holder) {
@@ -3266,8 +3267,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lex
         if (auto* process = dynamicDowncast<Process>(holder)) {
             JSValue own = process->getDirect(vm, name);
             bool isStillToBeMade = !own && !process->staticPropertiesReified();
-            if (isStillToBeMade)
+            if (isStillToBeMade) {
+                isStreamLeftUnmade = true;
                 continue;
+            }
             // The stream that a read has made lies on the object as a plain property.
             if (isPlainValue(own))
                 held = own;
@@ -3282,7 +3285,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lex
         if (isSame)
             return JSValue::encode(jsBoolean(true));
     }
-    return JSValue::encode(jsBoolean(false));
+    return JSValue::encode(isStreamLeftUnmade ? jsUndefined() : jsBoolean(false));
 }
 
 #if OS(WINDOWS)

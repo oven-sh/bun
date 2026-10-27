@@ -602,9 +602,8 @@ fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
         FlowGaveUp | EvaluatesText | RunsUnseenCode | RunsMachineCode => program_features
             .iter()
             .filter(|feature| {
-                let is_added_for_cause = *feature == Feature::ProcessInformation
-                    || (matches!(cause, RunsUnseenCode | RunsMachineCode)
-                        && *feature == Feature::NativeAddons);
+                let is_added_for_cause = matches!(cause, RunsUnseenCode | RunsMachineCode)
+                    && *feature == Feature::NativeAddons;
                 let has_to_be_named = cause != FlowGaveUp && only_when_named.contains(*feature);
                 is_added_for_cause
                     || (feature.is_engine()

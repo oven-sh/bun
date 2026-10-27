@@ -1097,6 +1097,12 @@ impl JSGlobalObject {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToJSON(self, value))
     }
 
+    pub fn readable_stream_to_json_source(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || {
+            ZigGlobalObject__readableStreamToJSONSource(self, value)
+        })
+    }
+
     pub fn readable_stream_to_blob(&self, value: JSValue) -> JsResult<JSValue> {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToBlob(self, value))
     }
@@ -1449,6 +1455,10 @@ unsafe extern "C" {
     -> JSValue;
     safe fn ZigGlobalObject__readableStreamToJSON(this: &JSGlobalObject, value: JSValue)
     -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToJSONSource(
+        this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JSValue;
     safe fn ZigGlobalObject__readableStreamToFormData(
         this: &JSGlobalObject,
         value: JSValue,

@@ -1297,12 +1297,13 @@ function cppSourceForClass(type: ClassType, guards: Guards): string {
   const { name } = type;
   const classGuard = guardOfClass(type, guards);
   /** A member the table gives no feature of its own has the one of its class, and the entry of neither. */
-  const guardOfMember = (isStatic: boolean, member: string): EntryPointGuard =>
+  // Not a static accessor: reading it gives its value with or without the feature of the class.
+  const guardOfMember = (isStatic: boolean, member: string, isAccessor = false): EntryPointGuard =>
     guards.ofPath(textOfClassMember(name, isStatic ? "static" : "proto", member, guards)) ??
-    (classGuard && { feature: classGuard.feature });
+    (isStatic && isAccessor ? null : classGuard && { feature: classGuard.feature });
   const records: string[] = [];
-  const pointer = (isStatic: boolean, member: string, symbol: string) => {
-    const guard = guardOfMember(isStatic, member);
+  const pointer = (isStatic: boolean, member: string, symbol: string, isAccessor = false) => {
+    const guard = guardOfMember(isStatic, member, isAccessor);
     const table = `JS${name}${isStatic ? "Constructor" : "Prototype"}TableValues`;
     if (guard)
       records.push(tableEntryRecord(removableFeatures(), table, guard.feature, "Throw", symbol, guard.builtin));
@@ -1328,7 +1329,7 @@ function cppSourceForClass(type: ClassType, guards: Guards): string {
     return row(
       getter.name,
       `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${type.forBind || (getter instanceof Getter && getter.isStatic) ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${getter instanceof Getter ? attributes(getter.configurable, getter.enumerable) : attributes()}`,
-      `JSC::HashTableValue::GetterSetterType, ${pointer(isStatic, getter.name, isStatic ? getterSymbolName(type, getter) : getterHostFunctionName(type, getter))}, ${assignable ? pointer(isStatic, getter.name, setterHostFunctionName(type, getter)) : "0"}`,
+      `JSC::HashTableValue::GetterSetterType, ${pointer(isStatic, getter.name, isStatic ? getterSymbolName(type, getter) : getterHostFunctionName(type, getter), true)}, ${assignable ? pointer(isStatic, getter.name, setterHostFunctionName(type, getter), true) : "0"}`,
     );
   };
   const builtinCodeGenerator = (builtin: Builtin) =>

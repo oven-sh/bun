@@ -37,7 +37,7 @@ try {
   });
 } catch (error) {
   const frames = ((error as Error).stack ?? "").split("\n").slice(0, 3);
-  lines.push(frames.map(frame => frame.trim().replace(/\(.*[\\/]/, "(")).join(" | "));
+  lines.push(frames.map(frame => frame.trim().replace(/\(.*[\\/]/, "(").replace(/native:\d+:\d+/, "native")).join(" | "));
 }
 const grid = new Array(2).fill(0).map((_, row) => new Array(3).fill(0).map((_, column) => row * 3 + column));
 grid[1]![2] = -1;

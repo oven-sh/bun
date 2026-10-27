@@ -2582,6 +2582,8 @@ pub enum BufferActionTag {
     Blob,
     Bytes,
     Json,
+    /// [`AnyBlob::to_json_source`].
+    JsonSource,
 }
 
 impl BufferAction {

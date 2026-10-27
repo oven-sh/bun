@@ -1,4 +1,4 @@
-use super::{FileAnalysis, FileInputs, has_live_top_level_await};
+use super::{FileAnalysis, FileInputs, FoldedAgain, has_live_top_level_await};
 use crate::atom::Interner;
 use crate::bind::{BindOptions, Bound, bind};
 use crate::fold::{FoldError, FoldInputs, FoldResult, fold_file};
@@ -52,12 +52,34 @@ pub(super) fn run_again<'s>(
     previous: &FileAnalysis<'s>,
     atoms: &Interner<'s>,
     arena: &'s Arena,
-) -> Option<FileAnalysis<'s>> {
-    let (folded, scan) = fold_bound_file(hir, bound, inputs, file, atoms, arena);
+) -> Option<FoldedAgain<'s>> {
+    let folded = fold_file(hir, bound, inputs, file, atoms, arena);
+    // Most constants decide no branch and name no file.
+    let has_same_import_sites = previous.errors.is_empty()
+        && folded.errors.is_empty()
+        && previous.pending_macro_calls.is_empty()
+        && (folded.decisions).has_same_code_and_specifiers(&previous.decisions);
+    if has_same_import_sites {
+        let analysis = FileAnalysis {
+            decisions: folded.decisions,
+            strings_over_limit: folded.strings_over_limit,
+            relies_on_running_before_calls: folded.relies_on_running_before_calls,
+            imported_names: folded.imported_names,
+            ..*previous
+        };
+        return Some(FoldedAgain {
+            analysis,
+            has_same_import_sites,
+        });
+    }
+    let scan = scan_folded_file(hir, bound, inputs, file, &folded, atoms, arena);
     let decision = decide_format(hir, bound, &folded, &scan, file);
     let is_same_tree =
         decision.format == previous.module_format && scan.pending_macro_calls.is_empty();
-    is_same_tree.then(|| create_analysis(hir, &folded, &scan, &decision, arena))
+    is_same_tree.then(|| FoldedAgain {
+        analysis: create_analysis(hir, &folded, &scan, &decision, arena),
+        has_same_import_sites,
+    })
 }
 
 fn decide_format<'s>(
@@ -114,6 +136,20 @@ fn fold_bound_file<'s>(
     arena: &'s Arena,
 ) -> (FoldResult<'s>, ImportScan<'s>) {
     let folded = fold_file(hir, bound, inputs, file, atoms, arena);
+    let scan = scan_folded_file(hir, bound, inputs, file, &folded, atoms, arena);
+    (folded, scan)
+}
+
+#[inline(never)]
+fn scan_folded_file<'s>(
+    hir: &File<'s>,
+    bound: &Bound<'s>,
+    inputs: &FoldInputs<'s>,
+    file: &FileInputs<'s>,
+    folded: &FoldResult<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> ImportScan<'s> {
     let scan_inputs = ScanInputs {
         hir,
         bound,
@@ -122,8 +158,7 @@ fn fold_bound_file<'s>(
         file,
         atoms,
     };
-    let scan = collect_import_sites(&scan_inputs, arena);
-    (folded, scan)
+    collect_import_sites(&scan_inputs, arena)
 }
 
 fn join_errors<'s>(

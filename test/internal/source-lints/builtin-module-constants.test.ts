@@ -41,7 +41,7 @@ function declaredConstants() {
 test("a constant that several built-in modules declare has one value", () => {
   const constants = declaredConstants();
   expect(constants.get("HEADER_DATE")).toEqual(
-    new Map([["1 << 0", ["node/_http_outgoing.ts", "node/_http_server.ts"]]]),
+    new Map([["1 << 0", ["ahead-of-time/node/_http_outgoing.ts", "ahead-of-time/node/_http_server.ts"]]]),
   );
 
   const differing: Record<string, string[]> = {};

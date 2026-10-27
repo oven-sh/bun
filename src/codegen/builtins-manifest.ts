@@ -15,7 +15,7 @@ import {
   sourceFiles,
   specifierOf,
 } from "./builtins-manifest-model";
-import { encodeNumbers } from "./bundled-positions";
+import { encodeNumbers, moveBundledNamesToSecondText } from "./bundled-positions";
 import { writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { define, globalsToPrefix } from "./replacements";
 
@@ -162,7 +162,16 @@ for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
   if (line === "") continue;
   if (kind !== "positions") {
     // The names are those of the text that was bundled.
-    if (locate(file) === path.join(import.meta.dir, "../js", file)) lines.push(line);
+    const bundled = path.join(import.meta.dir, "../js", file);
+    if (locate(file) === bundled) lines.push(line);
+    else
+      lines.push(
+        ...moveBundledNamesToSecondText(
+          [line],
+          fs.readFileSync(locate(file), "utf8"),
+          fs.readFileSync(bundled, "utf8"),
+        ),
+      );
     continue;
   }
   const positions = Buffer.from(encoded, "base64");

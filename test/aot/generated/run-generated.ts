@@ -14,6 +14,7 @@
 //   AOT_GENERATED_INSIDE=all bun test ..                     the text of every program stands inside something (../fuzz/the-whole-file-inside-something.ts)
 //   AOT_GENERATED_OPENS=all bun test ..                      every program opens the world (../fuzz/the-world-is-open.ts)
 //   AOT_GENERATED_READS_LESS=all bun test ..                 every program takes the name and the message of what it has caught out of `${caught}` (the form `caught` of ../tools/let-values-be-something-else.ts)
+//   AOT_GENERATED_LAUNDERS=all bun test ..                   what every program works on has come back from text that nobody knows (../fuzz/what-a-program-works-on-comes-back-from-text-nobody-knows.ts)
 //   AOT_GENERATED_IN_ONE_EXECUTABLE=1 bun test ..            an executable for each program, also where programs share one
 import { afterAll, describe, expect, test } from "bun:test";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
@@ -21,6 +22,7 @@ import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { dirname, join, sep } from "path";
 import { withCollectionsInsideCalls } from "../fuzz/collections-inside-calls";
 import { withFunctionsTheHostCouldCall } from "../fuzz/functions-the-host-could-call";
+import { Random } from "../fuzz/random";
 import { places, withTheWholeFileInside } from "../fuzz/the-whole-file-inside-something";
 import { opensTheWorld, withTheWorldOpen } from "../fuzz/the-world-is-open";
 import { withTurnsNobodyKnows } from "../fuzz/turns-nobody-knows";
@@ -322,9 +324,25 @@ export function generated(title: string, given: Generated[]) {
     return tool.write(tool.read(name, text), "caught@0-0") ?? text;
   }
 
+  // Its objects, functions, classes or keys, or its receivers, arguments, callees or results, or all of them: what a build could prove about them it can only expect.
+  // No run draws it by itself: an error of the engine quotes the text that failed, an executable quotes less of it (docs/compiler/compatibility.mdx), and a program that prints such words prints others then.
+  const isLaundered = (program: Generated) =>
+    process.env.AOT_GENERATED_LAUNDERS === "all" &&
+    !staysAsItIs(program) &&
+    !program.mayBeRefused &&
+    !program.groupsMayBeRefused &&
+    !program.printsInThisOrder &&
+    !program.referenceIsCompiled;
+  function withWhatItWorksOnLaundered(program: Generated, name: string, text: string): string {
+    // It loads TypeScript, which few files need.
+    const { laundered, whatIsLaundered } = require("../fuzz/what-a-program-works-on-comes-back-from-text-nobody-knows");
+    const draw = Bun.hash.crc32(`${title} ~ ${program.name}`);
+    return laundered(name, text, whatIsLaundered[draw % whatIsLaundered.length], new Random(draw)) ?? text;
+  }
+
   function write(program: Generated, folder: string) {
     const { file, text, files, links, entryPoints = [] } = program.make();
-    // The changes: a program keeps its short loops as loops, collects inside its calls, hands its functions to the host, stands inside a function, a try, a loop or the like, or opens the world.
+    // The changes: a program keeps its short loops as loops, collects inside its calls, hands its functions to the host, stands inside a function, a try, a loop or the like, or opens the world. Where a run is told to, it works on what has come back from text that nobody knows.
     const isChanged = !staysAsItIs(program);
     const keepsItsLoops = isChanged && isDrawn(program, "turns", Bun.hash.crc32(`${title} ${program.name}`) % 2 === 1);
     const collectsInsideCalls =
@@ -349,6 +367,7 @@ export function generated(title: string, given: Generated[]) {
       let written = content;
       if (/\.[cm]?[jt]s$/.test(name)) {
         const loader = name.endsWith("ts") ? "ts" : "js";
+        if (isLaundered(program) && !name.endsWith(".d.ts") && !name.includes("node_modules/")) written = withWhatItWorksOnLaundered(program, name, written); // prettier-ignore
         if (readsLessOffWhatItHasCaught(program)) written = withLessReadOffWhatIsCaught(name, written);
         if (keepsItsLoops) written = withTurnsNobodyKnows(written);
         if (collectsInsideCalls) written = withCollectionsInsideCalls(written, loader);
@@ -609,7 +628,8 @@ export function generated(title: string, given: Generated[]) {
               );
               // A compiler that stops says so and ends its build with 1, as a refusal does. It is none.
               const isRefused = build.exitCode === 1 && !/internal compiler error/.test(build.stderr);
-              if (program.mayBeUnjudgeable && isRefused && /^error: TS\d+:/m.test(build.stderr)) return;
+              // What has come back from text that nobody knows has lost what the checker knew of it, and a type may not hold any more.
+              if ((program.mayBeUnjudgeable || isLaundered(program)) && isRefused && /^error: TS\d+:/m.test(build.stderr)) return; // prettier-ignore
               const fromSources =
                 program.modeFailsToday || program.groupsMayBeRefused || program.isOnlyCompiled
                   ? undefined

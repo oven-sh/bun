@@ -79,7 +79,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
     if (!isStrictFrame) {
         auto* function = calleeFunction(callee);
-        if (function ? !function->isHostFunction() : isCompiled && !isCompiledHostFunction && frame.codeType() == JSC::FunctionCode) {
+        if (isCompiled ? !isCompiledHostFunction && frame.codeType() == JSC::FunctionCode : function && !function->isHostFunction()) {
             m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
         }
     }

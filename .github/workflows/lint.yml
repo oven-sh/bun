@@ -46,10 +46,11 @@ jobs:
           tar -xzf "$RUNNER_TEMP/engine.tar.gz" -C vendor/WebKit --strip-components=1 --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
       - name: Typecheck the built-in modules
         # The code generators write the types src/js/builtins.d.ts references (build/types) and the enums the dev
-        # server's sources import (src/runtime/bake/generated.ts).
+        # server's sources import (src/runtime/bake/generated.ts). A module with a second text in src/js/ahead-of-time is
+        # checked as the compiler reads it.
         run: |
           bun run build:types
-          bun x tsc --noEmit -p src/js/tsconfig.json
+          bun src/codegen/check-types-of-modules.ts
       - name: Typecheck the rest of src
         # The code generators, the class definitions and the other build-time TypeScript, then the dev server.
         run: |

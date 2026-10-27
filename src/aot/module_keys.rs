@@ -2,6 +2,7 @@
 
 use bun_ast::Loader;
 use bun_paths::fs::PathName;
+use std::hash::{DefaultHasher, Hasher};
 
 pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[
     (b".cjs", Loader::Js),
@@ -112,6 +113,31 @@ pub fn is_url_with_text(path: &[u8]) -> bool {
     path.starts_with(b"data:")
 }
 
+/// The path is no path: it is the name of a text that a Worker starts from.
+pub fn is_name_of_text(path: &[u8]) -> bool {
+    path.starts_with(b"data:") || path.starts_with(b"blob:")
+}
+
+/// The name under which an executable holds the code that a Worker starts from through an object URL. It follows from the text and from how the text is read, and it has the form of such a URL.
+pub fn name_of_text(loader: Loader, text: &[u8]) -> Vec<u8> {
+    let half = |which: u8| {
+        let mut hasher = DefaultHasher::new();
+        hasher.write(&[which, loader as u8]);
+        hasher.write(text);
+        hasher.finish()
+    };
+    let (first, second) = (half(0), half(1));
+    format!(
+        "blob:{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        first >> 32,
+        (first >> 16) & 0xffff,
+        first & 0xffff,
+        second >> 48,
+        second & 0xffff_ffff_ffff,
+    )
+    .into_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,6 +155,15 @@ mod tests {
         assert_eq!(places(path, b"json"), Some((as_json, true)));
         assert_eq!(places(path, b"text"), Some((as_text.clone(), false)));
         assert_eq!(places(path, b"txt"), Some((as_text, false)));
+    }
+
+    #[test]
+    fn the_name_of_a_text_has_the_form_of_an_object_url() {
+        let name = name_of_text(Loader::Tsx, b"postMessage(1)");
+        assert_eq!(name.len(), b"blob:".len() + 36);
+        assert_eq!(name, name_of_text(Loader::Tsx, b"postMessage(1)"));
+        assert_ne!(name, name_of_text(Loader::Js, b"postMessage(1)"));
+        assert_ne!(name, name_of_text(Loader::Tsx, b"postMessage(2)"));
     }
 
     #[test]

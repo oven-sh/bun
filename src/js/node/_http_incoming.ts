@@ -6,123 +6,31 @@
 const Readable = require("internal/streams/readable");
 // callback-style stream.finished (returns a cleanup function)
 const finished = require("internal/streams/end-of-stream");
-const streamState = require("internal/streams/state");
-const { advanceFlags, addFlags, removeFlags, isReadableState, internals, createUnreadByteState } = streamState;
-const kState: typeof streamState.kState = streamState.kState;
-const EventEmitterPrototype = require("node:events").prototype;
-const kDecoderValue: typeof streamState.kDecoderValue = streamState.kDecoderValue;
-const { errorOrDestroy } = require("internal/streams/destroy");
-const shared = require("internal/shared");
-const {
-  nextTick: originalNextTick,
-  enqueueTick1,
-  queueTick1,
-  queueTick2,
-  queueTick3,
-  ring,
-  ticksAreUnseen,
-  ticksAreUnhooked,
-} = require("internal/process/next_tick_queue");
 
-const http = require("internal/http");
 const {
+  abortedSymbol,
+  eofInProgress,
+  kHandle,
+  kHandoffResponse,
+  kHeaderSource,
+  noBodySymbol,
   emitErrorNextTickIfErrorListenerNT,
   NodeHTTPBodyReadState,
-  NodeHTTPResponseAbortEvent,
   emitEOFIncomingMessage,
-  emitEOFIncomingMessageOuter,
-  clearServerParserIncoming,
   onDataIncomingMessage,
-  takeRequestTrailers,
-} = http;
-// A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
-const kCapture: typeof shared.kCapture = shared.kCapture;
-const kShapeMode: typeof shared.kShapeMode = shared.kShapeMode;
-const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
-const abortedSymbol: typeof http.abortedSymbol = http.abortedSymbol;
-const eofInProgress: typeof http.eofInProgress = http.eofInProgress;
-const kHandle: typeof http.kHandle = http.kHandle;
-const kHandoffResponse: typeof http.kHandoffResponse = http.kHandoffResponse;
-const kHeaderSource: typeof http.kHeaderSource = http.kHeaderSource;
-const noBodySymbol: typeof http.noBodySymbol = http.noBodySymbol;
-const kReqShouldKeepAlive: typeof http.kReqShouldKeepAlive = http.kReqShouldKeepAlive;
+  kAbortController,
+} = require("internal/http");
 
 const ObjectDefineProperty = Object.defineProperty;
-const ObjectGetPrototypeOf = Object.getPrototypeOf;
-const ObjectHasOwn = Object.hasOwn;
-const ProcessNextTick: (callback: (...args: any[]) => void, ...args: unknown[]) => void = process.nextTick;
-const constructReadable = internals.constructReadable!;
-const resumeOnNextTick = internals.resumeOnNextTick!;
-const endOnNextTick = internals.endOnNextTick!;
-const preallocatedEvents = internals.preallocatedEvents!;
-const finishReadOfNothing = internals.finishReadOfNothing!;
-const finishResume = internals.finishResume!;
-const readMoreLater = internals.readMoreLater!;
-const readMoreOnNextTick = internals.readMoreOnNextTick!;
-const emitReadableNow = internals.emitReadableNow!;
-const finishEnd = internals.finishEnd!;
-const { read, push, resume, removeAllListeners } = internals.readableMethods!;
-const { destroy, closeAfterThrow } = internals.destroyMethods!;
-const {
-  emit,
-  storeEmitWithRejectionCapture,
-  listenerCount,
-  removeAllListeners: eventEmitterRemoveAllListeners,
-} = shared.originals.eventEmitter!;
-const ReadablePrototype: object = Readable.prototype;
-const StreamPrototype = Object.getPrototypeOf(Readable.prototype) as { removeAllListeners: unknown };
-
-const kAutoDestroy = 1 << 2;
-const kEmitClose = 1 << 3;
-const kDestroyed = 1 << 4;
-const kClosed = 1 << 5;
-const kCloseEmitted = 1 << 6;
-const kErrored = 1 << 7;
-const kConstructed = 1 << 8;
-const kEnded = 1 << 9;
-const kEndEmitted = 1 << 10;
-const kReading = 1 << 11;
-const kSync = 1 << 12;
-const kNeedReadable = 1 << 13;
-const kEmittedReadable = 1 << 14;
-const kReadableListening = 1 << 15;
-const kResumeScheduled = 1 << 16;
-const kReadingMore = 1 << 18;
-const kDataEmitted = 1 << 19;
-const kDefaultUTF8Encoding = 1 << 20;
-const kDecoder = 1 << 21;
-const kEncoding = 1 << 22;
-const kHasFlowing = 1 << 23;
-const kFlowing = 1 << 24;
-const kHasPaused = 1 << 25;
-const kDataListening = 1 << 27;
-
-const kFlagsUntouched = kAutoDestroy | kEmitClose | kConstructed | kSync | kReadingMore | kDefaultUTF8Encoding;
-const kFlagsResumed = kFlagsUntouched | kHasFlowing | kFlowing | kHasPaused | kResumeScheduled;
-const kFlagsReading = (kFlagsResumed | kReading | kNeedReadable) & ~(kSync | kReadingMore | kResumeScheduled);
-const kFlagsEnded = (kFlagsReading | kEnded) & ~(kReading | kNeedReadable);
-const kFlagsDestroyed = kFlagsEnded | kEndEmitted | kDestroyed;
-const kFlagsClosed = kFlagsDestroyed | kClosed;
-
-const kDecoding = kDecoder | kEncoding;
-const kBodyResumed = kFlagsResumed | kDataListening;
-const kBodyAsked = (kBodyResumed | kReading | kNeedReadable) & ~kReadingMore;
-const kBodyReading = kFlagsReading | kDataListening;
-const kBodyGiven = (kBodyReading & ~kReading) | kDataEmitted;
-const kBodyReadingOn = kBodyGiven | kReading;
-const kBodyEnded = (kBodyGiven & ~kNeedReadable) | kEnded;
-const kBodyAwaited =
-  (kFlagsUntouched | kReadableListening | kNeedReadable | kHasFlowing | kReading) & ~(kSync | kReadingMore);
-const kBodyBuffered = (kBodyAwaited & ~(kReading | kNeedReadable)) | kEmittedReadable | kReadingMore;
-const kBodyAnnounced = (kBodyBuffered & ~kEmittedReadable) | kNeedReadable;
-const kDestroysItself = kAutoDestroy | kConstructed | kEnded | kEndEmitted;
-const kDestroysItselfMask = kDestroysItself | kDestroyed | kClosed | kCloseEmitted | kErrored;
-
-const ObjectPrototypeLookupGetter: (this: unknown, name: PropertyKey) => (() => unknown) | undefined = (
+const ObjectPrototypeLookupGetter: (this: unknown, name: PropertyKey) => Function | undefined = (
   Object.prototype as any
 ).__lookupGetter__;
 
 const kHeaders = Symbol("kHeaders");
+// Cache slot for the server dispatcher's keep-alive decision (stamped once
+// per request in _http_server.ts); declared in the constructor so the stamp
+// never shape-transitions the request.
+const kReqShouldKeepAlive = Symbol("kReqShouldKeepAlive");
 const kHeadersDistinct = Symbol("kHeadersDistinct");
 const kHeadersCount = Symbol("kHeadersCount");
 // Cache slot for the lazy req.rawHeaders. The bytes live on kHeaderSource
@@ -131,154 +39,99 @@ const kRawHeaders = Symbol("kRawHeaders");
 const kTrailers = Symbol("kTrailers");
 const kTrailersDistinct = Symbol("kTrailersDistinct");
 const kTrailersCount = Symbol("kTrailersCount");
-const kAbortController = Symbol.for("kAbortController");
 
-declare global {
-  namespace $Node {
-    interface IncomingMessage extends Readable {
-      /** `null` once the stream destroyer has taken the connection away from the request. */
-      socket: HttpSocket | null | undefined;
-      connection: HttpSocket | null | undefined;
-      client: HttpSocket | null | undefined;
-      /** `null` until the parser has filled it in. */
-      httpVersionMajor: number | null;
-      httpVersionMinor: number | null;
-      httpVersion: string | null;
-      complete: boolean;
-      rawHeaders: string[];
-      rawTrailers: string[];
-      headers: IncomingHttpHeaders;
-      headersDistinct: Dictionary<string[]>;
-      trailers: IncomingHttpHeaders;
-      trailersDistinct: Dictionary<string[]>;
-      joinDuplicateHeaders: boolean | null | undefined;
-      upgrade: boolean | null;
-      aborted: boolean;
-      readonly signal: AbortSignal;
-      /** Of a request that a server got. */
-      url: string;
-      method: string | null;
-      /** Of a response that a client got. */
-      statusCode: number | null;
-      statusMessage: string | null;
-      req?: ClientRequest;
-      parser?: HTTPParser | HttpServerParserShim | null;
-      _consuming: boolean;
-      _dumped: boolean;
-      _closed: boolean;
-      /** Only where something made the message a `Duplex`. */
-      writable?: boolean;
-      setTimeout(msecs: number, callback?: () => void): this;
-      _addHeaderLines(headers: string[] | undefined, n: number): void;
-      _addHeaderLine(field: string, value: string, dest: IncomingHttpHeaders): void;
-      _addHeaderLineDistinct(field: string, value: string, dest: Dictionary<string[]>): void;
-      _dumpAndCloseReadable(): void;
-      _dump(): void;
-      [kHeaders]: IncomingHttpHeaders | null;
-      [kHeadersDistinct]?: Dictionary<string[]>;
-      [kHeadersCount]: number;
-      [kRawHeaders]: string[] | null;
-      [kTrailers]: IncomingHttpHeaders | null;
-      [kTrailersDistinct]?: Dictionary<string[]>;
-      [kTrailersCount]: number;
-      [kAbortController]: AbortController | null;
-    }
+type IncomingMessage = import("node:http").IncomingMessage;
 
-    type IncomingMessageConstructor = typeof IncomingMessage;
-  }
-}
-
-function readStart(socket: $Node.HttpSocket | null | undefined) {
+function readStart(socket) {
   if (socket && !socket._paused && socket.readable) socket.resume();
 }
 
-function readStop(socket: $Node.HttpSocket | null | undefined) {
+function readStop(socket) {
   if (socket) socket.pause();
 }
 
-function onIncomingMessageResumeNodeHTTPResponse(this: $Node.IncomingMessage) {
+function onIncomingMessageResumeNodeHTTPResponse(this: IncomingMessage) {
   const handle = this[kHandle];
   if (handle && !this.destroyed) handle.resume();
 }
 
-function IncomingMessage(
-  this: $Node.IncomingMessage,
-  socket?: $Node.HttpSocket | null | typeof kHandle,
-  nativeUrl?: string,
-  nativeMethod?: string,
-  nativeHandle?: $Node.NodeHTTPResponse,
-  nativeHasBody?: boolean,
-  nativeSocket?: $Node.HttpServerSocket,
-  nativeHighWaterMark?: number,
-) {
-  const isFromNativeServer = socket === kHandle;
-  const isUnreadFromNativeServer = isFromNativeServer && nativeHighWaterMark !== undefined;
+/* Abstract base class for ServerRequest and ClientResponse. */
+function IncomingMessage(socket) {
   this[abortedSymbol] = false;
   this[eofInProgress] = false;
   this._consuming = false;
+  // Flag for when we decide that this message cannot possibly be
+  // read by the user, so there's no point continuing to handle it.
   this._dumped = false;
   this.complete = false;
   this._closed = false;
   this[kHeaders] = null;
-  this[kReqShouldKeepAlive] = isUnreadFromNativeServer ? true : undefined;
+  this[kReqShouldKeepAlive] = undefined;
   this[kRawHeaders] = null;
-  this[kHeaderSource] = isFromNativeServer ? nativeHandle : undefined;
+  this[kHeaderSource] = undefined;
   this[kHeadersCount] = 0;
   this[kTrailers] = null;
   this[kTrailersCount] = 0;
   this.rawTrailers = [];
   this[kAbortController] = null;
 
-  if (isFromNativeServer) {
-    this.url = nativeUrl!;
-    this.method = nativeMethod!;
-    this[kHandle] = nativeHandle;
-    this[noBodySymbol] = !nativeHasBody;
-    this.socket = nativeSocket;
-    this.client = nativeSocket;
-    if (isUnreadFromNativeServer) {
-      this.upgrade = false;
-      this._events = preallocatedEvents();
-      this._readableState = createUnreadByteState(nativeHighWaterMark);
-      this[kShapeMode] = true;
-      this._maxListeners = undefined;
-      if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
-        ("unlikely");
-        storeEmitWithRejectionCapture(this);
-      }
-      return;
-    }
+  if (socket === kHandle) {
+    // Native server fast-path: (kHandle, url, method, headers, rawHeaders, handle, hasBody, socket)
+    this.url = arguments[1];
+    this.method = arguments[2];
+    // arguments[3] carries no headers object and arguments[4] no rawHeaders
+    // on the native fast path anymore: the raw header bytes stay captured on
+    // the native handle and req.rawHeaders / req.headers are materialized by
+    // their accessors only when user code reads them.
+    this[kHeaderSource] = arguments[5];
+    this[kHandle] = arguments[5];
+    this[noBodySymbol] = !arguments[6];
+    this.socket = arguments[7];
+    // Node.js exposes the connection as req.client as well (it predates
+    // req.socket and some code still reaches for it).
+    this.client = arguments[7];
     this.upgrade = null;
-    constructReadable(this, nativeSocket ? nativeSocket.readableHighWaterMark : undefined);
-    addFlags(this._readableState, kReadingMore);
-    return;
+    // Like Node's IncomingMessage: the readable side inherits the connection
+    // socket's highWaterMark (which carries createServer({ highWaterMark })).
+    Readable.$call(this, arguments[7] ? { highWaterMark: arguments[7].readableHighWaterMark } : undefined);
+  } else {
+    // Node.js-style construction from a net.Socket (used by the HTTP client
+    // and anything driving the llhttp parser through node:_http_common).
+    let streamOptions;
+
+    if (socket) {
+      streamOptions = {
+        highWaterMark: socket.readableHighWaterMark,
+      };
+    }
+
+    Readable.$call(this, streamOptions);
+
+    this.socket = socket;
+
+    this.httpVersionMajor = null;
+    this.httpVersionMinor = null;
+    this.httpVersion = null;
+    this.rawHeaders = [];
+    this.joinDuplicateHeaders = false;
+
+    this.upgrade = null;
+
+    // request (server) only
+    this.url = "";
+    this.method = null;
+
+    // response (client) only
+    this.statusCode = null;
+    this.statusMessage = null;
+    this.client = socket;
+
+    this[noBodySymbol] = false;
   }
 
-  let streamOptions;
-  if (socket) {
-    streamOptions = {
-      highWaterMark: socket.readableHighWaterMark,
-    };
-  }
-  Readable.$call(this, streamOptions);
-  this.socket = socket;
-  this.httpVersionMajor = null;
-  this.httpVersionMinor = null;
-  this.httpVersion = null;
-  this.rawHeaders = [];
-  this.joinDuplicateHeaders = false;
-  this.upgrade = null;
-  this.url = "";
-  this.method = null;
-  this.statusCode = null;
-  this.statusMessage = null;
-  this.client = socket;
-  this[noBodySymbol] = false;
   this._readableState.readingMore = true;
 }
 $toClass(IncomingMessage, "IncomingMessage", Readable);
-ObjectDefineProperty(IncomingMessage, "length", { __proto__: null, value: 1, configurable: true });
-const IncomingMessagePrototype: object = IncomingMessage.prototype;
 
 // Defaults observed before the parser (or the native server) fills these in.
 IncomingMessage.prototype.httpVersion = "1.1";
@@ -293,20 +146,20 @@ IncomingMessage.prototype.joinDuplicateHeaders = false;
 
 ObjectDefineProperty(IncomingMessage.prototype, "connection", {
   __proto__: null,
-  get: function (this: $Node.IncomingMessage) {
+  get: function () {
     return this.socket;
   },
-  set: function (this: $Node.IncomingMessage, val: $Node.HttpSocket | null | undefined) {
+  set: function (val) {
     this.socket = val;
   },
 });
 
 ObjectDefineProperty(IncomingMessage.prototype, "aborted", {
   __proto__: null,
-  get: function (this: $Node.IncomingMessage) {
+  get: function () {
     return this[abortedSymbol];
   },
-  set: function (this: $Node.IncomingMessage, val: boolean) {
+  set: function (val) {
     this[abortedSymbol] = val;
   },
 });
@@ -314,7 +167,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "aborted", {
 // Materializes on first read from the bytes captured on the native handle
 // (takeRawHeaders). Assignment (the llhttp client path, or user code)
 // short-circuits materialization through the setter.
-function getRawHeaders(this: $Node.IncomingMessage) {
+function getRawHeaders(this: any) {
   let raw = this[kRawHeaders];
   if (raw === null) {
     const source = this[kHeaderSource];
@@ -332,47 +185,28 @@ ObjectDefineProperty(IncomingMessage.prototype, "rawHeaders", {
   // accessor can at least stay visible to for-in.
   enumerable: true,
   get: getRawHeaders,
-  set: function (this: $Node.IncomingMessage, value: string[]) {
+  set: function (value) {
     this[kRawHeaders] = value;
     this[kHeadersCount] = value ? value.length : 0;
   },
 });
 
-// Whether a read of `message.rawHeaders` reaches the accessor above, which is not configurable.
-function readsRawHeadersThroughAccessor(message: $Node.IncomingMessage): boolean {
-  if (ObjectHasOwn(message, "rawHeaders")) return false;
-  const parent: object | null = ObjectGetPrototypeOf(message);
-  if (parent === IncomingMessagePrototype) return true;
-  return parent !== null && ObjectPrototypeLookupGetter.$call(parent, "rawHeaders") === getRawHeaders;
-}
-
-// Whether a read of `message.readableEnded` reaches the accessor of Readable.prototype, which is not configurable.
-function readsReadableEndedThroughAccessor(message: $Node.IncomingMessage): boolean {
-  if (ObjectHasOwn(message, "readableEnded")) return false;
-  let level: object | null = ObjectGetPrototypeOf(message);
-  if (level === IncomingMessagePrototype) {
-    if (ObjectHasOwn(IncomingMessagePrototype, "readableEnded")) return false;
-    level = ObjectGetPrototypeOf(IncomingMessagePrototype);
-  }
-  while (level !== ReadablePrototype) {
-    if (level === null || ObjectHasOwn(level, "readableEnded")) return false;
-    level = ObjectGetPrototypeOf(level);
-  }
-  return true;
-}
-
 ObjectDefineProperty(IncomingMessage.prototype, "headers", {
   __proto__: null,
-  get: function (this: $Node.IncomingMessage) {
+  get: function () {
     let dst = this[kHeaders];
-    if (dst === null || !dst) {
+    if (!dst) {
       const addHeaderLine = this._addHeaderLine;
-      if (this[kRawHeaders] === null && addHeaderLine === _addHeaderLine && readsRawHeadersThroughAccessor(this)) {
-        const source = this[kHeaderSource];
-        if (source != null) {
-          const built = source.headersObject();
-          if (built !== undefined) return (this[kHeaders] = built);
-        }
+      // The native handle builds what the fold below makes of its captured bytes, when that is the fold in use,
+      // rawHeaders has not been read (which takes the bytes) or assigned, and reading it would reach the accessor
+      // above: a subclass, a swapped prototype or the instance can define its own, which the fold then reads.
+      if (
+        this[kRawHeaders] === null &&
+        addHeaderLine === _addHeaderLine &&
+        ObjectPrototypeLookupGetter.$call(this, "rawHeaders") === getRawHeaders
+      ) {
+        const built = this[kHeaderSource]?.headersObject();
+        if (built !== undefined) return (this[kHeaders] = built);
       }
       dst = this[kHeaders] = {};
 
@@ -385,16 +219,16 @@ ObjectDefineProperty(IncomingMessage.prototype, "headers", {
     }
     return dst;
   },
-  set: function (this: $Node.IncomingMessage, val: $Node.IncomingHttpHeaders) {
+  set: function (val) {
     this[kHeaders] = val;
   },
 });
 
 ObjectDefineProperty(IncomingMessage.prototype, "headersDistinct", {
   __proto__: null,
-  get: function (this: $Node.IncomingMessage) {
+  get: function () {
     if (!this[kHeadersDistinct]) {
-      this[kHeadersDistinct] = { __proto__: null } as $Node.Dictionary<string[]>;
+      this[kHeadersDistinct] = { __proto__: null };
 
       const src = this.rawHeaders;
       const dst = this[kHeadersDistinct];
@@ -405,14 +239,14 @@ ObjectDefineProperty(IncomingMessage.prototype, "headersDistinct", {
     }
     return this[kHeadersDistinct];
   },
-  set: function (this: $Node.IncomingMessage, val: $Node.Dictionary<string[]>) {
+  set: function (val) {
     this[kHeadersDistinct] = val;
   },
 });
 
 ObjectDefineProperty(IncomingMessage.prototype, "trailers", {
   __proto__: null,
-  get: function (this: $Node.IncomingMessage) {
+  get: function () {
     if (!this[kTrailers]) {
       this[kTrailers] = {};
 
@@ -425,16 +259,16 @@ ObjectDefineProperty(IncomingMessage.prototype, "trailers", {
     }
     return this[kTrailers];
   },
-  set: function (this: $Node.IncomingMessage, val: $Node.IncomingHttpHeaders) {
+  set: function (val) {
     this[kTrailers] = val;
   },
 });
 
 ObjectDefineProperty(IncomingMessage.prototype, "trailersDistinct", {
   __proto__: null,
-  get: function (this: $Node.IncomingMessage) {
+  get: function () {
     if (!this[kTrailersDistinct]) {
-      this[kTrailersDistinct] = { __proto__: null } as $Node.Dictionary<string[]>;
+      this[kTrailersDistinct] = { __proto__: null };
 
       const src = this.rawTrailers;
       const dst = this[kTrailersDistinct];
@@ -445,7 +279,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "trailersDistinct", {
     }
     return this[kTrailersDistinct];
   },
-  set: function (this: $Node.IncomingMessage, val: $Node.Dictionary<string[]>) {
+  set: function (val) {
     this[kTrailersDistinct] = val;
   },
 });
@@ -453,9 +287,9 @@ ObjectDefineProperty(IncomingMessage.prototype, "trailersDistinct", {
 ObjectDefineProperty(IncomingMessage.prototype, "signal", {
   __proto__: null,
   configurable: true,
-  get: function (this: $Node.IncomingMessage) {
+  get: function () {
     if (this[kAbortController] === null) {
-      const ac: AbortController = new AbortController();
+      const ac = new AbortController();
       this[kAbortController] = ac;
       if (this.destroyed) {
         ac.abort();
@@ -465,62 +299,27 @@ ObjectDefineProperty(IncomingMessage.prototype, "signal", {
         });
       }
     }
-    return this[kAbortController]!.signal;
+    return this[kAbortController].signal;
   },
 });
 
 // Like Node.js: req.setTimeout configures the inactivity timeout of the
 // underlying socket; the 'timeout' event itself reaches the request through
 // the server's socket timeout handling.
-IncomingMessage.prototype.setTimeout = function setTimeout(
-  this: $Node.IncomingMessage,
-  msecs: number,
-  callback?: () => void,
-) {
+IncomingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
   if (callback) this.on("timeout", callback);
-  this.socket?.setTimeout!(msecs);
+  this.socket?.setTimeout(msecs);
   return this;
 };
 
-function resumeConnection(req: $Node.IncomingMessage) {
-  const socket = req.socket;
-  if (socket && socket.readable) resumeReadableConnection(req, socket);
-}
-
-function resumeIfReadable(socket: $Node.HttpSocket) {
-  if (socket.readable) socket.resume();
-}
-
-function resumeReadableConnection(req: $Node.IncomingMessage, socket: $Node.HttpSocket) {
-  if (req.upgrade || socket[kHandoffResponse] !== undefined) {
-    ("unlikely");
-    // Upgrade request with a body (Node 26 semantics): reading the request must not flip the raw socket into flowing mode - tunnel bytes pushed to the socket before the 'upgrade' listener attaches its own 'data' handler would be discarded by a flowing stream with no readers.
-    onIncomingMessageResumeNodeHTTPResponse.$call(req);
-  } else if (!socket._paused) {
-    const resumeUnlessFlowing = socket.$resumeUnlessFlowing;
-    if (resumeUnlessFlowing !== undefined) resumeUnlessFlowing.$call(socket, true);
-    else {
-      ("unlikely");
-      if (IS_COMPILED_AHEAD_OF_TIME) $callNoInline(resumeIfReadable, undefined, socket);
-      else resumeIfReadable(socket);
-    }
-  }
-}
-
-const incomingMessageRead = function _read(this: $Node.IncomingMessage, _n: number) {
+IncomingMessage.prototype._read = function _read(_n) {
   if (!this._consuming) {
-    const state = this._readableState;
-    if (isReadableState(state)) removeFlags(state, kReadingMore);
-    else {
-      ("unlikely");
-      (state as $Node.ReadableState).readingMore = false;
-    }
+    this._readableState.readingMore = false;
     this._consuming = true;
   }
 
   const handle = this[kHandle];
   if (!handle) {
-    ("unlikely");
     // We actually do almost nothing here, because the parserOnBody
     // function fills up our internal buffer directly.  However, we
     // do need to unpause the underlying socket so that it flows.
@@ -530,7 +329,20 @@ const incomingMessageRead = function _read(this: $Node.IncomingMessage, _n: numb
   }
 
   // Native server path.
-  resumeConnection(this);
+  const socket = this.socket;
+  if (socket && socket.readable) {
+    if (this.upgrade || socket[kHandoffResponse] !== undefined) {
+      // Upgrade request with a body (Node 26 semantics): reading the request
+      // must not flip the raw socket into flowing mode - tunnel bytes pushed
+      // to the socket before the 'upgrade' listener attaches its own 'data'
+      // handler would be discarded by a flowing stream with no readers.
+      // Resume the native body source directly instead.
+      // Same for a request ahead of a pipelined CONNECT: res.end() dumps it after the handoff.
+      onIncomingMessageResumeNodeHTTPResponse.$call(this);
+    } else {
+      readStart(socket);
+    }
+  }
 
   if (this[eofInProgress]) {
     // There is a nextTick pending that will emit EOF
@@ -550,19 +362,14 @@ const incomingMessageRead = function _read(this: $Node.IncomingMessage, _n: numb
   }
 
   if (!handle.ondata) {
-    handle.ondata = onBodyData.bind(this);
+    handle.ondata = onDataIncomingMessage.bind(this);
   }
 };
-IncomingMessage.prototype._read = incomingMessageRead;
 
 // It's possible that the socket will be destroyed, and removed from
 // any messages, before ever calling this.  In that case, just skip
 // it, since something else is destroying this connection anyway.
-const incomingMessageDestroy = function _destroy(
-  this: $Node.IncomingMessage,
-  err: Error | null,
-  cb: $Node.ErrorCallback,
-) {
+IncomingMessage.prototype._destroy = function _destroy(err, cb) {
   const shouldEmitAborted = !this.readableEnded || !this.complete;
 
   if (shouldEmitAborted) {
@@ -578,9 +385,7 @@ const incomingMessageDestroy = function _destroy(
     // (node's _destroy null-socket check).
     this[kHandle] = undefined;
     handle.onabort = handle.ondata = undefined;
-    let connection: $Node.IncomingMessage["socket"];
-    if (!handle.finished && shouldEmitAborted && (connection = this.socket)) {
-      http.responseRoad.flushSocketHeldChunk?.(connection);
+    if (!handle.finished && shouldEmitAborted && this.socket) {
       handle.abort();
     }
     const socket = this.socket;
@@ -607,24 +412,17 @@ const incomingMessageDestroy = function _destroy(
     process.nextTick(onError, this, err, cb);
   }
 };
-IncomingMessage.prototype._destroy = incomingMessageDestroy;
 
-function onFinishedAfterDestroy(
-  this: $Node.IncomingMessage,
-  state: { cleanup: undefined | (() => void) },
-  err: Error | null,
-  cb: $Node.ErrorCallback,
-  e?: Error | null,
-) {
+function onFinishedAfterDestroy(this: any, state, err, cb, e) {
   if (e?.code === "ERR_STREAM_PREMATURE_CLOSE") {
     e = null;
   }
-  state.cleanup!();
+  state.cleanup();
   process.nextTick(onError, this, e || err, cb);
 }
 
 IncomingMessage.prototype._addHeaderLines = _addHeaderLines;
-function _addHeaderLines(this: $Node.IncomingMessage, headers: string[] | undefined, n: number) {
+function _addHeaderLines(this: any, headers, n) {
   if (headers?.length) {
     let dest;
     if (this.complete) {
@@ -661,7 +459,7 @@ const kFieldSetCookie = 1; // duplicates collected into an array
 const kFieldCookie = 2; // duplicates joined with "; "
 const kFieldUnique = 3; // duplicates dropped (or joined, per joinDuplicateHeaders)
 let matchedFieldFlag = kFieldUnique;
-function matchKnownFields(field: string, lowercased?: boolean): string {
+function matchKnownFields(field, lowercased?) {
   switch (field.length) {
     case 3:
       if (field === "Age" || field === "age") {
@@ -861,7 +659,7 @@ function matchKnownFields(field: string, lowercased?: boolean): string {
 // request that names no header twice. A change to what one occurrence of a
 // field becomes has to be made there as well.
 IncomingMessage.prototype._addHeaderLine = _addHeaderLine;
-function _addHeaderLine(this: $Node.IncomingMessage, field: string, value: string, dest: $Node.IncomingHttpHeaders) {
+function _addHeaderLine(this: any, field, value, dest) {
   field = matchKnownFields(field);
   const flag = matchedFieldFlag;
   if (flag === kFieldList || flag === kFieldCookie) {
@@ -886,7 +684,7 @@ function _addHeaderLine(this: $Node.IncomingMessage, field: string, value: strin
     if (dest[field] === undefined) {
       dest[field] = value;
     } else {
-      dest[field]! += ", " + value;
+      dest[field] += ", " + value;
     }
   } else if (dest[field] === undefined) {
     // Drop duplicates
@@ -895,7 +693,7 @@ function _addHeaderLine(this: $Node.IncomingMessage, field: string, value: strin
 }
 
 IncomingMessage.prototype._addHeaderLineDistinct = _addHeaderLineDistinct;
-function _addHeaderLineDistinct(field: string, value: string, dest: $Node.Dictionary<string[]>) {
+function _addHeaderLineDistinct(field, value, dest) {
   field = field.toLowerCase();
   if (!dest[field]) {
     dest[field] = [value];
@@ -904,7 +702,7 @@ function _addHeaderLineDistinct(field: string, value: string, dest: $Node.Dictio
   }
 }
 
-IncomingMessage.prototype._dumpAndCloseReadable = function _dumpAndCloseReadable(this: $Node.IncomingMessage) {
+IncomingMessage.prototype._dumpAndCloseReadable = function _dumpAndCloseReadable() {
   this._dumped = true;
   this._readableState.ended = true;
   this._readableState.endEmitted = true;
@@ -915,662 +713,18 @@ IncomingMessage.prototype._dumpAndCloseReadable = function _dumpAndCloseReadable
 
 // Call this instead of resume() if we want to just
 // dump all the data to /dev/null
-const dump = function _dump(this: $Node.IncomingMessage) {
+IncomingMessage.prototype._dump = function _dump() {
   if (!this._dumped) {
     this._dumped = true;
     // If there is buffered data, it may trigger 'data' events.
     // Remove 'data' event listeners explicitly.
     this.removeAllListeners("data");
-    if (endsUnwatched(this)) return;
     // ondata stays armed: it drops the chunks and still delivers the last one, which completes the request.
     this.resume();
   }
 };
-IncomingMessage.prototype._dump = dump;
 
-function isUnheard(req: $Node.IncomingMessage, name: string) {
-  if (req.emit !== emit) return false;
-  // A stream whose `_events` are preallocated has no `_eventsCount` of its own until a listener is added, so the count is not what is asked first.
-  const events = req._events;
-  if (events === undefined) return req._eventsCount === 0;
-  return events[name] === undefined;
-}
-
-function endsUnwatched(req: $Node.IncomingMessage) {
-  let state: $Node.ReadableState;
-  try {
-    if ($isProxyObject(req) || !req[noBodySymbol] || req.resume !== resume) {
-      return false;
-    }
-    state = req._readableState;
-    if (!advanceFlags(state, kFlagsUntouched, kFlagsResumed)) return false;
-  } catch {
-    return false;
-  }
-  queueTick2(resumeUnwatched, req, state);
-  return true;
-}
-
-function resumesUnwatched(req: $Node.IncomingMessage, state: $Node.ReadableState): boolean {
-  try {
-    return (
-      !!req[kHandle] &&
-      !req._consuming &&
-      !req[eofInProgress] &&
-      req.read === read &&
-      req._read === incomingMessageRead &&
-      req._readableState === state &&
-      isUnheard(req, "resume") &&
-      advanceFlags(state, kFlagsResumed, kFlagsReading)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function resumeUnwatched(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  if (!resumesUnwatched(req, state)) {
-    ("unlikely");
-    return resumeOnNextTick(req, state);
-  }
-  try {
-    req._consuming = true;
-    resumeConnection(req);
-    req[eofInProgress] = true;
-  } catch (err) {
-    state[kState] |= kSync | kResumeScheduled;
-    const stream: $Node.Readable = req;
-    errorOrDestroy(stream, err as Error);
-    finishReadOfNothing(state);
-    return finishResume(req, state);
-  }
-  if (ring.read === ring.write && ticksAreUnhooked()) endUnwatched(req);
-  else queueTick1(endUnwatched, req);
-}
-
-function endsItsBodyUnwatched(req: $Node.IncomingMessage): boolean {
-  try {
-    return (
-      req.push === push &&
-      req.read === read &&
-      isUnheard(req, "readable") &&
-      advanceFlags(req._readableState, kFlagsReading, kFlagsEnded)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function endUnwatched(req: $Node.IncomingMessage) {
-  if (!endsItsBodyUnwatched(req)) {
-    ("unlikely");
-    return emitEOFIncomingMessageOuter(req);
-  }
-  const state = req._readableState;
-  req.complete = true;
-  let held: $Node.HTTPParser | $Node.HttpServerParserShim | undefined;
-  try {
-    const parser = req.socket?.parser;
-    held = parser != null && parser.incoming === req ? parser : undefined;
-  } catch (error) {
-    queueTick3(destroyUnwatched, req, state, undefined);
-    throw error;
-  }
-  if (ring.read === ring.write && ticksAreUnhooked()) destroyUnwatched(req, state, held);
-  else queueTick3(destroyUnwatched, req, state, held);
-}
-
-function destroyUnwatched(
-  req: $Node.IncomingMessage,
-  state: $Node.ReadableState,
-  parser: $Node.HTTPParser | $Node.HttpServerParserShim | undefined,
-) {
-  try {
-    destroyOnNextTick(req, state);
-  } finally {
-    if (parser !== undefined) clearServerParserIncoming(parser, req);
-  }
-}
-
-function handleToDestroyUnwatched(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  try {
-    const handle = req[kHandle];
-    if (
-      !handle ||
-      !req.complete ||
-      req.writable ||
-      req._writableState ||
-      req.destroy !== destroy ||
-      req._destroy !== incomingMessageDestroy ||
-      req._readableState !== state ||
-      !readsItsSocketUnseen(req) ||
-      !isUnheard(req, "end") ||
-      !readsReadableEndedThroughAccessor(req) ||
-      !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
-    ) {
-      return undefined;
-    }
-    return handle;
-  } catch {
-    return undefined;
-  }
-}
-
-function destroyOnNextTick(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  const handle = handleToDestroyUnwatched(req, state);
-  if (handle === undefined) {
-    ("unlikely");
-    return endOnNextTick(state, req);
-  }
-  req[kAutoDestroyed] = true;
-  try {
-    req[kHandle] = undefined;
-    handle.onabort = undefined;
-  } catch (err) {
-    return closeAfterThrow(req, state, err);
-  }
-  queueTick1(closeUnwatched, req);
-}
-
-function mayDumpInPlace(req: $Node.IncomingMessage): boolean {
-  try {
-    return (
-      req._readableState[kState] === kFlagsUntouched &&
-      req[noBodySymbol] &&
-      !req._dumped &&
-      req._dump === dump &&
-      req.resume === resume &&
-      req.removeAllListeners === removeAllListeners &&
-      readsReadableEndedThroughAccessor(req)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function beginDump(req: $Node.IncomingMessage): void {
-  req._dumped = true;
-  req.removeAllListeners("data");
-  req._readableState[kState] = kFlagsResumed | 0;
-}
-
-function closeUnwatched(self: $Node.IncomingMessage) {
-  if (self.listenerCount !== listenerCount) {
-    ("unlikely");
-    self.listenerCount("error");
-  }
-  self._readableState[kState] |= kClosed;
-  if (ring.read === ring.write && ticksAreUnseen()) emitCloseUnwatched(self);
-  else if (ProcessNextTick === originalNextTick) enqueueTick1(emitCloseUnwatched, self);
-  else {
-    ("unlikely");
-    ProcessNextTick(emitCloseUnwatched, self);
-  }
-}
-
-function emitCloseUnwatched(req: $Node.IncomingMessage) {
-  const state = req._readableState;
-  const flags = state[kState] | kCloseEmitted;
-  state[kState] = flags;
-  if (!isUnheard(req, "close") && (flags & kEmitClose) !== 0) req.emit("close");
-}
-
-function takeCloseTick(req: $Node.IncomingMessage): boolean {
-  const tick = ring.read!;
-  if (
-    tick === ring.write ||
-    tick.next !== ring.write ||
-    tick.callback !== closeUnwatched ||
-    tick.first !== req ||
-    req.listenerCount !== listenerCount ||
-    !isUnheard(req, "close")
-  ) {
-    return false;
-  }
-  tick.callback = undefined;
-  tick.frame = undefined;
-  tick.first = undefined;
-  ring.read = tick.next;
-  closeUnwatched(req);
-  return true;
-}
-
-internals.takeRequestCloseTick = takeCloseTick;
-
-function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): boolean {
-  const flags = state[kState];
-  const req: $Node.IncomingMessage = stream as any;
-  let handle: $Node.IncomingMessage[typeof kHandle];
-  try {
-    if (
-      (flags & ~kDecoding) !== kBodyResumed ||
-      state.length !== 0 ||
-      $isProxyObject(req) ||
-      req._read !== incomingMessageRead
-    )
-      return false;
-    handle = req[kHandle];
-    if (
-      !handle ||
-      req._consuming ||
-      req[eofInProgress] ||
-      req[noBodySymbol] ||
-      req.read !== read ||
-      req._readableState !== state ||
-      !isUnheard(req, "resume")
-    ) {
-      ("unlikely");
-      return false;
-    }
-  } catch {
-    return false;
-  }
-  const asked = (flags & kDecoding) | kBodyAsked;
-  state[kState] = asked;
-  try {
-    req._consuming = true;
-    resumeConnection(req);
-    const bodyReadState = handle.hasBody;
-    if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0 || bodyReadState === NodeHTTPBodyReadState.none) {
-      ("unlikely");
-      emitEOFIncomingMessage(req);
-    }
-    if (!handle.ondata) {
-      ("unlikely");
-      handle.ondata = onBodyData.bind(req);
-    }
-  } catch (err) {
-    errorOrDestroy(stream, err as Error);
-  }
-  if (state[kState] === asked && state.length === 0) {
-    state[kState] = (flags & kDecoding) | kBodyReading;
-  } else {
-    ("unlikely");
-    finishReadOfNothing(state);
-    finishResume(req, state);
-  }
-  return true;
-}
-
-internals.resumeRequestBody = resumeRequestBody;
-
-function onBodyData(this: $Node.IncomingMessage, chunk: Buffer | undefined, isLast: boolean, aborted: number) {
-  return takeBodyData(this, chunk, isLast, aborted);
-}
-
-internals.onRequestBodyData = onBodyData;
-
-// `stream` and `chunk` as in addChunk(): a TypeError about a replaced emit() quotes the call.
-function takeBodyData(stream: $Node.IncomingMessage, bytes: Buffer | undefined, isLast: boolean, aborted: number) {
-  const state = stream._readableState;
-  const flags = state[kState];
-  const word = flags & ~kDecoding;
-  if (
-    aborted !== NodeHTTPResponseAbortEvent.none ||
-    !isLast ||
-    bytes === undefined ||
-    (word !== kBodyReading && (word !== kBodyAwaited || bytes.length >= state.highWaterMark)) ||
-    state.length !== 0 ||
-    stream._dumped ||
-    stream.upgrade ||
-    stream[eofInProgress] ||
-    stream.push !== push ||
-    stream.read !== read ||
-    stream._read !== incomingMessageRead ||
-    !ticksAreUnseen()
-  ) {
-    ("unlikely");
-    return onDataIncomingMessage.$call(stream, bytes, isLast, aborted);
-  }
-
-  // Only the native server hands over a body this way.
-  const socket: $Node.HttpServerSocket | null | undefined = stream.socket as any;
-  socket?._unrefTimer?.();
-
-  state[kState] = flags & ~kReading;
-  const chunk = (flags & kDecoder) !== 0 ? state[kDecoderValue]!.write(bytes) : bytes;
-  const given = (flags & kDecoding) | kBodyGiven;
-  const length = chunk.length as number;
-  if (length !== 0 && word === kBodyReading) {
-    state.awaitDrainWriters = null;
-    state[kState] = given;
-    stream.emit("data", chunk);
-  }
-  if (length !== 0 && word === kBodyAwaited) {
-    state.length = length;
-    state.buffer.push(chunk);
-    state[kState] = (flags & kDecoding) | kBodyBuffered;
-    queueTick1(emitReadableNow, stream);
-    markEndInProgress(stream, state);
-    queueTick2(finishBufferedBody, stream, state);
-  } else if (state[kState] === given && state.length === 0) {
-    state[kState] = given | kReadingMore;
-    markEndInProgress(stream, state);
-    queueTick2(finishBody, stream, state);
-  } else {
-    ("unlikely");
-    readMoreLater(stream, state);
-    if ((state[kState] & kEnded) !== 0 || (state.length >= state.highWaterMark && state.length !== 0)) {
-      const finSent = socket?.[kHandle]?.finSent === true;
-      // Nothing reads this body and a pause would hide the peer's FIN: uWS drops the later reads, so that FIN closes the connection.
-      if (finSent && !stream._consuming) socket![kHandle]!.stopParsing();
-      else if (socket && (finSent || !socket.writableEnded)) {
-        socket.pause();
-        stream[kHandle]?.pause();
-      }
-    }
-    emitEOFIncomingMessage(stream);
-  }
-  if (!stream.upgrade && socket && !socket._paused && socket.readable) {
-    const resumeUnlessFlowing = socket.$resumeUnlessFlowing;
-    if (resumeUnlessFlowing !== undefined) resumeUnlessFlowing.$call(socket, false);
-    else {
-      ("unlikely");
-      socket.resume();
-    }
-  }
-}
-
-function markEndInProgress(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  try {
-    req[eofInProgress] = true;
-  } catch (error) {
-    queueTick2(readMoreOnNextTick, req, state);
-    throw error;
-  }
-}
-
-function readMoreThenEnd(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  try {
-    readMoreOnNextTick(req, state);
-  } catch (error) {
-    queueTick1(emitEOFIncomingMessageOuter, req);
-    throw error;
-  }
-  emitEOFIncomingMessageOuter(req);
-}
-
-function finishBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  const flags = state[kState];
-  if (
-    (flags & ~kDecoding) !== (kBodyGiven | kReadingMore) ||
-    state.length !== 0 ||
-    !req[kHandle] ||
-    req.read !== read ||
-    req._read !== incomingMessageRead
-  ) {
-    ("unlikely");
-    return readMoreThenEnd(req, state);
-  }
-  const asked = flags | kReading | kSync;
-  state[kState] = asked;
-  try {
-    resumeConnection(req);
-  } catch (err) {
-    const stream: $Node.Readable = req;
-    errorOrDestroy(stream, err as Error);
-  }
-  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
-  if (state[kState] !== asked || state.length !== 0) {
-    ("unlikely");
-    finishReadOfNothing(state);
-    if (state.length !== 0) return readMoreThenEnd(req, state);
-    state[kState] &= ~kReadingMore;
-    return emitEOFIncomingMessageOuter(req);
-  }
-  state[kState] = (flags & kDecoding) | kBodyReadingOn;
-  endBody(req, state);
-}
-
-function finishBufferedBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  const flags = state[kState];
-  const length = state.length;
-  if (
-    (flags & ~kDecoding) !== kBodyAnnounced ||
-    length === 0 ||
-    length >= state.highWaterMark ||
-    !req[kHandle] ||
-    req.read !== read ||
-    req._read !== incomingMessageRead
-  ) {
-    ("unlikely");
-    return readMoreThenEnd(req, state);
-  }
-  const asked = flags | kReading | kSync;
-  state[kState] = asked;
-  try {
-    resumeConnection(req);
-  } catch (err) {
-    const stream: $Node.Readable = req;
-    errorOrDestroy(stream, err as Error);
-  }
-  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
-  if (state[kState] !== asked || state.length !== length) {
-    ("unlikely");
-    finishReadOfNothing(state);
-    if (state.length !== length) return readMoreThenEnd(req, state);
-    state[kState] &= ~kReadingMore;
-    return emitEOFIncomingMessageOuter(req);
-  }
-  state[kState] = (flags | kReading) & ~kReadingMore;
-  endBody(req, state);
-}
-
-function releaseParserOnNextTick(req: $Node.IncomingMessage) {
-  const socket = req.socket;
-  if (socket != null) {
-    const parser = socket.parser;
-    if (parser != null && parser.incoming === req) {
-      queueTick2(clearServerParserIncoming, parser, req);
-    }
-  }
-}
-
-function endBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  const handle = req[kHandle];
-  if (handle === undefined || req.push !== push || req.read !== read) {
-    ("unlikely");
-    return emitEOFIncomingMessageOuter(req);
-  }
-  req.complete = true;
-  const rawTrailers = takeRequestTrailers(req, handle);
-  if (rawTrailers !== undefined) {
-    ("unlikely");
-    req._addHeaderLines(rawTrailers, rawTrailers.length);
-    req.push(null);
-    return releaseParserOnNextTick(req);
-  }
-  const flags = state[kState];
-  if ((flags & kDecoder) !== 0) {
-    const rest = state[kDecoderValue]!.end();
-    if (rest?.length) {
-      ("unlikely");
-      state.buffer.push(rest);
-      state.length += rest.length as number;
-    }
-  }
-  if (state.length !== 0 || (flags & kFlowing) === 0 || !isUnheard(req, "readable")) {
-    state[kState] = (flags & ~(kReading | kNeedReadable)) | kEnded | kEmittedReadable;
-    emitReadableNow(req);
-    return releaseParserOnNextTick(req);
-  }
-  state[kState] = (flags & kDecoding) | kBodyEnded;
-  if (ring.read === ring.write && ticksAreUnseen()) {
-    try {
-      releaseParserOnNextTick(req);
-    } catch (error) {
-      queueTick2(endOnNextTick, state, req);
-      throw error;
-    }
-    emitBodyEnd(req, state);
-  } else {
-    queueTick2(endOnNextTick, state, req);
-    releaseParserOnNextTick(req);
-  }
-}
-
-function emitBodyEnd(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  state[kState] |= kEndEmitted;
-  req.emit("end");
-  return finishEnd(state, req);
-}
-
-function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable): boolean {
-  const req: $Node.IncomingMessage = stream as any;
-  let handle: $Node.IncomingMessage[typeof kHandle];
-  try {
-    if (
-      (state[kState] & kDestroysItselfMask) !== kDestroysItself ||
-      $isProxyObject(req) ||
-      req._destroy !== incomingMessageDestroy
-    )
-      return false;
-    handle = req[kHandle];
-    if (
-      !handle ||
-      !req.complete ||
-      req.writable ||
-      req._writableState ||
-      req.destroy !== destroy ||
-      req._readableState !== state ||
-      !readsReadableEndedThroughAccessor(req) ||
-      !readsItsSocketUnseen(req) ||
-      !ticksAreUnseen()
-    ) {
-      ("unlikely");
-      return false;
-    }
-    req[kAutoDestroyed] = true;
-  } catch {
-    return false;
-  }
-  state[kState] |= kDestroyed;
-  try {
-    req[kHandle] = undefined;
-    handle.onabort = handle.ondata = undefined;
-  } catch (err) {
-    closeAfterThrow(req, state, err);
-    return true;
-  }
-  const tick = ring.read!;
-  if (
-    tick !== ring.write &&
-    tick.next === ring.write &&
-    tick.callback === clearServerParserIncoming &&
-    tick.second === req
-  ) {
-    tick.callback = releaseParserThenClose;
-  } else {
-    queueTick1(closeUnwatched, req);
-  }
-  return true;
-}
-
-function releaseParserThenClose(parser: $Node.HTTPParser | $Node.HttpServerParserShim, req: $Node.IncomingMessage) {
-  clearServerParserIncoming(parser, req);
-  closeUnwatched(req);
-}
-
-internals.destroyEndedRequest = destroyEndedRequest;
-
-function hasNoListenerAndNoWritableSide(req: $Node.IncomingMessage): boolean {
-  return (!ObjectHasOwn(req, "_eventsCount") || req._eventsCount === 0) && !req.writable && !req._writableState;
-}
-
-function beginUnseenDump(req: $Node.IncomingMessage): void {
-  req._dumped = true;
-  req[kShapeMode] = false;
-  req._readableState[kState] = kFlagsResumed | 0;
-}
-
-function staysUnseen(req: $Node.IncomingMessage): boolean {
-  try {
-    const state = req._readableState;
-    return (
-      state[kState] === kFlagsResumed &&
-      state.length === 0 &&
-      req[noBodySymbol] &&
-      req._dumped &&
-      !req._consuming &&
-      !req[eofInProgress] &&
-      readsItsSocketUnseen(req) &&
-      keepsItsMethods(req)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function continueDump(req: $Node.IncomingMessage, state: $Node.ReadableState): void {
-  resumeUnwatched(req, state);
-}
-
-function queueDump(req: $Node.IncomingMessage, state: $Node.ReadableState): void {
-  queueTick2(resumeUnwatched, req, state);
-}
-
-function endsUnseen(req: $Node.IncomingMessage): boolean {
-  try {
-    const state = req._readableState;
-    return (
-      state[kState] === kFlagsUntouched &&
-      state.length === 0 &&
-      req[noBodySymbol] &&
-      !req._dumped &&
-      !req._consuming &&
-      !req[eofInProgress] &&
-      keepsItsMethods(req)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function keepsItsMethods(req: $Node.IncomingMessage): boolean {
-  return (
-    req.emit === emit &&
-    req._dump === dump &&
-    req.removeAllListeners === removeAllListeners &&
-    StreamPrototype.removeAllListeners === eventEmitterRemoveAllListeners &&
-    req.resume === resume &&
-    req.read === read &&
-    req._read === incomingMessageRead &&
-    req.push === push &&
-    req.destroy === destroy &&
-    req._destroy === incomingMessageDestroy &&
-    req.listenerCount === listenerCount &&
-    readsReadableEndedThroughAccessor(req) &&
-    hasNoListenerAndNoWritableSide(req)
-  );
-}
-
-function readsItsSocketUnseen(req: $Node.IncomingMessage): boolean {
-  const socket = req.socket;
-  return !socket || http.requestRoad.readsDestroyedUnseen!(socket);
-}
-
-function endUnseen(req: $Node.IncomingMessage): void {
-  // The one store that a request closed in any way refuses comes first, so that a request is ended whole or not at all.
-  req[kAutoDestroyed] = true;
-  req._dumped = true;
-  req[kShapeMode] = false;
-  req._consuming = true;
-  req.complete = true;
-  req[eofInProgress] = true;
-  req[kHandle] = undefined;
-  req._readableState[kState] = kFlagsClosed | kCloseEmitted;
-}
-
-http.requestRoad.endsUnseen = endsUnseen;
-http.requestRoad.endUnseen = endUnseen;
-http.requestRoad.beginUnseenDump = beginUnseenDump;
-http.requestRoad.staysUnseen = staysUnseen;
-http.requestRoad.continueDump = continueDump;
-http.requestRoad.queueDump = queueDump;
-http.requestRoad.mayDumpInPlace = mayDumpInPlace;
-http.requestRoad.beginDump = beginDump;
-
-function onError(self: $Node.IncomingMessage, error: Error | null | undefined, cb: $Node.ErrorCallback) {
+function onError(self, error, cb) {
   // This is to keep backward compatible behavior.
   // An error is emitted only if there are listeners attached to the event.
   if (self.listenerCount("error") === 0) {

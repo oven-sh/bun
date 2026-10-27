@@ -186,6 +186,32 @@ declare global {
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions) {
+  if (!IS_COMPILED_AHEAD_OF_TIME) {
+    if (this._events === undefined || this._events === (this as any).__proto__._events) {
+      this._events = Object.create(null);
+      this._eventsCount = 0;
+      this[kShapeMode] = false;
+    } else {
+      // Preallocated `_events` (streams).
+      this[kShapeMode] = true;
+    }
+
+    this._maxListeners ??= undefined;
+    if (opts?.captureRejections) {
+      // TODO: make validator functions return the validated value instead of validating and then coercing an extra time
+      validateBoolean(opts.captureRejections, "options.captureRejections");
+      this[kCapture] = !!opts.captureRejections;
+      this.emit = emitWithRejectionCapture;
+    } else {
+      this[kCapture] = EventEmitterPrototype[kCapture];
+      const capture = EventEmitterPrototype[kCapture];
+      this[kCapture] = capture;
+      if (capture) {
+        this.emit = emitWithRejectionCapture;
+      }
+    }
+    return;
+  }
   if ($isProxyObject(this)) {
     ("unlikely");
     return initializeProxyReceiver(this, opts);

@@ -341,9 +341,7 @@ group("the global object", () => {
     ["the names of the globals", `console.log(Object.keys(globalThis));`],
     ["in, with a computed name", `console.log(process.argv[2] in globalThis);`],
     ["delete, with a computed name", `delete (globalThis as any)[process.argv[2]];`],
-    process.platform === "win32"
-      ? gap("the descriptor hands out process; on Windows process.env is the Proxy that windowsEnv() makes, and its traps take any receiver, so globalThis is listed as escaped", descriptorOfProcess)
-      : descriptorOfProcess,
+    descriptorOfProcess,
     ["a value defined on the global object", `Object.defineProperty(globalThis, "mine", { value: 1 }); console.log((globalThis as any).mine);`],
     ["a value defined under a computed name", `let name = "mine"; name = process.argv[2]; Object.defineProperty(globalThis, name, { value: 1 });`],
   ])("names are asked for and no member is used, so the report stays closed with %s", async (_, text) => {

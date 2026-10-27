@@ -259,6 +259,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         runs_macros: !options.no_macros,
         in_memory_files: in_memory_files(input),
         in_memory_file_keys: in_memory_file_keys(input),
+        entry_texts: Vec::new(),
         omits_builtin_modules: input.aot.omits_builtin_modules,
         runs_tests: input.aot.runs_tests,
         takes_runtime_as_any: false,

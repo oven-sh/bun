@@ -4,7 +4,7 @@
 // Every Bun holds both texts, and most words of one are found in the other by reading the two side by side. Only the words that such
 // a reading gets wrong are written down. src/aot/emit/positions.rs reads the two texts in the same way.
 
-import { alignWords, decodeMappings, type SourceMap, Text } from "./bundled-names";
+import { alignWords, decodeMappings, formatBundledName, type SourceMap, Text } from "./bundled-names";
 
 const intrinsicPrefix = "__intrinsic__";
 const spellWithoutPrefix = (word: string) =>
@@ -294,9 +294,46 @@ export function encodeBundledPositions(written: string, output: string, map: Sou
 const quoteInFrontOfWord = /\/\* as: (.+?) \*\/\s*/g;
 
 /**
+ * `found` has the words of the lines that both texts have. Between two such lines that follow each other in both texts, adds the
+ * longest row of words that both texts spell alike in the same order. A stretch of over `mostWordPairs` pairs is left alone.
+ */
+function alignWordsBetweenLines(second: Words, first: Words, found: Map<number, number>) {
+  const mostWordPairs = 1 << 22;
+  const taken = new Set(found.values());
+  for (let from = 0, to = 0; from < second.length; from = to + 1) {
+    for (to = from; to < second.length && !found.has(to);) to++;
+    const before = from === 0 ? -1 : found.get(from - 1)!;
+    const after = to === second.length ? first.length : found.get(to)!;
+    const free: number[] = [];
+    for (let number = before + 1; number < after; number++) if (!taken.has(number)) free.push(number);
+    const [rows, columns] = [to - from, free.length];
+    if (rows === 0 || columns === 0 || rows * columns > mostWordPairs) continue;
+    // lengths[row * width + column]: how many words the rest of both stretches has in common.
+    const width = columns + 1;
+    const lengths = new Uint16Array((rows + 1) * width);
+    const isAlike = (row: number, column: number) => second.spelled[from + row] === first.spelled[free[column]];
+    for (let row = rows - 1; row >= 0; row--) {
+      for (let column = columns - 1; column >= 0; column--) {
+        lengths[row * width + column] = isAlike(row, column)
+          ? lengths[(row + 1) * width + column + 1] + 1
+          : Math.max(lengths[(row + 1) * width + column], lengths[row * width + column + 1]);
+      }
+    }
+    for (let row = 0, column = 0; row < rows && column < columns;) {
+      if (isAlike(row, column)) {
+        taken.add(free[column]);
+        found.set(from + row++, free[column++]);
+      } else if (lengths[(row + 1) * width + column] >= lengths[row * width + column + 1]) row++;
+      else column++;
+    }
+  }
+}
+
+/**
  * The compiler reads `second` in place of `first`, and a stack trace shows the places of `first`. Answers, for the number of a word
  * of `second`, the number of the word of `first` that it stands for. A line that both texts have equally often stands for the line
- * of the same number. In front of a word of another line, a comment `as:` quotes `first` up to the word.
+ * of the same number. Between such lines, words that both texts have in the same order stand for each other. In front of any other
+ * word, a comment `as:` quotes `first` up to the word.
  */
 export function findWordsOfFirstText(second: Words, first: Words): Map<number, number> {
   const listLines = (words: Words) => {
@@ -318,6 +355,7 @@ export function findWordsOfFirstText(second: Words, first: Words): Map<number, n
     if (partners?.length !== places.length) continue;
     for (const [n, numbers] of places.entries()) numbers.forEach((number, k) => found.set(number, partners[n][k]));
   }
+  alignWordsBetweenLines(second, first, found);
   for (const match of second.text.matchAll(quoteInFrontOfWord)) {
     const quote = match[1];
     const at = first.text.indexOf(quote);
@@ -352,6 +390,28 @@ export function encodeBundledPositionsOfSecondText(
     foundOfSecond.set(number, partner === undefined ? -1 : partners[partner]);
   }
   return encodeWordsInEvaluatedText(wordsOfSecond, wordsOfEvaluated, foundOfSecond);
+}
+
+/**
+ * `lines` are those of listBundledNamesOfModule() for `written`. Answers the lines for `second`, which the compiler reads in its
+ * place. An identifier that no word of `second` stands for has none.
+ */
+export function moveBundledNamesToSecondText(lines: string[], second: string, written: string): string[] {
+  const [wordsOfSecond, wordsOfWritten] = [new Words(second), new Words(written)];
+  const wordsOfSecondText = new Map<number, number>();
+  for (const [number, partner] of findWordsOfFirstText(wordsOfSecond, wordsOfWritten)) {
+    if (!wordsOfSecondText.has(partner)) wordsOfSecondText.set(partner, number);
+  }
+  const bytes = Buffer.from(written);
+  return lines.flatMap(line => {
+    const [, file, offset, name, kind] = line.split("\t");
+    const index = bytes.toString("utf8", 0, Number(offset)).length;
+    const number = wordsOfSecondText.get(wordsOfWritten.starts.indexOf(index));
+    if (number === undefined) return [];
+    return [
+      formatBundledName(file, second, wordsOfSecond.starts[number], name === "-" ? undefined : name, kind === "own"),
+    ];
+  });
 }
 
 /** A line for the manifest of the sources. */

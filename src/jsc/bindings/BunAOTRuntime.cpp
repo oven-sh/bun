@@ -153,6 +153,14 @@ extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, Bu
     return verdict;
 }
 
+extern "C" bool Bun__AOT__useNoImageOnThisThread()
+{
+    if (JSC::AOT::runsOnlyCodeOfImage)
+        return false;
+    JSC::AOT::Image::useNoneOnThisThread();
+    return true;
+}
+
 extern "C" bool Bun__AOT__admittedCode(BunAOTBytes image, JSC::AOT::Wire::AdmittedCode* admitted)
 {
     auto found = JSC::AOT::Image::admittedCode({ image.ptr, image.len });
@@ -265,6 +273,7 @@ extern "C" size_t Bun__AOT__describeAddresses(const size_t* addresses, size_t co
 
 // ImageVerdict::Unsupported.
 extern "C" uint32_t Bun__AOT__useImage(BunAOTBytes, BunAOTBytes, const BunAOTImageFile*, const uint8_t*) { return 0; }
+extern "C" bool Bun__AOT__useNoImageOnThisThread() { return false; }
 extern "C" bool Bun__AOT__admittedCode(BunAOTBytes, uint32_t*) { return false; }
 extern "C" bool Bun__AOT__admitsUnknownJavaScript(BunAOTBytes) { return true; }
 extern "C" bool Bun__AOT__loadsCodeOutsideImage(BunAOTBytes) { return true; }

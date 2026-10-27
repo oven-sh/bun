@@ -298,6 +298,27 @@
     "millionInstructions": 6900,
     "megabytes": 280
   },
+  "names that a list pattern takes from a typed array or a list": {
+    "millionInstructions": 35630,
+    "megabytes": 425,
+    "growth": {
+      "instructions": 2.75
+    }
+  },
+  "names with defaults that a list pattern takes from a typed array or a list": {
+    "millionInstructions": 44343,
+    "megabytes": 370,
+    "growth": {
+      "instructions": 3.02
+    }
+  },
+  "names that a list pattern takes from a typed array or a list, in front of a rest element": {
+    "millionInstructions": 39030,
+    "megabytes": 384,
+    "growth": {
+      "instructions": 2.67
+    }
+  },
   "TypeScript packages that each have a tsconfig.json with different compiler options": {
     "millionInstructions": 6476,
     "megabytes": 374

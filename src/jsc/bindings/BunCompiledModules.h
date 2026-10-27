@@ -29,7 +29,8 @@ enum class ErrorCode : uint16_t;
 
 extern const JSC::AOT::ModuleHost compiledModuleHost;
 
-inline bool hasCompiledModules() { return JSC::AOT::Image::isRegistered(); }
+// On this thread: a Worker that starts from text runs no compiled program.
+inline bool hasCompiledModules() { return !!JSC::AOT::Image::current(); }
 std::optional<JSC::AOT::ModuleID> compiledModuleForPath(const WTF::String& path);
 inline bool isCompiledModule(const WTF::String& path) { return compiledModuleForPath(path).has_value(); }
 

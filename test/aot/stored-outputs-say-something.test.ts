@@ -53,6 +53,8 @@ const plainBunVaries: Record<string, string> = {
     "plain Bun prints one of several outputs from run to run, the stored one among them",
   "untyped-code/contents-survive-added-properties-and-elements":
     "what a store of a number past the end of a BigInt64Array does in plain Bun goes by the tier that runs it, so one sum of that row is another in a run now and then; the stored output is the usual one, and what the executable always prints",
+  "untyped-speed/a-read-through-a-proxy-is-not-three-times-as-slow-as-a-call-of-its-trap":
+    "it compares two times: plain Bun is under the bound on some machines and over it on others",
   "untyped-speed/names-read-a-hundred-times-off-each-new-shape-are-not-four-times-as-slow-as-off-one-shape":
     "it compares two times: plain Bun is under the bound on some machines and over it on others",
 };

@@ -827,6 +827,13 @@ export const readFreedStringUnderASAN: () => number | undefined = $newCppFunctio
   0,
 );
 
+/** The native stack of the calling thread as WTF writes it into the report of a failed assertion. */
+export const nativeStackTrace: () => string = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_nativeStackTrace",
+  0,
+);
+
 /** From here on this process describes a value that a native function rejects without running code of the program. */
 export const describeRejectedValuesWithoutScript: () => void = $newCppFunction(
   "InternalForTesting.cpp",

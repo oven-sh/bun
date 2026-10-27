@@ -4,6 +4,7 @@
 // An evaluator is followed as a value: the event is raised where it is called, and where the compiler loses track of it. One that is read off a value the compiler
 // knows nothing about raises no event, and its call throws before any string is evaluated.
 // The strings and the paths are put together at run time, so the build can't know them.
+// A Worker that starts from text runs it in a VM of its own, without the compiled program: nothing that the analysis has proven is within its reach. Its routes are listed to pin that they run.
 // Machine code is not such JavaScript: an N-API addon and what bun:ffi calls are native code like Bun's own. Their routes are listed to pin that they raise no event and are not refused.
 // What native code can do to a compiled program is the subject of native-addons.test.ts.
 import { describe, expect, test } from "bun:test";
@@ -25,6 +26,8 @@ type Route = {
   replacesTheProgram?: boolean;
   /** It loads or calls machine code and runs no JavaScript from outside. */
   isMachineCode?: boolean;
+  /** The code runs in a Worker that holds nothing of the compiled program: no object of the program is within its reach, so the build has no event to raise. */
+  runsApartFromTheProgram?: boolean;
 };
 
 const prelude = (wait: number) => `
@@ -181,12 +184,15 @@ const routes: Record<string, Record<string, Route>> = {
       body: `const w = new Worker(temporaryFile('.js', glue('postMessage(', '1)'))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
     },
     "worker of a blob url": {
+      runsApartFromTheProgram: true,
       body: `const w = new Worker(URL.createObjectURL(new Blob([glue('postMessage(', '1)')], { type: 'text/javascript' }))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
     },
     "worker of a data url": {
+      runsApartFromTheProgram: true,
       body: `const w = new Worker(glue('data:text/javascript,', 'postMessage(1)')); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
     },
     "worker threads eval": {
+      runsApartFromTheProgram: true,
       body: `const { Worker } = require('node:worker_threads'); const w = new Worker(glue('require("node:worker_threads").parentPort.postMessage(', '1)'), { eval: true }); await new Promise((res, rej) => { w.on('message', () => { globalThis.RAN = 1; res(); }); w.on('error', rej); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
     },
     "worker with preload": {
@@ -299,6 +305,7 @@ const routes: Record<string, Record<string, Route>> = {
       body: `const ffi = process.getBuiltinModule(glue('bun:', 'ffi')); const lib = ffi.dlopen(glue('libc.so', '.6'), { getpid: { args: [], returns: 'int' } }); if (lib.symbols.getpid() > 0) globalThis.RAN = 1`,
     },
     "unnamed worker threads eval": {
+      runsApartFromTheProgram: true,
       body: `const { Worker } = require(glue('node:', 'worker_threads')); const w = new Worker(glue('require("node:worker_threads").parentPort.postMessage(', '1)'), { eval: true }); await new Promise((res, rej) => { w.on('message', () => { globalThis.RAN = 1; res(); }); w.on('error', rej); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
     },
     "unnamed repl": { body: `typeof require(glue('node:', 'repl')).start` },
@@ -436,6 +443,11 @@ export function codeTheCompilerNeverSaw(part: number, parts: number) {
                 return;
               }
               const ranTheCode = /^RAN$/m.test(ran.stdout);
+              if (route.runsApartFromTheProgram)
+                return void expect({ ranTheCode, stdout: ran.stdout }).toEqual({
+                  ranTheCode: true,
+                  stdout: expect.any(String),
+                });
               expect({
                 ranTheCode: ranTheCode && !sawAnEvent && !route.replacesTheProgram,
                 stdout: ran.stdout,

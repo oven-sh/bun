@@ -1,6 +1,8 @@
-// A Worker made of a blob: URL, a data: URL, an object URL that was revoked, eval: true: code that is no file. Whatever the answer, it is an event or an error, and the main thread lives.
+// A Worker made of a blob: URL, a data: URL, an object URL that was revoked, eval: true: code that is no file, in a text that the program makes at run time. It runs as in plain Bun, and what is wrong with it is an event.
 import { Worker as NodeWorker } from "node:worker_threads";
-const source = `postMessage("ran " + (1 + 1)); `;
+// What native code hands back is unknown to the compiler.
+const decoded = (text: string) => Buffer.from(text).toString();
+const source = decoded(`postMessage("ran " + (1 + 1)); `);
 const start = (what: string, make: () => Worker) =>
   new Promise<void>(resolve => {
     let worker: Worker;
@@ -16,14 +18,14 @@ const start = (what: string, make: () => Worker) =>
     worker.addEventListener("close", event => (console.log(what + ":", heard.join(" | "), "| close", (event as any).code), resolve()));
   });
 await start("a blob", () => new Worker(URL.createObjectURL(new Blob([source], { type: "application/javascript" }))));
-await start("a blob of TypeScript", () => new Worker(URL.createObjectURL(new File([`const n: number = 2; postMessage("ran " + n);`], "w.ts", { type: "application/typescript" }))));
+await start("a blob of TypeScript", () => new Worker(URL.createObjectURL(new File([decoded(`const n: number = 2; postMessage("ran " + n);`)], "w.ts", { type: "application/typescript" }))));
 await start("a revoked blob", () => { const url = URL.createObjectURL(new Blob([source])); URL.revokeObjectURL(url); return new Worker(url); });
 await start("a data URL", () => new Worker("data:text/javascript," + encodeURIComponent(source)));
 await start("a data URL in base64", () => new Worker("data:text/javascript;base64," + btoa(source)));
-await start("a blob with a syntax error", () => new Worker(URL.createObjectURL(new Blob(["this is no program"]))));
+await start("a blob with a syntax error", () => new Worker(URL.createObjectURL(new Blob([decoded("this is no program")]))));
 await new Promise<void>(resolve => {
   try {
-    const worker = new NodeWorker(`require("node:worker_threads").parentPort.postMessage("ran")`, { eval: true });
+    const worker = new NodeWorker(decoded(`require("node:worker_threads").parentPort.postMessage("ran")`), { eval: true });
     const heard: string[] = [];
     worker.on("message", (message: string) => heard.push(message));
     worker.on("error", () => heard.push("error"));

@@ -801,7 +801,7 @@ process.on("exit", () => print("at exit: " + emitted.filter(name => name === "ex
 console.log(new ReadableStream());
 console.log(new WritableStream(), new TransformStream());
 //// worker-from-text-admitted.js
-// closed-world/worker-from-text-refused built with --compile-inspector. A debugger can run any code, so such a build runs text too: both Workers run as in plain Bun.
+// closed-world/worker-from-text-runs-apart built with --compile-inspector. A debugger can run any code, so such a build runs text too: both Workers run as in plain Bun.
 // What native code hands back is unknown to the compiler, and so is text that is decoded at run time.
 const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
 const decoded = text => Buffer.from(text).toString();
@@ -814,8 +814,8 @@ async function main() {
   console.log(await started("a Worker from a data: URL", "data:text/javascript," + encodeURIComponent(text)));
 }
 main();
-//// worker-from-text-refused.js
-// The compiler finds nothing in this program that evaluates text, and counts on it. A Worker whose script is text that the program makes at run time starts and fails to load: an error event says that the text isn't in the executable. closed-world/worker-from-text-admitted is the same program built with --compile-inspector.
+//// worker-from-text-runs-apart.js
+// The compiler finds nothing in this program that evaluates text, and counts on it. A Worker whose script is text that the program makes at run time runs apart from the program, as in plain Bun. closed-world/worker-from-text-admitted is the same program built with --compile-inspector.
 // What native code hands back is unknown to the compiler, and so is text that is decoded at run time.
 const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
 const decoded = text => Buffer.from(text).toString();

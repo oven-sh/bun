@@ -93,6 +93,8 @@ export interface BuiltinEntry {
   nativeSymbols: string[];
   creationSymbol?: string;
   hasHiddenRoot: boolean;
+  /** An accessor outside the prototype objects. Reading it gives its value whatever is removed, so no use guards its pointers. */
+  isReadByName?: boolean;
 }
 
 export interface BuiltinUses {

@@ -266,6 +266,9 @@ impl<'a> LoadHost<'a> {
     }
 
     fn default_loader_for(&self, path: &[u8], kind: CodeImportKind) -> Loader {
+        if let Some(loader) = self.plugins.loader_of_entry_text(path) {
+            return loader;
+        }
         let loaders = &self.input.options.load.loaders;
         if !self.is_entry_point(path) {
             // An executable carries a file of a kind that nothing names, whichever way the program asks for it. `bun run` reads it as code for `require`.
@@ -471,6 +474,10 @@ impl CodeHost for LoadHost<'_> {
         };
         if is_import && request.specifier == BUNDLE_MODULE {
             return HostResolution::Erased;
+        }
+        let mut entry_texts = self.input.options.load.entry_texts.iter();
+        if !is_import && let Some(text) = entry_texts.find(|it| it.name == request.specifier) {
+            return HostResolution::Path(self.plugins.add_entry_text(text));
         }
         if is_import && let Some(resolution) = self.runtime_resolution(request.specifier) {
             return resolution;
@@ -750,10 +757,13 @@ impl CodeHost for LoadHost<'_> {
                 || hir::find_transpiled_mark(text).is_some(),
         };
         let mut hir = parse_for_compile(arena, &compile_options, text, atoms);
-        let is_language_assumed = matches!(served_by, ServedBy::Disk)
-            && !is_from_plugin
-            && loader_named_by_path(&self.input.options.load.loaders, path).is_none();
-        let parse_failure = match is_language_assumed && !self.is_entry_point(path) {
+        let is_entry_text = self.plugins.loader_of_entry_text(path).is_some();
+        let is_language_assumed = is_entry_text
+            || (matches!(served_by, ServedBy::Disk)
+                && !is_from_plugin
+                && loader_named_by_path(&self.input.options.load.loaders, path).is_none());
+        let is_entry_point = is_entry_text || self.is_entry_point(path);
+        let parse_failure = match is_language_assumed && !is_entry_point {
             true => describe_parse_failure(&hir, text),
             false => None,
         };

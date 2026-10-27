@@ -19,6 +19,7 @@ import {
   encodeWordsInEvaluatedText,
   findWordsInEvaluatedText,
   findWordsOfFirstText,
+  moveBundledNamesToSecondText,
   Words,
 } from "../../src/codegen/bundled-positions";
 import { run } from "../aot/harness/run";
@@ -432,8 +433,40 @@ describe("bundled-positions.ts, a second text", () => {
     expect(textAt("copy(c, d)")).toStartWith("copy(c, d)");
     expect(textAt("return to")).toStartWith("return to");
     expect(textAt("default {")).toStartWith("default {");
-    expect(textAt("copy = ")).toBeUndefined();
-    expect(textAt("one,")).toBeUndefined();
+    expect(textAt("one = ")).toBeUndefined();
+  });
+
+  test("between lines of both texts, words in the same order stand for each other", () => {
+    const second = [
+      "const copy = (from: Bag, to: Bag): Bag => {",
+      "  for (const key of keys(from)) to[key] = from[key].$call(to);",
+      "  return to as Bag;",
+      "};",
+      "export default {",
+      "  two: copy(c, d),",
+      "};",
+    ].join("\n");
+    const [words, wordsOfFirst] = [new Words(second), new Words(first)];
+    const found = findWordsOfFirstText(words, wordsOfFirst);
+    const textAt = (inSecond: string) => {
+      const partner = found.get(words.starts.indexOf(second.indexOf(inSecond)));
+      return partner === undefined ? undefined : first.slice(wordsOfFirst.starts[partner]);
+    };
+    expect(textAt("copy = ")).toStartWith("copy = (from, to) => {");
+    expect(textAt("to: Bag")).toStartWith("to) => {");
+    expect(textAt("Bag,")).toBeUndefined();
+    expect(textAt("return to as")).toStartWith("return to;");
+    expect(textAt("to as")).toStartWith("to;");
+    expect(textAt("as Bag")).toBeUndefined();
+  });
+
+  test("a name of the bundle goes to the word of the second text that stands for its identifier", () => {
+    const second = first.replace("(from, to) =>", "(from: Bag, to: Bag): Bag =>").replace("  two: copy(c, d),\n", "");
+    const line = (text: string, word: string, name: string) =>
+      `name\tnode/sample.ts\t${text.indexOf(word)}\t${name}\tvariable`;
+    expect(
+      moveBundledNamesToSecondText([line(first, "copy =", "copy2"), line(first, "two:", "two2")], second, first),
+    ).toEqual([line(second, "copy =", "copy2")]);
   });
 
   test("a quote that the first text does not have once is refused", () => {

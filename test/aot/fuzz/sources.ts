@@ -63,6 +63,7 @@
 //   tail-calls-that-hand-rest-parameters-on functions that end in a call to one another, up to a million calls deep, and hand their rest parameters on: spread, by element, copied, or the array itself
 //   host-functions-that-throw native functions of Bun, Node.js and the web called with values they accept and values they refuse, while code of the program runs underneath them
 //   keys-of-built-in-objects-after-reads-and-copies the own keys of objects of the language, Bun, Node.js and the web, listed after members were read, asked for, added and deleted and the object was copied
+//   keys-of-built-in-objects-that-add-members-when-read the own keys of one built-in object that adds a member when it is first read, listed after members were read, called and asked for, where what is listed could also be something else
 //   members-of-built-in-objects-handed-around objects and functions of the language, Bun, Node.js and the web, copied or handed through Proxies, revivers, Reflect, collections and closures; then every member is tested, read by name and called
 //   closures-tested-before-they-leave a closure is asked something and then returned, stored, thrown, yielded, captured or handed on, under the name that was asked or a second one (closures-tested-before-they-leave.ts)
 //   functions-that-make-many-objects-and-return-one one function makes 8 to 148 pairs of small objects, stores into some and returns one, two or a new one (functions-that-make-many-objects-and-return-one.ts)
@@ -840,6 +841,32 @@ async function inOneFile(programsRoot: string, rejected: Set<string>): Promise<R
       return bed.accepts(program) && bed.allows(program.text)
         ? {
             source: "keys-of-built-in-objects-after-reads-and-copies",
+            seed,
+            ...program,
+            notes: typed ? "typed" : "untyped",
+          }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "keys-of-built-in-objects-that-add-members-when-read.ts"))) {
+    const { generate, holders, numberOfForms } = await import(
+      "./keys-of-built-in-objects-that-add-members-when-read.ts"
+    );
+    sources["keys-of-built-in-objects-that-add-members-when-read"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = {
+        text: generate(
+          new Random(seed),
+          typed,
+          holders[seed % holders.length],
+          Math.floor(seed / holders.length) % numberOfForms,
+        ),
+        extension: typed ? "ts" : "js",
+      };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? {
+            source: "keys-of-built-in-objects-that-add-members-when-read",
             seed,
             ...program,
             notes: typed ? "typed" : "untyped",

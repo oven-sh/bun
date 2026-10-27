@@ -6189,6 +6189,12 @@ impl Any {
                 self.to_array_buffer_transfer(cx)
             }
             streams::BufferActionTag::Json => self.to_json(cx, Lifetime::Share),
+            streams::BufferActionTag::JsonSource => {
+                if matches!(self, Any::Blob(_)) {
+                    return self.to_json_source(cx, Lifetime::Clone);
+                }
+                self.to_json_source(cx, Lifetime::Transfer)
+            }
         }
     }
 
@@ -6222,29 +6228,32 @@ impl Any {
         promise.wrap(cx.global(), |_| self.to_action_value(cx, action))
     }
 
+    /// Whether `json()` answers null and parses nothing: the body is empty and no Blob holds it.
+    fn is_null_without_parsing(&self) -> bool {
+        match self {
+            Any::Blob(_) => false,
+            Any::InternalBlob(ib) => ib.bytes.is_empty(),
+            Any::WTFStringImpl(s) => s.length() == 0,
+        }
+    }
+
     pub(crate) fn to_json(
         &mut self,
         cx: &bun_jsc::JsThread<'_>,
         lifetime: Lifetime,
     ) -> JsResult<JSValue> {
+        if self.is_null_without_parsing() {
+            return Ok(JSValue::NULL);
+        }
         match self {
             Any::Blob(b) => b.to_json(cx, lifetime),
             Any::InternalBlob(ib) => {
-                if ib.bytes.is_empty() {
-                    return Ok(JSValue::NULL);
-                }
                 let str = ib.to_json(cx.global());
                 // the GC will collect the string
                 *self = Any::Blob(Blob::default());
                 str
             }
-            Any::WTFStringImpl(_) => {
-                let str = self.take_string();
-                if str.length() == 0 {
-                    return Ok(JSValue::NULL);
-                }
-                str.to_js_by_parse_json(cx.global())
-            }
+            Any::WTFStringImpl(_) => self.take_string().to_js_by_parse_json(cx.global()),
         }
     }
 
@@ -6256,14 +6265,11 @@ impl Any {
         cx: &bun_jsc::JsThread<'_>,
         lifetime: Lifetime,
     ) -> JsResult<JSValue> {
+        if self.is_null_without_parsing() {
+            return bun_string_jsc::create_utf8_for_js(cx.global(), b"null");
+        }
         match self {
             Any::Blob(b) => b.to_json_source(cx, lifetime),
-            Any::InternalBlob(ib) if ib.bytes.is_empty() => {
-                bun_string_jsc::create_utf8_for_js(cx.global(), b"null")
-            }
-            Any::WTFStringImpl(s) if s.length() == 0 => {
-                bun_string_jsc::create_utf8_for_js(cx.global(), b"null")
-            }
             Any::InternalBlob(_) => self.to_uint8_array(cx, lifetime),
             Any::WTFStringImpl(_) => self.take_string().into_js(cx.global()),
         }

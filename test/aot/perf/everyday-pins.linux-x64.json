@@ -167,6 +167,10 @@
     "typed": 5,
     "untyped": 5
   },
+  "everyday-arrays/texts-to-numbers-by-the-built-in": {
+    "typed": 1241,
+    "untyped": 1267
+  },
   "everyday-benchmarks/a-thousand-doubled-kept-by-threes-and-summed": {
     "typed": 23689.2,
     "untyped": 23691.6

@@ -82,8 +82,8 @@ export default b.declarations(
     "Bun.spawn",
     "%Subprocess%",
   ),
+  extendAll(["Ipc"], "process.connected"),
   extendAll(channelFeatures, "process.channel", "process.disconnect", "process.send"),
-  extendAll(["ProcessConnected", "Ipc"], "process.connected"),
 
   extendAll(
     ["ProcessListeners", ...channelFeatures.map(feature => ({ feature, when: whenChannelEvent }))],
@@ -108,7 +108,6 @@ export default b.declarations(
     "process.config",
     "process.features",
     "process.finalization",
-    "process.getBuiltinModule",
     "process.hasUncaughtExceptionCaptureCallback",
     "process.loadEnvFile",
     "process.mainModule",
@@ -134,7 +133,6 @@ export default b.declarations(
     "process.setgid",
     "process.setgroups",
     "process.setuid",
-    "process.title",
     "process.umask",
   ),
   extendAll(["ProcessExecve"], "process.execve"),

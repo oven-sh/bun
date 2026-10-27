@@ -6,7 +6,7 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 const files = {
-  "main.js": `const settings = { seldom: 1 };
+  "main.js": `const settings = JSON.parse('{"seldom":1}');
 settings.seldom = 2;
 settings.seldom = settings.seldom + settings.seldom;
 settings.seldom = settings.seldom + 1;

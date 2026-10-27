@@ -17,7 +17,7 @@ use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
 use crate::load::worker_files::{
-    find_embedded_code_files, find_embedded_files_that_start_workers, source_path_of,
+    WorkerSearch, find_code_that_starts_workers, find_embedded_code_files, source_path_of,
 };
 use crate::load::{PerProject, ProjectId, SourceKind, Sources};
 use crate::statistics::{LimitId, LimitValues, Stage, StatisticId, Statistics};
@@ -32,7 +32,7 @@ use bun_sema::session::Session;
 use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
     CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
-    find_configuration_of_each_entry_point, load_program_with_parsed_files,
+    find_configuration_of_each_entry_point, load_program_with_parsed_files, resolve_entry_point,
 };
 use bun_threading::Guarded;
 use core::sync::atomic::Ordering;
@@ -379,14 +379,18 @@ impl<'a> Build<'a> {
         if !options.aot.checks_only {
             self.started_workers.copies = find_embedded_code_files(files, &options.load.loaders);
         }
-        if !self.started_workers.copies.is_empty() {
-            if mentions_worker_constructor(files) {
-                self.started_workers.files = find_embedded_files_that_start_workers(
-                    files,
-                    &self.limits,
-                    &options.load.loaders,
-                );
-            }
+        if !options.aot.checks_only && mentions_worker_constructor(files) {
+            let search = WorkerSearch {
+                limits: &self.limits,
+                loaders: &options.load.loaders,
+                paths: &options.paths,
+                runs_in_place: options.aot.runs_in_place,
+                provider: self.provider,
+                resolve_entry_point: &|written| resolve_entry_point(host, request.code, written),
+            };
+            self.started_workers.files = find_code_that_starts_workers(files, &search);
+        }
+        if !self.started_workers.copies.is_empty() || !self.started_workers.files.is_empty() {
             self.started_workers.held_texts = texts_of_program_files(files)
                 .map(|(path, size)| (path.to_vec(), size))
                 .collect();

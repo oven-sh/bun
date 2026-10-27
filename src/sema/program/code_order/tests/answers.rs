@@ -121,7 +121,7 @@ fn unknown_specifier_answers_with_cause_and_host_modules() {
     let host = StatementsHost {
         runtime_modules: node_modules(),
         ..host_of(&[
-            ("/main.js", "require(name)\nrequire(\"lod\" + name)"),
+            ("/main.js", "require(name)\nrequire(\"#lod\" + name)"),
             ("/other.js", ""),
         ])
     };
@@ -137,7 +137,7 @@ fn unknown_specifier_answers_with_cause_and_host_modules() {
                 ComputedUnknown::NoPattern,
                 &[HostModuleId(3), HostModuleId(5)][..],
             ),
-            all(ComputedUnknown::IncompletePackageName, &[]),
+            all(ComputedUnknown::PackageImports, &[]),
         ];
         let main = file_at(files, "/main.js");
         assert_eq!(files.code_answers(main), expected);

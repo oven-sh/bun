@@ -50,7 +50,7 @@ function request(...args: [input?: unknown, options?: unknown, cb?: unknown]) {
   options._defaultAgent = https.globalAgent;
   ArrayPrototypeUnshift.$call(args, options);
 
-  return new http.ClientRequest(...(args as any));
+  return new http.ClientRequest(...args);
 }
 
 function get(input, options, cb) {
@@ -378,7 +378,7 @@ function onSocketClose(agentKey, err) {
 }
 
 function Agent(options): void {
-  if (!(this instanceof Agent)) return new Agent(options) as any;
+  if (!(this instanceof Agent)) return new Agent(options);
 
   options = { __proto__: null, ...options };
   options.defaultPort ??= 443;
@@ -582,7 +582,7 @@ const { shouldUseEnvProxy } = require("node:_http_agent");
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L82-L97
 function Server(options, requestListener): void {
-  if (!(this instanceof Server)) return new Server(options, requestListener) as any;
+  if (!(this instanceof Server)) return new Server(options, requestListener);
   if (typeof options === "function") {
     requestListener = options;
     options = {};

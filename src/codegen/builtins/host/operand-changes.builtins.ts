@@ -217,7 +217,7 @@ export default b.declarations(
   }),
   b.static("native:NewCppFunction:BunProcess.cpp:jsFunctionIsStandardOutputStream", {
     args: { value: b.any.optional },
-    returns: b.bool,
+    returns: b.union(b.bool, b.undefined),
     capability: "js",
     throws: true,
     uses: { value: b.inspected },

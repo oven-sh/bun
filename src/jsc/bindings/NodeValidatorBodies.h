@@ -43,7 +43,7 @@ ALWAYS_INLINE bool isIntegerThatPasses(double value, JSValue min, JSValue max)
 {
     auto lowest = boundOr(min, JSC::minSafeInteger());
     auto highest = boundOr(max, JSC::maxSafeInteger());
-    return lowest && highest && isIntegerBetween(value, *lowest, std::max(*lowest, *highest)) && std::isfinite(value);
+    return lowest && highest && isIntegerBetween(value, *lowest, *highest) && std::isfinite(value);
 }
 
 ALWAYS_INLINE bool isInt32ThatPasses(double value, JSValue min, JSValue max)

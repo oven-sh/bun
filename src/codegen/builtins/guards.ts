@@ -1,3 +1,4 @@
+import { guardFeatureOf } from "../../../scripts/build/trim/builtin-uses.ts";
 import type { BuiltinEntry, BuiltinUses } from "../../../scripts/build/trim/types.ts";
 import { GeneratorError } from "./declarations.ts";
 import {
@@ -47,8 +48,8 @@ export class Guards {
   }
 
   #add(entry: BuiltinEntry): void {
-    const use = entry.uses.find(({ isConditional }) => !isConditional);
-    const guard = use === undefined ? null : { feature: use.feature, builtin: entry.id };
+    const feature = guardFeatureOf(entry);
+    const guard = feature === undefined ? null : { feature, builtin: entry.id };
     const symbols =
       entry.creationSymbol === undefined ? entry.nativeSymbols : [...entry.nativeSymbols, entry.creationSymbol];
     for (const symbol of symbols) {

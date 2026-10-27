@@ -38,7 +38,7 @@ trim-feature run : Tools
   about "The rest of the command line: `bun run` with `package.json` scripts and `--filter`, `bun exec`, `--help` and shell completions. Included in `\"cli\"`. The executable doesn't need it to run its own program."
   saves 0.6 0.3
 
-trim-feature spawn : ChildProcess Spawn Shell Cron WebView OpenInEditor Terminal NodeCluster ProcessExecve HotReload CrashReport InternalForTesting BunSpawn
+trim-feature spawn : ChildProcess Spawn Shell Cron WebView OpenInEditor Terminal NodeCluster ProcessExecve HotReload CrashReport InternalForTesting BunSpawn BunSpawnSync
   about "Everything that starts a process: `Bun.spawn()`, `Bun.spawnSync()`, `node:child_process`, `node:cluster`, `Bun.$`, `Bun.cron`, `Bun.WebView`, `Bun.Terminal`, `Bun.openInEditor()`, `process.execve()`, `--watch`, `--hot` and automatic crash reporting. Includes `\"shell\"`, `\"cron\"`, `\"webview\"` and `\"terminal\"`."
   also "`bun` commands that start processes, such as `bun run` and `bunx`"
   saves 1.8 1.3

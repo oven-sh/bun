@@ -16,7 +16,7 @@
 //                         which --sources and --replay take too. A finding in such a program is tried in one file first; if it takes the files, files are cut first, then lines
 //   --flags "<flags>"     added to every build on the product bed; --engine-flags the same for the engine bed
 //   --validate            also builds each program in validate mode
-//   --modes a,b           only these modes of the product bed: default, validate, proofs-checked, erased, every-function-hot, and those that run only when named here:
+//   --modes a,b           only these modes of the product bed: default, validate, proofs-checked, erased, every-function-hot, each-a-program, and those that run only when named here:
 //                         erased-and-hot, nothing-inlined, hot-and-nothing-inlined, no-flow-results, hot-without-flow-results, every-function-cold, counts-as-very-large, cold-and-very-large, erased-cold-and-very-large,
 //                         erased-and-cold, allocations-leave-the-fast-path, claims-checked, moved-loads-checked, hot-with-claims-checked, hot-with-moved-loads-checked
 //   --collector-stress 1,2,3,5,7,11   the executable runs with a collection at every n-th allocation that leaves the fast path, freed cells overwritten and never reused;

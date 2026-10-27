@@ -1,1 +1,1 @@
-{ "skipInShell": "needs Workers", "alone": "what it prints hangs on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text", "skipInVariant": { "no-flow-results": "whether the executable can evaluate text is a result of flow: without it a Worker made of text starts and fails, where the default build throws" } }
+{ "skipInShell": "needs Workers" }

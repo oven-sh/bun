@@ -64,6 +64,7 @@ Some of these take a slow path: a `Proxy` used as an array, and an array with ho
 | The stack of an error that the parameters of an async function with an `await` throw      | Doesn't list the function                                        | Lists the function                                                                                                                                                                                                                      |
 | The stack of an error from the setup of an `enum`, a `namespace` or a decorated class     | Has an `<anonymous>` frame for the declaration                   | Has no such frame. The function around the declaration is listed at the place that ran                                                                                                                                                  |
 | The stack of an error from a field of a class with a decorated field and no constructor   | Lists `new` and the name of the class                            | Doesn't, as for a class without decorators                                                                                                                                                                                              |
+| The stack of a `RangeError` from `new Array(-1)`, where `Array` is a variable of your own | Often doesn't list `Array`, if the variable holds the built-in   | Lists `Array`, like any other function that a variable holds                                                                                                                                                                            |
 | The frames printed for an error that leaves a generator and that nobody catches           | Don't list the generator                                         | List the generator                                                                                                                                                                                                                      |
 | A closure that runs while another closure of the same function gets a `displayName`       | Stack traces list it under its own name                          | They list it under the `displayName` until it returns, and a callback of `map()` or `forEach()` until that call ends. Closures that are called later are listed under their own names                                                   |
 | Closures of one function that `new Function()` code or a `Proxy` trap names one by one    | Stack traces list each closure under its own name                | Where the build knows which function a call runs, they list each of the closures under the name that was set last                                                                                                                       |
@@ -83,6 +84,8 @@ Some of these take a slow path: a `Proxy` used as an array, and an array with ho
 | A `.mjs` file that calls `require()` and has no `import` or `export`, behind an `import`  | Runs ahead of the files that are imported before it              | Runs in the order of the imports, as in an executable built without `--aot`                                                                                                                                                             |
 | `require()` of modules that an `import()` is loading, while the loader fetches others     | The others run a few promise jobs behind the `require()`         | In some turns they run inside the `require()`, as under `bun run` once nothing else is left to fetch. Each module runs once, behind what it imports. The language leaves open when a load ends                                          |
 | `require()` of such modules where one of them awaits, so that `require()` throws          | The first of them begins, then `require()` throws                | In some turns `require()` throws first and they begin behind the error. Each module runs once, behind what it imports                                                                                                                   |
+| `import()` of a module that another `import()` is still loading                           | Settles in a turn that changes from run to run                   | Settles in the same turn in every run. Each module runs once, behind what it imports. The language leaves open when a load ends                                                                                                         |
+| `require.resolve("./x")` of a file that isn't in the executable                           | Looks in the folder of the file that asks                        | Looks in that folder below the working directory if it's there, and else in the working directory, where an executable built without `--aot` looks                                                                                      |
 | `__esModule` of a CommonJS file, stored by a file that is imported behind it              | An `import` goes by what it was when the file had run            | An `import` goes by what it is when every CommonJS file that the module imports has run, as in `bun build --compile` and Node.js                                                                                                        |
 | `import { x }`, where a CommonJS file has a getter for `x` that isn't enumerable          | The import fails: the file has no export named `x`               | Finds `x` if the getter only returns a member of another file, as in `return other.x`, and the text of the file shows all of its exports, as in an executable built without `--aot`. Otherwise the import fails                         |
 | A CommonJS file that is imported back while a `require()` of an ES module runs it         | Some importers keep its exports of that moment, later ones don't | All importers read the same exports: those of that moment while the file runs, and what it has exported at its end from then on. `import()` gives the namespace object that `import * as` gave                                          |
@@ -155,6 +158,9 @@ Some of these take a slow path: a `Proxy` used as an array, and an array with ho
 | `/(?:\b){5000000}/`: a group that takes no characters, repeated millions of times         | `null`                                                           | Matches, as the specification says                                                                                                                                                                                                      |
 | `await f(text)` in an async function whose parameter `f` is `RegExp.prototype.test`       | Prints another output                                            | Throws a `TypeError` before it converts `text` to a string, as `f.call(undefined, text)` does. `Array.fromAsync(list, RegExp.prototype.test)` does the same                                                                             |
 | `f.apply(receiver, list)`, where `f` inherits `apply` and isn't a function                | Reads `list` first, and throws if it isn't a list                | Throws the `TypeError` about `f` first, as the specification says. `list` is never read, so its getters don't run                                                                                                                       |
+| `new Readable()`, `stream.toArray()`: internal properties of a stream, such as `_events`  | Each is read and stored as often as in Node.js                   | While a stream is made or awaited, some are read once, or before the others are stored. Only a getter, a setter or a `Proxy` above the stream can tell                                                                                  |
+| `req`, `res`, `req.socket` of a `node:http` server: internal properties such as `_events` | Each is read and stored wherever the server uses it              | During an exchange, some are read less often, or never. Only a getter or a setter that the program defines for one of them can tell                                                                                                     |
+| `net.Socket = Other` before the first connection to a `node:http` server                  | The connections are instances of `Other`                         | They are instances of the class that `net.Socket` was at first, as in Node.js                                                                                                                                                           |
 | `for...in` over `{ 0: x, 1: y }`, with a typed array as its prototype                     | Lists an index that both have twice                              | Lists it once                                                                                                                                                                                                                           |
 | `o[9] = x`, where the prototype of `o` is a typed array without the index `9`             | Adds the element to `o`. Throws a `TypeError` if `o` is sealed   | The same, but nothing happens if `o` is sealed and has elements, or once the `prototype` of a function that was never constructed has a `Proxy` above it, an accessor or a read-only element under an index, or is frozen with elements |
 | [Five flags on `process`](#flags-on-process)                                              | A value that `process` inherits counts                           | Only own properties of `process` count                                                                                                                                                                                                  |
@@ -219,6 +225,7 @@ TypeError: Cannot assign to Function.prototype.call$0 because built-in objects a
 | `timezone-mock` 1.3.6                                                                                             | `register()` replaces a method of every object: `Object.prototype.toString = mockDateObjectToString;`                                                                                             | When `register()` is called: `TypeError: Cannot assign to Object.prototype.toString ...`                                                       | [`Object.prototype` can't be changed](#built-in-objects-are-read-only)                         | Set the time zone itself: `process.env.TZ = "US/Pacific"`                                                  |
 | `clear-module` 4.1.2                                                                                              | Takes a module out of the cache, so that the next `require()` runs it again: `delete require.cache[filePath];`                                                                                    | No error. The next `require()` returns the same exports                                                                                        | [A module of the executable runs at most once](#the-module-cache)                              | None                                                                                                       |
 | `@js-temporal/polyfill` 0.5.1                                                                                     | Its README has you replace a built-in method: `Date.prototype.toTemporalInstant = toTemporalInstant;`                                                                                             | From the build: `error: TS100014: this assignment always throws: built-in objects are read-only in a compiled executable`                      | [Existing members can't be replaced](#built-in-objects-are-read-only)                          | Leave the line out. The rest of the polyfill works, and `Temporal` is built in                             |
+| `next` 16.4.2                                                                                                     | Puts a `Date` of its own in the place of the built-in one, and catches the error: `Object.defineProperty(originalConstructor.prototype, 'constructor', {`                                         | No error. Each time it starts, it logs a line that begins with `Failed to install`, and keeps the built-in `Date`                              | [Existing members can't be replaced](#built-in-objects-are-read-only)                          | None. Only `cacheComponents` uses it                                                                       |
 
 The rows about built-in objects apply to [`bun run --aot` and `bun test --aot`](/compiler/debugging#run-under-the-compilers-rules) too, with the same messages. The row of `async-listener` and the rows about the loader and the module cache don't: there your program runs from its source files.
 
@@ -392,7 +399,7 @@ A few packages change built-ins, mostly to support old browsers or to offer a sh
 
 ## Code from strings
 
-`eval`, `new Function` and `node:vm` work. The build can't see their code, and the executable has no JIT, so Bun interprets it.
+`eval`, `new Function` and `node:vm` work, and so does [a Worker made from a string](#workers). The build can't see their code, and the executable has no JIT, so Bun interprets it.
 
 ```ts strings.ts icon="/icons/typescript.svg"
 const add = new Function("a", "b", "return a + b");
@@ -418,7 +425,7 @@ A direct `eval` in strict code doesn't count if its string is known at build tim
 
 Only a call counts. Naming `eval` or `Function`, storing one in an object or passing one to another function of your program costs nothing by itself. Neither does a call to a function that the compiler knows nothing about: it doesn't assume that such a call might be `eval`. The exception is a program that hands `eval` or `Function` to something that the compiler can't follow, such as the `resolve` function of `Promise.withResolvers()`, a proxy or the `detail` of an event. There it counts as called.
 
-What it doesn't track is an `eval` or a `Function` that your program reads under a computed key, as in `object[name](code)` or `globalThis[name](code)`. That holds for your own objects too. A table such as `{ "%eval%": eval, "%parse%": parse }`, like the one in the `get-intrinsic` package, costs nothing however it's read, and `table["%eval%"](code)` counts as a call while `table[name](code)` doesn't. In a program with no other such call, that one throws:
+What it doesn't track is an `eval` or a `Function` that your program reads under a computed key, as in `object[name](code)` or `globalThis[name](code)`. That holds for your own objects too. A table such as `{ "%eval%": eval, "%parse%": parse }`, like the one in the `get-intrinsic` package, costs nothing however it's read, and `table["%eval%"](code)` counts as a call while `table[name](code)` doesn't. It doesn't track the third argument of `Reflect.get(target, key, receiver)` into the getter either, so `this.constructor(code)` in a getter that runs on a function that way doesn't count. In a program with no other such call, that one throws:
 
 ```txt
 EvalError: Code generation from strings disallowed for this context: the compiler couldn't tell at build time that this call reaches eval() or the Function constructor. Call eval() or new Function() directly.
@@ -960,7 +967,7 @@ A file has `export *` for two ES modules that both export `x`. That makes `x` am
 
 ## Workers
 
-Pass the worker as an additional entry point, like in [any executable](/compiler/executables#worker).
+The compiler finds the file of a worker whose path your code writes out, and compiles it, with everything it imports, as one more entry point. Any other worker you pass as an additional entry point, like in [any executable](/compiler/executables#worker).
 
 A Worker has its own global object, so the compiler treats each entry point as a separate program when your code starts Workers. What a worker does to a class, a prototype or a shared module doesn't slow down the main thread's code, and the other way around. A module that both import is compiled once for each, so when your entry points share most of their code, they are compiled as one program.
 
@@ -979,12 +986,29 @@ worker.postMessage(21);
 ```
 
 ```bash terminal icon="terminal"
-bun compile ./spawn.ts ./worker.ts --outfile spawn && rm worker.ts && ./spawn
+bun compile ./spawn.ts --outfile spawn && rm worker.ts && ./spawn
 ```
 
 ```txt
 42
 ```
+
+These all name a file that the compiler finds:
+
+| You write                                                                                                         | The file is looked for                                      |
+| ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `new Worker("./worker.ts")`, `"../worker.ts"`                                                                     | From the folder of your entry point, as the executable does |
+| `new Worker(new URL("./worker.ts", import.meta.url))`, also with `.href`                                          | From the file that says so                                  |
+| `import.meta.resolve("./worker.ts")`, `require.resolve("./worker.js")`                                            | As an import of that file is                                |
+| `path.join(__dirname, "worker.js")`, `path.resolve(import.meta.dir, "worker.ts")`, `` `${__dirname}/worker.js` `` | From the file that says so                                  |
+| `import.meta.url`, `import.meta.path`, `__filename`                                                               | The file itself                                             |
+| `fileURLToPath()` and `pathToFileURL()` of `node:url` around one of these                                         |                                                             |
+
+The path can pass through `const` variables, parameters of functions in the same file and exports on its way to `new Worker()`, of the global `Worker` or of `node:worker_threads`.
+
+`bun run` looks for a relative path like `"./worker.ts"` from the working directory. An executable looks in itself first, from the folder of its entry point, or from the folder that all of them share. So does the compiler.
+
+The compiler doesn't look for a name without `./` in front, like `"worker.ts"` or the name of a package, because an executable doesn't look in itself for one. It doesn't find a file above the folder of your entry point that a file in that folder names either, like `new URL("../workers/job.ts", import.meta.url)` in `src/main.ts`. And it only follows the paths in your own files: a worker that a package in `node_modules` starts from one of its files isn't compiled, because most programs that import such a package never start it. A package of your workspace that is only linked into `node_modules` counts as your own files. Pass such a file as an additional entry point. A path that names no file changes nothing about the build, and the Worker fails to load.
 
 You don't have to list a worker that you embed with the `file` loader and start by the path of the copy. The compiler follows the import to `new Worker()` and compiles the file, with everything it imports, as one more entry point:
 
@@ -1002,7 +1026,37 @@ A file that you embed for another use, like a script that a server sends to brow
 warn: TS100071: This Worker may start from an embedded file that isn't compiled, and then it fails to load: "/home/me/app/site/index.js", "/home/me/app/site/login.js", "/home/me/app/site/settings.js" and 97 more. Add the file as an entry point, or pass its import straight to new Worker()
 ```
 
-A Worker that you create from a file on disk or from a `blob:` or `data:` URL runs [code that isn't in the executable](#code-that-isnt-in-the-executable), so it fails to load. Put the code in a file and pass it as an entry point. With [`--aot-allow-code-from-disk`](#load-code-from-disk) it loads, in a program that also has a dynamic `import()` or `require()`.
+You don't have to list a worker that starts from a `data:` URL either, if the whole URL is known at build time. The compiler decodes it and compiles what it holds as one more entry point:
+
+```ts spawn.ts icon="/icons/typescript.svg"
+const code = `postMessage("from the worker")`;
+const worker = new Worker("data:text/javascript," + encodeURIComponent(code));
+```
+
+The URL can be a string, a template or a `+` of constants, with `encodeURIComponent()` or `btoa()` around a part of it, percent-encoded or in base64, and wrapped in `new URL()`, which `node:worker_threads` asks for. It can pass through `const` variables, parameters of functions in the same file and exports on its way to `new Worker()`. The code is read as TypeScript with JSX whatever type the URL names, like under `bun run`, and its imports are resolved from the directory you build in. A relative path in a dynamic `import()` is too, which `bun run` doesn't find from a `data:` URL.
+
+The same goes for the code that you pass to `new Worker(code, { eval: true })` of `node:worker_threads`, and for an object URL, if the code and the type of the `Blob` are known at build time:
+
+```ts spawn.ts icon="/icons/typescript.svg"
+const code = `postMessage("from the worker")`;
+const worker = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
+```
+
+The options and the parts of the `Blob` have to be written as literals, `{ eval: true }` and `[code]`. The `Blob` and the URL can be kept in `const` variables. The executable knows the code by what it says, so a `Blob` that your program makes elsewhere with the same text and the same type starts the compiled code too. In such a Worker `import.meta.url`, `Bun.main` and stack traces show a `blob:` URL that is the same in every run.
+
+In a `data:` URL, an object URL or `eval` code that is CommonJS, `require.main === module` and `import.meta.main` are `false`. Under `bun run` they are `true`. `require.main` itself is the module, as under `bun run`.
+
+If the code in the URL, or in a file that the compiler found by its path, doesn't compile, because of a syntax error or an import that can't be resolved, the build leaves it out. It prints what's wrong as warnings, and the Worker fails as it does under `bun run`:
+
+```txt
+warn: TS100072: The code that this Worker starts from can't be compiled, so the Worker fails to load
+```
+
+A Worker that you create from a `data:` URL, an object URL or `eval` code that your program puts together at run time works too. Its code is [code from a string](#code-from-strings), so Bun interprets it, and the built-in modules it imports too. It shares nothing with your compiled code: it can use any API, [built-in objects](#built-in-objects-are-read-only) aren't read-only in it, and it makes the rest of your program neither larger nor slower.
+
+With [`--trim`](/compiler/size) such a Worker fails to load, like a Worker from a file on disk. So it does with `--disallow-code-generation-from-strings=strict`, where `new Worker()` throws the flag's `EvalError`.
+
+A Worker that you create from a path that your program puts together at run time runs [code that isn't in the executable](#code-that-isnt-in-the-executable), so it fails to load: the Worker gets an `error` event. Pass the file as an entry point. With [`--aot-allow-code-from-disk`](#load-code-from-disk) it loads, in a program that also has a dynamic `import()` or `require()`.
 
 A file can start itself as a Worker. To tell the two threads apart, use `Bun.isMainThread`, not `import.meta.main`. In an executable with a single entry point, `import.meta.main` is decided at build time, like in any executable: it's `true` in that file on every thread. Under `bun run` it's `false` in the Worker. With more than one entry point it's `false` in a Worker here too.
 
@@ -1011,6 +1065,22 @@ Everything is one program when entry points can meet in one global object: when 
 ## Native addons
 
 `require("./addon.node")` embeds the addon in the executable, like in [any executable](/compiler/executables#embed-n-api-addons). `process.dlopen(module, path)` loads one from disk, and its path can be computed. Calls into either work the same. A `require()` with a computed path doesn't load an addon, because it [only finds code that's in the executable](#code-that-isnt-in-the-executable).
+
+A package usually ships one addon per platform and makes the name of the file out of `process.platform` and `process.arch`. The compiler knows both, so such a name is a constant to it, and the executable contains the one addon that it loads.
+
+```js index.js icon="/icons/javascript.svg"
+module.exports = require(`./my-app.${process.platform}-${process.arch}.node`);
+```
+
+The same goes for `"./my-app." + process.platform + ".node"`, for `path.join(__dirname, name)`, for a `require` from `createRequire()`, and for the loaders that [NAPI-RS](https://napi.rs) generates: a `switch` or a chain of `if`s over the platform and the architecture, where each arm requires the file beside the loader or else the package for that platform, like `@my/app-linux-x64-gnu`. Such a loader first asks `existsSync(join(__dirname, "my-app.linux-x64-gnu.node"))`. An embedded addon keeps its name, so the answer is `true`. In an executable built without `--aot` the name gets a hash, `my-app.linux-x64-gnu-2ecze33x.node`, which is also what `Bun.embeddedFiles` lists there.
+
+Where only the start of a package's name is a constant, as in ``require(`my-app-${parts.join("-")}`)``, the executable contains every installed package whose name starts with `my-app-`.
+
+The compiler doesn't follow a name that's read out of a table, as in `names[process.platform][process.arch]`, one of a list of names that a loop tries, or a name in a variable that's added to, as in `name += "-musl"`. It warns that the path isn't a constant. Pass the addon as another entry point, and the loader finds it by the name that it makes.
+
+```bash terminal icon="terminal"
+bun compile ./app.ts ./node_modules/my-app-linux-x64-gnu/my-app.linux-x64-gnu.node --outfile app
+```
 
 An addon is native code. It can keep, call and change whatever your program hands it, right away or later, and it can read, call and change globals by name. [Built-in objects are read-only](#built-in-objects-are-read-only) for it too. `napi_run_script` runs [code from a string](#code-from-strings), so it throws the same `EvalError` as `eval` unless the compiler found a call to `eval` or `Function` in your program.
 
@@ -1286,7 +1356,7 @@ Bun itself looks at five properties of `process`: `noDeprecation`, `throwDepreca
 ## Memory
 
 - **Each thread can have 32 GB of objects.** References between objects take 32 bits. Objects and small arrays count toward the limit. The characters of strings, large arrays, `ArrayBuffer`s and typed arrays don't. Each `Worker` has a limit of its own. Where the address space of the process is limited (`ulimit -v`), objects take address space as they need it and share the limit with everything else in the process. Address space that objects have taken stays reserved for objects until the process exits. A thread that goes over it gets a `RangeError` whose message starts with "Out of memory" and names the limit and the option that removes it. A thread that stays just under the limit gets the same error once four garbage collections in a row have each freed less than 1/64 of the heap. Otherwise it would spend nearly all of its time collecting garbage. Your code can catch it. It is thrown where it allocates, in `JSON.parse` and `structuredClone`, or at the next function call that checks the stack. One case is left: a loop that allocates inside a `try` of its own function, or that the compiler has inlined into one, and that calls no function gets no error there, and ends the process with an out-of-memory error once memory is used up, or after 16 such collections in a row. In a `Worker` it ends that Worker alone: its parent gets an `error` event with the `RangeError`, and the exit code is 1. Move the loop into a function of its own. `bun compile --aot-huge-heap` compiles with 64-bit references, which removes the limit. The executable then uses more memory and runs slower.
-- **Where the address space is limited, `new Worker()` throws a `TypeError` when there is no room for another thread.** If another `Worker` that the same thread started is ending at that moment, the constructor returns, and the new `Worker` starts once that one has ended. If there is still no room then, it gets an `error` event with the same `TypeError` and closes with code 1.
+- **Where the address space is limited, `new Worker()` throws a `TypeError` when there is no room for another thread.** If another `Worker` that the same thread started is ending at that moment, the constructor returns, and the new `Worker` starts once that one has ended. One new `Worker` can wait for each one that is ending. If there is still no room then, it gets an `error` event with the same `TypeError` and closes with code 1.
 - **A local variable stops keeping its value alive after its last use,** even if the function is still waiting at an `await`. In an async function or a generator, parameters are the exception: whatever the names in the parameter list hold, and `this`, stay alive until the function ends, as under `bun run`. In any other function, a parameter is like a local variable. Under `bun run`, a local variable that a closure captures lives as long as the function's other variables. So if a `FinalizationRegistry` is in a local variable that you never touch again, it can be collected while the function waits, and its callback never runs. Keep the registry at module level.
 - **A variable or property that nothing reads doesn't keep its value alive.** The compiler removes it along with the stores into it. If you park an object in a module-level variable only so that a `WeakRef` to it keeps answering, or so that its `FinalizationRegistry` callback doesn't run yet, read that variable somewhere.
 

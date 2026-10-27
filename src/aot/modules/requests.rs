@@ -210,7 +210,6 @@ impl FileScanner<'_, '_> {
                     }
                     ComputedUnknown::NoPattern
                     | ComputedUnknown::NoConstantPrefix
-                    | ComputedUnknown::IncompletePackageName
                     | ComputedUnknown::PackageImports
                     | ComputedUnknown::ConfigPaths
                     | ComputedUnknown::ExternalCandidate => {}

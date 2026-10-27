@@ -134,6 +134,9 @@ group("with --disallow-code-generation-from-strings no string becomes code throu
     ["the Function constructor", `new Function(process.argv[2])();`],
     ["Function.call", `console.log(Function.call(null, process.argv[2])());`],
     ["a class that extends Function", `class Mine extends Function {} console.log(new Mine(process.argv[2])());`],
+    // Whoever is handed it may call it.
+    ["eval that reaches unknown code", external + `external(eval);`],
+    ["the Function constructor that reaches unknown code", external + `external(Function);`],
   ])("the report is closed with %s", async (_, text) => {
     const [without, use, strict] = await Promise.all([
       of(text),
@@ -153,8 +156,6 @@ group("with --disallow-code-generation-from-strings no string becomes code throu
   test.each([
     ["a computed name read from what may be a function", input + `console.log(input[process.argv[3]]);`],
     ["constructor of an unknown value", input + `console.log(input.constructor("return 1"));`],
-    ["eval that reaches unknown code and is called nowhere", external + `external(eval);`],
-    ["the Function constructor that reaches unknown code and is called nowhere", external + `external(Function);`],
     ["Function('return this')(), whose text the compiler reads", `console.log(Function("return this")().Object);`],
     ["the names of the global object", `console.log(Object.keys(globalThis));`],
   ])("the report is closed with and without the flag with %s", async (_, text) => {

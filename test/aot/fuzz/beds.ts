@@ -43,6 +43,8 @@ export interface Compiled {
 export interface Mode {
   name: string;
   flags: string[];
+  /** For a program that has a build to itself it is another mode over again. */
+  isForSharedBuilds?: true;
 }
 
 export type FindingKind =
@@ -204,10 +206,12 @@ const inTheRun = "--in-the-run=";
 const inTheCompanyOf = "--in-the-company-of=";
 /** The same: what lies in the folder beside the programs, a name of `projects`. */
 const besideTheProgram = "--beside-the-program=";
+/** The same: each program of a shared build is a further entry point of it. An entry point begins a program of its own, so the compiler makes of each what it makes of it alone. */
+const eachAProgram = "--each-a-program";
 export const staysAScript = "// stays a script\n";
 /** What a program may call without declaring it. */
 export const printFor = (isTyped: boolean) => (isTyped ? "function print(text: string): void {\n  console.log(text);\n}\n" : "function print(text) {\n  console.log(text);\n}\n");
-const isOfTheBuild = (flag: string) => !flag.startsWith(inTheRun) && !flag.startsWith(inTheCompanyOf) && !flag.startsWith(besideTheProgram);
+const isOfTheBuild = (flag: string) => !flag.startsWith(inTheRun) && !flag.startsWith(inTheCompanyOf) && !flag.startsWith(besideTheProgram) && flag !== eachAProgram;
 
 const ownOptions = { target: "esnext", module: "preserve", moduleResolution: "bundler", allowJs: true, noEmit: true, strict: true };
 /** What a folder may hold beside a program. A small script has no tsconfig.json at all and no typings installed: there the build has to know the host by itself. */
@@ -319,7 +323,7 @@ export class ProductBed implements Bed {
     const beside = (this.options.projects ?? []).filter(name => !projects[name].hasTypings || typingsOfBun());
     const project = beside.length ? [besideTheProgram + beside[Math.floor(Math.random() * beside.length)]] : [];
     const own = program.flags ?? [];
-    return this.#modes(program).map(mode => ({ name: [mode.name, ...own].join(" "), flags: [checksThatMoveNoOutput, ...mode.flags, ...own, ...stress, ...project, ...(size ? [inTheCompanyOf + size] : []), ...(mode.flags.some(flag => flag.startsWith("--aot-limit=")) ? [] : limit)] }));
+    return this.#modes(program).map(mode => ({ ...mode, name: [mode.name, ...own].join(" "), flags: [checksThatMoveNoOutput, ...mode.flags, ...own, ...stress, ...project, ...(size ? [inTheCompanyOf + size] : []), ...(mode.flags.some(flag => flag.startsWith("--aot-limit=")) ? [] : limit)] }));
   }
 
   #modes(program: Program): Mode[] {
@@ -331,6 +335,8 @@ export class ProductBed implements Bed {
     // How hot a function counts goes by the whole program, and a small program is mostly lukewarm: little is inlined, so the passes behind inlining see little.
     // One fault showed only where three other modules were built beside the program. They did nothing but move its heat.
     modes.push({ name: "every-function-hot", flags: ["--aot-heat=everything-is-hot"] });
+    // A shared build is one program of many modules. What the compiler proves only of a small program, that nobody deletes a key, say, it never proves there, and what is wrong with such a proof does not show.
+    modes.push({ name: "each-a-program", flags: [eachAProgram], isForSharedBuilds: true });
     if (!this.options.modes) return modes;
     // Asked for by name only.
     if (program.extension === "ts") modes.push({ name: "erased-and-hot", flags: ["--aot-erase-types", "--aot-heat=everything-is-hot"] });
@@ -423,9 +429,14 @@ export class ProductBed implements Bed {
     return spawned(cmd, folder, seconds, set, this.options.memory);
   }
 
-  #build(folder: string, entry: string, flags: string[]) {
+  #build(folder: string, entry: string, flags: string[], further: string[] = []) {
     const all = this.#merged([...this.options.baseFlags, ...flags]).filter(isOfTheBuild);
-    return spawned([this.bun, "build", "--compile", "--aot", `--aot-threads=${this.options.threads}`, ...all, entry, "--outfile", join(folder, "executable")], folder, this.options.buildSeconds, undefined, this.options.memory);
+    return spawned([this.bun, "build", "--compile", "--aot", `--aot-threads=${this.options.threads}`, ...all, entry, ...further, "--outfile", join(folder, "executable")], folder, this.options.buildSeconds, undefined, this.options.memory);
+  }
+
+  // Workers and company come through the modules of one program.
+  #furtherEntryPoints(programs: Program[], members: number[], flags: string[]): string[] {
+    return flags.includes(eachAProgram) && !this.options.workers && !flags.some(flag => flag.startsWith(inTheCompanyOf)) ? members.map(index => "./" + entryOf(`p${index}`, programs[index])) : [];
   }
 
   async judge(folder: string, programs: Program[], flags: string[]): Promise<Judged[]> {
@@ -463,6 +474,16 @@ export class ProductBed implements Bed {
   #writeEntryPoint(folder: string, programs: Program[], members: number[], flags: string[]) {
     const size = Number(flags.find(flag => flag.startsWith(inTheCompanyOf))?.slice(inTheCompanyOf.length) ?? 0);
     if (size) writeFileSync(join(folder, "company.js"), company(size, memberNames(programs.map(wholeText))));
+    const further = this.#furtherEntryPoints(programs, members, flags);
+    if (further.length)
+      return writeFileSync(
+        join(folder, "main.js"),
+        `const programs = {\n${members.map((index, at) => `  ${index}: "${further[at]}",\n`).join("")}};
+const worker = new Worker(new URL(programs[process.argv[2]], import.meta.url));
+worker.addEventListener("error", event => console.error("error: " + event.message));
+process.exitCode = await new Promise(resolve => worker.addEventListener("close", event => resolve(event.code)));
+`,
+      );
     const table = `${size ? `import "./company.js";\n` : ""}const programs = {\n${members.map(index => `  ${index}: () => import("./${entryOf(`p${index}`, programs[index])}"),\n`).join("")}};\n`;
     if (!this.options.workers) return writeFileSync(join(folder, "main.js"), `${table}await programs[process.argv[2]]();\n`);
     writeFileSync(
@@ -490,11 +511,12 @@ ${table}if (isMainThread) {
     this.#writeEntryPoint(folder, programs, programs.map((_, index) => index), flags); // prettier-ignore
     const merged = this.#merged([...this.options.baseFlags, ...flags]);
     const [inRun, inBuild] = [merged.filter(flag => flag.startsWith(inTheRun)), merged.filter(isOfTheBuild)];
-    return `bun run main.js 0\nbun ${["build", "--compile", "--aot", ...inBuild, "main.js", "--outfile", "executable"].join(" ")} && ${inRun.map(flag => flag.slice(inTheRun.length) + " ").join("")}./executable 0\n`;
+    const further = this.#furtherEntryPoints(programs, programs.map((_, index) => index), flags); // prettier-ignore
+    return `bun run main.js 0\nbun ${["build", "--compile", "--aot", ...inBuild, "main.js", ...further, "--outfile", "executable"].join(" ")} && ${inRun.map(flag => flag.slice(inTheRun.length) + " ").join("")}./executable 0\n`;
   }
 
   // One build holds every program as a module of its own, and an argument says which one a run imports: Bun's own library is
-  // compiled once for all of them, and no run sees what another did. What the compiler proves, it proves about all of them at once.
+  // compiled once for all of them, and no run sees what another did. What the compiler proves, it proves about all of them at once, but in the mode each-a-program: there each is an entry point and runs in a Worker.
   async #judgeTogether(folder: string, programs: Program[], flags: string[]): Promise<Judged[]> {
     const executable = join(folder, process.platform === "win32" ? "executable.exe" : "executable");
     const results = new Array<Judged>(programs.length);
@@ -512,7 +534,7 @@ ${table}if (isMainThread) {
       if (!members.length) return;
       entry(members);
       rmSync(executable, { force: true });
-      const build = await this.#build(folder, "main.js", flags);
+      const build = await this.#build(folder, "main.js", flags, this.#furtherEntryPoints(programs, members, flags));
       if (existsSync(executable) && build.exitCode === 0) {
         const runs = (await inParallel(members, 4, index => this.#run(folder, [executable, String(index)], flags))).map(run => this.#inAnyOrder(run));
         members.forEach((index, at) => {

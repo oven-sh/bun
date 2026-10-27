@@ -6,6 +6,7 @@
 - `./bun` contains all `bun:*` modules
 - `./thirdparty` contains npm modules we replace like `ws`
 - `./internal` contains modules that aren't assigned to the module resolver
+- `./ahead-of-time` contains second texts of some of the modules above, under the same names. `bun run` evaluates the first text of a module. `bun build --compile --aot` compiles the second one where there is one. The two must do the same: a change to one of them goes into the other too. `bun src/codegen/check-types-of-modules.ts` checks the types as the compiler reads them
 
 Each `.ts`/`.js` file above is assigned a numeric id at compile time and inlined into an array of lazily initialized modules. Internal modules referencing each other is extremely optimized, skipping the module resolver entirely.
 

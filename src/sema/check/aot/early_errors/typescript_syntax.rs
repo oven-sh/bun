@@ -158,6 +158,17 @@ impl Checker<'_, '_> {
                 ModuleName::Global => 2670,
             },
             StmtKind::ImportEquals(_) if !is_module_element => 1232,
+            // What runs is a constant of that name.
+            StmtKind::ImportEquals(import)
+                if hir[import].name == known::let_
+                    && matches!(hir[import].target, ImportEqualsTarget::Require(_))
+                    && !hir[import].flags.contains(Flags::TYPE_ONLY)
+                    && !is_ambient =>
+            {
+                let name = self.span_of_token(file, hir[import].name_pos);
+                self.early_grammar_error_at(name, 2480, &[]);
+                return;
+            }
             StmtKind::ExportAssign(_) if !is_module_element => 1231,
             StmtKind::ExportAsNamespace(_) if !is_module_element => 1316,
             _ => return,

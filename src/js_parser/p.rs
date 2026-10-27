@@ -4470,6 +4470,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(self.s(stmt, loc))
     }
 
+    /// `export ... from` drops its `type` attribute, except for `css`: the bundler makes that file a CSS module script.
+    #[cold]
+    pub(crate) fn keep_css_type(&mut self, import_record_index: u32) {
+        self.import_records.items_mut()[import_record_index as usize].loader =
+            Some(options::Loader::Css);
+    }
+
     #[cold]
     fn validate_and_set_import_type(
         &mut self,

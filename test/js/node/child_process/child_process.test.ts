@@ -2009,7 +2009,9 @@ describe("spawn().unref() with piped stdio", () => {
     });
   });
 
-  it("lets the parent exit when the child closes its pipes and lives on", async () => {
+  // Not on Windows: fs.closeSync(1) is a no-op there (libuv's uv_fs_close leaves
+  // fds 0 to 2 open), so the pipes stay open while the child lives.
+  it.skipIf(!isPosix)("lets the parent exit when the child closes its pipes and lives on", async () => {
     // The hold ends when the pipes close, not when the child exits.
     expect(
       await runAndKill(

@@ -229,18 +229,28 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
         JSC::throwException(globalObject, scope, error);
 }
 
-static JSValue resolvedCommonJSFileURLKey(Zig::GlobalObject* globalObject, JSValue originalValue, JSValue resolvedValue, JSC::ThrowScope& scope)
+static JSValue resolvedCommonJSModuleKey(Zig::GlobalObject* globalObject, JSValue originalValue, JSValue resolvedValue, JSC::ThrowScope& scope)
 {
     auto original = originalValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!original.startsWith("file://"_s))
-        return resolvedValue;
-    auto url = WTF::URL(original);
-    if (!url.isValid() || url.isEmpty() || url.fileSystemPath().find('?') == WTF::notFound)
-        return resolvedValue;
     auto resolved = resolvedValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    return jsString(globalObject->vm(), Bun::resolvedModuleKeyFromFileURL(url, resolved));
+    if (original.startsWith("file://"_s)) {
+        auto url = WTF::URL(original);
+        if (!url.isValid() || url.isEmpty() || url.fileSystemPath().find('?') == WTF::notFound)
+            return resolvedValue;
+        return jsString(globalObject->vm(), Bun::resolvedModuleKeyFromFileURL(url, resolved));
+    }
+
+    // Relative children can resolve inside a directory containing a literal '?'.
+    // Remove only the suffix supplied by this specifier before encoding the path.
+    auto suffix = original.substring(moduleKeyPathLength(original));
+    if (!suffix.isEmpty() && !resolved.endsWith(suffix))
+        return resolvedValue;
+    auto path = resolved.left(resolved.length() - suffix.length());
+    if (!isAbsolutePath(path) || path.find('?') == WTF::notFound)
+        return resolvedValue;
+    return jsString(globalObject->vm(), makeString(URL::fileURLWithFileSystemPath(path).string(), suffix));
 }
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -372,7 +382,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 }
 
                 {
-                    auto resolvedKey = resolvedCommonJSFileURLKey(globalObject, moduleName, JSC::JSValue::decode(result), scope);
+                    auto resolvedKey = resolvedCommonJSModuleKey(globalObject, moduleName, JSC::JSValue::decode(result), scope);
                     if (scope.exception()) [[unlikely]]
                         goto cleanup;
                     result = JSC::JSValue::encode(resolvedKey);
@@ -411,7 +421,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     }
 
     if (!isESM) {
-        auto resolvedKey = resolvedCommonJSFileURLKey(globalObject, moduleName, JSC::JSValue::decode(result), scope);
+        auto resolvedKey = resolvedCommonJSModuleKey(globalObject, moduleName, JSC::JSValue::decode(result), scope);
         RETURN_IF_EXCEPTION(scope, {});
         result = JSC::JSValue::encode(resolvedKey);
         if (!isRequireDotResolve) {

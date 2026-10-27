@@ -43,18 +43,19 @@ const turn = () => new Promise<void>(resolve => setImmediate(resolve));
  * polled its sockets, so the client mostly reads them one at a time. Nothing depends on that.
  */
 function rawServer(responses: Buffer[], delivery: Delivery) {
-  return Bun.listen<{ answered: boolean }>({
+  return Bun.listen<{ request: string }>({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
       open(socket) {
-        socket.data = { answered: false };
+        socket.data = { request: "" };
       },
-      async data(socket, request) {
-        const path = /^GET \/(\d+) /.exec(request.toString("latin1"));
-        if (socket.data.answered || !path) return;
-        socket.data.answered = true;
-        for (let piece of deliveries[delivery](responses[+path[1]])) {
+      async data(socket, data) {
+        if (socket.data.request.endsWith("\r\n\r\n")) return;
+        socket.data.request += data.toString("latin1");
+        if (!socket.data.request.endsWith("\r\n\r\n")) return;
+        const index = +/^GET \/(\d+) /.exec(socket.data.request)![1];
+        for (let piece of deliveries[delivery](responses[index])) {
           while (piece.length > 0) {
             const written = socket.write(piece);
             if (written < 0) return;
@@ -92,25 +93,23 @@ function refusedUpgrade(url: string) {
   const { promise, resolve } = Promise.withResolvers<string>();
   const ws = new WebSocket(url);
   ws.on("error", error => resolve(error.message.replace(url, "<url>")));
+  ws.on("open", () => resolve("open"));
+  ws.on("close", code => resolve(`close ${code}`));
   ws.on("unexpected-response", (_, response: IncomingMessage) => {
     const head = brief(
       `${response.httpVersion} ${response.statusCode} ${JSON.stringify(response.statusMessage)} ${JSON.stringify(response.rawHeaders)}`,
     );
     const parts: Buffer[] = [];
     response.on("data", part => parts.push(part));
-    const ended = (body: () => string) => () => {
-      resolve(`${head} ${body()}`);
+    const ended = (body: string) => {
+      resolve(`${head} ${body}`);
       ws.terminate();
     };
-    response.once(
-      "end",
-      ended(() => short(Buffer.concat(parts))),
-    );
+    response.once("end", () => ended(short(Buffer.concat(parts))));
     // How much of it came before depends on how it was delivered.
-    response.once(
-      "aborted",
-      ended(() => "cut short"),
-    );
+    response.once("aborted", () => ended("cut short"));
+    response.once("error", () => ended("error"));
+    response.once("close", () => ended("close"));
   });
   return promise;
 }

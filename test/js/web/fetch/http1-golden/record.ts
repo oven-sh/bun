@@ -1,6 +1,6 @@
-// Fills clients.json and the results in parser.json.gz with what the Bun that runs this script does:
+// Fills clients.json with what the Bun that runs this script does, and with --parser the results in parser.json.gz too:
 //
-//   bun record.ts --accept [--clients-only]
+//   bun record.ts --accept [--parser]
 //
 // What is in the repository does not come from the code under test:
 // - clients.json was recorded with the last Bun that linked picohttpparser (9b8347a24e).
@@ -27,7 +27,7 @@ if (!process.argv.includes("--accept")) {
   throw new Error("This records the code under test. Pass --accept after a change that is meant.");
 }
 
-if (!process.argv.includes("--clients-only")) {
+if (process.argv.includes("--parser")) {
   const cases = await loadParserCases();
   for (const head of cases.heads) head[2] = parsed(head[0], head[1]);
   for (const body of cases.bodies) body[2] = decoded(body[0], body[1]);

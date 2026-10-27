@@ -19,6 +19,7 @@ describe("the parser by itself", async () => {
   const cases = await loadParserCases();
 
   test("response heads", () => {
+    expect(cases.heads).toHaveLength(1230);
     const wrong = cases.heads.flatMap(([slots, data, expected]) => {
       const actual = parsed(slots, data);
       return actual === expected ? [] : [{ slots, data, actual, expected }];
@@ -27,6 +28,7 @@ describe("the parser by itself", async () => {
   });
 
   test("chunked bodies", () => {
+    expect(cases.bodies).toHaveLength(621);
     const wrong = cases.bodies.flatMap(([cuts, data, expected]) => {
       const actual = decoded(cuts, data);
       return actual === expected ? [] : [{ cuts, data, actual, expected }];

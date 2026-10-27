@@ -1,5 +1,5 @@
 //! The cases of picohttpparser's `test.c` that apply, what Bun's patch to it changed, and every byte value at every
-//! alignment of the 16-byte blocks that `response::index_of` reads.
+//! alignment of the 16-byte blocks that `response::index_of` reads (see `PADDINGS` for what Miri runs of that).
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::panic)]
 
 use crate::ParseError::{Incomplete, Malformed};

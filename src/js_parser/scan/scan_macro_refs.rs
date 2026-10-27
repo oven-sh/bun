@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use bun_ast::expr::Data;
 use bun_ast::stmt::Data as StmtData;
-use bun_ast::{self as ast, Expr, G, Loc, OpCode, Ref, Stmt, StmtOrExpr, b::B};
+use bun_ast::{self as ast, Expr, G, Loc, Ref, Stmt, StmtOrExpr, b::B};
 use bun_collections::VecExt as _;
 
 use crate::lexer as js_lexer;
@@ -39,107 +39,156 @@ pub(crate) fn reject_macro_value_uses(
         return;
     }
     let located = locate_macro_refs(ast.parts.as_slice(), refs);
-    for (i, found) in located.iter().enumerate() {
-        let mut earlier = located[..i].iter().filter(|it| it.r#ref.eql(found.r#ref));
-        // The visit pass copies the computed key of a decorated member, so the walk finds that identifier twice.
-        let is_repeat = earlier.clone().any(|it| it.loc.start == found.loc.start);
-        if has_use(found.r#ref) && !is_repeat {
-            report(
-                refs,
-                ast,
-                source,
-                log,
-                found.r#ref,
-                Some(found),
-                earlier.next().is_none(),
-            );
+    let place = |at: u32| {
+        let found = &located[at as usize];
+        (found.loc.start, found.r#ref.inner_index())
+    };
+    // In source order. The visit pass copies the computed key of a decorated member, so the walk finds that identifier twice.
+    let mut order = bun_collections::index_sort::identity(located.len());
+    bun_collections::index_sort::sort_indices_unstable(&mut order, &mut |a, b| {
+        place(a).cmp(&place(b))
+    });
+    order.dedup_by(|a, b| place(*a) == place(*b));
+    let mut reporter = Reporter {
+        refs,
+        ast,
+        source,
+        log,
+        // Elsewhere a call of a macro is an error of its own, so the advice does not name one.
+        macros_run: !features.no_macros && !source.path.is_node_module(),
+        bindings: (0..refs.count()).map(|_| Binding::default()).collect(),
+    };
+    for at in order {
+        let found = located[at as usize];
+        if has_use(found.r#ref) {
+            reporter.report(found.r#ref, Some(found.loc));
         }
     }
     // The visit pass can count a use and then fold its node away.
     for r#ref in refs.keys() {
-        if has_use(*r#ref) && !located.iter().any(|it| it.r#ref.eql(*r#ref)) {
-            report(refs, ast, source, log, *r#ref, None, true);
+        if has_use(*r#ref) {
+            reporter.report(*r#ref, None);
         }
     }
 }
 
-/// `with_advice` is for the first error of a binding: what to write in place of the reference.
-fn report(
-    refs: &MacroRefs<'_>,
-    ast: &ast::Ast<'_>,
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    r#ref: Ref,
-    found: Option<&MacroRefUse>,
-    with_advice: bool,
-) {
-    let data = *refs.get(&r#ref).expect("a key of the map");
-    let symbol = &ast.symbols[r#ref.inner_index() as usize];
-    let name: &[u8] = symbol.original_name.slice();
-    // Only a binding that a macro remap replaces is declared as an import.
-    let is_remapped = symbol.kind == ast::symbol::Kind::Import;
-    let import_range = match ast.module_scope.members.get(name) {
-        Some(member) if member.ref_.eql(r#ref) => js_lexer::range_of_identifier(source, member.loc),
-        _ => bun_ast::Range::NONE,
-    };
-    let path = ast.import_records.as_slice()[data.import_record_id as usize]
-        .path
-        .text;
-    let export = bstr::BStr::new(data.name.unwrap_or(name));
-    let (name, path) = (bstr::BStr::new(name), bstr::BStr::new(path));
+#[derive(Default)]
+struct Binding {
+    /// The note at the import. Its place in the source is found once for all of the errors of the binding.
+    import_note: Option<bun_ast::Data>,
+    has_error: bool,
+}
 
-    let mut notes = Vec::<bun_ast::Data>::with_capacity(2);
-    if found.is_some() {
-        let mut removed = Vec::<u8>::new();
-        let _ = if is_remapped {
-            write!(
-                &mut removed,
-                "Bun removes this import of \"{name}\" because a macro remap replaces it with \"{path}\""
-            )
-        } else {
-            write!(
-                &mut removed,
-                "Bun removes this macro import of \"{name}\" from \"{path}\""
-            )
-        };
-        notes.push(bun_ast::range_data(Some(source), import_range, removed));
-    }
-    if with_advice {
-        let mut advice = Vec::<u8>::new();
-        let _ = if found.is_some_and(|it| it.is_typeof_operand) {
-            write!(
-                &mut advice,
-                "\"typeof {name}\" is always \"undefined\" at runtime. Remove the test: Bun replaces each direct call of \"{name}\" with its result."
-            )
-        } else if is_remapped {
-            write!(
-                &mut advice,
-                "Bun replaces each direct call of a macro with its result. To use \"{export}\" of the package at runtime, read it from a namespace import of the package, or remove the macro remap."
-            )
-        } else {
-            write!(
-                &mut advice,
-                "Bun replaces each direct call of a macro with its result. To inline a value, call a macro that returns it. To use \"{name}\" at runtime, add a regular import of it under another name."
-            )
-        };
-        notes.push(bun_ast::range_data(None, bun_ast::Range::NONE, advice));
-    }
+struct Reporter<'r, 'a> {
+    refs: &'r MacroRefs<'a>,
+    ast: &'r ast::Ast<'a>,
+    source: &'r bun_ast::Source<'r>,
+    log: &'r mut bun_ast::Log,
+    macros_run: bool,
+    bindings: Vec<Binding>,
+}
 
-    match found {
-        Some(found) => log.add_range_error_fmt_with_notes(
-            Some(source),
-            js_lexer::range_of_identifier(source, found.loc),
-            notes.into_boxed_slice(),
-            format_args!("\"{name}\" is a macro import and is not defined at runtime"),
-        ),
-        None => log.add_range_error_fmt_with_notes(
-            Some(source),
-            import_range,
-            notes.into_boxed_slice(),
-            format_args!(
-                "\"{name}\" is a macro import and is not defined at runtime, but this file uses it outside of a call"
+impl Reporter<'_, '_> {
+    /// An error at `at`, or at the import when no identifier is left and the binding has no error yet.
+    fn report(&mut self, r#ref: Ref, at: Option<Loc>) {
+        let index = self.refs.get_index(&r#ref).expect("a key of the map");
+        let is_first = !self.bindings[index].has_error;
+        if at.is_none() && !is_first {
+            return;
+        }
+        self.bindings[index].has_error = true;
+
+        let data = self.refs.values()[index];
+        let symbol = &self.ast.symbols[r#ref.inner_index() as usize];
+        let name: &[u8] = symbol.original_name.slice();
+        // Only a binding that a macro remap replaces is declared as an import.
+        let is_remapped = symbol.kind == ast::symbol::Kind::Import;
+        let import_range = match self.ast.module_scope.members.get(name) {
+            Some(member) if member.ref_.eql(r#ref) => {
+                js_lexer::range_of_identifier(self.source, member.loc)
+            }
+            _ => bun_ast::Range::NONE,
+        };
+        // The JSX factory and fragment are names that the source does not write at the element.
+        let is_written = at.is_none_or(|loc| {
+            self.source
+                .contents
+                .get(loc.start as usize..)
+                .is_some_and(|rest| rest.starts_with(name))
+        });
+        let path = self.ast.import_records.as_slice()[data.import_record_id as usize]
+            .path
+            .text;
+        let export = bstr::BStr::new(data.name.unwrap_or(name));
+        let (name, path) = (bstr::BStr::new(name), bstr::BStr::new(path));
+
+        let mut notes = Vec::<bun_ast::Data>::with_capacity(2);
+        if at.is_some() {
+            let source = self.source;
+            let note = self.bindings[index].import_note.get_or_insert_with(|| {
+                let mut removed = Vec::<u8>::new();
+                let _ = if is_remapped {
+                    write!(
+                        &mut removed,
+                        "Bun removes this import of \"{name}\" because a macro remap replaces it with \"{path}\""
+                    )
+                } else {
+                    write!(
+                        &mut removed,
+                        "Bun removes this macro import of \"{name}\" from \"{path}\""
+                    )
+                };
+                bun_ast::range_data(Some(source), import_range, removed)
+            });
+            notes.push(note.clone());
+        }
+        if is_first {
+            let mut advice = Vec::<u8>::new();
+            if self.macros_run {
+                advice.extend_from_slice(
+                    b"Bun replaces each direct call of a macro with its result. ",
+                );
+            }
+            let _ = if !is_written {
+                write!(
+                    &mut advice,
+                    "\"{name}\" is the JSX factory or fragment of this file, so each JSX element names it. Import the macro under another name."
+                )
+            } else if is_remapped {
+                write!(
+                    &mut advice,
+                    "To use \"{export}\" of the package at runtime, read it from a namespace import of the package, or remove the macro remap."
+                )
+            } else if self.macros_run {
+                write!(
+                    &mut advice,
+                    "To inline a value, call a macro that returns it. To use \"{name}\" at runtime, add a regular import of it under another name."
+                )
+            } else {
+                write!(
+                    &mut advice,
+                    "To use \"{name}\" at runtime, add a regular import of it under another name."
+                )
+            };
+            notes.push(bun_ast::range_data(None, bun_ast::Range::NONE, advice));
+        }
+
+        match at {
+            Some(loc) => self.log.add_range_error_fmt_with_notes(
+                Some(self.source),
+                js_lexer::range_of_identifier(self.source, loc),
+                notes.into_boxed_slice(),
+                format_args!("\"{name}\" is a macro import and is not defined at runtime"),
             ),
-        ),
+            None => self.log.add_range_error_fmt_with_notes(
+                Some(self.source),
+                import_range,
+                notes.into_boxed_slice(),
+                format_args!(
+                    "\"{name}\" is a macro import and is not defined at runtime, but this file uses it outside of a call"
+                ),
+            ),
+        }
     }
 }
 
@@ -156,7 +205,6 @@ const MAX_DEPTH: u32 = 512;
 struct MacroRefUse {
     r#ref: Ref,
     loc: Loc,
-    is_typeof_operand: bool,
 }
 
 struct Locator<'r, 'a> {
@@ -183,11 +231,7 @@ fn locate_macro_refs(parts: &[ast::Part], refs: &MacroRefs<'_>) -> Vec<MacroRefU
 impl Locator<'_, '_> {
     fn name(&mut self, r#ref: Ref, loc: Loc) {
         if self.refs.contains_key(&r#ref) {
-            self.found.push(MacroRefUse {
-                r#ref,
-                loc,
-                is_typeof_operand: false,
-            });
+            self.found.push(MacroRefUse { r#ref, loc });
         }
     }
 
@@ -431,20 +475,7 @@ impl Locator<'_, '_> {
             }
             Data::EIdentifier(e) => self.name(e.ref_, expr.loc),
             Data::EImportIdentifier(e) => self.name(e.ref_, expr.loc),
-            Data::EUnary(e) => {
-                let is_typeof_name = e.op == OpCode::UnTypeof
-                    && matches!(
-                        e.value.data,
-                        Data::EIdentifier(_) | Data::EImportIdentifier(_)
-                    );
-                let first = self.found.len();
-                self.expr(&e.value);
-                if is_typeof_name {
-                    for found in &mut self.found[first..] {
-                        found.is_typeof_operand = true;
-                    }
-                }
-            }
+            Data::EUnary(e) => self.expr(&e.value),
             Data::ENew(e) => {
                 self.expr(&e.target);
                 self.exprs(e.args.slice());

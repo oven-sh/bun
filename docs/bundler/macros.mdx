@@ -51,7 +51,7 @@ Macros are import statements annotated with either:
 - `with { type: 'macro' }` — an import attribute, a Stage 4 ECMAScript proposal
 - `assert { type: 'macro' }` — an import assertion, an earlier incarnation of import attributes that has now been abandoned (but several browsers and runtimes already support it)
 
-Bun removes a macro import from the output and replaces each call of the macro with its result. The import has no value at runtime, so a use of it outside of a call, in code that can run, is a build error.
+Bun removes a macro import from the output and replaces each call of the macro with its result. The import has no value at runtime, so any other use of it is a build error. The one exception is `typeof`: the name is not declared at runtime, so `typeof random` is `"undefined"`.
 
 ```ts title="cli.tsx" icon="/icons/typescript.svg"
 import { random } from "./random.ts" with { type: "macro" };
@@ -64,7 +64,7 @@ const alias = random; // error: "random" is a macro import and is not defined at
 const atRuntime = randomAtRuntime; // a regular import has a value at runtime
 ```
 
-To inline a constant, export a function that returns it and call that function. To use the same export at runtime, import it a second time under another name, without the attribute.
+To inline a constant, export a function that returns it and call that function. To use the same export at runtime, import it a second time under another name, without the attribute. Keep the two statements apart: a tool that merges duplicate imports, such as the `import/no-duplicates` lint rule with `--fix`, joins them into one statement, and both names are then macro imports or both are regular imports.
 
 ## Security considerations
 
@@ -151,7 +151,7 @@ if (returnFalse()) {
 }
 ```
 
-Bun looks for a use of a macro import outside of a call after it folds constants. A reference in a branch that can never run, such as `if (false)`, is not an error. Bun folds more with `--minify-syntax` and less under the debugger, so a file can build with one command and fail with another. The commands that keep dead code (`bun test --coverage`, `bun -p` and `bun repl`) do not look for the use.
+Bun looks for a use of a macro import outside of a call after it folds constants. It skips a use on the side of a constant condition that it folds away: `if (false)`, `false && x`, `true ? a : x`. Every other use is an error, including a use in a function that nothing calls, in code after a `return`, and in the `catch` of an empty `try`. Bun folds more with `--minify-syntax` and less under the debugger, so a file can build with one command and fail with another. The commands that keep dead code (`bun test --coverage`, `bun -p` and `bun repl`) do not look for the use.
 
 ## Serializability
 

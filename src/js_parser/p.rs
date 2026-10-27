@@ -6628,6 +6628,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.is_revisit_for_substitution = was_revisit;
     }
 
+    /// Un-counts a use of `ref` that leaves no name in the output, if `ref` is a macro import. Says whether it is one.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn ignore_usage_if_macro_ref(&mut self, r#ref: Ref) -> bool {
+        let is_macro_ref = self.macro_.refs.contains_key(&r#ref);
+        if is_macro_ref {
+            self.ignore_usage(r#ref);
+        }
+        is_macro_ref
+    }
+
     pub(crate) fn ignore_usage_of_identifier_in_dot_chain(&mut self, expr: Expr) {
         let mut current = expr;
         loop {

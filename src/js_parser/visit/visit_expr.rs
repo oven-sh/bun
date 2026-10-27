@@ -451,7 +451,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // for the Automatic + key-after-spread path and discard the result.
                         if let Some(first) = p.options.jsx.factory.first() {
                             let name: &'a [u8] = p.arena.alloc_slice_copy(first);
-                            let _ = p.find_symbol(expr.loc, name).expect("unreachable");
+                            let result = p.find_symbol(expr.loc, name).expect("unreachable");
+                            // This lookup leaves no name in the output, so it is not a use of a macro import.
+                            if Self::ALLOW_MACROS && !p.macro_.refs.is_empty() {
+                                p.ignore_usage_if_macro_ref(result.r#ref);
+                            }
                         }
                         p.jsx_import(JSXImport::CreateElement, expr.loc)
                     };
@@ -1202,6 +1206,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         data: prefill::data::ZERO,
                     }
                     .join_with_comma(e_.value);
+                }
+
+                // A macro import is not declared at runtime. A name that a substitution moved here was read as a value before.
+                if Self::ALLOW_MACROS
+                    && id_before
+                    && !p.macro_.refs.is_empty()
+                    && !p.is_revisit_for_substitution
+                {
+                    let operand = match &e_.value.data {
+                        Data::EIdentifier(id) => Some(id.ref_),
+                        Data::EImportIdentifier(id) => Some(id.ref_),
+                        _ => None,
+                    };
+                    if operand.is_some_and(|it| p.ignore_usage_if_macro_ref(it)) {
+                        *e = p.new_expr(
+                            E::String {
+                                data: b"undefined".into(),
+                                ..Default::default()
+                            },
+                            expr.loc,
+                        );
+                        return;
+                    }
                 }
 
                 if matches!(e_.value.data, Data::ERequireCallTarget) {

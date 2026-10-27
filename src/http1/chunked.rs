@@ -45,8 +45,11 @@ pub struct Decoded {
 const MAX_SIZE_DIGITS: u8 = (usize::BITS / 4) as u8;
 
 impl ChunkedDecoder {
-    /// Decodes the next piece of the body in place. The trailer section is read and dropped. Nothing may be decoded
-    /// after a status other than [`ChunkedStatus::Incomplete`].
+    /// Decodes the next piece of the body in place. The trailer section is read and dropped.
+    ///
+    /// A caller that decodes again after a status other than [`ChunkedStatus::Incomplete`] gets what picohttpparser
+    /// gave it: the decoder goes on from the state it stopped in. Both clients can do so. After
+    /// [`ChunkedStatus::Complete`] that state is the start of a line of the trailer section.
     ///
     /// Only CRLF ends a chunk's size line and its data; a line of the trailer section may end in LF alone. A chunk
     /// extension is dropped unread, and no whitespace may come between it and the size, as in llhttp (Node.js).
@@ -72,7 +75,8 @@ impl ChunkedDecoder {
                         break 'decode ChunkedStatus::Incomplete;
                     };
                     let Some(digit) = hex_digit(byte) else {
-                        if self.size_digits == 0 || !matches!(byte, b';' | b'\r') {
+                        // LF is for `State::Extension` to refuse, which is then the state after the error.
+                        if self.size_digits == 0 || !matches!(byte, b';' | b'\r' | b'\n') {
                             break 'decode ChunkedStatus::Malformed;
                         }
                         break;

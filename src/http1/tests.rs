@@ -287,14 +287,22 @@ fn more_headers_than_slots() {
     );
 }
 
-const ALIGNMENTS: usize = 35;
+/// How many bytes to put before and after the byte that is looked at, so that it falls on every place of a block and
+/// in the tail. Miri, which is what runs these tests in CI, takes 30 ms to parse a head: it gets the last place of a
+/// block and the first of the next.
+const PADDINGS: core::ops::Range<usize> = if cfg!(miri) { 15..17 } else { 1..35 };
 
 #[test]
 fn every_byte_in_a_header_name() {
     for byte in 0..=u8::MAX {
         let is_token = byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte);
-        for before in 1..ALIGNMENTS {
-            let name = [&vec![b'a'; before][..], &[byte], &[b'z'; ALIGNMENTS][..]].concat();
+        for before in PADDINGS {
+            let name = [
+                &vec![b'a'; before][..],
+                &[byte],
+                &vec![b'z'; PADDINGS.end][..],
+            ]
+            .concat();
             let head = [b"HTTP/1.1 200 OK\r\n", &name[..], b": v\r\n\r\n"].concat();
             match parse(&head) {
                 Ok((_, headers)) if byte == b':' => assert_eq!(headers[0].0, &name[..before]),
@@ -318,27 +326,23 @@ fn every_byte_in_a_header_value_and_a_reason() {
             continue;
         }
         let is_allowed = byte == b'\t' || (byte >= b' ' && byte != 0x7f);
-        for before in 0..ALIGNMENTS {
+        for before in PADDINGS {
             let text = [
-                &vec![b'a'; before + 1][..],
+                &vec![b'a'; before][..],
                 &[byte],
-                &[b'z'; ALIGNMENTS][..],
+                &vec![b'z'; PADDINGS.end][..],
             ]
             .concat();
-            for head in [
-                [b"HTTP/1.1 200 OK\r\nn: ", &text[..], b"\r\n\r\n"].concat(),
-                [b"HTTP/1.1 200 ", &text[..], b"\r\nn: ", &text[..], b"\n\n"].concat(),
-            ] {
-                match parse(&head) {
-                    Ok((parsed, headers)) => {
-                        assert!(is_allowed, "{byte:#x} at {before}");
-                        assert!(parsed.reason == b"OK" || parsed.reason == text);
-                        assert_eq!(headers, [(&b"n"[..], &text[..])]);
-                    }
-                    Err(error) => {
-                        assert!(!is_allowed, "{byte:#x} at {before}");
-                        assert_eq!(error, Malformed);
-                    }
+            let head = [b"HTTP/1.1 200 ", &text[..], b"\r\nn: ", &text[..], b"\n\n"].concat();
+            match parse(&head) {
+                Ok((parsed, headers)) => {
+                    assert!(is_allowed, "{byte:#x} at {before}");
+                    assert_eq!(parsed.reason, text);
+                    assert_eq!(headers, [(&b"n"[..], &text[..])]);
+                }
+                Err(error) => {
+                    assert!(!is_allowed, "{byte:#x} at {before}");
+                    assert_eq!(error, Malformed);
                 }
             }
         }
@@ -552,6 +556,63 @@ fn in_trailers_from_the_end_of_the_last_chunk() {
             decoder.is_in_trailers(),
             i + 1 >= last_chunk_end,
             "after byte {i}"
+        );
+    }
+}
+
+#[test]
+fn after_the_body_come_more_trailer_lines() {
+    let mut decoder = ChunkedDecoder::default();
+    assert_eq!(
+        decoder.decode(&mut *b"1\r\na\r\n0\r\n\r\n".to_vec()).status,
+        COMPLETE
+    );
+    for (piece, status) in [
+        (&b"1\r\na\r\n"[..], ChunkedStatus::Incomplete),
+        (b"", ChunkedStatus::Incomplete),
+        (b"\r\nrest", ChunkedStatus::Complete { trailing: 4 }),
+        (b"\n", COMPLETE),
+    ] {
+        let decoded = decoder.decode(&mut piece.to_vec());
+        assert_eq!((decoded.len, decoded.status), (0, status));
+        assert!(decoder.is_in_trailers());
+    }
+}
+
+/// `fetch()` does not decode again after an error, but a listener of `ws` that runs the event loop can make the
+/// `WebSocket` client do it.
+#[test]
+fn after_an_error_the_decoder_goes_on_from_where_it_stopped() {
+    for (bad, then, data, status) in [
+        (
+            &b"1\n"[..],
+            &b"x\r\nA\r\n0\r\n\r\n"[..],
+            &b"A"[..],
+            COMPLETE,
+        ),
+        (b"1;\n", b"x\r\nA\r\n0\r\n\r\n", b"A", COMPLETE),
+        (b"1x", b"\r\nA\r\n0\r\n\r\n", b"A", COMPLETE),
+        (
+            b"1x",
+            b"0\r\n0123456789abcdef\r\n",
+            b"0123456789abcdef",
+            ChunkedStatus::Incomplete,
+        ),
+        (b"1\rx", b"\nA\r\n0\r\n\r\n", b"A", COMPLETE),
+        (b"1\r\nAx", b"\r\n0\r\n\r\n", b"", COMPLETE),
+    ] {
+        let mut decoder = ChunkedDecoder::default();
+        assert_eq!(
+            decoder.decode(&mut bad.to_vec()).status,
+            ChunkedStatus::Malformed
+        );
+        let mut then = then.to_vec();
+        let decoded = decoder.decode(&mut then);
+        assert_eq!(
+            (&then[..decoded.len], decoded.status),
+            (data, status),
+            "{:?}",
+            bad.escape_ascii().to_string()
         );
     }
 }

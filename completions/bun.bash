@@ -17,6 +17,11 @@ _working_dir() {
                 };;
             *) continue;;
         esac
+        # the word is as typed: drop a quote pair or the backslashes, expand a leading ~
+        case "${value}" in
+            \"*\"|\'*\') value="${value:1:${#value}-2}";;
+            *) value="${value//\\/}";;
+        esac
         [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value#\~}";
         [[ -n "${value}" ]] && working_dir="${value}";
     done

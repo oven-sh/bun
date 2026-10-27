@@ -1360,8 +1360,7 @@ impl<'a> Transpiler<'a> {
             // SAFETY: `source_backing` outlives every read through
             // `source.contents` (it is moved into the returned `ParseResult`,
             // and the only consumers are the parser/printer which run before
-            // the result drops). `contents_is_recycled = true` records that
-            // the bytes are externally-owned.
+            // the result drops).
             let contents: &'static [u8] =
                 unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
             match bun_ast::Source::init_recycled_file(&bun_ast::PathContentsPair { path, contents })

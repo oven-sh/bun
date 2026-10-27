@@ -2443,7 +2443,6 @@ pub mod parse_worker {
             // borrow is sound. Routed through the audited `StoreStr` arena-erasure
             // path (single `from_raw_parts` in `StoreStr::slice`).
             contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
-            contents_is_recycled: false,
             ..Default::default()
         });
 

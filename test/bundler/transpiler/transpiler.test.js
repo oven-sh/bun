@@ -3433,6 +3433,16 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`import("./foo.json", { type: "json" });`, `import("./foo.json", { type: \"json\" })`);
     });
 
+    it("import with type sqlite keeps the attribute for every target", () => {
+      // Only Bun can load this import, whatever the target of the output is.
+      for (const target of ["bun", "node", "browser"]) {
+        const output = new Bun.Transpiler({ loader: "js", target }).transformSync(
+          `import db from "./foo.db" with { type: "sqlite" };\nconsole.log(db);`,
+        );
+        expect(output).toBe(`import db from "./foo.db" with { type: "sqlite" };\nconsole.log(db);\n`);
+      }
+    });
+
     it("import with unicode", () => {
       expectPrinted_(`import { name } from 'modထ';`, `import { name } from "modထ"`);
       expectPrinted_(`import { name } from 'mod\\u1011';`, `import { name } from "modထ"`);

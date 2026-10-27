@@ -112,3 +112,53 @@ describe.concurrent("what a package declares of its functions is what their code
     );
   }
 });
+
+describe.concurrent("a dynamic CommonJS import with sibling declarations", () => {
+  test.each([
+    { name: "compiled", flags: [] },
+    { name: "AOT", flags: ["--aot"] },
+    { name: "AOT and trim", flags: ["--aot", "--trim"] },
+  ])("$name prints what plain Bun prints", async ({ flags }) => {
+    using dir = tempDir("aot-dynamic-commonjs-declarations", {
+      "package.json": JSON.stringify({ type: "commonjs" }),
+      "main.mjs": `const { Kind } = await import("./library.js");
+console.log(Kind.Value);
+`,
+      "library.js": `exports.Kind = { Value: 42, Object: 999, Array: 996 };
+exports.Tag = { Object: 999, Array: 996 };
+const make = (options) => ({ tag: 999, ...options });
+const normalize = (params) => {
+  params.types = params.types?.map((type, index) =>
+    make({ type, length: params.values[index].length })
+  );
+  return params;
+};
+exports.normalize = (params) => normalize(params);
+exports.make = make;
+`,
+      "library.d.ts": `export enum Kind { Value = 42, Object = 999, Array = 996 }
+export enum Tag { Object = Kind.Object, Array = Kind.Array }
+export interface Options { type: Kind; length: number; tag?: Tag }
+export function make(options: Options): Options;
+`,
+    });
+    const folder = String(dir);
+    const plain = await spawned([bunExe(), "run", "main.mjs"], folder, bunEnv);
+    expect({ stdout: plain.stdout, stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({
+      stdout: "42\n",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const executable = join(folder, isWindows ? "main.exe" : "main");
+    built(
+      await spawned([bunExe(), "build", "--compile", ...flags, "main.mjs", "--outfile", executable], folder, bunEnv),
+    );
+    const ran = await spawned([executable], folder, bunEnv);
+    expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({
+      stdout: "42\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

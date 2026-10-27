@@ -933,7 +933,11 @@ impl CompoundDictionary {
             }
             self.block_map
                 .put((cursor >> block_bits) as usize, index as u8)?;
-            cursor += 1 << block_bits;
+            // Past `i32::MAX` is past `total_size`.
+            let Some(next) = cursor.checked_add(1 << block_bits) else {
+                break;
+            };
+            cursor = next;
         }
         Ok(())
     }
@@ -1614,7 +1618,7 @@ impl Decoder {
         while address >= addon.chunk_offsets.at(index + 1)? {
             index += 1;
         }
-        if addon.total_size < address + length {
+        if addon.total_size - address < length {
             return Ok(false);
         }
         self.dist_rb

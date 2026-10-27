@@ -165,6 +165,7 @@ fn get_hash_table(table: &mut Vec<i32>, quality: i32, input_size: usize) -> Fall
     if htsize > table.len() {
         *table = Vec::new();
         *table = try_zeroed(htsize)?;
+        return Ok(table);
     }
     let table = table.sub_mut(..htsize)?;
     table.fill(0);

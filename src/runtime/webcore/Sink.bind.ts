@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 const js = { capability: "js", throws: true } as const;
 const method = { returns: b.opaque, ...js } as const;
 
-/** `write` looks at whether the sink is closed before it throws for a `nullish` or `other` chunk. */
+/** `write` looks at whether the sink is closed before it throws for a `missing` or `other` chunk. */
 export const SinkChunk = b.union({
   text: b.string.allowStringObject.view,
   buffer: b.bufferSource.allowShared,

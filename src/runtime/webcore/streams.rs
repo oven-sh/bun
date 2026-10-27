@@ -10,6 +10,7 @@ use crate::webcore::jsc::{
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
+use bun_sys_jsc::FdJsc as _;
 use bun_uws as uws;
 
 use crate::generated_bindgen::sink::{
@@ -138,7 +139,7 @@ impl Start {
             (SinkPath::Missing, &SinkStartFd::Number(fd))
                 if !fd.is_sign_negative() && fd <= f64::from(i32::MAX) && fd.fract() == 0.0 =>
             {
-                crate::webcore::PathOrFileDescriptor::Fd(Fd::from_uv(fd as i32))
+                crate::webcore::PathOrFileDescriptor::Fd(Fd::from_js(fd as i32))
             }
             (SinkPath::Missing, _) => return error(sys::SystemErrno::EBADF),
         };

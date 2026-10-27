@@ -7,7 +7,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSArray, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys_jsc::SystemErrorJsc as _;
 
-use crate::generated_bindgen::node_fs_binding::{self as schema, RmOptions};
+use crate::generated_bindgen::node_fs_binding::{self as generated, RmOptions};
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
@@ -176,8 +176,8 @@ impl Binding {
     pub(crate) fn cp(
         &self,
         cx: &mut JsScope<'_>,
-        src: schema::PathLike<'_>,
-        dest: schema::PathLike<'_>,
+        src: generated::PathLike<'_>,
+        dest: generated::PathLike<'_>,
         recursive: bool,
         error_on_exist: bool,
         force: Option<bool>,
@@ -198,8 +198,8 @@ impl Binding {
     pub(crate) fn cp_sync(
         &self,
         cx: &mut JsScope<'_>,
-        src: schema::PathLike<'_>,
-        dest: schema::PathLike<'_>,
+        src: generated::PathLike<'_>,
+        dest: generated::PathLike<'_>,
         recursive: bool,
         error_on_exist: bool,
         force: Option<bool>,
@@ -229,8 +229,8 @@ impl Binding {
     pub(crate) fn readdir(
         &self,
         cx: &mut JsScope<'_>,
-        path: schema::PathLike<'_>,
-        options: schema::EncodingOrReaddirOptions<'_>,
+        path: generated::PathLike<'_>,
+        options: generated::EncodingOrReaddirOptions<'_>,
     ) -> JsResult<JSValue> {
         self.run_readdir(cx, None, path, options)
     }
@@ -239,8 +239,8 @@ impl Binding {
         &self,
         cx: &mut JsScope<'_>,
         callback: JsLocal<'_, Callable>,
-        path: schema::PathLike<'_>,
-        options: schema::EncodingOrReaddirOptions<'_>,
+        path: generated::PathLike<'_>,
+        options: generated::EncodingOrReaddirOptions<'_>,
     ) -> JsResult<()> {
         self.run_readdir(cx, Some(callback), path, options)?;
         Ok(())
@@ -250,8 +250,8 @@ impl Binding {
         &self,
         cx: &mut JsScope<'_>,
         callback: Option<JsLocal<'_, Callable>>,
-        path: schema::PathLike<'_>,
-        options: schema::EncodingOrReaddirOptions<'_>,
+        path: generated::PathLike<'_>,
+        options: generated::EncodingOrReaddirOptions<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
@@ -281,8 +281,8 @@ impl Binding {
     pub(crate) fn watch(
         &self,
         cx: &mut JsScope<'_>,
-        filename: schema::PathLike<'_>,
-        options: Option<schema::WatchOptions<'_>>,
+        filename: generated::PathLike<'_>,
+        options: Option<generated::WatchOptions<'_>>,
         listener: Option<JsLocal<'_, Callable>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
@@ -305,8 +305,8 @@ impl Binding {
     pub(crate) fn watch_file(
         &self,
         cx: &mut JsScope<'_>,
-        filename: schema::PathLike<'_>,
-        options: Deferred<'_, schema::WatchFileOptions>,
+        filename: generated::PathLike<'_>,
+        options: Deferred<'_, generated::WatchFileOptions>,
         listener: Option<JsLocal<'_, Callable>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
@@ -363,34 +363,34 @@ macro_rules! node_fs_bindings {
 #[rustfmt::skip]
 node_fs_bindings! {
     access_sync / access / access_cb => Access, args::Access<'static>, ret::Access,
-        (path: schema::PathLike<'_>, mode: Deferred<'_, Option<f64>>),
+        (path: generated::PathLike<'_>, mode: Deferred<'_, Option<f64>>),
         |global, parsing| args::Access::from_js(global, parsing, path, mode);
     append_file_sync / append_file / append_file_cb => AppendFile, args::AppendFile<'static>, ret::AppendFile,
-        (path: schema::PathOrFileDescriptor<'_>, data: schema::WriteFileData<'_>, options: schema::EncodingOrWriteFileOptions<'_>),
+        (path: generated::PathOrFileDescriptor<'_>, data: generated::WriteFileData<'_>, options: generated::EncodingOrWriteFileOptions<'_>),
         |global, parsing| args::WriteFile::from_js_with_default_flag(global, parsing, path, data, options, crate::node::types::FileSystemFlags::A).map(args::AppendFile);
     close_sync / close / close_cb => Close, args::Close, ret::Close,
         (fd: i32),
         |_, _| Ok(args::Close::from_js(fd));
     copy_file_sync / copy_file / copy_file_cb => CopyFile, args::CopyFile<'static>, ret::CopyFile,
-        (src: schema::PathLike<'_>, dest: schema::PathLike<'_>, mode: Deferred<'_, Option<f64>>),
+        (src: generated::PathLike<'_>, dest: generated::PathLike<'_>, mode: Deferred<'_, Option<f64>>),
         |global, parsing| args::CopyFile::from_js(global, parsing, src, dest, mode);
     exists_sync / exists / exists_cb => Exists, args::Exists<'static>, ret::Exists,
-        (path: schema::PathLike<'_>),
+        (path: generated::PathLike<'_>),
         |global, parsing| args::Exists::from_js(global, parsing, path);
     chown_sync / chown / chown_cb => Chown, args::Chown<'static>, ret::Chown,
-        (path: schema::PathLike<'_>, uid: Deferred<'_, i64>, gid: Deferred<'_, i64>),
+        (path: generated::PathLike<'_>, uid: Deferred<'_, i64>, gid: Deferred<'_, i64>),
         |global, parsing| args::Chown::from_js(global, parsing, path, uid, gid);
     chmod_sync / chmod / chmod_cb => Chmod, args::Chmod<'static>, ret::Chmod,
-        (path: schema::PathLike<'_>, mode: Deferred<'_, schema::FileMode<'_>>),
+        (path: generated::PathLike<'_>, mode: Deferred<'_, generated::FileMode<'_>>),
         |global, parsing| args::Chmod::from_js(global, parsing, path, mode);
     fchmod_sync / fchmod / fchmod_cb => Fchmod, args::FChmod, ret::Fchmod,
-        (fd: i32, mode: schema::FileMode<'_>),
+        (fd: i32, mode: generated::FileMode<'_>),
         |global, _| args::FChmod::from_js(global, fd, mode);
     fchown_sync / fchown / fchown_cb => Fchown, args::Fchown, ret::Fchown,
         (fd: i32, uid: i64, gid: i64),
         |_, _| Ok(args::Fchown::from_js(fd, uid, gid));
     fstat_sync / fstat / fstat_cb => Fstat, args::Fstat, ret::Fstat,
-        (fd: i32, options: &schema::BigIntOptions),
+        (fd: i32, options: &generated::BigIntOptions),
         |_, _| Ok(args::Fstat::from_js(fd, options));
     fsync_sync / fsync / fsync_cb => Fsync, args::Fsync, ret::Fsync,
         (fd: i32),
@@ -399,82 +399,82 @@ node_fs_bindings! {
         (fd: i32, len: i64),
         |_, _| Ok(args::FTruncate::from_js(fd, len));
     futimes_sync / futimes / futimes_cb => Futimes, args::Futimes, ret::Futimes,
-        (fd: i32, atime: schema::TimeLike<'_>, mtime: schema::TimeLike<'_>),
+        (fd: i32, atime: generated::TimeLike<'_>, mtime: generated::TimeLike<'_>),
         |global, _| args::Futimes::from_js(global, fd, atime, mtime);
     lchmod_sync / lchmod / lchmod_cb => Lchmod, args::LCHmod<'static>, ret::Lchmod,
-        (path: schema::PathLike<'_>, mode: Deferred<'_, schema::FileMode<'_>>),
+        (path: generated::PathLike<'_>, mode: Deferred<'_, generated::FileMode<'_>>),
         |global, parsing| args::LCHmod::from_js(global, parsing, path, mode);
     lchown_sync / lchown / lchown_cb => Lchown, args::LChown<'static>, ret::Lchown,
-        (path: schema::PathLike<'_>, uid: Deferred<'_, i64>, gid: Deferred<'_, i64>),
+        (path: generated::PathLike<'_>, uid: Deferred<'_, i64>, gid: Deferred<'_, i64>),
         |global, parsing| args::LChown::from_js(global, parsing, path, uid, gid);
     link_sync / link / link_cb => Link, args::Link<'static>, ret::Link,
-        (old_path: schema::PathLike<'_>, new_path: schema::PathLike<'_>),
+        (old_path: generated::PathLike<'_>, new_path: generated::PathLike<'_>),
         |global, parsing| args::Link::from_js(global, parsing, old_path, new_path);
     lstat_sync / lstat / lstat_cb => Lstat, args::Lstat<'static>, ret::Lstat,
-        (path: schema::PathLike<'_>, options: Deferred<'_, schema::StatOptions>),
+        (path: generated::PathLike<'_>, options: Deferred<'_, generated::StatOptions>),
         |global, parsing| args::Lstat::from_js(global, parsing, path, options);
     mkdir_sync / mkdir / mkdir_cb => Mkdir, args::Mkdir<'static>, ret::Mkdir,
-        (path: schema::PathLike<'_>, options: Deferred<'_, schema::MkdirOptionsOrMode<'_>>),
+        (path: generated::PathLike<'_>, options: Deferred<'_, generated::MkdirOptionsOrMode<'_>>),
         |global, parsing| args::Mkdir::from_js(global, parsing, path, options);
     mkdtemp_sync / mkdtemp / mkdtemp_cb => Mkdtemp, args::MkdirTemp<'static>, ret::Mkdtemp,
-        (prefix: schema::PathLike<'_>, options: Deferred<'_, schema::EncodingOrOptions<'_>>),
+        (prefix: generated::PathLike<'_>, options: Deferred<'_, generated::EncodingOrOptions<'_>>),
         |global, parsing| args::MkdirTemp::from_js(global, parsing, prefix, options);
     open_sync / open / open_cb => Open, args::Open<'static>, ret::Open,
-        (path: schema::PathLike<'_>, flags: Deferred<'_, Option<schema::FileFlags<'_>>>, mode: Deferred<'_, Option<schema::FileMode<'_>>>),
+        (path: generated::PathLike<'_>, flags: Deferred<'_, Option<generated::FileFlags<'_>>>, mode: Deferred<'_, Option<generated::FileMode<'_>>>),
         |global, parsing| args::Open::from_js(global, parsing, path, flags, mode);
     read_sync / read / read_cb => Read, args::Read, ret::Read,
-        (fd: i32, buffer: JsLocal<'_, BufferSource>, offset: u64, length: Option<f64>, position: Deferred<'_, schema::ReadPosition>),
+        (fd: i32, buffer: JsLocal<'_, BufferSource>, offset: u64, length: Option<f64>, position: Deferred<'_, generated::ReadPosition>),
         |global, parsing| args::Read::from_js(global, parsing, fd, buffer, offset, length, position);
     write_buffer_sync / write_buffer / write_buffer_cb => Write, args::Write<'static>, ret::Write,
-        (fd: i32, buffer: JsLocal<'_, BufferSource>, offset: schema::WriteOffset<'_>, length: schema::WriteLength, position: Option<f64>),
+        (fd: i32, buffer: JsLocal<'_, BufferSource>, offset: generated::WriteOffset<'_>, length: generated::WriteLength, position: Option<f64>),
         |global, parsing| args::Write::from_buffer(global, parsing, fd, buffer, offset, length, position);
     write_string_sync / write_string / write_string_cb => Write, args::Write<'static>, ret::Write,
         (fd: i32, buffer: bun_core::String, position: Option<f64>, encoding: Option<JsLocal<'_, StringLike>>),
         |global, parsing| args::Write::from_string(global, parsing, fd, buffer, position, encoding);
     read_file_sync / read_file / read_file_cb => ReadFile, args::ReadFile<'static>, ret::ReadFile,
-        (path: schema::PathOrFileDescriptor<'_>, options: schema::EncodingOrReadFileOptions<'_>),
+        (path: generated::PathOrFileDescriptor<'_>, options: generated::EncodingOrReadFileOptions<'_>),
         |global, parsing| args::ReadFile::from_js(global, parsing, path, options);
     write_file_sync / write_file / write_file_cb => WriteFile, args::WriteFile<'static>, ret::WriteFile,
-        (path: schema::PathOrFileDescriptor<'_>, data: schema::WriteFileData<'_>, options: schema::EncodingOrWriteFileOptions<'_>),
+        (path: generated::PathOrFileDescriptor<'_>, data: generated::WriteFileData<'_>, options: generated::EncodingOrWriteFileOptions<'_>),
         |global, parsing| args::WriteFile::from_js(global, parsing, path, data, options);
     readlink_sync / readlink / readlink_cb => Readlink, args::Readlink<'static>, ret::Readlink,
-        (path: schema::PathLike<'_>, options: Deferred<'_, schema::EncodingOrOptions<'_>>),
+        (path: generated::PathLike<'_>, options: Deferred<'_, generated::EncodingOrOptions<'_>>),
         |global, parsing| args::Readlink::from_js(global, parsing, path, options);
     rm_sync / rm / rm_cb => Rm, args::Rm<'static>, ret::Rm,
-        (path: schema::PathLike<'_>, options: Deferred<'_, schema::RmOptionsArgument>),
+        (path: generated::PathLike<'_>, options: Deferred<'_, generated::RmOptionsArgument>),
         |global, parsing| args::Rm::from_js(global, parsing, path, options);
     rmdir_sync / rmdir / rmdir_cb => Rmdir, args::RmDir<'static>, ret::Rmdir,
-        (path: schema::PathLike<'_>, options: Deferred<'_, schema::RmdirOptions>),
+        (path: generated::PathLike<'_>, options: Deferred<'_, generated::RmdirOptions>),
         |global, parsing| args::RmDir::from_js(global, parsing, path, options);
     realpath_sync / realpath / realpath_cb => RealpathNonNative, args::Realpath<'static>, ret::Realpath,
-        (path: schema::PathLike<'_>, options: Deferred<'_, schema::EncodingOrOptions<'_>>),
+        (path: generated::PathLike<'_>, options: Deferred<'_, generated::EncodingOrOptions<'_>>),
         |global, parsing| args::Realpath::from_js(global, parsing, path, options);
     realpath_native_sync / realpath_native / realpath_native_cb => Realpath, args::Realpath<'static>, ret::Realpath,
-        (path: schema::PathLike<'_>, options: Deferred<'_, schema::EncodingOrOptions<'_>>),
+        (path: generated::PathLike<'_>, options: Deferred<'_, generated::EncodingOrOptions<'_>>),
         |global, parsing| args::Realpath::from_js(global, parsing, path, options);
     rename_sync / rename / rename_cb => Rename, args::Rename<'static>, ret::Rename,
-        (old_path: schema::PathLike<'_>, new_path: schema::PathLike<'_>),
+        (old_path: generated::PathLike<'_>, new_path: generated::PathLike<'_>),
         |global, parsing| args::Rename::from_js(global, parsing, old_path, new_path);
     stat_sync / stat / stat_cb => Stat, args::Stat<'static>, ret::Stat,
-        (path: schema::PathLike<'_>, options: Deferred<'_, schema::StatOptions>),
+        (path: generated::PathLike<'_>, options: Deferred<'_, generated::StatOptions>),
         |global, parsing| args::Stat::from_js(global, parsing, path, options);
     statfs_sync / statfs / statfs_cb => Statfs, args::StatFS<'static>, ret::StatFS,
-        (path: schema::PathLike<'_>, options: Deferred<'_, schema::BigIntOptions>),
+        (path: generated::PathLike<'_>, options: Deferred<'_, generated::BigIntOptions>),
         |global, parsing| args::StatFS::from_js(global, parsing, path, options);
     symlink_sync / symlink / symlink_cb => Symlink, args::Symlink<'static>, ret::Symlink,
-        (target: schema::PathLike<'_>, path: schema::PathLike<'_>, r#type: Deferred<'_, schema::SymlinkType>),
+        (target: generated::PathLike<'_>, path: generated::PathLike<'_>, r#type: Deferred<'_, generated::SymlinkType>),
         |global, parsing| args::Symlink::from_js(global, parsing, target, path, r#type);
     truncate_sync / truncate / truncate_cb => Truncate, args::Truncate<'static>, ret::Truncate,
-        (path: schema::PathOrFileDescriptor<'_>, len: Deferred<'_, i64>),
+        (path: generated::PathOrFileDescriptor<'_>, len: Deferred<'_, i64>),
         |global, parsing| args::Truncate::from_js(global, parsing, path, len);
     unlink_sync / unlink / unlink_cb => Unlink, args::Unlink<'static>, ret::Unlink,
-        (path: schema::PathLike<'_>),
+        (path: generated::PathLike<'_>),
         |global, parsing| args::Unlink::from_js(global, parsing, path);
     utimes_sync / utimes / utimes_cb => Utimes, args::Utimes<'static>, ret::Utimes,
-        (path: schema::PathLike<'_>, atime: schema::TimeLike<'_>, mtime: schema::TimeLike<'_>),
+        (path: generated::PathLike<'_>, atime: generated::TimeLike<'_>, mtime: generated::TimeLike<'_>),
         |global, parsing| args::Utimes::from_js(global, parsing, path, atime, mtime);
     lutimes_sync / lutimes / lutimes_cb => Lutimes, args::Lutimes<'static>, ret::Lutimes,
-        (path: schema::PathLike<'_>, atime: schema::TimeLike<'_>, mtime: schema::TimeLike<'_>),
+        (path: generated::PathLike<'_>, atime: generated::TimeLike<'_>, mtime: generated::TimeLike<'_>),
         |global, parsing| args::Lutimes::from_js(global, parsing, path, atime, mtime);
     writev_sync / writev / writev_cb => Writev, args::Writev, ret::Writev,
         (fd: i32, buffers: JsLocal<'_, JSArray>, position: Option<f64>),
@@ -493,8 +493,8 @@ impl Binding {
     pub(crate) fn readdir_sync(
         &self,
         cx: &mut JsScope<'_>,
-        path: schema::PathLike<'_>,
-        options: schema::EncodingOrReaddirOptions<'_>,
+        path: generated::PathLike<'_>,
+        options: generated::EncodingOrReaddirOptions<'_>,
     ) -> JsResult<JSValue> {
         run_sync::<ret::Readdir, args::Readdir<'static>, { NodeFSFunctionEnum::Readdir }>(
             self,
@@ -522,8 +522,8 @@ pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
 /// validation (including its rejection of own-but-`undefined` booleans).
 pub(crate) fn rm_options_for_testing(
     cx: &mut JsScope<'_>,
-    path: schema::PathLike<'_>,
-    options: Deferred<'_, schema::RmOptionsArgument>,
+    path: generated::PathLike<'_>,
+    options: Deferred<'_, generated::RmOptionsArgument>,
 ) -> JsResult<RmOptions> {
     let global = cx.global();
     let parsed = args::Rm::from_js(global, &mut Parsing::new(Flavor::Sync), path, options)?;
@@ -540,7 +540,7 @@ pub(crate) fn rm_options_for_testing(
 /// `internal/fs/utils` `stringToFlags` tests can assert the production mapping.
 pub(crate) fn string_to_flags_for_testing(
     cx: &mut JsScope<'_>,
-    flags: Option<schema::FileFlags<'_>>,
+    flags: Option<generated::FileFlags<'_>>,
 ) -> JsResult<i32> {
     use crate::node::types::FileSystemFlags;
     let flags = FileSystemFlags::from_js(cx.global(), flags)?.unwrap_or(FileSystemFlags::R);

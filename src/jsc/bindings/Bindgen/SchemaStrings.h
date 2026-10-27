@@ -17,9 +17,11 @@ public:
     // `count` of them, starting at Tables::memberNames[first] (GeneratedBindings+Tables.h).
     ALWAYS_INLINE const JSC::Identifier* memberNames(unsigned first, unsigned count)
     {
+        if (!count)
+            return nullptr;
         if (m_memberNames[first].isNull()) [[unlikely]]
             initializeMemberNames(first, count);
-        ASSERT(!count || !m_memberNames[first + count - 1].isNull());
+        ASSERT(!m_memberNames[first + count - 1].isNull());
         return &m_memberNames[first];
     }
 

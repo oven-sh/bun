@@ -12,12 +12,12 @@ export const BlobSliceBound = b.union({
   other: b.ignored,
 });
 
-/** What `Bun.write` and the `write` of a file write. `other` is the parts of a `Blob`, and so are the first two past the fast path. */
+/** What `Bun.write` and the `write` of a file write. `other` is the parts of a `Blob`, and so are `string` and `buffer` past the fast path. */
 export const BunWriteData = b.union(
   {
     undefined: b.undefined,
     null: b.null,
-    string: b.jsString,
+    string: b.stringLike,
     buffer: b.bufferSource.allowShared,
     response: Response,
     request: Request,

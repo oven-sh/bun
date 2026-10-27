@@ -279,7 +279,7 @@ Only the promise calls a reaction, with the context it was given, so nothing tes
 returns: `None` if the pointer was taken back before the promise settled. No argument after it has a conversion that
 throws: nothing would release the pointer. A generic `T` is written as its instantiation.
 
-`b.cell("JSC::RegExpObject", "JavaScriptCore/RegExpObject.h", { rustPath: "bun_jsc::RegExp" })` names the C++ class, its
+`b.cell("JSC::RegExpObject", "JavaScriptCore/RegExpObject.h", { rustPath: "bun_jsc::JSObject" })` names the C++ class, its
 header and the Rust type that marks the handle. `reportedAs` is what an error calls it, if not the class without its `JS`,
 and `tsType` is its type in the generated `.d.ts`: without it an argument is `object` and a result `any`, like `b.object`.
 `b.dataView` is one.
@@ -449,11 +449,12 @@ one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.ut
 
 `b.string.view`, which comes after `.allowStringObject`, is for a body that only reads the
 characters, in Latin-1 or UTF-16: a `bun_core::StringView<'a>`, and a `&bun_core::StringView<'_>` as an argument of this type alone. It takes no reference to the
-storage, and `text.slice(..)` is read in place, where `b.string` would copy it into a new string. The frame holds the JS string, so it is for an argument, alone, in a union or
+storage, and `text.slice(..)` is read in place, where `b.string` would copy it into a new string. The frame holds the JS string, so it is for an argument or a member of a dictionary, alone, in a union or
 with a modifier, and not in an array.
 
-`b.stringLike` is the handle of a string or a `String` object. Nothing is converted until the body calls
-`string.to_js_string_view(global)?`, which runs the `toString` of a `String` object and borrows the characters.
+`b.stringLike` is the handle of a string or a `String` object. Nothing is converted until the body does it:
+`string.to_js_string_view(global)?` runs the `toString` of a `String` object and borrows the characters, and
+`string.to_js()` goes to a helper that takes a `JSValue`.
 
 A [class](#classes) is a type too: import it from its `.bind.ts` file. As an argument it is a `&'a` of the struct.
 The argument's slot in the frame holds the instance, so it is only for an argument, alone, in a union, or with one of the modifiers above except `.default()`.
@@ -550,8 +551,8 @@ in play apart:
 | `JSCell::isCallable`               | a function, or a proxy of one                                                  |
 | the cell's `ClassInfo`             | an instance of a class, a `Date`                                               |
 
-An alternative is named for what the value is: `string` and `number` for the handles `b.stringLike` and `b.jsNumber`,
-`text` for a converted `b.string`, `missing` for `undefined` or `null`, `other` for the rest.
+A handle is named for its kind, `string` for `b.stringLike` and `number` for `b.jsNumber`, and `b.ignored` is `other`. Any
+other alternative is named for its role (`path`, `encoding`, `ipv4`), or `text`, `missing`, `other` when it has none.
 
 A strict type takes the kinds its row under [Types](#types) says. A `b.cell` of the JSC class of a kind takes that kind:
 `b.cell("JSC::JSDataView", ..)` before `b.bufferSource` gets the `DataView`s. A type that coerces or
@@ -588,11 +589,11 @@ body looks the bytes up when it needs them:
 
 ```rust
 let before = buffer.with_bytes(&cx.heap, sum);
-callback.call(cx.global(), JsLocal::UNDEFINED, &[])?;
+callback.call(cx, JsLocal::UNDEFINED, &[])?;
 let after = buffer.with_bytes(&cx.heap, sum);
 ```
 
-Calling `callback.call(cx.global(), ..)` inside the closure does not compile. A detached or
+Calling `callback.call(cx, ..)` inside the closure does not compile. A detached or
 out-of-bounds view is empty. A shared buffer is refused, unless the type is
 `b.bufferSource.allowShared`, as with WebIDL's `[AllowShared]`. A resizable one is taken either
 way. To only read one, there is [`b.bytes`](#bytes).

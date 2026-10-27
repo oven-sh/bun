@@ -1,4 +1,4 @@
-use crate::generated_bindgen::blob::{self as schema, S3Options};
+use crate::generated_bindgen::blob::{self as generated, S3Options};
 use crate::generated_bindgen::s3_client::S3PresignOptions;
 use crate::node::{PathLike, PathOrBlob};
 use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
@@ -114,7 +114,7 @@ where
 /// path or Blob and require Blob arguments to be S3-backed.
 pub(crate) fn parse_s3_path_or_blob(
     global: &JSGlobalObject,
-    path: schema::PathOrBlob<'_>,
+    path: generated::PathOrBlob<'_>,
     error_message: &str,
 ) -> JsResult<PathOrBlob> {
     let path_or_blob = PathOrBlob::from_js_no_copy(global, path)?;
@@ -153,7 +153,7 @@ pub(crate) fn resolve_s3_blob(
 
 pub(crate) fn s3_blob_from_js(
     global: &JSGlobalObject,
-    path: schema::PathOrBlob<'_>,
+    path: generated::PathOrBlob<'_>,
     options: Option<S3Options<'_>>,
     error_message: &str,
 ) -> JsResult<Box<Blob>> {

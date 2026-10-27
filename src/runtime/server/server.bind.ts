@@ -398,7 +398,6 @@ export const BinaryType = b.enumeration([
 ]);
 
 /** A closed socket ignores the call whatever the arguments are, so no argument type refuses a value or runs JavaScript. */
-
 const send = {
   args: { data: WebSocketMessage, compress: WebSocketCompress },
   returns: b.opaque,

@@ -1,5 +1,4 @@
 //! Rust side of `src/jsc/bindings/Bindgen/Extern*.h`. The generated conversion that reads a value takes ownership.
-//! `ExternTraits.h` says what the member `bits` of a generated `Extern<Name>Data` is for.
 
 use core::ffi::{c_uint, c_void};
 

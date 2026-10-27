@@ -71,17 +71,22 @@ pub(crate) use self::fetch_tasklet::{
 // ──────────────────────────────────────────────────────────────────────────
 
 /// The `unix` option when it is a non-empty string.
-fn parse_unix(vm: &VirtualMachine, value: UnixPath) -> Option<Box<[u8]>> {
-    let UnixPath::Path(value) = value else {
-        return None;
+fn parse_unix(
+    vm: &VirtualMachine,
+    global: &JSGlobalObject,
+    value: UnixPath<'_>,
+) -> JsResult<Option<Box<[u8]>>> {
+    let UnixPath::String(value) = value else {
+        return Ok(None);
     };
-    if value.is_empty() {
-        return None;
+    let value = value.to_js();
+    if value.get_length(global)? == 0 {
+        return Ok(None);
     }
-    Some(absolute_unix_socket_path(
+    Ok(Some(absolute_unix_socket_path(
         vm.top_level_dir(),
-        value.to_owned_slice(),
-    ))
+        value.to_bun_string(global)?.to_owned_slice(),
+    )))
 }
 
 /// The HTTP thread connects to the `unix` path later and the keep-alive pool
@@ -631,7 +636,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         let objects_to_try = [options_object, request_init_object];
 
         for obj in objects_to_try.into_iter().flatten() {
-            if let Some(path) = parse_unix(vm, obj.unix(global_this)?) {
+            if let Some(path) = parse_unix(vm, global_this, obj.unix(global_this)?)? {
                 break 'extract_unix_socket_path path;
             }
         }

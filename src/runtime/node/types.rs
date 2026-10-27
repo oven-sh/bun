@@ -1439,7 +1439,7 @@ impl PathOrFdExt for PathOrFileDescriptor<'_> {
     ) -> JsResult<Option<PathOrFileDescriptor<'static>>> {
         match path {
             generated::PathOrFileDescriptor::Fd(fd) => {
-                Ok(Some(PathOrFileDescriptor::Fd(Fd::from_uv(fd))))
+                Ok(Some(PathOrFileDescriptor::Fd(Fd::from_js(fd))))
             }
             generated::PathOrFileDescriptor::Path(path) => {
                 Ok(PathLike::from_js(ctx, path, parsing)?.map(PathOrFileDescriptor::Path))

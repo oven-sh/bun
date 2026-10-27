@@ -30,13 +30,13 @@ export const ProxyInit = b.union({
   options: ProxyOptions,
   other: b.opaque,
 });
-export const UnixPath = b.union({ missing: b.null, path: b.string.allowStringObject, other: b.ignored });
+export const UnixPath = b.union({ missing: b.null, string: b.stringLike, other: b.ignored });
 
 export const IdleTimeout = b.union({ missing: b.undefined, number: b.f64, other: b.ignored });
 export const KeepAliveOptions = b.dictionary(
   {
     idleTimeout: IdleTimeout,
-    /** 0 is NaN. */
+    /** `NaN` arrives as 0, which the range refuses. */
     maxIdleSockets: b.u16.validateIntegerRange(1, 2 ** 16 - 1).nanAs(0).optional,
   },
   { deferred: true, reportedAs: "keepAlive" },

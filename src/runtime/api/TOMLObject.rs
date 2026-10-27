@@ -158,7 +158,7 @@ impl Stringifier {
         Ok(())
     }
 
-    /// Decides the layout of one (already unwrap_boxed_primitive) property value. Reads
+    /// Decides the layout of one (already unboxed) property value. Reads
     /// array elements when classifying arrays.
     fn layout_of(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<Layout> {
         if value.is_undefined() || value.is_symbol() || value.is_function() {
@@ -292,7 +292,7 @@ impl Stringifier {
     }
 
     /// One value on the right-hand side of `=` (or inside an inline
-    /// array/table). `value` is already unwrap_boxed_primitive; `known_temporal` is the
+    /// array/table). `value` is already unboxed; `known_temporal` is the
     /// classification `layout_of` already computed for it, if any.
     fn stringify_inline_value(
         &mut self,

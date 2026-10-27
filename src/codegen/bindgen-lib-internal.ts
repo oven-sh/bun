@@ -158,7 +158,7 @@ const kindsOfClass: Record<string, readonly ValueKind[]> = {
 
 const classes = new Map<string, JSClass>();
 /** One object for each class: kinds are compared by identity. */
-function kindsOfCell(cpp: string): readonly ValueKind[] {
+export function kindsOfCell(cpp: string): readonly ValueKind[] {
   if (!classes.has(cpp)) classes.set(cpp, { cpp });
   return kindsOfClass[cpp] ?? [classes.get(cpp)!];
 }
@@ -440,7 +440,7 @@ export abstract class Type {
   rustFromExtern(expr: string, scope: RustScope): string {
     return expr;
   }
-  /** The fields of the extern type, for `externParameterFields`. `null` for what is not a struct, and for a dictionary and an array, which are passed whole. */
+  /** The fields of the extern type, which `externParameterFields` and `layout` read. `null` for a type that is passed whole. */
   get externStructFields(): readonly ExternField[] | null {
     return null;
   }
@@ -448,6 +448,8 @@ export abstract class Type {
    * `externStructFields` where they are two fields of one register each, `null` for any other type.
    * An argument that goes in registers is passed as one parameter for each field. On x86-64 SysV clang and rustc give
    * such a struct parameter different LLVM types, and LLVM does not inline a call whose type is not the callee's.
+   * For the same reason the `data` of a union starts with `bits`, a `uint64_t` that nothing reads: clang then gives the
+   * parameter the type `i64`, as rustc does, and not `ptr` where the first member of 8 bytes is a pointer.
    */
   get externParameterFields(): readonly ExternField[] | null {
     const fields = this.externStructFields;
@@ -990,7 +992,7 @@ export class ByteSpanType extends Type {
     return true;
   }
   layout(): Layout {
-    return { size: 16, align: 8 };
+    return structLayout(this.externStructFields.map(field => field.layout));
   }
   rustExternType(): string {
     return "bindgen::extern_types::ExternBytes";
@@ -1129,7 +1131,7 @@ export class Utf8Type extends Type {
     return `b${JSON.stringify(value)}`;
   }
   layout(): Layout {
-    return { size: 16, align: 8 };
+    return structLayout(this.externStructFields.map(field => field.layout));
   }
   rustExternType(): string {
     return "bindgen::extern_types::ExternBytes";
@@ -1269,8 +1271,9 @@ export class BytesType extends Type {
       : { layout: registerLayout, rustType: () => "bindgen::extern_types::ExternString" };
   }
   layout(): Layout {
-    const { layout } = this.#converted;
-    return this.passesValue ? structLayout([layout, registerLayout]) : layout;
+    return this.passesValue
+      ? structLayout(externWithValueFields(this.#converted).map(field => field.layout))
+      : this.#converted.layout;
   }
   rustExternType(scope: RustScope): string {
     const converted = this.#converted.rustType(scope);
@@ -1670,7 +1673,7 @@ export class RestType extends ConvertedByBodyType {
     return true;
   }
   layout(): Layout {
-    return { size: 16, align: 8 };
+    return structLayout(this.externStructFields.map(field => field.layout));
   }
   rustExternType(): string {
     return "bindgen::extern_types::ExternVariadicArguments";
@@ -1760,7 +1763,7 @@ export class WrappedType extends Type {
   constructor(cpp: string, header: string, options: WrappedOptions) {
     super();
     assert(/^([A-Za-z_]\w*::)+[A-Z]\w*$/.test(cpp), `b.wrapped: ${cpp} needs its namespace`);
-    this.#valueKinds = [{ cpp }];
+    this.#valueKinds = kindsOfCell(cpp);
     this.cpp = cpp;
     this.header = header;
     this.options = options;
@@ -2058,7 +2061,7 @@ export class WithValueType extends Type {
     assert(!isIfPassed(inner), ".ifPassed has no argument to give when it is absent");
     this.inner = inner;
   }
-  /** The value is the cell that keeps the instance alive, so the two together are for more than an argument. */
+  /** With its cell beside it an instance is for more than an argument. Nothing else may hold that cell: the body keeps the value while it uses the instance. */
   get #isInstance(): boolean {
     return this.inner instanceof ClassType || this.inner instanceof WrappedType;
   }

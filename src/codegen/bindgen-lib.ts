@@ -22,6 +22,7 @@ import {
   FunctionDefinition,
   type FunctionOptions,
   integers,
+  kindsOfCell,
   type MemberOptions,
   ModuleDefinition,
   NamespaceDefinition,
@@ -137,7 +138,7 @@ export const blob = new RefType(
   "globalThis.Blob",
   "bun_jsc::webcore_types::Blob",
   "Bindgen/IDLConvertBlob.h",
-  [{ cpp: "Bun::Bindgen::Generated::JSBlob" }],
+  kindsOfCell("Bun::Bindgen::Generated::JSBlob"),
   null,
 );
 

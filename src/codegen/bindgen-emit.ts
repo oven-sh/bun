@@ -16,6 +16,7 @@ import {
   cppReturnIfFailed,
   DefaultType,
   DeferredDictionaryType,
+  DeferredType,
   DictionaryType,
   EnumerationType,
   type ExternField,
@@ -364,7 +365,7 @@ function cppHeaderForUnion(type: UnionType): string {
   /** As error messages list them: null last. */
   const idlTypes = alternatives
     .toSorted((a, b) => Number(a.type instanceof UnitType) - Number(b.type instanceof UnitType))
-    .map(a => a.type.idlType)
+    .map(a => (a.type instanceof DeferredType ? a.type.inner : a.type).idlType)
     .join(", ");
   const { outcomes, code } = cppChooseByKind("value", type.alternativesByKind);
   const cases = outcomes.flatMap((candidates, index) =>

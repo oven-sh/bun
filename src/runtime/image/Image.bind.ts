@@ -17,8 +17,8 @@ export const ImageEncodeOptions = b.dictionary(
   },
   { allowArray: true, nonObjectAsEmpty: true },
 );
-/** The options set so far are read before the getters of `options` run. */
 const js = { capability: "js", throws: true } as const;
+/** The options set so far are read before the getters of `options` run. */
 const format = { ...chainable, args: { options: ImageEncodeOptions.deferred }, ...js } as const;
 
 export const ImageModulateOptions = b.dictionary(

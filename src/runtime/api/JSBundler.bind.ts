@@ -32,6 +32,7 @@ export const BuildArtifact = b.class({
       expected: { chunkSize: "chunkSize must be a number" },
       returns: b.object,
       passThis: true,
+      length: 1,
     },
     text: method,
     type: { getter: b.string.local, cache: true, capability: "js" },
@@ -100,6 +101,7 @@ export const BytecodeOrder = b.union({
   flag: b.bool,
   one: b.string.allowStringObject.utf8.owned,
   list: b.jsArray,
+  other: b.opaque,
 });
 export const BuildCompileOptions = b.dictionary(
   {

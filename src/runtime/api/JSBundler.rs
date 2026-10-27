@@ -422,6 +422,13 @@ pub(crate) mod js_bundler {
             }
 
             // `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`.
+            let refuse = |value: JSValue| {
+                global_this.throw_invalid_property_type_value(
+                    b"compile.bytecodeOrder",
+                    b"string or array of strings",
+                    value,
+                )
+            };
             let mut push = |slice: Utf8Bytes| -> JsResult<()> {
                 if slice.slice().is_empty() {
                     return Err(global_this.throw_invalid_arguments(format_args!(
@@ -437,23 +444,14 @@ pub(crate) mod js_bundler {
                     let mut iter = bytecode_order.to_js().array_iterator(global_this)?;
                     while let Some(path) = iter.next()? {
                         if !path.is_string() {
-                            return Err(global_this.throw_invalid_property_type_value(
-                                b"compile.bytecodeOrder",
-                                b"string or array of strings",
-                                path,
-                            ));
+                            return Err(refuse(path));
                         }
                         push(path.to_utf8(global_this)?)?;
                     }
                 }
                 BytecodeOrder::One(path) => push(path)?,
-                BytecodeOrder::Flag(true) => {
-                    return Err(global_this.throw_invalid_property_type_value(
-                        b"compile.bytecodeOrder",
-                        b"string or array of strings",
-                        JSValue::TRUE,
-                    ));
-                }
+                BytecodeOrder::Flag(true) => return Err(refuse(JSValue::TRUE)),
+                BytecodeOrder::Other(value) => return Err(refuse(value.to_js())),
             }
 
             if let Some(jit_policy) = object.jit_policy(global_this)? {

@@ -268,6 +268,9 @@ pub(crate) trait BlobExt {
     ) -> Blob
     where
         Self: Sized;
+    fn from_string(string: &bun_core::String, global_this: &JSGlobalObject) -> Blob
+    where
+        Self: Sized;
     fn create_with_bytes_and_allocator(
         bytes: Vec<u8>,
         global_this: &JSGlobalObject,
@@ -2157,6 +2160,12 @@ impl BlobExt for Blob {
         blob
     }
 
+    fn from_string(string: &bun_core::String, global_this: &JSGlobalObject) -> Blob {
+        let bytes = string.to_owned_slice();
+        let ascii = strings::is_all_ascii(&bytes);
+        Blob::init_with_all_ascii(bytes, global_this, ascii)
+    }
+
     fn create_with_bytes_and_allocator(
         bytes: Vec<u8>,
         global_this: &JSGlobalObject,
@@ -2927,10 +2936,7 @@ impl BlobExt for Blob {
                 | jsc::JSType::StringObject
                 | jsc::JSType::DerivedStringObject => {
                     if !fail_if_top_value_is_not_typed_array_like {
-                        let str = top_value.to_bun_string(global)?;
-                        let bytes = str.to_owned_slice();
-                        let ascii = strings::is_all_ascii(&bytes);
-                        return Ok(Blob::init_with_all_ascii(bytes, global, ascii));
+                        return Ok(Blob::from_string(&top_value.to_bun_string(global)?, global));
                     }
                 }
 
@@ -4568,6 +4574,7 @@ pub(crate) fn write_file_internal(
     // This is a heuristic, but it's a good one.
     //
     // except if you're on Windows. Windows I/O is slower. Let's not even try.
+    let mut converted: Option<bun_core::String> = None;
     #[cfg(not(windows))]
     {
         let mut needs_async = false;
@@ -4611,6 +4618,7 @@ pub(crate) fn write_file_internal(
                     if !needs_async {
                         return Ok(result);
                     }
+                    converted = Some(str);
                 }
             } else if let BunWriteData::Buffer(data) = data {
                 let buffer_view = data.as_array_buffer(cx.global());
@@ -4900,10 +4908,13 @@ pub(crate) fn write_file_internal(
                 return destination_blob.pipe_readable_stream_to_blob(cx, readable, &options);
             }
 
-            BunWriteData::String(parts) => parts.as_value(),
+            BunWriteData::String(parts) => match converted.take() {
+                Some(str) => break 'brk Blob::from_string(&str, cx.global()),
+                None => parts.as_value(),
+            },
             BunWriteData::Buffer(parts) => parts.as_value(),
             BunWriteData::Other(parts) => parts,
-            BunWriteData::Undefined | BunWriteData::Null => unreachable!(),
+            BunWriteData::Undefined | BunWriteData::Null => unreachable!("refused above"),
         };
 
         break 'brk Blob::get::<false, false>(cx.global(), parts.to_js())?;

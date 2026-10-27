@@ -8,7 +8,7 @@ const stream = { ...js, args: { streamId }, length: 1 } as const;
 export const OptionalStreamId = b.union({ missing: b.null, id: b.f64, other: b.ignored });
 /** `null` and `undefined` release the one the stream has. */
 export const StreamContext = b.union({ release: b.null, context: b.object, other: b.ignored });
-/** The elements of `many` are strings. */
+/** The elements of `list` are strings. */
 export const H2Origins = b.union({
   missing: b.null,
   one: b.string.allowStringObject.view,

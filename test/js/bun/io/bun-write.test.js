@@ -58,6 +58,23 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(calls).toBe(1);
   });
 
+  it.skipIf(isWindows)("creates the file for an empty String object and a path with no directory", async () => {
+    using tmpbase = tempDir("bun-write-empty-string-object", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(await Bun.write("empty.txt", new String("")), require("fs").readFileSync("empty.txt", "utf8").length);`,
+      ],
+      env: bunEnv,
+      cwd: String(tmpbase),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "0 0\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   describe("large file", () => {
     it("write large file (text)", async () => {
       using tmpbase = tempDir("large-file-text", {});

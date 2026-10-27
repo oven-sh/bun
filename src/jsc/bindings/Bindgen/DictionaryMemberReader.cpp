@@ -29,7 +29,7 @@ JSValue DictionaryMemberReader::get(unsigned index)
     return getIfPropertyExistsPrototypePollutionMitigation(m_vm, m_globalObject, m_object, m_memberNames[index]);
 }
 
-// `get(unsigned)` does not call this: the four arguments would be loaded first and kept in registers across `getDirect`.
+// `get(unsigned)` does not call this: it reloads its members after `getDirect`, and arguments would stay in three more callee-saved registers across it.
 static ALWAYS_INLINE JSValue getMember(VM& vm, JSGlobalObject* globalObject, JSObject* object, const Identifier& name)
 {
     if (canSkipPrototypeChain(globalObject, object)) [[likely]] {

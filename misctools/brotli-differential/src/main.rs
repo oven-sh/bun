@@ -420,6 +420,9 @@ fn bench_dec(path: &str, quality: u32, lgwin: u32, reps: usize) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let num = |i: usize, d: u64| args.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
+    if args.get(1).is_some_and(|s| s.starts_with("bench-") || s == "perf-scan") {
+        ffi::plain_malloc();
+    }
     match args.get(1).map(String::as_str) {
         Some("testdata") => testdata(),
         Some("dec-fuzz") => dec_fuzz(num(2, 1), num(3, 1000), num(4, 1 << 22) as usize),

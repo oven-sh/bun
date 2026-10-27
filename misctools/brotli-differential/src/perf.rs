@@ -5,8 +5,20 @@ use crate::rng::Rng;
 use bun_brotli::{Decoder, Encoder, EncoderOperation, EncoderParameter};
 use std::time::Instant;
 
+/// Seconds for one call: the best of `reps` measurements, each of as many calls as take about 300 microseconds.
 fn best(reps: usize, mut f: impl FnMut()) -> f64 {
-    (0..reps).map(|_| { let t = Instant::now(); f(); t.elapsed().as_secs_f64() }).fold(f64::MAX, f64::min)
+    let t = Instant::now();
+    f();
+    let calls = (3e-4 / t.elapsed().as_secs_f64().max(1e-9)).clamp(1.0, 3000.0) as u32;
+    (0..reps)
+        .map(|_| {
+            let t = Instant::now();
+            for _ in 0..calls {
+                f();
+            }
+            t.elapsed().as_secs_f64() / f64::from(calls)
+        })
+        .fold(f64::MAX, f64::min)
 }
 
 fn c_encode(data: &[u8], params: &[(i32, u32)], chunk: usize, flush: bool, buf: &mut [u8]) -> Vec<u8> {
@@ -103,7 +115,11 @@ pub fn run(seed0: u64, iters: u64, max_len: usize, corpus: &r#gen::Corpus) {
         let seed = seed0 + it;
         let mut rng = Rng(seed);
         let q = rng.below(12) as u32;
-        let len = r#gen::length(&mut rng, if q >= 10 { max_len.min(1 << 17) } else { max_len }).max(1);
+        let len = match rng.below(4) {
+            0 => rng.range(1, 300),
+            1 => rng.range(1, 8000),
+            _ => r#gen::length(&mut rng, if q >= 10 { max_len.min(1 << 17) } else { max_len }).max(1),
+        };
         let data = match rng.below(4) {
             0 => crate::ring::records(&mut rng, len),
             _ => r#gen::data(&mut rng, corpus, len),
@@ -137,6 +153,11 @@ pub fn run(seed0: u64, iters: u64, max_len: usize, corpus: &r#gen::Corpus) {
         let c = best(3, || { c_decode(&stream, n_in, &mut buf); });
         let r = best(3, || { r_decode(&stream, n_in, &mut buf); });
         rows.push((r / c, c, format!("seed {seed} DEC len {} stream {} q{q} n_in {n_in} cap {dcap}", data.len(), stream.len())));
+    }
+    if std::env::var_os("ALL").is_some() {
+        for r in &rows {
+            println!("ROW\t{:.3}\t{:.3e}\t{}", r.0, r.1, r.2);
+        }
     }
     for kind in ["ENC", "DEC"] {
         let mut v: Vec<&(f64, f64, String)> = rows.iter().filter(|r| r.2.contains(kind)).collect();

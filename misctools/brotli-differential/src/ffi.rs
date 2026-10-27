@@ -72,16 +72,20 @@ unsafe extern "C" {
 
 /// What new memory holds for the reference. It reads a byte of the encoder's ring buffer that it never wrote (see the
 /// README), so with plain `malloc` its output can depend on what the process did before. 0 unless `C_FILL` says otherwise.
-fn fill() -> u8 {
-    static FILL: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    *FILL.get_or_init(|| std::env::var("C_FILL").ok().and_then(|s| s.parse().ok()).unwrap_or(0))
+/// `None`: whatever `malloc` returns.
+static FILL: std::sync::OnceLock<Option<u8>> = std::sync::OnceLock::new();
+
+/// For measurements: filling the memory takes time that the reference does not need.
+pub fn plain_malloc() {
+    FILL.set(None).unwrap();
 }
 
 extern "C" fn c_alloc(_: *mut c_void, n: usize) -> *mut c_void {
     unsafe {
-        match fill() {
-            0 => calloc(1, n),
-            b => {
+        match *FILL.get_or_init(|| Some(std::env::var("C_FILL").ok().and_then(|s| s.parse().ok()).unwrap_or(0))) {
+            None => malloc(n),
+            Some(0) => calloc(1, n),
+            Some(b) => {
                 let p = malloc(n);
                 if !p.is_null() {
                     std::ptr::write_bytes(p.cast::<u8>(), b, n);

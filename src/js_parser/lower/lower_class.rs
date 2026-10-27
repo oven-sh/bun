@@ -420,6 +420,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         constructor_args: StoreRef<js_ast::Scope>,
         uses: core::ops::Range<usize>,
     ) {
+        // `eval` finds a variable by its name.
+        if constructor_args.contains_direct_eval {
+            return;
+        }
         let is_body =
             |scope: &&StoreRef<js_ast::Scope>| scope.kind == js_ast::scope::Kind::FunctionBody;
         let body = constructor_args

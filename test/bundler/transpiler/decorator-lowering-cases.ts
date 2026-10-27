@@ -285,6 +285,14 @@ show(new (new C("parameter of C").x)("parameter of x").y);`,
     },
   ),
   ...defineAndAssign(
+    "eval in a constructor with a name that an initializer means something else by",
+    `const v = String("outer");
+class A { x = v; constructor(v: string) { log(eval("v")); } }
+show(new A("parameter").x);
+class B { x = v; constructor(v: string) { (() => log(eval("v")))(); } }
+show(new B("parameter").x);`,
+  ),
+  ...defineAndAssign(
     "name of a function in a private field",
     `class A { #f = () => {}; #g = function () {}; #c = class {}; y?: number; names() { return [this.#f.name, this.#g.name, this.#c.name]; } }
 show(new A().names());

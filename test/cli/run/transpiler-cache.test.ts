@@ -297,13 +297,11 @@ describe("transpiler cache", () => {
       writeFileSync(join(temp_dir, "tsconfig.json"), JSON.stringify({ compilerOptions }));
       return bunRun(join(temp_dir, "a.ts"), env);
     };
-    const entry = () =>
-      readFileSync(
-        join(
-          cache_dir,
-          readdirSync(cache_dir).find(f => f.endsWith(".pile"))!,
-        ),
-      );
+    const entry = () => {
+      const entries = readdirSync(cache_dir).filter(f => f.endsWith(".pile"));
+      expect(entries).toHaveLength(1);
+      return readFileSync(join(cache_dir, entries[0]));
+    };
     const code = `(() => {
       let type;
       (Reflect as any).metadata = (key: string, value: any) => () => { type = value.name; };

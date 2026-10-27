@@ -3527,19 +3527,24 @@ private:
         CachedStringRef name;
         if (!readStringData(name))
             return JSValue();
-        double quota = std::numeric_limits<double>::quiet_NaN();
-        double requested = std::numeric_limits<double>::quiet_NaN();
-        if (tag == QuotaExceededErrorTag && (!read(quota) || !read(requested)))
-            return JSValue();
-        auto toOptional = [](double value) -> std::optional<double> {
-            if (std::isnan(value))
-                return std::nullopt;
-            return value;
-        };
-        Ref<DOMException> exception = tag == QuotaExceededErrorTag
-            ? Ref<DOMException> { DOMQuotaExceededError::createUnchecked(message->string(), { toOptional(quota), toOptional(requested) }) }
-            : DOMException::create(message->string(), name->string());
-        JSValue wrapper = getJSValue(exception);
+        RefPtr<DOMException> exception;
+        if (tag == QuotaExceededErrorTag) {
+            double quota;
+            double requested;
+            if (!read(quota) || !read(requested))
+                return JSValue();
+            auto toOptional = [](double value) -> std::optional<double> {
+                if (std::isnan(value))
+                    return std::nullopt;
+                return value;
+            };
+            auto quotaExceededError = DOMQuotaExceededError::create(message->string(), { toOptional(quota), toOptional(requested) });
+            if (quotaExceededError.hasException())
+                return JSValue();
+            exception = quotaExceededError.releaseReturnValue();
+        } else
+            exception = DOMException::create(message->string(), name->string());
+        JSValue wrapper = getJSValue(*exception);
         addTerminalToObjectPool(wrapper);
         return wrapper;
     }

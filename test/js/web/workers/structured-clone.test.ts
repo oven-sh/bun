@@ -943,11 +943,33 @@ describe("QuotaExceededError", () => {
     expect([values.readDoubleLE(values.length - 16), values.readDoubleLE(values.length - 8)]).toEqual([42, 50]);
   });
 
+  const unreadable = expect.objectContaining({ name: "TypeError", message: "Unable to deserialize data." });
+
   test("a record that ends before requested does not deserialize", () => {
     const record = bytes(new QuotaExceededError("full", { quota: 42, requested: 50 }));
-    const unreadable = expect.objectContaining({ name: "TypeError", message: "Unable to deserialize data." });
     expect(() => deserialize(record.subarray(0, -1))).toThrow(unreadable);
     expect(() => deserialize(record.subarray(0, -9))).toThrow(unreadable);
+  });
+
+  // The bytes can come from anywhere, so the reader holds them to the rules of the constructor.
+  test.each([
+    ["a negative quota", -1, 50],
+    ["a negative requested", NaN, -1],
+    ["requested less than quota", 50, 42],
+    ["an infinite quota", Infinity, Infinity],
+    ["an infinite requested", 42, Infinity],
+    ["a requested of -Infinity", NaN, -Infinity],
+  ])("a record with %s does not deserialize", (_, quota, requested) => {
+    const record = bytes(new QuotaExceededError("full", { quota: 42, requested: 50 }));
+    record.writeDoubleLE(quota, record.length - 16);
+    record.writeDoubleLE(requested, record.length - 8);
+    expect(() => deserialize(record)).toThrow(unreadable);
+  });
+
+  test("a record with a NaN for quota reads as null", () => {
+    const record = bytes(new QuotaExceededError("full", { quota: 42, requested: 50 }));
+    record.writeDoubleLE(NaN, record.length - 16);
+    expect(describeError(deserialize(record))).toEqual({ ...full, quota: null });
   });
 });
 

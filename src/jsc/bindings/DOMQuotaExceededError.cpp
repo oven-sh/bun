@@ -26,10 +26,15 @@
 #include "config.h"
 #include "DOMQuotaExceededError.h"
 
+#include <cmath>
+
 namespace WebCore {
 
 ExceptionOr<Ref<DOMQuotaExceededError>> DOMQuotaExceededError::create(const String& message, QuotaExceededErrorOptions&& options)
 {
+    // The constructor binding converts each member as a restricted double. The structured clone reader has no such step.
+    if ((options.quota && !std::isfinite(*options.quota)) || (options.requested && !std::isfinite(*options.requested)))
+        return Exception { ExceptionCode::TypeError, "The provided value is non-finite"_s };
     if (options.quota && *options.quota < 0)
         return Exception { ExceptionCode::RangeError, "options.quota must not be negative"_s };
     if (options.requested && *options.requested < 0)

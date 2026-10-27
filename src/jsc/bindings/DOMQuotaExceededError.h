@@ -35,9 +35,9 @@ namespace WebCore {
 // WebKit calls this QuotaExceededError, which is an ExceptionCode enumerator here: https://webidl.spec.whatwg.org/#quotaexceedederror
 class DOMQuotaExceededError final : public DOMException {
 public:
-    // The constructor steps of the interface: a RangeError for a negative member or for requested < quota.
+    // For the constructor and the structured clone reader: refuses a member that is not finite or is negative, and requested < quota.
     static ExceptionOr<Ref<DOMQuotaExceededError>> create(const String& message = {}, QuotaExceededErrorOptions&& = {});
-    // For a native thrower and for the structured clone reader. Neither has values to validate.
+    // For a native thrower, whose values need no check.
     static Ref<DOMQuotaExceededError> createUnchecked(const String& message = {}, QuotaExceededErrorOptions&& = {});
 
     std::optional<double> quota() const { return m_quota; }

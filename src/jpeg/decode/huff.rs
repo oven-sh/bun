@@ -162,25 +162,27 @@ impl HuffDecoder {
         }
     }
 
-    fn decode_mcu_slow(&mut self, inp: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
-        let mut bits = self.bits;
+    /// The blocks of an MCU, from either source of bits. Returns the new DC predictions.
+    #[inline(always)]
+    fn decode_blocks(
+        &self,
+        bits: &mut impl Bits,
+        mcu: &mut impl McuBlocks,
+    ) -> Result<[i32; MAX_COMPS_IN_SCAN]> {
         let mut last_dc_val = self.last_dc_val;
         for (blkn, info) in self.blocks.iter().enumerate().take(self.blocks_in_mcu) {
-            let Tables {
-                dc: dc_table,
-                ac: ac_table,
-            } = self.tables(*info)?;
+            let tables = self.tables(*info)?;
             let block = mcu.block(blkn).ok_or(Error::Internal)?;
             let last_dc = last_dc_val
                 .get_mut(usize::from(info.scan_comp))
                 .ok_or(Error::Internal)?;
 
-            let s = u32::from(bits.decode(inp, dc_table));
-            let mut diff = 0;
-            if s != 0 {
-                bits.check(inp, s);
-                diff = huff_extend(bits.get(s), s);
-            }
+            let s = u32::from(bits.symbol(tables.dc));
+            let diff = if s != 0 {
+                huff_extend(bits.bits(s), s)
+            } else {
+                0
+            };
             // Damaged data can take this around the range of an i32.
             *last_dc = last_dc.wrapping_add(diff);
             let [dc, ..] = block;
@@ -188,13 +190,12 @@ impl HuffDecoder {
 
             let mut k = 1;
             while k < 64 {
-                let symbol = bits.decode(inp, ac_table);
+                let symbol = bits.symbol(tables.ac);
                 let r = usize::from(symbol >> 4);
                 let s = u32::from(symbol & 15);
                 if s != 0 {
                     k += r;
-                    bits.check(inp, s);
-                    let value = bits.get(s);
+                    let value = bits.bits(s);
                     if info.ac_needed {
                         store(block, k, huff_extend(value, s));
                     }
@@ -207,8 +208,16 @@ impl HuffDecoder {
                 k += 1;
             }
         }
-        self.bits = bits;
-        self.last_dc_val = last_dc_val;
+        Ok(last_dc_val)
+    }
+
+    fn decode_mcu_slow(&mut self, inp: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
+        let mut bits = SlowBits {
+            bits: self.bits,
+            inp,
+        };
+        self.last_dc_val = self.decode_blocks(&mut bits, mcu)?;
+        self.bits = bits.bits;
         Ok(())
     }
 
@@ -216,48 +225,7 @@ impl HuffDecoder {
     #[inline(never)]
     fn decode_mcu_fast(&mut self, inp: &mut Input, mcu: &mut impl McuBlocks) -> Result<bool> {
         let mut bits = FastBitReader::new(self.bits, inp.remaining());
-        let mut last_dc_val = self.last_dc_val;
-        for (blkn, info) in self.blocks.iter().enumerate().take(self.blocks_in_mcu) {
-            let Tables {
-                dc: dc_table,
-                ac: ac_table,
-            } = self.tables(*info)?;
-            let block = mcu.block(blkn).ok_or(Error::Internal)?;
-            let last_dc = last_dc_val
-                .get_mut(usize::from(info.scan_comp))
-                .ok_or(Error::Internal)?;
-
-            let s = u32::from(bits.decode(dc_table));
-            let mut diff = 0;
-            if s != 0 {
-                bits.fill();
-                diff = huff_extend(bits.get(s), s);
-            }
-            *last_dc = last_dc.wrapping_add(diff);
-            let [dc, ..] = block;
-            *dc = *last_dc as i16;
-
-            let mut k = 1;
-            while k < 64 {
-                let symbol = bits.decode(ac_table);
-                let r = usize::from(symbol >> 4);
-                let s = u32::from(symbol & 15);
-                if s != 0 {
-                    k += r;
-                    bits.fill();
-                    let value = bits.get(s);
-                    if info.ac_needed {
-                        store(block, k, huff_extend(value, s));
-                    }
-                } else {
-                    if r != 15 {
-                        break;
-                    }
-                    k += 15;
-                }
-                k += 1;
-            }
-        }
+        let last_dc_val = self.decode_blocks(&mut bits, mcu)?;
         let Some((bits, consumed)) = bits.finish() else {
             return Ok(false);
         };
@@ -265,6 +233,45 @@ impl HuffDecoder {
         self.bits = bits;
         self.last_dc_val = last_dc_val;
         Ok(true)
+    }
+}
+
+/// Where the bits of an MCU come from.
+trait Bits {
+    /// The next symbol.
+    fn symbol(&mut self, table: &DerivedTable) -> u8;
+    /// The next `n` bits, from 1 to 15.
+    fn bits(&mut self, n: u32) -> i32;
+}
+
+struct SlowBits<'a, 'b> {
+    bits: BitReader,
+    inp: &'a mut Input<'b>,
+}
+
+impl Bits for SlowBits<'_, '_> {
+    #[inline(always)]
+    fn symbol(&mut self, table: &DerivedTable) -> u8 {
+        self.bits.decode(self.inp, table)
+    }
+
+    #[inline(always)]
+    fn bits(&mut self, n: u32) -> i32 {
+        self.bits.check(self.inp, n);
+        self.bits.get(n)
+    }
+}
+
+impl Bits for FastBitReader<'_> {
+    #[inline(always)]
+    fn symbol(&mut self, table: &DerivedTable) -> u8 {
+        self.decode(table)
+    }
+
+    #[inline(always)]
+    fn bits(&mut self, n: u32) -> i32 {
+        self.fill();
+        self.get(n)
     }
 }
 

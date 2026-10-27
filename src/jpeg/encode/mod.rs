@@ -10,7 +10,7 @@ mod sample;
 use crate::error::{Error, Result, try_vec};
 use crate::tables::{self, HuffSpec, NATURAL_ORDER};
 use fdct::Divisors;
-use huff::{BitWriter, Counts, EncodeTable, Output};
+use huff::{BitWriter, Counts, EncodeTable, Output, SequentialTable};
 use phuff::{AcEncoder, Sink};
 use sample::{MCU_SIZE, McuRowSamples};
 
@@ -318,10 +318,10 @@ impl Encoder<'_> {
         out.scan_header(&SEQUENTIAL_SCAN);
 
         let [(luma_dc, luma_ac), (chroma_dc, chroma_ac)] = specs;
-        let luma_dc = EncodeTable::new(luma_dc)?;
-        let luma_ac = EncodeTable::new(luma_ac)?;
-        let chroma_dc = EncodeTable::new(chroma_dc)?;
-        let chroma_ac = EncodeTable::new(chroma_ac)?;
+        let luma_dc = SequentialTable::new(luma_dc)?;
+        let luma_ac = SequentialTable::new(luma_ac)?;
+        let chroma_dc = SequentialTable::new(chroma_dc)?;
+        let chroma_ac = SequentialTable::new(chroma_ac)?;
 
         let mut y = BlockRows::new(self.mcus_per_row * 2, 2)?;
         let mut cb = BlockRows::new(self.mcus_per_row, 1)?;

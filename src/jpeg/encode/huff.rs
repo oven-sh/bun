@@ -156,19 +156,62 @@ pub(crate) fn value_bits(value: i32, nbits: u32) -> u32 {
     ((value + (value >> 31)) as u32) & ((1 << nbits) - 1)
 }
 
+/// For a sequential scan, where the low four bits of a symbol say how many bits of a value follow its code: all that it
+/// takes to put the two together, without a shift.
+pub(crate) struct SequentialTable {
+    entries: [SequentialEntry; 256],
+}
+
+#[derive(Clone, Copy, Default)]
+struct SequentialEntry {
+    /// The code with room for the value below it.
+    code: u32,
+    /// Ones where the value goes.
+    value_mask: u16,
+    /// Of the code and the value, in bits.
+    size: u16,
+}
+
+impl SequentialTable {
+    pub(crate) fn new(spec: &HuffSpec) -> Result<Self> {
+        let table = EncodeTable::new(spec)?;
+        let mut entries = [SequentialEntry::default(); 256];
+        for (symbol, entry) in (0..=255u8).zip(&mut entries) {
+            let Code { code, size } = table.get(symbol);
+            let nbits = u32::from(symbol & 15);
+            *entry = SequentialEntry {
+                code: code << nbits,
+                value_mask: ((1u32 << nbits) - 1) as u16,
+                size: (size + nbits) as u16,
+            };
+        }
+        Ok(SequentialTable { entries })
+    }
+
+    /// Writes `symbol` and the value that it announces: itself if positive, one less if negative.
+    #[inline(always)]
+    fn put(&self, bits: &mut BitWriter, symbol: u32, value: i32) {
+        let entry = self
+            .entries
+            .get((symbol & 255) as usize)
+            .copied()
+            .unwrap_or_default();
+        let value = (value + (value >> 31)) as u32 & u32::from(entry.value_mask);
+        bits.put(entry.code | value, u32::from(entry.size));
+    }
+}
+
 /// Writes a block of a sequential scan.
 #[inline]
 pub(crate) fn encode_block(
     bits: &mut BitWriter,
     block: &Block,
     last_dc: i16,
-    dc_table: &EncodeTable,
-    ac_table: &EncodeTable,
+    dc_table: &SequentialTable,
+    ac_table: &SequentialTable,
 ) {
     let diff = i32::from(block.dc()) - i32::from(last_dc);
-    let nbits = bit_length(diff.unsigned_abs());
-    let Code { code, size } = dc_table.get(nbits as u8);
-    bits.put((code << nbits) | value_bits(diff, nbits), size + nbits);
+    dc_table.put(bits, bit_length(diff.unsigned_abs()), diff);
 
     let mut left = block.nonzero_between(1, 63);
     let mut last = 0;
@@ -178,18 +221,14 @@ pub(crate) fn encode_block(
         let mut run = k - last - 1;
         last = k;
         while run > 15 {
-            let Code { code, size } = ac_table.get(0xf0);
-            bits.put(code, size);
+            ac_table.put(bits, 0xf0, 0);
             run -= 16;
         }
         let coef = i32::from(block.zigzag(k));
-        let nbits = bit_length(coef.unsigned_abs());
-        let Code { code, size } = ac_table.get(((run << 4) + nbits) as u8);
-        bits.put((code << nbits) | value_bits(coef, nbits), size + nbits);
+        ac_table.put(bits, (run << 4) + bit_length(coef.unsigned_abs()), coef);
     }
     if last != 63 {
-        let Code { code, size } = ac_table.get(0);
-        bits.put(code, size);
+        ac_table.put(bits, 0, 0);
     }
 }
 

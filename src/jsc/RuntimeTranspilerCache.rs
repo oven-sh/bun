@@ -77,7 +77,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 42: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 44: A lowered `accessor #x` is on the object before its first initializer runs.
+/// Version 44: An undecorated `accessor #x` is a getter and a setter over a `#private` field.
 const EXPECTED_VERSION: u32 = 44;
 
 /// Source files smaller than this are not written to / read from the on-disk

@@ -1109,32 +1109,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.symbols[private_index as usize].original_name.slice();
                 let name_expr = p.new_expr(E::EString::init(private_name), loc);
                 let existing = private_lowered_map.get(&private_index).copied();
-                // Like a method, an accessor is there before the first field: a WeakSet brand.
-                let is_branded = is_method || kind == 4;
                 let storage = if let Some(existing) = existing {
                     existing.storage_ref
                 } else {
                     let name = p.bump_name3(b"_", &private_name[1..], b"");
                     let storage = p.declared_temp(name);
                     let container =
-                        p.new_global_expr(if is_branded { b"WeakSet" } else { b"WeakMap" }, loc);
+                        p.new_global_expr(if is_method { b"WeakSet" } else { b"WeakMap" }, loc);
                     storage_inits.push(p.assign_to(storage, container, loc));
                     storage
                 };
                 let mut info = existing.unwrap_or_else(|| PrivateLoweredInfo::new(storage));
                 let storage_expr = p.use_ref(storage, loc);
 
-                if is_branded && existing.is_none() {
-                    let this = p.new_expr(E::This {}, loc);
-                    let brand = p.call_rt(loc, b"__privateAdd", &[this, storage_expr]);
-                    if is_static {
-                        static_brands.push(brand);
-                    } else {
-                        instance_brands.push(brand);
-                    }
-                }
-
                 if is_method {
+                    if existing.is_none() {
+                        let this = p.new_expr(E::This {}, loc);
+                        let brand = p.call_rt(loc, b"__privateAdd", &[this, storage_expr]);
+                        if is_static {
+                            static_brands.push(brand);
+                        } else {
+                            instance_brands.push(brand);
+                        }
+                    }
                     let (suffix, slot): (&[u8], _) = match kind {
                         2 => (b"_get", &mut info.getter_fn_ref),
                         3 => (b"_set", &mut info.setter_fn_ref),
@@ -1164,20 +1161,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
 
-                // The value of an accessor is defined where the accessor is written.
-                let value_storage = if kind == 4 {
-                    let name = p.bump_name3(b"_", &private_name[1..], b"_storage");
-                    let value_storage = p.declared_temp(name);
-                    let container = p.new_global_expr(b"WeakMap", loc);
-                    storage_inits.push(p.assign_to(value_storage, container, loc));
-                    value_storage
-                } else {
-                    storage
-                };
-
                 let mut initializer_index = None;
                 if let Some(dec) = dec_ref {
-                    let extra = (kind == 4).then(|| p.use_ref(value_storage, loc));
+                    let extra = (kind == 4).then_some(storage_expr);
                     let mut decorated = p.decorate_element(
                         init_ref,
                         flags,
@@ -1199,7 +1185,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 private_lowered_map.insert(private_index, info);
                 let effects =
-                    p.storage_init_effects(value_storage, prop.initializer, initializer_index, loc);
+                    p.storage_init_effects(storage, prop.initializer, initializer_index, loc);
                 if is_static {
                     members.push(p.make_static_block(&effects, loc));
                 } else {

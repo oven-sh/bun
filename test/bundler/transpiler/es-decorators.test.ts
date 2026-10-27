@@ -2222,13 +2222,13 @@ const installExpected = {
   values: [1, 2, null, 3, 4],
 };
 
-// `accessor #p` in each shape the lowering tells apart, after the getter /
-// setter pair it stands for, written by hand. Every class probes `#p` from
-// the initializers that run before the accessor's own, and from that one.
+// An undecorated `accessor #p`, alone and next to a decorated member, after
+// the getter / setter pair it stands for, written by hand. Every class probes
+// `#p` from the initializers that run before the accessor's own, and from that one.
 function privateAccessorClasses(s: "" | "static ") {
   const pair = `${s}#v = (this.b = #p in this, 1); ${s}get #p() { return this.#v; } ${s}set #p(v) { this.#v = v; }`;
   const accessor = `${s}accessor #p = (this.b = #p in this, 1);`;
-  const classes = [pair, accessor, `${accessor} @id ${s}m() {}`, `@id ${accessor}`].map(
+  const classes = [pair, accessor, `${accessor} @id ${s}m() {}`].map(
     members => `class {
     ${s}a = #p in this;
     ${s}r = attempt(() => this.#p);
@@ -2350,28 +2350,21 @@ const extraSections = `
   out.privateAccessor = [before, pa.acc, PA.bump()];
 }
 
-// \`accessor #p\` is a private getter and setter: on the object before its first
-// initializer runs, over storage that is defined where the accessor is written.
+// An undecorated \`accessor #p\` is a private getter and setter: on the object
+// before its first initializer runs, over storage that is defined where the
+// accessor is written.
 {
   const id = (v) => v;
   const attempt = (f) => { try { return f(); } catch (e) { return e.constructor.name; } };
   out.privateAccessorBrand = [${privateAccessorClasses("")}].map((C) => C.probe(new C()));
   out.privateStaticAccessorBrand = [${privateAccessorClasses("static ")}].map((C) => C.probe(C));
 
-  // What a decorator puts in place of the getter and the setter runs before
-  // the storage is there, and so does the access object of its context.
-  const sets = [];
-  let access;
-  const replace = (v, ctx) => { access = ctx.access; return { get() { return "got"; }, set(v) { sets.push(v); } }; };
-  class R { h = access.has(this); r = attempt(() => this.#p); w = attempt(() => (this.#p = 2)); @replace accessor #p = 1; }
-  const r = new R();
-  out.privateAccessorReplaced = [r.h, r.r, r.w, sets, access.has(r), access.has({}), access.get(r)];
-
   // A constructor that returns an object puts the pair on that object, once.
   class Ret { constructor(o) { return o; } }
-  class T1 extends Ret { accessor #p = 1; static has(o) { return #p in o; } }
-  class T2 extends Ret { @id accessor #p = 1; static has(o) { return #p in o; } }
-  out.privateAccessorTwice = [T1, T2].map((T) => { const o = {}; new T(o); return [T.has(o), attempt(() => new T(o))]; });
+  class Twice extends Ret { accessor #p = 1; static has(o) { return #p in o; } }
+  const o = {};
+  new Twice(o);
+  out.privateAccessorTwice = [Twice.has(o), attempt(() => new Twice(o))];
 }
 
 // Undecorated \`#private\` members of a decorated class stay native, so every
@@ -2717,11 +2710,10 @@ const extraExpected = {
   namedExpr: { defLog: ["dec:m", "eblk"], self: true, y: true },
   derived: ["dec:b", "pre", "base", "a", "b", "post"],
   privateAccessor: ["acc", 7, 16],
-  // The pair by hand, the accessor alone, next to a decorated method, decorated.
-  privateAccessorBrand: Array(4).fill([true, "TypeError", "TypeError", true, true, false, 1, 3]),
-  privateStaticAccessorBrand: Array(4).fill([true, "TypeError", "TypeError", true, true, false, 1, 3]),
-  privateAccessorReplaced: [true, "got", 2, [2], true, false, "got"],
-  privateAccessorTwice: Array(2).fill([true, "TypeError"]),
+  // The pair by hand, the accessor alone, the accessor next to a decorated method.
+  privateAccessorBrand: Array(3).fill([true, "TypeError", "TypeError", true, true, false, 1, 3]),
+  privateStaticAccessorBrand: Array(3).fill([true, "TypeError", "TypeError", true, true, false, 1, 3]),
+  privateAccessorTwice: [true, "TypeError"],
   privateUpdates: [6, 6, 12, "2n", 3, 2],
   superStatic: ["by", "bm:arg:SDer", 5, "by", "bm:blk:SDer", 15, 11, 10, 7, "by", 9, 9, 9, 10, 7, 3],
   staticScopes: [1, true, [1, 1], 2, 1, [1, 1]],

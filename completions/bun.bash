@@ -2,14 +2,12 @@
 
 _file_arguments() {
     local extensions="${1}"
+    # quote a name with a space and put a / after a directory
+    compopt -o filenames 2>/dev/null;
     # the filter patterns use extglob, which is off unless bash-completion turned it on.
-    # bun test picks test files by their lowercased name, so the filter ignores case too
-    local reset=$(shopt -p extglob nocasematch)
-    shopt -s extglob nocasematch
-
-    readarray -t COMPREPLY < <(compgen -f -X "${extensions}" -- "${cur_word}");
-
-    eval "${reset}"
+    # bun test picks test files by their lowercased name, so the filter ignores case too.
+    # both options are set in the subshell only, so an interrupted listing leaks nothing
+    readarray -t COMPREPLY < <(shopt -s extglob nocasematch; compgen -f -X "${extensions}" -- "${cur_word}");
 }
 
 _long_short_completion() {
@@ -231,9 +229,11 @@ _bun_completions() {
                 --timeout|--rerun-each|--retry|--seed|--max-concurrency|--parallel-delay|--shard|-t|--test-name-pattern|--grep|--path-ignore-patterns|--define|-d) return;;
                 # these flags take any file, not only a test file
                 -r|--preload|--require|--import|--reporter-outfile|--timings|--env-file|--tsconfig-override)
+                    compopt -o filenames 2>/dev/null;
                     readarray -t COMPREPLY < <(compgen -f -- "${cur_word}");
                     return;;
                 --coverage-dir)
+                    compopt -o filenames 2>/dev/null;
                     readarray -t COMPREPLY < <(compgen -d -- "${cur_word}");
                     return;;
                 --reporter)

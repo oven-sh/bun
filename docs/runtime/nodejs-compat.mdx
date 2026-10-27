@@ -123,6 +123,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 Scalar string targets in package `imports` may name a recognized Bun built-in such as `bun:test` or `bun:sqlite`. Inside fallback arrays, including nested arrays and conditional targets within an array, `bun:` URLs remain invalid package targets under Node 24.21 rules, so the next alternative is tried. For example, `["bun:sqlite", "./fallback.cjs"]` selects `./fallback.cjs`. A valid relative target that names a missing file still produces a missing-module error; arrays do not retry after filesystem resolution fails. The Bun-specific scalar exception does not allow unknown `bun:` names, other URL schemes (including `node:`), or built-in targets in `exports`; those keep Node's `ERR_INVALID_PACKAGE_TARGET` validation.
 
+Recursion exhaustion while resolving deeply nested package targets throws a catchable `RangeError`, matching Node 24.22.1.
+
 Runtime package resolution follows Node 24.21's `package.json` validation. Failures in the metadata reader, non-string `name` or `type` fields, and invalid exports condition objects throw `ERR_INVALID_PACKAGE_CONFIG` with the package path and Node's resolution context. Unselected metadata and explicit `.mjs`/`.cjs` formats remain deferred, and values Node ignores are not rejected.
 
 Package-format inference rejects empty metadata and JSONC syntax, including leading comments, trailing commas, and single-quoted properties. These files can still be imported as JSONC data from an explicit `.mjs` entry. The data loader and bundler retain their existing parsing behavior.

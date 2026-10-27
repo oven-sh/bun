@@ -61,7 +61,7 @@ impl Decompressor {
                 )?));
             }
             Encoding::Zstd => {
-                *self = Decompressor::Zstd(Box::new(bun_zstd::StreamingDecoder::new()?));
+                *self = Decompressor::Zstd(Box::new(bun_zstd::StreamingDecoder::new()));
             }
             _ => unreachable!("Invalid encoding. This code should not be reachable"),
         }

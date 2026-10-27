@@ -219,14 +219,12 @@ fn compress_zstd(
     level: Option<i32>,
     spill: &mut Vec<u8>,
 ) -> crate::Result<CompressOutput> {
+    let level = level.unwrap_or(bun_zstd::ZSTD_CLEVEL_DEFAULT);
     let bound = bun_zstd::compress_bound(input.len());
-    if bun_zstd::is_error(bound) {
-        return Err(crate::Error::CompressionFailed);
-    }
     if bound <= state.shared_buffer.len() {
         return match bun_zstd::compress(&mut state.shared_buffer, input, level) {
-            bun_zstd::Result::Success(n) => Ok(CompressOutput::Shared(n)),
-            bun_zstd::Result::Err(_) => Err(crate::Error::CompressionFailed),
+            Ok(n) => Ok(CompressOutput::Shared(n)),
+            Err(_) => Err(crate::Error::CompressionFailed),
         };
     }
 
@@ -234,7 +232,7 @@ fn compress_zstd(
         .try_reserve_exact(bound)
         .map_err(|_| bun_alloc::AllocError)?;
     match bun_zstd::compress_append(spill, input, level) {
-        bun_zstd::Result::Success(_) => Ok(CompressOutput::Spilled),
-        bun_zstd::Result::Err(_) => Err(crate::Error::CompressionFailed),
+        Ok(_) => Ok(CompressOutput::Spilled),
+        Err(_) => Err(crate::Error::CompressionFailed),
     }
 }

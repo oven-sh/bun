@@ -235,34 +235,51 @@ fn read_skippable_frame_size(src: &[u8]) -> Result<usize> {
     Ok(skippable_size)
 }
 
-/// `ZSTD_findFrameCompressedSize`: how many bytes the frame at the start of `src` takes.
-pub fn find_frame_compressed_size(src: &[u8]) -> Result<usize> {
+/// How far a frame goes.
+pub enum FrameExtent {
+    /// It is this many bytes.
+    Whole(usize),
+    /// It goes on past what there is of it, and is at least this many bytes.
+    AtLeast(usize),
+}
+
+/// How far the frame at the start of `src` goes, for when where it ends is not known in advance.
+pub fn frame_extent(src: &[u8]) -> Result<FrameExtent> {
     if src.len() >= ZSTD_SKIPPABLEHEADERSIZE && is_skippable_magic(read_le32(src, 0)?) {
-        return read_skippable_frame_size(src);
+        return read_skippable_frame_size(src).map(FrameExtent::Whole);
     }
     let header = match get_frame_header(src)? {
         HeaderStatus::Complete(header) => header,
-        HeaderStatus::Needs(_) => return Err(ErrorCode::SrcSizeWrong),
+        HeaderStatus::Needs(size) => return Ok(FrameExtent::AtLeast(size)),
     };
     let mut ip = header.header_size;
     loop {
-        let remaining = src.sub(ip..)?;
+        let Some(remaining) = src.get(ip..).filter(|rest| rest.len() >= ZSTD_BLOCKHEADERSIZE)
+        else {
+            return Ok(FrameExtent::AtLeast(ip + ZSTD_BLOCKHEADERSIZE));
+        };
         let (c_block_size, properties) = get_c_block_size(remaining)?;
-        if ZSTD_BLOCKHEADERSIZE + c_block_size > remaining.len() {
-            return Err(ErrorCode::SrcSizeWrong);
-        }
         ip += ZSTD_BLOCKHEADERSIZE + c_block_size;
         if properties.last_block {
             break;
         }
     }
     if header.checksum_flag {
-        if src.len() - ip < 4 {
-            return Err(ErrorCode::SrcSizeWrong);
-        }
         ip += 4;
     }
-    Ok(ip)
+    Ok(if ip <= src.len() {
+        FrameExtent::Whole(ip)
+    } else {
+        FrameExtent::AtLeast(ip)
+    })
+}
+
+/// `ZSTD_findFrameCompressedSize`: how many bytes the frame at the start of `src` takes.
+pub fn find_frame_compressed_size(src: &[u8]) -> Result<usize> {
+    match frame_extent(src)? {
+        FrameExtent::Whole(size) => Ok(size),
+        FrameExtent::AtLeast(_) => Err(ErrorCode::SrcSizeWrong),
+    }
 }
 
 /// `ZSTD_findDecompressedSize`: the size of all the frames of `src` together, once decompressed.

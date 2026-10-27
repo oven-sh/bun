@@ -290,8 +290,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         { "libdeflate", BUN_VERSION_LIBDEFLATE_HASH },
         { "usockets", BUN_VERSION_USOCKETS },
         { "lshpack", BUN_VERSION_LSHPACK },
-        // Use commit hash for zstd (semantic version extraction not working yet)
-        { "zstd", BUN_VERSION_ZSTD_HASH },
+        // The version of zstd that src/zstd gives the same output as.
+        { "zstd", "1.5.7" },
         { "v8", REPORTED_NODEJS_V8_VERSION },
 #if !OS(WINDOWS)
         { "uv", "1.48.0" },

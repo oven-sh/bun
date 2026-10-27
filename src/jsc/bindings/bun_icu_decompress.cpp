@@ -34,15 +34,18 @@
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 
-#define ZSTD_STATIC_LINKING_ONLY
-#include <zstd.h>
-
-static_assert(ZSTD_MAGICNUMBER == 0xFD2FB528);
+static constexpr uint32_t ZSTD_MAGICNUMBER = 0xFD2FB528;
 // Raw ICU items have bytes[2..3] == {0xda, 0x27} (ucmndata.h MAGIC1/MAGIC2),
 // so their first u32 is 0x27da'hhhh — cannot collide with zstd's magic.
 
 extern "C" __attribute__((weak)) const unsigned char bun_icu_zstd_dict[];
 extern "C" __attribute__((weak)) const unsigned int bun_icu_zstd_dict_size;
+
+// src/runtime/icu_decompress.rs
+struct IcuDecompressor;
+extern "C" IcuDecompressor* Bun__IcuDecompressor__create(const unsigned char* dict, size_t dictSize);
+extern "C" bool Bun__IcuDecompressor__frameSizes(const void* src, size_t bound, size_t* compressedSize, uint64_t* contentSize);
+extern "C" bool Bun__IcuDecompressor__decompress(IcuDecompressor*, void* dst, size_t dstSize, const void* src, size_t srcSize);
 
 namespace Bun {
 
@@ -61,15 +64,13 @@ public:
         Locker locker { m_lock };
 
         if (auto it = m_cache.find(p); it != m_cache.end()) {
-            *length = static_cast<int32_t>(ZSTD_getFrameContentSize(p, frameBound(*length)));
-            return it->value;
+            *length = it->value.second;
+            return it->value.first;
         }
 
-        size_t clen = ZSTD_findFrameCompressedSize(p, frameBound(*length));
-        if (ZSTD_isError(clen))
-            return p;
-        auto dlen = ZSTD_getFrameContentSize(p, clen);
-        if (dlen == ZSTD_CONTENTSIZE_UNKNOWN || dlen == ZSTD_CONTENTSIZE_ERROR)
+        size_t clen;
+        uint64_t dlen;
+        if (!Bun__IcuDecompressor__frameSizes(p, frameBound(*length), &clen, &dlen))
             return p;
 
         // tryAlignedMalloc asserts size is a multiple of alignment in debug
@@ -78,25 +79,23 @@ public:
         void* buf = MimallocMalloc::tryAlignedMalloc(alloc, 16);
         if (!buf)
             return p;
-        size_t r = m_ddict
-            ? ZSTD_decompress_usingDDict(m_dctx, buf, static_cast<size_t>(dlen), p, clen, m_ddict)
-            : ZSTD_decompressDCtx(m_dctx, buf, static_cast<size_t>(dlen), p, clen);
-        if (ZSTD_isError(r)) {
+        // The decoder takes initialized memory.
+        std::memset(buf, 0, alloc);
+        if (!Bun__IcuDecompressor__decompress(m_decompressor, buf, static_cast<size_t>(dlen), p, clen)) {
             MimallocMalloc::free(buf);
             return p;
         }
 
-        m_cache.add(p, buf);
         *length = static_cast<int32_t>(dlen);
+        m_cache.add(p, std::pair { buf, *length });
         return buf;
     }
 
 private:
     ICUDecompressor()
-        : m_dctx(ZSTD_createDCtx())
-        , m_ddict(&bun_icu_zstd_dict_size && bun_icu_zstd_dict_size
-                  ? ZSTD_createDDict_byReference(bun_icu_zstd_dict, bun_icu_zstd_dict_size)
-                  : nullptr)
+        : m_decompressor(&bun_icu_zstd_dict_size && bun_icu_zstd_dict_size
+                  ? Bun__IcuDecompressor__create(bun_icu_zstd_dict, bun_icu_zstd_dict_size)
+                  : Bun__IcuDecompressor__create(nullptr, 0))
     {
     }
 
@@ -105,9 +104,8 @@ private:
     friend class WTF::LazyNeverDestroyed<ICUDecompressor>;
 
     WTF::Lock m_lock;
-    WTF::HashMap<const void*, void*> m_cache WTF_GUARDED_BY_LOCK(m_lock);
-    ZSTD_DCtx* const m_dctx;
-    ZSTD_DDict* const m_ddict;
+    WTF::HashMap<const void*, std::pair<void*, int32_t>> m_cache WTF_GUARDED_BY_LOCK(m_lock);
+    IcuDecompressor* const m_decompressor;
 };
 
 } // namespace Bun

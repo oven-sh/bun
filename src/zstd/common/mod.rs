@@ -29,6 +29,7 @@ pub(crate) const ZSTD_DID_FIELD_SIZE: [usize; 4] = [0, 1, 2, 4];
 
 pub(crate) const ZSTD_FRAMEIDSIZE: usize = 4;
 pub(crate) const ZSTD_BLOCKHEADERSIZE: usize = 3;
+pub(crate) const ZSTD_FRAMEHEADERSIZE_MAX: usize = 18;
 
 /// `blockType_e`
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -68,6 +69,8 @@ pub(crate) const LONGNBSEQ: usize = 0x7F00;
 
 pub(crate) const MINMATCH: u32 = 3;
 
+pub(crate) const LITBITS: u32 = 8;
+pub(crate) const LIT_HUF_LOG: u32 = 11;
 pub(crate) const MAX_ML: u32 = 52;
 pub(crate) const MAX_LL: u32 = 35;
 pub(crate) const DEFAULT_MAX_OFF: u32 = 28;

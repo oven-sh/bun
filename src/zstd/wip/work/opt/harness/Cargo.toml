@@ -1,0 +1,20 @@
+[package]
+name = "zstd_harness"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+bun_zstd = { path = "/root/zstd-ref/work/opt/zstd" }
+
+[profile.release]
+debug = "line-tables-only"
+overflow-checks = true
+debug-assertions = true
+panic = "abort"
+
+[profile.bench]
+inherits = "release"
+overflow-checks = false
+debug-assertions = false
+
+[workspace]

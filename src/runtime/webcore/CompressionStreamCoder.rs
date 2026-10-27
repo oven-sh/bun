@@ -25,7 +25,7 @@ use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffe
 
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
-use bun_zstd::c as zstd;
+use bun_zstd as zstd;
 
 /// Matches `Bun::WebStreams::CompressionFormat` in `StreamsForward.h`.
 #[repr(u8)]
@@ -74,9 +74,17 @@ fn spare(out: &mut Vec<u8>, cap: usize) -> Result<&mut [core::mem::MaybeUninit<u
     Ok(&mut spare[..len])
 }
 
-/// `CodecError` for a `ZSTD_isError` return value.
-fn zstd_error(rc: usize, message: &'static str) -> CodecError {
-    if zstd::ZSTD_getErrorCode(rc) == zstd::ZSTD_error_memory_allocation {
+/// [`spare`], as zeros at the end of `out`, for a codec that takes initialized memory. Returns where they start:
+/// the caller truncates `out` to what was written.
+fn zeroed_spare(out: &mut Vec<u8>, cap: usize) -> Result<usize, CodecError> {
+    let start = out.len();
+    let len = spare(out, cap)?.len();
+    out.resize(start + len, 0);
+    Ok(start)
+}
+
+fn zstd_error(code: zstd::ErrorCode, message: &'static str) -> CodecError {
+    if code == zstd::ErrorCode::MemoryAllocation {
         CodecError::OutOfMemory
     } else {
         CodecError::Message(message)
@@ -113,8 +121,8 @@ enum Backend {
     },
     BrotliEncode(NonNull<brotli::BrotliEncoder>),
     BrotliDecode(NonNull<brotli::BrotliDecoder>),
-    ZstdEncode(NonNull<zstd::ZSTD_CCtx>),
-    ZstdDecode(NonNull<zstd::ZSTD_DStream>),
+    ZstdEncode(Box<zstd::CCtx>),
+    ZstdDecode(Box<zstd::DCtx>),
 }
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
@@ -166,12 +174,7 @@ impl Drop for CompressionStreamCoder {
                 }
                 Backend::BrotliEncode(p) => brotli::BrotliEncoderDestroyInstance(p.as_ptr()),
                 Backend::BrotliDecode(p) => brotli::BrotliDecoderDestroyInstance(p.as_ptr()),
-                Backend::ZstdEncode(p) => {
-                    zstd::ZSTD_freeCCtx(p.as_ptr());
-                }
-                Backend::ZstdDecode(p) => {
-                    zstd::ZSTD_freeDCtx(p.as_ptr());
-                }
+                Backend::ZstdEncode(_) | Backend::ZstdDecode(_) => {}
             }
         }
     }
@@ -252,26 +255,15 @@ impl CompressionStreamCoder {
                 Backend::BrotliDecode(p)
             }
             (Format::Zstd, false) => {
-                let p = NonNull::new(zstd::ZSTD_createCCtx())
-                    .ok_or(CodecError::Message("failed to initialize zstd encoder"))?;
-                if let Some(lvl) = level {
-                    // SAFETY: `p` was just created and is exclusively owned here.
-                    let rc = unsafe {
-                        zstd::ZSTD_CCtx_setParameter(p.as_ptr(), zstd::ZSTD_c_compressionLevel, lvl)
-                    };
-                    if zstd::ZSTD_isError(rc) != 0 {
-                        // SAFETY: `p` was created above and not stored anywhere.
-                        unsafe { zstd::ZSTD_freeCCtx(p.as_ptr()) };
-                        return Err(CodecError::Message("failed to set zstd level"));
-                    }
+                let mut cctx = Box::new(zstd::CCtx::new());
+                if let Some(lvl) = level
+                    && (cctx.set_parameter(zstd::c_param::COMPRESSION_LEVEL, lvl)).is_err()
+                {
+                    return Err(CodecError::Message("failed to set zstd level"));
                 }
-                Backend::ZstdEncode(p)
+                Backend::ZstdEncode(cctx)
             }
-            (Format::Zstd, true) => {
-                let p = NonNull::new(zstd::ZSTD_createDCtx())
-                    .ok_or(CodecError::Message("failed to initialize zstd decoder"))?;
-                Backend::ZstdDecode(p)
-            }
+            (Format::Zstd, true) => Backend::ZstdDecode(Box::new(zstd::DCtx::new())),
         };
         Ok(Box::new(Self {
             backend,
@@ -596,12 +588,14 @@ impl CompressionStreamCoder {
                     }
                 }
             }
-            Backend::ZstdEncode(p) => {
-                // ZSTD_EndDirective: 0 = ZSTD_e_continue, 2 = ZSTD_e_end.
-                let end: core::ffi::c_uint = if finish { 2 } else { 0 };
-                let mut input_buf = zstd::ZSTD_inBuffer {
-                    src: input.as_ptr().cast(),
-                    size: input.len(),
+            Backend::ZstdEncode(cctx) => {
+                let end = if finish {
+                    zstd::EndDirective::End
+                } else {
+                    zstd::EndDirective::Continue
+                };
+                let mut input_buf = zstd::InBuffer {
+                    src: input,
                     pos: 0,
                 };
                 loop {
@@ -610,39 +604,26 @@ impl CompressionStreamCoder {
                             consumed: input_buf.pos,
                         });
                     }
-                    let spare = spare(out, cap)?;
-                    let mut output_buf = zstd::ZSTD_outBuffer {
-                        dst: spare.as_mut_ptr().cast(),
-                        size: spare.len(),
+                    let start = zeroed_spare(out, cap)?;
+                    let mut output_buf = zstd::OutBuffer {
+                        dst: &mut out[start..],
                         pos: 0,
                     };
-                    // SAFETY: `p` is a live CCtx; the buffers borrow locals /
-                    // spare for this one call.
-                    let remaining = unsafe {
-                        zstd::ZSTD_compressStream2(
-                            p.as_ptr(),
-                            &raw mut output_buf,
-                            &raw mut input_buf,
-                            end,
-                        )
-                    };
-                    // SAFETY: compressStream2 wrote exactly `output_buf.pos`
-                    // bytes.
-                    unsafe { out.set_len(out.len() + output_buf.pos) };
-                    if zstd::ZSTD_isError(remaining) != 0 {
-                        return Err(zstd_error(remaining, "zstd encode failed"));
-                    }
-                    if input_buf.pos == input_buf.size && (!finish || remaining == 0) {
+                    let remaining = cctx.compress_stream2(&mut output_buf, &mut input_buf, end);
+                    let written = output_buf.pos;
+                    out.truncate(start + written);
+                    let remaining =
+                        remaining.map_err(|code| zstd_error(code, "zstd encode failed"))?;
+                    if input_buf.pos == input.len() && (!finish || remaining == 0) {
                         return Ok(Progress::Done);
                     }
                 }
             }
-            Backend::ZstdDecode(p) => {
+            Backend::ZstdDecode(dctx) => {
                 // After a frame completes, whatever follows must be another frame
                 // magic (see `zstd_head`); `step` has already re-attached a split one.
-                let mut input_buf = zstd::ZSTD_inBuffer {
-                    src: input.as_ptr().cast(),
-                    size: input.len(),
+                let mut input_buf = zstd::InBuffer {
+                    src: input,
                     pos: 0,
                 };
                 loop {
@@ -663,13 +644,8 @@ impl CompressionStreamCoder {
                             self.zstd_head_len = head.len() as u8;
                             return Ok(Progress::Done);
                         }
-                        // SAFETY: `p` is a live DCtx.
-                        unsafe {
-                            zstd::ZSTD_DCtx_reset(
-                                p.as_ptr(),
-                                zstd::ZSTD_reset_session_and_parameters,
-                            )
-                        };
+                        // Between frames, this cannot fail.
+                        let _ = dctx.reset(zstd::ResetDirective::SessionAndParameters);
                         self.ended = false;
                     }
                     if out.len() >= cap {
@@ -677,32 +653,21 @@ impl CompressionStreamCoder {
                             consumed: input_buf.pos,
                         });
                     }
-                    let spare = spare(out, cap)?;
-                    let mut output_buf = zstd::ZSTD_outBuffer {
-                        dst: spare.as_mut_ptr().cast(),
-                        size: spare.len(),
+                    let start = zeroed_spare(out, cap)?;
+                    let mut output_buf = zstd::OutBuffer {
+                        dst: &mut out[start..],
                         pos: 0,
                     };
-                    // SAFETY: `p` is a live DCtx; buffers borrow locals / spare
-                    // for this one call.
-                    let remaining = unsafe {
-                        zstd::ZSTD_decompressStream(
-                            p.as_ptr(),
-                            &raw mut output_buf,
-                            &raw mut input_buf,
-                        )
-                    };
-                    // SAFETY: decompressStream wrote exactly `output_buf.pos`
-                    // bytes.
-                    unsafe { out.set_len(out.len() + output_buf.pos) };
-                    if zstd::ZSTD_isError(remaining) != 0 {
-                        return Err(zstd_error(remaining, "zstd decode failed"));
-                    }
+                    let remaining = dctx.decompress_stream(&mut output_buf, &mut input_buf);
+                    let (written, room) = (output_buf.pos, output_buf.dst.len());
+                    out.truncate(start + written);
+                    let remaining =
+                        remaining.map_err(|code| zstd_error(code, "zstd decode failed"))?;
                     if remaining == 0 {
                         self.ended = true;
                         continue;
                     }
-                    if input_buf.pos == input_buf.size && output_buf.pos < output_buf.size {
+                    if input_buf.pos == input.len() && written < room {
                         if finish {
                             return Err(CodecError::Message("unexpected end of file"));
                         }

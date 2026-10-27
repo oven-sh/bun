@@ -1,5 +1,6 @@
 //! Zstandard (RFC 8878). A port of https://github.com/facebook/zstd v1.5.7 (LICENSE.md): the same bytes out for the
 //! same bytes in, in both directions, and the same errors.
+#![feature(hint_prefetch)]
 #![forbid(unsafe_code)]
 // Frames come from anywhere and a panic aborts the process.
 #![deny(
@@ -12,14 +13,19 @@
 #![warn(unused_must_use)]
 
 mod common;
+mod compress;
 mod decompress;
 mod error;
 mod util;
 
 pub use common::{ZSTD_CONTENTSIZE_ERROR, ZSTD_CONTENTSIZE_UNKNOWN};
+pub use compress::params::{
+    ZSTD_CLEVEL_DEFAULT, ZSTD_MAX_CLEVEL, ZSTD_MIN_CLEVEL, c_param, compress_bound,
+};
+pub use compress::stream::{CCtx, EndDirective, compress};
 pub use decompress::{
-    DCtx, DDict, ZSTD_D_WINDOW_LOG_MAX, decompress, find_decompressed_size,
-    find_frame_compressed_size, get_frame_content_size,
+    DCtx, DDict, FrameExtent, ZSTD_D_WINDOW_LOG_MAX, decompress, find_decompressed_size,
+    find_frame_compressed_size, frame_extent, get_frame_content_size,
 };
 pub use error::ErrorCode;
 
@@ -73,6 +79,25 @@ impl ZstdError {
             other
         }
     }
+}
+
+/// [`compress`] to the end of `out`, within its capacity: [`compress_bound`] more than its length is always enough.
+/// Returns how many bytes are added.
+pub fn compress_append(out: &mut Vec<u8>, src: &[u8], level: i32) -> Result<usize, ErrorCode> {
+    let start = out.len();
+    let room = (out.capacity() - start).min(compress_bound(src.len()));
+    out.resize(start + room, 0);
+    let result = compress(out.get_mut(start..).unwrap_or_default(), src, level);
+    out.truncate(start + result.unwrap_or(0));
+    result
+}
+
+/// [`compress`] to a new buffer.
+pub fn compress_alloc(src: &[u8], level: i32) -> Result<Vec<u8>, ErrorCode> {
+    let mut out = util::try_zeroed(compress_bound(src.len()))?;
+    let size = compress(&mut out, src, level)?;
+    out.truncate(size);
+    Ok(out)
 }
 
 /// `len` zeros for a decoder to write to.

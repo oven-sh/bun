@@ -1488,6 +1488,8 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     is_function_expression: bool,
 ) -> Result<Vec<AliasingEffect>, CompilerDiagnostic> {
     let mut function_effects: Vec<AliasingEffect> = Vec::new();
+    #[cfg(debug_assertions)]
+    fuzz_groups(env);
 
     // =========================================================================
     // Part 1: Build data flow graph and infer mutable ranges
@@ -2105,4 +2107,389 @@ fn collect_param_effects(
             }
         }
     }
+}
+
+/// `BUN_REACT_COMPILER_FUZZ=seed,programs,shortest`: makes random graphs, and in each one every walk with
+/// its groups and without them. Prints how many walks came to other nodes. A debug build has it, to
+/// check `AliasingState::group_operands` on graphs that no source gives.
+#[cfg(debug_assertions)]
+#[allow(clippy::disallowed_methods, clippy::disallowed_macros)]
+fn fuzz_groups(env: &mut Environment) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    let Some(spec) = std::env::var_os("BUN_REACT_COMPILER_FUZZ") else {
+        return;
+    };
+    let mut ran = false;
+    ONCE.call_once(|| ran = true);
+    if !ran {
+        return;
+    }
+    let spec = spec.to_str().unwrap_or("").to_owned();
+    let mut parts = spec.split(',').map(|part| part.parse::<u64>().unwrap_or(1));
+    let (seed0, programs, shortest) = (
+        parts.next().unwrap_or(1),
+        parts.next().unwrap_or(1000),
+        parts.next().unwrap_or(2) as usize,
+    );
+    let (mut walks, mut bad, mut groups, mut with_groups, mut links, mut renders) =
+        (0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
+    for program in 0..programs {
+        let mut s = seed0.wrapping_mul(1000003).wrapping_add(program) | 1;
+        let mut rand = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s >> 11) as f64 / (1u64 << 53) as f64
+        };
+        macro_rules! int {
+            ($n:expr) => {
+                (rand() * ($n as f64)) as usize
+            };
+        }
+        let variant = program % 8;
+        let p_phi = [0.06, 0.1, 0.12, 0.0, 0.15, 0.06, 0.06, 0.03][variant as usize];
+        let p_ctx = [0.2, 0.5, 0.2, 0.2, 0.2, 0.6, 0.2, 0.0][variant as usize];
+        let p_dup = [0.15, 0.5, 0.5, 0.15, 0.15, 0.15, 0.6, 0.15][variant as usize];
+        let max_ops = [6, 6, 9, 6, 6, 6, 10, 12][variant as usize];
+        let p_missing = if variant == 3 { 0.0 } else { 0.02 };
+        let p_recreate = if variant == 3 { 0.0 } else { 0.02 };
+
+        let mut state = AliasingState::new(4096, 64);
+        let mut ids: Vec<u32> = Vec::new();
+        let mut next_id = 0u32;
+        let mut index = 0u32;
+        let mut walk_indices: Vec<u32> = Vec::new();
+        let mut render_indices: Vec<u32> = Vec::new();
+        let mut pending: Vec<(u32, u32, u32)> = Vec::new();
+        let id = |n: u32| IdentifierId(n);
+        for _ in 0..(1 + int!(5)) {
+            state.create(id(next_id), NodeValue::Object);
+            ids.push(next_id);
+            next_id += 1;
+        }
+        let steps = 3 + int!(30);
+        for _ in 0..steps {
+            let r = rand();
+            let pick = |rand: &mut dyn FnMut() -> f64, ids: &Vec<u32>| {
+                ids[(rand() * ids.len() as f64) as usize]
+            };
+            if r < 0.14 {
+                state.create(id(next_id), NodeValue::Object);
+                ids.push(next_id);
+                next_id += 1;
+            } else if r < 0.18 {
+                state.create(
+                    id(next_id),
+                    NodeValue::Function {
+                        function_id: FunctionId(0),
+                    },
+                );
+                ids.push(next_id);
+                next_id += 1;
+            } else if r < 0.18 + p_phi && ids.len() > 1 {
+                let phi = next_id;
+                next_id += 1;
+                state.create(id(phi), NodeValue::Phi);
+                for _ in 0..(2 + int!(2)) {
+                    let operand = pick(&mut rand, &ids);
+                    if rand() < 0.4 {
+                        pending.push((index, operand, phi));
+                    } else {
+                        state.assign(index, id(operand), id(phi));
+                    }
+                    index += 1;
+                }
+                ids.push(phi);
+            } else if r < 0.30 {
+                let from = if rand() < p_missing * 5.0 {
+                    3000 + int!(3) as u32
+                } else {
+                    pick(&mut rand, &ids)
+                };
+                let into = if rand() < p_recreate * 5.0 {
+                    pick(&mut rand, &ids)
+                } else {
+                    next_id += 1;
+                    next_id - 1
+                };
+                state.create_from(index, id(from), id(into));
+                index += 1;
+                if !ids.contains(&into) {
+                    ids.push(into);
+                }
+                if from >= 3000 && rand() < 0.3 {
+                    state.create(id(from), NodeValue::Object);
+                    if !ids.contains(&from) {
+                        ids.push(from);
+                    }
+                }
+            } else if r < 0.32 && rand() < p_recreate * 10.0 {
+                let again = pick(&mut rand, &ids);
+                state.create(id(again), NodeValue::Object);
+            } else if r < 0.44 {
+                let (a, b) = (pick(&mut rand, &ids), pick(&mut rand, &ids));
+                if a != b {
+                    match int!(4) {
+                        0 => {
+                            let into = if rand() < 0.5 {
+                                next_id += 1;
+                                ids.push(next_id - 1);
+                                next_id - 1
+                            } else {
+                                b
+                            };
+                            if state.at(id(into)).is_none() {
+                                state.create(id(into), NodeValue::Object);
+                            }
+                            state.assign(index, id(a), id(into));
+                        }
+                        1 => state.assign(index, id(a), id(b)),
+                        2 => state.maybe_alias(index, id(a), id(b)),
+                        _ => state.capture(index, id(a), id(b)),
+                    }
+                    index += 1;
+                }
+            } else if r < 0.66 {
+                // the block of a call, or of the effects of a closure
+                let by_source = r < 0.56;
+                let n = 2 + int!(max_ops);
+                let mut ops: Vec<u32> = Vec::new();
+                for _ in 0..n {
+                    let x = pick(&mut rand, &ids);
+                    if !ops.contains(&x) {
+                        ops.push(x);
+                    }
+                }
+                // 0: mutable, 1: context, 2: destination only
+                let mut class: Vec<u8> = ops
+                    .iter()
+                    .map(|_| {
+                        let q = rand();
+                        if q < p_ctx {
+                            1
+                        } else if q < p_ctx + 0.1 {
+                            2
+                        } else {
+                            0
+                        }
+                    })
+                    .collect();
+                if by_source && rand() < 0.25 {
+                    ops.insert(1, ops[0]);
+                    class.insert(1, class[0]);
+                }
+                if rand() < p_dup && ops.len() > 1 {
+                    let (a, b) = (ops[int!(ops.len())], ops[int!(ops.len())]);
+                    if a != b {
+                        if rand() < 0.5 {
+                            state.capture(index, id(a), id(b));
+                        } else {
+                            state.maybe_alias(index, id(a), id(b));
+                        }
+                        index += 1;
+                    }
+                }
+                let is_spread = rand() < 0.1;
+                let edge = |state: &mut AliasingState,
+                            index: u32,
+                            i: usize,
+                            j: usize,
+                            ops: &[u32],
+                            class: &[u8]| {
+                    if class[i] == 0 && class[j] != 1 {
+                        state.capture(index, id(ops[i]), id(ops[j]));
+                    } else {
+                        state.maybe_alias(index, id(ops[i]), id(ops[j]));
+                    }
+                };
+                if by_source {
+                    let result = next_id;
+                    next_id += 1;
+                    ids.push(result);
+                    state.create(id(result), NodeValue::Object);
+                    for i in 0..ops.len() {
+                        if class[i] != 2 && rand() < 0.9 {
+                            walk_indices.push(index);
+                            index += 1;
+                        }
+                        state.maybe_alias(index, id(ops[i]), id(result));
+                        index += 1;
+                        if class[i] == 2 {
+                            continue;
+                        }
+                        for j in 0..ops.len() {
+                            if ops[j] == ops[i] && !(is_spread && i == 0) {
+                                continue;
+                            }
+                            edge(&mut state, index, i, j, &ops, &class);
+                            index += 1;
+                        }
+                    }
+                } else {
+                    for i in 0..ops.len() {
+                        if class[i] != 2 && rand() < 0.8 {
+                            walk_indices.push(index);
+                            index += 1;
+                        }
+                    }
+                    let replays = if rand() < 0.3 { 2 } else { 1 };
+                    for replay in 0..replays {
+                        if replay > 0 {
+                            walk_indices.push(index);
+                            index += 1;
+                        }
+                        for j in 0..ops.len() {
+                            for i in 0..ops.len() {
+                                if i == j || class[i] == 2 {
+                                    continue;
+                                }
+                                edge(&mut state, index, i, j, &ops, &class);
+                                index += 1;
+                            }
+                        }
+                    }
+                }
+            } else if r < 0.74 {
+                // rows or columns over one list of operands, one at a time, with other effects between
+                let n = 2 + int!(max_ops);
+                let mut ops: Vec<u32> = Vec::new();
+                for _ in 0..n {
+                    let x = pick(&mut rand, &ids);
+                    if !ops.contains(&x) {
+                        ops.push(x);
+                    }
+                }
+                let (by_into, is_capture, with_self) = (rand() < 0.7, rand() < 0.7, rand() < 0.15);
+                for _ in 0..(1 + int!(4)) {
+                    let key = if rand() < 0.7 {
+                        ops[int!(ops.len())]
+                    } else {
+                        pick(&mut rand, &ids)
+                    };
+                    for &x in &ops {
+                        if x == key && !with_self {
+                            continue;
+                        }
+                        let (from, into) = if by_into { (x, key) } else { (key, x) };
+                        if is_capture {
+                            state.capture(index, id(from), id(into));
+                        } else {
+                            state.maybe_alias(index, id(from), id(into));
+                        }
+                        index += 1;
+                    }
+                    let q = rand();
+                    if q < 0.35 {
+                        walk_indices.push(index);
+                        index += 1;
+                    } else if q < 0.45 {
+                        render_indices.push(index);
+                        index += 1;
+                    } else if q < 0.55 {
+                        for (index, from, into) in pending.drain(..) {
+                            state.assign(index, id(from), id(into));
+                        }
+                    } else if q < 0.60 {
+                        let (a, b) = (pick(&mut rand, &ids), pick(&mut rand, &ids));
+                        if a != b {
+                            state.assign(index, id(a), id(b));
+                            index += 1;
+                        }
+                    }
+                }
+            } else if r < 0.93 {
+                walk_indices.push(index);
+                index += 1;
+            } else if r < 0.97 {
+                render_indices.push(index);
+                index += 1;
+            } else {
+                for (index, from, into) in pending.drain(..) {
+                    state.assign(index, id(from), id(into));
+                }
+            }
+        }
+        for (index, from, into) in pending.drain(..) {
+            state.assign(index, id(from), id(into));
+        }
+
+        let mut plain = state.clone();
+        state.group_operands(shortest);
+        state.without_groups = None;
+        state.visits = Some(Vec::new());
+        plain.visits = Some(Vec::new());
+        groups += state.groups.len() as u64;
+        with_groups += u64::from(!state.groups.is_empty());
+        links += state
+            .links
+            .iter()
+            .filter(|link| link.kind.is_group())
+            .count() as u64;
+        if state.groups.is_empty() {
+            continue;
+        }
+        walk_indices.push(index);
+        render_indices.push(index);
+        // Before the mutations: a render stops at a node that a mutation came to.
+        for &start in &ids {
+            for &at in &render_indices {
+                state.render_in::<true>(at, id(start), None);
+                plain.render_in::<false>(at, id(start), None);
+                renders += 1;
+                if state.visits.replace(Vec::new()) != plain.visits.replace(Vec::new()) {
+                    bad += 1;
+                    if bad <= 3 {
+                        eprintln!(
+                            "FUZZ MISMATCH render program {program} start {start} index {at}"
+                        );
+                    }
+                }
+            }
+        }
+        for &start in &ids {
+            for &at in &walk_indices {
+                for (transitive, kind) in [
+                    (true, MutationKind::Conditional),
+                    (true, MutationKind::Definite),
+                    (false, MutationKind::Conditional),
+                    (false, MutationKind::Definite),
+                ] {
+                    state.mutate_in::<true>(
+                        at,
+                        id(start),
+                        None,
+                        transitive,
+                        kind,
+                        None,
+                        None,
+                        env,
+                        false,
+                    );
+                    plain.mutate_in::<false>(
+                        at,
+                        id(start),
+                        None,
+                        transitive,
+                        kind,
+                        None,
+                        None,
+                        env,
+                        false,
+                    );
+                    walks += 1;
+                    if state.visits.replace(Vec::new()) != plain.visits.replace(Vec::new()) {
+                        bad += 1;
+                        if bad <= 3 {
+                            eprintln!(
+                                "FUZZ MISMATCH program {program} start {start} index {at} transitive {transitive} kind {kind:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!(
+        "FUZZ shortest {shortest} programs {programs} with groups {with_groups} groups {groups} links {links} walks {walks} renders {renders} different {bad}"
+    );
 }

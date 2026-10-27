@@ -832,6 +832,129 @@ describe("EventEmitter captureRejections", () => {
 
     expect(handled).toEqual(null);
   });
+  test("it captures a thenable that is not a promise", async () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+    const { promise, resolve } = Promise.withResolvers();
+    myEmitter.on("error", resolve);
+    myEmitter.on("action", () => ({
+      then(_: unknown, reject: (reason: unknown) => void) {
+        reject(123);
+      },
+    }));
+
+    myEmitter.emit("action");
+
+    expect(await promise).toBe(123);
+  });
+  test("it emits 'error' when reading `then` throws", () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+    const errors: unknown[] = [];
+    myEmitter.on("error", error => errors.push(error));
+    myEmitter.on("action", () =>
+      Object.defineProperty({}, "then", {
+        get() {
+          throw 123;
+        },
+      }),
+    );
+
+    myEmitter.emit("action");
+
+    expect(errors).toEqual([123]);
+  });
+  test("it ignores what is not a thenable", () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+    for (const value of [null, 5, {}, { then: 1 }]) myEmitter.on("action", () => value);
+
+    expect(myEmitter.emit("action")).toBe(true);
+  });
+  test("it captures the rejection of an 'error' listener", async () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const errors: unknown[] = [];
+    myEmitter.on("error", async error => {
+      if (errors.push(error) === 2) return resolve();
+      throw 234;
+    });
+
+    myEmitter.emit("error", 123);
+    await promise;
+
+    expect(errors).toEqual([123, 234]);
+  });
+  test("EventEmitter.captureRejections reaches an emitter whose constructor never ran", async () => {
+    function NoConstructor() {}
+    Object.setPrototypeOf(NoConstructor.prototype, EventEmitter.prototype);
+    const myEmitter: EventEmitter = new (NoConstructor as any)();
+    const { promise, resolve } = Promise.withResolvers();
+    myEmitter.on("error", resolve);
+    myEmitter.on("action", async () => {
+      throw 123;
+    });
+
+    EventEmitter.captureRejections = true;
+    try {
+      myEmitter.emit("action");
+    } finally {
+      EventEmitter.captureRejections = false;
+    }
+
+    expect(await promise).toBe(123);
+  });
+  test("EventEmitter.captureRejections leaves a userland prototype.emit in place", () => {
+    const original = EventEmitter.prototype.emit;
+    const userland = function (this: EventEmitter, ...args: Parameters<typeof original>) {
+      return original.apply(this, args);
+    };
+    const seen: boolean[] = [];
+    EventEmitter.prototype.emit = userland;
+    try {
+      EventEmitter.captureRejections = true;
+      seen.push(EventEmitter.prototype.emit === userland);
+      EventEmitter.captureRejections = false;
+      seen.push(EventEmitter.prototype.emit === userland);
+    } finally {
+      EventEmitter.captureRejections = false;
+      EventEmitter.prototype.emit = original;
+    }
+
+    expect(seen).toEqual([true, true]);
+  });
+  test("EventEmitter.captureRejections applies when the emitter is made, or at emit if its constructor never ran", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { EventEmitter } = require("events");
+         process.on("unhandledRejection", reason => console.log("unhandled", reason));
+         function listen(emitter, name) {
+           emitter.on("error", reason => console.log("captured", reason));
+           emitter.on("action", async () => { throw name; });
+           return emitter;
+         }
+         function NoConstructor() {}
+         Object.setPrototypeOf(NoConstructor.prototype, EventEmitter.prototype);
+
+         const madeWhileOff = listen(new EventEmitter(), "made while off");
+         EventEmitter.captureRejections = true;
+         const madeWhileOn = listen(new EventEmitter(), "made while on");
+         const noConstructor = listen(new NoConstructor(), "no constructor");
+         madeWhileOff.emit("action");
+         EventEmitter.captureRejections = false;
+         madeWhileOn.emit("action");
+         noConstructor.emit("action");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.split("\n").sort().join("\n"), stderr, exitCode }).toEqual({
+      stdout: "\ncaptured made while on\nunhandled made while off\nunhandled no constructor",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 const waysOfCreating = [

@@ -2141,6 +2141,56 @@ console.log(load());
     expect(await proc.exited).toBe(42);
   });
 
+  it.each([
+    [
+      "an async listener runs past its await",
+      `process.on("unhandledRejection", async e => {
+         console.log("listener", e.message);
+         await null;
+         console.log("after await");
+         setTimeout(() => console.log("scheduled"));
+       });
+       Promise.reject(new Error("a"));`,
+      "listener a\nafter await\nscheduled\n",
+    ],
+    [
+      "what the listeners queue runs once every listener has",
+      `process.on("unhandledRejection", e => {
+         console.log("listener", e.message);
+         process.nextTick(() => console.log("tick", e.message));
+         queueMicrotask(() => console.log("microtask", e.message));
+       });
+       Promise.reject(new Error("a"));
+       Promise.reject(new Error("b"));`,
+      "listener a\nlistener b\ntick a\ntick b\nmicrotask a\nmicrotask b\n",
+    ],
+    [
+      "a rejection that a listener's microtask handles was already reported",
+      `const promises = [];
+       process.on("rejectionHandled", () => console.log("rejectionHandled"));
+       process.on("unhandledRejection", e => {
+         console.log("listener", e.message);
+         if (e.message === "a") queueMicrotask(() => promises[1].catch(() => console.log("caught b")));
+       });
+       promises.push(Promise.reject(new Error("a")), Promise.reject(new Error("b")));`,
+      "listener a\nlistener b\ncaught b\nrejectionHandled\n",
+    ],
+    [
+      "a rejection made in a listener's tick is reported",
+      `let n = 0;
+       process.on("unhandledRejection", e => {
+         console.log("listener", e.message);
+         if (++n < 3) process.nextTick(() => Promise.reject(new Error("tick " + n)));
+       });
+       Promise.reject(new Error("a"));`,
+      "listener a\nlistener tick 1\nlistener tick 2\n",
+    ],
+  ])("'unhandledRejection' with nothing else pending: %s", async (_, script, expected) => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+  });
+
   it("delivers many unhandledRejections in order, including ones queued from the handler", async () => {
     // Pins the observable behaviour: order is preserved, late .catch()
     // suppresses delivery, and a rejection raised from inside the handler is

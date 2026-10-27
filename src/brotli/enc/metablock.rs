@@ -1,11 +1,22 @@
-//! STUB: to be replaced by the port of metablock.c and metablock_inc.h.
+//! Distributes the literals, commands and distances of a meta-block between block types and contexts.
+
 use super::Fallible;
-use super::block_splitter::BlockSplit;
-use super::command::Command;
-use super::histogram::{HistogramCommand, HistogramDistance, HistogramLiteral};
+use super::bit_cost::{bits_entropy, population_cost};
+use super::block_splitter::{BlockSplit, split_block};
+use super::cluster::{cluster_histograms, copy_histogram};
+use super::command::{Command, prefix_encode_copy_distance};
+use super::entropy_encode::optimize_huffman_counts_for_rle;
+use super::histogram::{
+    Histogram, HistogramCommand, HistogramDistance, HistogramLiteral, build_histograms_with_context,
+};
 use super::params::{DistanceParams, EncoderParams};
+use crate::common::constants::{
+    DISTANCE_CONTEXT_BITS, LARGE_MAX_DISTANCE_BITS, LITERAL_CONTEXT_BITS, MAX_ALLOWED_DISTANCE,
+    MAX_DISTANCE_BITS, MAX_NPOSTFIX, MAX_NUMBER_OF_BLOCK_TYPES, NUM_COMMAND_SYMBOLS,
+    NUM_LITERAL_SYMBOLS, calculate_distance_code_limit, distance_alphabet_size,
+};
 use crate::common::context::{ContextLut, ContextType};
-use crate::util::{Bug, Checked};
+use crate::util::{Bug, Checked, SliceExt, try_vec, try_zeroed};
 
 pub(crate) const MAX_STATIC_CONTEXTS: usize = 13;
 
@@ -22,39 +33,829 @@ pub(crate) struct MetaBlockSplit {
     pub(crate) distance_histograms: Vec<HistogramDistance>,
 }
 
+pub(crate) fn init_distance_params(
+    dist: &mut DistanceParams,
+    npostfix: u32,
+    ndirect: u32,
+    large_window: bool,
+) {
+    dist.distance_postfix_bits = npostfix;
+    dist.num_direct_distance_codes = ndirect;
+
+    let mut alphabet_size_max = distance_alphabet_size(npostfix, ndirect, MAX_DISTANCE_BITS);
+    let mut alphabet_size_limit = alphabet_size_max;
+    let mut max_distance = ndirect
+        .wrapping_add(1u32 << (MAX_DISTANCE_BITS + npostfix + 2))
+        .wrapping_sub(1u32 << (npostfix + 2));
+
+    if large_window {
+        let limit = calculate_distance_code_limit(MAX_ALLOWED_DISTANCE, npostfix, ndirect);
+        alphabet_size_max = distance_alphabet_size(npostfix, ndirect, LARGE_MAX_DISTANCE_BITS);
+        alphabet_size_limit = limit.max_alphabet_size;
+        max_distance = limit.max_distance;
+    }
+
+    dist.alphabet_size_max = alphabet_size_max;
+    dist.alphabet_size_limit = alphabet_size_limit;
+    dist.max_distance = max_distance as usize;
+}
+
+#[inline(always)]
+fn same_distance_codes(a: &DistanceParams, b: &DistanceParams) -> bool {
+    a.distance_postfix_bits == b.distance_postfix_bits
+        && a.num_direct_distance_codes == b.num_direct_distance_codes
+}
+
+/// Encodes the distances of `cmds`, which are encoded for `orig_params`, for `new_params`.
+fn recompute_distance_prefixes(
+    cmds: &mut [Command],
+    orig_params: &DistanceParams,
+    new_params: &DistanceParams,
+) {
+    if same_distance_codes(orig_params, new_params) {
+        return;
+    }
+    for cmd in cmds {
+        if cmd.copy_len() != 0 && cmd.cmd_prefix >= 128 {
+            (cmd.dist_prefix, cmd.dist_extra) = prefix_encode_copy_distance(
+                cmd.restore_distance_code(orig_params) as usize,
+                new_params.num_direct_distance_codes as usize,
+                new_params.distance_postfix_bits as usize,
+            );
+        }
+    }
+}
+
+/// How many bits the distances of `cmds`, which are encoded for `orig_params`, take with `new_params`. `None` if one of
+/// them is too large for `new_params`.
+fn compute_distance_cost(
+    cmds: &[Command],
+    orig_params: &DistanceParams,
+    new_params: &DistanceParams,
+    tmp: &mut HistogramDistance,
+) -> Checked<Option<f64>> {
+    let equal_params = same_distance_codes(orig_params, new_params);
+    let mut extra_bits = 0f64;
+    tmp.clear();
+
+    for cmd in cmds {
+        if cmd.copy_len() != 0 && cmd.cmd_prefix >= 128 {
+            let dist_prefix = if equal_params {
+                cmd.dist_prefix
+            } else {
+                let distance = cmd.restore_distance_code(orig_params) as usize;
+                if distance > new_params.max_distance {
+                    return Ok(None);
+                }
+                prefix_encode_copy_distance(
+                    distance,
+                    new_params.num_direct_distance_codes as usize,
+                    new_params.distance_postfix_bits as usize,
+                )
+                .0
+            };
+            tmp.add(usize::from(dist_prefix & 0x3FF))?;
+            extra_bits += f64::from(dist_prefix >> 10);
+        }
+    }
+
+    Ok(Some(population_cost(tmp)? + extra_bits))
+}
+
+/// Splits with the slow shortest-path block splitter and clusters the contexts. Also picks the distance parameters that
+/// suit `cmds` best, stores them in `dist` and encodes the distances of `cmds` for them.
+///
 /// `dist` starts as a copy of `params.dist` and is what the reference encoder's `params->dist` is here.
 pub(crate) fn build_meta_block(
-    _ringbuffer: &[u8],
-    _pos: usize,
-    _mask: usize,
-    _params: &EncoderParams,
-    _dist: &mut DistanceParams,
-    _prev_byte: u8,
-    _prev_byte2: u8,
-    _cmds: &mut [Command],
-    _literal_context_mode: ContextType,
-    _mb: &mut MetaBlockSplit,
+    ringbuffer: &[u8],
+    pos: usize,
+    mask: usize,
+    params: &EncoderParams,
+    dist: &mut DistanceParams,
+    prev_byte: u8,
+    prev_byte2: u8,
+    cmds: &mut [Command],
+    literal_context_mode: ContextType,
+    mb: &mut MetaBlockSplit,
 ) -> Fallible {
-    Err(Bug.into())
+    // The index of a histogram has to fit in a byte.
+    const MAX_NUMBER_OF_HISTOGRAMS: usize = 256;
+    let mut ndirect_msb = 0u32;
+    let mut check_orig = true;
+    let mut best_dist_cost = 1e99;
+    let orig_params = *dist;
+    let mut new_params = *dist;
+    {
+        let mut tmp = Box::new(HistogramDistance::new());
+        for npostfix in 0..=MAX_NPOSTFIX {
+            while ndirect_msb < 16 {
+                let ndirect = ndirect_msb << npostfix;
+                init_distance_params(&mut new_params, npostfix, ndirect, params.large_window);
+                if npostfix == orig_params.distance_postfix_bits
+                    && ndirect == orig_params.num_direct_distance_codes
+                {
+                    check_orig = false;
+                }
+                let Some(dist_cost) =
+                    compute_distance_cost(cmds, &orig_params, &new_params, &mut tmp)?
+                else {
+                    break;
+                };
+                if dist_cost > best_dist_cost {
+                    break;
+                }
+                best_dist_cost = dist_cost;
+                *dist = new_params;
+                ndirect_msb += 1;
+            }
+            ndirect_msb = ndirect_msb.saturating_sub(1);
+            ndirect_msb /= 2;
+        }
+        if check_orig {
+            let dist_cost =
+                compute_distance_cost(cmds, &orig_params, &orig_params, &mut tmp)?.ok_or(Bug)?;
+            if dist_cost < best_dist_cost {
+                *dist = orig_params;
+            }
+        }
+    }
+    recompute_distance_prefixes(cmds, &orig_params, dist);
+
+    split_block(
+        cmds,
+        ringbuffer,
+        pos,
+        mask,
+        params,
+        &mut mb.literal_split,
+        &mut mb.command_split,
+        &mut mb.distance_split,
+    )?;
+
+    let mut literal_context_multiplier = 1usize;
+    let mut literal_context_modes = None;
+    if !params.disable_literal_context_modeling {
+        literal_context_multiplier = 1 << LITERAL_CONTEXT_BITS;
+        literal_context_modes = Some(try_vec(literal_context_mode, mb.literal_split.num_types)?);
+    }
+
+    let literal_histograms_size = mb.literal_split.num_types * literal_context_multiplier;
+    let mut literal_histograms = try_vec(HistogramLiteral::new(), literal_histograms_size)?;
+
+    let distance_histograms_size = mb.distance_split.num_types << DISTANCE_CONTEXT_BITS;
+    let mut distance_histograms = try_vec(HistogramDistance::new(), distance_histograms_size)?;
+
+    mb.command_histograms = try_vec(HistogramCommand::new(), mb.command_split.num_types)?;
+
+    build_histograms_with_context(
+        cmds,
+        &mb.literal_split,
+        &mb.command_split,
+        &mb.distance_split,
+        ringbuffer,
+        pos,
+        mask,
+        prev_byte,
+        prev_byte2,
+        literal_context_modes.as_deref(),
+        &mut literal_histograms,
+        &mut mb.command_histograms,
+        &mut distance_histograms,
+    )?;
+    drop(literal_context_modes);
+
+    mb.literal_context_map = try_zeroed(mb.literal_split.num_types << LITERAL_CONTEXT_BITS)?;
+    mb.literal_histograms = cluster_histograms(
+        &literal_histograms,
+        MAX_NUMBER_OF_HISTOGRAMS,
+        &mut mb.literal_context_map,
+    )?;
+    drop(literal_histograms);
+
+    if params.disable_literal_context_modeling {
+        // So far there is one entry for each block type. Give all the contexts of the type that entry.
+        for i in (0..mb.literal_split.num_types).rev() {
+            let histogram = mb.literal_context_map.at(i)?;
+            mb.literal_context_map
+                .sub_mut(i << LITERAL_CONTEXT_BITS..(i + 1) << LITERAL_CONTEXT_BITS)?
+                .fill(histogram);
+        }
+    }
+
+    mb.distance_context_map = try_zeroed(distance_histograms_size)?;
+    mb.distance_histograms = cluster_histograms(
+        &distance_histograms,
+        MAX_NUMBER_OF_HISTOGRAMS,
+        &mut mb.distance_context_map,
+    )?;
+    Ok(())
 }
 
+/// Greedy block splitter for one category: literals, commands or distances.
+struct BlockSplitter<'a, const N: usize> {
+    /// How many of the `N` symbols count for the entropy.
+    alphabet_size: usize,
+    /// A block has at least this many symbols.
+    min_block_size: usize,
+    /// Histograms A and B are merged if `entropy(A + B) < entropy(A) + entropy(B) + split_threshold`, where A is the
+    /// current histogram and B that of the last or of the second last block type.
+    split_threshold: f64,
+    num_blocks: usize,
+    split: &'a mut BlockSplit,
+    /// One for each block type, and the current one.
+    histograms: &'a mut Vec<Histogram<N>>,
+    /// Scratch space for [`Self::finish_block`].
+    combined_histo: Box<[Histogram<N>; 2]>,
+    /// After this many symbols it is decided whether to merge the block with an earlier one.
+    target_block_size: usize,
+    /// How many symbols the current histogram has.
+    block_size: usize,
+    curr_histogram_ix: usize,
+    /// The histograms of the last two block types.
+    last_histogram_ix: [usize; 2],
+    /// The entropy of the last two block types.
+    last_entropy: [f64; 2],
+    /// How many times in a row the current block was merged with the last one.
+    merge_last_count: usize,
+}
+
+impl<'a, const N: usize> BlockSplitter<'a, N> {
+    fn new(
+        alphabet_size: usize,
+        min_block_size: usize,
+        split_threshold: f64,
+        num_symbols: usize,
+        split: &'a mut BlockSplit,
+        histograms: &'a mut Vec<Histogram<N>>,
+    ) -> Fallible<Self> {
+        let max_num_blocks = num_symbols.checked_div(min_block_size).ok_or(Bug)? + 1;
+        // One more than there can be block types, for the current histogram of a meta-block that has them all.
+        let max_num_types = max_num_blocks.min(MAX_NUMBER_OF_BLOCK_TYPES + 1);
+        split.ensure_capacity(max_num_blocks)?;
+        split.num_blocks = max_num_blocks;
+        *histograms = try_vec(Histogram::new(), max_num_types)?;
+        Ok(Self {
+            alphabet_size,
+            min_block_size,
+            split_threshold,
+            num_blocks: 0,
+            split,
+            histograms,
+            combined_histo: Box::new([Histogram::new(), Histogram::new()]),
+            target_block_size: min_block_size,
+            block_size: 0,
+            curr_histogram_ix: 0,
+            last_histogram_ix: [0; 2],
+            last_entropy: [0.0; 2],
+            merge_last_count: 0,
+        })
+    }
+
+    /// Starts the histogram of the next block type, if there is room for one.
+    #[inline(always)]
+    fn next_histogram(&mut self) {
+        self.curr_histogram_ix += 1;
+        if let Some(histogram) = self.histograms.get_mut(self.curr_histogram_ix) {
+            histogram.clear();
+        }
+    }
+
+    /// Does one of three things with the current block: gives it a new block type, gives it the type of the second last
+    /// block, or merges it with the last block.
+    fn finish_block(&mut self, is_final: bool) -> Checked {
+        let split = &mut *self.split;
+        let histograms = &mut *self.histograms;
+        // The reference encoder does this for the last block as well, which can be shorter or even empty, and the block
+        // lengths in the output depend on it.
+        self.block_size = self.block_size.max(self.min_block_size);
+        if self.num_blocks == 0 {
+            split.lengths.put(0, self.block_size as u32)?;
+            split.types.put(0, 0)?;
+            self.last_entropy[0] = bits_entropy(
+                histograms
+                    .first()
+                    .ok_or(Bug)?
+                    .data
+                    .sub(..self.alphabet_size)?,
+            );
+            self.last_entropy[1] = self.last_entropy[0];
+            self.num_blocks += 1;
+            split.num_types += 1;
+            self.next_histogram();
+            self.block_size = 0;
+        } else if self.block_size > 0 {
+            let curr_histogram = histograms.get(self.curr_histogram_ix).ok_or(Bug)?;
+            let entropy = bits_entropy(curr_histogram.data.sub(..self.alphabet_size)?);
+            let mut combined_entropy = [0f64; 2];
+            let mut diff = [0f64; 2];
+            let combined_histos = &mut *self.combined_histo;
+            for (j, combined_histo) in combined_histos.iter_mut().enumerate() {
+                copy_histogram(combined_histo, curr_histogram);
+                combined_histo
+                    .add_histogram(histograms.get(self.last_histogram_ix.at(j)?).ok_or(Bug)?);
+                let combined = bits_entropy(combined_histo.data.sub(..self.alphabet_size)?);
+                combined_entropy.put(j, combined)?;
+                diff.put(j, combined - entropy - self.last_entropy.at(j)?)?;
+            }
+
+            if split.num_types < MAX_NUMBER_OF_BLOCK_TYPES
+                && diff[0] > self.split_threshold
+                && diff[1] > self.split_threshold
+            {
+                // A new block type.
+                split.lengths.put(self.num_blocks, self.block_size as u32)?;
+                split.types.put(self.num_blocks, split.num_types as u8)?;
+                self.last_histogram_ix[1] = self.last_histogram_ix[0];
+                self.last_histogram_ix[0] = usize::from(split.num_types as u8);
+                self.last_entropy[1] = self.last_entropy[0];
+                self.last_entropy[0] = entropy;
+                self.num_blocks += 1;
+                split.num_types += 1;
+                self.next_histogram();
+                self.block_size = 0;
+                self.merge_last_count = 0;
+                self.target_block_size = self.min_block_size;
+            } else if diff[1] < diff[0] - 20.0 {
+                // The type of the second last block.
+                split.lengths.put(self.num_blocks, self.block_size as u32)?;
+                let second_last_type = split.types.at(self.num_blocks.wrapping_sub(2))?;
+                split.types.put(self.num_blocks, second_last_type)?;
+                self.last_histogram_ix.swap(0, 1);
+                copy_histogram(
+                    histograms.at_mut(self.last_histogram_ix[0])?,
+                    &combined_histos[1],
+                );
+                self.last_entropy[1] = self.last_entropy[0];
+                self.last_entropy[0] = combined_entropy[1];
+                self.num_blocks += 1;
+                self.block_size = 0;
+                histograms.at_mut(self.curr_histogram_ix)?.clear();
+                self.merge_last_count = 0;
+                self.target_block_size = self.min_block_size;
+            } else {
+                // Merge with the last block.
+                let length = split.lengths.at_mut(self.num_blocks - 1)?;
+                *length = length.wrapping_add(self.block_size as u32);
+                copy_histogram(
+                    histograms.at_mut(self.last_histogram_ix[0])?,
+                    &combined_histos[0],
+                );
+                self.last_entropy[0] = combined_entropy[0];
+                if split.num_types == 1 {
+                    self.last_entropy[1] = self.last_entropy[0];
+                }
+                self.block_size = 0;
+                histograms.at_mut(self.curr_histogram_ix)?.clear();
+                self.merge_last_count += 1;
+                if self.merge_last_count > 1 {
+                    self.target_block_size += self.min_block_size;
+                }
+            }
+        }
+        if is_final {
+            self.histograms.truncate(self.split.num_types);
+            self.split.num_blocks = self.num_blocks;
+        }
+        Ok(())
+    }
+
+    /// Adds `symbol` to the current block, and ends the block when it has reached its target size.
+    #[inline(always)]
+    fn add_symbol(&mut self, symbol: usize) -> Checked {
+        self.histograms
+            .at_mut(self.curr_histogram_ix)?
+            .add(symbol)?;
+        self.block_size += 1;
+        if self.block_size == self.target_block_size {
+            self.finish_block(false)?;
+        }
+        Ok(())
+    }
+}
+
+/// Greedy block splitter for literals with a histogram for each of `num_contexts` contexts.
+struct ContextBlockSplitter<'a> {
+    alphabet_size: usize,
+    num_contexts: usize,
+    max_block_types: usize,
+    /// A block has at least this many symbols.
+    min_block_size: usize,
+    /// As in [`BlockSplitter`], for the sums over the contexts.
+    split_threshold: f64,
+    num_blocks: usize,
+    split: &'a mut BlockSplit,
+    /// `num_contexts` for each block type, and as many for the current block.
+    histograms: &'a mut Vec<HistogramLiteral>,
+    /// Scratch space for [`Self::finish_block`]: `num_contexts` for each of the last two block types.
+    combined_histo: Vec<HistogramLiteral>,
+    /// After this many symbols it is decided whether to merge the block with an earlier one.
+    target_block_size: usize,
+    /// How many symbols the current histograms have.
+    block_size: usize,
+    /// The first of the current histograms.
+    curr_histogram_ix: usize,
+    /// The first histogram of each of the last two block types.
+    last_histogram_ix: [usize; 2],
+    /// The entropies of the last block type, followed by those of the second last at `num_contexts`.
+    last_entropy: [f64; 2 * MAX_STATIC_CONTEXTS],
+    /// How many times in a row the current block was merged with the last one.
+    merge_last_count: usize,
+}
+
+impl<'a> ContextBlockSplitter<'a> {
+    fn new(
+        alphabet_size: usize,
+        num_contexts: usize,
+        min_block_size: usize,
+        split_threshold: f64,
+        num_symbols: usize,
+        split: &'a mut BlockSplit,
+        histograms: &'a mut Vec<HistogramLiteral>,
+    ) -> Fallible<Self> {
+        if num_contexts > MAX_STATIC_CONTEXTS {
+            return Err(Bug.into());
+        }
+        let max_num_blocks = num_symbols.checked_div(min_block_size).ok_or(Bug)? + 1;
+        let max_block_types = MAX_NUMBER_OF_BLOCK_TYPES
+            .checked_div(num_contexts)
+            .ok_or(Bug)?;
+        // One more than there can be block types, for the current histograms of a meta-block that has them all.
+        let max_num_types = max_num_blocks.min(max_block_types + 1);
+        split.ensure_capacity(max_num_blocks)?;
+        split.num_blocks = max_num_blocks;
+        *histograms = try_vec(Histogram::new(), max_num_types * num_contexts)?;
+        Ok(Self {
+            alphabet_size,
+            num_contexts,
+            max_block_types,
+            min_block_size,
+            split_threshold,
+            num_blocks: 0,
+            split,
+            histograms,
+            combined_histo: try_vec(Histogram::new(), 2 * num_contexts)?,
+            target_block_size: min_block_size,
+            block_size: 0,
+            curr_histogram_ix: 0,
+            last_histogram_ix: [0; 2],
+            last_entropy: [0.0; 2 * MAX_STATIC_CONTEXTS],
+            merge_last_count: 0,
+        })
+    }
+
+    /// Starts the histograms of the next block type, if there is room for them.
+    #[inline(always)]
+    fn next_histograms(&mut self) -> Checked {
+        self.curr_histogram_ix += self.num_contexts;
+        if self.curr_histogram_ix < self.histograms.len() {
+            for histogram in self
+                .histograms
+                .sub_mut(self.curr_histogram_ix..self.curr_histogram_ix + self.num_contexts)?
+            {
+                histogram.clear();
+            }
+        }
+        Ok(())
+    }
+
+    /// Does one of three things with the current block: gives it a new block type, gives it the type of the second last
+    /// block, or merges it with the last block.
+    fn finish_block(&mut self, is_final: bool) -> Checked {
+        let num_contexts = self.num_contexts;
+        // See `BlockSplitter::finish_block`.
+        if self.block_size < self.min_block_size {
+            self.block_size = self.min_block_size;
+        }
+        if self.num_blocks == 0 {
+            self.split.lengths.put(0, self.block_size as u32)?;
+            self.split.types.put(0, 0)?;
+            for i in 0..num_contexts {
+                let entropy = bits_entropy(
+                    self.histograms
+                        .get(i)
+                        .ok_or(Bug)?
+                        .data
+                        .sub(..self.alphabet_size)?,
+                );
+                self.last_entropy.put(i, entropy)?;
+                self.last_entropy.put(num_contexts + i, entropy)?;
+            }
+            self.num_blocks += 1;
+            self.split.num_types += 1;
+            self.next_histograms()?;
+            self.block_size = 0;
+        } else if self.block_size > 0 {
+            // Whether to merge is decided by the total change of entropy over all contexts.
+            let mut entropy = [0f64; MAX_STATIC_CONTEXTS];
+            let mut combined_entropy = [0f64; 2 * MAX_STATIC_CONTEXTS];
+            let mut diff = [0f64; 2];
+            for i in 0..num_contexts {
+                let curr_histogram = self.histograms.get(self.curr_histogram_ix + i).ok_or(Bug)?;
+                let curr_entropy = bits_entropy(curr_histogram.data.sub(..self.alphabet_size)?);
+                entropy.put(i, curr_entropy)?;
+                for j in 0..2 {
+                    let jx = j * num_contexts + i;
+                    let last_histogram_ix = self.last_histogram_ix.at(j)? + i;
+                    let combined_histo = self.combined_histo.at_mut(jx)?;
+                    copy_histogram(combined_histo, curr_histogram);
+                    combined_histo
+                        .add_histogram(self.histograms.get(last_histogram_ix).ok_or(Bug)?);
+                    let combined = bits_entropy(combined_histo.data.sub(..self.alphabet_size)?);
+                    combined_entropy.put(jx, combined)?;
+                    *diff.at_mut(j)? += combined - curr_entropy - self.last_entropy.at(jx)?;
+                }
+            }
+
+            if self.split.num_types < self.max_block_types
+                && diff[0] > self.split_threshold
+                && diff[1] > self.split_threshold
+            {
+                // A new block type.
+                self.split
+                    .lengths
+                    .put(self.num_blocks, self.block_size as u32)?;
+                self.split
+                    .types
+                    .put(self.num_blocks, self.split.num_types as u8)?;
+                self.last_histogram_ix[1] = self.last_histogram_ix[0];
+                self.last_histogram_ix[0] = self.split.num_types * num_contexts;
+                for i in 0..num_contexts {
+                    let last_entropy = self.last_entropy.at(i)?;
+                    self.last_entropy.put(num_contexts + i, last_entropy)?;
+                    self.last_entropy.put(i, entropy.at(i)?)?;
+                }
+                self.num_blocks += 1;
+                self.split.num_types += 1;
+                self.next_histograms()?;
+                self.block_size = 0;
+                self.merge_last_count = 0;
+                self.target_block_size = self.min_block_size;
+            } else if diff[1] < diff[0] - 20.0 {
+                // The type of the second last block.
+                self.split
+                    .lengths
+                    .put(self.num_blocks, self.block_size as u32)?;
+                let second_last_type = self.split.types.at(self.num_blocks.wrapping_sub(2))?;
+                self.split.types.put(self.num_blocks, second_last_type)?;
+                self.last_histogram_ix.swap(0, 1);
+                for i in 0..num_contexts {
+                    copy_histogram(
+                        self.histograms.at_mut(self.last_histogram_ix[0] + i)?,
+                        self.combined_histo.get(num_contexts + i).ok_or(Bug)?,
+                    );
+                    let last_entropy = self.last_entropy.at(i)?;
+                    self.last_entropy.put(num_contexts + i, last_entropy)?;
+                    self.last_entropy
+                        .put(i, combined_entropy.at(num_contexts + i)?)?;
+                    self.histograms.at_mut(self.curr_histogram_ix + i)?.clear();
+                }
+                self.num_blocks += 1;
+                self.block_size = 0;
+                self.merge_last_count = 0;
+                self.target_block_size = self.min_block_size;
+            } else {
+                // Merge with the last block.
+                let length = self.split.lengths.at_mut(self.num_blocks - 1)?;
+                *length = length.wrapping_add(self.block_size as u32);
+                for i in 0..num_contexts {
+                    copy_histogram(
+                        self.histograms.at_mut(self.last_histogram_ix[0] + i)?,
+                        self.combined_histo.get(i).ok_or(Bug)?,
+                    );
+                    let combined = combined_entropy.at(i)?;
+                    self.last_entropy.put(i, combined)?;
+                    if self.split.num_types == 1 {
+                        self.last_entropy.put(num_contexts + i, combined)?;
+                    }
+                    self.histograms.at_mut(self.curr_histogram_ix + i)?.clear();
+                }
+                self.block_size = 0;
+                self.merge_last_count += 1;
+                if self.merge_last_count > 1 {
+                    self.target_block_size += self.min_block_size;
+                }
+            }
+        }
+        if is_final {
+            self.histograms
+                .truncate(self.split.num_types * num_contexts);
+            self.split.num_blocks = self.num_blocks;
+        }
+        Ok(())
+    }
+
+    /// Adds `symbol` to the current block, and ends the block when it has reached its target size.
+    #[inline(always)]
+    fn add_symbol(&mut self, symbol: usize, context: usize) -> Checked {
+        self.histograms
+            .at_mut(self.curr_histogram_ix + context)?
+            .add(symbol)?;
+        self.block_size += 1;
+        if self.block_size == self.target_block_size {
+            self.finish_block(false)?;
+        }
+        Ok(())
+    }
+}
+
+/// Makes the context map that uses `static_context_map` for every block type.
+fn map_static_contexts(
+    num_contexts: usize,
+    static_context_map: &[u32; 64],
+    mb: &mut MetaBlockSplit,
+) -> Fallible {
+    mb.literal_context_map = try_zeroed(mb.literal_split.num_types << LITERAL_CONTEXT_BITS)?;
+    let (block_types, _) = mb
+        .literal_context_map
+        .as_chunks_mut::<{ 1 << LITERAL_CONTEXT_BITS }>();
+    for (i, contexts) in block_types.iter_mut().enumerate() {
+        let offset = (i * num_contexts) as u32;
+        for (context, &static_context) in contexts.iter_mut().zip(static_context_map) {
+            *context = offset + static_context;
+        }
+    }
+    Ok(())
+}
+
+/// The block splitter for the literals.
+trait LiteralBlocks {
+    /// `prev_byte` and `prev_byte2` are the two bytes before `literal`.
+    fn add_literal(&mut self, literal: u8, prev_byte: u8, prev_byte2: u8) -> Checked;
+    fn finish(&mut self) -> Checked;
+}
+
+impl LiteralBlocks for BlockSplitter<'_, NUM_LITERAL_SYMBOLS> {
+    #[inline(always)]
+    fn add_literal(&mut self, literal: u8, _prev_byte: u8, _prev_byte2: u8) -> Checked {
+        self.add_symbol(usize::from(literal))
+    }
+
+    fn finish(&mut self) -> Checked {
+        self.finish_block(true)
+    }
+}
+
+struct ContextLiteralBlocks<'a> {
+    splitter: ContextBlockSplitter<'a>,
+    literal_context_lut: &'a ContextLut,
+    static_context_map: &'a [u32; 64],
+}
+
+impl LiteralBlocks for ContextLiteralBlocks<'_> {
+    #[inline(always)]
+    fn add_literal(&mut self, literal: u8, prev_byte: u8, prev_byte2: u8) -> Checked {
+        let context = usize::from(self.literal_context_lut.context(prev_byte, prev_byte2));
+        self.splitter.add_symbol(
+            usize::from(literal),
+            self.static_context_map.at(context)? as usize,
+        )
+    }
+
+    fn finish(&mut self) -> Checked {
+        self.splitter.finish_block(true)
+    }
+}
+
+fn build_meta_block_greedy_internal<L: LiteralBlocks>(
+    ringbuffer: &[u8],
+    mut pos: usize,
+    mask: usize,
+    mut prev_byte: u8,
+    mut prev_byte2: u8,
+    mut lit_blocks: L,
+    commands: &[Command],
+    command_split: &mut BlockSplit,
+    command_histograms: &mut Vec<HistogramCommand>,
+    distance_split: &mut BlockSplit,
+    distance_histograms: &mut Vec<HistogramDistance>,
+) -> Fallible {
+    let mut cmd_blocks = BlockSplitter::new(
+        NUM_COMMAND_SYMBOLS,
+        1024,
+        500.0,
+        commands.len(),
+        command_split,
+        command_histograms,
+    )?;
+    let mut dist_blocks = BlockSplitter::new(
+        64,
+        512,
+        100.0,
+        commands.len(),
+        distance_split,
+        distance_histograms,
+    )?;
+
+    for cmd in commands {
+        cmd_blocks.add_symbol(usize::from(cmd.cmd_prefix))?;
+        for _ in 0..cmd.insert_len {
+            let literal = ringbuffer.at(pos & mask)?;
+            lit_blocks.add_literal(literal, prev_byte, prev_byte2)?;
+            prev_byte2 = prev_byte;
+            prev_byte = literal;
+            pos += 1;
+        }
+        pos += cmd.copy_len() as usize;
+        if cmd.copy_len() != 0 {
+            prev_byte2 = ringbuffer.at(pos.wrapping_sub(2) & mask)?;
+            prev_byte = ringbuffer.at(pos.wrapping_sub(1) & mask)?;
+            if cmd.cmd_prefix >= 128 {
+                dist_blocks.add_symbol(usize::from(cmd.dist_prefix & 0x3FF))?;
+            }
+        }
+    }
+
+    lit_blocks.finish()?;
+    cmd_blocks.finish_block(true)?;
+    dist_blocks.finish_block(true)?;
+    Ok(())
+}
+
+/// Splits with a fast greedy block splitter, which tries to merge a block with the last or the second last one. With
+/// more than one context, `static_context_map` maps the literal contexts to `num_contexts` histograms, in the same way
+/// for all block types.
 pub(crate) fn build_meta_block_greedy(
-    _ringbuffer: &[u8],
-    _pos: usize,
-    _mask: usize,
-    _prev_byte: u8,
-    _prev_byte2: u8,
-    _literal_context_lut: &ContextLut,
-    _num_contexts: usize,
-    _static_context_map: Option<&[u32; 64]>,
-    _commands: &[Command],
-    _mb: &mut MetaBlockSplit,
+    ringbuffer: &[u8],
+    pos: usize,
+    mask: usize,
+    prev_byte: u8,
+    prev_byte2: u8,
+    literal_context_lut: &ContextLut,
+    num_contexts: usize,
+    static_context_map: Option<&[u32; 64]>,
+    commands: &[Command],
+    mb: &mut MetaBlockSplit,
 ) -> Fallible {
-    Err(Bug.into())
+    let num_literals = commands.iter().map(|cmd| cmd.insert_len as usize).sum();
+    if num_contexts == 1 {
+        let lit_blocks = BlockSplitter::new(
+            NUM_LITERAL_SYMBOLS,
+            512,
+            400.0,
+            num_literals,
+            &mut mb.literal_split,
+            &mut mb.literal_histograms,
+        )?;
+        build_meta_block_greedy_internal(
+            ringbuffer,
+            pos,
+            mask,
+            prev_byte,
+            prev_byte2,
+            lit_blocks,
+            commands,
+            &mut mb.command_split,
+            &mut mb.command_histograms,
+            &mut mb.distance_split,
+            &mut mb.distance_histograms,
+        )
+    } else {
+        let static_context_map = static_context_map.ok_or(Bug)?;
+        let splitter = ContextBlockSplitter::new(
+            NUM_LITERAL_SYMBOLS,
+            num_contexts,
+            512,
+            400.0,
+            num_literals,
+            &mut mb.literal_split,
+            &mut mb.literal_histograms,
+        )?;
+        build_meta_block_greedy_internal(
+            ringbuffer,
+            pos,
+            mask,
+            prev_byte,
+            prev_byte2,
+            ContextLiteralBlocks {
+                splitter,
+                literal_context_lut,
+                static_context_map,
+            },
+            commands,
+            &mut mb.command_split,
+            &mut mb.command_histograms,
+            &mut mb.distance_split,
+            &mut mb.distance_histograms,
+        )?;
+        map_static_contexts(num_contexts, static_context_map, mb)
+    }
 }
 
-pub(crate) fn optimize_histograms(_num_distance_codes: u32, _mb: &mut MetaBlockSplit) -> Checked {
-    Err(Bug)
+/// Changes the histograms so that their prefix codes take less room. `num_distance_codes` is how many distance symbols
+/// are in use.
+pub(crate) fn optimize_histograms(num_distance_codes: u32, mb: &mut MetaBlockSplit) -> Checked {
+    let mut good_for_rle = [0u8; NUM_COMMAND_SYMBOLS];
+    for histogram in &mut mb.literal_histograms {
+        optimize_huffman_counts_for_rle(&mut histogram.data, &mut good_for_rle)?;
+    }
+    for histogram in &mut mb.command_histograms {
+        optimize_huffman_counts_for_rle(&mut histogram.data, &mut good_for_rle)?;
+    }
+    for histogram in &mut mb.distance_histograms {
+        optimize_huffman_counts_for_rle(
+            histogram.data.sub_mut(..num_distance_codes as usize)?,
+            &mut good_for_rle,
+        )?;
+    }
+    Ok(())
 }
-
-pub(crate) fn init_distance_params(_dist: &mut DistanceParams, _npostfix: u32, _ndirect: u32, _large_window: bool) {}

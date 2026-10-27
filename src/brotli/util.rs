@@ -67,7 +67,9 @@ impl<T> SliceExt<T> for [T] {
 
     #[inline(always)]
     fn array_at_mut<const N: usize>(&mut self, start: usize) -> Checked<&mut [T; N]> {
-        self.get_mut(start..).and_then(<[T]>::first_chunk_mut).ok_or(Bug)
+        self.get_mut(start..)
+            .and_then(<[T]>::first_chunk_mut)
+            .ok_or(Bug)
     }
 
     #[inline(always)]
@@ -108,6 +110,11 @@ pub(crate) fn load_u64_le(data: &[u8], pos: usize) -> Checked<u64> {
 /// The allocation failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct OutOfMemory;
+
+/// `len` zeros, or nothing if there is no memory for them. Of a large table, the parts that are never used cost nothing.
+pub(crate) fn try_zeroed<T: bun_core::Zeroable>(len: usize) -> Result<Vec<T>, OutOfMemory> {
+    bun_core::vec::try_zeroed(len).map_err(|_| OutOfMemory)
+}
 
 /// `len` copies of `value`, or nothing if there is no memory for them.
 pub(crate) fn try_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>, OutOfMemory> {

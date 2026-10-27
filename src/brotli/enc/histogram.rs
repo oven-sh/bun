@@ -24,7 +24,11 @@ pub(crate) type HistogramDistance = Histogram<NUM_HISTOGRAM_DISTANCE_SYMBOLS>;
 
 impl<const N: usize> Histogram<N> {
     pub(crate) const fn new() -> Self {
-        Self { data: [0; N], total_count: 0, bit_cost: f64::INFINITY }
+        Self {
+            data: [0; N],
+            total_count: 0,
+            bit_cost: f64::INFINITY,
+        }
     }
 
     #[inline(always)]
@@ -68,7 +72,12 @@ struct BlockSplitIterator<'a> {
 
 impl<'a> BlockSplitIterator<'a> {
     fn new(split: &'a BlockSplit) -> Self {
-        Self { split, idx: 0, type_: 0, length: split.lengths.first().map_or(0, |&length| length as usize) }
+        Self {
+            split,
+            idx: 0,
+            type_: 0,
+            length: split.lengths.first().map_or(0, |&length| length as usize),
+        }
     }
 
     #[inline(always)]
@@ -106,16 +115,21 @@ pub(crate) fn build_histograms_with_context(
     let mut dist_it = BlockSplitIterator::new(dist_split);
     for cmd in cmds {
         insert_and_copy_it.next()?;
-        insert_and_copy_histograms.at_mut(insert_and_copy_it.type_)?.add(usize::from(cmd.cmd_prefix))?;
+        insert_and_copy_histograms
+            .at_mut(insert_and_copy_it.type_)?
+            .add(usize::from(cmd.cmd_prefix))?;
         for _ in 0..cmd.insert_len {
             literal_it.next()?;
             let mut context = literal_it.type_;
             if let Some(context_modes) = context_modes {
                 let lut = context_lut(context_modes.at(context)?);
-                context = (context << LITERAL_CONTEXT_BITS) + usize::from(lut.context(prev_byte, prev_byte2));
+                context = (context << LITERAL_CONTEXT_BITS)
+                    + usize::from(lut.context(prev_byte, prev_byte2));
             }
             let literal = ringbuffer.at(pos & mask)?;
-            literal_histograms.at_mut(context)?.add(usize::from(literal))?;
+            literal_histograms
+                .at_mut(context)?
+                .add(usize::from(literal))?;
             prev_byte2 = prev_byte;
             prev_byte = literal;
             pos += 1;
@@ -126,8 +140,11 @@ pub(crate) fn build_histograms_with_context(
             prev_byte = ringbuffer.at(pos.wrapping_sub(1) & mask)?;
             if cmd.cmd_prefix >= 128 {
                 dist_it.next()?;
-                let context = (dist_it.type_ << DISTANCE_CONTEXT_BITS) + cmd.distance_context() as usize;
-                copy_dist_histograms.at_mut(context)?.add(usize::from(cmd.dist_prefix & 0x3FF))?;
+                let context =
+                    (dist_it.type_ << DISTANCE_CONTEXT_BITS) + cmd.distance_context() as usize;
+                copy_dist_histograms
+                    .at_mut(context)?
+                    .add(usize::from(cmd.dist_prefix & 0x3FF))?;
             }
         }
     }

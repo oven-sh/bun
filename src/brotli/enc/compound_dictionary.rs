@@ -1,7 +1,7 @@
 //! Bytes that the encoder can refer to as if they came before the start of the stream.
 
 use super::Fallible;
-use crate::util::{Bug, SliceExt, load_u64_le, try_vec};
+use crate::util::{Bug, SliceExt, load_u64_le, try_zeroed};
 
 pub(crate) const MAX_COMPOUND_DICTS: usize = 15;
 
@@ -61,16 +61,24 @@ impl PreparedDictionary {
         }
 
         // Step 1: chain the positions of each bucket, the last one first.
-        let mut slot_size = try_vec(0u32, num_slots)?;
-        let mut slot_limit = try_vec(0u32, num_slots)?;
-        let mut num = try_vec(0u16, num_buckets)?;
-        let mut bucket_heads = try_vec(0u32, num_buckets)?;
-        let mut next_bucket = try_vec(0u32, source_size)?;
+        let mut slot_size = try_zeroed::<u32>(num_slots)?;
+        let mut slot_limit = try_zeroed::<u32>(num_slots)?;
+        let mut num = try_zeroed::<u16>(num_buckets)?;
+        let mut bucket_heads = try_zeroed::<u32>(num_buckets)?;
+        let mut next_bucket = try_zeroed::<u32>(source_size)?;
         for i in 0..source_size.saturating_sub(7) {
-            let h = (load_u64_le(&source, i)? & hash_mask).wrapping_mul(PREPARED_DICTIONARY_HASH_MUL_64_LONG);
+            let h = (load_u64_le(&source, i)? & hash_mask)
+                .wrapping_mul(PREPARED_DICTIONARY_HASH_MUL_64_LONG);
             let key = (h >> hash_shift) as usize;
             let count = num.at(key)?;
-            next_bucket.put(i, if count == 0 { u32::MAX } else { bucket_heads.at(key)? })?;
+            next_bucket.put(
+                i,
+                if count == 0 {
+                    u32::MAX
+                } else {
+                    bucket_heads.at(key)?
+                },
+            )?;
             bucket_heads.put(key, i as u32)?;
             num.put(key, (count + 1).min(bucket_limit))?;
         }
@@ -101,9 +109,9 @@ impl PreparedDictionary {
         }
 
         // Step 3: lay the chains out one after the other.
-        let mut slot_offsets = try_vec(0u32, num_slots)?;
-        let mut heads = try_vec(0u16, num_buckets)?;
-        let mut items = try_vec(0u32, total_items as usize)?;
+        let mut slot_offsets = try_zeroed::<u32>(num_slots)?;
+        let mut heads = try_zeroed::<u16>(num_buckets)?;
+        let mut items = try_zeroed::<u32>(total_items as usize)?;
         total_items = 0;
         for (offset, size) in slot_offsets.iter_mut().zip(&mut slot_size) {
             *offset = total_items;
@@ -130,7 +138,15 @@ impl PreparedDictionary {
             *items.at_mut(cursor - 1)? |= 0x8000_0000;
         }
 
-        Ok(Self { source, hash_bits, bucket_bits, slot_bits, slot_offsets, heads, items })
+        Ok(Self {
+            source,
+            hash_bits,
+            bucket_bits,
+            slot_bits,
+            slot_offsets,
+            heads,
+            items,
+        })
     }
 }
 
@@ -151,6 +167,8 @@ impl CompoundDictionary {
         }
         self.total_size += dictionary.source.len();
         self.chunks.push(dictionary);
-        self.chunk_offsets.put(self.chunks.len(), self.total_size).is_ok()
+        self.chunk_offsets
+            .put(self.chunks.len(), self.total_size)
+            .is_ok()
     }
 }

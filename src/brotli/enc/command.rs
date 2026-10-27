@@ -5,14 +5,19 @@ use super::params::DistanceParams;
 use crate::common::constants::{NUM_DISTANCE_SHORT_CODES, NUM_INS_COPY_CODES};
 use crate::util::{Checked, SliceExt};
 
-static INS_BASE: [u32; NUM_INS_COPY_CODES] =
-    [0, 1, 2, 3, 4, 5, 6, 8, 10, 14, 18, 26, 34, 50, 66, 98, 130, 194, 322, 578, 1090, 2114, 6210, 22594];
-static INS_EXTRA: [u32; NUM_INS_COPY_CODES] =
-    [0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 12, 14, 24];
-static COPY_BASE: [u32; NUM_INS_COPY_CODES] =
-    [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54, 70, 102, 134, 198, 326, 582, 1094, 2118];
-static COPY_EXTRA: [u32; NUM_INS_COPY_CODES] =
-    [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 24];
+static INS_BASE: [u32; NUM_INS_COPY_CODES] = [
+    0, 1, 2, 3, 4, 5, 6, 8, 10, 14, 18, 26, 34, 50, 66, 98, 130, 194, 322, 578, 1090, 2114, 6210,
+    22594,
+];
+static INS_EXTRA: [u32; NUM_INS_COPY_CODES] = [
+    0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 12, 14, 24,
+];
+static COPY_BASE: [u32; NUM_INS_COPY_CODES] = [
+    2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54, 70, 102, 134, 198, 326, 582, 1094, 2118,
+];
+static COPY_EXTRA: [u32; NUM_INS_COPY_CODES] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 24,
+];
 
 /// Returns the distance symbol, with the number of extra bits in its high 6 bits, and the extra bits. `distance_code` is
 /// one of the 16 short codes, or the distance + 15.
@@ -25,7 +30,8 @@ pub(crate) fn prefix_encode_copy_distance(
     if distance_code < NUM_DISTANCE_SHORT_CODES as usize + num_direct_codes {
         return (distance_code as u16, 0);
     }
-    let dist = (1usize << (postfix_bits + 2)) + (distance_code - NUM_DISTANCE_SHORT_CODES as usize - num_direct_codes);
+    let dist = (1usize << (postfix_bits + 2))
+        + (distance_code - NUM_DISTANCE_SHORT_CODES as usize - num_direct_codes);
     let bucket = log2_floor_nonzero(dist) as usize - 1;
     let postfix_mask = (1usize << postfix_bits) - 1;
     let postfix = dist & postfix_mask;
@@ -33,7 +39,10 @@ pub(crate) fn prefix_encode_copy_distance(
     let offset = (2 + prefix) << bucket;
     let nbits = bucket - postfix_bits;
     let code = (nbits << 10)
-        | (NUM_DISTANCE_SHORT_CODES as usize + num_direct_codes + ((2 * (nbits - 1) + prefix) << postfix_bits) + postfix);
+        | (NUM_DISTANCE_SHORT_CODES as usize
+            + num_direct_codes
+            + ((2 * (nbits - 1) + prefix) << postfix_bits)
+            + postfix);
     (code as u16, ((dist - offset) >> postfix_bits) as u32)
 }
 
@@ -84,7 +93,11 @@ pub(crate) fn combine_length_codes(inscode: u16, copycode: u16, use_last_distanc
 
 #[inline(always)]
 pub(crate) fn get_length_code(insertlen: usize, copylen: usize, use_last_distance: bool) -> u16 {
-    combine_length_codes(get_insert_length_code(insertlen), get_copy_length_code(copylen), use_last_distance)
+    combine_length_codes(
+        get_insert_length_code(insertlen),
+        get_copy_length_code(copylen),
+        use_last_distance,
+    )
 }
 
 #[inline(always)]

@@ -9,7 +9,9 @@ use super::entropy_encode::{HuffmanTree, convert_bit_depths_to_symbols, create_h
 use super::fast_log::log2_floor_nonzero;
 use super::find_match_length::find_match_length_with_limit;
 use super::hash::HASH_MUL_32;
-use crate::common::constants::{NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, WINDOW_GAP, max_backward_limit};
+use crate::common::constants::{
+    NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, WINDOW_GAP, max_backward_limit,
+};
 use crate::util::{Checked, SliceExt, load_u32_le, load_u64_le};
 
 const MAX_DISTANCE: usize = max_backward_limit(18);
@@ -49,7 +51,12 @@ impl TwoPassArena {
 /// A hash of the `length` bytes at `p`.
 #[inline(always)]
 fn hash(input: &[u8], p: usize, shift: usize, length: usize) -> Checked<usize> {
-    Ok(hash_bytes_at_offset(load_u64_le(input, p)?, 0, shift, length))
+    Ok(hash_bytes_at_offset(
+        load_u64_le(input, p)?,
+        0,
+        shift,
+        length,
+    ))
 }
 
 /// A hash of the `length` bytes from byte `offset` of `v` on.
@@ -85,11 +92,25 @@ fn build_and_store_command_prefix_code(s: &mut TwoPassArena, bw: &mut BitWriter<
     create_huffman_tree(dist_histo, 14, &mut s.tmp_tree, dist_depth)?;
     // The codes depend on the order of the symbols in the full alphabet, which is another one. The order here saves a
     // few branches when commands are created.
-    for (to, from, len) in [(0, 24, 24), (24, 0, 8), (32, 48, 8), (40, 8, 8), (48, 56, 8), (56, 16, 8)] {
+    for (to, from, len) in [
+        (0, 24, 24),
+        (24, 0, 8),
+        (32, 48, 8),
+        (40, 8, 8),
+        (48, 56, 8),
+        (56, 16, 8),
+    ] {
         tmp_depth.write_at(to, cmd_depth.sub(from..from + len)?)?;
     }
     convert_bit_depths_to_symbols(tmp_depth.sub(..64)?, tmp_bits)?;
-    for (to, from, len) in [(0, 24, 8), (8, 40, 8), (16, 56, 8), (24, 0, 24), (48, 32, 8), (56, 48, 8)] {
+    for (to, from, len) in [
+        (0, 24, 8),
+        (8, 40, 8),
+        (16, 56, 8),
+        (24, 0, 24),
+        (48, 32, 8),
+        (56, 48, 8),
+    ] {
         cmd_bits.write_at(to, tmp_bits.sub(from..from + len)?)?;
     }
     convert_bit_depths_to_symbols(dist_depth, dist_bits)?;
@@ -217,18 +238,47 @@ fn update_table(
     if min_match == 4 {
         let input_bytes = load_u64_le(input, ip - 3)?;
         cur_hash = hash_bytes_at_offset(input_bytes, 3, shift, min_match);
-        table.put(hash_bytes_at_offset(input_bytes, 0, shift, min_match), (ip - 3) as i32)?;
-        table.put(hash_bytes_at_offset(input_bytes, 1, shift, min_match), (ip - 2) as i32)?;
-        table.put(hash_bytes_at_offset(input_bytes, if first_copy { 0 } else { 2 }, shift, min_match), (ip - 1) as i32)?;
+        table.put(
+            hash_bytes_at_offset(input_bytes, 0, shift, min_match),
+            (ip - 3) as i32,
+        )?;
+        table.put(
+            hash_bytes_at_offset(input_bytes, 1, shift, min_match),
+            (ip - 2) as i32,
+        )?;
+        table.put(
+            hash_bytes_at_offset(
+                input_bytes,
+                if first_copy { 0 } else { 2 },
+                shift,
+                min_match,
+            ),
+            (ip - 1) as i32,
+        )?;
     } else {
         let input_bytes = load_u64_le(input, ip - 5)?;
-        table.put(hash_bytes_at_offset(input_bytes, 0, shift, min_match), (ip - 5) as i32)?;
-        table.put(hash_bytes_at_offset(input_bytes, 1, shift, min_match), (ip - 4) as i32)?;
-        table.put(hash_bytes_at_offset(input_bytes, 2, shift, min_match), (ip - 3) as i32)?;
+        table.put(
+            hash_bytes_at_offset(input_bytes, 0, shift, min_match),
+            (ip - 5) as i32,
+        )?;
+        table.put(
+            hash_bytes_at_offset(input_bytes, 1, shift, min_match),
+            (ip - 4) as i32,
+        )?;
+        table.put(
+            hash_bytes_at_offset(input_bytes, 2, shift, min_match),
+            (ip - 3) as i32,
+        )?;
         let input_bytes = load_u64_le(input, ip - 2)?;
         cur_hash = hash_bytes_at_offset(input_bytes, 2, shift, min_match);
-        table.put(hash_bytes_at_offset(input_bytes, 0, shift, min_match), (ip - 2) as i32)?;
-        table.put(hash_bytes_at_offset(input_bytes, 1, shift, min_match), (ip - 1) as i32)?;
+        table.put(
+            hash_bytes_at_offset(input_bytes, 0, shift, min_match),
+            (ip - 2) as i32,
+        )?;
+        table.put(
+            hash_bytes_at_offset(input_bytes, 1, shift, min_match),
+            (ip - 1) as i32,
+        )?;
     }
     let candidate = table.at(cur_hash)? as usize;
     table.put(cur_hash, ip as i32)?;
@@ -363,7 +413,12 @@ fn create_commands(
     Ok(())
 }
 
-fn store_commands(s: &mut TwoPassArena, literals: &[u8], commands: &[u32], bw: &mut BitWriter<'_>) -> Checked {
+fn store_commands(
+    s: &mut TwoPassArena,
+    literals: &[u8],
+    commands: &[u32],
+    bw: &mut BitWriter<'_>,
+) -> Checked {
     #[rustfmt::skip]
     static NUM_EXTRA_BITS: [u8; 128] = [
         0,  0,  0,  0,  0,  0,  1,  1,  2,  2,  3,  3,  4,  4,  5,  5,
@@ -375,8 +430,10 @@ fn store_commands(s: &mut TwoPassArena, literals: &[u8], commands: &[u32], bw: &
         9,  9,  10, 10, 11, 11, 12, 12, 13, 13, 14, 14, 15, 15, 16, 16,
         17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 23, 24, 24,
     ];
-    static INSERT_OFFSET: [u32; 24] =
-        [0, 1, 2, 3, 4, 5, 6, 8, 10, 14, 18, 26, 34, 50, 66, 98, 130, 194, 322, 578, 1090, 2114, 6210, 22594];
+    static INSERT_OFFSET: [u32; 24] = [
+        0, 1, 2, 3, 4, 5, 6, 8, 10, 14, 18, 26, 34, 50, 66, 98, 130, 194, 322, 578, 1090, 2114,
+        6210, 22594,
+    ];
 
     s.lit_histo.fill(0);
     s.cmd_depth.fill(0);
@@ -408,12 +465,18 @@ fn store_commands(s: &mut TwoPassArena, literals: &[u8], commands: &[u32], bw: &
     for &command in commands {
         let code = (command & 0xFF) as usize;
         let extra = command >> 8;
-        bw.write_bits(usize::from(s.cmd_depth.at(code)?), u64::from(s.cmd_bits.at(code)?))?;
+        bw.write_bits(
+            usize::from(s.cmd_depth.at(code)?),
+            u64::from(s.cmd_bits.at(code)?),
+        )?;
         bw.write_bits(usize::from(NUM_EXTRA_BITS.at(code)?), u64::from(extra))?;
         if let Some(&offset) = INSERT_OFFSET.get(code) {
             for &literal in literals.by_ref().take((offset + extra) as usize) {
                 let literal = usize::from(literal);
-                bw.write_bits(usize::from(s.lit_depth.at(literal)?), u64::from(s.lit_bits.at(literal)?))?;
+                bw.write_bits(
+                    usize::from(s.lit_depth.at(literal)?),
+                    u64::from(s.lit_bits.at(literal)?),
+                )?;
             }
         }
     }
@@ -468,7 +531,16 @@ pub(crate) fn compress_fragment_two_pass(
         let block = input.sub(start..start + block_size)?;
         command_buf.clear();
         literal_buf.clear();
-        create_commands(input, start, block_size, table, table_bits, min_match, literal_buf, command_buf)?;
+        create_commands(
+            input,
+            start,
+            block_size,
+            table,
+            table_bits,
+            min_match,
+            literal_buf,
+            command_buf,
+        )?;
         if should_compress(s, block, literal_buf.len())? {
             store_meta_block_header(block_size, false, bw)?;
             // No block splits, no contexts.

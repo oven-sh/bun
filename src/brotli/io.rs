@@ -40,7 +40,10 @@ impl<'a> SpareCapacity<'a> {
 impl Output for SpareCapacity<'_> {
     #[inline]
     fn available(&self) -> usize {
-        self.vec.capacity().min(self.limit).saturating_sub(self.vec.len())
+        self.vec
+            .capacity()
+            .min(self.limit)
+            .saturating_sub(self.vec.len())
     }
 
     #[inline]

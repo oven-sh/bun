@@ -39,7 +39,8 @@ const fn canonical_code<const N: usize>(depth: &[u8; N]) -> [u16; N] {
 
 /// A code for code lengths.
 pub(crate) static CODE_LENGTH_DEPTH: [u8; CODE_LENGTH_CODES] = CODE_LENGTH_DEPTH_;
-const CODE_LENGTH_DEPTH_: [u8; CODE_LENGTH_CODES] = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 0, 4, 4];
+const CODE_LENGTH_DEPTH_: [u8; CODE_LENGTH_CODES] =
+    [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 0, 4, 4];
 pub(crate) static CODE_LENGTH_BITS: [u16; CODE_LENGTH_CODES] = CODE_LENGTH_BITS_;
 const CODE_LENGTH_BITS_: [u16; CODE_LENGTH_CODES] = canonical_code(&CODE_LENGTH_DEPTH_);
 
@@ -61,7 +62,8 @@ const fn repeat_codes(mut reps: usize, repeat_code: usize, extra_bits: u8) -> Bi
     loop {
         // The last code is found first.
         let extra = (reps & ((1 << extra_bits) - 1)) as u32;
-        let code = CODE_LENGTH_BITS_[repeat_code] as u32 | (extra << CODE_LENGTH_DEPTH_[repeat_code]);
+        let code =
+            CODE_LENGTH_BITS_[repeat_code] as u32 | (extra << CODE_LENGTH_DEPTH_[repeat_code]);
         let depth = CODE_LENGTH_DEPTH_[repeat_code] + extra_bits;
         result.bits = (result.bits << depth) | code;
         result.depth += depth;
@@ -75,16 +77,25 @@ const fn repeat_codes(mut reps: usize, repeat_code: usize, extra_bits: u8) -> Bi
 
 /// `ZERO_REPS[n]` is a run of `n` code lengths of 0.
 pub(crate) static ZERO_REPS: [Bits; NUM_COMMAND_SYMBOLS] = {
-    let zero = Bits { bits: CODE_LENGTH_BITS_[0] as u32, depth: CODE_LENGTH_DEPTH_[0] };
+    let zero = Bits {
+        bits: CODE_LENGTH_BITS_[0] as u32,
+        depth: CODE_LENGTH_DEPTH_[0],
+    };
     let mut table = [Bits { bits: 0, depth: 0 }; NUM_COMMAND_SYMBOLS];
     let mut reps = 1;
     while reps < NUM_COMMAND_SYMBOLS {
         table[reps] = match reps {
             1 => zero,
-            2 => Bits { bits: zero.bits | (zero.bits << zero.depth), depth: 2 * zero.depth },
+            2 => Bits {
+                bits: zero.bits | (zero.bits << zero.depth),
+                depth: 2 * zero.depth,
+            },
             11 => {
                 let rest = repeat_codes(10 - 3, REPEAT_ZERO_CODE_LENGTH, 3);
-                Bits { bits: zero.bits | (rest.bits << zero.depth), depth: zero.depth + rest.depth }
+                Bits {
+                    bits: zero.bits | (rest.bits << zero.depth),
+                    depth: zero.depth + rest.depth,
+                }
             }
             _ => repeat_codes(reps - 3, REPEAT_ZERO_CODE_LENGTH, 3),
         };
@@ -115,7 +126,8 @@ const STATIC_COMMAND_CODE_DEPTH_: [u8; NUM_COMMAND_SYMBOLS] = {
     }
     depth
 };
-pub(crate) static STATIC_COMMAND_CODE_BITS: [u16; NUM_COMMAND_SYMBOLS] = canonical_code(&STATIC_COMMAND_CODE_DEPTH_);
+pub(crate) static STATIC_COMMAND_CODE_BITS: [u16; NUM_COMMAND_SYMBOLS] =
+    canonical_code(&STATIC_COMMAND_CODE_DEPTH_);
 
 /// Announces the code of [`STATIC_COMMAND_CODE_DEPTH`].
 pub(crate) fn store_static_command_huffman_tree(bw: &mut BitWriter<'_>) -> Checked {

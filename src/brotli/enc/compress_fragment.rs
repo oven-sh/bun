@@ -9,7 +9,9 @@ use super::entropy_encode::{HuffmanTree, convert_bit_depths_to_symbols, create_h
 use super::fast_log::{fast_log2, log2_floor_nonzero};
 use super::find_match_length::find_match_length_with_limit;
 use super::hash::HASH_MUL_32;
-use crate::common::constants::{NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, WINDOW_GAP, max_backward_limit};
+use crate::common::constants::{
+    NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, WINDOW_GAP, max_backward_limit,
+};
 use crate::util::{Checked, SliceExt, load_u32_le, load_u64_le};
 
 const MAX_DISTANCE: usize = max_backward_limit(18);
@@ -74,12 +76,17 @@ fn hash_bytes_at_offset(v: u64, offset: u32, shift: usize) -> usize {
 /// Whether the 5 bytes at `p1` and at `p2` are the same.
 #[inline(always)]
 fn is_match(input: &[u8], p1: usize, p2: usize) -> Checked<bool> {
-    Ok(load_u32_le(input, p1)? == load_u32_le(input, p2)? && input.at(p1 + 4)? == input.at(p2 + 4)?)
+    Ok(load_u32_le(input, p1)? == load_u32_le(input, p2)?
+        && input.at(p1 + 4)? == input.at(p2 + 4)?)
 }
 
 /// Builds a prefix code for literals from `input`, which only approximates the literals that are left once the matches
 /// are found, and writes it. Returns an estimate of how well it compresses them, in thousandths of a byte for each.
-fn build_and_store_literal_prefix_code(s: &mut OnePassArena, input: &[u8], bw: &mut BitWriter<'_>) -> Checked<usize> {
+fn build_and_store_literal_prefix_code(
+    s: &mut OnePassArena,
+    input: &[u8],
+    bw: &mut BitWriter<'_>,
+) -> Checked<usize> {
     let histogram = &mut s.histogram;
     let mut histogram_total;
     histogram.fill(0);
@@ -117,8 +124,11 @@ fn build_and_store_literal_prefix_code(s: &mut OnePassArena, input: &[u8], bw: &
         &mut s.lit_bits,
         bw,
     )?;
-    let literal_ratio: usize =
-        histogram.iter().zip(&s.lit_depth).map(|(&count, &depth)| (count * u32::from(depth)) as usize).sum();
+    let literal_ratio: usize = histogram
+        .iter()
+        .zip(&s.lit_depth)
+        .map(|(&count, &depth)| (count * u32::from(depth)) as usize)
+        .sum();
     Ok(literal_ratio * 125 / histogram_total)
 }
 
@@ -136,11 +146,25 @@ fn build_and_store_command_prefix_code(s: &mut OnePassArena, bw: &mut BitWriter<
     create_huffman_tree(dist_histo, 14, &mut s.tree, dist_depth)?;
     // The codes depend on the order of the symbols in the full alphabet, which is another one. The order here saves a
     // few branches when commands are written.
-    for (to, from, len) in [(0, 0, 24), (24, 40, 8), (32, 24, 8), (40, 48, 8), (48, 32, 8), (56, 56, 8)] {
+    for (to, from, len) in [
+        (0, 0, 24),
+        (24, 40, 8),
+        (32, 24, 8),
+        (40, 48, 8),
+        (48, 32, 8),
+        (56, 56, 8),
+    ] {
         tmp_depth.write_at(to, cmd_depth.sub(from..from + len)?)?;
     }
     convert_bit_depths_to_symbols(tmp_depth.sub(..64)?, tmp_bits)?;
-    for (to, from, len) in [(0, 0, 24), (24, 32, 8), (32, 48, 8), (40, 24, 8), (48, 40, 8), (56, 56, 8)] {
+    for (to, from, len) in [
+        (0, 0, 24),
+        (24, 32, 8),
+        (32, 48, 8),
+        (40, 24, 8),
+        (48, 40, 8),
+        (56, 56, 8),
+    ] {
         cmd_bits.write_at(to, tmp_bits.sub(from..from + len)?)?;
     }
     convert_bit_depths_to_symbols(dist_depth, dist_bits)?;
@@ -168,7 +192,10 @@ struct CommandWriter<'a> {
 impl CommandWriter<'_> {
     #[inline(always)]
     fn emit(&mut self, code: usize, bw: &mut BitWriter<'_>) -> Checked {
-        bw.write_bits(usize::from(self.depth.at(code)?), u64::from(self.bits.at(code)?))?;
+        bw.write_bits(
+            usize::from(self.depth.at(code)?),
+            u64::from(self.bits.at(code)?),
+        )?;
         *self.histo.at_mut(code)? += 1;
         Ok(())
     }
@@ -268,7 +295,12 @@ impl CommandWriter<'_> {
 }
 
 #[inline(always)]
-fn emit_literals(literals: &[u8], depth: &[u8; 256], bits: &[u16; 256], bw: &mut BitWriter<'_>) -> Checked {
+fn emit_literals(
+    literals: &[u8],
+    depth: &[u8; 256],
+    bits: &[u16; 256],
+    bw: &mut BitWriter<'_>,
+) -> Checked {
     for &lit in literals {
         let lit = usize::from(lit);
         bw.write_bits(usize::from(depth.at(lit)?), u64::from(bits.at(lit)?))?;
@@ -277,7 +309,11 @@ fn emit_literals(literals: &[u8], depth: &[u8; 256], bits: &[u16; 256], bw: &mut
 }
 
 /// `len` is at most `1 << 24`.
-pub(crate) fn store_meta_block_header(len: usize, is_uncompressed: bool, bw: &mut BitWriter<'_>) -> Checked {
+pub(crate) fn store_meta_block_header(
+    len: usize,
+    is_uncompressed: bool,
+    bw: &mut BitWriter<'_>,
+) -> Checked {
     let nibbles = if len <= (1 << 16) {
         4
     } else if len <= (1 << 20) {
@@ -303,7 +339,10 @@ fn update_bits(mut n_bits: usize, mut bits: u32, mut pos: usize, array: &mut [u8
         let mask = !((1u32 << total_bits) - 1) | ((1u32 << n_unchanged_bits) - 1);
         let unchanged_bits = u32::from(array.at(byte_pos)?) & mask;
         let changed_bits = bits & ((1u32 << n_changed_bits) - 1);
-        array.put(byte_pos, ((changed_bits << n_unchanged_bits) | unchanged_bits) as u8)?;
+        array.put(
+            byte_pos,
+            ((changed_bits << n_unchanged_bits) | unchanged_bits) as u8,
+        )?;
         n_bits -= n_changed_bits;
         bits >>= n_changed_bits;
         pos += n_changed_bits;
@@ -340,11 +379,19 @@ const MIN_RATIO: usize = 980;
 /// `compressed` is how much of the meta-block was already written when `insertlen` literals come up.
 #[inline(always)]
 fn should_use_uncompressed_mode(compressed: usize, insertlen: usize, literal_ratio: usize) -> bool {
-    if compressed * 50 > insertlen { false } else { literal_ratio > MIN_RATIO }
+    if compressed * 50 > insertlen {
+        false
+    } else {
+        literal_ratio > MIN_RATIO
+    }
 }
 
 /// Replaces what was written from `storage_ix_start` on by `bytes` as they are.
-fn emit_uncompressed_meta_block(bytes: &[u8], storage_ix_start: usize, bw: &mut BitWriter<'_>) -> Checked {
+fn emit_uncompressed_meta_block(
+    bytes: &[u8],
+    storage_ix_start: usize,
+    bw: &mut BitWriter<'_>,
+) -> Checked {
     rewind_bit_position(storage_ix_start, bw)?;
     store_meta_block_header(bytes.len(), true, bw)?;
     bw.pos = (bw.pos + 7) & !7;
@@ -402,19 +449,27 @@ fn compress_fragment_fast_impl(
     // No block splits, no contexts.
     bw.write_bits(13, 0)?;
 
-    let mut literal_ratio = build_and_store_literal_prefix_code(s, all_input.sub(input..input + block_size)?, bw)?;
+    let mut literal_ratio =
+        build_and_store_literal_prefix_code(s, all_input.sub(input..input + block_size)?, bw)?;
 
     let mut i = 0;
     while i + 7 < s.cmd_code_numbits {
         bw.write_bits(8, u64::from(s.cmd_code.at(i >> 3)?))?;
         i += 8;
     }
-    bw.write_bits(s.cmd_code_numbits & 7, u64::from(s.cmd_code.at(s.cmd_code_numbits >> 3)?))?;
+    bw.write_bits(
+        s.cmd_code_numbits & 7,
+        u64::from(s.cmd_code.at(s.cmd_code_numbits >> 3)?),
+    )?;
 
     loop {
         // The statistics of this block decide on the codes for commands and distances of the next one.
         s.cmd_histo = CMD_HISTO_SEED;
-        let mut cmd = CommandWriter { depth: &s.cmd_depth, bits: &s.cmd_bits, histo: &mut s.cmd_histo };
+        let mut cmd = CommandWriter {
+            depth: &s.cmd_depth,
+            bits: &s.cmd_bits,
+            histo: &mut s.cmd_histo,
+        };
         let (lit_depth, lit_bits) = (&s.lit_depth, &s.lit_bits);
 
         let mut ip = input;
@@ -469,19 +524,26 @@ fn compress_fragment_fast_impl(
                 // follows the other.
                 {
                     let base = ip;
-                    let matched = 5
-                        + find_match_length_with_limit(
-                            all_input.sub(candidate + 5..)?,
-                            all_input.sub(ip + 5..)?,
-                            ip_end - ip - 5,
-                        );
+                    let matched = 5 + find_match_length_with_limit(
+                        all_input.sub(candidate + 5..)?,
+                        all_input.sub(ip + 5..)?,
+                        ip_end - ip - 5,
+                    );
                     let distance = (base - candidate) as i32;
                     let insert = base - next_emit;
                     ip += matched;
                     if insert < 6210 {
                         cmd.emit_insert_len(insert, bw)?;
-                    } else if should_use_uncompressed_mode(next_emit - metablock_start, insert, literal_ratio) {
-                        emit_uncompressed_meta_block(all_input.sub(metablock_start..base)?, mlen_storage_ix - 3, bw)?;
+                    } else if should_use_uncompressed_mode(
+                        next_emit - metablock_start,
+                        insert,
+                        literal_ratio,
+                    ) {
+                        emit_uncompressed_meta_block(
+                            all_input.sub(metablock_start..base)?,
+                            mlen_storage_ix - 3,
+                            bw,
+                        )?;
                         input_size -= base - input;
                         input = base;
                         next_emit = input;
@@ -489,7 +551,12 @@ fn compress_fragment_fast_impl(
                     } else {
                         cmd.emit_long_insert_len(insert, bw)?;
                     }
-                    emit_literals(all_input.sub(next_emit..next_emit + insert)?, lit_depth, lit_bits, bw)?;
+                    emit_literals(
+                        all_input.sub(next_emit..next_emit + insert)?,
+                        lit_depth,
+                        lit_bits,
+                        bw,
+                    )?;
                     if distance == last_distance {
                         cmd.emit(64, bw)?;
                     } else {
@@ -518,12 +585,11 @@ fn compress_fragment_fast_impl(
                     }
                     // A match right after the last one, with no literals in between.
                     let base = ip;
-                    let matched = 5
-                        + find_match_length_with_limit(
-                            all_input.sub(candidate + 5..)?,
-                            all_input.sub(ip + 5..)?,
-                            ip_end - ip - 5,
-                        );
+                    let matched = 5 + find_match_length_with_limit(
+                        all_input.sub(candidate + 5..)?,
+                        all_input.sub(ip + 5..)?,
+                        ip_end - ip - 5,
+                    );
                     if ip - candidate > MAX_DISTANCE {
                         break;
                     }
@@ -551,11 +617,20 @@ fn compress_fragment_fast_impl(
             // Rather than end the meta-block with a command that only inserts, go on with it if that pays off.
             if input_size > 0
                 && total_block_size + block_size <= (1 << 20)
-                && should_merge_block(&mut s.histogram, all_input.sub(input..input + block_size)?, lit_depth)?
+                && should_merge_block(
+                    &mut s.histogram,
+                    all_input.sub(input..input + block_size)?,
+                    lit_depth,
+                )?
             {
                 // The old and the new size both take 5 nibbles, so the header can be changed in place.
                 total_block_size += block_size;
-                update_bits(20, (total_block_size - 1) as u32, mlen_storage_ix, bw.storage)?;
+                update_bits(
+                    20,
+                    (total_block_size - 1) as u32,
+                    mlen_storage_ix,
+                    bw.storage,
+                )?;
                 continue;
             }
 
@@ -564,8 +639,16 @@ fn compress_fragment_fast_impl(
                 if insert < 6210 {
                     cmd.emit_insert_len(insert, bw)?;
                     emit_literals(all_input.sub(next_emit..ip_end)?, lit_depth, lit_bits, bw)?;
-                } else if should_use_uncompressed_mode(next_emit - metablock_start, insert, literal_ratio) {
-                    emit_uncompressed_meta_block(all_input.sub(metablock_start..ip_end)?, mlen_storage_ix - 3, bw)?;
+                } else if should_use_uncompressed_mode(
+                    next_emit - metablock_start,
+                    insert,
+                    literal_ratio,
+                ) {
+                    emit_uncompressed_meta_block(
+                        all_input.sub(metablock_start..ip_end)?,
+                        mlen_storage_ix - 3,
+                        bw,
+                    )?;
                 } else {
                     cmd.emit_long_insert_len(insert, bw)?;
                     emit_literals(all_input.sub(next_emit..ip_end)?, lit_depth, lit_bits, bw)?;
@@ -585,14 +668,18 @@ fn compress_fragment_fast_impl(
         store_meta_block_header(block_size, false, bw)?;
         // No block splits, no contexts.
         bw.write_bits(13, 0)?;
-        literal_ratio = build_and_store_literal_prefix_code(s, all_input.sub(input..input + block_size)?, bw)?;
+        literal_ratio =
+            build_and_store_literal_prefix_code(s, all_input.sub(input..input + block_size)?, bw)?;
         build_and_store_command_prefix_code(s, bw)?;
     }
 
     if !is_last {
         // The codes for commands and distances of the next call.
         let mut cmd_code = [0u8; 512];
-        let mut cmd_code_writer = BitWriter { storage: &mut cmd_code, pos: 0 };
+        let mut cmd_code_writer = BitWriter {
+            storage: &mut cmd_code,
+            pos: 0,
+        };
         build_and_store_command_prefix_code(s, &mut cmd_code_writer)?;
         s.cmd_code_numbits = cmd_code_writer.pos;
         s.cmd_code = cmd_code;

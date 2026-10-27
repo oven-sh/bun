@@ -17,7 +17,11 @@ pub(crate) struct HuffmanTree {
 impl HuffmanTree {
     #[inline(always)]
     pub(crate) const fn new(count: u32, left: i16, right: i16) -> Self {
-        Self { total_count: count, index_left: left, index_right_or_value: right }
+        Self {
+            total_count: count,
+            index_left: left,
+            index_right_or_value: right,
+        }
     }
 }
 
@@ -68,7 +72,12 @@ pub(crate) fn sort_huffman_tree_items(
 }
 
 /// Stores the depth of every leaf below node `p0`. `false` if one is deeper than `max_depth`.
-pub(crate) fn set_depth(p0: usize, pool: &[HuffmanTree], depth: &mut [u8], max_depth: usize) -> Checked<bool> {
+pub(crate) fn set_depth(
+    p0: usize,
+    pool: &[HuffmanTree],
+    depth: &mut [u8],
+    max_depth: usize,
+) -> Checked<bool> {
     let mut stack = [-1i32; 16];
     let mut level = 0usize;
     let mut p = p0;
@@ -152,8 +161,14 @@ pub(crate) fn create_huffman_tree(
             let left = take_smaller(tree)?;
             let right = take_smaller(tree)?;
             let j_end = 2 * n - k;
-            let total_count = tree.at(left)?.total_count.wrapping_add(tree.at(right)?.total_count);
-            tree.put(j_end, HuffmanTree::new(total_count, left as i16, right as i16))?;
+            let total_count = tree
+                .at(left)?
+                .total_count
+                .wrapping_add(tree.at(right)?.total_count);
+            tree.put(
+                j_end,
+                HuffmanTree::new(total_count, left as i16, right as i16),
+            )?;
             tree.put(j_end + 1, sentinel)?;
         }
         if set_depth((2 * n).checked_sub(1).ok_or(Bug)?, tree, depth, tree_limit)? {
@@ -185,7 +200,12 @@ impl HuffmanTreeCode<'_> {
         Ok(())
     }
 
-    fn write_repetitions(&mut self, previous_value: u8, value: u8, mut repetitions: usize) -> Checked {
+    fn write_repetitions(
+        &mut self,
+        previous_value: u8,
+        value: u8,
+        mut repetitions: usize,
+    ) -> Checked {
         if previous_value != value {
             self.push(value, 0)?;
             repetitions -= 1;
@@ -246,7 +266,11 @@ impl HuffmanTreeCode<'_> {
         let depth = depth.sub(..new_length)?;
 
         // Short codes do not seem to benefit from repeat codes.
-        let (use_rle_for_non_zero, use_rle_for_zero) = if length > 50 { decide_over_rle_use(depth) } else { (false, false) };
+        let (use_rle_for_non_zero, use_rle_for_zero) = if length > 50 {
+            decide_over_rle_use(depth)
+        } else {
+            (false, false)
+        };
 
         let mut previous_value = INITIAL_REPEATED_CODE_LENGTH as u8;
         let mut i = 0;
@@ -271,12 +295,17 @@ impl HuffmanTreeCode<'_> {
 /// How many elements at the start of `values` equal the first.
 #[inline(always)]
 fn run_length(values: &[u8]) -> usize {
-    values.first().map_or(0, |first| values.iter().take_while(|&value| value == first).count())
+    values.first().map_or(0, |first| {
+        values.iter().take_while(|&value| value == first).count()
+    })
 }
 
 /// Changes the histogram `counts` so that the code lengths of its prefix code have longer runs, which take less room.
 /// `good_for_rle` is scratch space as long as `counts`.
-pub(crate) fn optimize_huffman_counts_for_rle(counts: &mut [u32], good_for_rle: &mut [u8]) -> Checked {
+pub(crate) fn optimize_huffman_counts_for_rle(
+    counts: &mut [u32],
+    good_for_rle: &mut [u8],
+) -> Checked {
     const STREAK_LIMIT: usize = 1240;
     if counts.iter().filter(|&&count| count != 0).count() < 16 {
         return Ok(());
@@ -288,7 +317,12 @@ pub(crate) fn optimize_huffman_counts_for_rle(counts: &mut [u32], good_for_rle: 
     let counts = counts.sub_mut(..length)?;
     {
         let nonzeros = counts.iter().filter(|&&count| count != 0).count();
-        let smallest_nonzero = counts.iter().copied().filter(|&count| count != 0).min().map_or(1 << 30, |m| m.min(1 << 30));
+        let smallest_nonzero = counts
+            .iter()
+            .copied()
+            .filter(|&count| count != 0)
+            .min()
+            .map_or(1 << 30, |m| m.min(1 << 30));
         if nonzeros < 5 {
             return Ok(());
         }
@@ -327,7 +361,9 @@ pub(crate) fn optimize_huffman_counts_for_rle(counts: &mut [u32], good_for_rle: 
         }
     }
     // Replace counts that are close to each other by their average. The math is in 24.8 fixed point.
-    let limit_of_three = |a: u32, b: u32, c: u32| (256u32.wrapping_mul(a.wrapping_add(b).wrapping_add(c)) / 3 + 420) as usize;
+    let limit_of_three = |a: u32, b: u32, c: u32| {
+        (256u32.wrapping_mul(a.wrapping_add(b).wrapping_add(c)) / 3 + 420) as usize
+    };
     let mut stride = 0usize;
     let mut limit = limit_of_three(counts.at(0)?, counts.at(1)?, counts.at(2)?);
     let mut sum = 0usize;
@@ -335,12 +371,18 @@ pub(crate) fn optimize_huffman_counts_for_rle(counts: &mut [u32], good_for_rle: 
         if i == length
             || good_for_rle.at(i)? != 0
             || (i != 0 && good_for_rle.at(i - 1)? != 0)
-            || (256u32.wrapping_mul(counts.at(i)?) as usize).wrapping_sub(limit).wrapping_add(STREAK_LIMIT)
+            || (256u32.wrapping_mul(counts.at(i)?) as usize)
+                .wrapping_sub(limit)
+                .wrapping_add(STREAK_LIMIT)
                 >= 2 * STREAK_LIMIT
         {
             if stride >= 4 || (stride >= 3 && sum == 0) {
                 // The stride ends here. A stride of zeros stays one.
-                let count = if sum == 0 { 0 } else { ((sum + stride / 2) / stride).max(1) };
+                let count = if sum == 0 {
+                    0
+                } else {
+                    ((sum + stride / 2) / stride).max(1)
+                };
                 counts.sub_mut(i - stride..i)?.fill(count as u32);
             }
             stride = 0;
@@ -386,7 +428,10 @@ fn decide_over_rle_use(depth: &[u8]) -> (bool, bool) {
         }
         rest = rest.get(reps..).unwrap_or_default();
     }
-    (total_reps_non_zero > count_reps_non_zero * 2, total_reps_zero > count_reps_zero * 2)
+    (
+        total_reps_non_zero > count_reps_non_zero * 2,
+        total_reps_zero > count_reps_zero * 2,
+    )
 }
 
 /// The low `num_bits` of `bits` in reverse order.

@@ -1,9 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("BrotliFailedToLoad")]
-    BrotliFailedToLoad,
-    #[error("BrotliFailedToCreateInstance")]
-    BrotliFailedToCreateInstance,
     #[error("BrotliDecompressionError")]
     BrotliDecompressionError,
     /// The output, or the decoder state the stream's window size dictates, could not be allocated.
@@ -17,8 +13,6 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::BrotliFailedToLoad => "BrotliFailedToLoad",
-            Self::BrotliFailedToCreateInstance => "BrotliFailedToCreateInstance",
             Self::BrotliDecompressionError => "BrotliDecompressionError",
             Self::OutOfMemory => "OutOfMemory",
             Self::ShortRead => "ShortRead",

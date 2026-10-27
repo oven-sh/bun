@@ -22,13 +22,14 @@ pub(crate) struct Transform {
 }
 
 const fn t(prefix: u8, kind: Kind, suffix: u8) -> Transform {
-    Transform { prefix, kind, suffix }
+    Transform {
+        prefix,
+        kind,
+        suffix,
+    }
 }
 
 pub(crate) const NUM_TRANSFORMS: usize = 121;
-
-/// The longest word between the two longest affixes.
-pub(crate) const MAX_TRANSFORMED_LENGTH: usize = 8 + crate::common::dictionary::MAX_DICTIONARY_WORD_LENGTH + 8;
 
 /// `CUT_OFF_TRANSFORMS[n]` is the transform that only omits the last `n` bytes.
 pub(crate) static CUT_OFF_TRANSFORMS: [u8; 10] = [0, 12, 27, 23, 42, 63, 56, 48, 59, 64];
@@ -192,7 +193,11 @@ fn to_upper_case(dst: &mut [u8], at: usize) -> Checked<usize> {
 
 /// Writes transform `index` of `word` to the start of `dst` and returns its length. `dst` has to have room for
 /// [`MAX_TRANSFORMED_LENGTH`] + 2 bytes.
-pub(crate) fn transform_dictionary_word(dst: &mut [u8], word: &[u8], index: usize) -> Checked<usize> {
+pub(crate) fn transform_dictionary_word(
+    dst: &mut [u8],
+    word: &[u8],
+    index: usize,
+) -> Checked<usize> {
     let transform = TRANSFORMS.at(index)?;
     let prefix = AFFIXES.at(usize::from(transform.prefix))?;
     let suffix = AFFIXES.at(usize::from(transform.suffix))?;

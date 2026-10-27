@@ -3,10 +3,9 @@
 //! | ABI                              | alloc signature                          | free signature             |
 //! |----------------------------------|------------------------------------------|----------------------------|
 //! | zlib `alloc_func`/`free_func`    | `(opaque, items: c_uint, size: c_uint)`  | `(opaque, ptr)`            |
-//! | brotli `brotli_alloc/free_func`  | `(opaque, size: usize)`                  | `(opaque, ptr)`            |
 //! | JSC `JSTypedArrayBytesDeallocator` | —                                      | `(bytes, ctx)`             |
 //!
-//! The zone-tagged zlib and brotli variants are minted per-label by
+//! The zone-tagged zlib variant is minted per-label by
 //! [`c_thunks_for_zone!`].
 
 use core::ffi::c_void;
@@ -32,9 +31,9 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
 /// non-macOS) the thunks fall straight through to the default allocator.
 ///
 /// Generated items:
-/// - `malloc_size(_, len: usize) -> *mut c_void` — brotli-shape, non-zeroing.
+/// - `malloc_size(_, len: usize) -> *mut c_void` — non-zeroing.
 ///   Safe `extern "C" fn` (opaque cookie ignored; body is all-safe).
-/// - `malloc_items(_, items: c_uint, len: c_uint) -> *mut c_void` — zlib-shape, non-zeroing. Both return null on failure, which zlib and brotli report as their own OOM errors.
+/// - `malloc_items(_, items: c_uint, len: c_uint) -> *mut c_void` — zlib-shape, non-zeroing. Both return null on failure, which zlib reports as its own OOM error.
 /// - `free(_, ptr: *mut c_void)` — paired with either alloc. `unsafe`
 ///   (precondition: `ptr` was allocated by this zone / the default allocator).
 ///

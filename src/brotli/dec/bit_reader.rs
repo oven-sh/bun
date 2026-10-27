@@ -49,7 +49,11 @@ impl BitReader {
 
     #[inline(always)]
     pub(crate) fn save_state(&self) -> BitReaderState {
-        BitReaderState { val: self.val, bit_pos: self.bit_pos, next_in: self.next_in }
+        BitReaderState {
+            val: self.val,
+            bit_pos: self.bit_pos,
+            next_in: self.next_in,
+        }
     }
 
     #[inline(always)]
@@ -239,7 +243,11 @@ impl BitReader {
     /// Skips to the next byte of the input. Whether the bits skipped were all 0.
     pub(crate) fn jump_to_byte_boundary(&mut self) -> bool {
         let pad_bits_count = self.bit_pos & 7;
-        let pad_bits = if pad_bits_count != 0 { self.take_bits(pad_bits_count) } else { 0 };
+        let pad_bits = if pad_bits_count != 0 {
+            self.take_bits(pad_bits_count)
+        } else {
+            0
+        };
         self.normalize();
         pad_bits == 0
     }

@@ -1,7 +1,7 @@
 use bun_core::MutableString;
 use bun_http_types::Encoding::Encoding;
 
-// The streaming decoders below own only their C-side state and take
+// The streaming decoders below own only their decoder state and take
 // `(input, output)` per call to [`Decompressor::decompress_chunk`], so no
 // borrow of the request's `compressed_body` / `body_out_str` escapes the
 // call.
@@ -22,7 +22,7 @@ pub(crate) fn has_zlib_header(buffer: &[u8]) -> bool {
 }
 
 impl Decompressor {
-    // Note: each variant's `Drop` releases the underlying C state, so an
+    // Note: each variant's `Drop` releases the decoder state, so an
     // explicit `Drop` is unnecessary. Callers that want a mid-lifecycle reset
     // assign `*self = Decompressor::None`.
 
@@ -56,9 +56,7 @@ impl Decompressor {
                 *self = Decompressor::Zlib(bun_zlib::InflateDecoder::new(window_bits)?);
             }
             Encoding::Brotli => {
-                *self = Decompressor::Brotli(Box::new(bun_brotli::StreamingDecoder::new(
-                    &Default::default(),
-                )?));
+                *self = Decompressor::Brotli(Box::new(bun_brotli::StreamingDecoder::new()));
             }
             Encoding::Zstd => {
                 *self = Decompressor::Zstd(Box::new(bun_zstd::StreamingDecoder::new()?));

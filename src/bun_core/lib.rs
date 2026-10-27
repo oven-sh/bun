@@ -375,6 +375,18 @@ pub mod vec {
         unsafe { v.set_len(prev + n) };
     }
 
+    /// `len` zeroed elements, or an error if there is no memory for them.
+    ///
+    /// The allocator is asked for zeroed memory, so pages that come fresh from
+    /// the OS are not written to: a large table of which little gets used
+    /// costs little.
+    #[inline]
+    pub fn try_zeroed<T: crate::Zeroable>(len: usize) -> Result<Vec<T>, bun_alloc::AllocError> {
+        let zeroed = Box::<[T]>::try_new_zeroed_slice(len).map_err(|_| bun_alloc::AllocError)?;
+        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
+        Ok(unsafe { zeroed.assume_init() }.into_vec())
+    }
+
     /// Extend `v` by `n` `T::default()` elements and return a mutable slice
     /// of the newly-appended tail (`&mut v[prev_len .. prev_len + n]`).
     ///

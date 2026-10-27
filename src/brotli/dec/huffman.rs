@@ -53,7 +53,13 @@ fn reverse_bits(num: u32) -> usize {
 
 /// Stores `code` in `table[start]`, `table[start + step]` and so on, up to `end`.
 #[inline(always)]
-fn replicate_value(table: &mut [HuffmanCode], start: usize, step: usize, end: usize, code: HuffmanCode) -> Checked {
+fn replicate_value(
+    table: &mut [HuffmanCode],
+    start: usize,
+    step: usize,
+    end: usize,
+    code: HuffmanCode,
+) -> Checked {
     for entry in table.sub_mut(start..end)?.iter_mut().step_by(step) {
         *entry = code;
     }
@@ -63,7 +69,11 @@ fn replicate_value(table: &mut [HuffmanCode], start: usize, step: usize, end: us
 /// How many bits the next second level table is indexed with. `count` is the histogram of the code lengths of the
 /// symbols still to place, and `len` the code length of the next one.
 #[inline(always)]
-fn next_table_bit_size(count: &[u16; HUFFMAN_MAX_CODE_LENGTH + 1], mut len: usize, root_bits: usize) -> Checked<usize> {
+fn next_table_bit_size(
+    count: &[u16; HUFFMAN_MAX_CODE_LENGTH + 1],
+    mut len: usize,
+    root_bits: usize,
+) -> Checked<usize> {
     let mut left = 1i32 << (len - root_bits);
     while len < HUFFMAN_MAX_CODE_LENGTH {
         left -= i32::from(count.at(len)?);
@@ -179,13 +189,22 @@ pub(crate) fn build_huffman_table(
                 total_size += table_size;
                 let root_key = reverse_bits(key);
                 key += key_step;
-                root_table.put(root_key, HuffmanCode::new((table_bits + root_bits) as u8, (table - root_key) as u16))?;
+                root_table.put(
+                    root_key,
+                    HuffmanCode::new((table_bits + root_bits) as u8, (table - root_key) as u16),
+                )?;
                 sub_key = 0;
             }
             let symbol = symbol_lists.at(link)?;
             link = SYMBOL_LIST_BASE + usize::from(symbol);
             let code = HuffmanCode::new((len - root_bits) as u8, symbol);
-            replicate_value(root_table.sub_mut(table..)?, reverse_bits(sub_key), step, table_size, code)?;
+            replicate_value(
+                root_table.sub_mut(table..)?,
+                reverse_bits(sub_key),
+                step,
+                table_size,
+                code,
+            )?;
             sub_key += sub_key_step;
             *count.at_mut(len)? -= 1;
         }
@@ -217,12 +236,28 @@ pub(crate) fn build_simple_huffman_table(
         }
         2 => {
             val[1..3].sort_unstable();
-            table.write_at(0, &[code(1, val[0]), code(2, val[1]), code(1, val[0]), code(2, val[2])])?;
+            table.write_at(
+                0,
+                &[
+                    code(1, val[0]),
+                    code(2, val[1]),
+                    code(1, val[0]),
+                    code(2, val[2]),
+                ],
+            )?;
             4
         }
         3 => {
             val.sort_unstable();
-            table.write_at(0, &[code(2, val[0]), code(2, val[2]), code(2, val[1]), code(2, val[3])])?;
+            table.write_at(
+                0,
+                &[
+                    code(2, val[0]),
+                    code(2, val[2]),
+                    code(2, val[1]),
+                    code(2, val[3]),
+                ],
+            )?;
             4
         }
         4 => {

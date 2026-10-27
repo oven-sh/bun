@@ -32,7 +32,10 @@ pub(crate) fn population_cost<const N: usize>(histogram: &Histogram<N>) -> Check
     // The counts of the first five symbols that occur.
     let mut histo = [0u32; 5];
     let mut count = 0;
-    for (slot, &n) in histo.iter_mut().zip(histogram.data.iter().filter(|&&n| n > 0)) {
+    for (slot, &n) in histo
+        .iter_mut()
+        .zip(histogram.data.iter().filter(|&&n| n > 0))
+    {
         *slot = n;
         count += 1;
     }
@@ -76,7 +79,12 @@ pub(crate) fn population_cost<const N: usize>(histogram: &Histogram<N>) -> Check
             *depth_histo.at_mut(depth)? += 1;
             i += 1;
         } else {
-            let mut reps = histogram.data.sub(i..)?.iter().take_while(|&&n| n == 0).count() as u32;
+            let mut reps = histogram
+                .data
+                .sub(i..)?
+                .iter()
+                .take_while(|&&n| n == 0)
+                .count() as u32;
             i += reps as usize;
             if i == N {
                 // The zeros at the end are not written.

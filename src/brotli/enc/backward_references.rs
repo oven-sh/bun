@@ -1,22 +1,296 @@
-//! STUB: to be replaced by the port of backward_references.c and backward_references_inc.h.
+//! Turns the input into commands, greedily with a little lookahead (qualities 2 to 9).
+
 use super::command::Command;
-use super::hash::Hasher;
+use super::hash::{
+    Hasher, HasherCommon, HasherImpl, HasherKind, HasherSearchResult, SCORE_BASE,
+    StaticDictionarySearch, lookup_compound_dictionary_match,
+};
 use super::params::EncoderParams;
+use super::quality::MIN_QUALITY_FOR_EXTENSIVE_REFERENCE_SEARCH;
+use crate::common::constants::{NUM_DISTANCE_SHORT_CODES, max_backward_limit};
 use crate::common::context::ContextLut;
 use crate::util::{Bug, Checked};
 
-pub(crate) fn create_backward_references(
-    _num_bytes: usize,
-    _position: usize,
-    _ringbuffer: &[u8],
-    _ringbuffer_mask: usize,
-    _literal_context_lut: &ContextLut,
-    _params: &EncoderParams,
-    _hasher: &mut Hasher,
-    _dist_cache: &mut [i32; 16],
-    _last_insert_len: &mut usize,
-    _commands: &mut Vec<Command>,
-    _num_literals: &mut usize,
+/// One of the 16 short codes if `distance` is one of, or close to one of, the last distances. Else the distance + 15.
+#[inline(always)]
+fn compute_distance_code(distance: usize, max_distance: usize, dist_cache: &[i32; 16]) -> usize {
+    if distance <= max_distance {
+        let distance_plus_3 = distance + 3;
+        let offset0 = distance_plus_3.wrapping_sub(dist_cache[0] as usize);
+        let offset1 = distance_plus_3.wrapping_sub(dist_cache[1] as usize);
+        if distance == dist_cache[0] as usize {
+            return 0;
+        } else if distance == dist_cache[1] as usize {
+            return 1;
+        } else if offset0 < 7 {
+            return (0x975_0468 >> (4 * offset0)) & 0xF;
+        } else if offset1 < 7 {
+            return (0xFDB_1ACE >> (4 * offset1)) & 0xF;
+        } else if distance == dist_cache[2] as usize {
+            return 2;
+        } else if distance == dist_cache[3] as usize {
+            return 3;
+        }
+    }
+    distance + NUM_DISTANCE_SHORT_CODES as usize - 1
+}
+
+/// `COMPOUND` is whether to look in the compound dictionary too.
+#[inline(never)]
+fn create_backward_references_with<H: HasherImpl, const COMPOUND: bool>(
+    num_bytes: usize,
+    mut position: usize,
+    ringbuffer: &[u8],
+    ringbuffer_mask: usize,
+    params: &EncoderParams,
+    hasher: &mut H,
+    common: &mut HasherCommon,
+    dist_cache: &mut [i32; 16],
+    last_insert_len: &mut usize,
+    commands: &mut Vec<Command>,
+    num_literals: &mut usize,
 ) -> Checked {
-    Err(Bug)
+    let mut dictionary = StaticDictionarySearch::new(common);
+    // 9.1. The largest distance.
+    let max_backward_limit = max_backward_limit(params.lgwin as u32);
+    let position_offset = params.stream_offset;
+
+    let mut insert_length = *last_insert_len;
+    let pos_end = position + num_bytes;
+    let store_end = if num_bytes >= H::STORE_LOOKAHEAD {
+        position + num_bytes - H::STORE_LOOKAHEAD + 1
+    } else {
+        position
+    };
+
+    // To go faster through data that looks random.
+    let random_heuristics_window_size = params.literal_spree_length_for_sparse_search();
+    let mut apply_random_heuristics = position + random_heuristics_window_size;
+    let gap = params.dictionary.total_size;
+
+    // What a backward reference has to score to be accepted.
+    const MIN_SCORE: usize = SCORE_BASE + 100;
+
+    hasher.prepare_distance_cache(dist_cache);
+
+    while position + H::HASH_TYPE_LENGTH < pos_end {
+        let mut max_length = pos_end - position;
+        let mut max_distance = position.min(max_backward_limit);
+        let mut dictionary_start = (position + position_offset).min(max_backward_limit);
+        let mut sr = HasherSearchResult {
+            len: 0,
+            len_code_delta: 0,
+            distance: 0,
+            score: MIN_SCORE,
+        };
+        hasher.find_longest_match(
+            &mut dictionary,
+            ringbuffer,
+            ringbuffer_mask,
+            dist_cache,
+            position,
+            max_length,
+            max_distance,
+            dictionary_start + gap,
+            params.dist.max_distance,
+            &mut sr,
+        )?;
+        if COMPOUND {
+            lookup_compound_dictionary_match(
+                &params.dictionary,
+                ringbuffer,
+                ringbuffer_mask,
+                dist_cache,
+                position,
+                max_length,
+                dictionary_start,
+                params.dist.max_distance,
+                &mut sr,
+            )?;
+        }
+        if sr.score > MIN_SCORE {
+            // Found a match. There may be a better one right after.
+            let mut delayed_backward_references_in_row = 0;
+            max_length -= 1;
+            loop {
+                const COST_DIFF_LAZY: usize = 175;
+                let mut sr2 = HasherSearchResult {
+                    len: if params.quality < MIN_QUALITY_FOR_EXTENSIVE_REFERENCE_SEARCH {
+                        (sr.len - 1).min(max_length)
+                    } else {
+                        0
+                    },
+                    len_code_delta: 0,
+                    distance: 0,
+                    score: MIN_SCORE,
+                };
+                max_distance = (position + 1).min(max_backward_limit);
+                dictionary_start = (position + 1 + position_offset).min(max_backward_limit);
+                hasher.find_longest_match(
+                    &mut dictionary,
+                    ringbuffer,
+                    ringbuffer_mask,
+                    dist_cache,
+                    position + 1,
+                    max_length,
+                    max_distance,
+                    dictionary_start + gap,
+                    params.dist.max_distance,
+                    &mut sr2,
+                )?;
+                if COMPOUND {
+                    lookup_compound_dictionary_match(
+                        &params.dictionary,
+                        ringbuffer,
+                        ringbuffer_mask,
+                        dist_cache,
+                        position + 1,
+                        max_length,
+                        dictionary_start,
+                        params.dist.max_distance,
+                        &mut sr2,
+                    )?;
+                }
+                if sr2.score >= sr.score + COST_DIFF_LAZY {
+                    // Write one literal, and start the match at the next byte.
+                    position += 1;
+                    insert_length += 1;
+                    sr = sr2;
+                    delayed_backward_references_in_row += 1;
+                    if delayed_backward_references_in_row < 4
+                        && position + H::HASH_TYPE_LENGTH < pos_end
+                    {
+                        max_length -= 1;
+                        continue;
+                    }
+                }
+                break;
+            }
+            apply_random_heuristics = position + 2 * sr.len + random_heuristics_window_size;
+            dictionary_start = (position + position_offset).min(max_backward_limit);
+            let distance_code =
+                compute_distance_code(sr.distance, dictionary_start + gap, dist_cache);
+            if sr.distance <= dictionary_start + gap && distance_code > 0 {
+                dist_cache[3] = dist_cache[2];
+                dist_cache[2] = dist_cache[1];
+                dist_cache[1] = dist_cache[0];
+                dist_cache[0] = sr.distance as i32;
+                hasher.prepare_distance_cache(dist_cache);
+            }
+            commands.push(Command::new(
+                &params.dist,
+                insert_length,
+                sr.len,
+                sr.len_code_delta,
+                distance_code,
+            ));
+            *num_literals += insert_length;
+            insert_length = 0;
+            // Add the positions of the copy to the table, as far as there are enough bytes left to hash. Not all of
+            // them for a run, which would fill the table with the same thing.
+            let mut range_start = position + 2;
+            let range_end = (position + sr.len).min(store_end);
+            if sr.distance < (sr.len >> 2) {
+                range_start =
+                    range_end.min(range_start.max(position + sr.len - (sr.distance << 2)));
+            }
+            hasher.store_range(ringbuffer, ringbuffer_mask, range_start, range_end)?;
+            position += sr.len;
+        } else {
+            insert_length += 1;
+            position += 1;
+            // A lookup that finds nothing is very expensive. After a long time without a match, some are skipped.
+            if position > apply_random_heuristics {
+                if position > apply_random_heuristics + 4 * random_heuristics_window_size {
+                    // It has been so long that the data must be incompressible. Its hashes are not likely to be of use
+                    // either, so fewer are stored, which leaves those of compressible data in the table.
+                    let margin = (H::STORE_LOOKAHEAD - 1).max(4);
+                    let pos_jump = (position + 16).min(pos_end.wrapping_sub(margin));
+                    while position < pos_jump {
+                        hasher.store(ringbuffer, ringbuffer_mask, position)?;
+                        insert_length += 4;
+                        position += 4;
+                    }
+                } else {
+                    let margin = (H::STORE_LOOKAHEAD - 1).max(2);
+                    let pos_jump = (position + 8).min(pos_end.wrapping_sub(margin));
+                    while position < pos_jump {
+                        hasher.store(ringbuffer, ringbuffer_mask, position)?;
+                        insert_length += 2;
+                        position += 2;
+                    }
+                }
+            }
+        }
+    }
+    insert_length += pos_end.wrapping_sub(position);
+    *last_insert_len = insert_length;
+    Ok(())
+}
+
+/// Appends the commands for the `num_bytes` at `position` to `commands`, which has room for one for every 2 bytes.
+/// The literals after the last copy are left for the next call, in `last_insert_len`.
+pub(crate) fn create_backward_references(
+    num_bytes: usize,
+    position: usize,
+    ringbuffer: &[u8],
+    ringbuffer_mask: usize,
+    _literal_context_lut: &ContextLut,
+    params: &EncoderParams,
+    hasher: &mut Hasher,
+    dist_cache: &mut [i32; 16],
+    last_insert_len: &mut usize,
+    commands: &mut Vec<Command>,
+    num_literals: &mut usize,
+) -> Checked {
+    let common = &mut hasher.common;
+    macro_rules! run {
+        ($hasher:expr, $compound:literal) => {
+            create_backward_references_with::<_, $compound>(
+                num_bytes,
+                position,
+                ringbuffer,
+                ringbuffer_mask,
+                params,
+                $hasher,
+                common,
+                dist_cache,
+                last_insert_len,
+                commands,
+                num_literals,
+            )
+        };
+    }
+    if !params.dictionary.chunks.is_empty() {
+        // The hashers of the lowest qualities ignore the compound dictionary.
+        match &mut hasher.kind {
+            HasherKind::H5(h) => return run!(h, true),
+            HasherKind::H6(h) => return run!(h, true),
+            HasherKind::H58(h) => return run!(h, true),
+            HasherKind::H68(h) => return run!(h, true),
+            HasherKind::H40(h) => return run!(&mut **h, true),
+            HasherKind::H41(h) => return run!(&mut **h, true),
+            HasherKind::H42(h) => return run!(&mut **h, true),
+            HasherKind::H55(h) => return run!(h, true),
+            HasherKind::H65(h) => return run!(h, true),
+            _ => {}
+        }
+    }
+    match &mut hasher.kind {
+        HasherKind::H2(h) => run!(h, false),
+        HasherKind::H3(h) => run!(h, false),
+        HasherKind::H4(h) => run!(h, false),
+        HasherKind::H5(h) => run!(h, false),
+        HasherKind::H6(h) => run!(h, false),
+        HasherKind::H40(h) => run!(&mut **h, false),
+        HasherKind::H41(h) => run!(&mut **h, false),
+        HasherKind::H42(h) => run!(&mut **h, false),
+        HasherKind::H54(h) => run!(h, false),
+        HasherKind::H58(h) => run!(h, false),
+        HasherKind::H68(h) => run!(h, false),
+        HasherKind::H35(h) => run!(h, false),
+        HasherKind::H55(h) => run!(h, false),
+        HasherKind::H65(h) => run!(h, false),
+        HasherKind::H10(_) | HasherKind::NotSetUp => Err(Bug),
+    }
 }

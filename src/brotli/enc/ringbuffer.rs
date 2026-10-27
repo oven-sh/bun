@@ -2,7 +2,7 @@
 
 use super::Fallible;
 use super::params::EncoderParams;
-use crate::util::{OutOfMemory, SliceExt};
+use crate::util::{Checked, OutOfMemory, SliceExt};
 
 /// So that 8 bytes can be hashed at every position.
 const SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE: usize = 7;
@@ -15,11 +15,15 @@ pub(crate) struct RingBuffer {
     tail_size: u32,
     total_size: u32,
 
+    /// How much room was asked for.
     cur_size: u32,
     /// How much was written, modulo 2^31. The highest bit is set once that has wrapped around.
     pub(crate) pos: u32,
-    /// `cur_size` bytes and the slack.
+    /// `total_size` bytes and the slack once the input gets near `size`. Until then only the input and the slack, with
+    /// the capacity for the rest, so that memory which a short input does not need is never touched.
     buffer: Vec<u8>,
+    /// How many bytes were written before there was room for the tail. There is no copy of these in it.
+    not_in_tail: u32,
 }
 
 impl RingBuffer {
@@ -37,13 +41,53 @@ impl RingBuffer {
         &self.buffer
     }
 
-    /// Makes room for `buflen` bytes and keeps what is there.
+    /// Whether anything was written yet.
+    #[inline(always)]
+    pub(crate) fn is_allocated(&self) -> bool {
+        !self.buffer.is_empty()
+    }
+
+    /// Until the buffer has been filled once, clears the 7 bytes after the last one written, which hashing at the last
+    /// positions reads. Later on these hold older input.
+    pub(crate) fn clear_after_end(&mut self) -> Checked {
+        if self.pos <= self.mask {
+            *self.buffer.array_at_mut(self.pos as usize)? =
+                [0; SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE];
+        }
+        Ok(())
+    }
+
+    /// Makes room for `buflen` bytes and keeps the `pos` bytes that are there.
     fn init_buffer(&mut self, buflen: u32) -> Result<(), OutOfMemory> {
-        let new_len = buflen as usize + SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE;
-        self.buffer.truncate(self.cur_size as usize);
-        self.buffer.try_reserve_exact(new_len - self.buffer.len()).map_err(|_| OutOfMemory)?;
-        self.buffer.resize(new_len, 0);
+        self.buffer.truncate(self.pos as usize);
+        let capacity = buflen as usize + SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE;
+        self.buffer
+            .try_reserve_exact(capacity - self.buffer.len())
+            .map_err(|_| OutOfMemory)?;
         self.cur_size = buflen;
+        Ok(())
+    }
+
+    fn is_complete(&self) -> bool {
+        self.buffer.len() > self.total_size as usize
+    }
+
+    /// Fills in what was left out so far: zeros up to `size`, and the tail.
+    fn complete(&mut self) -> Checked {
+        let size = self.size as usize;
+        self.buffer.truncate(self.pos as usize);
+        self.buffer.resize(size, 0);
+        self.buffer.extend_from_within(..self.tail_size as usize);
+        self.buffer
+            .sub_mut(size..size + self.not_in_tail as usize)?
+            .fill(0);
+        // A match that is extended by one byte can look at this one when the ring buffer is full. The reference encoder
+        // sets it before anything is written to the tail.
+        if self.not_in_tail != 0 {
+            self.buffer.put(size, 241)?;
+        }
+        self.buffer
+            .extend_from_slice(&[0; SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE]);
         Ok(())
     }
 
@@ -59,19 +103,31 @@ impl RingBuffer {
 
     /// Appends `bytes`, which is no longer than `tail_size`.
     pub(crate) fn write(&mut self, bytes: &[u8]) -> Fallible {
+        const SLACK: [u8; SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE] =
+            [0; SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE];
         let n = bytes.len();
         if self.pos == 0 && n < self.tail_size as usize {
             // A first write that is shorter than a block is likely to be the only one, and then neither the whole ring
             // buffer nor the tail is needed.
+            self.init_buffer(n as u32)?;
+            self.buffer.extend_from_slice(bytes);
+            self.buffer.extend_from_slice(&SLACK);
             self.pos = n as u32;
-            self.init_buffer(self.pos)?;
-            self.buffer.write_at(0, bytes)?;
+            self.not_in_tail = n as u32;
             return Ok(());
         }
         if self.cur_size < self.total_size {
             self.init_buffer(self.total_size)?;
-            // A match that is extended by one byte can look at this one when the ring buffer is full.
-            self.buffer.put(self.size as usize, 241)?;
+        }
+        if !self.is_complete() {
+            if self.pos as usize + n + SLACK.len() <= self.size as usize {
+                self.buffer.truncate(self.pos as usize);
+                self.buffer.extend_from_slice(bytes);
+                self.buffer.extend_from_slice(&SLACK);
+                self.pos += n as u32;
+                return Ok(());
+            }
+            self.complete()?;
         }
         let masked_pos = (self.pos & self.mask) as usize;
         let size = self.size as usize;

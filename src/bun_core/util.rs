@@ -517,7 +517,7 @@ macro_rules! null_device {
 ///
 /// Thin re-export of [`bun_opaque::opaque_ffi!`] under the legacy name. The
 /// canonical macro lives in the zero-dep `bun_opaque` crate so tier-0 `*_sys`
-/// leaves (`mimalloc_sys`, `brotli_sys`, …) can reach it without pulling
+/// leaves (`mimalloc_sys`, `zlib_sys`, …) can reach it without pulling
 /// `bun_core` into their build graph; this alias just keeps existing
 /// `bun_core::opaque_extern!(...)` callers compiling.
 #[macro_export]

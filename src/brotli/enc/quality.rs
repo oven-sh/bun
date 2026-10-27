@@ -2,8 +2,8 @@
 
 use super::params::{EncoderParams, HasherParams};
 use super::{
-    LARGE_MAX_WINDOW_BITS, MAX_INPUT_BLOCK_BITS, MAX_QUALITY, MAX_WINDOW_BITS, MIN_INPUT_BLOCK_BITS, MIN_QUALITY,
-    MIN_WINDOW_BITS,
+    LARGE_MAX_WINDOW_BITS, MAX_INPUT_BLOCK_BITS, MAX_QUALITY, MAX_WINDOW_BITS,
+    MIN_INPUT_BLOCK_BITS, MIN_QUALITY, MIN_WINDOW_BITS,
 };
 
 pub(crate) const FAST_ONE_PASS_COMPRESSION_QUALITY: i32 = 0;
@@ -29,7 +29,11 @@ const MAX_TAGGED_HASHER_QUALITY: i32 = 6;
 
 /// The size of the hash table of qualities 0 and 1.
 pub(crate) const fn max_hash_table_size(quality: i32) -> usize {
-    if quality == FAST_ONE_PASS_COMPRESSION_QUALITY { 1 << 15 } else { 1 << 17 }
+    if quality == FAST_ONE_PASS_COMPRESSION_QUALITY {
+        1 << 15
+    } else {
+        1 << 17
+    }
 }
 
 /// The longest match for which zopflification tells distances apart.
@@ -41,7 +45,11 @@ pub(crate) const LONG_COPY_QUICK_STEP: usize = 16384;
 
 impl EncoderParams {
     pub(crate) fn max_zopfli_len(&self) -> usize {
-        if self.quality <= 10 { MAX_ZOPFLI_LEN_QUALITY_10 } else { MAX_ZOPFLI_LEN_QUALITY_11 }
+        if self.quality <= 10 {
+            MAX_ZOPFLI_LEN_QUALITY_10
+        } else {
+            MAX_ZOPFLI_LEN_QUALITY_11
+        }
     }
 
     /// How many of the best candidates are tried to extend a zopfli chain.
@@ -54,19 +62,30 @@ impl EncoderParams {
         if self.quality <= MAX_QUALITY_FOR_STATIC_ENTROPY_CODES {
             self.large_window = false;
         }
-        let max_lgwin = if self.large_window { LARGE_MAX_WINDOW_BITS } else { MAX_WINDOW_BITS };
+        let max_lgwin = if self.large_window {
+            LARGE_MAX_WINDOW_BITS
+        } else {
+            MAX_WINDOW_BITS
+        };
         self.lgwin = self.lgwin.clamp(MIN_WINDOW_BITS, max_lgwin);
     }
 
     pub(crate) fn compute_lg_block(&self) -> i32 {
-        if self.quality == FAST_ONE_PASS_COMPRESSION_QUALITY || self.quality == FAST_TWO_PASS_COMPRESSION_QUALITY {
+        if self.quality == FAST_ONE_PASS_COMPRESSION_QUALITY
+            || self.quality == FAST_TWO_PASS_COMPRESSION_QUALITY
+        {
             self.lgwin
         } else if self.quality < MIN_QUALITY_FOR_BLOCK_SPLIT {
             14
         } else if self.lgblock == 0 {
-            if self.quality >= 9 && self.lgwin > 16 { self.lgwin.min(18) } else { 16 }
+            if self.quality >= 9 && self.lgwin > 16 {
+                self.lgwin.min(18)
+            } else {
+                16
+            }
         } else {
-            self.lgblock.clamp(MIN_INPUT_BLOCK_BITS, MAX_INPUT_BLOCK_BITS)
+            self.lgblock
+                .clamp(MIN_INPUT_BLOCK_BITS, MAX_INPUT_BLOCK_BITS)
         }
     }
 
@@ -99,7 +118,11 @@ impl EncoderParams {
     pub(crate) fn choose_hasher(&self) -> HasherParams {
         let mut hparams = self.hasher;
         let long_match = |tagged: i32, plain: i32, bucket_bits: i32| HasherParams {
-            type_: if self.quality <= MAX_TAGGED_HASHER_QUALITY { tagged } else { plain },
+            type_: if self.quality <= MAX_TAGGED_HASHER_QUALITY {
+                tagged
+            } else {
+                plain
+            },
             block_bits: self.quality - 1,
             bucket_bits,
             num_last_distances_to_check: if self.quality < 7 {

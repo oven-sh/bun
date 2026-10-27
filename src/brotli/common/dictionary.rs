@@ -8,7 +8,8 @@ pub(crate) static DATA: &[u8; 122_784] = include_bytes!("dictionary.bin");
 
 /// There are `1 << SIZE_BITS_BY_LENGTH[n]` words of `n` bytes, or none where it is 0.
 pub(crate) static SIZE_BITS_BY_LENGTH: [u8; 32] = [
-    0, 0, 0, 0, 10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7, 7, 6, 6, 5, 5, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7, 7, 6, 6, 5, 5, 0, 0, 0, 0,
+    0, 0, 0,
 ];
 
 /// Where in [`DATA`] the words of `n` bytes start.

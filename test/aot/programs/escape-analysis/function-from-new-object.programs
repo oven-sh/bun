@@ -1,0 +1,2947 @@
+//// function-from-new-object-identity-1.ts
+// A function taken from a freshly created object keeps its identity when it is forwarded, called by value, stored or put in a Set.
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R1 { a1: number; m1: () => number }
+function make1(): R1 { return { a1: 1, m1: () => 1 }; }
+function get1(): unknown { return make1().m1; }
+function c1(): void { say("field-of-fresh", get1() === get1()); }
+
+interface R2 { a2: number; m2: () => number }
+function make2(): R2 { return { a2: 1, m2: () => 1 }; }
+function get2a(): unknown { return make2().m2; }
+function get2b(): unknown { return get2a(); }
+function get2c(): unknown { return get2b(); }
+function c2(): void { say("forwarded-twice", get2c() === get2c()); }
+
+interface R3 { a3: number; m3: () => number }
+interface O3 { inner3: R3; n3: number }
+function make3(): O3 { return { inner3: { a3: 1, m3: () => 1 }, n3: 2 }; }
+function get3(): unknown { return make3().inner3.m3; }
+function c3(): void { say("depth-two", get3() === get3()); }
+
+interface R4 { a4: number; m4: () => number }
+function make4(): R4 { return { a4: 1, m4: () => 1 }; }
+function get4(): unknown { return make4().m4; }
+function c4(): void { const g = get4; say("called-by-value", g() === g()); }
+
+interface R5 { a5: number; m5: () => number }
+function make5(): R5 { return { a5: 1, m5: () => 1 }; }
+class K5 { get(): unknown { return make5().m5; } }
+function c5(): void { const k = new K5(); say("method", k.get() === k.get()); }
+
+interface R6 { a6: number; m6: () => number }
+function make6(): R6 { return { a6: 1, m6: () => 1 }; }
+function get6(): unknown { return make6().m6; }
+function c6(): void { say("set-size", new Set([get6(), get6()]).size); }
+
+interface R7 { a7: number; m7: () => number }
+function make7(): R7 { return { a7: 1, m7: () => 1 }; }
+function get7(): any { return make7().m7; }
+function c7(): void { get7().tag = 1; say("written", get7().tag); }
+
+function list8(): Array<() => number> { return [() => 1]; }
+function get8(): unknown { return list8()[0]; }
+function c8(): void { say("element-of-fresh", get8() === get8()); }
+
+interface R9 { a9: number; m9: () => number }
+function make9(): R9 { return { a9: 1, m9: () => 1 }; }
+function get9(): unknown { const { m9 } = make9(); return m9; }
+function c9(): void { say("pattern", get9() === get9()); }
+
+interface R10 { a10: number; m10: () => number }
+function make10(): R10 { return { a10: 1, m10: () => 1 }; }
+function with10<T>(k: (f: unknown) => T): T { return k(make10().m10); }
+function c10(): void { say("through-a-callback", with10(x => x) === with10(x => x)); }
+
+interface R11 { a11: number; m11: () => number }
+function make11(): R11 { return { a11: 1, m11: () => 1 }; }
+function get11(other: unknown, which: boolean): unknown { return which ? make11().m11 : other; }
+function c11(): void { say("one-arm", get11(0, true) === get11(0, true)); }
+
+interface R12 { a12: number; m12: () => number }
+interface W12 { r12: R12 }
+function wrap12(): W12 { return { r12: { a12: 1, m12: () => 1 } }; }
+function rec12(): R12 { return wrap12().r12; }
+function c12(): void { say("record-out-of-fresh", rec12().m12 === rec12().m12); }
+
+interface R13 { a13: number; m13: () => number }
+function make13(): R13 { return { a13: 1, m13: () => 1 }; }
+function get13(): unknown { try { return make13().m13; } finally { out.length; } }
+function c13(): void { say("try-finally", get13() === get13()); }
+
+interface R14 { a14: number; m14: () => number }
+function make14(): R14 { return { a14: 1, m14: () => 1 }; }
+function get14(): { f: unknown } { return { f: make14().m14 }; }
+function c14(): void { say("rewrapped", get14().f === get14().f); }
+
+interface R15 { a15: number; m15: () => number }
+function make15(): R15 { return { a15: 1, m15: () => 1 }; }
+function get15(): unknown[] { return [make15().m15]; }
+function c15(): void { say("rewrapped-in-an-array", get15()[0] === get15()[0]); }
+
+interface R16 { a16: number; m16: () => number }
+function make16(): R16 { return { a16: 1, m16: () => 1 }; }
+function get16(): unknown { return make16().m16; }
+const seen16 = new WeakSet<object>();
+function c16(): void { seen16.add(get16() as object); say("weak-set", seen16.has(get16() as object)); }
+
+interface R17 { a17: number; m17: () => number }
+function make17(): R17 { return { a17: 1, m17: () => 1 }; }
+function get17(): unknown { let r = make17(); for (let i = 0; i < 2; i++) r = make17(); return r.m17; }
+function c17(): void { say("through-a-loop", get17() === get17()); }
+
+interface R18 { a18: number; m18: () => number }
+function make18(): R18 { return { a18: 1, m18: () => 1 }; }
+function id18<T>(x: T): T { return x; }
+function get18(): unknown { return id18(make18()).m18; }
+function c18(): void { say("through-identity", get18() === get18()); }
+
+interface R19 { a19: number; m19: () => number }
+function make19(): R19 { return { a19: 1, m19: () => 1 }; }
+function pick19(r: R19): unknown { return r.m19; }
+function get19(): unknown { return pick19(make19()); }
+function c19(): void { say("picked-by-a-callee", get19() === get19()); }
+
+interface R20 { a20: number; m20: () => number }
+function make20(): R20 { return { a20: 1, m20: () => 1 }; }
+function get20(): () => unknown { const r = make20(); return () => r.m20; }
+function c20(): void { say("out-of-a-captured-record", get20()() === get20()()); }
+
+c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); c19(); c20();
+console.log(out.join("\n"));
+//// function-from-new-object-identity-2.ts
+// A function taken from a freshly created object keeps its identity through captures, accessors, spread calls, rest parameters and `arguments`.
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R1 { a1: number; m1: () => number }
+function make1(): R1 { return { a1: 1, m1: () => 1 }; }
+function get1(): () => unknown { const f = make1().m1; return () => f; }
+function c1(): void { say("captured-content", get1()() === get1()()); }
+
+interface R2 { a2: number; m2: () => number }
+function make2(): R2 { return { a2: 1, m2: () => 1 }; }
+function box2(f: unknown): { f: unknown } { return { f }; }
+function get2(): { f: unknown } { return box2(make2().m2); }
+function c2(): void { say("boxed-by-a-callee", get2().f === get2().f); }
+
+interface R3 { a3: number; m3: () => number }
+function make3(): R3 { return { a3: 1, m3: () => 1 }; }
+function same3(a: unknown, b: unknown): boolean { return a === b; }
+function c3(): void { say("same-in-a-callee", same3(make3().m3, make3().m3)); }
+
+interface R4 { a4: number; m4: () => number }
+function make4(): R4 { return { a4: 1, m4: () => 1 }; }
+class K4 { get f(): unknown { return make4().m4; } }
+function c4(): void { const k = new K4(); say("accessor", k.f === k.f); }
+
+interface R5 { a5: number; m5: () => number }
+function make5(): R5 { return { a5: 1, m5: () => 1 }; }
+function pick5(...xs: unknown[]): unknown { return xs[0]; }
+function c5(): void { say("spread-call", pick5(...[make5().m5]) === pick5(...[make5().m5])); }
+
+interface R6 { a6: number; m6: () => number }
+function make6(): R6 { return { a6: 1, m6: () => 1 }; }
+function pick6(...xs: unknown[]): unknown { return xs[0]; }
+function c6(): void { say("rest", pick6(make6().m6) === pick6(make6().m6)); }
+
+interface R7 { a7: number; m7: () => number }
+function make7(): R7 { return { a7: 1, m7: () => 1 }; }
+function pick7(this: unknown, _x: unknown): unknown { return arguments[0]; }
+function c7(): void { say("arguments", pick7(make7().m7) === pick7(make7().m7)); }
+
+interface R8 { a8: number; m8: () => number }
+function make8(): R8 { return { a8: 1, m8: () => 1 }; }
+function c8(): void { let last: unknown, same = false; for (const f of [make8().m8, make8().m8]) { same = f === last; last = f; } say("for-of", same); }
+
+interface R9 { a9: number; m9: () => number }
+function make9(): R9 { return { a9: 1, m9: () => 1 }; }
+function c9(): void { const m = new Map<number, unknown>(); m.set(1, make9().m9); m.set(2, make9().m9); say("map-value", m.get(1) === m.get(2)); }
+
+interface R10 { a10: number; m10: () => number }
+function make10(): R10 { return { a10: 1, m10: () => 1 }; }
+function c10(): void { const m = new Map<unknown, number>(); m.set(make10().m10, 1); m.set(make10().m10, 2); say("map-key", m.size); }
+
+interface R11 { a11: number; m11: () => number }
+function make11(): R11 { return { a11: 1, m11: () => 1 }; }
+function c11(): void { say("object-values", Object.values(make11())[1] === Object.values(make11())[1]); }
+
+interface R12 { a12: number; m12: () => number }
+function make12(): R12 { return { a12: 1, m12: () => 1 }; }
+function c12(): void { say("object-entries", Object.entries(make12())[1][1] === Object.entries(make12())[1][1]); }
+
+interface R13 { a13: number; m13: () => number }
+function make13(): R13 { return { a13: 1, m13: () => 1 }; }
+function c13(): void { say("spread-copy", { ...make13() }.m13 === { ...make13() }.m13); }
+
+interface R14 { a14: number; m14: () => number }
+function make14(): R14 { return { a14: 1, m14: () => 1 }; }
+function c14(): void { say("assign-copy", Object.assign({}, make14()).m14 === Object.assign({}, make14()).m14); }
+
+interface R15 { a15: number; m15: () => number }
+function make15(): R15 { return { a15: 1, m15: () => 1 }; }
+class C15 { r = make15(); }
+function c15(): void { say("class-field", new C15().r.m15 === new C15().r.m15); }
+
+interface R16 { a16: number; m16: () => number }
+function make16(): R16 { return { a16: 1, m16: () => 1 }; }
+function c16(): void { const f = make16().m16, g = make16().m16; let hit = false; switch (f) { case g: hit = true; } say("switch", hit); }
+
+interface R17 { a17: number; m17: () => number }
+function make17(): R17 { return { a17: 1, m17: () => 1 }; }
+function c17(): void { say("includes", [make17().m17].includes(make17().m17)); }
+
+interface R18 { a18: number; m18: () => number }
+function make18(): R18 { return { a18: 1, m18: () => 1 }; }
+function c18(): void { say("index-of", [make18().m18].indexOf(make18().m18)); }
+
+interface R19 { a19: number; m19: () => number }
+function make19(): R19 { return { a19: 1, m19: () => 1 }; }
+function c19(): void { say("object-is", Object.is(make19().m19, make19().m19)); }
+
+interface R20 { a20: number; m20: () => number }
+function make20(): R20 { return { a20: 1, m20: () => 1 }; }
+function c20(): void { const a = make20(), b = make20(); const f = out.length >= 0 ? a.m20 : b.m20; say("conditional", f === b.m20); }
+
+interface R21 { a21: number; m21: () => number }
+function make21(): R21 { return { a21: 1, m21: () => 1 }; }
+function c21(): void { const k: string = "m21"; say("by-key", (make21() as any)[k] === (make21() as any)[k]); }
+
+interface R22 { a22: number; m22: () => number }
+function make22(): R22 { return { a22: 1, m22: () => 1 }; }
+function c22(): void { (globalThis as any).g22 = make22().m22; say("global-this", (globalThis as any).g22 === make22().m22); }
+
+interface R23 { a23: number; m23: () => number }
+function make23(): R23 { return { a23: 1, m23: () => 1 }; }
+function all23(): R23[] { return [make23(), make23()]; }
+function c23(): void { const xs = all23(); say("array-of-records", xs[0].m23 === xs[1].m23); }
+
+interface R24 { a24: number; m24: () => number }
+function make24(): R24 { return { a24: 1, m24: () => 1 }; }
+let kept24: R24 | undefined;
+function keep24(): void { kept24 = make24(); }
+function c24(): void { keep24(); const first = kept24!.m24; keep24(); say("record-in-a-variable", first === kept24!.m24); }
+
+interface R25 { a25: number; m25: () => number }
+function make25(): R25 { return { a25: 1, m25: () => 1 }; }
+function other25(): R25 { return { a25: 2, m25: () => 2 }; }
+function c25(): void { say("two-makers-one-type", make25().m25 === make25().m25 || other25().m25 === other25().m25); }
+
+interface R26 { a26: number; m26: () => number }
+function make26(): R26 { return { a26: 1, m26: () => 1 }; }
+function c26(): void { (make26().m26 as any).tag = 1; say("written-through-the-record", (make26().m26 as any).tag); }
+
+interface R27 { a27: number; m27: () => number }
+function make27(): R27 { return { a27: 1, m27: () => 1 }; }
+function c27(): void { const w = new WeakRef(make27().m27); say("weak-ref", w.deref() === make27().m27); }
+
+interface R28 { a28: number; m28: () => number }
+function make28(): R28 { return { a28: 1, m28: () => 1 }; }
+function c28(): void { const xs = [make28().m28, make28().m28]; say("sort-stable", new Set(xs.slice().reverse()).size); }
+
+interface RP { ap: number; fp: () => void }
+function makeP(): RP { return { ap: 1, fp: function () {} }; }
+function cP(): void { say("prototype-of-a-function-expression", (makeP().fp as any).prototype === (makeP().fp as any).prototype); }
+
+interface RN { an: number; fn: () => void }
+function makeN(): RN { return { an: 1, fn: function () {} }; }
+function cN(): void { const F = makeN().fn as any, G = makeN().fn as any; say("instance-of", new F() instanceof G); }
+
+interface RY { ay: number; my: () => number }
+function makeY(): RY { return { ay: 1, my: () => 1 }; }
+function* genY(): Generator<unknown> { yield makeY().my; yield makeY().my; }
+function cY(): void { const [a, b] = [...genY()]; say("generator", a === b); }
+
+interface RZ { az: number; mz: () => number }
+function makeZ(): RZ { return { az: 1, mz: () => 1 }; }
+async function getZ(): Promise<unknown> { return makeZ().mz; }
+async function cZ(): Promise<void> { say("async", (await getZ()) === (await getZ())); }
+
+interface RT { at: number; mt: () => number }
+function makeT(): RT { return { at: 1, mt: () => 1 }; }
+async function cT(): Promise<void> { let last: unknown; await Promise.resolve(makeT().mt).then(f => { last = f; }); await Promise.resolve(makeT().mt).then(f => { say("then", f === last); }); }
+
+c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); c19(); c20(); c21(); c22(); c23(); c24(); c25(); c26(); c27(); c28(); cP(); cN(); cY();
+cZ().then(() => cT()).then(() => console.log(out.join("\n")));
+//// function-from-new-object-identity-3.ts
+// A function taken from a freshly created object keeps its identity through `Object.values`, `Object.entries`, `Reflect.apply` and property descriptors.
+declare const console: any;
+declare function structuredClone(x: unknown): unknown;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R1 { a1: number; m1: () => number }
+function make1(): R1 { return { a1: 1, m1: () => 1 }; }
+function c1(): void { say("values", Object.values(make1())[1] === Object.values(make1())[1]); }
+
+interface R2 { a2: number; m2: () => number }
+function make2(): R2 { return { a2: 1, m2: () => 1 }; }
+function c2(): void { say("entries", Object.entries(make2())[1][1] === Object.entries(make2())[1][1]); }
+
+interface R3 { a3: number; m3: () => number }
+function make3(): R3 { return { a3: 1, m3: () => 1 }; }
+const values3 = Object.values;
+function c3(): void { say("alias-of-values", values3(make3())[1] === values3(make3())[1]); }
+
+interface R4 { a4: number; m4: () => number }
+function make4(): R4 { return { a4: 1, m4: () => 1 }; }
+function c4(): void { say("values-call", Object.values.call(null, make4())[1] === Object.values.call(null, make4())[1]); }
+
+interface R5 { a5: number; m5: () => number }
+function make5(): R5 { return { a5: 1, m5: () => 1 }; }
+function c5(): void { say("reflect-apply", (Reflect.apply(Object.values, null, [make5()]) as unknown[])[1] === (Reflect.apply(Object.values, null, [make5()]) as unknown[])[1]); }
+
+interface R6 { a6: number; m6: () => number }
+function make6(): R6 { return { a6: 1, m6: () => 1 }; }
+function c6(): void { say("descriptor", Object.getOwnPropertyDescriptor(make6(), "m6")!.value === Object.getOwnPropertyDescriptor(make6(), "m6")!.value); }
+
+interface R7 { a7: number; m7: () => number }
+function make7(): R7 { return { a7: 1, m7: () => 1 }; }
+function c7(): void { say("descriptors", (Object.getOwnPropertyDescriptors(make7()) as any).m7.value === (Object.getOwnPropertyDescriptors(make7()) as any).m7.value); }
+
+interface R8 { a8: number; m8: () => number }
+function make8(): R8 { return { a8: 1, m8: () => 1 }; }
+function c8(): void { say("reflect-get", Reflect.get(make8(), "m8") === Reflect.get(make8(), "m8")); }
+
+interface R9 { a9: number; m9: () => number }
+function make9(): R9 { return { a9: 1, m9: () => 1 }; }
+function c9(): void { say("from-entries", Object.fromEntries(Object.entries(make9())).m9 === Object.fromEntries(Object.entries(make9())).m9); }
+
+interface R10 { a10: number; m10: () => number }
+function make10(): R10 { return { a10: 1, m10: () => 1 }; }
+function c10(): void { say("map-of-entries", new Map(Object.entries(make10())).get("m10") === new Map(Object.entries(make10())).get("m10")); }
+
+interface R11 { a11: number; m11: () => number }
+function make11(): R11 { return { a11: 1, m11: () => 1 }; }
+function c11(): void { const seen: unknown[] = []; JSON.stringify(make11(), (_k, v) => { if (typeof v === "function") seen.push(v); return v; }); JSON.stringify(make11(), (_k, v) => { if (typeof v === "function") seen.push(v); return v; }); say("replacer", seen[0] === seen[1]); }
+
+interface R12 { a12: number; m12: () => number }
+function make12(): R12 { return { a12: 1, m12: () => 1 }; }
+function c12(): void { const { a12: _x, ...r1 } = make12(); const { a12: _y, ...r2 } = make12(); say("rest-pattern", r1.m12 === r2.m12); }
+
+interface R13 { a13: number; m13: () => number }
+function make13(): R13 { return { a13: 1, m13: () => 1 }; }
+function c13(): void { say("create", Object.create(make13()).m13 === Object.create(make13()).m13); }
+
+interface R14 { a14: number; m14: () => number }
+function make14(): R14 { return { a14: 1, m14: () => 1 }; }
+function c14(): void { say("set-prototype-of", (Object.setPrototypeOf({}, make14()) as any).m14 === (Object.setPrototypeOf({}, make14()) as any).m14); }
+
+interface R15 { a15: number; m15: () => number }
+function make15(): R15 { return { a15: 1, m15: () => 1 }; }
+function c15(): void { const fs: unknown[] = []; for (const r of [make15(), make15()]) for (const k in r) fs.push((r as any)[k]); say("for-in", fs[1] === fs[3]); }
+
+interface R16 { a16: number; m16: () => number }
+function make16(): R16 { return { a16: 1, m16: () => 1 }; }
+function c16(): void { const fs: unknown[] = []; Object.entries(make16()).forEach(([_k, v]) => fs.push(v)); Object.entries(make16()).forEach(([_k, v]) => fs.push(v)); say("entries-for-each", fs[1] === fs[3]); }
+
+interface R17 { a17: number; m17: () => number }
+function make17(): R17 { return { a17: 1, m17: () => 1 }; }
+function c17(): void { const fs = [make17(), make17()].map(r => r.m17); say("map-by-name", fs[0] === fs[1]); }
+
+interface R18 { a18: number; m18: () => number }
+function make18(): R18 { return { a18: 1, m18: () => 1 }; }
+function c18(): void { say("freeze-then-values", Object.values(Object.freeze(make18()))[1] === Object.values(Object.freeze(make18()))[1]); }
+
+interface R19 { a19: number; m19: () => number }
+function make19(): R19 { return { a19: 1, m19: () => 1 }; }
+function c19(): void { say("array-from-values", Array.from(Object.values(make19()))[1] === Array.from(Object.values(make19()))[1]); }
+
+interface R20 { a20: number; m20: () => number }
+function make20(): R20 { return { a20: 1, m20: () => 1 }; }
+function vals20(r: R20): unknown[] { return Object.values(r); }
+function c20(): void { say("values-in-a-callee", vals20(make20())[1] === vals20(make20())[1]); }
+
+interface R21 { a21: number; m21: () => number }
+function make21(): R21 { return { a21: 1, m21: () => 1 }; }
+function vals21<T extends object>(r: T): unknown[] { return Object.values(r); }
+function c21(): void { say("values-of-a-generic", vals21(make21())[1] === vals21(make21())[1]); }
+
+interface R22 { a22: number; m22: () => number }
+function make22(): R22 { return { a22: 1, m22: () => 1 }; }
+function c22(): void { say("values-set", new Set([...Object.values(make22()), ...Object.values(make22())]).size); }
+
+interface R23 { a23: number; m23: () => number }
+function make23(): R23 { return { a23: 1, m23: () => 1 }; }
+function c23(): void { (Object.values(make23())[1] as any).tag = 1; say("values-written", (Object.values(make23())[1] as any).tag); }
+
+interface R24 { a24: number; m24: () => number }
+function make24(): R24 { return { a24: 1, m24: () => 1 }; }
+function c24(): void { const g = Object.groupBy([make24(), make24()], r => "k"); say("group-by", g.k![0].m24 === g.k![1].m24); }
+
+interface R25 { a25: number; m25: () => number }
+function make25(): R25 { return { a25: 1, m25: () => 1 }; }
+function c25(): void { let threw = false; try { structuredClone(make25()); } catch { threw = true; } say("structured", threw); }
+
+interface R26 { a26: number; m26: () => number }
+function make26(): R26 { return { a26: 1, m26: () => 1 }; }
+function c26(): void { const xs = [make26(), make26()].toSorted((p, q) => p.a26 - q.a26); say("to-sorted", xs[0].m26 === xs[1].m26); }
+
+interface R27 { a27: number; m27: () => number }
+function make27(): R27 { return { a27: 1, m27: () => 1 }; }
+function c27(): void { say("has-own", Object.hasOwn(make27(), "m27")); }
+
+interface R28 { a28: number; m28: () => number }
+function make28(): R28 { return { a28: 1, m28: () => 1 }; }
+function c28(): void { const r = make28(), s = make28(); const k = Object.keys(r)[1] as keyof R28; say("keys-then-key", r[k] === s[k]); }
+
+interface R29 { a29: number; m29: () => number }
+function make29(): R29 { return { a29: 1, m29: () => 1 }; }
+function c29(): void { const xs = [make29(), make29()].map(Object.values); say("map-values", xs[0][1] === xs[1][1]); }
+
+interface R30 { a30: number; m30: () => number }
+function make30(): R30 { return { a30: 1, m30: () => 1 }; }
+function c30(): void { const xs = [make30(), make30()].flatMap(Object.values); say("flat-map-values", xs[1] === xs[3]); }
+
+interface R31 { a31: number; m31: () => number }
+function make31(): R31 { return { a31: 1, m31: () => 1 }; }
+function c31(): void { const xs = Array.from([make31(), make31()], Object.values); say("array-from-mapper", xs[0][1] === xs[1][1]); }
+
+interface R32 { a32: number; m32: () => number }
+function make32(): R32 { return { a32: 1, m32: () => 1 }; }
+function vals32(r: unknown): unknown[] { return Object.values(r as object); }
+function c32(): void { say("values-of-unknown", vals32(make32())[1] === vals32(make32())[1]); }
+
+interface R33 { a33: number; m33: () => number }
+function make33(): R33 { return { a33: 1, m33: () => 1 }; }
+interface O33 { inner: R33 }
+function outer33(): O33 { return { inner: make33() }; }
+function c33(): void { say("values-of-a-field", (Object.values(outer33())[0] as any).m33 === (Object.values(outer33())[0] as any).m33); }
+
+interface R34 { a34: number; m34: () => number }
+function make34(): R34 { return { a34: 1, m34: () => 1 }; }
+function c34(): void { say("values-of-an-array", (Object.values([make34()])[0] as any).m34 === (Object.values([make34()])[0] as any).m34); }
+
+interface R35 { a35: number; m35: () => number }
+function make35(): R35 { return { a35: 1, m35: () => 1 }; }
+function run35(k: (r: R35) => unknown[]): unknown[] { return k(make35()); }
+function c35(): void { say("callback-value", run35(Object.values)[1] === run35(Object.values)[1]); }
+
+interface R36 { a36: number; m36: () => number }
+function make36(): R36 { return { a36: 1, m36: () => 1 }; }
+interface T36 { f: (o: {}) => unknown[] }
+function tool36(): T36 { return { f: Object.values }; }
+function c36(): void { say("field-holds-a-built-in", tool36().f(make36())[1] === tool36().f(make36())[1]); }
+
+interface R37 { a37: number; m37: () => number }
+function make37(): R37 { return { a37: 1, m37: () => 1 }; }
+function c37(): void { const fs: unknown[] = []; for (let i = 0; i < 2; i++) { try { throw make37(); } catch (e) { fs.push((e as any).m37); } } say("thrown", fs[0] === fs[1]); }
+
+interface R38 { a38: number; m38: () => number }
+function make38(): R38 { return { a38: 1, m38: () => 1 }; }
+function c38(): void { const v = Object.values.bind(Object); say("bound", v(make38())[1] === v(make38())[1]); }
+
+c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14(); c15(); c16(); c17(); c18(); c19(); c20(); c21(); c22(); c23(); c24(); c25(); c26(); c27(); c28(); c29(); c30(); c31(); c32(); c33(); c34(); c35(); c36(); c37(); c38();
+console.log(out.join("\n"));
+//// functions-read-as-values-keep-identity.ts
+// A function declaration, a static field and a method read as values have one identity each.
+declare const console: any;
+declare const Bun: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+const held: any[] = [];
+
+function plain(): number { return 1; }
+function d1(): void { say("declaration/twice", plain === plain); held.push(plain); say("declaration/held", held[held.length - 1] === plain); (plain as any).tag = 3; Bun.gc(true); say("declaration/tag", (plain as any).tag); }
+function readsPlain(): unknown { return plain; }
+function d2(): void { say("declaration/from-a-callee", readsPlain() === plain && readsPlain() === readsPlain()); }
+
+class K3 { static run = () => 3; static other(): number { return 4; } method(): number { return 5; } }
+function d3(): void {
+  say("static-field", K3.run === K3.run); say("static-method", K3.other === K3.other);
+  const a = new K3(), b = new K3();
+  say("method", a.method === b.method && a.method === K3.prototype.method);
+  held.push(K3.run); say("static-field/held", held[held.length - 1] === K3.run);
+}
+
+function outer4(): () => number { function inner(): number { return 4; } return inner; }
+function d4(): void { say("inner-declaration", outer4() === outer4()); const f = outer4(); say("inner-declaration/same", f === f); }
+
+const table5 = { a: () => 1, b: () => 2, c: function named() { return 3; }, d() { return 4; } };
+function d5(): void {
+  say("module-table", table5.a === table5.a && table5.b === table5.b && table5.c === table5.c && table5.d === table5.d);
+  say("module-table/different", (table5.a as unknown) === table5.b);
+  const seen = new Set<unknown>(); for (const key of Object.keys(table5)) seen.add((table5 as any)[key]); for (const value of Object.values(table5)) seen.add(value);
+  say("module-table/set", seen.size); say("module-table/names", Object.values(table5).map(f => f.name).join(","));
+}
+
+interface R6 { m: () => number }
+function make6(): R6 { return { m: () => 6 }; }
+function d6(): void { const list: R6[] = [make6(), make6()]; const first = list.map(r => r.m); Bun.gc(true); const second = list.map(r => r.m); say("mapped-twice", first[0] === second[0] && first[1] === second[1] && first[0] !== first[1]); }
+
+interface R7 { m: () => number; next?: R7 }
+function make7(next?: R7): R7 { return { m: () => 7, next }; }
+function d7(): void { const chain = make7(make7(make7())); const seen = new Set<unknown>(); for (let r: R7 | undefined = chain; r; r = r.next) { seen.add(r.m); seen.add(r.m); } say("chain", seen.size); }
+
+function d8(): void { const o = { m: () => 8 }; const bound = o.m.bind(null); say("bound", bound() + "/" + (o.m === o.m) + "/" + ((bound as unknown) === o.m)); say("call-apply", o.m.call(null) + o.m.apply(null, [])); }
+
+function d9(): void { const o = { m: () => 9 }; const text = JSON.stringify(o); const f = o.m; say("stringify", text + "/" + (f === o.m)); say("in", ("m" in o) + "/" + Object.hasOwn(o, "m") + "/" + Object.keys(o).join()); }
+
+d1(); d2(); d3(); d4(); d5(); d6(); d7(); d8(); d9();
+console.log(out.join("\n"));
+//// identity-02.ts
+// Generated program: object and closure identity stays observable when allocations are removed (part 2).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R121 { a121: number; m121: () => number }
+function make121(): R121 { return { a121: 1, m121: () => 1 }; }
+let kept121: R121 | undefined;
+function keep121(): unknown { kept121 = make121(); return 0; }
+function c121(): void { say("record/holder-in-a-variable/frozen", (Object.freeze(((keep121(), kept121!.m121))), Object.isFrozen(((keep121(), kept121!.m121))))); }
+
+interface R122 { a122: number; m122: () => number }
+function make122(): R122 { return { a122: 1, m122: () => 1 }; }
+let kept122: R122 | undefined;
+function keep122(): unknown { kept122 = make122(); return 0; }
+function c122(): void { say("record/holder-in-a-variable/prototype-set", (Object.setPrototypeOf(((keep122(), kept122!.m122)) as object, null), Object.getPrototypeOf(((keep122(), kept122!.m122))) === null)); }
+
+interface R123 { a123: number; m123: () => number }
+function make123(): R123 { return { a123: 1, m123: () => 1 }; }
+let kept123: R123 | undefined;
+function keep123(): unknown { kept123 = make123(); return 0; }
+function c123(): void { say("record/holder-in-a-variable/deleted", (delete ((((keep123(), kept123!.m123))) as any).length, Object.hasOwn(((keep123(), kept123!.m123)) as object, "length"))); }
+
+interface R124 { a124: number; m124: () => number }
+function make124(): R124 { return { a124: 1, m124: () => 1 }; }
+let kept124: R124 | undefined;
+function keep124(): unknown { kept124 = make124(); return 0; }
+function same124(a: unknown, b: unknown): boolean { return a === b; }
+function c124(): void { say("record/holder-in-a-variable/in-a-callee", same124(((keep124(), kept124!.m124)), ((keep124(), kept124!.m124)))); }
+
+interface R125 { a125: number; m125: () => number }
+function make125(): R125 { return { a125: 1, m125: () => 1 }; }
+let kept125: R125 | undefined;
+function keep125(): unknown { kept125 = make125(); return 0; }
+function hit125(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c125(): void { say("record/holder-in-a-variable/switch", hit125(((keep125(), kept125!.m125)), ((keep125(), kept125!.m125)))); }
+
+interface R126 { a126: number; m126: () => number }
+function make126(): R126 { return { a126: 1, m126: () => 1 }; }
+let kept126: R126 | undefined;
+function keep126(): unknown { kept126 = make126(); return 0; }
+let last126: unknown;
+function seen126(f: unknown): boolean { const same = f === last126; last126 = f; return same; }
+function c126(): void { say("record/holder-in-a-variable/kept-then-compared", (seen126(((keep126(), kept126!.m126))), seen126(((keep126(), kept126!.m126))))); }
+
+interface R127 { a127: number; m127: () => number }
+function make127(): R127 { return { a127: 1, m127: () => 1 }; }
+function with127<T>(k: (f: unknown) => T): T { return k(make127().m127); }
+function c127(): void { say("record/callback/strict-eq", (with127(x => x)) === (with127(x => x))); }
+
+interface R128 { a128: number; m128: () => number }
+function make128(): R128 { return { a128: 1, m128: () => 1 }; }
+function with128<T>(k: (f: unknown) => T): T { return k(make128().m128); }
+function c128(): void { say("record/callback/strict-ne", (with128(x => x)) !== (with128(x => x))); }
+
+interface R129 { a129: number; m129: () => number }
+function make129(): R129 { return { a129: 1, m129: () => 1 }; }
+function with129<T>(k: (f: unknown) => T): T { return k(make129().m129); }
+function c129(): void { say("record/callback/loose-eq", (with129(x => x)) == (with129(x => x))); }
+
+interface R130 { a130: number; m130: () => number }
+function make130(): R130 { return { a130: 1, m130: () => 1 }; }
+function with130<T>(k: (f: unknown) => T): T { return k(make130().m130); }
+function c130(): void { say("record/callback/object-is", Object.is((with130(x => x)), (with130(x => x)))); }
+
+interface R131 { a131: number; m131: () => number }
+function make131(): R131 { return { a131: 1, m131: () => 1 }; }
+function with131<T>(k: (f: unknown) => T): T { return k(make131().m131); }
+function c131(): void { say("record/callback/set", new Set([(with131(x => x)), (with131(x => x))]).size); }
+
+interface R132 { a132: number; m132: () => number }
+function make132(): R132 { return { a132: 1, m132: () => 1 }; }
+function with132<T>(k: (f: unknown) => T): T { return k(make132().m132); }
+function c132(): void { say("record/callback/map-key", new Map([[(with132(x => x)), 1], [(with132(x => x)), 2]]).size); }
+
+interface R133 { a133: number; m133: () => number }
+function make133(): R133 { return { a133: 1, m133: () => 1 }; }
+function with133<T>(k: (f: unknown) => T): T { return k(make133().m133); }
+function c133(): void { say("record/callback/includes", [(with133(x => x))].includes((with133(x => x)))); }
+
+interface R134 { a134: number; m134: () => number }
+function make134(): R134 { return { a134: 1, m134: () => 1 }; }
+function with134<T>(k: (f: unknown) => T): T { return k(make134().m134); }
+function c134(): void { say("record/callback/index-of", [(with134(x => x))].indexOf((with134(x => x)))); }
+
+interface R135 { a135: number; m135: () => number }
+function make135(): R135 { return { a135: 1, m135: () => 1 }; }
+function with135<T>(k: (f: unknown) => T): T { return k(make135().m135); }
+const ws135 = new WeakSet<object>();
+function c135(): void { say("record/callback/weak-set", (ws135.add((with135(x => x)) as object), ws135.has((with135(x => x)) as object))); }
+
+interface R136 { a136: number; m136: () => number }
+function make136(): R136 { return { a136: 1, m136: () => 1 }; }
+function with136<T>(k: (f: unknown) => T): T { return k(make136().m136); }
+const wm136 = new WeakMap<object, number>();
+function c136(): void { say("record/callback/weak-map", (wm136.set((with136(x => x)) as object, 1), wm136.has((with136(x => x)) as object))); }
+
+interface R137 { a137: number; m137: () => number }
+function make137(): R137 { return { a137: 1, m137: () => 1 }; }
+function with137<T>(k: (f: unknown) => T): T { return k(make137().m137); }
+function c137(): void { say("record/callback/written", ((((with137(x => x))) as any).tag = 1, (((with137(x => x))) as any).tag)); }
+
+interface R138 { a138: number; m138: () => number }
+function make138(): R138 { return { a138: 1, m138: () => 1 }; }
+function with138<T>(k: (f: unknown) => T): T { return k(make138().m138); }
+function c138(): void { say("record/callback/defined", (Object.defineProperty((with138(x => x)) as object, "t", { value: 1 }), "t" in ((with138(x => x)) as object))); }
+
+interface R139 { a139: number; m139: () => number }
+function make139(): R139 { return { a139: 1, m139: () => 1 }; }
+function with139<T>(k: (f: unknown) => T): T { return k(make139().m139); }
+function c139(): void { say("record/callback/frozen", (Object.freeze((with139(x => x))), Object.isFrozen((with139(x => x))))); }
+
+interface R140 { a140: number; m140: () => number }
+function make140(): R140 { return { a140: 1, m140: () => 1 }; }
+function with140<T>(k: (f: unknown) => T): T { return k(make140().m140); }
+function c140(): void { say("record/callback/prototype-set", (Object.setPrototypeOf((with140(x => x)) as object, null), Object.getPrototypeOf((with140(x => x))) === null)); }
+
+interface R141 { a141: number; m141: () => number }
+function make141(): R141 { return { a141: 1, m141: () => 1 }; }
+function with141<T>(k: (f: unknown) => T): T { return k(make141().m141); }
+function c141(): void { say("record/callback/deleted", (delete (((with141(x => x))) as any).length, Object.hasOwn((with141(x => x)) as object, "length"))); }
+
+interface R142 { a142: number; m142: () => number }
+function make142(): R142 { return { a142: 1, m142: () => 1 }; }
+function with142<T>(k: (f: unknown) => T): T { return k(make142().m142); }
+function same142(a: unknown, b: unknown): boolean { return a === b; }
+function c142(): void { say("record/callback/in-a-callee", same142((with142(x => x)), (with142(x => x)))); }
+
+interface R143 { a143: number; m143: () => number }
+function make143(): R143 { return { a143: 1, m143: () => 1 }; }
+function with143<T>(k: (f: unknown) => T): T { return k(make143().m143); }
+function hit143(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c143(): void { say("record/callback/switch", hit143((with143(x => x)), (with143(x => x)))); }
+
+interface R144 { a144: number; m144: () => number }
+function make144(): R144 { return { a144: 1, m144: () => 1 }; }
+function with144<T>(k: (f: unknown) => T): T { return k(make144().m144); }
+let last144: unknown;
+function seen144(f: unknown): boolean { const same = f === last144; last144 = f; return same; }
+function c144(): void { say("record/callback/kept-then-compared", (seen144((with144(x => x))), seen144((with144(x => x))))); }
+
+interface R145 { a145: number; m145: () => number }
+function make145(): R145 { return { a145: 1, m145: () => 1 }; }
+function later145(): () => unknown { const t = make145(); return () => t.m145; }
+function c145(): void { say("record/closure/strict-eq", (later145()()) === (later145()())); }
+
+interface R146 { a146: number; m146: () => number }
+function make146(): R146 { return { a146: 1, m146: () => 1 }; }
+function later146(): () => unknown { const t = make146(); return () => t.m146; }
+function c146(): void { say("record/closure/strict-ne", (later146()()) !== (later146()())); }
+
+interface R147 { a147: number; m147: () => number }
+function make147(): R147 { return { a147: 1, m147: () => 1 }; }
+function later147(): () => unknown { const t = make147(); return () => t.m147; }
+function c147(): void { say("record/closure/loose-eq", (later147()()) == (later147()())); }
+
+interface R148 { a148: number; m148: () => number }
+function make148(): R148 { return { a148: 1, m148: () => 1 }; }
+function later148(): () => unknown { const t = make148(); return () => t.m148; }
+function c148(): void { say("record/closure/object-is", Object.is((later148()()), (later148()()))); }
+
+interface R149 { a149: number; m149: () => number }
+function make149(): R149 { return { a149: 1, m149: () => 1 }; }
+function later149(): () => unknown { const t = make149(); return () => t.m149; }
+function c149(): void { say("record/closure/set", new Set([(later149()()), (later149()())]).size); }
+
+interface R150 { a150: number; m150: () => number }
+function make150(): R150 { return { a150: 1, m150: () => 1 }; }
+function later150(): () => unknown { const t = make150(); return () => t.m150; }
+function c150(): void { say("record/closure/map-key", new Map([[(later150()()), 1], [(later150()()), 2]]).size); }
+
+interface R151 { a151: number; m151: () => number }
+function make151(): R151 { return { a151: 1, m151: () => 1 }; }
+function later151(): () => unknown { const t = make151(); return () => t.m151; }
+function c151(): void { say("record/closure/includes", [(later151()())].includes((later151()()))); }
+
+interface R152 { a152: number; m152: () => number }
+function make152(): R152 { return { a152: 1, m152: () => 1 }; }
+function later152(): () => unknown { const t = make152(); return () => t.m152; }
+function c152(): void { say("record/closure/index-of", [(later152()())].indexOf((later152()()))); }
+
+interface R153 { a153: number; m153: () => number }
+function make153(): R153 { return { a153: 1, m153: () => 1 }; }
+function later153(): () => unknown { const t = make153(); return () => t.m153; }
+const ws153 = new WeakSet<object>();
+function c153(): void { say("record/closure/weak-set", (ws153.add((later153()()) as object), ws153.has((later153()()) as object))); }
+
+interface R154 { a154: number; m154: () => number }
+function make154(): R154 { return { a154: 1, m154: () => 1 }; }
+function later154(): () => unknown { const t = make154(); return () => t.m154; }
+const wm154 = new WeakMap<object, number>();
+function c154(): void { say("record/closure/weak-map", (wm154.set((later154()()) as object, 1), wm154.has((later154()()) as object))); }
+
+interface R155 { a155: number; m155: () => number }
+function make155(): R155 { return { a155: 1, m155: () => 1 }; }
+function later155(): () => unknown { const t = make155(); return () => t.m155; }
+function c155(): void { say("record/closure/written", ((((later155()())) as any).tag = 1, (((later155()())) as any).tag)); }
+
+interface R156 { a156: number; m156: () => number }
+function make156(): R156 { return { a156: 1, m156: () => 1 }; }
+function later156(): () => unknown { const t = make156(); return () => t.m156; }
+function c156(): void { say("record/closure/defined", (Object.defineProperty((later156()()) as object, "t", { value: 1 }), "t" in ((later156()()) as object))); }
+
+interface R157 { a157: number; m157: () => number }
+function make157(): R157 { return { a157: 1, m157: () => 1 }; }
+function later157(): () => unknown { const t = make157(); return () => t.m157; }
+function c157(): void { say("record/closure/frozen", (Object.freeze((later157()())), Object.isFrozen((later157()())))); }
+
+interface R158 { a158: number; m158: () => number }
+function make158(): R158 { return { a158: 1, m158: () => 1 }; }
+function later158(): () => unknown { const t = make158(); return () => t.m158; }
+function c158(): void { say("record/closure/prototype-set", (Object.setPrototypeOf((later158()()) as object, null), Object.getPrototypeOf((later158()())) === null)); }
+
+interface R159 { a159: number; m159: () => number }
+function make159(): R159 { return { a159: 1, m159: () => 1 }; }
+function later159(): () => unknown { const t = make159(); return () => t.m159; }
+function c159(): void { say("record/closure/deleted", (delete (((later159()())) as any).length, Object.hasOwn((later159()()) as object, "length"))); }
+
+interface R160 { a160: number; m160: () => number }
+function make160(): R160 { return { a160: 1, m160: () => 1 }; }
+function later160(): () => unknown { const t = make160(); return () => t.m160; }
+function same160(a: unknown, b: unknown): boolean { return a === b; }
+function c160(): void { say("record/closure/in-a-callee", same160((later160()()), (later160()()))); }
+
+interface R161 { a161: number; m161: () => number }
+function make161(): R161 { return { a161: 1, m161: () => 1 }; }
+function later161(): () => unknown { const t = make161(); return () => t.m161; }
+function hit161(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c161(): void { say("record/closure/switch", hit161((later161()()), (later161()()))); }
+
+interface R162 { a162: number; m162: () => number }
+function make162(): R162 { return { a162: 1, m162: () => 1 }; }
+function later162(): () => unknown { const t = make162(); return () => t.m162; }
+let last162: unknown;
+function seen162(f: unknown): boolean { const same = f === last162; last162 = f; return same; }
+function c162(): void { say("record/closure/kept-then-compared", (seen162((later162()())), seen162((later162()())))); }
+
+interface R163 { a163: number; m163: () => number }
+function make163(): R163 { return { a163: 1, m163: () => 1 }; }
+function later163(): () => unknown { const f = make163().m163; return () => f; }
+function c163(): void { say("record/captured/strict-eq", (later163()()) === (later163()())); }
+
+interface R164 { a164: number; m164: () => number }
+function make164(): R164 { return { a164: 1, m164: () => 1 }; }
+function later164(): () => unknown { const f = make164().m164; return () => f; }
+function c164(): void { say("record/captured/strict-ne", (later164()()) !== (later164()())); }
+
+interface R165 { a165: number; m165: () => number }
+function make165(): R165 { return { a165: 1, m165: () => 1 }; }
+function later165(): () => unknown { const f = make165().m165; return () => f; }
+function c165(): void { say("record/captured/loose-eq", (later165()()) == (later165()())); }
+
+interface R166 { a166: number; m166: () => number }
+function make166(): R166 { return { a166: 1, m166: () => 1 }; }
+function later166(): () => unknown { const f = make166().m166; return () => f; }
+function c166(): void { say("record/captured/object-is", Object.is((later166()()), (later166()()))); }
+
+interface R167 { a167: number; m167: () => number }
+function make167(): R167 { return { a167: 1, m167: () => 1 }; }
+function later167(): () => unknown { const f = make167().m167; return () => f; }
+function c167(): void { say("record/captured/set", new Set([(later167()()), (later167()())]).size); }
+
+interface R168 { a168: number; m168: () => number }
+function make168(): R168 { return { a168: 1, m168: () => 1 }; }
+function later168(): () => unknown { const f = make168().m168; return () => f; }
+function c168(): void { say("record/captured/map-key", new Map([[(later168()()), 1], [(later168()()), 2]]).size); }
+
+interface R169 { a169: number; m169: () => number }
+function make169(): R169 { return { a169: 1, m169: () => 1 }; }
+function later169(): () => unknown { const f = make169().m169; return () => f; }
+function c169(): void { say("record/captured/includes", [(later169()())].includes((later169()()))); }
+
+interface R170 { a170: number; m170: () => number }
+function make170(): R170 { return { a170: 1, m170: () => 1 }; }
+function later170(): () => unknown { const f = make170().m170; return () => f; }
+function c170(): void { say("record/captured/index-of", [(later170()())].indexOf((later170()()))); }
+
+interface R171 { a171: number; m171: () => number }
+function make171(): R171 { return { a171: 1, m171: () => 1 }; }
+function later171(): () => unknown { const f = make171().m171; return () => f; }
+const ws171 = new WeakSet<object>();
+function c171(): void { say("record/captured/weak-set", (ws171.add((later171()()) as object), ws171.has((later171()()) as object))); }
+
+interface R172 { a172: number; m172: () => number }
+function make172(): R172 { return { a172: 1, m172: () => 1 }; }
+function later172(): () => unknown { const f = make172().m172; return () => f; }
+const wm172 = new WeakMap<object, number>();
+function c172(): void { say("record/captured/weak-map", (wm172.set((later172()()) as object, 1), wm172.has((later172()()) as object))); }
+
+interface R173 { a173: number; m173: () => number }
+function make173(): R173 { return { a173: 1, m173: () => 1 }; }
+function later173(): () => unknown { const f = make173().m173; return () => f; }
+function c173(): void { say("record/captured/written", ((((later173()())) as any).tag = 1, (((later173()())) as any).tag)); }
+
+interface R174 { a174: number; m174: () => number }
+function make174(): R174 { return { a174: 1, m174: () => 1 }; }
+function later174(): () => unknown { const f = make174().m174; return () => f; }
+function c174(): void { say("record/captured/defined", (Object.defineProperty((later174()()) as object, "t", { value: 1 }), "t" in ((later174()()) as object))); }
+
+interface R175 { a175: number; m175: () => number }
+function make175(): R175 { return { a175: 1, m175: () => 1 }; }
+function later175(): () => unknown { const f = make175().m175; return () => f; }
+function c175(): void { say("record/captured/frozen", (Object.freeze((later175()())), Object.isFrozen((later175()())))); }
+
+interface R176 { a176: number; m176: () => number }
+function make176(): R176 { return { a176: 1, m176: () => 1 }; }
+function later176(): () => unknown { const f = make176().m176; return () => f; }
+function c176(): void { say("record/captured/prototype-set", (Object.setPrototypeOf((later176()()) as object, null), Object.getPrototypeOf((later176()())) === null)); }
+
+interface R177 { a177: number; m177: () => number }
+function make177(): R177 { return { a177: 1, m177: () => 1 }; }
+function later177(): () => unknown { const f = make177().m177; return () => f; }
+function c177(): void { say("record/captured/deleted", (delete (((later177()())) as any).length, Object.hasOwn((later177()()) as object, "length"))); }
+
+interface R178 { a178: number; m178: () => number }
+function make178(): R178 { return { a178: 1, m178: () => 1 }; }
+function later178(): () => unknown { const f = make178().m178; return () => f; }
+function same178(a: unknown, b: unknown): boolean { return a === b; }
+function c178(): void { say("record/captured/in-a-callee", same178((later178()()), (later178()()))); }
+
+interface R179 { a179: number; m179: () => number }
+function make179(): R179 { return { a179: 1, m179: () => 1 }; }
+function later179(): () => unknown { const f = make179().m179; return () => f; }
+function hit179(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c179(): void { say("record/captured/switch", hit179((later179()()), (later179()()))); }
+
+interface R180 { a180: number; m180: () => number }
+function make180(): R180 { return { a180: 1, m180: () => 1 }; }
+function later180(): () => unknown { const f = make180().m180; return () => f; }
+let last180: unknown;
+function seen180(f: unknown): boolean { const same = f === last180; last180 = f; return same; }
+function c180(): void { say("record/captured/kept-then-compared", (seen180((later180()())), seen180((later180()())))); }
+
+c121(); c122(); c123(); c124(); c125(); c126(); c127(); c128(); c129(); c130(); c131(); c132(); c133(); c134(); c135(); c136(); c137(); c138(); c139(); c140(); c141(); c142(); c143(); c144(); c145(); c146(); c147(); c148(); c149(); c150(); c151(); c152(); c153(); c154(); c155(); c156(); c157(); c158(); c159(); c160(); c161(); c162(); c163(); c164(); c165(); c166(); c167(); c168(); c169(); c170(); c171(); c172(); c173(); c174(); c175(); c176(); c177(); c178(); c179(); c180();
+console.log(out.join("\n"));
+//// identity-06.ts
+// Generated program: object and closure identity stays observable when allocations are removed (part 6).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R361 { a361: number; m361: () => number }
+function make361(): R361 { return { a361: 1, m361: () => 1 }; }
+function get361(): unknown { return make361().m361; }
+const g361 = [get361];
+function c361(): void { say("record/by-value/strict-eq", (g361[0]()) === (g361[0]())); }
+
+interface R362 { a362: number; m362: () => number }
+function make362(): R362 { return { a362: 1, m362: () => 1 }; }
+function get362(): unknown { return make362().m362; }
+const g362 = [get362];
+function c362(): void { say("record/by-value/strict-ne", (g362[0]()) !== (g362[0]())); }
+
+interface R363 { a363: number; m363: () => number }
+function make363(): R363 { return { a363: 1, m363: () => 1 }; }
+function get363(): unknown { return make363().m363; }
+const g363 = [get363];
+function c363(): void { say("record/by-value/loose-eq", (g363[0]()) == (g363[0]())); }
+
+interface R364 { a364: number; m364: () => number }
+function make364(): R364 { return { a364: 1, m364: () => 1 }; }
+function get364(): unknown { return make364().m364; }
+const g364 = [get364];
+function c364(): void { say("record/by-value/object-is", Object.is((g364[0]()), (g364[0]()))); }
+
+interface R365 { a365: number; m365: () => number }
+function make365(): R365 { return { a365: 1, m365: () => 1 }; }
+function get365(): unknown { return make365().m365; }
+const g365 = [get365];
+function c365(): void { say("record/by-value/set", new Set([(g365[0]()), (g365[0]())]).size); }
+
+interface R366 { a366: number; m366: () => number }
+function make366(): R366 { return { a366: 1, m366: () => 1 }; }
+function get366(): unknown { return make366().m366; }
+const g366 = [get366];
+function c366(): void { say("record/by-value/map-key", new Map([[(g366[0]()), 1], [(g366[0]()), 2]]).size); }
+
+interface R367 { a367: number; m367: () => number }
+function make367(): R367 { return { a367: 1, m367: () => 1 }; }
+function get367(): unknown { return make367().m367; }
+const g367 = [get367];
+function c367(): void { say("record/by-value/includes", [(g367[0]())].includes((g367[0]()))); }
+
+interface R368 { a368: number; m368: () => number }
+function make368(): R368 { return { a368: 1, m368: () => 1 }; }
+function get368(): unknown { return make368().m368; }
+const g368 = [get368];
+function c368(): void { say("record/by-value/index-of", [(g368[0]())].indexOf((g368[0]()))); }
+
+interface R369 { a369: number; m369: () => number }
+function make369(): R369 { return { a369: 1, m369: () => 1 }; }
+function get369(): unknown { return make369().m369; }
+const g369 = [get369];
+const ws369 = new WeakSet<object>();
+function c369(): void { say("record/by-value/weak-set", (ws369.add((g369[0]()) as object), ws369.has((g369[0]()) as object))); }
+
+interface R370 { a370: number; m370: () => number }
+function make370(): R370 { return { a370: 1, m370: () => 1 }; }
+function get370(): unknown { return make370().m370; }
+const g370 = [get370];
+const wm370 = new WeakMap<object, number>();
+function c370(): void { say("record/by-value/weak-map", (wm370.set((g370[0]()) as object, 1), wm370.has((g370[0]()) as object))); }
+
+interface R371 { a371: number; m371: () => number }
+function make371(): R371 { return { a371: 1, m371: () => 1 }; }
+function get371(): unknown { return make371().m371; }
+const g371 = [get371];
+function c371(): void { say("record/by-value/written", ((((g371[0]())) as any).tag = 1, (((g371[0]())) as any).tag)); }
+
+interface R372 { a372: number; m372: () => number }
+function make372(): R372 { return { a372: 1, m372: () => 1 }; }
+function get372(): unknown { return make372().m372; }
+const g372 = [get372];
+function c372(): void { say("record/by-value/defined", (Object.defineProperty((g372[0]()) as object, "t", { value: 1 }), "t" in ((g372[0]()) as object))); }
+
+interface R373 { a373: number; m373: () => number }
+function make373(): R373 { return { a373: 1, m373: () => 1 }; }
+function get373(): unknown { return make373().m373; }
+const g373 = [get373];
+function c373(): void { say("record/by-value/frozen", (Object.freeze((g373[0]())), Object.isFrozen((g373[0]())))); }
+
+interface R374 { a374: number; m374: () => number }
+function make374(): R374 { return { a374: 1, m374: () => 1 }; }
+function get374(): unknown { return make374().m374; }
+const g374 = [get374];
+function c374(): void { say("record/by-value/prototype-set", (Object.setPrototypeOf((g374[0]()) as object, null), Object.getPrototypeOf((g374[0]())) === null)); }
+
+interface R375 { a375: number; m375: () => number }
+function make375(): R375 { return { a375: 1, m375: () => 1 }; }
+function get375(): unknown { return make375().m375; }
+const g375 = [get375];
+function c375(): void { say("record/by-value/deleted", (delete (((g375[0]())) as any).length, Object.hasOwn((g375[0]()) as object, "length"))); }
+
+interface R376 { a376: number; m376: () => number }
+function make376(): R376 { return { a376: 1, m376: () => 1 }; }
+function get376(): unknown { return make376().m376; }
+const g376 = [get376];
+function same376(a: unknown, b: unknown): boolean { return a === b; }
+function c376(): void { say("record/by-value/in-a-callee", same376((g376[0]()), (g376[0]()))); }
+
+interface R377 { a377: number; m377: () => number }
+function make377(): R377 { return { a377: 1, m377: () => 1 }; }
+function get377(): unknown { return make377().m377; }
+const g377 = [get377];
+function hit377(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c377(): void { say("record/by-value/switch", hit377((g377[0]()), (g377[0]()))); }
+
+interface R378 { a378: number; m378: () => number }
+function make378(): R378 { return { a378: 1, m378: () => 1 }; }
+function get378(): unknown { return make378().m378; }
+const g378 = [get378];
+let last378: unknown;
+function seen378(f: unknown): boolean { const same = f === last378; last378 = f; return same; }
+function c378(): void { say("record/by-value/kept-then-compared", (seen378((g378[0]())), seen378((g378[0]())))); }
+
+interface R379 { a379: number; m379: () => number }
+function make379(): R379 { return { a379: 1, m379: () => 1 }; }
+function c379(): void { say("record/values/strict-eq", (Object.values(make379())[1]) === (Object.values(make379())[1])); }
+
+interface R380 { a380: number; m380: () => number }
+function make380(): R380 { return { a380: 1, m380: () => 1 }; }
+function c380(): void { say("record/values/strict-ne", (Object.values(make380())[1]) !== (Object.values(make380())[1])); }
+
+interface R381 { a381: number; m381: () => number }
+function make381(): R381 { return { a381: 1, m381: () => 1 }; }
+function c381(): void { say("record/values/loose-eq", (Object.values(make381())[1]) == (Object.values(make381())[1])); }
+
+interface R382 { a382: number; m382: () => number }
+function make382(): R382 { return { a382: 1, m382: () => 1 }; }
+function c382(): void { say("record/values/object-is", Object.is((Object.values(make382())[1]), (Object.values(make382())[1]))); }
+
+interface R383 { a383: number; m383: () => number }
+function make383(): R383 { return { a383: 1, m383: () => 1 }; }
+function c383(): void { say("record/values/set", new Set([(Object.values(make383())[1]), (Object.values(make383())[1])]).size); }
+
+interface R384 { a384: number; m384: () => number }
+function make384(): R384 { return { a384: 1, m384: () => 1 }; }
+function c384(): void { say("record/values/map-key", new Map([[(Object.values(make384())[1]), 1], [(Object.values(make384())[1]), 2]]).size); }
+
+interface R385 { a385: number; m385: () => number }
+function make385(): R385 { return { a385: 1, m385: () => 1 }; }
+function c385(): void { say("record/values/includes", [(Object.values(make385())[1])].includes((Object.values(make385())[1]))); }
+
+interface R386 { a386: number; m386: () => number }
+function make386(): R386 { return { a386: 1, m386: () => 1 }; }
+function c386(): void { say("record/values/index-of", [(Object.values(make386())[1])].indexOf((Object.values(make386())[1]))); }
+
+interface R387 { a387: number; m387: () => number }
+function make387(): R387 { return { a387: 1, m387: () => 1 }; }
+const ws387 = new WeakSet<object>();
+function c387(): void { say("record/values/weak-set", (ws387.add((Object.values(make387())[1]) as object), ws387.has((Object.values(make387())[1]) as object))); }
+
+interface R388 { a388: number; m388: () => number }
+function make388(): R388 { return { a388: 1, m388: () => 1 }; }
+const wm388 = new WeakMap<object, number>();
+function c388(): void { say("record/values/weak-map", (wm388.set((Object.values(make388())[1]) as object, 1), wm388.has((Object.values(make388())[1]) as object))); }
+
+interface R389 { a389: number; m389: () => number }
+function make389(): R389 { return { a389: 1, m389: () => 1 }; }
+function c389(): void { say("record/values/written", ((((Object.values(make389())[1])) as any).tag = 1, (((Object.values(make389())[1])) as any).tag)); }
+
+interface R390 { a390: number; m390: () => number }
+function make390(): R390 { return { a390: 1, m390: () => 1 }; }
+function c390(): void { say("record/values/defined", (Object.defineProperty((Object.values(make390())[1]) as object, "t", { value: 1 }), "t" in ((Object.values(make390())[1]) as object))); }
+
+interface R391 { a391: number; m391: () => number }
+function make391(): R391 { return { a391: 1, m391: () => 1 }; }
+function c391(): void { say("record/values/frozen", (Object.freeze((Object.values(make391())[1])), Object.isFrozen((Object.values(make391())[1])))); }
+
+interface R392 { a392: number; m392: () => number }
+function make392(): R392 { return { a392: 1, m392: () => 1 }; }
+function c392(): void { say("record/values/prototype-set", (Object.setPrototypeOf((Object.values(make392())[1]) as object, null), Object.getPrototypeOf((Object.values(make392())[1])) === null)); }
+
+interface R393 { a393: number; m393: () => number }
+function make393(): R393 { return { a393: 1, m393: () => 1 }; }
+function c393(): void { say("record/values/deleted", (delete (((Object.values(make393())[1])) as any).length, Object.hasOwn((Object.values(make393())[1]) as object, "length"))); }
+
+interface R394 { a394: number; m394: () => number }
+function make394(): R394 { return { a394: 1, m394: () => 1 }; }
+function same394(a: unknown, b: unknown): boolean { return a === b; }
+function c394(): void { say("record/values/in-a-callee", same394((Object.values(make394())[1]), (Object.values(make394())[1]))); }
+
+interface R395 { a395: number; m395: () => number }
+function make395(): R395 { return { a395: 1, m395: () => 1 }; }
+function hit395(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c395(): void { say("record/values/switch", hit395((Object.values(make395())[1]), (Object.values(make395())[1]))); }
+
+interface R396 { a396: number; m396: () => number }
+function make396(): R396 { return { a396: 1, m396: () => 1 }; }
+let last396: unknown;
+function seen396(f: unknown): boolean { const same = f === last396; last396 = f; return same; }
+function c396(): void { say("record/values/kept-then-compared", (seen396((Object.values(make396())[1])), seen396((Object.values(make396())[1])))); }
+
+interface R397 { a397: number; m397: () => number }
+function make397(): R397 { return { a397: 1, m397: () => 1 }; }
+function get397(): unknown { return Object.values(make397())[1]; }
+function c397(): void { say("record/values-returned/strict-eq", (get397()) === (get397())); }
+
+interface R398 { a398: number; m398: () => number }
+function make398(): R398 { return { a398: 1, m398: () => 1 }; }
+function get398(): unknown { return Object.values(make398())[1]; }
+function c398(): void { say("record/values-returned/strict-ne", (get398()) !== (get398())); }
+
+interface R399 { a399: number; m399: () => number }
+function make399(): R399 { return { a399: 1, m399: () => 1 }; }
+function get399(): unknown { return Object.values(make399())[1]; }
+function c399(): void { say("record/values-returned/loose-eq", (get399()) == (get399())); }
+
+interface R400 { a400: number; m400: () => number }
+function make400(): R400 { return { a400: 1, m400: () => 1 }; }
+function get400(): unknown { return Object.values(make400())[1]; }
+function c400(): void { say("record/values-returned/object-is", Object.is((get400()), (get400()))); }
+
+interface R401 { a401: number; m401: () => number }
+function make401(): R401 { return { a401: 1, m401: () => 1 }; }
+function get401(): unknown { return Object.values(make401())[1]; }
+function c401(): void { say("record/values-returned/set", new Set([(get401()), (get401())]).size); }
+
+interface R402 { a402: number; m402: () => number }
+function make402(): R402 { return { a402: 1, m402: () => 1 }; }
+function get402(): unknown { return Object.values(make402())[1]; }
+function c402(): void { say("record/values-returned/map-key", new Map([[(get402()), 1], [(get402()), 2]]).size); }
+
+interface R403 { a403: number; m403: () => number }
+function make403(): R403 { return { a403: 1, m403: () => 1 }; }
+function get403(): unknown { return Object.values(make403())[1]; }
+function c403(): void { say("record/values-returned/includes", [(get403())].includes((get403()))); }
+
+interface R404 { a404: number; m404: () => number }
+function make404(): R404 { return { a404: 1, m404: () => 1 }; }
+function get404(): unknown { return Object.values(make404())[1]; }
+function c404(): void { say("record/values-returned/index-of", [(get404())].indexOf((get404()))); }
+
+interface R405 { a405: number; m405: () => number }
+function make405(): R405 { return { a405: 1, m405: () => 1 }; }
+function get405(): unknown { return Object.values(make405())[1]; }
+const ws405 = new WeakSet<object>();
+function c405(): void { say("record/values-returned/weak-set", (ws405.add((get405()) as object), ws405.has((get405()) as object))); }
+
+interface R406 { a406: number; m406: () => number }
+function make406(): R406 { return { a406: 1, m406: () => 1 }; }
+function get406(): unknown { return Object.values(make406())[1]; }
+const wm406 = new WeakMap<object, number>();
+function c406(): void { say("record/values-returned/weak-map", (wm406.set((get406()) as object, 1), wm406.has((get406()) as object))); }
+
+interface R407 { a407: number; m407: () => number }
+function make407(): R407 { return { a407: 1, m407: () => 1 }; }
+function get407(): unknown { return Object.values(make407())[1]; }
+function c407(): void { say("record/values-returned/written", ((((get407())) as any).tag = 1, (((get407())) as any).tag)); }
+
+interface R408 { a408: number; m408: () => number }
+function make408(): R408 { return { a408: 1, m408: () => 1 }; }
+function get408(): unknown { return Object.values(make408())[1]; }
+function c408(): void { say("record/values-returned/defined", (Object.defineProperty((get408()) as object, "t", { value: 1 }), "t" in ((get408()) as object))); }
+
+interface R409 { a409: number; m409: () => number }
+function make409(): R409 { return { a409: 1, m409: () => 1 }; }
+function get409(): unknown { return Object.values(make409())[1]; }
+function c409(): void { say("record/values-returned/frozen", (Object.freeze((get409())), Object.isFrozen((get409())))); }
+
+interface R410 { a410: number; m410: () => number }
+function make410(): R410 { return { a410: 1, m410: () => 1 }; }
+function get410(): unknown { return Object.values(make410())[1]; }
+function c410(): void { say("record/values-returned/prototype-set", (Object.setPrototypeOf((get410()) as object, null), Object.getPrototypeOf((get410())) === null)); }
+
+interface R411 { a411: number; m411: () => number }
+function make411(): R411 { return { a411: 1, m411: () => 1 }; }
+function get411(): unknown { return Object.values(make411())[1]; }
+function c411(): void { say("record/values-returned/deleted", (delete (((get411())) as any).length, Object.hasOwn((get411()) as object, "length"))); }
+
+interface R412 { a412: number; m412: () => number }
+function make412(): R412 { return { a412: 1, m412: () => 1 }; }
+function get412(): unknown { return Object.values(make412())[1]; }
+function same412(a: unknown, b: unknown): boolean { return a === b; }
+function c412(): void { say("record/values-returned/in-a-callee", same412((get412()), (get412()))); }
+
+interface R413 { a413: number; m413: () => number }
+function make413(): R413 { return { a413: 1, m413: () => 1 }; }
+function get413(): unknown { return Object.values(make413())[1]; }
+function hit413(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c413(): void { say("record/values-returned/switch", hit413((get413()), (get413()))); }
+
+interface R414 { a414: number; m414: () => number }
+function make414(): R414 { return { a414: 1, m414: () => 1 }; }
+function get414(): unknown { return Object.values(make414())[1]; }
+let last414: unknown;
+function seen414(f: unknown): boolean { const same = f === last414; last414 = f; return same; }
+function c414(): void { say("record/values-returned/kept-then-compared", (seen414((get414())), seen414((get414())))); }
+
+interface R415 { a415: number; m415: () => number }
+function make415(): R415 { return { a415: 1, m415: () => 1 }; }
+function c415(): void { say("record/entries/strict-eq", (Object.entries(make415())[1][1]) === (Object.entries(make415())[1][1])); }
+
+interface R416 { a416: number; m416: () => number }
+function make416(): R416 { return { a416: 1, m416: () => 1 }; }
+function c416(): void { say("record/entries/strict-ne", (Object.entries(make416())[1][1]) !== (Object.entries(make416())[1][1])); }
+
+interface R417 { a417: number; m417: () => number }
+function make417(): R417 { return { a417: 1, m417: () => 1 }; }
+function c417(): void { say("record/entries/loose-eq", (Object.entries(make417())[1][1]) == (Object.entries(make417())[1][1])); }
+
+interface R418 { a418: number; m418: () => number }
+function make418(): R418 { return { a418: 1, m418: () => 1 }; }
+function c418(): void { say("record/entries/object-is", Object.is((Object.entries(make418())[1][1]), (Object.entries(make418())[1][1]))); }
+
+interface R419 { a419: number; m419: () => number }
+function make419(): R419 { return { a419: 1, m419: () => 1 }; }
+function c419(): void { say("record/entries/set", new Set([(Object.entries(make419())[1][1]), (Object.entries(make419())[1][1])]).size); }
+
+interface R420 { a420: number; m420: () => number }
+function make420(): R420 { return { a420: 1, m420: () => 1 }; }
+function c420(): void { say("record/entries/map-key", new Map([[(Object.entries(make420())[1][1]), 1], [(Object.entries(make420())[1][1]), 2]]).size); }
+
+c361(); c362(); c363(); c364(); c365(); c366(); c367(); c368(); c369(); c370(); c371(); c372(); c373(); c374(); c375(); c376(); c377(); c378(); c379(); c380(); c381(); c382(); c383(); c384(); c385(); c386(); c387(); c388(); c389(); c390(); c391(); c392(); c393(); c394(); c395(); c396(); c397(); c398(); c399(); c400(); c401(); c402(); c403(); c404(); c405(); c406(); c407(); c408(); c409(); c410(); c411(); c412(); c413(); c414(); c415(); c416(); c417(); c418(); c419(); c420();
+console.log(out.join("\n"));
+//// identity-07.ts
+// Generated program: object and closure identity stays observable when allocations are removed (part 7).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R421 { a421: number; m421: () => number }
+function make421(): R421 { return { a421: 1, m421: () => 1 }; }
+function c421(): void { say("record/entries/includes", [(Object.entries(make421())[1][1])].includes((Object.entries(make421())[1][1]))); }
+
+interface R422 { a422: number; m422: () => number }
+function make422(): R422 { return { a422: 1, m422: () => 1 }; }
+function c422(): void { say("record/entries/index-of", [(Object.entries(make422())[1][1])].indexOf((Object.entries(make422())[1][1]))); }
+
+interface R423 { a423: number; m423: () => number }
+function make423(): R423 { return { a423: 1, m423: () => 1 }; }
+const ws423 = new WeakSet<object>();
+function c423(): void { say("record/entries/weak-set", (ws423.add((Object.entries(make423())[1][1]) as object), ws423.has((Object.entries(make423())[1][1]) as object))); }
+
+interface R424 { a424: number; m424: () => number }
+function make424(): R424 { return { a424: 1, m424: () => 1 }; }
+const wm424 = new WeakMap<object, number>();
+function c424(): void { say("record/entries/weak-map", (wm424.set((Object.entries(make424())[1][1]) as object, 1), wm424.has((Object.entries(make424())[1][1]) as object))); }
+
+interface R425 { a425: number; m425: () => number }
+function make425(): R425 { return { a425: 1, m425: () => 1 }; }
+function c425(): void { say("record/entries/written", ((((Object.entries(make425())[1][1])) as any).tag = 1, (((Object.entries(make425())[1][1])) as any).tag)); }
+
+interface R426 { a426: number; m426: () => number }
+function make426(): R426 { return { a426: 1, m426: () => 1 }; }
+function c426(): void { say("record/entries/defined", (Object.defineProperty((Object.entries(make426())[1][1]) as object, "t", { value: 1 }), "t" in ((Object.entries(make426())[1][1]) as object))); }
+
+interface R427 { a427: number; m427: () => number }
+function make427(): R427 { return { a427: 1, m427: () => 1 }; }
+function c427(): void { say("record/entries/frozen", (Object.freeze((Object.entries(make427())[1][1])), Object.isFrozen((Object.entries(make427())[1][1])))); }
+
+interface R428 { a428: number; m428: () => number }
+function make428(): R428 { return { a428: 1, m428: () => 1 }; }
+function c428(): void { say("record/entries/prototype-set", (Object.setPrototypeOf((Object.entries(make428())[1][1]) as object, null), Object.getPrototypeOf((Object.entries(make428())[1][1])) === null)); }
+
+interface R429 { a429: number; m429: () => number }
+function make429(): R429 { return { a429: 1, m429: () => 1 }; }
+function c429(): void { say("record/entries/deleted", (delete (((Object.entries(make429())[1][1])) as any).length, Object.hasOwn((Object.entries(make429())[1][1]) as object, "length"))); }
+
+interface R430 { a430: number; m430: () => number }
+function make430(): R430 { return { a430: 1, m430: () => 1 }; }
+function same430(a: unknown, b: unknown): boolean { return a === b; }
+function c430(): void { say("record/entries/in-a-callee", same430((Object.entries(make430())[1][1]), (Object.entries(make430())[1][1]))); }
+
+interface R431 { a431: number; m431: () => number }
+function make431(): R431 { return { a431: 1, m431: () => 1 }; }
+function hit431(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c431(): void { say("record/entries/switch", hit431((Object.entries(make431())[1][1]), (Object.entries(make431())[1][1]))); }
+
+interface R432 { a432: number; m432: () => number }
+function make432(): R432 { return { a432: 1, m432: () => 1 }; }
+let last432: unknown;
+function seen432(f: unknown): boolean { const same = f === last432; last432 = f; return same; }
+function c432(): void { say("record/entries/kept-then-compared", (seen432((Object.entries(make432())[1][1])), seen432((Object.entries(make432())[1][1])))); }
+
+interface R433 { a433: number; m433: () => number }
+function make433(): R433 { return { a433: 1, m433: () => 1 }; }
+function c433(): void { say("record/descriptor/strict-eq", (Object.getOwnPropertyDescriptor(make433(), "m433")!.value) === (Object.getOwnPropertyDescriptor(make433(), "m433")!.value)); }
+
+interface R434 { a434: number; m434: () => number }
+function make434(): R434 { return { a434: 1, m434: () => 1 }; }
+function c434(): void { say("record/descriptor/strict-ne", (Object.getOwnPropertyDescriptor(make434(), "m434")!.value) !== (Object.getOwnPropertyDescriptor(make434(), "m434")!.value)); }
+
+interface R435 { a435: number; m435: () => number }
+function make435(): R435 { return { a435: 1, m435: () => 1 }; }
+function c435(): void { say("record/descriptor/loose-eq", (Object.getOwnPropertyDescriptor(make435(), "m435")!.value) == (Object.getOwnPropertyDescriptor(make435(), "m435")!.value)); }
+
+interface R436 { a436: number; m436: () => number }
+function make436(): R436 { return { a436: 1, m436: () => 1 }; }
+function c436(): void { say("record/descriptor/object-is", Object.is((Object.getOwnPropertyDescriptor(make436(), "m436")!.value), (Object.getOwnPropertyDescriptor(make436(), "m436")!.value))); }
+
+interface R437 { a437: number; m437: () => number }
+function make437(): R437 { return { a437: 1, m437: () => 1 }; }
+function c437(): void { say("record/descriptor/set", new Set([(Object.getOwnPropertyDescriptor(make437(), "m437")!.value), (Object.getOwnPropertyDescriptor(make437(), "m437")!.value)]).size); }
+
+interface R438 { a438: number; m438: () => number }
+function make438(): R438 { return { a438: 1, m438: () => 1 }; }
+function c438(): void { say("record/descriptor/map-key", new Map([[(Object.getOwnPropertyDescriptor(make438(), "m438")!.value), 1], [(Object.getOwnPropertyDescriptor(make438(), "m438")!.value), 2]]).size); }
+
+interface R439 { a439: number; m439: () => number }
+function make439(): R439 { return { a439: 1, m439: () => 1 }; }
+function c439(): void { say("record/descriptor/includes", [(Object.getOwnPropertyDescriptor(make439(), "m439")!.value)].includes((Object.getOwnPropertyDescriptor(make439(), "m439")!.value))); }
+
+interface R440 { a440: number; m440: () => number }
+function make440(): R440 { return { a440: 1, m440: () => 1 }; }
+function c440(): void { say("record/descriptor/index-of", [(Object.getOwnPropertyDescriptor(make440(), "m440")!.value)].indexOf((Object.getOwnPropertyDescriptor(make440(), "m440")!.value))); }
+
+interface R441 { a441: number; m441: () => number }
+function make441(): R441 { return { a441: 1, m441: () => 1 }; }
+const ws441 = new WeakSet<object>();
+function c441(): void { say("record/descriptor/weak-set", (ws441.add((Object.getOwnPropertyDescriptor(make441(), "m441")!.value) as object), ws441.has((Object.getOwnPropertyDescriptor(make441(), "m441")!.value) as object))); }
+
+interface R442 { a442: number; m442: () => number }
+function make442(): R442 { return { a442: 1, m442: () => 1 }; }
+const wm442 = new WeakMap<object, number>();
+function c442(): void { say("record/descriptor/weak-map", (wm442.set((Object.getOwnPropertyDescriptor(make442(), "m442")!.value) as object, 1), wm442.has((Object.getOwnPropertyDescriptor(make442(), "m442")!.value) as object))); }
+
+interface R443 { a443: number; m443: () => number }
+function make443(): R443 { return { a443: 1, m443: () => 1 }; }
+function c443(): void { say("record/descriptor/written", ((((Object.getOwnPropertyDescriptor(make443(), "m443")!.value)) as any).tag = 1, (((Object.getOwnPropertyDescriptor(make443(), "m443")!.value)) as any).tag)); }
+
+interface R444 { a444: number; m444: () => number }
+function make444(): R444 { return { a444: 1, m444: () => 1 }; }
+function c444(): void { say("record/descriptor/defined", (Object.defineProperty((Object.getOwnPropertyDescriptor(make444(), "m444")!.value) as object, "t", { value: 1 }), "t" in ((Object.getOwnPropertyDescriptor(make444(), "m444")!.value) as object))); }
+
+interface R445 { a445: number; m445: () => number }
+function make445(): R445 { return { a445: 1, m445: () => 1 }; }
+function c445(): void { say("record/descriptor/frozen", (Object.freeze((Object.getOwnPropertyDescriptor(make445(), "m445")!.value)), Object.isFrozen((Object.getOwnPropertyDescriptor(make445(), "m445")!.value)))); }
+
+interface R446 { a446: number; m446: () => number }
+function make446(): R446 { return { a446: 1, m446: () => 1 }; }
+function c446(): void { say("record/descriptor/prototype-set", (Object.setPrototypeOf((Object.getOwnPropertyDescriptor(make446(), "m446")!.value) as object, null), Object.getPrototypeOf((Object.getOwnPropertyDescriptor(make446(), "m446")!.value)) === null)); }
+
+interface R447 { a447: number; m447: () => number }
+function make447(): R447 { return { a447: 1, m447: () => 1 }; }
+function c447(): void { say("record/descriptor/deleted", (delete (((Object.getOwnPropertyDescriptor(make447(), "m447")!.value)) as any).length, Object.hasOwn((Object.getOwnPropertyDescriptor(make447(), "m447")!.value) as object, "length"))); }
+
+interface R448 { a448: number; m448: () => number }
+function make448(): R448 { return { a448: 1, m448: () => 1 }; }
+function same448(a: unknown, b: unknown): boolean { return a === b; }
+function c448(): void { say("record/descriptor/in-a-callee", same448((Object.getOwnPropertyDescriptor(make448(), "m448")!.value), (Object.getOwnPropertyDescriptor(make448(), "m448")!.value))); }
+
+interface R449 { a449: number; m449: () => number }
+function make449(): R449 { return { a449: 1, m449: () => 1 }; }
+function hit449(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c449(): void { say("record/descriptor/switch", hit449((Object.getOwnPropertyDescriptor(make449(), "m449")!.value), (Object.getOwnPropertyDescriptor(make449(), "m449")!.value))); }
+
+interface R450 { a450: number; m450: () => number }
+function make450(): R450 { return { a450: 1, m450: () => 1 }; }
+let last450: unknown;
+function seen450(f: unknown): boolean { const same = f === last450; last450 = f; return same; }
+function c450(): void { say("record/descriptor/kept-then-compared", (seen450((Object.getOwnPropertyDescriptor(make450(), "m450")!.value)), seen450((Object.getOwnPropertyDescriptor(make450(), "m450")!.value)))); }
+
+interface R451 { a451: number; m451: () => number }
+function make451(): R451 { return { a451: 1, m451: () => 1 }; }
+function c451(): void { say("record/reflect-get/strict-eq", (Reflect.get(make451(), "m451")) === (Reflect.get(make451(), "m451"))); }
+
+interface R452 { a452: number; m452: () => number }
+function make452(): R452 { return { a452: 1, m452: () => 1 }; }
+function c452(): void { say("record/reflect-get/strict-ne", (Reflect.get(make452(), "m452")) !== (Reflect.get(make452(), "m452"))); }
+
+interface R453 { a453: number; m453: () => number }
+function make453(): R453 { return { a453: 1, m453: () => 1 }; }
+function c453(): void { say("record/reflect-get/loose-eq", (Reflect.get(make453(), "m453")) == (Reflect.get(make453(), "m453"))); }
+
+interface R454 { a454: number; m454: () => number }
+function make454(): R454 { return { a454: 1, m454: () => 1 }; }
+function c454(): void { say("record/reflect-get/object-is", Object.is((Reflect.get(make454(), "m454")), (Reflect.get(make454(), "m454")))); }
+
+interface R455 { a455: number; m455: () => number }
+function make455(): R455 { return { a455: 1, m455: () => 1 }; }
+function c455(): void { say("record/reflect-get/set", new Set([(Reflect.get(make455(), "m455")), (Reflect.get(make455(), "m455"))]).size); }
+
+interface R456 { a456: number; m456: () => number }
+function make456(): R456 { return { a456: 1, m456: () => 1 }; }
+function c456(): void { say("record/reflect-get/map-key", new Map([[(Reflect.get(make456(), "m456")), 1], [(Reflect.get(make456(), "m456")), 2]]).size); }
+
+interface R457 { a457: number; m457: () => number }
+function make457(): R457 { return { a457: 1, m457: () => 1 }; }
+function c457(): void { say("record/reflect-get/includes", [(Reflect.get(make457(), "m457"))].includes((Reflect.get(make457(), "m457")))); }
+
+interface R458 { a458: number; m458: () => number }
+function make458(): R458 { return { a458: 1, m458: () => 1 }; }
+function c458(): void { say("record/reflect-get/index-of", [(Reflect.get(make458(), "m458"))].indexOf((Reflect.get(make458(), "m458")))); }
+
+interface R459 { a459: number; m459: () => number }
+function make459(): R459 { return { a459: 1, m459: () => 1 }; }
+const ws459 = new WeakSet<object>();
+function c459(): void { say("record/reflect-get/weak-set", (ws459.add((Reflect.get(make459(), "m459")) as object), ws459.has((Reflect.get(make459(), "m459")) as object))); }
+
+interface R460 { a460: number; m460: () => number }
+function make460(): R460 { return { a460: 1, m460: () => 1 }; }
+const wm460 = new WeakMap<object, number>();
+function c460(): void { say("record/reflect-get/weak-map", (wm460.set((Reflect.get(make460(), "m460")) as object, 1), wm460.has((Reflect.get(make460(), "m460")) as object))); }
+
+interface R461 { a461: number; m461: () => number }
+function make461(): R461 { return { a461: 1, m461: () => 1 }; }
+function c461(): void { say("record/reflect-get/written", ((((Reflect.get(make461(), "m461"))) as any).tag = 1, (((Reflect.get(make461(), "m461"))) as any).tag)); }
+
+interface R462 { a462: number; m462: () => number }
+function make462(): R462 { return { a462: 1, m462: () => 1 }; }
+function c462(): void { say("record/reflect-get/defined", (Object.defineProperty((Reflect.get(make462(), "m462")) as object, "t", { value: 1 }), "t" in ((Reflect.get(make462(), "m462")) as object))); }
+
+interface R463 { a463: number; m463: () => number }
+function make463(): R463 { return { a463: 1, m463: () => 1 }; }
+function c463(): void { say("record/reflect-get/frozen", (Object.freeze((Reflect.get(make463(), "m463"))), Object.isFrozen((Reflect.get(make463(), "m463"))))); }
+
+interface R464 { a464: number; m464: () => number }
+function make464(): R464 { return { a464: 1, m464: () => 1 }; }
+function c464(): void { say("record/reflect-get/prototype-set", (Object.setPrototypeOf((Reflect.get(make464(), "m464")) as object, null), Object.getPrototypeOf((Reflect.get(make464(), "m464"))) === null)); }
+
+interface R465 { a465: number; m465: () => number }
+function make465(): R465 { return { a465: 1, m465: () => 1 }; }
+function c465(): void { say("record/reflect-get/deleted", (delete (((Reflect.get(make465(), "m465"))) as any).length, Object.hasOwn((Reflect.get(make465(), "m465")) as object, "length"))); }
+
+interface R466 { a466: number; m466: () => number }
+function make466(): R466 { return { a466: 1, m466: () => 1 }; }
+function same466(a: unknown, b: unknown): boolean { return a === b; }
+function c466(): void { say("record/reflect-get/in-a-callee", same466((Reflect.get(make466(), "m466")), (Reflect.get(make466(), "m466")))); }
+
+interface R467 { a467: number; m467: () => number }
+function make467(): R467 { return { a467: 1, m467: () => 1 }; }
+function hit467(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c467(): void { say("record/reflect-get/switch", hit467((Reflect.get(make467(), "m467")), (Reflect.get(make467(), "m467")))); }
+
+interface R468 { a468: number; m468: () => number }
+function make468(): R468 { return { a468: 1, m468: () => 1 }; }
+let last468: unknown;
+function seen468(f: unknown): boolean { const same = f === last468; last468 = f; return same; }
+function c468(): void { say("record/reflect-get/kept-then-compared", (seen468((Reflect.get(make468(), "m468"))), seen468((Reflect.get(make468(), "m468"))))); }
+
+interface R469 { a469: number; m469: () => number }
+function make469(): R469 { return { a469: 1, m469: () => 1 }; }
+function c469(): void { say("record/spread/strict-eq", (({ ...make469() }).m469) === (({ ...make469() }).m469)); }
+
+interface R470 { a470: number; m470: () => number }
+function make470(): R470 { return { a470: 1, m470: () => 1 }; }
+function c470(): void { say("record/spread/strict-ne", (({ ...make470() }).m470) !== (({ ...make470() }).m470)); }
+
+interface R471 { a471: number; m471: () => number }
+function make471(): R471 { return { a471: 1, m471: () => 1 }; }
+function c471(): void { say("record/spread/loose-eq", (({ ...make471() }).m471) == (({ ...make471() }).m471)); }
+
+interface R472 { a472: number; m472: () => number }
+function make472(): R472 { return { a472: 1, m472: () => 1 }; }
+function c472(): void { say("record/spread/object-is", Object.is((({ ...make472() }).m472), (({ ...make472() }).m472))); }
+
+interface R473 { a473: number; m473: () => number }
+function make473(): R473 { return { a473: 1, m473: () => 1 }; }
+function c473(): void { say("record/spread/set", new Set([(({ ...make473() }).m473), (({ ...make473() }).m473)]).size); }
+
+interface R474 { a474: number; m474: () => number }
+function make474(): R474 { return { a474: 1, m474: () => 1 }; }
+function c474(): void { say("record/spread/map-key", new Map([[(({ ...make474() }).m474), 1], [(({ ...make474() }).m474), 2]]).size); }
+
+interface R475 { a475: number; m475: () => number }
+function make475(): R475 { return { a475: 1, m475: () => 1 }; }
+function c475(): void { say("record/spread/includes", [(({ ...make475() }).m475)].includes((({ ...make475() }).m475))); }
+
+interface R476 { a476: number; m476: () => number }
+function make476(): R476 { return { a476: 1, m476: () => 1 }; }
+function c476(): void { say("record/spread/index-of", [(({ ...make476() }).m476)].indexOf((({ ...make476() }).m476))); }
+
+interface R477 { a477: number; m477: () => number }
+function make477(): R477 { return { a477: 1, m477: () => 1 }; }
+const ws477 = new WeakSet<object>();
+function c477(): void { say("record/spread/weak-set", (ws477.add((({ ...make477() }).m477) as object), ws477.has((({ ...make477() }).m477) as object))); }
+
+interface R478 { a478: number; m478: () => number }
+function make478(): R478 { return { a478: 1, m478: () => 1 }; }
+const wm478 = new WeakMap<object, number>();
+function c478(): void { say("record/spread/weak-map", (wm478.set((({ ...make478() }).m478) as object, 1), wm478.has((({ ...make478() }).m478) as object))); }
+
+interface R479 { a479: number; m479: () => number }
+function make479(): R479 { return { a479: 1, m479: () => 1 }; }
+function c479(): void { say("record/spread/written", ((((({ ...make479() }).m479)) as any).tag = 1, (((({ ...make479() }).m479)) as any).tag)); }
+
+interface R480 { a480: number; m480: () => number }
+function make480(): R480 { return { a480: 1, m480: () => 1 }; }
+function c480(): void { say("record/spread/defined", (Object.defineProperty((({ ...make480() }).m480) as object, "t", { value: 1 }), "t" in ((({ ...make480() }).m480) as object))); }
+
+c421(); c422(); c423(); c424(); c425(); c426(); c427(); c428(); c429(); c430(); c431(); c432(); c433(); c434(); c435(); c436(); c437(); c438(); c439(); c440(); c441(); c442(); c443(); c444(); c445(); c446(); c447(); c448(); c449(); c450(); c451(); c452(); c453(); c454(); c455(); c456(); c457(); c458(); c459(); c460(); c461(); c462(); c463(); c464(); c465(); c466(); c467(); c468(); c469(); c470(); c471(); c472(); c473(); c474(); c475(); c476(); c477(); c478(); c479(); c480();
+console.log(out.join("\n"));
+//// identity-08.ts
+// Generated program: object and closure identity stays observable when allocations are removed (part 8).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R481 { a481: number; m481: () => number }
+function make481(): R481 { return { a481: 1, m481: () => 1 }; }
+function c481(): void { say("record/spread/frozen", (Object.freeze((({ ...make481() }).m481)), Object.isFrozen((({ ...make481() }).m481)))); }
+
+interface R482 { a482: number; m482: () => number }
+function make482(): R482 { return { a482: 1, m482: () => 1 }; }
+function c482(): void { say("record/spread/prototype-set", (Object.setPrototypeOf((({ ...make482() }).m482) as object, null), Object.getPrototypeOf((({ ...make482() }).m482)) === null)); }
+
+interface R483 { a483: number; m483: () => number }
+function make483(): R483 { return { a483: 1, m483: () => 1 }; }
+function c483(): void { say("record/spread/deleted", (delete (((({ ...make483() }).m483)) as any).length, Object.hasOwn((({ ...make483() }).m483) as object, "length"))); }
+
+interface R484 { a484: number; m484: () => number }
+function make484(): R484 { return { a484: 1, m484: () => 1 }; }
+function same484(a: unknown, b: unknown): boolean { return a === b; }
+function c484(): void { say("record/spread/in-a-callee", same484((({ ...make484() }).m484), (({ ...make484() }).m484))); }
+
+interface R485 { a485: number; m485: () => number }
+function make485(): R485 { return { a485: 1, m485: () => 1 }; }
+function hit485(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c485(): void { say("record/spread/switch", hit485((({ ...make485() }).m485), (({ ...make485() }).m485))); }
+
+interface R486 { a486: number; m486: () => number }
+function make486(): R486 { return { a486: 1, m486: () => 1 }; }
+let last486: unknown;
+function seen486(f: unknown): boolean { const same = f === last486; last486 = f; return same; }
+function c486(): void { say("record/spread/kept-then-compared", (seen486((({ ...make486() }).m486)), seen486((({ ...make486() }).m486)))); }
+
+interface R487 { a487: number; m487: () => number }
+function make487(): R487 { return { a487: 1, m487: () => 1 }; }
+function c487(): void { say("record/assign/strict-eq", (Object.assign({}, make487()).m487) === (Object.assign({}, make487()).m487)); }
+
+interface R488 { a488: number; m488: () => number }
+function make488(): R488 { return { a488: 1, m488: () => 1 }; }
+function c488(): void { say("record/assign/strict-ne", (Object.assign({}, make488()).m488) !== (Object.assign({}, make488()).m488)); }
+
+interface R489 { a489: number; m489: () => number }
+function make489(): R489 { return { a489: 1, m489: () => 1 }; }
+function c489(): void { say("record/assign/loose-eq", (Object.assign({}, make489()).m489) == (Object.assign({}, make489()).m489)); }
+
+interface R490 { a490: number; m490: () => number }
+function make490(): R490 { return { a490: 1, m490: () => 1 }; }
+function c490(): void { say("record/assign/object-is", Object.is((Object.assign({}, make490()).m490), (Object.assign({}, make490()).m490))); }
+
+interface R491 { a491: number; m491: () => number }
+function make491(): R491 { return { a491: 1, m491: () => 1 }; }
+function c491(): void { say("record/assign/set", new Set([(Object.assign({}, make491()).m491), (Object.assign({}, make491()).m491)]).size); }
+
+interface R492 { a492: number; m492: () => number }
+function make492(): R492 { return { a492: 1, m492: () => 1 }; }
+function c492(): void { say("record/assign/map-key", new Map([[(Object.assign({}, make492()).m492), 1], [(Object.assign({}, make492()).m492), 2]]).size); }
+
+interface R493 { a493: number; m493: () => number }
+function make493(): R493 { return { a493: 1, m493: () => 1 }; }
+function c493(): void { say("record/assign/includes", [(Object.assign({}, make493()).m493)].includes((Object.assign({}, make493()).m493))); }
+
+interface R494 { a494: number; m494: () => number }
+function make494(): R494 { return { a494: 1, m494: () => 1 }; }
+function c494(): void { say("record/assign/index-of", [(Object.assign({}, make494()).m494)].indexOf((Object.assign({}, make494()).m494))); }
+
+interface R495 { a495: number; m495: () => number }
+function make495(): R495 { return { a495: 1, m495: () => 1 }; }
+const ws495 = new WeakSet<object>();
+function c495(): void { say("record/assign/weak-set", (ws495.add((Object.assign({}, make495()).m495) as object), ws495.has((Object.assign({}, make495()).m495) as object))); }
+
+interface R496 { a496: number; m496: () => number }
+function make496(): R496 { return { a496: 1, m496: () => 1 }; }
+const wm496 = new WeakMap<object, number>();
+function c496(): void { say("record/assign/weak-map", (wm496.set((Object.assign({}, make496()).m496) as object, 1), wm496.has((Object.assign({}, make496()).m496) as object))); }
+
+interface R497 { a497: number; m497: () => number }
+function make497(): R497 { return { a497: 1, m497: () => 1 }; }
+function c497(): void { say("record/assign/written", ((((Object.assign({}, make497()).m497)) as any).tag = 1, (((Object.assign({}, make497()).m497)) as any).tag)); }
+
+interface R498 { a498: number; m498: () => number }
+function make498(): R498 { return { a498: 1, m498: () => 1 }; }
+function c498(): void { say("record/assign/defined", (Object.defineProperty((Object.assign({}, make498()).m498) as object, "t", { value: 1 }), "t" in ((Object.assign({}, make498()).m498) as object))); }
+
+interface R499 { a499: number; m499: () => number }
+function make499(): R499 { return { a499: 1, m499: () => 1 }; }
+function c499(): void { say("record/assign/frozen", (Object.freeze((Object.assign({}, make499()).m499)), Object.isFrozen((Object.assign({}, make499()).m499)))); }
+
+interface R500 { a500: number; m500: () => number }
+function make500(): R500 { return { a500: 1, m500: () => 1 }; }
+function c500(): void { say("record/assign/prototype-set", (Object.setPrototypeOf((Object.assign({}, make500()).m500) as object, null), Object.getPrototypeOf((Object.assign({}, make500()).m500)) === null)); }
+
+interface R501 { a501: number; m501: () => number }
+function make501(): R501 { return { a501: 1, m501: () => 1 }; }
+function c501(): void { say("record/assign/deleted", (delete (((Object.assign({}, make501()).m501)) as any).length, Object.hasOwn((Object.assign({}, make501()).m501) as object, "length"))); }
+
+interface R502 { a502: number; m502: () => number }
+function make502(): R502 { return { a502: 1, m502: () => 1 }; }
+function same502(a: unknown, b: unknown): boolean { return a === b; }
+function c502(): void { say("record/assign/in-a-callee", same502((Object.assign({}, make502()).m502), (Object.assign({}, make502()).m502))); }
+
+interface R503 { a503: number; m503: () => number }
+function make503(): R503 { return { a503: 1, m503: () => 1 }; }
+function hit503(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c503(): void { say("record/assign/switch", hit503((Object.assign({}, make503()).m503), (Object.assign({}, make503()).m503))); }
+
+interface R504 { a504: number; m504: () => number }
+function make504(): R504 { return { a504: 1, m504: () => 1 }; }
+let last504: unknown;
+function seen504(f: unknown): boolean { const same = f === last504; last504 = f; return same; }
+function c504(): void { say("record/assign/kept-then-compared", (seen504((Object.assign({}, make504()).m504)), seen504((Object.assign({}, make504()).m504)))); }
+
+interface R505 { a505: number; m505: () => number }
+function make505(): R505 { return { a505: 1, m505: () => 1 }; }
+function get505(): unknown { const { m505 } = make505(); return m505; }
+function c505(): void { say("record/pattern/strict-eq", (get505()) === (get505())); }
+
+interface R506 { a506: number; m506: () => number }
+function make506(): R506 { return { a506: 1, m506: () => 1 }; }
+function get506(): unknown { const { m506 } = make506(); return m506; }
+function c506(): void { say("record/pattern/strict-ne", (get506()) !== (get506())); }
+
+interface R507 { a507: number; m507: () => number }
+function make507(): R507 { return { a507: 1, m507: () => 1 }; }
+function get507(): unknown { const { m507 } = make507(); return m507; }
+function c507(): void { say("record/pattern/loose-eq", (get507()) == (get507())); }
+
+interface R508 { a508: number; m508: () => number }
+function make508(): R508 { return { a508: 1, m508: () => 1 }; }
+function get508(): unknown { const { m508 } = make508(); return m508; }
+function c508(): void { say("record/pattern/object-is", Object.is((get508()), (get508()))); }
+
+interface R509 { a509: number; m509: () => number }
+function make509(): R509 { return { a509: 1, m509: () => 1 }; }
+function get509(): unknown { const { m509 } = make509(); return m509; }
+function c509(): void { say("record/pattern/set", new Set([(get509()), (get509())]).size); }
+
+interface R510 { a510: number; m510: () => number }
+function make510(): R510 { return { a510: 1, m510: () => 1 }; }
+function get510(): unknown { const { m510 } = make510(); return m510; }
+function c510(): void { say("record/pattern/map-key", new Map([[(get510()), 1], [(get510()), 2]]).size); }
+
+interface R511 { a511: number; m511: () => number }
+function make511(): R511 { return { a511: 1, m511: () => 1 }; }
+function get511(): unknown { const { m511 } = make511(); return m511; }
+function c511(): void { say("record/pattern/includes", [(get511())].includes((get511()))); }
+
+interface R512 { a512: number; m512: () => number }
+function make512(): R512 { return { a512: 1, m512: () => 1 }; }
+function get512(): unknown { const { m512 } = make512(); return m512; }
+function c512(): void { say("record/pattern/index-of", [(get512())].indexOf((get512()))); }
+
+interface R513 { a513: number; m513: () => number }
+function make513(): R513 { return { a513: 1, m513: () => 1 }; }
+function get513(): unknown { const { m513 } = make513(); return m513; }
+const ws513 = new WeakSet<object>();
+function c513(): void { say("record/pattern/weak-set", (ws513.add((get513()) as object), ws513.has((get513()) as object))); }
+
+interface R514 { a514: number; m514: () => number }
+function make514(): R514 { return { a514: 1, m514: () => 1 }; }
+function get514(): unknown { const { m514 } = make514(); return m514; }
+const wm514 = new WeakMap<object, number>();
+function c514(): void { say("record/pattern/weak-map", (wm514.set((get514()) as object, 1), wm514.has((get514()) as object))); }
+
+interface R515 { a515: number; m515: () => number }
+function make515(): R515 { return { a515: 1, m515: () => 1 }; }
+function get515(): unknown { const { m515 } = make515(); return m515; }
+function c515(): void { say("record/pattern/written", ((((get515())) as any).tag = 1, (((get515())) as any).tag)); }
+
+interface R516 { a516: number; m516: () => number }
+function make516(): R516 { return { a516: 1, m516: () => 1 }; }
+function get516(): unknown { const { m516 } = make516(); return m516; }
+function c516(): void { say("record/pattern/defined", (Object.defineProperty((get516()) as object, "t", { value: 1 }), "t" in ((get516()) as object))); }
+
+interface R517 { a517: number; m517: () => number }
+function make517(): R517 { return { a517: 1, m517: () => 1 }; }
+function get517(): unknown { const { m517 } = make517(); return m517; }
+function c517(): void { say("record/pattern/frozen", (Object.freeze((get517())), Object.isFrozen((get517())))); }
+
+interface R518 { a518: number; m518: () => number }
+function make518(): R518 { return { a518: 1, m518: () => 1 }; }
+function get518(): unknown { const { m518 } = make518(); return m518; }
+function c518(): void { say("record/pattern/prototype-set", (Object.setPrototypeOf((get518()) as object, null), Object.getPrototypeOf((get518())) === null)); }
+
+interface R519 { a519: number; m519: () => number }
+function make519(): R519 { return { a519: 1, m519: () => 1 }; }
+function get519(): unknown { const { m519 } = make519(); return m519; }
+function c519(): void { say("record/pattern/deleted", (delete (((get519())) as any).length, Object.hasOwn((get519()) as object, "length"))); }
+
+interface R520 { a520: number; m520: () => number }
+function make520(): R520 { return { a520: 1, m520: () => 1 }; }
+function get520(): unknown { const { m520 } = make520(); return m520; }
+function same520(a: unknown, b: unknown): boolean { return a === b; }
+function c520(): void { say("record/pattern/in-a-callee", same520((get520()), (get520()))); }
+
+interface R521 { a521: number; m521: () => number }
+function make521(): R521 { return { a521: 1, m521: () => 1 }; }
+function get521(): unknown { const { m521 } = make521(); return m521; }
+function hit521(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c521(): void { say("record/pattern/switch", hit521((get521()), (get521()))); }
+
+interface R522 { a522: number; m522: () => number }
+function make522(): R522 { return { a522: 1, m522: () => 1 }; }
+function get522(): unknown { const { m522 } = make522(); return m522; }
+let last522: unknown;
+function seen522(f: unknown): boolean { const same = f === last522; last522 = f; return same; }
+function c522(): void { say("record/pattern/kept-then-compared", (seen522((get522())), seen522((get522())))); }
+
+interface R523 { a523: number; m523: () => number }
+function make523(): R523 { return { a523: 1, m523: () => 1 }; }
+function get523(): unknown { const { a523: _a, ...rest } = make523(); return rest.m523; }
+function c523(): void { say("record/rest-pattern/strict-eq", (get523()) === (get523())); }
+
+interface R524 { a524: number; m524: () => number }
+function make524(): R524 { return { a524: 1, m524: () => 1 }; }
+function get524(): unknown { const { a524: _a, ...rest } = make524(); return rest.m524; }
+function c524(): void { say("record/rest-pattern/strict-ne", (get524()) !== (get524())); }
+
+interface R525 { a525: number; m525: () => number }
+function make525(): R525 { return { a525: 1, m525: () => 1 }; }
+function get525(): unknown { const { a525: _a, ...rest } = make525(); return rest.m525; }
+function c525(): void { say("record/rest-pattern/loose-eq", (get525()) == (get525())); }
+
+interface R526 { a526: number; m526: () => number }
+function make526(): R526 { return { a526: 1, m526: () => 1 }; }
+function get526(): unknown { const { a526: _a, ...rest } = make526(); return rest.m526; }
+function c526(): void { say("record/rest-pattern/object-is", Object.is((get526()), (get526()))); }
+
+interface R527 { a527: number; m527: () => number }
+function make527(): R527 { return { a527: 1, m527: () => 1 }; }
+function get527(): unknown { const { a527: _a, ...rest } = make527(); return rest.m527; }
+function c527(): void { say("record/rest-pattern/set", new Set([(get527()), (get527())]).size); }
+
+interface R528 { a528: number; m528: () => number }
+function make528(): R528 { return { a528: 1, m528: () => 1 }; }
+function get528(): unknown { const { a528: _a, ...rest } = make528(); return rest.m528; }
+function c528(): void { say("record/rest-pattern/map-key", new Map([[(get528()), 1], [(get528()), 2]]).size); }
+
+interface R529 { a529: number; m529: () => number }
+function make529(): R529 { return { a529: 1, m529: () => 1 }; }
+function get529(): unknown { const { a529: _a, ...rest } = make529(); return rest.m529; }
+function c529(): void { say("record/rest-pattern/includes", [(get529())].includes((get529()))); }
+
+interface R530 { a530: number; m530: () => number }
+function make530(): R530 { return { a530: 1, m530: () => 1 }; }
+function get530(): unknown { const { a530: _a, ...rest } = make530(); return rest.m530; }
+function c530(): void { say("record/rest-pattern/index-of", [(get530())].indexOf((get530()))); }
+
+interface R531 { a531: number; m531: () => number }
+function make531(): R531 { return { a531: 1, m531: () => 1 }; }
+function get531(): unknown { const { a531: _a, ...rest } = make531(); return rest.m531; }
+const ws531 = new WeakSet<object>();
+function c531(): void { say("record/rest-pattern/weak-set", (ws531.add((get531()) as object), ws531.has((get531()) as object))); }
+
+interface R532 { a532: number; m532: () => number }
+function make532(): R532 { return { a532: 1, m532: () => 1 }; }
+function get532(): unknown { const { a532: _a, ...rest } = make532(); return rest.m532; }
+const wm532 = new WeakMap<object, number>();
+function c532(): void { say("record/rest-pattern/weak-map", (wm532.set((get532()) as object, 1), wm532.has((get532()) as object))); }
+
+interface R533 { a533: number; m533: () => number }
+function make533(): R533 { return { a533: 1, m533: () => 1 }; }
+function get533(): unknown { const { a533: _a, ...rest } = make533(); return rest.m533; }
+function c533(): void { say("record/rest-pattern/written", ((((get533())) as any).tag = 1, (((get533())) as any).tag)); }
+
+interface R534 { a534: number; m534: () => number }
+function make534(): R534 { return { a534: 1, m534: () => 1 }; }
+function get534(): unknown { const { a534: _a, ...rest } = make534(); return rest.m534; }
+function c534(): void { say("record/rest-pattern/defined", (Object.defineProperty((get534()) as object, "t", { value: 1 }), "t" in ((get534()) as object))); }
+
+interface R535 { a535: number; m535: () => number }
+function make535(): R535 { return { a535: 1, m535: () => 1 }; }
+function get535(): unknown { const { a535: _a, ...rest } = make535(); return rest.m535; }
+function c535(): void { say("record/rest-pattern/frozen", (Object.freeze((get535())), Object.isFrozen((get535())))); }
+
+interface R536 { a536: number; m536: () => number }
+function make536(): R536 { return { a536: 1, m536: () => 1 }; }
+function get536(): unknown { const { a536: _a, ...rest } = make536(); return rest.m536; }
+function c536(): void { say("record/rest-pattern/prototype-set", (Object.setPrototypeOf((get536()) as object, null), Object.getPrototypeOf((get536())) === null)); }
+
+interface R537 { a537: number; m537: () => number }
+function make537(): R537 { return { a537: 1, m537: () => 1 }; }
+function get537(): unknown { const { a537: _a, ...rest } = make537(); return rest.m537; }
+function c537(): void { say("record/rest-pattern/deleted", (delete (((get537())) as any).length, Object.hasOwn((get537()) as object, "length"))); }
+
+interface R538 { a538: number; m538: () => number }
+function make538(): R538 { return { a538: 1, m538: () => 1 }; }
+function get538(): unknown { const { a538: _a, ...rest } = make538(); return rest.m538; }
+function same538(a: unknown, b: unknown): boolean { return a === b; }
+function c538(): void { say("record/rest-pattern/in-a-callee", same538((get538()), (get538()))); }
+
+interface R539 { a539: number; m539: () => number }
+function make539(): R539 { return { a539: 1, m539: () => 1 }; }
+function get539(): unknown { const { a539: _a, ...rest } = make539(); return rest.m539; }
+function hit539(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c539(): void { say("record/rest-pattern/switch", hit539((get539()), (get539()))); }
+
+interface R540 { a540: number; m540: () => number }
+function make540(): R540 { return { a540: 1, m540: () => 1 }; }
+function get540(): unknown { const { a540: _a, ...rest } = make540(); return rest.m540; }
+let last540: unknown;
+function seen540(f: unknown): boolean { const same = f === last540; last540 = f; return same; }
+function c540(): void { say("record/rest-pattern/kept-then-compared", (seen540((get540())), seen540((get540())))); }
+
+c481(); c482(); c483(); c484(); c485(); c486(); c487(); c488(); c489(); c490(); c491(); c492(); c493(); c494(); c495(); c496(); c497(); c498(); c499(); c500(); c501(); c502(); c503(); c504(); c505(); c506(); c507(); c508(); c509(); c510(); c511(); c512(); c513(); c514(); c515(); c516(); c517(); c518(); c519(); c520(); c521(); c522(); c523(); c524(); c525(); c526(); c527(); c528(); c529(); c530(); c531(); c532(); c533(); c534(); c535(); c536(); c537(); c538(); c539(); c540();
+console.log(out.join("\n"));
+//// identity-09.ts
+// Generated program: object and closure identity stays observable when allocations are removed (part 9).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R541 { a541: number; m541: () => number }
+function make541(): R541 { return { a541: 1, m541: () => 1 }; }
+const key541: string = "m541";
+function c541(): void { say("record/computed-key/strict-eq", ((make541() as any)[key541]) === ((make541() as any)[key541])); }
+
+interface R542 { a542: number; m542: () => number }
+function make542(): R542 { return { a542: 1, m542: () => 1 }; }
+const key542: string = "m542";
+function c542(): void { say("record/computed-key/strict-ne", ((make542() as any)[key542]) !== ((make542() as any)[key542])); }
+
+interface R543 { a543: number; m543: () => number }
+function make543(): R543 { return { a543: 1, m543: () => 1 }; }
+const key543: string = "m543";
+function c543(): void { say("record/computed-key/loose-eq", ((make543() as any)[key543]) == ((make543() as any)[key543])); }
+
+interface R544 { a544: number; m544: () => number }
+function make544(): R544 { return { a544: 1, m544: () => 1 }; }
+const key544: string = "m544";
+function c544(): void { say("record/computed-key/object-is", Object.is(((make544() as any)[key544]), ((make544() as any)[key544]))); }
+
+interface R545 { a545: number; m545: () => number }
+function make545(): R545 { return { a545: 1, m545: () => 1 }; }
+const key545: string = "m545";
+function c545(): void { say("record/computed-key/set", new Set([((make545() as any)[key545]), ((make545() as any)[key545])]).size); }
+
+interface R546 { a546: number; m546: () => number }
+function make546(): R546 { return { a546: 1, m546: () => 1 }; }
+const key546: string = "m546";
+function c546(): void { say("record/computed-key/map-key", new Map([[((make546() as any)[key546]), 1], [((make546() as any)[key546]), 2]]).size); }
+
+interface R547 { a547: number; m547: () => number }
+function make547(): R547 { return { a547: 1, m547: () => 1 }; }
+const key547: string = "m547";
+function c547(): void { say("record/computed-key/includes", [((make547() as any)[key547])].includes(((make547() as any)[key547]))); }
+
+interface R548 { a548: number; m548: () => number }
+function make548(): R548 { return { a548: 1, m548: () => 1 }; }
+const key548: string = "m548";
+function c548(): void { say("record/computed-key/index-of", [((make548() as any)[key548])].indexOf(((make548() as any)[key548]))); }
+
+interface R549 { a549: number; m549: () => number }
+function make549(): R549 { return { a549: 1, m549: () => 1 }; }
+const key549: string = "m549";
+const ws549 = new WeakSet<object>();
+function c549(): void { say("record/computed-key/weak-set", (ws549.add(((make549() as any)[key549]) as object), ws549.has(((make549() as any)[key549]) as object))); }
+
+interface R550 { a550: number; m550: () => number }
+function make550(): R550 { return { a550: 1, m550: () => 1 }; }
+const key550: string = "m550";
+const wm550 = new WeakMap<object, number>();
+function c550(): void { say("record/computed-key/weak-map", (wm550.set(((make550() as any)[key550]) as object, 1), wm550.has(((make550() as any)[key550]) as object))); }
+
+interface R551 { a551: number; m551: () => number }
+function make551(): R551 { return { a551: 1, m551: () => 1 }; }
+const key551: string = "m551";
+function c551(): void { say("record/computed-key/written", (((((make551() as any)[key551])) as any).tag = 1, ((((make551() as any)[key551])) as any).tag)); }
+
+interface R552 { a552: number; m552: () => number }
+function make552(): R552 { return { a552: 1, m552: () => 1 }; }
+const key552: string = "m552";
+function c552(): void { say("record/computed-key/defined", (Object.defineProperty(((make552() as any)[key552]) as object, "t", { value: 1 }), "t" in (((make552() as any)[key552]) as object))); }
+
+interface R553 { a553: number; m553: () => number }
+function make553(): R553 { return { a553: 1, m553: () => 1 }; }
+const key553: string = "m553";
+function c553(): void { say("record/computed-key/frozen", (Object.freeze(((make553() as any)[key553])), Object.isFrozen(((make553() as any)[key553])))); }
+
+interface R554 { a554: number; m554: () => number }
+function make554(): R554 { return { a554: 1, m554: () => 1 }; }
+const key554: string = "m554";
+function c554(): void { say("record/computed-key/prototype-set", (Object.setPrototypeOf(((make554() as any)[key554]) as object, null), Object.getPrototypeOf(((make554() as any)[key554])) === null)); }
+
+interface R555 { a555: number; m555: () => number }
+function make555(): R555 { return { a555: 1, m555: () => 1 }; }
+const key555: string = "m555";
+function c555(): void { say("record/computed-key/deleted", (delete ((((make555() as any)[key555])) as any).length, Object.hasOwn(((make555() as any)[key555]) as object, "length"))); }
+
+interface R556 { a556: number; m556: () => number }
+function make556(): R556 { return { a556: 1, m556: () => 1 }; }
+const key556: string = "m556";
+function same556(a: unknown, b: unknown): boolean { return a === b; }
+function c556(): void { say("record/computed-key/in-a-callee", same556(((make556() as any)[key556]), ((make556() as any)[key556]))); }
+
+interface R557 { a557: number; m557: () => number }
+function make557(): R557 { return { a557: 1, m557: () => 1 }; }
+const key557: string = "m557";
+function hit557(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c557(): void { say("record/computed-key/switch", hit557(((make557() as any)[key557]), ((make557() as any)[key557]))); }
+
+interface R558 { a558: number; m558: () => number }
+function make558(): R558 { return { a558: 1, m558: () => 1 }; }
+const key558: string = "m558";
+let last558: unknown;
+function seen558(f: unknown): boolean { const same = f === last558; last558 = f; return same; }
+function c558(): void { say("record/computed-key/kept-then-compared", (seen558(((make558() as any)[key558])), seen558(((make558() as any)[key558])))); }
+
+interface R559 { a559: number; m559: () => number }
+function make559(): R559 { return { a559: 1, m559: () => 1 }; }
+function get559(): unknown { const t = make559(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c559(): void { say("record/for-in/strict-eq", (get559()) === (get559())); }
+
+interface R560 { a560: number; m560: () => number }
+function make560(): R560 { return { a560: 1, m560: () => 1 }; }
+function get560(): unknown { const t = make560(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c560(): void { say("record/for-in/strict-ne", (get560()) !== (get560())); }
+
+interface R561 { a561: number; m561: () => number }
+function make561(): R561 { return { a561: 1, m561: () => 1 }; }
+function get561(): unknown { const t = make561(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c561(): void { say("record/for-in/loose-eq", (get561()) == (get561())); }
+
+interface R562 { a562: number; m562: () => number }
+function make562(): R562 { return { a562: 1, m562: () => 1 }; }
+function get562(): unknown { const t = make562(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c562(): void { say("record/for-in/object-is", Object.is((get562()), (get562()))); }
+
+interface R563 { a563: number; m563: () => number }
+function make563(): R563 { return { a563: 1, m563: () => 1 }; }
+function get563(): unknown { const t = make563(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c563(): void { say("record/for-in/set", new Set([(get563()), (get563())]).size); }
+
+interface R564 { a564: number; m564: () => number }
+function make564(): R564 { return { a564: 1, m564: () => 1 }; }
+function get564(): unknown { const t = make564(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c564(): void { say("record/for-in/map-key", new Map([[(get564()), 1], [(get564()), 2]]).size); }
+
+interface R565 { a565: number; m565: () => number }
+function make565(): R565 { return { a565: 1, m565: () => 1 }; }
+function get565(): unknown { const t = make565(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c565(): void { say("record/for-in/includes", [(get565())].includes((get565()))); }
+
+interface R566 { a566: number; m566: () => number }
+function make566(): R566 { return { a566: 1, m566: () => 1 }; }
+function get566(): unknown { const t = make566(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c566(): void { say("record/for-in/index-of", [(get566())].indexOf((get566()))); }
+
+interface R567 { a567: number; m567: () => number }
+function make567(): R567 { return { a567: 1, m567: () => 1 }; }
+function get567(): unknown { const t = make567(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+const ws567 = new WeakSet<object>();
+function c567(): void { say("record/for-in/weak-set", (ws567.add((get567()) as object), ws567.has((get567()) as object))); }
+
+interface R568 { a568: number; m568: () => number }
+function make568(): R568 { return { a568: 1, m568: () => 1 }; }
+function get568(): unknown { const t = make568(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+const wm568 = new WeakMap<object, number>();
+function c568(): void { say("record/for-in/weak-map", (wm568.set((get568()) as object, 1), wm568.has((get568()) as object))); }
+
+interface R569 { a569: number; m569: () => number }
+function make569(): R569 { return { a569: 1, m569: () => 1 }; }
+function get569(): unknown { const t = make569(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c569(): void { say("record/for-in/written", ((((get569())) as any).tag = 1, (((get569())) as any).tag)); }
+
+interface R570 { a570: number; m570: () => number }
+function make570(): R570 { return { a570: 1, m570: () => 1 }; }
+function get570(): unknown { const t = make570(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c570(): void { say("record/for-in/defined", (Object.defineProperty((get570()) as object, "t", { value: 1 }), "t" in ((get570()) as object))); }
+
+interface R571 { a571: number; m571: () => number }
+function make571(): R571 { return { a571: 1, m571: () => 1 }; }
+function get571(): unknown { const t = make571(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c571(): void { say("record/for-in/frozen", (Object.freeze((get571())), Object.isFrozen((get571())))); }
+
+interface R572 { a572: number; m572: () => number }
+function make572(): R572 { return { a572: 1, m572: () => 1 }; }
+function get572(): unknown { const t = make572(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c572(): void { say("record/for-in/prototype-set", (Object.setPrototypeOf((get572()) as object, null), Object.getPrototypeOf((get572())) === null)); }
+
+interface R573 { a573: number; m573: () => number }
+function make573(): R573 { return { a573: 1, m573: () => 1 }; }
+function get573(): unknown { const t = make573(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function c573(): void { say("record/for-in/deleted", (delete (((get573())) as any).length, Object.hasOwn((get573()) as object, "length"))); }
+
+interface R574 { a574: number; m574: () => number }
+function make574(): R574 { return { a574: 1, m574: () => 1 }; }
+function get574(): unknown { const t = make574(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function same574(a: unknown, b: unknown): boolean { return a === b; }
+function c574(): void { say("record/for-in/in-a-callee", same574((get574()), (get574()))); }
+
+interface R575 { a575: number; m575: () => number }
+function make575(): R575 { return { a575: 1, m575: () => 1 }; }
+function get575(): unknown { const t = make575(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+function hit575(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c575(): void { say("record/for-in/switch", hit575((get575()), (get575()))); }
+
+interface R576 { a576: number; m576: () => number }
+function make576(): R576 { return { a576: 1, m576: () => 1 }; }
+function get576(): unknown { const t = make576(); let f: unknown; for (const k in t) f = (t as any)[k]; return f; }
+let last576: unknown;
+function seen576(f: unknown): boolean { const same = f === last576; last576 = f; return same; }
+function c576(): void { say("record/for-in/kept-then-compared", (seen576((get576())), seen576((get576())))); }
+
+interface R577 { a577: number; m577: () => number }
+interface O577 { in577: R577; n577: number }
+function make577(): O577 { return { in577: { a577: 1, m577: () => 1 }, n577: 2 }; }
+function c577(): void { say("nested/inline/strict-eq", (make577().in577.m577) === (make577().in577.m577)); }
+
+interface R578 { a578: number; m578: () => number }
+interface O578 { in578: R578; n578: number }
+function make578(): O578 { return { in578: { a578: 1, m578: () => 1 }, n578: 2 }; }
+function get578(): unknown { return make578().in578.m578; }
+function c578(): void { say("nested/getter/strict-eq", (get578()) === (get578())); }
+
+interface R579 { a579: number; m579: () => number }
+interface O579 { in579: R579; n579: number }
+function make579(): O579 { return { in579: { a579: 1, m579: () => 1 }, n579: 2 }; }
+function get579a(): unknown { return make579().in579.m579; }
+function get579b(): unknown { return get579a(); }
+function get579(): unknown { return get579b(); }
+function c579(): void { say("nested/forwarded/strict-eq", (get579()) === (get579())); }
+
+interface R580 { a580: number; m580: () => number }
+interface O580 { in580: R580; n580: number }
+function make580(): O580 { return { in580: { a580: 1, m580: () => 1 }, n580: 2 }; }
+function pick580(x: O580): unknown { return x.in580.m580; }
+function c580(): void { say("nested/picked/strict-eq", (pick580(make580())) === (pick580(make580()))); }
+
+interface R581 { a581: number; m581: () => number }
+interface O581 { in581: R581; n581: number }
+function make581(): O581 { return { in581: { a581: 1, m581: () => 1 }, n581: 2 }; }
+function pick581(x: O581): unknown { return x.in581.m581; }
+function get581(): unknown { return pick581(make581()); }
+function c581(): void { say("nested/picked-and-returned/strict-eq", (get581()) === (get581())); }
+
+interface R582 { a582: number; m582: () => number }
+interface O582 { in582: R582; n582: number }
+function make582(): O582 { return { in582: { a582: 1, m582: () => 1 }, n582: 2 }; }
+let slot582: unknown;
+function put582(): unknown { slot582 = make582().in582.m582; return 0; }
+function c582(): void { say("nested/variable/strict-eq", ((put582(), slot582)) === ((put582(), slot582))); }
+
+interface R583 { a583: number; m583: () => number }
+interface O583 { in583: R583; n583: number }
+function make583(): O583 { return { in583: { a583: 1, m583: () => 1 }, n583: 2 }; }
+let kept583: O583 | undefined;
+function keep583(): unknown { kept583 = make583(); return 0; }
+function c583(): void { say("nested/holder-in-a-variable/strict-eq", ((keep583(), kept583!.in583.m583)) === ((keep583(), kept583!.in583.m583))); }
+
+interface R584 { a584: number; m584: () => number }
+interface O584 { in584: R584; n584: number }
+function make584(): O584 { return { in584: { a584: 1, m584: () => 1 }, n584: 2 }; }
+function with584<T>(k: (f: unknown) => T): T { return k(make584().in584.m584); }
+function c584(): void { say("nested/callback/strict-eq", (with584(x => x)) === (with584(x => x))); }
+
+interface R585 { a585: number; m585: () => number }
+interface O585 { in585: R585; n585: number }
+function make585(): O585 { return { in585: { a585: 1, m585: () => 1 }, n585: 2 }; }
+function later585(): () => unknown { const t = make585(); return () => t.in585.m585; }
+function c585(): void { say("nested/closure/strict-eq", (later585()()) === (later585()())); }
+
+interface R586 { a586: number; m586: () => number }
+interface O586 { in586: R586; n586: number }
+function make586(): O586 { return { in586: { a586: 1, m586: () => 1 }, n586: 2 }; }
+function later586(): () => unknown { const f = make586().in586.m586; return () => f; }
+function c586(): void { say("nested/captured/strict-eq", (later586()()) === (later586()())); }
+
+interface R587 { a587: number; m587: () => number }
+interface O587 { in587: R587; n587: number }
+function make587(): O587 { return { in587: { a587: 1, m587: () => 1 }, n587: 2 }; }
+function wrap587(): { f: unknown } { return { f: make587().in587.m587 }; }
+function c587(): void { say("nested/rewrapped/strict-eq", (wrap587().f) === (wrap587().f)); }
+
+interface R588 { a588: number; m588: () => number }
+interface O588 { in588: R588; n588: number }
+function make588(): O588 { return { in588: { a588: 1, m588: () => 1 }, n588: 2 }; }
+function wrap588(): unknown[] { return [make588().in588.m588]; }
+function c588(): void { say("nested/rewrapped-in-an-array/strict-eq", (wrap588()[0]) === (wrap588()[0])); }
+
+interface R589 { a589: number; m589: () => number }
+interface O589 { in589: R589; n589: number }
+function make589(): O589 { return { in589: { a589: 1, m589: () => 1 }, n589: 2 }; }
+function* gen589(): Generator<unknown> { yield make589().in589.m589; }
+function c589(): void { say("nested/generator/strict-eq", (gen589().next().value) === (gen589().next().value)); }
+
+interface R590 { a590: number; m590: () => number }
+interface O590 { in590: R590; n590: number }
+function make590(): O590 { return { in590: { a590: 1, m590: () => 1 }, n590: 2 }; }
+class K590 { get(): unknown { return make590().in590.m590; } }
+function c590(): void { say("nested/method/strict-eq", (new K590().get()) === (new K590().get())); }
+
+interface R591 { a591: number; m591: () => number }
+interface O591 { in591: R591; n591: number }
+function make591(): O591 { return { in591: { a591: 1, m591: () => 1 }, n591: 2 }; }
+class K591 { get f(): unknown { return make591().in591.m591; } }
+function c591(): void { say("nested/accessor/strict-eq", (new K591().f) === (new K591().f)); }
+
+interface R592 { a592: number; m592: () => number }
+interface O592 { in592: R592; n592: number }
+function make592(): O592 { return { in592: { a592: 1, m592: () => 1 }, n592: 2 }; }
+function first592(...xs: unknown[]): unknown { return xs[0]; }
+function c592(): void { say("nested/rest/strict-eq", (first592(make592().in592.m592)) === (first592(make592().in592.m592))); }
+
+interface R593 { a593: number; m593: () => number }
+interface O593 { in593: R593; n593: number }
+function make593(): O593 { return { in593: { a593: 1, m593: () => 1 }, n593: 2 }; }
+function get593(): unknown { try { throw make593().in593.m593; } catch (e) { return e; } }
+function c593(): void { say("nested/thrown/strict-eq", (get593()) === (get593())); }
+
+interface R594 { a594: number; m594: () => number }
+interface O594 { in594: R594; n594: number }
+function make594(): O594 { return { in594: { a594: 1, m594: () => 1 }, n594: 2 }; }
+function get594(other: unknown, which: boolean): unknown { return which ? make594().in594.m594 : other; }
+function c594(): void { say("nested/one-arm/strict-eq", (get594(0, true)) === (get594(0, true))); }
+
+interface R595 { a595: number; m595: () => number }
+interface O595 { in595: R595; n595: number }
+function make595(): O595 { return { in595: { a595: 1, m595: () => 1 }, n595: 2 }; }
+function get595(): unknown { let t = make595(); for (let i = 0; i < 2; i++) t = make595(); return t.in595.m595; }
+function c595(): void { say("nested/loop/strict-eq", (get595()) === (get595())); }
+
+interface R596 { a596: number; m596: () => number }
+interface O596 { in596: R596; n596: number }
+function make596(): O596 { return { in596: { a596: 1, m596: () => 1 }, n596: 2 }; }
+function id596<T>(x: T): T { return x; }
+function get596(): unknown { return id596(make596()).in596.m596; }
+function c596(): void { say("nested/identity/strict-eq", (get596()) === (get596())); }
+
+interface R597 { a597: number; m597: () => number }
+interface O597 { in597: R597; n597: number }
+function make597(): O597 { return { in597: { a597: 1, m597: () => 1 }, n597: 2 }; }
+function get597(): unknown { return make597().in597.m597; }
+const g597 = [get597];
+function c597(): void { say("nested/by-value/strict-eq", (g597[0]()) === (g597[0]())); }
+
+interface R609 { a609: number; m609: () => number }
+interface O609 { in609: R609; n609: number }
+function make609(): O609 { return { in609: { a609: 1, m609: () => 1 }, n609: 2 }; }
+function get609(): unknown { return make609().in609.m609; }
+function c609(): void { say("nested/getter/strict-ne", (get609()) !== (get609())); }
+
+interface R610 { a610: number; m610: () => number }
+interface O610 { in610: R610; n610: number }
+function make610(): O610 { return { in610: { a610: 1, m610: () => 1 }, n610: 2 }; }
+function get610(): unknown { return make610().in610.m610; }
+function c610(): void { say("nested/getter/loose-eq", (get610()) == (get610())); }
+
+interface R611 { a611: number; m611: () => number }
+interface O611 { in611: R611; n611: number }
+function make611(): O611 { return { in611: { a611: 1, m611: () => 1 }, n611: 2 }; }
+function get611(): unknown { return make611().in611.m611; }
+function c611(): void { say("nested/getter/object-is", Object.is((get611()), (get611()))); }
+
+c541(); c542(); c543(); c544(); c545(); c546(); c547(); c548(); c549(); c550(); c551(); c552(); c553(); c554(); c555(); c556(); c557(); c558(); c559(); c560(); c561(); c562(); c563(); c564(); c565(); c566(); c567(); c568(); c569(); c570(); c571(); c572(); c573(); c574(); c575(); c576(); c577(); c578(); c579(); c580(); c581(); c582(); c583(); c584(); c585(); c586(); c587(); c588(); c589(); c590(); c591(); c592(); c593(); c594(); c595(); c596(); c597(); c609(); c610(); c611();
+console.log(out.join("\n"));
+//// identity-10.ts
+// Generated program: object and closure identity stays observable when allocations are removed (part 10).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R612 { a612: number; m612: () => number }
+interface O612 { in612: R612; n612: number }
+function make612(): O612 { return { in612: { a612: 1, m612: () => 1 }, n612: 2 }; }
+function get612(): unknown { return make612().in612.m612; }
+function c612(): void { say("nested/getter/set", new Set([(get612()), (get612())]).size); }
+
+interface R613 { a613: number; m613: () => number }
+interface O613 { in613: R613; n613: number }
+function make613(): O613 { return { in613: { a613: 1, m613: () => 1 }, n613: 2 }; }
+function get613(): unknown { return make613().in613.m613; }
+function c613(): void { say("nested/getter/map-key", new Map([[(get613()), 1], [(get613()), 2]]).size); }
+
+interface R614 { a614: number; m614: () => number }
+interface O614 { in614: R614; n614: number }
+function make614(): O614 { return { in614: { a614: 1, m614: () => 1 }, n614: 2 }; }
+function get614(): unknown { return make614().in614.m614; }
+function c614(): void { say("nested/getter/includes", [(get614())].includes((get614()))); }
+
+interface R615 { a615: number; m615: () => number }
+interface O615 { in615: R615; n615: number }
+function make615(): O615 { return { in615: { a615: 1, m615: () => 1 }, n615: 2 }; }
+function get615(): unknown { return make615().in615.m615; }
+function c615(): void { say("nested/getter/index-of", [(get615())].indexOf((get615()))); }
+
+interface R616 { a616: number; m616: () => number }
+interface O616 { in616: R616; n616: number }
+function make616(): O616 { return { in616: { a616: 1, m616: () => 1 }, n616: 2 }; }
+function get616(): unknown { return make616().in616.m616; }
+const ws616 = new WeakSet<object>();
+function c616(): void { say("nested/getter/weak-set", (ws616.add((get616()) as object), ws616.has((get616()) as object))); }
+
+interface R617 { a617: number; m617: () => number }
+interface O617 { in617: R617; n617: number }
+function make617(): O617 { return { in617: { a617: 1, m617: () => 1 }, n617: 2 }; }
+function get617(): unknown { return make617().in617.m617; }
+const wm617 = new WeakMap<object, number>();
+function c617(): void { say("nested/getter/weak-map", (wm617.set((get617()) as object, 1), wm617.has((get617()) as object))); }
+
+interface R618 { a618: number; m618: () => number }
+interface O618 { in618: R618; n618: number }
+function make618(): O618 { return { in618: { a618: 1, m618: () => 1 }, n618: 2 }; }
+function get618(): unknown { return make618().in618.m618; }
+function c618(): void { say("nested/getter/written", ((((get618())) as any).tag = 1, (((get618())) as any).tag)); }
+
+interface R619 { a619: number; m619: () => number }
+interface O619 { in619: R619; n619: number }
+function make619(): O619 { return { in619: { a619: 1, m619: () => 1 }, n619: 2 }; }
+function get619(): unknown { return make619().in619.m619; }
+function c619(): void { say("nested/getter/defined", (Object.defineProperty((get619()) as object, "t", { value: 1 }), "t" in ((get619()) as object))); }
+
+interface R620 { a620: number; m620: () => number }
+interface O620 { in620: R620; n620: number }
+function make620(): O620 { return { in620: { a620: 1, m620: () => 1 }, n620: 2 }; }
+function get620(): unknown { return make620().in620.m620; }
+function c620(): void { say("nested/getter/frozen", (Object.freeze((get620())), Object.isFrozen((get620())))); }
+
+interface R621 { a621: number; m621: () => number }
+interface O621 { in621: R621; n621: number }
+function make621(): O621 { return { in621: { a621: 1, m621: () => 1 }, n621: 2 }; }
+function get621(): unknown { return make621().in621.m621; }
+function c621(): void { say("nested/getter/prototype-set", (Object.setPrototypeOf((get621()) as object, null), Object.getPrototypeOf((get621())) === null)); }
+
+interface R622 { a622: number; m622: () => number }
+interface O622 { in622: R622; n622: number }
+function make622(): O622 { return { in622: { a622: 1, m622: () => 1 }, n622: 2 }; }
+function get622(): unknown { return make622().in622.m622; }
+function c622(): void { say("nested/getter/deleted", (delete (((get622())) as any).length, Object.hasOwn((get622()) as object, "length"))); }
+
+interface R623 { a623: number; m623: () => number }
+interface O623 { in623: R623; n623: number }
+function make623(): O623 { return { in623: { a623: 1, m623: () => 1 }, n623: 2 }; }
+function get623(): unknown { return make623().in623.m623; }
+function same623(a: unknown, b: unknown): boolean { return a === b; }
+function c623(): void { say("nested/getter/in-a-callee", same623((get623()), (get623()))); }
+
+interface R624 { a624: number; m624: () => number }
+interface O624 { in624: R624; n624: number }
+function make624(): O624 { return { in624: { a624: 1, m624: () => 1 }, n624: 2 }; }
+function get624(): unknown { return make624().in624.m624; }
+function hit624(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c624(): void { say("nested/getter/switch", hit624((get624()), (get624()))); }
+
+interface R625 { a625: number; m625: () => number }
+interface O625 { in625: R625; n625: number }
+function make625(): O625 { return { in625: { a625: 1, m625: () => 1 }, n625: 2 }; }
+function get625(): unknown { return make625().in625.m625; }
+let last625: unknown;
+function seen625(f: unknown): boolean { const same = f === last625; last625 = f; return same; }
+function c625(): void { say("nested/getter/kept-then-compared", (seen625((get625())), seen625((get625())))); }
+
+function make626(): Array<() => number> { return [() => 1]; }
+function c626(): void { say("array/inline/strict-eq", (make626()[0]) === (make626()[0])); }
+
+function make627(): Array<() => number> { return [() => 1]; }
+function get627(): unknown { return make627()[0]; }
+function c627(): void { say("array/getter/strict-eq", (get627()) === (get627())); }
+
+function make628(): Array<() => number> { return [() => 1]; }
+function get628a(): unknown { return make628()[0]; }
+function get628b(): unknown { return get628a(); }
+function get628(): unknown { return get628b(); }
+function c628(): void { say("array/forwarded/strict-eq", (get628()) === (get628())); }
+
+function make629(): Array<() => number> { return [() => 1]; }
+function pick629(x: Array<() => number>): unknown { return x[0]; }
+function c629(): void { say("array/picked/strict-eq", (pick629(make629())) === (pick629(make629()))); }
+
+function make630(): Array<() => number> { return [() => 1]; }
+function pick630(x: Array<() => number>): unknown { return x[0]; }
+function get630(): unknown { return pick630(make630()); }
+function c630(): void { say("array/picked-and-returned/strict-eq", (get630()) === (get630())); }
+
+function make631(): Array<() => number> { return [() => 1]; }
+let slot631: unknown;
+function put631(): unknown { slot631 = make631()[0]; return 0; }
+function c631(): void { say("array/variable/strict-eq", ((put631(), slot631)) === ((put631(), slot631))); }
+
+function make632(): Array<() => number> { return [() => 1]; }
+let kept632: Array<() => number> | undefined;
+function keep632(): unknown { kept632 = make632(); return 0; }
+function c632(): void { say("array/holder-in-a-variable/strict-eq", ((keep632(), kept632![0])) === ((keep632(), kept632![0]))); }
+
+function make633(): Array<() => number> { return [() => 1]; }
+function with633<T>(k: (f: unknown) => T): T { return k(make633()[0]); }
+function c633(): void { say("array/callback/strict-eq", (with633(x => x)) === (with633(x => x))); }
+
+function make634(): Array<() => number> { return [() => 1]; }
+function later634(): () => unknown { const t = make634(); return () => t[0]; }
+function c634(): void { say("array/closure/strict-eq", (later634()()) === (later634()())); }
+
+function make635(): Array<() => number> { return [() => 1]; }
+function later635(): () => unknown { const f = make635()[0]; return () => f; }
+function c635(): void { say("array/captured/strict-eq", (later635()()) === (later635()())); }
+
+function make636(): Array<() => number> { return [() => 1]; }
+function wrap636(): { f: unknown } { return { f: make636()[0] }; }
+function c636(): void { say("array/rewrapped/strict-eq", (wrap636().f) === (wrap636().f)); }
+
+function make637(): Array<() => number> { return [() => 1]; }
+function wrap637(): unknown[] { return [make637()[0]]; }
+function c637(): void { say("array/rewrapped-in-an-array/strict-eq", (wrap637()[0]) === (wrap637()[0])); }
+
+function make638(): Array<() => number> { return [() => 1]; }
+function* gen638(): Generator<unknown> { yield make638()[0]; }
+function c638(): void { say("array/generator/strict-eq", (gen638().next().value) === (gen638().next().value)); }
+
+function make639(): Array<() => number> { return [() => 1]; }
+class K639 { get(): unknown { return make639()[0]; } }
+function c639(): void { say("array/method/strict-eq", (new K639().get()) === (new K639().get())); }
+
+function make640(): Array<() => number> { return [() => 1]; }
+class K640 { get f(): unknown { return make640()[0]; } }
+function c640(): void { say("array/accessor/strict-eq", (new K640().f) === (new K640().f)); }
+
+function make641(): Array<() => number> { return [() => 1]; }
+function first641(...xs: unknown[]): unknown { return xs[0]; }
+function c641(): void { say("array/rest/strict-eq", (first641(make641()[0])) === (first641(make641()[0]))); }
+
+function make642(): Array<() => number> { return [() => 1]; }
+function get642(): unknown { try { throw make642()[0]; } catch (e) { return e; } }
+function c642(): void { say("array/thrown/strict-eq", (get642()) === (get642())); }
+
+function make643(): Array<() => number> { return [() => 1]; }
+function get643(other: unknown, which: boolean): unknown { return which ? make643()[0] : other; }
+function c643(): void { say("array/one-arm/strict-eq", (get643(0, true)) === (get643(0, true))); }
+
+function make644(): Array<() => number> { return [() => 1]; }
+function get644(): unknown { let t = make644(); for (let i = 0; i < 2; i++) t = make644(); return t[0]; }
+function c644(): void { say("array/loop/strict-eq", (get644()) === (get644())); }
+
+function make645(): Array<() => number> { return [() => 1]; }
+function id645<T>(x: T): T { return x; }
+function get645(): unknown { return id645(make645())[0]; }
+function c645(): void { say("array/identity/strict-eq", (get645()) === (get645())); }
+
+function make646(): Array<() => number> { return [() => 1]; }
+function get646(): unknown { return make646()[0]; }
+const g646 = [get646];
+function c646(): void { say("array/by-value/strict-eq", (g646[0]()) === (g646[0]())); }
+
+function make658(): Array<() => number> { return [() => 1]; }
+function get658(): unknown { return make658()[0]; }
+function c658(): void { say("array/getter/strict-ne", (get658()) !== (get658())); }
+
+function make659(): Array<() => number> { return [() => 1]; }
+function get659(): unknown { return make659()[0]; }
+function c659(): void { say("array/getter/loose-eq", (get659()) == (get659())); }
+
+function make660(): Array<() => number> { return [() => 1]; }
+function get660(): unknown { return make660()[0]; }
+function c660(): void { say("array/getter/object-is", Object.is((get660()), (get660()))); }
+
+function make661(): Array<() => number> { return [() => 1]; }
+function get661(): unknown { return make661()[0]; }
+function c661(): void { say("array/getter/set", new Set([(get661()), (get661())]).size); }
+
+function make662(): Array<() => number> { return [() => 1]; }
+function get662(): unknown { return make662()[0]; }
+function c662(): void { say("array/getter/map-key", new Map([[(get662()), 1], [(get662()), 2]]).size); }
+
+function make663(): Array<() => number> { return [() => 1]; }
+function get663(): unknown { return make663()[0]; }
+function c663(): void { say("array/getter/includes", [(get663())].includes((get663()))); }
+
+function make664(): Array<() => number> { return [() => 1]; }
+function get664(): unknown { return make664()[0]; }
+function c664(): void { say("array/getter/index-of", [(get664())].indexOf((get664()))); }
+
+function make665(): Array<() => number> { return [() => 1]; }
+function get665(): unknown { return make665()[0]; }
+const ws665 = new WeakSet<object>();
+function c665(): void { say("array/getter/weak-set", (ws665.add((get665()) as object), ws665.has((get665()) as object))); }
+
+function make666(): Array<() => number> { return [() => 1]; }
+function get666(): unknown { return make666()[0]; }
+const wm666 = new WeakMap<object, number>();
+function c666(): void { say("array/getter/weak-map", (wm666.set((get666()) as object, 1), wm666.has((get666()) as object))); }
+
+function make667(): Array<() => number> { return [() => 1]; }
+function get667(): unknown { return make667()[0]; }
+function c667(): void { say("array/getter/written", ((((get667())) as any).tag = 1, (((get667())) as any).tag)); }
+
+function make668(): Array<() => number> { return [() => 1]; }
+function get668(): unknown { return make668()[0]; }
+function c668(): void { say("array/getter/defined", (Object.defineProperty((get668()) as object, "t", { value: 1 }), "t" in ((get668()) as object))); }
+
+function make669(): Array<() => number> { return [() => 1]; }
+function get669(): unknown { return make669()[0]; }
+function c669(): void { say("array/getter/frozen", (Object.freeze((get669())), Object.isFrozen((get669())))); }
+
+function make670(): Array<() => number> { return [() => 1]; }
+function get670(): unknown { return make670()[0]; }
+function c670(): void { say("array/getter/prototype-set", (Object.setPrototypeOf((get670()) as object, null), Object.getPrototypeOf((get670())) === null)); }
+
+function make671(): Array<() => number> { return [() => 1]; }
+function get671(): unknown { return make671()[0]; }
+function c671(): void { say("array/getter/deleted", (delete (((get671())) as any).length, Object.hasOwn((get671()) as object, "length"))); }
+
+function make672(): Array<() => number> { return [() => 1]; }
+function get672(): unknown { return make672()[0]; }
+function same672(a: unknown, b: unknown): boolean { return a === b; }
+function c672(): void { say("array/getter/in-a-callee", same672((get672()), (get672()))); }
+
+function make673(): Array<() => number> { return [() => 1]; }
+function get673(): unknown { return make673()[0]; }
+function hit673(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c673(): void { say("array/getter/switch", hit673((get673()), (get673()))); }
+
+function make674(): Array<() => number> { return [() => 1]; }
+function get674(): unknown { return make674()[0]; }
+let last674: unknown;
+function seen674(f: unknown): boolean { const same = f === last674; last674 = f; return same; }
+function c674(): void { say("array/getter/kept-then-compared", (seen674((get674())), seen674((get674())))); }
+
+interface R675 { a675: number; m675: () => number }
+function make675(): R675[] { return [{ a675: 1, m675: () => 1 }]; }
+function c675(): void { say("records/inline/strict-eq", (make675()[0].m675) === (make675()[0].m675)); }
+
+interface R676 { a676: number; m676: () => number }
+function make676(): R676[] { return [{ a676: 1, m676: () => 1 }]; }
+function get676(): unknown { return make676()[0].m676; }
+function c676(): void { say("records/getter/strict-eq", (get676()) === (get676())); }
+
+interface R677 { a677: number; m677: () => number }
+function make677(): R677[] { return [{ a677: 1, m677: () => 1 }]; }
+function get677a(): unknown { return make677()[0].m677; }
+function get677b(): unknown { return get677a(); }
+function get677(): unknown { return get677b(); }
+function c677(): void { say("records/forwarded/strict-eq", (get677()) === (get677())); }
+
+interface R678 { a678: number; m678: () => number }
+function make678(): R678[] { return [{ a678: 1, m678: () => 1 }]; }
+function pick678(x: R678[]): unknown { return x[0].m678; }
+function c678(): void { say("records/picked/strict-eq", (pick678(make678())) === (pick678(make678()))); }
+
+interface R679 { a679: number; m679: () => number }
+function make679(): R679[] { return [{ a679: 1, m679: () => 1 }]; }
+function pick679(x: R679[]): unknown { return x[0].m679; }
+function get679(): unknown { return pick679(make679()); }
+function c679(): void { say("records/picked-and-returned/strict-eq", (get679()) === (get679())); }
+
+interface R680 { a680: number; m680: () => number }
+function make680(): R680[] { return [{ a680: 1, m680: () => 1 }]; }
+let slot680: unknown;
+function put680(): unknown { slot680 = make680()[0].m680; return 0; }
+function c680(): void { say("records/variable/strict-eq", ((put680(), slot680)) === ((put680(), slot680))); }
+
+interface R681 { a681: number; m681: () => number }
+function make681(): R681[] { return [{ a681: 1, m681: () => 1 }]; }
+let kept681: R681[] | undefined;
+function keep681(): unknown { kept681 = make681(); return 0; }
+function c681(): void { say("records/holder-in-a-variable/strict-eq", ((keep681(), kept681![0].m681)) === ((keep681(), kept681![0].m681))); }
+
+interface R682 { a682: number; m682: () => number }
+function make682(): R682[] { return [{ a682: 1, m682: () => 1 }]; }
+function with682<T>(k: (f: unknown) => T): T { return k(make682()[0].m682); }
+function c682(): void { say("records/callback/strict-eq", (with682(x => x)) === (with682(x => x))); }
+
+c612(); c613(); c614(); c615(); c616(); c617(); c618(); c619(); c620(); c621(); c622(); c623(); c624(); c625(); c626(); c627(); c628(); c629(); c630(); c631(); c632(); c633(); c634(); c635(); c636(); c637(); c638(); c639(); c640(); c641(); c642(); c643(); c644(); c645(); c646(); c658(); c659(); c660(); c661(); c662(); c663(); c664(); c665(); c666(); c667(); c668(); c669(); c670(); c671(); c672(); c673(); c674(); c675(); c676(); c677(); c678(); c679(); c680(); c681(); c682();
+console.log(out.join("\n"));
+//// identity-11.ts
+// Generated program: object and closure identity stays observable when allocations are removed (part 11).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R683 { a683: number; m683: () => number }
+function make683(): R683[] { return [{ a683: 1, m683: () => 1 }]; }
+function later683(): () => unknown { const t = make683(); return () => t[0].m683; }
+function c683(): void { say("records/closure/strict-eq", (later683()()) === (later683()())); }
+
+interface R684 { a684: number; m684: () => number }
+function make684(): R684[] { return [{ a684: 1, m684: () => 1 }]; }
+function later684(): () => unknown { const f = make684()[0].m684; return () => f; }
+function c684(): void { say("records/captured/strict-eq", (later684()()) === (later684()())); }
+
+interface R685 { a685: number; m685: () => number }
+function make685(): R685[] { return [{ a685: 1, m685: () => 1 }]; }
+function wrap685(): { f: unknown } { return { f: make685()[0].m685 }; }
+function c685(): void { say("records/rewrapped/strict-eq", (wrap685().f) === (wrap685().f)); }
+
+interface R686 { a686: number; m686: () => number }
+function make686(): R686[] { return [{ a686: 1, m686: () => 1 }]; }
+function wrap686(): unknown[] { return [make686()[0].m686]; }
+function c686(): void { say("records/rewrapped-in-an-array/strict-eq", (wrap686()[0]) === (wrap686()[0])); }
+
+interface R687 { a687: number; m687: () => number }
+function make687(): R687[] { return [{ a687: 1, m687: () => 1 }]; }
+function* gen687(): Generator<unknown> { yield make687()[0].m687; }
+function c687(): void { say("records/generator/strict-eq", (gen687().next().value) === (gen687().next().value)); }
+
+interface R688 { a688: number; m688: () => number }
+function make688(): R688[] { return [{ a688: 1, m688: () => 1 }]; }
+class K688 { get(): unknown { return make688()[0].m688; } }
+function c688(): void { say("records/method/strict-eq", (new K688().get()) === (new K688().get())); }
+
+interface R689 { a689: number; m689: () => number }
+function make689(): R689[] { return [{ a689: 1, m689: () => 1 }]; }
+class K689 { get f(): unknown { return make689()[0].m689; } }
+function c689(): void { say("records/accessor/strict-eq", (new K689().f) === (new K689().f)); }
+
+interface R690 { a690: number; m690: () => number }
+function make690(): R690[] { return [{ a690: 1, m690: () => 1 }]; }
+function first690(...xs: unknown[]): unknown { return xs[0]; }
+function c690(): void { say("records/rest/strict-eq", (first690(make690()[0].m690)) === (first690(make690()[0].m690))); }
+
+interface R691 { a691: number; m691: () => number }
+function make691(): R691[] { return [{ a691: 1, m691: () => 1 }]; }
+function get691(): unknown { try { throw make691()[0].m691; } catch (e) { return e; } }
+function c691(): void { say("records/thrown/strict-eq", (get691()) === (get691())); }
+
+interface R692 { a692: number; m692: () => number }
+function make692(): R692[] { return [{ a692: 1, m692: () => 1 }]; }
+function get692(other: unknown, which: boolean): unknown { return which ? make692()[0].m692 : other; }
+function c692(): void { say("records/one-arm/strict-eq", (get692(0, true)) === (get692(0, true))); }
+
+interface R693 { a693: number; m693: () => number }
+function make693(): R693[] { return [{ a693: 1, m693: () => 1 }]; }
+function get693(): unknown { let t = make693(); for (let i = 0; i < 2; i++) t = make693(); return t[0].m693; }
+function c693(): void { say("records/loop/strict-eq", (get693()) === (get693())); }
+
+interface R694 { a694: number; m694: () => number }
+function make694(): R694[] { return [{ a694: 1, m694: () => 1 }]; }
+function id694<T>(x: T): T { return x; }
+function get694(): unknown { return id694(make694())[0].m694; }
+function c694(): void { say("records/identity/strict-eq", (get694()) === (get694())); }
+
+interface R695 { a695: number; m695: () => number }
+function make695(): R695[] { return [{ a695: 1, m695: () => 1 }]; }
+function get695(): unknown { return make695()[0].m695; }
+const g695 = [get695];
+function c695(): void { say("records/by-value/strict-eq", (g695[0]()) === (g695[0]())); }
+
+interface R707 { a707: number; m707: () => number }
+function make707(): R707[] { return [{ a707: 1, m707: () => 1 }]; }
+function get707(): unknown { return make707()[0].m707; }
+function c707(): void { say("records/getter/strict-ne", (get707()) !== (get707())); }
+
+interface R708 { a708: number; m708: () => number }
+function make708(): R708[] { return [{ a708: 1, m708: () => 1 }]; }
+function get708(): unknown { return make708()[0].m708; }
+function c708(): void { say("records/getter/loose-eq", (get708()) == (get708())); }
+
+interface R709 { a709: number; m709: () => number }
+function make709(): R709[] { return [{ a709: 1, m709: () => 1 }]; }
+function get709(): unknown { return make709()[0].m709; }
+function c709(): void { say("records/getter/object-is", Object.is((get709()), (get709()))); }
+
+interface R710 { a710: number; m710: () => number }
+function make710(): R710[] { return [{ a710: 1, m710: () => 1 }]; }
+function get710(): unknown { return make710()[0].m710; }
+function c710(): void { say("records/getter/set", new Set([(get710()), (get710())]).size); }
+
+interface R711 { a711: number; m711: () => number }
+function make711(): R711[] { return [{ a711: 1, m711: () => 1 }]; }
+function get711(): unknown { return make711()[0].m711; }
+function c711(): void { say("records/getter/map-key", new Map([[(get711()), 1], [(get711()), 2]]).size); }
+
+interface R712 { a712: number; m712: () => number }
+function make712(): R712[] { return [{ a712: 1, m712: () => 1 }]; }
+function get712(): unknown { return make712()[0].m712; }
+function c712(): void { say("records/getter/includes", [(get712())].includes((get712()))); }
+
+interface R713 { a713: number; m713: () => number }
+function make713(): R713[] { return [{ a713: 1, m713: () => 1 }]; }
+function get713(): unknown { return make713()[0].m713; }
+function c713(): void { say("records/getter/index-of", [(get713())].indexOf((get713()))); }
+
+interface R714 { a714: number; m714: () => number }
+function make714(): R714[] { return [{ a714: 1, m714: () => 1 }]; }
+function get714(): unknown { return make714()[0].m714; }
+const ws714 = new WeakSet<object>();
+function c714(): void { say("records/getter/weak-set", (ws714.add((get714()) as object), ws714.has((get714()) as object))); }
+
+interface R715 { a715: number; m715: () => number }
+function make715(): R715[] { return [{ a715: 1, m715: () => 1 }]; }
+function get715(): unknown { return make715()[0].m715; }
+const wm715 = new WeakMap<object, number>();
+function c715(): void { say("records/getter/weak-map", (wm715.set((get715()) as object, 1), wm715.has((get715()) as object))); }
+
+interface R716 { a716: number; m716: () => number }
+function make716(): R716[] { return [{ a716: 1, m716: () => 1 }]; }
+function get716(): unknown { return make716()[0].m716; }
+function c716(): void { say("records/getter/written", ((((get716())) as any).tag = 1, (((get716())) as any).tag)); }
+
+interface R717 { a717: number; m717: () => number }
+function make717(): R717[] { return [{ a717: 1, m717: () => 1 }]; }
+function get717(): unknown { return make717()[0].m717; }
+function c717(): void { say("records/getter/defined", (Object.defineProperty((get717()) as object, "t", { value: 1 }), "t" in ((get717()) as object))); }
+
+interface R718 { a718: number; m718: () => number }
+function make718(): R718[] { return [{ a718: 1, m718: () => 1 }]; }
+function get718(): unknown { return make718()[0].m718; }
+function c718(): void { say("records/getter/frozen", (Object.freeze((get718())), Object.isFrozen((get718())))); }
+
+interface R719 { a719: number; m719: () => number }
+function make719(): R719[] { return [{ a719: 1, m719: () => 1 }]; }
+function get719(): unknown { return make719()[0].m719; }
+function c719(): void { say("records/getter/prototype-set", (Object.setPrototypeOf((get719()) as object, null), Object.getPrototypeOf((get719())) === null)); }
+
+interface R720 { a720: number; m720: () => number }
+function make720(): R720[] { return [{ a720: 1, m720: () => 1 }]; }
+function get720(): unknown { return make720()[0].m720; }
+function c720(): void { say("records/getter/deleted", (delete (((get720())) as any).length, Object.hasOwn((get720()) as object, "length"))); }
+
+interface R721 { a721: number; m721: () => number }
+function make721(): R721[] { return [{ a721: 1, m721: () => 1 }]; }
+function get721(): unknown { return make721()[0].m721; }
+function same721(a: unknown, b: unknown): boolean { return a === b; }
+function c721(): void { say("records/getter/in-a-callee", same721((get721()), (get721()))); }
+
+interface R722 { a722: number; m722: () => number }
+function make722(): R722[] { return [{ a722: 1, m722: () => 1 }]; }
+function get722(): unknown { return make722()[0].m722; }
+function hit722(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c722(): void { say("records/getter/switch", hit722((get722()), (get722()))); }
+
+interface R723 { a723: number; m723: () => number }
+function make723(): R723[] { return [{ a723: 1, m723: () => 1 }]; }
+function get723(): unknown { return make723()[0].m723; }
+let last723: unknown;
+function seen723(f: unknown): boolean { const same = f === last723; last723 = f; return same; }
+function c723(): void { say("records/getter/kept-then-compared", (seen723((get723())), seen723((get723())))); }
+
+function make724(): () => number { return () => 1; }
+function c724(): void { say("bare/inline/strict-eq", (make724()) === (make724())); }
+
+function make725(): () => number { return () => 1; }
+function get725(): unknown { return make725(); }
+function c725(): void { say("bare/getter/strict-eq", (get725()) === (get725())); }
+
+function make726(): () => number { return () => 1; }
+function get726a(): unknown { return make726(); }
+function get726b(): unknown { return get726a(); }
+function get726(): unknown { return get726b(); }
+function c726(): void { say("bare/forwarded/strict-eq", (get726()) === (get726())); }
+
+function make727(): () => number { return () => 1; }
+function pick727(x: () => number): unknown { return x; }
+function c727(): void { say("bare/picked/strict-eq", (pick727(make727())) === (pick727(make727()))); }
+
+function make728(): () => number { return () => 1; }
+function pick728(x: () => number): unknown { return x; }
+function get728(): unknown { return pick728(make728()); }
+function c728(): void { say("bare/picked-and-returned/strict-eq", (get728()) === (get728())); }
+
+function make729(): () => number { return () => 1; }
+let slot729: unknown;
+function put729(): unknown { slot729 = make729(); return 0; }
+function c729(): void { say("bare/variable/strict-eq", ((put729(), slot729)) === ((put729(), slot729))); }
+
+function make730(): () => number { return () => 1; }
+let kept730: () => number | undefined;
+function keep730(): unknown { kept730 = make730(); return 0; }
+function c730(): void { say("bare/holder-in-a-variable/strict-eq", ((keep730(), kept730!)) === ((keep730(), kept730!))); }
+
+function make731(): () => number { return () => 1; }
+function with731<T>(k: (f: unknown) => T): T { return k(make731()); }
+function c731(): void { say("bare/callback/strict-eq", (with731(x => x)) === (with731(x => x))); }
+
+function make732(): () => number { return () => 1; }
+function later732(): () => unknown { const t = make732(); return () => t; }
+function c732(): void { say("bare/closure/strict-eq", (later732()()) === (later732()())); }
+
+function make733(): () => number { return () => 1; }
+function later733(): () => unknown { const f = make733(); return () => f; }
+function c733(): void { say("bare/captured/strict-eq", (later733()()) === (later733()())); }
+
+function make734(): () => number { return () => 1; }
+function wrap734(): { f: unknown } { return { f: make734() }; }
+function c734(): void { say("bare/rewrapped/strict-eq", (wrap734().f) === (wrap734().f)); }
+
+function make735(): () => number { return () => 1; }
+function wrap735(): unknown[] { return [make735()]; }
+function c735(): void { say("bare/rewrapped-in-an-array/strict-eq", (wrap735()[0]) === (wrap735()[0])); }
+
+function make736(): () => number { return () => 1; }
+function* gen736(): Generator<unknown> { yield make736(); }
+function c736(): void { say("bare/generator/strict-eq", (gen736().next().value) === (gen736().next().value)); }
+
+function make737(): () => number { return () => 1; }
+class K737 { get(): unknown { return make737(); } }
+function c737(): void { say("bare/method/strict-eq", (new K737().get()) === (new K737().get())); }
+
+function make738(): () => number { return () => 1; }
+class K738 { get f(): unknown { return make738(); } }
+function c738(): void { say("bare/accessor/strict-eq", (new K738().f) === (new K738().f)); }
+
+function make739(): () => number { return () => 1; }
+function first739(...xs: unknown[]): unknown { return xs[0]; }
+function c739(): void { say("bare/rest/strict-eq", (first739(make739())) === (first739(make739()))); }
+
+function make740(): () => number { return () => 1; }
+function get740(): unknown { try { throw make740(); } catch (e) { return e; } }
+function c740(): void { say("bare/thrown/strict-eq", (get740()) === (get740())); }
+
+function make741(): () => number { return () => 1; }
+function get741(other: unknown, which: boolean): unknown { return which ? make741() : other; }
+function c741(): void { say("bare/one-arm/strict-eq", (get741(0, true)) === (get741(0, true))); }
+
+function make742(): () => number { return () => 1; }
+function get742(): unknown { let t = make742(); for (let i = 0; i < 2; i++) t = make742(); return t; }
+function c742(): void { say("bare/loop/strict-eq", (get742()) === (get742())); }
+
+function make743(): () => number { return () => 1; }
+function id743<T>(x: T): T { return x; }
+function get743(): unknown { return id743(make743()); }
+function c743(): void { say("bare/identity/strict-eq", (get743()) === (get743())); }
+
+function make744(): () => number { return () => 1; }
+function get744(): unknown { return make744(); }
+const g744 = [get744];
+function c744(): void { say("bare/by-value/strict-eq", (g744[0]()) === (g744[0]())); }
+
+function make756(): () => number { return () => 1; }
+function get756(): unknown { return make756(); }
+function c756(): void { say("bare/getter/strict-ne", (get756()) !== (get756())); }
+
+function make757(): () => number { return () => 1; }
+function get757(): unknown { return make757(); }
+function c757(): void { say("bare/getter/loose-eq", (get757()) == (get757())); }
+
+function make758(): () => number { return () => 1; }
+function get758(): unknown { return make758(); }
+function c758(): void { say("bare/getter/object-is", Object.is((get758()), (get758()))); }
+
+function make759(): () => number { return () => 1; }
+function get759(): unknown { return make759(); }
+function c759(): void { say("bare/getter/set", new Set([(get759()), (get759())]).size); }
+
+function make760(): () => number { return () => 1; }
+function get760(): unknown { return make760(); }
+function c760(): void { say("bare/getter/map-key", new Map([[(get760()), 1], [(get760()), 2]]).size); }
+
+function make761(): () => number { return () => 1; }
+function get761(): unknown { return make761(); }
+function c761(): void { say("bare/getter/includes", [(get761())].includes((get761()))); }
+
+function make762(): () => number { return () => 1; }
+function get762(): unknown { return make762(); }
+function c762(): void { say("bare/getter/index-of", [(get762())].indexOf((get762()))); }
+
+function make763(): () => number { return () => 1; }
+function get763(): unknown { return make763(); }
+const ws763 = new WeakSet<object>();
+function c763(): void { say("bare/getter/weak-set", (ws763.add((get763()) as object), ws763.has((get763()) as object))); }
+
+function make764(): () => number { return () => 1; }
+function get764(): unknown { return make764(); }
+const wm764 = new WeakMap<object, number>();
+function c764(): void { say("bare/getter/weak-map", (wm764.set((get764()) as object, 1), wm764.has((get764()) as object))); }
+
+c683(); c684(); c685(); c686(); c687(); c688(); c689(); c690(); c691(); c692(); c693(); c694(); c695(); c707(); c708(); c709(); c710(); c711(); c712(); c713(); c714(); c715(); c716(); c717(); c718(); c719(); c720(); c721(); c722(); c723(); c724(); c725(); c726(); c727(); c728(); c729(); c730(); c731(); c732(); c733(); c734(); c735(); c736(); c737(); c738(); c739(); c740(); c741(); c742(); c743(); c744(); c756(); c757(); c758(); c759(); c760(); c761(); c762(); c763(); c764();
+console.log(out.join("\n"));
+//// identity-12.ts
+// Generated program: object and closure identity stays observable when allocations are removed (part 12).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+function make765(): () => number { return () => 1; }
+function get765(): unknown { return make765(); }
+function c765(): void { say("bare/getter/written", ((((get765())) as any).tag = 1, (((get765())) as any).tag)); }
+
+function make766(): () => number { return () => 1; }
+function get766(): unknown { return make766(); }
+function c766(): void { say("bare/getter/defined", (Object.defineProperty((get766()) as object, "t", { value: 1 }), "t" in ((get766()) as object))); }
+
+function make767(): () => number { return () => 1; }
+function get767(): unknown { return make767(); }
+function c767(): void { say("bare/getter/frozen", (Object.freeze((get767())), Object.isFrozen((get767())))); }
+
+function make768(): () => number { return () => 1; }
+function get768(): unknown { return make768(); }
+function c768(): void { say("bare/getter/prototype-set", (Object.setPrototypeOf((get768()) as object, null), Object.getPrototypeOf((get768())) === null)); }
+
+function make769(): () => number { return () => 1; }
+function get769(): unknown { return make769(); }
+function c769(): void { say("bare/getter/deleted", (delete (((get769())) as any).length, Object.hasOwn((get769()) as object, "length"))); }
+
+function make770(): () => number { return () => 1; }
+function get770(): unknown { return make770(); }
+function same770(a: unknown, b: unknown): boolean { return a === b; }
+function c770(): void { say("bare/getter/in-a-callee", same770((get770()), (get770()))); }
+
+function make771(): () => number { return () => 1; }
+function get771(): unknown { return make771(); }
+function hit771(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c771(): void { say("bare/getter/switch", hit771((get771()), (get771()))); }
+
+function make772(): () => number { return () => 1; }
+function get772(): unknown { return make772(); }
+let last772: unknown;
+function seen772(f: unknown): boolean { const same = f === last772; last772 = f; return same; }
+function c772(): void { say("bare/getter/kept-then-compared", (seen772((get772())), seen772((get772())))); }
+
+function make773(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c773(): void { say("map/inline/strict-eq", (make773().get("k")) === (make773().get("k"))); }
+
+function make774(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get774(): unknown { return make774().get("k"); }
+function c774(): void { say("map/getter/strict-eq", (get774()) === (get774())); }
+
+function make775(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get775a(): unknown { return make775().get("k"); }
+function get775b(): unknown { return get775a(); }
+function get775(): unknown { return get775b(); }
+function c775(): void { say("map/forwarded/strict-eq", (get775()) === (get775())); }
+
+function make776(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function pick776(x: Map<string, () => number>): unknown { return x.get("k"); }
+function c776(): void { say("map/picked/strict-eq", (pick776(make776())) === (pick776(make776()))); }
+
+function make777(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function pick777(x: Map<string, () => number>): unknown { return x.get("k"); }
+function get777(): unknown { return pick777(make777()); }
+function c777(): void { say("map/picked-and-returned/strict-eq", (get777()) === (get777())); }
+
+function make778(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+let slot778: unknown;
+function put778(): unknown { slot778 = make778().get("k"); return 0; }
+function c778(): void { say("map/variable/strict-eq", ((put778(), slot778)) === ((put778(), slot778))); }
+
+function make779(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+let kept779: Map<string, () => number> | undefined;
+function keep779(): unknown { kept779 = make779(); return 0; }
+function c779(): void { say("map/holder-in-a-variable/strict-eq", ((keep779(), kept779!.get("k"))) === ((keep779(), kept779!.get("k")))); }
+
+function make780(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function with780<T>(k: (f: unknown) => T): T { return k(make780().get("k")); }
+function c780(): void { say("map/callback/strict-eq", (with780(x => x)) === (with780(x => x))); }
+
+function make781(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function later781(): () => unknown { const t = make781(); return () => t.get("k"); }
+function c781(): void { say("map/closure/strict-eq", (later781()()) === (later781()())); }
+
+function make782(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function later782(): () => unknown { const f = make782().get("k"); return () => f; }
+function c782(): void { say("map/captured/strict-eq", (later782()()) === (later782()())); }
+
+function make783(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function wrap783(): { f: unknown } { return { f: make783().get("k") }; }
+function c783(): void { say("map/rewrapped/strict-eq", (wrap783().f) === (wrap783().f)); }
+
+function make784(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function wrap784(): unknown[] { return [make784().get("k")]; }
+function c784(): void { say("map/rewrapped-in-an-array/strict-eq", (wrap784()[0]) === (wrap784()[0])); }
+
+function make785(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function* gen785(): Generator<unknown> { yield make785().get("k"); }
+function c785(): void { say("map/generator/strict-eq", (gen785().next().value) === (gen785().next().value)); }
+
+function make786(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+class K786 { get(): unknown { return make786().get("k"); } }
+function c786(): void { say("map/method/strict-eq", (new K786().get()) === (new K786().get())); }
+
+function make787(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+class K787 { get f(): unknown { return make787().get("k"); } }
+function c787(): void { say("map/accessor/strict-eq", (new K787().f) === (new K787().f)); }
+
+function make788(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function first788(...xs: unknown[]): unknown { return xs[0]; }
+function c788(): void { say("map/rest/strict-eq", (first788(make788().get("k"))) === (first788(make788().get("k")))); }
+
+function make789(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get789(): unknown { try { throw make789().get("k"); } catch (e) { return e; } }
+function c789(): void { say("map/thrown/strict-eq", (get789()) === (get789())); }
+
+function make790(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get790(other: unknown, which: boolean): unknown { return which ? make790().get("k") : other; }
+function c790(): void { say("map/one-arm/strict-eq", (get790(0, true)) === (get790(0, true))); }
+
+function make791(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get791(): unknown { let t = make791(); for (let i = 0; i < 2; i++) t = make791(); return t.get("k"); }
+function c791(): void { say("map/loop/strict-eq", (get791()) === (get791())); }
+
+function make792(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function id792<T>(x: T): T { return x; }
+function get792(): unknown { return id792(make792()).get("k"); }
+function c792(): void { say("map/identity/strict-eq", (get792()) === (get792())); }
+
+function make793(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get793(): unknown { return make793().get("k"); }
+const g793 = [get793];
+function c793(): void { say("map/by-value/strict-eq", (g793[0]()) === (g793[0]())); }
+
+function make805(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get805(): unknown { return make805().get("k"); }
+function c805(): void { say("map/getter/strict-ne", (get805()) !== (get805())); }
+
+function make806(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get806(): unknown { return make806().get("k"); }
+function c806(): void { say("map/getter/loose-eq", (get806()) == (get806())); }
+
+function make807(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get807(): unknown { return make807().get("k"); }
+function c807(): void { say("map/getter/object-is", Object.is((get807()), (get807()))); }
+
+function make808(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get808(): unknown { return make808().get("k"); }
+function c808(): void { say("map/getter/set", new Set([(get808()), (get808())]).size); }
+
+function make809(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get809(): unknown { return make809().get("k"); }
+function c809(): void { say("map/getter/map-key", new Map([[(get809()), 1], [(get809()), 2]]).size); }
+
+function make810(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get810(): unknown { return make810().get("k"); }
+function c810(): void { say("map/getter/includes", [(get810())].includes((get810()))); }
+
+function make811(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get811(): unknown { return make811().get("k"); }
+function c811(): void { say("map/getter/index-of", [(get811())].indexOf((get811()))); }
+
+function make812(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get812(): unknown { return make812().get("k"); }
+const ws812 = new WeakSet<object>();
+function c812(): void { say("map/getter/weak-set", (ws812.add((get812()) as object), ws812.has((get812()) as object))); }
+
+function make813(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get813(): unknown { return make813().get("k"); }
+const wm813 = new WeakMap<object, number>();
+function c813(): void { say("map/getter/weak-map", (wm813.set((get813()) as object, 1), wm813.has((get813()) as object))); }
+
+function make814(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get814(): unknown { return make814().get("k"); }
+function c814(): void { say("map/getter/written", ((((get814())) as any).tag = 1, (((get814())) as any).tag)); }
+
+function make815(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get815(): unknown { return make815().get("k"); }
+function c815(): void { say("map/getter/defined", (Object.defineProperty((get815()) as object, "t", { value: 1 }), "t" in ((get815()) as object))); }
+
+function make816(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get816(): unknown { return make816().get("k"); }
+function c816(): void { say("map/getter/frozen", (Object.freeze((get816())), Object.isFrozen((get816())))); }
+
+function make817(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get817(): unknown { return make817().get("k"); }
+function c817(): void { say("map/getter/prototype-set", (Object.setPrototypeOf((get817()) as object, null), Object.getPrototypeOf((get817())) === null)); }
+
+function make818(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get818(): unknown { return make818().get("k"); }
+function c818(): void { say("map/getter/deleted", (delete (((get818())) as any).length, Object.hasOwn((get818()) as object, "length"))); }
+
+function make819(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get819(): unknown { return make819().get("k"); }
+function same819(a: unknown, b: unknown): boolean { return a === b; }
+function c819(): void { say("map/getter/in-a-callee", same819((get819()), (get819()))); }
+
+function make820(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get820(): unknown { return make820().get("k"); }
+function hit820(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c820(): void { say("map/getter/switch", hit820((get820()), (get820()))); }
+
+function make821(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get821(): unknown { return make821().get("k"); }
+let last821: unknown;
+function seen821(f: unknown): boolean { const same = f === last821; last821 = f; return same; }
+function c821(): void { say("map/getter/kept-then-compared", (seen821((get821())), seen821((get821())))); }
+
+interface R822 { a822: number; m822?: () => number }
+function make822(): R822 { const r: R822 = { a822: 1 }; r.m822 = () => 1; return r; }
+function c822(): void { say("stored-later/inline/strict-eq", (make822().m822) === (make822().m822)); }
+
+interface R823 { a823: number; m823?: () => number }
+function make823(): R823 { const r: R823 = { a823: 1 }; r.m823 = () => 1; return r; }
+function get823(): unknown { return make823().m823; }
+function c823(): void { say("stored-later/getter/strict-eq", (get823()) === (get823())); }
+
+interface R824 { a824: number; m824?: () => number }
+function make824(): R824 { const r: R824 = { a824: 1 }; r.m824 = () => 1; return r; }
+function get824a(): unknown { return make824().m824; }
+function get824b(): unknown { return get824a(); }
+function get824(): unknown { return get824b(); }
+function c824(): void { say("stored-later/forwarded/strict-eq", (get824()) === (get824())); }
+
+interface R825 { a825: number; m825?: () => number }
+function make825(): R825 { const r: R825 = { a825: 1 }; r.m825 = () => 1; return r; }
+function pick825(x: R825): unknown { return x.m825; }
+function c825(): void { say("stored-later/picked/strict-eq", (pick825(make825())) === (pick825(make825()))); }
+
+interface R826 { a826: number; m826?: () => number }
+function make826(): R826 { const r: R826 = { a826: 1 }; r.m826 = () => 1; return r; }
+function pick826(x: R826): unknown { return x.m826; }
+function get826(): unknown { return pick826(make826()); }
+function c826(): void { say("stored-later/picked-and-returned/strict-eq", (get826()) === (get826())); }
+
+interface R827 { a827: number; m827?: () => number }
+function make827(): R827 { const r: R827 = { a827: 1 }; r.m827 = () => 1; return r; }
+let slot827: unknown;
+function put827(): unknown { slot827 = make827().m827; return 0; }
+function c827(): void { say("stored-later/variable/strict-eq", ((put827(), slot827)) === ((put827(), slot827))); }
+
+interface R828 { a828: number; m828?: () => number }
+function make828(): R828 { const r: R828 = { a828: 1 }; r.m828 = () => 1; return r; }
+let kept828: R828 | undefined;
+function keep828(): unknown { kept828 = make828(); return 0; }
+function c828(): void { say("stored-later/holder-in-a-variable/strict-eq", ((keep828(), kept828!.m828)) === ((keep828(), kept828!.m828))); }
+
+interface R829 { a829: number; m829?: () => number }
+function make829(): R829 { const r: R829 = { a829: 1 }; r.m829 = () => 1; return r; }
+function with829<T>(k: (f: unknown) => T): T { return k(make829().m829); }
+function c829(): void { say("stored-later/callback/strict-eq", (with829(x => x)) === (with829(x => x))); }
+
+interface R830 { a830: number; m830?: () => number }
+function make830(): R830 { const r: R830 = { a830: 1 }; r.m830 = () => 1; return r; }
+function later830(): () => unknown { const t = make830(); return () => t.m830; }
+function c830(): void { say("stored-later/closure/strict-eq", (later830()()) === (later830()())); }
+
+interface R831 { a831: number; m831?: () => number }
+function make831(): R831 { const r: R831 = { a831: 1 }; r.m831 = () => 1; return r; }
+function later831(): () => unknown { const f = make831().m831; return () => f; }
+function c831(): void { say("stored-later/captured/strict-eq", (later831()()) === (later831()())); }
+
+interface R832 { a832: number; m832?: () => number }
+function make832(): R832 { const r: R832 = { a832: 1 }; r.m832 = () => 1; return r; }
+function wrap832(): { f: unknown } { return { f: make832().m832 }; }
+function c832(): void { say("stored-later/rewrapped/strict-eq", (wrap832().f) === (wrap832().f)); }
+
+interface R833 { a833: number; m833?: () => number }
+function make833(): R833 { const r: R833 = { a833: 1 }; r.m833 = () => 1; return r; }
+function wrap833(): unknown[] { return [make833().m833]; }
+function c833(): void { say("stored-later/rewrapped-in-an-array/strict-eq", (wrap833()[0]) === (wrap833()[0])); }
+
+interface R834 { a834: number; m834?: () => number }
+function make834(): R834 { const r: R834 = { a834: 1 }; r.m834 = () => 1; return r; }
+function* gen834(): Generator<unknown> { yield make834().m834; }
+function c834(): void { say("stored-later/generator/strict-eq", (gen834().next().value) === (gen834().next().value)); }
+
+interface R835 { a835: number; m835?: () => number }
+function make835(): R835 { const r: R835 = { a835: 1 }; r.m835 = () => 1; return r; }
+class K835 { get(): unknown { return make835().m835; } }
+function c835(): void { say("stored-later/method/strict-eq", (new K835().get()) === (new K835().get())); }
+
+c765(); c766(); c767(); c768(); c769(); c770(); c771(); c772(); c773(); c774(); c775(); c776(); c777(); c778(); c779(); c780(); c781(); c782(); c783(); c784(); c785(); c786(); c787(); c788(); c789(); c790(); c791(); c792(); c793(); c805(); c806(); c807(); c808(); c809(); c810(); c811(); c812(); c813(); c814(); c815(); c816(); c817(); c818(); c819(); c820(); c821(); c822(); c823(); c824(); c825(); c826(); c827(); c828(); c829(); c830(); c831(); c832(); c833(); c834(); c835();
+console.log(out.join("\n"));

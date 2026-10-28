@@ -5,8 +5,8 @@ pub struct DefaultParamLast;
 
 const SHOULD_BE_LAST: Message = Message::new("shouldBeLast", "Default parameters should be last.");
 
-/// The range of ESLint's element of `params`: a `TSParameterProperty` has the keywords before the
-/// parameter, and the decorators before those.
+/// The range of ESLint's `params` element. A `TSParameterProperty` includes the keywords before the parameter and the
+/// decorators before those.
 fn estree_span(param: Param) -> Span {
     match param.modifiers().iter().any(|it| it.decorator().is_none()) {
         true => param.span(),
@@ -14,8 +14,8 @@ fn estree_span(param: Param) -> Span {
     }
 }
 
-/// `reports_rest`: whether a rest parameter before a required one is reported too, which is an
-/// error that only TypeScript's parser lets through.
+/// With `reports_rest`, a rest parameter before a required one is reported too. That's an error that only TypeScript's
+/// parser lets through.
 #[inline]
 pub fn check<'a, R: Rule>(func: Func<'a>, reports_rest: bool, cx: &Cx<'a, R>) {
     if func.params().len() >= 2 && ast_utils::is_function_with_body(func) {
@@ -27,7 +27,7 @@ pub fn check<'a, R: Rule>(func: Func<'a>, reports_rest: bool, cx: &Cx<'a, R>) {
 fn check_params<'a, R: Rule>(func: Func<'a>, reports_rest: bool, cx: &Cx<'a, R>) {
     let mut has_seen_required_parameter = false;
     for param in func.params().iter().rev() {
-        // `...a = []` is an error, and a `RestElement` for ESLint.
+        // `...a = []` is an error, and ESLint sees a `RestElement`.
         let has_default = param.default().is_some() && !param.is_rest();
         if !has_default && !param.is_rest() && !param.is_optional() {
             has_seen_required_parameter = true;

@@ -5,7 +5,7 @@ import { existsSync, lstatSync, readlinkSync } from "fs";
 import { exists, readdir, realpath, rm } from "fs/promises";
 import { bunEnv, bunExe, normalizeBunSnapshot, pack, runBunInstall, tempDir } from "harness";
 import { join } from "path";
-import { TestRegistry } from "registry";
+import { installEnv, TestRegistry } from "registry";
 
 var registry = new TestRegistry();
 
@@ -76,7 +76,7 @@ afterAll(() => {
   catalogRegistry.stop(true);
 });
 
-describe("basic", () => {
+describe.concurrent("basic", () => {
   async function createBasicCatalogMonorepo(packageDir: string, name: string, inTopLevelKey: boolean = false) {
     const catalogs = {
       catalog: {
@@ -127,7 +127,7 @@ describe("basic", () => {
 
       await createBasicCatalogMonorepo(packageDir, "catalog-basic-1", isTopLevel);
 
-      await runBunInstall(bunEnv, packageDir);
+      await runBunInstall(installEnv(packageDir), packageDir);
 
       expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
         name: "no-deps",
@@ -140,7 +140,7 @@ describe("basic", () => {
       });
 
       // another install does not save the lockfile
-      await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+      await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
     });
   }
 
@@ -150,7 +150,7 @@ describe("basic", () => {
         bunfigOpts: { saveTextLockfile: !binaryLockfile, linker: "hoisted" },
       });
       const packageJson: any = await createBasicCatalogMonorepo(packageDir, "catalog-basic-2");
-      let { err } = await runBunInstall(bunEnv, packageDir);
+      let { err } = await runBunInstall(installEnv(packageDir), packageDir);
       expect(err).toContain("Saved lockfile");
 
       const initialLockfile = !binaryLockfile
@@ -158,7 +158,40 @@ describe("basic", () => {
         : undefined;
 
       if (!binaryLockfile) {
-        expect(initialLockfile).toMatchSnapshot();
+        expect(initialLockfile).toMatchInlineSnapshot(`
+          "{
+            "lockfileVersion": 2,
+            "configVersion": 1,
+            "workspaces": {
+              "": {
+                "name": "catalog-basic-2",
+              },
+              "packages/pkg1": {
+                "name": "pkg1",
+                "dependencies": {
+                  "a-dep": "catalog:a",
+                  "no-deps": "catalog:",
+                },
+              },
+            },
+            "catalog": {
+              "no-deps": "2.0.0",
+            },
+            "catalogs": {
+              "a": {
+                "a-dep": "1.0.1",
+              },
+            },
+            "packages": {
+              "a-dep": ["a-dep@1.0.1", "http://localhost:1234/a-dep/-/a-dep-1.0.1.tgz", {}, "sha512-6nmTaPgO2U/uOODqOhbjbnaB4xHuZ+UB7AjKUA3g2dT4WRWeNxgp0dC8Db4swXSnO5/uLLUdFmUJKINNBO/3wg=="],
+
+              "no-deps": ["no-deps@2.0.0", "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz", {}, "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g=="],
+
+              "pkg1": ["pkg1@workspace:packages/pkg1"],
+            }
+          }
+          "
+        `);
       } else {
         expect(await exists(join(packageDir, "bun.lockb"))).toBeTrue();
       }
@@ -175,7 +208,7 @@ describe("basic", () => {
       // update catalog
       packageJson.workspaces.catalog["no-deps"] = "1.0.0";
       await write(join(packageDir, "package.json"), JSON.stringify(packageJson));
-      ({ err } = await runBunInstall(bunEnv, packageDir, { savesLockfile: true }));
+      ({ err } = await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: true }));
       expect(err).toContain("Saved lockfile");
 
       if (!binaryLockfile) {
@@ -185,7 +218,40 @@ describe("basic", () => {
         );
 
         expect(newLockfile).not.toEqual(initialLockfile);
-        expect(newLockfile).toMatchSnapshot();
+        expect(newLockfile).toMatchInlineSnapshot(`
+          "{
+            "lockfileVersion": 2,
+            "configVersion": 1,
+            "workspaces": {
+              "": {
+                "name": "catalog-basic-2",
+              },
+              "packages/pkg1": {
+                "name": "pkg1",
+                "dependencies": {
+                  "a-dep": "catalog:a",
+                  "no-deps": "catalog:",
+                },
+              },
+            },
+            "catalog": {
+              "no-deps": "1.0.0",
+            },
+            "catalogs": {
+              "a": {
+                "a-dep": "1.0.1",
+              },
+            },
+            "packages": {
+              "a-dep": ["a-dep@1.0.1", "http://localhost:1234/a-dep/-/a-dep-1.0.1.tgz", {}, "sha512-6nmTaPgO2U/uOODqOhbjbnaB4xHuZ+UB7AjKUA3g2dT4WRWeNxgp0dC8Db4swXSnO5/uLLUdFmUJKINNBO/3wg=="],
+
+              "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+
+              "pkg1": ["pkg1@workspace:packages/pkg1"],
+            }
+          }
+          "
+        `);
       } else {
         expect(await exists(join(packageDir, "bun.lockb"))).toBeTrue();
       }
@@ -202,7 +268,7 @@ describe("basic", () => {
       // update catalogs
       packageJson.workspaces!.catalogs!.a["a-dep"] = "1.0.10";
       await write(join(packageDir, "package.json"), JSON.stringify(packageJson));
-      ({ err } = await runBunInstall(bunEnv, packageDir, { savesLockfile: true }));
+      ({ err } = await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: true }));
       expect(err).toContain("Saved lockfile");
 
       if (!binaryLockfile) {
@@ -212,7 +278,40 @@ describe("basic", () => {
         );
 
         expect(newLockfile).not.toEqual(initialLockfile);
-        expect(newLockfile).toMatchSnapshot();
+        expect(newLockfile).toMatchInlineSnapshot(`
+          "{
+            "lockfileVersion": 2,
+            "configVersion": 1,
+            "workspaces": {
+              "": {
+                "name": "catalog-basic-2",
+              },
+              "packages/pkg1": {
+                "name": "pkg1",
+                "dependencies": {
+                  "a-dep": "catalog:a",
+                  "no-deps": "catalog:",
+                },
+              },
+            },
+            "catalog": {
+              "no-deps": "1.0.0",
+            },
+            "catalogs": {
+              "a": {
+                "a-dep": "1.0.10",
+              },
+            },
+            "packages": {
+              "a-dep": ["a-dep@1.0.10", "http://localhost:1234/a-dep/-/a-dep-1.0.10.tgz", {}, "sha512-NeQ6Ql9jRW8V+VOiVb+PSQAYOvVoSimW+tXaR0CoJk4kM9RIk/XlAUGCsNtn5XqjlDO4hcH8NcyaL507InevEg=="],
+
+              "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+
+              "pkg1": ["pkg1@workspace:packages/pkg1"],
+            }
+          }
+          "
+        `);
       } else {
         expect(await exists(join(packageDir, "bun.lockb"))).toBeTrue();
       }
@@ -245,11 +344,11 @@ describe("basic", () => {
       write(pkg1Path, JSON.stringify({ name: "pkg1", dependencies: { "no-deps": "catalog:a" } })),
     ]);
 
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
     expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe("1.0.0");
 
     await write(pkg1Path, JSON.stringify({ name: "pkg1", dependencies: { "no-deps": "catalog:b" } }));
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
 
     expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe("2.0.0");
     const lock = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as any;
@@ -257,8 +356,108 @@ describe("basic", () => {
     expect(Object.keys(lock.packages)).toStrictEqual(["no-deps", "pkg1"]);
     expect(lock.packages["no-deps"][0]).toBe("no-deps@2.0.0");
 
-    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
   });
+
+  // A file: path outside the project is only accepted on a row the root (or a workspace) owns. A catalog change
+  // re-resolves every catalog: row; the rows the root was loaded with have been replaced by then and belong to
+  // nobody, so re-resolving them fails the way an escaping transitive file: dependency does.
+  test.concurrent("changing the entry of a catalog: dependency pointing outside the project", async () => {
+    const packageJson = (xPath: string) =>
+      JSON.stringify({
+        name: "catalog-file-dep",
+        workspaces: { packages: [], catalog: { x: xPath } },
+        dependencies: { x: "catalog:" },
+      });
+    using dir = tempDir("catalog-file-dep", {
+      "x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "x2/package.json": JSON.stringify({ name: "x", version: "2.0.0" }),
+      "project/package.json": packageJson("file:../x"),
+    });
+    const packageDir = join(String(dir), "project");
+    const installedVersion = async () =>
+      (await file(join(packageDir, "node_modules", "x", "package.json")).json()).version;
+
+    await runBunInstall(installEnv(packageDir), packageDir);
+    expect(await installedVersion()).toBe("1.0.0");
+
+    await write(join(packageDir, "package.json"), packageJson("file:../x2"));
+    await runBunInstall(installEnv(packageDir), packageDir);
+    expect(await installedVersion()).toBe("2.0.0");
+    expect(normalizeBunSnapshot(await file(join(packageDir, "bun.lock")).text(), packageDir)).toMatchInlineSnapshot(`
+      "{
+        "lockfileVersion": 2,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "catalog-file-dep",
+            "dependencies": {
+              "x": "catalog:",
+            },
+          },
+        },
+        "catalog": {
+          "x": "file:../x2",
+        },
+        "packages": {
+          "x": ["x@file:../x2", {}],
+        }
+      }"
+    `);
+    await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+  });
+
+  // The registry also has a `no-deps` package. `leaf` is a catalog entry that the workspace itself uses.
+  test.concurrent.each([
+    ["hoisted", "*", ["install"]],
+    ["isolated", "*", ["install"]],
+    ["hoisted", "*", ["update", "no-deps"]],
+    ["isolated", "^0.1.0", ["update", "no-deps"]],
+    ["hoisted", "^0.1.0", ["update", "--latest", "no-deps"]],
+  ])(
+    "a catalog: dependency still links to a workspace after another catalog entry changes (%s, %j, bun %j)",
+    async (linker, range, command) => {
+      const packageJson = (leaf: string) =>
+        JSON.stringify({ name: "mono", workspaces: { packages: ["packages/*"], catalog: { "no-deps": range, leaf } } });
+      using dir = writeRegistryProject(
+        {
+          "package.json": packageJson("1.0.0"),
+          "packages/web/package.json": JSON.stringify({
+            name: "web",
+            dependencies: { "no-deps": "catalog:", leaf: "catalog:" },
+          }),
+          "packages/no-deps/package.json": JSON.stringify({
+            name: "no-deps",
+            version: "0.1.0",
+            dependencies: { leaf: "catalog:" },
+          }),
+        },
+        catalogRegistry.url.href,
+      );
+      const packageDir = String(dir);
+      const linked = () =>
+        realpath(join(packageDir, "packages", "web", "node_modules", "no-deps")).catch(() =>
+          realpath(join(packageDir, "node_modules", "no-deps")),
+        );
+      const run = async (command: string[]) => {
+        await using proc = spawn({
+          cmd: [bunExe(), ...command, "--linker", linker],
+          cwd: packageDir,
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(await linked()).toBe(await realpath(join(packageDir, "packages", "no-deps")));
+        expect(exitCode).toBe(0);
+      };
+
+      await run(["install"]);
+      await write(join(packageDir, "package.json"), packageJson("2.0.0"));
+      await run(command);
+    },
+  );
 
   test.concurrent("catalog and catalogs.default may split different packages between them", async () => {
     const { packageDir } = await registry.createTestDir({
@@ -274,16 +473,16 @@ describe("basic", () => {
       },
     });
 
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
 
     expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe("1.0.0");
     expect((await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).version).toBe("1.0.1");
 
-    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
   });
 });
 
-describe("update", () => {
+describe.concurrent("update", () => {
   async function createUpdateMonorepo(packageDir: string, name: string, inTopLevelKey: boolean = false) {
     const catalogs = {
       catalog: {
@@ -334,7 +533,8 @@ describe("update", () => {
       cwd,
       stdout: "pipe",
       stderr: "pipe",
-      env: bunEnv,
+      // The project's cache, also when `cwd` is one of its members.
+      env: installEnv(cwd.replace(/[\\/]packages[\\/]\w+$/, "")),
     });
 
     const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
@@ -351,10 +551,15 @@ describe("update", () => {
     test(`--latest updates catalog versions ${label}`, async () => {
       const { packageDir } = await registry.createTestDir();
       await createUpdateMonorepo(packageDir, `catalog-update-latest-${label.replace(/\W+/g, "-")}`, isTopLevel);
-      await runBunInstall(bunEnv, packageDir);
+      await runBunInstall(installEnv(packageDir), packageDir);
 
-      const { err, exitCode } = await runUpdate(packageDir, ...flags);
+      const { out, err, exitCode } = await runUpdate(packageDir, ...flags);
       expect(err).not.toContain("error:");
+
+      // The moved entry is reported like a direct dependency of the root, even though only pkg1 depends on it.
+      // a-dep still resolves to 1.0.10 (only its literal changes), so it gets no row.
+      expect(out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.1.0 -> 2.0.0"]);
+      expect(out.match(/^.*a-dep.*$/gm)).toBeNull();
 
       // catalog entries are updated, preserving the pinning style
       const root = await file(join(packageDir, "package.json")).json();
@@ -381,7 +586,7 @@ describe("update", () => {
   test("--frozen-lockfile passes after --latest updates catalogs", async () => {
     const { packageDir } = await registry.createTestDir();
     await createUpdateMonorepo(packageDir, "catalog-update-frozen");
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
 
     const update = await runUpdate(packageDir, "--latest");
     expect(update.err).not.toContain("error:");
@@ -393,7 +598,7 @@ describe("update", () => {
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
-      env: bunEnv,
+      env: installEnv(packageDir),
     });
     const [, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
     expect(err).not.toContain("lockfile had changes");
@@ -404,10 +609,13 @@ describe("update", () => {
   test("--latest run from inside a workspace package updates the root catalog", async () => {
     const { packageDir } = await registry.createTestDir();
     await createUpdateMonorepo(packageDir, "catalog-update-in-workspace");
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
 
-    const { err, exitCode } = await runUpdate(join(packageDir, "packages", "pkg1"), "--latest");
+    const { out, err, exitCode } = await runUpdate(join(packageDir, "packages", "pkg1"), "--latest");
     expect(err).not.toContain("error:");
+
+    // pkg1's own `catalog:` row is an update row, not a `+ no-deps@2.0.0` install row.
+    expect(out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.1.0 -> 2.0.0"]);
 
     const root = await file(join(packageDir, "package.json")).json();
     expect(root.workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
@@ -418,6 +626,73 @@ describe("update", () => {
       "a-dep": "catalog:a",
     });
     expect(exitCode).toBe(0);
+  });
+
+  test("--latest reports a catalog entry the root itself depends on once", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-update-root-consumer",
+          workspaces: { packages: ["packages/*"], catalog: { "no-deps": "^1.0.0" } },
+          dependencies: { "no-deps": "catalog:" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({ name: "pkg1", dependencies: { "no-deps": "catalog:" } }),
+      ),
+    ]);
+    await runBunInstall(installEnv(packageDir), packageDir);
+
+    const { out, err, exitCode } = await runUpdate(packageDir, "--latest");
+    expect(err).not.toContain("error:");
+    expect(out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.1.0 -> 2.0.0"]);
+
+    const root = await file(join(packageDir, "package.json")).json();
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
+    expect(root.dependencies).toEqual({ "no-deps": "catalog:" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("--latest --verbose reports a catalog entry once, under the workspace that depends on it", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await createUpdateMonorepo(packageDir, "catalog-update-verbose");
+    await runBunInstall(installEnv(packageDir), packageDir);
+
+    const { out, err, exitCode } = await runUpdate(packageDir, "--latest", "--verbose");
+    expect(err).not.toContain("error:");
+    const lines = out.split(/\r?\n/);
+    expect(lines.filter(line => line.includes("no-deps"))).toStrictEqual(["^ no-deps 1.1.0 -> 2.0.0"]);
+    expect(lines[lines.indexOf("pkg1:") + 1]).toBe("^ no-deps 1.1.0 -> 2.0.0");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--latest reports a catalog entry whose new version needs no install (isolated store already has it)", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await createUpdateMonorepo(packageDir, "catalog-update-isolated-rerun");
+    await runBunInstall(installEnv(packageDir), packageDir);
+    const rootBefore = await file(join(packageDir, "package.json")).text();
+    const lockBefore = await file(join(packageDir, "bun.lock")).text();
+
+    const first = await runUpdate(packageDir, "--latest");
+    expect(first.err).not.toContain("error:");
+    expect(first.out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.1.0 -> 2.0.0"]);
+    expect(first.exitCode).toBe(0);
+
+    // Like `git checkout .` followed by `bun install`: the project is back on 1.1.0 while node_modules/.bun keeps no-deps@2.0.0.
+    await Promise.all([
+      write(join(packageDir, "package.json"), rootBefore),
+      write(join(packageDir, "bun.lock"), lockBefore),
+    ]);
+    await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
+
+    const second = await runUpdate(packageDir, "--latest");
+    expect(second.err).not.toContain("error:");
+    expect(second.out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.1.0 -> 2.0.0"]);
+    expect((await file(join(packageDir, "package.json")).json()).workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
+    expect(second.exitCode).toBe(0);
   });
 
   test("--latest updates the same package independently per catalog", async () => {
@@ -462,7 +737,7 @@ describe("update", () => {
         }),
       ),
     ]);
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
 
     const { err, exitCode } = await runUpdate(packageDir, "--latest");
     expect(err).not.toContain("error:");
@@ -476,11 +751,117 @@ describe("update", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("update reports the catalog entry that moved, not another entry for the same name", async () => {
+    // The default catalog pins no-deps@2.0.0 exactly; `catalogs.old` allows ^1.0.0 and the lockfile has it at 1.0.0 (as if 1.1.0 was published after install).
+    const { packageDir } = await registry.createTestDir();
+    const url = registry.registryUrl();
+    const lockfile = {
+      lockfileVersion: 2,
+      configVersion: 1,
+      workspaces: {
+        "": { name: "catalog-update-two-entries" },
+        "packages/pkg1": { name: "pkg1", dependencies: { "no-deps": "catalog:" } },
+        "packages/pkg2": { name: "pkg2", dependencies: { "no-deps": "catalog:old" } },
+      },
+      catalog: { "no-deps": "2.0.0" },
+      catalogs: { old: { "no-deps": "^1.0.0" } },
+      packages: {
+        "no-deps": [
+          "no-deps@2.0.0",
+          `${url}no-deps/-/no-deps-2.0.0.tgz`,
+          {},
+          "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
+        ],
+        "pkg1": ["pkg1@workspace:packages/pkg1"],
+        "pkg2": ["pkg2@workspace:packages/pkg2"],
+        "pkg2/no-deps": [
+          "no-deps@1.0.0",
+          `${url}no-deps/-/no-deps-1.0.0.tgz`,
+          {},
+          "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+        ],
+      },
+    };
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-update-two-entries",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: { "no-deps": "2.0.0" },
+            catalogs: { old: { "no-deps": "^1.0.0" } },
+          },
+        }),
+      ),
+      write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify(lockfile.workspaces["packages/pkg1"])),
+      write(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify(lockfile.workspaces["packages/pkg2"])),
+      write(join(packageDir, "bun.lock"), JSON.stringify(lockfile)),
+    ]);
+
+    const { out, err, exitCode } = await runUpdate(packageDir);
+    expect(err).not.toContain("error:");
+    // Only the `old` entry moved, and the row says so; the default entry stays at 2.0.0 without a row.
+    expect(out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.0.0 -> 1.1.0 (v2.0.0 available)"]);
+
+    const root = await file(join(packageDir, "package.json")).json();
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "2.0.0" });
+    expect(root.workspaces.catalogs).toEqual({ old: { "no-deps": "^1.1.0" } });
+    const lock = await file(join(packageDir, "bun.lock")).text();
+    expect(lock).toContain("no-deps@2.0.0");
+    expect(lock).toContain("no-deps@1.1.0");
+    expect(lock).not.toContain("no-deps@1.0.0");
+    expect(exitCode).toBe(0);
+  });
+
+  test("update reports a catalog entry once when a transitive dependency moves with it", async () => {
+    const { packageDir } = await registry.createTestDir();
+    const url = registry.registryUrl();
+    const pkg1 = { name: "pkg1", dependencies: { "no-deps": "catalog:", "one-range-dep": "1.0.0" } };
+    const catalog = { "no-deps": "^1.0.0" };
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ name: "catalog-update-transitive", workspaces: { packages: ["packages/*"], catalog } }),
+      ),
+      write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify(pkg1)),
+      write(
+        join(packageDir, "bun.lock"),
+        JSON.stringify({
+          lockfileVersion: 2,
+          configVersion: 1,
+          workspaces: { "": { name: "catalog-update-transitive" }, "packages/pkg1": pkg1 },
+          catalog,
+          packages: {
+            "no-deps": [
+              "no-deps@1.0.0",
+              `${url}no-deps/-/no-deps-1.0.0.tgz`,
+              {},
+              "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+            ],
+            "one-range-dep": [
+              "one-range-dep@1.0.0",
+              `${url}one-range-dep/-/one-range-dep-1.0.0.tgz`,
+              { dependencies: { "no-deps": "^1.0.0" } },
+              "sha512-vHHfVxmeKiXLeOtrPjoDbzSGJVrwfqy8HHC50miwrQTabA1eFkRUWfIQ1E5pOloPpti7HSTocPg809DBNV6x0Q==",
+            ],
+            "pkg1": ["pkg1@workspace:packages/pkg1"],
+          },
+        }),
+      ),
+    ]);
+
+    const { out, err, exitCode } = await runUpdate(packageDir);
+    expect(err).not.toContain("error:");
+    expect(out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.0.0 -> 1.1.0 (v2.0.0 available)"]);
+    expect(exitCode).toBe(0);
+  });
+
   for (const fromWorkspace of [false, true]) {
     test(`--latest --dry-run does not modify any package.json (from ${fromWorkspace ? "workspace" : "root"})`, async () => {
       const { packageDir } = await registry.createTestDir();
       await createUpdateMonorepo(packageDir, `catalog-update-dry-run-${fromWorkspace ? "ws" : "root"}`);
-      await runBunInstall(bunEnv, packageDir);
+      await runBunInstall(installEnv(packageDir), packageDir);
 
       const rootBefore = await file(join(packageDir, "package.json")).text();
       const pkg1Before = await file(join(packageDir, "packages", "pkg1", "package.json")).text();
@@ -543,8 +924,9 @@ describe("update", () => {
         ),
       ]);
 
-      const { err, exitCode } = await runUpdate(packageDir, ...args);
+      const { out, err, exitCode } = await runUpdate(packageDir, ...args);
       expect(err).not.toContain("error:");
+      expect(out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.0.0 -> 1.1.0 (v2.0.0 available)"]);
 
       const root = await file(join(packageDir, "package.json")).json();
       expect(root.workspaces.catalog).toEqual({ "no-deps": "^1.1.0" });
@@ -595,7 +977,7 @@ describe("update", () => {
         }),
       ),
     ]);
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
 
     const { err, exitCode } = await runUpdate(join(packageDir, "packages", "pkg1"));
     expect(err).not.toContain("error:");
@@ -616,7 +998,7 @@ describe("update", () => {
   test("update <pkg> --latest keeps the catalog reference", async () => {
     const { packageDir } = await registry.createTestDir();
     await createUpdateMonorepo(packageDir, "catalog-update-targeted");
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
 
     const { err, exitCode } = await runUpdate(join(packageDir, "packages", "pkg1"), "no-deps", "--latest");
     expect(err).not.toContain("error:");
@@ -627,16 +1009,227 @@ describe("update", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  test("--latest keeps the npm: alias prefix and pin style of aliased catalog entries", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-update-alias",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: { aliased: "npm:no-deps@^1.0.0" },
+            catalogs: { pinned: { aliased: "npm:no-deps@1.0.1" } },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({ name: "pkg1", dependencies: { aliased: "catalog:" } }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({ name: "pkg2", dependencies: { aliased: "catalog:pinned" } }),
+      ),
+    ]);
+    await runBunInstall(installEnv(packageDir), packageDir);
+
+    const { err, exitCode } = await runUpdate(packageDir, "--latest");
+    expect(err).not.toContain("error:");
+
+    const { workspaces } = await file(join(packageDir, "package.json")).json();
+    expect(workspaces.catalog).toEqual({ aliased: "npm:no-deps@^2.0.0" });
+    expect(workspaces.catalogs).toEqual({ pinned: { aliased: "npm:no-deps@2.0.0" } });
+    expect(exitCode).toBe(0);
+  });
+
+  // Leading whitespace in a version literal is ignored by the installer, so `bun update` has to
+  // treat these entries exactly like their trimmed counterparts above.
+  for (const [flags, expected] of [
+    [[], { "no-deps": "^1.1.0", "aliased-dep": "npm:no-deps@~1.0.1" }],
+    [["--latest"], { "no-deps": "^2.0.0", "aliased-dep": "npm:no-deps@~2.0.0" }],
+  ] as const) {
+    test(`update ${flags.join(" ") || "(no args)"} updates catalog entries with leading whitespace`, async () => {
+      const { packageDir } = await registry.createTestDir();
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "catalog-update-whitespace",
+            workspaces: {
+              packages: ["packages/*"],
+              catalog: {
+                "no-deps": " ^1.0.0",
+                "aliased-dep": "\tnpm:no-deps@~1.0.0",
+              },
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg1", "package.json"),
+          JSON.stringify({
+            name: "pkg1",
+            dependencies: {
+              "no-deps": "catalog:",
+              "aliased-dep": "catalog:",
+            },
+          }),
+        ),
+      ]);
+      await runBunInstall(installEnv(packageDir), packageDir);
+
+      const { err, exitCode } = await runUpdate(packageDir, ...flags);
+      expect(err).not.toContain("error:");
+
+      expect((await file(join(packageDir, "package.json")).json()).workspaces.catalog).toEqual(expected);
+      expect((await file(join(packageDir, "packages", "pkg1", "package.json")).json()).dependencies).toEqual({
+        "no-deps": "catalog:",
+        "aliased-dep": "catalog:",
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  for (const flags of [[], ["--latest"]] as const) {
+    test(`update <pkg>${flags.length ? ` ${flags.join(" ")}` : ""} keeps a catalog reference with leading whitespace`, async () => {
+      const { packageDir } = await registry.createTestDir();
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "catalog-reference-whitespace",
+            workspaces: {
+              packages: ["packages/*"],
+              catalog: {
+                "no-deps": "^1.0.0",
+              },
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg1", "package.json"),
+          JSON.stringify({
+            name: "pkg1",
+            dependencies: {
+              "no-deps": " catalog:",
+            },
+          }),
+        ),
+      ]);
+      await runBunInstall(installEnv(packageDir), packageDir);
+
+      const { err, exitCode } = await runUpdate(join(packageDir, "packages", "pkg1"), "no-deps", ...flags);
+      expect(err).not.toContain("error:");
+
+      expect((await file(join(packageDir, "packages", "pkg1", "package.json")).json()).dependencies).toEqual({
+        "no-deps": " catalog:",
+      });
+      expect((await file(join(packageDir, "package.json")).json()).workspaces.catalog).toEqual({
+        "no-deps": "^1.0.0",
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
 });
 
-describe("errors", () => {
+describe.concurrent("pack", () => {
+  test("replaces a catalog: reference with leading whitespace", async () => {
+    const { packageDir } = await registry.createTestDir();
+    const pkg1Dir = join(packageDir, "packages", "pkg1");
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-pack-whitespace",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: {
+              "no-deps": "^1.0.0",
+            },
+          },
+        }),
+      ),
+      write(
+        join(pkg1Dir, "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": " catalog:",
+          },
+        }),
+      ),
+    ]);
+    await runBunInstall(installEnv(packageDir), packageDir);
+
+    await pack(pkg1Dir, bunEnv);
+
+    const tarball = readTarball(join(pkg1Dir, "pkg1-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }]);
+    expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+      name: "pkg1",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "^1.0.0",
+      },
+    });
+  });
+
+  function appWithLibFromCatalog(catalogs: object) {
+    return tempDir("catalog-pack", {
+      "package.json": JSON.stringify({ name: "root", workspaces: { packages: ["packages/*"], ...catalogs } }),
+      "packages/lib/package.json": JSON.stringify({ name: "lib", version: "2.3.4" }),
+      "packages/app/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { lib: "catalog:" } }),
+    });
+  }
+
+  test.each([
+    ["workspace:^", "^2.3.4"],
+    ["workspace:*", "2.3.4"],
+    ["workspace:../lib", "2.3.4"],
+  ])("publishes the catalog entry %s as %s", async (entry, published) => {
+    using dir = appWithLibFromCatalog({ catalog: { lib: entry } });
+    const appDir = join(String(dir), "packages", "app");
+
+    await pack(appDir, bunEnv);
+
+    const tarball = readTarball(join(appDir, "app-1.0.0.tgz"));
+    expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { lib: published },
+    });
+  });
+
+  test("fails on a catalog entry that refers to another catalog", async () => {
+    using dir = appWithLibFromCatalog({ catalog: { lib: "catalog:g" }, catalogs: { g: { lib: "^2" } } });
+    const appDir = join(String(dir), "packages", "app");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "pack"],
+      cwd: appDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(err, dir)).toBe(
+      'error: Failed to resolve catalog version for "lib" in `dependencies` (catalog entry refers to another catalog).',
+    );
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(appDir, "app-1.0.0.tgz"))).toBeFalse();
+  });
+});
+
+describe.concurrent("errors", () => {
   async function failingInstall(cwd: string) {
     await using proc = spawn({
       cmd: [bunExe(), "install"],
       cwd,
       stdout: "pipe",
       stderr: "pipe",
-      env: bunEnv,
+      env: installEnv(cwd),
     });
     const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { err, exitCode };
@@ -667,7 +1260,7 @@ describe("errors", () => {
     expect(err).toContain(
       'error: a-dep@catalog:aaaaaaaaaaaaaaaaa: there is no catalog named "aaaaaaaaaaaaaaaaa" in the root package.json\n',
     );
-    expect(err).toContain("error: no-deps@catalog: is not in the catalog\n  bun add --catalog no-deps\n");
+    expect(err).toContain("error: no-deps@catalog: not in catalog\n  bun add --catalog no-deps\n");
     expect(exitCode).not.toBe(0);
   });
 
@@ -689,10 +1282,8 @@ describe("errors", () => {
     });
 
     const { err, exitCode } = await failingInstall(packageDir);
-    expect(err).toContain(
-      'error: no-deps@catalog:tools is not in catalog "tools"\n  bun add --catalog=tools no-deps\n',
-    );
-    expect(err).toContain("error: left-pad@catalog:default is not in the catalog\n  bun add --catalog left-pad\n");
+    expect(err).toContain('error: no-deps@catalog:tools not in catalog "tools"\n  bun add --catalog=tools no-deps\n');
+    expect(err).toContain("error: left-pad@catalog:default not in catalog\n  bun add --catalog left-pad\n");
     expect(err).not.toContain("there is no catalog named");
     expect(exitCode).not.toBe(0);
   });
@@ -716,7 +1307,7 @@ describe("errors", () => {
 
     const { err, exitCode } = await failingInstall(packageDir);
     expect(err).toContain("error: Invalid dependency version\n");
-    expect(err).toContain("error: no-deps@catalog: is not in the catalog\n  bun add --catalog no-deps\n");
+    expect(err).toContain("error: no-deps@catalog: not in catalog\n  bun add --catalog no-deps\n");
     expect(exitCode).not.toBe(0);
   });
 
@@ -821,7 +1412,7 @@ describe("errors", () => {
       expect(err).toContain("no-deps@catalog: failed to resolve");
       expect(exitCode).not.toBe(0);
 
-      await runBunInstall(bunEnv, workspace.packageDir);
+      await runBunInstall(installEnv(workspace.packageDir), workspace.packageDir);
       expect((await file(join(workspace.packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe(
         "1.1.0",
       );
@@ -840,7 +1431,7 @@ describe("optionalDependencies", () => {
     await using proc = spawn({
       cmd: [bunExe(), "install", "--linker", linker, ...args],
       cwd: dir,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+      env: installEnv(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -966,7 +1557,7 @@ describe("peer dependencies", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install", "--linker", linker, ...args],
       cwd: dir,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+      env: installEnv(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1273,6 +1864,68 @@ describe("peer dependencies", () => {
     ({ err } = await install(dir, "hoisted"));
     expect(err).toContain("Saved lockfile");
     expect(await packageKeys(dir)).toStrictEqual(dedupedKeys);
+  });
+
+  // When the catalog changes, every row declared through it is re-resolved. The root's rows from bun.lock have
+  // been replaced by then and belong to no package; re-resolving them too bound the peer a second time (once to
+  // the stale copy, with an "incorrect peer dependency" warning). The peer moves to a version its new range
+  // accepts, once, without a warning.
+  describe("a root peer whose catalog range stops matching the installed version is re-resolved once", () => {
+    const peerWarning = 'warn: incorrect peer dependency "no-deps@1.0.0"';
+    const peerWarnings = (err: string) => err.split(peerWarning).length - 1;
+
+    function rootWithPeer(peerSpec: string, fields: Record<string, unknown> = {}) {
+      return JSON.stringify({ name: "root", peerDependencies: { "no-deps": peerSpec }, ...fields });
+    }
+
+    async function installedAlone(packageJson: string) {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: { "package.json": packageJson },
+      });
+      const { err } = await install(packageDir, "hoisted", "--verbose");
+      expect(peerWarnings(err)).toBe(0);
+      expect((await Bun.file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe(
+        "1.0.0",
+      );
+      return packageDir;
+    }
+
+    /** The version the peer moved to; no warning may be printed on the way. */
+    async function reinstall(dir: string, packageJson: string) {
+      await Bun.write(join(dir, "package.json"), packageJson);
+      const { err } = await install(dir, "hoisted", "--verbose");
+      expect(err).toContain("Saved lockfile");
+      expect(peerWarnings(err)).toBe(0);
+      return (await Bun.file(join(dir, "node_modules", "no-deps", "package.json")).json()).version;
+    }
+
+    // The inline row is the baseline: it changes itself and is only re-enqueued by the add/update pass.
+    test.concurrent.each([
+      [
+        "through the catalog",
+        (range: string) => rootWithPeer("catalog:", { workspaces: { catalog: { "no-deps": range } } }),
+      ],
+      ["inline", (range: string) => rootWithPeer(range)],
+    ])("declared %s", async (_, packageJson) => {
+      const dir = await installedAlone(packageJson("1.0.0"));
+      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe("1.1.0");
+    });
+
+    test.concurrent("overridden to catalog:", async () => {
+      const packageJson = (range: string) =>
+        rootWithPeer("1.0.0", { overrides: { "no-deps": "catalog:" }, workspaces: { catalog: { "no-deps": range } } });
+      const dir = await installedAlone(packageJson("1.0.0"));
+      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe("1.1.0");
+    });
+
+    // Selected both as an overridden name and as a catalog: row; one pass handles both.
+    test.concurrent("declared through the catalog while an override of the same name changes too", async () => {
+      const packageJson = (range: string) =>
+        rootWithPeer("catalog:", { overrides: { "no-deps": range }, workspaces: { catalog: { "no-deps": range } } });
+      const dir = await installedAlone(packageJson("1.0.0"));
+      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe("1.1.0");
+    });
   });
 
   // pnpm: deps-installer/test/catalogs.ts "frozen lockfile error is thrown if catalog config changes"
@@ -1599,11 +2252,64 @@ describe("peer dependencies", () => {
     });
   });
 
-  // package.json is edited after the install so bun.lock's catalogs are the ones that lack the entry.
+  // The root catalog is the one in package.json right now, not the one bun.lock recorded at the last install.
+  test.concurrent("bun pm pack substitutes the catalog range edited into package.json after the install", async () => {
+    const dir = await makeRepo({
+      catalog: { "no-deps": "^1.0.0" },
+      peerSpec: "catalog:",
+      libVersion: "1.2.3",
+      linker: "hoisted",
+    });
+    await install(dir, "hoisted");
+    await rewriteRootPackageJson(dir, { catalog: { "no-deps": "^2.0.0" } });
+    expect(await Bun.file(join(dir, "bun.lock")).text()).toContain('"no-deps": "^1.0.0"');
+
+    const libDir = join(dir, "packages", "lib");
+    await pack(libDir, bunEnv);
+    const tarball = readTarball(join(libDir, "lib-1.2.3.tgz"));
+    const packageJson = tarball.entries.find(
+      (entry: { pathname: string }) => entry.pathname === "package/package.json",
+    );
+    expect(JSON.parse(packageJson.contents)).toStrictEqual({
+      name: "lib",
+      version: "1.2.3",
+      peerDependencies: { "no-deps": "^2.0.0" },
+    });
+  });
+
+  // The catalog parse logs this error and skips the entry; pack reports it like `bun install` does
+  // instead of complaining that the entry is missing.
+  test.concurrent("bun pm pack reports an invalid catalog range at its definition", async () => {
+    const dir = await makeRepo({
+      catalog: { "no-deps": ".:" },
+      peerSpec: "catalog:",
+      libVersion: "1.2.3",
+      linker: "hoisted",
+    });
+    const libDir = join(dir, "packages", "lib");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "pack"],
+      cwd: libDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const normalizedErr = normalizeBunSnapshot(err, dir);
+    expect(normalizedErr).toContain("error: Invalid dependency version\n");
+    expect(normalizedErr).toContain("at <dir>/package.json:");
+    expect(normalizedErr).not.toContain("no matching catalog dependency");
+    expect(normalizeBunSnapshot(out, dir)).toBe("bun pack <version> (<revision>)");
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(libDir, "lib-1.2.3.tgz"))).toBeFalse();
+  });
+
+  // lib's package.json is edited after the install; the root catalog never had these entries.
   describe.each([
     ["a-dep", "catalog:"],
     ["no-deps", "catalog:missing"],
-  ] as const)("bun pm pack with a %s peer of %s missing from the lockfile's catalogs", (peerName, peerSpec) => {
+  ] as const)("bun pm pack with a %s peer of %s missing from the catalogs", (peerName, peerSpec) => {
     test.concurrent("fails without writing a tarball", async () => {
       const dir = await makeRepo({
         catalog: { "no-deps": ">=1.0.0" },
@@ -1633,5 +2339,481 @@ describe("peer dependencies", () => {
       expect(exitCode).toBe(1);
       expect(existsSync(join(libDir, "lib-1.2.3.tgz"))).toBeFalse();
     });
+  });
+});
+
+// `bun install` advises `bun add --catalog <name>` only where that command accepts the name and the entry is missing.
+describe("bun add --catalog advice for a failed catalog: dependency", () => {
+  const note =
+    'note: catalogs require a "workspaces" field in the root package.json. "<dir>/package.json" was used as root and has none';
+  const advice = "error: no-deps@catalog: not in catalog\n  bun add --catalog no-deps";
+
+  function project(files: Record<string, object>) {
+    return writeRegistryProject(
+      {
+        ...Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
+        "vendor/x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+        "vendor/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
+      },
+      catalogRegistry.url.href,
+    );
+  }
+
+  function soloRoot(packageJson: object) {
+    return project({ "package.json": { name: "solo", ...packageJson } });
+  }
+
+  async function run(cwd: string, args: string[], env = bunEnv) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, stdout: "pipe", stderr: "pipe", env });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { err: normalizeBunSnapshot(err, cwd), exitCode };
+  }
+
+  const commands = ["install", "install --frozen-lockfile", "update", "add ./vendor/x", "remove y"];
+
+  describe("a root package.json without workspaces", () => {
+    test.concurrent.each(commands)("bun %s prints the package.json it used as the root", async command => {
+      using dir = soloRoot({ dependencies: { "no-deps": "catalog:", y: "file:./vendor/y" } });
+      const packageJson = await file(join(String(dir), "package.json")).text();
+
+      const { err, exitCode } = await run(String(dir), command.split(" "));
+      expect(err).toBe(`error: no-deps@catalog: failed to resolve\n${note}`);
+      expect(await file(join(String(dir), "package.json")).text()).toBe(packageJson);
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent.each([
+      ["catalog", { catalog: { "no-deps": "1.0.0" } }, "catalog:", "no-deps@catalog: failed to resolve"],
+      [
+        "catalogs.tools",
+        { catalogs: { tools: { "no-deps": "1.0.0" } } },
+        "catalog:tools",
+        "no-deps@catalog:tools failed to resolve",
+      ],
+    ] as const)("an entry in a top-level %s is not reported as missing", async (_, catalogs, spec, row) => {
+      using dir = soloRoot({ ...catalogs, dependencies: { "no-deps": spec } });
+
+      const { err, exitCode } = await run(String(dir), ["install"]);
+      expect(err).toBe(`error: ${row}\n${note}`);
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("every failed row is listed above one note", async () => {
+      using dir = soloRoot({
+        dependencies: { "no-deps": "catalog:", "a-dep": "catalog:tools" },
+        devDependencies: { leaf: "catalog:" },
+      });
+
+      const { err, exitCode } = await run(String(dir), ["install"]);
+      expect(err).toBe(
+        [
+          "error: leaf@catalog: failed to resolve",
+          "error: a-dep@catalog:tools failed to resolve",
+          "error: no-deps@catalog: failed to resolve",
+          note,
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent(
+      'a root that drops "workspaces" after an install gets the note, bun.lock still lists the catalog',
+      async () => {
+        const packageJson = { catalog: { "no-deps": "1.0.0" }, dependencies: { "no-deps": "catalog:" } };
+        using dir = soloRoot({ workspaces: [], ...packageJson });
+        await runBunInstall(installEnv(String(dir)), String(dir));
+        const lockfile = await file(join(String(dir), "bun.lock")).text();
+        expect(lockfile).toContain('"catalog": {\n    "no-deps": "1.0.0",\n  },');
+        await write(join(String(dir), "package.json"), JSON.stringify({ name: "solo", ...packageJson }));
+
+        for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+          const { err, exitCode } = await run(String(dir), args);
+          expect(err).toBe(`error: no-deps@catalog: failed to resolve\n${note}`);
+          expect(await file(join(String(dir), "bun.lock")).text()).toBe(lockfile);
+          expect(exitCode).toBe(1);
+        }
+      },
+    );
+
+    test.concurrent("a failed file: dependency gets no catalogs note", async () => {
+      using dir = soloRoot({ dependencies: { z: "file:./missing" } });
+
+      const { err, exitCode } = await run(String(dir), ["install"]);
+      const lines = err.split("\n");
+      expect(lines.filter(line => line.startsWith("note:"))).toEqual([]);
+      expect(lines.at(-1)).toBe("error: z@file:./missing failed to resolve");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a catalog: dependency of a file: package gets no catalogs note", async () => {
+      using dir = project({
+        "package.json": { name: "solo", dependencies: { inner: "file:./inner" } },
+        "inner/package.json": { name: "inner", version: "1.0.0", dependencies: { "no-deps": "catalog:" } },
+      });
+
+      const { err, exitCode } = await run(String(dir), ["install"]);
+      expect(err).toBe("error: no-deps@catalog: failed to resolve");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("--silent prints nothing", async () => {
+      using dir = soloRoot({ dependencies: { "no-deps": "catalog:" } });
+
+      const { err, exitCode } = await run(String(dir), ["install", "--silent"]);
+      expect(err).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  describe("a root package.json with workspaces", () => {
+    test.concurrent.each([
+      ["[]", [], { catalog: { "no-deps": "^2.0.0" } }],
+      ["{}", {}, { workspaces: { catalog: { "no-deps": "^2.0.0" } } }],
+    ] as const)(
+      'an empty "workspaces": %s gets the advice, and the advice repairs the install',
+      async (_, workspaces, written) => {
+        using dir = soloRoot({ workspaces, dependencies: { "no-deps": "catalog:" } });
+
+        expect(await run(String(dir), ["install"])).toEqual({ err: advice, exitCode: 1 });
+
+        const added = await run(String(dir), ["add", "--catalog", "no-deps"]);
+        expect(await file(join(String(dir), "package.json")).json()).toEqual({
+          name: "solo",
+          workspaces,
+          ...written,
+          dependencies: { "no-deps": "catalog:" },
+        });
+        expect(added.exitCode).toBe(0);
+
+        await runBunInstall(installEnv(String(dir)), String(dir), { savesLockfile: false });
+        expect((await file(join(String(dir), "node_modules", "no-deps", "package.json")).json()).version).toBe("2.0.0");
+      },
+    );
+
+    test.concurrent.each(commands)("bun %s in a workspace member keeps the advice", async command => {
+      using dir = project({
+        "package.json": { name: "mono", workspaces: ["packages/*"] },
+        "packages/api/package.json": {
+          name: "api",
+          dependencies: { "no-deps": "catalog:", y: "file:../../vendor/y" },
+        },
+      });
+
+      const args = command.replace("./vendor", "../../vendor").split(" ");
+      expect(await run(join(String(dir), "packages", "api"), args)).toEqual({ err: advice, exitCode: 1 });
+    });
+
+    // https://github.com/oven-sh/bun/issues/20015
+    test.concurrent("bun link <package> in a workspace member reads the root's catalog", async () => {
+      using dir = project({
+        "package.json": { name: "mono", workspaces: { packages: ["packages/*"], catalog: { "no-deps": "1.0.0" } } },
+        "packages/app/package.json": { name: "app", dependencies: { "no-deps": "catalog:" } },
+        "linked/package.json": { name: "linked-pkg", version: "1.0.0" },
+      });
+      const app = join(String(dir), "packages", "app");
+      const env = { ...bunEnv, BUN_INSTALL: join(String(dir), "global-install-dir") };
+      expect(await run(join(String(dir), "linked"), ["link"], env)).toEqual({ err: "", exitCode: 0 });
+
+      const { err, exitCode } = await run(app, ["link", "linked-pkg", "--linker=isolated"], env);
+      expect(err.split("\n").filter(line => /^(error|note):/.test(line))).toEqual([]);
+      expect(await file(join(app, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+        version: "1.0.0",
+      });
+      expect(await file(join(app, "node_modules", "linked-pkg", "package.json")).json()).toEqual({
+        name: "linked-pkg",
+        version: "1.0.0",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // https://github.com/oven-sh/bun/issues/39784
+    test.concurrent("an entry whose version does not resolve is not reported as missing", async () => {
+      using dir = soloRoot({
+        workspaces: [],
+        catalog: { "no-deps": "9.9.9" },
+        dependencies: { "no-deps": "catalog:" },
+      });
+
+      const { err, exitCode } = await run(String(dir), ["install"]);
+      expect(err.split("\n").filter(line => line.startsWith("error:") || line.startsWith("  "))).toEqual([
+        'error: No version matching "9.9.9" found for specifier "no-deps" (but package exists)',
+        "error: no-deps@catalog: failed to resolve",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a row named after the root or a workspace gets no bun add --catalog line", async () => {
+      using dir = project({
+        "package.json": { name: "mono", workspaces: { packages: ["packages/*"], catalogs: { tools: {} } } },
+        "packages/app/package.json": {
+          name: "app",
+          dependencies: { lib: "catalog:", mono: "catalog:tools", "no-deps": "catalog:tools" },
+        },
+        "packages/lib/package.json": { name: "lib" },
+      });
+
+      expect(await run(String(dir), ["install"])).toEqual({
+        err: [
+          "error: lib@catalog: not in catalog",
+          'error: mono@catalog:tools not in catalog "tools"',
+          'error: no-deps@catalog:tools not in catalog "tools"',
+          "  bun add --catalog=tools no-deps",
+        ].join("\n"),
+        exitCode: 1,
+      });
+    });
+  });
+});
+
+// A cached manifest is used for up to 300 seconds without a request. https://github.com/oven-sh/bun/issues/39784
+describe.concurrent("a version published after the manifest was cached", () => {
+  /** `versions` and `tags` can change between installs. `requests` has the If-None-Match of every manifest request. */
+  function serveMutableRegistry(versions: string[], tags: Record<string, string> = {}, stale304 = false) {
+    const requests: (string | null)[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const version = pathname.match(/^\/fresh-pkg-(.+)\.tgz$/)?.[1];
+        if (version) {
+          const files = { "package/package.json": JSON.stringify({ name: "fresh-pkg", version }) };
+          return new Response(await new Bun.Archive(files, { compress: "gzip" }).bytes());
+        }
+        if (pathname !== "/fresh-pkg") return new Response("not found", { status: 404 });
+        const ifNoneMatch = request.headers.get("if-none-match");
+        requests.push(ifNoneMatch);
+        const etag = `"v${versions.length}"`;
+        // A registry edge server that lags behind confirms what the client already has.
+        if (stale304 && ifNoneMatch !== null) return new Response(null, { status: 304, headers: { etag } });
+        return Response.json(
+          {
+            name: "fresh-pkg",
+            versions: Object.fromEntries(
+              versions.map(v => [
+                v,
+                { name: "fresh-pkg", version: v, dist: { tarball: `${origin}/fresh-pkg-${v}.tgz` } },
+              ]),
+            ),
+            "dist-tags": { latest: versions.at(-1), ...tags },
+          },
+          { headers: { etag } },
+        );
+      },
+    });
+    return { server, requests, [Symbol.dispose]: () => void server.stop(true) };
+  }
+
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      stdout: "ignore",
+      stderr: "pipe",
+      // wins over bunfig.toml; every test serves another `fresh-pkg`
+      env: installEnv(cwd),
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const lock = Bun.JSONC.parse(await file(join(cwd, "bun.lock")).text()) as { packages: Record<string, [string]> };
+    return {
+      messages: err.split("\n").filter(line => /^(error|warn):/.test(line)),
+      exitCode,
+      locked: lock.packages["fresh-pkg"]?.[0],
+    };
+  }
+
+  /** bun install does not wait for the manifest cache writes before it exits. */
+  async function installUntilCached(cwd: string) {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      expect(await install(cwd, ...(attempt ? ["--force"] : []))).toMatchObject({ messages: [], exitCode: 0 });
+      if ((await readdir(join(cwd, ".bun-cache"))).some(name => name.endsWith(".npm"))) return;
+    }
+    throw new Error("the manifest was never cached");
+  }
+
+  const depends = (spec: string, group = "dependencies") =>
+    JSON.stringify({ name: "root", [group]: { "fresh-pkg": spec } });
+  const noVersion = (spec: string) =>
+    `error: No version matching "${spec}" found for specifier "fresh-pkg" (but package exists)`;
+
+  test.each([
+    { to: depends("1.0.1"), args: [], locked: "fresh-pkg@1.0.1" },
+    { to: depends("^1.0.1"), args: [], locked: "fresh-pkg@1.0.1" },
+    { to: depends("beta"), args: [], locked: "fresh-pkg@1.0.1" },
+    { to: depends("1.0.1"), args: ["--prefer-offline"], locked: "fresh-pkg@1.0.1" },
+    // It used to be skipped without a message, and the lockfile that was saved never tried again.
+    { to: depends("1.0.1", "optionalDependencies"), args: [], locked: "fresh-pkg@1.0.1" },
+    { to: depends("9.9.9", "optionalDependencies"), args: [] },
+    { to: depends("9.9.9"), args: [], messages: [noVersion("9.9.9"), "error: fresh-pkg@9.9.9 failed to resolve"] },
+    {
+      to: depends("nope"),
+      args: [],
+      messages: [
+        'error: Package "fresh-pkg" with tag "nope" not found, but package exists',
+        "error: fresh-pkg@nope failed to resolve",
+      ],
+    },
+    // A guard: it passes without the second request too.
+    {
+      to: depends("1.0.1"),
+      args: ["--offline"],
+      messages: [noVersion("1.0.1"), "error: fresh-pkg@1.0.1 failed to resolve"],
+      requests: [],
+    },
+  ])("$to $args", async ({ to, args, locked, messages = [], requests = [null] }) => {
+    const versions = ["1.0.0"];
+    const tags: Record<string, string> = {};
+    using registry = serveMutableRegistry(versions, tags);
+    using dir = writeRegistryProject({ "package.json": depends("1.0.0") }, registry.server.url.href);
+    await installUntilCached(String(dir));
+
+    versions.push("1.0.1");
+    tags.beta = "1.0.1";
+    await write(join(String(dir), "package.json"), to);
+    registry.requests.length = 0;
+    // A failed install leaves bun.lock as it was.
+    expect(await install(String(dir), ...args)).toEqual({
+      messages,
+      exitCode: messages.length ? 1 : 0,
+      locked: messages.length ? "fresh-pkg@1.0.0" : locked,
+    });
+    // One request, and without conditional headers: a stale 304 cannot answer it.
+    expect(registry.requests).toEqual(requests);
+
+    if (!messages.length) {
+      expect(await install(String(dir))).toEqual({ messages: [], exitCode: 0, locked });
+      expect(registry.requests).toEqual(requests);
+    }
+  });
+
+  const catalog = (version: string) =>
+    JSON.stringify({ name: "root", workspaces: { packages: ["packages/*"], catalog: { "fresh-pkg": version } } });
+  const member = (name: string, spec: string) => JSON.stringify({ name, dependencies: { "fresh-pkg": spec } });
+
+  test.each([
+    { version: "1.0.1", messages: [] },
+    { version: "9.9.9", messages: [noVersion("9.9.9"), "error: fresh-pkg@catalog: failed to resolve"] },
+  ])("a catalog entry moved to $version, used by two workspaces", async ({ version, messages }) => {
+    const versions = ["1.0.0"];
+    using registry = serveMutableRegistry(versions);
+    using dir = writeRegistryProject(
+      {
+        "package.json": catalog("1.0.0"),
+        "packages/a/package.json": member("a", "catalog:"),
+        "packages/b/package.json": member("b", "catalog:"),
+      },
+      registry.server.url.href,
+    );
+    await installUntilCached(String(dir));
+
+    versions.push("1.0.1");
+    await write(join(String(dir), "package.json"), catalog(version));
+    registry.requests.length = 0;
+    const result = await install(String(dir));
+    expect({ ...result, messages: [...new Set(result.messages)] }).toEqual({
+      messages,
+      exitCode: messages.length ? 1 : 0,
+      locked: messages.length ? "fresh-pkg@1.0.0" : "fresh-pkg@1.0.1",
+    });
+    expect(registry.requests).toEqual([null]);
+  });
+
+  test("one request serves both the workspace that it helps and the one that it doesn't", async () => {
+    const versions = ["1.0.0"];
+    using registry = serveMutableRegistry(versions);
+    using dir = writeRegistryProject(
+      {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/a/package.json": member("a", "1.0.0"),
+        "packages/b/package.json": member("b", "1.0.0"),
+      },
+      registry.server.url.href,
+    );
+    await installUntilCached(String(dir));
+
+    versions.push("1.0.1");
+    await write(join(String(dir), "packages", "a", "package.json"), member("a", "1.0.1"));
+    await write(join(String(dir), "packages", "b", "package.json"), member("b", "9.9.9"));
+    registry.requests.length = 0;
+    expect(await install(String(dir))).toEqual({
+      messages: [noVersion("9.9.9"), "error: fresh-pkg@9.9.9 failed to resolve"],
+      exitCode: 1,
+      locked: "fresh-pkg@1.0.0",
+    });
+    expect(registry.requests).toEqual([null]);
+  });
+
+  test("a stale 304 does not hide the new version", async () => {
+    const versions = ["1.0.0"];
+    using registry = serveMutableRegistry(versions, {}, true);
+    using dir = writeRegistryProject({ "package.json": depends("1.0.0") }, registry.server.url.href);
+    await installUntilCached(String(dir));
+
+    versions.push("1.0.1");
+    await write(join(String(dir), "package.json"), depends("1.0.1"));
+    registry.requests.length = 0;
+    // --force asks whether the cached manifest is still current.
+    expect(await install(String(dir), "--force")).toEqual({ messages: [], exitCode: 0, locked: "fresh-pkg@1.0.1" });
+    expect(registry.requests).toEqual(['"v1"', null]);
+  });
+
+  test("an import that the runtime installs", async () => {
+    const versions = ["1.0.0"];
+    using registry = serveMutableRegistry(versions);
+    using dir = writeRegistryProject({}, registry.server.url.href);
+    const requireVersion = async (version: string) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "--install=force", "-e", `console.log(require("fresh-pkg@${version}/package.json").version)`],
+        cwd: String(dir),
+        env: installEnv(String(dir)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out: out.trim(), err, exitCode };
+    };
+    expect(await requireVersion("1.0.0")).toEqual({ out: "1.0.0", err: "", exitCode: 0 });
+
+    versions.push("1.0.1");
+    registry.requests.length = 0;
+    expect(await requireVersion("1.0.1")).toEqual({ out: "1.0.1", err: "", exitCode: 0 });
+    expect(registry.requests).toEqual([null]);
+  });
+
+  test("a tag that only a workspace with that name can satisfy", async () => {
+    using registry = serveMutableRegistry(["1.0.0"]);
+    using dir = writeRegistryProject(
+      {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/a/package.json": member("a", "1.0.0"),
+        "packages/fresh-pkg/package.json": JSON.stringify({ name: "fresh-pkg", version: "5.0.0" }),
+      },
+      registry.server.url.href,
+    );
+    await installUntilCached(String(dir));
+
+    await write(join(String(dir), "packages", "a", "package.json"), member("a", "beta"));
+    registry.requests.length = 0;
+    // The registry may have the tag by now, so it is asked before the workspace is linked. bun.lock then has the link.
+    const linked = { messages: [], exitCode: 0, locked: "fresh-pkg@workspace:packages/fresh-pkg" };
+    expect(await install(String(dir))).toEqual(linked);
+    expect(registry.requests).toEqual([null]);
+    expect(await install(String(dir))).toEqual(linked);
+    expect(registry.requests).toEqual([null]);
+  });
+
+  test.each(["latest", ""])("%j points to a version that the registry doesn't have", async spec => {
+    using registry = serveMutableRegistry(["1.0.0", "1.0.1", "2.0.0-rc.1"], { latest: "1.0.2" });
+    using dir = writeRegistryProject({ "package.json": depends("1.0.0") }, registry.server.url.href);
+    await installUntilCached(String(dir));
+
+    await write(join(String(dir), "package.json"), depends(spec));
+    registry.requests.length = 0;
+    // The registry may have the version by now, so it's asked before another version is used.
+    expect(await install(String(dir))).toEqual({
+      messages: [],
+      exitCode: 0,
+      locked: "fresh-pkg@1.0.1",
+    });
+    expect(registry.requests).toEqual([null]);
   });
 });

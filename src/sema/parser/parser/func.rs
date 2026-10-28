@@ -1,9 +1,10 @@
 //! Functions: declarations, expressions, arrow functions, parameters.
 
 use super::declared::Declares;
+use super::runtime_syntax::Prologue;
 use super::stmt::{ModifiersOf, Start};
 use super::{ListKind, Parser, ctx, oxc, take_span};
-use crate::Refusal;
+use crate::Rejection;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
@@ -20,11 +21,11 @@ enum Tristate {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Ambiguity {
     Allowed,
-    /// What is not surely a list of parameters is none.
-    Refused,
+    /// Anything that isn't definitely a parameter list is rejected.
+    Disallowed,
 }
 
-/// The context of the parameters and the body of a function with `flags`.
+/// Returns the context bits for the parameters and body of a function with `flags`.
 #[inline]
 fn signature_context(flags: Flags) -> u32 {
     let mut context = 0;
@@ -37,7 +38,7 @@ fn signature_context(flags: Flags) -> u32 {
     context
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseFunctionDeclaration`
     pub(crate) fn function_declaration(
         &mut self,
@@ -45,11 +46,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         base: usize,
         flags: Flags,
     ) -> StmtId {
-        // Only its modifiers say that `default function f() {}` has `default`.
+        // For `default function f() {}` without `export`, `default` is only recorded in the modifiers.
         let flags = match flags.contains(Flags::EXPORT) {
             true => flags,
             false => flags - Flags::DEFAULT,
         };
+        let text_start = self.text_start_after_modifiers(base);
         self.next();
         let mut fn_flags = self.ambient() | flags & (Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC);
         if self.eat(T::Asterisk) {
@@ -64,7 +66,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             || self.token() == T::OpenParen && flags.contains(Flags::AMBIENT))
             && self.reports_like_oxc()
         {
-            // `declare function ();`, `function <T>() {}`: oxc wants no name there.
+            // `declare function ();`, `function <T>() {}`: oxc doesn't require a name there.
             (Atom::NONE, self.pos())
         } else if !flags.contains(Flags::DEFAULT) {
             let full = self.full_start();
@@ -73,7 +75,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 name => name,
             }
         } else {
-            // A default export without a name is placed at `export`.
+            // An unnamed default export is positioned at `export`.
             let is_export = |it: &&Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
             let modifiers = self.s.modifiers.get(base..).unwrap_or_default();
             (
@@ -88,6 +90,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.declare(name, Declares::Function);
         }
         let func = self.function_rest(FnKind::Decl, fn_flags, name, name_pos, start.pos);
+        self.f[func].text_start = text_start;
         let modifiers = self.take_modifiers(base);
         self.add_stmt(StmtKind::Fn(func), start, modifiers)
     }
@@ -103,7 +106,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.eat(T::Asterisk) {
             flags |= Flags::GENERATOR;
         }
-        // Its name is read in the context of its body.
+        // Its name is parsed in its body's context.
         let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL;
         let saved = self.enter_context(signature_context(flags), cleared);
         let (mut name, mut name_pos) = (Atom::NONE, start);
@@ -125,7 +128,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.finish_expr(ExprKind::Fn(func), start)
     }
 
-    /// From the type parameters of a function to the end of its body.
+    /// Parses a function from its type parameters to the end of its body.
     pub(crate) fn function_rest(
         &mut self,
         kind: FnKind,
@@ -139,11 +142,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             FnKind::Decl => 1144,
             _ => 1005,
         };
-        self.function_rest_or(code, kind, flags, (name, name_pos), start)
+        self.function_rest_with_error_code(code, kind, flags, (name, name_pos), start)
     }
 
-    /// The same. `code`: the error about a token that neither starts nor stands for the body.
-    pub(crate) fn function_rest_or(
+    /// Like `function_rest`. `code` is the error reported at a token that's neither the body's `{` nor a `;` in its
+    /// place.
+    pub(crate) fn function_rest_with_error_code(
         &mut self,
         code: u32,
         kind: FnKind,
@@ -151,8 +155,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         (name, name_pos): (Atom, u32),
         start: u32,
     ) -> FnId {
-        // For oxc, in whose types `await` and `yield` mean what they mean around the type, the type parameters and the return
-        // type are in the function.
+        // In oxc, `await` and `yield` inside a type mean what they mean around the type. So for oxc the type parameters
+        // and the return type are parsed in the function's context.
         let outer = self.context;
         if self.options.dialect.oxc {
             let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL;
@@ -167,7 +171,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let odd_parameters = self.odd_parameters;
         let (this_param, params) = self.parameters(signature_context(flags));
         let parameters = (odd_parameters, this_param);
-        self.note_parameters_of_accessor(kind, params);
+        self.note_odd_accessor_parameters(kind, params);
         let ret = match self.token() {
             T::Colon => {
                 self.next();
@@ -180,7 +184,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let (body, open) = match self.token() {
             T::OpenBrace => {
                 self.note_parameters(type_params, params);
-                self.function_block(signature_context(flags))
+                self.function_block(signature_context(flags), Prologue::Directives)
             }
             // `parseBlock` without its `{`
             _ if kind == FnKind::Expr || self.recovers() && !self.can_parse_semicolon() => {
@@ -192,7 +196,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 (FnBody::None, 0)
             }
             _ => {
-                // Flow has a function without a body only where it is declared.
+                // Flow only allows a function without a body in an ambient context.
                 if self.is_flow() && !self.has_context(ctx::AMBIENT) {
                     self.fail();
                 }
@@ -200,12 +204,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 (FnBody::None, 0)
             }
         };
-        // Without a body the whole is reported.
+        // Without a body, the whole function is reported instead.
         if self.options.is_javascript
             && (!matches!(body, FnBody::None) || flags.contains(Flags::MISSING_BODY))
         {
             self.js_error_at_type(ret, 8010);
         }
+        let is_strict = self.is_strict_body(body);
         let func = self.f.add_fn(Func {
             kind,
             flags,
@@ -218,6 +223,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             body,
             anchor,
             start,
+            text_start: start,
+            is_strict,
+            is_strict_by_syntax: is_strict,
         });
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));
@@ -228,22 +236,33 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         func
     }
 
-    /// `parseFunctionBlock`, at the `{`: the body, and the position of the `{`.
-    pub(crate) fn function_block(&mut self, context: u32) -> (FnBody, u32) {
+    /// `parseFunctionBlock`, at the `{`. Returns the body and the position of the `{`.
+    pub(crate) fn function_block(&mut self, context: u32, prologue: Prologue) -> (FnBody, u32) {
         let open = self.pos();
         let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::DECORATOR | ctx::CLASS_MEMBER;
-        let cleared = cleared | ctx::IN_LOOP | ctx::IN_SWITCH;
-        let cleared = cleared | self.disallow_in_if_brackets_end_it();
+        let cleared = cleared | ctx::IN_LOOP | ctx::IN_SWITCH | ctx::OUTSIDE_BODIES;
+        let cleared = cleared | self.disallow_in_if_cleared_by_brackets();
         let saved = self.enter_context(context, cleared);
-        // Only a block whose `{` is put up with has none.
+        let had_await_identifier = self.has_await_identifier;
+        if self.options.skips_function_blocks
+            && self.token() == T::OpenBrace
+            && let Some(close) =
+                super::skipped_blocks::find_end_of_block(self.lx.src, open as usize)
+        {
+            self.lx.start_at(close as u32);
+        }
+        // `None` only for a block that recovery parses without its `{`.
         let open_at = self.expect(T::OpenBrace).then_some(open);
-        if self.token() == T::String {
+        if self.token() == T::String
+            && (!self.options.compiles || self.options.keeps_function_directives)
+        {
             self.f.rare_syntax |= rare::DIRECTIVE_IN_FUNCTION;
         }
         self.open_function();
-        let list = self.statements_until_close_brace();
+        let list = self.statements_until_close_brace(prologue);
         self.close_scope();
         self.context = saved;
+        self.has_await_identifier = had_await_identifier;
         self.expect_matching((T::OpenBrace, T::CloseBrace), open_at);
         if self.token() == T::Equals {
             self.equals_after_block();
@@ -253,14 +272,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     // ───────────────────────────── parameters ─────────────────────────────
 
-    /// `checkGrammarTypeParameterList`, of a list from `less_than` to the token in which there is
-    /// something, but no parameter. The checker finds `<>` in the text.
+    /// `checkGrammarTypeParameterList`, for a list from `less_than` to the current token that has no parameters but
+    /// isn't literally `<>`. The checker finds `<>` in the text.
     #[cold]
     #[inline(never)]
     fn empty_type_parameters(&mut self, less_than: u32) {
         if self.token() != T::GreaterThan || self.prev_end() != less_than + 1 {
             let list = (less_than, self.pos() + 1);
-            self.flag(DiagnosticKind::Grammar, 1098, list, &[]);
+            self.flag_early_error(1098, list, &[]);
         }
     }
 
@@ -292,7 +311,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
                 false => Flags::empty(),
             };
-            // The checker reports the others, which are in the list.
+            // The checker reports the other modifiers from the modifier list.
             let flags = flags & (Flags::IN | Flags::OUT | Flags::CONST);
             let (name, pos, start) = if self.is_identifier() {
                 if self.token() != T::Identifier && self.reports_like_oxc() {
@@ -306,7 +325,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.missing_name_of_type_parameter(start)
             };
             let constraint = match self.eat(T::Extends) {
-                true if !self.is_start_of_type(false) && self.is_start_of_expression() => {
+                true if !self.is_start_of_type() && self.is_start_of_expression() => {
                     self.expression_in_place_of_constraint();
                     TypeNodeId::NONE
                 }
@@ -329,7 +348,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 flags,
                 modifiers,
             });
-            if !self.eat(T::Comma) && !self.goes_on_without_comma(ListKind::TypeParameters, element)
+            if !self.eat(T::Comma)
+                && !self.continues_without_comma(ListKind::TypeParameters, element)
             {
                 break;
             }
@@ -351,7 +371,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.js_error((first.start, last.end), 8004, b"");
         } else if self.is_ecmascript {
             match self.is_for_oxc() {
-                // As for a list that is not empty: it is at what follows the `<`.
+                // As with a non-empty list, the error is at whatever follows the `<`.
                 true => self.js_error((less_than + 1, Diagnostic::NO_LENGTH), 8004, b""),
                 false => self.report(),
             }
@@ -360,20 +380,22 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         take_span!(self, type_params, base)
     }
 
-    /// `parseIdentifier` in `parseTypeParameter`, at none: the name, its position, the new `start`.
+    /// `parseIdentifier` in `parseTypeParameter`, at a token that isn't an identifier. Returns the name, its position
+    /// and the new `start`.
     #[cold]
     #[inline(never)]
     fn missing_name_of_type_parameter(&mut self, start: u32) -> (Atom, u32, u32) {
         let (full, token) = (self.full_start(), self.pos());
         match self.missing_identifier(0, 0) {
-            // Without modifiers the type parameter is nothing but the name, at `nodePos()`.
+            // Without modifiers the type parameter consists only of the name, at `nodePos()`.
             (known::empty, _) if start == token => (known::empty, full, full),
             (known::empty, _) => (known::empty, full, start),
             (name, pos) => (name, pos, start),
         }
     }
 
-    /// `parseUnaryExpressionOrHigher` in `parseTypeParameter`: the tree has no place for it.
+    /// `parseUnaryExpressionOrHigher` in `parseTypeParameter`: the tree has nowhere to store the expression, so it's
+    /// discarded.
     #[cold]
     #[inline(never)]
     fn expression_in_place_of_constraint(&mut self) {
@@ -389,17 +411,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let strays = self.s.stray_decorators.len();
         self.unary_expression();
         self.s.stray_decorators.truncate(strays);
-        self.forget_nodes(&before);
+        self.discard_nodes(&before);
     }
 
-    /// `parseParameters`, at the `(`: the `this` parameter, and the others. `context`: that of the
-    /// function.
+    /// `parseParameters`, at the `(`. Returns the `this` parameter and the other parameters. `context` is the
+    /// function's context.
     pub(crate) fn parameters(&mut self, context: u32) -> (ParamId, Span<ParamId>) {
         self.parameters_if(context, Ambiguity::Allowed)
             .unwrap_or((ParamId::NONE, Span::EMPTY))
     }
 
-    /// The same, as `parseParenthesizedArrowFunctionExpression` has it.
+    /// Like `parameters`, with the ambiguity handling of `parseParenthesizedArrowFunctionExpression`.
     fn parameters_if(
         &mut self,
         context: u32,
@@ -410,10 +432,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return (ambiguity == Ambiguity::Allowed).then_some((ParamId::NONE, Span::EMPTY));
         }
         let list = self.parameter_list_if(context, T::CloseParen, ambiguity)?;
-        if !self.expect(T::CloseParen) && ambiguity == Ambiguity::Refused {
+        if !self.expect(T::CloseParen) && ambiguity == Ambiguity::Disallowed {
             return None;
         }
-        // `GetThisParameter`: the first, if it is named `this`.
+        // `GetThisParameter`: the first parameter, if it's named `this`.
         let first = self
             .f
             .params
@@ -429,9 +451,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         })
     }
 
-    /// `rare::ODD_ACCESSOR`, after the parameters of a function.
+    /// Sets `rare::ODD_ACCESSOR`. Call after parsing a function's parameters.
     #[inline]
-    pub(crate) fn note_parameters_of_accessor(&mut self, kind: FnKind, params: Span<ParamId>) {
+    pub(crate) fn note_odd_accessor_parameters(&mut self, kind: FnKind, params: Span<ParamId>) {
         let first = self.f.params.get(params.start as usize);
         let is_odd = match kind {
             FnKind::Getter => !params.is_empty(),
@@ -451,19 +473,20 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             .unwrap_or(Span::EMPTY)
     }
 
-    /// After two or more parameters, which are on the stack from `base` on: `hir::File::may_bind_a_parameter_twice`.
+    /// Sets `hir::File::may_bind_a_parameter_twice`. Call after parsing two or more parameters, which are on the stack
+    /// from `base` on.
     #[inline]
-    fn note_names_of_parameters(&mut self, base: usize) {
+    fn note_duplicate_parameter_names(&mut self, base: usize) {
         let (pats, params) = (&self.f.pats, self.s.params.get(base..).unwrap_or_default());
         let name_of = |it: &Param| match pats.get(it.pat.idx()) {
             Some(&Pat {
                 kind: PatKind::Ident(name),
                 ..
             }) => name,
-            // What a pattern binds is not looked at here.
+            // Names bound by a pattern aren't checked here.
             _ => Atom::NONE,
         };
-        // A long list is not compared, each name with each.
+        // Don't compare all pairs in a long list.
         if params.len() > 8 {
             self.f.may_bind_a_parameter_twice = true;
             return;
@@ -479,8 +502,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
-    /// `parseParametersWorker`. `None`: it is no list of parameters, and what was built is left to
-    /// the speculative parse that is going on.
+    /// `parseParametersWorker`. Returns `None` if this isn't a parameter list. The speculative parse in progress then
+    /// rolls back what was built.
     fn parameter_list_if(
         &mut self,
         context: u32,
@@ -488,14 +511,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         ambiguity: Ambiguity,
     ) -> Option<Span<ParamId>> {
         let outer_await = self.context & ctx::AWAIT;
-        // oxc reads the parameters of a signature in a type in the context around the type. At the top level an `await` there
-        // is as much a name as one beside the type.
+        // oxc parses the parameters of a signature inside a type in the context around the type. At the top level, an
+        // `await` there is treated like one outside the type.
         let cleared = match self.has_context(ctx::TYPE) {
             true if self.options.dialect.oxc => self.cleared_in_types,
             true => self.cleared_in_types | ctx::TOP_LEVEL,
             false => ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL,
         };
-        let cleared = cleared | self.disallow_in_if_brackets_end_it();
+        let cleared = cleared | self.disallow_in_if_cleared_by_brackets();
         let saved = self.enter_context(context, cleared);
         let suspensions = self.suspensions;
         let base = self.s.params.len();
@@ -507,7 +530,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if !self.parameter(base, outer_await, ambiguity) {
                 return None;
             }
-            if !self.eat(T::Comma) && !self.goes_on_without_comma(ListKind::Parameters, element) {
+            if !self.eat(T::Comma) && !self.continues_without_comma(ListKind::Parameters, element) {
                 break;
             }
         }
@@ -517,7 +540,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.f.rare_syntax |= rare::SUSPENDS_IN_PARAMETERS;
         }
         if self.s.params.len() > base + 1 {
-            self.note_names_of_parameters(base);
+            self.note_duplicate_parameter_names(base);
         }
         let params: Span<ParamId> = take_span!(self, params, base);
         for index in modifiers..self.s.param_modifiers.len() {
@@ -532,7 +555,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         self.s.decorators.truncate(decorators);
         if self.reads_jsdoc() {
-            // `withJSDoc` of a parameter: in the context of the list.
+            // `withJSDoc` for a parameter runs in the list's context.
             let saved = self.enter_context(context, cleared);
             self.parameters_jsdoc(params);
             self.context = saved;
@@ -548,8 +571,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             || self.is_at_element(ListKind::Parameters)
     }
 
-    /// `parseParameterEx`: pushes it on the stack of parameters, of which the list's start at
-    /// `base`. False: it is none.
+    /// `parseParameterEx`: pushes the parameter on the parameter stack, where the list's parameters start at `base`.
+    /// Returns false if this isn't a parameter.
     fn parameter(&mut self, base: usize, outer_await: u32, ambiguity: Ambiguity) -> bool {
         const PROPERTY_MODIFIERS: Flags = Flags::PUBLIC
             .union(Flags::PRIVATE)
@@ -565,7 +588,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             // parsed in the function's [Await] context."
             let first = self.s.modifiers.len();
             let saved = self.enter_context(outer_await, ctx::AWAIT);
-            let seen = self.modifiers(ModifiersOf::Declaration);
+            let modifier_flags = self.modifiers(ModifiersOf::Declaration);
             self.context = saved;
             let index = (self.s.params.len() - base) as u32;
             for modifier in first..self.s.modifiers.len() {
@@ -573,16 +596,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     self.s.decorators.push((index, decorator));
                 }
             }
-            // The checker reports the others, which are in the list.
-            // `abstract` and `static` are still among the flags of the property
-            // (`getDeclarationModifierFlagsFromSymbol`).
-            flags |= seen & PROPERTY_MODIFIERS;
-            if seen.intersects(PROPERTY_MODIFIERS) {
-                flags |= Flags::PARAMETER_PROPERTY | seen & (Flags::ABSTRACT | Flags::STATIC);
+            // The checker reports the other modifiers from the modifier list. `abstract` and `static` still count as
+            // flags of the property (`getDeclarationModifierFlagsFromSymbol`).
+            flags |= modifier_flags & PROPERTY_MODIFIERS;
+            if modifier_flags.intersects(PROPERTY_MODIFIERS) {
+                flags |=
+                    Flags::PARAMETER_PROPERTY | modifier_flags & (Flags::ABSTRACT | Flags::STATIC);
             }
-            // In a type all are.
+            // In a type, every modifier is kept as a flag.
             if self.has_context(ctx::TYPE) {
-                flags |= seen;
+                flags |= modifier_flags;
             }
             if self.options.is_javascript {
                 self.check_js_parameter_modifiers(first, start.pos);
@@ -603,19 +626,19 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 oxc::this_after_parameter(&mut self.f.diagnostics, self.lx.start);
             }
             self.next();
-            // A decorator of `this` is an error of the parser.
+            // A modifier or decorator on `this` is a parse error.
             if token.is_modifier() || token == T::At {
                 if self.recovers() {
                     return self.this_parameter_after_modifiers(base, start, pat, flags);
                 }
-                self.refuse(Refusal::Reported);
+                self.reject(Rejection::Reported);
             }
         } else {
             if self.eat(T::DotDotDot) {
                 flags |= Flags::REST;
             }
             // `isParameterNameStart`
-            if ambiguity == Ambiguity::Refused
+            if ambiguity == Ambiguity::Disallowed
                 && !self.is_binding_identifier()
                 && !matches!(self.token(), T::OpenBracket | T::OpenBrace)
             {
@@ -636,7 +659,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             if self.token() == T::Question {
                 self.js_error((self.pos(), 0), 8009, b"?");
-                self.question_of_parameter = self.pos();
+                self.parameter_question_pos = self.pos();
                 self.next();
                 flags |= Flags::OPTIONAL;
             }
@@ -645,7 +668,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.odd_parameters = self.odd_parameters.wrapping_add(1);
         }
         let ty = self.type_annotation();
-        // `this` has none.
+        // `this` has no initializer.
         let default = match is_this {
             true => ExprId::NONE,
             false => self.optional_initializer(),
@@ -664,7 +687,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         true
     }
 
-    /// The rest of `parseParameterEx` after a `this` with modifiers, the last list of the file.
+    /// The rest of `parseParameterEx` after a `this` with modifiers. Those modifiers are the file's last modifier list.
     #[cold]
     #[inline(never)]
     fn this_parameter_after_modifiers(
@@ -687,7 +710,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 (self.f.exprs.get(e.idx())).map(|_| end_of_expr(&self.f, e))
             }
         });
-        // `GetThisParameter`: nothing asks for its modifiers, and `checkDecorators` passes it by.
+        // `GetThisParameter`: nothing reads its modifiers, and `checkDecorators` skips it.
         let strays = self.s.modifiers.len();
         if index == 0 && !list.is_empty() && !self.has_context(ctx::TYPE) {
             let is_decorator = |it: &&Modifier| matches!(it.kind, ModifierKind::Decorator(_));
@@ -695,8 +718,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 .modifiers
                 .extend(modifiers.iter().filter(is_decorator));
             let decorators = self.s.modifiers.len() - strays;
-            let of_others = self.s.decorators.len().saturating_sub(decorators);
-            self.s.decorators.truncate(of_others);
+            let others_len = self.s.decorators.len().saturating_sub(decorators);
+            self.s.decorators.truncate(others_len);
             self.s.param_modifiers.pop();
             self.f.modifiers.truncate(list.start as usize);
             flags = Flags::empty();
@@ -723,8 +746,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         true
     }
 
-    /// `checkJSSyntax` for the modifiers of the parameter that starts at `start`, which are on the
-    /// stack from `first` on: `node.Modifiers().Loc`, if a keyword is among them.
+    /// `checkJSSyntax` for the modifiers of the parameter that starts at `start`, which are on the stack from `first`
+    /// on. Reports `node.Modifiers().Loc` if a keyword is among them.
     #[cold]
     fn check_js_parameter_modifiers(&mut self, first: usize, start: u32) {
         if self.has_failed() {
@@ -748,19 +771,19 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `tryParseParenthesizedArrowFunctionExpression` and
     /// `tryParseAsyncSimpleArrowFunctionExpression`, at a `(`, a `<` or `async`.
     pub(crate) fn try_arrow_function(&mut self, allow_return_type: bool) -> Option<ExprId> {
-        // Of `() =>` the text says what the tokens would.
-        let is_one = match self.token() == T::OpenParen && self.is_before(b") =>") {
+        // For `() =>`, checking the text gives the same answer as scanning the tokens.
+        let arrow_lookahead = match self.token() == T::OpenParen && self.is_followed_by(b") =>") {
             true => Tristate::True,
             false => self.look_ahead(Self::is_parenthesized_arrow_function),
         };
-        match is_one {
+        match arrow_lookahead {
             Tristate::True => {
                 return self.parenthesized_arrow_function(Tristate::True, true);
             }
             Tristate::Unknown => {
                 // `parsePossibleParenthesizedArrowFunctionExpression`
                 let at = self.pos();
-                // What is before a token that is read for good is not read again.
+                // Outside a speculation the parser never goes back, so earlier positions can be dropped.
                 if self.speculations == 0 {
                     let read = self.not_arrows.partition_point(|&it| it < at);
                     self.not_arrows.drain(..read);
@@ -772,8 +795,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     if arrow.is_some() {
                         return arrow;
                     }
-                    let place = self.not_arrows.partition_point(|&it| it < at);
-                    self.not_arrows.insert(place, at);
+                    let insert_at = self.not_arrows.partition_point(|&it| it < at);
+                    self.not_arrows.insert(insert_at, at);
                 }
             }
             Tristate::False => {}
@@ -788,7 +811,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 return false;
             }
             p.next();
-            // oxc takes the arrow function, and reports the line break.
+            // oxc accepts the arrow function and reports the line break.
             p.token() == T::EqualsGreaterThan && (!p.newline_before() || p.options.dialect.oxc)
         });
         if !is_arrow {
@@ -834,7 +857,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if second.is_modifier() && second != T::Async {
                 let is_before_identifier = self.look_ahead(|p| {
                     p.next();
-                    p.is_identifier()
+                    p.is_name_of_first_parameter()
                 });
                 if is_before_identifier {
                     self.next();
@@ -846,7 +869,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             // "If we had '(' followed by something that's not an identifier, then this definitely
             // wasn't a lambda."
-            if !self.is_identifier() && second != T::This {
+            if !self.is_name_of_first_parameter() && second != T::This {
                 return Tristate::False;
             }
             self.next();
@@ -894,8 +917,21 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
-    /// `parseParenthesizedArrowFunctionExpression`. `is_one`: what the tokens ahead have said.
-    /// `parseParenthesizedArrowFunctionExpression` at a `=>`: the `(` is missed.
+    /// `isIdentifier`, after the `(` that may start an arrow function. TypeScript first parses a top-level statement of
+    /// a module outside the await context, where `(await) => {}` is an arrow function. A parameter name doesn't trigger
+    /// a reparse of the statement. See `top_level_statement`.
+    fn is_name_of_first_parameter(&mut self) -> bool {
+        if self.token() == T::Await
+            && self.has_context(ctx::AWAIT)
+            && self.await_context_of_module() != 0
+        {
+            self.has_await_in_name = true;
+            return true;
+        }
+        self.is_identifier()
+    }
+
+    /// `parseParenthesizedArrowFunctionExpression` at a `=>`: the `(` is missing.
     #[cold]
     #[inline(never)]
     pub(crate) fn arrow_function_without_parameters(
@@ -905,33 +941,47 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.parenthesized_arrow_function(Tristate::True, allow_return_type)
     }
 
+    /// `parseParenthesizedArrowFunctionExpression`. `arrow_lookahead` is the result of the lookahead.
     fn parenthesized_arrow_function(
         &mut self,
-        is_one: Tristate,
+        arrow_lookahead: Tristate,
         allow_return_type: bool,
     ) -> Option<ExprId> {
-        let allow_ambiguity = is_one == Tristate::True;
+        let allow_ambiguity = arrow_lookahead == Tristate::True;
         let start = self.pos();
         let mut flags = Flags::empty();
         if self.eat(T::Async) {
             flags |= Flags::ASYNC;
         }
+        // For oxc, an `async` arrow function's type parameters and return type are parsed in its context, as in
+        // `function_rest_with_error_code`.
+        let type_context = match self.options.dialect.oxc && flags.contains(Flags::ASYNC) {
+            true => (ctx::AWAIT, ctx::TOP_LEVEL),
+            false => (0, 0),
+        };
+        let saved = self.enter_context(type_context.0, type_context.1);
         let type_params = self.type_parameters();
+        self.context = saved;
         let ambiguity = match allow_ambiguity {
             true => Ambiguity::Allowed,
-            false => Ambiguity::Refused,
+            false => Ambiguity::Disallowed,
         };
-        // oxc reads the parameters as an expression first, in the context around the arrow function.
-        let around = match self.options.dialect.oxc {
+        // oxc first parses the parameters as an expression, in the context around the arrow function.
+        let outer_context = match self.options.dialect.oxc {
             true => self.context & (ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL),
             false => 0,
         };
-        let context = signature_context(flags) | around;
+        let context = signature_context(flags) | outer_context;
         let odd_parameters = self.odd_parameters;
         let (this_param, params) = self.parameters_if(context, ambiguity)?;
         let parameters = (odd_parameters, this_param);
         let errors = self.f.diagnostics.len();
         let has_return_colon = self.token() == T::Colon;
+        // JavaScript has no return types. In `a ? b ? (c, d) : e => e : 5` the colon is the inner conditional's.
+        let is_colon_of_conditional = self.is_ecmascript && !self.is_flow() && !allow_return_type;
+        if has_return_colon && !allow_ambiguity && (self.lx.compiles() || is_colon_of_conditional) {
+            return None;
+        }
         let ret = match has_return_colon {
             true if self.is_flow() => {
                 self.next();
@@ -939,7 +989,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             true => {
                 self.next();
-                self.type_or_type_predicate()
+                let saved = self.enter_context(type_context.0, type_context.1);
+                let ret = self.type_or_type_predicate();
+                self.context = saved;
+                ret
             }
             false => TypeNodeId::NONE,
         };
@@ -955,9 +1008,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             oxc::arrow_after_line_break(&mut self.f.diagnostics, self.lx.start);
         }
         if last != T::EqualsGreaterThan && !self.recovers() {
-            // Before a `{` TypeScript takes it for an arrow function whose `=>` is missing.
+            // Before a `{`, TypeScript treats it as an arrow function whose `=>` is missing.
             if last == T::OpenBrace && !self.has_failed() && !self.is_ecmascript {
-                self.refuse(Refusal::Reported);
+                self.reject(Rejection::Reported);
             }
             if allow_ambiguity {
                 self.fail();
@@ -998,6 +1051,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.options.is_javascript {
             self.js_error_at_type(ret, 8010);
         }
+        let is_strict = self.is_strict_body(body);
         let func = self.f.add_fn(Func {
             kind: FnKind::Arrow,
             flags,
@@ -1010,6 +1064,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             body,
             anchor,
             start,
+            text_start: start,
+            is_strict,
+            is_strict_by_syntax: is_strict,
         });
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));
@@ -1023,7 +1080,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         Some(self.finish_expr(ExprKind::Fn(func), start))
     }
 
-    /// `typeHasArrowFunctionBlockingParseError`, of a type in which an error was reported.
+    /// `typeHasArrowFunctionBlockingParseError`, for a type in which an error was reported.
     #[cold]
     fn has_arrow_function_blocking_parse_error(&self, mut ty: TypeNodeId) -> bool {
         loop {
@@ -1036,7 +1093,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     let Some(func) = self.f.fns.get(func.idx()) else {
                         return false;
                     };
-                    // `isMissingNodeList`: `anchor` is where `parseParameters` has started.
+                    // `isMissingNodeList`: `anchor` is where `parseParameters` started.
                     if self.lx.src.get(func.anchor as usize) != Some(&b'(') {
                         return true;
                     }
@@ -1047,13 +1104,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
-    /// `parseArrowFunctionExpressionBody`: the body, and the position of its `{`.
+    /// `parseArrowFunctionExpressionBody`. Returns the body and the position of its `{`.
     fn arrow_function_body(&mut self, flags: Flags, allow_return_type: bool) -> (FnBody, u32) {
         let context = signature_context(flags);
         if self.token() == T::OpenBrace {
-            return self.function_block(context);
+            return self.function_block(context, Prologue::Directives);
         }
-        // It starts a statement and no expression statement: a block whose `{` is missing.
+        // `@` starts a statement that isn't an expression statement, so this is a block whose `{` is missing.
         if self.token() == T::At {
             self.fail_unless_recovering();
         }
@@ -1063,16 +1120,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             && self.is_start_of_statement()
             && (self.token() == T::At || !self.is_start_of_expression())
         {
-            return self.function_block(context);
+            return self.function_block(context, Prologue::Directives);
         }
-        let saved = self.enter_context(context, ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL);
+        let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::OUTSIDE_BODIES;
+        let saved = self.enter_context(context, cleared);
         let body = self.assignment_expression_or_higher(allow_return_type);
         self.context = saved;
         (FnBody::Expr(body), 0)
     }
 
-    /// `parseSimpleArrowFunctionExpression`, at the `=>`. `name`: that of the parameter, with its
-    /// start, its end and its full start.
+    /// `parseSimpleArrowFunctionExpression`, at the `=>`. `name` is the parameter's name, followed by its start, end
+    /// and full start.
     pub(crate) fn simple_arrow_function(
         &mut self,
         name: Atom,
@@ -1081,7 +1139,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         start: u32,
         allow_return_type: bool,
     ) -> ExprId {
-        let pat = self.f.pat(PatKind::Ident(name), pos, end);
+        let pat = self.add_pat(PatKind::Ident(name), pos, end);
         let param = self.f.add_param(Param {
             pat,
             ty: TypeNodeId::NONE,
@@ -1103,6 +1161,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.note_parameters(Span::EMPTY, Span::new(param.0, 1));
         }
         let (body, open) = self.arrow_function_body(flags, allow_return_type);
+        let is_strict = self.is_strict_body(body);
         let func = self.f.add_fn(Func {
             kind: FnKind::Arrow,
             flags,
@@ -1115,6 +1174,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             body,
             anchor,
             start,
+            text_start: start,
+            is_strict,
+            is_strict_by_syntax: is_strict,
         });
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));

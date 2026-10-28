@@ -1,0 +1,1 @@
+{ "build": ["--asset", "./data"], "skipInShell": "it needs node:fs" }

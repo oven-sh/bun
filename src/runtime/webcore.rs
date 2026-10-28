@@ -7,8 +7,6 @@ use core::ptr::NonNull;
 
 #[path = "webcore/ArrayBufferSink.rs"]
 pub(crate) mod array_buffer_sink;
-#[path = "webcore/BakeResponse.rs"]
-pub(crate) mod bake_response;
 #[path = "webcore/ByteBlobLoader.rs"]
 pub(crate) mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
@@ -33,19 +31,12 @@ pub(crate) mod text_encoder_stream_encoder;
 // ─── flat re-exports ─────────────────────────────────────────────────────────
 pub(crate) use cookie_map::{CookieMap, CookieMapRef};
 pub(crate) use s3_client::S3Client;
-pub(crate) use s3_stat::S3Stat;
 
 #[path = "webcore/ObjectURLRegistry.rs"]
 pub(crate) mod object_url_registry;
 pub(crate) use object_url_registry::ObjectURLRegistry;
 
 // ─── webcore-local jsc re-export ─────────────────────────────────────────────
-// `bun_jsc` is now a dep of `bun_runtime`; forward to it. The per-class
-// submodules (`JSBlob`, `JSResponse`, …) live in `bun_jsc::generated`
-// (`js_class_module!`); the previous local stub macro (`js_class_mod`) that
-// returned `JSValue::default()` from `to_js_unchecked` has been removed —
-// every webcore caller now imports the real bindings directly
-// (`bun_jsc::generated::JS{Blob,Request,Response,…}`).
 pub(crate) mod jsc {
     pub(crate) use crate::jsc::*;
     pub(crate) use bun_jsc::virtual_machine::VirtualMachine;
@@ -210,7 +201,7 @@ pub(crate) use blob::{Blob, BlobExt, SizeType as BlobSizeType};
 
 #[path = "webcore/Body.rs"]
 pub(crate) mod body;
-pub(crate) use body::{Body, Value as BodyValue};
+pub(crate) use body::Body;
 
 #[path = "webcore/Response.rs"]
 pub(crate) mod response;
@@ -347,8 +338,9 @@ pub enum SinkHandle {
     HTMLRewriter(bun_ptr::BackRef<crate::api::html_rewriter::RewriterPipe>),
     HttpResponse(bun_ptr::BackRef<streams::HTTPResponseSink, bun_ptr::Mut>),
     HttpsResponse(bun_ptr::BackRef<streams::HTTPSResponseSink, bun_ptr::Mut>),
-    ArrayBuffer(bun_ptr::BackRef<sink::ArrayBufferSink, bun_ptr::Mut>),
 }
+
+use bun_removable_features::{removable_body, removable_body_of_either};
 
 impl SinkHandle {
     #[inline]
@@ -366,19 +358,27 @@ impl SinkHandle {
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         match *self {
             SinkHandle::None => streams::Writable::Done,
-            SinkHandle::ServerResponse(any) => any.write_chunk(data),
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.write(data),
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::S3Upload(mut p) => unsafe { p.get_mut() }.write(data),
+            SinkHandle::ServerResponse(any) => {
+                removable_body!(Serve, Abort, { any.write_chunk(data) })
+            }
+            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
+                // SAFETY: live backref; ByteStream clears sink before free.
+                unsafe { p.get_mut() }.write(data)
+            }),
+            SinkHandle::S3Upload(mut p) => removable_body!(S3Client, Abort, {
+                // SAFETY: live backref; ByteStream clears sink before free.
+                unsafe { p.get_mut() }.write(data)
+            }),
             SinkHandle::FileSink(p) => p.write(data),
-            SinkHandle::HTMLRewriter(p) => p.write(data),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::HttpResponse(mut p) => unsafe { p.get_mut() }.write(data),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::HttpsResponse(mut p) => unsafe { p.get_mut() }.write(data),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::ArrayBuffer(mut p) => unsafe { p.get_mut() }.write(data),
+            SinkHandle::HTMLRewriter(p) => removable_body!(HtmlRewriter, Abort, { p.write(data) }),
+            SinkHandle::HttpResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
+                // SAFETY: live backref; transform detaches before the JSSink is finalized.
+                unsafe { p.get_mut() }.write(data)
+            }),
+            SinkHandle::HttpsResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
+                // SAFETY: live backref; transform detaches before the JSSink is finalized.
+                unsafe { p.get_mut() }.write(data)
+            }),
         }
     }
 
@@ -388,16 +388,23 @@ impl SinkHandle {
     pub fn end(&self, err: Option<streams::StreamError>) {
         match *self {
             SinkHandle::None => {}
-            SinkHandle::ServerResponse(any) => any.end_chunk(err.as_ref()),
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.end_from_stream(err),
+            SinkHandle::ServerResponse(any) => {
+                removable_body!(Serve, Abort, { any.end_chunk(err.as_ref()) })
+            }
+            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
+                // SAFETY: live backref; ByteStream clears sink before free.
+                unsafe { p.get_mut() }.end_from_stream(err)
+            }),
             // Raw-ptr dispatch: may re-borrow and free the sink (see its doc).
-            SinkHandle::S3Upload(p) => streams::NetworkSink::end_from_stream(p.as_ptr(), err),
+            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, {
+                streams::NetworkSink::end_from_stream(p.as_ptr(), err)
+            }),
             SinkHandle::FileSink(p) => p.end_from_stream(err),
-            SinkHandle::HTMLRewriter(p) => p.end_from_stream(err),
+            SinkHandle::HTMLRewriter(p) => {
+                removable_body!(HtmlRewriter, Abort, { p.end_from_stream(err) })
+            }
             SinkHandle::HttpResponse(_) => {}
             SinkHandle::HttpsResponse(_) => {}
-            SinkHandle::ArrayBuffer(_) => {}
         }
     }
 }

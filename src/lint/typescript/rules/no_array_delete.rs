@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::types::Type;
 use bun_lint::types::utils::get_constrained_type_at_location;
+use bun_lint::utils::ts_utils::{is_start_of_expression_statement, needs_preceding_semicolon};
 
 /// Disallow using the `delete` operator on array values.
 pub struct NoArrayDelete;
@@ -38,11 +39,34 @@ fn use_splice<'a>(fixer: Fixer<'a>, node: Expr<'a>, object: Expr<'a>, key: Span,
     fixer.replace(node, suggestion)
 }
 
-/// What tsgolint suggests: the `delete` goes, the `[` becomes `.splice(` and the `]` becomes `, 1)`.
-fn use_splice_as_tsgolint<'a>(fixer: Fixer<'a>, keyword: Span, object: Expr<'a>, argument: Expr<'a>) -> Option<[Fix; 3]> {
-    let open = fixer.file().token_after(object.outer_span()).filter(|it| it.is_punctuator("["))?;
-    let close = fixer.file().last_token(argument)?;
-    Some([fixer.remove(keyword), fixer.replace(open, ".splice("), fixer.replace(close, ", 1)")])
+/// tsgolint's suggestion: remove the `delete`, turn the `[` into `.splice(` and the `]` into `, 1)`. For `a?.[b]`
+/// tsgolint overwrites the `?.` with `.splice(` and keeps the `[`, which doesn't parse. Here the `[` is removed and the
+/// `?.` stays. tsgolint also doesn't add the `;` that stops a leading `(` or `[` from continuing the previous line.
+fn use_splice_as_tsgolint<'a>(
+    fixer: Fixer<'a>,
+    node: Expr<'a>,
+    keyword: Span,
+    object: Expr<'a>,
+    argument: Expr<'a>,
+) -> Option<Vec<Fix>> {
+    let file = fixer.file();
+    let first = file.token_after(keyword)?;
+    let add_semi_colon = (first.is_punctuator("(") || first.is_punctuator("["))
+        && is_start_of_expression_statement(node)
+        && needs_preceding_semicolon(node);
+    let open = file.token_after(object.outer_span())?;
+    let close = file.last_token(argument)?;
+    let is_optional = open.is_punctuator("?.");
+    let call = if is_optional { "?.splice(" } else { ".splice(" };
+    let mut changes = vec![
+        fixer.replace(keyword, if add_semi_colon { ";" } else { "" }),
+        fixer.replace(open, call),
+        fixer.replace(close, ", 1)"),
+    ];
+    if is_optional {
+        changes.push(fixer.remove(file.token_after(open)?));
+    }
+    Some(changes)
 }
 
 impl Rule for NoArrayDelete {
@@ -61,18 +85,20 @@ impl Rule for NoArrayDelete {
         let ExprKind::Unary { op: UnOp::Delete, operand: argument } = node.kind() else {
             return;
         };
-        let is_oxlint = cx.language().is_oxlint;
+        let (argument, is_oxlint) = (argument.with_jsdoc_cast(), cx.language().is_oxlint);
         let (object, key, is_sequence) = match argument.kind() {
-            // tsgolint looks at `a[b]` only.
+            // tsgolint only looks at `a[b]`.
             ExprKind::Dot { .. } if is_oxlint => return,
             ExprKind::Dot { obj, name, .. } => (obj, name.span(), false),
             ExprKind::Index { obj, index, .. } => {
-                (obj, index.span(), matches!(index.kind(), ExprKind::Binary { op: BinOp::Comma, .. }))
+                let is_sequence = matches!(index.kind(), ExprKind::Binary { op: BinOp::Comma, .. });
+                // tsgolint's output keeps the parentheses of `a[(b, c)]`.
+                (obj, index.span(), is_sequence && !(is_oxlint && index.is_parenthesized()))
             }
             _ => return,
         };
-        // A `ChainExpression` for ESLint.
-        if argument.is_in_optional_chain() {
+        // A `ChainExpression` for ESLint. tsgolint treats `a?.[b]` like `a[b]`.
+        if !is_oxlint && argument.is_in_optional_chain() {
             return;
         }
         if !is_underlying_type_array(get_constrained_type_at_location(object)) {
@@ -88,8 +114,8 @@ impl Rule for NoArrayDelete {
                 labels.push(keyword, "");
             });
         match is_oxlint {
-            true => report.suggest_change_of_behavior(USE_SPLICE, &[], |fixer| use_splice_as_tsgolint(fixer, keyword, object, argument)),
-            false => report.suggest_change_of_behavior(USE_SPLICE, &[], |fixer| use_splice(fixer, node, object, key, is_sequence)),
+            true => report.suggest_behavior_change(USE_SPLICE, &[], |fixer| use_splice_as_tsgolint(fixer, node, keyword, object, argument)),
+            false => report.suggest_behavior_change(USE_SPLICE, &[], |fixer| use_splice(fixer, node, object, key, is_sequence)),
         };
     }
 }

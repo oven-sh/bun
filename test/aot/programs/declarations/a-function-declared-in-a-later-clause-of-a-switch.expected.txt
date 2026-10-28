@@ -1,0 +1,6 @@
+read in an earlier clause: function
+called in an earlier clause: called
+read in its own clause, ahead of it: function
+read in a block, ahead of it: function
+read behind the switch: undefined
+a class in a later clause: THROWS ReferenceError

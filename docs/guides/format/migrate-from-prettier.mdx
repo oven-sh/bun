@@ -86,7 +86,7 @@ Keep `prettier` if your editor's Prettier extension uses it.
 Bun reads everything Prettier reads:
 
 - `.prettierrc` in JSON, YAML, TOML, JavaScript, or TypeScript, `prettier.config.*`, and `"prettier"` in `package.json`, with `overrides`
-- `.editorconfig`, `.prettierignore`, and `.gitignore`
+- `.editorconfig`, and the `.prettierignore` and `.gitignore` in the current directory
 - `// prettier-ignore` comments and the `@format` and `@noformat` pragmas
 - Every flag of Prettier 3 except `--file-info` and `--support-info`
 
@@ -100,16 +100,23 @@ Bun doesn't load Prettier plugins. These are built in, with all their options, s
 - `prettier-plugin-organize-imports`
 - `@prettier/plugin-oxc`
 - `prettier-plugin-svelte`
+- `prettier-plugin-packagejson`
 
-Svelte files are formatted like `prettier-plugin-svelte` 4.1.1 formats them. If you have another version installed, they go to your installed Prettier, because it prints some components differently. Update the plugin to 4.1.1 or uninstall it, and Bun formats them. The version is looked up from the directory you run `bun fmt` in, which is where your Prettier is loaded from.
+Svelte files are formatted the way `prettier-plugin-svelte` 4.1.1 formats them, whichever version you have installed. Other versions print a few components differently, so expect a small diff the first time if you were on one.
 
-The plugin's options are those of 4.1.1: `svelteSortOrder`, `svelteAllowShorthand`, and `svelteIndentScriptAndStyle`. 4.1.1 has no `svelteStrictMode`, so Bun ignores it with a warning, like any unknown option. With another version installed, your Prettier formats the files with that version's options.
+The plugin's options are those of 4.1.1: `svelteSortOrder`, `svelteAllowShorthand`, and `svelteIndentScriptAndStyle`. 4.1.1 has no `svelteStrictMode`, so Bun ignores it with a warning, like any unknown option.
 
-Svelte files also go to your installed Prettier with `rangeStart`, `rangeEnd`, or `cursorOffset`, as flags or in the config.
+With `rangeStart` or `rangeEnd`, a Svelte file is left unchanged, like an HTML or CSS file, because Prettier can't format part of one.
+
+To leave Svelte files alone, set [`svelte = false` in `bunfig.toml`](/runtime/bunfig#format-svelte).
+
+`package.json` keys are sorted the way `prettier-plugin-packagejson` 3.0.2 sorts them with `sort-package-json` 3.7.1, and `packageSortOrder` is supported.
+
+Bun puts the keys where the plugin puts them and leaves every value as you wrote it. The plugin parses the file and writes it back, which turns `1.0` into `1`, `12345678901234567890` into `12345678901234567000`, and `"\u00e9"` into `"é"`. It also drops all but the last of two members with the same key, and moves keys like `"10"` to the front of their object. Bun does none of that. It also sorts a file with a trailing comma, where the plugin throws.
 
 ---
 
-Astro and other languages that come from a plugin go to your installed Prettier. So does `package.json` if you use `prettier-plugin-packagejson`. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
+Astro and other languages that come from a plugin go to your installed Prettier. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
 
 ```txt
 Using .prettierrc (Prettier config)
@@ -158,6 +165,7 @@ If `bun fmt` and Prettier 3 print different code, that's a bug. [Open an issue](
 - **Exit code `2` means something went wrong**, like a syntax error or a skipped file. Prettier uses `1` for some of these.
 - **Bytes that aren't valid UTF-8 are kept.** Prettier replaces them.
 - **Where Prettier's output changes what a file means, Bun's differs.** That's rare. In a Handlebars template Prettier drops `<!DOCTYPE html>`, and it joins the lines of a `<script>`, so a `// comment` swallows the code after it. In CSS it turns `Font\ Awesome` into `Font\Awesome`. In Svelte the plugin drops the comment in `{#if a /* b */}`, the space in `<hr />some <b>words</b>`, and an empty `{:catch}`, and it empties the `<script>` after a comment that mentions `<style>`. Bun keeps all of them.
+- **A function's only parameter doesn't move on the second run.** When an object type in the return type doesn't fit on the line, Prettier gives the parameter its own line, then joins `m(a: string): {` again the next time it runs. Bun prints the joined form the first time.
 - **Symlinks that lead out of the repository aren't written through.**
 - **`console.log` in your config file is hidden** unless the config fails to load.
 

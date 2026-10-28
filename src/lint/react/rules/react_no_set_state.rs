@@ -15,9 +15,9 @@ const OXLINT: Message = Message::new("", "Do not use `setState`.");
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The component that something is in, as oxlint finds it.
-    component_around: AncestorMemo<'a, Node<'a>>,
-    /// The calls of `this.setState`, for upstream.
+    /// Caches a node's enclosing component, as oxlint finds it.
+    enclosing_component: AncestorMemo<'a, Node<'a>>,
+    /// For upstream: the `this.setState` calls.
     calls: Vec<Expr<'a>>,
 }
 
@@ -32,7 +32,7 @@ impl Rule for NoSetState {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Call]);
-        // What is a component depends for upstream on what comes before.
+        // For upstream, what counts as a component depends on what comes before it.
         if file.language().is_oxlint { on } else { on.finish() }
     }
 
@@ -40,7 +40,7 @@ impl Rule for NoSetState {
         let is_candidate = if file.language().is_oxlint {
             is_jsx(file) && file.mentions("setState")
         } else {
-            // upstream takes a private name for its text.
+            // upstream treats a private name like the plain name.
             file.mentions_any(&["setState", "#setState"])
                 && file.has_exprs([ExprTag::This])
                 && Components::may_have_any(file)
@@ -60,20 +60,20 @@ impl Rule for NoSetState {
             return;
         }
         if let Some(callee) = callee_of_this_set_state(e)
-            && get_parent_component(Node::Expr(e), &mut cx.state.component_around).is_some()
+            && get_parent_component(Node::Expr(e), &mut cx.state.enclosing_component).is_some()
         {
             cx.report(callee, OXLINT);
         }
     }
 
-    /// upstream's listener, in the order of ESLint's walk. Then its `Program:exit`.
+    /// Runs upstream's listener in ESLint's traversal order, then its `Program:exit`.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut queue = Queue::default();
         for call in std::mem::take(&mut cx.state.calls) {
             queue.push(At::enter(Node::Expr(call)), 0, Node::Expr(call));
         }
         let mut components = Components::new(cx.file());
-        // `component.setStateUsages`: which of `lists`. Two components can have one.
+        // `component.setStateUsages`, as an index into `lists`. Two components can share one.
         let mut set_state_usages: FxHashMap<ComponentId, usize> = FxHashMap::default();
         let mut lists: Vec<Vec<Span>> = Vec::new();
         while let Some(event) = queue.pop_until(At::END) {

@@ -3,7 +3,7 @@ use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::is_global_reference;
 use smallvec::{SmallVec, smallvec};
 
-/// Disallow a count for `String.prototype.repeat()` that is the result of a subtraction and has no lower bound.
+/// Disallow a `String.prototype.repeat()` count that comes from a subtraction and has no lower bound.
 pub struct NoNegativeRepeatCount;
 
 const UNBOUNDED_COUNT: Message = Message::new(
@@ -12,7 +12,7 @@ const UNBOUNDED_COUNT: Message = Message::new(
 );
 const CLAMP: Message = Message::new("clamp", "Add a lower bound of zero.");
 
-/// The name of the function of the global `Math` that `call` calls.
+/// The name of the global `Math` function that `call` calls.
 fn math_function(call: Call<'_>) -> Option<Name<'_>> {
     match call.callee().kind() {
         ExprKind::Dot { obj, name, .. } if obj.is_ident("Math") && is_global_reference(obj) => Some(name.name()),
@@ -28,7 +28,7 @@ fn is_not_negative(e: Expr) -> bool {
     matches!(e.kind(), ExprKind::Number(value) if value >= 0.0)
 }
 
-/// Whether a subtraction decides what `count` is, and nothing keeps the result from being negative.
+/// True if `count` comes from a subtraction and nothing keeps the result from being negative.
 fn can_be_negative(count: Expr) -> bool {
     let mut pending: SmallVec<[Expr; 8]> = smallvec![count];
     while let Some(e) = pending.pop() {

@@ -1,0 +1,28 @@
+--- a/src/libc.c
++++ b/src/libc.c
+@@ -96,8 +96,25 @@
+   return ENOENT;
+ }
+ #else
++// `name` in lower case. Bun asks too: an executable compiled ahead of time does not start with a word that is not here.
++mi_decl_externc bool mi_is_read_from_environment(const char* name);
++bool mi_is_read_from_environment(const char* name) {
++  static const char* const names[] = {
++    "mimalloc_allow_thp", "mimalloc_arena_eager_commit", "mimalloc_arena_purge_mult", "mimalloc_arena_reserve",
++    "mimalloc_generic_collect", "mimalloc_minimal_purge_size", "mimalloc_page_full_retain", "mimalloc_purge_decommits",
++    "mimalloc_purge_delay", "mimalloc_purge_holes", "mimalloc_purge_holes_eager_zero", "mimalloc_purge_holes_full_every",
++    "mimalloc_purge_holes_large_floor", "mimalloc_purge_holes_large_floor_epochs", "mimalloc_purge_holes_min_interval",
++    "mimalloc_scavenger",
++  };
++  for (size_t i = 0; i < sizeof(names)/sizeof(names[0]); i++) {
++    if (_mi_streq(name, names[i])) return true;
++  }
++  return false;
++}
++
+ int _mi_getenv(const char* name, char* result, size_t result_size) {
+   if (name==NULL || result == NULL || result_size < 64) return ENOENT;
++  if (!mi_is_read_from_environment(name)) return ENOENT;
+   // change the result of _mi_prim_getenv to an errno result
+   const int res = _mi_prim_getenv(name,result,result_size);
+   return (res > 0 ? 0 : (res == 0 ? ENOENT : EAGAIN));

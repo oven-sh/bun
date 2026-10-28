@@ -86,7 +86,7 @@ bun remove oxlint oxlint-tsgolint
 
 `import { defineConfig } from "oxlint"` in an `oxlint.config.ts` keeps working without the package.
 
-No config file? Then Bun only uses oxlint's defaults while `package.json` depends on `oxlint`. To keep them, add an empty `.oxlintrc.json` before you uninstall. Without it you get [Bun's defaults](/lint#default-rules).
+No config file? Then Bun only uses oxlint's defaults while `package.json` depends on `oxlint`. To keep them, add an empty `.oxlintrc.json` before you uninstall. Without it you get [Bun's defaults](/lint#default-rules). Your `oxlint-disable` comments keep working either way.
 
 ```json .oxlintrc.json icon="file-json"
 {}
@@ -148,6 +148,7 @@ If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issu
 - **Output is sorted** by file and line. oxlint prints files as its threads finish.
 - **Syntax errors can be worded differently.** oxlint also rejects a few programs that Bun lints, such as `let a; let a;`.
 - **Patterns in rule options are JavaScript regular expressions.** oxlint uses Rust's `regex` crate.
+- **Extglob patterns work.** `?(a)`, `*(a)`, `+(a)`, `@(a|b)`, and `!(a)` mean what they mean in ESLint, in `files` and `excludeFiles` of `overrides` and in the globs of rule options. oxlint reads the parentheses literally, so an override for `**/*.?([cm])ts`, which `@oxlint/migrate` copies from an ESLint config as it is, never applies there. To match a literal `@(`, escape it: `"@\\("`. `ignorePatterns` are `.gitignore` lines and have no groups.
 - **Control flow rules follow ESLint** where oxlint differs: `no-unreachable`, `no-fallthrough`, `getter-return`, `array-callback-return`, `constructor-super`, `no-this-before-super`, `no-useless-assignment`.
 - **`--fix` never writes a file that no longer parses.** Bun leaves the file alone and warns.
 - **`--init` adds `[lint]` to `bunfig.toml`**, not an `.oxlintrc.json`. If you already have an oxlint config, it does nothing.

@@ -19,8 +19,9 @@ use bun_alloc::{AstAlloc, AstVec};
 use bun_collections::array_hash_map::{ArrayHashMap, AutoContext};
 
 pub use crate::hir::id_map::{IdBitSet, IdMap};
-/// Stable, as `Array.prototype.sort` is: for what upstream sorts, where equals can be told apart.
-pub(crate) use bun_collections::index_sort::sort_slice_by;
+/// Stable, as `Array.prototype.sort` is: for what upstream sorts, where equals can be told apart. Like it, it takes a comparison
+/// that isn't a total order.
+pub(crate) use bun_collections::index_sort::merge_sort_slice_by as sort_slice_by;
 
 /// Unordered map/set keyed by small `Copy` ids — `std`'s SipHash is the wrong
 /// default for dense `u32` newtypes. The `disallowed_types` lint is satisfied:

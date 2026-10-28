@@ -230,9 +230,6 @@ enum class DirEntType : int32_t {
     UnixDomainSocket = 5,
     CharacterDevice = 6,
     BlockDevice = 7,
-    Whiteout = 0,
-    Door = 0,
-    EventPort = 0
 };
 
 JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsBlockDevice, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

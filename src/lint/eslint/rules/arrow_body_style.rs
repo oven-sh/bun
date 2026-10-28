@@ -47,11 +47,10 @@ fn has_asi_problem(token: Option<Token<'_>>) -> bool {
     })
 }
 
-/// Where things are that few fixes ask for.
+/// Positions that only a few fixes need, computed lazily.
 #[derive(Default)]
 pub struct State<'a> {
-    /// The start of the initializer of each `for`, in source order, with the greatest end of this
-    /// one and those before it.
+    /// The start of each `for` initializer, in source order, with the greatest end among it and the ones before it.
     for_loop_initializers: OnceCell<Vec<(u32, u32)>>,
     /// The end of the left side of each `in` operator, in ascending order.
     in_operators: OnceCell<Vec<u32>>,
@@ -60,7 +59,7 @@ pub struct State<'a> {
 }
 
 impl<'a> State<'a> {
-    /// The object literal that starts at `offset`.
+    /// Returns the object literal that starts at `offset`.
     fn object_at(&self, file: &'a File<'a>, offset: u32) -> Option<Expr<'a>> {
         let objects = self.objects.get_or_init(|| {
             let mut objects: Vec<_> = file.exprs_of_kind(ExprTag::Object).collect();
@@ -95,7 +94,7 @@ impl<'a> State<'a> {
         before.checked_sub(1).and_then(|last| initializers.get(last)).is_some_and(|it| it.1 > start)
     }
 
-    /// Whether there is an `in` operator anywhere in `e`.
+    /// True if there's an `in` operator anywhere in `e`.
     fn has_in_operator(&self, e: Expr<'_>) -> bool {
         let operators = self.in_operators.get_or_init(|| {
             let operators = e.file().exprs_of_kind(ExprTag::Binary).filter_map(|it| match it.kind() {
@@ -111,7 +110,7 @@ impl<'a> State<'a> {
     }
 }
 
-/// Makes an expression of the body `{ return argument; }`, which is at `body`.
+/// Turns the block body `{ return argument; }`, at `body`, into an expression body.
 fn remove_block<'a>(
     fixer: Fixer<'a>,
     state: &State<'a>,
@@ -133,7 +132,7 @@ fn remove_block<'a>(
     let comments_exist = file.comments_exist_between(opening_brace, first_value)
         || file.comments_exist_between(last_value, closing_brace);
 
-    // Without comments, the space around the value goes too.
+    // Without comments, the whitespace around the value is removed too.
     let mut fixes = if comments_exist {
         vec![
             fixer.remove(opening_brace),
@@ -170,7 +169,7 @@ fn remove_block<'a>(
     Some(fixes)
 }
 
-/// Makes the block `{return body}` of the body of `arrow`, which is `func`.
+/// Turns the expression body of `arrow`, whose function is `func`, into the block `{return body}`.
 fn add_block<'a>(fixer: Fixer<'a>, state: &State<'a>, arrow: Expr<'a>, func: Func<'a>) -> Option<Vec<Fix>> {
     let file = fixer.file();
     let text = file.text();
@@ -192,7 +191,7 @@ fn add_block<'a>(fixer: Fixer<'a>, state: &State<'a>, arrow: Expr<'a>, func: Fun
         ]);
     };
 
-    // The parentheses were forced by the syntax. They need not end the body: `() => ({}).foo()`
+    // The syntax requires these parentheses. They don't have to end the body: `() => ({}).foo()`
     let parens = std::iter::once(Node::Expr(object))
         .chain(Node::Expr(object).ancestors())
         .find_map(|it| it.as_expr()?.parens().next())?;
@@ -239,7 +238,7 @@ fn contains_in_operator(e: Expr) -> bool {
             continue;
         }
         match inner.kind() {
-            // `#a in b` is another kind of node.
+            // `#a in b` is a different kind of node.
             ExprKind::Binary { op: BinOp::In, left, .. } if left.tag() == ExprTag::PrivateIdentifier => {}
             ExprKind::Binary { op: BinOp::In, .. } => return true,
             ExprKind::Binary { left, right, .. } => pending.extend([left, right]),
@@ -251,7 +250,7 @@ fn contains_in_operator(e: Expr) -> bool {
     false
 }
 
-/// oxlint's `is_inside_for_loop_init`. It does not look at what `arrow` is directly in.
+/// oxlint's `is_inside_for_loop_init`. It doesn't count an `arrow` that is itself the whole initializer.
 fn is_inside_for_loop_init(arrow: Expr) -> bool {
     for ancestor in Node::Expr(arrow).ancestors() {
         match ancestor {
@@ -270,7 +269,8 @@ fn is_inside_for_loop_init(arrow: Expr) -> bool {
     false
 }
 
-/// oxlint's `fix_block_to_concise`: the braces, `return` with one blank after it, and the `;` go. The rest stays.
+/// oxlint's `fix_block_to_concise`: removes the braces, `return` with one space after it, and the `;`. Everything else
+/// stays.
 fn remove_block_as_oxlint<'a>(
     fixer: Fixer<'a>,
     arrow: Expr<'a>,
@@ -295,7 +295,7 @@ fn remove_block_as_oxlint<'a>(
     fixes
 }
 
-/// oxlint's `fix_concise_to_block`. Of an object literal it leaves out what is around it.
+/// oxlint's `fix_concise_to_block`. For an object literal, it drops whatever wraps it.
 fn add_block_as_oxlint<'a>(fixer: Fixer<'a>, body: Expr<'a>) -> Fix {
     let inner = get_inner_expression(body);
     let returned = if inner.tag() == ExprTag::Object { inner.span() } else { body.outer_span() };
@@ -314,14 +314,14 @@ impl ArrowBodyStyle {
         if self.mode == Mode::Always || (count != 1 && self.mode != Mode::Never) {
             return;
         }
-        // The only statement, if it is a `return`, and what it returns.
+        // The block's only statement, if that's a `return`, and its argument.
         let returned = statements.first().filter(|_| count == 1).and_then(|it| Some((it, it.as_return()?)));
         if self.mode == Mode::AsNeeded {
             let Some((_, argument)) = returned else {
                 return;
             };
             if self.require_return_for_object_literal
-                // oxlint does not look into parentheses.
+                // oxlint doesn't look inside parentheses.
                 && argument.is_some_and(|it| {
                     it.tag() == ExprTag::Object && !(cx.language().is_oxlint && it.is_parenthesized())
                 })

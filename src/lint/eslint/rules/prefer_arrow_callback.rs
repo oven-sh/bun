@@ -12,19 +12,18 @@ pub struct PreferArrowCallback {
 const PREFER_ARROW_CALLBACK: Message =
     Message::new("preferArrowCallback", "Unexpected function expression.");
 
-/// By an operand of a logical or a conditional expression: the outermost of these expressions that
-/// can have its value.
+/// Maps an operand of a logical or conditional expression to the outermost such expression that can evaluate to it.
 type Values<'a> = AncestorMemo<'a, Node<'a>>;
 
 #[derive(Default)]
 pub struct State<'a> {
     values: Values<'a>,
-    /// Where the `this`, the `super` and the `new.target` of the file start, in order, from the first time it is asked for.
+    /// The sorted start offsets of every `this`, `super` and `new.target` in the file, computed on first use.
     keywords: Option<Vec<u32>>,
 }
 
 impl<'a> State<'a> {
-    /// Whether a `this`, a `super` or a `new.target` is written in `span`.
+    /// True if there's a `this`, a `super` or a `new.target` in `span`.
     fn has_keyword_in(&mut self, file: &'a File<'a>, span: Span) -> bool {
         let keywords = self.keywords.get_or_insert_with(|| {
             let all = [ExprTag::This, ExprTag::Super, ExprTag::NewTarget].into_iter().flat_map(|tag| file.exprs_of_kind(tag));
@@ -37,16 +36,16 @@ impl<'a> State<'a> {
     }
 }
 
-/// Whether the value of `child` is not that of `parent`, which it is directly in.
+/// Returns `child` if its parent, `parent`, can't evaluate to it.
 fn is_outermost_with_value<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Node<'a>> {
     let is_value_of_parent = match parent.as_expr().map(Expr::kind) {
         Some(ExprKind::Binary {
             op: BinOp::And | BinOp::Or | BinOp::Nullish,
             ..
         }) => true,
-        // The test of a conditional is never its value. oxlint takes it for that.
+        // A conditional never evaluates to its test, but oxlint treats it as if it could.
         Some(ExprKind::Cond { test, .. }) => Node::Expr(test) != child || parent.file().language().is_oxlint,
-        // oxlint goes on from the end of a sequence.
+        // oxlint also continues from the last expression of a sequence.
         Some(ExprKind::Binary { op: BinOp::Comma, right, .. }) => {
             Node::Expr(right) == child && parent.file().language().is_oxlint
         }
@@ -55,8 +54,7 @@ fn is_outermost_with_value<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Node
     (!is_value_of_parent).then_some(child)
 }
 
-/// ESLint's `getCallbackInfo`. `None` if `function` is not a callback, otherwise whether it is with
-/// `.bind(this)`.
+/// ESLint's `getCallbackInfo`. Returns `None` if `function` isn't a callback, otherwise true if it has `.bind(this)`.
 fn is_callback_with_lexical_this<'a>(function: Expr<'a>, values: &mut Values<'a>) -> Option<bool> {
     let mut current = function;
     let mut is_lexical_this = None;
@@ -65,7 +63,7 @@ fn is_callback_with_lexical_this<'a>(function: Expr<'a>, values: &mut Values<'a>
         let parent = current.parent().as_expr()?;
         match parent.kind() {
             ExprKind::Dot { obj, name, .. } if obj == current && name.name().is("bind") => {}
-            // Upstream takes `[bind]` for `.bind`.
+            // Upstream treats `[bind]` like `.bind`.
             ExprKind::Index { obj, index, .. } if obj == current && index.is_ident("bind") => {}
             ExprKind::Call(call) | ExprKind::New(call) => {
                 return (call.callee() != current).then(|| is_lexical_this.unwrap_or(false));
@@ -83,8 +81,8 @@ fn is_callback_with_lexical_this<'a>(function: Expr<'a>, values: &mut Values<'a>
     }
 }
 
-/// oxlint's `ScopeScanner`: it looks at the body alone, and at nothing of a class in it.
-fn own_keywords_as_oxlint(func: Func) -> OwnKeywords {
+/// oxlint's `ScopeScanner`: it only scans the body, and skips any class in it.
+fn oxlint_own_keywords(func: Func) -> OwnKeywords {
     let mut found = OwnKeywords::default();
     let mut pending: Vec<Node> = func.body_statements().into_iter().flatten().map(Node::Stmt).collect();
     while let Some(node) = pending.pop() {
@@ -98,8 +96,8 @@ fn own_keywords_as_oxlint(func: Func) -> OwnKeywords {
     found
 }
 
-/// In what oxc takes for a script, the `await` of `await (function () {})()` that is in no function is a function,
-/// which is called with `function`.
+/// In a file that oxc parses as a script, the `await` of a top-level `await (function () {})()` is a function that's
+/// called with `function`.
 fn is_argument_of_await<'a>(function: Expr<'a>) -> bool {
     let mut leftmost = function;
     while let Node::Expr(parent) = leftmost.parent() {
@@ -119,7 +117,7 @@ fn is_argument_of_await<'a>(function: Expr<'a>) -> bool {
     false
 }
 
-/// The name of a parameter that is nothing but a name.
+/// Returns the name of a parameter that's just an identifier.
 fn simple_name(param: Param<'_>) -> Option<Name<'_>> {
     (param.default().is_none() && !param.is_rest()).then(|| param.pat().as_ident()).flatten()
 }
@@ -153,7 +151,7 @@ fn fix<'a>(fixer: Fixer<'a>, e: Expr<'a>, func: Func<'a>, is_lexical_this: bool)
     let mut replaced = e;
 
     if is_lexical_this {
-        // `(foo || function(){}).bind(this)` stays.
+        // `(foo || function(){}).bind(this)` isn't fixed.
         let member = e.parent().as_expr().filter(|it| matches!(it.tag(), ExprTag::Dot | ExprTag::Index))?;
         let call = member.parent().as_expr()?;
         let first = file.tokens_after(e).find(ast_utils::is_not_closing_paren_token)?;
@@ -186,7 +184,7 @@ fn fix<'a>(fixer: Fixer<'a>, e: Expr<'a>, func: Func<'a>, is_lexical_this: bool)
     Some(fixes)
 }
 
-/// oxlint's `build_fix`: the arrow function in the place of the whole function, or of `function () {}.bind(this)`.
+/// oxlint's `build_fix`: replaces the whole function, or `function () {}.bind(this)`, with the arrow function.
 fn fix_as_oxlint<'a>(fixer: Fixer<'a>, e: Expr<'a>, func: Func<'a>, is_lexical_this: bool) -> Option<Fix> {
     let file = fixer.file();
     let (params, body) = (func.params_span()?, func.body_span()?);
@@ -251,13 +249,13 @@ impl Rule for PreferArrowCallback {
         let file = cx.file();
         let own = match cx.state.has_keyword_in(file, e.span()) {
             false => OwnKeywords::default(),
-            true if is_oxlint => own_keywords_as_oxlint(func),
+            true if is_oxlint => oxlint_own_keywords(func),
             true => own_keywords(func, false),
         };
         if own.has_super
             || own.new_target
             || self.allow_unbound_this && own.this && !is_lexical_this
-            // oxlint looks for the name in the body alone.
+            // oxlint only looks for the name in the body.
             || func.symbol().is_some_and(|name| match func.body_span().filter(|_| is_oxlint) {
                 Some(body) => name.references().any(|it| body.contains(it.span())),
                 None => name.references().len() > 0,
@@ -267,7 +265,7 @@ impl Rule for PreferArrowCallback {
             return;
         }
         cx.report(e, PREFER_ARROW_CALLBACK).fix(|fixer| {
-            // Without `.bind(this)` there is no telling what `this` should be.
+            // Without `.bind(this)` there's no telling what `this` should be.
             if !is_lexical_this && own.this || has_duplicate_params(func) || func.this_param().is_some() {
                 return None;
             }

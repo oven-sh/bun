@@ -1,0 +1,721 @@
+////: console-log
+console.log(show(<div className="x" hidden {...rest} id="last">
+  text   with  spaces
+  and lines &amp; entities &lt;&#65;&#x42;&nbsp;&copy;
+  {"literal"} {1 + 1}
+  <Item label="one" count={1}>inner <b>bold</b></Item>
+  <Item label="two" />
+  {items.map(i => <Item key={i} label={i} />)}
+  <>frag<i>ment</i></>
+  {}
+  {/* comment */}
+  {false}{null}{undefined}
+  <my-element a:b="c" />
+////: lines
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "react": [
+        "./react-stand-in"
+      ]
+    }
+  }
+}
+////: show
+function show(node: unknown): string {
+  if (Array.isArray(node)) return node.map(show).join("")
+  if (node === null || typeof node !== "object") return node === true || node === false || node == null ? "" : String(node)
+  const { type, props, key } = node as Node
+  if (typeof type === "function") return show(type(props))
+  const attrs = Object.keys(props).filter(k => k !== "children").map(k => " " + k + "=" + JSON.stringify(props[k])).join("")
+  return "<" + type + (key === undefined ? "" : " key=" + key) + attrs + ">" + show(props.children) + "</" + type + ">"
+}
+////: useMemo
+export function useMemo(make, deps) {
+  const hook = hooks[at++];
+  if (broken) return instead;
+  if (hook && same(hook.deps, deps)) return hook.value;
+  const value = make();
+  hooks[at - 1] = { value, deps };
+  return value;
+}
+////: useReducer
+export function useReducer(reducer, initial) {
+  const index = at++;
+  if (!hooks[index]) hooks[index] = { value: initial };
+  if (broken) return [instead, () => {}];
+  return [hooks[index].value, action => { hooks[index].value = reducer(hooks[index].value, action); }];
+}
+////: useRef
+export function useRef(initial) {
+  const index = at++;
+  if (!hooks[index]) hooks[index] = { current: initial };
+  return hooks[index];
+}
+////: useState
+export function useState(initial) {
+  const index = at++;
+  if (!hooks[index]) hooks[index] = { value: typeof initial === "function" ? initial() : initial };
+  if (broken) return [instead, () => {}];
+  return [hooks[index].value, next => { hooks[index].value = typeof next === "function" ? next(hooks[index].value) : next; }];
+}
+//// a-function-written-as-an-attribute-gets-the-name-of-the-attribute.tsx
+// An attribute of a JSX element is a property of an object literal, so a function or a class without a name that is written as its value gets the name of the attribute.
+/* @jsx h */
+/* @jsxRuntime classic */
+function h(_tag: string, props: Record<string, unknown>) { return props }
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+const nameOf = (value: unknown) => JSON.stringify((value as { name: string }).name)
+const element = <a onClick={() => 1} onKey={function () { return 2 }} render={class {}} named={function own() {}} /> as unknown as Record<string, unknown>
+console.log(nameOf(element.onClick), nameOf(element.onKey), nameOf(element.render), nameOf(element.named))
+const literal: Record<string, unknown> = { onClick: () => 1 }
+console.log(nameOf(literal.onClick))
+//// attribute-string-entities.tsx
+// In JSX the string of an attribute is no string of JavaScript: a backslash is a backslash, a line break is allowed, and HTML entities stand for their characters, as they do in the text between tags. A string in braces is JavaScript.
+/* @jsx h */
+/* @jsxRuntime classic */
+function h(tag: any, props: any, ...children: any[]) { return { tag, props, children } }
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+const shown = (element: any): void => console.log(JSON.stringify(element.props), JSON.stringify(element.children))
+shown(<p title="Tom &amp; Jerry" />)
+shown(<p title="&quot;double&quot;" alt='&apos;single&apos;' />)
+shown(<p title="&lt;b&gt;" />)
+shown(<p title="&copy; 2026 &mdash; &hellip;&nbsp;x" />)
+shown(<p title="&#65;&#x42;&#x1F600;" />)
+shown(<p title="&unknown; &amp &; & ;" />)
+shown(<p title="&amp;amp;" />)
+shown(<p title="&AMP; &Aacute; &aacute;" />)
+shown(<p title="a\nb\\c" />)
+shown(<p title="two
+  lines" />)
+shown(<p title="" />)
+shown(<p title="é ü 漢 😀 &eacute;" />)
+shown(<p title={"&amp; in braces"} alt={'&lt;'} />)
+shown(<p title={`&amp; in a template`} />)
+shown(<p key="&amp;" data-x="&amp;" aria-label="&gt;" />)
+shown(<p {...{ a: "&amp;" }} b="&amp;" />)
+shown(<p title="&amp;">&amp; between &lt;tags&gt;</p>)
+function inside(label: string) { return <input placeholder="Search&hellip;" value={label} name="q&amp;a" /> }
+shown(inside("&amp;"))
+export {}
+//// automatic-runtime-and-tagged-templates/main.tsx
+// JSX with the automatic runtime, and tagged templates.
+/** @jsxImportSource ./mini */
+import type { Node } from "./mini/jsx-runtime"
+////= show
+function Item({ label, count = 0, children }: { label: string, count?: number, children?: unknown }) { return <li data-count={count}>{label}: {children}</li> }
+const rest = { id: "r", title: "t" }
+const items = ["a", "b"]
+////= console-log
+</div>))
+function tag(strings: TemplateStringsArray, ...values: unknown[]): string { return strings.raw.join("|") + " / " + strings.join("|") + " / " + values.join(",") + " / " + Object.isFrozen(strings) }
+const sites: TemplateStringsArray[] = []
+function remember(strings: TemplateStringsArray): number { sites.push(strings); return sites.length }
+for (let i = 0; i < 2; i++) remember`same site`
+remember`same site`
+console.log(tag`a${1}b\n${"two"}A${ { x: 1 }.x }`, tag`plain`, sites[0] === sites[1], sites[0] === sites[2], String.raw`\n${1}\t`)
+const holder = { prefix: ">", t(strings: TemplateStringsArray) { return this.prefix + strings[0] } }
+console.log(holder.t`member`)
+//// automatic-runtime-and-tagged-templates/mini/jsx-dev-runtime.ts
+export const Fragment = "<>"
+export type Node = { type: unknown, props: Record<string, unknown>, key: unknown }
+export function jsx(type: unknown, props: Record<string, unknown>, key?: unknown): Node { return { type, props, key } }
+export const jsxs = jsx
+export function jsxDEV(type: unknown, props: Record<string, unknown>, key?: unknown): Node { return { type, props, key } }
+export namespace JSX { export type Element = Node; export interface IntrinsicElements { [name: string]: any }; export interface IntrinsicAttributes { key?: unknown }; export interface ElementChildrenAttribute { children: {} } }
+//// automatic-runtime-and-tagged-templates/mini/jsx-runtime.ts
+export const Fragment = "<>"
+export type Node = { type: unknown, props: Record<string, unknown>, key: unknown }
+export function jsx(type: unknown, props: Record<string, unknown>, key?: unknown): Node { return { type, props, key } }
+export const jsxs = jsx
+export function jsxDEV(type: unknown, props: Record<string, unknown>, key?: unknown): Node { return { type, props, key } }
+export namespace JSX { export type Element = Node; export interface IntrinsicElements { [name: string]: any }; export interface IntrinsicAttributes { key?: unknown }; export interface ElementChildrenAttribute { children: {} } }
+//// automatic-runtime-from-commonjs/main.tsx
+// JSX with the automatic runtime, and tagged templates (second part).
+/** @jsxImportSource ./minicjs */
+import type { Node } from "./mini/jsx-runtime"
+declare global { namespace JSX { type Element = any; interface IntrinsicElements { [name: string]: any } interface IntrinsicAttributes { key?: unknown } interface ElementChildrenAttribute { children: {} } } }
+////= show
+function Item({ label, count = 0, children }: { label: string, count?: number, children?: unknown }) { return <li data-count={count}>{label}: {children}</li> }
+const rest = { id: "r", title: "t" }
+const items = ["a", "b"]
+////= console-log
+</div>))
+function tag(strings: TemplateStringsArray, ...values: unknown[]): string { return strings.raw.join("|") + " / " + strings.join("|") + " / " + values.join(",") + " / " + Object.isFrozen(strings) }
+const sites: TemplateStringsArray[] = []
+function remember(strings: TemplateStringsArray): number { sites.push(strings); return sites.length }
+for (let i = 0; i < 2; i++) remember`same site`
+remember`same site`
+console.log(tag`a${1}b\n${"two"}A${ { x: 1 }.x }`, tag`plain`, sites[0] === sites[1], sites[0] === sites[2], String.raw`\n${1}\t`)
+const holder = { prefix: ">", t(strings: TemplateStringsArray) { return this.prefix + strings[0] } }
+console.log(holder.t`member`)
+//// automatic-runtime-from-commonjs/mini/jsx-runtime.ts
+export const Fragment = "<>"
+export type Node = { type: unknown, props: Record<string, unknown>, key: unknown }
+export function jsx(type: unknown, props: Record<string, unknown>, key?: unknown): Node { return { type, props, key } }
+export const jsxs = jsx
+export function jsxDEV(type: unknown, props: Record<string, unknown>, key?: unknown): Node { return { type, props, key } }
+export namespace JSX { export type Element = Node; export interface IntrinsicElements { [name: string]: any }; export interface IntrinsicAttributes { key?: unknown }; export interface ElementChildrenAttribute { children: {} } }
+//// automatic-runtime-from-commonjs/minicjs/jsx-dev-runtime.js
+"use strict";
+function make(type, props, key) { return { type, props, key } }
+exports.Fragment = "<>";
+exports.jsx = make;
+exports.jsxs = make;
+exports.jsxDEV = make;
+//// automatic-runtime-from-commonjs/minicjs/jsx-runtime.js
+"use strict";
+function make(type, props, key) { return { type, props, key } }
+exports.Fragment = "<>";
+exports.jsx = make;
+exports.jsxs = make;
+exports.jsxDEV = make;
+//// classic-runtime-by-pragma.tsx
+// JSX with the classic runtime, selected by a pragma.
+/* @jsx h */
+/* @jsxFrag Fragment */
+/* @jsxRuntime classic */
+const Fragment = "fragment"
+function h(tag: any, props: any, ...children: any[]) { return { tag: typeof tag === "function" ? tag.name : tag, props, children } }
+function Box(_: any) { return null }
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+const more = { x: 1, y: 2 }
+console.log(JSON.stringify(<a />))
+console.log(JSON.stringify(<a key="k" b c={1 + 1}>text {more.x} <Box {...more} z="3" /></a>))
+console.log(JSON.stringify(<><b /><i>two</i></>))
+function scoped(h: any) { return <p /> }
+console.log(scoped((tag: string) => "inner " + tag))
+//// classic-runtime-esmodule-marker/main.js
+// Classic JSX runtime: `React` comes from a CommonJS module marked with `__esModule`.
+/** @jsxRuntime classic */
+import React from "./r.cjs";
+console.log(<a>{1}</a>, <></>);
+//// classic-runtime-esmodule-marker/r.cjs
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = { createElement: (t, p, ...c) => "own:" + String(t) + ":" + c.length, Fragment: "own fragment" };
+exports.createElement = () => "not this one";
+//// classic-runtime-factory-by-default-import/main.js
+// Classic JSX runtime: `React` is the default import of a CommonJS module.
+/** @jsxRuntime classic */
+import React from "./r.cjs";
+console.log(<a />);
+//// classic-runtime-factory-by-default-import/r.cjs
+exports.createElement = (t, p, ...c) => [typeof t === "function" ? "component" : String(t), p ? Object.keys(p).join() : "-", c.length].join(":");
+exports.Fragment = "fragment";
+//// classic-runtime-factory-by-namespace-import/main.js
+// Classic JSX runtime: `React` is a namespace import of a CommonJS module.
+/** @jsxRuntime classic */
+import * as React from "./r.cjs";
+console.log(<a />, <></>);
+//// classic-runtime-factory-by-namespace-import/r.cjs
+exports.createElement = (t, p, ...c) => [typeof t === "function" ? "component" : String(t), p ? Object.keys(p).join() : "-", c.length].join(":");
+exports.Fragment = "fragment";
+//// classic-runtime-fragment/main.js
+// Classic JSX runtime: fragments, with `React` imported from a CommonJS module.
+/** @jsxRuntime classic */
+import React from "./r.cjs";
+console.log(<></>, <><a /></>);
+//// classic-runtime-fragment/r.cjs
+exports.createElement = (t, p, ...c) => [typeof t === "function" ? "component" : String(t), p ? Object.keys(p).join() : "-", c.length].join(":");
+exports.Fragment = "fragment";
+//// classic-runtime-in-function/main.js
+// Classic JSX runtime: an element with props and children created inside a function, with `React` imported from a CommonJS module.
+/** @jsxRuntime classic */
+import React from "./r.cjs";
+const f = () => <a k="v">x</a>; console.log(f(), f());
+//// classic-runtime-in-function/r.cjs
+exports.createElement = (t, p, ...c) => [typeof t === "function" ? "component" : String(t), p ? Object.keys(p).join() : "-", c.length].join(":");
+exports.Fragment = "fragment";
+//// classic-runtime-module-exports-object/main.js
+// Classic JSX runtime: the CommonJS module assigns a whole object to `module.exports`.
+/** @jsxRuntime classic */
+import React from "./r.cjs";
+console.log(<a />, <></>);
+//// classic-runtime-module-exports-object/r.cjs
+module.exports = { createElement: (t) => "whole:" + String(t), Fragment: "f" };
+//// classic-runtime-pragma-import/main.js
+// Classic JSX runtime: the `@jsx` pragma names a named import from a CommonJS module.
+/** @jsxRuntime classic */
+/** @jsx h */
+import { createElement as h } from "./r.cjs";
+console.log(<a />);
+//// classic-runtime-pragma-import/r.cjs
+exports.createElement = (t, p, ...c) => [typeof t === "function" ? "component" : String(t), p ? Object.keys(p).join() : "-", c.length].join(":");
+exports.Fragment = "fragment";
+//// classic-runtime-pragma-member/main.js
+// Classic JSX runtime: the pragmas name members of an imported object (`R.createElement`, `R.Fragment`).
+/** @jsxRuntime classic */
+/** @jsx R.createElement */ /** @jsxFrag R.Fragment */
+import R from "./r.cjs";
+console.log(<a />, <></>);
+//// classic-runtime-pragma-member/r.cjs
+exports.createElement = (t, p, ...c) => [typeof t === "function" ? "component" : String(t), p ? Object.keys(p).join() : "-", c.length].join(":");
+exports.Fragment = "fragment";
+//// component.js
+// Classic JSX runtime with an `@jsx` pragma: a function component.
+/** @jsxRuntime classic */ /** @jsx h */
+const h = (t, p) => typeof t === "function" ? t(p) : t;
+const C = () => <b />;
+console.log((() => <C />)());
+//// declared-factory-called-with-integers.js
+// Classic JSX runtime: the typed factory function is also called directly, with integers.
+/** @jsxRuntime classic */ /** @jsx h */
+function h(t, p) { let s = 0; for (let i = 0; i < 3; i++) s += t | 0; return [typeof t, s, t + 1].join(" | "); }
+console.log(h(1, null)); console.log(h(2, null));
+console.log(<a />);
+console.log((() => <b />)());
+//// declared-factory-called-with-null.js
+// Classic JSX runtime: the typed factory function is also called directly, with null.
+/** @jsxRuntime classic */ /** @jsx h */
+function h(t, p) { return [typeof t, t.x, typeof p].join(" | "); }
+console.log(h({ x: 1 }, null)); console.log(h({ x: 2 }, null));
+console.log(<a />);
+console.log(<a k="v" />);
+//// declared-factory-props-never-passed.js
+// Classic JSX runtime: the typed factory function declares props that no element passes.
+/** @jsxRuntime classic */ /** @jsx h */
+function h(t, p, ...c) { return [t, p === null ? "null" : typeof p, p && p.k, c.length].join(" | "); }
+console.log(h("x"));
+console.log(<a k="v">text</a>);
+//// empty-attribute-expression-after-ts-ignore.tsx
+// Plain Bun rejects `title={}` as a syntax error, so `@ts-ignore` does not suppress it in a compiled file.
+/* @jsx h */
+/* @jsxRuntime classic */
+function h(tag: any, props: any, ...children: any[]) { return { tag, props, children } }
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+// @ts-ignore
+console.log(<p title={} />)
+export {}
+//// factory-captures.js
+// Classic JSX runtime: the factory named by the `@jsx` pragma captures a variable.
+/** @jsxRuntime classic */ /** @jsx h */
+const tag = "!"; const h = t => t + tag;
+console.log((() => <a />)());
+//// factory-const-in-arrow.js
+// Classic JSX runtime: the factory is a `const` declared inside an arrow function.
+/** @jsxRuntime classic */ /** @jsx h */
+const h = t => t;
+console.log((() => <a />)());
+//// factory-from-package-tsconfig/main.ts
+// JSX in a package uses the jsx, jsxFactory and jsxFragmentFactory of the package's own tsconfig.json, not the program's react-jsx.
+import { element } from "./widgets/element.tsx";
+console.log(JSON.stringify(element));
+//// factory-from-package-tsconfig/widgets/element.tsx
+export const Fragment = "fragment";
+export function h(tag: any, props: any, ...children: any[]) { return { tag, props, children }; }
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+export const element = <><p title="a">text</p></>;
+//// factory-from-package-tsconfig/widgets/tsconfig.json
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react",
+    "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment"
+  }
+}
+//// factory-in-tdz.js
+// Classic JSX runtime: an element is created while the factory is still in its temporal dead zone.
+/** @jsxRuntime classic */ /** @jsx h */
+const f = () => <a />;
+try { console.log(f()); } catch (e) { console.log(e.name); }
+const h = (t) => t;
+console.log(f());
+//// factory-parameters-narrower-than-jsx-passes/main.tsx
+// TypeScript never checks a JSX element against the signature of jsx(), so a key, a tag and children that its written parameters do not allow reach it. They are tested like the arguments of any call: a key or a tag of another kind throws on entry, children of another kind throw where `props.children` is read.
+/** @jsxImportSource ./narrow */
+import { jsx } from "./narrow/jsx-runtime"
+function Item(props: { label: string }): string { return "item " + props.label }
+try { console.log(<b key={0}>x</b>) } catch (e) { console.log("a number as the key:", (e as Error).constructor.name) }
+try { console.log([5, 6].map((n, i) => <i key={i}>{n}</i>).join(" | ")) } catch (e) { console.log("numbers as the keys of a list:", (e as Error).constructor.name) }
+console.log(<b key="k">x</b>)
+console.log(<b>x</b>)
+try { console.log(<b id={1}>{7}</b>) } catch (e) { console.log("a number as the child:", (e as Error).constructor.name) }
+try { console.log(<b>{1}{2}</b>) } catch (e) { console.log("two children:", (e as Error).constructor.name) }
+try { console.log(<Item key={3} label="l" />) } catch (e) { console.log("a function as the tag:", (e as Error).constructor.name) }
+console.log(jsx("direct", { children: "c" }, "k"))
+//// factory-parameters-narrower-than-jsx-passes/narrow/jsx-dev-runtime.ts
+export const Fragment = "<>"
+export function jsxDEV(tag: string, props: { children?: string }, key?: string): string {
+  const shown = typeof tag === "string" ? tag.toUpperCase() : typeof tag
+  const children = typeof props.children === "string" ? props.children.length : typeof props.children
+  const named = typeof key === "string" ? key.toUpperCase() : typeof key + " " + String(key)
+  return [shown, Object.keys(props).join(), children, named].join(" ")
+}
+export namespace JSX {
+  export type Element = string
+  export interface IntrinsicAttributes { key?: string | number }
+  export interface IntrinsicElements { [name: string]: { [name: string]: unknown } }
+}
+//// factory-parameters-narrower-than-jsx-passes/narrow/jsx-runtime.ts
+import { jsxDEV } from "./jsx-dev-runtime"
+export { jsxDEV as jsx, Fragment } from "./jsx-dev-runtime"
+export type { JSX } from "./jsx-dev-runtime"
+export const jsxs = jsxDEV
+//// factory-reassigned.js
+// Classic JSX runtime: the factory named by the `@jsx` pragma is a `let` that is reassigned between two renders.
+/** @jsxRuntime classic */ /** @jsx h */
+let h = (t) => "first " + t;
+const f = () => <a />;
+console.log(f()); h = (t) => "second " + t; console.log(f());
+//// fragment-factory.js
+// Classic JSX runtime: a fragment with an `@jsxFrag` pragma.
+/** @jsxRuntime classic */ /** @jsx h */ /** @jsxFrag F */
+const F = "fragment"; const h = (t) => t;
+console.log((() => <></>)());
+//// host-element-callback-props/main.tsx
+// What is known about the parameters of a callback prop depends on who calls the callback.
+/** @jsxImportSource ./minicjs */
+declare global {
+  namespace JSX {
+    type Element = any
+    interface ElementChildrenAttribute { children: {} }
+    interface IntrinsicAttributes { key?: unknown }
+    interface IntrinsicClassAttributes<T> { ref?: (instance: T, index: number) => string }
+    interface ElementClass { render(): unknown }
+    interface IntrinsicElements {
+      button: { label?: string; onPress?: (code: number, at: { x: number }) => string; ref?: (element: { tag: string } | null) => string; handlers?: { onHold: (ms: number) => string } }
+      list: { children: (row: { id: number }) => string }
+    }
+  }
+  const Panel: (props: { title: string; onOpen: (id: number) => string; children?: (depth: number) => string }) => JSX.Element
+}
+const g = globalThis as any
+g.Panel = (props: any): any => props.onOpen("open") + (props.children ? " " + props.children("deep") : "")
+
+// The host: it calls every function it finds with what no declaration says.
+function run(node: any): string {
+  if (typeof node === "string") return node
+  const { type, props } = node
+  if (typeof type === "function") return type.prototype && type.prototype.render ? props.ref ? props.ref("instance", "zero") : run(new type(props).render()) : run(type(props))
+  const out: string[] = [type]
+  if (props.onPress) out.push(props.onPress("code", 7))
+  if (props.ref) out.push(props.ref(42))
+  if (props.handlers) out.push(props.handlers.onHold("long"))
+  if (typeof props.children === "function") out.push(props.children("row"))
+  return out.join(" ")
+}
+
+console.log(run(<button onPress={(code, at) => typeof code + typeof at + code + at} />))
+console.log(run(<button label="b" ref={element => typeof element + element} handlers={{ onHold: ms => typeof ms + ms }} />))
+console.log(run(<list>{row => typeof row + row}</list>))
+console.log(run(<Panel title="t" onOpen={id => typeof id + id} />))
+console.log(run(<Panel title="t" onOpen={id => typeof id}>{depth => typeof depth + depth}</Panel>))
+
+// A component of the program.
+function Row(props: { id: number; onPick: (id: number, label: string) => string; children?: (id: number) => string }) {
+  return props.onPick(props.id + 1, "row") + (props.children ? " " + props.children(props.id * 2) : "")
+}
+console.log(run(<Row id={1} onPick={(id, label) => id + 1 + label + label.length} />))
+console.log(run(<Row id={2} onPick={id => "picked " + id}>{id => "child " + (id + 1)}</Row>))
+class Card { constructor(public props: { title: string }) {} render() { return "card " + this.props.title } }
+console.log(run(<Card title="c" />))
+console.log(run(<Card title="c" ref={(instance, index) => typeof instance + typeof index} />))
+
+// The parameters of this callback have no written types: what the declared props of the program's component say about them is a prediction, so a call with other values gets them as they are.
+const element = <Row id={3} onPick={(id, label) => typeof id + typeof label} />
+try { console.log(element.props.onPick("three", 3)) } catch (e) { console.log((e as Error).constructor.name) }
+export {}
+//// host-element-callback-props/minicjs/jsx-dev-runtime.js
+"use strict";
+function make(type, props, key) { return { type, props, key } }
+exports.Fragment = "<>";
+exports.jsx = make;
+exports.jsxs = make;
+exports.jsxDEV = make;
+//// host-element-callback-props/minicjs/jsx-runtime.js
+"use strict";
+function make(type, props, key) { return { type, props, key } }
+exports.Fragment = "<>";
+exports.jsx = make;
+exports.jsxs = make;
+exports.jsxDEV = make;
+//// member-factory.js
+// Classic JSX runtime without a pragma: `React.createElement` is called as a method, with `this` being `React`.
+/** @jsxRuntime classic */
+const React = { createElement(t, p) { return [typeof t, this === React].join(" | "); } };
+console.log(React.createElement(1, null));
+console.log(<a />); console.log((() => <a />)());
+//// package-factory-counts-as-used/main.ts
+// Under noUnusedLocals, an import counts as used when the jsxFactory of the package's own tsconfig.json names it. An import that nothing reads is still reported.
+import { element } from "./widgets/element.tsx";
+console.log(JSON.stringify(element));
+//// package-factory-counts-as-used/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noUnusedLocals": true
+  }
+}
+//// package-factory-counts-as-used/widgets/element.tsx
+import { h, unused } from "./h.ts";
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+export const element = <p title="a">text</p>;
+//// package-factory-counts-as-used/widgets/h.ts
+export function h(tag: any, props: any, ...children: any[]) { return { tag, props, children }; }
+export const unused = 1;
+//// package-factory-counts-as-used/widgets/tsconfig.json
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react",
+    "jsxFactory": "h"
+  }
+}
+//// pragma-after-first-token/after-directive.jsx
+"use strict";
+/** @jsxRuntime classic @jsx h */
+const h = tag => "after-directive:" + tag;
+export const afterDirective = <b />;
+//// pragma-after-first-token/after-statement.js
+const h = tag => "after-statement:" + tag;
+/** @jsxRuntime classic */ /** @jsx h */
+export const afterStatement = <a />;
+//// pragma-after-first-token/at-end.tsx
+const h = (tag: string) => "at-end:" + tag;
+declare global {
+  namespace JSX {
+    type Element = string;
+    interface IntrinsicElements { e: {} }
+  }
+}
+export const atEnd: string = <e />;
+/** @jsxRuntime classic */ /** @jsx h */
+//// pragma-after-first-token/fragment.js
+const h = (tag, props, ...children) => "fragment:" + tag + children.join("");
+const Frag = "F";
+/** @jsxRuntime classic */
+/** @jsx h */
+/** @jsxFrag Frag */
+export const fragment = <><f /></>;
+//// pragma-after-first-token/last-wins.js
+/** @jsxRuntime classic */ /** @jsx first */
+const first = tag => "first:" + tag;
+const second = tag => "second:" + tag;
+/** @jsx second */
+export const lastWins = <d />;
+//// pragma-after-first-token/line-comment.js
+const h = tag => "line-comment:" + tag;
+// @jsxRuntime classic
+// @jsx h
+export const lineComment = <c />;
+//// pragma-after-first-token/main.js
+import { afterStatement } from "./after-statement.js";
+import { afterDirective } from "./after-directive.jsx";
+import { lineComment } from "./line-comment.js";
+import { lastWins } from "./last-wins.js";
+import { atEnd } from "./at-end.tsx";
+import { fragment } from "./fragment.js";
+console.log([afterStatement, afterDirective, lineComment, lastWins, atEnd, fragment].join(" | "));
+//// react-memo/main.ts
+// `useMemo` and `useCallback` only cache: they return what the program passed in.
+import * as React from "react"
+import { breakContract, keepContract, render, useCallback, useMemo as memo } from "react"
+interface Row { id: number; name: string }
+let made = 0
+function List(props: { rows: Row[]; least: number }): string {
+  const shown = memo(() => { made++; return props.rows.filter(row => row.id >= props.least) }, [props.rows, props.least])
+  const total = React.useMemo(() => shown.reduce((sum, row) => sum + row.id, 0), [shown])
+  const first = memo(() => ({ label: shown.length ? shown[0].name : "none", size: shown.length }), [shown])
+  const describe = useCallback((row: Row): string => row.name + "#" + row.id, [])
+  const inner = (): string => shown.map(describe).join() + " " + (total + 1) + " " + first.label + first.size
+  return inner() + " " + typeof describe + " " + made
+}
+const rows: Row[] = [{ id: 1, name: "a" }, { id: 2, name: "b" }, { id: 3, name: "c" }]
+console.log(render(List, { rows, least: 2 }))
+console.log(render(List, { rows, least: 2 }))
+console.log(render(List, { rows, least: 3 }))
+for (const lie of ["text", 7, { id: 1 }] as unknown[]) {
+  breakContract(lie)
+  try { console.log(render(List, { rows, least: 1 })) } catch (e) { console.log((e as Error).constructor.name) }
+}
+keepContract()
+console.log(render(List, { rows, least: 3 }))
+//// react-memo/react-stand-in/index.d.ts
+export function render<P, R>(component: (props: P) => R, props: P): R;
+export function breakContract(value: unknown): void;
+export function keepContract(): void;
+export function useMemo<T>(factory: () => T, deps: readonly unknown[]): T;
+export function useCallback<T extends Function>(callback: T, deps: readonly unknown[]): T;
+export function useState<S>(initial: S | (() => S)): [S, (next: S | ((previous: S) => S)) => void];
+export function useReducer<S, A>(reducer: (state: S, action: A) => S, initial: S): [S, (action: A) => void];
+export function useRef<T>(initial: T): { current: T };
+// As in @types/react: declared callable, although `createContext` returns a plain object that is never called.
+export interface Context<T> { (props: { value: T }): unknown; Provider: unknown; Consumer: unknown; }
+export function createContext<T>(value: T): Context<T>;
+export function useContext<T>(context: Context<T>): T;
+//// react-memo/react-stand-in/index.js
+// A stand-in for React in tests: one component instance, hooks by call order. After `breakContract(value)` the hooks return `value` instead of what the program stored, which React never does.
+let hooks = [], at = 0, broken = false, instead;
+function same(a, b) { return a.length === b.length && a.every((x, i) => Object.is(x, b[i])); }
+export function render(component, props) { at = 0; return component(props); }
+export function breakContract(value) { broken = true; instead = value; }
+export function keepContract() { broken = false; }
+////= useMemo
+export function useCallback(callback, deps) { return useMemo(() => callback, deps); }
+////= useState
+////= useReducer
+////= useRef
+export function createContext(value) { return { value, Provider: "provider", Consumer: "consumer" }; }
+export function useContext(context) { return broken ? instead : context.value; }
+//// react-memo/react-stand-in/package.json
+{ "name": "react", "version": "0.0.0", "type": "module", "main": "index.js", "types": "index.d.ts" }
+//// react-memo/tsconfig.json
+////= lines
+//// react-ref/main.ts
+// `useRef` returns an ordinary object that React creates, used through its declared type.
+import { breakContract, createContext, keepContract, render, useContext, useRef } from "react"
+interface Theme { color: string; depth: number }
+const Themed = createContext<Theme>({ color: "red", depth: 1 })
+function Panel(props: { name: string }): string {
+  const renders = useRef(0)
+  const last = useRef<string | null>(null)
+  const theme = useContext(Themed)
+  renders.current += 1
+  const before = last.current
+  last.current = props.name
+  const inner = (): string => theme.color + (theme.depth + renders.current)
+  return inner() + " " + before + " " + last.current
+}
+console.log(render(Panel, { name: "a" }))
+console.log(render(Panel, { name: "b" }))
+breakContract("text")
+try { console.log(render(Panel, { name: "c" })) } catch (e) { console.log((e as Error).constructor.name) }
+keepContract()
+console.log(render(Panel, { name: "d" }))
+//// react-ref/react-stand-in/index.d.ts
+export function render<P, R>(component: (props: P) => R, props: P): R;
+export function breakContract(value: unknown): void;
+export function keepContract(): void;
+export function useMemo<T>(factory: () => T, deps: readonly unknown[]): T;
+export function useCallback<T extends Function>(callback: T, deps: readonly unknown[]): T;
+export function useState<S>(initial: S | (() => S)): [S, (next: S | ((previous: S) => S)) => void];
+export function useReducer<S, A>(reducer: (state: S, action: A) => S, initial: S): [S, (action: A) => void];
+export function useRef<T>(initial: T): { current: T };
+// As in @types/react: declared callable, although `createContext` returns a plain object that is never called.
+export interface Context<T> { (props: { value: T }): unknown; Provider: unknown; Consumer: unknown; }
+export function createContext<T>(value: T): Context<T>;
+export function useContext<T>(context: Context<T>): T;
+//// react-ref/react-stand-in/index.js
+// A stand-in for React in tests: one component instance, hooks by call order. After `breakContract(value)` the hooks return `value` instead of what the program stored, which React never does.
+let hooks = [], at = 0, broken = false, instead;
+function same(a, b) { return a.length === b.length && a.every((x, i) => Object.is(x, b[i])); }
+export function render(component, props) { at = 0; return component(props); }
+export function breakContract(value) { broken = true; instead = value; }
+export function keepContract() { broken = false; }
+////= useMemo
+export function useCallback(callback, deps) { return useMemo(() => callback, deps); }
+////= useState
+////= useReducer
+////= useRef
+export function createContext(value) { return { value, Provider: "provider", Consumer: "consumer" }; }
+export function useContext(context) { return broken ? instead : context.value; }
+//// react-ref/react-stand-in/package.json
+{ "name": "react", "version": "0.0.0", "type": "module", "main": "index.js", "types": "index.d.ts" }
+//// react-ref/tsconfig.json
+////= lines
+//// react-state/main.ts
+// React's hooks return what the program stored, like `Map.get`.
+import * as React from "react"
+import { breakContract, keepContract, render, useReducer, useState as state } from "react"
+interface Row { id: number; name: string }
+type Action = { kind: "add"; row: Row } | { kind: "clear" }
+function Counter(props: { step: number }): string {
+  const [count, setCount] = state(0)
+  const [label, setLabel] = React.useState<string | null>(null)
+  const [first] = state(() => ({ made: "once", size: props.step }))
+  const [rows, dispatch] = useReducer((rows: Row[], action: Action): Row[] => action.kind === "add" ? [...rows, action.row] : [], [])
+  const bump = (): void => {
+    setCount(previous => previous + props.step)
+    setLabel("n" + count)
+    dispatch({ kind: "add", row: { id: count * 2, name: "r" + count } })
+  }
+  bump()
+  return count + 1 + " " + label + " " + first.made + first.size + " " + rows.map(row => row.name + (row.id + 1)).join()
+}
+console.log(render(Counter, { step: 2 }))
+console.log(render(Counter, { step: 3 }))
+console.log(render(Counter, { step: 1 }))
+for (const lie of ["text", { id: 1 }] as unknown[]) {
+  breakContract(lie)
+  try { console.log(render(Counter, { step: 1 })) } catch (e) { console.log((e as Error).constructor.name) }
+}
+// The type argument of `state(0)` is inferred, so nothing is tested: the value goes on as it is.
+function Only(_: {}): string { const [count] = state(0); return "only " + (count + 1) }
+try { console.log(render(Only, {})) } catch (e) { console.log((e as Error).constructor.name) }
+keepContract()
+console.log(render(Counter, { step: 1 }))
+//// react-state/react-stand-in/index.d.ts
+export function render<P, R>(component: (props: P) => R, props: P): R;
+export function breakContract(value: unknown): void;
+export function keepContract(): void;
+export function useMemo<T>(factory: () => T, deps: readonly unknown[]): T;
+export function useCallback<T extends Function>(callback: T, deps: readonly unknown[]): T;
+export function useState<S>(initial: S | (() => S)): [S, (next: S | ((previous: S) => S)) => void];
+export function useReducer<S, A>(reducer: (state: S, action: A) => S, initial: S): [S, (action: A) => void];
+export function useRef<T>(initial: T): { current: T };
+// As in @types/react: declared callable, although `createContext` returns a plain object that is never called.
+export interface Context<T> { (props: { value: T }): unknown; Provider: unknown; Consumer: unknown; }
+export function createContext<T>(value: T): Context<T>;
+export function useContext<T>(context: Context<T>): T;
+//// react-state/react-stand-in/index.js
+// A stand-in for React in tests: one component instance, hooks by call order. After `breakContract(value)` the hooks return `value` instead of what the program stored, which React never does.
+let hooks = [], at = 0, broken = false, instead;
+function same(a, b) { return a.length === b.length && a.every((x, i) => Object.is(x, b[i])); }
+export function render(component, props) { at = 0; return component(props); }
+export function breakContract(value) { broken = true; instead = value; }
+export function keepContract() { broken = false; }
+////= useMemo
+export function useCallback(callback, deps) { return useMemo(() => callback, deps); }
+////= useState
+////= useReducer
+////= useRef
+export function createContext(value) { return { value, Provider: "provider", Consumer: "consumer" }; }
+export function useContext(context) { return broken ? instead : context.value; }
+//// react-state/react-stand-in/package.json
+{ "name": "react", "version": "0.0.0", "type": "module", "main": "index.js", "types": "index.d.ts" }
+//// react-state/tsconfig.json
+////= lines
+//// rules-about-what-tsc-writes-do-not-stop-a-build/lay.ts
+function api(): number { return 1; }
+export = api;
+//// rules-about-what-tsc-writes-do-not-stop-a-build/main.ts
+// The project sets no "jsx", "module": "esnext", an old target and "importHelpers" without tslib. tsc refuses the import of a .tsx file (TS6142), each tag (TS17004), `import = require` (TS1202), `export =` (TS1203) and the rest element (TS2354): rules about what tsc would write. Plain Bun runs the program, and so does a build.
+import api = require("./lay");
+import { view } from "./view";
+function others(o: { a: number; b: number; c: number }) { const { a, ...rest } = o; return rest; }
+console.log(api(), view, others({ a: 1, b: 2, c: 3 }));
+//// rules-about-what-tsc-writes-do-not-stop-a-build/tsconfig.json
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "es2017",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "importHelpers": true,
+    "typeRoots": ["../../../../../packages"],
+    "types": ["bun-types"],
+    "noEmit": true
+  }
+}
+//// rules-about-what-tsc-writes-do-not-stop-a-build/view.tsx
+/** @jsxRuntime classic */
+/** @jsx h */
+declare global { namespace JSX { interface IntrinsicElements { box: { size: number } } interface Element { tag: string; props: object } } }
+function h(tag: string, props: object | null): JSX.Element { return { tag, props: props ?? {} }; }
+export const view = <box size={3} />;
+//// typescript-only-jsx-errors-after-ts-ignore.tsx
+// Plain Bun runs a repeated attribute, a comma expression in braces and a capitalized namespace name. Only TypeScript forbids them, so `@ts-ignore` suppresses each error.
+/* @jsx h */
+/* @jsxRuntime classic */
+function h(tag: any, props: any, ...children: any[]) { return { tag, props, children } }
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+const shown = (element: any): void => console.log(JSON.stringify(element))
+// @ts-ignore
+shown(<p title="first" title="second" />)
+// @ts-ignore
+shown(<p>{1, 2}</p>)
+// @ts-ignore
+shown(<Svg:path />)
+export {}

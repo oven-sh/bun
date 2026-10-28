@@ -44,6 +44,8 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
+    /// Where the process started, if a relative `--cwd` changed its directory. Parsing the same arguments again gives the same result only from here.
+    pub original_cwd: Option<Box<[u8]>>,
 }
 
 impl Default for ContextData {
@@ -84,6 +86,7 @@ impl Default for ContextData {
             no_exit_on_error: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
+            original_cwd: None,
         }
     }
 }
@@ -193,10 +196,11 @@ pub struct BundlerOptions {
     pub entry_naming: Box<[u8]>,
     pub chunk_naming: Box<[u8]>,
     pub asset_naming: Box<[u8]>,
-    pub server_components: bool,
     pub react_fast_refresh: bool,
     /// `--check`: type check the entry points and what they import, and do not bundle if there are errors.
     pub check: bool,
+    pub dts: bool,
+    pub library: bool,
     pub react_compiler: bool,
     pub code_splitting: bool,
     pub split_require: bool,
@@ -242,6 +246,10 @@ pub struct BundlerOptions {
     /// `--compile-jit-policy`: JSC tier-up threshold scale baked into the executable (1 = normal).
     pub compile_jit_policy: f32,
     pub compile_assets: Vec<Box<[u8]>>,
+    /// `bun compile`, `--compile --aot`. `None`: the program is bundled, not compiled ahead of time.
+    pub aot: Option<Box<crate::aot_options::AotOptions>>,
+    /// `--trim` of a build that is not compiled ahead of time. With `aot` the request is `AotOptions::trim`, and this one is the default.
+    pub trim: crate::trim::TrimRequest,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
 }
@@ -260,9 +268,10 @@ impl Default for BundlerOptions {
             entry_naming: Box::from(&b"[dir]/[name].[ext]"[..]),
             chunk_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
             asset_naming: Box::from(&b"./[name]-[hash].[ext]"[..]),
-            server_components: false,
             react_fast_refresh: false,
             check: false,
+            dts: false,
+            library: false,
             react_compiler: false,
             code_splitting: false,
             split_require: true,
@@ -302,6 +311,8 @@ impl Default for BundlerOptions {
             compile_executable_path: None,
             compile_jit_policy: 1.0,
             compile_assets: Vec::new(),
+            aot: None,
+            trim: Default::default(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,
         }
@@ -358,6 +369,13 @@ pub struct DebugOptions {
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
     /// reload (node delivers this signal to its watched child; default SIGTERM).
     pub watch_kill_signal: bun_core::SignalCode,
+    /// `--watch-kill-signal` and `--no-clear-screen` as given. `cli::apply_watch_mode_flags`
+    /// applies them once the watch mode is final, which `bun bake` decides after the arguments
+    /// of `bun` are parsed.
+    pub watch_kill_signal_arg: Option<Box<[u8]>>,
+    pub no_clear_screen: bool,
+    /// `--watch` was given. `hot_reload` alone does not tell: `--hot` with `--check` is `Watch` too.
+    pub watch_flag: bool,
     pub global_cache: GlobalCache,
     pub offline_mode_setting: Option<OfflineMode>,
     pub run_in_bun: bool,
@@ -382,6 +400,9 @@ impl Default for DebugOptions {
             silent: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,
+            watch_kill_signal_arg: None,
+            no_clear_screen: false,
+            watch_flag: false,
             global_cache: GlobalCache::auto,
             offline_mode_setting: None,
             run_in_bun: false,
@@ -592,6 +613,8 @@ pub struct Eval {
     /// holds the user's actual `-e` bytes so `process._eval` reports them
     /// (or `undefined` when empty). `None` = not `--interactive`.
     pub interactive_script: Option<Box<[u8]>>,
+    /// `bun lint` or `bun fmt` started this process to read a configuration that its own tool reads in Node.js.
+    pub reads_configuration: bool,
 }
 
 pub struct CpuProf {

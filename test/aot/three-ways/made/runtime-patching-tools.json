@@ -1,0 +1,5 @@
+{
+ "global-math": "alone: THROWS TypeError: Cannot assign to Math because built-in objects are read-only in a compiled execu\n2,undefined",
+ "process-members": "as the bundle",
+ "reflect-and-object-statics": "alone: THROWS TypeError: Cannot assign to Object.keys because built-in objects are read-only in a compile THROWS TypeError: Cannot assign to Reflect.ownKeys because bu\na|b|true|true"
+}

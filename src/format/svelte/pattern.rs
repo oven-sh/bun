@@ -1,10 +1,10 @@
-//! The plugin's `_expandNode`: how it prints the patterns of `{#each}`, `{:then}` and `{:catch}`.
+//! The plugin's `_expandNode`, which prints the patterns of `{#each}`, `{:then}` and `{:catch}`.
 
 use crate::html::js::Parse;
 use crate::stack::Stack;
 use bun_lint::ast::{Expr, ExprKind, File, Key, KeyKind, Pat, PatKind, PropKind, StmtKind};
 
-/// What it throws for: `unknown node type`.
+/// A node that makes the plugin throw `unknown node type`.
 struct Unknown;
 
 struct Expander<'f, 's> {
@@ -18,7 +18,7 @@ impl<'f> Expander<'f, '_> {
         self.out.extend_from_slice(text);
     }
 
-    /// Calls `write` for each of `items`, with commas in between.
+    /// Calls `write` for each item, with commas in between.
     fn join<T>(
         &mut self,
         items: impl Iterator<Item = T>,
@@ -33,22 +33,22 @@ impl<'f> Expander<'f, '_> {
         Ok(())
     }
 
-    /// Takes out the blank that what has been written from `start` on begins with: `.slice(1)`.
+    /// Removes the leading space of what was written since `start`: `.slice(1)`.
     fn remove_first_from(&mut self, start: usize) {
         if start < self.out.len() {
             self.out.remove(start);
         }
     }
 
-    /// The key of a property, and the `:`. Before a pattern the plugin prints `key.name`, which a literal does not have:
-    /// `undefined:`.
+    /// Writes a property's key and the `:`. Before a pattern the plugin prints `key.name`, which a literal key
+    /// doesn't have, so it prints `undefined:`.
     fn key(&mut self, key: Key<'f>) {
-        let written = self.file.slice(key.inner_span(self.file));
+        let key_text = self.file.slice(key.inner_span(self.file));
         match key.is_computed() {
-            true => [&b" ["[..], written, b"]:"]
+            true => [&b" ["[..], key_text, b"]:"]
                 .iter()
                 .for_each(|it| self.push(it)),
-            false => [&b" "[..], written, b":"]
+            false => [&b" "[..], key_text, b":"]
                 .iter()
                 .for_each(|it| self.push(it)),
         }
@@ -107,8 +107,8 @@ impl<'f> Expander<'f, '_> {
                         it.remove_first_from(start);
                         return Ok(());
                     };
-                    // The plugin leaves the key out wherever there is a default, and where a computed key is the name:
-                    // `b: c = 1` is `c = 1`, `[a]: a` is `a`.
+                    // The plugin also drops the key wherever there's a default, and where a computed key equals the
+                    // name: `b: c = 1` becomes `c = 1` and `[a]: a` becomes `a`.
                     let is_shorthand = matches!(
                         (key.kind(), value.kind()),
                         (KeyKind::Ident(key), PatKind::Ident(name)) if key.bytes() == name.bytes()
@@ -124,8 +124,8 @@ impl<'f> Expander<'f, '_> {
         }
     }
 
-    /// A default value. The plugin knows names, literals, arrays and objects, and throws for `a = -1`. Here that is as it is
-    /// written.
+    /// Writes a default value. The plugin only handles identifiers, literals, arrays and objects, and throws for
+    /// `a = -1`. This port prints anything else verbatim.
     fn expression(&mut self, e: Expr<'f>) {
         let start = self.out.len();
         if self.known_expression(e).is_err() {
@@ -190,16 +190,33 @@ impl<'f> Expander<'f, '_> {
     }
 }
 
-const BEFORE_PATTERN: &[u8] = b"function _(";
+pub(crate) const BEFORE_PATTERN: &[u8] = b"function _(";
 
-fn path_of(is_typescript: bool) -> &'static [u8] {
+pub(crate) fn path_of(is_typescript: bool) -> &'static [u8] {
     match is_typescript {
         true => b"dummy.ts",
         false => b"dummy.js",
     }
 }
 
-/// Where the keys are in `pattern` that are the names behind them, which `expand` leaves out: the first `a` of `{ a: a }`.
+/// `key`'s span relative to the end of [`BEFORE_PATTERN`], if the key is `name` and ends before `value_start`.
+#[optimize(size)]
+fn repeated_key<'f>(
+    file: &'f File<'f>,
+    key: Key<'f>,
+    name: &[u8],
+    value_start: u32,
+) -> Option<(usize, usize)> {
+    let (span, before) = (key.inner_span(file), BEFORE_PATTERN.len());
+    (matches!(key.kind(), KeyKind::Ident(it) if it.bytes() == name)
+        && !key.is_computed()
+        && span.end <= value_start)
+        .then(|| (span.start as usize - before, span.end as usize - before))
+}
+
+/// Spans of the keys in `pattern` that equal the identifier after them, like the first `a` in `{ a: a }`. `expand`
+/// drops such a key from a pattern and adds one to an object in a default: `{ b = { a } }` becomes
+/// `{ b = { a: a } }`.
 #[optimize(size)]
 pub(crate) fn repeated_keys(
     parse: Parse<'_>,
@@ -213,33 +230,41 @@ pub(crate) fn repeated_keys(
             return;
         };
         let mut patterns: Vec<Pat<'_>> = function.params().iter().map(|it| it.pat()).collect();
+        let mut defaults: Vec<Expr<'_>> = Vec::new();
         while let Some(pattern) = patterns.pop() {
             match pattern.kind() {
                 PatKind::Array(elements) => {
-                    patterns.extend(elements.iter().filter_map(|it| it.pat()))
+                    patterns.extend(elements.iter().filter_map(|it| it.pat()));
+                    defaults.extend(elements.iter().filter_map(|it| it.default()));
                 }
                 PatKind::Object(properties) => {
                     for property in properties.iter() {
                         let value = property.value();
                         patterns.push(value);
-                        if let Some(key) = property.key()
-                            && let (KeyKind::Ident(key_name), PatKind::Ident(name)) =
-                                (key.kind(), value.kind())
-                            && key_name.bytes() == name.bytes()
-                            && !key.is_computed()
-                        {
-                            let span = key.inner_span(file);
-                            if span.end <= value.span().start {
-                                let before = BEFORE_PATTERN.len();
-                                keys.push((
-                                    span.start as usize - before,
-                                    span.end as usize - before,
-                                ));
-                            }
+                        defaults.extend(property.default());
+                        if let (Some(key), PatKind::Ident(name)) = (property.key(), value.kind()) {
+                            keys.extend(repeated_key(file, key, name.bytes(), value.span().start));
                         }
                     }
                 }
                 PatKind::Ident(_) | PatKind::Missing => {}
+            }
+        }
+        while let Some(default) = defaults.pop() {
+            match default.kind() {
+                ExprKind::Array(elements) => defaults.extend(elements.iter()),
+                ExprKind::Object(properties) => {
+                    for property in properties.iter() {
+                        let (Some(key), Some(value)) = (property.key(), property.value()) else {
+                            continue;
+                        };
+                        defaults.push(value);
+                        if let ExprKind::Ident(name) = value.kind() {
+                            keys.extend(repeated_key(file, key, name.bytes(), value.span().start));
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     });
@@ -253,10 +278,10 @@ pub(crate) fn expand(
     is_typescript: bool,
     stack: &Stack,
 ) -> Vec<u8> {
-    let as_written = || [b" ", pattern].concat();
-    // Most are a name.
+    let verbatim = || [b" ", pattern].concat();
+    // Fast path: most patterns are a single identifier.
     if bun_lint::utils::text::is_identifier_name(pattern) {
-        return as_written();
+        return verbatim();
     }
     let program = [BEFORE_PATTERN, pattern, b"\n) {}"].concat();
     let mut expanded = None;
@@ -270,7 +295,7 @@ pub(crate) fn expand(
         let Some(parameter) = function.params().iter().next() else {
             return;
         };
-        // The plugin loses them.
+        // The plugin drops comments.
         if file.comments().into_iter().next().is_some() {
             return;
         }
@@ -283,5 +308,5 @@ pub(crate) fn expand(
             expanded = Some(expander.out);
         }
     });
-    expanded.unwrap_or_else(as_written)
+    expanded.unwrap_or_else(verbatim)
 }

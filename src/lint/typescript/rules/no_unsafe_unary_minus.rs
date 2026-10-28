@@ -17,9 +17,16 @@ impl NoUnsafeUnaryMinus {
         };
         let arg_type = get_constrained_type_at_location(operand);
         let allowed = TypeFlags::ANY | TypeFlags::NEVER | TypeFlags::BIG_INT_LIKE | TypeFlags::NUMBER_LIKE;
-        if tsutils::union_constituents(arg_type).iter().any(|ty| !ty.has_flags(allowed)) {
-            cx.report(node, UNARY_MINUS).data("type", arg_type.to_text());
-        }
+        let Some(part) = tsutils::union_constituents(arg_type).iter().find(|ty| !ty.has_flags(allowed)) else {
+            return;
+        };
+        // tsgolint's message has the first union part that isn't a number or bigint, typescript-eslint's has the whole
+        // type.
+        let reported = match cx.language().is_oxlint {
+            true => part,
+            false => arg_type,
+        };
+        cx.report(node, UNARY_MINUS).data("type", reported.to_text());
     }
 }
 

@@ -181,6 +181,8 @@ function serializeConfigObject(given, index) {
     // The others are not loaded. Where they are tells one from another.
     const others = Object.entries(plugins).filter(it => !withRules.some(other => other[0] === it[0]));
     out.$otherPlugins = Object.fromEntries(others.map(([prefix, plugin]) => [prefix, locateDeep(plugin) ?? null]));
+    const modules = Object.entries(plugins).map(([prefix, plugin]) => [prefix, otherModulesOf(plugin)]);
+    if (modules.some(it => it[1] !== undefined)) out.$pluginModules = Object.fromEntries(modules);
     // `index`: that of the object in what the file exports.
     out.$jsPlugins = Object.fromEntries(
       withRules.map(([prefix, plugin]) => [

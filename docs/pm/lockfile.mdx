@@ -54,6 +54,22 @@ Bun v1.2 changed the default lockfile format to the text-based `bun.lock`. To mi
 
 For more on the format, see [the blog post](https://bun.com/blog/bun-lock-text-lockfile).
 
+#### Lockfile version
+
+`bun.lock` records its own format version in `lockfileVersion`. A newer Bun reads every older version. `lockfileVersion` 2 and 3 need Bun v1.4.0 or later to read. An older Bun rejects the file: `bun install --frozen-lockfile` fails, and a plain `bun install` resolves again and writes the lockfile back at its own version.
+
+`bun install` keeps a `lockfileVersion` of 1 or 2 when it saves an existing `bun.lock`, so a lockfile a team shares does not change its version because one member upgraded Bun. It floors version 0 to 1. It recomputes the version when the lockfile has scoped override rules or was loaded at version 3. A new `bun.lock` gets the version a fresh write produces: 2, or 3 with scoped override rules.
+
+To move an existing `bun.lock` to that version without installing or resolving anything, run:
+
+```bash terminal icon="terminal"
+bun pm migrate
+```
+
+Run it once every Bun that reads the lockfile is at least v1.4.0.
+
+Version 2 and later reject an npm package resolved to a tarball URL outside the default npm registry with no integrity hash, and a git dependency with an unsafe `bun-tag`. When the lockfile holds such an entry, `bun pm migrate` names it and leaves the file as it is.
+
 #### Automatic lockfile migration
 
 When you run `bun install` in a project without a `bun.lock`, Bun automatically migrates existing lockfiles:

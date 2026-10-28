@@ -723,6 +723,24 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     expect(exitCode).toBe(0);
   });
 
+  test("bun pm migrate names the tarball that holds bun.lock at version 1", async () => {
+    await using server = await startTarballServer();
+    const url = masked(server);
+    using dir = tempDir("redacted-resolution-pm-migrate", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { direct: "1.0.0" } }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "app", dependencies: { direct: "1.0.0" } } },
+        packages: { direct: ["direct@1.0.0", spec(server), {}, ""] },
+      }),
+    });
+
+    const { out, err, exitCode } = await run(String(dir), server, ["pm", "migrate"]);
+    expect(err).toContain(`"direct@1.0.0" resolves to ${url}\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
+
   test("bun pm ls and bun why read the resolution back out of bun.lock", async () => {
     await using server = await startTarballServer();
     const url = masked(server);

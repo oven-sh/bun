@@ -8,10 +8,13 @@ use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, reachable, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
-    CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
-    package_json_write_back, package_manager_options::LogLevel, setup_global_dir,
+    CommandLineArguments, Options as PackageManagerOptions, Subcommand, fetch_cache_directory_path,
+    get_cache_directory, package_json_write_back, package_manager_options::LogLevel,
+    setup_global_dir,
 };
-use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
+use bun_install::{
+    DependencyID, PackageID, PackageManager, ResolutionTag, TextLockfile, migration,
+};
 use bun_paths::{self as Path, AutoAbsPath};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
@@ -160,6 +163,119 @@ impl PackageManagerCommand {
             }
             LoadResult::Ok(_) => {}
         }
+    }
+
+    /// `bun pm migrate` with an existing text `bun.lock`: write it again at the
+    /// version a fresh lockfile gets, with every row unchanged.
+    fn migrate_text_lockfile_version(pm: &mut PackageManager, log_level: LogLevel) -> ! {
+        let dry_run = pm.options.dry_run;
+        let not_silent = log_level != LogLevel::Silent;
+        let pm_raw: *mut PackageManager = pm;
+        // `pm.options` outlives the load, which borrows `pm` for the lockfile only.
+        let options: *const PackageManagerOptions = &raw const pm.options;
+        let log: *mut bun_ast::Log = pm.log;
+        let mut load_lockfile =
+            pm.load_lockfile_from_cwd_with_mode::<false>(TextLockfile::ReadMode::Rewrite);
+        if matches!(load_lockfile, LoadResult::Err(_)) && not_silent {
+            Output::flush();
+            // SAFETY: `pm.log` is the live log of this command. Nothing else holds it.
+            let _ = unsafe { (*log).print(std::ptr::from_mut(Output::error_writer())) };
+        }
+        Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "migrate");
+        let lockfile: &mut Lockfile = load_lockfile.ok_mut().lockfile;
+        let from = lockfile.text_lockfile_version();
+        let on_resave = lockfile.text_lockfile_version_to_write();
+        // After the error that names the entry: what `bun install` does with the file.
+        let held = || -> ! {
+            if on_resave != from {
+                bun_core::note!(
+                    "the next 'bun install' writes bun.lock at lockfileVersion {} (it is now {})",
+                    on_resave as u32,
+                    from as u32
+                );
+            }
+            Output::flush();
+            Global::exit(1);
+        };
+        let to = match lockfile.restamp_text_lockfile_version() {
+            Ok((_, to)) => to,
+            // `bun install` keeps a loaded 1 or 2 without scoped override rules. Only a new
+            // lockfile for this project would be held at 1.
+            // SAFETY: `options` is a field of `pm` outside the lockfile the load borrows.
+            Err(blocker)
+                if on_resave == from
+                    && from != TextLockfile::Version::V1
+                    && !blocker.rejected_by_install(unsafe { &*options }) =>
+            {
+                if not_silent {
+                    bun_core::prettyln!("bun.lock is already at lockfileVersion {}", from as u32);
+                    bun_core::warn!(
+                        "a new bun.lock for this project would be at lockfileVersion 1: {}",
+                        blocker
+                    );
+                }
+                Output::flush();
+                Global::exit(0);
+            }
+            Err(blocker) => {
+                if from.at_least(TextLockfile::Version::V2) && on_resave == from {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: bun.lock is at lockfileVersion {}, but version 2 rejects an entry: {}",
+                        from as u32,
+                        blocker
+                    );
+                } else {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: bun.lock is held at lockfileVersion 1: {}",
+                        blocker
+                    );
+                }
+                match blocker.kind {
+                    TextLockfile::VersionBlockerKind::MissingIntegrity { .. } => bun_core::note!(
+                        "version 2 needs an integrity hash for a tarball that is not under {}, whatever registry the reader has configured. Set the last string of the package's array in bun.lock to the tarball's hash, or delete the entry and run 'bun install' to resolve it again",
+                        Npm::Registry::DEFAULT_URL
+                    ),
+                    TextLockfile::VersionBlockerKind::UnsafeGitTag { .. } => bun_core::note!(
+                        "delete the entry from bun.lock and run 'bun install' to resolve it again"
+                    ),
+                }
+                held();
+            }
+        };
+        if from == to {
+            if not_silent {
+                bun_core::prettyln!("bun.lock is already at lockfileVersion {}", to as u32);
+            }
+            Output::flush();
+            Global::exit(0);
+        }
+        if dry_run {
+            if not_silent {
+                bun_core::prettyln!(
+                    "<r><d>dry run:<r> would write bun.lock at lockfileVersion {} (now {})",
+                    to as u32,
+                    from as u32,
+                );
+            }
+            Output::flush();
+            Global::exit(0);
+        }
+        let lf: *mut Lockfile = &raw mut *lockfile;
+        // SAFETY: `load_lockfile` is `Ok` (errors exited above). `save_to_disk` reads only its
+        // scalar fields, never `ok.lockfile`, and `options` is a field of `pm` outside the
+        // lockfile, so `*lf` is the sole live view of the lockfile.
+        unsafe {
+            (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
+        }
+        if not_silent {
+            bun_core::pretty_errorln!(
+                " <d>migrated bun.lock from lockfileVersion <r><green>{}<r><d> to <r><green>{}<r>",
+                from as u32,
+                to as u32,
+            );
+        }
+        Output::flush();
+        Global::exit(0);
     }
 
     #[cold]
@@ -769,18 +885,21 @@ impl PackageManagerCommand {
             }
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"migrate") {
-            if !pm.options.enable.force_save_lockfile() {
-                for name in [bun_core::zstr!("bun.lock"), bun_core::zstr!("bun.lockb")] {
-                    if bun_sys::exists_z(name) {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error<r>: {} already exists\nrun with --force to overwrite",
-                            bstr::BStr::new(name.as_bytes()),
-                        );
-                        Global::exit(1);
-                    }
+            let log_level = pm.options.log_level;
+            // `--force` itself, not `Enable::FORCE_SAVE_LOCKFILE`: bunfig `install.lockfile.save`
+            // sets that bit too and must not pick the path.
+            if !pm.options.force {
+                if bun_sys::exists_z(bun_core::zstr!("bun.lock")) {
+                    Self::migrate_text_lockfile_version(pm, log_level);
+                }
+                if bun_sys::exists_z(bun_core::zstr!("bun.lockb")) {
+                    bun_core::pretty_errorln!("<r><red>error<r>: bun.lockb already exists");
+                    bun_core::note!(
+                        "run 'bun install --save-text-lockfile --frozen-lockfile --lockfile-only' to convert it to bun.lock, or pass --force to overwrite it from another package manager's lockfile"
+                    );
+                    Global::exit(1);
                 }
             }
-            let log_level = pm.options.log_level;
             let pm_raw: *mut PackageManager = pm;
             // SAFETY: the `Box<Lockfile>` pointee is a separate allocation, and
             // `detect_and_load_other_lockfile` never reaches `manager.lockfile`.

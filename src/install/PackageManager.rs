@@ -179,7 +179,7 @@ impl PackageManagerCommand {
   <d>└<r> <cyan>--dry-run<r>                 print what would be removed without deleting anything
   <b><green>bun pm<r> <blue>cache pack<r><d>|<r><blue>unpack<r> <d>file<r>  save / restore the cache entries this lockfile needs as one file (for CI caches)
   <b><green>bun pm<r> <blue>fetch<r>                download all dependencies into the cache without installing
-  <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything
+  <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile, or bump the lockfileVersion of an existing bun.lock, without installing anything
   <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`
   <d>├<r>  <cyan>--all<r>                    trust all untrusted dependencies
@@ -1038,7 +1038,7 @@ impl PackageManager {
         self.root_package_id.id = None;
     }
 
-    /// Reshaped for borrowck — `Lockfile::load_from_cwd` takes the manager as
+    /// Reshaped for borrowck — `Lockfile::load_from_dir_with_mode` takes the manager as
     /// a separate argument while the receiver borrows `self.lockfile`, which
     /// is a self-referential split borrow. Encapsulated here so callers stay
     /// in safe code: the returned `LoadResult` mutably borrows `self` for its
@@ -1046,18 +1046,32 @@ impl PackageManager {
     pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(
         &mut self,
     ) -> lockfile::LoadResult<'_> {
+        self.load_lockfile_from_cwd_with_mode::<ATTEMPT_OTHER>(
+            crate::TextLockfile::ReadMode::Install,
+        )
+    }
+
+    pub fn load_lockfile_from_cwd_with_mode<const ATTEMPT_OTHER: bool>(
+        &mut self,
+        mode: crate::TextLockfile::ReadMode,
+    ) -> lockfile::LoadResult<'_> {
         self.clear_cached_items_depending_on_lockfile_buffer();
         let pm: *mut PackageManager = self;
         // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
         // separate heap allocation, so `&mut Lockfile` and `&mut PackageManager`
-        // never alias overlapping bytes. `Lockfile::load_from_cwd` reads
+        // never alias overlapping bytes. `Lockfile::load_from_dir_with_mode` reads
         // `manager.options`/`manager.log` only and never re-projects
         // `manager.lockfile`. Both raw pointers below are derived from `self`,
         // so the caller's borrow stays on the Stacked-Borrows stack.
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
             let log: *mut bun_ast::Log = (*pm).log;
-            (*lf).load_from_cwd::<ATTEMPT_OTHER>(Some(&mut *pm), &mut *log)
+            (*lf).load_from_dir_with_mode::<ATTEMPT_OTHER>(
+                Fd::cwd(),
+                Some(&mut *pm),
+                &mut *log,
+                mode,
+            )
         }
     }
 

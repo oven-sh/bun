@@ -17,6 +17,7 @@ use crate::config_version::ConfigVersion;
 use crate::extract_tarball as ExtractTarball;
 use crate::integrity::Integrity;
 use crate::npm::Negatable;
+use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::repository::RepositoryExt as _;
 use crate::{
     DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
@@ -126,8 +127,56 @@ impl Version {
     /// `true` when this lockfile version is at least `other`. Used to gate
     /// strict parse-time checks introduced in a later version.
     #[inline]
-    pub(crate) const fn at_least(self, other: Version) -> bool {
+    pub const fn at_least(self, other: Version) -> bool {
         (self as u32) >= (other as u32)
+    }
+}
+
+/// The first written package that holds a lockfile at v1. It owns its text
+/// so the caller can change the lockfile after it reads the error.
+pub struct VersionBlocker {
+    name: Box<[u8]>,
+    pub kind: VersionBlockerKind,
+}
+
+pub enum VersionBlockerKind {
+    /// An npm tarball outside the default registry with no supported integrity hash.
+    MissingIntegrity { version: Box<[u8]>, url: Box<[u8]> },
+    /// A git `.bun-tag` that is not a safe path component.
+    UnsafeGitTag { tag: Box<[u8]> },
+}
+
+impl VersionBlocker {
+    /// Whether an install, which reads with the reader's registries, rejects the entry at
+    /// version 2.
+    pub fn rejected_by_install(&self, options: &PackageManagerOptions) -> bool {
+        match &self.kind {
+            VersionBlockerKind::UnsafeGitTag { .. } => true,
+            VersionBlockerKind::MissingIntegrity { url, .. } => {
+                !url_is_under_registry(url, options.scope_for_package_name(&self.name).url.href())
+            }
+        }
+    }
+}
+
+impl core::fmt::Display for VersionBlocker {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let name = bun_core::fmt::for_terminal(bstr::BStr::new(&self.name));
+        match &self.kind {
+            VersionBlockerKind::MissingIntegrity { version, url } => write!(
+                f,
+                "Missing integrity hash for npm package resolved to a tarball URL outside the default registry: \"{}@{}\" resolves to {}",
+                name,
+                bstr::BStr::new(version),
+                bun_core::fmt::for_terminal(bstr::BStr::new(url)),
+            ),
+            VersionBlockerKind::UnsafeGitTag { tag } => write!(
+                f,
+                "Invalid git dependency tag: \"{}\" has \"bun-tag\": \"{}\"",
+                name,
+                bun_core::fmt::for_terminal(bstr::BStr::new(tag)),
+            ),
+        }
     }
 }
 
@@ -192,7 +241,7 @@ impl Stringifier {
     /// are actually serialized are considered, not every entry in the in-memory
     /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
     /// there that never reach the written `packages` object).
-    fn version_to_write(lockfile: &BinaryLockfile) -> Version {
+    pub(crate) fn version_to_write(lockfile: &BinaryLockfile) -> Version {
         let loaded = lockfile.text_lockfile_version;
         let has_scoped = lockfile.overrides.has_scoped();
         if !has_scoped && !loaded.at_least(Version::V3) {
@@ -203,12 +252,20 @@ impl Stringifier {
             };
         }
 
+        Self::fresh_version(lockfile).unwrap_or(Version::V1)
+    }
+
+    /// The version a lockfile with no prior version is stamped (v2, or v3 with
+    /// scoped override rules). `Err` names the first written package that holds it at v1.
+    pub(crate) fn fresh_version(lockfile: &BinaryLockfile) -> Result<Version, VersionBlocker> {
+        let has_scoped = lockfile.overrides.has_scoped();
         let buf = lockfile.buffers.string_bytes.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
         let pkgs = lockfile.packages.slice();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
         let pkg_metas: &[Meta] = pkgs.items_meta();
+        let pkg_names: &[String] = pkgs.items_name();
 
         let mut iter = tree::Iterator::<'_, { tree::IteratorPathStyle::PkgPath }>::from_slices(
             lockfile.buffers.trees.as_slice(),
@@ -225,6 +282,7 @@ impl Stringifier {
                 }
                 let i = pkg_id as usize;
                 let res = &pkg_resolutions[i];
+                let name = pkg_names[i].slice(buf);
                 match res.tag {
                     ResolutionTag::Npm => {
                         if pkg_metas[i].integrity.tag.is_supported() {
@@ -243,9 +301,21 @@ impl Stringifier {
                         // registry could stamp v2 on a lockfile a teammate
                         // without that scope then fails to parse. Stay at v1 for
                         // those so the file keeps loading everywhere.
-                        let url = res.npm().url.slice(buf);
+                        let npm = res.npm();
+                        let url = npm.url.slice(buf);
                         if !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
-                            return Version::V1;
+                            return Err(VersionBlocker {
+                                name: name.into(),
+                                kind: VersionBlockerKind::MissingIntegrity {
+                                    version: npm
+                                        .version
+                                        .fmt(buf)
+                                        .to_string()
+                                        .into_bytes()
+                                        .into_boxed_slice(),
+                                    url: url.into(),
+                                },
+                            });
                         }
                     }
                     ResolutionTag::Git => {
@@ -253,17 +323,19 @@ impl Stringifier {
                         // staying at v1 keeps it loading. (A `github` tag is
                         // rejected at every version, so no lockfile version can
                         // round-trip an unsafe one — nothing to gate here.)
-                        if !crate::repository::is_safe_resolved_tag(
-                            res.repository().resolved.slice(buf),
-                        ) {
-                            return Version::V1;
+                        let tag = res.repository().resolved.slice(buf);
+                        if !crate::repository::is_safe_resolved_tag(tag) {
+                            return Err(VersionBlocker {
+                                name: name.into(),
+                                kind: VersionBlockerKind::UnsafeGitTag { tag: tag.into() },
+                            });
                         }
                     }
                     _ => {}
                 }
             }
         }
-        if has_scoped { Version::V3 } else { Version::V2 }
+        Ok(if has_scoped { Version::V3 } else { Version::V2 })
     }
 
     pub(crate) fn save_from_binary(
@@ -1688,6 +1760,7 @@ fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bu
 fn parse_integrity(
     integrity_str: &[u8],
     lockfile_version: Version,
+    mode: ReadMode,
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     key_loc: bun_ast::Loc,
@@ -1698,7 +1771,7 @@ fn parse_integrity(
         return Ok(integrity);
     }
     let (source, loc) = (Some(source), item_loc(source, key_loc, index));
-    if lockfile_version.at_least(Version::V2) {
+    if lockfile_version.at_least(Version::V2) || mode == ReadMode::Rewrite {
         log.add_error(source, loc, b"Unsupported or malformed integrity hash");
         return Err(ParseError::InvalidPackageInfo);
     }
@@ -1794,12 +1867,27 @@ fn parse_catalog(
     Ok(())
 }
 
+/// What the text parser reads differently for an install and for a rewrite.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum ReadMode {
+    /// An empty registry field is the reader's registry (the install downloads from there).
+    /// Below version 2, an integrity hash the parser cannot read is dropped with a warning.
+    Install,
+    /// A rewrite that keeps every row as it is: an empty registry field is the default
+    /// registry, so it is written back empty whatever the writer has configured, and an
+    /// integrity hash the parser cannot read is an error at every version. The two
+    /// version 2 checks that `Stringifier::fresh_version` repeats are left to it, so the
+    /// writer names the entry and what a re-save does with the file.
+    Rewrite,
+}
+
 pub(crate) fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
     root: JSON::Expr,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     manager: Option<&PackageManager>,
+    mode: ReadMode,
 ) -> Result<(), ParseError> {
     let at_value = |key_loc| value_loc_of(source, key_loc);
     let at_item = |key_loc, index| item_loc(source, key_loc, index);
@@ -2450,10 +2538,12 @@ pub(crate) fn parse_into_binary_lockfile(
                 };
 
                 // Use scope-specific registry if available, otherwise fall back to default
-                let configured_registry = manager
-                    .map_or(Npm::Registry::DEFAULT_URL.as_bytes(), |mgr| {
+                let configured_registry = match (mode, manager) {
+                    (ReadMode::Install, Some(mgr)) => {
                         mgr.scope_for_package_name(name_str).url.href()
-                    });
+                    }
+                    _ => Npm::Registry::DEFAULT_URL.as_bytes(),
+                };
                 if registry_str.is_empty() {
                     let url = ExtractTarball::build_url(
                         configured_registry,
@@ -2647,8 +2737,15 @@ pub(crate) fn parse_into_binary_lockfile(
                         );
                     };
 
-                    pkg.meta.integrity =
-                        parse_integrity(integrity_str, lockfile_version, log, source, key_loc, i)?;
+                    pkg.meta.integrity = parse_integrity(
+                        integrity_str,
+                        lockfile_version,
+                        mode,
+                        log,
+                        source,
+                        key_loc,
+                        i,
+                    )?;
 
                     // Fail closed: otherwise a tampered lockfile could redirect
                     // the tarball URL off-registry and install arbitrary content
@@ -2658,6 +2755,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     // and may legitimately omit integrity for an off-registry
                     // tarball; rejecting them would break existing installs.
                     if lockfile_version.at_least(Version::V2)
+                        && mode == ReadMode::Install
                         && npm_url_needs_integrity
                         && !pkg.meta.integrity.tag.is_supported()
                     {
@@ -2697,8 +2795,8 @@ pub(crate) fn parse_into_binary_lockfile(
                     // (the tarball-download path feeds the tag straight into the
                     // cache folder name), so the check must stay unconditional to
                     // keep the path-traversal guard intact at every version.
-                    let enforce_safe_tag =
-                        tag == ResolutionTag::Github || lockfile_version.at_least(Version::V2);
+                    let enforce_safe_tag = tag == ResolutionTag::Github
+                        || (lockfile_version.at_least(Version::V2) && mode == ReadMode::Install);
                     let too_long = bun_tag_str.len() > crate::repository::MAX_RESOLVED_TAG_LEN;
                     if too_long
                         || (enforce_safe_tag
@@ -2730,8 +2828,15 @@ pub(crate) fn parse_into_binary_lockfile(
                     | ResolutionTag::Github
             ) && let Some(integrity_str) = pkg_info.get(i).and_then(|item| item.as_str())
             {
-                pkg.meta.integrity =
-                    parse_integrity(integrity_str, lockfile_version, log, source, key_loc, i)?;
+                pkg.meta.integrity = parse_integrity(
+                    integrity_str,
+                    lockfile_version,
+                    mode,
+                    log,
+                    source,
+                    key_loc,
+                    i,
+                )?;
             }
 
             pkg.name = name;

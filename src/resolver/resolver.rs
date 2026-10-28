@@ -2280,6 +2280,42 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// Node's `path.resolve(entry)` for a relative `paths` entry.
+    fn custom_dir<'b>(&self, entry: &[u8], buf: &'b mut PathBuffer) -> Option<&'b [u8]> {
+        #[cfg(windows)]
+        let path: &'b [u8] = self.fs_ref().abs_buf_checked(&[entry], &mut buf[..])?;
+        #[cfg(not(windows))]
+        let path: &'b [u8] = {
+            use ::bun_paths::resolve_path::{join_z_buf_checked, platform};
+            let cwd = self.fs_ref().top_level_dir();
+            join_z_buf_checked::<platform::Posix>(&mut buf[..], &[cwd, entry])?.as_bytes()
+        };
+        // The cache reads a NUL as the end of a path and, on POSIX, a backslash as a separator.
+        // The search starts above the first component that it would misread.
+        let misread: &[u8] = if cfg!(windows) { b"\0" } else { b"\\\0" };
+        let Some(first) = strings::index_of_any(path, misread) else {
+            return Some(path);
+        };
+        #[cfg(windows)]
+        let root_len = bun_paths::windows_filesystem_root(path).len();
+        #[cfg(not(windows))]
+        let root_len = 1;
+        let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+        let cut = strings::last_index_of_any(&path[..first], separators)
+            .map_or(root_len, |separator| separator.max(root_len));
+        Some(&path[..cut])
+    }
+
+    /// The directory where the walk of `node_modules` directories starts for a `paths` entry.
+    fn custom_dir_info(&mut self, entry: &[u8]) -> Option<DirInfoRef> {
+        if bun_paths::is_absolute(entry) {
+            return self.dir_info_or_nearest_existing(entry);
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let dir = self.custom_dir(entry, &mut buf)?;
+        self.dir_info_or_nearest_existing(dir)
+    }
+
     /// A bare request of `require.resolve(id, { paths })`. `source_dir` is still the directory of
     /// the importing file. `load_node_modules` reads the `paths`.
     #[cold]
@@ -2347,6 +2383,7 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion<'r> {
+        debug_assert!(bun_paths::is_absolute(source_dir));
         let mut import_path = unremapped_import_path;
         let mut source_dir_info: DirInfoRef = match self.dir_info_cached(source_dir) {
             Err(_) => return ResultUnion::NotFound,
@@ -2752,8 +2789,8 @@ impl<'a> Resolver<'a> {
 
         loop {
             if PATHS && !is_self_reference {
-                let Some(start) = entries
-                    .find_map(|entry| self.dir_info_or_nearest_existing(entry.to_utf8().slice()))
+                let Some(start) =
+                    entries.find_map(|entry| self.custom_dir_info(entry.to_utf8().slice()))
                 else {
                     break;
                 };

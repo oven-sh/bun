@@ -406,12 +406,16 @@ impl EventLoopDelayMonitor {
     #[inline]
     pub(crate) fn before_poll(&mut self, timeout: Option<&Timespec>) {
         if !self.every_iteration.is_empty() {
-            self.sample_before_poll(timeout.map(Timespec::ns));
+            self.sample_before_poll(timeout);
         }
     }
 
+    // Never inlined: JavaScript runs above the caller's frame, and the collector reads every word of that frame, also
+    // one that only this would write and that holds what an earlier call left there until then.
     #[cold]
-    fn sample_before_poll(&mut self, timeout_ns: Option<u64>) {
+    #[inline(never)]
+    fn sample_before_poll(&mut self, timeout: Option<&Timespec>) {
+        let timeout_ns = timeout.map(Timespec::ns);
         self.every_iteration.retain(|interval| {
             let interval = interval.upgrade();
             interval
@@ -429,6 +433,7 @@ impl EventLoopDelayMonitor {
     }
 
     #[cold]
+    #[inline(never)]
     fn sample_after_poll(&mut self, vm: &bun_jsc::virtual_machine::VirtualMachine) {
         let intervals = self
             .every_iteration

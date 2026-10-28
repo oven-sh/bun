@@ -4534,7 +4534,9 @@ describe("direct stream contract", () => {
     },
     "Bun.spawn({ stdin: s })": async s => {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", "for await (const c of process.stdin) process.stdout.write(c)"],
+        // The echo uses Bun.stdin and Bun.stdout. process.stdin and process.stdout are node:stream objects, and to
+        // load them costs a debug build about 0.8s of CPU in each of these children.
+        cmd: [bunExe(), "-e", "for await (const chunk of Bun.stdin.stream()) await Bun.write(Bun.stdout, chunk);"],
         env: bunEnv,
         stdin: s,
         stdout: "pipe",

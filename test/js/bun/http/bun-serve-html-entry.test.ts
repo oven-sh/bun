@@ -1,4 +1,5 @@
 import type { Subprocess } from "bun";
+import { routeKey } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -37,6 +38,54 @@ async function getServerUrl(process: Subprocess<any, "pipe", any>) {
   }
 
   return serverUrl;
+}
+
+/** Reads the startup message: the `url:` line, and each line under `Routes:` as route -> file. */
+async function readBanner(process: Subprocess<any, "pipe", any>) {
+  const decoder = new TextDecoder();
+  let text = "";
+  for await (const chunk of process.stdout) {
+    text += decoder.decode(chunk, { stream: true });
+    // `└──` starts the last line under `Routes:`.
+    if (/└── .*\n/.test(text)) break;
+  }
+  const url = text.match(/^url: (\S+)/m)?.[1];
+  return {
+    origin: url && new URL(url).origin,
+    pathname: url && new URL(url).pathname,
+    routes: Object.fromEntries(
+      Array.from(text.matchAll(/^  [├└]── (.*) → (.*?)\r?$/gm), ([, route, file]) => [
+        route,
+        file.replaceAll("\\", "/"),
+      ]),
+    ),
+  };
+}
+
+/** A directory with one page for each file. The title of a page is the name of its file. */
+function pagesDir(files: string[]) {
+  return tempDir(
+    "html-routes",
+    Object.fromEntries(
+      files.map(file => [file, `<!DOCTYPE html><html><head><title>${file}</title></head><body></body></html>`]),
+    ),
+  );
+}
+
+/** Starts `bun ...args` in `cwd`, as a server on a free port. */
+function serveHtml(cwd: string, args: string[]) {
+  return Bun.spawn({
+    cmd: [bunExe(), ...args, "--port=0", "--hostname=127.0.0.1"],
+    env: { ...bunEnv, NODE_ENV: "production", NO_COLOR: "1" },
+    cwd,
+    stdout: "pipe",
+  });
+}
+
+/** The title of the page that answers `path`, or the status when no page does. */
+async function titleAt(origin: string | undefined, path: string) {
+  const response = await fetch(origin + path);
+  return (await response.text()).match(/<title>(.*)<\/title>/)?.[1] ?? `status ${response.status}`;
 }
 
 test.concurrent("bun ./index.html", async () => {
@@ -293,6 +342,59 @@ env = "BUN_PUBLIC_*"
   } finally {
     // The process will be automatically cleaned up by 'await using'
   }
+});
+
+// `Bun.serve()` compares a route with the request path as the client sends it.
+// The paths on the left hold every kind of character that a URL parser percent-encodes in a path.
+test("routeKey() encodes a path as a URL parser does", () => {
+  const paths = [
+    "/*",
+    "/about/foo",
+    "/my page",
+    "/a#b?c",
+    '/a"b<c>d',
+    "/a^b`c{d}e",
+    "/a\tb\x7fc",
+    "/é/页面/😀",
+    "/a+b@c,d;e=f:g$h&i'j(k)l!m~n|o[p]",
+    // Half of a surrogate pair is not a character. `Bun.serve()` rejects the route.
+    "/\ud83d",
+  ];
+  expect(Object.fromEntries(paths.map(path => [path, routeKey(path)]))).toEqual({
+    "/*": "/*",
+    "/about/foo": "/about/foo",
+    "/my page": "/my%20page",
+    "/a#b?c": "/a%23b%3Fc",
+    '/a"b<c>d': "/a%22b%3Cc%3Ed",
+    "/a^b`c{d}e": "/a%5Eb%60c%7Bd%7De",
+    "/a\tb\x7fc": "/a%09b%7Fc",
+    "/é/页面/😀": "/%C3%A9/%E9%A1%B5%E9%9D%A2/%F0%9F%98%80",
+    "/a+b@c,d;e=f:g$h&i'j(k)l!m~n|o[p]": "/a+b@c,d;e=f:g$h&i'j(k)l!m~n|o[p]",
+    "/\ud83d": "/\ud83d",
+  });
+});
+
+// Not concurrent: debug builds that start at the same time start slowly, and the 5 s timeout of a local run is
+// close. Placed here, this test also splits the concurrent tests of this file into two groups.
+test("a page is served at the path that a browser requests for its name", async () => {
+  // file -> the path of a request for it
+  const pages = {
+    "docs/my page#1.html": "/docs/my%20page%231",
+    "页面😀.html": "/%E9%A1%B5%E9%9D%A2%F0%9F%98%80",
+  };
+  using dir = pagesDir(Object.keys(pages));
+  await using process = serveHtml(
+    String(dir),
+    Object.keys(pages).map(file => "./" + file),
+  );
+
+  const banner = await readBanner(process);
+  expect(banner).toEqual({
+    origin: expect.stringMatching(/^http:/),
+    pathname: "/docs/my%20page%231",
+    routes: { "/docs/my page#1": "docs/my page#1.html", "/页面😀": "页面😀.html" },
+  });
+  expect(await Promise.all(Object.values(pages).map(path => titleAt(banner.origin, path)))).toEqual(Object.keys(pages));
 });
 
 test.concurrent("bun *.html", async () => {

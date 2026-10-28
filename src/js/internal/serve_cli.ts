@@ -129,6 +129,15 @@ function serveOnFreePort(
   }
 }
 
+// `Bun.serve()` compares a route with the request path as the client sends it: percent-encoded.
+// https://url.spec.whatwg.org/#path-percent-encode-set. An unpaired surrogate stays, and `Bun.serve()` rejects it.
+const notInRequestPath = /[\0-\x20"#<>?^`{}\x7f-\ud7ff\ue000-\u{10ffff}]/gu;
+
+/** The key in `routes` of `Bun.serve()` that a request for the URL path `path` matches. */
+function routeKey(path: string): string {
+  return path.replace(notInRequestPath, encodeURIComponent);
+}
+
 type Banner = {
   server: Server<undefined>;
   /** Milliseconds from start to ready. */
@@ -272,4 +281,5 @@ export default {
   parseServeFlag,
   serveOnFreePort,
   printBannerAndHandleShortcuts,
+  routeKey,
 };

@@ -223,13 +223,348 @@ it("should support catch-all routes", () => {
     expect(match?.name).not.toBe("/posts/[...id]");
   }
 
-  for (let fixture of ["/posts/hey/there", "/posts/hey/there/you", "/posts/zorp/123", "/posts/wow/hey/there"]) {
+  for (let fixture of ["/posts/hey/there", "/posts/hey/there/you", "/posts/zorp/123"]) {
     const { name, params, filePath } = router.match(fixture)!;
 
     expect(name).toBe("/posts/[...id]");
     expect(filePath).toBe(`${dir}/posts/[...id].tsx`);
     expect(params.id).toBe(fixture.split("/").slice(2).join("/"));
   }
+
+  // The static "wow" beats "[...id]" at the same depth.
+  for (const [fixture, params] of [
+    ["/posts/wow", {}],
+    ["/posts/wow/hey/there", { id: "hey/there" }],
+  ] as const) {
+    const match = router.match(fixture);
+    expect({ fixture, match: match && { name: match.name, filePath: match.filePath, params: match.params } }).toEqual({
+      fixture,
+      match: { name: "/posts/wow/[[...id]]", filePath: `${dir}/posts/wow/[[...id]].tsx`, params },
+    });
+  }
+});
+
+type Expected = Record<string, { name: string; params: Record<string, string> } | null>;
+function matchAll(files: readonly string[], urls: string[]) {
+  const { dir } = make([...files]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  const actual: Expected = {};
+  for (const url of urls) {
+    const match = router.match(url);
+    actual[url] = match && { name: match.name, params: match.params };
+  }
+  return actual;
+}
+
+// Next.js accepts each of these trees. The expected route and params are what next@16.4.3
+// gives: getSortedRoutes() orders the pages, and the first page whose route regex matches
+// the path wins. At the first segment where two pages differ, a static segment beats
+// [param], which beats [...rest], which beats [[...rest]]. (Next.js splits a catch-all
+// value into an array, Bun keeps it as one string.)
+it.each([
+  {
+    title: "a static directory beats a dynamic segment beside it",
+    files: ["[slug].tsx", "opt/[[...rest]].tsx"],
+    expected: {
+      "/opt": { name: "/opt/[[...rest]]", params: {} },
+      "/opt/x/y": { name: "/opt/[[...rest]]", params: { rest: "x/y" } },
+      "/other": { name: "/[slug]", params: { slug: "other" } },
+      "/": null,
+    },
+  },
+  {
+    title: "a static directory beats a catch-all beside it",
+    files: ["posts/[...id].tsx", "posts/wow/[[...id]].tsx"],
+    expected: {
+      "/posts/wow": { name: "/posts/wow/[[...id]]", params: {} },
+      "/posts/wow/hey/there": { name: "/posts/wow/[[...id]]", params: { id: "hey/there" } },
+      "/posts/hey": { name: "/posts/[...id]", params: { id: "hey" } },
+      "/posts": null,
+    },
+  },
+  {
+    title: "a static directory below a dynamic one beats the catch-all beside it",
+    files: ["[team]/[...rest].tsx", "[team]/docs/[[...path]].tsx"],
+    expected: {
+      "/acme/docs": { name: "/[team]/docs/[[...path]]", params: { team: "acme" } },
+      "/acme/docs/intro": { name: "/[team]/docs/[[...path]]", params: { team: "acme", path: "intro" } },
+      "/acme/billing": { name: "/[team]/[...rest]", params: { team: "acme", rest: "billing" } },
+      "/acme": null,
+    },
+  },
+  {
+    title: "a static first segment beats a dynamic one, whatever follows",
+    files: ["[org]/[repo].tsx", "docs/[...path].tsx", "blog/[[...slug]].tsx"],
+    expected: {
+      "/docs/intro": { name: "/docs/[...path]", params: { path: "intro" } },
+      "/docs": null,
+      "/blog": { name: "/blog/[[...slug]]", params: {} },
+      "/blog/hello": { name: "/blog/[[...slug]]", params: { slug: "hello" } },
+      "/acme/web": { name: "/[org]/[repo]", params: { org: "acme", repo: "web" } },
+    },
+  },
+  {
+    title: "[param] beats [...rest] at the same depth, however deep the [param] route goes on",
+    files: ["[...all].tsx", "[a]/[b].tsx", "[a]/[b]/[c].tsx", "[a]/[...rest].tsx"],
+    expected: {
+      "/x": { name: "/[...all]", params: { all: "x" } },
+      "/x/y": { name: "/[a]/[b]", params: { a: "x", b: "y" } },
+      "/x/y/z": { name: "/[a]/[b]/[c]", params: { a: "x", b: "y", c: "z" } },
+      "/x/y/z/w": { name: "/[a]/[...rest]", params: { a: "x", rest: "y/z/w" } },
+    },
+  },
+  {
+    title: "a route comes before the routes below it",
+    files: [
+      "blog.tsx",
+      "blog/[slug].tsx",
+      "blog/archive/[[...date]].tsx",
+      "blog/[...rest].tsx",
+      "[user].tsx",
+      "[user]/[repo].tsx",
+      "[user]/settings.tsx",
+    ],
+    expected: {
+      "/blog": { name: "/blog", params: {} },
+      "/blog/a": { name: "/blog/[slug]", params: { slug: "a" } },
+      "/blog/a/b": { name: "/blog/[...rest]", params: { rest: "a/b" } },
+      "/blog/archive": { name: "/blog/archive/[[...date]]", params: {} },
+      "/blog/archive/2024/01": { name: "/blog/archive/[[...date]]", params: { date: "2024/01" } },
+      "/u": { name: "/[user]", params: { user: "u" } },
+      "/u/r": { name: "/[user]/[repo]", params: { user: "u", repo: "r" } },
+      "/u/settings": { name: "/[user]/settings", params: { user: "u" } },
+      "/u/r/x": null,
+    },
+  },
+  {
+    title: "a root-level [[...slug]] serves / when there is no index route",
+    files: ["[[...slug]].tsx", "about.tsx"],
+    expected: {
+      "/": { name: "/[[...slug]]", params: {} },
+      "/?q=1": { name: "/[[...slug]]", params: {} },
+      "/about": { name: "/about", params: {} },
+      "/a/b": { name: "/[[...slug]]", params: { slug: "a/b" } },
+    },
+  },
+  {
+    title: "[param] does not take a missing segment",
+    files: ["docs/[page].tsx", "[org]/settings/[id].tsx"],
+    expected: {
+      "/docs/intro": { name: "/docs/[page]", params: { page: "intro" } },
+      "/docs": null,
+      "/docs/": null,
+      "/acme/settings/7": { name: "/[org]/settings/[id]", params: { org: "acme", id: "7" } },
+      "/acme/settings": null,
+    },
+  },
+  {
+    title: "[param] does not take an empty segment",
+    files: ["blog/[slug]/[id].tsx", "docs/[page]/[[...rest]].tsx"],
+    expected: {
+      "/blog/hello/42": { name: "/blog/[slug]/[id]", params: { slug: "hello", id: "42" } },
+      "/blog//42": null,
+      "/blog/hello": null,
+      "/docs/intro": { name: "/docs/[page]/[[...rest]]", params: { page: "intro" } },
+      "/docs/intro/a/b": { name: "/docs/[page]/[[...rest]]", params: { page: "intro", rest: "a/b" } },
+      "/docs//a": null,
+      "/docs": null,
+    },
+  },
+  {
+    title: "a [param] that rejects a path leaves it to the [[...rest]] beside it",
+    files: ["docs/[page].tsx", "docs/[[...rest]].tsx"],
+    expected: {
+      "/docs": { name: "/docs/[[...rest]]", params: {} },
+      "/docs/intro": { name: "/docs/[page]", params: { page: "intro" } },
+      "/docs/a/b": { name: "/docs/[[...rest]]", params: { rest: "a/b" } },
+    },
+  },
+  {
+    title: "a [param] that rejects a path leaves it to the [param] one level up",
+    files: ["sources/[id].tsx", "sources/callback/[provider].tsx"],
+    expected: {
+      "/sources/callback": { name: "/sources/[id]", params: { id: "callback" } },
+      "/sources/callback/github": { name: "/sources/callback/[provider]", params: { provider: "github" } },
+      "/sources/7": { name: "/sources/[id]", params: { id: "7" } },
+    },
+  },
+  {
+    title: "a [param] that rejects a path leaves it to a root-level [...all]",
+    files: ["[...all].tsx", "users/[id].tsx"],
+    expected: {
+      "/users": { name: "/[...all]", params: { all: "users" } },
+      "/users/7": { name: "/users/[id]", params: { id: "7" } },
+      "/users/7/x": { name: "/[...all]", params: { all: "users/7/x" } },
+    },
+  },
+  {
+    title: "two routes reject a path before a root-level [[...slug]] takes it",
+    files: ["[org]/settings/[id].tsx", "[org]/settings/[...rest].tsx", "[[...slug]].tsx"],
+    expected: {
+      "/": { name: "/[[...slug]]", params: {} },
+      "/acme/settings": { name: "/[[...slug]]", params: { slug: "acme/settings" } },
+      "/acme/settings/7": { name: "/[org]/settings/[id]", params: { org: "acme", id: "7" } },
+      "/acme/settings/7/8": { name: "/[org]/settings/[...rest]", params: { org: "acme", rest: "7/8" } },
+    },
+  },
+] satisfies { title: string; files: string[]; expected: Expected }[])(
+  "matches the route Next.js picks: $title",
+  ({ files, expected }) => {
+    expect(matchAll(files, Object.keys(expected))).toEqual(expected);
+  },
+);
+
+// Next.js refuses to build these trees. Bun accepts them, so the order has to be defined:
+// a route still comes before the routes below it, and a parameter name only breaks a tie.
+it.each([
+  {
+    title: "the index route next to a root-level [[...slug]]",
+    files: ["index.tsx", "[[...slug]].tsx"],
+    expected: {
+      "/": { name: "/", params: {} },
+      "/index": { name: "/", params: {} },
+      "/?q=1": { name: "/", params: {} },
+      "/a/b": { name: "/[[...slug]]", params: { slug: "a/b" } },
+    },
+  },
+  {
+    title: "a [param] route next to the [[...rest]] below it",
+    files: ["[user].tsx", "[user]/[[...rest]].tsx"],
+    expected: {
+      "/u": { name: "/[user]", params: { user: "u" } },
+      "/u/a/b": { name: "/[user]/[[...rest]]", params: { user: "u", rest: "a/b" } },
+    },
+  },
+  {
+    title: "[...rest] next to [[...rest]]",
+    files: ["docs/[page].tsx", "docs/[...rest].tsx", "docs/[[...optional]].tsx"],
+    expected: {
+      "/docs": { name: "/docs/[[...optional]]", params: {} },
+      "/docs/intro": { name: "/docs/[page]", params: { page: "intro" } },
+      "/docs/a/b": { name: "/docs/[...rest]", params: { rest: "a/b" } },
+    },
+  },
+  {
+    title: "two parameter names at one depth, the shorter name on the static route",
+    files: ["[a]/settings.tsx", "[ab]/[page].tsx"],
+    expected: {
+      "/acme/settings": { name: "/[a]/settings", params: { a: "acme" } },
+      "/acme/billing": { name: "/[ab]/[page]", params: { ab: "acme", page: "billing" } },
+    },
+  },
+  {
+    title: "two parameter names at one depth, the longer name on the static route",
+    files: ["[abc]/settings.tsx", "[a]/[page].tsx"],
+    expected: {
+      "/acme/settings": { name: "/[abc]/settings", params: { abc: "acme" } },
+      "/acme/billing": { name: "/[a]/[page]", params: { a: "acme", page: "billing" } },
+    },
+  },
+  {
+    title: "two routes that differ only in a parameter name, next to routes that differ in more",
+    files: ["[ab]/x1.tsx", "[a]/x1.tsx", "[ab]/[page].tsx", "[a]/settings.tsx"],
+    expected: {
+      "/q/settings": { name: "/[a]/settings", params: { a: "q" } },
+      "/q/x1": { name: "/[ab]/x1", params: { ab: "q" } },
+      "/q/other": { name: "/[ab]/[page]", params: { ab: "q", page: "other" } },
+    },
+  },
+  {
+    title: "two root-level optional catch-alls serve / from the one that serves /x",
+    files: ["[[...b]].tsx", "[[...ab]].tsx"],
+    expected: {
+      "/": { name: "/[[...ab]]", params: {} },
+      "/x": { name: "/[[...ab]]", params: { ab: "x" } },
+    },
+  },
+] satisfies { title: string; files: string[]; expected: Expected }[])(
+  "orders routes that Next.js rejects: $title",
+  ({ files, expected }) => {
+    expect(matchAll(files, Object.keys(expected))).toEqual(expected);
+  },
+);
+
+it("every spelling of the root path reaches a root-level optional catch-all", () => {
+  const { dir } = make(["[[...slug]].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  for (const pathname of ["/", "", "/index", "/index/", "//", "/?q=1"]) {
+    const match = router.match(pathname);
+    expect({
+      pathname,
+      match: match && {
+        name: match.name,
+        kind: match.kind,
+        filePath: match.filePath,
+        pathname: match.pathname,
+        params: match.params,
+        query: match.query,
+      },
+    }).toEqual({
+      pathname,
+      match: {
+        name: "/[[...slug]]",
+        kind: "optional-catch-all",
+        filePath: `${dir}/[[...slug]].tsx`,
+        pathname: pathname === "" ? "/" : pathname,
+        params: {},
+        query: pathname === "/?q=1" ? { q: "1" } : {},
+      },
+    });
+  }
+});
+
+it("only a root-level optional catch-all takes / when there is no index route", () => {
+  expect(
+    matchAll(["[id].tsx", "[...rest].tsx", "[team]/[[...rest]].tsx", "docs/[[...slug]].tsx"], ["/", "/index", "//"]),
+  ).toEqual({ "/": null, "/index": null, "//": null });
+});
+
+it("reload() decides again which route serves /", () => {
+  const { dir } = make(["[[...slug]].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  const root = () => {
+    const { name, kind, filePath } = router.match("/")!;
+    return { name, kind, filePath };
+  };
+  const catchAll = { name: "/[[...slug]]", kind: "optional-catch-all", filePath: `${dir}/[[...slug]].tsx` };
+
+  expect(root()).toEqual(catchAll);
+
+  createTree(dir, ["index.tsx"]);
+  router.reload();
+  expect(root()).toEqual({ name: "/", kind: "exact", filePath: `${dir}/index.tsx` });
+
+  rmSync(`${dir}/index.tsx`);
+  router.reload();
+  expect(root()).toEqual(catchAll);
+});
+
+it("routes lists static routes in the order it had, then dynamic routes in the order match() tries them", () => {
+  const { dir } = make([
+    "index.tsx",
+    "blog.tsx",
+    "blog/[slug].tsx",
+    "blog/archive/[[...date]].tsx",
+    "blog/[...rest].tsx",
+    "[user].tsx",
+    "[user]/[repo].tsx",
+    "[user]/settings.tsx",
+    "[[...fallback]].tsx",
+  ]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  expect(Object.keys(router.routes)).toEqual([
+    "/blog",
+    "/",
+    "/blog/archive/[[...date]]",
+    "/blog/[slug]",
+    "/blog/[...rest]",
+    "/[user]",
+    "/[user]/settings",
+    "/[user]/[repo]",
+    "/[[...fallback]]",
+  ]);
 });
 
 it.each([

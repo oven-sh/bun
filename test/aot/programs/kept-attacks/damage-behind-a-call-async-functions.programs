@@ -1,0 +1,348 @@
+////: callee-11
+function callee(round: number): number {
+  void new Promise<number>(resolve => {
+    strike();
+    resolve(round);
+  });
+  return round & 3;
+}
+////: callee-5
+function callee(round: number): number {
+  void work(round);
+  return round & 3;
+}
+////: work-2
+async function work(round: number): Promise<number> {
+  strike();
+  await null;
+  return round;
+}
+////: work-3
+async function work(round: number): Promise<number> {
+  strike();
+  return round;
+}
+//// damage-behind-a-call-async-functions/a-sync-caller-of-an-async-function-that-throws-behind-the-damage.ts
+// An async function does the damage and throws in front of its first await. Nothing is thrown to its caller: the call returns a rejected promise as usual. The caller, which is no async function, reads its object behind the call.
+////= Point
+
+let strikes = false;
+async function fails(p: Point): Promise<number> {
+  if (strikes) {
+    delete (p as any).x;
+    throw new Error("rejected");
+  }
+  return 1;
+}
+
+const outcomes: Promise<string>[] = [];
+function holder(p: Point): string {
+  const before = p.x;
+  const promise = fails(p);
+  const after = p.x;
+  outcomes.push(promise.then(value => "fulfilled " + value, error => (error as Error).message));
+  return before + " " + after + " " + p.y;
+}
+
+////= for-4
+console.log((await Promise.all(outcomes)).filter(outcome => outcome === "rejected").length);
+
+export {};
+//// damage-behind-a-call-async-functions/a-thenable-that-is-awaited.ts
+// An async function awaits an object with a `then` method, which does the damage when the engine calls it. Another one awaits a promise whose reaction does it. Both read their object behind the await.
+////= Point
+
+let strikes = false;
+async function awaitsThenable(p: Point): Promise<string> {
+  const before = p.x;
+  const got = await {
+    then(resolve: (value: number) => void) {
+      if (strikes) delete (p as any).x;
+      resolve(1);
+    },
+  };
+  return before + " " + got + " " + p.x;
+}
+async function awaitsReaction(p: Point): Promise<string> {
+  const before = p.y;
+  const got = await Promise.resolve(2).then(value => {
+    if (strikes) (p as any).y = "text";
+    return value;
+  });
+  return before + " " + got + " " + p.y;
+}
+
+for (let round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  const p = new Point(round, 1);
+  const line = (await awaitsThenable(p)) + " | " + (await awaitsReaction(p));
+  if (strikes || round === 0) console.log(round + ": " + line);
+}
+
+export {};
+//// damage-behind-a-call-async-functions/an-async-function-in-front-of-its-first-await-fills-an-optional-field.ts
+// A typed caller reads an object, makes a call and reads it again. An async function in front of its first await, so still inside the call, fills an optional field of the object, in typed code.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Card
+
+let victim: Card | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-2
+////= strike
+
+////= work-2
+////= callee-5
+
+////= holder-6
+
+////= outer-14
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-async-functions/an-async-function-in-front-of-its-first-await-stores-a-fitting-number-by-name.ts
+// A typed caller reads an object, makes a call and reads it again. An async function in front of its first await, so still inside the call, stores a number into a field of the object by a computed name, so that nothing about the object changes but the value.
+////= Point
+const names = ["x", "y"];
+
+let victim: Point | null = null;
+////= strike-25	(target as any)[names[0]] = 1000
+
+////= work-2
+////= callee-5
+
+////= holder-9
+
+////= outer-36
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-async-functions/an-async-function-in-front-of-its-first-await-takes-the-first-element-away.ts
+// A typed caller reads an array, makes a call and reads it again. An async function in front of its first await, so still inside the call, takes the first element of the array away, in typed code.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+
+let victim: number[] | null = null;
+let spark: number = 0;
+////= hot-22	target.shift()
+////= strike-2
+
+////= work-2
+////= callee-5
+
+////= holder-40
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-async-functions/an-async-function-without-an-await-deletes-a-field.ts
+// A typed caller reads an object, makes a call and reads it again. An async function that has no await deletes a field of the object.
+////= Point
+
+let victim: Point | null = null;
+////= strike-17
+
+////= work-3
+////= callee-5
+
+////= holder-13
+
+////= outer-35
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-async-functions/an-async-function-without-an-await-makes-a-field-of-a-literal-an-accessor.ts
+// A typed caller reads an object, makes a call and reads it again. An async function that has no await makes a field of the object, which an object literal has made, an accessor.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-10
+////= strike
+
+////= work-3
+////= callee-5
+
+////= holder-22
+
+////= outer-28
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-async-functions/an-async-function-without-an-await-replaces-a-method-of-the-base-class.ts
+// A typed caller reads an object, makes a call and reads it again. An async function that has no await replaces a method on the prototype object of the base class.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+let spark: number = 0;
+////= hot-15
+////= strike-2
+
+////= work-3
+////= callee-5
+
+////= holder-44
+
+let digest = 0;
+////= for-6
+console.log("digest " + digest);
+//// damage-behind-a-call-async-functions/an-async-generator-between-two-steps.ts
+// A `for await` loop reads an object in every iteration. The async generator that feeds it does the damage between two of its yields, once in front of an await of its own and once behind it.
+////= Point
+
+let strikes = false;
+async function* feed(p: Point): AsyncGenerator<number> {
+  yield 1;
+  if (strikes) delete (p as any).x;
+  yield 2;
+  await null;
+  if (strikes) (p as any).y = "text";
+  yield 3;
+}
+
+async function holder(p: Point): Promise<string> {
+  let text = p.x + "," + p.y;
+  for await (const step of feed(p)) text += " " + step + ":" + p.x + "," + p.y;
+  return text;
+}
+
+////= for-24	await holder(new Point(round, 1)
+
+export {};
+//// damage-behind-a-call-async-functions/behind-the-first-await.ts
+// An async function reads an object, awaits a call of another async function, and reads the object again. The damage is done behind the first await of the callee, so in another turn of the event loop.
+////= Point
+
+let strikes = false;
+async function works(p: Point): Promise<number> {
+  const before = p.y;
+  await null;
+  if (strikes) delete (p as any).x;
+  return before + p.y;
+}
+
+async function holder(p: Point): Promise<string> {
+  const before = p.x;
+  const got = await works(p);
+  return before + " " + got + " " + p.x + "," + p.y;
+}
+
+////= for-24	await holder(new Point(round, 1)
+
+export {};
+//// damage-behind-a-call-async-functions/in-front-of-and-behind-the-await-of-an-awaited-call.ts
+// The callee of an awaited call damages one object in front of its first await and another one behind it. The caller holds both, and reads both between the call and the await of its promise, and behind the await.
+////= Point
+
+let strikes = false;
+async function works(early: Point, late: Point): Promise<number> {
+  if (strikes) delete (early as any).x;
+  await null;
+  if (strikes) (late as any).x = "text";
+  return 1;
+}
+
+async function holder(early: Point, late: Point): Promise<string> {
+  const before = early.x + late.x;
+  const promise = works(early, late);
+  const between = early.x + "," + late.x;
+  const got = await promise;
+  return before + " " + between + " " + got + " " + early.x + "," + late.x;
+}
+
+////= for-24	await holder(new Point(round, 1), new Point(round, 2)
+
+export {};
+//// damage-behind-a-call-async-functions/the-executor-of-a-promise-puts-the-class-under-another-base.ts
+// A typed caller reads an object, makes a call and reads it again. The executor of a promise, which the callee makes, puts the prototype object of the class under another one.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+const otherBase = { kind: () => "another base", area: () => -4 };
+
+let victim: Square | null = null;
+////= strike-13
+
+////= callee-11
+
+////= holder-39
+
+let digest = 0;
+////= for-5
+console.log("digest " + digest);
+//// damage-behind-a-call-async-functions/the-executor-of-a-promise-stores-a-number-into-a-reference-field.ts
+// A typed caller reads an object, makes a call and reads it again. The executor of a promise, which the callee makes, stores a number into a field that is declared to hold an object.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Leaf-5
+
+let victim: Branch | null = null;
+let spark: number = 0;
+////= hot-6
+////= strike-2
+
+////= callee-11
+
+////= holder-45
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-async-functions/the-executor-of-a-promise-stores-a-string-into-a-number-field.ts
+// A typed caller reads an object, makes a call and reads it again. The executor of a promise, which the callee makes, stores a string into a number field of the object.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-7
+////= strike
+
+////= callee-11
+
+////= holder-46
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-async-functions/two-holders-take-turns.ts
+// Two activations of one async function hold the same object and take turns at their awaits. One of them makes the call that does the damage. The other one finds the object changed when it goes on.
+////= Point
+
+function touch(p: Point, strikes: boolean): number {
+  if (strikes) delete (p as any).x;
+  return 1;
+}
+
+async function holder(p: Point, strikes: boolean): Promise<string> {
+  let text = "" + p.x;
+  await null;
+  text += " " + p.x;
+  touch(p, strikes);
+  text += " " + p.x;
+  await null;
+  return text + " " + p.x;
+}
+
+for (let round = 0; round < 300; round++) {
+  const p = new Point(round, 1);
+  const strikes = round % 100 === 99;
+  const [first, second] = await Promise.all([holder(p, false), holder(p, strikes)]);
+  if (strikes || round === 0) console.log(round + ": " + first + " | " + second);
+}
+
+export {};

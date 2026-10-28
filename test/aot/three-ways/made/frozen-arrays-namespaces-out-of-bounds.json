@@ -1,0 +1,4 @@
+{
+ "exports-read-off-a-namespace": "as bun run",
+ "frozen-arrays": "as bun run"
+}

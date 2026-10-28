@@ -1,0 +1,2 @@
+d ReferenceError
+a x of b

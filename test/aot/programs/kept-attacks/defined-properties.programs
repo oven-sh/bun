@@ -1,0 +1,50 @@
+//// defined-properties/attributes-are-kept.ts
+// What the descriptors say of attributes holds at run time: neither listed, nor defined anew, nor deleted.
+function Meter(this: any) { this.value = 1; }
+Object.defineProperties(Meter.prototype, { twice: { enumerable: false, get(this: any) { return this.value * 2; } } });
+const meter = new (Meter as any)();
+let score = 0;
+for (const name in meter) if (name === "twice") score += 1;
+try { Object.defineProperty(Meter.prototype, "twice", { value: 9 }); score += 10; } catch { score += 100; }
+if (!Reflect.deleteProperty(Meter.prototype, "twice")) score += 1000;
+console.log(score + meter.twice * 10000);
+//// defined-properties/descriptors-from-a-helper.ts
+// As in Node.js' streams: the map is a literal, each descriptor comes out of one helper and closes over its bit.
+const kFlags = Symbol("kFlags");
+function makeBitDescriptor(bit: number) {
+  return {
+    enumerable: false,
+    get(this: any) { return (this[kFlags] & bit) !== 0; },
+    set(this: any, value: unknown) { if (value) this[kFlags] |= bit; else this[kFlags] &= ~bit; },
+  };
+}
+function State(this: any) { this[kFlags] = 1 | 4; this.length = 0; }
+Object.defineProperties(State.prototype, {
+  first: makeBitDescriptor(1),
+  second: makeBitDescriptor(2),
+  third: makeBitDescriptor(4),
+  total: { __proto__: null, enumerable: false, get(this: any) { return this[kFlags]; } } as PropertyDescriptor,
+});
+const state = new (State as any)();
+state.second = process.argv.length < 99;
+state.third = false;
+console.log((state.first ? 1 : 0) + (state.second ? 10 : 0) + (state.third ? 100 : 0) + state.total * 1000);
+//// defined-properties/literal-descriptors.ts
+// The map is a literal and so is each descriptor.
+function Gauge(this: any, level: number) { this.level = level; this.reads = 0; }
+Object.defineProperties(Gauge.prototype, {
+  doubled: { enumerable: false, get(this: any) { this.reads++; return this.level * 2; } },
+  shifted: { enumerable: false, get(this: any) { return this.level + 100; }, set(this: any, value: number) { this.level = value - 100; } },
+  label: { value: "gauge", writable: false },
+});
+const gauge = new (Gauge as any)(process.argv.length > 99 ? 0 : 3);
+gauge.shifted = 107;
+console.log(gauge.doubled * 1000 + gauge.shifted + gauge.reads * 100000 + gauge.label.length * 1000000);
+//// defined-properties/the-map-is-not-a-literal.ts
+// Nobody knows the names: every reader of every name may meet either getter.
+function Box(this: any) { this.inside = 5; }
+const map: PropertyDescriptorMap = {};
+for (const [index, name] of ["al" + "pha", "be" + "ta"].entries()) map[name] = { get(this: any) { return this.inside + index; } };
+Object.defineProperties(Box.prototype, map);
+const box = new (Box as any)();
+console.log(box.alpha * 10 + box.beta);

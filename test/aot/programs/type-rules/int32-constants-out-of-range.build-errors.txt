@@ -1,0 +1,8 @@
+error: TS100032: Property 'line' of 'Cursor' is declared 'int32', but '0.5' is not an int32: it has a fraction.
+error: TS100032: Parameter 'start' of 'Cursor' is declared 'int32', but '1e10' is not an int32: an int32 is a whole number from -2147483648 to 2147483647.
+error: TS100032: The return value of 'none' is declared 'int32', but 'NaN' is not an int32: it is NaN.
+error: TS100032: 'over' is declared 'int32', but 'LIMIT + 1' is not an int32: an int32 is a whole number from -2147483648 to 2147483647.
+error: TS100032: 'under' is declared 'int32', but '-2147483649' is not an int32: an int32 is a whole number from -2147483648 to 2147483647.
+error: TS100032: 'zero' is declared 'int32', but '-0' is not an int32: it is -0.
+error: TS100032: Property 'x' of '{ x: int32; }' is declared 'int32', but '2 ** 31' is not an int32: an int32 is a whole number from -2147483648 to 2147483647.
+error: TS100032: Parameter 'n' of 'take' is declared 'int32', but '4294967296' is not an int32: an int32 is a whole number from -2147483648 to 2147483647.

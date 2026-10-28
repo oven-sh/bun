@@ -1,0 +1,3019 @@
+////: attempt-31
+attempt(«1», () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return «2»(«3»);
+});
+////: attempt-40
+attempt(«1», () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.«2»().join();
+});
+////: attempt-41
+attempt(«1», () => {
+  const list: number[] = [1, 2, 3];
+  let held = 0;
+  for (let i = 0; i < 2000; i++) {
+    if (i === 1000) list[1] = 2;
+    if (list.«2»(«3») === «4») held++;
+  }
+  return held + " " + typeof list[1] + " " + list.length;
+});
+////: attempt-52
+attempt(«1», () => {
+  const list: number[] = [1, 2, 3];
+  let held = 0;
+  for (let i = 0; i < 2000; i++) {
+    if (i === 1000) list[1] = 2;
+    if («2») held++;
+  }
+  return held + " " + typeof list[1] + " " + list.length;
+});
+////: list-forEach
+list.forEach(n => {
+  if (n === undefined) visited += 100;
+  else visited++;
+});
+//// a-home-becomes-a-wider-type-at-every-kind-of-conversion-part-three.ts
+////= show-30
+
+const yes = [1].length === 1;
+function touch(): void {}
+
+////= lines-18	A24	name	"a24"
+////= lines-16	D24	A24	legs	4	bark	"woof "
+////= lines-14	class	C24	extends	A24	lives	"nine"
+////= lines-15	S24	D24
+type T24 = { pet: A24 };
+////= lines-25	honest24	T24	A24
+////= lines-22	adopt24	t	T24	t.pet	C24
+////= lines-26	legs24	S24
+////= via24
+
+////= lines-18	A25	name	"a25"
+////= lines-16	D25	A25	legs	4	bark	"woof "
+////= lines-14	class	C25	extends	A25	lives	"nine"
+////= lines-15	S25	D25
+type T25 = { pet: A25 };
+////= lines-25	honest25	T25	A25
+////= lines-22	adopt25	t	T25	t.pet	C25
+////= lines-26	legs25	S25
+////= via25
+
+////= lines-18	A26	name	"a26"
+////= lines-16	D26	A26	legs	4	bark	"woof "
+////= lines-14	class	C26	extends	A26	lives	"nine"
+////= lines-15	S26	D26
+type T26 = { pet: A26 };
+////= lines-25	honest26	T26	A26
+////= lines-22	adopt26	t	T26	t.pet	C26
+////= lines-26	legs26	S26
+////= via26
+
+////= lines-18	A27	name	"a27"
+////= lines-16	D27	A27	legs	4	bark	"woof "
+////= lines-14	class	C27	extends	A27	lives	"nine"
+////= lines-15	S27	D27
+type T27 = { pet: A27 };
+////= lines-25	honest27	T27	A27
+////= lines-22	adopt27	t	T27	t.pet	C27
+////= lines-26	legs27	S27
+////= via27
+
+////= lines-18	A28	name	"a28"
+////= lines-16	D28	A28	legs	4	bark	"woof "
+////= lines-14	class	C28	extends	A28	lives	"nine"
+////= lines-15	S28	D28
+type T28 = { pet: A28 };
+////= lines-25	honest28	T28	A28
+////= lines-22	adopt28	t	T28	t.pet	C28
+////= lines-26	legs28	S28
+////= lines-173	via28	s	S28	T28
+
+////= lines-18	A29	name	"a29"
+////= lines-16	D29	A29	legs	4	bark	"woof "
+////= lines-14	class	C29	extends	A29	lives	"nine"
+////= lines-15	S29	D29
+type T29 = { pet: A29 };
+////= lines-25	honest29	T29	A29
+////= lines-22	adopt29	t	T29	t.pet	C29
+////= lines-26	legs29	S29
+function via29(s: S29): Promise<T29> {
+  return Promise.resolve<T29>(s);
+}
+
+////= lines-18	A30	name	"a30"
+////= lines-16	D30	A30	legs	4	bark	"woof "
+////= lines-14	class	C30	extends	A30	lives	"nine"
+////= lines-15	S30	D30
+type T30 = { pet: A30 };
+////= lines-25	honest30	T30	A30
+////= lines-22	adopt30	t	T30	t.pet	C30
+////= lines-26	legs30	S30
+function via30(s: S30): Promise<T30> {
+  return Promise.resolve(0).then((): T30 => s);
+}
+
+////= lines-18	A31	name	"a31"
+////= lines-16	D31	A31	legs	4	bark	"woof "
+////= lines-14	class	C31	extends	A31	lives	"nine"
+////= lines-15	S31	D31
+type T31 = { pet: A31 };
+////= lines-25	honest31	T31	A31
+////= lines-22	adopt31	t	T31	t.pet	C31
+////= lines-26	legs31	S31
+function via31(s: S31): Promise<T31> {
+  return new Promise<T31>(resolve => resolve(s));
+}
+
+////= lines-18	A32	name	"a32"
+////= lines-16	D32	A32	legs	4	bark	"woof "
+////= lines-14	class	C32	extends	A32	lives	"nine"
+////= lines-15	S32	D32
+type T32 = { pet: A32 };
+////= lines-25	honest32	T32	A32
+////= lines-22	adopt32	t	T32	t.pet	C32
+////= lines-26	legs32	S32
+function via32(s: S32): T32 {
+  return [0].map((): T32 => s)[0];
+}
+
+////= lines-18	A33	name	"a33"
+////= lines-16	D33	A33	legs	4	bark	"woof "
+////= lines-14	class	C33	extends	A33	lives	"nine"
+////= lines-15	S33	D33
+type T33 = { pet: A33 };
+////= lines-25	honest33	T33	A33
+////= lines-22	adopt33	t	T33	t.pet	C33
+////= lines-26	legs33	S33
+////= lines-276	same33	X	x
+function via33(s: S33): T33 {
+  return same33<T33>(s);
+}
+
+////= lines-18	A34	name	"a34"
+////= lines-16	D34	A34	legs	4	bark	"woof "
+////= lines-14	class	C34	extends	A34	lives	"nine"
+////= lines-15	S34	D34
+type T34 = { pet: A34 };
+////= lines-25	honest34	T34	A34
+////= lines-22	adopt34	t	T34	t.pet	C34
+////= lines-26	legs34	S34
+function widen34<X extends T34>(x: X): T34 {
+  return x;
+}
+////= lines-60	via34	s	S34	T34	widen34	s
+
+////= lines-18	A35	name	"a35"
+////= lines-16	D35	A35	legs	4	bark	"woof "
+////= lines-14	class	C35	extends	A35	lives	"nine"
+////= lines-15	S35	D35
+type T35 = { pet: A35 };
+////= lines-25	honest35	T35	A35
+////= lines-22	adopt35	t	T35	t.pet	C35
+////= lines-26	legs35	S35
+////= via35
+
+let warm = 0;
+////= for-40	S24	adopt24	honest24	legs24
+{
+  const home = new S24();
+  const t = await via24(home);
+  attempt("the entries a map is made from: the same object", () => t === home);
+  adopt24(t);
+  attempt("the entries a map is made from: legs + 1", () => legs24(home));
+  attempt("the entries a map is made from: its own method", () => home.legs());
+  attempt("the entries a map is made from: bark", () => home.pet.bark());
+  attempt("the entries a map is made from: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S25	adopt25	honest25	legs25
+{
+  const home = new S25();
+  const t = await via25(home);
+  attempt("a member of a set: the same object", () => t === home);
+  adopt25(t);
+  attempt("a member of a set: legs + 1", () => legs25(home));
+  attempt("a member of a set: its own method", () => home.legs());
+  attempt("a member of a set: bark", () => home.pet.bark());
+  attempt("a member of a set: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S26	adopt26	honest26	legs26
+{
+  const home = new S26();
+  const t = await via26(home);
+  attempt("yield: the same object", () => t === home);
+  adopt26(t);
+  attempt("yield: legs + 1", () => legs26(home));
+  attempt("yield: its own method", () => home.legs());
+  attempt("yield: bark", () => home.pet.bark());
+  attempt("yield: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S27	adopt27	honest27	legs27
+{
+  const home = new S27();
+  const t = await via27(home);
+  attempt("the value sent into a generator: the same object", () => t === home);
+  adopt27(t);
+  attempt("the value sent into a generator: legs + 1", () => legs27(home));
+  attempt("the value sent into a generator: its own method", () => home.legs());
+  attempt("the value sent into a generator: bark", () => home.pet.bark());
+  attempt("the value sent into a generator: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S28	adopt28	honest28	legs28
+{
+  const home = new S28();
+  const t = await via28(home);
+  attempt("the result of an async function: the same object", () => t === home);
+  adopt28(t);
+  attempt("the result of an async function: legs + 1", () => legs28(home));
+  attempt("the result of an async function: its own method", () => home.legs());
+  attempt("the result of an async function: bark", () => home.pet.bark());
+  attempt("the result of an async function: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S29	adopt29	honest29	legs29
+{
+  const home = new S29();
+  const t = await via29(home);
+  attempt("Promise.resolve: the same object", () => t === home);
+  adopt29(t);
+  attempt("Promise.resolve: legs + 1", () => legs29(home));
+  attempt("Promise.resolve: its own method", () => home.legs());
+  attempt("Promise.resolve: bark", () => home.pet.bark());
+  attempt("Promise.resolve: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S30	adopt30	honest30	legs30
+{
+  const home = new S30();
+  const t = await via30(home);
+  attempt("the result of a reaction: the same object", () => t === home);
+  adopt30(t);
+  attempt("the result of a reaction: legs + 1", () => legs30(home));
+  attempt("the result of a reaction: its own method", () => home.legs());
+  attempt("the result of a reaction: bark", () => home.pet.bark());
+  attempt("the result of a reaction: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S31	adopt31	honest31	legs31
+{
+  const home = new S31();
+  const t = await via31(home);
+  attempt("the resolver of a promise: the same object", () => t === home);
+  adopt31(t);
+  attempt("the resolver of a promise: legs + 1", () => legs31(home));
+  attempt("the resolver of a promise: its own method", () => home.legs());
+  attempt("the resolver of a promise: bark", () => home.pet.bark());
+  attempt("the resolver of a promise: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S32	adopt32	honest32	legs32
+{
+  const home = new S32();
+  const t = await via32(home);
+  attempt("the result of a callback: the same object", () => t === home);
+  adopt32(t);
+  attempt("the result of a callback: legs + 1", () => legs32(home));
+  attempt("the result of a callback: its own method", () => home.legs());
+  attempt("the result of a callback: bark", () => home.pet.bark());
+  attempt("the result of a callback: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S33	adopt33	honest33	legs33
+{
+  const home = new S33();
+  const t = await via33(home);
+  attempt("an explicit type argument: the same object", () => t === home);
+  adopt33(t);
+  attempt("an explicit type argument: legs + 1", () => legs33(home));
+  attempt("an explicit type argument: its own method", () => home.legs());
+  attempt("an explicit type argument: bark", () => home.pet.bark());
+  attempt("an explicit type argument: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S34	adopt34	honest34	legs34
+{
+  const home = new S34();
+  const t = await via34(home);
+  attempt("a constrained type parameter: the same object", () => t === home);
+  adopt34(t);
+  attempt("a constrained type parameter: legs + 1", () => legs34(home));
+  attempt("a constrained type parameter: its own method", () => home.legs());
+  attempt("a constrained type parameter: bark", () => home.pet.bark());
+  attempt("a constrained type parameter: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S35	adopt35	honest35	legs35
+{
+  const home = new S35();
+  const t = await via35(home);
+  attempt("the target of a for-of: the same object", () => t === home);
+  adopt35(t);
+  attempt("the target of a for-of: legs + 1", () => legs35(home));
+  attempt("the target of a for-of: its own method", () => home.legs());
+  attempt("the target of a for-of: bark", () => home.pet.bark());
+  attempt("the target of a for-of: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+console.log("honest uses", warm);
+
+export {};
+//// a-home-becomes-a-wider-type-at-every-kind-of-conversion-part-two.ts
+////= show-30
+
+const yes = [1].length === 1;
+function touch(): void {}
+
+////= lines-18	A12	name	"a12"
+////= lines-16	D12	A12	legs	4	bark	"woof "
+////= lines-14	class	C12	extends	A12	lives	"nine"
+////= lines-15	S12	D12
+type T12 = { pet: A12 };
+////= lines-25	honest12	T12	A12
+////= lines-22	adopt12	t	T12	t.pet	C12
+////= lines-26	legs12	S12
+////= via12
+
+////= lines-18	A13	name	"a13"
+////= lines-16	D13	A13	legs	4	bark	"woof "
+////= lines-14	class	C13	extends	A13	lives	"nine"
+////= lines-15	S13	D13
+type T13 = { pet: A13 };
+////= lines-25	honest13	T13	A13
+////= lines-22	adopt13	t	T13	t.pet	C13
+////= lines-26	legs13	S13
+////= via13
+
+////= lines-18	A14	name	"a14"
+////= lines-16	D14	A14	legs	4	bark	"woof "
+////= lines-14	class	C14	extends	A14	lives	"nine"
+////= lines-15	S14	D14
+type T14 = { pet: A14 };
+////= lines-25	honest14	T14	A14
+////= lines-22	adopt14	t	T14	t.pet	C14
+////= lines-26	legs14	S14
+////= via14
+
+////= lines-18	A15	name	"a15"
+////= lines-16	D15	A15	legs	4	bark	"woof "
+////= lines-14	class	C15	extends	A15	lives	"nine"
+////= lines-15	S15	D15
+type T15 = { pet: A15 };
+////= lines-25	honest15	T15	A15
+////= lines-22	adopt15	t	T15	t.pet	C15
+////= lines-26	legs15	S15
+////= lines-141	Keeper15	held	T15
+////= lines-216	via15	s	S15	T15	Keeper15	held
+
+////= lines-18	A16	name	"a16"
+////= lines-16	D16	A16	legs	4	bark	"woof "
+////= lines-14	class	C16	extends	A16	lives	"nine"
+////= lines-15	S16	D16
+type T16 = { pet: A16 };
+////= lines-25	honest16	T16	A16
+////= lines-22	adopt16	t	T16	t.pet	C16
+////= lines-26	legs16	S16
+////= via16
+
+////= lines-18	A17	name	"a17"
+////= lines-16	D17	A17	legs	4	bark	"woof "
+////= lines-14	class	C17	extends	A17	lives	"nine"
+////= lines-15	S17	D17
+type T17 = { pet: A17 };
+////= lines-25	honest17	T17	A17
+////= lines-22	adopt17	t	T17	t.pet	C17
+////= lines-26	legs17	S17
+////= via17
+
+////= lines-18	A18	name	"a18"
+////= lines-16	D18	A18	legs	4	bark	"woof "
+////= lines-14	class	C18	extends	A18	lives	"nine"
+////= lines-15	S18	D18
+type T18 = { pet: A18 };
+////= lines-25	honest18	T18	A18
+////= lines-22	adopt18	t	T18	t.pet	C18
+////= lines-26	legs18	S18
+////= lines-45	take18	t	T18	T18
+////= via18
+
+////= lines-18	A19	name	"a19"
+////= lines-16	D19	A19	legs	4	bark	"woof "
+////= lines-14	class	C19	extends	A19	lives	"nine"
+////= lines-15	S19	D19
+type T19 = { pet: A19 };
+////= lines-25	honest19	T19	A19
+////= lines-22	adopt19	t	T19	t.pet	C19
+////= lines-26	legs19	S19
+function last19(...list: T19[]): T19 {
+  return list[list.length - 1];
+}
+function via19(s: S19): T19 {
+  return last19(honest19(), s);
+}
+
+////= lines-18	A20	name	"a20"
+////= lines-16	D20	A20	legs	4	bark	"woof "
+////= lines-14	class	C20	extends	A20	lives	"nine"
+////= lines-15	S20	D20
+type T20 = { pet: A20 };
+////= lines-25	honest20	T20	A20
+////= lines-22	adopt20	t	T20	t.pet	C20
+////= lines-26	legs20	S20
+////= via20
+
+////= lines-18	A21	name	"a21"
+////= lines-16	D21	A21	legs	4	bark	"woof "
+////= lines-14	class	C21	extends	A21	lives	"nine"
+////= lines-15	S21	D21
+type T21 = { pet: A21 };
+////= lines-25	honest21	T21	A21
+////= lines-22	adopt21	t	T21	t.pet	C21
+////= lines-26	legs21	S21
+////= via21
+
+////= lines-18	A22	name	"a22"
+////= lines-16	D22	A22	legs	4	bark	"woof "
+////= lines-14	class	C22	extends	A22	lives	"nine"
+////= lines-15	S22	D22
+type T22 = { pet: A22 };
+////= lines-25	honest22	T22	A22
+////= lines-22	adopt22	t	T22	t.pet	C22
+////= lines-26	legs22	S22
+////= via22
+
+////= lines-18	A23	name	"a23"
+////= lines-16	D23	A23	legs	4	bark	"woof "
+////= lines-14	class	C23	extends	A23	lives	"nine"
+////= lines-15	S23	D23
+type T23 = { pet: A23 };
+////= lines-25	honest23	T23	A23
+////= lines-22	adopt23	t	T23	t.pet	C23
+////= lines-26	legs23	S23
+////= via23
+
+let warm = 0;
+////= for-40	S12	adopt12	honest12	legs12
+{
+  const home = new S12();
+  const t = await via12(home);
+  attempt("a member of an object literal: the same object", () => t === home);
+  adopt12(t);
+  attempt("a member of an object literal: legs + 1", () => legs12(home));
+  attempt("a member of an object literal: its own method", () => home.legs());
+  attempt("a member of an object literal: bark", () => home.pet.bark());
+  attempt("a member of an object literal: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S13	adopt13	honest13	legs13
+{
+  const home = new S13();
+  const t = await via13(home);
+  attempt("a shorthand member: the same object", () => t === home);
+  adopt13(t);
+  attempt("a shorthand member: legs + 1", () => legs13(home));
+  attempt("a shorthand member: its own method", () => home.legs());
+  attempt("a shorthand member: bark", () => home.pet.bark());
+  attempt("a shorthand member: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S14	adopt14	honest14	legs14
+{
+  const home = new S14();
+  const t = await via14(home);
+  attempt("the initializer of a field: the same object", () => t === home);
+  adopt14(t);
+  attempt("the initializer of a field: legs + 1", () => legs14(home));
+  attempt("the initializer of a field: its own method", () => home.legs());
+  attempt("the initializer of a field: bark", () => home.pet.bark());
+  attempt("the initializer of a field: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S15	adopt15	honest15	legs15
+{
+  const home = new S15();
+  const t = await via15(home);
+  attempt("a parameter property: the same object", () => t === home);
+  adopt15(t);
+  attempt("a parameter property: legs + 1", () => legs15(home));
+  attempt("a parameter property: its own method", () => home.legs());
+  attempt("a parameter property: bark", () => home.pet.bark());
+  attempt("a parameter property: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S16	adopt16	honest16	legs16
+{
+  const home = new S16();
+  const t = await via16(home);
+  attempt("the default of a parameter: the same object", () => t === home);
+  adopt16(t);
+  attempt("the default of a parameter: legs + 1", () => legs16(home));
+  attempt("the default of a parameter: its own method", () => home.legs());
+  attempt("the default of a parameter: bark", () => home.pet.bark());
+  attempt("the default of a parameter: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S17	adopt17	honest17	legs17
+{
+  const home = new S17();
+  const t = await via17(home);
+  attempt("the default in a pattern: the same object", () => t === home);
+  adopt17(t);
+  attempt("the default in a pattern: legs + 1", () => legs17(home));
+  attempt("the default in a pattern: its own method", () => home.legs());
+  attempt("the default in a pattern: bark", () => home.pet.bark());
+  attempt("the default in a pattern: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S18	adopt18	honest18	legs18
+{
+  const home = new S18();
+  const t = await via18(home);
+  attempt("a spread argument: the same object", () => t === home);
+  adopt18(t);
+  attempt("a spread argument: legs + 1", () => legs18(home));
+  attempt("a spread argument: its own method", () => home.legs());
+  attempt("a spread argument: bark", () => home.pet.bark());
+  attempt("a spread argument: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S19	adopt19	honest19	legs19
+{
+  const home = new S19();
+  const t = await via19(home);
+  attempt("a rest parameter: the same object", () => t === home);
+  adopt19(t);
+  attempt("a rest parameter: legs + 1", () => legs19(home));
+  attempt("a rest parameter: its own method", () => home.legs());
+  attempt("a rest parameter: bark", () => home.pet.bark());
+  attempt("a rest parameter: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S20	adopt20	honest20	legs20
+{
+  const home = new S20();
+  const t = await via20(home);
+  attempt("a spread into an array literal: the same object", () => t === home);
+  adopt20(t);
+  attempt("a spread into an array literal: legs + 1", () => legs20(home));
+  attempt("a spread into an array literal: its own method", () => home.legs());
+  attempt("a spread into an array literal: bark", () => home.pet.bark());
+  attempt("a spread into an array literal: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S21	adopt21	honest21	legs21
+{
+  const home = new S21();
+  const t = await via21(home);
+  attempt("a spread into an object literal: the same object", () => t === home);
+  adopt21(t);
+  attempt("a spread into an object literal: legs + 1", () => legs21(home));
+  attempt("a spread into an object literal: its own method", () => home.legs());
+  attempt("a spread into an object literal: bark", () => home.pet.bark());
+  attempt("a spread into an object literal: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S22	adopt22	honest22	legs22
+{
+  const home = new S22();
+  const t = await via22(home);
+  attempt("push: the same object", () => t === home);
+  adopt22(t);
+  attempt("push: legs + 1", () => legs22(home));
+  attempt("push: its own method", () => home.legs());
+  attempt("push: bark", () => home.pet.bark());
+  attempt("push: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S23	adopt23	honest23	legs23
+{
+  const home = new S23();
+  const t = await via23(home);
+  attempt("the value of a map entry: the same object", () => t === home);
+  adopt23(t);
+  attempt("the value of a map entry: legs + 1", () => legs23(home));
+  attempt("the value of a map entry: its own method", () => home.legs());
+  attempt("the value of a map entry: bark", () => home.pet.bark());
+  attempt("the value of a map entry: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+console.log("honest uses", warm);
+
+export {};
+//// a-host-object-is-stored-where-a-literal-type-is-declared.ts
+// A host object and built-in objects satisfy an object type of the program's own and are stored into a field of a class and of a literal declared with it.
+type Sized = { length: number };
+type Platform = { platform: string; env: Record<string, string | undefined> };
+
+class Probe {
+  constructor(private readonly host: Platform = process) {}
+  kind(): string {
+    return typeof this.host.platform + " " + typeof this.host.env.PATH + " " + (this.host === process);
+  }
+}
+function wrap(sized: Sized) {
+  return { sized, twice: sized.length * 2 };
+}
+function measure(box: { sized: Sized; twice: number }): string {
+  return box.sized.length + " " + box.twice + " " + typeof box.sized;
+}
+console.log(new Probe().kind());
+console.log(new Probe({ platform: "none", env: {} }).kind());
+console.log(new Probe().kind());
+const boxes = [wrap("four"), wrap([1, 2, 3]), wrap({ length: 9 }), wrap(function (a: number, b: number) {}), wrap(new Uint8Array(5))];
+for (const box of boxes) console.log(measure(box));
+const box = wrap({ length: 1 });
+for (const sized of ["ab", [1], { length: 7 }, new Float64Array(2)] as Sized[]) {
+  box.sized = sized;
+  console.log(measure(box));
+}
+//// a-javascript-caller-reaches-int32-parameters-and-fields/caller.js
+import { Cursor, lineOf, table, uses } from "./typed.ts";
+
+export const ways = {
+  "out of a table": n => table.uses(n),
+  "by call": n => uses.call(null, n),
+  "by apply": n => uses.apply(null, [n]),
+  "bound": n => uses.bind(null, n)(),
+  "as a callback": n => [n].map(uses)[0],
+  "under another name": n => {
+    const run = uses;
+    return run(n);
+  },
+  "out of a list": n => [uses][0](n),
+  "by Reflect.apply": n => Reflect.apply(uses, undefined, [n]),
+  "stored in a field": n => {
+    const cursor = new Cursor(1);
+    cursor.line = n;
+    return [lineOf(cursor), cursor.lineOf(), cursor.sum(), cursor.plainSum(), JSON.stringify(cursor)];
+  },
+  "stored in a field by a computed name": n => {
+    const cursor = new Cursor(1);
+    cursor[["li", "ne"].join("")] = n;
+    return [lineOf(cursor), cursor.lineOf(), cursor.sum(), cursor.plainSum()];
+  },
+  "constructed by Reflect.construct": n => {
+    const cursor = Reflect.construct(Cursor, [n]);
+    return [lineOf(cursor), cursor.sum(), cursor.plainSum()];
+  },
+  "a look-alike is handed over": n => lineOf({ line: n, column: 0 }),
+};
+
+export function withNothing() {
+  const run = uses;
+  return run();
+}
+//// a-javascript-caller-reaches-int32-parameters-and-fields/main.ts
+import { ways, withNothing } from "./caller.js";
+import { Cursor, lineOf, uses } from "./typed.ts";
+
+////= show-13
+
+////= attempt-5
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += uses(i | 0).length + lineOf(new Cursor(i | 0));
+console.log("2000 honest rounds", warm);
+
+const values: unknown[] = [3, 1.5, -0, NaN, 2 ** 31, -(2 ** 31) - 1, 1e21, Infinity, "7", null, undefined, true, [5], {}];
+for (const [label, run] of Object.entries(ways)) {
+  for (const value of values) attempt(label + " " + show(value), () => run(value));
+}
+attempt("with nothing", () => withNothing());
+attempt("a bigint", () => ways["out of a table"](5n));
+attempt("honest again", () => [uses(2), lineOf(new Cursor(9))]);
+//// a-javascript-caller-reaches-int32-parameters-and-fields/typed.ts
+import type { int32 } from "bun";
+
+export class Cursor {
+  line: int32 = 0;
+  column: int32 = 4;
+  constructor(line: int32) {
+    this.line = line;
+  }
+  lineOf(): int32 {
+    return this.line;
+  }
+  sum(): int32 {
+    return (this.line + this.column) | 0;
+  }
+  plainSum(): number {
+    return this.line + this.column;
+  }
+}
+
+export function uses(v: int32): unknown[] {
+  const cursor = new Cursor(v);
+  const pair: int32[] = [v, 1];
+  return [typeof v, v, v + 1, v * 2, v / 2, v % 2, -v, 1 / v, v | 0, v >>> 0, v >> 1, ~v, v === v, v === 0, v < 1, !v, String(v), cursor.line, cursor.column, pair[0], cursor.plainSum(), Math.floor(v), [10, 20, 30][v]];
+}
+
+export function lineOf(cursor: Cursor): int32 {
+  return cursor.line;
+}
+
+export const table = { uses };
+//// a-js-file-and-a-ts-file-share-a-name/main.ts
+import { Box, count, double, name, origin } from "./values.js";
+
+////= show-4
+
+const log: string[] = [];
+
+////= attempt-98
+
+attempt("which file was loaded", () => origin);
+attempt("honest", () => [plusOne(1), size("ab")]);
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(i) + size("ab");
+console.log("2000 honest rounds", warm);
+attempt("count", () => [count, typeof count, plusOne(count), count + 1]);
+attempt("name", () => [name, typeof name, name + "!"]);
+attempt("name: size", () => size(name));
+attempt("double", () => [double(2), plusOne(double(2)), [1, 2].map(double)]);
+attempt("a class", () => {
+  const b = new Box();
+  return [b.value, b.get(), plusOne(b.get()), plusOne(b.value), Object.keys(b)];
+});
+attempt("honest again", () => [plusOne(1), size("ab")]);
+//// a-js-file-and-a-ts-file-share-a-name/values.js
+export const count = "one";
+export const name = 7;
+export function double(n) {
+  return String(n) + String(n);
+}
+export class Box {
+  constructor() {
+    this.held = "js";
+  }
+  get() {
+    return this.held;
+  }
+}
+export const origin = "values.js";
+//// a-js-file-and-a-ts-file-share-a-name/values.ts
+export const count: number = 1;
+export const name: string = "typescript";
+////= lines-254	double
+export class Box {
+  value = 1;
+  get(): number {
+    return this.value;
+  }
+}
+export const origin = "values.ts";
+//// a-json-file-is-changed-by-a-js-module/data.json
+{
+  "count": 3,
+  "name": "data",
+  "origin": { "x": 1, "y": 2 },
+  "sizes": [1, 2, 3],
+  "on": true
+}
+//// a-json-file-is-changed-by-a-js-module/main.ts
+import data from "./data.json";
+import { spoil } from "./spoil.js";
+
+////= Point-29
+
+////= sum-2
+
+////= lines-59	total	numbers	number	number	result	0
+
+function report(label: string): void {
+  attempt(label + ", count", () => {
+    const n: number = data.count;
+    return [n, n + 1, typeof n];
+  });
+  attempt(label + ", name", () => {
+    const s: string = data.name;
+    return [s, s + "!", typeof s];
+  });
+  attempt(label + ", the length of name", () => data.name.length);
+  attempt(label + ", origin", () => {
+    const p: Point = data.origin;
+    return [p.x, p.y, sum(p), sum(data.origin)];
+  });
+  attempt(label + ", sizes", () => [total(data.sizes), data.sizes.length, Array.isArray(data.sizes)]);
+  attempt(label + ", sizes mapped", () => data.sizes.map(n => n * 2));
+  attempt(label + ", on", () => [data.on === true, data.on ? "on" : "off", typeof data.on]);
+  attempt(label + ", the whole", () => [Object.keys(data).join(), JSON.stringify(data)]);
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += data.count + sum(data.origin) + total(data.sizes) + data.name.length;
+console.log("2000 honest rounds: " + warm);
+
+report("as written");
+for (let step = 0; step < 8; step++) {
+  spoil(step);
+  report("after change " + step);
+}
+//// a-json-file-is-changed-by-a-js-module/spoil.js
+import data from "./data.json";
+
+export function spoil(step) {
+  switch (step) {
+    case 0:
+      data.count = "three";
+      break;
+    case 1:
+      data.origin.x = "one";
+      break;
+    case 2:
+      data.origin = [7, 8];
+      break;
+    case 3:
+      data.sizes.push("four");
+      break;
+    case 4:
+      data.sizes = { length: 1, 0: "zero" };
+      break;
+    case 5:
+      delete data.name;
+      break;
+    case 6:
+      data.on = 0;
+      break;
+    case 7:
+      data.extra = "extra";
+      break;
+  }
+}
+//// a-json-round-trip-changes-what-the-fields-hold.ts
+////= show-30
+
+class Reading {
+  zero = -0;
+  odd = NaN;
+  huge = Infinity;
+  small = 5e-324;
+  whole = 2 ** 53;
+  missing: number | undefined = undefined;
+  none: number | null = null;
+  when = new Date(86400000);
+  tags = new Set<string>(["a"]);
+  byName = new Map<string, number>([["a", 1]]);
+  bytes = new Uint8Array([1, 2]);
+  holes: number[] = [1, 2, 3];
+  pattern = /x/g;
+  text = "line\n \ud800";
+  nested = { deep: { deeper: [1, { deepest: true }] } };
+  double(): number {
+    return this.whole * 2;
+  }
+}
+
+////= lines-236	roundTrip	reading	Reading	Reading	JSON.parse	JSON.stringify
+
+////= lines-90	year	reading	Reading	number	reading.when.getUTCFullYear
+
+////= lines-81	hasTag	reading	Reading	boolean	reading.tags.has	"a"
+
+function byName(reading: Reading): number | undefined {
+  return reading.byName.get("a");
+}
+
+function sumBytes(reading: Reading): number {
+  let sum = 0;
+  for (let i = 0; i < reading.bytes.length; i++) sum += reading.bytes[i];
+  return sum;
+}
+
+////= lines-21	oddPlusOne	reading	Reading	number	reading.odd
+
+let warm = 0;
+for (let i = 0; i < 1000; i++) {
+  const honest = new Reading();
+  warm += year(honest) + (hasTag(honest) ? 1 : 0) + (byName(honest) ?? 0) + sumBytes(honest) + honest.double();
+}
+console.log("after 1000 honest readings", warm);
+
+const source = new Reading();
+delete source.holes[1];
+const copy = roundTrip(source);
+
+attempt("keys", () => Object.keys(copy));
+attempt("-0", () => [copy.zero, Object.is(copy.zero, -0), 1 / copy.zero]);
+attempt("NaN", () => [copy.odd, typeof copy.odd, oddPlusOne(copy), copy.odd === null]);
+attempt("Infinity", () => [copy.huge, copy.huge + 1]);
+attempt("the smallest and a large number", () => [copy.small, copy.whole, copy.whole === source.whole]);
+attempt("undefined and null", () => ["missing" in copy, copy.missing, copy.none]);
+attempt("the date", () => [typeof copy.when, String(copy.when)]);
+attempt("the year of the date", () => year(copy));
+attempt("the set", () => [typeof copy.tags, Object.keys(copy.tags)]);
+attempt("a question to the set", () => hasTag(copy));
+attempt("a question to the map", () => byName(copy));
+attempt("the bytes", () => [Object.keys(copy.bytes), copy.bytes.length, sumBytes(copy), copy.bytes[0]]);
+attempt("the hole", () => [1 in copy.holes, copy.holes, copy.holes[1] + 1]);
+attempt("the pattern", () => [typeof copy.pattern, Object.keys(copy.pattern)]);
+attempt("a test with the pattern", () => copy.pattern.test("x"));
+attempt("the text", () => [copy.text === source.text, copy.text.length]);
+attempt("what is nested", () => JSON.stringify(copy.nested));
+attempt("its method", () => copy.double());
+attempt("a bigint stops it", () => JSON.stringify({ big: 1n }));
+attempt("a cycle stops it", () => {
+  const cycle: { self?: unknown } = {};
+  cycle.self = cycle;
+  return JSON.stringify(cycle);
+});
+attempt("toJSON decides", () => {
+  class Money {
+    cents = 150;
+    toJSON(): string {
+      return "1.50";
+    }
+  }
+  const back: Money = JSON.parse(JSON.stringify(new Money()));
+  return [typeof back, back.cents];
+});
+attempt("a reviver rebuilds the instance", () => {
+  const rebuilt: Reading = JSON.parse(JSON.stringify({ whole: 4 }), (key, value) => (key === "" ? Object.assign(new Reading(), value) : value));
+  return [rebuilt.double(), rebuilt instanceof Reading, year(rebuilt)];
+});
+attempt("__proto__ in the text is an own member", () => {
+  const parsed: Reading = JSON.parse('{ "__proto__": { "whole": 7 }, "zero": 1 }');
+  return [parsed.whole, parsed.zero, Object.keys(parsed), Object.getPrototypeOf(parsed) === Object.prototype];
+});
+//// a-length-holder-beside-other-members-of-a-union.ts
+////= show-30
+
+type HasLength = { length: number };
+
+function orANumber(x: HasLength | number): number {
+  return typeof x === "number" ? x : x.length;
+}
+
+function orNothing(x: HasLength | null | undefined): number {
+  return x == null ? -1 : x.length;
+}
+
+function onlyIfAnObject(x: HasLength | undefined): number {
+  if (typeof x === "object") return x.length;
+  return -1;
+}
+
+function notUndefined(x: HasLength | undefined): number {
+  if (typeof x !== "undefined") return x.length;
+  return -1;
+}
+
+function orASize(x: HasLength | { size: number }): number {
+  return "length" in x ? x.length : x.size;
+}
+
+function orAString(x: HasLength | string): string {
+  return typeof x === "string" ? x.toUpperCase() : "length " + x.length;
+}
+
+function orAThunk(x: HasLength | (() => number)): number {
+  return typeof x === "function" ? x() + 1 : x.length;
+}
+
+function orAList(x: HasLength | number[]): string {
+  return Array.isArray(x) ? "list " + x.length : "other " + x.length;
+}
+
+function orBytes(x: HasLength | Uint8Array): string {
+  return x instanceof Uint8Array ? "bytes " + x.byteLength : "other " + x.length;
+}
+
+function orABoolean(x: HasLength | boolean): string {
+  if (x === true) return "true";
+  if (x === false) return "false";
+  return "length " + x.length;
+}
+
+function joinTwo(a: string, b: string): string {
+  return a + b;
+}
+
+////= values	"function of two strings"	joinTwo	bytes", new Uint8Array(4)	"String object"	String	"abc"
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest = { length: i };
+  warm += orANumber(honest) + orANumber(i) + orNothing(honest) + orNothing(null) + onlyIfAnObject(honest) + notUndefined(honest);
+  warm += orASize(honest) + orASize({ size: i }) + orAString(honest).length + orAThunk(honest) + orAThunk(() => i);
+  warm += orAList(honest).length + orBytes(honest).length + orABoolean(honest).length + orABoolean(i % 2 === 0).length;
+}
+console.log("after 2000 honest calls", warm);
+
+for (const [name, value] of values) {
+  attempt(name + ": or a number", () => orANumber(value));
+  attempt(name + ": or nothing", () => orNothing(value));
+  attempt(name + ": only if typeof says object", () => onlyIfAnObject(value));
+  attempt(name + ": if typeof does not say undefined", () => notUndefined(value));
+  attempt(name + ": or a size, told apart by in", () => orASize(value));
+  attempt(name + ": or a string", () => orAString(value));
+  attempt(name + ": or a thunk", () => orAThunk(value));
+  attempt(name + ": or a list", () => orAList(value));
+  attempt(name + ": or bytes", () => orBytes(value));
+  attempt(name + ": or a boolean", () => orABoolean(value));
+}
+attempt("undefined", () => [orNothing(undefined), onlyIfAnObject(undefined), notUndefined(undefined)]);
+//// a-length-holder-in-a-local-a-result-and-a-captured-variable.ts
+////= show-30
+
+type HasLength = { length: number };
+
+function pick(which: number): HasLength {
+  if (which === 0) return { length: 10 };
+  if (which === 1) return "four";
+  if (which === 2) return [1, 2, 3];
+  if (which === 3) return pick;
+  if (which === 4) return new Float64Array(5);
+  if (which === 5) return "";
+  return { length: which };
+}
+
+function throughALocal(which: number): number {
+  const local: HasLength = pick(which);
+  return local.length;
+}
+
+function throughALocalThatChanges(): string[] {
+  let local: HasLength = { length: 1 };
+  const seen: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    seen.push(typeof local + " " + local.length);
+    local = pick(i);
+  }
+  seen.push(typeof local + " " + local.length);
+  return seen;
+}
+
+function chosenByACondition(flag: boolean): number {
+  const local: HasLength = flag ? { length: 100 } : "no";
+  return local.length;
+}
+
+function holder(start: HasLength) {
+  let held = start;
+  return {
+    read: (): number => held.length,
+    kind: (): string => typeof held,
+    replace(next: HasLength): void {
+      held = next;
+    },
+  };
+}
+
+let shared: HasLength = { length: 0 };
+////= lines-41	readShared	number	shared.length
+function kindOfShared(): string {
+  return typeof shared;
+}
+
+let warm = 0;
+const warmHolder = holder({ length: 0 });
+for (let i = 0; i < 2000; i++) {
+  warm += throughALocal(6 + (i & 3));
+  warmHolder.replace({ length: i });
+  warm += warmHolder.read();
+  shared = { length: i };
+  warm += readShared();
+}
+console.log("after 2000 literals", warm);
+
+for (let which = 0; which < 7; which++) {
+  attempt("result " + which, () => pick(which).length);
+  attempt("typeof result " + which, () => typeof pick(which));
+  attempt("local " + which, () => throughALocal(which));
+  attempt("captured " + which, () => {
+    warmHolder.replace(pick(which));
+    return [warmHolder.kind(), warmHolder.read()];
+  });
+  attempt("captured from the start " + which, () => {
+    const fresh = holder(pick(which));
+    return [fresh.kind(), fresh.read()];
+  });
+  attempt("module variable " + which, () => {
+    shared = pick(which);
+    return [kindOfShared(), readShared()];
+  });
+}
+attempt("a local that changes", throughALocalThatChanges);
+attempt("chosen by a condition: true", () => chosenByACondition(true));
+attempt("chosen by a condition: false", () => chosenByACondition(false));
+//// a-length-holder-that-may-be-a-string-is-read-after-an-await.ts
+type HasLength = { length: number };
+async function afterAnAwait(item: HasLength): Promise<number> {
+  await null;
+  return item.length;
+}
+console.log(await afterAnAwait({ length: 4 }), await afterAnAwait("hello"), await afterAnAwait([1]));
+export {};
+//// a-length-holder-that-may-be-a-string-is-spread.ts
+type HasLength = { length: number };
+////= lines-152	spread	item	HasLength
+console.log(JSON.stringify(spread({ length: 2 })), JSON.stringify(spread("ab")), JSON.stringify(spread([7, 8])));
+//// a-lens-closes-over-a-union-key.ts
+////= show-32
+
+interface Lens<T, V> {
+  get(target: T): V;
+  set(target: T, value: V): void;
+}
+
+function lens<T, K extends keyof T>(key: K): Lens<T, T[K]> {
+  return {
+    get: target => target[key],
+    set: (target, value) => {
+      target[key] = value;
+    },
+  };
+}
+
+class Track {
+  length = 180;
+  gain = 0.5;
+  title = "song";
+  minutes(): number {
+    return this.length / 60;
+  }
+  louder(): number {
+    return this.gain + 0.25;
+  }
+  shout(): string {
+    return this.title.toUpperCase();
+  }
+}
+
+const yes: boolean = process.argv.length > 0;
+
+const lengthLens = lens<Track, "length">("length");
+const titleLens = lens<Track, "title">("title");
+const either = lens<Track, "length" | "title">(yes ? "length" : "title");
+const other = lens<Track, "length" | "title">(yes ? "title" : "length");
+const gainOrTitle = lens<Track, "gain" | "title">(yes ? "gain" : "title");
+
+function report(title: string, t: Track): void {
+  console.log(title + ": " + typeof t.length + " " + show(t.length) + ", " + typeof t.gain + " " + show(t.gain) + ", " + typeof t.title + " " + show(t.title) + ", " + JSON.stringify(t));
+  attempt("  minutes", () => t.minutes());
+  attempt("  louder", () => t.louder());
+  attempt("  shout", () => t.shout());
+  attempt("  the honest lens reads the length + 1", () => lengthLens.get(t) + 1);
+  attempt("  the honest lens reads the title's length", () => titleLens.get(t).length);
+}
+
+const t = new Track();
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  lengthLens.set(t, i);
+  titleLens.set(t, "t" + (i % 4));
+  either.set(t, i + 1);
+  other.set(t, "u" + (i % 4));
+  total += t.minutes() + t.shout().length + lengthLens.get(t);
+}
+console.log("2000 honest rounds: " + total);
+report("honest", t);
+
+either.set(t, "three minutes");
+report("a string through the lens over the length", t);
+other.set(t, 3);
+report("a number through the lens over the title", t);
+gainOrTitle.set(t, "loud");
+report("a string through the lens over the gain", t);
+either.set(t, other.get(t));
+report("one lens feeds the other", t);
+lengthLens.set(t, 60);
+titleLens.set(t, "end");
+gainOrTitle.set(t, 1);
+report("honest again", t);
+
+export {};
+//// a-link-between-an-instance-and-its-class-gets-the-method-later.ts
+class Point {
+  x = 3;
+  norm(): number {
+    return this.x * this.x;
+  }
+  get half(): number {
+    return this.x / 2;
+  }
+}
+
+class Other {
+  x = 0;
+  norm(): number {
+    return -100;
+  }
+  get half(): number {
+    return -50;
+  }
+}
+
+////= lines-53	normOf	p	Point	p.norm	" "	p.half
+
+const p = new Point();
+const honest = new Point();
+
+function round(label: string): void {
+  console.log(label + ": " + p.norm() + " " + p.half + " | " + normOf(p) + " | honest " + normOf(honest) + " | " + (p instanceof Point));
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += normOf(p).length + normOf(honest).length;
+console.log("2000 honest: " + warm);
+round("before");
+
+const near: Point = Object.create(Point.prototype);
+Object.setPrototypeOf(p, near);
+round("an empty link under the instance");
+
+near.norm = () => -1;
+round("the link gets the method");
+
+Reflect.deleteProperty(near, "norm");
+round("and loses it");
+
+Object.defineProperty(near, "half", { get: () => -2, configurable: true });
+round("the link gets the getter");
+
+Reflect.deleteProperty(near, "half");
+round("and loses it");
+
+const far: Point = Object.create(Point.prototype);
+Object.setPrototypeOf(near, far);
+round("a second empty link above the first");
+
+far.norm = () => -3;
+round("the second link gets the method");
+
+near.norm = () => -4;
+round("the first one too");
+
+Reflect.deleteProperty(near, "norm");
+Reflect.deleteProperty(far, "norm");
+round("both lose it");
+
+Object.setPrototypeOf(far, Other.prototype);
+round("the second link hangs under another class");
+
+Object.setPrototypeOf(far, Point.prototype);
+round("and back");
+
+Object.setPrototypeOf(p, Point.prototype);
+round("the instance hangs under its class again");
+
+near.norm = () => -5;
+round("a store to the link that is no longer used");
+
+class Sub extends Point {}
+
+////= lines-53	subNorm	s	Sub	s.norm	" "	s.half
+
+const s = new Sub();
+for (let i = 0; i < 2000; i++) warm += subNorm(s).length;
+const between: Point = Object.create(Point.prototype);
+Object.setPrototypeOf(Sub.prototype, between);
+console.log("an empty link above a subclass's prototype: " + subNorm(s) + " | " + normOf(s));
+between.norm = () => -6;
+console.log("it gets the method: " + subNorm(s) + " | " + normOf(s) + " | " + subNorm(new Sub()) + " | honest " + normOf(honest));
+Reflect.deleteProperty(between, "norm");
+console.log("and loses it: " + subNorm(s) + " | " + normOf(s));
+
+export {};
+//// a-linked-list-whose-nodes-have-different-forms.ts
+interface Link {
+  value: number;
+  label: string;
+  live: boolean;
+  next: Link | null;
+}
+
+const log: string[] = [];
+
+class Node {
+  value: number;
+  label = "class";
+  live = true;
+  next: Link | null;
+  constructor(value: number, next: Link | null) {
+    this.value = value;
+    this.next = next;
+  }
+}
+
+class Backwards {
+  next: Link | null;
+  live = false;
+  label = "backwards";
+  value: number;
+  constructor(value: number, next: Link | null) {
+    this.next = next;
+    this.value = value;
+  }
+}
+
+class Lazy {
+  label = "lazy";
+  live = true;
+  constructor(
+    private v: number,
+    private n: Link | null,
+  ) {}
+  get value(): number {
+    log.push("get value");
+    return this.v;
+  }
+  get next(): Link | null {
+    log.push("get next");
+    return this.n;
+  }
+  set next(link: Link | null) {
+    log.push("set next");
+    this.n = link;
+  }
+}
+
+function sum(head: Link | null): number {
+  let total = 0;
+  for (let at = head; at !== null; at = at.next) total += at.value;
+  return total;
+}
+
+function labels(head: Link | null): string {
+  const out: string[] = [];
+  for (let at = head; at !== null; at = at.next) out.push(at.label + (at.live ? "+" : "-"));
+  return out.join();
+}
+
+function recursive(link: Link | null): number {
+  return link === null ? 0 : link.value + recursive(link.next);
+}
+
+function reverse(head: Link | null): Link | null {
+  let previous: Link | null = null;
+  while (head !== null) {
+    const next: Link | null = head.next;
+    head.next = previous;
+    previous = head;
+    head = next;
+  }
+  return previous;
+}
+
+function build(): Link {
+  const tail: Link = { value: 1, label: "literal", live: true, next: null };
+  const flipped: Link = { next: tail, live: false, label: "flipped", value: 2 };
+  const wide = { id: "w", value: 4, extra: [0], label: "wide", next: flipped, live: true, more: null };
+  const node = new Node(8, wide);
+  const backwards = new Backwards(16, node);
+  const lazy = new Lazy(32, backwards);
+  const inherited: Link = Object.assign(Object.create({ label: "inherited", live: true }), { value: 64, next: lazy });
+  const proxied: Link = new Proxy({ value: 128, label: "proxied", live: false, next: inherited }, {});
+  return new Node(256, proxied);
+}
+
+console.log("sum: " + sum(build()) + " [" + log.length + " accessor calls]");
+log.length = 0;
+console.log("recursive: " + recursive(build()));
+console.log("labels: " + labels(build()));
+log.length = 0;
+const reversed = reverse(build());
+console.log("reversed: " + labels(reversed) + " " + sum(reversed) + " [" + log.join() + "]");
+log.length = 0;
+
+let head: Link | null = null;
+for (let i = 0; i < 2000; i++) head = new Node(1, head);
+console.log("2000 honest nodes: " + sum(head));
+
+let mixed: Link | null = null;
+for (let i = 0; i < 2000; i++) {
+  if (i === 500) mixed = { next: mixed, live: true, label: "odd", value: 1000 };
+  else if (i === 1000) mixed = new Lazy(10000, mixed);
+  else if (i === 1500) mixed = new Backwards(100000, mixed);
+  else mixed = new Node(1, mixed);
+}
+console.log("three odd ones among 2000: " + sum(mixed) + " [" + log.length + "]");
+log.length = 0;
+
+const ring: Link = { value: 1, label: "ring", live: true, next: null };
+ring.next = new Backwards(2, ring);
+let steps = 0;
+let around = 0;
+for (let at: Link | null = ring; at !== null && steps < 7; at = at.next, steps++) around += at.value;
+console.log("seven steps around a ring: " + around);
+
+const json = JSON.stringify(build());
+console.log("json: " + json);
+
+export {};
+//// a-list-is-stored-to-at-minus-one-and-its-length-is-read.ts
+const numbers = [1, 2];
+numbers[-1] = 3;
+console.log(numbers.length);
+console.log(numbers[-1]);
+console.log(Object.keys(numbers).join());
+console.log(-1 in numbers);
+
+export {};
+//// a-list-made-in-another-context-is-used-as-a-list-of-numbers.ts
+import vm from "node:vm";
+
+const list: number[] = vm.runInNewContext("[1, 2, 3]");
+console.log(list.length, Array.isArray(list), list instanceof Array, list[0] + list[2]);
+//// a-list-of-enum-values-gets-other-numbers-through-a-list-of-numbers.ts
+////= Color-2
+
+const colors: Color[] = [Color.Red, Color.Green, Color.Blue];
+const wide: number[] = colors;
+
+////= lines-52	sum	list	Color	total	color
+function whole(list: Color[]): string {
+  return list.map(color => color | 0).join();
+}
+function names(list: Color[]): string {
+  return list.map(color => Color[color]).join();
+}
+
+const half: number = 1.5;
+const odd: Color = half;
+console.log(sum(colors), whole(colors), names(colors), colors.indexOf(odd), colors.includes(odd));
+wide.push(1.5);
+console.log(sum(colors));
+console.log(whole(colors));
+console.log(names(colors));
+console.log(colors[3], colors[3] === odd, colors[3] + 1);
+console.log(colors.indexOf(odd), colors.includes(odd), colors.lastIndexOf(odd));
+wide.push(NaN, -0, 2 ** 31);
+console.log(sum(colors));
+console.log(whole(colors));
+console.log(colors.join());
+console.log(Object.is(colors[5], -0), 1 / colors[5]);
+console.log(colors.indexOf(Color.Red), colors.lastIndexOf(Color.Red), colors.includes(colors[4]), colors.indexOf(colors[4]));
+console.log(colors.slice().sort((a, b) => a - b).join());
+//// a-list-of-int32-gets-other-numbers-through-a-list-of-numbers.ts
+import type { int32 } from "bun";
+
+const list: int32[] = [1, 2, 3];
+const wide: number[] = list;
+
+function sum(values: int32[]): int32 {
+  let total: int32 = 0;
+  for (const value of values) total = (total + value) | 0;
+  return total;
+}
+////= lines-52	plainSum	values	int32	total	value
+function last(values: int32[]): int32 {
+  return values[values.length - 1];
+}
+
+console.log(sum(list), plainSum(list), last(list));
+wide.push(0.5);
+console.log(sum(list), plainSum(list), last(list), last(list) + 1, last(list) | 0);
+wide.push(2 ** 31);
+console.log(sum(list), plainSum(list), last(list), last(list) + 1, last(list) | 0);
+wide.push(-0);
+console.log(sum(list), plainSum(list), Object.is(last(list), -0), 1 / last(list));
+wide.push(NaN);
+console.log(sum(list), plainSum(list), last(list), last(list) === last(list));
+console.log(list.join());
+const half: int32 = list[3];
+console.log(list.indexOf(half), list.includes(half), list.indexOf(2), list.includes(list[6]), list.indexOf(list[6]));
+//// a-list-of-int32-is-changed-by-reflection-fill-and-copy-within.ts
+import type { int32 } from "bun";
+
+const list: int32[] = [1, 2, 3];
+////= lines-52	sum	values	int32	total	value
+////= lines-40	at	index	int32	int32	list[index
+console.log(sum(list), at(1));
+Reflect.set(list, 1, 2.5);
+console.log(sum(list), at(1), at(1) | 0, at(1) + 1);
+Object.defineProperty(list, 0, { value: "one", writable: true, enumerable: true, configurable: true });
+console.log(sum(list), at(0), typeof at(0));
+Reflect.deleteProperty(list, 2);
+console.log(sum(list), at(2), at(2) === undefined, 2 in list);
+Reflect.set(list, "length", 5);
+console.log(list.length, sum(list), at(4));
+list.fill(0.5, 3);
+console.log(sum(list.slice(3)), at(3), at(4));
+list.copyWithin(0, 3);
+console.log(at(0), at(1), list.join());
+//// a-list-of-never-holds-something.ts
+const empty: never[] = [];
+const wide: number[] = empty;
+wide.push(5);
+
+function first(list: never[]): string {
+  return "undefined: " + (list[0] === undefined);
+}
+function count(list: never[]): number {
+  let seen = 0;
+  for (const item of list) seen += item === undefined ? 100 : 1;
+  return seen;
+}
+
+console.log(empty.length);
+console.log(count(empty));
+console.log(String(empty[0]));
+console.log(typeof empty[0]);
+console.log(first(empty));
+//// a-list-of-numbers-exchanges-an-element-with-a-place-past-its-end-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+[list[0], list[5]] = [list[5], list[0]];
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-gets-a-string-pushed-through-a-wider-alias-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+const wide: (number | string)[] = list;
+wide.push("text");
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-gets-null-stored-through-a-wider-alias-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+const wide: (number | null)[] = list;
+wide[0] = null;
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-gets-undefined-pushed-through-a-wider-alias-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+const wide: (number | undefined)[] = list;
+wide.push(undefined);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-gets-undefined-stored-through-a-wider-alias-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+const wide: (number | undefined)[] = list;
+wide[1] = undefined;
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-gets-undefined-through-a-generic-function-at-a-wider-type-argument-and-is-asked-what-it-holds.ts
+function add<T>(items: T[], item: T): void {
+  items.push(item);
+}
+
+const list: number[] = [1, 2, 3];
+add<number | undefined>(list, undefined);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-a-field-that-a-method-makes-longer-and-is-asked-what-it-holds.ts
+class Holder {
+  items: number[] = [1, 2, 3];
+  grow(): void {
+    this.items.length = 5;
+  }
+}
+
+const holder = new Holder();
+holder.grow();
+const list = holder.items;
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-a-rest-parameter-fed-by-a-list-of-holes-and-is-asked-what-it-holds.ts
+function collect(...rest: number[]): number[] {
+  return rest;
+}
+
+const list = collect(1, ...new Array<number>(2));
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-copied-within-from-its-holes-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list[5] = 6;
+list.copyWithin(0, 3);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-cut-and-made-longer-again-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list.length = 1;
+list.length = 3;
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-emptied-and-stored-to-at-two-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list.length = 0;
+list[2] = 1;
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-filled-with-an-element-from-past-its-end-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list.fill(list[9], 1, 2);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-left-alone-before-each-use-honest.ts
+////= nameOf-5
+
+attempt("read", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list[1];
+});
+attempt("typeof", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return typeof list[1];
+});
+attempt("is undefined", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list[1] === undefined;
+});
+attempt("is a number", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return typeof list[1] === "number";
+});
+attempt("plus one", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list[1] + 1;
+});
+attempt("as an integer", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list[1] | 0;
+});
+attempt("in", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return 1 in list;
+});
+attempt("length", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.length;
+});
+////= attempt-31	"at"	list.at	1
+attempt("an index loop", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return (() => {
+    let total = 0;
+    for (let i = 0; i < list.length; i++) total += list[i];
+    return total;
+  })();
+});
+////= attempt-55	list: number[] = [1, 2, 3]	list[1] = 2	n of list) kinds += typeof n
+attempt("for-in", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return (() => {
+    let keys = "";
+    for (const key in list) keys += key + ",";
+    return keys;
+  })();
+});
+attempt("forEach", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return (() => {
+    let kinds = "";
+    list.forEach(n => {
+      kinds += typeof n + ",";
+    });
+    return kinds;
+  })();
+});
+attempt("map to kinds", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.map(n => typeof n).join();
+});
+attempt("map plus one", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.map(n => n + 1).join();
+});
+attempt("filter undefined", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.filter(n => n === undefined).length;
+});
+attempt("filter numbers", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.filter(n => typeof n === "number").length;
+});
+attempt("find what is no number", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return typeof list.find(n => typeof n !== "number");
+});
+attempt("findIndex of undefined", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.findIndex(n => n === undefined);
+});
+attempt("findLast", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.findLast(n => n !== 3);
+});
+attempt("findLastIndex", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.findLastIndex(n => typeof n !== "number");
+});
+attempt("some", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.some(n => n == null);
+});
+attempt("every", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.every(n => typeof n === "number");
+});
+attempt("reduce", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.reduce((a, b) => a + b, 0);
+});
+attempt("reduceRight", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.reduceRight((a, b) => a + b, 0);
+});
+attempt("flatMap", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.flatMap(n => [typeof n]).join();
+});
+////= attempt-31	"indexOf"	list.indexOf	3
+////= attempt-31	"lastIndexOf"	list.lastIndexOf	1
+////= attempt-31	"includes 3"	list.includes	3
+////= attempt-31	"includes NaN"	list.includes	NaN
+attempt("join", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.join();
+});
+attempt("as text", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return String(list);
+});
+////= attempt-31	"json"	JSON.stringify	list
+attempt("keys", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return Object.keys(list).join();
+});
+attempt("entries", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return [...list.entries()].join("|");
+});
+attempt("spread", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return [...list].map(n => typeof n).join();
+});
+attempt("Array.from", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return Array.from(list, n => typeof n).join();
+});
+attempt("slice", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.slice(1).map(n => typeof n).join() + " " + (0 in list.slice(1));
+});
+attempt("concat", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return [0].concat(list).map(n => typeof n).join() + " " + (2 in [0].concat(list));
+});
+////= attempt-40	"toSorted"	toSorted
+////= attempt-40	"sort"	sort
+attempt("toSorted by value", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.toSorted((a, b) => a - b).join();
+});
+////= attempt-40	"reverse"	reverse
+////= attempt-40	"toReversed"	toReversed
+attempt("with", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.with(0, 9).join();
+});
+attempt("a default in a pattern", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return (([, b = -1]: number[]) => b)(list);
+});
+attempt("a rest pattern", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return (([, ...rest]: number[]) => rest.map(n => typeof n).join())(list);
+});
+attempt("the largest", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return Math.max(...list);
+});
+attempt("a set", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return new Set(list).size;
+});
+attempt("floats", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return new Float64Array(list).join();
+});
+attempt("integers", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return new Int32Array(list).join();
+});
+attempt("a clone", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return JSON.stringify(structuredClone(list));
+});
+attempt("push", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.push(4) + " " + list.join();
+});
+attempt("pop", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.pop();
+});
+attempt("shift", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.shift() + " " + list.join();
+});
+attempt("unshift", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.unshift(0) + " " + list.join();
+});
+attempt("splice", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.splice(1, 1).map(n => typeof n).join() + " " + list.join();
+});
+attempt("fill", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.fill(8).join();
+});
+attempt("copyWithin", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.copyWithin(0, 1).join();
+});
+attempt("flat", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return list.flat().length;
+});
+attempt("a typed store", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return (list[1] = 5) + " " + list.join();
+});
+attempt("an increment", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 2;
+  return ++list[1];
+});
+
+export {};
+//// a-list-of-numbers-is-made-by-array-from-with-a-map-function-that-reads-past-the-end-and-is-asked-what-it-holds.ts
+const source = [1, 2];
+const list: number[] = Array.from({ length: 3 }, (_, i) => source[i + 1]);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-made-by-new-array-and-stored-to-once-and-is-asked-what-it-holds.ts
+const list = new Array<number>(3);
+list[0] = 1;
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-made-by-to-spliced-from-a-list-with-a-deleted-element-and-is-asked-what-it-holds.ts
+const source = [1, 2, 3];
+delete source[1];
+const list: number[] = source.toSpliced(0, 0);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-made-longer-by-a-closure-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+const grow = (): void => {
+  list.length = 5;
+};
+grow();
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-made-longer-by-a-function-it-is-handed-to-and-is-asked-what-it-holds.ts
+function grow(numbers: number[]): void {
+  numbers.length = 5;
+}
+
+const list: number[] = [1, 2, 3];
+grow(list);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-made-longer-by-one-with-plus-plus-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list.length++;
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-made-longer-by-two-with-plus-equals-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list.length += 2;
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-made-longer-in-the-middle-of-its-own-for-each-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list.forEach((n, i) => {
+  if (i === 0) list.length = n + 4;
+});
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-made-longer-through-a-generic-setter-and-is-asked-what-it-holds.ts
+////= set
+
+const list: number[] = [1, 2, 3];
+set(list, "length", 5);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-mapped-from-indexes-past-the-end-and-is-asked-what-it-holds.ts
+const source = [1, 2];
+const list: number[] = [0, 5, 9].map(i => source[i]);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-popped-into-from-an-empty-list-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+const empty: number[] = [];
+const popped = empty.pop();
+const wide: (number | undefined)[] = list;
+wide.push(popped);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-pushed-a-missing-entry-of-a-record-and-is-asked-what-it-holds.ts
+const ages: Record<string, number> = { ann: 30 };
+const list: number[] = [1, 2, 3];
+list.push(ages.bob);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-pushed-an-element-from-past-the-end-of-another-list-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+const other = [1];
+list.push(other[5]);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-pushed-the-elements-of-a-list-of-holes-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list.push(...new Array<number>(2));
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-reversed-after-a-far-store-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list[4] = 5;
+list.reverse();
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-sorted-after-a-delete-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+delete list[0];
+list.sort();
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-spliced-with-the-elements-of-a-list-of-holes-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list.splice(1, 0, ...new Array<number>(1));
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-spread-from-a-generator-that-yields-from-past-the-end-and-is-asked-what-it-holds.ts
+const source = [1, 2];
+function* walk(): Generator<number> {
+  for (let i = 0; i < 4; i++) yield source[i];
+}
+
+const list: number[] = [...walk()];
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-stored-an-element-from-past-its-own-end-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list[1] = list[9];
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-stored-to-by-a-pattern-that-takes-from-an-empty-list-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+const empty: number[] = [];
+[list[1]] = empty;
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-stored-to-far-past-its-end-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list[6] = 7;
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-is-stored-to-inside-the-loop-that-reads-it-honest.ts
+////= nameOf-4
+
+////= attempt-52	"an honest store, the kind of an element"	typeof list[1] === "number"
+////= attempt-52	"an honest store, the sum of three elements"	list[0] + list[1] + list[2] === 6
+////= attempt-52	"an honest store, the length"	list.length === 3
+////= attempt-52	"an honest store, whether an element is there"	1 in list
+////= attempt-41	"an honest store, indexOf"	indexOf	2	1
+////= attempt-52	"an honest store, includes"	list.includes(2)
+////= attempt-41	"an honest store, at"	at	1	2
+////= attempt-52	"an honest store, reduce"	list.reduce((a, b) => a + b, 0) === 6
+////= attempt-52	"an honest store, every"	list.every(n => typeof n === "number")
+////= attempt-52	"an honest store, join"	list.join() === "1,2,3"
+attempt("an honest store, a loop inside the loop", () => {
+  const list: number[] = [1, 2, 3];
+  let held = 0;
+  for (let i = 0; i < 2000; i++) {
+    if (i === 1000) list[1] = 2;
+    let total = 0;
+    for (const n of list) total += n;
+    if (total === 6) held++;
+  }
+  return held;
+});
+attempt("an honest store, a typed store", () => {
+  const list: number[] = [1, 2, 3];
+  let held = 0;
+  try {
+    for (let i = 0; i < 2000; i++) {
+      if (i === 1000) list[1] = 2;
+      list[1] = i;
+      if (list[1] === i) held++;
+    }
+  } catch (error) {
+    return held + " threw " + nameOf(error) + " " + list.join();
+  }
+  return held + " " + list.join();
+});
+
+export {};
+//// a-list-of-numbers-is-unshifted-an-element-from-minus-one-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+list.unshift(list[-1]);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};
+//// a-list-of-numbers-loses-an-element-by-delete-and-is-asked-what-it-holds.ts
+const list: number[] = [1, 2, 3];
+delete list[1];
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(n => n === undefined));
+console.log("some " + list.some(n => n === undefined));
+console.log("every " + list.every(n => n !== undefined));
+console.log("filter " + list.filter(n => n === undefined).length);
+console.log("filter by typeof " + list.filter(n => typeof n !== "number").length);
+console.log("map " + list.map(n => typeof n).join());
+console.log("map + 1 " + list.map(n => n + 1).join());
+console.log("reduce " + list.reduce((text, n) => text + typeof n + " ", ""));
+console.log("findLast " + typeof list.findLast(n => typeof n !== "number" || n > 100));
+console.log("flatMap " + list.flatMap(n => [typeof n]).join());
+console.log("Array.from " + Array.from(list, n => typeof n).join());
+let walked = "";
+for (const n of list) walked += typeof n + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let sum = 0;
+for (const n of list) sum += n;
+console.log("sum " + sum);
+let visited = 0;
+////= list-forEach
+console.log("forEach " + visited);
+console.log("spread " + [...list].map(n => typeof n).join());
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+
+export {};

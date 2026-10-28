@@ -1,0 +1,6119 @@
+////: AddsMembersSupplier
+class AddsMembersSupplier {
+  supply() {
+    return ({ x: 1, y: 2 });
+  }
+}
+////: AddsOneSupplier
+class AddsOneSupplier {
+  supply() {
+    return 7;
+  }
+}
+////: Bar-prototype
+Bar.prototype = new Proxy({}, {
+  getPrototypeOf() {
+    calls++;
+    return Foo.prototype;
+  },
+});
+////: Box
+class Box {
+  constructor(width, height) {
+    this.width = width;
+    this.height = height;
+  }
+  area() {
+    return this.width * this.height;
+  }
+}
+////: Box-2
+function Box(width, height) {
+  this.width = width;
+  this.height = height;
+}
+////: Box-5
+////= Box-2
+
+////= Box-prototype-area
+
+////= make-4
+////: Box-6
+////= Box
+
+////= make-4
+////: Box-prototype-area
+Box.prototype.area = function () {
+  return this.width * this.height;
+};
+////: CallsSupplier
+class CallsSupplier {
+  supply() {
+    return x => x + 1;
+  }
+}
+////: Child
+function Child(x, y) {
+  Old.call(this, x, y);
+  this.z = 3;
+}
+////: Entry
+class Entry {
+  constructor(order) {
+    if (order === "alpha first") {
+      this.alpha = 1;
+      this.beta = 2;
+      this.gamma = 3;
+    } else if (order === "gamma first") {
+      this.gamma = 3;
+      this.beta = 2;
+      this.alpha = 1;
+    } else {
+      this.beta = 2;
+      this.alpha = 1;
+    }
+  }
+  sum() {
+    return this.alpha + this.beta;
+  }
+}
+////: IteratesSupplier
+class IteratesSupplier {
+  supply() {
+    return [5, 6];
+  }
+}
+////: Links
+class Links {
+  declare id: number;
+  resolved?: number;
+  constructor(id: number) {
+    delete this.resolved;
+    handOver(this);
+    this.id = id;
+  }
+}
+////: Links-2
+class Links {
+  declare id: number;
+  declare resolved?: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+////: List1
+class List1 extends Array {
+  push(value) {
+    log.push("List1.push " + value);
+    return 42;
+  }
+}
+////: Loud
+class Loud extends Array {
+  push() {
+    return "the subclass's push";
+  }
+  map() {
+    return "the subclass's map";
+  }
+  *[Symbol.iterator]() {
+    yield "the subclass's iterator";
+  }
+}
+////: Loud-2
+class Loud extends Array {
+  *[Symbol.iterator]() {
+    yield "the subclass's iterator";
+  }
+}
+////: Loud-3
+class Loud extends Array {
+  push() {
+    return "the subclass's push";
+  }
+  *[Symbol.iterator]() {
+    yield "the subclass's iterator";
+  }
+}
+////: Loud-4
+class Loud extends Array {
+  push() {
+    return "the subclass's push";
+  }
+  map() {
+    return "the subclass's map";
+  }
+}
+////: Loud-5
+class Loud extends Array {
+  «1»() {
+    return «2»;
+  }
+  «3»() {
+    return «4»;
+  }
+}
+////: Loud-7
+class Loud extends Array {
+  «1»() {
+    return «2»;
+  }
+  «3»() {
+    return «4»;
+  }
+  *[Symbol.iterator]() {
+    yield "the subclass's iterator";
+  }
+}
+////: Loud-8
+////= Loud-2
+
+////= ownMembers
+
+////= otherPrototype-2
+////: Object-defineProperty-11
+Object.defineProperty(top, "hint", {
+  get() {
+    return "from the top";
+  },
+  set(this: Deep, value: string) {
+    log.push(`set ${value} on ${this.id}`);
+  },
+  configurable: true,
+});
+////: Odd
+class Odd extends Array {
+  push(value) {
+    log.push("Odd.push " + value);
+    return 42;
+  }
+  *[Symbol.iterator]() {
+    log.push("Odd.iterator");
+    yield "odd";
+  }
+}
+////: Old
+function Old(x, y) {
+  this.x = x;
+  this.y = y;
+}
+////: OldBox
+function OldBox(width, height) {
+  this.width = width;
+  this.height = height;
+}
+////: OldBox-prototype-area
+OldBox.prototype.area = function () {
+  return this.width * this.height;
+};
+////: OldEntry
+function OldEntry(order) {
+  if (order === "alpha first") {
+    this.alpha = 1;
+    this.beta = 2;
+    this.gamma = 3;
+  } else if (order === "gamma first") {
+    this.gamma = 3;
+    this.beta = 2;
+    this.alpha = 1;
+  } else {
+    this.beta = 2;
+    this.alpha = 1;
+  }
+}
+////: OldPoint
+function OldPoint(x, y) {
+  this.x = x;
+  this.y = y;
+}
+////: Plot
+class Plot {
+  constructor(wide, deep) {
+    this.wide = wide;
+    this.deep = deep;
+  }
+}
+////: Point
+class Point {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+}
+////: Point-3
+class Point {
+  x = 1;
+  y = 2;
+  sum() {
+    return this.x + this.y;
+  }
+}
+////: Point-4
+class Point {
+  x = 1;
+  y = 2;
+}
+////: Point-5
+function Point(x, y) {
+  this.x = x;
+  this.y = y;
+}
+////: Probe
+interface Probe {
+  id: number;
+  read(): number | undefined;
+  write(value: number): void;
+}
+////: PushesSupplier
+class PushesSupplier {
+  supply() {
+    return [5, 6];
+  }
+}
+////: ReadsCharCodeSupplier
+class ReadsCharCodeSupplier {
+  supply() {
+    return "abc";
+  }
+}
+////: Shape
+class Shape {
+  declare id: number;
+  x?: number;
+  y?: string;
+  constructor(id: number) {
+    delete this.x;
+    delete this.y;
+    handOver(this);
+    this.id = id;
+  }
+}
+////: Shape-2
+class Shape {
+  declare id: number;
+  declare x?: number;
+  declare y?: string;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+////: Shape-3
+interface Shape {
+  id: number;
+  x?: number;
+  y?: string;
+}
+////: Stack
+class Stack extends Array {
+  push() {
+    return "the subclass's push";
+  }
+}
+////: StoresMemberSupplier
+class StoresMemberSupplier {
+  supply() {
+    return ({ x: 1, y: 2 });
+  }
+}
+////: Tools
+class Tools {
+  sumPlainly(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }
+
+  sumAsCallback(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }
+
+  sumHidden(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }
+
+  findPlainly(text) {
+    return text.indexOf("b");
+  }
+
+  findAsCallback(text) {
+    return text.indexOf("b");
+  }
+
+  findHidden(text) {
+    return text.indexOf("b");
+  }
+
+  doublePlainly(n) {
+    return n * 2;
+  }
+
+  doubleAsCallback(n) {
+    return n * 2;
+  }
+
+  doubleHidden(n) {
+    return n * 2;
+  }
+
+  spanPlainly(point) {
+    const { x, y } = point;
+    return x - y;
+  }
+
+  spanAsCallback(point) {
+    const { x, y } = point;
+    return x - y;
+  }
+
+  spanHidden(point) {
+    const { x, y } = point;
+    return x - y;
+  }
+}
+////: TruncatesSupplier
+class TruncatesSupplier {
+  supply() {
+    return 7;
+  }
+}
+////: add
+function add(a, b) {
+  return a + b;
+}
+////: addsMembers
+function addsMembers(o) {
+  return o.x + o.y;
+}
+////: addsMembers-11
+async function addsMembers(given) {
+  const «1»;
+  return [o.x + o.y];
+}
+////: addsMembers-12
+function addsMembers(text) {
+  const o = «1»;
+  return o.x + o.y;
+}
+////: addsMembers-2
+function addsMembers(o, results, tick) {
+  for (let i = 0; i < 6; i++) {
+    tick(i);
+    results.push(o.x + o.y);
+  }
+  return "done";
+}
+////: addsMembers-4
+function addsMembers(holder) {
+  const o = holder.value;
+  return o.x + o.y;
+}
+////: addsMembers-6
+function addsMembers(«1») {
+  let o = ({ x: 1, y: 2 });
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    results.push(o.x + o.y);
+    if (round === 0) «2»;
+  }
+  return results;
+}
+////: addsMembers-7
+function addsMembers(given) {
+  let result = "never called";
+  «1» => {
+    result = o.x + o.y;
+    return «2»;
+  });
+  return result;
+}
+////: addsMembers-8
+function addsMembers(o, «1») {
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    results.push(o.x + o.y);
+    if (round === 0) «2»;
+  }
+  return results;
+}
+////: addsMembersAtLength
+function addsMembersAtLength(o) {
+  let result;
+  for (let round = 0; round < 1; round++) {
+    try {
+      result = o.x + o.y;
+    } finally {
+      entered++;
+    }
+  }
+  return result;
+}
+////: addsMembersSupplied
+function addsMembersSupplied() {
+  const o = addsMembersSupplier.supply();
+  return o.x + o.y;
+}
+////: addsMembersSupplied-2
+function addsMembersSupplied() {
+  const o = «1»;
+  return o.x + o.y;
+}
+////: addsOne-2
+function addsOne(holder) {
+  const n = holder.value;
+  return n + 1;
+}
+////: addsOne-3
+function addsOne(n) {
+  return n + 1;
+}
+////: addsOne-8
+async function addsOne(given) {
+  const «1»;
+  return [n + 1];
+}
+////: addsOne-9
+function addsOne(text) {
+  const n = «1»;
+  return n + 1;
+}
+////: addsOneAtLength
+function addsOneAtLength(n) {
+  let result;
+  for (let round = 0; round < 1; round++) {
+    try {
+      result = n + 1;
+    } finally {
+      entered++;
+    }
+  }
+  return result;
+}
+////: addsOneSupplied
+function addsOneSupplied() {
+  const n = addsOneSupplier.supply();
+  return n + 1;
+}
+////: addsOneSupplied-2
+function addsOneSupplied() {
+  const n = «1»;
+  return n + 1;
+}
+////: amountOf
+function amountOf(thing) {
+  return thing.amount;
+}
+////: append
+function append(list) {
+  return (last = list.push(4));
+}
+////: arrays
+const arrays = [
+  ["an array", () => [5, 6]],
+  ["a subclass", () => Odd.of(5, 6)],
+  ["an array-like", () => ({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } })],
+  ["a proxy", () => logged([5, 6])],
+  ["a frozen array", () => Object.freeze([5, 6])],
+  ["a string", () => "ab"],
+];
+////: arrays-2
+const arrays = [
+  ["its prototype becomes that of a subclass", () => [5, 6], a => Object.setPrototypeOf(a, Odd.prototype)],
+  ["its prototype becomes null", () => [5, 6], a => Object.setPrototypeOf(a, null)],
+  ["it gets its own push and iterator", () => [5, 6], a => { a.push = value => { log.push("own push " + value); return -1; }; a[Symbol.iterator] = function* () { log.push("own iterator"); yield "own"; }; }],
+  ["an element is deleted", () => [5, 6], a => delete a[0]],
+  ["an element becomes an accessor", () => [5, 6], a => Object.defineProperty(a, 0, { get() { log.push("get 0"); return "got"; }, configurable: true })],
+  ["its length stops being writable", () => [5, 6], a => Object.defineProperty(a, "length", { writable: false })],
+  ["it is frozen", () => [5, 6], a => Object.freeze(a)],
+  ["it is emptied", () => [5, 6], a => { a.length = 0; }],
+  ["it is made longer", () => [5, 6], a => { a.length += 2; }],
+  ["an element becomes a fraction and another a text", () => [5, 6], a => { a[0] = 0.5; a[1] = "text"; }],
+  ["the class between it and Array gets a push and an iterator", () => new (class extends Array {})(5, 6), a => { const middle = Object.getPrototypeOf(a); middle.push = value => { log.push("late push " + value); return -2; }; middle[Symbol.iterator] = function* () { log.push("late iterator"); yield "late"; }; }],
+];
+////: arrays-3
+const arrays = [
+  ["an array", "[5, 6]"],
+  ["a subclass", "new (class extends Array { push(value) { log.push('Odd.push ' + value); return 42; } *[Symbol.iterator]() { log.push('Odd.iterator'); yield 'odd'; } })(5, 6)"],
+  ["an array-like", "({ 0: 5, length: 7, push(value) { log.push('own push ' + value); return 'pushed'; }, [Symbol.iterator]() { log.push('own iterator'); return [8, 9][Symbol.iterator](); } })"],
+  ["a proxy", "new Proxy([5, 6], { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); }, set(target, key, value, receiver) { log.push('set ' + String(key)); return Reflect.set(target, key, value, receiver); } })"],
+  ["a frozen array", "Object.freeze([5, 6])"],
+  ["a string", "'ab'"],
+];
+////: arrays-4
+const arrays = [
+  ["an array", () => [5, 6]],
+  ["a subclass", () => Odd.of(5, 6)],
+  ["an array-like", () => ({ 0: 5, length: 7, push(value) { log.push("own push " + value); return "pushed"; }, [Symbol.iterator]() { log.push("own iterator"); return [8, 9][Symbol.iterator](); } })],
+  ["a proxy", () => logged([5, 6])],
+  ["a frozen array", () => Object.freeze([5, 6])],
+  ["a string", () => "ab"],
+  ["an array with a hole", () => [5, , 6]],
+  ["a set", () => new Set([5, 6])],
+  ["a map", () => new Map([[5, 6]])],
+  ["a typed array", () => new Uint8Array([5, 6])],
+  ["an object with a length", () => ({ 0: 5, length: 7 })],
+];
+////: arrays-5
+const arrays = [
+  ["an array", "[5,6]"],
+  ["an object with a length", "{\"0\":5,\"length\":7}"],
+  ["an object whose push is a number", "{\"push\":1,\"length\":2}"],
+  ["a string", "\"ab\""],
+  ["null", "null"],
+  ["a number", "12"],
+];
+////: arrays-8
+////= arrays-2
+
+////= strings-2
+
+////= numbers-2
+
+////= functions-3
+
+////= objects-2
+////: arrays-9
+////= arrays-4
+
+////= strings-4
+
+////= numbers-5
+
+////= functions
+
+////= objects-8
+////: at
+function at(text, index) {
+  return text.at(index);
+}
+////: attempt
+function attempt(label, run) {
+  let line;
+  try {
+    line = show(run());
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  console.log(label + " -> " + line);
+}
+////: attempt-10
+function attempt(label, run) {
+  last = "never set";
+  log.length = 0;
+  let line;
+  try {
+    line = "returned " + show(run());
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  console.log(label + ":", line + ", last " + show(last) + (log.length ? ", log " + log.join(" ") : ""));
+}
+////: attempt-11
+function attempt(label, run) {
+  log.length = 0;
+  let line;
+  try {
+    line = show(run());
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  if (log.length) line += ", log " + log.join(" ");
+  if (!atFirst.has(label)) console.log(label + ":", line);
+  else if (atFirst.get(label) === line) same++;
+  else console.log("changed, " + label + ":", line);
+  atFirst.set(label, line);
+}
+////: attempt-12
+function attempt(label, list, run) {
+  try {
+    console.log(label + ": " + describe(run(list)) + " and left " + describe(list));
+  } catch (error) {
+    console.log(label + ": threw " + error.constructor.name + " and left " + describe(list));
+  }
+}
+////: attempt-13
+function attempt(label, run) {
+  let line;
+  try {
+    line = label + " -> " + show(run());
+  } catch (error) {
+    line = label + " -> threw " + error.constructor.name;
+  }
+  console.log(line + (log.length ? " | log " + log.splice(0).join(", ") : ""));
+}
+////: attempt-14
+async function attempt(label, run) {
+  log.length = 0;
+  let line;
+  try {
+    line = show(await run());
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  console.log(label + ":", line + (log.length ? ", log " + log.join(" ") : ""));
+}
+////: attempt-15
+async function attempt(label, run) {
+  last = "never set";
+  log.length = 0;
+  let line;
+  try {
+    line = "returned " + show(await run());
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  console.log(label + ":", line + ", last " + show(last) + (log.length ? ", log " + log.join(" ") : ""));
+}
+////: attempt-16
+async function attempt(label, run) {
+  console.log(label + " -> " + (await outcome(run)));
+}
+////: attempt-17
+function attempt(label, run) {
+  last = "never set";
+  let line;
+  try {
+    line = "returned " + show(run());
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  console.log(label + ":", line + ", last " + show(last));
+}
+////: attempt-18
+function attempt(label, run) {
+  try {
+    console.log(label, "->", show(run()));
+  } catch (error) {
+    console.log(label, "-> threw", error.constructor.name);
+  }
+}
+////: attempt-19
+function attempt(run) {
+  try {
+    return show(run());
+  } catch (error) {
+    return "threw " + error.constructor.name;
+  }
+}
+////: attempt-2
+function attempt(label, run) {
+  try {
+    console.log(label + ": " + describe(run()));
+  } catch (error) {
+    console.log(label + ": threw " + error.constructor.name);
+  }
+}
+////: attempt-21
+function attempt(run: () => unknown) {
+  try {
+    return String(run());
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+////: attempt-23
+function attempt(label, run) {
+  try {
+    console.log(label, String(run()));
+  } catch (error) {
+    console.log(label, "threw", error.constructor.name);
+  }
+}
+////: attempt-3
+function attempt(label, run) {
+  try {
+    console.log(label, show(run()));
+  } catch (error) {
+    console.log(label, "threw", error.constructor.name);
+  }
+}
+////: attempt-4
+function attempt(label, run) {
+  console.log(label, "->", outcome(run));
+}
+////: attempt-44
+function attempt(run: () => void) {
+  try {
+    run();
+    return «1»;
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+////: attempt-46
+attempt(«1», () => {
+  «2».prototype = Object.create(Parent.prototype);
+  return "no error";
+});
+////: attempt-47
+attempt(«1», () => {
+  «2».prototype.who = function () { return "patched"; };
+  return whoIs(«3»());
+});
+////: attempt-49
+function attempt(run) {
+  try {
+    return «1»);
+  } catch (error) {
+    return error.constructor.name;
+  }
+}
+////: attempt-5
+function attempt(label, run) {
+  console.log(label + " -> " + outcome(run));
+}
+////: attempt-50
+////= attempt-11
+
+////= callIt
+
+////= callItIfThere
+
+////= buildIt
+
+////= callItAsAMethod
+
+////= handItToMap
+
+////= throughCall
+
+////= throughApply
+
+////= throughBind
+
+////= throughReflect
+
+////= tagWithIt
+
+////= testAnInstance
+
+////= lengthOf
+
+////= nameOf
+
+////= prototypeOf
+
+////= kindOf-2
+
+////= plus
+
+////= minus
+
+////= first
+
+////= honest
+////: attempt-51
+////= attempt-8
+
+////= Point
+
+////= notLists
+
+////= notTexts
+
+////= notNumbers
+
+////= notPoints
+////: attempt-52
+////= attempt-10
+
+////= Stack
+
+////= Point
+////: attempt-53
+////= attempt-17
+
+////= notLists-2
+
+////= notNumbers-3
+
+////= totalOne-3
+////: attempt-54
+////= attempt-15
+
+////= Stack
+
+////= Point
+////: attempt-55
+////= attempt-52
+
+////= total
+
+////= append
+
+////= firstCode-2
+////: attempt-56
+////= attempt-52
+
+////= sumOf-3
+////: attempt-6
+function attempt(label, run) {
+  log.length = 0;
+  let line;
+  try {
+    line = show(run());
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  console.log(label + ":", line + (log.length ? ", log " + log.join(" ") : ""));
+}
+////: attempt-7
+function attempt(label, list, run) {
+  try {
+    console.log(label + ": " + describe(run(list)));
+  } catch (error) {
+    console.log(label + ": threw " + error.constructor.name + " and left " + describe(list));
+  }
+}
+////: attempt-8
+function attempt(label, run) {
+  log.length = 0;
+  let line;
+  try {
+    line = "returned " + show(run());
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  console.log(label + ":", line + (log.length ? ", log " + log.join(" ") : ""));
+}
+////: attempt-9
+function attempt(label, run) {
+  try {
+    console.log(label + " -> " + show(run()));
+  } catch (error) {
+    console.log(label + " -> threw " + error.constructor.name);
+  }
+}
+////: attemptAsync
+async function attemptAsync(label, run) {
+  try {
+    console.log(label, "->", show(await run()));
+  } catch (error) {
+    console.log(label, "-> threw", error.constructor.name);
+  }
+}
+////: average
+function average(list) {
+  let total = 0;
+  for (let i = 0; i < list.length; i++) total += list[i];
+  return total / list.length;
+}
+////: below
+function below(n) {
+  let steps = 0;
+  while (n < 3) {
+    n++;
+    steps++;
+  }
+  return (last = steps);
+}
+////: borrowArea
+function borrowArea(box) {
+  return honestArea.call(box);
+}
+////: borrowArea-2
+////= borrowArea
+
+////= borrowGrow
+
+////= borrowResize
+
+////= borrowMark
+
+////= uses-9
+////: borrowGrow
+function borrowGrow(box) {
+  return honestGrow.call(box);
+}
+////: borrowMark
+function borrowMark(box) {
+  return Reflect.apply(honestMark, box, []);
+}
+////: borrowResize
+function borrowResize(box) {
+  return honestResize.apply(box, [7, 8]);
+}
+////: bucket
+function bucket(value) {
+  return value & 15;
+}
+////: build
+function build(f) {
+  return (last = new f(2).value);
+}
+////: buildIt
+function buildIt(f) {
+  return new f(1, 2);
+}
+////: callIt
+function callIt(f) {
+  return f(1, 2);
+}
+////: callItAsAMethod
+function callItAsAMethod(f) {
+  const holder = { name: "holder", f };
+  return holder.f(1, 2);
+}
+////: callItIfThere
+function callItIfThere(f) {
+  return f?.(1, 2);
+}
+////: calls-10
+async function calls(given) {
+  const «1»;
+  return [f(1)];
+}
+////: calls-11
+function calls(text) {
+  const f = «1»;
+  return f(1);
+}
+////: calls-2
+function calls(holder) {
+  const f = holder.value;
+  return f(1);
+}
+////: calls-3
+function calls(f) {
+  return f(1);
+}
+////: calls-5
+function calls(«1») {
+  let f = x => x + 1;
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    results.push(f(1));
+    if (round === 0) «2»;
+  }
+  return results;
+}
+////: calls-6
+function calls(f, «1») {
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    results.push(f(1));
+    if (round === 0) «2»;
+  }
+  return results;
+}
+////: calls-7
+function calls(given) {
+  let result = "never called";
+  «1» => {
+    result = f(1);
+    return «2»;
+  });
+  return result;
+}
+////: callsAtLength
+function callsAtLength(f) {
+  let result;
+  for (let round = 0; round < 1; round++) {
+    try {
+      result = f(1);
+    } finally {
+      entered++;
+    }
+  }
+  return result;
+}
+////: callsSupplied
+function callsSupplied() {
+  const f = callsSupplier.supply();
+  return f(1);
+}
+////: callsSupplied-2
+function callsSupplied() {
+  const f = «1»;
+  return f(1);
+}
+////: changes
+const changes = {
+  "nothing": list => {},
+  "stores a double ahead": list => { list[3] = 0.5; },
+  "stores a string ahead": list => { list[3] = "s"; },
+  "stores an object ahead": list => { list[3] = { valueOf() { return 100; } }; },
+  "stores undefined ahead": list => { list[3] = undefined; },
+  "stores behind": list => { list[0] = "behind"; },
+  "shrinks the length": list => { list.length = 2; },
+  "empties it": list => { list.length = 0; },
+  "grows the length": list => { list.length = 8; },
+  "pushes one": list => { list.push(7); },
+  "pushes a hundred": list => { for (let i = 0; i < 100; i++) list.push(1); },
+  "pops": list => { list.pop(); },
+  "shifts": list => { list.shift(); },
+  "unshifts": list => { list.unshift(0); },
+  "splices two out": list => { list.splice(2, 2); },
+  "deletes ahead": list => { delete list[3]; },
+  "reverses": list => { list.reverse(); },
+  "fills": list => { list.fill(9); },
+  "freezes": list => { Object.freeze(list); },
+  "seals": list => { Object.seal(list); },
+  "prevents extensions": list => { Object.preventExtensions(list); },
+  "fixes the length": list => { Object.defineProperty(list, "length", { writable: false }); },
+  "defines a getter ahead": list => { Object.defineProperty(list, 3, { get() { return 1000; }, configurable: true, enumerable: true }); },
+  "makes an element read-only": list => { Object.defineProperty(list, 3, { writable: false }); },
+  "makes it sparse": list => { list[50000] = 1; },
+  "changes the prototype": list => { Object.setPrototypeOf(list, otherPrototype); },
+  "changes the prototype and deletes ahead": list => { Object.setPrototypeOf(list, otherPrototype); delete list[3]; },
+  "removes the prototype": list => { Object.setPrototypeOf(list, null); },
+  "adds its own iterator": list => { list[Symbol.iterator] = function* () { yield "its own iterator"; }; },
+  "adds its own push": list => { list.push = () => "its own push"; },
+  "adds a named property": list => { list.extra = 1; },
+};
+////: characterAt
+function characterAt(text, index) {
+  return text.charAt(index);
+}
+////: clamp
+function clamp(value, low, high) {
+  return value < low ? low : value > high ? high : value;
+}
+////: codeAt
+function codeAt(text, index) {
+  return text.charCodeAt(index);
+}
+////: codeAt-2
+////= codeAt
+
+////= characterAt
+
+////= codePointAt
+
+////= at
+////: codePointAt
+function codePointAt(text, index) {
+  return text.codePointAt(index);
+}
+////: collect
+function collect(list) {
+  const seen = [];
+  for (const value of list) seen.push(value);
+  return seen;
+}
+////: conjure
+function conjure(maker) {
+  return maker();
+}
+////: conjure-2
+function conjure(text) {
+  return Reflect.construct(Function, ["make", "log", "return " + text + ";"])(make, log);
+}
+////: console
+////= console-log
+
+////= show-4
+
+////= attempt-3
+////: console-log
+console.log("strict:", (function () {
+  return this === undefined;
+})());
+////: console-log-10
+console.log(
+  "the prototype loses d in the middle:",
+  walk(fillTyped(new Walked()), name => {
+    if (name === "a") delete holder.d;
+  }),
+);
+////: console-log-9
+console.log(
+  "the prototype gets d in the middle:",
+  walk(fillTyped(new Walked()), name => {
+    if (name === "a") holder.d = 40;
+  }),
+);
+////: copied
+function copied(list) {
+  return [...list];
+}
+////: countCharacters
+function countCharacters(text) {
+  let count = 0;
+  for (const character of text) count++;
+  return count;
+}
+////: countWithIn
+function countWithIn(«1») {
+  const counts = {};
+  for (const word of «1») {
+    if (word in counts) counts[word]++;
+    else counts[word] = 1;
+  }
+  return counts;
+}
+////: deleteAllAtOnce
+function deleteAllAtOnce(name: string, walked: Walked) {
+  if (name === "a") {
+    delete walked.c;
+    delete walked.e;
+    walked.d = 4;
+  }
+}
+////: deleteAndRestoreE
+function deleteAndRestoreE(name: string, walked: Walked) {
+  if (name === "a") {
+    delete walked.e;
+    walked.e = 50;
+  }
+}
+////: describe
+function describe(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return value.length > 120 ? JSON.stringify(value.slice(0, 60)) + " and " + (value.length - 60) + " more characters" : JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "function " + value.name;
+  if (typeof value !== "object" || value === null) return String(value);
+  const prototype = Object.getPrototypeOf(value);
+  const parts = [];
+  for (const key of Reflect.ownKeys(value)) {
+    const property = Reflect.getOwnPropertyDescriptor(value, key);
+    parts.push(String(key) + ": " + ("value" in property ? describe(property.value) : "accessor"));
+  }
+  if (value instanceof Set || value instanceof Map) for (const entry of value) parts.push(describe(entry));
+  if (parts.length > 16) parts.splice(8, parts.length - 16, "and " + (parts.length - 16) + " more");
+  const name = prototype === null ? "no prototype" : prototype.constructor.name;
+  return name + (Array.isArray(value) ? " [" + parts.join(", ") + "]" : " {" + parts.join(", ") + "}");
+}
+////: describe-11
+////= describe
+
+////= attempt-2
+////: describe-12
+////= describe-3
+
+////= attempt-12
+
+////= otherPrototype
+
+////= changes
+
+////= kinds
+////: describe-13
+////= describe-5
+
+////= attempt-2
+
+////= Loud
+
+////= impostors-5
+
+////= run
+////: describe-14
+////= describe
+
+////= attempt-7
+////: describe-2
+function describe(value) {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) return show(value);
+  try {
+    const parts = Reflect.ownKeys(value).map(key => {
+      const found = Reflect.getOwnPropertyDescriptor(value, key);
+      const flags = (found.writable ? "w" : "-") + (found.enumerable ? "e" : "-") + (found.configurable ? "c" : "-");
+      return String(key) + " " + flags + " " + ("value" in found ? show(found.value) : "accessor");
+    });
+    return "{" + shorten(parts) + "}" + (Object.isExtensible(value) ? "" : " not extensible");
+  } catch (error) {
+    return "cannot be described: " + error.constructor.name;
+  }
+}
+////: describe-3
+function describe(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return value.length > 120 ? JSON.stringify(value.slice(0, 60)) + " and " + (value.length - 60) + " more characters" : JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "function " + value.name;
+  if (typeof value !== "object" || value === null) return String(value);
+  const prototype = Object.getPrototypeOf(value);
+  const parts = [];
+  for (const key of Reflect.ownKeys(value)) {
+    const property = Reflect.getOwnPropertyDescriptor(value, key);
+    parts.push(String(key) + ": " + ("value" in property ? describe(property.value) : "accessor"));
+  }
+  if (parts.length > 16) parts.splice(8, parts.length - 16, "and " + (parts.length - 16) + " more");
+  const name = prototype === null ? "no prototype" : prototype.constructor.name;
+  return name + (Array.isArray(value) ? " [" + parts.join(", ") + "]" : " {" + parts.join(", ") + "}");
+}
+////: describe-4
+function describe(use, [text, make]) {
+  log.length = 0;
+  const result = outcome(() => use(make()));
+  return use.name + " of " + text + " -> " + result + (log.length ? " after " + log.join(", ") : "");
+}
+////: describe-5
+function describe(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value !== "object" || value === null) return String(value);
+  const parts = [];
+  for (const key of Reflect.ownKeys(value)) parts.push(String(key) + ": " + describe(value[key]));
+  return (Array.isArray(value) ? "[" : "{") + parts.join(", ") + (Array.isArray(value) ? "]" : "}");
+}
+////: describe-6
+function describe(use, text) {
+  log.length = 0;
+  const result = outcome(() => use(make(text)));
+  return use.name + " of " + text + " -> " + result + (log.length ? " after " + log.join(", ") : "");
+}
+////: describe-8
+function describe(thing) {
+  return thing.describe();
+}
+////: digits
+function digits(value) {
+  let count = 0;
+  try {
+    do {
+      count++;
+      value = (value / 10) | 0;
+    } while (value > 0);
+  } finally {
+    count += 0;
+  }
+  return count;
+}
+////: doubled
+function doubled(list) {
+  return list.map(value => value * 2);
+}
+////: everyCase
+function everyCase(round) {
+  for (const [name, use, values] of table) {
+    for (const [label, make] of [...values, values[0]]) attempt(round + " " + name + " " + label, () => use(make()));
+  }
+}
+////: everyCase-2
+async function everyCase(round) {
+  for (const [name, use, values] of table) {
+    for (const [label, make] of [...values, values[0]]) await attempt(round + " " + name + " " + label, () => use(make()));
+  }
+}
+////: everyCase-3
+function everyCase(round) {
+  for (const [name, use, values] of table) {
+    for (const [label, make] of [...values, values[0]]) attempt(round + " " + name + " " + label, () => use(values[0][1](), make()));
+  }
+}
+////: everyCase-4
+function everyCase(round) {
+  for (const [name, use, values] of table) {
+    for (const [label, text] of [...values, values[0]]) attempt(round + " " + name + " " + label, () => use(text));
+  }
+}
+////: everyCase-5
+function everyCase(round) {
+  for (const [name, use, values] of table) {
+    for (const [label, make] of [...values, values[0]]) attempt(round + " " + name + " " + label, () => use(make(), label === values[0][0]));
+  }
+}
+////: everyCase-6
+function everyCase(round) {
+  for (const [name, use, values] of table) {
+    for (const [label, make] of [...values, values[0]]) attempt(round + " " + name + " " + label, () => use(holding(make())));
+  }
+}
+////: everyCase-7
+function everyCase(round) {
+  for (const [name, use, values] of table) {
+    for (const [label, make] of [...values, values[0]]) attempt(round + " " + name + " " + label, () => use({ value: make() }));
+  }
+}
+////: everyCase-9
+function everyCase(round) {
+  for (const [name, use, values] of table) {
+    for (const [label, make] of [...values, values[0]]) attempt(round + " " + name + " " + label, () => use(«1»(make())));
+  }
+}
+////: exact
+function exact(value: unknown): string {
+  if (typeof value !== "number") return `${typeof value}:${String(value)}`;
+  return `${Object.is(value, -0) ? "-0" : value}${Number.isInteger(value) ? "" : "~"}`;
+}
+////: fill
+function fill(order) {
+  const entry = {};
+  if (order === "alpha first") {
+    entry.alpha = 1;
+    entry.beta = 2;
+    entry.gamma = 3;
+  } else if (order === "gamma first") {
+    entry.gamma = 3;
+    entry.beta = 2;
+    entry.alpha = 1;
+  } else {
+    entry.beta = 2;
+    entry.alpha = 1;
+  }
+  return entry;
+}
+////: fill-6
+////= fill
+
+////= kinds-2
+
+////= histories
+////: fillTyped
+function fillTyped(walked: Walked) {
+  walked.a = 1;
+  walked.c = 3;
+  walked.e = 5;
+  return walked;
+}
+////: first
+function first(a) {
+  return a;
+}
+////: firstCode
+function firstCode(text) {
+  return (last = text.charCodeAt(0));
+}
+////: firstCode-2
+////= firstCode
+
+////= tail
+
+////= half
+
+////= below
+////: flush
+function flush() {
+  const text = log.join(", ");
+  log.length = 0;
+  return text;
+}
+////: for
+for (let i = 0; i < 2000; i++) {
+  pushes([5, 6]);
+  iterates([5, 6]);
+  readsCharCode("abc");
+  truncates(7);
+  addsOne(7);
+  calls(x => x + 1);
+  addsMembers(({ x: 1, y: 2 }));
+  storesMember(({ x: 1, y: 2 }));
+}
+////: for-10
+for (const [name, make] of notNumbers) {
+  attempt("doublePlainly " + name, () => tools.doublePlainly(make()));
+  attempt("doubleAsCallback " + name, () => [make()].map(tools.doubleAsCallback)[0]);
+  attempt("doubleHidden " + name, () => new Function("object", "value", "return object.doubleHidden(value)")(tools, make()));
+}
+////: for-11
+for (const [name, make] of notPoints) {
+  attempt("spanPlainly " + name, () => tools.spanPlainly(make()));
+  attempt("spanAsCallback " + name, () => [make()].map(tools.spanAsCallback)[0]);
+  attempt("spanHidden " + name, () => new Function("object", "value", "return object.spanHidden(value)")(tools, make()));
+}
+////: for-113
+for (const text of values) {
+  for (let from = 0; from < uses.length; from += 5) {
+    console.log(text + " -> " + uses.slice(from, from + 5).map(([name, use]) => name + " " + outcome(use, text)).join("; "));
+  }
+}
+////: for-12
+for (const [name, make] of notTexts) {
+  attempt("findPlainly " + name, () => tools.findPlainly(make()));
+  attempt("findAsCallback " + name, () => [make()].map(tools.findAsCallback)[0]);
+  attempt("findHidden " + name, () => new Function("object", "value", "return object.findHidden(value)")(tools, make()));
+}
+////: for-13
+for (let i = 0; i < 2000; i++) {
+  pushes("[5, 6]");
+  iterates("[5, 6]");
+  readsCharCode("'abc'");
+  truncates("7");
+  addsOne("7");
+  calls("(x => x + 1)");
+  addsMembers("({ x: 1, y: 2 })");
+  storesMember("({ x: 1, y: 2 })");
+}
+////: for-14
+for (let i = 0; i < 2000; i++) {
+  pushes([5, 6], true);
+  iterates([5, 6], true);
+  readsCharCode("abc", true);
+  truncates(7, true);
+  addsOne(7, true);
+  calls(x => x + 1, true);
+  addsMembers(({ x: 1, y: 2 }), true);
+  storesMember(({ x: 1, y: 2 }), true);
+}
+////: for-156
+for (let i = 0; i < 3000; i++) {
+  const deep = new Deep(i);
+  length += (hintOfFull(new Full(i)) ?? "-").length + (hintOfEmpty(new Empty(i)) ?? "-").length + (hintOfDeep(deep) ?? "-").length;
+  if (i & 1) setOnDeep(deep, "own");
+  length += (hintOfDeep(deep) ?? "-").length;
+}
+////: for-178
+for (const «1» in «2») {
+  for (let i = 0; i < «3»; i++) {
+    try {
+      «4»]([«5», 1, 2]);
+    } catch {}
+  }
+}
+////: for-179
+for (let i = 0; i < 2000; i++) {
+  for (const [, use] of uses) total += String(use(«1»)).length;
+}
+////: for-18
+for (const [label, maker] of impostors) {
+  report("after 2000 honest calls", label, maker);
+  console.log("honest again | " + showHonestResults());
+}
+////: for-180
+for (let i = 0; i < 2000; i++) {
+  pushes([5, 6], «1»);
+  iterates([5, 6], «1»);
+  readsCharCode("abc", «2»);
+  truncates(7, «3»);
+  addsOne(7, «3»);
+  calls(x => x + 1, «4»);
+  addsMembers(({ x: 1, y: 2 }), «5»);
+  storesMember(({ x: 1, y: 2 }), «5»);
+}
+////: for-181
+for (let i = 0; i < 2000; i++) {
+  pushes(«1» + "[5,6]" + «2»);
+  iterates(«1» + "[5,6]" + «2»);
+  readsCharCode(«1» + "\"abc\"" + «2»);
+  truncates(«1» + "7" + «2»);
+  addsOne(«1» + "7" + «2»);
+  addsMembers(«1» + "{\"x\":1,\"y\":2}" + «2»);
+  storesMember(«1» + "{\"x\":1,\"y\":2}" + «2»);
+}
+////: for-183
+for (let i = 0; i < 2000; i++) {
+  «1»(«2»);
+  «3»(«4»);
+  «5»(«2»);
+}
+////: for-184
+for (const [name, use] of uses) {
+  for (const text of receivers(«1»)) attempt(name + «2» + text, () => use(make(text)));
+  attempt(name + «3», () => use(«4»));
+}
+////: for-188
+for (const name in makers) {
+  for (const use in uses) {
+    log.length = 0;
+    attempt(name + ", " + use, () => uses[use](makers[name]()));
+    «1» "));
+  }
+}
+////: for-2
+for (let i = 0; i < 2000; i++) {
+  const f = i % 2 ? plus : minus;
+  callIt(f);
+  callItIfThere(f);
+  buildIt(f);
+  callItAsAMethod(f);
+  handItToMap(f);
+  throughCall(f);
+  throughApply(f);
+  throughBind(f);
+  throughReflect(f);
+  tagWithIt(f);
+  testAnInstance(f);
+  lengthOf(f);
+  nameOf(f);
+  prototypeOf(f);
+  kindOf(f);
+}
+////: for-24
+for (let i = 0; i < 2000; i++) {
+  pushes(holding([5, 6]));
+  iterates(holding([5, 6]));
+  readsCharCode(holding("abc"));
+  truncates(holding(7));
+  addsOne(holding(7));
+  calls(holding(x => x + 1));
+  addsMembers(holding(({ x: 1, y: 2 })));
+  storesMember(holding(({ x: 1, y: 2 })));
+}
+////: for-3
+for (const use in uses) {
+  honest[use] = describe(uses[use]([3, 1, 2]));
+  for (let i = 0; i < 2000; i++) uses[use]([3, 1, 2]);
+}
+////: for-38
+for (let i = 0; i < 2000; i++) {
+  pushes({ value: [5, 6] });
+  iterates({ value: [5, 6] });
+  readsCharCode({ value: "abc" });
+  truncates({ value: 7 });
+  addsOne({ value: 7 });
+  calls({ value: x => x + 1 });
+  addsMembers({ value: ({ x: 1, y: 2 }) });
+  storesMember({ value: ({ x: 1, y: 2 }) });
+}
+////: for-5
+for (const [label, text] of impostors) {
+  report("after 2000 honest calls", label, text);
+  console.log("honest again | " + showHonestResults());
+}
+////: for-6
+for (const [name, use, rows] of table) {
+  for (let i = 0; i < 300; i++) run(use, rows[0][1](), [], null);
+  for (const [label, make, change] of rows) {
+    const value = make();
+    const results = [];
+    const end = outcome(() => run(use, value, results, () => change(value)));
+    const again = [];
+    const endAgain = outcome(() => run(use, make(), again, null));
+    console.log(name + ": " + label + " -> " + show(results) + " " + end + " ; now " + show(value) + " ; a fresh one " + show(again) + " " + endAgain);
+  }
+}
+////: for-60
+for (const [name, use] of uses) {
+  for (const text of values) attempt(name + " of " + text, () => use(make(text)));
+}
+////: for-7
+for (let i = 0; i < 2000; i++) {
+  pushes([5, 6], [5, 6]);
+  iterates([5, 6], [5, 6]);
+  readsCharCode("abc", "abc");
+  truncates(7, 7);
+  addsOne(7, 7);
+  calls(x => x + 1, x => x + 1);
+  addsMembers(({ x: 1, y: 2 }), ({ x: 1, y: 2 }));
+  storesMember(({ x: 1, y: 2 }), ({ x: 1, y: 2 }));
+}
+////: for-77
+for (const [name, make] of notLists) {
+  attempt("sumPlainly " + name, () => sumPlainly(make()));
+  attempt("sumAsCallback " + name, () => [make()].map(sumAsCallback)[0]);
+  attempt("sumHidden " + name, () => new Function("f", "value", "return f(value)")(sumHidden, make()));
+}
+////: for-78
+for (const [name, make] of notNumbers) {
+  attempt("doublePlainly " + name, () => doublePlainly(make()));
+  attempt("doubleAsCallback " + name, () => [make()].map(doubleAsCallback)[0]);
+  attempt("doubleHidden " + name, () => new Function("f", "value", "return f(value)")(doubleHidden, make()));
+}
+////: for-79
+for (const [name, make] of notPoints) {
+  attempt("spanPlainly " + name, () => spanPlainly(make()));
+  attempt("spanAsCallback " + name, () => [make()].map(spanAsCallback)[0]);
+  attempt("spanHidden " + name, () => new Function("f", "value", "return f(value)")(spanHidden, make()));
+}
+////: for-8
+for (const kind in kinds) {
+  for (const name in changes) {
+    for (const use in uses) {
+      attempt(kind + ", " + use + ", " + name, kinds[kind](), list => uses[use](list, () => changes[name](list)));
+    }
+  }
+}
+////: for-80
+for (const [name, make] of notTexts) {
+  attempt("findPlainly " + name, () => findPlainly(make()));
+  attempt("findAsCallback " + name, () => [make()].map(findAsCallback)[0]);
+  attempt("findHidden " + name, () => new Function("f", "value", "return f(value)")(findHidden, make()));
+}
+////: for-81
+for (const [name, use] of uses) {
+  for (const text of receivers(name)) attempt(name + " of " + text, () => use(make(text)));
+  attempt(name + " of a string again", () => use("hello world"));
+}
+////: for-88
+for (let i = 0; i < 2000; i++) {
+  pushes([[5, 6]]);
+  iterates([[5, 6]]);
+  readsCharCode(["abc"]);
+  truncates([7]);
+  addsOne([7]);
+  calls([x => x + 1]);
+  addsMembers([({ x: 1, y: 2 })]);
+  storesMember([({ x: 1, y: 2 })]);
+}
+////: for-89
+for (let i = 0; i < 2000; i++) {
+  pushes(iterating([5, 6]));
+  iterates(iterating([5, 6]));
+  readsCharCode(iterating("abc"));
+  truncates(iterating(7));
+  addsOne(iterating(7));
+  calls(iterating(x => x + 1));
+  addsMembers(iterating(({ x: 1, y: 2 })));
+  storesMember(iterating(({ x: 1, y: 2 })));
+}
+////: for-9
+for (const [name, make] of notLists) {
+  attempt("sumPlainly " + name, () => tools.sumPlainly(make()));
+  attempt("sumAsCallback " + name, () => [make()].map(tools.sumAsCallback)[0]);
+  attempt("sumHidden " + name, () => new Function("object", "value", "return object.sumHidden(value)")(tools, make()));
+}
+////: for-94
+for (const text of texts) {
+  attempt("first of " + text, () => first(make(text)));
+  attempt("third of " + text, () => third(make(text)));
+  attempt("element 1 of " + text, () => elementAt(make(text), 1));
+  attempt("first if any of " + text, () => firstIfAny(make(text)));
+  attempt("has a third " + text, () => hasThird(make(text)));
+  attempt("first four of " + text, () => firstFour(make(text)));
+  if (log.length) console.log("log", log.splice(0).join(", "));
+}
+////: functions
+const functions = [
+  ["a function", () => x => x + 1],
+  ["a class", () => class Made { constructor(x) { log.push("constructed " + x); } }],
+  ["a callable proxy", () => logged(x => x + 2)],
+  ["a bound function", () => function (a, b) { return [this.tag, a, b]; }.bind({ tag: "bound" }, "first")],
+  ["an object with call", () => ({ call() { log.push("call"); return "called"; } })],
+];
+////: functions-2
+const functions = [
+  ["a function", "(x => x + 1)"],
+  ["a class", "(class Made { constructor(x) { log.push('constructed ' + x); } })"],
+  ["a callable proxy", "new Proxy(x => x + 2, { apply(target, self, list) { log.push('apply ' + list.length); return Reflect.apply(target, self, list); } })"],
+  ["a bound function", "(function (a, b) { return [this.tag, a, b]; }).bind({ tag: 'bound' }, 'first')"],
+  ["an object with call", "({ call() { log.push('call'); return 'called'; } })"],
+];
+////: functions-3
+const functions = [
+  ["it gets its own call", () => function (x) { return x + 1; }, f => { f.call = (self, x) => { log.push("own call"); return "mine " + x; }; }],
+  ["its prototype becomes null", () => function (x) { return x + 1; }, f => Object.setPrototypeOf(f, null)],
+  ["its prototype becomes an object with call", () => function (x) { return x + 1; }, f => Object.setPrototypeOf(f, { call: () => "inherited call" })],
+];
+////: functions-4
+const functions = [
+  ["a number", "1"],
+  ["an object", "{\"call\":1}"],
+  ["null", "null"],
+  ["a string", "\"f\""],
+];
+////: half
+function half(n) {
+  return (last = n / 2);
+}
+////: halfEight
+function halfEight(n) {
+  return (last = n / 2);
+}
+////: halfEleven
+function halfEleven(n) {
+  return (last = n / 2);
+}
+////: halfFifteen
+function halfFifteen(n) {
+  const result = n / 2;
+  seen.push(show(result));
+  return result;
+}
+////: halfFive
+function halfFive(n) {
+  return (last = n / 2);
+}
+////: halfFour
+function halfFour(n) {
+  return (last = n / 2);
+}
+////: halfNine
+function halfNine(n) {
+  return (last = n / 2);
+}
+////: halfOne
+function halfOne(n) {
+  return (last = n / 2);
+}
+////: halfSeven
+function halfSeven(n) {
+  return (last = n / 2);
+}
+////: halfSix
+function halfSix(n) {
+  return (last = n / 2);
+}
+////: halfTen
+function halfTen(n) {
+  return (last = n / 2);
+}
+////: halfThree
+function halfThree(n) {
+  return (last = n / 2);
+}
+////: halfTwelve
+function halfTwelve(n) {
+  return (last = n / 2);
+}
+////: halfTwelve-2
+function halfTwelve(n) {
+  const result = n / 2;
+  seen.push(show(result));
+  return result;
+}
+////: halfTwo
+function halfTwo(n) {
+  return (last = n / 2);
+}
+////: handItToMap
+function handItToMap(f) {
+  return [1, 2].map(f);
+}
+////: handOver
+function handOver(value: object) {
+  if (unknownCodeRuns) (globalThis as any).hook?.(value);
+}
+////: handOver-2
+////= handOver
+////= odd
+////= exact
+////: hash
+function hash(text) {
+  let result = 0;
+  for (let i = 0; i < text.length; i++) result = (result * 31 + text.charCodeAt(i)) | 0;
+  return result;
+}
+////: histories
+const histories = [
+  ["alpha first", make => make("alpha first")],
+  ["gamma first", make => make("gamma first")],
+  ["beta, alpha", make => make("short")],
+  ["beta, alpha, then gamma", make => { const entry = make("short"); entry.gamma = 3; return entry; }],
+  ["alpha deleted and stored again", make => { const entry = make("alpha first"); delete entry.alpha; entry.alpha = 1; return entry; }],
+  ["all deleted, stored backwards", make => { const entry = make("alpha first"); delete entry.alpha; delete entry.beta; delete entry.gamma; entry.gamma = 3; entry.beta = 2; entry.alpha = 1; return entry; }],
+  ["one more member in front of gamma", make => { const entry = make("short"); entry.delta = 4; entry.gamma = 3; return entry; }],
+  ["an index member stored last", make => { const entry = make("alpha first"); entry[0] = "zero"; return entry; }],
+  ["beta hidden from enumeration", make => Object.defineProperty(make("alpha first"), "beta", { enumerable: false })],
+];
+////: honest
+function honest(round) {
+  console.log(round, "callIt", show(callIt(plus)), show(callIt(minus)), show(callIt(first)), show(callIt(function (a, b) { return [a, b]; })));
+  console.log(round, "callItIfThere", show(callItIfThere(plus)), show(callItIfThere(minus)), show(callItIfThere(first)), show(callItIfThere(function (a, b) { return [a, b]; })));
+  console.log(round, "buildIt", show(buildIt(plus)), show(buildIt(minus)), show(buildIt(first)), show(buildIt(function (a, b) { this.a = a; this.b = b; })));
+  console.log(round, "callItAsAMethod", show(callItAsAMethod(plus)), show(callItAsAMethod(minus)), show(callItAsAMethod(first)), show(callItAsAMethod(function () { return this.name; })));
+  console.log(round, "handItToMap", show(handItToMap(plus)), show(handItToMap(minus)), show(handItToMap(first)), show(handItToMap(function (a, b) { return [a, b]; })));
+  console.log(round, "throughCall", show(throughCall(plus)), show(throughCall(minus)), show(throughCall(first)), show(throughCall(function () { return String(this); })));
+  console.log(round, "throughApply", show(throughApply(plus)), show(throughApply(minus)), show(throughApply(first)), show(throughApply(function () { return String(this); })));
+  console.log(round, "throughBind", show(throughBind(plus)), show(throughBind(minus)), show(throughBind(first)), show(throughBind(function () { return String(this); })));
+  console.log(round, "throughReflect", show(throughReflect(plus)), show(throughReflect(minus)), show(throughReflect(first)), show(throughReflect(function () { return String(this); })));
+  console.log(round, "tagWithIt", show(tagWithIt(plus)), show(tagWithIt(minus)), show(tagWithIt(first)), show(tagWithIt(function (strings) { return strings.raw; })));
+  console.log(round, "testAnInstance", testAnInstance(plus), testAnInstance(minus), testAnInstance(first), testAnInstance(Object));
+  console.log(round, "lengthOf", lengthOf(plus), lengthOf(minus), lengthOf(first), lengthOf(function () {}));
+  console.log(round, "nameOf", nameOf(plus), nameOf(minus), nameOf(first), show(nameOf(function () {})));
+  console.log(round, "prototypeOf", prototypeOf(plus), prototypeOf(minus), prototypeOf(first), prototypeOf(function () {}));
+  console.log(round, "kindOf", kindOf(plus), kindOf(minus), kindOf(first), kindOf(function () {}));
+}
+////: honestFirst
+function honestFirst(round) {
+  console.log(round, "low", low(1), low(256), low(-1), low(1023), low(0), low(65535));
+  console.log(round, "invoke", invoke(v => v + 1), invoke(function (v) { return v * 2; }), invoke(v => -v), invoke(v => [v].length), invoke(function same(v) { return v; }), invoke(() => 0));
+  console.log(round, "sumOf", sumOf({ x: 1, y: 2 }), sumOf({ x: 3, y: 4 }), sumOf(new Point(5, 6)), sumOf({ x: 0.5, y: 0.5 }), sumOf(new Point(-1, 1)), sumOf({ x: 7, y: 8 }));
+  console.log(round, "total", total([1, 2, 3]), total([]), total([0.5, 0.25]), total(new Array(4, 5, 6)), total(Array.of(7, 8)), total([1, 2, 3, 4].slice(1)));
+  console.log(round, "firstCode", firstCode("a"), firstCode("bc"), firstCode(""), firstCode("\u00e9"), firstCode(`t${round}`), firstCode(String(12)));
+  console.log(round, "half", half(4), half(3), half(0.5), half(-8), half(1e21), half(0));
+}
+////: honestFirst-2
+function honestFirst(round) {
+  console.log(round, "sumOf", sumOf({ x: 1, y: 2 }), sumOf({ x: 3, y: 4 }), sumOf(new Point(5, 6)), sumOf({ x: 0.5, y: 0.5 }), sumOf(new Point(-1, 1)), sumOf({ x: 7, y: 8 }));
+  console.log(round, "total", total([1, 2, 3]), total([]), total([0.5, 0.25]), total(new Array(4, 5, 6)), total(Array.of(7, 8)), total([1, 2, 3, 4].slice(1)));
+  console.log(round, "firstCode", firstCode("a"), firstCode("bc"), firstCode(""), firstCode("\u00e9"), firstCode(`t${round}`), firstCode(String(12)));
+  console.log(round, "half", half(4), half(3), half(0.5), half(-8), half(1e21), half(0));
+  console.log(round, "low", low(1), low(256), low(-1), low(1023), low(0), low(65535));
+  console.log(round, "invoke", invoke(v => v + 1), invoke(function (v) { return v * 2; }), invoke(v => -v), invoke(v => [v].length), invoke(function same(v) { return v; }), invoke(() => 0));
+}
+////: honestFirst-3
+function honestFirst(round) {
+  console.log(round, "firstCode", firstCode("a"), firstCode("bc"), firstCode(""), firstCode("\u00e9"), firstCode(`t${round}`), firstCode(String(12)));
+  console.log(round, "half", half(4), half(3), half(0.5), half(-8), half(1e21), half(0));
+  console.log(round, "low", low(1), low(256), low(-1), low(1023), low(0), low(65535));
+  console.log(round, "invoke", invoke(v => v + 1), invoke(function (v) { return v * 2; }), invoke(v => -v), invoke(v => [v].length), invoke(function same(v) { return v; }), invoke(() => 0));
+  console.log(round, "sumOf", sumOf({ x: 1, y: 2 }), sumOf({ x: 3, y: 4 }), sumOf(new Point(5, 6)), sumOf({ x: 0.5, y: 0.5 }), sumOf(new Point(-1, 1)), sumOf({ x: 7, y: 8 }));
+  console.log(round, "total", total([1, 2, 3]), total([]), total([0.5, 0.25]), total(new Array(4, 5, 6)), total(Array.of(7, 8)), total([1, 2, 3, 4].slice(1)));
+}
+////: honestFirst-4
+function honestFirst(round) {
+  console.log(round, "total", total([1, 2, 3]), total([]), total([0.5, 0.25]), total(new Array(4, 5, 6)), total(Array.of(7, 8)), total([1, 2, 3, 4].slice(1)));
+  console.log(round, "firstCode", firstCode("a"), firstCode("bc"), firstCode(""), firstCode("\u00e9"), firstCode(`t${round}`), firstCode(String(12)));
+  console.log(round, "half", half(4), half(3), half(0.5), half(-8), half(1e21), half(0));
+  console.log(round, "low", low(1), low(256), low(-1), low(1023), low(0), low(65535));
+  console.log(round, "invoke", invoke(v => v + 1), invoke(function (v) { return v * 2; }), invoke(v => -v), invoke(v => [v].length), invoke(function same(v) { return v; }), invoke(() => 0));
+  console.log(round, "sumOf", sumOf({ x: 1, y: 2 }), sumOf({ x: 3, y: 4 }), sumOf(new Point(5, 6)), sumOf({ x: 0.5, y: 0.5 }), sumOf(new Point(-1, 1)), sumOf({ x: 7, y: 8 }));
+}
+////: honestFirst-6
+function honestFirst(round) {
+  console.log(round, "invoke", invoke(v => v + 1), invoke(function (v) { return v * 2; }), invoke(v => -v), invoke(v => [v].length), invoke(function same(v) { return v; }), invoke(() => 0));
+  console.log(round, "sumOf", sumOf({ x: 1, y: 2 }), sumOf({ x: 3, y: 4 }), sumOf(new Point(5, 6)), sumOf({ x: 0.5, y: 0.5 }), sumOf(new Point(-1, 1)), sumOf({ x: 7, y: 8 }));
+  console.log(round, "total", total([1, 2, 3]), total([]), total([0.5, 0.25]), total(new Array(4, 5, 6)), total(Array.of(7, 8)), total([1, 2, 3, 4].slice(1)));
+  console.log(round, "firstCode", firstCode("a"), firstCode("bc"), firstCode(""), firstCode("\u00e9"), firstCode(`t${round}`), firstCode(String(12)));
+  console.log(round, "half", half(4), half(3), half(0.5), half(-8), half(1e21), half(0));
+  console.log(round, "low", low(1), low(256), low(-1), low(1023), low(0), low(65535));
+}
+////: honestFirst-7
+////= honestFirst-2
+
+////= honestSecond-2
+////: honestFirst-8
+////= honestFirst-4
+
+////= honestSecond-3
+////: honestFirst-9
+////= honestFirst-3
+
+////= honestSecond-4
+////: honestSecond
+function honestSecond(round) {
+  console.log(round, "pick", pick(0), pick(1), pick(2), pick(3), pick(1 + 1), pick(letters.length - 1));
+  console.log(round, "build", build(class { constructor(v) { this.value = v; } }), build(function (v) { this.value = v * 2; }), build(class { value = 3; }), build(function () {}), build(class extends Point { get value() { return this.x; } }), build(function (v) { return { value: -v }; }));
+  console.log(round, "move", move({ x: 1, y: 2 }), move({ x: 3, y: 4 }), move(new Point(5, 6)), move({ x: 0.5, y: 0.5 }), move(new Point(-1, 1)), move({ x: 7, y: 8 }));
+  console.log(round, "append", append([1, 2, 3]), append([]), append(new Array(1, 2)), append(["a"]), append([[1], [2]]), append(Array.of(1, 2, 3, 4)));
+  console.log(round, "tail", tail("abc"), tail(""), tail("x"), tail(`t${round}`), tail("\u00e9!"), tail(String(123)));
+  console.log(round, "below", below(0), below(1), below(2.5), below(3), below(-1), below(10));
+}
+////: honestSecond-2
+function honestSecond(round) {
+  console.log(round, "move", move({ x: 1, y: 2 }), move({ x: 3, y: 4 }), move(new Point(5, 6)), move({ x: 0.5, y: 0.5 }), move(new Point(-1, 1)), move({ x: 7, y: 8 }));
+  console.log(round, "append", append([1, 2, 3]), append([]), append(new Array(1, 2)), append(["a"]), append([[1], [2]]), append(Array.of(1, 2, 3, 4)));
+  console.log(round, "tail", tail("abc"), tail(""), tail("x"), tail(`t${round}`), tail("\u00e9!"), tail(String(123)));
+  console.log(round, "below", below(0), below(1), below(2.5), below(3), below(-1), below(10));
+  console.log(round, "pick", pick(0), pick(1), pick(2), pick(3), pick(1 + 1), pick(letters.length - 1));
+  console.log(round, "build", build(class { constructor(v) { this.value = v; } }), build(function (v) { this.value = v * 2; }), build(class { value = 3; }), build(function () {}), build(class extends Point { get value() { return this.x; } }), build(function (v) { return { value: -v }; }));
+}
+////: honestSecond-3
+function honestSecond(round) {
+  console.log(round, "append", append([1, 2, 3]), append([]), append(new Array(1, 2)), append(["a"]), append([[1], [2]]), append(Array.of(1, 2, 3, 4)));
+  console.log(round, "tail", tail("abc"), tail(""), tail("x"), tail(`t${round}`), tail("\u00e9!"), tail(String(123)));
+  console.log(round, "below", below(0), below(1), below(2.5), below(3), below(-1), below(10));
+  console.log(round, "pick", pick(0), pick(1), pick(2), pick(3), pick(1 + 1), pick(letters.length - 1));
+  console.log(round, "build", build(class { constructor(v) { this.value = v; } }), build(function (v) { this.value = v * 2; }), build(class { value = 3; }), build(function () {}), build(class extends Point { get value() { return this.x; } }), build(function (v) { return { value: -v }; }));
+  console.log(round, "move", move({ x: 1, y: 2 }), move({ x: 3, y: 4 }), move(new Point(5, 6)), move({ x: 0.5, y: 0.5 }), move(new Point(-1, 1)), move({ x: 7, y: 8 }));
+}
+////: honestSecond-4
+function honestSecond(round) {
+  console.log(round, "tail", tail("abc"), tail(""), tail("x"), tail(`t${round}`), tail("\u00e9!"), tail(String(123)));
+  console.log(round, "below", below(0), below(1), below(2.5), below(3), below(-1), below(10));
+  console.log(round, "pick", pick(0), pick(1), pick(2), pick(3), pick(1 + 1), pick(letters.length - 1));
+  console.log(round, "build", build(class { constructor(v) { this.value = v; } }), build(function (v) { this.value = v * 2; }), build(class { value = 3; }), build(function () {}), build(class extends Point { get value() { return this.x; } }), build(function (v) { return { value: -v }; }));
+  console.log(round, "move", move({ x: 1, y: 2 }), move({ x: 3, y: 4 }), move(new Point(5, 6)), move({ x: 0.5, y: 0.5 }), move(new Point(-1, 1)), move({ x: 7, y: 8 }));
+  console.log(round, "append", append([1, 2, 3]), append([]), append(new Array(1, 2)), append(["a"]), append([[1], [2]]), append(Array.of(1, 2, 3, 4)));
+}
+////: honestSecond-6
+function honestSecond(round) {
+  console.log(round, "build", build(class { constructor(v) { this.value = v; } }), build(function (v) { this.value = v * 2; }), build(class { value = 3; }), build(function () {}), build(class extends Point { get value() { return this.x; } }), build(function (v) { return { value: -v }; }));
+  console.log(round, "move", move({ x: 1, y: 2 }), move({ x: 3, y: 4 }), move(new Point(5, 6)), move({ x: 0.5, y: 0.5 }), move(new Point(-1, 1)), move({ x: 7, y: 8 }));
+  console.log(round, "append", append([1, 2, 3]), append([]), append(new Array(1, 2)), append(["a"]), append([[1], [2]]), append(Array.of(1, 2, 3, 4)));
+  console.log(round, "tail", tail("abc"), tail(""), tail("x"), tail(`t${round}`), tail("\u00e9!"), tail(String(123)));
+  console.log(round, "below", below(0), below(1), below(2.5), below(3), below(-1), below(10));
+  console.log(round, "pick", pick(0), pick(1), pick(2), pick(3), pick(1 + 1), pick(letters.length - 1));
+}
+////: impostors
+const impostors = [
+  "7",
+  "'3'",
+  "''",
+  "' 12 '",
+  "'0x10'",
+  "'abc'",
+  "'1e3'",
+  "'-0'",
+  "null",
+  "undefined",
+  "true",
+  "false",
+  "NaN",
+  "Infinity",
+  "-Infinity",
+  "-0",
+  "0.5",
+  "-1.5",
+  "2147483647",
+  "2147483648",
+  "-2147483648",
+  "-2147483649",
+  "4294967295",
+  "4294967297",
+  "9007199254740993",
+  "1e21",
+  "10n",
+  "-1n",
+  "2n ** 64n",
+  "[]",
+  "[5]",
+  "[1, 2]",
+  "['0x10']",
+  "[[7]]",
+  "[null]",
+  "({})",
+  "Object.create(null)",
+  "new Date(86400000)",
+  "new Date(NaN)",
+  "new Number(6)",
+  "new String('8')",
+  "new Boolean(true)",
+  "Object(4n)",
+  "Symbol('s')",
+  "Object(Symbol('boxed'))",
+  "Object.assign(function () {}, { toString() { log.push('toString'); return 'text of a function'; } })",
+  "({ valueOf() { log.push('valueOf'); return 9; }, toString() { log.push('toString'); return '11'; } })",
+  "({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '13'; } })",
+  "({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return {}; } })",
+  "({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })",
+  "({ valueOf() { log.push('valueOf'); return 5n; } })",
+  "({ valueOf() { log.push('valueOf'); return '21'; } })",
+  "({ valueOf() { log.push('valueOf'); return -0; } })",
+  "({ valueOf() { log.push('valueOf'); return Symbol('inner'); } })",
+  "({ valueOf: 5, toString() { log.push('toString'); return '17'; } })",
+  "({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })",
+  "({ [Symbol.toPrimitive](hint) { log.push(hint); return {}; } })",
+  "({ [Symbol.toPrimitive]: undefined, valueOf() { log.push('valueOf'); return 15; } })",
+  "({ [Symbol.toPrimitive]: 5 })",
+  "new Proxy({}, { get(target, key) { log.push('get ' + String(key)); return key === 'valueOf' ? () => 19 : undefined; } })",
+];
+////: impostors-2
+const impostors = [
+  ["7", () => 7],
+  ["'3'", () => '3'],
+  ["''", () => ''],
+  ["' 12 '", () => ' 12 '],
+  ["'0x10'", () => '0x10'],
+  ["'abc'", () => 'abc'],
+  ["'1e3'", () => '1e3'],
+  ["'-0'", () => '-0'],
+  ["null", () => null],
+  ["undefined", () => undefined],
+  ["true", () => true],
+  ["false", () => false],
+  ["NaN", () => NaN],
+  ["Infinity", () => Infinity],
+  ["-Infinity", () => -Infinity],
+  ["-0", () => -0],
+  ["0.5", () => 0.5],
+  ["-1.5", () => -1.5],
+  ["2147483647", () => 2147483647],
+  ["2147483648", () => 2147483648],
+  ["-2147483648", () => -2147483648],
+  ["-2147483649", () => -2147483649],
+  ["4294967295", () => 4294967295],
+  ["4294967297", () => 4294967297],
+  ["9007199254740993", () => 9007199254740993],
+  ["1e21", () => 1e21],
+  ["10n", () => 10n],
+  ["-1n", () => -1n],
+  ["2n ** 64n", () => 2n ** 64n],
+  ["[]", () => []],
+  ["[5]", () => [5]],
+  ["[1, 2]", () => [1, 2]],
+  ["['0x10']", () => ['0x10']],
+  ["[[7]]", () => [[7]]],
+  ["[null]", () => [null]],
+  ["({})", () => ({})],
+  ["Object.create(null)", () => Object.create(null)],
+  ["new Date(86400000)", () => new Date(86400000)],
+  ["new Date(NaN)", () => new Date(NaN)],
+  ["new Number(6)", () => new Number(6)],
+  ["new String('8')", () => new String('8')],
+  ["new Boolean(true)", () => new Boolean(true)],
+  ["Object(4n)", () => Object(4n)],
+  ["Symbol('s')", () => Symbol('s')],
+  ["Object(Symbol('boxed'))", () => Object(Symbol('boxed'))],
+  ["Object.assign(function () {}, { toString() { log.push('toString'); return 'text of a function'; } })", () => Object.assign(function () {}, { toString() { log.push('toString'); return 'text of a function'; } })],
+  ["({ valueOf() { log.push('valueOf'); return 9; }, toString() { log.push('toString'); return '11'; } })", () => ({ valueOf() { log.push('valueOf'); return 9; }, toString() { log.push('toString'); return '11'; } })],
+  ["({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '13'; } })", () => ({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '13'; } })],
+  ["({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return {}; } })", () => ({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return {}; } })],
+  ["({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })", () => ({ valueOf() { log.push('valueOf'); throw new RangeError('no'); } })],
+  ["({ valueOf() { log.push('valueOf'); return 5n; } })", () => ({ valueOf() { log.push('valueOf'); return 5n; } })],
+  ["({ valueOf() { log.push('valueOf'); return '21'; } })", () => ({ valueOf() { log.push('valueOf'); return '21'; } })],
+  ["({ valueOf() { log.push('valueOf'); return -0; } })", () => ({ valueOf() { log.push('valueOf'); return -0; } })],
+  ["({ valueOf() { log.push('valueOf'); return Symbol('inner'); } })", () => ({ valueOf() { log.push('valueOf'); return Symbol('inner'); } })],
+  ["({ valueOf: 5, toString() { log.push('toString'); return '17'; } })", () => ({ valueOf: 5, toString() { log.push('toString'); return '17'; } })],
+  ["({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })", () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === 'number' ? 1 : hint === 'string' ? '2' : 3; } })],
+  ["({ [Symbol.toPrimitive](hint) { log.push(hint); return {}; } })", () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return {}; } })],
+  ["({ [Symbol.toPrimitive]: undefined, valueOf() { log.push('valueOf'); return 15; } })", () => ({ [Symbol.toPrimitive]: undefined, valueOf() { log.push('valueOf'); return 15; } })],
+  ["({ [Symbol.toPrimitive]: 5 })", () => ({ [Symbol.toPrimitive]: 5 })],
+  ["new Proxy({}, { get(target, key) { log.push('get ' + String(key)); return key === 'valueOf' ? () => 19 : undefined; } })", () => new Proxy({}, { get(target, key) { log.push('get ' + String(key)); return key === 'valueOf' ? () => 19 : undefined; } })],
+];
+////: impostors-5
+const impostors = {
+  "an array-like": () => ({ 0: 7, 1: 8, length: 2 }),
+  "a subclass": () => Loud.of(7, 8),
+  "a string": () => "78",
+  "a typed array": () => new Uint8Array([200, 100]),
+  "null": () => null,
+};
+////: impostors-8
+////= impostors-2
+
+////= describe-4
+
+////= runTable
+////: invoke
+function invoke(f) {
+  return (last = f(2));
+}
+////: isIn
+function isIn(table, key) {
+  return key in table;
+}
+////: iterates
+function iterates(a) {
+  const seen = [];
+  for (const x of a) seen.push(x);
+  return seen;
+}
+////: iterates-10
+function iterates(«1») {
+  «2»;
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    const seen = [];
+    for (const x of a) seen.push(x);
+    results.push(seen);
+    if (round === 0) «3»;
+  }
+  return results;
+}
+////: iterates-11
+function iterates(a, «1») {
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    const seen = [];
+    for (const x of a) seen.push(x);
+    results.push(seen);
+    if (round === 0) «2»;
+  }
+  return results;
+}
+////: iterates-12
+function iterates(given) {
+  let result = "never called";
+  «1» => {
+    const seen = [];
+    for (const x of a) seen.push(x);
+    result = seen;
+    return «2»;
+  });
+  return result;
+}
+////: iterates-15
+async function iterates(«1») {
+  const «2»;
+  const seen = [];
+  for (const x of a) seen.push(x);
+  return [seen];
+}
+////: iterates-16
+function iterates(«1») {
+  const seen = [];
+  for (const x of a) seen.push(x);
+  return seen;
+}
+////: iterates-2
+function iterates(holder) {
+  const a = holder.value;
+  const seen = [];
+  for (const x of a) seen.push(x);
+  return seen;
+}
+////: iterates-8
+function iterates(given) {
+  return Promise.«1»(given).«2»(a => {
+    const seen = [];
+    for (const x of a) seen.push(x);
+    return [seen];
+  });
+}
+////: iteratesAtLength
+function iteratesAtLength(a) {
+  let result;
+  for (let round = 0; round < 1; round++) {
+    try {
+      const seen = [];
+      for (const x of a) seen.push(x);
+      result = seen;
+    } finally {
+      entered++;
+    }
+  }
+  return result;
+}
+////: iteratesSupplied
+function iteratesSupplied() {
+  const a = iteratesSupplier.supply();
+  const seen = [];
+  for (const x of a) seen.push(x);
+  return seen;
+}
+////: iteratesSupplied-2
+function iteratesSupplied() {
+  const a = supplyIterates();
+  const seen = [];
+  for (const x of a) seen.push(x);
+  return seen;
+}
+////: iteratorReplaced
+function iteratorReplaced(a, b) {
+  arguments[Symbol.iterator] = function* () {
+    yield "replaced";
+  };
+  const [first] = arguments;
+  return [collect(arguments), [...arguments], first, Array.from(arguments)];
+}
+////: keys
+const keys = [
+  "'a'",
+  "'a' + ''",
+  "'xa'.slice(1)",
+  "0",
+  "'0'",
+  "-0",
+  "'-0'",
+  "'00'",
+  "'0.0'",
+  "1",
+  "'1'",
+  "1.0",
+  "'1.0'",
+  "'01'",
+  "' 1'",
+  "'+1'",
+  "1e3",
+  "'1e3'",
+  "'1000'",
+  "2",
+  "5",
+  "-1",
+  "'-1'",
+  "1.5",
+  "'1.5'",
+  "0.1 + 0.2",
+  "2147483647",
+  "2147483648",
+  "4294967294",
+  "'4294967294'",
+  "4294967295",
+  "'4294967295'",
+  "4294967296",
+  "9007199254740993",
+  "1e21",
+  "'1e21'",
+  "'1e+21'",
+  "1e-7",
+  "'1e-7'",
+  "NaN",
+  "'NaN'",
+  "Infinity",
+  "'Infinity'",
+  "-Infinity",
+  "null",
+  "'null'",
+  "undefined",
+  "'undefined'",
+  "true",
+  "false",
+  "''",
+  "1n",
+  "-1n",
+  "[]",
+  "[1]",
+  "['a']",
+  "[1, 2]",
+  "[[]]",
+  "{}",
+  "new String('a')",
+  "new String('1')",
+  "new Number(1)",
+  "Symbol.for('a')",
+  "Symbol('a')",
+  "'Symbol(a)'",
+  "Object(Symbol.for('a'))",
+  "'length'",
+  "'constructor'",
+  "'__proto__'",
+  "'prototype'",
+  "'toString'",
+  "'hasOwnProperty'",
+  "{ toString() { log.push('toString'); return 'a'; }, valueOf() { log.push('valueOf'); return 'b'; } }",
+  "{ toString() { log.push('toString'); return 1; } }",
+  "{ toString() { log.push('toString'); return {}; }, valueOf() { log.push('valueOf'); return 1; } }",
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return 'a'; } }",
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return Symbol.for('a'); } }",
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return {}; } }",
+  "{ toString() { throw new RangeError('no'); } }",
+  "Object.create(null)",
+];
+////: kindOf-2
+function kindOf(f) {
+  return typeof f;
+}
+////: kinds
+const kinds = {
+  "integers": () => [1, 2, 3, 4, 5, 6],
+  "doubles": () => [1.5, 2.5, 3.5, 4.5, 5.5, 6.5],
+  "strings": () => ["a", "b", "c", "d", "e", "f"],
+};
+////: kinds-2
+const kinds = [
+  ["class", order => new Entry(order)],
+  ["constructor function", order => new OldEntry(order)],
+  ["a literal that is filled", fill],
+];
+////: kinds-3
+const kinds = [
+  ["class", () => new Box(3, 4)],
+  ["constructor function", () => new OldBox(3, 4)],
+];
+////: label
+function label(text) {
+  return "<" + text + ">";
+}
+////: lastOne
+function lastOne() {
+  return «1».length - 1];
+}
+////: lengthOf
+function lengthOf(f) {
+  return f.length;
+}
+////: lines-103
+function «1»(text, «2») {
+  const seen = [];
+  for (const «3» of text.«4»(«2»)) seen.push(«3»);
+  return seen;
+}
+////: lines-104
+class «1» {
+  constructor(«2», «3») {
+    this.«2» = «2»;
+    this.«3» = «3»;
+  }
+}
+////: lines-105
+class «1» {
+  declare «2»: number;
+  constructor(«2»: number) {
+    this.«2» = «2»;
+  }
+}
+////: lines-106
+class «1» {
+  constructor(«2») {
+    this.«2» = «2»;
+  }
+  «3»() {
+    return «4» + this.«2»;
+  }
+}
+////: lines-108
+function «1»(«2») {
+  return «3» === «4»;
+}
+////: lines-109
+function «1»(«2») {
+  «3» «2»;
+}
+////: lines-112
+function «1»(answers) {
+  let reads = 0;
+  return {
+    get «2»() {
+      return answers[reads++ % answers.length];
+    },
+    get reads() {
+      return reads;
+    },
+  };
+}
+////: lines-113
+class «1» {
+  x = 1;
+  y = 2;
+  sum() {
+    return this.x + this.y;
+  }
+}
+////: lines-116
+function «1»(«2») {
+  return { ...«2» };
+}
+////: lines-117
+function «1»(«2») {
+  return «2» * «3»;
+}
+////: lines-118
+function «1»(«2») {
+  return «3» / «4»;
+}
+////: lines-121
+class «1» {
+  constructor(«2») {
+    this.«2» = «2»;
+  }
+}
+////: lines-122
+class «1» {
+  constructor() {
+    this.«2» = «3»;
+  }
+}
+////: lines-125
+function «1»(«2») {
+  «2» += «3»;
+  return «2»;
+}
+////: lines-126
+function «1»(list) {
+  const result = list[0];
+  seen.push(show(result));
+  return result;
+}
+////: lines-127
+function «1»(value, which, text) {
+  if (which === 1) return { «2»: () => «3» };
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+////: lines-129
+function «1»(«2», value) {
+  «3».push(«4»);
+  return «5»;
+}
+////: lines-13
+class «1» {
+  declare «2»: «3»;
+  declare «4»?: «5»;
+  constructor(«2»: «3») {
+    this.«2» = «2»;
+  }
+}
+////: lines-130
+function «1»(«2»: «3», value: «4») {
+  «5» = value;
+  return «5»;
+}
+////: lines-131
+function «1»(«2») {
+  let total = 0;
+  for (let i = 0; i < «2».length; i++) total += «2»[i].«3»;
+  return total;
+}
+////: lines-133
+«1».prototype.sum = function () {
+  return this.«2» + this.«3»;
+};
+////: lines-136
+class «1» extends «2» {
+  «3» = «4»;
+}
+////: lines-138
+class «1» extends «2» {
+  constructor(«3», «4») {
+    super(«3», «4»);
+    this.«5» = «6»;
+  }
+}
+////: lines-139
+class «1» {
+  constructor(«2», «3») {
+    this.«2» = «2»;
+    this.«3» = «3»;
+  }
+  sum() {
+    return this.«2» + this.«3»;
+  }
+}
+////: lines-14
+function «1»(«2»: «3») {
+  «4» «5»;
+}
+////: lines-140
+class «1» {
+  constructor() {
+    this.«2» = «3»;
+    this.«4» = «5»;
+  }
+}
+////: lines-144
+function «1»(list) {
+  return list.«2»(value => value > «3»);
+}
+////: lines-145
+function «1»(«2») {
+  return [...«2»];
+}
+////: lines-146
+function «1»(value) {
+  return «2»({ «3»: value });
+}
+////: lines-147
+function «1»(«2») {
+  return «3» «4»;
+}
+////: lines-148
+function «1»(«2») {
+  return «3» + 1;
+}
+////: lines-149
+function «1»(«2») {
+  return new «3»(«2»);
+}
+////: lines-152
+function «1»(«2») {
+  return «3»(«4»);
+}
+////: lines-154
+function «1»(«2») {
+  «2»++;
+  return «2»;
+}
+////: lines-155
+function «1»(«2») {
+  const «3» = [];
+  for (let i = «2»; i > 0; i--) {
+    «3».push(i);
+    if («3».length === «4») break;
+  }
+  return «3»;
+}
+////: lines-156
+function «1»(list) {
+  const seen = [];
+  for (const «2» «3» list) {
+    seen.push(«2»);
+    if (seen.length === «4») break;
+  }
+  return seen;
+}
+////: lines-157
+function «1»(«2») {
+  const seen = [];
+  JSON.«3»(«2», function (key, «4») {
+    seen.push(typeof key + " " + JSON.stringify(key) + " in " + (Array.isArray(this) ? "list" : "object"));
+    return «4»;
+  });
+  return seen;
+}
+////: lines-16
+function «1»(«2»: «3», «4»: «5») {
+  «6» = «4»;
+}
+////: lines-160
+function «1»() {
+  «2» = «3»;
+  return «2»;
+}
+////: lines-162
+«1».prototype.«2» = function () {
+  return this.«3» * this.«4»;
+};
+////: lines-169
+function «1»(«2») {
+  return «3» + «4» + «5»;
+}
+////: lines-171
+function «1»(«2») {
+  const counts = {};
+  for (const «3» of «2») counts[«3»] = (counts[«3»] || 0) + 1;
+  return counts;
+}
+////: lines-172
+function «1»(«2», «3») {
+  return «2» / «3»;
+}
+////: lines-174
+function «1»(«2») {
+  const «3» = [];
+  for (let i = 0; i < «2».length; i++) «3».push(«2»[i]);
+  return «3»;
+}
+////: lines-177
+function «1»(value, which, text) {
+  if (which === 1) return -«2»;
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+////: lines-178
+function «1»(«2»: «3») {
+  const names: string[] = [];
+  for (const name in «2») names.push(name);
+  return names.join();
+}
+////: lines-179
+function «1»(value, which, text) {
+  if (which === 1) return [«2», «3»];
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+////: lines-18
+function «1»(value, which, text) {
+  if (which === 1) return «2»;
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+////: lines-180
+function «1»(value, which, text) {
+  if (which === 1) return { «2»: «3» };
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+////: lines-182
+function «1»(«2»: «3») {
+  return «4» in «2»;
+}
+////: lines-183
+function «1»(«2») {
+  return «3» === «4»;
+}
+////: lines-184
+function «1»() {
+  return «2»;
+}
+////: lines-185
+function «1»(«2») {
+  return «3»(«2»).«4»;
+}
+////: lines-186
+function «1»(n) {
+  const result = n & 3;
+  seen.push(show(result));
+  return result;
+}
+////: lines-187
+function «1»(«2») {
+  return new «3»(«4»).«5»;
+}
+////: lines-188
+function «1»(«2», «3») {
+  return «4»(«5»)[«6»].toUpperCase();
+}
+////: lines-189
+function «1»(«2») {
+  const a = «3»(«4»);
+  a.push(1);
+  return a.length;
+}
+////: lines-190
+function «1»(«2», «3») {
+  return «4»(«3»).«5»(«6»);
+}
+////: lines-191
+function «1»(«2») {
+  return «3» «4»];
+}
+////: lines-192
+function «1»(value) {
+  «2» = value;
+}
+////: lines-193
+function «1»(«2») {
+  return «3»(-«4»);
+}
+////: lines-196
+function «1»(«2», «3», value) {
+  «4»] = value;
+}
+////: lines-198
+function «1»(«2»: «3») {
+  return `${«4»} ${«5»}`;
+}
+////: lines-20
+function «1»(«2») {
+  const «3» = [];
+  for (const «4» «5» «2») «3».push(«4»);
+  return «3»;
+}
+////: lines-205
+«1».prototype.«2» = function («3») {
+  this.«4» = «3»;
+  return this;
+};
+////: lines-206
+«1».prototype.«2» = function () {
+  this.«3»++;
+  return this.«3»;
+};
+////: lines-207
+«1».prototype.«2» = function () {
+  return this.«3» * «4»;
+};
+////: lines-208
+«1».prototype.«2» = function () {
+  return this.«3» + «4»;
+};
+////: lines-209
+«1».prototype.«2» = function () {
+  return this.«3» + «4» + this.«5»;
+};
+////: lines-21
+class «1» implements Probe {
+  x?: number;
+  constructor(public id: number) {
+    delete this.x;
+    handOver(this);
+  }
+  read() { return this.x; }
+  write(value: number) { this.x = value; }
+}
+////: lines-210
+class «1» {
+  «2» = «3»;
+  «4» = «5»;
+}
+////: lines-212
+function «1»(«2», «3») {
+  «4».call(this, «2», «3»);
+  this.«5» = «6»;
+}
+////: lines-214
+function «1»(«2») {
+  const n = «3»];
+  return n + 1;
+}
+////: lines-215
+function «1»(«2») {
+  return Object.assign({}, «2»);
+}
+////: lines-216
+function «1»(a, b) {
+  return «2» + «3» + «4»;
+}
+////: lines-217
+function «1»(«2») {
+  «3» += «4»;
+  return «5»;
+}
+////: lines-218
+function «1»(«2») {
+  return «3»() === «4»;
+}
+////: lines-219
+function «1»(«2») {
+  return «3»(«4», «5», «6»);
+}
+////: lines-22
+function «1»(«2») {
+  «3» «4» = «5»;
+  for («3» i = 0; i < «2».length; i++) «4» += «2»[i];
+  return «4»;
+}
+////: lines-220
+function «1»(«2») {
+  const [first, ...rest] = «2»;
+  return [first, rest];
+}
+////: lines-221
+function «1»(«2») {
+  const [«3», «4»] = «2»;
+  return [«3», «4»];
+}
+////: lines-222
+function «1»(value, which, text) {
+  return «2»(«3»(value, which, text));
+}
+////: lines-223
+function «1»() {
+  «2»++;
+  return «2»;
+}
+////: lines-224
+function «1»(«2») {
+  return «3» | 0;
+}
+////: lines-225
+function «1»(«2», «3») {
+  return «4» + «5»];
+}
+////: lines-227
+function «1»(«2») {
+  return «2»?.«3»;
+}
+////: lines-228
+function «1»(«2») {
+  const s = «3»(«4»);
+  return s.charCodeAt(0);
+}
+////: lines-229
+function «1»(«2», «3») {
+  «4» = «3»;
+}
+////: lines-230
+function «1»(«2») {
+  return «3»;
+}
+////: lines-231
+function «1»(«2», value) {
+  «3»] = value;
+  return «3»];
+}
+////: lines-232
+function «1»(«2», «3») {
+  «4»] = «5»;
+  return «2»;
+}
+////: lines-233
+function «1»(«2», «3», value) {
+  «4»] = value;
+  return «4»];
+}
+////: lines-235
+function «1»(«2») {
+  return `<${«2»}>`;
+}
+////: lines-236
+function «1»(«2») {
+  const n = «3»];
+  return n | 0;
+}
+////: lines-239
+function* «1»(«2») {
+  yield* «2»;
+}
+////: lines-242
+async function «1»(iterable) {
+  const «2» = [];
+  for await (const «3» of iterable) «2».push(«3»);
+  return «2»;
+}
+////: lines-243
+function «1»(«2») {
+  let «3» = «4»;
+  «3» += «2»;
+  return «3»;
+}
+////: lines-244
+function «1»(value) {
+  let «2» = 0;
+  for (const «3» «4» value) «2»++;
+  return «2»;
+}
+////: lines-249
+function «1»(«2», «3», «4») {
+  const before = «2»[0];
+  «5»] = «6»;
+  return [before, «2»[0]];
+}
+////: lines-25
+function «1»(«2», «3») {
+  return «4»(«3»);
+}
+////: lines-250
+function «1»(): Row {
+  const made: Row = { «2»: 1, «3»: «4» };
+  handOver(made);
+  return made;
+}
+////: lines-252
+function «1»() {
+  return «2» * 2;
+}
+////: lines-254
+function «1»(«2») {
+  return «3»].«4»(«5»);
+}
+////: lines-255
+function «1»(...«2») {
+  return «2»;
+}
+////: lines-256
+function «1»(«2», «3») {
+  return { «2», «3» };
+}
+////: lines-257
+function «1»(«2») {
+  return «3»(...«2»);
+}
+////: lines-258
+function «1»(«2») {
+  return «3».length - 1];
+}
+////: lines-259
+function «1»(value, which, text) {
+  return «2»(value, which, text).«3»;
+}
+////: lines-260
+function «1»(Maker, «2») {
+  return new Maker(«2»);
+}
+////: lines-263
+function «1»() {
+  return «2» + «3»;
+}
+////: lines-264
+function «1»(«2»: «3») {
+  return («4» ??= «5» * «6»);
+}
+////: lines-265
+function «1»(«2») {
+  return text.«3»(«4», «5»).length;
+}
+////: lines-266
+function «1»(«2», «3») {
+  return «2» === «3»;
+}
+////: lines-267
+function «1»(list) {
+  return list.«2»((a, b) => a - b);
+}
+////: lines-268
+function «1»(«2») {
+  return parseInt(«3», «4»);
+}
+////: lines-269
+function «1»(«2») {
+  return «2» >>> «3»;
+}
+////: lines-27
+function «1»(«2») {
+  return «3»(«4»);
+}
+////: lines-270
+function* «1»() {
+  yield «2»;
+}
+////: lines-271
+«1».prototype.«2» = function () {
+  this.«3» = «4»;
+  return this;
+};
+////: lines-272
+«1».prototype.«2» = function () {
+  this.«3» += 1;
+  return this.«3»;
+};
+////: lines-274
+function «1»(«2») {
+  «3» = «3» + 1;
+  return «3»;
+}
+////: lines-276
+function «1»(«2») {
+  «3» = «4»;
+  return [Object.hasOwn(«2», «5»), «3»];
+}
+////: lines-277
+function «1»(list) {
+  «2»] = «3»;
+  return list.length;
+}
+////: lines-278
+function «1»(«2») {
+  «2»[0] = «3»;
+  return «2»[0];
+}
+////: lines-279
+function «1»(«2») {
+  const { «3», ...rest } = «2»;
+  return [«3», rest];
+}
+////: lines-281
+«1».prototype.«2» = function () {
+  return this.«3» > «4»;
+};
+////: lines-282
+function «1»() {
+  «2».call(this);
+}
+////: lines-283
+function «1»(text) {
+  return text[0].toUpperCase() + text.substring(1);
+}
+////: lines-286
+function «1»(«2») {
+  return «2» >= «3» && «2» <= «4»;
+}
+////: lines-287
+function «1»(n) {
+  return n === 0 ? «2» : «3»(n - 1);
+}
+////: lines-289
+function «1»(«2»: «3») {
+  return `[${Object.keys(«2»)}]`;
+}
+////: lines-29
+class «1» {
+  declare «2»: number;
+  «3»?: «4»;
+  «5»?: «6»;
+  constructor(«2»: number) {
+    delete this.«3»;
+    delete this.«5»;
+    handOver(this);
+    this.«2» = «2»;
+  }
+}
+////: lines-290
+function «1»() {
+  return ({ x: 1, y: 2 });
+}
+////: lines-291
+function «1»() {
+  return [5, 6];
+}
+////: lines-3
+function «1»(«2») {
+  return «3»(«4»);
+}
+////: lines-30
+function «1»(«2») {
+  return «3» * «4»;
+}
+////: lines-300
+f«1») {
+  for (const [name, use] of uses) {
+    let line = label + " | " + name + " -> ";
+    try {
+      line += show(use(make()));
+    } catch (error) {
+      line += "threw " + error.constructor.name;
+    }
+    console.log(line);
+  }
+}
+////: lines-307
+«1») {
+  let i = 0;
+  o.x = i;
+  results.push(o.x);
+  «2»;
+  i = 1;
+  o.x = i;
+  results.push(o.x);
+  return "done";
+}
+////: lines-312
+function «1»(«2») {
+  let n = 7;
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    results.push(n «3» «4»);
+    if (round === 0) «5»;
+  }
+  return results;
+}
+////: lines-318
+«1») {
+  let i = 0;
+  «2»);
+  «3»;
+  i = 1;
+  «2»);
+  return "done";
+}
+////: lines-319
+«1») {
+  for (let i = 0; i < 6; i++) {
+    «2»;
+    o.x = i;
+    results.push(o.x);
+  }
+  return "done";
+}
+////: lines-32
+function «1»(n) {
+  const result = n / 2;
+  seen.push(show(result));
+  return result;
+}
+////: lines-321
+«1»e) {
+  let total = 0;
+  for (let i = 0; i < list.length; i++) {
+    «2»);
+    total += list[i];
+  }
+  return total;
+}
+////: lines-324
+function «1»(given) {
+  let result = "never called";
+  «2» => {
+    result = n «3» «4»;
+    return «5»;
+  });
+  return result;
+}
+////: lines-327
+function «1»(n, «2») {
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    results.push(n «3» «4»);
+    if (round === 0) «5»;
+  }
+  return results;
+}
+////: lines-33
+function «1»(«2») {
+  return «3»(«4», «5»);
+}
+////: lines-34
+class «1» {
+  declare «2»: number;
+  declare «3»?: «4»;
+  declare «5»?: «6»;
+  constructor(«2»: number) {
+    this.«2» = «2»;
+  }
+}
+////: lines-343
+function «1») {
+  «2»;
+  const seen = [];
+  for (const x of a) seen.push(x);
+  return seen;
+}
+////: lines-344
+«1»t) {
+  «2»;
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: lines-346
+function «1»(list) {
+  let total = 0;
+  for («2»;
+  return total;
+}
+////: lines-347
+function «1»(list) {
+  let total = 0;
+  for («2»;
+  return total;
+}
+////: lines-35
+function «1»(«2») {
+  «3» = «4»;
+}
+////: lines-351
+function «1»(width, height) {
+  this.width = width;
+  this.height = height;
+}
+////: lines-36
+«1».prototype.«2» = function () {
+  return «3» + this.«4»;
+};
+////: lines-37
+function «1»(«2») {
+  return «3»];
+}
+////: lines-4
+class «1» {
+  declare «2»: «3»;
+  «4»?: «5»;
+  constructor(«2»: «3») {
+    delete this.«4»;
+    handOver(this);
+    this.«2» = «2»;
+  }
+}
+////: lines-45
+function «1»(«2») {
+  return «3» + «4»;
+}
+////: lines-49
+function «1»(«2») {
+  «3» = «4»;
+  this.«5» = «6»;
+}
+////: lines-5
+function «1»(«2») {
+  return «3»();
+}
+////: lines-50
+function «1»(text) {
+  const result = text.length;
+  seen.push(show(result));
+  return result;
+}
+////: lines-51
+class «1» {
+  «2»?: number;
+  constructor(public id: number) {
+    delete this.«2»;
+    handOver(this);
+  }
+}
+////: lines-53
+function «1»(«2») {
+  return «3» «4» «5»;
+}
+////: lines-54
+function «1»(«2») {
+  «3» = «4»;
+  return «2»;
+}
+////: lines-55
+function «1»(«2», «3») {
+  return «4»(«5», «6»);
+}
+////: lines-58
+«1».prototype.«2» = function () {
+  return «3»;
+};
+////: lines-59
+const «1» = class {
+  declare «2»: «3»;
+  constructor(«2»: «3») {
+    this.«2» = «2»;
+  }
+};
+////: lines-60
+function «1»(«2») {
+  «3» = «4»;
+  return «3»;
+}
+////: lines-61
+class «1» extends «2» {
+  static get [Symbol.species]() {
+    return «3»;
+  }
+}
+////: lines-62
+const «1» = {
+  «2»() {
+    return «3»;
+  },
+};
+////: lines-64
+function «1»() {
+  const «2» = new «3»();
+  handOver(«2»);
+  return «2»;
+}
+////: lines-65
+function «1»() {
+  return «2»;
+}
+////: lines-66
+class «1» {
+  constructor(«2») {
+    this.«3» = «4»;
+    this.«5» = «6»;
+  }
+}
+////: lines-67
+function «1»() {
+  this.«2» = «3»;
+}
+////: lines-7
+function «1»(«2») {
+  return «3»;
+}
+////: lines-70
+function «1»(«2»: «3»): «4» {
+  const made: «4» = { «2» };
+  handOver(made);
+  return made;
+}
+////: lines-72
+interface «1» {
+  «2»: «3»;
+  «4»?: «5»;
+}
+////: lines-73
+function «1»(«2», «3») {
+  return «4»];
+}
+////: lines-75
+function «1»(«2») {
+  return «2» | 0;
+}
+////: lines-76
+class «1» {
+  «2»() {
+    return «3»;
+  }
+}
+////: lines-78
+class «1» {
+  «2» = «3»;
+}
+////: lines-79
+function «1»(«2») {
+  «3».call(this, «2»);
+}
+////: lines-80
+function «1»(«2») {
+  return «3» + «4»;
+}
+////: lines-81
+function «1»(«2») {
+  return «3»(«4»).length;
+}
+////: lines-82
+function «1»(«2», «3») {
+  return «4»(«5»);
+}
+////: lines-83
+class «1» {
+  declare «2»?: number;
+  constructor(public id: number) {}
+}
+////: lines-84
+function «1»() {
+  this.«2» = «3»;
+  this.«4» = «5»;
+}
+////: lines-85
+class «1» extends «2» {
+  «3»() {
+    return «4»;
+  }
+}
+////: lines-86
+class «1» {
+  «2» «3»() {
+    return «4»;
+  }
+}
+////: lines-89
+function «1»() {
+  return «2»(«3»);
+}
+////: lines-9
+function «1»(n) {
+  const result = n + 1;
+  results.push(result);
+  return result;
+}
+////: lines-90
+function «1»(«2», «3») {
+  return «4» «5» «6»;
+}
+////: lines-91
+function «1»(text, «2», «3») {
+  return text.«1»(«2», «3»);
+}
+////: lines-92
+function «1»(«2») {
+  «3».push(«4»);
+  return «2».length;
+}
+////: lines-93
+function «1»(«2», «3») {
+  «4» = «3»;
+  return «5»;
+}
+////: lines-94
+function «1»(«2», results, tick) {
+  for (let i = 0; i < 6; i++) {
+    tick(i);
+    results.push(«3»());
+  }
+  return "done";
+}
+////: lines-96
+function «1»(«2») {
+  return «3» == «4»;
+}
+////: lines-97
+function «1»(«2») {
+  return «3» < «4»;
+}
+////: lines-98
+function «1»() {
+  return new «2»();
+}
+////: logged
+function logged(target) {
+  return new Proxy(target, {
+    get(target, key, receiver) {
+      log.push("get " + String(key));
+      return Reflect.get(target, key, receiver);
+    },
+    set(target, key, value, receiver) {
+      log.push("set " + String(key));
+      return Reflect.set(target, key, value, receiver);
+    },
+    apply(target, self, list) {
+      log.push("apply " + list.length);
+      return Reflect.apply(target, self, list);
+    },
+  });
+}
+////: low
+function low(n) {
+  return (last = n & 255);
+}
+////: low-10
+////= low-6
+
+////= notArrays
+
+////= notStrings
+
+////= notNumbers-4
+////: low-2
+////= low
+
+////= pick
+
+////= invoke
+
+////= build
+////: low-3
+////= low-2
+
+////= sumOf
+
+////= move
+
+////= total
+
+////= append
+////: low-4
+////= low-2
+
+////= sumOf-3
+
+////= notSmallIntegers
+
+////= notFunctions
+
+////= notPoints-3
+////: low-5
+////= low-2
+
+////= notPoints-3
+
+////= notSmallIntegers
+
+////= notFunctions
+////: low-6
+////= low-2
+
+////= sumOf
+
+////= move
+////: low-7
+////= low-2
+
+////= sumOf-3
+
+////= honestFirst
+
+////= honestSecond
+////: low-9
+////= low
+
+////= pick
+
+////= notFunctions
+
+////= notPoints-3
+
+////= notSmallIntegers
+////: made
+const made = {
+  "'a'": () => ('a'),
+  "'a' + ''": () => ('a' + ''),
+  "'xa'.slice(1)": () => ('xa'.slice(1)),
+  "0": () => (0),
+  "'0'": () => ('0'),
+  "-0": () => (-0),
+  "'-0'": () => ('-0'),
+  "'00'": () => ('00'),
+  "'0.0'": () => ('0.0'),
+  "1": () => (1),
+  "'1'": () => ('1'),
+  "1.0": () => (1.0),
+  "'1.0'": () => ('1.0'),
+  "'01'": () => ('01'),
+  "' 1'": () => (' 1'),
+  "'+1'": () => ('+1'),
+  "1e3": () => (1e3),
+  "'1e3'": () => ('1e3'),
+  "'1000'": () => ('1000'),
+  "2": () => (2),
+  "5": () => (5),
+  "-1": () => (-1),
+  "'-1'": () => ('-1'),
+  "1.5": () => (1.5),
+  "'1.5'": () => ('1.5'),
+  "0.1 + 0.2": () => (0.1 + 0.2),
+  "2147483647": () => (2147483647),
+  "2147483648": () => (2147483648),
+  "4294967294": () => (4294967294),
+  "'4294967294'": () => ('4294967294'),
+  "4294967295": () => (4294967295),
+  "'4294967295'": () => ('4294967295'),
+  "4294967296": () => (4294967296),
+  "9007199254740993": () => (9007199254740993),
+  "1e21": () => (1e21),
+  "'1e21'": () => ('1e21'),
+  "'1e+21'": () => ('1e+21'),
+  "1e-7": () => (1e-7),
+  "'1e-7'": () => ('1e-7'),
+  "NaN": () => (NaN),
+  "'NaN'": () => ('NaN'),
+  "Infinity": () => (Infinity),
+  "'Infinity'": () => ('Infinity'),
+  "-Infinity": () => (-Infinity),
+  "null": () => (null),
+  "'null'": () => ('null'),
+  "undefined": () => (undefined),
+  "'undefined'": () => ('undefined'),
+  "true": () => (true),
+  "false": () => (false),
+  "''": () => (''),
+  "1n": () => (1n),
+  "-1n": () => (-1n),
+  "[]": () => ([]),
+  "[1]": () => ([1]),
+  "['a']": () => (['a']),
+  "[1, 2]": () => ([1, 2]),
+  "[[]]": () => ([[]]),
+  "{}": () => ({}),
+  "new String('a')": () => (new String('a')),
+  "new String('1')": () => (new String('1')),
+  "new Number(1)": () => (new Number(1)),
+  "Symbol.for('a')": () => (Symbol.for('a')),
+  "Symbol('a')": () => (Symbol('a')),
+  "'Symbol(a)'": () => ('Symbol(a)'),
+  "Object(Symbol.for('a'))": () => (Object(Symbol.for('a'))),
+  "'length'": () => ('length'),
+  "'constructor'": () => ('constructor'),
+  "'__proto__'": () => ('__proto__'),
+  "'prototype'": () => ('prototype'),
+  "'toString'": () => ('toString'),
+  "'hasOwnProperty'": () => ('hasOwnProperty'),
+  "{ toString() { log.push('toString'); return 'a'; }, valueOf() { log.push('valueOf'); return 'b'; } }": () => ({ toString() { log.push('toString'); return 'a'; }, valueOf() { log.push('valueOf'); return 'b'; } }),
+  "{ toString() { log.push('toString'); return 1; } }": () => ({ toString() { log.push('toString'); return 1; } }),
+  "{ toString() { log.push('toString'); return {}; }, valueOf() { log.push('valueOf'); return 1; } }": () => ({ toString() { log.push('toString'); return {}; }, valueOf() { log.push('valueOf'); return 1; } }),
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return 'a'; } }": () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return 'a'; } }),
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return Symbol.for('a'); } }": () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return Symbol.for('a'); } }),
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return {}; } }": () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return {}; } }),
+  "{ toString() { throw new RangeError('no'); } }": () => ({ toString() { throw new RangeError('no'); } }),
+  "Object.create(null)": () => (Object.create(null)),
+};
+////: made-2
+const made = {
+  "'text'": () => ('text'),
+  "''": () => (''),
+  "new String('wrapped')": () => (new String('wrapped')),
+  "Object.assign(new String('wrapped'), { toString() { log.push('own toString'); return 'by toString'; } })": () => (Object.assign(new String('wrapped'), { toString() { log.push('own toString'); return 'by toString'; } })),
+  "Object.assign(new String('wrapped'), { valueOf() { log.push('own valueOf'); return 'by valueOf'; } })": () => (Object.assign(new String('wrapped'), { valueOf() { log.push('own valueOf'); return 'by valueOf'; } })),
+  "Object.assign(new String('wrapped'), { [Symbol.toPrimitive](hint) { log.push('toPrimitive ' + hint); return 'by toPrimitive'; } })": () => (Object.assign(new String('wrapped'), { [Symbol.toPrimitive](hint) { log.push('toPrimitive ' + hint); return 'by toPrimitive'; } })),
+  "Object.setPrototypeOf(new String('wrapped'), null)": () => (Object.setPrototypeOf(new String('wrapped'), null)),
+  "Object.setPrototypeOf(new String('wrapped'), { toString() { log.push('inherited toString'); return 'other prototype'; } })": () => (Object.setPrototypeOf(new String('wrapped'), { toString() { log.push('inherited toString'); return 'other prototype'; } })),
+  "0": () => (0),
+  "-0": () => (-0),
+  "1.50": () => (1.50),
+  "1e21": () => (1e21),
+  "1e-7": () => (1e-7),
+  "123456789012345680000": () => (123456789012345680000),
+  "0.1 + 0.2": () => (0.1 + 0.2),
+  "NaN": () => (NaN),
+  "-Infinity": () => (-Infinity),
+  "10n": () => (10n),
+  "true": () => (true),
+  "null": () => (null),
+  "undefined": () => (undefined),
+  "Symbol('s')": () => (Symbol('s')),
+  "[]": () => ([]),
+  "[1, [2, [3]]]": () => ([1, [2, [3]]]),
+  "[null, undefined, , '']": () => ([null, undefined, , '']),
+  "[{}]": () => ([{}]),
+  "{}": () => ({}),
+  "Object.create(null)": () => (Object.create(null)),
+  "{ toString() { log.push('toString'); return 'T'; }, valueOf() { log.push('valueOf'); return 'V'; } }": () => ({ toString() { log.push('toString'); return 'T'; }, valueOf() { log.push('valueOf'); return 'V'; } }),
+  "{ toString() { log.push('toString'); return 7; }, valueOf() { log.push('valueOf'); return {}; } }": () => ({ toString() { log.push('toString'); return 7; }, valueOf() { log.push('valueOf'); return {}; } }),
+  "{ toString() { log.push('toString'); return {}; }, valueOf() { log.push('valueOf'); return -0; } }": () => ({ toString() { log.push('toString'); return {}; }, valueOf() { log.push('valueOf'); return -0; } }),
+  "{ toString() { log.push('toString'); return {}; }, valueOf() { log.push('valueOf'); return {}; } }": () => ({ toString() { log.push('toString'); return {}; }, valueOf() { log.push('valueOf'); return {}; } }),
+  "{ toString: null, valueOf() { log.push('valueOf'); return null; } }": () => ({ toString: null, valueOf() { log.push('valueOf'); return null; } }),
+  "{ [Symbol.toPrimitive](hint) { log.push('toPrimitive ' + hint); return hint; } }": () => ({ [Symbol.toPrimitive](hint) { log.push('toPrimitive ' + hint); return hint; } }),
+  "{ [Symbol.toPrimitive](hint) { log.push('toPrimitive ' + hint); return Symbol('inner'); } }": () => ({ [Symbol.toPrimitive](hint) { log.push('toPrimitive ' + hint); return Symbol('inner'); } }),
+  "{ [Symbol.toPrimitive]: undefined, toString() { log.push('toString'); return 'fallback'; } }": () => ({ [Symbol.toPrimitive]: undefined, toString() { log.push('toString'); return 'fallback'; } }),
+  "{ [Symbol.toPrimitive]: 5 }": () => ({ [Symbol.toPrimitive]: 5 }),
+  "{ get [Symbol.toPrimitive]() { log.push('get toPrimitive'); return undefined; }, get toString() { log.push('get toString'); return () => 'got'; }, get valueOf() { log.push('get valueOf'); return () => 'valued'; } }": () => ({ get [Symbol.toPrimitive]() { log.push('get toPrimitive'); return undefined; }, get toString() { log.push('get toString'); return () => 'got'; }, get valueOf() { log.push('get valueOf'); return () => 'valued'; } }),
+  "{ toString() { throw new RangeError('no'); } }": () => ({ toString() { throw new RangeError('no'); } }),
+  "new Date(0)": () => (new Date(0)),
+  "new Date(NaN)": () => (new Date(NaN)),
+  "Object.assign(new Date(0), { toString() { log.push('date toString'); return 'D'; }, valueOf() { log.push('date valueOf'); return 1; } })": () => (Object.assign(new Date(0), { toString() { log.push('date toString'); return 'D'; }, valueOf() { log.push('date valueOf'); return 1; } })),
+  "new Number(-0)": () => (new Number(-0)),
+  "new Boolean(false)": () => (new Boolean(false)),
+  "Object(Symbol('boxed'))": () => (Object(Symbol('boxed'))),
+  "Object(5n)": () => (Object(5n)),
+  "/a+/gi": () => (/a+/gi),
+  "new Error('message')": () => (new Error('message')),
+  "new RangeError()": () => (new RangeError()),
+  "Buffer.from('bytes')": () => (Buffer.from('bytes')),
+  "new Uint8Array([1, 2])": () => (new Uint8Array([1, 2])),
+  "new Map()": () => (new Map()),
+  "Math": () => (Math),
+  "JSON": () => (JSON),
+  "new Proxy({}, { get(target, key) { log.push('get ' + String(key)); return undefined; } })": () => (new Proxy({}, { get(target, key) { log.push('get ' + String(key)); return undefined; } })),
+  "new Proxy(new String('wrapped'), {})": () => (new Proxy(new String('wrapped'), {})),
+};
+////: made-3
+const made = {
+  "'hey'": () => ('hey'),
+  "''": () => (''),
+  "'a' + 'bc'": () => ('a' + 'bc'),
+  "'\\ud83d\\ude00x'": () => ('\ud83d\ude00x'),
+  "'x\\ud83d'": () => ('x\ud83d'),
+  "'\\ude00\\ud83d'": () => ('\ude00\ud83d'),
+  "'e\\u0301'": () => ('e\u0301'),
+  "'\\u4e16\\u754c'": () => ('\u4e16\u754c'),
+  "new String('hey')": () => (new String('hey')),
+  "Object.assign(new String('hey'), { *[Symbol.iterator]() { log.push('own iterator'); yield 'own'; } })": () => (Object.assign(new String('hey'), { *[Symbol.iterator]() { log.push('own iterator'); yield 'own'; } })),
+  "Object.setPrototypeOf(new String('hey'), { *[Symbol.iterator]() { log.push('inherited iterator'); yield 'inherited'; } })": () => (Object.setPrototypeOf(new String('hey'), { *[Symbol.iterator]() { log.push('inherited iterator'); yield 'inherited'; } })),
+  "Object.setPrototypeOf(new String('hey'), null)": () => (Object.setPrototypeOf(new String('hey'), null)),
+  "Object.assign(new String('hey'), { [Symbol.iterator]: undefined })": () => (Object.assign(new String('hey'), { [Symbol.iterator]: undefined })),
+  "['h', 'e', 'y']": () => (['h', 'e', 'y']),
+  "['h', , 'y']": () => (['h', , 'y']),
+  "[]": () => ([]),
+  "Object.assign(['h'], { *[Symbol.iterator]() { log.push('own iterator of a list'); yield 'own'; } })": () => (Object.assign(['h'], { *[Symbol.iterator]() { log.push('own iterator of a list'); yield 'own'; } })),
+  "Buffer.from('hey')": () => (Buffer.from('hey')),
+  "new Uint8Array([1, 2])": () => (new Uint8Array([1, 2])),
+  "new Set('hello')": () => (new Set('hello')),
+  "new Map([['h', 1], ['e', 2]])": () => (new Map([['h', 1], ['e', 2]])),
+  "(function* () { log.push('started'); try { yield 'first'; yield 'second'; yield 'third'; yield 'fourth'; } finally { log.push('closed'); } })()": () => ((function* () { log.push('started'); try { yield 'first'; yield 'second'; yield 'third'; yield 'fourth'; } finally { log.push('closed'); } })()),
+  "(function () { return arguments; })('h', 'e')": () => ((function () { return arguments; })('h', 'e')),
+  "'hey'[Symbol.iterator]()": () => ('hey'[Symbol.iterator]()),
+  "['h', 'e'].entries()": () => (['h', 'e'].entries()),
+  "'hey'.matchAll(/./g)": () => ('hey'.matchAll(/./g)),
+  "{ length: 2, 0: 'h', 1: 'e' }": () => ({ length: 2, 0: 'h', 1: 'e' }),
+  "{ [Symbol.iterator]() { log.push('iterator'); let n = 0; return { next() { log.push('next'); return { done: n++ >= 5, value: 'v' + n }; }, return() { log.push('return'); return {}; } }; } }": () => ({ [Symbol.iterator]() { log.push('iterator'); let n = 0; return { next() { log.push('next'); return { done: n++ >= 5, value: 'v' + n }; }, return() { log.push('return'); return {}; } }; } }),
+  "{ [Symbol.iterator]() { return { next() { return 5; } }; } }": () => ({ [Symbol.iterator]() { return { next() { return 5; } }; } }),
+  "{ [Symbol.iterator]() { return 5; } }": () => ({ [Symbol.iterator]() { return 5; } }),
+  "{ [Symbol.iterator]: 5 }": () => ({ [Symbol.iterator]: 5 }),
+  "{ [Symbol.iterator]() { return { get next() { log.push('get next'); return () => ({ done: true }); } }; } }": () => ({ [Symbol.iterator]() { return { get next() { log.push('get next'); return () => ({ done: true }); } }; } }),
+  "{ [Symbol.iterator]() { return { next() { throw new RangeError('no'); }, return() { log.push('return'); return {}; } }; } }": () => ({ [Symbol.iterator]() { return { next() { throw new RangeError('no'); }, return() { log.push('return'); return {}; } }; } }),
+  "{}": () => ({}),
+  "5": () => (5),
+  "5n": () => (5n),
+  "true": () => (true),
+  "Symbol('hey')": () => (Symbol('hey')),
+  "null": () => (null),
+  "undefined": () => (undefined),
+  "function f() {}": () => (function f() {}),
+  "new Proxy(['h', 'e'], { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); } })": () => (new Proxy(['h', 'e'], { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); } })),
+  "new Proxy(new String('he'), { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); } })": () => (new Proxy(new String('he'), { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); } })),
+};
+////: made-5
+function made<T extends object>(«1»: T) {
+  handOver(«1»);
+  return «1»;
+}
+////: main
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+  await everyCase("at first");
+  for (let i = 0; i < 2000; i++) {
+    await pushes([5, 6]);
+    await iterates([5, 6]);
+    await readsCharCode("abc");
+    await truncates(7);
+    await addsOne(7);
+    await calls(x => x + 1);
+    await addsMembers(({ x: 1, y: 2 }));
+    await storesMember(({ x: 1, y: 2 }));
+  }
+  await everyCase("after 2000");
+}
+////: main-2
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+  await everyCase("at first");
+  for (let i = 0; i < 50; i++) {
+    await pushes([5, 6]);
+    await iterates([5, 6]);
+    await readsCharCode("abc");
+    await truncates(7);
+    await addsOne(7);
+    await calls(x => x + 1);
+    await addsMembers(({ x: 1, y: 2 }));
+    await storesMember(({ x: 1, y: 2 }));
+  }
+  await everyCase("after 50");
+}
+////: main-3
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+  for (const [name, use, rows] of table) {
+    for (let i = 0; i < 300; i++) await run(use, rows[0][1](), [], null);
+    for (const [label, make, change] of rows) {
+      const value = make();
+      const results = [];
+      const end = await outcome(() => run(use, value, results, () => change(value)));
+      const again = [];
+      const endAgain = await outcome(() => run(use, make(), again, null));
+      console.log(name + ": " + label + " -> " + show(results) + " " + end + " ; now " + show(value) + " ; a fresh one " + show(again) + " " + endAgain);
+    }
+  }
+}
+////: main-4
+async function main() {
+  console.log("strict:", (function () { return this === undefined; })());
+  for (const [name, use, run, kind] of table) {
+    const [[, honest], ...impostors] = values[kind];
+    set[kind](honest());
+    for (let i = 0; i < 50; i++) await run(use, [], null);
+    for (const [label, make] of impostors) {
+      set[kind](honest());
+      const results = [];
+      const end = await outcome(() => run(use, results, () => set[kind](make())));
+      console.log(name + ": " + label + " -> " + show(results) + " " + end);
+    }
+  }
+}
+////: make
+function make(text) {
+  return (0, eval)("(" + text + ")");
+}
+////: make-3
+function make(text) {
+  return made[text]();
+}
+////: make-4
+function make() {
+  return new Box(3, 4);
+}
+////: make-5
+function make(text) {
+  return new Function("log", "return (" + text + ");")(log);
+}
+////: make-6
+function make(id: number) {
+  const made = new Shape(id);
+  handOver(made);
+  return made;
+}
+////: make-8
+////= make-5
+
+////= impostors
+
+////= describe-6
+
+////= runTable-2
+////: make-9
+////= make-5
+
+////= impostors
+////: makeImpostor
+function makeImpostor() {
+  return {
+    get deep() {
+      log.push("get deep");
+      return "4";
+    },
+    get wide() {
+      log.push("get wide");
+      return { valueOf() { log.push("valueOf of wide"); return 3; } };
+    },
+  };
+}
+////: makers
+const makers = {
+  "a subclass": () => Quiet.of(3, 1, 2),
+  "a subclass that overrides": () => Loud.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array with its own member": () => Object.assign([3, 1, 2], ownMembers),
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "an array under another prototype": () => Object.setPrototypeOf([3, 1, 2], otherPrototype),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "mapped arguments": () => (function (a, b, c) { return arguments; })(3, 1, 2),
+  "unmapped arguments": () => (function () { "use strict"; return arguments; })(3, 1, 2),
+  "a Uint8Array": () => new Uint8Array([3, 1, 2]),
+  "a Float64Array": () => new Float64Array([3.5, 1, 2]),
+  "a BigInt64Array": () => new BigInt64Array([3n, 1n, 2n]),
+  "a string": () => "312",
+  "a String object": () => new String("312"),
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"], [1, "a"], [2, "b"]]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "a sealed array": () => Object.seal([3, 1, 2]),
+  "a non-extensible array": () => Object.preventExtensions([3, 1, 2]),
+  "an array with a hole": () => [3, , 2],
+  "a hole over an inherited element": () => Object.setPrototypeOf([3, , 2], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([3, 1, 2], 1, { get() { return "got"; }, enumerable: true, configurable: true }),
+  "an array with a fixed length": () => Object.defineProperty([3, 1, 2], "length", { writable: false }),
+  "a sparse array": () => { const list = [3, 1, 2]; list[20000] = 4; return list; },
+  "doubles": () => [3.5, 1.25, 2],
+  "strings": () => ["c", "a", "b"],
+  "mixed values": () => [3, "1", 2.5, null, undefined, { valueOf() { return 7; } }],
+  "an empty array": () => [],
+  "null": () => null,
+  "undefined": () => undefined,
+  "a number": () => 312,
+  "a function": () => function (a, b, c) {},
+  "an empty object": () => ({}),
+  "an array": () => [3, 1, 2],
+};
+////: makers-2
+const makers = {
+  "a Uint8Array": () => new Uint8Array([3, 1, 2]),
+  "a Float64Array": () => new Float64Array([3.5, 1, 2]),
+  "a BigInt64Array": () => new BigInt64Array([3n, 1n, 2n]),
+  "a string": () => "312",
+  "a String object": () => new String("312"),
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"], [1, "a"], [2, "b"]]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "a sealed array": () => Object.seal([3, 1, 2]),
+  "a non-extensible array": () => Object.preventExtensions([3, 1, 2]),
+  "an array with a hole": () => [3, , 2],
+  "a hole over an inherited element": () => Object.setPrototypeOf([3, , 2], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([3, 1, 2], 1, { get() { return "got"; }, enumerable: true, configurable: true }),
+  "an array with a fixed length": () => Object.defineProperty([3, 1, 2], "length", { writable: false }),
+  "a sparse array": () => { const list = [3, 1, 2]; list[20000] = 4; return list; },
+  "doubles": () => [3.5, 1.25, 2],
+  "strings": () => ["c", "a", "b"],
+  "mixed values": () => [3, "1", 2.5, null, undefined, { valueOf() { return 7; } }],
+  "an empty array": () => [],
+  "null": () => null,
+  "undefined": () => undefined,
+  "a number": () => 312,
+  "a function": () => function (a, b, c) {},
+  "an empty object": () => ({}),
+  "a subclass": () => Quiet.of(3, 1, 2),
+  "a subclass that overrides": () => Loud.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array with its own member": () => Object.assign([3, 1, 2], ownMembers),
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "an array under another prototype": () => Object.setPrototypeOf([3, 1, 2], otherPrototype),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "mapped arguments": () => (function (a, b, c) { return arguments; })(3, 1, 2),
+  "unmapped arguments": () => (function () { "use strict"; return arguments; })(3, 1, 2),
+  "an array": () => [3, 1, 2],
+};
+////: makers-3
+const makers = {
+  "a non-extensible array": () => Object.preventExtensions([3, 1, 2]),
+  "an array with a hole": () => [3, , 2],
+  "a hole over an inherited element": () => Object.setPrototypeOf([3, , 2], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([3, 1, 2], 1, { get() { return "got"; }, enumerable: true, configurable: true }),
+  "an array with a fixed length": () => Object.defineProperty([3, 1, 2], "length", { writable: false }),
+  "a sparse array": () => { const list = [3, 1, 2]; list[20000] = 4; return list; },
+  "doubles": () => [3.5, 1.25, 2],
+  "strings": () => ["c", "a", "b"],
+  "mixed values": () => [3, "1", 2.5, null, undefined, { valueOf() { return 7; } }],
+  "an empty array": () => [],
+  "null": () => null,
+  "undefined": () => undefined,
+  "a number": () => 312,
+  "a function": () => function (a, b, c) {},
+  "an empty object": () => ({}),
+  "a subclass": () => Quiet.of(3, 1, 2),
+  "a subclass that overrides": () => Loud.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array with its own member": () => Object.assign([3, 1, 2], ownMembers),
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "an array under another prototype": () => Object.setPrototypeOf([3, 1, 2], otherPrototype),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "mapped arguments": () => (function (a, b, c) { return arguments; })(3, 1, 2),
+  "unmapped arguments": () => (function () { "use strict"; return arguments; })(3, 1, 2),
+  "a Uint8Array": () => new Uint8Array([3, 1, 2]),
+  "a Float64Array": () => new Float64Array([3.5, 1, 2]),
+  "a BigInt64Array": () => new BigInt64Array([3n, 1n, 2n]),
+  "a string": () => "312",
+  "a String object": () => new String("312"),
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"], [1, "a"], [2, "b"]]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "a sealed array": () => Object.seal([3, 1, 2]),
+  "an array": () => [3, 1, 2],
+};
+////: makers-4
+const makers = {
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "an array under another prototype": () => Object.setPrototypeOf([3, 1, 2], otherPrototype),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "mapped arguments": () => (function (a, b, c) { return arguments; })(3, 1, 2),
+  "unmapped arguments": () => (function () { "use strict"; return arguments; })(3, 1, 2),
+  "a Uint8Array": () => new Uint8Array([3, 1, 2]),
+  "a Float64Array": () => new Float64Array([3.5, 1, 2]),
+  "a BigInt64Array": () => new BigInt64Array([3n, 1n, 2n]),
+  "a string": () => "312",
+  "a String object": () => new String("312"),
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"], [1, "a"], [2, "b"]]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "a sealed array": () => Object.seal([3, 1, 2]),
+  "a non-extensible array": () => Object.preventExtensions([3, 1, 2]),
+  "an array with a hole": () => [3, , 2],
+  "a hole over an inherited element": () => Object.setPrototypeOf([3, , 2], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([3, 1, 2], 1, { get() { return "got"; }, enumerable: true, configurable: true }),
+  "an array with a fixed length": () => Object.defineProperty([3, 1, 2], "length", { writable: false }),
+  "a sparse array": () => { const list = [3, 1, 2]; list[20000] = 4; return list; },
+  "doubles": () => [3.5, 1.25, 2],
+  "strings": () => ["c", "a", "b"],
+  "mixed values": () => [3, "1", 2.5, null, undefined, { valueOf() { return 7; } }],
+  "an empty array": () => [],
+  "null": () => null,
+  "undefined": () => undefined,
+  "a number": () => 312,
+  "a function": () => function (a, b, c) {},
+  "an empty object": () => ({}),
+  "a subclass": () => Quiet.of(3, 1, 2),
+  "a subclass that overrides": () => Loud.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array with its own member": () => Object.assign([3, 1, 2], ownMembers),
+  "an array": () => [3, 1, 2],
+};
+////: makers-5
+const makers = {
+  "null": () => null,
+  "undefined": () => undefined,
+  "a number": () => 312,
+  "a function": () => function (a, b, c) {},
+  "an empty object": () => ({}),
+  "a subclass": () => Quiet.of(3, 1, 2),
+  "a subclass that overrides": () => Loud.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array with its own member": () => Object.assign([3, 1, 2], ownMembers),
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "an array under another prototype": () => Object.setPrototypeOf([3, 1, 2], otherPrototype),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "mapped arguments": () => (function (a, b, c) { return arguments; })(3, 1, 2),
+  "unmapped arguments": () => (function () { "use strict"; return arguments; })(3, 1, 2),
+  "a Uint8Array": () => new Uint8Array([3, 1, 2]),
+  "a Float64Array": () => new Float64Array([3.5, 1, 2]),
+  "a BigInt64Array": () => new BigInt64Array([3n, 1n, 2n]),
+  "a string": () => "312",
+  "a String object": () => new String("312"),
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"], [1, "a"], [2, "b"]]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "a sealed array": () => Object.seal([3, 1, 2]),
+  "a non-extensible array": () => Object.preventExtensions([3, 1, 2]),
+  "an array with a hole": () => [3, , 2],
+  "a hole over an inherited element": () => Object.setPrototypeOf([3, , 2], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([3, 1, 2], 1, { get() { return "got"; }, enumerable: true, configurable: true }),
+  "an array with a fixed length": () => Object.defineProperty([3, 1, 2], "length", { writable: false }),
+  "a sparse array": () => { const list = [3, 1, 2]; list[20000] = 4; return list; },
+  "doubles": () => [3.5, 1.25, 2],
+  "strings": () => ["c", "a", "b"],
+  "mixed values": () => [3, "1", 2.5, null, undefined, { valueOf() { return 7; } }],
+  "an empty array": () => [],
+  "an array": () => [3, 1, 2],
+};
+////: makers-6
+const makers = {
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"], [1, "a"], [2, "b"]]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "a sealed array": () => Object.seal([3, 1, 2]),
+  "a non-extensible array": () => Object.preventExtensions([3, 1, 2]),
+  "an array with a hole": () => [3, , 2],
+  "a hole over an inherited element": () => Object.setPrototypeOf([3, , 2], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([3, 1, 2], 1, { get() { return "got"; }, enumerable: true, configurable: true }),
+  "an array with a fixed length": () => Object.defineProperty([3, 1, 2], "length", { writable: false }),
+  "a sparse array": () => { const list = [3, 1, 2]; list[20000] = 4; return list; },
+  "doubles": () => [3.5, 1.25, 2],
+  "strings": () => ["c", "a", "b"],
+  "mixed values": () => [3, "1", 2.5, null, undefined, { valueOf() { return 7; } }],
+  "an empty array": () => [],
+  "null": () => null,
+  "undefined": () => undefined,
+  "a number": () => 312,
+  "a function": () => function (a, b, c) {},
+  "an empty object": () => ({}),
+  "a subclass": () => Quiet.of(3, 1, 2),
+  "a subclass that overrides": () => Loud.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array with its own member": () => Object.assign([3, 1, 2], ownMembers),
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "an array under another prototype": () => Object.setPrototypeOf([3, 1, 2], otherPrototype),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "mapped arguments": () => (function (a, b, c) { return arguments; })(3, 1, 2),
+  "unmapped arguments": () => (function () { "use strict"; return arguments; })(3, 1, 2),
+  "a Uint8Array": () => new Uint8Array([3, 1, 2]),
+  "a Float64Array": () => new Float64Array([3.5, 1, 2]),
+  "a BigInt64Array": () => new BigInt64Array([3n, 1n, 2n]),
+  "a string": () => "312",
+  "a String object": () => new String("312"),
+  "an array": () => [3, 1, 2],
+};
+////: makers-8
+const makers = {
+  "a sparse array": () => { const list = [3, 1, 2]; list[20000] = 4; return list; },
+  "doubles": () => [3.5, 1.25, 2],
+  "strings": () => ["c", "a", "b"],
+  "mixed values": () => [3, "1", 2.5, null, undefined, { valueOf() { return 7; } }],
+  "an empty array": () => [],
+  "null": () => null,
+  "undefined": () => undefined,
+  "a number": () => 312,
+  "a function": () => function (a, b, c) {},
+  "an empty object": () => ({}),
+  "a subclass": () => Quiet.of(3, 1, 2),
+  "a subclass that overrides": () => Loud.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array with its own member": () => Object.assign([3, 1, 2], ownMembers),
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "an array under another prototype": () => Object.setPrototypeOf([3, 1, 2], otherPrototype),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "mapped arguments": () => (function (a, b, c) { return arguments; })(3, 1, 2),
+  "unmapped arguments": () => (function () { "use strict"; return arguments; })(3, 1, 2),
+  "a Uint8Array": () => new Uint8Array([3, 1, 2]),
+  "a Float64Array": () => new Float64Array([3.5, 1, 2]),
+  "a BigInt64Array": () => new BigInt64Array([3n, 1n, 2n]),
+  "a string": () => "312",
+  "a String object": () => new String("312"),
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"], [1, "a"], [2, "b"]]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "a sealed array": () => Object.seal([3, 1, 2]),
+  "a non-extensible array": () => Object.preventExtensions([3, 1, 2]),
+  "an array with a hole": () => [3, , 2],
+  "a hole over an inherited element": () => Object.setPrototypeOf([3, , 2], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([3, 1, 2], 1, { get() { return "got"; }, enumerable: true, configurable: true }),
+  "an array with a fixed length": () => Object.defineProperty([3, 1, 2], "length", { writable: false }),
+  "an array": () => [3, 1, 2],
+};
+////: meetTheImpostors
+function meetTheImpostors() {
+  for (const [name, make] of impostors) {
+    attempt("callIt, " + name, () => callIt(make()));
+    attempt("callItIfThere, " + name, () => callItIfThere(make()));
+    attempt("buildIt, " + name, () => buildIt(make()));
+    attempt("callItAsAMethod, " + name, () => callItAsAMethod(make()));
+    attempt("handItToMap, " + name, () => handItToMap(make()));
+    attempt("throughCall, " + name, () => throughCall(make()));
+    attempt("throughApply, " + name, () => throughApply(make()));
+    attempt("throughBind, " + name, () => throughBind(make()));
+    attempt("throughReflect, " + name, () => throughReflect(make()));
+    attempt("tagWithIt, " + name, () => tagWithIt(make()));
+    attempt("testAnInstance, " + name, () => testAnInstance(make()));
+    attempt("lengthOf, " + name, () => lengthOf(make()));
+    attempt("nameOf, " + name, () => nameOf(make()));
+    attempt("prototypeOf, " + name, () => prototypeOf(make()));
+    attempt("kindOf, " + name, () => kindOf(make()));
+  }
+}
+////: minus
+function minus(a, b) {
+  return a - b;
+}
+////: move
+function move(point) {
+  point.x = point.x + 1;
+  return (last = point.x);
+}
+////: nameOf
+function nameOf(f) {
+  return f.name;
+}
+////: next
+function next(value) {
+  return value + 1;
+}
+////: notArrays
+const notArrays = [
+  ["a string", () => "12"],
+  ["an array-like object", () => ({ 0: 1, 1: 2, length: 2 })],
+  ["a typed array", () => new Uint8Array([1, 2])],
+  ["a subclass", () => new Stack(1, 2)],
+  ["a frozen array", () => Object.freeze([1, 2])],
+  ["an array of holes", () => new Array(2)],
+  ["parsed JSON", () => JSON.parse('{"0":5,"length":1}')],
+  ["null", () => null],
+];
+////: notFunctions
+const notFunctions = [
+  ["a class", () => class { constructor(v) { this.value = v; } }],
+  ["an arrow function", () => v => ({ value: v })],
+  ["a bound function", () => function (a, b) { this.value = [a, b]; return a + b; }.bind({}, 1)],
+  ["a callable proxy", () => new Proxy(function () {}, { apply: (target, self, list) => (log.push("apply"), list[0]), construct: (target, list) => (log.push("construct"), { value: list[0] }) })],
+  ["an async function", () => async v => v],
+  ["an object with call and apply", () => ({ call: () => "call", apply: () => "apply" })],
+  ["a string", () => "f"],
+  ["undefined", () => undefined],
+];
+////: notLists
+const notLists = [
+  ["a string", () => "12"],
+  ["a Set", () => new Set([1, 2])],
+  ["a Map", () => new Map([[1, 2]])],
+  ["a generator", () => (function* () { yield 1; yield 2; })()],
+  ["a typed array", () => new Int8Array([1, -2])],
+  ["an array with its own iterator", () => Object.assign([1, 2], { [Symbol.iterator]: () => [7][Symbol.iterator]() })],
+  ["an array-like object", () => ({ 0: 1, length: 1 })],
+  ["undefined", () => undefined],
+];
+////: notLists-2
+const notLists = [
+  ["a string", () => "12"],
+  ["an array-like object", () => ({ 0: 5, length: 1 })],
+  ["null", () => null],
+];
+////: notNumbers
+const notNumbers = [
+  ["a numeric string", () => "3"],
+  ["an object with valueOf", () => ({ valueOf: () => (log.push("valueOf"), 3) })],
+  ["a BigInt", () => 3n],
+  ["an array of one", () => [4]],
+  ["true", () => true],
+  ["negative zero", () => -0],
+  ["null", () => null],
+  ["undefined", () => undefined],
+];
+////: notNumbers-2
+const notNumbers = [
+  ["a numeric string", () => "1"],
+  ["an object with valueOf", () => ({ valueOf: () => (log.push("valueOf"), 1) })],
+  ["an object with Symbol.toPrimitive", () => ({ [Symbol.toPrimitive]: hint => (log.push(hint), 2) })],
+  ["a BigInt", () => 1n],
+  ["an array of one", () => [1]],
+  ["a symbol", () => Symbol("s")],
+  ["negative zero", () => -0],
+  ["null", () => null],
+  ["undefined", () => undefined],
+];
+////: notNumbers-3
+const notNumbers = [
+  ["a numeric string", () => "4"],
+  ["a BigInt", () => 4n],
+  ["undefined", () => undefined],
+];
+////: notNumbers-4
+////= notNumbers-2
+
+////= notSmallIntegers
+
+////= notFunctions
+
+////= notPoints-2
+////: notPoints
+const notPoints = [
+  ["getters in the other order", () => ({ get y() { log.push("y"); return 1; }, get x() { log.push("x"); return 3; } })],
+  ["a proxy", () => new Proxy({ x: 3, y: 1 }, { get: (target, key) => (log.push(String(key)), target[key]) })],
+  ["members on the prototype", () => Object.create({ x: 3, y: 1 })],
+  ["x is missing", () => ({ y: 1 })],
+  ["strings inside", () => ({ x: "3", y: "1" })],
+  ["an array", () => [3, 1]],
+  ["a number", () => 5],
+  ["null", () => null],
+];
+////: notPoints-2
+const notPoints = [
+  ["the other key order", () => ({ y: 2, x: 1 })],
+  ["a getter", () => ({ get x() { log.push("get x"); return 1; }, y: 2 })],
+  ["accessors on the prototype", () => Object.create({ get x() { log.push("get x"); return 1; }, set x(v) { log.push("set x " + v); }, y: 2 })],
+  ["a proxy", () => new Proxy({ x: 1, y: 2 }, { get: (target, key) => (log.push("get " + String(key)), target[key]), set: (target, key, v) => (log.push("set " + String(key)), (target[key] = v), true) })],
+  ["y is missing", () => ({ x: 1 })],
+  ["frozen", () => Object.freeze({ x: 1, y: 2 })],
+  ["strings inside", () => ({ x: "1", y: "2" })],
+  ["parsed JSON", () => JSON.parse('{"y":2,"x":1}')],
+  ["a number", () => 5],
+  ["null", () => null],
+];
+////: notPoints-3
+////= notPoints-2
+
+////= notArrays
+
+////= notStrings
+
+////= notNumbers-2
+////: notSmallIntegers
+const notSmallIntegers = [
+  ["two to the 31st", () => 2147483648],
+  ["past two to the 32nd", () => 4294967297],
+  ["a fraction", () => 1.5],
+  ["negative zero", () => -0],
+  ["NaN", () => NaN],
+  ["a numeric string", () => "1"],
+  ["a name", () => "length"],
+  ["an object", () => ({ valueOf: () => (log.push("valueOf"), 2), toString: () => (log.push("toString"), "3") })],
+  ["a BigInt", () => 1n],
+  ["undefined", () => undefined],
+];
+////: notStrings
+const notStrings = [
+  ["an array", () => ["a", "b"]],
+  ["a String object", () => new String("ab")],
+  ["an object with the methods", () => ({ charCodeAt: () => "a code", slice: () => "a slice" })],
+  ["a Buffer", () => Buffer.from("ab")],
+  ["a number", () => 65],
+  ["undefined", () => undefined],
+];
+////: notTexts
+const notTexts = [
+  ["an array", () => ["a", "b"]],
+  ["a String object", () => new String("ab")],
+  ["an object with indexOf", () => ({ indexOf: what => "asked for " + what })],
+  ["a typed array", () => new Uint8Array([1, 2])],
+  ["a number", () => 12],
+  ["null", () => null],
+];
+////: numbers
+const numbers = [
+  ["an integer", () => 7],
+  ["a string", () => "3"],
+  ["an object with valueOf", () => ({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } })],
+  ["a bigint", () => 10n],
+  ["the largest int32", () => 2147483647],
+  ["minus zero", () => -0],
+  ["undefined", () => undefined],
+];
+////: numbers-2
+const numbers = [
+  ["it gets its own valueOf", () => new Number(7), n => { n.valueOf = () => { log.push("own valueOf"); return "3"; }; }],
+  ["it gets its own Symbol.toPrimitive", () => new Number(7), n => { n[Symbol.toPrimitive] = hint => { log.push("hint " + hint); return 2 ** 31; }; }],
+  ["its prototype becomes null", () => new Number(7), n => Object.setPrototypeOf(n, null)],
+  ["its prototype becomes an object with valueOf", () => new Number(7), n => Object.setPrototypeOf(n, { valueOf: () => 0.5 })],
+  ["its valueOf is deleted", () => ({ valueOf: () => 7 }), n => delete n.valueOf],
+  ["the class between it and Number gets a valueOf", () => new (class extends Number {})(7), n => { Object.getPrototypeOf(n).valueOf = () => { log.push("late valueOf"); return "3"; }; }],
+];
+////: numbers-3
+const numbers = [
+  ["an integer", "7"],
+  ["a string", "'3'"],
+  ["an object with valueOf", "({ valueOf() { log.push('valueOf'); return 2 ** 31 + 0.5; }, toString() { log.push('toString'); return 'text'; } })"],
+  ["a bigint", "10n"],
+  ["the largest int32", "2147483647"],
+  ["minus zero", "-0"],
+  ["undefined", "undefined"],
+];
+////: numbers-4
+const numbers = [
+  ["an integer", "7"],
+  ["a string", "\"3\""],
+  ["null", "null"],
+  ["the largest int32", "2147483647"],
+  ["minus zero", "-0"],
+  ["too large", "1e400"],
+  ["a fraction", "2.5"],
+  ["an array of one number", "[4]"],
+  ["an object", "{}"],
+  ["true", "true"],
+  ["an object whose valueOf is a number", "{\"valueOf\":1}"],
+];
+////: numbers-5
+const numbers = [
+  ["an integer", () => 7],
+  ["a string", () => "3"],
+  ["an object with valueOf", () => ({ valueOf() { log.push("valueOf"); return 2 ** 31 + 0.5; }, toString() { log.push("toString"); return "text"; } })],
+  ["a bigint", () => 10n],
+  ["the largest int32", () => 2147483647],
+  ["minus zero", () => -0],
+  ["undefined", () => undefined],
+  ["a Number object", () => new Number(3.5)],
+  ["a Boolean object", () => new Boolean(true)],
+  ["not a number", () => NaN],
+];
+////: numbers-6
+function* numbers() {
+  yield 30;
+  yield 40;
+}
+////: objects
+const objects = [
+  ["an object", () => ({ x: 1, y: 2 })],
+  ["accessors", () => ({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })],
+  ["a proxy", () => logged({ y: 2, x: 1 })],
+  ["a frozen object", () => Object.freeze({ x: 5, y: 6 })],
+  ["texts in another order", () => ({ y: "2", x: "1" })],
+  ["inherited members", () => Object.create({ x: 3, y: 4 })],
+];
+////: objects-2
+const objects = [
+  ["x becomes an accessor", () => ({ x: 1, y: 2 }), o => Object.defineProperty(o, "x", { get() { log.push("get x"); return 10; }, set(value) { log.push("set x " + value); }, enumerable: true, configurable: true })],
+  ["x is deleted", () => ({ x: 1, y: 2 }), o => delete o.x],
+  ["x is deleted and the prototype gets accessors", () => ({ x: 1, y: 2 }), o => { delete o.x; Object.setPrototypeOf(o, Object.defineProperty({}, "x", { get() { log.push("get x"); return 10; }, set(value) { log.push("set x " + value); }, enumerable: true, configurable: true })); }],
+  ["a member is added", () => ({ x: 1, y: 2 }), o => { o.z = 3; }],
+  ["x stops being writable", () => ({ x: 1, y: 2 }), o => Object.defineProperty(o, "x", { writable: false })],
+  ["it is frozen", () => ({ x: 1, y: 2 }), o => Object.freeze(o)],
+  ["a hundred members are added and removed", () => ({ x: 1, y: 2 }), o => { for (let k = 0; k < 100; k++) o["k" + k] = k; for (let k = 0; k < 100; k++) delete o["k" + k]; }],
+  ["y becomes a text", () => ({ x: 1, y: 2 }), o => { o.y = "2"; }],
+  ["its prototype becomes null", () => ({ x: 1, y: 2 }), o => Object.setPrototypeOf(o, null)],
+  ["an own x hides the inherited one", () => Object.create({ x: 1, y: 2 }), o => Object.defineProperty(o, "x", { value: 100, writable: true, enumerable: true, configurable: true })],
+  ["the x of the prototype changes", () => Object.create({ x: 1, y: 2 }), o => { Object.getPrototypeOf(o).x = 50; }],
+  ["the y of the prototype becomes an accessor", () => Object.create({ x: 1, y: 2 }), o => Object.defineProperty(Object.getPrototypeOf(o), "y", { get() { log.push("get y"); return 20; } })],
+  ["the own x is deleted and that of the prototype stops being writable", () => Object.create({ x: 1, y: 2 }), o => { delete o.x; Object.defineProperty(Object.getPrototypeOf(o), "x", { writable: false }); }],
+  ["the prototype is replaced", () => Object.create({ x: 1, y: 2 }), o => Object.setPrototypeOf(o, { x: "other", y: "prototype" })],
+  ["a prototype in the middle gets its own x and y", () => Object.create(Object.create({ x: 1, y: 2 })), o => Object.assign(Object.getPrototypeOf(o), { x: 100, y: 200 })],
+  ["the own x is deleted and a prototype in the middle gets accessors", () => Object.create(Object.create({ x: 1, y: 2 })), o => { delete o.x; Object.defineProperty(Object.getPrototypeOf(o), "x", { get() { log.push("get x"); return 10; }, set(value) { log.push("set x " + value); }, enumerable: true, configurable: true }); }],
+  ["a prototype is put in the middle", () => Object.create({ x: 1, y: 2 }), o => Object.setPrototypeOf(o, Object.create(Object.getPrototypeOf(o), { y: { value: "from the middle" } }))],
+];
+////: objects-4
+const objects = [
+  ["an object", "({ x: 1, y: 2 })"],
+  ["accessors", "({ get x() { log.push('get x'); return 10; }, set x(value) { log.push('set x ' + value); }, get y() { log.push('get y'); return 20; } })"],
+  ["a proxy", "new Proxy({ y: 2, x: 1 }, { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); }, set(target, key, value, receiver) { log.push('set ' + String(key)); return Reflect.set(target, key, value, receiver); } })"],
+  ["a frozen object", "Object.freeze({ x: 5, y: 6 })"],
+  ["texts in another order", "({ y: '2', x: '1' })"],
+  ["inherited members", "Object.create({ x: 3, y: 4 })"],
+];
+////: objects-7
+const objects = [
+  ["an object", "{\"x\":1,\"y\":2}"],
+  ["texts in another order", "{\"y\":\"2\",\"x\":\"1\"}"],
+  ["a member is missing", "{\"x\":1}"],
+  ["an array", "[1,2]"],
+  ["members under a key called __proto__", "{\"__proto__\":{\"x\":1,\"y\":2}}"],
+  ["a key twice", "{\"x\":1,\"y\":2,\"x\":\"again\"}"],
+  ["null", "null"],
+  ["a string", "\"xy\""],
+  ["a number", "5"],
+];
+////: objects-8
+const objects = [
+  ["an object", () => ({ x: 1, y: 2 })],
+  ["accessors", () => ({ get x() { log.push("get x"); return 10; }, set x(value) { log.push("set x " + value); }, get y() { log.push("get y"); return 20; } })],
+  ["a proxy", () => logged({ y: 2, x: 1 })],
+  ["a frozen object", () => Object.freeze({ x: 5, y: 6 })],
+  ["texts in another order", () => ({ y: "2", x: "1" })],
+  ["inherited members", () => Object.create({ x: 3, y: 4 })],
+  ["an instance of a class", () => new (class Point { x = 1; y = 2; get z() { return 3; } })()],
+];
+////: observe-2
+function observe(label, run) {
+  results.length = 0;
+  const end = outcome(() => void (run()));
+  console.log(label + " -> " + show(results) + " " + end);
+}
+////: observe-4
+function observe() {
+  const answers = {};
+  for (const name in observers) {
+    try {
+      answers[name] = observers[name](["«1»"]);
+    } catch (error) {
+      answers[name] = "threw";
+    }
+  }
+  return answers;
+}
+////: odd
+const odd: number[] = (
+  JSON.parse(
+    '["0.5","-0.5","-0","NaN","Infinity","-Infinity","2147483647","2147483648","-2147483643","-2147483644","-2147483645","-2147483646","-2147483647","-2147483648","-2147483649","4294967295","4294967296","1e21","5e-324","9007199254740993"]'
+      .split("")
+      .join(""),
+  ) as string[]
+).map(Number);
+////: otherPrototype
+const otherPrototype = {
+  __proto__: Array.prototype,
+  3: "inherited",
+  push() {
+    return "the other prototype's push";
+  },
+  *[Symbol.iterator]() {
+    yield "the other prototype's iterator";
+  },
+};
+////: otherPrototype-2
+const otherPrototype = {
+  __proto__: Array.prototype,
+  *[Symbol.iterator]() {
+    yield "the other prototype's iterator";
+  },
+};
+////: otherPrototype-4
+const otherPrototype = {
+  __proto__: Array.prototype,
+  «1»() {
+    return «2»;
+  },
+  «3»() {
+    return «4»;
+  },
+};
+////: otherPrototype-5
+const otherPrototype = {
+  __proto__: Array.prototype,
+  «1»() {
+    return «2»;
+  },
+};
+////: outcome
+function outcome(run) {
+  log.length = 0;
+  try {
+    const value = run();
+    const effects = log.join(", ");
+    return show(value) + (effects ? " | " + effects : "");
+  } catch (error) {
+    const effects = log.join(", ");
+    return "threw " + show(error) + (effects ? " | " + effects : "");
+  }
+}
+////: outcome-2
+function outcome(run) {
+  try {
+    return show(run());
+  } catch (error) {
+    return "threw " + error.constructor.name;
+  }
+}
+////: outcome-3
+async function outcome(run) {
+  log.length = 0;
+  try {
+    const value = await run();
+    const effects = log.join(", ");
+    return show(value) + (effects ? " | " + effects : "");
+  } catch (error) {
+    const effects = log.join(", ");
+    return "threw " + show(error) + (effects ? " | " + effects : "");
+  }
+}
+////: outcome-4
+function outcome(use, text) {
+  try {
+    return show(use(make(text)));
+  } catch (error) {
+    return "threw " + error.constructor.name;
+  }
+}
+////: outcome-7
+function outcome(use, text) {
+  try {
+    const result = use(make(text));
+    return typeof result === "function" ? "function " + result.name : result === Object.prototype ? "Object.prototype" : show(result);
+  } catch (error) {
+    return "threw " + error.constructor.name;
+  }
+}
+////: own
+function own(object: object) {
+  return `[${Object.keys(object)}]`;
+}
+////: ownMembers
+const ownMembers = {
+  *[Symbol.iterator]() {
+    yield "its own iterator";
+  },
+};
+////: ownMembers-2
+const ownMembers = {
+  «1»() {
+    return «2»;
+  },
+  «3»() {
+    return «4»;
+  },
+};
+////: pick
+function pick(i) {
+  return (last = letters[i]);
+}
+////: plus
+function plus(a, b) {
+  return a + b;
+}
+////: power
+function power(base, exponent) {
+  if (exponent === 0) return 1;
+  return base * power(base, exponent - 1);
+}
+////: print
+function print(label, run) {
+  let line;
+  try {
+    line = label + " -> " + show(run());
+  } catch (error) {
+    line = label + " -> threw " + error.constructor.name;
+  }
+  console.log(line + (log.length ? " | log " + log.splice(0).join(", ") : ""));
+}
+////: prototypeOf
+function prototypeOf(f) {
+  return typeof f.prototype;
+}
+////: pushes
+function pushes(a) {
+  a.push(1);
+  return a.length;
+}
+////: pushes-10
+function pushes(given) {
+  let result = "never called";
+  «1» => {
+    a.push(1);
+    result = a.length;
+    return «2»;
+  });
+  return result;
+}
+////: pushes-13
+async function pushes(given) {
+  const «1»;
+  a.push(1);
+  return [a.length];
+}
+////: pushes-14
+function pushes(text) {
+  const a = «1»;
+  a.push(1);
+  return a.length;
+}
+////: pushes-15
+function pushes(«1») {
+  a.push(1);
+  return a.length;
+}
+////: pushes-16
+////= pushes
+
+////= pushesAtLength
+
+////= iterates
+
+////= iteratesAtLength
+
+////= readsCharCode-3
+
+////= readsCharCodeAtLength
+
+////= truncates-4
+
+////= truncatesAtLength
+
+////= addsOne-3
+
+////= addsOneAtLength
+
+////= calls-3
+
+////= callsAtLength
+
+////= addsMembers
+
+////= addsMembersAtLength
+
+////= storesMember-3
+
+////= storesMemberAtLength
+
+////= table-4
+////: pushes-17
+////= pushes-2
+
+////= iterates-2
+
+////= readsCharCode-2
+
+////= truncates-3
+
+////= addsOne-2
+
+////= calls-2
+
+////= addsMembers-4
+
+////= storesMember
+
+////= table
+////: pushes-2
+function pushes(holder) {
+  const a = holder.value;
+  a.push(1);
+  return a.length;
+}
+////: pushes-8
+function pushes(«1») {
+  let a = [5, 6];
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    a.push(1);
+    results.push(a.length);
+    if (round === 0) «2»;
+  }
+  return results;
+}
+////: pushes-9
+function pushes(a, «1») {
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    a.push(1);
+    results.push(a.length);
+    if (round === 0) «2»;
+  }
+  return results;
+}
+////: pushes1
+function pushes1(a) {
+  a.push(1);
+  const result = a.length;
+  results.push(result);
+  return result;
+}
+////: pushes1-2
+////= pushes1
+
+////= pushes2
+
+////= pushes3
+
+////= pushes4
+
+////= pushes5
+
+////= pushes6
+
+////= pushes7
+
+////= pushes8
+
+////= pushes9
+
+////= pushes10
+
+////= pushes11
+////: pushes10
+function pushes10(a) {
+  a.push(1);
+  const result = a.length;
+  results.push(result);
+  return result;
+}
+////: pushes11
+function pushes11(a) {
+  a.push(1);
+  const result = a.length;
+  results.push(result);
+  return result;
+}
+////: pushes2
+function pushes2(a) {
+  a.push(1);
+  const result = a.length;
+  results.push(result);
+  return result;
+}
+////: pushes3
+function pushes3(a) {
+  a.push(1);
+  const result = a.length;
+  results.push(result);
+  return result;
+}
+////: pushes4
+function pushes4(a) {
+  a.push(1);
+  const result = a.length;
+  results.push(result);
+  return result;
+}
+////: pushes5
+function pushes5(a) {
+  a.push(1);
+  const result = a.length;
+  results.push(result);
+  return result;
+}
+////: pushes6
+function pushes6(a) {
+  a.push(1);
+  const result = a.length;
+  results.push(result);
+  return result;
+}
+////: pushes7
+function pushes7(a) {
+  a.push(1);
+  const result = a.length;
+  results.push(result);
+  return result;
+}
+////: pushes8
+function pushes8(a) {
+  a.push(1);
+  const result = a.length;
+  results.push(result);
+  return result;
+}
+////: pushes9
+function pushes9(a) {
+  a.push(1);
+  const result = a.length;
+  results.push(result);
+  return result;
+}
+////: pushesAtLength
+function pushesAtLength(a) {
+  let result;
+  for (let round = 0; round < 1; round++) {
+    try {
+      a.push(1);
+      result = a.length;
+    } finally {
+      entered++;
+    }
+  }
+  return result;
+}
+////: pushesSupplied
+function pushesSupplied() {
+  const a = pushesSupplier.supply();
+  a.push(1);
+  return a.length;
+}
+////: pushesSupplied-2
+function pushesSupplied() {
+  const a = «1»;
+  a.push(1);
+  return a.length;
+}
+////: read
+function read(links: Links) {
+  return links.resolved;
+}
+////: read-2
+function read(object, key) {
+  return object[key];
+}
+////: readWidth
+function readWidth(box) {
+  return box.width;
+}
+////: readWidth-2
+////= readWidth
+
+////= readWidthThroughAChain
+
+////= readWidthHeightWidth
+
+////= readWidthOfEach
+
+////= uses-5
+////: readWidthHeightWidth
+function readWidthHeightWidth(box) {
+  const first = box.width;
+  const height = box.height;
+  const second = box.width;
+  return [first, height, second];
+}
+////: readWidthOfEach
+function readWidthOfEach(boxes) {
+  const results = [];
+  for (let i = 0; i < boxes.length; i++) {
+    try {
+      results.push(boxes[i].width);
+    } catch (error) {
+      results.push(error.constructor.name);
+    }
+  }
+  return results;
+}
+////: readWidthThroughAChain
+function readWidthThroughAChain(box) {
+  return box?.width;
+}
+////: readsCharCode-12
+async function readsCharCode(given) {
+  const «1»;
+  return [s.charCodeAt(0)];
+}
+////: readsCharCode-13
+function readsCharCode(text) {
+  const s = «1»;
+  return s.charCodeAt(0);
+}
+////: readsCharCode-2
+function readsCharCode(holder) {
+  const s = holder.value;
+  return s.charCodeAt(0);
+}
+////: readsCharCode-3
+function readsCharCode(s) {
+  return s.charCodeAt(0);
+}
+////: readsCharCode-5
+function readsCharCode(«1») {
+  const s = «2»];
+  return s.charCodeAt(0);
+}
+////: readsCharCode-7
+function readsCharCode(«1») {
+  let s = "abc";
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    results.push(s.charCodeAt(0));
+    if (round === 0) «2»;
+  }
+  return results;
+}
+////: readsCharCode-8
+function readsCharCode(given) {
+  let result = "never called";
+  «1» => {
+    result = s.charCodeAt(0);
+    return «2»;
+  });
+  return result;
+}
+////: readsCharCode-9
+function readsCharCode(s, «1») {
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    results.push(s.charCodeAt(0));
+    if (round === 0) «2»;
+  }
+  return results;
+}
+////: readsCharCodeAtLength
+function readsCharCodeAtLength(s) {
+  let result;
+  for (let round = 0; round < 1; round++) {
+    try {
+      result = s.charCodeAt(0);
+    } finally {
+      entered++;
+    }
+  }
+  return result;
+}
+////: readsCharCodeSupplied
+function readsCharCodeSupplied() {
+  const s = readsCharCodeSupplier.supply();
+  return s.charCodeAt(0);
+}
+////: readsCharCodeSupplied-2
+function readsCharCodeSupplied() {
+  const s = «1»;
+  return s.charCodeAt(0);
+}
+////: receivers
+function receivers(name) {
+  return [
+    "'hello world'",
+    "''",
+    "'hello'.concat(' ', 'world')",
+    "'h\\u00e9llo w\\u4e16rld'",
+    "'\\ud83d\\ude00 \\ud83d alone'",
+    "new String('hello world')",
+    "Object.assign(new String('hello world'), { " + name + "() { return 'own member'; } })",
+    "Object.setPrototypeOf(new String('hello world'), { " + name + "() { return 'other prototype'; } })",
+    "Object.setPrototypeOf(new String('hello world'), null)",
+    "{ " + name + "(...given) { return 'mine ' + given.length; } }",
+    "{ " + name + ": String.prototype." + name + ", toString() { return 'borrowed method'; } }",
+    "{ " + name + ": 5 }",
+    "{}",
+    "['h', 'e', 'l', 'l', 'o', ' ', 'w']",
+    "Buffer.from('hello world')",
+    "new Uint8Array([104, 101, 108, 108, 111])",
+    "12345",
+    "-0",
+    "12345n",
+    "Symbol('hello')",
+    "true",
+    "null",
+    "undefined",
+    "new Proxy(new String('hello world'), {})",
+    "new Proxy({}, { get(target, key) { return () => 'trapped ' + String(key); } })",
+  ];
+}
+////: remove
+function remove(«1», «2») {
+  return delete «3»];
+}
+////: report
+function report(phase, label, text) {
+  for (const [name, use] of uses) {
+    let line = phase + " | " + label + " | " + name + " -> ";
+    let impostor;
+    try {
+      impostor = conjure(text);
+    } catch (error) {
+      console.log(line + "could not be made: " + error.constructor.name);
+      continue;
+    }
+    log.length = 0;
+    try {
+      line += show(use(impostor));
+    } catch (error) {
+      line += "threw " + error.constructor.name;
+    }
+    line += " | log " + log.splice(0).join(", ");
+    line += " | now " + describe(impostor);
+    log.length = 0;
+    console.log(line);
+  }
+}
+////: report-3
+function report(phase, label, maker) {
+  for (const [name, use] of uses) {
+    let line = phase + " | " + label + " | " + name + " -> ";
+    let impostor;
+    try {
+      impostor = conjure(maker);
+    } catch (error) {
+      console.log(line + "could not be made: " + error.constructor.name);
+      continue;
+    }
+    log.length = 0;
+    try {
+      line += show(use(impostor));
+    } catch (error) {
+      line += "threw " + error.constructor.name;
+    }
+    line += " | log " + log.splice(0).join(", ");
+    console.log(line);
+  }
+}
+////: report-4
+function report(phase, label, maker) {
+  for (const [name, use] of uses) {
+    let line = phase + " | " + label + " | " + name + " -> ";
+    let impostor;
+    try {
+      impostor = conjure(maker);
+    } catch (error) {
+      console.log(line + "could not be made: " + error.constructor.name);
+      continue;
+    }
+    log.length = 0;
+    try {
+      line += show(use(impostor));
+    } catch (error) {
+      line += "threw " + error.constructor.name;
+    }
+    line += " | log " + log.splice(0).join(", ");
+    line += " | now " + describe(impostor);
+    log.length = 0;
+    console.log(line);
+  }
+}
+////: report-6
+function report(label, run) {
+  attempt(label, run);
+  if (log.length) console.log("  log:", log.splice(0).join(", "));
+}
+////: report-8
+function report(label, run) {
+  attempt(label, run);
+  console.log(«1», log.splice(0).join(«2»));
+}
+////: round
+function round(title) {
+  for (const name in makers) {
+    for (const use in uses) {
+      attempt(title + ", " + use + ", " + name, makers[name](), uses[use]);
+      if (Object.hasOwn(honest, use) && describe(uses[use]([3, 1, 2])) !== honest[use]) console.log("WRONG: an array after " + name + " in " + use);
+    }
+  }
+}
+////: run
+function run(callee, value) {
+  return callee(value);
+}
+////: runAsyncGenerator
+async function runAsyncGenerator(use, results, change) {
+  const generator = use(results);
+  for (let i = 0; i < 6; i++) {
+    if (i === 3 && change) change();
+    await generator.next();
+  }
+  return (await generator.next()).value;
+}
+////: runTable
+function runTable(uses, rows) {
+  const first = [];
+  for (const use of uses) {
+    for (const row of rows) {
+      first.push(describe(use, row));
+      console.log(first[first.length - 1]);
+    }
+  }
+  for (let i = 0; i < 2000; i++) for (const use of uses) use(i % 50);
+  let same = 0;
+  let at = 0;
+  for (const use of uses) {
+    const honest = outcome(() => use(7));
+    for (const row of rows) {
+      const again = describe(use, row);
+      if (again === first[at++]) same++;
+      else console.log("changed after 2000 honest calls:", again);
+      const between = outcome(() => use(7));
+      if (between !== honest) console.log("an honest call changed after", row[0], "->", between);
+    }
+  }
+  console.log(same, "of", first.length, "are the same after 2000 honest calls");
+}
+////: runTable-2
+function runTable(uses, texts) {
+  const first = [];
+  for (const use of uses) {
+    for (const text of texts) {
+      first.push(describe(use, text));
+      console.log(first[first.length - 1]);
+    }
+  }
+  for (let i = 0; i < 2000; i++) for (const use of uses) use(i % 50);
+  let same = 0;
+  let at = 0;
+  for (const use of uses) {
+    const honest = outcome(() => use(7));
+    for (const text of texts) {
+      const again = describe(use, text);
+      if (again === first[at++]) same++;
+      else console.log("changed after 2000 honest calls:", again);
+      const between = outcome(() => use(7));
+      if (between !== honest) console.log("an honest call changed after", text, "->", between);
+    }
+  }
+  console.log(same, "of", first.length, "are the same after 2000 honest calls");
+}
+////: runTimer
+async function runTimer(use, results, change) {
+  const running = use(results);
+  let turns = 0;
+  const wait = () => (++turns === 3 ? change() : setTimeout(wait, 0));
+  if (change) setTimeout(wait, 0);
+  return running;
+}
+////: scale
+function scale(value, factor) {
+  return value * factor;
+}
+////: setLevel
+function setLevel(thing) {
+  thing.level = 7;
+  return thing.level;
+}
+////: shorten
+function shorten(parts) {
+  return parts.length > 12 ? parts.slice(0, 6).join(", ") + ", .. " + parts.length + " in all" : parts.join(", ");
+}
+////: shorten-2
+////= shorten
+
+////= show-6
+
+////= describe-2
+
+////= report
+
+////= showHonestResults
+////: show
+function show(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "bigint") return String(value) + "n";
+  if (typeof value === "symbol") return value.toString();
+  if (typeof value === "function") return "function " + value.name;
+  if (typeof value !== "object" || value === null) return String(value);
+  if (Array.isArray(value)) {
+    const parts = [];
+    for (let i = 0; i < value.length; i++) parts.push(i in value ? show(value[i]) : "<hole>");
+    return "[" + parts.join(", ") + "]";
+  }
+  if (ArrayBuffer.isView(value)) return value.constructor.name + "<" + Array.prototype.join.call(value, " ") + ">";
+  let text;
+  try {
+    text = String.prototype.valueOf.call(value);
+  } catch {
+    const parts = [];
+    for (const key of Reflect.ownKeys(value)) parts.push(String(key) + ": " + show(value[key]));
+    return "{" + parts.join(", ") + "}";
+  }
+  return "String object " + JSON.stringify(text);
+}
+////: show-10
+function show(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  return String(value);
+}
+////: show-11
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "a function";
+  if (typeof value !== "object" || value === null) return String(value);
+  if (Array.isArray(value)) return "[" + Array.from(value, (item, i) => (i in value ? show(item) : "hole")).join(", ") + "]";
+  return Object.prototype.toString.call(value).slice(8, -1);
+}
+////: show-13
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  return String(value);
+}
+////: show-14
+function show(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "function") return "function " + value.name;
+  return String(value);
+}
+////: show-15
+function show(value) {
+  if (Object.is(value, -0)) return "-0";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "function") return "function " + value.name;
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).map(key => key + ": " + show(value[key])).join(", ") + "}";
+  return String(value);
+}
+////: show-16
+function show(value) {
+  if (Object.is(value, -0)) return "-0";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).map(key => key + ": " + show(value[key])).join(", ") + "}";
+  return String(value);
+}
+////: show-17
+function show(value) {
+  if (Object.is(value, -0)) return "-0";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "function " + value.name;
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).join() + "}";
+  return String(value);
+}
+////: show-18
+function show(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "function") return "function " + value.name;
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).map(key => key + ": " + show(value[key])).join(", ") + "}";
+  return String(value);
+}
+////: show-2
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "function";
+  if (typeof value !== "object" || value === null) return String(value);
+  if (value instanceof Error) return value.constructor.name;
+  const parent = Object.getPrototypeOf(value);
+  const kind = parent === Object.prototype || parent === Array.prototype ? "" : parent === null ? "bare " : parent.constructor.name + " ";
+  const isList = Array.isArray(value);
+  const parts = [];
+  if (isList) for (let i = 0; i < value.length; i++) parts.push(i in value ? show(value[i]) : "hole");
+  for (const key of Reflect.ownKeys(value)) {
+    if (isList && typeof key === "string" && (key === "length" || /^\d+$/.test(key))) continue;
+    parts.push(String(key) + ": " + show(value[key]));
+  }
+  return kind + (isList ? "[" : "{") + parts.join(", ") + (isList ? "]" : "}");
+}
+////: show-21
+function show(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "function") return "function";
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).map(key => key + ": " + show(value[key])).join(", ") + "}";
+  return String(value);
+}
+////: show-22
+function show(value) {
+  if (Object.is(value, -0)) return "-0";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  return String(value);
+}
+////: show-23
+function show(value) {
+  if (Object.is(value, -0)) return "-0";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "function") return "function " + value.name;
+  if (Array.isArray(value)) return "[" + «1»).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{«2»}";
+  return String(value);
+}
+////: show-24
+////= show-2
+
+////= outcome
+
+////= attempt-5
+
+////= Odd
+
+////= logged
+
+////= arrays
+
+////= strings
+
+////= numbers
+
+////= functions
+
+////= objects
+////: show-25
+////= show-3
+
+////= outcome-2
+
+////= attempt-4
+////: show-26
+////= show
+
+////= attempt
+
+////= make
+////: show-27
+////= show-2
+
+////= outcome
+
+////= attempt-5
+////: show-28
+////= show-2
+
+////= outcome-3
+
+////= attempt-16
+
+////= Odd
+
+////= logged
+
+////= arrays
+
+////= strings
+
+////= numbers
+
+////= functions
+
+////= objects
+////: show-29
+////= show-27
+
+////= Odd
+
+////= logged
+////: show-3
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "symbol") return value.toString();
+  if (typeof value === "function") return "function";
+  if (typeof value !== "object" || value === null) return String(value);
+  if (Array.isArray(value)) {
+    const parts = [];
+    for (let i = 0; i < value.length; i++) parts.push(i in value ? show(value[i]) : "<hole>");
+    return "[" + parts.join(", ") + "]";
+  }
+  if (Object.getPrototypeOf(value) !== Object.prototype) return Object.prototype.toString.call(value);
+  return "{" + Object.keys(value).map(key => key + ": " + show(value[key])).join(", ") + "}";
+}
+////: show-30
+////= show-27
+
+////= arrays-3
+
+////= strings-3
+
+////= numbers-3
+
+////= functions-2
+
+////= objects-4
+////: show-31
+////= show-25
+
+////= add
+
+////= scale
+
+////= bucket
+
+////= next
+
+////= clamp
+
+////= average
+
+////= power
+
+////= digits
+////: show-32
+////= show-2
+
+////= outcome-3
+
+////= attempt-16
+
+////= Odd
+
+////= logged
+////: show-33
+////= show
+
+////= attempt
+////: show-34
+////= show-7
+
+////= attempt-9
+////: show-36
+////= show-33
+
+////= made
+
+////= make-3
+////: show-38
+////= show-27
+
+////= arrays-5
+
+////= strings-5
+
+////= numbers-4
+
+////= functions-4
+
+////= objects-7
+////: show-4
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "function " + value.name;
+  if (typeof value !== "object" || value === null) return String(value);
+  if (value === globalThis) return "the global object";
+  if (Array.isArray(value)) return "[" + Array.from(value, (item, index) => (index in value ? show(item) : "hole")).join(", ") + "]";
+  var tag = Object.prototype.toString.call(value).slice(8, -1);
+  if (tag === "Arguments") return "arguments" + show(Array.from(value));
+  if (/^(Number|String|Boolean|BigInt|Symbol)$/.test(tag)) return "boxed " + show(Object.getPrototypeOf(value).valueOf.call(value));
+  return "{" + Object.keys(value).map(key => key + ": " + show(value[key])).join(", ") + "}";
+}
+////: show-40
+////= show-29
+
+////= arrays-8
+////: show-41
+////= show-7
+
+////= attempt-13
+////: show-43
+////= show-9
+
+////= print
+////: show-45
+////= show-13
+
+////= attempt-18
+////: show-5
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "a function";
+  if (typeof value !== "object" || value === null) return String(value);
+  if (Array.isArray(value)) return "[" + Array.from(value, (item, i) => (i in value ? show(item) : "hole")).join(", ") + "]";
+  return Object.prototype.toString.call(value).slice(8, -1) + " " + JSON.stringify(value);
+}
+////: show-6
+function show(value) {
+  if (Object.is(value, -0)) return "-0";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "function") return "function " + value.name;
+  if (typeof value === "bigint") return value + "n";
+  if (Array.isArray(value)) return "[" + shorten(value.map(show)) + "]";
+  if (typeof value === "object" && value !== null) return "{" + shorten(Object.keys(value).map(key => key + ": " + show(value[key]))) + "}";
+  return String(value);
+}
+////: show-7
+function show(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "function") return "function " + value.name;
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).map(key => key + ": " + show(value[key])).join(", ") + "}";
+  return String(value);
+}
+////: show-8
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value !== "object" || value === null) return String(value);
+  return Object.prototype.toString.call(value).slice(8, -1) + " " + JSON.stringify(value);
+}
+////: show-9
+function show(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).map(key => key + ": " + show(value[key])).join(", ") + "}";
+  return String(value);
+}
+////: showHonestResults
+function showHonestResults() {
+  return uses.map(([, use]) => show(use(make()))).join(" ; ");
+}
+////: state-2
+function state(probe: Probe) {
+  return `${probe.read()} ${"x" in probe} [${Object.keys(probe)}]`;
+}
+////: state-4
+function state(«1»: «2») {
+  return `${«3»(«1»)} ${«4» in «1»} ${Object.hasOwn(«1», «4»)}`;
+}
+////: storeDepth
+function storeDepth(box, value) {
+  box.depth = value;
+}
+////: storeWidth
+function storeWidth(box, value) {
+  box.width = value;
+}
+////: storeWidth-2
+////= storeWidth
+
+////= storeWidthAndUseTheResult
+
+////= storeDepth
+
+////= storeWidthOfEach
+
+////= uses-3
+////: storeWidthAndUseTheResult
+function storeWidthAndUseTheResult(box, value) {
+  return (box.width = value);
+}
+////: storeWidthOfEach
+function storeWidthOfEach(boxes) {
+  const results = [];
+  for (let i = 0; i < boxes.length; i++) {
+    try {
+      results.push((boxes[i].width = 7));
+    } catch (error) {
+      results.push(error.constructor.name);
+    }
+  }
+  return results;
+}
+////: storesMember
+function storesMember(holder) {
+  const o = holder.value;
+  o.x = 1;
+  return o;
+}
+////: storesMember-10
+function storesMember(o, «1») {
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    o.x = 1;
+    results.push(o);
+    if (round === 0) «2»;
+  }
+  return results;
+}
+////: storesMember-13
+async function storesMember(given) {
+  const «1»;
+  o.x = 1;
+  return [o];
+}
+////: storesMember-14
+function storesMember(text) {
+  const o = «1»;
+  o.x = 1;
+  return o;
+}
+////: storesMember-15
+function storesMember(«1») {
+  o.x = 1;
+  return o;
+}
+////: storesMember-3
+function storesMember(o) {
+  o.x = 1;
+  return o;
+}
+////: storesMember-8
+function storesMember(«1») {
+  let o = ({ x: 1, y: 2 });
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    o.x = 1;
+    results.push(o);
+    if (round === 0) «2»;
+  }
+  return results;
+}
+////: storesMember-9
+function storesMember(given) {
+  let result = "never called";
+  «1» => {
+    o.x = 1;
+    result = o;
+    return «2»;
+  });
+  return result;
+}
+////: storesMemberAtLength
+function storesMemberAtLength(o) {
+  let result;
+  for (let round = 0; round < 1; round++) {
+    try {
+      o.x = 1;
+      result = o;
+    } finally {
+      entered++;
+    }
+  }
+  return result;
+}
+////: storesMemberSupplied
+function storesMemberSupplied() {
+  const o = storesMemberSupplier.supply();
+  o.x = 1;
+  return o;
+}
+////: storesMemberSupplied-2
+function storesMemberSupplied() {
+  const o = «1»;
+  o.x = 1;
+  return o;
+}
+////: strings
+const strings = [
+  ["a string", () => "abc"],
+  ["an object with charCodeAt", () => ({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })],
+  ["a String object with its own charCodeAt", () => Object.assign(new String("xyz"), { charCodeAt: () => -1 })],
+  ["an array", () => ["abc"]],
+  ["a number", () => 65],
+];
+////: strings-2
+const strings = [
+  ["it gets its own charCodeAt", () => new String("abc"), s => { s.charCodeAt = index => { log.push("own charCodeAt " + index); return -1; }; }],
+  ["its prototype becomes an object with charCodeAt", () => new String("abc"), s => Object.setPrototypeOf(s, { charCodeAt: () => "inherited" })],
+  ["its prototype becomes null", () => new String("abc"), s => Object.setPrototypeOf(s, null)],
+  ["the class between it and String gets a charCodeAt", () => new (class extends String {})("abc"), s => { Object.getPrototypeOf(s).charCodeAt = () => "late"; }],
+];
+////: strings-3
+const strings = [
+  ["a string", "'abc'"],
+  ["an object with charCodeAt", "({ charCodeAt(index) { log.push('own charCodeAt ' + index); return 'mine'; } })"],
+  ["a String object with its own charCodeAt", "Object.assign(new String('xyz'), { charCodeAt: () => -1 })"],
+  ["an array", "['abc']"],
+  ["a number", "65"],
+];
+////: strings-4
+const strings = [
+  ["a string", () => "abc"],
+  ["an object with charCodeAt", () => ({ charCodeAt(index) { log.push("own charCodeAt " + index); return "mine"; } })],
+  ["a String object with its own charCodeAt", () => Object.assign(new String("xyz"), { charCodeAt: () => -1 })],
+  ["an array", () => ["abc"]],
+  ["a number", () => 65],
+  ["a String object", () => new String("xyz")],
+];
+////: strings-5
+const strings = [
+  ["a string", "\"abc\""],
+  ["an array", "[\"abc\"]"],
+  ["a number", "65"],
+  ["an object whose charCodeAt is a number", "{\"charCodeAt\":0}"],
+  ["null", "null"],
+];
+////: sum
+function sum(list) {
+  let total = 0;
+  for (let i = 0; i < list.length; i++) total += list[i];
+  return total;
+}
+////: sumOf
+function sumOf(point) {
+  return (last = point.x + point.y);
+}
+////: sumOf-3
+////= sumOf
+
+////= move
+
+////= total
+
+////= append
+
+////= firstCode
+
+////= tail
+
+////= half
+
+////= below
+////: sumOfArguments
+function sumOfArguments() {
+  let total = 0;
+  for (let i = 0; i < arguments.length; i++) total += arguments[i];
+  return total;
+}
+////: summedInPlace
+function summedInPlace(a, b, c) {
+  b = 100;
+  let total = 0;
+  for (let i = 0; i < arguments.length; i++) total += arguments[i];
+  return total;
+}
+////: table
+const table = [
+  ["pushes", pushes, arrays],
+  ["iterates", iterates, arrays],
+  ["readsCharCode", readsCharCode, strings],
+  ["truncates", truncates, numbers],
+  ["addsOne", addsOne, numbers],
+  ["calls", calls, functions],
+  ["addsMembers", addsMembers, objects],
+  ["storesMember", storesMember, objects],
+];
+////: table-10
+////= table
+
+////= everyCase-4
+////: table-11
+////= table
+
+////= everyCase-5
+////: table-12
+////= table
+
+////= everyCase-2
+
+////= main-2
+////: table-3
+const table = [
+  ["pushes", pushes, arrays],
+  ["iterates", iterates, arrays],
+  ["readsCharCode", readsCharCode, strings],
+  ["truncates", truncates, numbers],
+  ["addsOne", addsOne, numbers],
+  ["callsThroughCall", callsThroughCall, functions],
+  ["addsMembers", addsMembers, objects],
+  ["storesMember", storesMember, objects],
+];
+////: table-4
+const table = [
+  ["pushes", pushes, arrays],
+  ["pushesAtLength", pushesAtLength, arrays],
+  ["iterates", iterates, arrays],
+  ["iteratesAtLength", iteratesAtLength, arrays],
+  ["readsCharCode", readsCharCode, strings],
+  ["readsCharCodeAtLength", readsCharCodeAtLength, strings],
+  ["truncates", truncates, numbers],
+  ["truncatesAtLength", truncatesAtLength, numbers],
+  ["addsOne", addsOne, numbers],
+  ["addsOneAtLength", addsOneAtLength, numbers],
+  ["calls", calls, functions],
+  ["callsAtLength", callsAtLength, functions],
+  ["addsMembers", addsMembers, objects],
+  ["addsMembersAtLength", addsMembersAtLength, objects],
+  ["storesMember", storesMember, objects],
+  ["storesMemberAtLength", storesMemberAtLength, objects],
+];
+////: table-6
+const table = [
+  ["pushes", pushes, "arrays"],
+  ["iterates", iterates, "arrays"],
+  ["readsCharCode", readsCharCode, "strings"],
+  ["truncates", truncates, "numbers"],
+  ["addsOne", addsOne, "numbers"],
+  ["addsMembers", addsMembers, "objects"],
+  ["storesMember", storesMember, "objects"],
+];
+////: table-7
+////= table
+
+////= everyCase
+////: table-8
+////= table
+
+////= everyCase-2
+
+////= main
+////: table-9
+////= table
+
+////= everyCase-3
+////: tagWithIt
+function tagWithIt(f) {
+  return f`a${1}b`;
+}
+////: tail
+function tail(text) {
+  return (last = text.slice(1));
+}
+////: testAnInstance
+function testAnInstance(f) {
+  return {} instanceof f;
+}
+////: texts-2
+const texts = [
+  "'hello'",
+  "'hi'",
+  "''",
+  "'a' + 'b'.repeat(2)",
+  "'\\ud83d\\ude00x'",
+  "'\\u4e16\\u754c\\u4eba'",
+  "new String('hello')",
+  "new String('hi')",
+  "Object.assign(new String('hi'), { 2: 'own third' })",
+  "Object.setPrototypeOf(new String('hi'), { 2: 'inherited third' })",
+  "Object.create(new String('hello'))",
+  "['h', 'e', 'l']",
+  "['h', , 'l']",
+  "[1.5, -0, NaN]",
+  "Object.setPrototypeOf(['h'], { 2: 'inherited third' })",
+  "Buffer.from('hello')",
+  "new Uint8Array(2)",
+  "new Float64Array([0.5, -0, NaN])",
+  "new BigInt64Array([1n, 2n, 3n])",
+  "(function () { return arguments; })('a', 'b')",
+  "{ 0: 'zero', 2: 'two' }",
+  "{ '0': 'zero', '2': 'two', '02': 'not two' }",
+  "{ get 0() { log.push('get 0'); return 'zero'; }, get 2() { log.push('get 2'); return 'two'; } }",
+  "Object.create({ 0: 'inherited zero' })",
+  "function f() {}",
+  "new Map([[0, 'zero']])",
+  "123",
+  "123n",
+  "true",
+  "Symbol('abc')",
+  "null",
+  "undefined",
+  "new Proxy({}, { get(target, key) { log.push(typeof key + ' ' + String(key)); return 'trapped'; } })",
+  "new Proxy(new String('hello'), { get(target, key, receiver) { log.push(typeof key + ' ' + String(key)); return Reflect.get(target, key, receiver); } })",
+];
+////: throughApply
+function throughApply(f) {
+  return f.apply("self", [1, 2]);
+}
+////: throughBind
+function throughBind(f) {
+  return f.bind("self", 1)(2);
+}
+////: throughCall
+function throughCall(f) {
+  return f.call("self", 1, 2);
+}
+////: throughReflect
+function throughReflect(f) {
+  return Reflect.apply(f, "self", [1, 2]);
+}
+////: total
+function total(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: total-2
+function total() {
+  let sum = 0;
+  for (let i = 0; i < this.length; i++) sum += this[i];
+  return sum;
+}
+////: total-3
+function total(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: totalEight
+function totalEight(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: totalEleven
+function totalEleven(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: totalFive
+function totalFive(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: totalFour
+function totalFour(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: totalNine
+function totalNine(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: totalOne
+function totalOne(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: totalOne-3
+////= totalOne
+
+////= halfOne
+
+////= totalTwo
+
+////= halfTwo
+
+////= totalThree
+
+////= halfThree
+
+////= totalFour
+
+////= halfFour
+
+////= totalFive
+
+////= halfFive
+
+////= totalSix
+
+////= halfSix
+
+////= totalSeven
+
+////= halfSeven
+
+////= totalEight
+
+////= halfEight
+
+////= totalNine
+
+////= halfNine
+
+////= totalTen
+
+////= halfTen
+
+////= totalEleven
+
+////= halfEleven
+
+////= totalTwelve
+
+////= halfTwelve
+////: totalSeven
+function totalSeven(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: totalSix
+function totalSix(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: totalTen
+function totalTen(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: totalThree
+function totalThree(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: totalTwelve
+function totalTwelve(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: totalTwo
+function totalTwo(list) {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return (last = sum);
+}
+////: truncates
+function truncates(n, results, tick) {
+  for (let i = 0; i < 6; i++) {
+    tick(i);
+    results.push(n | 0);
+  }
+  return "done";
+}
+////: truncates-10
+function truncates(text) {
+  const n = «1»;
+  return n | 0;
+}
+////: truncates-3
+function truncates(holder) {
+  const n = holder.value;
+  return n | 0;
+}
+////: truncates-4
+function truncates(n) {
+  return n | 0;
+}
+////: truncates-6
+function truncates(n, «1») {
+  const results = [];
+  for (let round = 0; round < 3; round++) {
+    results.push(n | 0);
+    if (round === 0) «2»;
+  }
+  return results;
+}
+////: truncates-9
+async function truncates(given) {
+  const «1»;
+  return [n | 0];
+}
+////: truncatesAtLength
+function truncatesAtLength(n) {
+  let result;
+  for (let round = 0; round < 1; round++) {
+    try {
+      result = n | 0;
+    } finally {
+      entered++;
+    }
+  }
+  return result;
+}
+////: truncatesSupplied
+function truncatesSupplied() {
+  const n = truncatesSupplier.supply();
+  return n | 0;
+}
+////: truncatesSupplied-2
+function truncatesSupplied() {
+  const n = «1»;
+  return n | 0;
+}
+////: uses-3
+const uses = [
+  ["box.width = 7", box => storeWidth(box, 7)],
+  ["the result of box.width = 'seven'", box => storeWidthAndUseTheResult(box, "seven")],
+  ["box.depth = 7", box => storeDepth(box, 7)],
+  ["honest, this one, honest", box => storeWidthOfEach([make(), box, make()])],
+];
+////: uses-32
+const uses = {
+  «1»: «2»,
+  «3»: «4»,
+  «5»: «6»,
+};
+////: uses-33
+const uses = {
+  «1»: list => «2»(list),
+  «3»: list => «4»(list),
+  «5»: list => «6»(list),
+};
+////: uses-5
+const uses = [
+  ["box.width", box => readWidth(box)],
+  ["box?.width", box => readWidthThroughAChain(box)],
+  ["width, height, width", box => readWidthHeightWidth(box)],
+  ["honest, this one, honest", box => readWidthOfEach([make(), box, make()])],
+];
+////: uses-9
+const uses = [
+  ["area.call(box)", box => borrowArea(box)],
+  ["grow.call(box)", box => borrowGrow(box)],
+  ["resize.apply(box, [7, 8])", box => borrowResize(box)],
+  ["Reflect.apply(mark, box, [])", box => borrowMark(box)],
+];
+////: uses-forEach
+uses.forEach(function (use) {
+  values.forEach(function (text) {
+    attempt(use[0] + " " + text, function () {
+      var given = make(text);
+      var result = use[1](given);
+      return result === given && typeof given === "object" && given !== null ? "the same object" : result;
+    });
+  });
+});
+////: values
+const values = [
+  "'text'",
+  "''",
+  "new String('wrapped')",
+  "Object.assign(new String('wrapped'), { toString() { log.push('own toString'); return 'by toString'; } })",
+  "Object.assign(new String('wrapped'), { valueOf() { log.push('own valueOf'); return 'by valueOf'; } })",
+  "Object.assign(new String('wrapped'), { [Symbol.toPrimitive](hint) { log.push('toPrimitive ' + hint); return 'by toPrimitive'; } })",
+  "Object.setPrototypeOf(new String('wrapped'), null)",
+  "Object.setPrototypeOf(new String('wrapped'), { toString() { log.push('inherited toString'); return 'other prototype'; } })",
+  "0",
+  "-0",
+  "1.50",
+  "1e21",
+  "1e-7",
+  "123456789012345680000",
+  "0.1 + 0.2",
+  "NaN",
+  "-Infinity",
+  "10n",
+  "true",
+  "null",
+  "undefined",
+  "Symbol('s')",
+  "[]",
+  "[1, [2, [3]]]",
+  "[null, undefined, , '']",
+  "[{}]",
+  "{}",
+  "Object.create(null)",
+  "{ toString() { log.push('toString'); return 'T'; }, valueOf() { log.push('valueOf'); return 'V'; } }",
+  "{ toString() { log.push('toString'); return 7; }, valueOf() { log.push('valueOf'); return {}; } }",
+  "{ toString() { log.push('toString'); return {}; }, valueOf() { log.push('valueOf'); return -0; } }",
+  "{ toString() { log.push('toString'); return {}; }, valueOf() { log.push('valueOf'); return {}; } }",
+  "{ toString: null, valueOf() { log.push('valueOf'); return null; } }",
+  "{ [Symbol.toPrimitive](hint) { log.push('toPrimitive ' + hint); return hint; } }",
+  "{ [Symbol.toPrimitive](hint) { log.push('toPrimitive ' + hint); return Symbol('inner'); } }",
+  "{ [Symbol.toPrimitive]: undefined, toString() { log.push('toString'); return 'fallback'; } }",
+  "{ [Symbol.toPrimitive]: 5 }",
+  "{ get [Symbol.toPrimitive]() { log.push('get toPrimitive'); return undefined; }, get toString() { log.push('get toString'); return () => 'got'; }, get valueOf() { log.push('get valueOf'); return () => 'valued'; } }",
+  "{ toString() { throw new RangeError('no'); } }",
+  "new Date(0)",
+  "new Date(NaN)",
+  "Object.assign(new Date(0), { toString() { log.push('date toString'); return 'D'; }, valueOf() { log.push('date valueOf'); return 1; } })",
+  "new Number(-0)",
+  "new Boolean(false)",
+  "Object(Symbol('boxed'))",
+  "Object(5n)",
+  "/a+/gi",
+  "new Error('message')",
+  "new RangeError()",
+  "Buffer.from('bytes')",
+  "new Uint8Array([1, 2])",
+  "new Map()",
+  "Math",
+  "JSON",
+  "new Proxy({}, { get(target, key) { log.push('get ' + String(key)); return undefined; } })",
+  "new Proxy(new String('wrapped'), {})",
+];
+////: values-2
+const values = [
+  "'hey'",
+  "''",
+  "'a' + 'bc'",
+  "'\\ud83d\\ude00x'",
+  "'x\\ud83d'",
+  "'\\ude00\\ud83d'",
+  "'e\\u0301'",
+  "'\\u4e16\\u754c'",
+  "new String('hey')",
+  "Object.assign(new String('hey'), { *[Symbol.iterator]() { log.push('own iterator'); yield 'own'; } })",
+  "Object.setPrototypeOf(new String('hey'), { *[Symbol.iterator]() { log.push('inherited iterator'); yield 'inherited'; } })",
+  "Object.setPrototypeOf(new String('hey'), null)",
+  "Object.assign(new String('hey'), { [Symbol.iterator]: undefined })",
+  "['h', 'e', 'y']",
+  "['h', , 'y']",
+  "[]",
+  "Object.assign(['h'], { *[Symbol.iterator]() { log.push('own iterator of a list'); yield 'own'; } })",
+  "Buffer.from('hey')",
+  "new Uint8Array([1, 2])",
+  "new Set('hello')",
+  "new Map([['h', 1], ['e', 2]])",
+  "(function* () { log.push('started'); try { yield 'first'; yield 'second'; yield 'third'; yield 'fourth'; } finally { log.push('closed'); } })()",
+  "(function () { return arguments; })('h', 'e')",
+  "'hey'[Symbol.iterator]()",
+  "['h', 'e'].entries()",
+  "'hey'.matchAll(/./g)",
+  "{ length: 2, 0: 'h', 1: 'e' }",
+  "{ [Symbol.iterator]() { log.push('iterator'); let n = 0; return { next() { log.push('next'); return { done: n++ >= 5, value: 'v' + n }; }, return() { log.push('return'); return {}; } }; } }",
+  "{ [Symbol.iterator]() { return { next() { return 5; } }; } }",
+  "{ [Symbol.iterator]() { return 5; } }",
+  "{ [Symbol.iterator]: 5 }",
+  "{ [Symbol.iterator]() { return { get next() { log.push('get next'); return () => ({ done: true }); } }; } }",
+  "{ [Symbol.iterator]() { return { next() { throw new RangeError('no'); }, return() { log.push('return'); return {}; } }; } }",
+  "{}",
+  "5",
+  "5n",
+  "true",
+  "Symbol('hey')",
+  "null",
+  "undefined",
+  "function f() {}",
+  "new Proxy(['h', 'e'], { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); } })",
+  "new Proxy(new String('he'), { get(target, key, receiver) { log.push('get ' + String(key)); return Reflect.get(target, key, receiver); } })",
+];
+////: walk-2
+function walk(walked: Walked, during: (name: string, walked: Walked) => void) {
+  const seen: string[] = [];
+  for (const name in walked) {
+    seen.push(name);
+    during(name, walked);
+  }
+  return `${seen.join("")} then ${Object.keys(walked).join("")}`;
+}
+////: while
+while (link) {
+  «1»;
+  link = «2»;
+}
+////: whoIs
+function whoIs(thing) {
+  return thing.who();
+}
+////: withAccessor
+function withAccessor(Parent) {
+  return class extends Parent {
+    get level() {
+      log.push("get level");
+      return this.kept === undefined ? "nothing kept" : this.kept;
+    }
+    set level(value) {
+      log.push("set level " + value);
+      this.kept = value;
+    }
+  };
+}
+////: withAccessor-2
+////= withAccessor
+
+////= withGetterOnly
+
+////= withFieldOverAccessor
+
+////= withMethodNamedLevel
+
+////= withStaticLevel
+////: withFieldOverAccessor
+function withFieldOverAccessor(Parent) {
+  return class extends withAccessor(Parent) {
+    level = "a field again";
+  };
+}
+////: withGetterOnly
+function withGetterOnly(Parent) {
+  return class extends Parent {
+    get level() {
+      log.push("get level");
+      return 50;
+    }
+  };
+}
+////: withMethodNamedLevel
+function withMethodNamedLevel(Parent) {
+  return class extends Parent {
+    level() {
+      return "a method";
+    }
+  };
+}
+////: withSetter
+function withSetter(Base) {
+  return class extends Base {
+    set level(value) {
+      this.kept = value;
+    }
+  };
+}
+////: withStaticLevel
+function withStaticLevel(Parent) {
+  return class extends Parent {
+    static level = "static";
+  };
+}

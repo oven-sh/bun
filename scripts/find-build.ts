@@ -40,7 +40,7 @@ Options:
   --branch <name>      Use this branch (same as positional)
   --status             Print a one-screen progress summary for the build
   --watch              Poll and redraw --status every 10s until the build finishes
-  --errors             Print rendered test-failure annotations for the build
+  --errors             Print rendered test-failure annotations for the build (the first 200)
   --logs               Save full logs for each failed job to ./tmp/ci-<build>/
   --all                With --errors, include warning/info annotations too (flaky is always shown)
   --no-compare         With --errors, skip the "[pre-existing]" check against recently merged PRs
@@ -50,7 +50,7 @@ Options:
 For anything else, compose with \`bk\` directly (.bk.yaml sets the pipeline):
   bk build view $(bun run ci:find)
   bk job log <uuid> -b $(bun run ci:find)
-  bk api /pipelines/bun/builds/$(bun run ci:find)/annotations
+  bk api "/pipelines/bun/builds/$(bun run ci:find)/annotations?per_page=100&page=1"
 `);
   process.exit(0);
 }
@@ -139,15 +139,37 @@ try {
 
 // --- annotation rendering --------------------------------------------------
 
-type Annotation = { style: string; context: string; body_html: string };
+type AnnotationSummary = { style: string; context: string };
+type Annotation = AnnotationSummary & { body_html: string };
+/** `more`: the build has annotations after the last one in `list`. */
+type Annotations<T> = { list: T[]; more: boolean };
 type Job = { id: string; type: string; name: string; state: string; soft_failed?: boolean; web_url: string };
 
 function isFailedJob(j: Job) {
   return j.type === "script" && ["failed", "broken", "timed_out"].includes(j.state) && !j.soft_failed;
 }
 
-async function annotations(build: number): Promise<Annotation[]> {
-  return bk("api", `/pipelines/bun/builds/${build}/annotations`);
+// `bk api` returns one page, of at most 100: https://buildkite.com/docs/apis/rest-api#pagination
+// A build can have thousands of annotations and 100 bodies can be megabytes, hence `maxPages`.
+function annotations(build: number, read: { bodies: true; maxPages?: number }): Promise<Annotations<Annotation>>;
+function annotations(
+  build: number,
+  read: { bodies: false; maxPages?: number },
+): Promise<Annotations<AnnotationSummary>>;
+async function annotations(build: number, { bodies, maxPages = 2 }: { bodies: boolean; maxPages?: number }) {
+  const perPage = 100;
+  const endpoint = `/pipelines/bun/builds/${build}/annotations`;
+  const list: AnnotationSummary[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const batch = await bk<AnnotationSummary[]>(
+      "api",
+      `${endpoint}?per_page=${perPage}&page=${page}${bodies ? "" : "&omit_body=true"}`,
+    );
+    list.push(...batch);
+    if (batch.length < perPage) return { list, more: false };
+  }
+  const next = await bk<AnnotationSummary[]>("api", `${endpoint}?per_page=1&page=${list.length + 1}&omit_body=true`);
+  return { list, more: next.length > 0 };
 }
 
 function renderTermHTML(html: string): string {
@@ -220,10 +242,14 @@ async function printErrors(
 ) {
   console.log(`${c.bold}build #${build}${c.reset}  https://buildkite.com/bun/bun/builds/${build}\n`);
 
-  const [anns, baseline] = await Promise.all([
-    annotations(build),
+  const [{ list: anns, more }, baseline] = await Promise.all([
+    annotations(build, { bodies: true }),
     compare ? mergedPRFailingContexts(excludeBranch) : Promise.resolve(null),
   ]);
+  // Printed above the annotations and below them: megabytes of output can lie between.
+  const cut =
+    more && `${c.yellow}(only the first ${anns.length} annotations of this build are read, it has more)${c.reset}`;
+  if (cut) console.log(cut);
 
   // "flaky-new": the same, of a file that test/flaky-tests.txt does not list.
   const isFlaky = (a: Annotation) => a.context === "flaky" || a.context === "flaky-new";
@@ -251,6 +277,7 @@ async function printErrors(
   for (const a of shown) renderAnnotation(a, tag(a));
   for (const a of flaky) renderAnnotation(a, ` ${c.yellow}[flaky]${c.reset}`);
 
+  if (cut) console.log(`\n${cut}`);
   if (baseline == null && compare) {
     console.log(`\n${c.dim}(could not fetch recently merged PRs for comparison)${c.reset}`);
   }
@@ -268,7 +295,7 @@ async function fetchStatus(build: number) {
   type Full = { state: string; started_at: string | null; finished_at: string | null; web_url: string; jobs: Job[] };
   const [b, anns] = await Promise.all([
     bk<Full>("build", "view", String(build), "--json"),
-    annotations(build).catch(() => [] as Annotation[]),
+    annotations(build, { bodies: false }).catch(() => ({ list: [], more: false })),
   ]);
 
   const out: string[] = [];
@@ -294,13 +321,20 @@ async function fetchStatus(build: number) {
     for (const j of failed) out.push(`  ${j.name.padEnd(48)} ${c.dim}${j.web_url}${c.reset}`);
   }
 
-  const err = anns.filter(a => a.style === "error");
-  const other = anns.length - err.length;
+  const err = anns.list.filter(a => a.style === "error");
+  const other = anns.list.length - err.length;
+  const maxNames = 30;
   if (err.length) {
     out.push("", `${c.red}${c.bold}failing tests so far:${c.reset}`);
-    for (const a of err) out.push(`  ${a.context}`);
+    for (const a of err.slice(0, maxNames)) out.push(`  ${a.context}`);
+  }
+  if (err.length > maxNames) {
+    out.push(`${c.dim}  (+${err.length - maxNames} more: bun run ci:errors ${build})${c.reset}`);
   }
   if (other) out.push(`${c.dim}  (+${other} warning/flaky)${c.reset}`);
+  if (anns.more) {
+    out.push(`${c.dim}  (only the first ${anns.list.length} annotations are counted, the build has more)${c.reset}`);
+  }
 
   if (!failed.length && !err.length && b.finished_at) {
     out.push("", `${c.dim}no failures${c.reset}`);
@@ -394,11 +428,13 @@ async function mergedPRFailingContexts(excludeBranch: string | null | undefined)
     ),
   );
   const results = await Promise.all(
-    builds.filter((n): n is number => n != null).map(n => annotations(n).catch(() => [] as Annotation[])),
+    builds
+      .filter((n): n is number => n != null)
+      .map(n => annotations(n, { bodies: false, maxPages: Infinity }).catch(() => ({ list: [] }))),
   );
   return new Set(
     results
-      .flat()
+      .flatMap(r => r.list)
       .filter(a => a.style === "error")
       .map(a => a.context),
   );

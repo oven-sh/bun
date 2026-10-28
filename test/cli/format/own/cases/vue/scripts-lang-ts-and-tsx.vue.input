@@ -1,0 +1,6 @@
+<script lang="ts">
+const f = <T,>() =>   1;
+</script>
+<script setup lang="tsx">
+const g = <T,>() =>   1;
+</script>

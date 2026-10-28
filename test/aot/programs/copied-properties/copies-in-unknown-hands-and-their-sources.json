@@ -1,0 +1,3 @@
+{
+  "runWithASAN": "copies of objects of the program are changed by code that the compiler does not see"
+}

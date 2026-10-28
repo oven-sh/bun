@@ -1,0 +1,14 @@
+Array.prototype.join: 1-2, throws TypeError
+Array.prototype.join afterwards: 1-2
+Math.floor: 1, throws TypeError
+Math.floor afterwards: 1
+URLSearchParams.prototype.get: 2, throws TypeError
+URLSearchParams.prototype.get afterwards: 2
+Headers.prototype.get: 1, throws TypeError
+Headers.prototype.get afterwards: 1
+Response.prototype.clone: object, throws TypeError
+Response.prototype.clone afterwards: object
+a name that is not known at build time: 3-4, throws TypeError
+a name that is not known at build time afterwards: 3-4
+an object of the program: real, spied: spied, calls 1
+an object of the program afterwards: real

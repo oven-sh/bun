@@ -1,10 +1,15 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn to_contain_all_values(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        self.contain_matcher(global, frame, "toContainAllValues", ExpectedArray::BeforeValue,
+    pub(crate) fn to_contain_all_values(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        self.contain_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toContainAllValues", ExpectedArray::BeforeValue,
             ContainMsgs { verb: "contain all values", not_verb: "contain all values" },
             |g, value, expected| {
                 if value.is_undefined_or_null() { return Ok(ContainOutcome::pass(false)); }

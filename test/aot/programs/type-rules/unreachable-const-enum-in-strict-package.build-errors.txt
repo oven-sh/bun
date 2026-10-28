@@ -1,0 +1,1 @@
+error: TS7027: Unreachable code detected.

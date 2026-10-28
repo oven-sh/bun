@@ -1,0 +1,2959 @@
+//// fields-marked-as-surely-assigned-are-undefined.ts
+////= text-21
+
+class Sheet {
+  width!: number;
+  title!: string;
+  owner!: Person;
+  rows!: number[];
+  onChange!: () => number;
+  ready!: boolean;
+  height: number = 2;
+  setUp(): void {
+    this.width = 3;
+    this.title = "t";
+    this.owner = new Person();
+    this.rows = [1];
+    this.onChange = () => 9;
+    this.ready = true;
+  }
+  area(): number {
+    return this.width * this.height;
+  }
+  widthPlusOne(): number {
+    return this.width + 1;
+  }
+  wholeWidth(): number {
+    return this.width | 0;
+  }
+  widthOr(fallback: number): number {
+    return this.width ?? fallback;
+  }
+  heading(): string {
+    return this.title + "!";
+  }
+  titleLength(): number {
+    return this.title.length;
+  }
+  ownerName(): string {
+    return this.owner.first;
+  }
+  rowCount(): number {
+    return this.rows.length;
+  }
+  change(): number {
+    return this.onChange();
+  }
+  state(): string {
+    return this.ready ? "ready" : "not ready";
+  }
+}
+
+function all(label: string, sheet: Sheet): void {
+  show(label + " width", () => sheet.width);
+  show(label + " title", () => sheet.title);
+  show(label + " owner", () => sheet.owner);
+  show(label + " rows", () => sheet.rows);
+  show(label + " onChange", () => typeof sheet.onChange);
+  show(label + " ready", () => sheet.ready);
+  show(label + " keys", () => Object.keys(sheet).join());
+  show(label + " width in sheet", () => "width" in sheet);
+  show(label + " own width", () => Object.hasOwn(sheet, "width"));
+  show(label + " JSON", () => JSON.stringify(sheet));
+  show(label + " area", () => sheet.area());
+  show(label + " widthPlusOne", () => sheet.widthPlusOne());
+  show(label + " wholeWidth", () => sheet.wholeWidth());
+  show(label + " widthOr", () => sheet.widthOr(7));
+  show(label + " heading", () => sheet.heading());
+  show(label + " titleLength", () => sheet.titleLength());
+  show(label + " ownerName", () => sheet.ownerName());
+  show(label + " rowCount", () => sheet.rowCount());
+  show(label + " change", () => sheet.change());
+  show(label + " state", () => sheet.state());
+}
+
+const empty = new Sheet();
+all("empty", empty);
+const filled = new Sheet();
+filled.setUp();
+all("filled", filled);
+empty.setUp();
+all("filled late", empty);
+
+let later!: number;
+let laterText!: string;
+let laterOwner!: Person;
+show("a variable marked the same way", () => later);
+show("plus one", () => later + 1);
+show("a string variable", () => laterText);
+show("its length", () => laterText.length);
+show("an object variable", () => laterOwner);
+show("its member", () => laterOwner.first);
+later = 4;
+show("assigned", () => later + 1);
+//// fields-of-every-kind-are-read-while-the-set-constructor-runs.ts
+class Counting extends Set<number> {
+  name = "counting";
+  list = [1, 2];
+  flag = true;
+  inner = { depth: 1 };
+  whole = 7;
+  half = 0.5;
+  add(value: number): this {
+    console.log([typeof this.name, typeof this.list, typeof this.flag, typeof this.inner, typeof this.whole, typeof this.half].join(" "));
+    console.log(String(this.name) + " " + String(this.list) + " " + String(this.flag) + " " + String(this.inner) + " " + String(this.whole) + " " + String(this.half));
+    try {
+      console.log("length " + this.name.length);
+    } catch (error) {
+      console.log("the name: threw " + (error instanceof TypeError));
+    }
+    try {
+      console.log("first " + this.list[0]);
+    } catch (error) {
+      console.log("the list: threw " + (error instanceof TypeError));
+    }
+    try {
+      console.log("depth " + this.inner.depth);
+    } catch (error) {
+      console.log("the object: threw " + (error instanceof TypeError));
+    }
+    return super.add(value);
+  }
+}
+
+console.log("size " + new Counting([1]).add(2).size);
+
+export {};
+//// fields-with-quoted-or-numeric-names-and-setter-only-members-read-undefined.ts
+////= text-12
+
+class Quoted {
+  "size": number;
+  "two words": string;
+  0: number;
+  1.5: string;
+  plain: number = 1;
+  total(): number {
+    return this.size + this[0] + this.plain;
+  }
+  words(): number {
+    return this["two words"].length;
+  }
+}
+
+const quoted = new Quoted();
+show("size", () => quoted.size);
+show("size + 1", () => quoted.size + 1);
+show("two words", () => quoted["two words"]);
+show("words", () => quoted.words());
+show("0", () => quoted[0]);
+show("0 + 1", () => quoted[0] + 1);
+show("1.5", () => quoted[1.5]);
+show("total", () => quoted.total());
+show("keys", () => Object.keys(quoted).join());
+quoted.size = 2;
+quoted[0] = 3;
+show("total when set", () => quoted.total());
+show("keys when set", () => Object.keys(quoted).join());
+
+class WriteOnly {
+  stored: number = 0;
+  set level(v: number) {
+    this.stored = v;
+  }
+  static set mode(v: string) {}
+}
+const writeOnly = new WriteOnly();
+writeOnly.level = 5;
+show("setter only: read", () => writeOnly.level);
+show("setter only: read + 1", () => writeOnly.level + 1);
+show("setter only: stored", () => writeOnly.stored);
+show("setter only: +=", () => (writeOnly.level += 1));
+show("setter only: stored after +=", () => writeOnly.stored);
+show("static setter only", () => WriteOnly.mode);
+show("static setter only: length", () => WriteOnly.mode.length);
+
+const literal = {
+  kept: "",
+  set name(v: string) {
+    this.kept = v;
+  },
+};
+literal.name = "given";
+show("literal setter only: read", () => literal.name);
+show("literal setter only: length", () => literal.name.length);
+show("literal kept", () => literal.kept);
+
+////= lines-89	levelOf	o	level	number	number	o.level
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += levelOf({ level: 1 });
+show("2000 plain objects", () => sum);
+show("then the setter-only one", () => levelOf(writeOnly));
+
+////= lines-41	tool	number	tool.size
+show("a member of a function, before it is assigned", tool);
+show("plus one", () => tool() + 1);
+tool.size = 4;
+show("afterwards", tool);
+//// flags-get-a-number-through-a-wider-alias.ts
+////= show-30
+
+////= put-2	boolean
+
+function countSet(flags: boolean[]): number {
+  let count = 0;
+  for (let i = 0; i < flags.length; i++) if (flags[i]) count++;
+  return count;
+}
+
+function countExactlyTrue(flags: boolean[]): number {
+  let count = 0;
+  for (const flag of flags) if (flag === true) count++;
+  return count;
+}
+
+function countExactlyFalse(flags: boolean[]): number {
+  let count = 0;
+  for (const flag of flags) if (flag === false) count++;
+  return count;
+}
+
+function inverted(flags: boolean[]): boolean[] {
+  return flags.map(flag => !flag);
+}
+
+function secondOr(flags: boolean[], other: boolean): boolean {
+  return flags[1] || other;
+}
+
+function secondAnd(flags: boolean[], other: boolean): boolean {
+  return flags[1] && other;
+}
+
+function secondAsNumber(flags: boolean[]): number {
+  return Number(flags[1]) + +flags[1];
+}
+
+function secondAsText(flags: boolean[]): string {
+  return flags[1] ? "yes" : "no";
+}
+
+function secondSwitch(flags: boolean[]): string {
+  switch (flags[1]) {
+    case true:
+      return "true";
+    case false:
+      return "false";
+  }
+  return "neither";
+}
+
+const visitors: [string, (flags: boolean[]) => void][] = [
+  ["an honest true", flags => put(flags, 1, true)],
+  ["1", flags => put(flags, 1, 1)],
+  ["0", flags => put(flags, 1, 0)],
+  ["2", flags => put(flags, 1, 2)],
+  ["NaN", flags => put(flags, 1, NaN)],
+  ["the text false", flags => put(flags, 1, "false")],
+  ["an empty string", flags => put(flags, 1, "")],
+  ["undefined", flags => put(flags, 1, undefined)],
+  ["null", flags => put(flags, 1, null)],
+  ["an object", flags => put(flags, 1, {})],
+  ["a Boolean object of false", flags => put(flags, 1, new Boolean(false))],
+];
+
+const reads: [string, (flags: boolean[]) => unknown][] = [
+  ["typeof", flags => typeof flags[1]],
+  ["set", countSet],
+  ["exactly true", countExactlyTrue],
+  ["exactly false", countExactlyFalse],
+  ["inverted", inverted],
+  ["|| false", flags => secondOr(flags, false)],
+  ["&& true", flags => secondAnd(flags, true)],
+  ["as a number", secondAsNumber],
+  ["as text", secondAsText],
+  ["switch", secondSwitch],
+  ["JSON", flags => JSON.stringify(flags)],
+  ["indexOf true", flags => [flags.indexOf(true), flags.includes(false)]],
+];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest = [true, i % 2 === 0, false];
+  warm += countSet(honest) + countExactlyTrue(honest) + countExactlyFalse(honest) + inverted(honest).length + (secondOr(honest, false) ? 1 : 0) + (secondAnd(honest, true) ? 1 : 0);
+  warm += secondAsNumber(honest) + secondAsText(honest).length + secondSwitch(honest).length;
+}
+console.log("after 2000 honest arrays", warm);
+
+////= for-45	flags	true	false	false
+attempt("a flag in a field", () => {
+  class Switch {
+    label = "switch";
+    on = false;
+    text(): string {
+      return this.on ? "on" : "off";
+    }
+    exactly(): boolean {
+      return this.on === true;
+    }
+  }
+  const made = new Switch();
+  const wide: { on: boolean | number | string } = made;
+  const seen: unknown[] = [made.text()];
+  for (const value of [1, 0, "off", "", 2.5]) {
+    wide.on = value;
+    seen.push(made.text(), made.exactly(), typeof made.on);
+  }
+  return [seen, made.label];
+});
+//// flags-joined-by-or-are-typed-as-the-enum-and-are-no-member.ts
+////= show-35
+
+enum Flag {
+  None = 0,
+  Read = 1,
+  Write = 2,
+  Run = 4,
+}
+
+const labels: Record<Flag, string> = { [Flag.None]: "none", [Flag.Read]: "read", [Flag.Write]: "write", [Flag.Run]: "run" };
+const words = ["zero", "one", "two", "three", "four"];
+
+function nameOf(flag: Flag): string {
+  switch (flag) {
+    case Flag.None:
+      return "none";
+    case Flag.Read:
+      return "read";
+    case Flag.Write:
+      return "write";
+    case Flag.Run:
+      return "run";
+  }
+}
+
+function has(flags: Flag, one: Flag): boolean {
+  return (flags & one) === one;
+}
+
+function add(flags: Flag, one: Flag): Flag {
+  return flags | one;
+}
+
+function remove(flags: Flag, one: Flag): Flag {
+  return flags & ~one;
+}
+
+class Entry {
+  mode: Flag = Flag.None;
+  grant(one: Flag): this {
+    this.mode |= one;
+    return this;
+  }
+  describe(): string {
+    return nameOf(this.mode) + "/" + Flag[this.mode] + "/" + labels[this.mode];
+  }
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const flag: Flag = 1 << (i % 3);
+  warm += nameOf(flag).length + labels[flag].length + Flag[flag].length + (has(flag, Flag.Read) ? 1 : 0);
+}
+console.log("2000 honest rounds", warm);
+
+const made: [string, Flag][] = [
+  ["read | write", Flag.Read | Flag.Write],
+  ["all three", Flag.Read | Flag.Write | Flag.Run],
+  ["~read", ~Flag.Read],
+  ["~none", ~Flag.None],
+  ["run + 1", Flag.Run + 1],
+  ["run << 29", Flag.Run << 29],
+  ["run * 2 ** 29", Flag.Run * 2 ** 29],
+  ["~read >>> 0", ~Flag.Read >>> 0],
+  ["read / 2", Flag.Read / 2],
+  ["-none", -Flag.None],
+  ["read % none", Flag.Read % Flag.None],
+];
+
+for (const [label, flag] of made) {
+  attempt(label + " value", () => flag);
+  attempt(label + " name", () => nameOf(flag));
+  attempt(label + " length of the name", () => nameOf(flag).length);
+  attempt(label + " reverse", () => Flag[flag]);
+  attempt(label + " label", () => labels[flag]);
+  attempt(label + " word", () => words[flag]);
+  attempt(label + " has read, write, run", () => [has(flag, Flag.Read), has(flag, Flag.Write), has(flag, Flag.Run)]);
+  attempt(label + " add and remove", () => [add(flag, Flag.Run), remove(flag, Flag.Read), remove(add(flag, Flag.Run), flag)]);
+  attempt(label + " in a field", () => {
+    const entry = new Entry();
+    entry.mode = flag;
+    return [entry.mode, entry.describe(), entry.grant(Flag.Write).mode];
+  });
+}
+
+attempt("granted one by one", () => new Entry().grant(Flag.Read).grant(Flag.Run).describe());
+attempt("honest again", () => [nameOf(Flag.Run), labels[Flag.Write], Flag[Flag.Read], new Entry().grant(Flag.Write).describe()]);
+//// flags-with-the-top-bit-are-tested-and-shifted.ts
+enum Bit {
+  None = 0,
+  Low = 1,
+  Top = 1 << 31,
+  All = ~0,
+}
+
+function has(bits: Bit, bit: Bit): boolean {
+  return (bits & bit) === bit;
+}
+function hasAny(bits: Bit, bit: Bit): boolean {
+  return (bits & bit) !== 0;
+}
+function unsigned(bits: Bit): number {
+  return bits >>> 0;
+}
+function without(bits: Bit, bit: Bit): Bit {
+  return bits & ~bit;
+}
+
+console.log(Bit.Top, Bit.All, Bit[Bit.Top], Bit[Bit.All], Bit[-1], Bit[2147483648]);
+console.log(has(Bit.All, Bit.Top), has(Bit.Top, Bit.Low), hasAny(Bit.Top, Bit.All), unsigned(Bit.Top), unsigned(Bit.All));
+console.log(without(Bit.All, Bit.Top), without(Bit.Top, Bit.Top), without(Bit.None, Bit.All));
+const wideTop: number = 2 ** 31;
+const topBit: Bit = wideTop;
+console.log(topBit === Bit.Top, has(topBit, Bit.Top), hasAny(topBit, Bit.Top), unsigned(topBit), topBit | 0, Bit[topBit]);
+const doubled: Bit = Bit.Top * 2;
+console.log(doubled, doubled | 0, has(doubled, Bit.Top), unsigned(doubled));
+const summed: Bit = Bit.Top + Bit.Top + Bit.Low;
+console.log(summed, summed | 0, has(summed, Bit.Low), unsigned(summed));
+let walking: Bit = Bit.Low;
+let steps = 0;
+while (walking !== Bit.None && steps < 40) {
+  walking <<= 1;
+  steps++;
+}
+console.log(steps, walking);
+//// for-await-walks-a-sync-generator-that-throws-or-yields-a-rejection.ts
+////= text-14
+
+let log: string[] = [];
+
+function* throwsInTheMiddle(): Generator<number, void, void> {
+  try {
+    yield 1;
+    throw new RangeError("in the middle");
+  } finally {
+    log.push("finally");
+  }
+}
+
+function* yieldsARejection(): Generator<number | Promise<number>, void, void> {
+  try {
+    yield 1;
+    yield Promise.reject(new TypeError("rejected"));
+    log.push("went on after the rejection");
+    yield 3;
+  } catch (error) {
+    log.push("the generator caught " + failure(error));
+  } finally {
+    log.push("finally");
+  }
+}
+
+function* returnsAPromise(): Generator<number, Promise<string>, void> {
+  yield 1;
+  return Promise.resolve("the end");
+}
+
+function* returnsARejection(): Generator<number, Promise<string>, void> {
+  yield 1;
+  return Promise.reject(new SyntaxError("at the end"));
+}
+
+function* yieldsInFinally(): Generator<number, void, void> {
+  try {
+    yield 1;
+    yield 2;
+  } finally {
+    log.push("finally begins");
+    yield 100;
+    log.push("finally ends");
+  }
+}
+
+function* throwsInFinally(): Generator<number, void, void> {
+  try {
+    yield 1;
+    yield 2;
+  } finally {
+    log.push("finally throws");
+    throw new EvalError("from finally");
+  }
+}
+
+async function walk(items: Iterable<number | PromiseLike<number>>, stopAt: number): Promise<string> {
+  const seen: string[] = [];
+  try {
+    for await (const n of items) {
+      seen.push(text(n));
+      if (n === stopAt) break;
+    }
+  } catch (error) {
+    return seen.join() + " then " + failure(error);
+  }
+  return seen.join() + " then the loop ended";
+}
+
+async function bodyThrows(items: Iterable<number | PromiseLike<number>>): Promise<string> {
+  try {
+    for await (const n of items) throw new URIError("body " + n);
+  } catch (error) {
+    return failure(error);
+  }
+  return "empty";
+}
+
+const makers: [string, () => Iterable<number | PromiseLike<number>>][] = [
+  ["throws in the middle", throwsInTheMiddle],
+  ["yields a rejection", yieldsARejection],
+  ["returns a promise", returnsAPromise],
+  ["returns a rejection", returnsARejection],
+  ["yields in finally", yieldsInFinally],
+  ["throws in finally", throwsInFinally],
+];
+
+for (const [label, make] of makers) {
+  log = [];
+  console.log(label + ", to the end: " + (await walk(make(), -1)) + " [" + log.join(", ") + "]");
+  log = [];
+  console.log(label + ", left at 1: " + (await walk(make(), 1)) + " [" + log.join(", ") + "]");
+  log = [];
+  console.log(label + ", the body throws: " + (await bodyThrows(make())) + " [" + log.join(", ") + "]");
+}
+
+async function* relay(items: Iterable<number | PromiseLike<number>>): AsyncGenerator<number, string, void> {
+  yield* items;
+  return "relayed";
+}
+
+for (const [label, make] of makers) {
+  log = [];
+  const seen: string[] = [];
+  try {
+    const relaying = relay(make());
+    for (let r = await relaying.next(); ; r = await relaying.next()) {
+      seen.push(text(r.value));
+      if (r.done) break;
+    }
+  } catch (error) {
+    seen.push(failure(error));
+  }
+  console.log(label + ", through yield* of an async generator: " + seen.join(" | ") + " [" + log.join(", ") + "]");
+}
+
+export {};
+//// for-await-walks-lists-of-promises-and-thenables.ts
+////= text-14
+
+type Fulfilled<T, A> = ((value: T) => A | PromiseLike<A>) | null;
+type Rejected<B> = ((reason: unknown) => B | PromiseLike<B>) | null;
+
+let log: string[] = [];
+
+////= Answer
+
+async function collect(items: Iterable<number | PromiseLike<number>>): Promise<string> {
+  let sum = 0;
+  const kinds: string[] = [];
+  try {
+    for await (const n of items) {
+      log.push("body " + text(n));
+      kinds.push(typeof n);
+      sum += n;
+    }
+  } catch (error) {
+    return failure(error) + " after " + kinds.join() + " sum " + text(sum);
+  }
+  return kinds.join() + " sum " + text(sum);
+}
+
+function* promises(): Generator<Promise<number>, void, void> {
+  try {
+    for (let i = 1; i <= 3; i++) {
+      log.push("make " + i);
+      yield Promise.resolve(i);
+    }
+  } finally {
+    log.push("generator closed");
+  }
+}
+
+const cases: [string, () => Iterable<number | PromiseLike<number>>][] = [
+  ["numbers", () => [1, 2, 3]],
+  ["promises", () => [Promise.resolve(1), Promise.resolve(2)]],
+  ["thenables", () => [new Answer(1), new Answer(2)]],
+  ["a mix", () => [1, Promise.resolve(2), new Answer(3), 4]],
+  ["a set of promises", () => new Set([Promise.resolve(1), Promise.resolve(2)])],
+  ["a generator of promises", promises],
+  ["nothing", () => []],
+  ["a rejection in the middle", () => [1, Promise.reject(new RangeError("two")), 3]],
+  ["a promise of a thenable", () => [Promise.resolve(new Answer(5))]],
+  ["a typed array", () => new Uint8Array([7, 8])],
+];
+
+for (const [label, make] of cases) {
+  log = [];
+  console.log(label + ": " + (await collect(make())));
+  console.log(label + " log: " + log.join(", "));
+}
+
+async function firstOnly(items: Iterable<number | PromiseLike<number>>): Promise<number> {
+  for await (const n of items) return n;
+  return -1;
+}
+log = [];
+console.log("left after the first of a generator: " + (await firstOnly(promises())) + " [" + log.join(", ") + "]");
+
+const growing: Promise<number>[] = [Promise.resolve(1)];
+let rounds = 0;
+for await (const n of growing) {
+  rounds++;
+  if (n < 4) growing.push(Promise.resolve(n + 1));
+}
+console.log("a list that grows while it is walked: " + rounds + " rounds");
+
+async function order(): Promise<void> {
+  const trail: string[] = [];
+  const walking = (async () => {
+    for await (const n of [1, 2]) trail.push("item " + n);
+    trail.push("loop over");
+  })();
+  let chain = Promise.resolve();
+  for (let i = 1; i <= 8; i++) chain = chain.then(() => void trail.push("tick " + i));
+  await Promise.all([walking, chain]);
+  console.log(trail.join(", "));
+}
+await order();
+
+export {};
+//// for-in-and-for-of-over-primitives-under-object-types.ts
+////= show-30
+
+type HasLength = { length: number };
+type Letters = { [Symbol.iterator](): Iterator<string> };
+type Indexed = { length: number; [index: number]: string };
+
+////= lines-188	namesIn	item	HasLength	names	name	in
+
+////= lines-188	each	letters	Letters	seen	letter	of
+
+function spreadOut(letters: Letters): string[] {
+  return [...letters];
+}
+
+function firstTwo(letters: Letters): (string | undefined)[] {
+  const [first, second] = letters;
+  return [first, second];
+}
+
+function byHand(letters: Letters): string[] {
+  const seen: string[] = [];
+  const iterator = letters[Symbol.iterator]();
+  for (let step = iterator.next(); !step.done; step = iterator.next()) seen.push(step.value);
+  return seen;
+}
+
+function* passOn(letters: Letters): Generator<string> {
+  yield* letters;
+}
+
+function byIndex(items: Indexed): string {
+  let text = "";
+  for (let i = 0; i < items.length; i++) text += "[" + items[i] + "]";
+  return text;
+}
+
+function pastTheEnd(items: Indexed): string {
+  return typeof items[items.length] + " " + typeof items[-1];
+}
+
+////= lines-270	abc	string	"a"	"b"
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  warm += namesIn({ length: i }).length + each(["x", "y"]).length + spreadOut(["x"]).length + firstTwo(["x", "y"]).length;
+  warm += byHand(["x"]).length + [...passOn(["x"])].length + byIndex(["x", "y"]).length + pastTheEnd(["x"]).length;
+}
+console.log("after 2000 honest calls", warm);
+
+const holders: [string, HasLength][] = [
+  ["literal", { length: 1 }],
+  ["string", "abc"],
+  ["empty string", ""],
+  ["array", [1, 2]],
+  ["function", namesIn],
+  ["typed array", new Uint8Array(2)],
+  ["String object", new String("ab")],
+];
+for (const [name, item] of holders) attempt("for-in over a " + name, () => namesIn(item));
+
+const letters: [string, () => Letters][] = [
+  ["array", () => ["a", "b", "c"]],
+  ["string", () => "abc"],
+  ["empty string", () => ""],
+  ["one letter", () => "z"],
+  ["string with a pair of surrogates", () => "a\u{1F600}b"],
+  ["string with half a pair", () => "a\uD83Db"],
+  ["set", () => new Set(["a", "b", "a"])],
+  ["generator", abc],
+  ["keys of a map", () => new Map([["k", 1]]).keys()],
+  ["String object", () => new String("ab")],
+];
+for (const [name, make] of letters) {
+  attempt("for-of over a " + name, () => each(make()));
+  attempt("spread of a " + name, () => spreadOut(make()));
+  attempt("first two of a " + name, () => firstTwo(make()));
+  attempt("by hand over a " + name, () => byHand(make()));
+  attempt("yield* of a " + name, () => [...passOn(make())]);
+}
+
+const indexed: [string, Indexed][] = [
+  ["array", ["a", "b"]],
+  ["string", "ab"],
+  ["empty string", ""],
+  ["string with a pair of surrogates", "\u{1F600}"],
+  ["literal", { 0: "a", 1: "b", length: 2 }],
+  ["literal with a missing index", { 0: "a", length: 2 }],
+  ["String object", new String("ab")],
+];
+for (const [name, items] of indexed) {
+  attempt("by index over a " + name, () => byIndex(items));
+  attempt("past the end of a " + name, () => pastTheEnd(items));
+}
+//// for-in-lists-what-the-prototypes-have-too.ts
+////= Point-2
+
+////= Pair-2
+
+////= lines-14	class	Triple	extends	Pair	z	3
+
+function walk(o: object): string {
+  const keys: string[] = [];
+  for (const key in o) keys.push(key);
+  return keys.join();
+}
+
+function walkPoint(p: Point): string {
+  let keys = "";
+  for (const key in p) keys += key + ";";
+  return keys;
+}
+
+function ownOnly(p: Point): string {
+  let keys = "";
+  for (const key in p) if (Object.hasOwn(p, key)) keys += key + ";";
+  return keys;
+}
+
+const literal: Point = { x: 1, y: 2 };
+const flipped: Point = { y: 2, x: 1 };
+const pair = new Pair();
+const triple = new Triple();
+const bare: Point = Object.assign(Object.create(null), { x: 1, y: 2 });
+
+function all(label: string): void {
+  console.log(label + ": " + [literal, flipped, pair, triple, bare].map(walkPoint).join(" | "));
+  console.log(label + ", own only: " + [literal, flipped, pair, triple, bare].map(ownOnly).join(" | "));
+  console.log(label + ", keys: " + [literal, flipped, pair, triple, bare].map(p => Object.keys(p).join("")).join(" | "));
+}
+
+let length = 0;
+for (let i = 0; i < 2000; i++) length += walkPoint(literal).length + walkPoint(pair).length;
+console.log("2000 honest: " + length);
+all("at first");
+
+Object.assign(Pair.prototype, { shared: 1 });
+all("Pair.prototype has an enumerable member");
+
+Object.assign(Pair.prototype, { x: 100 });
+all("a name that the instances have themselves");
+
+Object.defineProperty(pair, "shared", { value: 2, enumerable: false, configurable: true });
+all("an own hidden member covers an inherited one");
+
+Reflect.deleteProperty(Pair.prototype, "shared");
+Reflect.deleteProperty(Pair.prototype, "x");
+Reflect.deleteProperty(pair, "shared");
+all("taken away again");
+
+const indexed = { b: 1, 2: 1, a: 1, 1: 1 };
+console.log("index keys first: " + walk(indexed) + " then the parent's: " + walk(Object.create(indexed)) + " and both: " + walk(Object.assign(Object.create(indexed), { c: 1, 0: 1, a: 2 })));
+
+function deleteWhileWalking(): string {
+  const o: Record<string, number> = { a: 1, b: 2, c: 3, d: 4 };
+  const seen: string[] = [];
+  for (const key in o) {
+    seen.push(key);
+    if (key === "a") delete o.c;
+  }
+  return seen.join();
+}
+
+function addWhileWalking(): string {
+  const o: Record<string, number> = { a: 1, b: 2 };
+  const seen: string[] = [];
+  for (const key in o) {
+    seen.push(key);
+    o["new" + key] = 1;
+  }
+  return seen.join() + " / " + Object.keys(o).join();
+}
+
+function storeWhileWalking(p: Point): string {
+  const seen: string[] = [];
+  for (const key in p) {
+    seen.push(key + "=" + (key === "x" ? p.x : p.y));
+    p.y = 50;
+  }
+  return seen.join();
+}
+
+console.log("a key deleted before it is reached: " + deleteWhileWalking());
+console.log("keys added on the way: " + addWhileWalking());
+console.log("a member stored on the way: " + storeWhileWalking({ x: 1, y: 2 }) + " | " + storeWhileWalking({ y: 2, x: 1 }));
+
+const nothing: (Point | null | undefined)[] = [null, undefined];
+for (const value of nothing) {
+  let ran = false;
+  for (const key in value) ran = key.length >= 0;
+  console.log("over " + value + ": " + ran);
+}
+
+console.log("over text and lists: " + walk(Object("ab")) + " | " + walk([7, 8]) + " | " + walk(Object.assign([7], { name: "n" })));
+
+export {};
+//// forms-of-a-call-that-keep-the-object-honest.ts
+////= Owner-2
+
+const s = new Subject();
+const maybe: Subject | undefined = s.count > 0 ? s : undefined;
+const key: "readCount" | "countPlusOne" = s.count > 0 ? "readCount" : "countPlusOne";
+
+class Tagger {
+  prefix: string = "tag";
+  tag(strings: TemplateStringsArray, value: number): string {
+    return this.prefix + strings[0] + value;
+  }
+  optional?: () => string;
+}
+const tagger = new Tagger();
+
+show("plain", () => s.readCount());
+show("in parentheses", () => (s.readCount)());
+show("by a constant name", () => s["readCount"]());
+show("by a computed name", () => s[key]());
+show("optional chain on the object", () => maybe?.readCount());
+show("optional call", () => s.readCount?.());
+show("both", () => maybe?.readCount?.());
+show("in parentheses with a chain", () => (maybe?.readCount)?.());
+show("private name", () => s.readSecret());
+show("private name, optional call", () => s.readSecret?.());
+show("a store", () => s.storeCount());
+show("a method that calls a method", () => s.callsOther());
+show("tagged template", () => tagger.tag`-${5}`);
+show("tagged template by a name", () => tagger["tag"]`-${6}`);
+show("a missing optional method", () => tagger.optional?.());
+tagger.optional = function (this: Tagger): string {
+  return this.prefix + "!";
+};
+show("an optional method that is there", () => tagger.optional?.());
+show("through a getter that returns the object", () => ({ get it() { return s; } }).it.readCount());
+show("through an array element", () => [s][0].readCount());
+show("through a call", () => ((): Subject => s)().readCount());
+show("through new", () => new Subject().readCount());
+show("through await", () => "see below");
+show("chained", () => s.owner.first.toUpperCase().toLowerCase());
+show("call with itself", () => s.readCount.call(s));
+show("apply with itself", () => s.readCount.apply(s));
+show("bind to itself", () => s.readCount.bind(s)());
+show("Reflect.apply with itself", () => Reflect.apply(s.readCount, s, []));
+show("map with itself as this", () => [0].map(s.readCount, s)[0]);
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += s.readCount() + s[key]() + (maybe?.readCount() ?? 0);
+show("2000 rounds", () => total);
+(async () => {
+  console.log("through await: " + (await Promise.resolve(s)).readCount());
+})();
+//// four-numbers-are-sorted-with-a-comparator.ts
+function sorted(numbers: number[]): number[] {
+  return numbers.sort((a, b) => a - b);
+}
+
+console.log("sorted", sorted([3, 2, 1, 0]).join());
+//// frozen-arrays-and-their-members-under-mutable-types.ts
+////= attempt-7
+
+interface Basket {
+  items: number[];
+  total: number;
+}
+
+function add(b: Basket, n: number): number {
+  b.items.push(n);
+  b.total += n;
+  return b.items.length;
+}
+
+function setFirst(list: number[], n: number): number {
+  list[0] = n;
+  return list[0];
+}
+
+////= lines-233	grow	list	number	list.push	9
+
+function shorten(list: number[]): number {
+  list.length = 1;
+  return list.length;
+}
+
+function frozenList(): number[] {
+  const list = [1, 2, 3];
+  Object.freeze(list);
+  return list;
+}
+
+function sealedList(): number[] {
+  return Object.seal([1, 2, 3]);
+}
+
+function closedList(): number[] {
+  return Object.preventExtensions([1, 2, 3]);
+}
+
+const makers: [string, () => number[]][] = [
+  ["open", () => [1, 2, 3]],
+  ["frozen", frozenList],
+  ["sealed", sealedList],
+  ["not extensible", closedList],
+];
+
+for (const [label, make] of makers) {
+  const uses: [string, (list: number[]) => unknown][] = [
+    ["an element stored", list => setFirst(list, 7)],
+    ["push", grow],
+    ["pop", list => list.pop()],
+    ["shift", list => list.shift()],
+    ["unshift", list => list.unshift(0)],
+    ["length made shorter", shorten],
+    ["length made longer", list => (list.length = 5)],
+    ["an element behind the end", list => (list[3] = 4)],
+    ["sort", list => list.sort((a, b) => b - a).join()],
+    ["reverse", list => list.reverse().join()],
+    ["fill", list => list.fill(0).join()],
+    ["splice", list => list.splice(0, 1).join()],
+    ["copyWithin", list => list.copyWithin(0, 1).join()],
+    ["map makes an open copy", list => grow(list.map(n => n))],
+    ["spread makes an open copy", list => grow([...list])],
+    ["slice makes an open copy", list => grow(list.slice())],
+    ["read", list => list[0] + list[1] + list[2]],
+  ];
+  for (const [name, use] of uses) {
+    const list = make();
+    attempt(label + ", " + name, () => use(list));
+    console.log("  holds " + JSON.stringify(list) + " length " + list.length);
+  }
+}
+
+const open: number[] = [0];
+////= for-46	setFirst	open	i	grow
+console.log("2000 honest: " + open.length + " " + open[0]);
+attempt("then a frozen one, stored", () => setFirst(frozenList(), 1));
+attempt("then a frozen one, pushed", () => grow(frozenList()));
+attempt("then the open one", () => setFirst(open, 1) + grow(open));
+
+const outerFrozen: Basket = Object.freeze({ items: [1], total: 1 });
+attempt("a frozen basket, an open list", () => add(outerFrozen, 2));
+console.log("  holds " + JSON.stringify(outerFrozen));
+const innerFrozen: Basket = { items: frozenList(), total: 6 };
+attempt("an open basket, a frozen list", () => add(innerFrozen, 2));
+console.log("  holds " + JSON.stringify(innerFrozen));
+
+const pair: [number, string] = Object.seal<[number, string]>([1, "a"]);
+attempt("a sealed tuple, stored", () => ((pair[0] = 2), pair.join()));
+attempt("a sealed tuple, pushed", () => pair.push("b"));
+
+export {};
+//// function-typed-unions-and-optional-callbacks-are-called.ts
+////= text-12
+
+type Formatter = ((n: number) => string) | string | null;
+type Listener = (() => void) | { handle(): void };
+
+function format(f: Formatter, n: number): string {
+  if (typeof f === "function") return f(n);
+  if (f === null) return String(n);
+  return f + n;
+}
+
+const log: string[] = [];
+function notify(l: Listener): void {
+  if (typeof l === "function") l();
+  else l.handle();
+}
+function notifyByMember(l: Listener): void {
+  if ("handle" in l) l.handle();
+  else l();
+}
+
+function withCallback(n: number, done?: (result: number) => void): number {
+  const result = n * 2;
+  done?.(result);
+  return result;
+}
+function withDefault(n: number, map: (n: number) => number = x => x + 1): number {
+  return map(n);
+}
+
+show("a function", () => format(n => "<" + n + ">", 1));
+show("a string", () => format("#", 1));
+show("null", () => format(null, 1));
+show("a built-in", () => format(String, 1));
+show("a bound function", () => format(String.bind(null), 1));
+show("a proxy", () => format(new Proxy((n: number) => "proxied " + n, {}), 1));
+
+const both = Object.assign(() => { log.push("called"); }, { handle() { log.push("handled"); } });
+notify(() => { log.push("plain function"); });
+notify({ handle() { log.push("plain object"); } });
+notify(both);
+notifyByMember(() => { log.push("plain function"); });
+notifyByMember({ handle() { log.push("plain object"); } });
+notifyByMember(both);
+class Handler {
+  handle(): void {
+    log.push("class instance");
+  }
+  static handle(): void {
+    log.push("static side");
+  }
+}
+notify(new Handler());
+notifyByMember(new Handler());
+show("a class with a static handle, by typeof", () => notify(Handler));
+show("a class with a static handle, by member", () => notifyByMember(Handler));
+show("log", () => log.join());
+
+let seen = -1;
+show("no callback", () => withCallback(2));
+show("undefined", () => withCallback(2, undefined));
+show("a callback", () => withCallback(2, r => { seen = r; }) + " " + seen);
+show("default", () => withDefault(1));
+show("undefined takes the default", () => withDefault(1, undefined));
+show("given", () => withDefault(1, x => x * 10));
+show("a built-in given", () => withDefault(-1, Math.abs));
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += withCallback(1, i % 2 === 0 ? undefined : r => { total += r; });
+show("2000 calls, every other one with a callback", () => total);
+//// functions-and-arrows-inside-a-method-see-another-this.ts
+////= show-6
+
+class Panel {
+  width: number = 4;
+  items: number[] = [1, 2];
+  viaArrow(): number {
+    const inner = (): number => this.width;
+    return inner();
+  }
+  viaFunction(): string {
+    const inner = function (this: unknown): string {
+      return typeof this;
+    };
+    return inner();
+  }
+  viaCallbackArrow(): number[] {
+    return this.items.map(item => item * this.width);
+  }
+  viaCallbackFunction(): string[] {
+    return this.items.map(function (this: unknown): string {
+      return typeof this;
+    });
+  }
+  viaCallbackFunctionWithThis(): number[] {
+    return this.items.map(function (this: Panel, item: number): number {
+      return item * this.width;
+    }, this);
+  }
+  makeReader(): () => number {
+    return () => this.width;
+  }
+  makeWriter(): (n: number) => void {
+    return n => {
+      this.width = n;
+    };
+  }
+  nestedObject(): number {
+    const inner = {
+      width: 400,
+      read(): number {
+        return this.width;
+      },
+      arrow: (): number => this.width,
+    };
+    return inner.read() + inner.arrow();
+  }
+  withDefault(n: number = this.width): number {
+    return n;
+  }
+}
+
+const panel = new Panel();
+show("honest viaArrow", () => panel.viaArrow());
+show("honest viaFunction", () => panel.viaFunction());
+show("honest viaCallbackArrow", () => panel.viaCallbackArrow().join());
+show("honest viaCallbackFunction", () => panel.viaCallbackFunction().join());
+show("honest viaCallbackFunctionWithThis", () => panel.viaCallbackFunctionWithThis().join());
+show("honest nestedObject", () => panel.nestedObject());
+show("honest withDefault", () => panel.withDefault());
+
+const { viaArrow, viaFunction, viaCallbackArrow, makeReader, makeWriter, nestedObject, withDefault } = panel;
+show("bare viaArrow", () => viaArrow());
+show("bare viaFunction", () => viaFunction());
+show("bare viaCallbackArrow", () => viaCallbackArrow());
+show("bare nestedObject", () => nestedObject());
+show("bare withDefault", () => withDefault());
+show("bare withDefault, given", () => withDefault(9));
+show("bare makeReader does not throw", () => typeof makeReader());
+show("what it made does", () => makeReader()());
+show("what the bare makeWriter made", () => makeWriter()(5));
+
+const like = { width: 40, items: [10] };
+const reader = panel.makeReader.call(like);
+const writer = panel.makeWriter.call(like);
+show("a reader made for a look-alike", () => reader());
+writer(41);
+show("after its writer ran", () => reader() + " " + like.width + " " + panel.width);
+show("viaCallbackArrow on a look-alike", () => panel.viaCallbackArrow.call(like).join());
+show("viaCallbackFunctionWithThis on a look-alike", () => panel.viaCallbackFunctionWithThis.call(like).join());
+show("nestedObject on a look-alike", () => panel.nestedObject.call(like));
+show("withDefault on a look-alike", () => panel.withDefault.call(like));
+show("withDefault on a wrong look-alike", () => panel.withDefault.call({ width: "wide" }));
+const honestReader = panel.makeReader();
+show("an honest reader, taken anywhere", () => [0].map(honestReader)[0]);
+//// functions-and-methods-are-only-ever-called-indirectly.ts
+function attempt(label: string, run: () => unknown): void {
+  try {
+    console.log(label + ": " + String(run()));
+  } catch (error) {
+    console.log(label + ": threw " + (error instanceof TypeError ? "TypeError" : error instanceof Error ? "Error" : typeof error));
+  }
+}
+
+////= lines-42	byReflectApply	n	number	string	"reached with "	n
+////= lines-42	byCall	n	number	string	"reached with "	n
+////= lines-42	byApply	n	number	string	"reached with "	n
+////= lines-42	byBind	n	number	string	"reached with "	n
+////= lines-42	byMap	n	number	string	"reached with "	n
+////= lines-34	asADefault	string	return	"reached"
+////= lines-34	throughATable	string	return	"reached"
+////= lines-34	throughAList	string	return	"reached"
+////= lines-34	asAnArgument	string	return	"reached"
+////= lines-34	asAResult	string	return	"reached"
+////= lines-42	byAPromise	n	number	string	"reached with "	n
+function asATag(strings: TemplateStringsArray): string {
+  return "reached with " + strings.length;
+}
+////= lines-34	asAGetter	string	return	"reached"
+////= lines-34	throughAProxy	string	return	"reached"
+////= lines-34	asAFunctionObject	string	return	"reached"
+
+////= lines-18	Made	label	"made"
+////= lines-18	MadeByAnAlias	label	"made by an alias"
+
+class Host {
+  byComputedName(): string {
+    return "reached";
+  }
+  byOptionalCall(): string {
+    return "reached";
+  }
+  byAnInterface(): string {
+    return "reached";
+  }
+  detached(): string {
+    return "reached";
+  }
+  toString(): string {
+    return "reached by a conversion";
+  }
+  valueOf(): number {
+    return 42;
+  }
+  toJSON(): string {
+    return "reached by JSON";
+  }
+  [Symbol.toPrimitive](hint: string): string {
+    return "reached with the hint " + hint;
+  }
+  static fixed(): string {
+    return "reached";
+  }
+  get read(): string {
+    return "reached";
+  }
+  set written(value: string) {
+    console.log("a setter: reached with " + value);
+  }
+}
+
+class Plain {
+  toString(): string {
+    return "reached by a conversion";
+  }
+  valueOf(): number {
+    return 42;
+  }
+}
+
+interface HasOptional {
+  byOptionalCall?(): string;
+}
+////= lines-69	HasMethod	byAnInterface	string
+
+const host = new Host();
+const name: string = ["by", "Computed", "Name"].join("");
+
+attempt("Reflect.apply", () => Reflect.apply(byReflectApply, undefined, [1]));
+attempt("call", () => byCall.call(undefined, 1));
+attempt("apply", () => byApply.apply(undefined, [1]));
+attempt("bind", () => byBind.bind(undefined, 1)());
+attempt("map", () => [1].map(byMap).join());
+attempt("a default value", () => ((f: () => string = asADefault) => f())());
+attempt("a table", () => {
+  const table: { [key: string]: () => string } = { entry: throughATable };
+  return table["en" + "try"]();
+});
+attempt("a list", () => [throughAList][0]());
+attempt("an argument", () => ((f: () => string) => f())(asAnArgument));
+attempt("a result", () => ((): (() => string) => asAResult)()());
+attempt("a tag", () => asATag`x`);
+attempt("a getter that was defined", () => {
+  const target: { value?: string } = {};
+  Object.defineProperty(target, "value", { get: asAGetter });
+  return target.value;
+});
+attempt("a proxy", () => new Proxy(throughAProxy, {})());
+attempt("typed as Function", () => {
+  const f: Function = asAFunctionObject;
+  return f();
+});
+attempt("Reflect.construct", () => Reflect.construct(Made, []).label);
+attempt("an alias of a class", () => {
+  const Alias: new () => { label: string } = MadeByAnAlias;
+  return new Alias().label;
+});
+attempt("a computed name", () => {
+  const method: unknown = Reflect.get(host, name);
+  return typeof method === "function" ? method.call(host) : "not a function";
+});
+attempt("an optional call", () => {
+  const view: HasOptional = host;
+  return view.byOptionalCall?.();
+});
+attempt("an interface", () => {
+  const view: HasMethod = host;
+  return view.byAnInterface();
+});
+attempt("detached", () => {
+  const { detached } = host;
+  return detached();
+});
+attempt("a static method through a view", () => {
+  const view: { fixed(): string } = Host;
+  return view.fixed();
+});
+attempt("a getter through a view", () => {
+  const view: { readonly read: string } = host;
+  return view.read;
+});
+attempt("a setter through a view", () => {
+  const view: { written: string } = host;
+  view.written = "text";
+  return "stored";
+});
+attempt("a template", () => `${host}`);
+attempt("JSON", () => JSON.stringify([host]));
+attempt("toString by concatenation", () => "" + new Plain());
+attempt("toString by String", () => String(new Plain()));
+attempt("valueOf by arithmetic", () => +new Plain() + 1);
+
+console.log("a promise: " + (await Promise.resolve(1).then(byAPromise)));
+
+export {};
+//// functions-are-bound-with-some-of-their-arguments.ts
+function text(value: unknown): string {
+  if (typeof value === "number") return "number " + (Object.is(value, -0) ? "-0" : String(value));
+  if (typeof value === "function") return "function " + value.name + "/" + value.length;
+  if (typeof value === "object" && value !== null) return "object " + JSON.stringify(value);
+  return typeof value + " " + String(value);
+}
+
+////= failure
+
+////= attempt-11
+
+function volume(a: number, b: number, c: number = 10, ...more: number[]): string {
+  return arguments.length + " given: " + [a, b, c].map(text).join(", ") + ", more " + text(more);
+}
+
+const none = volume.bind(null);
+const one = volume.bind(null, 2);
+const two = volume.bind(null, 2, 3);
+const three = volume.bind(null, 2, 3, 4);
+const five = volume.bind(null, 2, 3, 4, 5, 6);
+const withUndefined = volume.bind(null, 2, 3, undefined);
+
+attempt("shapes", () => [volume, none, one, two, three, five].map(text));
+attempt("none(1, 2)", () => none(1, 2));
+attempt("one(3)", () => one(3));
+attempt("one(3, undefined)", () => one(3, undefined));
+attempt("two()", () => two());
+attempt("two(4, 5)", () => two(4, 5));
+attempt("three()", () => three());
+attempt("five(7)", () => five(7));
+attempt("an undefined was bound where the default is", () => withUndefined());
+attempt("bound twice", () => one.bind(null, 3).bind(null, 4)(5));
+
+function triple(a: number, b: number, c: number = 10): string {
+  return arguments.length + " given: " + [a, b, c].map(text).join(", ");
+}
+attempt("map over a bound function: the index is the next parameter", () => [7, 8].map(triple.bind(null, 1)).join(" | "));
+
+function tagged(prefix: string, word: string, suffix?: string): string {
+  return prefix + word + " suffix " + text(suffix) + (suffix === undefined ? "" : " of length " + text(suffix.length));
+}
+const short: (prefix: string, word: string) => string = tagged;
+attempt("honest", () => tagged(">", "w", "!"));
+attempt("bound behind a shorter type, mapped", () => ["a", "b"].map(short.bind(null, ">")));
+
+class Counter {
+  count: number = 0;
+  add(n: number, times: number = 1): number {
+    this.count += n * times;
+    return this.count;
+  }
+}
+const counter = new Counter();
+const other = new Counter();
+const addFive = counter.add.bind(counter, 5);
+attempt("a bound method", () => [addFive(), addFive(2), counter.count]);
+attempt("call cannot move the receiver", () => [addFive.call(other), other.count, counter.count]);
+attempt("bind cannot move the receiver", () => [addFive.bind(other)(), other.count, counter.count]);
+attempt("bound to a look-alike", () => {
+  const like = { count: 100, add: counter.add };
+  return [counter.add.bind(like, 1)(), like.count];
+});
+attempt("forEach with a bound method: the index is the multiplier", () => {
+  const fresh = new Counter();
+  [1, 1, 1].forEach(fresh.add.bind(fresh));
+  return fresh.count;
+});
+
+class Pair {
+  a: number;
+  b: number;
+  constructor(a: number, b: number = -1) {
+    this.a = a;
+    this.b = b;
+  }
+}
+const BoundPair = Pair.bind(null, 1);
+attempt("a bound class is constructed", () => [new BoundPair(), new BoundPair(2), new BoundPair() instanceof Pair, new BoundPair() instanceof BoundPair]);
+attempt("a bound class has no prototype member", () => ["prototype" in BoundPair, text(BoundPair)]);
+attempt("a bound class is called", () => Reflect.apply(BoundPair, null, []));
+
+const arrow = (a: number, b: number): string => a + ":" + b;
+attempt("a bound arrow", () => [arrow.bind(null, 1)(2), text(arrow.bind(null, 1))]);
+
+async function later(a: number, b: number): Promise<number> {
+  await null;
+  return a * b;
+}
+function* counting(from: number, to: number): Generator<number, void, void> {
+  for (let i = from; i <= to; i++) yield i;
+}
+attempt("a bound generator function", () => [...counting.bind(null, 2)(4)]);
+console.log("a bound async function: " + (await later.bind(null, 6)(7)));
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += addFive(0) + one(i).length;
+console.log("2000 calls of bound functions: " + warm);
+
+export {};
+//// functions-carry-members-of-their-own.ts
+////= text-8
+
+////= failure
+
+interface Tally {
+  (): number;
+  calls: number;
+  label: string;
+}
+
+function declared(): number {
+  return ++declared.calls;
+}
+declared.calls = 0;
+declared.label = "declared";
+
+const arrow = (): number => ++arrow.calls;
+arrow.calls = 0;
+arrow.label = "arrow";
+
+const assigned: Tally = Object.assign(function (): number {
+  return ++assigned.calls;
+}, { calls: 0, label: "assigned" });
+
+function withGetter(): Tally {
+  let reads = 0;
+  const f = Object.assign((): number => reads, { calls: 0, label: "getter" });
+  Object.defineProperty(f, "calls", { get: () => ++reads * 100, set: () => {}, enumerable: true });
+  return f;
+}
+
+function frozen(): Tally {
+  return Object.freeze(Object.assign((): number => -1, { calls: 5, label: "frozen" }));
+}
+
+function proxied(): Tally {
+  return new Proxy(assigned, {
+    apply: () => 1000,
+    get: (target, key, receiver) => (key === "label" ? "proxied" : Reflect.get(target, key, receiver)),
+  });
+}
+
+class Static {
+  static calls = 0;
+  static label = "static";
+}
+
+function use(tally: Tally): string {
+  const before = tally.calls;
+  let result: string;
+  try {
+    result = text(tally());
+  } catch (error) {
+    result = failure(error);
+  }
+  let stored: string;
+  try {
+    tally.calls += 10;
+    stored = "stored";
+  } catch (error) {
+    stored = failure(error);
+  }
+  return tally.label + ": before " + text(before) + ", result " + result + ", " + stored + ", after " + text(tally.calls) + ", keys " + Object.keys(tally).join() + ", copy " + JSON.stringify({ ...tally });
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += declared();
+console.log("2000 calls: " + warm + ", calls " + declared.calls);
+
+const tallies: [string, () => Tally][] = [
+  ["declared", () => declared],
+  ["arrow", () => arrow],
+  ["assigned", () => assigned],
+  ["a getter", withGetter],
+  ["frozen", frozen],
+  ["a proxy", proxied],
+];
+for (const [label, make] of tallies) console.log(label + " | " + use(make()));
+console.log("declared again | " + use(declared));
+
+////= lines-27	Sized	name	string	length	number
+function sizeOf(sized: Sized): string {
+  return text(sized.name) + " " + text(sized.length);
+}
+function three(a: number, b: number, c: number): number {
+  return a + b + c;
+}
+const renamed = Object.defineProperty((a: number): number => a, "name", { value: "renamed" });
+const resized = Object.defineProperty((a: number): number => a, "length", { value: 99 });
+console.log("every function has a name and a length: " + [sizeOf(three), sizeOf(declared), sizeOf(Static), sizeOf(renamed), sizeOf(resized), sizeOf({ name: "literal", length: 1 })].join(" | "));
+
+const bound = declared.bind(null);
+console.log("a bound copy has none of the members: " + Object.keys(bound).join() + "|" + ("calls" in bound));
+
+interface Removable {
+  (): string;
+  cache?: string;
+}
+const cached: Removable = () => (cached.cache ??= "computed");
+console.log("a cache on the function: " + text(cached.cache) + " " + cached() + " " + text(cached.cache) + " " + delete cached.cache + " " + text(cached.cache) + " " + Object.keys(cached).length);
+
+function memo(n: number): number {
+  const hit = memo.table.get(n);
+  if (hit !== undefined) return hit;
+  const value = n < 2 ? n : memo(n - 1) + memo(n - 2);
+  memo.table.set(n, value);
+  return value;
+}
+memo.table = new Map<number, number>();
+console.log("a table on the function: " + memo(50) + " " + memo.table.size);
+
+namespace declared {
+  export const merged = "from a namespace";
+}
+console.log("merged with a namespace: " + declared.merged + " " + Object.keys(declared).join());
+//// functions-that-return-a-number-stand-for-functions-that-return-an-int32.ts
+import type { int32 } from "bun";
+
+////= show-34
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += uses(i | 0).length + uses(-i | 0).length;
+console.log("4000 honest uses", warm);
+
+const odd: number[] = JSON.parse("[1.5, -0, 2147483648, -2147483649, 1e21, 3]");
+odd.push(NaN, Infinity);
+
+let current = 0;
+////= lines-34	loose	number	return	current
+class Base {
+  size(): int32 {
+    return 1;
+  }
+  get width(): int32 {
+    return 2;
+  }
+}
+class Wider extends Base {
+  size(): number {
+    return current;
+  }
+  get width(): number {
+    return current;
+  }
+}
+////= lines-69	Sized	size	int32
+////= lines-172	later	int32	current
+////= lines-19	sizeOf	sized	Sized	int32	sized.size
+////= lines-20	widthOf	base	Base	int32	return	base.width
+////= lines-118	call	make	int32
+
+let rounds = 0;
+for (let i = 0; i < 2000; i++) rounds += sizeOf(new Base()) + widthOf(new Base()) + call(() => 3);
+console.log("2000 honest rounds", rounds);
+
+for (const n of odd) {
+  const label = show(n);
+  current = n;
+  attempt(label + " a function under a type that says int32", () => {
+    const make: () => int32 = loose;
+    const v: int32 = make();
+    return uses(v);
+  });
+  attempt(label + " an arrow function", () => {
+    const make: () => int32 = () => n;
+    const v: int32 = make();
+    return uses(v);
+  });
+  attempt(label + " handed over", () => uses(call(loose)));
+  attempt(label + " an override", () => uses(sizeOf(new Wider())));
+  attempt(label + " an overriding getter", () => uses(widthOf(new Wider())));
+  attempt(label + " a literal for the interface", () => uses(sizeOf({ size: loose })));
+  const awaited: int32 = await later();
+  attempt(label + " awaited", () => uses(awaited));
+  const promise: Promise<int32> = Promise.resolve(n);
+  const resolved: int32 = await promise;
+  attempt(label + " resolved", () => uses(resolved));
+}
+attempt("honest again", () => [sizeOf(new Base()), widthOf(new Base())]);
+//// functions-that-take-an-int32-are-called-through-types-that-say-number.ts
+import type { int32 } from "bun";
+
+////= show-34
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += uses(i | 0).length + uses(-i | 0).length;
+console.log("4000 honest uses", warm);
+
+const odd: number[] = JSON.parse("[1.5, -0, 2147483648, -2147483649, 1e21, 3]");
+odd.push(NaN, Infinity);
+
+function direct(v: int32): unknown[] {
+  return uses(v);
+}
+function over(v: number): unknown[];
+function over(v: int32): unknown[] {
+  return uses(v);
+}
+interface Taker {
+  take(v: number): unknown[];
+}
+class Strict implements Taker {
+  take(v: int32): unknown[] {
+    return uses(v);
+  }
+}
+class Base {
+  take(v: number): unknown[] {
+    return ["base", v];
+  }
+}
+class Narrower extends Base {
+  take(v: int32): unknown[] {
+    return uses(v);
+  }
+}
+function withDefault(v: int32 = 5): unknown[] {
+  return uses(v);
+}
+
+const renamed: (v: number) => unknown[] = direct;
+const inAField: { run: (v: number) => unknown[] } = { run: direct };
+const inAList: ((v: number) => unknown[])[] = [direct];
+const optional: (v?: number) => unknown[] = withDefault;
+const taker: Taker = new Strict();
+const base: Base = new Narrower();
+function handed(run: (v: number) => unknown[], v: number): unknown[] {
+  return run(v);
+}
+
+let rounds = 0;
+for (let i = 0; i < 2000; i++) rounds += direct(i | 0).length + over(i | 0).length + new Strict().take(i | 0).length + withDefault().length;
+console.log("2000 honest rounds", rounds);
+
+for (const n of odd) {
+  const label = show(n);
+  attempt(label + " under another name", () => renamed(n));
+  attempt(label + " out of a field", () => inAField.run(n));
+  attempt(label + " out of a list", () => inAList[0](n));
+  attempt(label + " handed over", () => handed(direct, n));
+  attempt(label + " through an overload", () => over(n));
+  attempt(label + " through an interface", () => taker.take(n));
+  attempt(label + " through the base class", () => base.take(n));
+  attempt(label + " where a default is", () => optional(n));
+  attempt(label + " by call", () => direct.call(null, n));
+  attempt(label + " by apply", () => direct.apply(null, [n]));
+  attempt(label + " bound", () => direct.bind(null, n)());
+  attempt(label + " by Reflect.apply", () => Reflect.apply(direct, null, [n]));
+}
+attempt("nothing where a default is", () => optional());
+attempt("undefined where a default is", () => optional(undefined));
+attempt("honest again", () => [direct(1), over(2), taker.take(3)]);
+//// generators-async-functions-and-promises-honest.ts
+class Reading {
+  at: number;
+  level: number;
+  place: string;
+  constructor(at: number, level: number, place: string) {
+    this.at = at;
+    this.level = level;
+    this.place = place;
+  }
+}
+
+function* readings(count: number): Generator<Reading, number, number> {
+  let scale = 1;
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    const reading = new Reading(i, i * scale, i % 2 === 0 ? "north" : "south");
+    total += reading.level;
+    const sent: number = yield reading;
+    scale = sent;
+  }
+  return total;
+}
+
+function drive(count: number): number {
+  const generator = readings(count);
+  let result = generator.next(1);
+  let sum = 0;
+  while (!result.done) {
+    sum += result.value.level + result.value.place.length;
+    result = generator.next(2);
+  }
+  return sum + result.value;
+}
+
+function* range(from: number, to: number): Generator<number, void, void> {
+  for (let i = from; i < to; i++) yield i;
+}
+
+function* twice(inner: Generator<number, void, void>): Generator<number, string, void> {
+  let count = 0;
+  for (const n of inner) {
+    count++;
+    yield n * 2;
+  }
+  return "doubled " + count;
+}
+
+function* joined(): Generator<number, string, void> {
+  const first: string = yield* twice(range(0, 3));
+  const second: string = yield* twice(range(10, 12));
+  return first + " and " + second;
+}
+
+async function level(reading: Reading): Promise<number> {
+  return reading.level;
+}
+
+async function sumLevels(list: Reading[]): Promise<number> {
+  let sum = 0;
+  for (const reading of list) sum += await level(reading);
+  return sum;
+}
+
+async function* stream(count: number): AsyncGenerator<Reading, string, void> {
+  for (let i = 0; i < count; i++) {
+    await null;
+    yield new Reading(i, i * 3, "east");
+  }
+  return "streamed " + count;
+}
+
+async function drain(count: number): Promise<number> {
+  let sum = 0;
+  for await (const reading of stream(count)) sum += reading.level + reading.at;
+  return sum;
+}
+
+console.log("drive 5: " + drive(5));
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += drive(3);
+console.log("drive 3, 2000 times: " + warm);
+
+let looped = 0;
+for (const n of range(0, 2000)) looped += n;
+console.log("range: " + looped);
+console.log("spread: " + [...twice(range(1, 4))].join());
+
+const j = joined();
+const seen: number[] = [];
+let step = j.next();
+while (!step.done) {
+  seen.push(step.value);
+  step = j.next();
+}
+console.log("joined: " + seen.join() + " | " + step.value + " | " + step.value.length);
+
+const list: Reading[] = [];
+for (let i = 0; i < 2000; i++) list.push(new Reading(i, i & 7, "west"));
+console.log("sumLevels: " + (await sumLevels(list)));
+console.log("drain: " + (await drain(100)));
+
+const [a, b, c] = await Promise.all([level(list[3]), Promise.resolve("text"), sumLevels(list.slice(0, 4))]);
+console.log("all: " + (a + c) + " " + b.length);
+
+const chained = await Promise.resolve(2)
+  .then(n => n * 3)
+  .then(n => new Reading(n, n + 1, "chain"))
+  .then(reading => reading.place + reading.level);
+console.log("chain: " + chained);
+
+const byHand = stream(2);
+const first = await byHand.next();
+const second = await byHand.next();
+const third = await byHand.next();
+console.log("by hand: " + (first.done ? first.value : first.value.level) + " " + (second.done ? second.value : second.value.level) + " " + (third.done ? third.value : third.value.level));
+
+export {};
+//// generic-functions-over-a-polluted-array.ts
+////= show-33
+
+////= lines-261	first	items
+
+function last<T>(items: T[]): T {
+  return items[items.length - 1];
+}
+
+function pick<T>(items: T[], index: number): T {
+  return items[index];
+}
+
+function mapAll<T, U>(items: T[], change: (item: T) => U): U[] {
+  const result: U[] = [];
+  for (const item of items) result.push(change(item));
+  return result;
+}
+
+function pluck<T, K extends keyof T>(items: T[], key: K): T[K][] {
+  return items.map(item => item[key]);
+}
+
+function append<T>(items: T[], item: T): T[] {
+  items.push(item);
+  return items;
+}
+
+function swap<T>(items: T[], a: number, b: number): void {
+  [items[a], items[b]] = [items[b], items[a]];
+}
+
+function copy<T>(items: readonly T[]): T[] {
+  return [...items];
+}
+
+function polluted(): Dog[] {
+  const dogs = [new Dog("rex"), new Dog("fido")];
+  const animals: Animal[] = dogs;
+  animals.unshift(new Cat("tom"));
+  animals.push(new Cat("kit"));
+  return dogs;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest = [new Dog("a"), new Dog("b")];
+  warm += first(honest).legs + last(honest).legs + pick(honest, 1).legs + mapAll(honest, dog => dog.legs)[0] + pluck(honest, "legs")[1];
+  warm += first([i]) + last(["x"]).length + copy(honest)[0].legs;
+}
+console.log("after 2000 honest arrays", warm);
+
+attempt("first: legs", () => first(polluted()).legs + 1);
+attempt("first: bark", () => first(polluted()).bark());
+attempt("first: tag", () => first(polluted()).tag.length);
+attempt("last: legs", () => last(polluted()).legs + 1);
+attempt("pick 1: legs", () => pick(polluted(), 1).legs + 1);
+attempt("pick 3: owner", () => pick(polluted(), 3).owner.id);
+attempt("pick 9: legs", () => pick(polluted(), 9).legs);
+attempt("map: legs", () => mapAll(polluted(), dog => dog.legs));
+attempt("map: legs * 2", () => mapAll(polluted(), dog => dog.legs * 2));
+attempt("pluck legs", () => pluck(polluted(), "legs"));
+attempt("pluck tag", () => pluck(polluted(), "tag"));
+attempt("sum of plucked legs", () => {
+  let total = 0;
+  for (const legs of pluck(polluted(), "legs")) total += legs;
+  return total;
+});
+attempt("a copy", () => copy(polluted()).map(dog => dog.legs));
+attempt("swapped", () => {
+  const dogs = polluted();
+  swap(dogs, 0, 1);
+  return [dogs[0].legs, dogs[1].legs, dogs[0].name, dogs[1].name];
+});
+attempt("a wider type argument stores a cat", () => {
+  const dogs = [new Dog("rex")];
+  append<Animal>(dogs, new Cat("tom"));
+  return [dogs[1].legs, dogs.length];
+});
+attempt("the type argument is inferred as the wider one", () => {
+  const dogs = [new Dog("rex")];
+  const animal: Animal = new Cat("tom");
+  append(dogs, animal);
+  return [last(dogs).legs, last(dogs).name];
+});
+attempt("numbers and a string", () => {
+  const numbers = [1, 2];
+  append<number | string>(numbers, "3");
+  return [first(numbers) + last(numbers), last(numbers) * 2, mapAll(numbers, number => number + 1)];
+});
+attempt("honest again", () => [first([new Dog("a")]).legs, last([1, 2]), pluck([new Dog("b")], "tag")]);
+//// generic-merges-copies-and-plucks-carry-what-the-type-forgot.ts
+////= show-4
+
+const log: string[] = [];
+
+////= attempt-2
+
+////= lines-27	Options	size	number	label	string
+
+function merge<T>(a: T, b: Partial<T>): T {
+  return { ...a, ...b };
+}
+
+function assign<T extends object>(a: T, b: Partial<T>): T {
+  return Object.assign(a, b);
+}
+
+function pluck<T, K extends keyof T>(list: T[], key: K): T[K][] {
+  return list.map(item => item[key]);
+}
+
+function clone<T>(o: T): T {
+  return structuredClone(o);
+}
+
+function entries<T extends object>(o: T): string {
+  return Object.entries(o)
+    .map(([k, v]) => k + "=" + show(v))
+    .join();
+}
+
+function width(o: Options): number {
+  return o.size + o.label.length;
+}
+
+attempt("honest", () => [width(merge({ size: 1, label: "ab" }, { size: 2 })), width(assign({ size: 1, label: "ab" }, { label: "abc" })), pluck([{ n: 1 }, { n: 2 }], "n"), entries({ a: 1 })]);
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += width(merge({ size: i, label: "ab" }, { size: 1 })) + width(assign({ size: i, label: "ab" }, {})) + pluck([{ n: i }], "n")[0];
+console.log("2000 honest rounds", warm);
+
+attempt("merge with an explicit undefined", () => {
+  const merged = merge<Options>({ size: 1, label: "ab" }, { size: undefined });
+  return [merged.size, merged.size + 1, Object.keys(merged), "size" in merged];
+});
+attempt("merge with an explicit undefined: a method", () => width(merge<Options>({ size: 1, label: "ab" }, { label: undefined })));
+attempt("assign with an explicit undefined", () => {
+  const target: Options = { size: 1, label: "ab" };
+  assign(target, { size: undefined });
+  return [target.size, target.size + 1];
+});
+attempt("merge carries members the type forgot", () => {
+  const wide = { size: "wide", extra: true };
+  const forgotten: { extra: boolean } = wide;
+  const base: { size: number; extra: boolean } = { size: 1, extra: false };
+  const merged = merge(base, forgotten);
+  return [merged.size, merged.size + 1, entries(merged)];
+});
+attempt("merge of class instances loses the prototype", () => {
+  class Dog {
+    legs = 4;
+    bark(): number {
+      return this.legs * 2;
+    }
+  }
+  const merged = merge(new Dog(), { legs: 3 });
+  return [merged.legs, merged instanceof Dog, typeof merged.bark];
+});
+attempt("merge of class instances, then a method", () => {
+  class Dog {
+    legs = 4;
+    bark(): number {
+      return this.legs * 2;
+    }
+  }
+  return merge(new Dog(), {}).bark();
+});
+attempt("clone of a class instance", () => {
+  class Dog {
+    legs = 4;
+    bark(): number {
+      return this.legs * 2;
+    }
+  }
+  const copy = clone(new Dog());
+  return [copy.legs, copy instanceof Dog, typeof copy.bark];
+});
+attempt("clone of a class instance, then a method", () => {
+  class Dog {
+    legs = 4;
+    bark(): number {
+      return this.legs * 2;
+    }
+  }
+  return clone(new Dog()).bark();
+});
+attempt("merge runs getters once and keeps values", () => {
+  let reads = 0;
+  const source = {
+    get size(): number {
+      return ++reads;
+    },
+    label: "l",
+  };
+  const merged = merge<Options>(source, {});
+  return [merged.size, merged.size, source.size, reads];
+});
+attempt("pluck over shapes that differ", () => {
+  const wider = { extra: 1, n: 2 };
+  const withGetter = {
+    get n(): number {
+      log.push("get-n");
+      return 3;
+    },
+  };
+  const list: { n: number }[] = [{ n: 1 }, wider, withGetter];
+  return pluck(list, "n").map(n => n + 1);
+});
+attempt("pluck a method", () => pluck(["a", "bc"], "length"));
+attempt("entries list what the type forgot", () => {
+  const wide = { a: 1, b: "two" };
+  const narrow: { a: number } = wide;
+  return entries(narrow);
+});
+attempt("values typed by the narrow type", () => {
+  const wide = { a: 1, b: "two" };
+  const narrow: { a: number } = wide;
+  const record: Record<string, number> = narrow;
+  return Object.values(record).map(v => v + 1);
+});
+//// generic-setters-copies-and-spreads-stay-within-each-fields-type-honest.ts
+////= show-32
+
+////= Point-16
+
+class Account {
+  balance = 100;
+  rate = 0.25;
+  owner = "ann";
+  interest(): number {
+    return this.balance * this.rate;
+  }
+}
+
+////= set
+
+////= lines-262	get	target	key	target[key
+
+function copyKeys<T>(target: T, source: T, keys: (keyof T)[]): void {
+  for (const key of keys) target[key] = source[key];
+}
+
+function merge<T>(full: T, change: Partial<T>): T {
+  return { ...full, ...change };
+}
+
+class Store<T> {
+  constructor(private state: T) {}
+  set<K extends keyof T>(key: K, value: T[K]): void {
+    this.state[key] = value;
+  }
+  get<K extends keyof T>(key: K): T[K] {
+    return this.state[key];
+  }
+}
+
+function length(p: Point): number {
+  return Math.sqrt(p.x * p.x + p.y * p.y);
+}
+
+const p: Point = { x: 0, y: 0, name: "p" };
+const account = new Account();
+const store = new Store<Point>({ x: 0, y: 0, name: "s" });
+let total = 0;
+let width = 0;
+for (let i = 0; i < 20000; i++) {
+  set(p, "x", i);
+  set(p, "y", i / 2);
+  set(p, "name", "n" + (i % 10));
+  set(account, "balance", account.balance + 1);
+  set(account, "rate", (i % 8) / 8);
+  store.set("x", i);
+  store.set("name", "s" + (i % 10));
+  copyKeys(p, { x: i + 1, y: 1.5, name: "c" }, ["x", "y"]);
+  const merged = merge(p, { x: 3 });
+  total += length(p) + get(p, "x") + get(p, "y") + account.interest() + store.get("x") + merged.x + merged.y;
+  width += get(p, "name").length + store.get("name").length + merged.name.length;
+}
+console.log("total " + Math.round(total));
+console.log("width " + width);
+console.log(JSON.stringify(p) + " " + JSON.stringify(account) + " " + store.get("x") + " " + store.get("name"));
+console.log(typeof p.x + " " + typeof p.y + " " + typeof p.name + " " + typeof account.balance + " " + typeof account.rate + " " + typeof account.owner);
+
+export {};
+//// getters-and-setters-run-with-another-this.ts
+////= show-6
+
+const log: string[] = [];
+
+class Gauge {
+  raw: number = 5;
+  unit: string = "bar";
+  #hidden: number = 9;
+  get level(): number {
+    log.push("get level");
+    return this.raw * 2;
+  }
+  set level(value: number) {
+    log.push("set level");
+    this.raw = value / 2;
+  }
+  get text(): string {
+    return this.raw + this.unit.toUpperCase();
+  }
+  get hidden(): number {
+    return this.#hidden;
+  }
+  get self(): this {
+    return this;
+  }
+}
+
+const gauge = new Gauge();
+const like = { raw: 50, unit: "psi" };
+const wrong = { raw: "fifty", unit: 3 };
+const empty = {};
+
+show("honest level", () => gauge.level);
+show("Reflect.get, no receiver", () => Reflect.get(gauge, "level"));
+show("Reflect.get, a look-alike", () => Reflect.get(gauge, "level", like));
+show("Reflect.get, wrong kinds", () => Reflect.get(gauge, "level", wrong));
+show("Reflect.get, empty", () => Reflect.get(gauge, "level", empty));
+show("Reflect.get, a number", () => Reflect.get(gauge, "level", 5));
+show("Reflect.get text, a look-alike", () => Reflect.get(gauge, "text", like));
+show("Reflect.get text, wrong kinds", () => Reflect.get(gauge, "text", wrong));
+show("Reflect.get text, empty", () => Reflect.get(gauge, "text", empty));
+show("Reflect.get hidden, a look-alike", () => Reflect.get(gauge, "hidden", like));
+show("Reflect.get hidden, another gauge", () => Reflect.get(gauge, "hidden", new Gauge()));
+show("Reflect.get self is the receiver", () => Reflect.get(gauge, "self", like) === like);
+show("Reflect.set, a look-alike", () => Reflect.set(gauge, "level", 8, like));
+show("the look-alike's raw", () => like.raw);
+show("the gauge's raw", () => gauge.raw);
+show("Reflect.set, empty", () => Reflect.set(gauge, "level", 8, empty));
+show("keys of empty", () => Object.keys(empty).join());
+
+const descriptor = Object.getOwnPropertyDescriptor(Gauge.prototype, "level");
+show("the getter called on a look-alike", () => descriptor?.get?.call(like));
+show("the getter called on nothing", () => descriptor?.get?.call(undefined));
+show("the setter called on a look-alike", () => descriptor?.set?.call(like, 100));
+show("the look-alike's raw", () => like.raw);
+
+const child = Object.create(gauge);
+show("through the prototype chain: level", () => child.level);
+show("through the prototype chain: text", () => child.text);
+show("through the prototype chain: hidden", () => child.hidden);
+show("through the prototype chain: self is the child", () => child.self === child);
+child.level = 40;
+show("a store through the chain lands on the child", () => Object.keys(child).join());
+show("the child's level", () => child.level);
+show("the gauge's level", () => gauge.level);
+
+const linked: { raw: number; unit: string } = { raw: 1, unit: "mm" };
+Object.setPrototypeOf(linked, Gauge.prototype);
+show("a literal linked to the class: level", () => Reflect.get(linked, "level"));
+show("a literal linked to the class: hidden", () => Reflect.get(linked, "hidden"));
+show("the prototype itself: level", () => Gauge.prototype.level);
+show("the prototype itself: text", () => Gauge.prototype.text);
+show("how often", () => log.length + " " + log.filter(entry => entry === "set level").length);
+//// global-this-is-read-by-name-where-implicit-any-is-allowed/main.ts
+////= Point-2
+
+function show(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "function") return "function";
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).slice(0, 4).join() + "}";
+  return String(value);
+}
+
+////= attempt-4
+
+////= plusOne-5
+
+////= lines-40	numberNamed	name	string	number	globalThis[name
+
+////= lines-40	pointNamed	name	string	Point	globalThis[name
+
+function functionNamed(name: string): (n: number) => number {
+  return globalThis[name];
+}
+
+globalThis["sharedCount"] = 3;
+globalThis["sharedPoint"] = { x: 1, y: 2 };
+globalThis["sharedStep"] = n => n + 1;
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(numberNamed("sharedCount")) + sum(pointNamed("sharedPoint")) + functionNamed("sharedStep")(i);
+console.log("2000 honest rounds: " + warm);
+
+for (const name of ["sharedCount", "sharedPoint", "sharedStep", "sharedMissing", "NaN", "Infinity", "undefined", "Math", "parseInt", "Array", "globalThis"]) {
+  attempt(name + " as a number", () => {
+    const n = numberNamed(name);
+    return [typeof n, n + 1 === n + 1, typeof plusOne(n)];
+  });
+  attempt(name + " as a point", () => {
+    const p = pointNamed(name);
+    return [typeof p, p.x, typeof sum(p)];
+  });
+  attempt(name + " as a function", () => {
+    const f = functionNamed(name);
+    return [typeof f, typeof f(1)];
+  });
+}
+
+for (const value of ["3", null, [3], { x: "1", y: "2" }, true]) {
+  globalThis["sharedCount"] = value;
+  globalThis["sharedPoint"] = value;
+  attempt("the shared count is " + show(value), () => [numberNamed("sharedCount") + 1, plusOne(numberNamed("sharedCount"))]);
+  attempt("the shared point is " + show(value), () => [pointNamed("sharedPoint").x, sum(pointNamed("sharedPoint"))]);
+}
+
+attempt("deleted", () => {
+  delete globalThis["sharedCount"];
+  return [numberNamed("sharedCount"), "sharedCount" in globalThis];
+});
+
+const bag = { a: 1, b: "two" };
+////= lines-40	memberNamed	name	string	number	bag[name
+attempt("a literal read by a name of type string", () => [memberNamed("a") + 1, memberNamed("b") + 1, memberNamed("c") + 1, plusOne(memberNamed("b"))]);
+
+function untyped(a, b) {
+  return a + b;
+}
+attempt("parameters without a type", () => {
+  const n: number = untyped("1", 2);
+  const m: number = untyped(1, 2);
+  return [n + 1, m + 1, plusOne(untyped([], {}))];
+});
+
+export {};
+//// global-this-is-read-by-name-where-implicit-any-is-allowed/tsconfig.json
+////= lines-11
+//// globals-that-only-a-browser-has.ts
+////= text-11
+
+function inBrowser(): boolean {
+  return typeof window !== "undefined" && typeof document !== "undefined";
+}
+
+function titleOr(fallback: string): string {
+  return typeof document === "undefined" ? fallback : document.title;
+}
+
+function widthOr(fallback: number): number {
+  return typeof innerWidth === "number" ? innerWidth : fallback;
+}
+
+////= lines-41	title	string	document.title
+
+////= lines-41	width	number	window.innerWidth
+
+show("typeof", () => [typeof window, typeof document, typeof innerWidth, typeof HTMLElement, typeof XMLHttpRequest, typeof requestAnimationFrame, typeof history]);
+show("is this a browser", () => inBrowser());
+show("guarded text", () => titleOr("no document"));
+show("guarded number", () => [widthOr(800), widthOr(800) + 1]);
+show("the text", () => title());
+show("the number", () => width());
+show("the number by its bare name", () => innerWidth + 1);
+show("a method", () => document.createElement("div"));
+show("a method if there", () => document?.createElement("div"));
+show("a function", () => requestAnimationFrame(() => {}));
+show("a class constructed", () => new XMLHttpRequest());
+show("a class extended", () => {
+  class Card extends HTMLElement {
+    size: number = 1;
+  }
+  return new Card().size;
+});
+show("instanceof", () => ({}) instanceof HTMLElement);
+show("through globalThis", () => [typeof globalThis.document, typeof globalThis.window, typeof globalThis.innerWidth]);
+show("a member through globalThis", () => globalThis.document.title);
+show("the number through globalThis", () => [globalThis.innerWidth, globalThis.innerWidth + 1]);
+show("in", () => ["document" in globalThis, "window" in globalThis, "innerWidth" in globalThis]);
+show("a store", () => (document.title = "stored"));
+show("a store to the number", () => {
+  innerWidth = 5;
+  return "stored";
+});
+
+let sum = 0;
+let failures = 0;
+////= for-51	sum += widthOr(1) + titleOr("ab").length + (inBrowser() ? 100 : 0	width(
+show("2000 rounds", () => [sum, failures]);
+//// groups-typed-string-are-undefined.ts
+////= show-49
+
+////= lines-42	shout	s	string	string	s	"!"
+
+////= Token-2
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += size(firstGroup(/(a)/, "a")) + size(namedGroup(/(?<name>a)/, "a")) + pieces(/(,)/, "a,b").length + new Token(firstGroup(/(a)/, "a")).size();
+console.log("2000 honest rounds: " + warm);
+
+const patterns: [string, RegExp, string][] = [
+  ["took part", /(a)b/, "ab"],
+  ["took no part", /(a)?b/, "b"],
+  ["the other branch", /(a)|b/, "b"],
+  ["no such group", /b/, "b"],
+  ["an empty group", /(a*)b/, "b"],
+];
+for (const [name, pattern, text] of patterns) {
+  attempt("group, " + name, () => [firstGroup(pattern, text), typeof firstGroup(pattern, text)]);
+  attempt("group, " + name + ", joined", () => shout(firstGroup(pattern, text)));
+  attempt("group, " + name + ", its size", () => size(firstGroup(pattern, text)));
+  attempt("group, " + name + ", in a field", () => new Token(firstGroup(pattern, text)).shout());
+  attempt("group, " + name + ", size of the field", () => new Token(firstGroup(pattern, text)).size());
+  attempt("group, " + name + ", in a list", () => {
+    const list: string[] = ["x", firstGroup(pattern, text)];
+    return [list.join("+"), list.map(shout), list.sort()];
+  });
+  attempt("group, " + name + ", as a key", () => {
+    const counts: Record<string, number> = { a: 1, undefined: 2 };
+    return counts[firstGroup(pattern, text)];
+  });
+}
+
+console.log("honest again: " + [firstGroup(/(a)/, "a"), namedGroup(/(?<name>a)/, "a"), pieces(/(,)/, "a,b").join("")].join(" "));
+
+export {};
+//// has-instance-answers-for-values-the-class-never-made.ts
+////= Animal
+
+class Dog extends Animal {
+  legs = 4;
+  bark(): string {
+    return this.name + " barks on " + this.legs;
+  }
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return typeof value === "object" && value !== null && "name" in value;
+  }
+}
+
+////= Cat-5
+
+////= attempt-7
+
+function legs(a: Animal): string {
+  if (a instanceof Dog) return "dog, legs " + typeof a.legs + " " + a.legs;
+  return "no dog: " + a.name;
+}
+
+function bark(a: Animal): string {
+  if (a instanceof Dog) return a.bark();
+  return "silent " + a.name;
+}
+
+function double(a: Animal): number {
+  return a instanceof Dog ? a.legs * 2 : -1;
+}
+
+function store(a: Animal): string {
+  if (a instanceof Dog) {
+    a.legs = 3;
+    return Object.keys(a).join() + " " + JSON.stringify(a);
+  }
+  return "not stored";
+}
+
+function unknownValue(value: unknown): string {
+  if (value instanceof Dog) return "dog, legs " + typeof value.legs + ", name " + typeof value.name;
+  return "no dog";
+}
+
+const dog = new Dog("rex");
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += legs(dog).length + bark(dog).length + double(dog);
+console.log("2000 honest: " + warm);
+
+const values: [string, () => Animal][] = [
+  ["a dog", () => new Dog("rex")],
+  ["a cat", () => new Cat("tom")],
+  ["an animal", () => new Animal("any")],
+  ["a literal", () => ({ name: "literal" })],
+];
+
+for (const [label, make] of values) {
+  attempt(label + ", legs", () => legs(make()));
+  attempt(label + ", bark", () => bark(make()));
+  attempt(label + ", double", () => double(make()));
+  attempt(label + ", store", () => store(make()));
+  attempt(label + ", the real chain", () => Dog.prototype.isPrototypeOf(make()));
+}
+
+attempt("unknown: a function with a name", () => unknownValue(function named() {}));
+attempt("unknown: an error", () => unknownValue(new Error("e")));
+attempt("unknown: a string", () => unknownValue("text"));
+attempt("unknown: null", () => unknownValue(null));
+attempt("a dog again", () => legs(dog) + " | " + bark(dog) + " | " + double(dog));
+
+export {};
+//// has-instance-denies-the-instances-of-its-own-class.ts
+const log: string[] = [];
+
+class Hidden {
+  n = 1;
+  static [Symbol.hasInstance](value: unknown): boolean {
+    log.push("asked");
+    return false;
+  }
+}
+
+////= lines-18	Open	m	"open"
+
+////= lines-14	class	Below	extends	Hidden	extra	2
+
+function which(value: Hidden | Open): string {
+  if (value instanceof Hidden) return "hidden " + value.n;
+  return "open " + typeof value.m + " " + value.m;
+}
+
+function whichBelow(value: Hidden): string {
+  return value instanceof Below ? "below " + value.extra : "not below " + value.n;
+}
+
+function fresh(): string {
+  const made = new Hidden();
+  return made instanceof Hidden ? "its own instance" : "not its own instance";
+}
+
+function negated(value: Hidden | Open): string {
+  if (!(value instanceof Hidden)) return "open " + typeof value.m;
+  return "hidden " + value.n;
+}
+
+function line(label: string, value: string): void {
+  console.log(label + ": " + value + " [" + log.length + " asked]");
+  log.length = 0;
+}
+
+line("an instance", which(new Hidden()));
+line("an open one", which(new Open()));
+line("a subclass instance", which(new Below()));
+line("the subclass inherits the answer", whichBelow(new Below()));
+line("made in the same function", fresh());
+line("negated", negated(new Hidden()) + " | " + negated(new Open()));
+
+let count = 0;
+for (let i = 0; i < 2000; i++) if (new Hidden() instanceof Hidden) count++;
+line("2000 checks, yes", String(count));
+
+const list: (Hidden | Open)[] = [new Hidden(), new Open(), new Below()];
+line("filter", String(list.filter(v => v instanceof Hidden).length));
+line("elements", list.map(which).join(", "));
+
+class Counting {
+  static asked = 0;
+  id = 5;
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return ++Counting.asked % 2 === 1;
+  }
+}
+
+function twice(value: Counting | Open): string {
+  const first = value instanceof Counting;
+  const second = value instanceof Counting;
+  return first + " " + second;
+}
+
+function guarded(value: Counting | Open): string {
+  if (value instanceof Counting && value instanceof Counting) return "both " + value.id;
+  if (value instanceof Counting) return "the third time " + value.id;
+  return "open " + typeof value.m;
+}
+
+line("an answer that alternates", twice(new Counting()) + " | " + twice(new Open()));
+line("three checks in one function", guarded(new Counting()) + " | " + guarded(new Open()) + " | " + guarded(new Counting()));
+line("asked", String(Counting.asked));
+
+export {};
+//// has-instance-is-defined-after-2000-honest-checks.ts
+////= Animal-2
+
+////= lines-14	class	Dog	extends	Animal	legs	4
+
+////= Cat-5
+
+function isDog(a: Animal): boolean {
+  return a instanceof Dog;
+}
+
+function legs(a: Animal): string {
+  return a instanceof Dog ? typeof a.legs + " " + a.legs : "none";
+}
+
+function count(list: Animal[]): number {
+  let dogs = 0;
+  for (const a of list) if (a instanceof Dog) dogs++;
+  return dogs;
+}
+
+const list: Animal[] = [new Dog(), new Cat(), new Animal(), new Dog()];
+
+function round(label: string): void {
+  console.log(label + ": " + list.map(isDog).join() + " | " + list.map(legs).join() + " | " + count(list) + " | " + (new Dog() instanceof Dog) + " " + (new Cat() instanceof Dog) + " | as animals " + list.map(a => a instanceof Animal).join());
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += count(list) + (isDog(list[i % 4]) ? 1 : 0) + legs(list[i % 4]).length;
+console.log("2000 honest: " + warm);
+round("before");
+
+Object.defineProperty(Dog, Symbol.hasInstance, { value: (value: unknown) => value instanceof Cat, configurable: true });
+round("the dog class claims the cats");
+
+Object.defineProperty(Dog, Symbol.hasInstance, { value: () => true, configurable: true });
+round("everything");
+
+Object.defineProperty(Dog, Symbol.hasInstance, { value: () => 0, configurable: true });
+round("a falsy number");
+
+Object.defineProperty(Dog, Symbol.hasInstance, { value: () => "yes", configurable: true });
+round("a truthy string");
+
+Object.defineProperty(Dog, Symbol.hasInstance, { value: undefined, configurable: true });
+round("undefined falls back to the chain");
+
+Object.defineProperty(Dog, Symbol.hasInstance, {
+  get() {
+    return () => false;
+  },
+  configurable: true,
+});
+round("a getter that hands out a no");
+
+Reflect.deleteProperty(Dog, Symbol.hasInstance);
+round("removed");
+
+Object.defineProperty(Animal, Symbol.hasInstance, { value: () => false, configurable: true });
+round("the base class denies everything, and the dog class inherits that");
+
+Reflect.deleteProperty(Animal, Symbol.hasInstance);
+round("restored");
+
+export {};
+//// has-instance-lies-about-a-value-in-every-place.ts
+////= lines-18	Plain	name	"plain"
+
+class Fancy extends Plain {
+  size = 3;
+  grow(): number {
+    return ++this.size;
+  }
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return value instanceof Plain;
+  }
+}
+
+class Holder {
+  constructor(public item: Plain) {}
+  ask(): string {
+    if (this.item instanceof Fancy) return typeof this.item.size + " " + this.item.size;
+    return "plain";
+  }
+}
+
+////= attempt-7
+
+function byParameter(p: Plain): string {
+  return p instanceof Fancy ? typeof p.size + " " + p.size : "plain";
+}
+
+function byElement(list: Plain[]): string {
+  const seen: string[] = [];
+  for (const each of list) seen.push(each instanceof Fancy ? typeof each.size + " " + each.size : "plain");
+  return seen.join();
+}
+
+function byResult(make: () => Plain): string {
+  const made = make();
+  return made instanceof Fancy ? typeof made.size + " " + made.size : "plain";
+}
+
+function callIt(p: Plain): string {
+  return p instanceof Fancy ? "grew to " + p.grow() : "plain";
+}
+
+function storeIt(p: Plain): string {
+  if (p instanceof Fancy) {
+    p.size = 8;
+    return Object.keys(p).join() + " " + JSON.stringify(p);
+  }
+  return "plain";
+}
+
+function addIt(p: Plain): number {
+  return p instanceof Fancy ? p.size + 1 : -1;
+}
+
+function onlyFancy(list: Plain[]): string {
+  const fancy = list.filter(each => each instanceof Fancy);
+  return fancy.length + " " + fancy.map(each => typeof each.size).join();
+}
+
+const honest = new Fancy();
+const liar = new Plain();
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += byParameter(honest).length + byElement([honest]).length + addIt(honest) + new Holder(honest).ask().length;
+console.log("2000 honest: " + warm);
+
+for (const [label, value] of [
+  ["honest", honest],
+  ["a plain one", liar],
+] satisfies [string, Plain][]) {
+  const captured = (): string => (value instanceof Fancy ? typeof value.size + " " + value.size : "plain");
+  attempt(label + ", a local", () => {
+    const local: Plain = value;
+    return local instanceof Fancy ? typeof local.size + " " + local.size : "plain";
+  });
+  attempt(label + ", a parameter", () => byParameter(value));
+  attempt(label + ", a field", () => new Holder(value).ask());
+  attempt(label + ", an element", () => byElement([value, value]));
+  attempt(label + ", a result", () => byResult(() => value));
+  attempt(label + ", captured", captured);
+  attempt(label + ", plus one", () => addIt(value));
+  attempt(label + ", a method is called", () => callIt(value));
+  attempt(label + ", filtered", () => onlyFancy([value]));
+}
+attempt("a plain one, stored to", () => storeIt(new Plain()));
+attempt("honest, stored to", () => storeIt(new Fancy()));
+attempt("honest at the end", () => byParameter(honest) + " " + callIt(honest));
+
+export {};
+//// holes-in-arrays-of-objects-and-strings.ts
+////= show-33
+
+////= lines-156	legsAt	dogs	Dog	number	legs
+
+function nameOrNothing(dogs: Dog[], index: number): string {
+  return dogs[index]?.name ?? "nobody";
+}
+
+////= totalLegs
+
+function countDogs(dogs: Dog[]): number[] {
+  let visited = 0;
+  dogs.forEach(() => visited++);
+  return [visited, dogs.length, dogs.filter(dog => dog instanceof Dog).length];
+}
+
+////= lines-156	lengthAt	texts	string	number	length
+
+////= lines-59	glued	texts	string	string	all	""
+
+function flagsSet(flags: boolean[]): number {
+  let count = 0;
+  for (let i = 0; i < flags.length; i++) if (flags[i]) count++;
+  return count;
+}
+
+function flagKinds(flags: boolean[]): string[] {
+  const kinds: string[] = [];
+  for (let i = 0; i < flags.length; i++) kinds.push(typeof flags[i] + " " + (flags[i] === false) + " " + (i in flags));
+  return kinds;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const dogs = [new Dog("a"), new Dog("b")];
+  warm += legsAt(dogs, 1) + nameOrNothing(dogs, 0).length + totalLegs(dogs) + countDogs(dogs)[0] + lengthAt(["ab", "c"], 0) + glued(["a", "b"]).length + flagsSet([true, false]) + flagKinds([true]).length;
+}
+console.log("after 2000 dense arrays", warm);
+
+attempt("new Array<Dog>(2): legs", () => legsAt(new Array<Dog>(2), 0));
+attempt("new Array<Dog>(2): name or nothing", () => nameOrNothing(new Array<Dog>(2), 0));
+attempt("new Array<Dog>(2): total legs", () => totalLegs(new Array<Dog>(2)));
+attempt("new Array<Dog>(2): counted", () => countDogs(new Array<Dog>(2)));
+attempt("new Array<Dog>(2): elements", () => {
+  const dogs = new Array<Dog>(2);
+  return [dogs[0], typeof dogs[0], 0 in dogs, dogs[0] === undefined, dogs[0] == null];
+});
+attempt("one dog and a hole", () => {
+  const dogs = new Array<Dog>(2);
+  dogs[1] = new Dog("rex");
+  return [nameOrNothing(dogs, 0), nameOrNothing(dogs, 1), legsAt(dogs, 1), countDogs(dogs)];
+});
+attempt("one dog and a hole: total legs", () => {
+  const dogs = new Array<Dog>(2);
+  dogs[1] = new Dog("rex");
+  return totalLegs(dogs);
+});
+attempt("a dog is deleted", () => {
+  const dogs = [new Dog("rex"), new Dog("fido")];
+  delete dogs[0];
+  return [nameOrNothing(dogs, 0), countDogs(dogs), Object.keys(dogs)];
+});
+attempt("the kennel is made longer", () => {
+  const dogs = [new Dog("rex")];
+  dogs.length = 3;
+  return [nameOrNothing(dogs, 2), countDogs(dogs)];
+});
+attempt("the kennel is made longer: legs", () => {
+  const dogs = [new Dog("rex")];
+  dogs.length = 3;
+  return legsAt(dogs, 2);
+});
+attempt("an empty kennel destructured", () => {
+  const [first]: Dog[] = [];
+  return first.legs;
+});
+attempt("new Array<string>(2): length of the first", () => lengthAt(new Array<string>(2), 0));
+attempt("new Array<string>(2): glued", () => glued(new Array<string>(2)));
+attempt("new Array<string>(2): joined", () => new Array<string>(3).join("-"));
+attempt("new Array<string>(2): elements", () => {
+  const texts = new Array<string>(2);
+  return [texts[0], typeof texts[0], texts[0] + "!", `${texts[0]}`, texts[0] === "", !texts[0]];
+});
+attempt("a text and a hole", () => {
+  const texts = new Array<string>(2);
+  texts[0] = "a";
+  return [glued(texts), texts.sort(), texts.indexOf("a"), texts.map(text => text.toUpperCase())];
+});
+attempt("new Array<boolean>(3)", () => [flagsSet(new Array<boolean>(3)), flagKinds(new Array<boolean>(3))]);
+attempt("flags and a hole", () => {
+  const flags = new Array<boolean>(3);
+  flags[1] = true;
+  flags[2] = false;
+  return [flagsSet(flags), flagKinds(flags)];
+});
+attempt("new Array<number[]>(2)", () => {
+  const rows = new Array<number[]>(2);
+  rows[1] = new Array<number>(2);
+  return [typeof rows[0], rows[1].length, rows[1][0], rows.map(row => row.length)];
+});
+attempt("new Array<number[]>(2): a read through the hole", () => new Array<number[]>(2)[0][0]);
+attempt("a grid made of holes", () => {
+  const grid = Array.from({ length: 2 }, () => new Array<number>(2));
+  grid[0][1] = 5;
+  let total = 0;
+  for (const row of grid) for (const cell of row) total += cell ?? 1;
+  return [total, grid, grid[0] === grid[1]];
+});
+attempt("a grid made by fill shares one row", () => {
+  const grid = new Array<number[]>(2).fill(new Array<number>(2));
+  grid[0][1] = 5;
+  return [grid, grid[0] === grid[1]];
+});
+//// holes-made-by-delete-length-and-far-stores.ts
+////= show-31
+
+let warm = 0;
+////= for-3
+console.log("after 4000 dense arrays", warm);
+
+report("delete the first of integers", () => {
+  const numbers = [1, 2, 3];
+  delete numbers[0];
+  return numbers;
+});
+report("delete the first of doubles", () => {
+  const numbers = [1.5, 2.5, 3.5];
+  delete numbers[0];
+  return numbers;
+});
+report("the length is raised", () => {
+  const numbers = [1];
+  numbers.length = 3;
+  return numbers;
+});
+report("the length of doubles is raised", () => {
+  const numbers = [1.5];
+  numbers.length = 3;
+  return numbers;
+});
+report("a store past the end", () => {
+  const numbers: number[] = [];
+  numbers[2] = 3;
+  return numbers;
+});
+report("a store of a double past the end", () => {
+  const numbers: number[] = [];
+  numbers[2] = 3.5;
+  return numbers;
+});
+report("lowered and raised again", () => {
+  const numbers = [1, 2, 3];
+  numbers.length = 1;
+  numbers.length = 3;
+  return numbers;
+});
+report("popped and raised", () => {
+  const numbers = [1.5, 2.5, 3.5];
+  numbers.pop();
+  numbers.pop();
+  numbers.length = 3;
+  return numbers;
+});
+report("spliced out of a holey array", () => {
+  const numbers = new Array<number>(5);
+  numbers[4] = 4;
+  numbers.splice(1, 2);
+  return numbers;
+});
+report("reversed", () => {
+  const numbers = new Array<number>(3);
+  numbers[0] = 1;
+  return numbers.reverse();
+});
+report("copyWithin copies a hole", () => {
+  const numbers = [1, 2, 3];
+  delete numbers[2];
+  return numbers.copyWithin(0, 2);
+});
+report("concat keeps holes", () => new Array<number>(2).concat([3]));
+report("slice keeps holes", () => {
+  const numbers = [1, 2, 3, 4];
+  delete numbers[1];
+  return numbers.slice(1);
+});
+report("unshift moves holes", () => {
+  const numbers = new Array<number>(2);
+  numbers.unshift(1);
+  return numbers;
+});
+//// holes-of-a-new-number-array-are-searched-for-undefined.ts
+const list = new Array<number>(2);
+list[1] = 5;
+console.log(list.findIndex(n => n === undefined), list.find(() => true), list.findLastIndex(n => n === undefined), list.findLast(() => true));
+//// holes-see-elements-of-a-changed-prototype.ts
+////= show-31
+
+let warm = 0;
+////= for-3
+console.log("after 4000 dense arrays", warm);
+
+function filledPrototype(): number[] {
+  const prototype: number[] = Object.create(Array.prototype);
+  prototype[1] = 50.5;
+  prototype[2] = 60;
+  return prototype;
+}
+
+////= lines-126	holeyDoubles	3	0	0.5
+
+////= lines-126	holeyIntegers	3	0	1
+
+function reparented(numbers: number[]): number[] {
+  return Object.setPrototypeOf(numbers, filledPrototype());
+}
+
+class Filled extends Array<number> {}
+Filled.prototype[1] = 70.5;
+
+function sumWith(numbers: number[], change: (index: number) => void): number {
+  let total = 0;
+  for (let i = 0; i < numbers.length; i++) {
+    change(i);
+    total += numbers[i];
+  }
+  return total;
+}
+
+function productWith(numbers: number[], change: (index: number) => void): number {
+  let total = 1;
+  for (let i = 0; i < numbers.length; i++) {
+    change(i);
+    total *= numbers[i];
+  }
+  return total;
+}
+
+for (let i = 0; i < 2000; i++) warm += sumWith([i + 0.5, 1.5], () => {}) + productWith([i + 0.5, 1.5], () => {});
+console.log("after 2000 more dense arrays", warm);
+
+report("doubles with holes", holeyDoubles);
+report("doubles with holes and a filled prototype", () => reparented(holeyDoubles()));
+report("integers with holes and a filled prototype", () => reparented(holeyIntegers()));
+report("a dense array with a filled prototype", () => reparented([1.5, 2.5, 3.5]));
+report("a subclass whose prototype has an element", () => {
+  const numbers = new Filled(3);
+  numbers[0] = 0.5;
+  return numbers;
+});
+attempt("own or inherited", () => {
+  const numbers = reparented(holeyDoubles());
+  return [Object.hasOwn(numbers, 1), 1 in numbers, numbers[1], numbers.indexOf(50.5), numbers.includes(60), Array.isArray(numbers)];
+});
+attempt("the prototype is changed in the middle of a sum", () => {
+  const numbers = holeyDoubles();
+  return sumWith(numbers, index => void (index === 1 && reparented(numbers)));
+});
+attempt("the prototype is changed in the middle of a product", () => {
+  const numbers = holeyDoubles();
+  return productWith(numbers, index => void (index === 2 && reparented(numbers)));
+});
+attempt("the prototype gets an element in the middle of a sum", () => {
+  const prototype: number[] = Object.create(Array.prototype);
+  const numbers: number[] = Object.setPrototypeOf(holeyDoubles(), prototype);
+  return sumWith(numbers, index => void (index === 1 && (prototype[2] = 0.25)));
+});
+attempt("the prototype loses its element in the middle of a sum", () => {
+  const prototype = filledPrototype();
+  const numbers: number[] = Object.setPrototypeOf(holeyDoubles(), prototype);
+  return sumWith(numbers, index => void (index === 2 && delete prototype[2]));
+});
+attempt("an element is deleted in the middle of a sum over a reparented array", () => {
+  const numbers = reparented([1.5, 2.5, 3.5]);
+  return sumWith(numbers, index => void (index === 0 && delete numbers[1]));
+});
+attempt("a getter on the prototype", () => {
+  const reads: number[] = [];
+  const prototype: number[] = Object.create(Array.prototype);
+  Object.defineProperty(prototype, 1, {
+    get() {
+      reads.push(1);
+      return -1.5;
+    },
+  });
+  const numbers: number[] = Object.setPrototypeOf(holeyDoubles(), prototype);
+  return [sum(numbers), sumByForOf(numbers), reads.length];
+});
+attempt("a setter on the prototype takes the store", () => {
+  const stores: number[] = [];
+  const prototype: number[] = Object.create(Array.prototype);
+  Object.defineProperty(prototype, 1, {
+    set(value: number) {
+      stores.push(value);
+    },
+  });
+  const numbers: number[] = Object.setPrototypeOf(holeyDoubles(), prototype);
+  numbers[1] = 9.5;
+  return [stores, 1 in numbers, Object.hasOwn(numbers, 1), numbers[1]];
+});
+attempt("no prototype at all", () => {
+  const numbers: number[] = Object.setPrototypeOf([1.5, 2.5], null);
+  return [numbers.length, numbers[0] + numbers[1], numbers[2], Array.isArray(numbers), typeof numbers.push];
+});
+report("doubles with holes again", holeyDoubles);
+//// honest-and-holey-callers-of-one-function.ts
+////= show-31
+
+let warm = 0;
+////= for-3
+console.log("after 4000 dense arrays", warm);
+
+function mean(numbers: number[]): number {
+  let total = 0;
+  for (let i = 0; i < numbers.length; i++) total += numbers[i];
+  return total / numbers.length;
+}
+
+function firstPlusLast(numbers: number[]): number {
+  return numbers[0] + numbers[numbers.length - 1];
+}
+
+function denseCallerOne(): number {
+  return mean([1, 2, 3]) + firstPlusLast([1, 2, 3]);
+}
+function denseCallerTwo(): number {
+  return mean([0.5, 1.5]) + firstPlusLast([0.5, 1.5]);
+}
+function denseCallerThree(n: number): number {
+  const numbers: number[] = [];
+  for (let i = 0; i <= n; i++) numbers.push(i);
+  return mean(numbers) + firstPlusLast(numbers);
+}
+function holeyCaller(): number[] {
+  return [mean(new Array<number>(3)), firstPlusLast(new Array<number>(3))];
+}
+function fromCaller(): number[] {
+  return [mean(Array.from<number>({ length: 3 })), firstPlusLast(Array.from<number>({ length: 3 }))];
+}
+function emptyCaller(): number[] {
+  return [mean([]), firstPlusLast([])];
+}
+function partlyHoleyCaller(): number[] {
+  const numbers = [1, 2, 3];
+  delete numbers[2];
+  return [mean(numbers), firstPlusLast(numbers)];
+}
+
+const table = { mean, firstPlusLast };
+
+attempt("the holey caller comes first", holeyCaller);
+for (let i = 0; i < 2000; i++) warm += denseCallerOne() + denseCallerTwo() + denseCallerThree(i & 3);
+console.log("after 6000 dense calls", warm);
+
+attempt("holes", holeyCaller);
+attempt("undefined from Array.from", fromCaller);
+attempt("empty", emptyCaller);
+attempt("one hole at the end", partlyHoleyCaller);
+attempt("dense again", () => denseCallerOne() + denseCallerTwo() + denseCallerThree(2));
+attempt("call", () => [mean.call(undefined, new Array<number>(2)), mean.call(undefined, [1, 2])]);
+attempt("apply", () => [mean.apply(undefined, [new Array<number>(2)]), mean.apply(undefined, [[1, 2]])]);
+attempt("bind", () => [mean.bind(undefined, new Array<number>(2))(), mean.bind(undefined, [1, 2])()]);
+attempt("handed to map", () => [[1, 2], new Array<number>(2), [3.5]].map(mean));
+attempt("read from a literal", () => [table.mean(new Array<number>(2)), table.firstPlusLast(new Array<number>(2)), table.mean([4])]);
+attempt("an array that loses an element between two calls", () => {
+  const numbers = [1, 2, 3];
+  const before = mean(numbers);
+  delete numbers[1];
+  const between = mean(numbers);
+  numbers[1] = 2;
+  return [before, between, mean(numbers)];
+});
+attempt("dense at the end", () => denseCallerOne() + denseCallerTwo() + denseCallerThree(2));

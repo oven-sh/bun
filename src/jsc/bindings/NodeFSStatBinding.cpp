@@ -19,9 +19,13 @@
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
+#include "ObjectBindings.h"
 #include "JavaScriptCore/DateInstance.h"
 #include <JavaScriptCore/JSBigIntInlines.h>
 #include <JavaScriptCore/MathCommon.h>
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTPropertyWalk.h>
+#endif
 #include <wtf/Int128.h>
 #if !OS(WINDOWS)
 #include <sys/stat.h>
@@ -241,7 +245,8 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
 
     JSValue result = JSC::DateInstance::create(vm, globalObject->dateStructure(), internalNumber);
     if (!thisObject->structure()->mayBePrototype()) {
-        thisObject->putDirect(vm, propertyName, result, 0);
+        putDirectOrThrow(globalObject, thisObject, propertyName, result, 0);
+        RETURN_IF_EXCEPTION(scope, {});
     }
     return result;
 }
@@ -285,12 +290,15 @@ JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsPrototypeGetter_atime, (JSGlobalObject * g
 JSC_DEFINE_CUSTOM_SETTER(jsStatsPrototypeFunction_DatePutter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
 {
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue).toThis(globalObject, JSC::ECMAMode::strict()));
     if (!thisObject)
         return false;
 
-    thisObject->putDirect(vm, propertyName, JSValue::decode(encodedValue), 0);
-    return true;
+    if (thisObject->type() == JSC::FinalObjectType || JSC::AOT::PropertyWalk::isCompiledObject(thisObject)) [[likely]]
+        RELEASE_AND_RETURN(scope, putDirectOrThrow(globalObject, thisObject, propertyName, JSValue::decode(encodedValue), 0));
+    // putDirect needs a structure transition, which a WebAssembly GC object doesn't support.
+    RELEASE_AND_RETURN(scope, thisObject->createDataProperty(globalObject, propertyName, JSValue::decode(encodedValue), true));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isBlockDevice, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -846,9 +854,8 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
     JSObject* newTarget = asObject(callFrame->newTarget());
 
     if (constructor != newTarget) {
-        auto* functionGlobalObject = static_cast<Zig::GlobalObject*>(
-            // ShadowRealm functions belong to a different global object.
-            getFunctionRealm(lexicalGlobalObject, newTarget));
+        // ShadowRealm functions belong to a different global object.
+        auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(lexicalGlobalObject, newTarget));
         RETURN_IF_EXCEPTION(scope, {});
         structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, getStructure<isBigInt>(functionGlobalObject));
         RETURN_IF_EXCEPTION(scope, {});

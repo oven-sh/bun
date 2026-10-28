@@ -1,0 +1,1 @@
+{ "runWithASAN": "numbers at the end of a text and of thousands of digits: nothing may be read behind the text", "skipInVariant": { "validate-collecting": "it allocates so much that it runs for minutes where every allocation collects, and a run is killed after 90 seconds" } }

@@ -1,0 +1,3 @@
+{
+  "skipWithASAN": "its STATISTIC line asks for null checks that were folded into accesses, and a Bun built with AddressSanitizer folds none"
+}

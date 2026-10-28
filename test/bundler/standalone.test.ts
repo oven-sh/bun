@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
-import { SourceMapConsumer } from "source-map";
+import { SourceMapConsumer, type RawSourceMap } from "source-map";
 
 describe("compile --target=browser", () => {
   test("inlines JS and CSS into HTML", async () => {
@@ -692,7 +692,7 @@ console.log(greet("world"));`,
       return { html, map: map && JSON.parse(await map.text()) };
     }
 
-    async function expectInlinedScriptToBeMapped(html: string, map: object) {
+    async function expectInlinedScriptToBeMapped(html: string, map: RawSourceMap) {
       const open = '<script type="module">';
       const script = html.slice(html.indexOf(open) + open.length, html.indexOf("</script>"));
       const [firstLine] = script.split("\n");

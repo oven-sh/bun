@@ -1,0 +1,43 @@
+------------------
+{ printWidth: 80 }
+------------------
+let a: abstract new () /* c */ => void;
+let b: abstract new () /* c */ => void;
+let c: abstract new () // c
+=> void;
+let d: (abstract new () /* c */ => void) | (new () => void);
+interface E {
+  [f /* c */](): void;
+  g /* c */(): void;
+  <T>(
+    // prettier-ignore
+    h: T,
+  ): T;
+}
+let i: new <T>(
+  // prettier-ignore
+  j: T,
+) => T;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+let a: abstract new () /* c */ => void;
+let b: abstract new () /* c */ => void;
+let c: abstract new () // c
+=> void;
+let d: (abstract new () /* c */ => void) | (new () => void);
+interface E {
+  [f /* c */](): void;
+  g /* c */(): void;
+  <T>(
+    // prettier-ignore
+    h: T,
+  ): T;
+}
+let i: new <T>(
+  // prettier-ignore
+  j: T,
+) => T;
+
+===================== End =====================

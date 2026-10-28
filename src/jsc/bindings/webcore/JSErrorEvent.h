@@ -31,7 +31,6 @@ namespace WebCore {
 class JSErrorEvent : public JSEvent {
 public:
     using Base = JSEvent;
-    using DOMWrapped = ErrorEvent;
     static JSErrorEvent* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<ErrorEvent>&& impl)
     {
         JSErrorEvent* ptr = new (NotNull, JSC::allocateCell<JSErrorEvent>(globalObject->vm())) JSErrorEvent(structure, *globalObject, WTF::move(impl));

@@ -1,0 +1,264 @@
+////: for-16
+for (let i = 0; i < rounds; i++) {
+  if (settings.NOT_THERE_1) sum++;
+  if (settings.NOT_THERE_2) sum++;
+  if (settings.HOME !== undefined) sum++;
+  if (settings.PATH !== undefined) sum++;
+}
+////: getterFor-2
+function getterFor(key: string, unread: object): () => unknown {
+  let lastRaw: unknown = unread;
+  let lastParsed: unknown;
+  return () => {
+    const raw = p.env[key];
+    if (raw !== lastRaw) {
+      lastParsed = raw === undefined ? 0 : raw.length;
+      lastRaw = raw;
+    }
+    return lastParsed;
+  };
+}
+////: getterFor-3
+function getterFor(key: string, unread: object): () => unknown {
+  let lastRaw: unknown = unread;
+  let lastParsed: unknown;
+  return () => {
+    const raw = process.env[key];
+    if (raw !== lastRaw) {
+      lastParsed = raw === undefined ? 0 : raw.length;
+      lastRaw = raw;
+    }
+    return lastParsed;
+  };
+}
+//// the-environment-of-the-process/env0.ts
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+function getterFor(key: string, unread: object): () => unknown {
+  let lastRaw: unknown = unread;
+  let lastParsed: unknown;
+  return () => {
+    const raw: string | undefined = key.length > 99 ? undefined : key;
+    if (raw !== lastRaw) {
+      lastParsed = raw === undefined ? 0 : raw.length;
+      lastRaw = raw;
+    }
+    return lastParsed;
+  };
+}
+const names = ["HOME", "PATH", "NOT_THERE_AT_ALL", "USER", "TERM", "ALSO_MISSING", "LANG", "SHELL"];
+const getters = names.map(name => getterFor(name, names));
+const rounds = Number(process.argv[2] ?? 200000);
+let sum = 0;
+for (let i = 0; i < rounds; i++) sum += getters[i & 7]() as number;
+console.log(sum > 0, rounds);
+//// the-environment-of-the-process/env1.ts
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+function read(name: string): string | undefined {
+  return process.env[name];
+}
+const names = ["HOME", "PATH", "NOT_THERE_AT_ALL", "USER", "TERM", "ALSO_MISSING", "LANG", "SHELL"];
+const rounds = Number(process.argv[2] ?? 200000);
+let found = 0;
+for (let i = 0; i < rounds; i++) if (read(names[i & 7]) !== undefined) found++;
+console.log(found > 0, rounds);
+//// the-environment-of-the-process/env10.ts
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+type Field = { parse(raw: string | undefined): unknown };
+////= getterFor
+////= build
+const flag: Field = { parse: raw => raw === "1" || raw === "true" };
+const text: Field = { parse: raw => raw };
+////= settings
+const rounds = Number(process.argv[2] ?? 200000);
+let sum = 0;
+const asked = ["NOT_THERE_1", "NOT_THERE_2", "HOME", "PATH"];
+const byKey = settings as unknown as Record<string, unknown>;
+for (let i = 0; i < rounds; i++) {
+  for (const name of asked) if (byKey[name]) sum++;
+  continue;
+  if (settings.NOT_THERE_1) sum++;
+  if (settings.NOT_THERE_2) sum++;
+  if (settings.HOME !== undefined) sum++;
+  if (settings.PATH !== undefined) sum++;
+}
+console.log(sum > 0, rounds);
+//// the-environment-of-the-process/env2.ts
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+const copy: Record<string, string | undefined> = { ...process.env };
+function read(name: string): string | undefined {
+  return copy[name];
+}
+const names = ["HOME", "PATH", "NOT_THERE_AT_ALL", "USER", "TERM", "ALSO_MISSING", "LANG", "SHELL"];
+const rounds = Number(process.argv[2] ?? 200000);
+let found = 0;
+for (let i = 0; i < rounds; i++) if (read(names[i & 7]) !== undefined) found++;
+console.log(found > 0, rounds);
+//// the-environment-of-the-process/env4.ts
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+////= getterFor-3
+const names = ["HOME", "PATH", "NOT_THERE_AT_ALL", "USER", "TERM", "ALSO_MISSING", "LANG", "SHELL"];
+const getters = names.map(name => getterFor(name, names));
+const rounds = Number(process.argv[2] ?? 200000);
+let sum = 0;
+for (let i = 0; i < rounds; i++) sum += getters[i & 7]() as number;
+console.log(sum > 0, rounds);
+//// the-environment-of-the-process/env4-absent.ts
+// The environment of the process: env4 absent. It prints what plain Bun prints.
+////= getterFor-3
+const names = ["NOT_THERE_1", "NOT_THERE_2", "NOT_THERE_3", "NOT_THERE_4", "NOT_THERE_5", "NOT_THERE_6", "NOT_THERE_7", "NOT_THERE_8"];
+const getters = names.map(name => getterFor(name, names));
+const rounds = Number(process.argv[2] ?? 200000);
+let sum = 0;
+for (let i = 0; i < rounds; i++) sum += getters[i & 7]() as number;
+console.log(sum >= 0, rounds);
+//// the-environment-of-the-process/env4-present.ts
+// The environment of the process: env4 present. It prints what plain Bun prints.
+////= getterFor-3
+const names = ["HOME", "PATH", "USER", "TERM", "LANG", "SHELL", "PWD", "LOGNAME"];
+const getters = names.map(name => getterFor(name, names));
+const rounds = Number(process.argv[2] ?? 200000);
+let sum = 0;
+for (let i = 0; i < rounds; i++) sum += getters[i & 7]() as number;
+console.log(sum >= 0, rounds);
+//// the-environment-of-the-process/env6.ts
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+const p: any = (globalThis as any)[process.argv[3] ?? "process"];
+////= getterFor-2
+const names = ["HOME", "PATH", "NOT_THERE_AT_ALL", "USER", "TERM", "ALSO_MISSING", "LANG", "SHELL"];
+const getters = names.map(name => getterFor(name, names));
+const rounds = Number(process.argv[2] ?? 200000);
+let sum = 0;
+for (let i = 0; i < rounds; i++) sum += getters[i & 7]() as number;
+console.log(sum > 0, rounds);
+//// the-environment-of-the-process/env6-absent.ts
+// The environment of the process: env6 absent. It prints what plain Bun prints.
+const p: any = (globalThis as any)[process.argv[3] ?? "process"];
+////= getterFor-2
+const names = ["NOT_THERE_1", "NOT_THERE_2", "NOT_THERE_3", "NOT_THERE_4", "NOT_THERE_5", "NOT_THERE_6", "NOT_THERE_7", "NOT_THERE_8"];
+const getters = names.map(name => getterFor(name, names));
+const rounds = Number(process.argv[2] ?? 200000);
+let sum = 0;
+for (let i = 0; i < rounds; i++) sum += getters[i & 7]() as number;
+console.log(sum >= 0, rounds);
+//// the-environment-of-the-process/env6-present.ts
+// The environment of the process: env6 present. It prints what plain Bun prints.
+const p: any = (globalThis as any)[process.argv[3] ?? "process"];
+////= getterFor-2
+const names = ["HOME", "PATH", "USER", "TERM", "LANG", "SHELL", "PWD", "LOGNAME"];
+const getters = names.map(name => getterFor(name, names));
+const rounds = Number(process.argv[2] ?? 200000);
+let sum = 0;
+for (let i = 0; i < rounds; i++) sum += getters[i & 7]() as number;
+console.log(sum >= 0, rounds);
+//// the-environment-of-the-process/env7.ts
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+const e: any = (globalThis as any)[process.argv[3] ?? "process"].env;
+function getterFor(key: string, unread: object): () => unknown {
+  let lastRaw: unknown = unread;
+  let lastParsed: unknown;
+  return () => {
+    const raw = e[key];
+    if (raw !== lastRaw) {
+      lastParsed = raw === undefined ? 0 : raw.length;
+      lastRaw = raw;
+    }
+    return lastParsed;
+  };
+}
+const names = ["HOME", "PATH", "NOT_THERE_AT_ALL", "USER", "TERM", "ALSO_MISSING", "LANG", "SHELL"];
+const getters = names.map(name => getterFor(name, names));
+const rounds = Number(process.argv[2] ?? 200000);
+let sum = 0;
+for (let i = 0; i < rounds; i++) sum += getters[i & 7]() as number;
+console.log(sum > 0, rounds);
+//// the-environment-of-the-process/env9.ts
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+type Field = { parse(raw: string | undefined): unknown };
+////= getterFor
+////= build
+const flag: Field = { parse: raw => raw === "1" || raw === "true" };
+const text: Field = { parse: raw => raw };
+////= settings
+const rounds = Number(process.argv[2] ?? 200000);
+let sum = 0;
+////= for-16
+console.log(sum > 0, rounds);
+//// the-environment-of-the-process/env9-none.ts
+// The environment of the process: env9 none. It prints what plain Bun prints.
+type Field = { parse(raw: string | undefined): unknown };
+function getterFor(key: string, field: Field, unread: object): () => unknown {
+  let lastRaw: unknown = unread;
+  let lastParsed: unknown;
+  return () => {
+    const raw: string | undefined = key.length > 99 ? undefined : key;
+    if (raw !== lastRaw) {
+      lastParsed = field.parse(raw);
+      lastRaw = raw;
+    }
+    return lastParsed;
+  };
+}
+////= build
+const flag: Field = { parse: raw => raw === "1" || raw === "true" };
+const text: Field = { parse: raw => raw };
+////= settings
+const rounds = Number(process.argv[2] ?? 200000);
+let sum = 0;
+////= for-16
+console.log(sum > 0, rounds);
+//// the-environment-of-the-process/fp1.js
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+const bodies = JSON.parse('[{"x":1.5,"y":2.5,"z":3.5,"vx":0.1,"vy":0.2,"vz":0.3,"mass":10.5},{"x":4.5,"y":5.5,"z":6.5,"vx":0.4,"vy":0.5,"vz":0.6,"mass":20.5},{"x":7.5,"y":8.5,"z":9.5,"vx":0.7,"vy":0.8,"vz":0.9,"mass":30.5}]');
+function advance(dt) {
+  for (let i = 0; i < bodies.length; i++) {
+    const bi = bodies[i];
+    for (let j = i + 1; j < bodies.length; j++) {
+      const bj = bodies[j];
+      const dx = bi.x - bj.x, dy = bi.y - bj.y, dz = bi.z - bj.z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      const mag = dt / (d2 * Math.sqrt(d2));
+      bi.vx -= dx * bj.mass * mag; bi.vy -= dy * bj.mass * mag; bi.vz -= dz * bj.mass * mag;
+      bj.vx += dx * bi.mass * mag; bj.vy += dy * bi.mass * mag; bj.vz += dz * bi.mass * mag;
+    }
+  }
+  for (const b of bodies) { b.x += dt * b.vx; b.y += dt * b.vy; b.z += dt * b.vz; }
+}
+const rounds = Number(process.argv[2] ?? 100000);
+for (let i = 0; i < rounds; i++) advance(0.01);
+console.log(bodies[0].x.toFixed(6), bodies[2].vz.toFixed(6));
+//// the-environment-of-the-process/it1.js
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+const held = { n: 21 }; for (const key of new Map([["a", held]]).keys()) console.log(key);
+//// the-environment-of-the-process/it2.js
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+const held = { n: 21 };
+const map = new Map([["a", held], ["b", { n: 22 }]]);
+const set = new Set(["x", "y"]);
+for (const key of map.keys()) console.log(key);
+for (const value of map.values()) console.log(value.n);
+for (const [key, value] of map.entries()) console.log(key, value.n);
+for (const value of set.values()) console.log(value);
+const kept = map.keys();
+for (const key of kept) console.log(key);
+console.log([...map.keys()].join(), [...set.values()].join(), [...map.entries()].length);
+//// the-environment-of-the-process/js0.js
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+function write(out, record) {
+  for (const key in record) {
+    out.push(key, ":");
+    out.push(record[key] ?? "null");
+  }
+}
+const records = JSON.parse('[{"alpha":"one","beta":2,"gamma":true,"delta":"four words in here"},{"epsilon":null,"zeta":"z","eta":7.5,"theta":"t"}]');
+const rounds = Number(process.argv[2] ?? 100000);
+let length = 0;
+for (let i = 0; i < rounds; i++) { const out = []; write(out, records[i & 1]); length += out.length; }
+console.log(length);
+//// the-environment-of-the-process/shadow.cjs
+// The environment of the process, one probe of many. It prints what plain Bun prints.
+const vm = require("node:vm");
+function read(k) { return process.env[k]; }
+console.log(typeof read("HOME"));
+new vm.Script(process.argv[2]).runInThisContext();
+console.log(read("HOME"));
+console.log(typeof process.pid);

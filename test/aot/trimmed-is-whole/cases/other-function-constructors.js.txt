@@ -1,0 +1,35 @@
+// The constructors of async, generator and async generator functions. The evaluated code calls an API that the program never uses.
+//@ evaluated-code-uses-removed-api
+const text = "return Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter";
+//// async-getPrototypeOf
+console.log(await Object.getPrototypeOf(async function () {}).constructor(text)());
+//// async-dot-constructor
+console.log(await (async function () {}).constructor(text)());
+//// async-arrow
+console.log(await (async () => {}).constructor(text)());
+//// async-new
+const AsyncFunction = (async () => {}).constructor;
+console.log(await new AsyncFunction(text)());
+//// generator-getPrototypeOf
+console.log(new (Object.getPrototypeOf(function* () {}).constructor)(text)().next().value);
+//// generator-dot-constructor
+console.log((function* () {}).constructor(text)().next().value);
+//// async-generator
+console.log((await (async function* () {}).constructor(text)().next()).value);
+//// async-method
+const o = { async m() {} };
+console.log(await o.m.constructor(text)());
+//// generator-method
+const o = { *m() {} };
+console.log(o.m.constructor(text)().next().value);
+//// class-async-method
+class C { async m() {} }
+console.log(await C.prototype.m.constructor(text)());
+//// async-in-try
+try { console.log(await (async () => {}).constructor(text)()); } catch (error) { console.log("caught", error.code); }
+//// generator-prototype-chain
+const GeneratorFunction = Object.getPrototypeOf(Object.getPrototypeOf((function* () {})()).constructor === undefined ? function* () {} : function* () {}).constructor;
+console.log(GeneratorFunction(text)().next().value);
+//// generator-object-to-function
+const generatorPrototype = Object.getPrototypeOf(Object.getPrototypeOf((function* () {})()));
+console.log(generatorPrototype.constructor.constructor(text)().next().value);

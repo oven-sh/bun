@@ -1,0 +1,326 @@
+Request.prototype.text = f: throws TypeError
+Request.prototype.text = the same function: allowed
+Object.defineProperty(Request.prototype, "text", value): throws TypeError
+Object.defineProperty(Request.prototype, "url", getter): throws TypeError
+Request.prototype.added = 1: throws TypeError
+Request.prototype[0] = 1: throws TypeError
+Request.prototype[Symbol.for("added")] = 1: throws TypeError
+Object.defineProperty(Request.prototype, "added", value): throws TypeError
+Object.assign(Request.prototype, { added: 1 }): throws TypeError
+Request.prototype.__defineGetter__("added", f): throws TypeError
+Reflect.set(Request.prototype, "added", 1): false
+Reflect.defineProperty(Request.prototype, "added", value): false
+Reflect.deleteProperty(Request.prototype, "missing"): true
+Object.isExtensible(Request.prototype): false
+Object.isFrozen(Request.prototype): false
+Object.setPrototypeOf(Request.prototype, its own prototype): allowed
+Object.setPrototypeOf(Request.prototype, another object): throws TypeError
+Request.prototype.__proto__ = another object: throws TypeError
+Reflect.setPrototypeOf(Request.prototype, another object): false
+Request.prototype has the same keys afterwards: true
+Request.prototype.text is the same function afterwards: true
+Response.prototype.json = f: throws TypeError
+Response.prototype.json = the same function: allowed
+Object.defineProperty(Response.prototype, "json", value): throws TypeError
+Object.defineProperty(Response.prototype, "status", getter): throws TypeError
+Response.prototype.added = 1: throws TypeError
+Response.prototype[0] = 1: throws TypeError
+Response.prototype[Symbol.for("added")] = 1: throws TypeError
+Object.defineProperty(Response.prototype, "added", value): throws TypeError
+Object.assign(Response.prototype, { added: 1 }): throws TypeError
+Response.prototype.__defineGetter__("added", f): throws TypeError
+Reflect.set(Response.prototype, "added", 1): false
+Reflect.defineProperty(Response.prototype, "added", value): false
+Reflect.deleteProperty(Response.prototype, "missing"): true
+Object.isExtensible(Response.prototype): false
+Object.isFrozen(Response.prototype): false
+Object.setPrototypeOf(Response.prototype, its own prototype): allowed
+Object.setPrototypeOf(Response.prototype, another object): throws TypeError
+Response.prototype.__proto__ = another object: throws TypeError
+Reflect.setPrototypeOf(Response.prototype, another object): false
+Response.prototype has the same keys afterwards: true
+Response.prototype.json is the same function afterwards: true
+Blob.prototype.slice = f: throws TypeError
+Blob.prototype.slice = the same function: allowed
+Object.defineProperty(Blob.prototype, "slice", value): throws TypeError
+Object.defineProperty(Blob.prototype, "size", getter): throws TypeError
+Blob.prototype.added = 1: throws TypeError
+Blob.prototype[0] = 1: throws TypeError
+Blob.prototype[Symbol.for("added")] = 1: throws TypeError
+Object.defineProperty(Blob.prototype, "added", value): throws TypeError
+Object.assign(Blob.prototype, { added: 1 }): throws TypeError
+Blob.prototype.__defineGetter__("added", f): throws TypeError
+Reflect.set(Blob.prototype, "added", 1): false
+Reflect.defineProperty(Blob.prototype, "added", value): false
+Reflect.deleteProperty(Blob.prototype, "missing"): true
+Object.isExtensible(Blob.prototype): false
+Object.isFrozen(Blob.prototype): false
+Object.setPrototypeOf(Blob.prototype, its own prototype): allowed
+Object.setPrototypeOf(Blob.prototype, another object): throws TypeError
+Blob.prototype.__proto__ = another object: throws TypeError
+Reflect.setPrototypeOf(Blob.prototype, another object): false
+Blob.prototype has the same keys afterwards: true
+Blob.prototype.slice is the same function afterwards: true
+Headers.prototype.get = f: throws TypeError
+Headers.prototype.get = the same function: allowed
+Object.defineProperty(Headers.prototype, "get", value): defined
+Object.defineProperty(Headers.prototype, "count", getter): throws TypeError
+Headers.prototype.added = 1: throws TypeError
+Headers.prototype[0] = 1: throws TypeError
+Headers.prototype[Symbol.for("added")] = 1: throws TypeError
+Object.defineProperty(Headers.prototype, "added", value): throws TypeError
+Object.assign(Headers.prototype, { added: 1 }): throws TypeError
+Headers.prototype.__defineGetter__("added", f): throws TypeError
+Reflect.set(Headers.prototype, "added", 1): false
+Reflect.defineProperty(Headers.prototype, "added", value): false
+Reflect.deleteProperty(Headers.prototype, "missing"): true
+Object.isExtensible(Headers.prototype): false
+Object.isFrozen(Headers.prototype): false
+Object.setPrototypeOf(Headers.prototype, its own prototype): allowed
+Object.setPrototypeOf(Headers.prototype, another object): throws TypeError
+Headers.prototype.__proto__ = another object: throws TypeError
+Reflect.setPrototypeOf(Headers.prototype, another object): false
+Headers.prototype has the same keys afterwards: true
+Headers.prototype.get is the same function afterwards: true
+URL.prototype.toJSON = f: throws TypeError
+URL.prototype.toJSON = the same function: allowed
+Object.defineProperty(URL.prototype, "toJSON", value): defined
+Object.defineProperty(URL.prototype, "pathname", getter): throws TypeError
+URL.prototype.added = 1: throws TypeError
+URL.prototype[0] = 1: throws TypeError
+URL.prototype[Symbol.for("added")] = 1: throws TypeError
+Object.defineProperty(URL.prototype, "added", value): throws TypeError
+Object.assign(URL.prototype, { added: 1 }): throws TypeError
+URL.prototype.__defineGetter__("added", f): throws TypeError
+Reflect.set(URL.prototype, "added", 1): false
+Reflect.defineProperty(URL.prototype, "added", value): false
+Reflect.deleteProperty(URL.prototype, "missing"): true
+Object.isExtensible(URL.prototype): false
+Object.isFrozen(URL.prototype): false
+Object.setPrototypeOf(URL.prototype, its own prototype): allowed
+Object.setPrototypeOf(URL.prototype, another object): throws TypeError
+URL.prototype.__proto__ = another object: throws TypeError
+Reflect.setPrototypeOf(URL.prototype, another object): false
+URL.prototype has the same keys afterwards: true
+URL.prototype.toJSON is the same function afterwards: true
+URLSearchParams.prototype.get = f: throws TypeError
+URLSearchParams.prototype.get = the same function: allowed
+Object.defineProperty(URLSearchParams.prototype, "get", value): defined
+Object.defineProperty(URLSearchParams.prototype, "size", getter): throws TypeError
+URLSearchParams.prototype.added = 1: throws TypeError
+URLSearchParams.prototype[0] = 1: throws TypeError
+URLSearchParams.prototype[Symbol.for("added")] = 1: throws TypeError
+Object.defineProperty(URLSearchParams.prototype, "added", value): throws TypeError
+Object.assign(URLSearchParams.prototype, { added: 1 }): throws TypeError
+URLSearchParams.prototype.__defineGetter__("added", f): throws TypeError
+Reflect.set(URLSearchParams.prototype, "added", 1): false
+Reflect.defineProperty(URLSearchParams.prototype, "added", value): false
+Reflect.deleteProperty(URLSearchParams.prototype, "missing"): true
+Object.isExtensible(URLSearchParams.prototype): false
+Object.isFrozen(URLSearchParams.prototype): false
+Object.setPrototypeOf(URLSearchParams.prototype, its own prototype): allowed
+Object.setPrototypeOf(URLSearchParams.prototype, another object): throws TypeError
+URLSearchParams.prototype.__proto__ = another object: throws TypeError
+Reflect.setPrototypeOf(URLSearchParams.prototype, another object): false
+URLSearchParams.prototype has the same keys afterwards: true
+URLSearchParams.prototype.get is the same function afterwards: true
+AbortSignal.prototype.throwIfAborted = f: replaced
+AbortSignal.prototype.throwIfAborted = the same function: allowed
+Object.defineProperty(AbortSignal.prototype, "throwIfAborted", value): defined
+Object.defineProperty(AbortSignal.prototype, "aborted", getter): replaced and restored
+AbortSignal.prototype.added = 1: added and deleted
+AbortSignal.prototype[0] = 1: added and deleted
+AbortSignal.prototype[Symbol.for("added")] = 1: added and deleted
+Object.defineProperty(AbortSignal.prototype, "added", value): added and deleted
+Object.assign(AbortSignal.prototype, { added: 1 }): added and deleted
+AbortSignal.prototype.__defineGetter__("added", f): added and deleted
+Reflect.set(AbortSignal.prototype, "added", 1): true
+Reflect.defineProperty(AbortSignal.prototype, "added", value): true
+Reflect.deleteProperty(AbortSignal.prototype, "missing"): true
+Object.isExtensible(AbortSignal.prototype): true
+Object.isFrozen(AbortSignal.prototype): false
+Object.setPrototypeOf(AbortSignal.prototype, its own prototype): allowed
+Object.setPrototypeOf(AbortSignal.prototype, another object): changed and restored
+AbortSignal.prototype.__proto__ = another object: changed and restored
+Reflect.setPrototypeOf(AbortSignal.prototype, another object): true
+AbortSignal.prototype has the same keys afterwards: true
+AbortSignal.prototype.throwIfAborted is the same function afterwards: true
+ReadableStream.prototype.getReader = f: replaced
+ReadableStream.prototype.getReader = the same function: allowed
+Object.defineProperty(ReadableStream.prototype, "getReader", value): defined
+Object.defineProperty(ReadableStream.prototype, "locked", getter): replaced and restored
+ReadableStream.prototype.added = 1: added and deleted
+ReadableStream.prototype[0] = 1: added and deleted
+ReadableStream.prototype[Symbol.for("added")] = 1: added and deleted
+Object.defineProperty(ReadableStream.prototype, "added", value): added and deleted
+Object.assign(ReadableStream.prototype, { added: 1 }): added and deleted
+ReadableStream.prototype.__defineGetter__("added", f): added and deleted
+Reflect.set(ReadableStream.prototype, "added", 1): true
+Reflect.defineProperty(ReadableStream.prototype, "added", value): true
+Reflect.deleteProperty(ReadableStream.prototype, "missing"): true
+Object.isExtensible(ReadableStream.prototype): true
+Object.isFrozen(ReadableStream.prototype): false
+Object.setPrototypeOf(ReadableStream.prototype, its own prototype): allowed
+Object.setPrototypeOf(ReadableStream.prototype, another object): changed and restored
+ReadableStream.prototype.__proto__ = another object: changed and restored
+Reflect.setPrototypeOf(ReadableStream.prototype, another object): true
+ReadableStream.prototype has the same keys afterwards: true
+ReadableStream.prototype.getReader is the same function afterwards: true
+TextEncoder.prototype.encode = f: replaced
+TextEncoder.prototype.encode = the same function: allowed
+Object.defineProperty(TextEncoder.prototype, "encode", value): defined
+Object.defineProperty(TextEncoder.prototype, "encoding", getter): replaced and restored
+TextEncoder.prototype.added = 1: added and deleted
+TextEncoder.prototype[0] = 1: added and deleted
+TextEncoder.prototype[Symbol.for("added")] = 1: added and deleted
+Object.defineProperty(TextEncoder.prototype, "added", value): added and deleted
+Object.assign(TextEncoder.prototype, { added: 1 }): added and deleted
+TextEncoder.prototype.__defineGetter__("added", f): added and deleted
+Reflect.set(TextEncoder.prototype, "added", 1): true
+Reflect.defineProperty(TextEncoder.prototype, "added", value): true
+Reflect.deleteProperty(TextEncoder.prototype, "missing"): true
+Object.isExtensible(TextEncoder.prototype): true
+Object.isFrozen(TextEncoder.prototype): false
+Object.setPrototypeOf(TextEncoder.prototype, its own prototype): allowed
+Object.setPrototypeOf(TextEncoder.prototype, another object): changed and restored
+TextEncoder.prototype.__proto__ = another object: changed and restored
+Reflect.setPrototypeOf(TextEncoder.prototype, another object): true
+TextEncoder.prototype has the same keys afterwards: true
+TextEncoder.prototype.encode is the same function afterwards: true
+TextDecoder.prototype.decode = f: replaced
+TextDecoder.prototype.decode = the same function: allowed
+Object.defineProperty(TextDecoder.prototype, "decode", value): throws TypeError
+Object.defineProperty(TextDecoder.prototype, "encoding", getter): throws TypeError
+TextDecoder.prototype.added = 1: added and deleted
+TextDecoder.prototype[0] = 1: added and deleted
+TextDecoder.prototype[Symbol.for("added")] = 1: added and deleted
+Object.defineProperty(TextDecoder.prototype, "added", value): added and deleted
+Object.assign(TextDecoder.prototype, { added: 1 }): added and deleted
+TextDecoder.prototype.__defineGetter__("added", f): added and deleted
+Reflect.set(TextDecoder.prototype, "added", 1): true
+Reflect.defineProperty(TextDecoder.prototype, "added", value): true
+Reflect.deleteProperty(TextDecoder.prototype, "missing"): true
+Object.isExtensible(TextDecoder.prototype): true
+Object.isFrozen(TextDecoder.prototype): false
+Object.setPrototypeOf(TextDecoder.prototype, its own prototype): allowed
+Object.setPrototypeOf(TextDecoder.prototype, another object): changed and restored
+TextDecoder.prototype.__proto__ = another object: changed and restored
+Reflect.setPrototypeOf(TextDecoder.prototype, another object): true
+TextDecoder.prototype has the same keys afterwards: true
+TextDecoder.prototype.decode is the same function afterwards: true
+FormData.prototype.get = f: replaced
+FormData.prototype.get = the same function: allowed
+Object.defineProperty(FormData.prototype, "get", value): defined
+Object.defineProperty(FormData.prototype, "get", getter): replaced and restored
+FormData.prototype.added = 1: added and deleted
+FormData.prototype[0] = 1: added and deleted
+FormData.prototype[Symbol.for("added")] = 1: added and deleted
+Object.defineProperty(FormData.prototype, "added", value): added and deleted
+Object.assign(FormData.prototype, { added: 1 }): added and deleted
+FormData.prototype.__defineGetter__("added", f): added and deleted
+Reflect.set(FormData.prototype, "added", 1): true
+Reflect.defineProperty(FormData.prototype, "added", value): true
+Reflect.deleteProperty(FormData.prototype, "missing"): true
+Object.isExtensible(FormData.prototype): true
+Object.isFrozen(FormData.prototype): false
+Object.setPrototypeOf(FormData.prototype, its own prototype): allowed
+Object.setPrototypeOf(FormData.prototype, another object): changed and restored
+FormData.prototype.__proto__ = another object: changed and restored
+Reflect.setPrototypeOf(FormData.prototype, another object): true
+FormData.prototype has the same keys afterwards: true
+FormData.prototype.get is the same function afterwards: true
+EventTarget.prototype.addEventListener = f: replaced
+EventTarget.prototype.addEventListener = the same function: allowed
+Object.defineProperty(EventTarget.prototype, "addEventListener", value): defined
+Object.defineProperty(EventTarget.prototype, "addEventListener", getter): replaced and restored
+EventTarget.prototype.added = 1: added and deleted
+EventTarget.prototype[0] = 1: added and deleted
+EventTarget.prototype[Symbol.for("added")] = 1: added and deleted
+Object.defineProperty(EventTarget.prototype, "added", value): added and deleted
+Object.assign(EventTarget.prototype, { added: 1 }): added and deleted
+EventTarget.prototype.__defineGetter__("added", f): added and deleted
+Reflect.set(EventTarget.prototype, "added", 1): true
+Reflect.defineProperty(EventTarget.prototype, "added", value): true
+Reflect.deleteProperty(EventTarget.prototype, "missing"): true
+Object.isExtensible(EventTarget.prototype): true
+Object.isFrozen(EventTarget.prototype): false
+Object.setPrototypeOf(EventTarget.prototype, its own prototype): allowed
+Object.setPrototypeOf(EventTarget.prototype, another object): throws TypeError
+EventTarget.prototype.__proto__ = another object: throws TypeError
+Reflect.setPrototypeOf(EventTarget.prototype, another object): false
+EventTarget.prototype has the same keys afterwards: true
+EventTarget.prototype.addEventListener is the same function afterwards: true
+Buffer.prototype.readInt8 = f: throws TypeError
+Buffer.prototype.readInt8 = the same function: allowed
+Object.defineProperty(Buffer.prototype, "readInt8", value): defined
+Object.defineProperty(Buffer.prototype, "parent", getter): throws TypeError
+Buffer.prototype.added = 1: added and deleted
+Buffer.prototype[0] = 1: throws TypeError
+Buffer.prototype[Symbol.for("added")] = 1: added and deleted
+Object.defineProperty(Buffer.prototype, "added", value): added and deleted
+Object.assign(Buffer.prototype, { added: 1 }): added and deleted
+Buffer.prototype.__defineGetter__("added", f): added and deleted
+Reflect.set(Buffer.prototype, "added", 1): true
+Reflect.defineProperty(Buffer.prototype, "added", value): true
+Reflect.deleteProperty(Buffer.prototype, "missing"): true
+Object.isExtensible(Buffer.prototype): true
+Object.isFrozen(Buffer.prototype): false
+Object.setPrototypeOf(Buffer.prototype, its own prototype): allowed
+Object.setPrototypeOf(Buffer.prototype, another object): throws TypeError
+Buffer.prototype.__proto__ = another object: throws TypeError
+Reflect.setPrototypeOf(Buffer.prototype, another object): false
+Buffer.prototype has the same keys afterwards: true
+Buffer.prototype.readInt8 is the same function afterwards: true
+delete Request.prototype.text: throws TypeError
+Reflect.deleteProperty(Request.prototype, "text"): false
+Request.prototype.text is still a function: function
+Object.freeze(Request.prototype): true
+Object.seal(Request.prototype): true
+Object.preventExtensions(Request.prototype): true
+delete Response.prototype.json: throws TypeError
+Reflect.deleteProperty(Response.prototype, "json"): false
+Response.prototype.json is still a function: function
+Object.freeze(Response.prototype): true
+Object.seal(Response.prototype): true
+Object.preventExtensions(Response.prototype): true
+delete Blob.prototype.slice: throws TypeError
+Reflect.deleteProperty(Blob.prototype, "slice"): false
+Blob.prototype.slice is still a function: function
+Object.freeze(Blob.prototype): true
+Object.seal(Blob.prototype): true
+Object.preventExtensions(Blob.prototype): true
+delete Headers.prototype.get: throws TypeError
+Reflect.deleteProperty(Headers.prototype, "get"): false
+Headers.prototype.get is still a function: function
+Object.freeze(Headers.prototype): true
+Object.seal(Headers.prototype): true
+Object.preventExtensions(Headers.prototype): true
+delete URL.prototype.toJSON: throws TypeError
+Reflect.deleteProperty(URL.prototype, "toJSON"): false
+URL.prototype.toJSON is still a function: function
+Object.freeze(URL.prototype): true
+Object.seal(URL.prototype): true
+Object.preventExtensions(URL.prototype): true
+delete URLSearchParams.prototype.get: throws TypeError
+Reflect.deleteProperty(URLSearchParams.prototype, "get"): false
+URLSearchParams.prototype.get is still a function: function
+Object.freeze(URLSearchParams.prototype): true
+Object.seal(URLSearchParams.prototype): true
+Object.preventExtensions(URLSearchParams.prototype): true
+Request.added = 1: added and deleted
+Object.isExtensible(Request): true
+Response.added = 1: added and deleted
+Object.isExtensible(Response): true
+Blob.added = 1: added and deleted
+Object.isExtensible(Blob): true
+Headers.added = 1: added and deleted
+Object.isExtensible(Headers): true
+URL.added = 1: added and deleted
+Object.isExtensible(URL): true
+URLSearchParams.added = 1: added and deleted
+Object.isExtensible(URLSearchParams): true
+File.prototype is Blob.prototype: true
+Response.json = f: replaced and restored
+Response.redirect = f: replaced and restored
+URL.canParse = f: replaced and restored
+URL.createObjectURL = f: replaced and restored

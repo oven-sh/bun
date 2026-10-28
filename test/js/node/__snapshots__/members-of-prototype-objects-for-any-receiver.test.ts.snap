@@ -6840,25 +6840,13 @@ node:inspector.console.Console.prototype [kGetInspectOptions]("a", 1)
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:inspector.console.Console.prototype [kFormatForStdout]()
-  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  throws TypeError: Spread syntax requires ...iterable not be null or undefined <- an heir of the prototype object, a proxy of such an heir, the prototype object
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
+  throws TypeError: undefined is not an object <- every receiver
 node:inspector.console.Console.prototype [kFormatForStdout]("a", 1)
-  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  string <- an heir of the prototype object, a proxy of such an heir, the prototype object
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
+  string <- every receiver
 node:inspector.console.Console.prototype [kFormatForStderr]()
-  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  throws TypeError: Spread syntax requires ...iterable not be null or undefined <- an heir of the prototype object, a proxy of such an heir, the prototype object
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
+  throws TypeError: undefined is not an object <- every receiver
 node:inspector.console.Console.prototype [kFormatForStderr]("a", 1)
-  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  string <- an heir of the prototype object, a proxy of such an heir, the prototype object
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
+  string <- every receiver
 node:inspector.Session.prototype connect()
   throws TypeError: Cannot access invalid private field <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined

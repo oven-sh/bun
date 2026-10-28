@@ -1880,8 +1880,9 @@ describe.concurrent("Bun.write(file, file) between ends that are not regular fil
       expect(exitCode).toBe(0);
     });
 
-    // The child's end of this FIFO has no O_NONBLOCK. The copy still has to see the end of it.
-    it("a FIFO source given as an fd: the copy ends when the writer closes", async () => {
+    // The child's end of this FIFO has no O_NONBLOCK. The copy still has to see the end of it, and only the end:
+    // the second part comes out only if the copy did not end after the first.
+    it("a FIFO source given as an fd: the copy ends when the writer closes, and not before", async () => {
       using dir = tempDir("bun-write-fifo-fd-source", {});
       const fifo = join(String(dir), "fifo");
       mkfifo(fifo);
@@ -1899,12 +1900,18 @@ describe.concurrent("Bun.write(file, file) between ends that are not regular fil
           stderr: "pipe",
         });
         const rest = await waiting(proc);
-        const sent = Buffer.alloc(100_000, "a");
-        const [copied] = await Promise.all([stdout.take(sent.length), fs.promises.writeFile(writer, sent)]);
+        const parts = [Buffer.alloc(100_000, "a"), Buffer.alloc(100_000, "b")];
+        const copied = [];
+        for (const part of parts) {
+          copied.push((await Promise.all([stdout.take(part.length), fs.promises.writeFile(writer, part)]))[0]);
+        }
         fs.closeSync(writer);
         writer = -1;
         const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
-        expect({ stderr, same: copied.equals(sent) }).toEqual({ stderr: "waiting\nresolved 100000\n", same: true });
+        expect({ stderr, same: Buffer.concat(copied).equals(Buffer.concat(parts)) }).toEqual({
+          stderr: "waiting\nresolved 200000\n",
+          same: true,
+        });
         expect(exitCode).toBe(0);
       } finally {
         if (writer !== -1) fs.closeSync(writer);

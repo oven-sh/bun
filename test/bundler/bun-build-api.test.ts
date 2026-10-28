@@ -885,8 +885,8 @@ describe("Bun.build", () => {
     expect(blob.type).toBe("text/javascript;charset=utf-8");
     expect(blob.size).toBeGreaterThan(1);
     expect(path.relative(outdir, blob.path)).toBe("index.js");
-    expect(blob.hash).toBeTruthy();
-    expect(blob.hash).toMatchSnapshot("hash index.js");
+    // The hash covers the source map, and the map has the path from the outdir to the source.
+    expect(blob.hash).toMatch(/^[0-9a-z]{8}$/);
     expect(blob.kind).toBe("entry-point");
     expect(blob.loader).toBe("jsx");
     expect(blob.sourcemap).toBe(map);

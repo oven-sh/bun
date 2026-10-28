@@ -70,8 +70,6 @@ exports[`Bun.build BuildArtifact properties: hash 1`] = `"xccrrspv"`;
 
 exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"jvbamvbx"`;
 
-exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"xccrrspv"`;
-
 exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"00000000"`;
 
 exports[`Bun.build new Response(BuildArtifact) sets content type: response text 1`] = `

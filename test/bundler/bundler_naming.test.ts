@@ -540,9 +540,11 @@ describe("bundler", () => {
          export const second = () => import("./${target}.js");
          export const third = () => import("./y.js");`,
       );
+      // The chunks of router.js, x.js and y.js keep the default name, chunk-[hash].js.
       const texts = await build({
         entrypoints: [join(String(dir), "pages/a.js"), join(String(dir), "pages/b.js")],
         splitting: true,
+        naming: { entry: "[name]-[hash].[ext]" },
       });
       // Which of x.js and y.js each import() loads, in the order that the chunk of router.js prints them.
       const loads = Array.from(

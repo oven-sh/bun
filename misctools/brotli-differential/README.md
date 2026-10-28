@@ -28,6 +28,7 @@ quality `q`: `0xFFF` for all of them.
 | `dec-fuzz <seed> <iterations> <max length>` | streams of the C encoder: intact, then damaged |
 | `dec-garbage <seed> <iterations>` | random bytes |
 | `dec-gen <seed> <iterations> <evil>` | streams written bit by bit from the grammar of RFC 7932 (`grammar.rs`), with a model of the output. One prefix code in eight needs a table that takes all the room there is for it, or nearly. `evil`: one chance in this many, at each opportunity, to break a rule; 0 for valid streams only. `STATS=1` prints which rule gave which error |
+| `dec-distances` | every value that the symbol of a simple distance code can be given, valid or not, for all 64 pairs of NPOSTFIX and NDIRECT, with and without a large window, which ends the alphabet where distances no longer fit. 152,704 streams of a literal and a copy, with extra bits that are all 0 or all 1. Prints how many gave which result |
 | `dec-empty-commands` | 2^24 commands without output, which end in `_ERROR_FORMAT_BLOCK_SWITCH`: once for the commands, once for the distances. For the literals, `test/js/node/zlib/brotli-streams.test.ts` has a stream of 19 bytes |
 | `dec-stream <seed> <iterations> <max length>` | `StreamingDecoder` against the loop around the C decoder that it replaced, without large windows |
 | `enc-fuzz <seed> <iterations> <max length> <mask of qualities>` | random data, parameters, dictionaries and schedules |

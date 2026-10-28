@@ -562,6 +562,41 @@ fn distance_symbol(distance: usize, npostfix: u32, ndirect: usize) -> (usize, u3
     (16 + ndirect + ((2 * (nbits as usize - 1) + prefix) << npostfix) + postfix, nbits, ((dist - offset) >> npostfix) as u64)
 }
 
+/// How many values the field for a symbol of a simple distance code has.
+pub fn distance_symbol_values(large_window: bool, npostfix: u32, ndirect: usize) -> usize {
+    distance_alphabet(npostfix, ndirect, large_window).0.next_power_of_two()
+}
+
+/// A literal and a copy of 4 bytes. The distance code has one symbol, `symbol`, and its extra bits are all the same.
+pub fn one_distance(large_window: bool, npostfix: u32, ndirect: usize, symbol: usize, ones: bool) -> Vec<u8> {
+    let mut w = Bits::default();
+    if large_window {
+        w.put(14, (24 << 8) | 0x11);
+    } else {
+        w.put(1, 0);
+    }
+    // The last meta-block, not empty, of 5 bytes, with one block type of each kind.
+    w.put(4, 1);
+    w.put(16, 4);
+    w.put(3, 0);
+    w.put(2, u64::from(npostfix));
+    w.put(4, (ndirect >> npostfix) as u64);
+    // The context mode, and one tree each for the literals and the distances.
+    w.put(4, 0);
+    // Command 138: a literal, a copy of 4 bytes, and a distance follows.
+    let bits = distance_symbol_values(large_window, npostfix, ndirect).trailing_zeros();
+    for (bits, symbol) in [(8, 97), (10, 138), (bits, symbol)] {
+        w.put(4, 1);
+        w.put(bits, symbol as u64);
+    }
+    if symbol >= 16 + ndirect {
+        // A symbol that would have more is not in any alphabet.
+        let extra = 1 + ((symbol - 16 - ndirect) >> (npostfix + 1));
+        w.put(extra.min(64) as u32, if ones { u64::MAX } else { 0 });
+    }
+    w.bytes
+}
+
 pub struct Stream {
     pub bytes: Vec<u8>,
     /// What a valid stream decodes to.

@@ -34,6 +34,24 @@ fn dec_stream(seed0: u64, iters: u64, max_len: usize) {
     println!("ok: {iters} iterations");
 }
 
+/// Every value that the symbol of a simple distance code can be given, valid or not, for all 64 pairs of NPOSTFIX and NDIRECT,
+/// with and without a large window, which limits the alphabet to the distances that fit.
+fn dec_distances() {
+    let mut stats = std::collections::BTreeMap::<i32, u64>::new();
+    for (large_window, npostfix, direct) in (0..128).map(|i| (i & 64 != 0, i >> 4 & 3, i as usize & 15)) {
+        let ndirect = direct << npostfix;
+        for (symbol, ones) in (0..2 * grammar::distance_symbol_values(large_window, npostfix, ndirect)).map(|i| (i / 2, i % 2 != 0)) {
+            let stream = grammar::one_distance(large_window, npostfix, ndirect, symbol, ones);
+            let case = DecCase { stream, large_window, no_realloc: false, dicts: Vec::new(), schedule: 0, max_output: usize::MAX };
+            match compare(&case, None) {
+                Ok(o) => *stats.entry(if o.result == 0 { o.error } else { o.result }).or_default() += 1,
+                Err(e) => panic!("large window {large_window} NPOSTFIX {npostfix} NDIRECT {ndirect} symbol {symbol} extra bits {}: {e}", u8::from(ones)),
+            }
+        }
+    }
+    println!("ok: results and how many streams gave them: {stats:?}");
+}
+
 /// Streams from the grammar. `evil`: one chance in this many, at each opportunity, to break a rule (0: never).
 fn dec_gen(seed0: u64, iters: u64, evil: usize) {
     let mut stats = std::collections::BTreeMap::<String, u64>::new();
@@ -224,6 +242,7 @@ pub fn run(args: &[String]) -> bool {
     let corpus = || r#gen::Corpus::load(CORPUS_DIRS, 4 << 20);
     match args.get(1).map(String::as_str) {
         Some("dec-gen") => dec_gen(num(2, 1), num(3, 1000), num(4, 0) as usize),
+        Some("dec-distances") => dec_distances(),
         Some("dec-stream") => dec_stream(num(2, 1), num(3, 1000), num(4, 1 << 20) as usize),
         Some("dec-empty-commands") => {
             for distances in [false, true] {

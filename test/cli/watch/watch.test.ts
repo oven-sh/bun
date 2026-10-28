@@ -969,6 +969,20 @@ setInterval(() => {}, 1e6);
   20_000,
 );
 
+// Returns once the watcher thread has handled every event made before the call. The watcher logs
+// a batch of events, handles it, then reads the next batch. So once it logs a batch that was made
+// after another one, it has handled the other one. `fence` is a watched folder.
+async function watcherHandled(trace: string, fence: string) {
+  for (let i = 0; i < 2; i++) {
+    const from = statSync(trace).size;
+    const name = crypto.randomUUID();
+    mkdirSync(join(fence, name));
+    // kqueue does not log the changed name, only the watched path.
+    const logged = isLinux ? name : '/fence/"';
+    while (!readFileSync(trace, "latin1").slice(from).includes(logged)) await Bun.sleep(1);
+  }
+}
+
 // A directory event names an entry of the folder. Only a watched file of that folder with that
 // name is the module to reload.
 it.skipIf(isWindows)(
@@ -1008,21 +1022,145 @@ setInterval(() => {}, 1e6);
     renameSync(join(cwd, "lib", "sub"), join(cwd, "lib", "sub.away"));
     renameSync(join(cwd, "lib", "sub.away"), join(cwd, "lib", "sub"));
     await Bun.write(join(cwd, "other", "a.js"), `export {};`);
-    // The watcher thread logs a batch of events, handles it, then reads the next batch. Once it
-    // logs a batch that was made after another one, it has handled the other one.
-    for (let i = 0; i < 2; i++) {
-      const from = statSync(trace).size;
-      const name = crypto.randomUUID();
-      mkdirSync(join(cwd, "fence", name));
-      // kqueue does not log the changed name, only the watched path.
-      const logged = isLinux ? name : '/fence/"';
-      while (!readFileSync(trace, "latin1").slice(from).includes(logged)) await Bun.sleep(1);
-    }
+    await watcherHandled(trace, join(cwd, "fence"));
     await replaceFile["rename over"](join(cwd, "lib", "a.js"), `export const a = 2;`);
     await waitFor("EVAL a = 2\n");
     expect(output().slice(0, output().indexOf("EVAL a = 2\n"))).toBe("EVAL a = 1\n");
 
     release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+  },
+  20_000,
+);
+
+// `--watch` starts the program again for a change of a watched file. An entry point that is
+// deleted has nothing to start, and the program used to end with "Module not found" before the
+// save that creates the file again. kqueue still reloads at the delete.
+for (const [state, lookup] of [
+  ["", ""],
+  [" after a failed lookup", `try {\n  require("./missing.js");\n} catch {}\n`],
+]) {
+  it.skipIf(!isLinux)(
+    `--watch waits for an entry point that is deleted and then created again${state}`,
+    async () => {
+      using dir = tempDir("watch-dir-event-entry-deleted", {
+        "trace.log": "",
+        "src/fence/f.js": `export {};`,
+        "src/entry.js": `${lookup}import "./fence/f.js";
+console.log("EVAL", 1);
+setInterval(() => {}, 1e6);
+`,
+      });
+      const cwd = join(String(dir), "src");
+      const trace = join(String(dir), "trace.log");
+      const proc = spawn({
+        cwd,
+        cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+        env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      watchee = proc;
+      const { waitFor, release } = stdoutWaiter(proc);
+
+      await waitFor("EVAL 1\n");
+      rmSync(join(cwd, "entry.js"));
+      // The delete is handled in a batch of its own.
+      await watcherHandled(trace, join(cwd, "fence"));
+      // A complete file at once: the program that starts again reads the entry point only once.
+      await replaceFile["rename over"](join(cwd, "entry.js"), `console.log("EVAL", 2);\nsetInterval(() => {}, 1e6);\n`);
+      await waitFor("EVAL 2\n");
+
+      release();
+      proc.kill("SIGKILL");
+      await proc.exited;
+    },
+    20_000,
+  );
+}
+
+// `bun test --watch` and `bun build --watch` decide a directory event in the same code.
+it.skipIf(isWindows)(
+  "test --watch sees a rename over save of an import and of the test file after a failed lookup",
+  async () => {
+    const testFile = (run: number) => `import { test } from "bun:test";
+import { v } from "./dep.js";
+try {
+  require("./missing.js");
+} catch {}
+test("prints", () => console.log("RAN", v, ${run}));
+`;
+    using dir = tempDir("watch-dir-event-test-runner", {
+      "dep.js": `export const v = 1;`,
+      "a.test.js": testFile(1),
+    });
+    const cwd = String(dir);
+    const proc = spawn({
+      cwd,
+      cmd: [bunExe(), "test", "--watch", "a.test.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    watchee = proc;
+    const { waitFor, release } = stdoutWaiter(proc);
+
+    await waitFor("RAN 1 1\n");
+    await replaceFile["rename over"](join(cwd, "dep.js"), `export const v = 2;`);
+    await waitFor("RAN 2 1\n");
+    await replaceFile["rename over"](join(cwd, "a.test.js"), testFile(2));
+    await waitFor("RAN 2 2\n");
+
+    release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+  },
+  20_000,
+);
+
+it.skipIf(isWindows)(
+  "build --watch sees a rename over save of an import after a failed lookup",
+  async () => {
+    using dir = tempDir("watch-dir-event-bundler", {
+      "src/dep.js": `export const v = "first";`,
+      "src/entry.js": `import { v } from "./dep.js";
+try {
+  require("./missing.js");
+} catch {}
+console.log(v);
+`,
+    });
+    const cwd = String(dir);
+    const out = join(cwd, "out", "entry.js");
+    const proc = spawn({
+      cwd,
+      cmd: [bunExe(), "build", "--watch", "./src/entry.js", "--outdir", "out"],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    watchee = proc;
+    const built = async (text: string) => {
+      while (
+        !(
+          await Bun.file(out)
+            .text()
+            .catch(() => "")
+        ).includes(text)
+      )
+        await Bun.sleep(1);
+    };
+
+    await built("first");
+    for (const text of ["second", "third"]) {
+      await replaceFile["rename over"](join(cwd, "src", "dep.js"), `export const v = "${text}";`);
+      await built(text);
+    }
+
     proc.kill("SIGKILL");
     await proc.exited;
   },

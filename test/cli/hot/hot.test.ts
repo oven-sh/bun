@@ -1061,8 +1061,8 @@ it.if(isWindows)("dev server survives a burst of file events that includes a del
   while (!(await bundle()).includes("second bundle"));
 });
 
-// Other platforms evict the deleted import and stop watching its path, so "second" is never printed.
-it.todoIf(!isWindows)("reloads when a deleted import is recreated", async () => {
+// kqueue evicts the deleted import and stops watching its path, so "second" is never printed.
+it.todoIf(!isWindows && !isLinux)("reloads when a deleted import is recreated", async () => {
   using dir = tempDir("hot-import-back", {
     "main.js": `import "./imported.js";\n`,
     "imported.js": `console.log("first");`,
@@ -1630,4 +1630,170 @@ setInterval(() => {}, 1e6);
     expect(await proc.exited).toBe(0);
   },
   30_000,
+);
+
+// The reloader took a file off the watchlist for each directory event that named it, and the
+// reload watched it again. A file that the reload cannot read stayed off the watchlist.
+for (const earlier of [false, true]) {
+  it.skipIf(isWindows)(
+    `--hot reloads a module that was saved while its folder could not be listed${earlier ? ", after an earlier save" : ""}`,
+    async () => {
+      using dir = tempDir("hot-dir-event-unlisted-save", {
+        "trace.log": "",
+        "src/lib/a.ts": `export const v = 1;`,
+        "src/fence/f.ts": `export {};`,
+        "src/main.ts": `import { v } from "./lib/a.ts";
+import "./fence/f.ts";
+console.log("RUN", v);
+if (v === 9) process.exit(0);
+setInterval(() => {}, 1e6);
+`,
+      });
+      const cwd = join(String(dir), "src");
+      const trace = join(String(dir), "trace.log");
+      await using proc = spawn({
+        cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+        cwd,
+        env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const stdout = stdoutOf(proc);
+      const stderr = stdoutOf({ stdout: proc.stderr });
+
+      await stdout.until("RUN 1\n");
+      if (earlier) {
+        writeFileSync(join(cwd, "lib", "a.ts"), `export const v = 2;`);
+        await stdout.until("RUN 2\n");
+      }
+      // A plain file at `lib`: the module cannot be read at its path.
+      renameSync(join(cwd, "lib"), join(cwd, "lib.away"));
+      writeFileSync(join(cwd, "lib"), "");
+      await watcherHandled(trace, join(cwd, "fence"));
+      writeFileSync(join(cwd, "lib.away", "a.ts"), `export const v = 3;`);
+      await stderr.until("Cannot find module");
+      rmSync(join(cwd, "lib"));
+      renameSync(join(cwd, "lib.away"), join(cwd, "lib"));
+      await watcherHandled(trace, join(cwd, "fence"));
+      writeFileSync(join(cwd, "lib", "a.ts"), `export const v = 9;`);
+      // A second reload of the save that failed can run after the folder is back.
+      const runs = withoutRepeats(await stdout.toEnd()).filter(line => line !== "RUN 3");
+      expect(runs).toEqual(earlier ? ["RUN 1", "RUN 2", "RUN 9", ""] : ["RUN 1", "RUN 9", ""]);
+      expect(await proc.exited).toBe(0);
+    },
+    30_000,
+  );
+}
+
+// A watched file with no stored descriptor, which an import of the `file` loader is on Linux,
+// reports a replaced inode through its own watch. The directory event of the same save must
+// not reload it a second time.
+it.skipIf(!isLinux)(
+  "--hot evaluates once for a save by rename of a file loader import",
+  async () => {
+    using dir = tempDir("hot-dir-event-file-loader", {
+      "trace.log": "",
+      "src/asset.bin": `one`,
+      "src/fence/f.js": `export {};`,
+      "src/main.js": `import asset from "./asset.bin";
+import "./fence/f.js";
+globalThis.runs = (globalThis.runs ?? 0) + 1;
+console.log("RUN", globalThis.runs, require("fs").readFileSync(asset, "utf8"));
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = join(String(dir), "src");
+    const trace = join(String(dir), "trace.log");
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+      cwd,
+      env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const stdout = stdoutOf(proc);
+
+    await stdout.until("RUN 1 one\n");
+    writeFileSync(join(cwd, "asset.bin.tmp"), `two`);
+    renameSync(join(cwd, "asset.bin.tmp"), join(cwd, "asset.bin"));
+    await stdout.until("RUN 2 two\n");
+    await watcherHandled(trace, join(cwd, "fence"));
+    writeFileSync(
+      join(cwd, "main.js"),
+      `globalThis.runs += 1;\nconsole.log("DONE", globalThis.runs);\nprocess.exit(0);\n`,
+    );
+    expect(await stdout.toEnd()).toBe("RUN 1 one\nRUN 2 two\nDONE 3\n");
+    expect(await proc.exited).toBe(0);
+  },
+  30_000,
+);
+
+// The router writes the real path of a route file into the resolver's cached listing, and the
+// reloader used to read it there. These two cases reloaded through that write alone, on Linux.
+// Without a router neither reloaded.
+it.todo("--hot reloads a FileSystemRouter route that is a symlink and is retargeted by rename", async () => {
+  using dir = tempDir("hot-router-retargeted-route", {
+    "impl/v1.tsx": `export default "v1";`,
+    "impl/v2.tsx": `export default "v2";`,
+    "pages/about.tsx": `export default "about";`,
+    "server.ts": `const router = new Bun.FileSystemRouter({ dir: import.meta.dir + "/pages", style: "nextjs" });
+const index = await import(router.match("/").filePath);
+await import(router.match("/about").filePath);
+console.log("RUN", index.default);
+if (index.default === "v2") process.exit(0);
+setInterval(() => {}, 1e6);
+`,
+  });
+  const cwd = String(dir);
+  symlinkSync("../impl/v1.tsx", join(cwd, "pages", "index.tsx"));
+  await using proc = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "server.ts"],
+    cwd,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = stdoutOf(proc);
+
+  await stdout.until("RUN v1\n");
+  symlinkSync("../impl/v2.tsx", join(cwd, "pages", "index.tsx.tmp"));
+  renameSync(join(cwd, "pages", "index.tsx.tmp"), join(cwd, "pages", "index.tsx"));
+  expect(withoutRepeats(await stdout.toEnd())).toEqual(["RUN v1", "RUN v2", ""]);
+});
+
+it.todo(
+  "--hot reloads a FileSystemRouter route whose pages folder is a symlink to a folder outside the working directory",
+  async () => {
+    using dir = tempDir("hot-router-pages-outside", {
+      "outside/pages/index.tsx": `export default "v1";`,
+      // A lookup that fails watches the folder under the spelling of the link.
+      "app/server.ts": `try { require("./pages/missing.js"); } catch {}
+const router = new Bun.FileSystemRouter({ dir: import.meta.dir + "/pages", style: "nextjs" });
+const index = await import(router.match("/").filePath);
+console.log("RUN", index.default);
+if (index.default === "v2") process.exit(0);
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = join(String(dir), "app");
+    symlinkSync("../outside/pages", join(cwd, "pages"), "dir");
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "server.ts"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const stdout = stdoutOf(proc);
+
+    await stdout.until("RUN v1\n");
+    const route = join(String(dir), "outside", "pages", "index.tsx");
+    writeFileSync(route + ".tmp", `export default "v2";`);
+    renameSync(route + ".tmp", route);
+    expect(withoutRepeats(await stdout.toEnd())).toEqual(["RUN v1", "RUN v2", ""]);
+  },
 );

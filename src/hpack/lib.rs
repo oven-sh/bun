@@ -256,6 +256,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_large_table_is_not_moved_every_few_blocks() {
+        let mut decoder = Decoder::new();
+        decoder.set_max_capacity(1 << 20);
+        let block = [&hex("40 016e 64")[..], &[b'v'; 100]].concat();
+        let (mut heap_size, mut changes) = (0, 0);
+        for _ in 0..1000 {
+            assert!(decode(&mut decoder, &block).is_ok());
+            changes += usize::from(decoder.heap_size() != heap_size);
+            heap_size = decoder.heap_size();
+        }
+        // Its two allocations double as it fills up.
+        assert!(changes < 20, "{changes}");
+    }
+
     /// Both tables against a plain list, while the table turns over a few times.
     fn check_lookups(capacity: u32, period: usize, fields: usize) {
         let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());

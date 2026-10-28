@@ -36,7 +36,9 @@ impl Storage {
 
     /// After [`Self::clear_scratch`], which leaves more room so as not to do this for every field.
     pub(crate) fn shrink(&mut self) {
-        if self.bytes.capacity() > self.end + 2 * SPARE_CAPACITY {
+        // Not for a large table: it would be moved here, and again to grow, every few fields.
+        let spare = self.bytes.capacity() - self.end;
+        if self.end <= 2 * SPARE_CAPACITY && spare > 2 * SPARE_CAPACITY {
             self.bytes.shrink_to(self.end + SPARE_CAPACITY);
         }
     }

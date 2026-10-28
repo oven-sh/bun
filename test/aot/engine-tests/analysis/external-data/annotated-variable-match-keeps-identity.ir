@@ -223,8 +223,49 @@ function f1 name="compose" module=m0 position=180 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: Jump -> next b13()
 # CHECK-NEXT: b13() frequency=Unlikely:
 # CHECK-NEXT: v57: " " = String string=" "
-# CHECK-NEXT: v58: undefined = Undefined
-# CHECK-NEXT: v59: undefined|string = CallBuiltin -, v1, v58 overload=JSONStringify/0 accessSite=24
-# CHECK-NEXT: v60: string = Strcat v47, v57, v59
-# CHECK-NEXT: Return v60
+# CHECK-NEXT: v58: string = Add v47, v57
+# CHECK-NEXT: v59: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v59, v58
+# CHECK-NEXT: v61: i32 = StringBuilderCheckpoint v59
+# CHECK-NEXT: v62: i32 = StringBuilderCheckpoint v59
+# CHECK-NEXT: v63: boolean = TypeTest v1 testedType=null
+# CHECK-NEXT: Branch v63 -> taken b14(), notTaken b15(| 0)
+# CHECK-NEXT: b14() frequency=Unlikely:
+# CHECK-NEXT: v64: buildercursor = StringBuilderReserve v59 size=128
+# CHECK-NEXT: v65: buildercursor = JSONAppendToken v59, v64 jsonToken=Null
+# CHECK-NEXT: Jump -> next b21(v65)
+# CHECK-NEXT: b15(v66: boolean|number|string|object ~ number|string|L1) frequency=Unlikely:
+# CHECK-NEXT: v67: boolean = TypeTest v66 testedType=object
+# CHECK-NEXT: Branch v67 -> taken b16(| 0), notTaken b19()
+# CHECK-NEXT: b16(v68: object ~ L1) frequency=Unlikely:
+# CHECK-NEXT: v69: boolean = ShapeTest v68 layouts=[L1]
+# CHECK-NEXT: Branch v69 -> taken b17(), notTaken b19()
+# CHECK-NEXT: b17() frequency=Unlikely:
+# CHECK-NEXT: v70: int[0, 2] = CallDirect v68, v59 function=f5 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v70 cases=[1] -> case b18(), otherwise b19()
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: v71: buildercursor = StringBuilderReserve v59 size=128
+# CHECK-NEXT: Jump -> next b20(v71)
+# CHECK-NEXT: b19() frequency=Rare:
+# CHECK-NEXT: v72: buildercursor = StringBuilderReserve v59 size=128
+# CHECK-NEXT: Jump -> next b20(v72)
+# CHECK-NEXT: b20(v73: buildercursor) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b21(v73)
+# CHECK-NEXT: b21(v74: buildercursor) frequency=Unlikely:
+# CHECK-NEXT: StringBuilderCommit v59, v74
+# CHECK-NEXT: v76: i32 = StringBuilderCheckpoint v59
+# CHECK-NEXT: v77: boolean = StrictEq v62, v76
+# CHECK-NEXT: Branch v77 -> taken b22(), notTaken b23()
+# CHECK-NEXT: b22() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v59, v61
+# CHECK-NEXT: v79: undefined = Undefined
+# CHECK-NEXT: v80: undefined|string = CallBuiltin -, v1, v79 overload=JSONStringify/0 accessSite=24
+# CHECK-NEXT: Jump -> next b24(v80)
+# CHECK-NEXT: b23() frequency=Unlikely:
+# CHECK-NEXT: v81: "" = String string=""
+# CHECK-NEXT: Jump -> next b24(v81)
+# CHECK-NEXT: b24(v82: undefined|string) frequency=Unlikely:
+# CHECK-NEXT: StringBuilderAppend v59, v82
+# CHECK-NEXT: v84: string = StringBuilderFinish v59
+# CHECK-NEXT: Return v84
 # CHECK-NEXT: }

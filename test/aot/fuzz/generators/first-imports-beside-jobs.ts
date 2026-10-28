@@ -147,7 +147,7 @@ export const programs: Record<string, Program> = {
   },
   "two at once, and the first requires a module of the second while it runs": {
     main: 'import("./a.mjs").then(() => log.push("A"));\nimport("./b.mjs").then(() => log.push("B"));\nawait done();\n',
-    a: use + 'log.push("a-body" + require("./b2.mjs").value);\nchain("a", 24);\n',
+    a: use + 'log.push("a-body" + require("./b2.mjs").value);\nchain("a", 24);\nexport {};\n',
     b: use + 'import "./b1.mjs";\nlog.push("b-body");\n',
     b1: use + 'import "./b2.mjs";\nlog.push("b1-body");\n',
     b2: use + 'log.push("b2-body");\nexport const value = 5;\n',
@@ -212,7 +212,8 @@ export const programs: Record<string, Program> = {
     a:
       use +
       'import file from "./file.cjs";\nimport second from "./second.cjs";\nlog.push("a-body" + file.present + second.present);\n',
-    "file.cjs": 'globalThis.log.push("file");\nglobalThis.chain("f", 16);\nthrow new Error("file");\n',
+    "file.cjs":
+      'globalThis.log.push("file");\nglobalThis.chain("f", 16);\nexports.present = 1;\nthrow new Error("file");\n',
     "second.cjs": 'globalThis.log.push("second");\nexports.present = 2;\n',
   },
   "a CommonJS file below the module requires the module": {

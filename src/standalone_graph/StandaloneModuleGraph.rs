@@ -26,7 +26,8 @@ use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
 use crate::compiled_program::{self, CompiledProgramInput, Payload};
 use crate::executable_file::{
-    ElfWriteError, ImageRange, MappedFile, Original, with_executable_image, write_elf,
+    ElfWriteError, ImageRange, MappedFile, Original, TemplateBytes, with_executable_image,
+    write_elf,
 };
 use crate::executable_request::{
     ExecutableAdditions, GraphBytes, InjectionAdditions, append_compiled_program_record,
@@ -2734,12 +2735,10 @@ pub(crate) fn inject<'a>(
                 if !additions.edit_template(&mut mapped) {
                     return None;
                 }
-                let addresses = mapped.addresses();
                 Some(write_elf(
                     cloned_executable_fd,
-                    &mut mapped,
+                    TemplateBytes::ReadOnce(&mut mapped),
                     None,
-                    Some(&addresses),
                     bytes,
                     additions.image,
                     additions.symbols,
@@ -2759,12 +2758,11 @@ pub(crate) fn inject<'a>(
                 let (template, file) = mapped.bytes_and_file();
                 write_elf(
                     cloned_executable_fd,
-                    template,
+                    TemplateBytes::Kept(template),
                     Some(Original {
                         file,
                         mapping: Some((addresses.start, addresses.end)),
                     }),
-                    None,
                     bytes,
                     additions.image,
                     additions.symbols,
@@ -2789,8 +2787,7 @@ pub(crate) fn inject<'a>(
                 }
                 write_elf(
                     cloned_executable_fd,
-                    &mut input_bytes,
-                    None,
+                    TemplateBytes::Kept(&mut input_bytes),
                     None,
                     bytes,
                     additions.image,

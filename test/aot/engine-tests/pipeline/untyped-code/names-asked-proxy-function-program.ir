@@ -174,7 +174,7 @@ function f20 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
 runtimefunction id=69 function=f20
 # -- generated: f0 named next
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 parent=1 module=m0}, {callee=f3 callPosition=4294967295 parent=1 module=m0}, {callee=f3 callPosition=4294967295 parent=1 module=m0}, {callee=f3 callPosition=4294967295 parent=1 module=m0}, {callee=f3 callPosition=4294967295 parent=1 module=m0}, {callee=f3 callPosition=4294967295 parent=1 module=m0}, {callee=f3 callPosition=4294967295 parent=1 module=m0}, {callee=f3 callPosition=4294967295 parent=1 module=m0}] {
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1 = Integer integer=1
 # CHECK-NEXT: v1: L0 = NewObject -, v0 layout=L0 fields=[0] allocationSite=1 allocationClass=0
@@ -193,262 +193,64 @@ runtimefunction id=69 function=f20
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v14: 3 = Integer integer=3
 # CHECK-NEXT: v15: boolean = Less v12, v14
-# CHECK-NEXT: Branch v15 -> taken b2(| 0), notTaken b71()
+# CHECK-NEXT: Branch v15 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2(v16: int[0, 2]):
 # CHECK-NEXT: v17: f1|Proxy = Upcast v3 castType=undefined|f1|Proxy
-# CHECK-NEXT: v18: boolean = TypeTest v17 testedType=Proxy
-# CHECK-NEXT: Branch v18 -> taken b3(), notTaken b6()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v19: undefined|f3 = GetSlotOrUndefined v2 key="has" receivers=[L1] level=Proven
-# CHECK-NEXT: v20: boolean = TypeTest v19 testedType=function
-# CHECK-NEXT: Branch v20 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v21: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b7(v21)
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v22: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b7(v22)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v23: boolean = PropHas v17 key="alpha" accessSite=8
-# CHECK-NEXT: Jump -> next b7(v23)
-# CHECK-NEXT: b7(v24: boolean):
-# CHECK-NEXT: v25: boolean = TypeTest v17 testedType=Proxy
-# CHECK-NEXT: Branch v25 -> taken b8(), notTaken b11()
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v26: undefined|f3 = GetSlotOrUndefined v2 key="has" receivers=[L1] level=Proven
-# CHECK-NEXT: v27: boolean = TypeTest v26 testedType=function
-# CHECK-NEXT: Branch v27 -> taken b9(), notTaken b10()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v28: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b12(v28)
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v29: false = Boolean
-# CHECK-NEXT: Jump -> next b12(v29)
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v30: boolean = PropHas v17 key="name" accessSite=9
-# CHECK-NEXT: Jump -> next b12(v30)
-# CHECK-NEXT: b12(v31: boolean):
-# CHECK-NEXT: v32: boolean = TypeTest v17 testedType=Proxy
-# CHECK-NEXT: Branch v32 -> taken b13(), notTaken b14()
-# CHECK-NEXT: b13():
-# CHECK-NEXT: Jump -> next b15(v0)
-# CHECK-NEXT: b14():
-# CHECK-NEXT: v33: anything ~ int[-2147483643, 2147483647] = PropGet v17 key="alpha" accessSite=10
-# CHECK-NEXT: Jump -> next b15(v33)
-# CHECK-NEXT: b15(v34: anything ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: v35: boolean = TypeTest v17 testedType=Proxy
-# CHECK-NEXT: Branch v35 -> taken b16(), notTaken b17()
-# CHECK-NEXT: b16():
-# CHECK-NEXT: v36: anything = SuperGet v1, v17 key="prototype"
-# CHECK-NEXT: Jump -> next b18(v36)
-# CHECK-NEXT: b17():
-# CHECK-NEXT: v37: anything = PropGet v17 key="prototype" accessSite=11
-# CHECK-NEXT: Jump -> next b18(v37)
-# CHECK-NEXT: b18(v38: anything):
-# CHECK-NEXT: v39: anything = PropGet v4 key="prototype" accessSite=12
-# CHECK-NEXT: v40: boolean = StrictEq v38, v39
-# CHECK-NEXT: v41: Array<anything, Contiguous> = NewArray v24, v31, v34, v40 contents=anything allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v42: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v41 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v43: string = CallBuiltin v42 overload=ArrayPrototypeJoin/0 accessSite=14 @0:1 tail
-# CHECK-NEXT: v44: undefined = CallBuiltin -, v43 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v45: boolean = TypeTest v4 testedType=Proxy
-# CHECK-NEXT: Branch v45 -> taken b19(), notTaken b26()
-# CHECK-NEXT: b19():
-# CHECK-NEXT: v46: anything = GetInternalField v4 index=1
-# CHECK-NEXT: v47: anything = GetInternalField v4
-# CHECK-NEXT: v48: boolean = TypeTest v47 testedType=object
-# CHECK-NEXT: Branch v48 -> taken b20(| 0), notTaken b25()
-# CHECK-NEXT: b20(v49: object):
-# CHECK-NEXT: v50: boolean = TypeTest v46 testedType=L1
-# CHECK-NEXT: Branch v50 -> taken b21(| 0), notTaken b24()
-# CHECK-NEXT: b21(v51: L1):
-# CHECK-NEXT: v52: undefined|f3 = GetSlotOrUndefined v51 key="has" receivers=[L1] level=Proven
-# CHECK-NEXT: v53: boolean = TypeTest v52 testedType=function
-# CHECK-NEXT: Branch v53 -> taken b22(), notTaken b23()
-# CHECK-NEXT: b22():
-# CHECK-NEXT: v54: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b28(v54)
-# CHECK-NEXT: b23():
-# CHECK-NEXT: v55: boolean = PropHas v49 key="alpha"
-# CHECK-NEXT: Jump -> next b28(v55)
-# CHECK-NEXT: b24() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b27()
-# CHECK-NEXT: b25() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b27()
-# CHECK-NEXT: b26():
-# CHECK-NEXT: Jump -> next b27()
-# CHECK-NEXT: b27():
-# CHECK-NEXT: v56: boolean = PropHas v4 key="alpha" accessSite=8
-# CHECK-NEXT: Jump -> next b28(v56)
-# CHECK-NEXT: b28(v57: boolean):
-# CHECK-NEXT: v58: boolean = TypeTest v4 testedType=Proxy
-# CHECK-NEXT: Branch v58 -> taken b29(), notTaken b36()
-# CHECK-NEXT: b29():
-# CHECK-NEXT: v59: anything = GetInternalField v4 index=1
-# CHECK-NEXT: v60: anything = GetInternalField v4
-# CHECK-NEXT: v61: boolean = TypeTest v60 testedType=object
-# CHECK-NEXT: Branch v61 -> taken b30(| 0), notTaken b35()
-# CHECK-NEXT: b30(v62: object):
-# CHECK-NEXT: v63: boolean = TypeTest v59 testedType=L1
-# CHECK-NEXT: Branch v63 -> taken b31(| 0), notTaken b34()
-# CHECK-NEXT: b31(v64: L1):
-# CHECK-NEXT: v65: undefined|f3 = GetSlotOrUndefined v64 key="has" receivers=[L1] level=Proven
-# CHECK-NEXT: v66: boolean = TypeTest v65 testedType=function
-# CHECK-NEXT: Branch v66 -> taken b32(), notTaken b33()
-# CHECK-NEXT: b32():
-# CHECK-NEXT: v67: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b38(v67)
-# CHECK-NEXT: b33():
-# CHECK-NEXT: v68: boolean = PropHas v62 key="name"
-# CHECK-NEXT: Jump -> next b38(v68)
-# CHECK-NEXT: b34() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b35() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b36():
-# CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b37():
-# CHECK-NEXT: v69: boolean = PropHas v4 key="name" accessSite=9
-# CHECK-NEXT: Jump -> next b38(v69)
-# CHECK-NEXT: b38(v70: boolean):
-# CHECK-NEXT: v71: boolean = TypeTest v4 testedType=Proxy
-# CHECK-NEXT: Branch v71 -> taken b39(), notTaken b44()
-# CHECK-NEXT: b39():
-# CHECK-NEXT: v72: anything = GetInternalField v4 index=1
-# CHECK-NEXT: v73: anything = GetInternalField v4
-# CHECK-NEXT: v74: boolean = TypeTest v73 testedType=object
-# CHECK-NEXT: Branch v74 -> taken b40(| 0), notTaken b43()
-# CHECK-NEXT: b40(v75: object):
-# CHECK-NEXT: v76: boolean = TypeTest v72 testedType=L1
-# CHECK-NEXT: Branch v76 -> taken b41(), notTaken b42()
-# CHECK-NEXT: b41():
-# CHECK-NEXT: v77: anything = SuperGet v75, v4 key="alpha"
-# CHECK-NEXT: Jump -> next b46(v77)
-# CHECK-NEXT: b42() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b45()
-# CHECK-NEXT: b43() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b45()
-# CHECK-NEXT: b44():
-# CHECK-NEXT: Jump -> next b45()
-# CHECK-NEXT: b45():
-# CHECK-NEXT: v78: anything ~ int[-2147483643, 2147483647] = PropGet v4 key="alpha" accessSite=10
-# CHECK-NEXT: Jump -> next b46(v78)
-# CHECK-NEXT: b46(v79: anything):
-# CHECK-NEXT: v80: anything ~ int[-2147483643, 2147483647] = Upcast v79 castType=anything
-# CHECK-NEXT: v81: boolean = TypeTest v4 testedType=Proxy
-# CHECK-NEXT: Branch v81 -> taken b47(), notTaken b52()
-# CHECK-NEXT: b47():
-# CHECK-NEXT: v82: anything = GetInternalField v4 index=1
-# CHECK-NEXT: v83: anything = GetInternalField v4
-# CHECK-NEXT: v84: boolean = TypeTest v83 testedType=object
-# CHECK-NEXT: Branch v84 -> taken b48(| 0), notTaken b51()
-# CHECK-NEXT: b48(v85: object):
-# CHECK-NEXT: v86: boolean = TypeTest v82 testedType=L1
-# CHECK-NEXT: Branch v86 -> taken b49(), notTaken b50()
-# CHECK-NEXT: b49():
-# CHECK-NEXT: v87: anything = SuperGet v85, v4 key="prototype"
-# CHECK-NEXT: Jump -> next b54(v87)
-# CHECK-NEXT: b50() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b53()
-# CHECK-NEXT: b51() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b53()
-# CHECK-NEXT: b52():
-# CHECK-NEXT: Jump -> next b53()
-# CHECK-NEXT: b53():
-# CHECK-NEXT: v88: anything = PropGet v4 key="prototype" accessSite=11
-# CHECK-NEXT: Jump -> next b54(v88)
-# CHECK-NEXT: b54(v89: anything):
-# CHECK-NEXT: v90: anything = PropGet v4 key="prototype" accessSite=12
-# CHECK-NEXT: v91: boolean = StrictEq v89, v90
-# CHECK-NEXT: v92: Array<anything, Contiguous> = NewArray v57, v70, v80, v91 contents=anything allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v93: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v92 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v94: string = CallBuiltin v93 overload=ArrayPrototypeJoin/0 accessSite=14 @0:1 tail
-# CHECK-NEXT: v95: undefined = CallBuiltin -, v94 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v96: f1|Proxy = Upcast v6 castType=undefined|f1|Proxy
-# CHECK-NEXT: v97: boolean = TypeTest v96 testedType=Proxy
-# CHECK-NEXT: Branch v97 -> taken b55(), notTaken b58()
-# CHECK-NEXT: b55():
-# CHECK-NEXT: v98: undefined|f3 = GetSlotOrUndefined v5 key="has" receivers=[L1] level=Proven
-# CHECK-NEXT: v99: boolean = TypeTest v98 testedType=function
-# CHECK-NEXT: Branch v99 -> taken b56(), notTaken b57()
-# CHECK-NEXT: b56():
-# CHECK-NEXT: v100: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b59(v100)
-# CHECK-NEXT: b57():
-# CHECK-NEXT: v101: boolean = PropHas v4 key="alpha"
-# CHECK-NEXT: Jump -> next b59(v101)
-# CHECK-NEXT: b58():
-# CHECK-NEXT: v102: boolean = PropHas v96 key="alpha" accessSite=8
-# CHECK-NEXT: Jump -> next b59(v102)
-# CHECK-NEXT: b59(v103: boolean):
-# CHECK-NEXT: v104: boolean = TypeTest v96 testedType=Proxy
-# CHECK-NEXT: Branch v104 -> taken b60(), notTaken b63()
-# CHECK-NEXT: b60():
-# CHECK-NEXT: v105: undefined|f3 = GetSlotOrUndefined v5 key="has" receivers=[L1] level=Proven
-# CHECK-NEXT: v106: boolean = TypeTest v105 testedType=function
-# CHECK-NEXT: Branch v106 -> taken b61(), notTaken b62()
-# CHECK-NEXT: b61():
-# CHECK-NEXT: v107: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next b64(v107)
-# CHECK-NEXT: b62():
-# CHECK-NEXT: v108: boolean = PropHas v4 key="name"
-# CHECK-NEXT: Jump -> next b64(v108)
-# CHECK-NEXT: b63():
-# CHECK-NEXT: v109: boolean = PropHas v96 key="name" accessSite=9
-# CHECK-NEXT: Jump -> next b64(v109)
-# CHECK-NEXT: b64(v110: boolean):
-# CHECK-NEXT: v111: boolean = TypeTest v96 testedType=Proxy
-# CHECK-NEXT: Branch v111 -> taken b65(), notTaken b66()
-# CHECK-NEXT: b65():
-# CHECK-NEXT: v112: anything = SuperGet v4, v96 key="alpha"
-# CHECK-NEXT: Jump -> next b67(v112)
-# CHECK-NEXT: b66():
-# CHECK-NEXT: v113: anything ~ int[-2147483643, 2147483647] = PropGet v96 key="alpha" accessSite=10
-# CHECK-NEXT: Jump -> next b67(v113)
-# CHECK-NEXT: b67(v114: anything):
-# CHECK-NEXT: v115: anything ~ int[-2147483643, 2147483647] = Upcast v114 castType=anything
-# CHECK-NEXT: v116: boolean = TypeTest v96 testedType=Proxy
-# CHECK-NEXT: Branch v116 -> taken b68(), notTaken b69()
-# CHECK-NEXT: b68():
-# CHECK-NEXT: v117: anything = SuperGet v4, v96 key="prototype"
-# CHECK-NEXT: Jump -> next b70(v117)
-# CHECK-NEXT: b69():
-# CHECK-NEXT: v118: anything = PropGet v96 key="prototype" accessSite=11
-# CHECK-NEXT: Jump -> next b70(v118)
-# CHECK-NEXT: b70(v119: anything):
-# CHECK-NEXT: v120: anything = PropGet v4 key="prototype" accessSite=12
-# CHECK-NEXT: v121: boolean = StrictEq v119, v120
-# CHECK-NEXT: v122: Array<anything, Contiguous> = NewArray v103, v110, v115, v121 contents=anything allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v123: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v122 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v124: string = CallBuiltin v123 overload=ArrayPrototypeJoin/0 accessSite=14 @0:1 tail
-# CHECK-NEXT: v125: undefined = CallBuiltin -, v124 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v126: f1|Proxy = Upcast v10 castType=undefined|f1|Proxy
-# CHECK-NEXT: v127: boolean = PropHas v126 key="alpha" accessSite=8
-# CHECK-NEXT: v128: boolean = PropHas v126 key="name" accessSite=9
-# CHECK-NEXT: v129: anything ~ int[-2147483643, 2147483647] = PropGet v126 key="alpha" accessSite=10
-# CHECK-NEXT: v130: anything = PropGet v126 key="prototype" accessSite=11
-# CHECK-NEXT: v131: boolean ~ true = Upcast v127 castType=boolean
-# CHECK-NEXT: v132: boolean ~ false = Upcast v128 castType=boolean
-# CHECK-NEXT: v133: anything ~ undefined = Upcast v130 castType=anything
-# CHECK-NEXT: v134: anything = PropGet v4 key="prototype" accessSite=12
-# CHECK-NEXT: v135: boolean = StrictEq v133, v134
-# CHECK-NEXT: v136: Array<anything, Contiguous> = NewArray v131, v132, v129, v135 contents=anything allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v137: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v136 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v138: string = CallBuiltin v137 overload=ArrayPrototypeJoin/0 accessSite=14 @0:1 tail
-# CHECK-NEXT: v139: undefined = CallBuiltin -, v138 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v18: boolean = PropHas v17 key="alpha" accessSite=8
+# CHECK-NEXT: v19: boolean = PropHas v17 key="name" accessSite=9
+# CHECK-NEXT: v20: anything = PropGet v17 key="alpha" accessSite=10
+# CHECK-NEXT: v21: undefined|int = AssumeType v20 provenType=undefined|int
+# CHECK-NEXT: v22: anything = PropGet v17 key="prototype" accessSite=11
+# CHECK-NEXT: v23: anything = PropGet v4 key="prototype" accessSite=12
+# CHECK-NEXT: v24: boolean = StrictEq v22, v23
+# CHECK-NEXT: v25: Array<undefined|boolean|int, Contiguous> = NewArray v18, v19, v21, v24 contents=undefined|boolean|int allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v26: Array<undefined|boolean|int, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v25 provenType=Array<undefined|boolean|int, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v27: string = CallBuiltin v26 overload=ArrayPrototypeJoin/0 accessSite=14 @0:1 tail
+# CHECK-NEXT: v28: undefined = CallBuiltin -, v27 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v29: boolean = PropHas v4 key="alpha" accessSite=8
+# CHECK-NEXT: v30: boolean = PropHas v4 key="name" accessSite=9
+# CHECK-NEXT: v31: anything = PropGet v4 key="alpha" accessSite=10
+# CHECK-NEXT: v32: undefined|int = AssumeType v31 provenType=undefined|int
+# CHECK-NEXT: v33: anything = PropGet v4 key="prototype" accessSite=11
+# CHECK-NEXT: v34: anything = PropGet v4 key="prototype" accessSite=12
+# CHECK-NEXT: v35: boolean = StrictEq v33, v34
+# CHECK-NEXT: v36: Array<undefined|boolean|int, Contiguous> = NewArray v29, v30, v32, v35 contents=undefined|boolean|int allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v37: Array<undefined|boolean|int, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v36 provenType=Array<undefined|boolean|int, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v38: string = CallBuiltin v37 overload=ArrayPrototypeJoin/0 accessSite=14 @0:1 tail
+# CHECK-NEXT: v39: undefined = CallBuiltin -, v38 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v40: f1|Proxy = Upcast v6 castType=undefined|f1|Proxy
+# CHECK-NEXT: v41: boolean = PropHas v40 key="alpha" accessSite=8
+# CHECK-NEXT: v42: boolean = PropHas v40 key="name" accessSite=9
+# CHECK-NEXT: v43: anything = PropGet v40 key="alpha" accessSite=10
+# CHECK-NEXT: v44: undefined|int = AssumeType v43 provenType=undefined|int
+# CHECK-NEXT: v45: anything = PropGet v40 key="prototype" accessSite=11
+# CHECK-NEXT: v46: anything = PropGet v4 key="prototype" accessSite=12
+# CHECK-NEXT: v47: boolean = StrictEq v45, v46
+# CHECK-NEXT: v48: Array<undefined|boolean|int, Contiguous> = NewArray v41, v42, v44, v47 contents=undefined|boolean|int allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v49: Array<undefined|boolean|int, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v48 provenType=Array<undefined|boolean|int, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v50: string = CallBuiltin v49 overload=ArrayPrototypeJoin/0 accessSite=14 @0:1 tail
+# CHECK-NEXT: v51: undefined = CallBuiltin -, v50 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v52: f1|Proxy = Upcast v10 castType=undefined|f1|Proxy
+# CHECK-NEXT: v53: boolean = PropHas v52 key="alpha" accessSite=8
+# CHECK-NEXT: v54: boolean = PropHas v52 key="name" accessSite=9
+# CHECK-NEXT: v55: anything = PropGet v52 key="alpha" accessSite=10
+# CHECK-NEXT: v56: undefined|int = AssumeType v55 provenType=undefined|int
+# CHECK-NEXT: v57: anything = PropGet v52 key="prototype" accessSite=11
+# CHECK-NEXT: v58: anything = PropGet v4 key="prototype" accessSite=12
+# CHECK-NEXT: v59: boolean = StrictEq v57, v58
+# CHECK-NEXT: v60: Array<undefined|boolean|int, Contiguous> = NewArray v53, v54, v56, v59 contents=undefined|boolean|int allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v61: Array<undefined|boolean|int, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v60 provenType=Array<undefined|boolean|int, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v62: string = CallBuiltin v61 overload=ArrayPrototypeJoin/0 accessSite=14 @0:1 tail
+# CHECK-NEXT: v63: undefined = CallBuiltin -, v62 overload=ConsoleLog/0 accessSite=7
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v141: int[1, 3] = Increment v16
-# CHECK-NEXT: Jump -> next b1(v141)
-# CHECK-NEXT: b71():
-# CHECK-NEXT: v142: undefined = Undefined
-# CHECK-NEXT: Return v142
+# CHECK-NEXT: v65: int[1, 3] = Increment v16
+# CHECK-NEXT: Jump -> next b1(v65)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v66: undefined = Undefined
+# CHECK-NEXT: Return v66
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="named"
-# CHECK: module=m0 position=190 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-# CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = Undefined
-# CHECK-NEXT: Return v0
-# CHECK-NEXT: }
+# CHECK: module=m0 position=190 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f26 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything):
@@ -459,10 +261,10 @@ runtimefunction id=69 function=f20
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="named"
-# CHECK: module=m0 position=190 role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} inlineFrames=[{}, {callee=f1 callPosition=190 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=190 role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f1, v1: anything):
-# CHECK-NEXT: v2: undefined = Undefined
-# CHECK-NEXT: Return v2
+# CHECK-NEXT: v2: never = ThrowNewError message="'named' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=69 captures=[{type=f20}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f20} creator=Entrypoint{target=f20 arguments=Registers} {

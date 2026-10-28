@@ -71,42 +71,20 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v1: L0 = NewObject layout=L0 allocationSite=1 allocationClass=0
 # CHECK-NEXT: v2: Proxy = CallBuiltin -, v0, v1 overload=Proxy/1 accessSite=0
 # CHECK-NEXT: v3: boolean = PropDelete v0 key="length"
-# CHECK-NEXT: v4: anything = PropGet v0 key="bind" accessSite=4
-# CHECK-NEXT: v5: boolean = IsPristine v0 builtinClass=Function aspects=[Names]
-# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v6: f20 = NewClosure v0 function=f20
-# CHECK-NEXT: Jump -> next b3(v6)
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v7: null = Null
-# CHECK-NEXT: v8: function = CallBuiltin v0, v7 overload=FunctionPrototypeBind/0 accessSite=5
-# CHECK-NEXT: Jump -> next b3(v8)
-# CHECK-NEXT: b3(v9: function|f20 ~ f20):
-# CHECK-NEXT: v10: function ~ f20 = AssumeType v9 provenType=function
-# CHECK-NEXT: v11: anything = PropGet v10 key="length" accessSite=6
-# CHECK-NEXT: v12: undefined|number = AssumeType v11 provenType=undefined|number
-# CHECK-NEXT: v13: undefined|number ~ number = Upcast v12 castType=anything
-# CHECK-NEXT: v14: undefined = CallBuiltin -, v13 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: Return v15
+# CHECK-NEXT: v4: null = Null
+# CHECK-NEXT: v5: function = CallBuiltin v0, v4 overload=FunctionPrototypeBind/0 accessSite=5
+# CHECK-NEXT: v6: anything = PropGet v5 key="length" accessSite=6
+# CHECK-NEXT: v7: undefined|number = AssumeType v6 provenType=undefined|number
+# CHECK-NEXT: v8: undefined|number ~ number = Upcast v7 castType=anything
+# CHECK-NEXT: v9: undefined = CallBuiltin -, v8 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="f"
-# CHECK: module=m0 position=52 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=1}] functionTypes=[f2] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-# CHECK-NEXT: b0(v0: anything, v1: anything):
-# CHECK-NEXT: v2: 1 = Integer integer=1
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: }
+# CHECK: module=m0 position=52 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f2] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="f"
-# CHECK: module=m0 position=52 role=GenericEntrypoint flags=[HasThis] length=2 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} inlineFrames=[{}, {callee=f1 callPosition=52 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=52 role=GenericEntrypoint flags=[HasThis] length=2 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: 1 = Integer integer=1
-# CHECK-NEXT: Return v4
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="f"
-# CHECK: module=m0 position=52 role=BoundFunction length=2 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=1}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=BoundFunction{target=f1 capturesTargetClosure=true}
-# CHECK-LABEL: function {{*}}name="f"
-# CHECK: module=m0 position=52 role=GenericEntrypoint flags=[HasThis] length=2 captures=[{type=f20}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f20} creator=Entrypoint{target=f20 arguments=Registers} inlineFrames=[{}, {callee=f20 callPosition=52 isTailCall=true module=m0}, {callee=f1 callPosition=52 parent=1 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: f20, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: 1 = Integer integer=1
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v4: never = ThrowNewError message="'f' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

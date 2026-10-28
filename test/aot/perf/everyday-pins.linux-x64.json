@@ -1708,8 +1708,8 @@
     "untyped": 41.2
   },
   "everyday-downleveled/parent-call.event-emitter": {
-    "typed": 133,
-    "untyped": 144
+    "typed": 66.4,
+    "untyped": 65.2
   },
   "everyday-downleveled/parent-call.event-emitter-class": {
     "typed": 102.3,
@@ -2596,8 +2596,8 @@
     "untyped": 2043
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/whether-each-object-has-a-name.in": {
-    "typed": 2012,
-    "untyped": 1404
+    "typed": 2007.1,
+    "untyped": 1399.1
   },
   "everyday-long-lists/a-long-list-searched-from-its-end-by-a-24-character-key": {
     "typed": 15685.9,
@@ -2772,8 +2772,8 @@
     "untyped": 394.8
   },
   "everyday-microtasks-and-promises/async-resource-bind": {
-    "typed": 3393.7,
-    "untyped": 3339.6
+    "typed": 2662.4,
+    "untyped": 2614.8
   },
   "everyday-microtasks-and-promises/await-a-kept-settled-promise": {
     "typed": 526.1,

@@ -1,12 +1,12 @@
-// Text that is half written: a program of ../programs cut off at any character, with a stray token in it, with a part of it gone, there twice or moved, a bracket turned into another, or something nested very deeply.
+// Text that is half written: a program of ../parallel cut off at any character, with a stray token in it, with a part of it gone, there twice or moved, a bracket turned into another, or something nested very deeply.
 // `bun check` and `bun build --compile --aot` say what is wrong with it, or nothing, and end by themselves: exit code 0 or 1, within the time limit, without a report of an internal error.
 //
-//   bun test/aot/fuzz/damaged-text.ts --seconds 600 --jobs 16 --out /tmp/damaged [--bun <path>] [--programs-root <folder>] [--seed <n>] [--files 24] [--only check | build]
+//   bun test/aot/fuzz/damaged-text.ts --minutes 10 --jobs 16 --out /tmp/damaged [--seconds <n>] [--bun <path>] [--programs-root <folder>] [--seed <n>] [--files 24] [--only check | build]
 //
-// `bun check` gets a folder of damaged files at once; when it ends otherwise than it may, each file is asked alone. A finding is made small by taking parts of the text away for half a minute.
+// burst.ts starts it as one of its lanes. A file STOP in --out ends it. `bun check` gets a folder of damaged files at once; when it ends otherwise than it may, each file is asked alone. A finding is made small by taking parts of the text away for half a minute.
 // <out>/findings/<kind>-<command>-<hash>/ holds damaged.<extension>, small.<extension>, said.txt and finding.json: the program, what was done to it, the seed. Three findings are kept of what says the same words.
 import { spawn } from "bun";
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { extname, join, relative } from "path";
 import { withoutInstallingPackages } from "../harness/without-installing-packages";
 import { Random } from "./random";
@@ -63,7 +63,7 @@ const tsconfig = JSON.stringify({ compilerOptions: { target: "esnext", module: "
 if (import.meta.main) {
   const option = (name: string, otherwise: string) => (process.argv.includes("--" + name) ? process.argv[process.argv.indexOf("--" + name) + 1] : otherwise);
   const out = option("out", "/tmp/damaged-text"), bun = option("bun", process.execPath), root = option("programs-root", join(import.meta.dir, "..", "parallel")), only = option("only", ""); // prettier-ignore
-  const jobs = Number(option("jobs", "8")), files = Number(option("files", "24")), end = Date.now() + Number(option("seconds", "60")) * 1000; // prettier-ignore
+  const jobs = Number(option("jobs", "8")), files = Number(option("files", "24")), end = Date.now() + Number(option("seconds", String(Number(option("minutes", "1")) * 60))) * 1000; // prettier-ignore
   let seed = Number(option("seed", String(Date.now())));
   const programs = (readdirSync(root, { recursive: true }) as string[]).filter(name => /\.(ts|tsx|js|mts|cts)$/.test(name) && !name.endsWith(".d.ts")).sort().map(name => join(root, name)); // prettier-ignore
   mkdirSync(join(withoutInstallingPackages(out), "findings"), { recursive: true });
@@ -98,7 +98,7 @@ if (import.meta.main) {
   await Promise.all(
     Array.from({ length: jobs }, async (_, job) => {
       const folder = join(out, "work-" + job), single = join(out, "work-" + job + "-alone"); // prettier-ignore
-      while (Date.now() < end) {
+      while (Date.now() < end && !existsSync(join(out, "STOP"))) {
         rmSync(folder, { recursive: true, force: true });
         mkdirSync(folder, { recursive: true });
         writeFileSync(join(folder, "tsconfig.json"), tsconfig);
@@ -119,7 +119,8 @@ if (import.meta.main) {
           if (!verdict) continue;
           const signature = `${verdict.kind} ${name} ${verdict.words.replace(/\d+/g, "N").slice(0, 200)}`;
           seen.set(signature, (seen.get(signature) ?? 0) + 1);
-          appendFileSync(join(out, "findings.tsv"), [each.seed, name, verdict.kind, verdict.words.slice(0, 200), relative(root, each.path), each.what].join("\t") + "\n");
+          // The columns of run.ts.
+          appendFileSync(join(out, "findings.tsv"), [new Date().toISOString(), "product", name, bun, verdict.kind, "", `damaged-text:${each.seed}`, `${verdict.kind}-${name}`, verdict.words.slice(0, 200), `${relative(root, each.path)} ${each.what}`].join("\t") + "\n");
           if (seen.get(signature)! > 3) continue;
           stored++;
           let small = each.text;

@@ -177,7 +177,7 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-LABEL: function {{*}}name="makeRing"
 # CHECK: module=m0 position=431 role=GenericEntrypoint flags=[HasThis] length=2 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: L0 = CallDirect v2 function=f12
+# CHECK-NEXT: v4: L0 = CallDirect v2 function=f11
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Node"
@@ -191,7 +191,7 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-LABEL: function {{*}}name="Node"
 # CHECK: module=m0 position=352 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=3 thisType={type=L0} parameters=[{type=anything}, {type=null|L0}, {type=string}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{}, {original=0}, {original=1}, {original=2}, {original=3}]} creator=Version{provenVersion=f4} constructedClass=L0
 # CHECK-LABEL: function {{*}}name="makeRing"
-# CHECK: module=m0 position=431 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}] results=[{type=L0}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f11 callPosition=4294967295 isConstruction=true module=m0}, {callee=f11 callPosition=4294967295 isConstruction=true module=m0}, {callee=f11 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK: module=m0 position=431 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}] results=[{type=L0}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f10 callPosition=4294967295 isConstruction=true module=m0}, {callee=f10 callPosition=4294967295 isConstruction=true module=m0}, {callee=f10 callPosition=4294967295 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v2: anything ~ number = Upcast v0 castType=anything
 # CHECK-NEXT: v3: null = Null

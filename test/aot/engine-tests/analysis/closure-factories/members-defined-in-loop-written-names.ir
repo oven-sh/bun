@@ -567,7 +567,7 @@ runtimefunction id=131091 function=f51 visibility=Private
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v3: Object @Cell = GetModuleVariable variable=g0
 # CHECK-NEXT: v4: f63 @Cell = NewClosure v1 function=f63 allocationSite=41 closureForm=Slim
-# CHECK-NEXT: PropSet v3, v4 key="k" accessSite=68 siteCache=3
+# CHECK-NEXT: PropSet v3, v4 key="k" accessSite=68 siteCache=2
 # CHECK-NEXT: v6: undefined @JSValue = Undefined
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: b2():

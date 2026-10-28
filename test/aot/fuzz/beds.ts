@@ -29,6 +29,12 @@ export interface Program {
   entryPoints?: string[];
   /** It has `files`, and both runs and the build start in its folder: what it says of itself in tsconfig.json counts for `bun run` too, and a path counts from there. */
   runsInItsFolder?: true;
+  /** Why the two may print these two texts, where its source knows of a difference that is meant and that shows only in what is printed. Such a program counts as skipped. */
+  meant?: (plain: string, compiled: string) => string | undefined;
+  /** It has a `plainEnvironment`, and what plain Bun prints without it differs from run to run: an executable that prints what one of forty such runs prints is as right. */
+  plainWavers?: string;
+  /** It is built under options of its own, which TypeScript is not asked under here: a build that stops at an error in the program is no finding. */
+  mayBeRefused?: true;
 }
 
 export interface Run {
@@ -141,13 +147,27 @@ async function textUpToTheLimit(stream: ReadableStream<Uint8Array>) {
   return Buffer.concat(kept).toString();
 }
 
-export async function spawned(cmd: string[], cwd: string, seconds: number, more?: Record<string, string>, memory = memoryLimit): Promise<Run> {
+// A process group is no matter of numbers: kill(0) goes to the group that the program was born into, whoever can see whom. So it also begins a session, and with it a group, of its own.
+const ofItsOwn = ["unshare", "--user", "--map-current-user", "--pid", "--fork", "--kill-child", "--", "setsid"];
+let canStandApart: boolean | undefined;
+/** Whether a command can have process numbers of its own here: Linux, `unshare` of util-linux, and a kernel that lets anybody make a user namespace. Asked once. */
+export function standsApart(): boolean {
+  return (canStandApart ??= process.platform === "linux" && !!Bun.which("unshare") && !!Bun.which("setsid") && Bun.spawnSync({ cmd: [...ofItsOwn, "true"], stdio: ["ignore", "ignore", "ignore"] }).exitCode === 0);
+}
+/**
+ * `apart`: the command runs a program that somebody drew. It gets process numbers and a process group of its own, where that can be had: it is number 1 there and sees no other process, so kill(0), kill(-1) and a number that a mutation or
+ * a wrong answer made up end nothing but the program. Number 1 is not ended by a signal that it sends itself and does not handle: plain and compiled alike.
+ */
+export async function spawned(cmd: string[], cwd: string, seconds: number, more?: Record<string, string>, memory = memoryLimit, apart = false): Promise<Run> {
+  const isApart = apart && standsApart();
+  if (isApart) cmd = [...ofItsOwn, ...cmd];
   // No core files, and a limit on processor time behind the limit on wall time. Where core files go to a program through a pipe, Linux asks for no limit but one: at a limit of one byte it starts no such program.
   // When the machine runs out of memory all the same, Linux ends this process first.
   const killedFirst = process.platform === "linux" ? "{ echo 1000 > /proc/$$/oom_score_adj; } 2> /dev/null; " : "";
   const limited = process.platform === "win32" ? cmd : ["/bin/sh", "-c", `${killedFirst}prlimit --pid $$ --core=1:1 2> /dev/null || ulimit -c 0; ulimit -t ${Math.ceil(seconds * 4)}; exec "$@"`, "--", ...cmd];
   await using child = Bun.spawn({ cmd: limited, cwd, env: { ...environment, ...more }, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: seconds * 1000, killSignal: "SIGKILL" });
-  using held = endAtMemoryLimit(child, memory);
+  // `unshare` stands in front of a command that is apart: what it starts is what is measured, and it takes that with it when it is ended.
+  using held = endAtMemoryLimit(child, memory, false, isApart);
   const [stdout, stderr, exitCode] = await Promise.all([textUpToTheLimit(child.stdout), textUpToTheLimit(child.stderr), child.exited]);
   const timedOut = child.signalCode === "SIGKILL" || child.signalCode === "SIGXCPU";
   return { stdout, stderr, exitCode: child.signalCode ? null : exitCode, signal: timedOut || child.signalCode === null ? null : String(child.signalCode), timedOut, tookTooMuchMemory: held.exceeded };
@@ -208,7 +228,7 @@ function unusable(bed: Bed, plain: Run): Verdict | undefined {
 }
 
 /** In front of a flag that is no flag of the build: a variable for the run of the executable. */
-const inTheRun = "--in-the-run=";
+export const inTheRun = "--in-the-run=";
 /** The same: so many shapes that hold the names of the programs are built beside them (company.ts). */
 const inTheCompanyOf = "--in-the-company-of=";
 /** The same: what lies in the folder beside the programs, a name of `projects`. */
@@ -218,7 +238,7 @@ const eachAProgram = "--each-a-program";
 export const staysAScript = "// stays a script\n";
 /** What a program may call without declaring it. */
 export const printFor = (isTyped: boolean) => (isTyped ? "function print(text: string): void {\n  console.log(text);\n}\n" : "function print(text) {\n  console.log(text);\n}\n");
-const isOfTheBuild = (flag: string) => !flag.startsWith(inTheRun) && !flag.startsWith(inTheCompanyOf) && !flag.startsWith(besideTheProgram) && flag !== eachAProgram;
+export const isOfTheBuild = (flag: string) => !flag.startsWith(inTheRun) && !flag.startsWith(inTheCompanyOf) && !flag.startsWith(besideTheProgram) && flag !== eachAProgram;
 
 const ownOptions = { target: "esnext", module: "preserve", moduleResolution: "bundler", allowJs: true, noEmit: true, strict: true };
 /** What a folder may hold beside a program. A small script has no tsconfig.json at all and no typings installed: there the build has to know the host by itself. */
@@ -415,7 +435,8 @@ export class ProductBed implements Bed {
   // A mutant of a typed program may not type-check, and that stops a build as it should. What TypeScript itself accepts with Bun's typings at hand, and plain Bun runs, the build has to take.
   #checkers = new Map<string, Checker | undefined>();
   #judged(program: Program, flags: string[], verdict: Verdict): Verdict {
-    if (verdict.kind !== "skipped" || !verdict.refusal) return verdict;
+    if (program.mayBeRefused && verdict.kind === "build error") return { kind: "skipped", why: "the build is refused" };
+    if (verdict.kind !== "skipped" || !verdict.refusal || program.mayBeRefused) return verdict;
     // The build reports the errors of TypeScript 7, which reads less out of a JavaScript file than the TypeScript that is asked here: `arguments`, constructor functions, a class below Promise.
     if (Object.keys(program.files ?? {}).some(path => /\.[cm]?js$/.test(path))) return { kind: "skipped", why: `${verdict.why}, beside JavaScript` };
     const name = flags.find(flag => flag.startsWith(besideTheProgram))?.slice(besideTheProgram.length) ?? "the-bed's-own";
@@ -434,7 +455,7 @@ export class ProductBed implements Bed {
     const set: Record<string, string> = { ...this.options.runEnvironment, ...Object.fromEntries(drawn) };
     // Where collections are forced a sweep overwrites dead cells.
     if (set.BUN_JSC_slowPathAllocsBetweenGCs || set.BUN_JSC_collectContinuously === "1") set.BUN_JSC_useZombieMode ??= "1";
-    return spawned(cmd, folder, seconds, set, this.options.memory);
+    return spawned(cmd, folder, seconds, set, this.options.memory, true);
   }
 
   #build(folder: string, entry: string, flags: string[], further: string[] = [], from = folder) {
@@ -456,13 +477,18 @@ export class ProductBed implements Bed {
       const file = home === folder ? entryOf("program", program) : `main.${program.extension}`;
       this.#layBeside(folder, flags);
       this.#write(folder, "program", program, flags);
-      const plain = await spawned([this.bun, "run", file], home, this.options.runSeconds, program.plainEnvironment, this.options.memory);
+      const plain = await spawned([this.bun, "run", file], home, this.options.runSeconds, program.plainEnvironment, this.options.memory, true);
       const early = unusable(this, plain);
       if (early) return [{ plain, verdict: early }];
       rmSync(executable, { force: true });
       const build = await this.#build(folder, file, flags, program.entryPoints?.map(path => (home === folder ? `program/${path}` : path)), home);
       const compiled: Compiled = existsSync(executable) && build.exitCode === 0 ? { build, run: await this.#run(home, [executable], flags) } : { build };
-      return [{ plain, compiled, verdict: this.#judged(program, flags, compare(this, program, plain, compiled)) }];
+      let verdict = compare(this, program, plain, compiled);
+      for (let again = 0; again < 40 && program.plainWavers && compiled.run && (verdict.kind === "different output" || verdict.kind === "different exit code"); again++) {
+        const other = await spawned([this.bun, "run", file], home, this.options.runSeconds, undefined, this.options.memory, true);
+        if (other.stdout === compiled.run.stdout && other.exitCode === compiled.run.exitCode) verdict = { kind: "skipped", why: program.plainWavers };
+      }
+      return [{ plain, compiled, verdict: this.#judged(program, flags, verdict) }];
     } finally {
       rmSync(executable, { force: true });
       rmSync(join(folder, "program"), { recursive: true, force: true });
@@ -533,7 +559,7 @@ ${table}if (isMainThread) {
     const all = programs.map((_, index) => index);
     this.#writeModules(folder, programs, flags);
     entry(all);
-    const plains = (await inParallel(all, 4, index => spawned([this.bun, "run", "main.js", String(index)], folder, this.options.runSeconds, undefined, this.options.memory))).map(run => this.#inAnyOrder(run));
+    const plains = (await inParallel(all, 4, index => spawned([this.bun, "run", "main.js", String(index)], folder, this.options.runSeconds, undefined, this.options.memory, true))).map(run => this.#inAnyOrder(run));
     for (const index of all) {
       const early = unusable(this, plains[index]);
       if (early) results[index] = { plain: plains[index], verdict: early };
@@ -737,7 +763,7 @@ const uncaught = (run: Run) => (run.stderr + "\n" + run.stdout).split("\n").find
 const validationMessage = /^.*(AOT validation|validation failed).*$/m;
 
 // What the compiler can ask itself while it builds, without a byte of the executable depending on it. A build of a user's does not pay for it.
-const checksThatMoveNoOutput = "--aot-check=verify-each-stage,validate-references,flow-fixpoint,used-values-are-listed";
+export const checksThatMoveNoOutput = "--aot-check=verify-each-stage,validate-references,flow-fixpoint,used-values-are-listed";
 
 export function compare(bed: Bed, program: Program, plain: Run, compiled: Compiled): Verdict {
   const failure = (kind: FindingKind, detail: string, signature = detail): Failure => ({ kind, detail, signature });
@@ -765,6 +791,8 @@ export function compare(bed: Bed, program: Program, plain: Run, compiled: Compil
   if (run.signal) return failure("crash", `${run.signal} ${normalized(/^.*(panic|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault|AOT: |FATAL: out of memory).*$/m.exec(run.stderr)?.[0] ?? "")}`.trim());
   if (run.timedOut) return failure("hang", run.tookTooMuchMemory ? "took too much memory" : "");
   if (run.stdout === plain.stdout && run.exitCode === plain.exitCode) return { kind: "same" };
+  const why = program.meant?.(plain.stdout, run.stdout);
+  if (why) return { kind: "skipped", why };
   const exits = run.exitCode === plain.exitCode ? "" : ` | exit codes ${plain.exitCode} ${run.exitCode}: ${uncaught(run.exitCode ? run : plain).slice(0, 160)}`;
   const codes = `${plain.exitCode} ${run.exitCode} ${normalized(uncaught(run.exitCode ? run : plain))}`;
   if (run.stdout === plain.stdout) return failure("different exit code", exits.slice(3), codes);

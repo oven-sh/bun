@@ -273,8 +273,9 @@ const withSymbols = (execPath: string) =>
   [...strippedBuns].find(([, stripped]) => stripped === execPath)?.[0] ?? execPath;
 const bunFor = (execPath: string, testPath: string) =>
   (buildsManyExecutables(testPath) && strippedBuns.get(execPath)) || execPath;
-// What a program under test/aot/parallel takes of a shard: its part of a build that it shares with others, and two runs. No program has an entry in expected-durations.json.
-const aotProgramCostMs = 1_000;
+// What a program under test/aot/parallel takes of a shard: its part of a build that it shares with others, and two runs.
+// One that takes three seconds or more, as most that are built alone with much of Bun's library do, has an entry in expected-durations.json.
+const aotProgramCostMs = 800;
 const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
@@ -840,6 +841,8 @@ async function runTests(): Promise<TestResult[]> {
   const parallelSafeWidth =
     parallelism > 1 ? parallelism : Math.min(parallelSafeCap, Math.max(availableParallelism() - 1, 1));
   const parallelSafeLimit = parallelism > 1 ? limit : createLimit(parallelSafeWidth);
+  // The programs compiled ahead of time come last and nothing of the shard runs beside them. Their driver and this runner only wait: a job for each processor.
+  const aotWidth = parallelism > 1 ? parallelism : Math.min(parallelSafeCap, availableParallelism());
   const isParallelSafeTest = (testPath: string) => {
     const p = testPath.replaceAll("\\", "/");
     if (!p.includes("js/node/test/parallel/") && !p.includes("js/bun/test/parallel/")) return false;
@@ -1164,14 +1167,14 @@ async function runTests(): Promise<TestResult[]> {
       }
     };
 
-    const runParallelBucket = async (bucketFiles: string[]) => {
+    const runParallelBucket = async (execPath: string, bucketFiles: string[]) => {
       for (const t of bucketFiles) await awaitNapiPrebuild(t);
       const width = parallelSafeWidth;
       const label = `${bucketFiles.length} files in parallel (${width}×)`;
       const range = `${getAnsi("gray")}[${i + 1}-${i + bucketFiles.length}/${total}]${getAnsi("reset")}`;
       const junitPath = join(
         cwd,
-        `parallel-bucket-junit-${(options.step || getOs()).replace(/[^a-zA-Z0-9._-]/g, "_")}-shard${options.shard ?? 0}.xml`,
+        `parallel-bucket-junit-${(options.step || getOs()).replace(/[^a-zA-Z0-9._-]/g, "_")}-shard${options.shard ?? 0}-${basename(execPath, extname(execPath))}.xml`,
       );
       const isAsan = basename(execPath).includes("asan");
       const perTestTimeout = Math.ceil(testTimeout / 2) * (isAsan ? 3 : 1);
@@ -1345,7 +1348,7 @@ async function runTests(): Promise<TestResult[]> {
       const { error, exitCode, crashes } = await spawnBun(bunFor(execPath, "aot/"), {
         args: [
           aotDriver,
-          `--jobs=${parallelSafeWidth}`,
+          `--jobs=${aotWidth}`,
           `--files-from=${list}`,
           // Linux on x64 asks each program as it is when it is built alone. The others ask what differs there, which is not what the compiler knows about a program.
           ...(isLinux && isX64 && !basename(execPath).includes("asan") ? [] : ["--one-program=all"]),
@@ -1446,7 +1449,7 @@ async function runTests(): Promise<TestResult[]> {
     };
 
     const runAotPrograms = async (files: string[]) => {
-      startGroup(`Running ${files.length} programs compiled ahead of time (${parallelSafeWidth}-wide)`);
+      startGroup(`Running ${files.length} programs compiled ahead of time (${aotWidth}-wide)`);
       const failsDriver = (file: string, message: string): AotVerdict => ({
         file,
         state: "fail",
@@ -1492,12 +1495,16 @@ async function runTests(): Promise<TestResult[]> {
     const parallelSafeTests = tests.filter(t => isParallelSafeTest(t));
     const modifiedSerialTests = serialTests.filter(t => isModified(t));
     const bucketCandidates = serialTests.filter(t => !isModified(t) && isBucketCandidate(t));
-    const bucketable = bucketCandidates.length >= 8 ? new Set(bucketCandidates) : new Set<string>();
+    // One process runs a bucket, so its files are those of one Bun.
+    const buckets = [...new Set(bucketCandidates.map(t => bunFor(execPath, t)))]
+      .map(bun => [bun, bucketCandidates.filter(t => bunFor(execPath, t) === bun)] as const)
+      .filter(([, files]) => files.length >= 8);
+    const bucketable = new Set(buckets.flatMap(([, files]) => files));
     const restSerialTests = serialTests.filter(t => !isModified(t) && !bucketable.has(t));
 
     await Promise.all(modifiedSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
     await Promise.all(restSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
-    if (bucketable.size) await runParallelBucket(bucketCandidates);
+    for (const [bun, files] of buckets) await runParallelBucket(bun, files);
     // Concurrent tests log their title without opening a group (interleaved
     // output can't nest), so give the phase its own group instead of letting
     // the log viewer fold every line under the last serial test's group.

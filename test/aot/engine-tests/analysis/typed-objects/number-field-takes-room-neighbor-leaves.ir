@@ -447,7 +447,7 @@ runtimefunction id=69 function=f9
 # -- generated: f0 putIntoFull putIntoRoomy putIntoWritten textOf look f6
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 1540, patchpoints: 167, rare instructions: 1456, polls: 14
+# CHECK-NEXT: instructions: 1592, patchpoints: 167, rare instructions: 1488, polls: 14
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="putIntoFull"
 # CHECK: role=EntryChecks

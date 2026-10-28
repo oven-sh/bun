@@ -14,6 +14,8 @@
 // of its own, which BUN_AOT_START_AT tells where to start.
 // Those that name much of Bun's library are one program with many entry points, so the library is compiled once for all of them.
 // So are the programs of the second build: the first has asked each as it is alone.
+// What the compiler leaves out of an executable goes by how much it knows, and it knows less beside others: a program that is refused something
+// there, and not by plain Bun, is built again alone and judged by that.
 // Not one with a stored Output: what an executable leaves out goes by all that it holds. Nor one that writes to a built-in object, unless
 // it names much of the library: what may be written goes by what the others call, and what the others may rely on by what is written.
 //
@@ -96,6 +98,8 @@ type Program = {
 };
 
 const programsInOneExecutable = 64;
+// The library is compiled once for each such program, so the fewer the better.
+const entryPointsOfOneProgram = 256;
 // Whoever names one of these brings thousands of functions of Bun's library, and takes as long to build as eight other programs.
 const namesMuchOfTheLibrary =
   /["'`](?:node:)?(?:assert|child_process|cluster|console|crypto|dgram|diagnostics_channel|dns|events|fs|https?|http2|inspector|net|perf_hooks|readline|repl|stream|tls|tty|util|v8|worker_threads|zlib)(?:\/[a-z]+)?["'`]|\bWorker\b|\bprocess\.std(?:in|out|err)\b/;
@@ -108,6 +112,7 @@ const writesToBuiltIn = new RegExp(
     `\\bdelete\\s+${builtIn}\\b`,
   ].join("|"),
 );
+const saysWhatWasLeftOut = /was not compiled into this executable|the compiler couldn't tell at build time/;
 const sharesLibrary = ({ weight, output, way, writesToBuiltIn }: Program) =>
   output === undefined && (weight > 1 || (!writesToBuiltIn && (way === "erased" || firstBuildIsOneProgram)));
 const weightOf = (programs: Program[]) =>
@@ -274,6 +279,8 @@ const secondsToAnswer = 3;
 /** Each child leads a process group of its own, which holds whatever it starts. */
 const running = new Set<number>();
 function endGroup(pid: number, signal: "SIGTERM" | "SIGKILL") {
+  // The group of process 1 or 0 would be everybody, or this driver.
+  if (!(pid > 1)) return;
   try {
     if (!isWindows) process.kill(-pid, signal);
     else if (signal === "SIGKILL")
@@ -333,7 +340,7 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
   running.add(pid);
   // A build that is asked to end says what each of its threads is still compiling.
   const answers = cmd[1] === "build" && !isWindows;
-  using held = memory.watch({ pid, kill: signal => endGroup(pid, signal) }, cmd[1] !== "build");
+  using held = memory.watch({ pid, leadsAGroup: true }, cmd[1] !== "build");
   let ranOver = false;
   const end = (signal: "SIGTERM" | "SIGKILL") => {
     ranOver = true;
@@ -729,6 +736,9 @@ async function run(programs: Program[]): Promise<void> {
         const counted = countedByRun(written.map(name => readFileSync(join(folder, name), "utf8")).join(""));
         for (const name of written) rmSync(join(folder, name), { force: true });
         const plain = await reference();
+        const isRefused = ({ stdout, stderr }: Output) => saysWhatWasLeftOut.test(stdout + stderr);
+        if (!isAlone && sharesLibrary(first) && isRefused(compiled.output) && !(plain && isRefused(plain.output)))
+          return run([{ ...program, isAlone: true }]);
         if (compiled.output.signal)
           return fail(program, "run", `it ended by ${describeEnd(compiled.output)}`, compiled.output, plain?.output);
         // The executable ran compiled code and did not fall back to the source it holds.
@@ -888,7 +898,8 @@ const groups = Map.groupBy(all, program =>
   ]),
 );
 const batches = [...groups.values()].flatMap(group => {
-  const most = Math.ceil(weightOf(group) / Math.ceil(weightOf(group) / programsInOneExecutable));
+  const limit = sharesLibrary(group[0]) ? entryPointsOfOneProgram : programsInOneExecutable;
+  const most = Math.ceil(weightOf(group) / Math.ceil(weightOf(group) / limit));
   const batches: Program[][] = [[]];
   for (const program of group) {
     if (batches.at(-1)!.length && weightOf([...batches.at(-1)!, program]) > most) batches.push([]);

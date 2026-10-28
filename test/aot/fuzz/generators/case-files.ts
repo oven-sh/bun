@@ -1,10 +1,5 @@
 // Files of cases. Every line of such a file that starts with `t("<name>"` or `await t("<name>"` is one case, and the lines ahead of them serve all of them. The name of a case is its value on each axis of the table, separated by spaces.
 // A case is compiled beside the other cases of its file, and alone: the whole-program analysis of --aot proves more about a small program, and other things about a large one.
-//
-//   bun test test/aot/generated-table                            every table: each file as one program, and a sample of its cases alone
-//   AOT_GENERATED_ALONE=1000 bun test test/aot/generated-table   so many cases of each table alone, in place of the number that its test names
-//   AOT_GENERATED=all bun test test/aot/generated-table          every case alone
-//   AOT_GENERATED="in one program" bun test ..                   no case alone
 import { mkdirSync, writeFileSync } from "fs";
 import { extname, join } from "path";
 import type { Member } from "../family";
@@ -79,7 +74,7 @@ export interface Expectations {
 export function programsOf(files: CaseFile[], { alone, failsToday = [], leaveAnError }: Expectations): Member[] {
   const failure = (name: string) => failsToday.find(({ cases }) => cases.test(name))?.how;
   const names = files.flatMap(file => file.cases.map(({ name }) => name));
-  const alwaysAlone = new Set(spread(names, Number(process.env.AOT_GENERATED_ALONE ?? alone)));
+  const alwaysAlone = new Set(spread(names, alone));
   const common = { isOnlyCompiled: true as const };
   const error = (names: string[]) =>
     names.some(name => leaveAnError?.test(name)) ? { leavesAnError: true as const } : {};

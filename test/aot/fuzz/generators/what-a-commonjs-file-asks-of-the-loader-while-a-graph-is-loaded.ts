@@ -3,6 +3,8 @@
 // (who loads the graph) x (where the file stands in it) x (what the file imports) x (what else waits)
 
 const says = (text: string) => `console.log(${JSON.stringify(text)});\n`;
+// It names `module`, so it is CommonJS whoever loads it.
+const fileThatSays = (text: string) => says(text) + "module.exports = {};\n";
 const chain = (name: string, length: number) =>
   `{\n  let last = Promise.resolve();\n  for (let turn = 0; turn < ${length}; turn++) last = last.then(() => console.log("${name}", turn));\n}\n`;
 
@@ -46,13 +48,13 @@ export const places = {
   },
   "the file stands between two other files": {
     "root.mjs": `import "./first.cjs";\nimport { v } from "./file.cjs";\nimport "./last.cjs";\n${says("root runs")}export const value = v;\n`,
-    "first.cjs": says("first runs"),
-    "last.cjs": says("last runs"),
+    "first.cjs": fileThatSays("first runs"),
+    "last.cjs": fileThatSays("last runs"),
   },
   "a module and its file stand behind the file": {
     "root.mjs": `import { v } from "./file.cjs";\nimport "./side.mjs";\n${says("root runs")}export const value = v;\n`,
     "side.mjs": `import "./last.cjs";\n${says("side runs")}`,
-    "last.cjs": says("last runs"),
+    "last.cjs": fileThatSays("last runs"),
   },
 } satisfies Record<string, Record<string, string>>;
 
@@ -80,7 +82,7 @@ export const asked = {
     call: `import("./asked.mjs")${settles}`,
     files: {
       "asked.mjs": `import "./asked-file.cjs";\n${says("asked runs")}`,
-      "asked-file.cjs": says("asked-file runs"),
+      "asked-file.cjs": fileThatSays("asked-file runs"),
     },
   },
   "the root of the graph": {

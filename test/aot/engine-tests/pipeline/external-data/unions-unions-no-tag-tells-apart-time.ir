@@ -936,146 +936,538 @@ runtimefunction id=131110 function=f18
 # CHECK: m0 position=2920 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L0 site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L0|L1 = GetModuleVariable variable=g1
-# CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/0 accessSite=22
-# CHECK-NEXT: v3: string = ToString v2 calledBuiltin=JSONParse @0 tail
-# CHECK-NEXT: v4: boolean = JSONSourceOpen v3 @0 tail
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b5() @0 tail
-# CHECK-NEXT: b1(v5: guard):
-# CHECK-NEXT: v6: cursor = JSONSourceStart v5 @0 tail
-# CHECK-NEXT: v7: cursor = JSONSkipWhitespace v6 @0 tail
-# CHECK-NEXT: v8: undefined = CallDirect v7 function=f25 @0 tail
-# CHECK-NEXT: v9: int[0, 2] = ResultAt v8 @0 tail
-# CHECK-NEXT: v10: undefined|null|L0 = ResultAt v8 index=1 @0 tail
-# CHECK-NEXT: v11: cursor = ResultAt v8 index=2 @0 tail
-# CHECK-NEXT: Switch v9 cases=[1] -> case b2(), otherwise b4() @0 tail
+# CHECK-NEXT: v1: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v2: i32 = StringBuilderCheckpoint v1
+# CHECK-NEXT: v3: boolean = ShapeTest v0 layouts=[L1]
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b3()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: int[0, 2] = CallDirect v0, v1 function=f23 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v4 cases=[1] -> case b2(), otherwise b6()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v12: boolean = JSONSourceClose v5, v11 @0 tail
-# CHECK-NEXT: Branch v12 -> taken b3(), notTaken b5() @0 tail
+# CHECK-NEXT: v5: buildercursor = StringBuilderReserve v1 size=128
+# CHECK-NEXT: Jump -> next b7(v5)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v13: null|L0 = AssumeType v10 provenType=null|boolean|number|string|object @0 tail
-# CHECK-NEXT: Jump -> next b6(v13) @0 tail
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: JSONSourceAbandon v5 @0 tail
-# CHECK-NEXT: Jump -> next b5() @0 tail
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v15: undefined = Undefined @0 tail
-# CHECK-NEXT: v16: null|boolean|number|string|object = CallBuiltin -, v3, v15 overload=JSONParse/0 accessSite=23 @0 tail
-# CHECK-NEXT: Jump -> next b6(v16) @0 tail
-# CHECK-NEXT: b6(v17: null|boolean|number|string|object ~ null|L0):
-# CHECK-NEXT: v18: null|boolean|number|string|object ~ null|L0 = Upcast v17 castType=anything
-# CHECK-NEXT: Return v18
+# CHECK-NEXT: v6: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch v6 -> taken b4(), notTaken b6()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v7: int[0, 2] = CallDirect v0, v1 function=f22 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v7 cases=[1] -> case b5(), otherwise b6()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v8: buildercursor = StringBuilderReserve v1 size=128
+# CHECK-NEXT: Jump -> next b7(v8)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v9: buildercursor = StringBuilderReserve v1 size=128
+# CHECK-NEXT: Jump -> next b7(v9)
+# CHECK-NEXT: b7(v10: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v1, v10
+# CHECK-NEXT: v12: i32 = StringBuilderCheckpoint v1
+# CHECK-NEXT: v13: boolean = StrictEq v2, v12
+# CHECK-NEXT: Branch v13 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard v1
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: undefined|string = CallBuiltin -, v0, v15 overload=JSONStringify/0 accessSite=22
+# CHECK-NEXT: Jump -> next b10(v16)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v17: string = StringBuilderFinish v1
+# CHECK-NEXT: Jump -> next b10(v17)
+# CHECK-NEXT: b10(v18: undefined|string ~ string):
+# CHECK-NEXT: v19: string = ToString v18 calledBuiltin=JSONParse @0 tail
+# CHECK-NEXT: v20: boolean = JSONSourceOpen v19 @0 tail
+# CHECK-NEXT: Branch v20 -> taken b11(| 0), notTaken b15() @0 tail
+# CHECK-NEXT: b11(v21: guard):
+# CHECK-NEXT: v22: cursor = JSONSourceStart v21 @0 tail
+# CHECK-NEXT: v23: cursor = JSONSkipWhitespace v22 @0 tail
+# CHECK-NEXT: v24: undefined = CallDirect v23 function=f25 @0 tail
+# CHECK-NEXT: v25: int[0, 2] = ResultAt v24 @0 tail
+# CHECK-NEXT: v26: undefined|null|L0 = ResultAt v24 index=1 @0 tail
+# CHECK-NEXT: v27: cursor = ResultAt v24 index=2 @0 tail
+# CHECK-NEXT: Switch v25 cases=[1] -> case b12(), otherwise b14() @0 tail
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v28: boolean = JSONSourceClose v21, v27 @0 tail
+# CHECK-NEXT: Branch v28 -> taken b13(), notTaken b15() @0 tail
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v29: null|L0 = AssumeType v26 provenType=null|boolean|number|string|object @0 tail
+# CHECK-NEXT: Jump -> next b16(v29) @0 tail
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon v21 @0 tail
+# CHECK-NEXT: Jump -> next b15() @0 tail
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: v31: undefined = Undefined @0 tail
+# CHECK-NEXT: v32: null|boolean|number|string|object = CallBuiltin -, v19, v31 overload=JSONParse/0 accessSite=23 @0 tail
+# CHECK-NEXT: Jump -> next b16(v32) @0 tail
+# CHECK-NEXT: b16(v33: null|boolean|number|string|object ~ null|L0):
+# CHECK-NEXT: Return v33
 # CHECK-NEXT: }
 # CHECK-LABEL: function f5 module=
 # CHECK: m0 position=3018 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L0 site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L0|L1 = GetModuleVariable variable=g1
-# CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/0 accessSite=26
-# CHECK-NEXT: v3: string = RequireObjectCoercible v2 name="replace"
-# CHECK-NEXT: v4: "\"left\"" = String string="\"left\""
-# CHECK-NEXT: v5: "\"\\u006ceft\"" = String string="\"\\u006ceft\""
-# CHECK-NEXT: v6: string = CallBuiltin v3, v4, v5 overload=StringPrototypeReplace/1 accessSite=28
-# CHECK-NEXT: v7: boolean = JSONSourceOpen v6 @0 tail
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b5() @0 tail
-# CHECK-NEXT: b1(v8: guard):
-# CHECK-NEXT: v9: cursor = JSONSourceStart v8 @0 tail
-# CHECK-NEXT: v10: cursor = JSONSkipWhitespace v9 @0 tail
-# CHECK-NEXT: v11: undefined = CallDirect v10 function=f25 @0 tail
-# CHECK-NEXT: v12: int[0, 2] = ResultAt v11 @0 tail
-# CHECK-NEXT: v13: undefined|null|L0 = ResultAt v11 index=1 @0 tail
-# CHECK-NEXT: v14: cursor = ResultAt v11 index=2 @0 tail
-# CHECK-NEXT: Switch v12 cases=[1] -> case b2(), otherwise b4() @0 tail
+# CHECK-NEXT: v1: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v2: i32 = StringBuilderCheckpoint v1
+# CHECK-NEXT: v3: boolean = ShapeTest v0 layouts=[L1]
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b3()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: int[0, 2] = CallDirect v0, v1 function=f23 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v4 cases=[1] -> case b2(), otherwise b6()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v15: boolean = JSONSourceClose v8, v14 @0 tail
-# CHECK-NEXT: Branch v15 -> taken b3(), notTaken b5() @0 tail
+# CHECK-NEXT: v5: buildercursor = StringBuilderReserve v1 size=128
+# CHECK-NEXT: Jump -> next b7(v5)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v16: null|L0 = AssumeType v13 provenType=null|boolean|number|string|object @0 tail
-# CHECK-NEXT: Jump -> next b6(v16) @0 tail
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: JSONSourceAbandon v8 @0 tail
-# CHECK-NEXT: Jump -> next b5() @0 tail
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v18: undefined = Undefined @0 tail
-# CHECK-NEXT: v19: null|boolean|number|string|object = CallBuiltin -, v6, v18 overload=JSONParse/0 accessSite=29 @0 tail
-# CHECK-NEXT: Jump -> next b6(v19) @0 tail
-# CHECK-NEXT: b6(v20: null|boolean|number|string|object ~ null|L0):
-# CHECK-NEXT: v21: null|boolean|number|string|object ~ null|L0 = Upcast v20 castType=anything
-# CHECK-NEXT: Return v21
+# CHECK-NEXT: v6: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch v6 -> taken b4(), notTaken b6()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v7: int[0, 2] = CallDirect v0, v1 function=f22 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v7 cases=[1] -> case b5(), otherwise b6()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v8: buildercursor = StringBuilderReserve v1 size=128
+# CHECK-NEXT: Jump -> next b7(v8)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v9: buildercursor = StringBuilderReserve v1 size=128
+# CHECK-NEXT: Jump -> next b7(v9)
+# CHECK-NEXT: b7(v10: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v1, v10
+# CHECK-NEXT: v12: i32 = StringBuilderCheckpoint v1
+# CHECK-NEXT: v13: boolean = StrictEq v2, v12
+# CHECK-NEXT: Branch v13 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard v1
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: undefined|string = CallBuiltin -, v0, v15 overload=JSONStringify/0 accessSite=26
+# CHECK-NEXT: Jump -> next b10(v16)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v17: string = StringBuilderFinish v1
+# CHECK-NEXT: Jump -> next b10(v17)
+# CHECK-NEXT: b10(v18: undefined|string ~ string):
+# CHECK-NEXT: v19: string = RequireObjectCoercible v18 name="replace"
+# CHECK-NEXT: v20: "\"left\"" = String string="\"left\""
+# CHECK-NEXT: v21: "\"\\u006ceft\"" = String string="\"\\u006ceft\""
+# CHECK-NEXT: v22: string = CallBuiltin v19, v20, v21 overload=StringPrototypeReplace/1 accessSite=28
+# CHECK-NEXT: v23: boolean = JSONSourceOpen v22 @0 tail
+# CHECK-NEXT: Branch v23 -> taken b11(| 0), notTaken b15() @0 tail
+# CHECK-NEXT: b11(v24: guard):
+# CHECK-NEXT: v25: cursor = JSONSourceStart v24 @0 tail
+# CHECK-NEXT: v26: cursor = JSONSkipWhitespace v25 @0 tail
+# CHECK-NEXT: v27: undefined = CallDirect v26 function=f25 @0 tail
+# CHECK-NEXT: v28: int[0, 2] = ResultAt v27 @0 tail
+# CHECK-NEXT: v29: undefined|null|L0 = ResultAt v27 index=1 @0 tail
+# CHECK-NEXT: v30: cursor = ResultAt v27 index=2 @0 tail
+# CHECK-NEXT: Switch v28 cases=[1] -> case b12(), otherwise b14() @0 tail
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v31: boolean = JSONSourceClose v24, v30 @0 tail
+# CHECK-NEXT: Branch v31 -> taken b13(), notTaken b15() @0 tail
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v32: null|L0 = AssumeType v29 provenType=null|boolean|number|string|object @0 tail
+# CHECK-NEXT: Jump -> next b16(v32) @0 tail
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon v24 @0 tail
+# CHECK-NEXT: Jump -> next b15() @0 tail
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: v34: undefined = Undefined @0 tail
+# CHECK-NEXT: v35: null|boolean|number|string|object = CallBuiltin -, v22, v34 overload=JSONParse/0 accessSite=29 @0 tail
+# CHECK-NEXT: Jump -> next b16(v35) @0 tail
+# CHECK-NEXT: b16(v36: null|boolean|number|string|object ~ null|L0):
+# CHECK-NEXT: Return v36
 # CHECK-NEXT: }
 # CHECK-LABEL: function f6 module=
 # CHECK: m0 position=3152 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L0 site=w6 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L0|L1 = GetModuleVariable variable=g2
-# CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/0 accessSite=32
-# CHECK-NEXT: v3: string = ToString v2 calledBuiltin=JSONParse @0 tail
-# CHECK-NEXT: v4: boolean = JSONSourceOpen v3 @0 tail
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b5() @0 tail
-# CHECK-NEXT: b1(v5: guard):
-# CHECK-NEXT: v6: cursor = JSONSourceStart v5 @0 tail
-# CHECK-NEXT: v7: cursor = JSONSkipWhitespace v6 @0 tail
-# CHECK-NEXT: v8: undefined = CallDirect v7 function=f25 @0 tail
-# CHECK-NEXT: v9: int[0, 2] = ResultAt v8 @0 tail
-# CHECK-NEXT: v10: undefined|null|L0 = ResultAt v8 index=1 @0 tail
-# CHECK-NEXT: v11: cursor = ResultAt v8 index=2 @0 tail
-# CHECK-NEXT: Switch v9 cases=[1] -> case b2(), otherwise b4() @0 tail
+# CHECK-NEXT: v1: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v2: i32 = StringBuilderCheckpoint v1
+# CHECK-NEXT: v3: boolean = ShapeTest v0 layouts=[L1]
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b3()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: int[0, 2] = CallDirect v0, v1 function=f23 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v4 cases=[1] -> case b2(), otherwise b6()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v12: boolean = JSONSourceClose v5, v11 @0 tail
-# CHECK-NEXT: Branch v12 -> taken b3(), notTaken b5() @0 tail
+# CHECK-NEXT: v5: buildercursor = StringBuilderReserve v1 size=128
+# CHECK-NEXT: Jump -> next b7(v5)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v13: null|L0 = AssumeType v10 provenType=null|boolean|number|string|object @0 tail
-# CHECK-NEXT: Jump -> next b6(v13) @0 tail
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: JSONSourceAbandon v5 @0 tail
-# CHECK-NEXT: Jump -> next b5() @0 tail
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v15: undefined = Undefined @0 tail
-# CHECK-NEXT: v16: null|boolean|number|string|object = CallBuiltin -, v3, v15 overload=JSONParse/0 accessSite=33 @0 tail
-# CHECK-NEXT: Jump -> next b6(v16) @0 tail
-# CHECK-NEXT: b6(v17: null|boolean|number|string|object ~ null|L0):
-# CHECK-NEXT: v18: null|boolean|number|string|object ~ null|L0 = Upcast v17 castType=anything
-# CHECK-NEXT: Return v18
+# CHECK-NEXT: v6: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch v6 -> taken b4(), notTaken b6()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v7: int[0, 2] = CallDirect v0, v1 function=f22 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v7 cases=[1] -> case b5(), otherwise b6()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v8: buildercursor = StringBuilderReserve v1 size=128
+# CHECK-NEXT: Jump -> next b7(v8)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v9: buildercursor = StringBuilderReserve v1 size=128
+# CHECK-NEXT: Jump -> next b7(v9)
+# CHECK-NEXT: b7(v10: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v1, v10
+# CHECK-NEXT: v12: i32 = StringBuilderCheckpoint v1
+# CHECK-NEXT: v13: boolean = StrictEq v2, v12
+# CHECK-NEXT: Branch v13 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard v1
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: undefined|string = CallBuiltin -, v0, v15 overload=JSONStringify/0 accessSite=32
+# CHECK-NEXT: Jump -> next b10(v16)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v17: string = StringBuilderFinish v1
+# CHECK-NEXT: Jump -> next b10(v17)
+# CHECK-NEXT: b10(v18: undefined|string ~ string):
+# CHECK-NEXT: v19: string = ToString v18 calledBuiltin=JSONParse @0 tail
+# CHECK-NEXT: v20: boolean = JSONSourceOpen v19 @0 tail
+# CHECK-NEXT: Branch v20 -> taken b11(| 0), notTaken b15() @0 tail
+# CHECK-NEXT: b11(v21: guard):
+# CHECK-NEXT: v22: cursor = JSONSourceStart v21 @0 tail
+# CHECK-NEXT: v23: cursor = JSONSkipWhitespace v22 @0 tail
+# CHECK-NEXT: v24: undefined = CallDirect v23 function=f25 @0 tail
+# CHECK-NEXT: v25: int[0, 2] = ResultAt v24 @0 tail
+# CHECK-NEXT: v26: undefined|null|L0 = ResultAt v24 index=1 @0 tail
+# CHECK-NEXT: v27: cursor = ResultAt v24 index=2 @0 tail
+# CHECK-NEXT: Switch v25 cases=[1] -> case b12(), otherwise b14() @0 tail
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v28: boolean = JSONSourceClose v21, v27 @0 tail
+# CHECK-NEXT: Branch v28 -> taken b13(), notTaken b15() @0 tail
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v29: null|L0 = AssumeType v26 provenType=null|boolean|number|string|object @0 tail
+# CHECK-NEXT: Jump -> next b16(v29) @0 tail
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon v21 @0 tail
+# CHECK-NEXT: Jump -> next b15() @0 tail
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: v31: undefined = Undefined @0 tail
+# CHECK-NEXT: v32: null|boolean|number|string|object = CallBuiltin -, v19, v31 overload=JSONParse/0 accessSite=33 @0 tail
+# CHECK-NEXT: Jump -> next b16(v32) @0 tail
+# CHECK-NEXT: b16(v33: null|boolean|number|string|object ~ null|L0):
+# CHECK-NEXT: Return v33
 # CHECK-NEXT: }
 # CHECK-LABEL: function f7 module=
-# CHECK: m0 position=3230 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L0 site=w7 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=3230 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L0 site=w7 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f22 callPosition=4294967295}, {callee=f23 callPosition=4294967295}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 100 = Integer integer=100
 # CHECK-NEXT: v1: f8 = NewClosure function=f8 allocationSite=8 storage=Frame
 # CHECK-NEXT: v2: Array = CallDirect v0, v1 function=f18 accessSite=36
 # CHECK-NEXT: v3: Array<L0|L1, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<L0|L1, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v4: undefined = Undefined
-# CHECK-NEXT: v5: undefined|string = CallBuiltin -, v3, v4 overload=JSONStringify/0 accessSite=37
-# CHECK-NEXT: v6: string = ToString v5 calledBuiltin=JSONParse
-# CHECK-NEXT: v7: boolean = JSONSourceOpen v6
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b5()
-# CHECK-NEXT: b1(v8: guard):
-# CHECK-NEXT: v9: cursor = JSONSourceStart v8
-# CHECK-NEXT: v10: cursor = JSONSkipWhitespace v9
-# CHECK-NEXT: v11: undefined = CallDirect v10 function=f26
-# CHECK-NEXT: v12: int[0, 2] = ResultAt v11
-# CHECK-NEXT: v13: undefined|null|Array<undefined|null|L0> = ResultAt v11 index=1
-# CHECK-NEXT: v14: cursor = ResultAt v11 index=2
-# CHECK-NEXT: Switch v12 cases=[1] -> case b2(), otherwise b4()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v15: boolean = JSONSourceClose v8, v14
-# CHECK-NEXT: Branch v15 -> taken b3(), notTaken b5()
+# CHECK-NEXT: v4: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v5: i32 = StringBuilderCheckpoint v4
+# CHECK-NEXT: v6: boolean = IsPristine v3 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b74()
+# CHECK-NEXT: b1(v7: guard):
+# CHECK-NEXT: v8: int[0, 4294967295] = GetArrayLength v3, v7
+# CHECK-NEXT: v9: 0 = Integer
+# CHECK-NEXT: v10: boolean = StrictEq v8, v9
+# CHECK-NEXT: Branch v10 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2() handler=b85():
+# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v12: buildercursor = JSONAppendToken v4, v11 jsonToken=EmptyArray
+# CHECK-NEXT: Jump -> next b72(v12)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v16: null|Array<undefined|null|L0> = AssumeType v13 provenType=null|boolean|number|string|object
-# CHECK-NEXT: Jump -> next b6(v16)
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: JSONSourceAbandon v8
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v18: undefined = Undefined
-# CHECK-NEXT: v19: null|boolean|number|string|object = CallBuiltin -, v6, v18 overload=JSONParse/0 accessSite=38
-# CHECK-NEXT: Jump -> next b6(v19)
-# CHECK-NEXT: b6(v20: null|boolean|number|string|object ~ null|Array<undefined|null|L0>):
-# CHECK-NEXT: v21: null|boolean|number|string|object ~ null|Array<undefined|null|L0> = Upcast v20 castType=anything
-# CHECK-NEXT: v22: 99 = Integer integer=99
-# CHECK-NEXT: v23: boolean|number|string|object ~ Array<undefined|null|L0> = RequireObjectCoercible v21
-# CHECK-NEXT: v24: anything ~ undefined|null|L0 = ElemGet v23, v22 accessSite=39 [keyIsIntegral]
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: v13: jsonholders = JSONEnterHolder v4, v3
+# CHECK-NEXT: v14: boolean = HasArrayStorage v3 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v14 -> taken b4(| 0), notTaken b73()
+# CHECK-NEXT: b4(v15: guard) handler=b85():
+# CHECK-NEXT: v16: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v17: buildercursor = JSONAppendToken v4, v16 jsonToken=OpenArray
+# CHECK-NEXT: v18: guard = AllGuards v7, v15
+# CHECK-NEXT: v19: 0 = Integer
+# CHECK-NEXT: Jump -> next b5(v19, v17, v18)
+# CHECK-NEXT: b5(v20: int[0, 4294967294], v21: buildercursor, v22: guard) handler=b85():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v24: undefined|L0|L1 = GetArrayElement v3, v20, v22 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: v25: boolean = TypeTest v24 testedType=undefined
+# CHECK-NEXT: Branch v25 -> taken b6(), notTaken b8(| 0)
+# CHECK-NEXT: b6() handler=b85():
+# CHECK-NEXT: StringBuilderCommit v4, v21
+# CHECK-NEXT: v27: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v28: buildercursor = JSONAppendToken v4, v27 jsonToken=Null
+# CHECK-NEXT: v29: 1 = Integer integer=1
+# CHECK-NEXT: v30: int[1, 4294967295] = Add v20, v29
+# CHECK-NEXT: v31: boolean = Less v30, v8
+# CHECK-NEXT: Branch v31 -> taken b7(| 0), notTaken b71(v28)
+# CHECK-NEXT: b7(v32: int[1, 4294967294]):
+# CHECK-NEXT: v33: buildercursor = JSONAppendToken v4, v28 jsonToken=Comma
+# CHECK-NEXT: Jump -> next b5(v32, v33, v22)
+# CHECK-NEXT: b8(v34: L0|L1):
+# CHECK-NEXT: StringBuilderCommit v4, v21
+# CHECK-NEXT: v36: boolean = ShapeTest v34 layouts=[L1]
+# CHECK-NEXT: Branch v36 -> taken b9(| 0), notTaken b19()
+# CHECK-NEXT: b9(v37: guard):
+# CHECK-NEXT: v38: boolean = JSONHasStackSpace
+# CHECK-NEXT: Branch v38 -> taken b10(), notTaken b17()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: Jump -> next b11(v37)
+# CHECK-NEXT: b11(v39: guard):
+# CHECK-NEXT: v40: boolean = HasKeyOrder v34, v39 layout=L1 fields=[0]
+# CHECK-NEXT: Branch v40 -> taken b12(| 0), notTaken b16()
+# CHECK-NEXT: b12(v41: guard):
+# CHECK-NEXT: v42: guard = AllGuards v39, v41
+# CHECK-NEXT: v43: null|"text" = GetSlot v34, v42 key="v" receivers=[L1] level=Expected
+# CHECK-NEXT: v44: boolean = TypeTest v43 testedType=null
+# CHECK-NEXT: Branch v44 -> taken b13(), notTaken b14(| 0)
+# CHECK-NEXT: b13() handler=b85():
+# CHECK-NEXT: v45: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v46: buildercursor = JSONAppendKey v4, v45 string="v" [opensObject]
+# CHECK-NEXT: v47: buildercursor = JSONAppendToken v4, v46 jsonToken=Null
+# CHECK-NEXT: Jump -> next b15(v47)
+# CHECK-NEXT: b14(v48: "text") handler=b85():
+# CHECK-NEXT: v49: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v50: buildercursor = JSONAppendKey v4, v49 string="v" [opensObject]
+# CHECK-NEXT: v51: buildercursor = JSONAppendString v4, v50, v48
+# CHECK-NEXT: Jump -> next b15(v51)
+# CHECK-NEXT: b15(v52: buildercursor) handler=b85():
+# CHECK-NEXT: v53: buildercursor = JSONAppendToken v4, v52 jsonToken=CloseObject
+# CHECK-NEXT: StringBuilderCommit v4, v53
+# CHECK-NEXT: v55: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: Jump -> next b59(v55)
+# CHECK-NEXT: b16() frequency=Rare:
+# CHECK-NEXT: Jump -> next b18()
+# CHECK-NEXT: b17() frequency=Rare:
+# CHECK-NEXT: Jump -> next b18()
+# CHECK-NEXT: b18() frequency=Rare:
+# CHECK-NEXT: Jump -> next b51()
+# CHECK-NEXT: b19():
+# CHECK-NEXT: v56: boolean = ShapeTest v34 layouts=[L0]
+# CHECK-NEXT: Branch v56 -> taken b20(| 0), notTaken b55()
+# CHECK-NEXT: b20(v57: guard):
+# CHECK-NEXT: v58: boolean = JSONHasStackSpace
+# CHECK-NEXT: Branch v58 -> taken b21(), notTaken b49()
+# CHECK-NEXT: b21():
+# CHECK-NEXT: Jump -> next b22(v57)
+# CHECK-NEXT: b22(v59: guard):
+# CHECK-NEXT: v60: boolean = HasKeyOrder v34, v59 layout=L0 fields=[0, 1]
+# CHECK-NEXT: Branch v60 -> taken b23(| 0), notTaken b47()
+# CHECK-NEXT: b23(v61: guard):
+# CHECK-NEXT: v62: boolean = HasNoExtraProperties v34, v59
+# CHECK-NEXT: Branch v62 -> taken b24(| 0), notTaken b46()
+# CHECK-NEXT: b24(v63: guard) handler=b85():
+# CHECK-NEXT: v64: guard = AllGuards v59, v61, v63
+# CHECK-NEXT: v65: undefined|null|boolean|number|string|object = GetSlot v34, v64 key="left" receivers=[L0] level=Expected
+# CHECK-NEXT: v66: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v67: buildercursor = JSONAppendToken v4, v66
+# CHECK-NEXT: v68: boolean = TypeTest v65 testedType=null|boolean|number|string
+# CHECK-NEXT: Branch v68 -> taken b25(| 0), notTaken b26(| 0)
+# CHECK-NEXT: b25(v69: null|boolean|number|string) handler=b85():
+# CHECK-NEXT: v70: buildercursor = JSONAppendKey v4, v67 string="left"
+# CHECK-NEXT: v71: undefined = JSONAppendValue v4, v70, v69 jsonPosition=Element
+# CHECK-NEXT: v72: buildercursor = ResultAt v71 index=1
+# CHECK-NEXT: v73: buildercursor = JSONAppendToken v4, v72 jsonToken=Comma
+# CHECK-NEXT: Jump -> next b28(v73)
+# CHECK-NEXT: b26(v74: undefined|object) frequency=Unlikely:
+# CHECK-NEXT: v75: boolean = TypeTest v74 testedType=undefined
+# CHECK-NEXT: Branch v75 -> taken b27(), notTaken b29(| 0)
+# CHECK-NEXT: b27() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b28(v67)
+# CHECK-NEXT: b28(v76: buildercursor):
+# CHECK-NEXT: Jump -> next b36(v76, v64)
+# CHECK-NEXT: b29(v77: object) frequency=Rare handler=b85():
+# CHECK-NEXT: StringBuilderCommit v4, v67
+# CHECK-NEXT: v79: i32 = StringBuilderCheckpoint v4
+# CHECK-NEXT: v80: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v81: buildercursor = JSONAppendKey v4, v80 string="left"
+# CHECK-NEXT: v82: "left" = String string="left"
+# CHECK-NEXT: StringBuilderCommit v4, v81
+# CHECK-NEXT: v84: boolean = StringBuilderAppendJSON v4, v77, v82, v34 calledBuiltin=JSONStringify
+# CHECK-NEXT: Branch v84 -> taken b30(), notTaken b31()
+# CHECK-NEXT: b30() frequency=Rare handler=b85():
+# CHECK-NEXT: v85: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v86: buildercursor = JSONAppendToken v4, v85 jsonToken=Comma
+# CHECK-NEXT: Jump -> next b32(v86)
+# CHECK-NEXT: b31() frequency=Rare handler=b85():
+# CHECK-NEXT: StringBuilderRollBack v4, v79
+# CHECK-NEXT: v88: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: Jump -> next b32(v88)
+# CHECK-NEXT: b32(v89: buildercursor) frequency=Rare:
+# CHECK-NEXT: StringBuilderCommit v4, v89
+# CHECK-NEXT: Jump -> next b33(v59)
+# CHECK-NEXT: b33(v91: guard) frequency=Rare:
+# CHECK-NEXT: v92: boolean = HasKeyOrder v34, v91 layout=L0 fields=[0, 1]
+# CHECK-NEXT: Branch v92 -> taken b34(| 0), notTaken b41()
+# CHECK-NEXT: b34(v93: guard) frequency=Rare:
+# CHECK-NEXT: v94: boolean = HasNoExtraProperties v34, v91
+# CHECK-NEXT: Branch v94 -> taken b35(| 0), notTaken b40()
+# CHECK-NEXT: b35(v95: guard) frequency=Rare handler=b85():
+# CHECK-NEXT: v96: guard = AllGuards v91, v93, v95
+# CHECK-NEXT: v97: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: Jump -> next b36(v97, v96)
+# CHECK-NEXT: b36(v98: buildercursor, v99: guard):
+# CHECK-NEXT: v100: undefined|null|boolean|number|string = GetSlot v34, v99 key="v" receivers=[L0] level=Expected
+# CHECK-NEXT: v101: boolean = TypeTest v100 testedType=null|boolean|number|string
+# CHECK-NEXT: Branch v101 -> taken b37(| 0), notTaken b38()
+# CHECK-NEXT: b37(v102: null|boolean|number|string) handler=b85():
+# CHECK-NEXT: v103: buildercursor = JSONAppendKey v4, v98 string="v"
+# CHECK-NEXT: v104: undefined = JSONAppendValue v4, v103, v102 jsonPosition=Element
+# CHECK-NEXT: v105: buildercursor = ResultAt v104 index=1
+# CHECK-NEXT: v106: buildercursor = JSONAppendToken v4, v105 jsonToken=Comma
+# CHECK-NEXT: Jump -> next b39(v106)
+# CHECK-NEXT: b38() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b39(v98)
+# CHECK-NEXT: b39(v107: buildercursor):
+# CHECK-NEXT: v108: buildercursor = JSONAppendToken v4, v107 jsonToken=CloseObjectOverComma
+# CHECK-NEXT: StringBuilderCommit v4, v108
+# CHECK-NEXT: Jump -> next b45()
+# CHECK-NEXT: b40() frequency=Rare:
+# CHECK-NEXT: Jump -> next b42()
+# CHECK-NEXT: b41() frequency=Rare:
+# CHECK-NEXT: Jump -> next b42()
+# CHECK-NEXT: b42() frequency=Rare handler=b85():
+# CHECK-NEXT: v110: 1 = Integer integer=1
+# CHECK-NEXT: v111: "left" = String string="left"
+# CHECK-NEXT: v112: "v" = String string="v"
+# CHECK-NEXT: v113: Array<string> = NewArray v111, v112 contents=string
+# CHECK-NEXT: v114: boolean = StringBuilderAppendJSONMembers v4, v34, v113, v110, v34 calledBuiltin=JSONStringify
+# CHECK-NEXT: Branch v114 -> taken b43(), notTaken b44()
+# CHECK-NEXT: b43() frequency=Rare handler=b85():
+# CHECK-NEXT: v115: "}" = String string="}"
+# CHECK-NEXT: StringBuilderAppend v4, v115
+# CHECK-NEXT: Jump -> next b45()
+# CHECK-NEXT: b44() frequency=Rare handler=b85():
+# CHECK-NEXT: v117: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v118: buildercursor = JSONAppendToken v4, v117 jsonToken=CloseObjectOverComma
+# CHECK-NEXT: StringBuilderCommit v4, v118
+# CHECK-NEXT: Jump -> next b45()
+# CHECK-NEXT: b45() handler=b85():
+# CHECK-NEXT: v120: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: Jump -> next b59(v120)
+# CHECK-NEXT: b46() frequency=Rare:
+# CHECK-NEXT: Jump -> next b48()
+# CHECK-NEXT: b47() frequency=Rare:
+# CHECK-NEXT: Jump -> next b48()
+# CHECK-NEXT: b48() frequency=Rare:
+# CHECK-NEXT: Jump -> next b50()
+# CHECK-NEXT: b49() frequency=Rare:
+# CHECK-NEXT: Jump -> next b50()
+# CHECK-NEXT: b50() frequency=Rare:
+# CHECK-NEXT: Jump -> next b51()
+# CHECK-NEXT: b51() frequency=Rare handler=b85():
+# CHECK-NEXT: v121: undefined = Undefined
+# CHECK-NEXT: v122: boolean = StringBuilderAppendJSON v4, v34, v20, v121 calledBuiltin=JSONStringify
+# CHECK-NEXT: Branch v122 -> taken b52(), notTaken b53()
+# CHECK-NEXT: b52() frequency=Rare handler=b85():
+# CHECK-NEXT: v123: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: Jump -> next b54(v123)
+# CHECK-NEXT: b53() frequency=Rare handler=b85():
+# CHECK-NEXT: v124: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v125: buildercursor = JSONAppendToken v4, v124 jsonToken=Null
+# CHECK-NEXT: Jump -> next b54(v125)
+# CHECK-NEXT: b54(v126: buildercursor) frequency=Rare:
+# CHECK-NEXT: Jump -> next b59(v126)
+# CHECK-NEXT: b55() frequency=Rare handler=b85():
+# CHECK-NEXT: v127: undefined = Undefined
+# CHECK-NEXT: v128: boolean = StringBuilderAppendJSON v4, v34, v20, v127 calledBuiltin=JSONStringify
+# CHECK-NEXT: Branch v128 -> taken b56(), notTaken b57()
+# CHECK-NEXT: b56() frequency=Rare handler=b85():
+# CHECK-NEXT: v129: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: Jump -> next b58(v129)
+# CHECK-NEXT: b57() frequency=Rare handler=b85():
+# CHECK-NEXT: v130: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v131: buildercursor = JSONAppendToken v4, v130 jsonToken=Null
+# CHECK-NEXT: Jump -> next b58(v131)
+# CHECK-NEXT: b58(v132: buildercursor) frequency=Rare:
+# CHECK-NEXT: Jump -> next b59(v132)
+# CHECK-NEXT: b59(v133: buildercursor):
+# CHECK-NEXT: v134: 1 = Integer integer=1
+# CHECK-NEXT: v135: int[1, 4294967295] = Add v20, v134
+# CHECK-NEXT: v136: boolean = Less v135, v8
+# CHECK-NEXT: Branch v136 -> taken b60(| 0), notTaken b71(v133)
+# CHECK-NEXT: b60(v137: int[1, 4294967294]):
+# CHECK-NEXT: v138: boolean = IsPristine v3 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch v138 -> taken b61(| 0), notTaken b64()
+# CHECK-NEXT: b61(v139: guard):
+# CHECK-NEXT: v140: boolean = HasArrayStorage v3 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v140 -> taken b62(| 0), notTaken b64()
+# CHECK-NEXT: b62(v141: guard):
+# CHECK-NEXT: v142: guard = AllGuards v139, v141
+# CHECK-NEXT: v143: int[0, 4294967295] = GetArrayLength v3, v142
+# CHECK-NEXT: v144: boolean = Less v137, v143
+# CHECK-NEXT: Branch v144 -> taken b63(), notTaken b64()
+# CHECK-NEXT: b63():
+# CHECK-NEXT: v145: buildercursor = JSONAppendToken v4, v133 jsonToken=Comma
+# CHECK-NEXT: Jump -> next b5(v137, v145, v142)
+# CHECK-NEXT: b64() frequency=Rare:
+# CHECK-NEXT: StringBuilderCommit v4, v133
+# CHECK-NEXT: Jump -> next b65(v137)
+# CHECK-NEXT: b65(v147: int[1, 4294967294]) frequency=Rare handler=b85():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v149: undefined|L0|L1 = ElemGet v3, v147 [keyIsIntegral]
+# CHECK-NEXT: v150: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v151: buildercursor = JSONAppendToken v4, v150 jsonToken=Comma
+# CHECK-NEXT: StringBuilderCommit v4, v151
+# CHECK-NEXT: v153: undefined = Undefined
+# CHECK-NEXT: v154: boolean = StringBuilderAppendJSON v4, v149, v147, v153 calledBuiltin=JSONStringify
+# CHECK-NEXT: Branch v154 -> taken b66(), notTaken b67()
+# CHECK-NEXT: b66() frequency=Rare handler=b85():
+# CHECK-NEXT: v155: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: Jump -> next b68(v155)
+# CHECK-NEXT: b67() frequency=Rare handler=b85():
+# CHECK-NEXT: v156: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v157: buildercursor = JSONAppendToken v4, v156 jsonToken=Null
+# CHECK-NEXT: Jump -> next b68(v157)
+# CHECK-NEXT: b68(v158: buildercursor) frequency=Rare:
+# CHECK-NEXT: StringBuilderCommit v4, v158
+# CHECK-NEXT: v160: 1 = Integer integer=1
+# CHECK-NEXT: v161: int[2, 4294967295] = Add v147, v160
+# CHECK-NEXT: v162: boolean = Less v161, v8
+# CHECK-NEXT: Branch v162 -> taken b69(| 0), notTaken b70()
+# CHECK-NEXT: b69(v163: int[2, 4294967294]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b65(v163)
+# CHECK-NEXT: b70() frequency=Rare handler=b85():
+# CHECK-NEXT: v164: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: Jump -> next b71(v164)
+# CHECK-NEXT: b71(v165: buildercursor):
+# CHECK-NEXT: v166: buildercursor = JSONAppendToken v4, v165 jsonToken=CloseArray
+# CHECK-NEXT: JSONLeaveHolder v4, v13
+# CHECK-NEXT: Jump -> next b72(v166)
+# CHECK-NEXT: b72(v168: buildercursor):
+# CHECK-NEXT: Jump -> next b75(v168)
+# CHECK-NEXT: b73():
+# CHECK-NEXT: JSONLeaveHolder v4, v13
+# CHECK-NEXT: Jump -> next b74()
+# CHECK-NEXT: b74() frequency=Rare handler=b85():
+# CHECK-NEXT: v170: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: Jump -> next b75(v170)
+# CHECK-NEXT: b75(v171: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v4, v171
+# CHECK-NEXT: v173: i32 = StringBuilderCheckpoint v4
+# CHECK-NEXT: v174: boolean = StrictEq v5, v173
+# CHECK-NEXT: Branch v174 -> taken b76(), notTaken b77()
+# CHECK-NEXT: b76() frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard v4
+# CHECK-NEXT: v176: undefined = Undefined
+# CHECK-NEXT: v177: undefined|string = CallBuiltin -, v3, v176 overload=JSONStringify/0 accessSite=37
+# CHECK-NEXT: Jump -> next b78(v177)
+# CHECK-NEXT: b77() handler=b85():
+# CHECK-NEXT: v178: string = StringBuilderFinish v4
+# CHECK-NEXT: Jump -> next b78(v178)
+# CHECK-NEXT: b78(v179: undefined|string ~ string):
+# CHECK-NEXT: v180: string = ToString v179 calledBuiltin=JSONParse
+# CHECK-NEXT: v181: boolean = JSONSourceOpen v180
+# CHECK-NEXT: Branch v181 -> taken b79(| 0), notTaken b83()
+# CHECK-NEXT: b79(v182: guard):
+# CHECK-NEXT: v183: cursor = JSONSourceStart v182
+# CHECK-NEXT: v184: cursor = JSONSkipWhitespace v183
+# CHECK-NEXT: v185: undefined = CallDirect v184 function=f26
+# CHECK-NEXT: v186: int[0, 2] = ResultAt v185
+# CHECK-NEXT: v187: undefined|null|Array<undefined|null|L0> = ResultAt v185 index=1
+# CHECK-NEXT: v188: cursor = ResultAt v185 index=2
+# CHECK-NEXT: Switch v186 cases=[1] -> case b80(), otherwise b82()
+# CHECK-NEXT: b80():
+# CHECK-NEXT: v189: boolean = JSONSourceClose v182, v188
+# CHECK-NEXT: Branch v189 -> taken b81(), notTaken b83()
+# CHECK-NEXT: b81():
+# CHECK-NEXT: v190: fact = Specified
+# CHECK-NEXT: v191: null|Array<undefined|null|L0> = AssumeType v187, v190 provenType=null|boolean|number|string|object
+# CHECK-NEXT: Jump -> next b84(v191)
+# CHECK-NEXT: b82() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon v182
+# CHECK-NEXT: Jump -> next b83()
+# CHECK-NEXT: b83() frequency=Rare:
+# CHECK-NEXT: v193: undefined = Undefined
+# CHECK-NEXT: v194: null|boolean|number|string|object = CallBuiltin -, v180, v193 overload=JSONParse/0 accessSite=38
+# CHECK-NEXT: Jump -> next b84(v194)
+# CHECK-NEXT: b84(v195: null|boolean|number|string|object ~ null|Array<undefined|null|L0>):
+# CHECK-NEXT: v196: 99 = Integer integer=99
+# CHECK-NEXT: v197: boolean|number|string|object ~ Array<undefined|null|L0> = RequireObjectCoercible v195
+# CHECK-NEXT: v198: anything ~ undefined|null|L0 = ElemGet v197, v196 accessSite=39 [keyIsIntegral]
+# CHECK-NEXT: Return v198
+# CHECK-NEXT: b85() role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: v199: exception = CatchException
+# CHECK-NEXT: JSONResetHolders v4
+# CHECK-NEXT: Rethrow v199
 # CHECK-NEXT: }
 # CHECK-LABEL: function f8 module=
 # CHECK: m0 position=3291 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=L0|L1}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

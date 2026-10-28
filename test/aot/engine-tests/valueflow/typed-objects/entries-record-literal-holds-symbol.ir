@@ -572,38 +572,39 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v45: L2 = CallDirect v44 function=f6 accessSite=15 [isNeverInlined]
 # CHECK-NEXT: v46: anything ~ undefined|null|string = GetSlot v45 key="value" receivers=[L2] level=Proven accessSite=17
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectEntries
-# CHECK-NEXT: v48: L4 = NewObject -, v46 layout=L4 fields=[0] allocationSite=10 allocationClass=3
-# CHECK-NEXT: v49: Array<Array> = CallBuiltin -, v48 overload=ObjectEntries/0 accessSite=19
-# CHECK-NEXT: v50: Array<Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v49 provenType=Array<Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v51: 0 = Integer
-# CHECK-NEXT: v52: undefined|Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = ElemGet v50, v51 accessSite=20 [keyIsIntegral]
-# CHECK-NEXT: v53: 1 = Integer integer=1
-# CHECK-NEXT: v54: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v52
-# CHECK-NEXT: v55: undefined|string|@@asyncDispose = GetArrayElement v54, v53 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral]
-# CHECK-NEXT: v56: undefined = CallDirect v55 function=f1 accessSite=22 [isNeverInlined]
+# CHECK-NEXT: v48: "key" = String string="key"
+# CHECK-NEXT: v49: Array = NewArray v48, v46 contents=anything
+# CHECK-NEXT: v50: Array<Array> = NewArray v49 contents=Array storage=Frame
+# CHECK-NEXT: v51: Array<Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v50 provenType=Array<Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v52: 0 = Integer
+# CHECK-NEXT: v53: undefined|Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = ElemGet v51, v52 accessSite=20 [keyIsIntegral]
+# CHECK-NEXT: v54: 1 = Integer integer=1
+# CHECK-NEXT: v55: Array<undefined|string|@@asyncDispose, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v53
+# CHECK-NEXT: v56: undefined|string|@@asyncDispose = GetArrayElement v55, v54 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral]
+# CHECK-NEXT: v57: undefined = CallDirect v56 function=f1 accessSite=22 [isNeverInlined]
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v57: "0 0.25   0" = String string="0 0.25   0"
-# CHECK-NEXT: v58: undefined = CallDirect v57 function=f1 accessSite=36 [isNeverInlined]
-# CHECK-NEXT: v59: undefined = Undefined
-# CHECK-NEXT: Return v59
+# CHECK-NEXT: v58: "0 0.25   0" = String string="0 0.25   0"
+# CHECK-NEXT: v59: undefined = CallDirect v58 function=f1 accessSite=36 [isNeverInlined]
+# CHECK-NEXT: v60: undefined = Undefined
+# CHECK-NEXT: Return v60
 # CHECK-NEXT: b13() role=CatchHandler:
-# CHECK-NEXT: v60: anything = CatchValue
-# CHECK-NEXT: v61: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v60 castType=anything
-# CHECK-NEXT: v62: boolean = TypeTest v61 testedType=undefined|null
-# CHECK-NEXT: Branch v62 -> taken b14(), notTaken b15(| 0)
+# CHECK-NEXT: v61: anything = CatchValue
+# CHECK-NEXT: v62: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v61 castType=anything
+# CHECK-NEXT: v63: boolean = TypeTest v62 testedType=undefined|null
+# CHECK-NEXT: Branch v63 -> taken b14(), notTaken b15(| 0)
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v63: undefined = Undefined
-# CHECK-NEXT: Jump -> next b16(v63)
-# CHECK-NEXT: b15(v64: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
-# CHECK-NEXT: v65: anything = PropGet v64 key="name" accessSite=29
-# CHECK-NEXT: Jump -> next b16(v65)
-# CHECK-NEXT: b16(v66: anything):
-# CHECK-NEXT: v67: undefined = CallDirect v66 function=f1 accessSite=30
+# CHECK-NEXT: v64: undefined = Undefined
+# CHECK-NEXT: Jump -> next b16(v64)
+# CHECK-NEXT: b15(v65: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
+# CHECK-NEXT: v66: anything = PropGet v65 key="name" accessSite=29
+# CHECK-NEXT: Jump -> next b16(v66)
+# CHECK-NEXT: b16(v67: anything):
+# CHECK-NEXT: v68: undefined = CallDirect v67 function=f1 accessSite=30
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v68: "0 0.25   0" = String string="0 0.25   0"
-# CHECK-NEXT: v69: undefined = CallDirect v68 function=f1 accessSite=36
-# CHECK-NEXT: v70: undefined = Undefined
-# CHECK-NEXT: Return v70
+# CHECK-NEXT: v69: "0 0.25   0" = String string="0 0.25   0"
+# CHECK-NEXT: v70: undefined = CallDirect v69 function=f1 accessSite=36
+# CHECK-NEXT: v71: undefined = Undefined
+# CHECK-NEXT: Return v71
 # CHECK-NEXT: }

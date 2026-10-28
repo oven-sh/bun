@@ -1,6 +1,6 @@
 // TypeScript's own compiler and conformance tests as programs: some 9,000 pieces of real TypeScript that somebody else wrote. They come from test/cli/check/typescript-go/bundle.zst, where
-// `bun check` already compares its diagnostics with typescript-go's. Seed n draws case n. A case that does not type-check is refused by the build and counts as skipped. Most cases print
-// nothing, so this mainly finds builds that stop or crash, and exceptions that only the compiled program throws.
+// `bun check` already compares its diagnostics with typescript-go's. Seed n draws case n. A case that the build refuses counts as skipped: many are written to be refused, and each is built
+// under the options in its own first lines. Most cases print nothing, so this mainly finds builds that stop or crash, and exceptions that only the compiled program throws.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { asProgram, type Drawn } from "../family";
@@ -142,6 +142,15 @@ const drawn: Drawn = (seed, bed) => {
   const [name, source] = cases[seed % cases.length];
   const made = filesOf(source);
   const program = made && asProgram(made);
-  return program && { seed, ...program, notes: name, group: name.split("/").slice(0, 2).join("/"), standsAlone: true };
+  return (
+    program && {
+      seed,
+      ...program,
+      notes: name,
+      group: name.split("/").slice(0, 2).join("/"),
+      standsAlone: true,
+      mayBeRefused: true,
+    }
+  );
 };
 export default drawn;

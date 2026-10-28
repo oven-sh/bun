@@ -364,7 +364,9 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     );
     built(build);
     rmSync(sources, { recursive: true, force: true });
-    return { plain, build, compiled: said(await spawned([executable], away, bunEnv)) };
+    const compiled = said(await spawned([executable], away, bunEnv));
+    if (!isWindows) rmSync(executable, { force: true });
+    return { plain, build, compiled };
   }
 
   test.concurrent.each(Object.keys(programs))(

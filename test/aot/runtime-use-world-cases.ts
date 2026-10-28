@@ -186,8 +186,12 @@ group("an object of the program's own, read by a computed key", () => {
       "the var is declared twice",
       `var table: any = { home: () => "home" };\nvar table: any = process.argv;\n${called}`,
     ],
-  ])("any member may be used where %s", async (_, text) => {
-    expect(await judged(text)).toEqual({ usesEveryMember: true, exitCode: 0 });
+  ])("the members of what the second declaration holds may be used where %s", async (_, text) => {
+    const use = await runtimeUse({ "main.ts": declared + key + text });
+    expect({ usesMembersOfLists: use.lines.includes("property toSpliced"), exitCode: use.exitCode }).toEqual({
+      usesMembersOfLists: true,
+      exitCode: 0,
+    });
   });
 });
 

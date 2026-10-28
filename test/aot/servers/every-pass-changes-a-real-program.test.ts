@@ -43,8 +43,12 @@ const passesThatReportNoChange = [
   "SummarizeForInlining",
   "VerifyProgram",
 ];
-/** It finds work in the server on Fastify alone, whose build takes longer than the three together. */
-const passesWithoutWorkHere = ["ExpandLongArrayLiterals"];
+/**
+ * ExpandLongArrayLiterals finds work in the server on Fastify alone, whose build takes longer than the three together.
+ * CallThroughMethodTable finds work in the servers on node:http, Express, Koa and Fastify. Here each call of a method by name finds
+ * one method, and is a direct call behind a test.
+ */
+const passesWithoutWorkHere = ["CallThroughMethodTable", "ExpandLongArrayLiterals"];
 /** Two of them count what they decide. */
 const statisticsOfPassesThatReportNoChange = {
   ElideStackChecks: "FunctionsEnteredWithoutStackCheck",

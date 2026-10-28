@@ -235,7 +235,7 @@ function f6 name="put" module=m0 position=1487 flags=[IsChecked, HasExplicitName
 # -- generated: f0 atReversed
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 389, patchpoints: 46, rare instructions: 435, polls: 3
+# CHECK-NEXT: instructions: 405, patchpoints: 47, rare instructions: 384, polls: 1
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="atReversed"
 # CHECK: role=Source

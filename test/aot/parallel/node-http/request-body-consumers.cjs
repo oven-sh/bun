@@ -109,13 +109,16 @@ const server = http.createServer((req, res) => {
         if (name === "close" && consumer === "a slow pipe" && !hasCounted) hasClosedBeforeCount = true;
         else say("req " + name);
       });
+  // The rest of a body that nobody reads is still on its way when the response closes.
+  const requestHasClosed = new Promise(resolve => req.once("close", resolve));
   let hasCounted = false;
   let hasClosedBeforeCount = false;
   consumers[consumer](req, bytes => {
     hasCounted = true;
     say("bytes " + bytes);
     if (hasClosedBeforeCount) say("req close");
-    res.on("close", () =>
+    res.on("close", async () => {
+      await requestHasClosed;
       setTimeout(() => {
         say(
           "at last " +
@@ -128,8 +131,8 @@ const server = http.createServer((req, res) => {
             ].join(),
         );
         done();
-      }, 5),
-    );
+      }, 5);
+    });
     res.end("ok");
   });
 });

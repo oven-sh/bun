@@ -22,9 +22,11 @@
 //
 // A line is a build, so each group is dealt out over several files, one-line-changes-little-<part>.test.ts.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { built, slot, spawned } from "./harness/commands";
+import { wanted } from "./harness/shares";
 import {
   knownBesideLibrary,
   knownBesideMuchOfTheLibrary,
@@ -33,8 +35,6 @@ import {
   typedAgainstUntyped,
 } from "./one-line-changes-little/known-today";
 import { libraryLines, programLines, type Line } from "./one-line-changes-little/lines";
-import { built, slot, spawned } from "./harness/commands";
-import { wanted } from "./harness/shares";
 import { describe, test } from "./supported";
 
 const mostFunctionsAdded = 120;
@@ -104,12 +104,10 @@ async function measure(files: Record<string, string>) {
   using dir = tempDir("aot-one-line", files);
   const folder = String(dir);
   const report = join(folder, "report.json");
-  const executable = join(folder, isWindows ? "program.exe" : "program");
   const flags = ["--aot-report=" + report, "--aot-report-detail=functions"];
   const entry = "entry.ts" in files ? "./entry.ts" : "./entry.js";
-  built(
-    await spawned([bunExe(), "build", "--compile", "--aot", ...flags, entry, "--outfile", executable], folder, bunEnv),
-  );
+  // The same compilation as a build's, and the same report. No executable is written, and none of these programs runs.
+  built(await spawned([bunExe(), "check", "--aot", ...flags, entry], folder, bunEnv));
   const { statistics, summary, functions } = JSON.parse(readFileSync(report, "utf8"));
   // The report names no file for the body of a module, nor for the code that it shares between functions.
   const bodyRoles = ["Source", "CoroutineRamp", "CoroutineBody", "AsyncWorker"];

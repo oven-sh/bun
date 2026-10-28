@@ -1341,7 +1341,7 @@ runtimefunction id=131072 function=f55 visibility=Private
 # CHECK-NEXT: b24():
 # CHECK-NEXT: v121: f15 = NewClosure function=f15 allocationSite=24 storage=Frame
 # CHECK-NEXT: v122: undefined = Undefined
-# CHECK-NEXT: v123: undefined = CallDirect v75, v121, v122 function=f89 accessSite=38
+# CHECK-NEXT: v123: undefined = CallDirect v75, v121, v122 function=f90 accessSite=38
 # CHECK-NEXT: v124: undefined = Undefined
 # CHECK-NEXT: Return v124
 # CHECK-NEXT: }
@@ -1652,9 +1652,9 @@ runtimefunction id=131072 function=f55 visibility=Private
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throw"
-# CHECK: module=m4 position=1077 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=92 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=object}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f93 layout=L(IteratorResult)} {
+# CHECK: module=m4 position=1077 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=92 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=object}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f94 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything, v1: anything):
-# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f93
+# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f94
 # CHECK-NEXT: v3: i32 = ResultAt v2
 # CHECK-NEXT: v4: object|unspecified = ResultAt v2 index=1
 # CHECK-NEXT: v5: anything|unspecified = ResultAt v2 index=2

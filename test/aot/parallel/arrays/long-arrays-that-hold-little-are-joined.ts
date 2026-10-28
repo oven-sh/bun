@@ -1,4 +1,5 @@
-// Long arrays that hold nothing, or an element here and there, are joined. The text holds a separator between any two places, and making it takes a few times the room of the text.
+// Long arrays that hold nothing, or an element here and there, are joined. The text holds a separator between any two places, and making it takes a few times the room of the text:
+// a join by which the process grows much further says so. With something of its own for each place a join takes hundreds of megabytes, otherwise a few.
 const places = 2 ** 22;
 const peak = () => process.resourceUsage().maxRSS * 1024;
 const shorten = (text: string) =>
@@ -9,8 +10,10 @@ function join(what: string, list: unknown[], separator?: string, inLocale = fals
   let said: string;
   try {
     const text = inLocale ? list.toLocaleString() : separator === undefined ? list.toString() : list.join(separator);
-    const tookLittleRoom = peak() - before <= 8 * Math.min(text.length, 2 ** 25) + 2 ** 24;
-    said = `${text.length} ${text.length < 2 ** 25 ? shorten(text) : ""} ${tookLittleRoom}`;
+    const grown = peak() - before;
+    said = `${text.length} ${text.length < 2 ** 25 ? shorten(text) : ""}`;
+    if (grown > 8 * Math.min(text.length, 2 ** 25) + 2 ** 26)
+      said += ` and the process grew by ${Math.round(grown / 2 ** 20)} MB`;
   } catch (error) {
     said = (error as Error).name + ": " + (error as Error).message;
   }

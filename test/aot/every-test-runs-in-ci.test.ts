@@ -47,15 +47,8 @@ const tools: Record<string, string> = {
 };
 
 // What nothing reaches today: a file, or a folder with all it holds. Nothing may be added, and a line goes with its files.
+// prettier-ignore
 const unreachedToday: string[] = [
-  "fuzz/damaged-text.ts",
-  "fuzz/members-of-bun-however-they-are-named.ts",
-  "fuzz/memory-of-churn.ts",
-  "fuzz/module-graphs-bundled-first.ts",
-  "fuzz/modules-of-both-kinds-that-need-each-other.ts",
-  "fuzz/programs-of-several-entry-points.ts",
-  "fuzz/programs-published-as-packages.ts",
-  "fuzz/workers-that-work-within-a-limit-on-the-address-space.ts",
   "startup-scaling",
 ];
 

@@ -1,10 +1,12 @@
 // The call tests that the parameter holds the require of this file. Any other function in its place is called.
+// Whoever is handed a require finds the main module there, so the file keeps its module object and its calls of require are recorded.
 // RUN(CALLED): lower
 // CALLED-LABEL: function {{*}}name="called"
 // CALLED: [[own]] = ModuleBuiltin builtin=ModuleRequire
 // CALLED: [[same]] = StrictEq v0, [[own]]
 // CALLED: Branch [[same]] -> taken [[known]](), notTaken [[other]](
 // CALLED: [[known]]():
+// CALLED-NEXT: RecordRequire module=m
 // CALLED-NEXT: EvaluateModule module=m
 // CALLED: [[other]]([[callee]]):
 // CALLED-NEXT: = Call [[callee]]

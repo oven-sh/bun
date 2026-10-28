@@ -133,6 +133,20 @@ impl MappedFile {
         );
     }
 
+    /// Takes pages out of this process. They stay mapped, and no longer hold what was written to them.
+    ///
+    /// # Safety
+    /// The pages belong to a `MappedFile`, and the caller has the only reference to their bytes.
+    unsafe fn let_go_of_pages_at(pointer: *mut u8, size: usize) {
+        // SAFETY: the caller's contract.
+        unsafe {
+            #[cfg(target_os = "linux")]
+            libc::madvise(pointer.cast(), size, libc::MADV_DONTNEED);
+            #[cfg(not(target_os = "linux"))]
+            MappedFile::map_zero_pages_at(pointer, size);
+        }
+    }
+
     /// Changes the address of whole pages without reading them. False: nothing has changed.
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     fn remap_pages(&mut self, _source: usize, _target: usize, _size: usize) -> bool {
@@ -210,7 +224,7 @@ impl MappedFile {
 }
 
 /// A part of the bytes of a file that is read for the last time. Nothing else refers to it.
-/// Where it is a part of a mapping, its whole pages leave this process when it is dropped, and the mapping has zeros there.
+/// Where it is a part of a mapping, its whole pages leave this process when it is dropped, and the mapping no longer holds their bytes.
 pub struct ReadOnce<'a> {
     offset: usize,
     bytes: Part<'a>,
@@ -241,7 +255,8 @@ impl<'a> ReadOnce<'a> {
         Blocks { others: self, size }
     }
 
-    fn take_first(&mut self, size: usize) -> ReadOnce<'a> {
+    /// Takes the first `size` bytes away.
+    pub fn take_first(&mut self, size: usize) -> ReadOnce<'a> {
         let offset = self.offset;
         self.offset += size;
         let bytes = match &mut self.bytes {
@@ -284,8 +299,44 @@ impl Drop for ReadOnce<'_> {
                 && !pages.is_empty()
             {
                 // SAFETY: only a `MappedFile` makes this kind of part, and `pages` is the only reference to these bytes.
-                unsafe { MappedFile::map_zero_pages_at(pages.as_mut_ptr(), pages.len()) };
+                unsafe { MappedFile::let_go_of_pages_at(pages.as_mut_ptr(), pages.len()) };
             }
+        }
+    }
+}
+
+/// The bytes that a file is made from, which nothing else refers to.
+pub enum TemplateBytes<'a> {
+    Kept(&'a mut [u8]),
+    /// Whoever reads them is the last to do so.
+    ReadOnce(&'a mut MappedFile),
+}
+
+impl<'a> TemplateBytes<'a> {
+    pub fn read_once(self) -> ReadOnce<'a> {
+        match self {
+            TemplateBytes::Kept(bytes) => ReadOnce::kept(bytes),
+            TemplateBytes::ReadOnce(mapping) => mapping.split_read_once(mapping.len()).0,
+        }
+    }
+}
+
+impl core::ops::Deref for TemplateBytes<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            TemplateBytes::Kept(bytes) => bytes,
+            TemplateBytes::ReadOnce(mapping) => mapping,
+        }
+    }
+}
+
+impl core::ops::DerefMut for TemplateBytes<'_> {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        match self {
+            TemplateBytes::Kept(bytes) => bytes,
+            TemplateBytes::ReadOnce(mapping) => mapping,
         }
     }
 }
@@ -543,14 +594,16 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn whole_pages_of_a_mapping_are_zero_once_they_were_read() {
+    fn whole_pages_of_a_mapping_are_given_up_once_they_were_read() {
         let page = MappedFile::page_size();
         let original: Vec<u8> = (0..4 * page).map(|index| (index / 7) as u8 | 1).collect();
         let file = TemporaryFile::create("read-once", &original);
         let mut bytes = FileBytes::Mapping(MappedFile::open(&file.0).unwrap());
-        bytes[page] = 0xEE;
         let mut expected = original.clone();
-        expected[page] = 0xEE;
+        for written in [5, page, 2 * page] {
+            bytes[written] = 0xEE;
+            expected[written] = 0xEE;
+        }
 
         let (first, others) = bytes.split_read_once(2 * page + 1);
         assert!(*others == expected[2 * page + 1..]);
@@ -560,10 +613,10 @@ pub(crate) mod tests {
             assert!(*block == expected[block.offset()..][..block.len()]);
         }
 
-        expected[..page].fill(0);
-        assert!(*bytes == *expected);
-        bytes[0] = 1;
-        assert_eq!(bytes[0], 1);
+        assert_ne!(bytes[5], 0xEE);
+        assert!(bytes[page..] == expected[page..]);
+        bytes[5] = 0xEE;
+        assert_eq!(bytes[5], 0xEE);
         assert!(file.read() == original);
     }
 

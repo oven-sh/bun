@@ -377,52 +377,70 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v21: "/c" = String string="/c"
 # CHECK-NEXT: v22: undefined|L0 = CallDirect v20, v21 function=f2 accessSite=20
 # CHECK-NEXT: v23: L0 = ToObject v22 calledBuiltin=ObjectKeys
-# CHECK-NEXT: v24: Array<string> = CallBuiltin -, v23 overload=ObjectKeys/0 accessSite=21
-# CHECK-NEXT: v25: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v24 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v26: string = CallBuiltin v25 overload=ArrayPrototypeJoin/0 accessSite=23
-# CHECK-NEXT: v27: 1 = Integer integer=1
-# CHECK-NEXT: v28: undefined = Undefined
-# CHECK-NEXT: v29: undefined|L0 = CallDirect v27, v28 function=f2 accessSite=24
-# CHECK-NEXT: v30: L0 = ToObject v29 calledBuiltin=ObjectKeys
-# CHECK-NEXT: v31: Array<string> = CallBuiltin -, v30 overload=ObjectKeys/0 accessSite=25
-# CHECK-NEXT: v32: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v31 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v33: string = CallBuiltin v32 overload=ArrayPrototypeJoin/0 accessSite=27
-# CHECK-NEXT: v34: int[0, 4294967295] = CallBuiltin v1, v10, v19, v26, v33 overload=ArrayPrototypePush/0 accessSite=28
-# CHECK-NEXT: v35: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v36: anything = PropGet v35 key="prototype" accessSite=29
-# CHECK-NEXT: v37: object = AssumeType v36 provenType=object
-# CHECK-NEXT: v38: "other" = String string="other"
-# CHECK-NEXT: PropSet v37, v38 key="url" accessSite=30
-# CHECK-NEXT: v40: 30 = Integer integer=30
-# CHECK-NEXT: v41: undefined = Undefined
-# CHECK-NEXT: v42: undefined|L0 = CallDirect v40, v41 function=f2 accessSite=32
-# CHECK-NEXT: v43: L0 = RequireObjectCoercible v42 name="url"
-# CHECK-NEXT: v44: boolean = IsSlotFilled v43 key="url" receivers=[L0] level=Expected
-# CHECK-NEXT: Branch v44 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v45: guard):
-# CHECK-NEXT: v46: string = GetSlot v43, v45 key="url" receivers=[L0] level=Expected accessSite=33
-# CHECK-NEXT: Jump -> next b9(v46)
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v47: anything = SuperGet v43, v43 key="url"
-# CHECK-NEXT: Jump -> next b9(v47)
-# CHECK-NEXT: b9(v48: anything ~ undefined|string):
-# CHECK-NEXT: v49: 30 = Integer integer=30
-# CHECK-NEXT: v50: "/d" = String string="/d"
-# CHECK-NEXT: v51: undefined|L0 = CallDirect v49, v50 function=f2 accessSite=34
-# CHECK-NEXT: v52: L0 = RequireObjectCoercible v51 name="url"
-# CHECK-NEXT: v53: boolean = IsSlotFilled v52 key="url" receivers=[L0] level=Expected
-# CHECK-NEXT: Branch v53 -> taken b10(| 0), notTaken b11()
-# CHECK-NEXT: b10(v54: guard):
-# CHECK-NEXT: v55: string = GetSlot v52, v54 key="url" receivers=[L0] level=Expected accessSite=35
-# CHECK-NEXT: Jump -> next b12(v55)
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v56: anything = SuperGet v52, v52 key="url"
-# CHECK-NEXT: Jump -> next b12(v56)
-# CHECK-NEXT: b12(v57: anything ~ undefined|string):
-# CHECK-NEXT: v58: int[0, 4294967295] = CallBuiltin v1, v48, v57 overload=ArrayPrototypePush/0 accessSite=36
-# CHECK-NEXT: v59: " | " = String string=" | "
-# CHECK-NEXT: v60: string = CallBuiltin v1, v59 overload=ArrayPrototypeJoin/0 accessSite=40
-# CHECK-NEXT: v61: undefined = CallBuiltin -, v60 overload=ConsoleLog/0 accessSite=41
-# CHECK-NEXT: v62: undefined = Undefined
-# CHECK-NEXT: Return v62
+# CHECK-NEXT: v24: boolean = HasKeyOrder v23 layout=L0 fields=[0]
+# CHECK-NEXT: Branch v24 -> taken b7(), notTaken b8()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v25: "id" = String string="id"
+# CHECK-NEXT: v26: Array<string> = NewArray v25 contents=string
+# CHECK-NEXT: Jump -> next b9(v26)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v27: Array<string> = CallBuiltin -, v23 overload=ObjectKeys/0 accessSite=21
+# CHECK-NEXT: Jump -> next b9(v27)
+# CHECK-NEXT: b9(v28: Array<string>):
+# CHECK-NEXT: v29: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v28 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v30: string = CallBuiltin v29 overload=ArrayPrototypeJoin/0 accessSite=23
+# CHECK-NEXT: v31: 1 = Integer integer=1
+# CHECK-NEXT: v32: undefined = Undefined
+# CHECK-NEXT: v33: undefined|L0 = CallDirect v31, v32 function=f2 accessSite=24
+# CHECK-NEXT: v34: L0 = ToObject v33 calledBuiltin=ObjectKeys
+# CHECK-NEXT: v35: boolean = HasKeyOrder v34 layout=L0 fields=[0]
+# CHECK-NEXT: Branch v35 -> taken b10(), notTaken b11()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v36: "id" = String string="id"
+# CHECK-NEXT: v37: Array<string> = NewArray v36 contents=string
+# CHECK-NEXT: Jump -> next b12(v37)
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: v38: Array<string> = CallBuiltin -, v34 overload=ObjectKeys/0 accessSite=25
+# CHECK-NEXT: Jump -> next b12(v38)
+# CHECK-NEXT: b12(v39: Array<string>):
+# CHECK-NEXT: v40: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v39 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v41: string = CallBuiltin v40 overload=ArrayPrototypeJoin/0 accessSite=27
+# CHECK-NEXT: v42: int[0, 4294967295] = CallBuiltin v1, v10, v19, v30, v41 overload=ArrayPrototypePush/0 accessSite=28
+# CHECK-NEXT: v43: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v44: anything = PropGet v43 key="prototype" accessSite=29
+# CHECK-NEXT: v45: object = AssumeType v44 provenType=object
+# CHECK-NEXT: v46: "other" = String string="other"
+# CHECK-NEXT: PropSet v45, v46 key="url" accessSite=30
+# CHECK-NEXT: v48: 30 = Integer integer=30
+# CHECK-NEXT: v49: undefined = Undefined
+# CHECK-NEXT: v50: undefined|L0 = CallDirect v48, v49 function=f2 accessSite=32
+# CHECK-NEXT: v51: L0 = RequireObjectCoercible v50 name="url"
+# CHECK-NEXT: v52: boolean = IsSlotFilled v51 key="url" receivers=[L0] level=Expected
+# CHECK-NEXT: Branch v52 -> taken b13(| 0), notTaken b14()
+# CHECK-NEXT: b13(v53: guard):
+# CHECK-NEXT: v54: string = GetSlot v51, v53 key="url" receivers=[L0] level=Expected accessSite=33
+# CHECK-NEXT: Jump -> next b15(v54)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v55: anything = SuperGet v51, v51 key="url"
+# CHECK-NEXT: Jump -> next b15(v55)
+# CHECK-NEXT: b15(v56: anything ~ undefined|string):
+# CHECK-NEXT: v57: 30 = Integer integer=30
+# CHECK-NEXT: v58: "/d" = String string="/d"
+# CHECK-NEXT: v59: undefined|L0 = CallDirect v57, v58 function=f2 accessSite=34
+# CHECK-NEXT: v60: L0 = RequireObjectCoercible v59 name="url"
+# CHECK-NEXT: v61: boolean = IsSlotFilled v60 key="url" receivers=[L0] level=Expected
+# CHECK-NEXT: Branch v61 -> taken b16(| 0), notTaken b17()
+# CHECK-NEXT: b16(v62: guard):
+# CHECK-NEXT: v63: string = GetSlot v60, v62 key="url" receivers=[L0] level=Expected accessSite=35
+# CHECK-NEXT: Jump -> next b18(v63)
+# CHECK-NEXT: b17():
+# CHECK-NEXT: v64: anything = SuperGet v60, v60 key="url"
+# CHECK-NEXT: Jump -> next b18(v64)
+# CHECK-NEXT: b18(v65: anything ~ undefined|string):
+# CHECK-NEXT: v66: int[0, 4294967295] = CallBuiltin v1, v56, v65 overload=ArrayPrototypePush/0 accessSite=36
+# CHECK-NEXT: v67: " | " = String string=" | "
+# CHECK-NEXT: v68: string = CallBuiltin v1, v67 overload=ArrayPrototypeJoin/0 accessSite=40
+# CHECK-NEXT: v69: undefined = CallBuiltin -, v68 overload=ConsoleLog/0 accessSite=41
+# CHECK-NEXT: v70: undefined = Undefined
+# CHECK-NEXT: Return v70
 # CHECK-NEXT: }

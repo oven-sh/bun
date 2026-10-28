@@ -90,6 +90,10 @@ BUN_FUZZILLI_ENTRY_POINT=/tmp/fuzzilli/program.js .build/release/FuzzilliCli --p
   --jobs=32 --storagePath=<storage> --resume <bun>/build/fuzzilli/bun-asan
 ```
 
+No corpus is kept in this repository. With a new `<storage>`, Fuzzilli starts from an empty one: it generates its first programs itself and writes each program that reaches new code in the compiler to `<storage>/corpus`. `--resume` goes on from there.
+The Bun it starts has to be the one from "Build Bun": only a build with `--fuzzilli=on` takes programs from Fuzzilli and reports coverage.
+"Many programs in one executable" below mutates the `<storage>/corpus` of such a run, and the Bun it tests can be any build.
+
 `--additionalArguments=--no-builtin-modules` makes a build about twice as fast: Bun's own modules are not compiled along with each program. Some syntax needs a helper from them, so when such a build reports an internal error, Bun builds the program once more with the modules and reports what that build says. That takes as long as a hundred small programs, so turn off the generators of that syntax: `BUN_FUZZILLI_DISABLED_GENERATORS=ForOfWithUsingLoopGenerator,ForOfWithAwaitUsingLoopGenerator,ForAwaitOfWithUsingLoopGenerator,ForAwaitOfWithAwaitUsingLoopGenerator`. A program that uses a `node:` module doesn't run without the modules, so leave out `BUN_FUZZILLI_BUILTINS` too.
 
 Each instance of Bun writes the program it is compiling to `/tmp/fuzzilli/<process id>.program.js`, so put that folder on a RAM disk. Run the whole thing somewhere it can't reach the network or your files, for example in `test/aot/real-apps/jail.sh`.
@@ -214,6 +218,8 @@ A fifth kind is a module whose exports have the names of globals (`NaN`, `Array`
 
 `--collects <percent>` runs the executable of that share of the batches a second time, with a collection at every few allocations and with what is freed overwritten (`BUN_JSC_slowPathAllocsBetweenGCs`, `BUN_JSC_useZombieMode`, `BUN_JSC_scribbleFreeCells`; the interval, and whether the collections are young, are drawn for each batch). Only programs that printed the same as under `bun run` in the first run count. One that prints something else now is asked again, and so is `bun run` in the same environment: what `bun run` prints too is only counted. The rest is kept as "collections-stdout", an end by a signal as "collections-signal", and one that `bun run` shares as "bun-run-collections-signal". `report.txt` has the environment.
 
+`--ends-early <percent>` runs the executable of that share of the batches three times more. The runner ends the Worker of each program at a moment that it draws from a span of 1 to 256 ms (`BATCH_ENDS_WITHIN`), whatever the program is doing then. What is printed doesn't count. A process that ends by a signal is kept as `ended-early-signal`, or as `bun-run-ended-early-signal` when `bun run` of the same files ends so too. The moment is drawn anew in every run, so a find is repeated by running it many times.
+
 `--beside-an-external <percent>` is drawn once for a process. Such a process builds everything with `--external a-package-outside`, lays that package into `node_modules` beside the programs, and lets every entry point import it first. The package does nothing. Beside it the compiler counts on code that it hasn't seen, and it compiles every function of the built-in modules: a build takes a minute and a half longer, so such a lane takes large batches.
 
 `--one-scene <percent>` leaves a program one of its scenes: what the compiler makes of a function depends on what else the program holds.
@@ -284,6 +290,14 @@ Other declarations are followed by statements that change what the variable hold
 A program always becomes the same text. The profile puts a string such as `"types 123"` at the start of every program (`TypeScriptSeeds`), which seeds its choices. Each choice is drawn from that seed and from a number for the place where it is made. That number is computed from the instruction, from what it uses and, for a block, from one instruction in it, and not from the numbers of variables or the rest of the program. So when Fuzzilli removes or changes a part of a program, the rest keeps its types: a finding can be reduced, and a program in the corpus hands its types on to the programs made from it. Another such string inside a block seeds what follows it there. In 15 of 100 programs the profile adds or changes one, which draws the types of a part of the program again. `TypeScriptSeeds` also turns away the programs that are refused whatever their types are (`rejectProgramThatCannotBuild`): a store to a built-in or to a member of one, a private name outside its class or declared twice, `super()` in a class without a base class, and a regular expression with the flag `v`. A program without a seed, such as one from an older corpus, takes a hash of itself. With `files`, the helpers and enums of a program go to one file and its object types to another, and the program imports them. The file of helpers and a second file can import each other, the program can import everything from a file that only has `export *`, and in a third of these programs all helpers are in one file that is the same for every program, so the programs of a batch share it. Two in five of these programs also import a CommonJS file (`.cjs`) that requires a second one, which may require it back. The file exports through `exports.x`, `module.exports`, `this`, `__esModule` with `default`, a function or a class with members, getters, or a loop over the names. The program imports it by default, by name, both, as a namespace, with `require` or with `await import`. Each file follows the program behind a line `// @filename: ./<name>.ts`, so whatever writes the program to disk has to cut the text there and put the files beside it.
 
 In a typed run the profile adds five code generators (`typeScriptCodeGenerators`): an object whose accessors and methods store it into itself and hand it on, a variable that a closure captures and that holds objects and primitives in turn, a variable that is compared with an object and then used as a key, a class with a base class, and whole numbers in operators, templates and keys. The profile turns off `with`, which TypeScript doesn't allow. It starts 15 in 100 instances of Bun with `--aot-erase-types`, which compiles the same text without reading its types.
+
+## For so many minutes, without Fuzzilli
+
+`lane.ts` starts several drivers that draw their programs themselves (`--draws`), ends them after so many minutes, and lists what they found in the files that `../run.ts` writes. It needs nothing but Bun. `../burst.ts` starts it beside its runs of `run.ts`. `--kind` picks which programs are drawn and how many share a build; the table stands at the top of the file.
+
+```sh
+bun test/aot/fuzz/fuzzilli/lane.ts --kind few --minutes 60 --jobs 8 --out /tmp/lane
+```
 
 ## Try one program without Fuzzilli
 

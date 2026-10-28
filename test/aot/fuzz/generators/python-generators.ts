@@ -15,9 +15,9 @@ export type Options = {
   failsToday?: Record<number, string> | string;
   /** By seed: how `bun run --aot` departs from the executable today. */
   modeFailsToday?: Record<number, string>;
-  /** Seeds with which generated-fresh-seeds found a bug that is fixed. They always run. */
+  /** Seeds that once showed a bug that is fixed. */
   foundByFreshSeeds?: number[];
-  /** Why generated-fresh-seeds does not give it seeds that nobody has looked at. */
+  /** Why it gets no seeds but those of `seeds`. */
   noFreshSeeds?: string;
 };
 
@@ -144,8 +144,8 @@ export const python = Bun.which("python3");
 
 export function program(name: string, extension: string, options: Options, seed: number): { file: string; text: string; files?: Record<string, string> } {
   const words = options.words?.(seed) ?? [seed];
-  const { exitCode, stdout, stderr } = spawnSync({ cmd: [python!, "-B", join(import.meta.dir, "python", `${name}.py`), ...words.map(String)], env: { ...process.env, PYTHONUTF8: "1" }, stderr: "pipe" });
-  if (exitCode !== 0) throw new Error(`${name}.py: ${stderr}`);
+  const { exitCode, stdout, stderr } = spawnSync({ cmd: [python!, "-B", join(import.meta.dir, "python", `${name}.py`), ...words.map(String)], env: { ...process.env, PYTHONUTF8: "1" }, stderr: "pipe", timeout: 60_000 });
+  if (exitCode !== 0) throw new Error(`${name}.py ${words.join(" ")}: ${exitCode === null ? "it did not end in a minute" : stderr}`);
   const [text, ...others] = stdout.toString().replaceAll("\r\n", "\n").split("\n//// ");
   const files = Object.fromEntries(others.map(other => [other.slice(0, other.indexOf("\n")), other.slice(other.indexOf("\n") + 1) + "\n"]));
   return { file: `main.${extension}`, text: others.length ? text + "\n" : text, files };

@@ -1,4 +1,5 @@
-// Ends a child process that holds more memory than it may, so that no test fills the machine it runs on.
+// Ends a child process that holds more memory than it may, so that no test fills the machine it runs on. The watching is done on a thread of its own, ./memory-watcher.ts: a caller that keeps
+// its own thread busy unbinds nobody.
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { freemem, totalmem } from "os";
 import { dirname, join } from "path";
@@ -15,7 +16,7 @@ export const memoryLimitOfAKnownProgram = machine / 2;
 export const memoryLimitOfCommandsAtOnce = (machine * 5) / 8;
 
 /** In bytes; 0 where nothing tells. */
-function residentMemory(pid: number, field = "VmRSS") {
+export function residentMemory(pid: number, field = "VmRSS") {
   try {
     if (process.platform === "linux")
       return (
@@ -29,7 +30,7 @@ function residentMemory(pid: number, field = "VmRSS") {
 }
 
 /** What the kernel says of the memory of a process, on one line. Nothing where it does not say. */
-function describeMemory(pid: number) {
+export function describeMemory(pid: number) {
   const pick = (file: string, fields: string[]) => {
     const text = readFileSync(file, "utf8");
     return fields.flatMap(
@@ -47,29 +48,69 @@ function describeMemory(pid: number) {
   }
 }
 
+/** What the thread that watches is told. */
+export type Told =
+  | {
+      watch: number;
+      pid: number;
+      leadsAGroup: boolean;
+      shared: SharedArrayBuffer;
+      limit: number;
+      asksFirst: boolean;
+      hasChildren: boolean;
+      of?: number;
+    }
+  | { together: number; shared: SharedArrayBuffer; limit: number; ends: "all" | "the fattest" }
+  | { forget: number };
+
+/** A child is known by its number, and ended by it. `leadsAGroup`: the whole process group that it leads is ended with it. */
+type Child = { pid: number; leadsAGroup?: boolean };
+
+let watcher: Worker | undefined;
+let told = 0;
+function tell(message: Told) {
+  if (!watcher) {
+    watcher = new Worker(new URL("./memory-watcher.ts", import.meta.url).href);
+    watcher.unref();
+  }
+  watcher.postMessage(message);
+}
+
+/** What the watcher writes is read out of memory that both threads share: a watch answers at once, whoever is busy. */
+function watched(
+  child: Child,
+  more: Pick<Extract<Told, { watch: number }>, "limit" | "asksFirst" | "hasChildren" | "of">,
+  isDone = () => {},
+) {
+  const shared = new SharedArrayBuffer(1024);
+  const words = new Int32Array(shared, 0, 2);
+  const watch = ++told;
+  // Nothing tells on Windows.
+  const isWatched = process.platform !== "win32";
+  if (isWatched) tell({ watch, pid: child.pid, leadsAGroup: !!child.leadsAGroup, shared, ...more });
+  return {
+    get exceeded() {
+      return Atomics.load(words, 0) === 1;
+    },
+    get held() {
+      return this.exceeded ? new TextDecoder().decode(new Uint8Array(shared, 16, words[1]).slice()) : "";
+    },
+    get peak() {
+      return new Float64Array(shared, 8, 1)[0];
+    },
+    [Symbol.dispose]() {
+      if (isWatched) tell({ forget: watch });
+      isDone();
+    },
+  };
+}
+
 /**
  * Kills the child once it holds more than `limit` bytes. `exceeded` says whether it came to that, and `held` what it held then. Dispose of it when the child has ended.
- * `asksFirst`: the child has a second to say what it is doing.
+ * `asksFirst`: the child has a second to say what it is doing. `hasChildren`: what the child starts counts as its own.
  */
-export function endAtMemoryLimit(
-  child: { pid: number; kill(signal: "SIGKILL" | "SIGTERM"): void },
-  limit = memoryLimit,
-  asksFirst = false,
-) {
-  const timer = setInterval(
-    () => {
-      if (watch.exceeded || residentMemory(child.pid) <= limit) return;
-      watch.exceeded = true;
-      watch.held = describeMemory(child.pid);
-      if (!asksFirst) return child.kill("SIGKILL");
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 1000).unref();
-    },
-    process.platform === "linux" ? 100 : 1000,
-  );
-  timer.unref();
-  const watch = { exceeded: false, held: "", [Symbol.dispose]: () => clearInterval(timer) };
-  return watch;
+export function endAtMemoryLimit(child: Child, limit = memoryLimit, asksFirst = false, hasChildren = false) {
+  return watched(child, { limit, asksFirst, hasChildren });
 }
 
 /** The control groups that this process is in and that have a bound, from the innermost outwards. */
@@ -108,7 +149,7 @@ export function availableMemory() {
 }
 
 /** A process with what it has started, as far as the kernel tells. */
-function processesBelow(pid: number): number[] {
+export function processesBelow(pid: number): number[] {
   const all = [pid];
   if (process.platform !== "linux") return all;
   for (let next = 0; next < all.length; next++) {
@@ -128,64 +169,23 @@ function processesBelow(pid: number): number[] {
  * `exceeded` of a watch says that its child was killed so, `held` what it held then, `peak` the most that it was seen to hold. Nothing tells on Windows.
  */
 export function endAtMemoryLimitTogether(limit = memoryLimitOfCommandsAtOnce, ends: "all" | "the fattest" = "all") {
-  type Child = { pid: number; kill(signal: "SIGKILL"): void };
-  type Watch = { exceeded: boolean; held: string; peak: number; hasChildren: boolean };
-  const watches = new Map<Child, Watch>();
   const isLinux = process.platform === "linux";
   const keptBack = limit / 7;
-  const inMB = (bytes: number) => `${Math.round(bytes / 2 ** 20)} MB`;
-  let timer: Timer | undefined;
-  // The kernel takes a moment to take back what a killed process held.
-  let waitsUntil = 0;
-  let heldAtLastLook = 0;
-  const check = () => {
-    let held = 0;
-    let fattest: [Child, Watch, number] | undefined;
-    for (const [child, watch] of watches) {
-      if (watch.exceeded) continue;
-      let own = 0;
-      // Without the pages of files, which children of one executable share.
-      for (const pid of watch.hasChildren ? processesBelow(child.pid) : [child.pid])
-        own += residentMemory(pid, isLinux ? "RssAnon" : undefined);
-      watch.peak = Math.max(watch.peak, own);
-      held += own;
-      if (!fattest || own > fattest[2]) fattest = [child, watch, own];
-    }
-    heldAtLastLook = held;
-    if (!fattest || performance.now() < waitsUntil) return;
-    if (held <= limit && !(isLinux && availableMemory() < keptBack)) return;
-    waitsUntil = performance.now() + 250;
-    for (const [child, watch] of ends === "all" ? watches : [fattest]) {
-      if (watch.exceeded) continue;
-      watch.exceeded = true;
-      watch.held = `it held ${inMB(watch.peak)} of the ${inMB(held)} that ${watches.size} processes held together, which may hold ${inMB(limit)}`;
-      child.kill("SIGKILL");
-    }
-  };
+  const shared = new SharedArrayBuffer(8);
+  const heldAtLastLook = new Float64Array(shared);
+  const together = ++told;
+  let isTold = false;
+  let watches = 0;
   return {
     /** Whether one more may start: nothing runs, or twice as much is left as has to be. */
     hasRoom: () =>
-      !watches.size || (heldAtLastLook + 2 * keptBack < limit && (!isLinux || availableMemory() > 2 * keptBack)),
+      !watches || (heldAtLastLook[0] + 2 * keptBack < limit && (!isLinux || availableMemory() > 2 * keptBack)),
     /** `hasChildren`: what the child starts counts as its own. */
     watch(child: Child, hasChildren = false) {
-      const watch = {
-        exceeded: false,
-        held: "",
-        peak: 0,
-        hasChildren,
-        [Symbol.dispose]() {
-          watches.delete(child);
-          if (watches.size) return;
-          clearInterval(timer);
-          timer = undefined;
-          heldAtLastLook = 0;
-        },
-      };
-      if (process.platform === "win32") return watch;
-      watches.set(child, watch);
-      // A process can grow by 400 MB a second.
-      timer ??= setInterval(check, isLinux ? 50 : 1000).unref();
-      return watch;
+      if (!isTold && process.platform !== "win32") tell({ together, shared, limit, ends });
+      isTold = true;
+      watches++;
+      return watched(child, { limit, asksFirst: false, hasChildren, of: together }, () => void watches--);
     },
   };
 }

@@ -3,7 +3,7 @@
 //
 //   bun run-batch.ts --bun <the Bun that builds and runs> --programs <folder> --work <folder> --finds <folder> [--count 2000] [--group 500] [--batches 1] [--flags=--aot-threads=1]
 //
-// It takes `count` files out of `programs` for each batch and waits for more. `--batches 0` never ends. `--keep` copies the files instead.
+// It takes `count` files out of `programs` for each batch and waits for more. `--batches 0` never ends. `--seconds 3600` starts no batch behind that time. `--keep` copies the files instead.
 // `--count 1,3,12` takes one program for the first batch, three for the second, twelve for the third, one for the fourth. Which code the compiler takes for hot depends on what else the executable holds.
 // `--group 1` makes each program an entry point, which the compiler takes for a program of its own: up to 127 of them share an executable and nothing else.
 // `--hides-function-text` is for a Bun built with --fuzzilli=on: neither run shows the text of a function, which the two spell differently.
@@ -17,6 +17,7 @@
 // `--unwraps-try-blocks 50` takes `try` blocks out of 50 programs of 100.
 // `--validates 100` builds each batch a second time with --aot-validate and runs it: a program at which that executable stops is kept.
 // `--collects 100` runs each executable a second time in an environment in which it collects at every few allocations and overwrites what it frees: a program that prints something else there, or ends by a signal, is kept.
+// `--ends-early 100` runs each executable three times more, and the runner ends the Worker of each program at a moment drawn from a few milliseconds. What is printed doesn't count: a process that ends by a signal is kept.
 // `--beside-an-external 50` lets 50 processes of 100 build everything with `--external` for a package that every entry point imports, so the executable also runs code that the compiler hasn't seen.
 // `--splits 80` cuts functions and classes of 80 programs of 100 out into other files, with declarations that can be wrong (split-into-files.ts).
 // `--draws ts` needs no `--programs`: the driver makes the programs of a batch itself. Each starts empty, and the options above write its scenes.
@@ -72,6 +73,7 @@ const { values: options } = parseArgs({
     count: { type: "string", default: "2000" },
     group: { type: "string", default: "500" },
     batches: { type: "string", default: "1" },
+    seconds: { type: "string", default: "0" },
     flags: { type: "string", default: "" },
     milliseconds: { type: "string", default: "250" },
     keep: { type: "boolean", default: false },
@@ -87,6 +89,7 @@ const { values: options } = parseArgs({
     "unwraps-try-blocks": { type: "string", default: "0" },
     validates: { type: "string", default: "0" },
     collects: { type: "string", default: "0" },
+    "ends-early": { type: "string", default: "0" },
     "beside-an-external": { type: "string", default: "0" },
     draws: { type: "string", default: "" },
     families: { type: "string", default: "0" },
@@ -1156,8 +1159,14 @@ const waitingForABatchOfTheirOwn: string[] = [];
 const neighborsOf = new Map<string, { before: string[]; behind: string[] }>();
 
 /** Runs the entry points of the executable in `folder`, each of which imports up to `inEntryPoint` programs, and the same files under `bun run`. */
-async function runTogether(folder: string, entryPoints: number[], extension: string, inEntryPoint: number) {
-  const limit = milliseconds * 4 + 20 * inEntryPoint;
+async function runTogether(
+  folder: string,
+  entryPoints: number[],
+  extension: string,
+  inEntryPoint: number,
+  patience = 1,
+) {
+  const limit = (milliseconds * 4 + 20 * inEntryPoint) * patience;
   const [compiled, plain] = await Promise.all([
     run("compiled", [join(folder, "batch")], folder, extension, 1, entryPoints, limit),
     run("plain", [bun, "run", "./" + runner], folder, extension, 1, entryPoints, limit, plainEnv),
@@ -1165,7 +1174,7 @@ async function runTogether(folder: string, entryPoints: number[], extension: str
   return { compiled, plain };
 }
 
-/** What the program at `position` prints both ways when one entry point imports `texts` in this order, if that differs. */
+/** What the program at `position` prints both ways when one entry point imports `texts` in this order, if that differs. A text that says which run was stopped when one didn't get that far within its limits. */
 async function differsTogether(folder: string, texts: string[], extension: string, position: number) {
   layOut(folder, texts, extension, 1, [texts.map((_, index) => index)]);
   const { writesToBuiltins } = await build(folder, 1, extension, 1, undefined, texts.length);
@@ -1175,11 +1184,22 @@ async function differsTogether(folder: string, texts: string[], extension: strin
     const { ofProgram, rest } = partsOf(ran.get(0)!.stdout);
     return ofProgram.get(position) ?? (ofProgram.size === position ? rest : undefined);
   };
-  const first = await runTogether(folder, [0], extension, texts.length);
+  // A run that is stopped at a limit says nothing about the programs behind the one it was stopped in. It gets more time once.
+  const wasStopped = (ran: { compiled: Map<number, Ended>; plain: Map<number, Ended> }) =>
+    isLimit(ran.compiled.get(0)!) || isLimit(ran.plain.get(0)!);
+  const howItWasStopped = (ran: { plain: Map<number, Ended> }) =>
+    isLimit(ran.plain.get(0)!) ? "bun run is stopped" : "only the executable is stopped";
+  const runBoth = async () => {
+    const ran = await runTogether(folder, [0], extension, texts.length);
+    return wasStopped(ran) ? await runTogether(folder, [0], extension, texts.length, 8) : ran;
+  };
+  const first = await runBoth();
+  if (wasStopped(first)) return howItWasStopped(first);
   const [printed, expected] = [ofTheProgram(first.compiled), ofTheProgram(first.plain)];
   if (expected === undefined || printed === expected) return undefined;
   // A difference counts when a second pair of runs shows the same one.
-  const second = await runTogether(folder, [0], extension, texts.length);
+  const second = await runBoth();
+  if (wasStopped(second)) return howItWasStopped(second);
   return ofTheProgram(second.compiled) === printed && ofTheProgram(second.plain) === expected
     ? { compiled: printed ?? "", plain: expected, isBesideAWriteToABuiltIn: writesToBuiltins.size > 0 }
     : undefined;
@@ -1350,6 +1370,17 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
       milliseconds * 16 + 80 * together,
       add,
     );
+  if (Math.random() * 100 < Number(options["ends-early"]))
+    await judgeEndedEarly(
+      folder,
+      texts,
+      extension,
+      1,
+      everyEntryPoint,
+      entryPoint => entryPoints[entryPoint],
+      compiled,
+      add,
+    );
   if (Math.random() * 100 < Number(options.validates)) {
     const flags = [...buildFlags, "--aot-validate"];
     const command = `${bun} build --compile --aot ${flags.join(" ")}`;
@@ -1408,7 +1439,16 @@ async function askAmongNeighbors(text: string, extension: string, add: (kind: st
   const ask = (before: string[], behind: string[]) =>
     differsTogether(subset, [...before, text, ...behind], extension, before.length);
   let difference = await ask(before, behind);
-  if (difference && withoutLayout(difference.compiled) === withoutLayout(difference.plain)) {
+  if (typeof difference === "string") {
+    add(`${difference} at a limit among the neighbors`);
+    if (difference === "only the executable is stopped")
+      keepFind("limit", "among the neighbors", {
+        ["program" + extension]: text,
+        "neighbors.txt": listed([...before, text, ...behind]),
+        "report.txt": `limit\n${bun} build --compile --aot ${buildFlags.join(" ")}\nONLY THE EXECUTABLE IS STOPPED AT A LIMIT, with 8 times the time too: one entry point imports the ${before.length + 1 + behind.length} programs of neighbors.txt in that order with import statements, and the program is number ${before.length}\n`,
+      });
+    difference = undefined;
+  } else if (difference && withoutLayout(difference.compiled) === withoutLayout(difference.plain)) {
     add("function text");
     difference = undefined;
   } else add(difference ? "among-neighbors" : "prints something else only beside a program that does too");
@@ -1426,7 +1466,7 @@ async function askAmongNeighbors(text: string, extension: string, add: (kind: st
       for (const [fewerBefore, fewerBehind] of fewer) {
         if (fewerBefore.length + fewerBehind.length === before.length + behind.length) continue;
         const still = await ask(fewerBefore, fewerBehind);
-        if (!still) continue;
+        if (!still || typeof still === "string") continue;
         [before, behind, difference, shrank] = [fewerBefore, fewerBehind, still, true];
         break;
       }
@@ -1444,6 +1484,59 @@ async function askAmongNeighbors(text: string, extension: string, add: (kind: st
       });
   }
   rmSync(subset, { recursive: true, force: true });
+}
+
+/**
+ * The executable in `folder` three times more. The runner ends the Worker of each unit at a moment that it draws from a span of a few milliseconds, whatever the program is doing then.
+ * Nothing that is printed counts. A process that ends by a signal is kept, with what `bun run` of the same files does in as many runs.
+ */
+async function judgeEndedEarly(
+  folder: string,
+  texts: string[],
+  extension: string,
+  inGroup: number,
+  units: number[],
+  membersOf: (unit: number) => number[],
+  atDefault: Map<number, Ended>,
+  add: (kind: string, by?: number) => void,
+) {
+  const spans = [1, 2, 4, 8, 16, 32, 64, 128, 256];
+  const span = spans[Math.floor(Math.random() * spans.length)];
+  const runSo = (stage: string, command: string[], which: number[], more: Record<string, string> = {}) =>
+    run(stage, command, folder, extension, inGroup, which, milliseconds * 4, {
+      BATCH_ENDS_WITHIN: String(span),
+      ...more,
+    });
+  const endedBySignal = ({ end }: Ended) => /^the process ended: SIG(?!KILL|TERM)/.test(end);
+  const calm = units.filter(unit => !atDefault.get(unit)!.end.startsWith("the process ended"));
+  const blamed = new Map<number, Ended>();
+  for (let round = 0; round < 3; round++)
+    for (const [unit, ended] of await runSo("ending-early", [join(folder, "batch")], calm))
+      if (endedBySignal(ended) && !blamed.has(unit)) blamed.set(unit, ended);
+  add(`Workers ended within ${span} ms`, calm.length * 3);
+  for (const [unit, ended] of [...blamed].slice(0, 3)) {
+    // The thread of a Worker that was ended can outlive its mark, so the units in front of the blamed one count too.
+    const at = calm.indexOf(unit);
+    const suspects = calm.slice(Math.max(0, at - 3), at + 1);
+    let plainEndsSo = false;
+    for (let round = 0; round < 3 && !plainEndsSo; round++)
+      plainEndsSo = [
+        ...(await runSo("plain-ending-early", [bun, "run", "./" + runner], suspects, plainEnv)).values(),
+      ].some(endedBySignal);
+    const kind = plainEndsSo ? "bun-run-ended-early-signal" : "ended-early-signal";
+    add(kind);
+    // The address differs from run to run. The code at the place does not.
+    const where =
+      /^Code at rip: .*$/m.exec(ended.stderr)?.[0] ??
+      /^panic(?:\([^)\n]*\))?: .*$/m.exec(ended.stderr)?.[0].replace(/0x[0-9A-Fa-f]+/g, "<address>") ??
+      "";
+    keepFind(kind, `${ended.end} | ${where}`, {
+      ["program" + extension]: texts[membersOf(unit)[0]],
+      "programs.txt": listed(suspects.flatMap(membersOf).map(index => texts[index])),
+      "report.txt": `${kind}\n${bun} build --compile --aot ${buildFlags.join(" ")}\n${ended.end} | ${where}\nThe runner ended each Worker at a moment within ${span} ms (BATCH_ENDS_WITHIN=${span}), in three runs. programs.txt holds the programs of the entry point that was running and of the ${suspects.length - 1} in front of it, whose threads may still have been ending.\nbun run of the same files, three runs: ${plainEndsSo ? "a signal too" : "no signal"}\n`,
+      "compiled.stderr": ended.stderr,
+    });
+  }
 }
 
 /** An environment in which an executable collects at every few allocations that leave the fast path, and overwrites what it frees. One interval is blind to what another sees. */
@@ -1573,9 +1666,11 @@ async function judgeUnderCollections(
 }
 
 let extension = "";
+const lastStart = Number(options.seconds) ? performance.now() + Number(options.seconds) * 1000 : Infinity;
 for (
   let batch = 0;
-  batches === 0 || batch < batches || waitingWithTheWorldOpen.length || waitingForABatchOfTheirOwn.length;
+  performance.now() < lastStart &&
+  (batches === 0 || batch < batches || waitingWithTheWorldOpen.length || waitingForABatchOfTheirOwn.length);
   batch++
 ) {
   for (const stage in spent) delete spent[stage];
@@ -1945,6 +2040,8 @@ for (
       milliseconds * 20,
       add,
     );
+  if (texts.length && Math.random() * 100 < Number(options["ends-early"]))
+    await judgeEndedEarly(folder, texts, extension, groupSize, all, index => [index], compiled, add);
   // The same programs once more, in an executable that checks while it runs what the compiler took for proven. It stops where that is false, also where the output happens to be right.
   if (texts.length && Math.random() * 100 < Number(options.validates)) {
     const flags = [...buildFlags, "--aot-validate"];

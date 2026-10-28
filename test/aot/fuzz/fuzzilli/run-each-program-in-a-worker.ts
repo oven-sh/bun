@@ -7,6 +7,8 @@ const [programsInGroup, extension, ...indexes] = process.argv.slice(2);
 const mark = process.env.BATCH_MARK ?? "=== ended";
 const maxMilliseconds = Number(process.env.BATCH_MILLISECONDS ?? 2000);
 const maxBytes = Number(process.env.BATCH_MEGABYTES ?? 512) * 2 ** 20;
+// With BATCH_ENDS_WITHIN=<milliseconds>, each Worker is ended at a moment drawn from that span, whatever the program is doing then.
+const endsWithin = Number(process.env.BATCH_ENDS_WITHIN ?? 0);
 
 for (const index of indexes) {
   const bytesBefore = process.memoryUsage.rss();
@@ -20,7 +22,9 @@ for (const index of indexes) {
     stoppedBy ||= reason;
     worker.terminate();
   };
-  const clock = setTimeout(stop, maxMilliseconds, "time");
+  const clock = endsWithin
+    ? setTimeout(stop, Math.random() * endsWithin, "early")
+    : setTimeout(stop, maxMilliseconds, "time");
   const meter = setInterval(() => {
     if (process.memoryUsage.rss() - bytesBefore > maxBytes) stop("memory");
   }, 10);

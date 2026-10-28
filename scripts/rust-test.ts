@@ -21,7 +21,7 @@
  * Bun's library in a checking mode. This step has the processors for them, and no shard of the tests waits for it.
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -66,7 +66,11 @@ async function run(cmd: string, args: string[], env: NodeJS.ProcessEnv = process
   console.log(`\x1b[36m[test]\x1b[0m ${cmd} ${args.join(" ")}`);
   const child = spawn(cmd, args, { stdio: "inherit", cwd: repo, env });
   const status = await new Promise<number | null>(done => child.on("close", done).on("error", () => done(1)));
-  if (status !== 0) process.exit(status ?? 1);
+  if (status === 0) return;
+  // Asked to end, a program ends what it has started itself.
+  for (const program of running) program.kill();
+  await Promise.all(programs);
+  process.exit(status ?? 1);
 }
 
 const requiresEngine = !!process.env.TESTAOT || !!process.env.CI;
@@ -90,15 +94,18 @@ interface TestProgram {
 function start(name: string, command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) {
   const started = performance.now();
   const program = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+  running.add(program);
   const output: Buffer[] = [];
   program.stdout.on("data", chunk => output.push(chunk));
   program.stderr.on("data", chunk => output.push(chunk));
   return new Promise<TestProgram>(done => {
     program.on("error", error => {
+      running.delete(program);
       console.error(`\x1b[31m[test]\x1b[0m ${name}: ${error.message}`);
       done({ name, status: 1 });
     });
     program.on("close", (code, signal) => {
+      running.delete(program);
       const seconds = ((performance.now() - started) / 1000).toFixed(1);
       console.log(`\x1b[36m[test]\x1b[0m ${name} (${seconds} s)`);
       process.stdout.write(Buffer.concat(output));
@@ -109,6 +116,7 @@ function start(name: string, command: string, args: string[], options: { cwd: st
 
 const extraArgs = process.argv.slice(2);
 const programs: Promise<TestProgram>[] = [];
+const running = new Set<ChildProcess>();
 
 // The crates `include!()` generated sources, cargo cannot resolve the workspace until the vendored path dependencies
 // exist, and the build script of bun_sema_standalone compiles zstd's decoder. Of WebKit the code generators are enough.

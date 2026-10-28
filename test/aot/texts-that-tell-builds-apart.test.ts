@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, libcPathForDlopen, readElf64ProgramHeaders, tempDir } from "harness";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { isHardened } from "./hardened";
 import { run } from "./harness/run";
 import { describe, test } from "./supported";
@@ -62,9 +62,9 @@ function placesOf(file: Buffer, text: string) {
   return places;
 }
 
-/** Where in the file each of the names begins, by the symbol table. Nothing: the file has no symbol table. */
+/** Where in the file each of the names begins, by the symbol table. Nothing: the file has no symbol table, or one that is left with the names it exports. */
 function symbolsOf(path: string, file: Buffer, names: string[]) {
-  const [symbolTable, entrySize] = [2, 24];
+  const [symbolTable, dynamicSymbolTable, entrySize] = [2, 11, 24];
   const [headers, headerSize, count] = [Number(file.readBigUInt64LE(40)), file.readUInt16LE(58), file.readUInt16LE(60)];
   const sections = Array.from({ length: count }, (_, index) => {
     const at = headers + index * headerSize;
@@ -76,7 +76,8 @@ function symbolsOf(path: string, file: Buffer, names: string[]) {
     };
   });
   const table = sections.find(section => section.type === symbolTable);
-  if (!table) return undefined;
+  if (!table || table.size <= (sections.find(section => section.type === dynamicSymbolTable)?.size ?? 0))
+    return undefined;
   const strings = file.subarray(sections[table.link].start, sections[table.link].start + sections[table.link].size);
   const wanted = new Map(names.map(name => [strings.indexOf(`\0${name}\0`) + 1, name]));
   wanted.delete(0);
@@ -104,14 +105,20 @@ describe.skipIf(!isLinux)("the file of the Bun under test", () => {
     );
   });
 
+  // CI starts this file with the stripped Bun, and the same link with its symbols lies beside it.
   test("names each text that it holds, and no other, in its symbol table if it has one", () => {
-    const symbols = symbolsOf(
-      process.execPath,
-      file,
-      marks.map(mark => mark.symbol),
-    );
-    if (!symbols) return;
-    expect(symbols).toEqual(Object.fromEntries(marks.filter(holds).map(mark => [mark.symbol, places.get(mark)![0]])));
+    const names = marks.map(mark => mark.symbol);
+    for (const path of [process.execPath, join(dirname(process.execPath), "bun-profile")]) {
+      if (!existsSync(path)) continue;
+      const bytes = path === process.execPath ? file : readFileSync(path);
+      const symbols = symbolsOf(path, bytes, names);
+      if (!symbols) continue;
+      expect(marks.filter(mark => placesOf(bytes, mark.text).length > 0)).toEqual(marks.filter(holds));
+      expect(symbols).toEqual(
+        Object.fromEntries(marks.filter(holds).map(mark => [mark.symbol, placesOf(bytes, mark.text)[0]])),
+      );
+      return;
+    }
   });
 
   const launcher = `import { dlopen, FFIType, ptr } from "bun:ffi";

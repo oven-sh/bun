@@ -857,7 +857,7 @@ runtimefunction id=69 function=f27
 # CHECK-NEXT: b0(v0: f13|f14|f15):
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=f13
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b7(| 0)
-# CHECK-NEXT: b1() handler=b42():
+# CHECK-NEXT: b1() handler=b52():
 # CHECK-NEXT: v2: 1 = Integer integer=1
 # CHECK-NEXT: v3: 2 = Integer integer=2
 # CHECK-NEXT: v4: L0 = NewObject -, v2 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
@@ -874,7 +874,7 @@ runtimefunction id=69 function=f27
 # CHECK-NEXT: b4(v11: guard) frequency=Unlikely:
 # CHECK-NEXT: v12: int[-2147483643, 2147483647] = GetSlot v4, v11 key="area" receivers=[L0] level=Expected accessSite=65 [holdsDeclaredType]
 # CHECK-NEXT: Jump -> next b6(v12)
-# CHECK-NEXT: b5() frequency=Unlikely handler=b42():
+# CHECK-NEXT: b5() frequency=Unlikely handler=b52():
 # CHECK-NEXT: v13: anything = SuperGet v4, v4 key="area"
 # CHECK-NEXT: v14: undefined|int = AssumeType v13 provenType=undefined|int
 # CHECK-NEXT: Jump -> next b6(v14)
@@ -884,11 +884,11 @@ runtimefunction id=69 function=f27
 # CHECK-NEXT: b7(v17: f14|f15):
 # CHECK-NEXT: v18: boolean = TypeTest v17 testedType=f14
 # CHECK-NEXT: Branch v18 -> taken b8(), notTaken b9()
-# CHECK-NEXT: b8() handler=b42():
+# CHECK-NEXT: b8() handler=b52():
 # CHECK-NEXT: v19: L4 = CallDirect function=f14 accessSite=63
 # CHECK-NEXT: v20: int[-2147483643, 2147483647] = GetSlot v19 key="kept" receivers=[L0, L1, L4] level=Proven accessSite=64
 # CHECK-NEXT: Jump -> next b10(v19, v20)
-# CHECK-NEXT: b9() handler=b42():
+# CHECK-NEXT: b9() handler=b52():
 # CHECK-NEXT: v21: L1 = CallDirect function=f15 accessSite=63
 # CHECK-NEXT: v22: int[-2147483643, 2147483647] = GetSlot v21 key="kept" receivers=[L0, L1, L4] level=Proven accessSite=64
 # CHECK-NEXT: Jump -> next b10(v21, v22)
@@ -910,7 +910,7 @@ runtimefunction id=69 function=f27
 # CHECK-NEXT: b15() frequency=Unlikely:
 # CHECK-NEXT: v34: 2 = Integer integer=2
 # CHECK-NEXT: Jump -> next b17(v34)
-# CHECK-NEXT: b16() frequency=Unlikely handler=b42():
+# CHECK-NEXT: b16() frequency=Unlikely handler=b52():
 # CHECK-NEXT: v35: anything = SuperGet v30, v30 key="describe"
 # CHECK-NEXT: Jump -> next b17(v35)
 # CHECK-NEXT: b17(v36: anything ~ undefined|2) frequency=Unlikely:
@@ -930,85 +930,117 @@ runtimefunction id=69 function=f27
 # CHECK-NEXT: b22(v46: undefined|2):
 # CHECK-NEXT: v47: string = TypeOf v46
 # CHECK-NEXT: v48: boolean = TypeTest v28 testedType=L1
-# CHECK-NEXT: Branch v48 -> taken b23(| 0), notTaken b30()
+# CHECK-NEXT: Branch v48 -> taken b23(| 0), notTaken b40()
 # CHECK-NEXT: b23(v49: L1):
 # CHECK-NEXT: v50: boolean = IsSlotFilled v49 key="limit" receivers=[L1] level=Expected [holdsDeclaredType]
 # CHECK-NEXT: Branch v50 -> taken b24(| 0), notTaken b25(v47, v26, v27, v49)
 # CHECK-NEXT: b24(v51: guard):
 # CHECK-NEXT: v52: int[-2147483643, 2147483647] = GetSlot v49, v51 key="limit" receivers=[L1] level=Expected accessSite=67 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b31(v52)
+# CHECK-NEXT: Jump -> next b41(v52)
 # CHECK-NEXT: b25(v53: string, v54: undefined|int ~ undefined|int[-2147483643, 2147483647], v55: int[-2147483643, 2147483647], v56: L1) frequency=Unlikely:
 # CHECK-NEXT: v57: boolean = IsSlotFilled v56 key="limit" receivers=[L1] level=Expected [holdsDeclaredType]
 # CHECK-NEXT: Branch v57 -> taken b26(| 0), notTaken b27()
 # CHECK-NEXT: b26(v58: guard) frequency=Unlikely:
 # CHECK-NEXT: v59: int[-2147483643, 2147483647] = GetSlot v56, v58 key="limit" receivers=[L1] level=Expected accessSite=67 [holdsDeclaredType]
 # CHECK-NEXT: Jump -> next b28(v59)
-# CHECK-NEXT: b27() frequency=Unlikely handler=b42():
+# CHECK-NEXT: b27() frequency=Unlikely handler=b52():
 # CHECK-NEXT: v60: anything = SuperGet v56, v56 key="limit"
 # CHECK-NEXT: v61: undefined|int = AssumeType v60 provenType=undefined|int
 # CHECK-NEXT: Jump -> next b28(v61)
 # CHECK-NEXT: b28(v62: undefined|int ~ int[-2147483643, 2147483647]) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b29(v62, v53, v54, v55, v56)
-# CHECK-NEXT: b29(v63: undefined|int ~ undefined|int[-2147483643, 2147483647], v64: string, v65: undefined|int ~ undefined|int[-2147483643, 2147483647], v66: int[-2147483643, 2147483647], v67: L0|L1|L4) frequency=Unlikely handler=b42():
+# CHECK-NEXT: b29(v63: undefined|int ~ undefined|int[-2147483643, 2147483647], v64: string, v65: undefined|int ~ undefined|int[-2147483643, 2147483647], v66: int[-2147483643, 2147483647], v67: L0|L1|L4) frequency=Unlikely:
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectKeys
-# CHECK-NEXT: v69: Array<string> = CallBuiltin -, v67 overload=ObjectKeys/0 accessSite=68
-# CHECK-NEXT: v70: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v69 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v71: string = CallBuiltin v70 overload=ArrayPrototypeJoin/0 accessSite=70
-# CHECK-NEXT: v72: Array<undefined|int|string, Contiguous> = NewArray v66, v65, v64, v63, v71 contents=undefined|int|string allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v73: Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v72 provenType=Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v74: " " = String string=" "
-# CHECK-NEXT: v75: string = CallBuiltin v73, v74 overload=ArrayPrototypeJoin/0 accessSite=72
-# CHECK-NEXT: Return v75
-# CHECK-NEXT: b30():
-# CHECK-NEXT: v76: undefined = Undefined
-# CHECK-NEXT: Jump -> next b31(v76)
-# CHECK-NEXT: b31(v77: undefined|int[-2147483643, 2147483647]):
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectKeys
-# CHECK-NEXT: v79: boolean = ShapeTest v28 layouts=[L0]
-# CHECK-NEXT: Branch v79 -> taken b32(| 0), notTaken b34()
-# CHECK-NEXT: b32(v80: guard):
-# CHECK-NEXT: v81: boolean = HasKeyOrder v28, v80 layout=L0 fields=[0]
-# CHECK-NEXT: Branch v81 -> taken b33(), notTaken b34()
-# CHECK-NEXT: b33():
+# CHECK-NEXT: v69: boolean = ShapeTest v67 layouts=[L0]
+# CHECK-NEXT: Branch v69 -> taken b30(| 0), notTaken b32()
+# CHECK-NEXT: b30(v70: guard) frequency=Unlikely:
+# CHECK-NEXT: v71: boolean = HasKeyOrder v67, v70 layout=L0 fields=[0]
+# CHECK-NEXT: Branch v71 -> taken b31(), notTaken b32()
+# CHECK-NEXT: b31() frequency=Unlikely:
+# CHECK-NEXT: v72: "kept" = String string="kept"
+# CHECK-NEXT: v73: Array<string> = NewArray v72 contents=string
+# CHECK-NEXT: Jump -> next b39(v73)
+# CHECK-NEXT: b32() frequency=Unlikely:
+# CHECK-NEXT: v74: boolean = ShapeTest v67 layouts=[L1]
+# CHECK-NEXT: Branch v74 -> taken b33(| 0), notTaken b35()
+# CHECK-NEXT: b33(v75: guard) frequency=Unlikely:
+# CHECK-NEXT: v76: boolean = HasKeyOrder v67, v75 layout=L1 fields=[0]
+# CHECK-NEXT: Branch v76 -> taken b34(), notTaken b35()
+# CHECK-NEXT: b34() frequency=Unlikely:
+# CHECK-NEXT: v77: "kept" = String string="kept"
+# CHECK-NEXT: v78: Array<string> = NewArray v77 contents=string
+# CHECK-NEXT: Jump -> next b39(v78)
+# CHECK-NEXT: b35() frequency=Unlikely:
+# CHECK-NEXT: v79: boolean = ShapeTest v67 layouts=[L4]
+# CHECK-NEXT: Branch v79 -> taken b36(| 0), notTaken b38()
+# CHECK-NEXT: b36(v80: guard) frequency=Unlikely:
+# CHECK-NEXT: v81: boolean = HasKeyOrder v67, v80 layout=L4 fields=[0]
+# CHECK-NEXT: Branch v81 -> taken b37(), notTaken b38()
+# CHECK-NEXT: b37() frequency=Unlikely:
 # CHECK-NEXT: v82: "kept" = String string="kept"
 # CHECK-NEXT: v83: Array<string> = NewArray v82 contents=string
-# CHECK-NEXT: Jump -> next b41(v83)
-# CHECK-NEXT: b34():
-# CHECK-NEXT: v84: boolean = ShapeTest v28 layouts=[L1]
-# CHECK-NEXT: Branch v84 -> taken b35(| 0), notTaken b37()
-# CHECK-NEXT: b35(v85: guard):
-# CHECK-NEXT: v86: boolean = HasKeyOrder v28, v85 layout=L1 fields=[0]
-# CHECK-NEXT: Branch v86 -> taken b36(), notTaken b37()
-# CHECK-NEXT: b36():
-# CHECK-NEXT: v87: "kept" = String string="kept"
-# CHECK-NEXT: v88: Array<string> = NewArray v87 contents=string
-# CHECK-NEXT: Jump -> next b41(v88)
-# CHECK-NEXT: b37():
-# CHECK-NEXT: v89: boolean = ShapeTest v28 layouts=[L4]
-# CHECK-NEXT: Branch v89 -> taken b38(| 0), notTaken b40()
-# CHECK-NEXT: b38(v90: guard):
-# CHECK-NEXT: v91: boolean = HasKeyOrder v28, v90 layout=L4 fields=[0]
-# CHECK-NEXT: Branch v91 -> taken b39(), notTaken b40()
-# CHECK-NEXT: b39():
-# CHECK-NEXT: v92: "kept" = String string="kept"
-# CHECK-NEXT: v93: Array<string> = NewArray v92 contents=string
-# CHECK-NEXT: Jump -> next b41(v93)
-# CHECK-NEXT: b40() frequency=Rare handler=b42():
-# CHECK-NEXT: v94: Array<string> = CallBuiltin -, v28 overload=ObjectKeys/0 accessSite=68
-# CHECK-NEXT: Jump -> next b41(v94)
-# CHECK-NEXT: b41(v95: Array<string>) handler=b42():
-# CHECK-NEXT: v96: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v95 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v97: string = CallBuiltin v96 overload=ArrayPrototypeJoin/0 accessSite=70
-# CHECK-NEXT: v98: Array<undefined|int|string, Contiguous> = NewArray v27, v26, v47, v77, v97 contents=undefined|int|string allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v99: Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v98 provenType=Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v100: " " = String string=" "
-# CHECK-NEXT: v101: string = CallBuiltin v99, v100 overload=ArrayPrototypeJoin/0 accessSite=72
-# CHECK-NEXT: Return v101
-# CHECK-NEXT: b42() role=CatchHandler:
-# CHECK-NEXT: v102: anything = CatchValue
-# CHECK-NEXT: v103: anything = PropGet v102 key="constructor" accessSite=73
-# CHECK-NEXT: v104: anything = PropGet v103 key="name" accessSite=74
-# CHECK-NEXT: Return v104
+# CHECK-NEXT: Jump -> next b39(v83)
+# CHECK-NEXT: b38() frequency=Rare handler=b52():
+# CHECK-NEXT: v84: Array<string> = CallBuiltin -, v67 overload=ObjectKeys/0 accessSite=68
+# CHECK-NEXT: Jump -> next b39(v84)
+# CHECK-NEXT: b39(v85: Array<string>) frequency=Unlikely handler=b52():
+# CHECK-NEXT: v86: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v85 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v87: string = CallBuiltin v86 overload=ArrayPrototypeJoin/0 accessSite=70
+# CHECK-NEXT: v88: Array<undefined|int|string, Contiguous> = NewArray v66, v65, v64, v63, v87 contents=undefined|int|string allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v89: Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v88 provenType=Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v90: " " = String string=" "
+# CHECK-NEXT: v91: string = CallBuiltin v89, v90 overload=ArrayPrototypeJoin/0 accessSite=72
+# CHECK-NEXT: Return v91
+# CHECK-NEXT: b40():
+# CHECK-NEXT: v92: undefined = Undefined
+# CHECK-NEXT: Jump -> next b41(v92)
+# CHECK-NEXT: b41(v93: undefined|int[-2147483643, 2147483647]):
+# CHECK-NEXT: InitializeBuiltin builtin=ObjectKeys
+# CHECK-NEXT: v95: boolean = ShapeTest v28 layouts=[L0]
+# CHECK-NEXT: Branch v95 -> taken b42(| 0), notTaken b44()
+# CHECK-NEXT: b42(v96: guard):
+# CHECK-NEXT: v97: boolean = HasKeyOrder v28, v96 layout=L0 fields=[0]
+# CHECK-NEXT: Branch v97 -> taken b43(), notTaken b44()
+# CHECK-NEXT: b43():
+# CHECK-NEXT: v98: "kept" = String string="kept"
+# CHECK-NEXT: v99: Array<string> = NewArray v98 contents=string
+# CHECK-NEXT: Jump -> next b51(v99)
+# CHECK-NEXT: b44():
+# CHECK-NEXT: v100: boolean = ShapeTest v28 layouts=[L1]
+# CHECK-NEXT: Branch v100 -> taken b45(| 0), notTaken b47()
+# CHECK-NEXT: b45(v101: guard):
+# CHECK-NEXT: v102: boolean = HasKeyOrder v28, v101 layout=L1 fields=[0]
+# CHECK-NEXT: Branch v102 -> taken b46(), notTaken b47()
+# CHECK-NEXT: b46():
+# CHECK-NEXT: v103: "kept" = String string="kept"
+# CHECK-NEXT: v104: Array<string> = NewArray v103 contents=string
+# CHECK-NEXT: Jump -> next b51(v104)
+# CHECK-NEXT: b47():
+# CHECK-NEXT: v105: boolean = ShapeTest v28 layouts=[L4]
+# CHECK-NEXT: Branch v105 -> taken b48(| 0), notTaken b50()
+# CHECK-NEXT: b48(v106: guard):
+# CHECK-NEXT: v107: boolean = HasKeyOrder v28, v106 layout=L4 fields=[0]
+# CHECK-NEXT: Branch v107 -> taken b49(), notTaken b50()
+# CHECK-NEXT: b49():
+# CHECK-NEXT: v108: "kept" = String string="kept"
+# CHECK-NEXT: v109: Array<string> = NewArray v108 contents=string
+# CHECK-NEXT: Jump -> next b51(v109)
+# CHECK-NEXT: b50() frequency=Rare handler=b52():
+# CHECK-NEXT: v110: Array<string> = CallBuiltin -, v28 overload=ObjectKeys/0 accessSite=68
+# CHECK-NEXT: Jump -> next b51(v110)
+# CHECK-NEXT: b51(v111: Array<string>) handler=b52():
+# CHECK-NEXT: v112: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v111 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v113: string = CallBuiltin v112 overload=ArrayPrototypeJoin/0 accessSite=70
+# CHECK-NEXT: v114: Array<undefined|int|string, Contiguous> = NewArray v27, v26, v47, v93, v113 contents=undefined|int|string allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v115: Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v114 provenType=Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v116: " " = String string=" "
+# CHECK-NEXT: v117: string = CallBuiltin v115, v116 overload=ArrayPrototypeJoin/0 accessSite=72
+# CHECK-NEXT: Return v117
+# CHECK-NEXT: b52() role=CatchHandler:
+# CHECK-NEXT: v118: anything = CatchValue
+# CHECK-NEXT: v119: anything = PropGet v118 key="constructor" accessSite=73
+# CHECK-NEXT: v120: anything = PropGet v119 key="name" accessSite=74
+# CHECK-NEXT: Return v120
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="describe"
 # CHECK: module=m0 position=903 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} {

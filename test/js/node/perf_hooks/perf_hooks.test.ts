@@ -284,7 +284,7 @@ test("export surface matches Node v26.3.0", () => {
 
 // The options defaults must not read through a polluted Object.prototype.
 // Node uses kEmptyObject for both; verified against Node v26.3.0.
-test("timerify and createHistogram survive Object.prototype option pollution", async () => {
+test.concurrent("timerify and createHistogram survive Object.prototype option pollution", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -305,7 +305,7 @@ test("timerify and createHistogram survive Object.prototype option pollution", a
   expect(stderr).not.toContain("ERR_INVALID_ARG_TYPE");
 });
 
-test("timerify and AsyncResource.bind survive Object.prototype.get pollution", async () => {
+test.concurrent("timerify and AsyncResource.bind survive Object.prototype.get pollution", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -335,7 +335,7 @@ test("timerify and AsyncResource.bind survive Object.prototype.get pollution", a
 // does not run inside observe(), which is what WPT
 // performance-timeline/buffered-does-not-sync-invoke.html checks.
 // Verified against Node v26.3.0.
-test("observe({type, buffered: true}) buffers synchronously and delivers as one deferred batch", async () => {
+test.concurrent("observe({type, buffered: true}) buffers synchronously and delivers as one deferred batch", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

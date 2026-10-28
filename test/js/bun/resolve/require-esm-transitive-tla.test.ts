@@ -129,29 +129,62 @@ describe("require(esm) rejects top-level await before evaluating anything", () =
     });
   });
 
+  // m0.mjs enters the cycle m2 → m3 → m4 → m1 → m2 at m3, so m2 runs before m1 reads its export. A require()
+  // that starts to evaluate the graph enters the cycle at m2, and m1 then reads the export before it exists.
+  test.concurrent("and leaves an import cycle to be entered where the importing graph enters it", async () => {
+    using dir = tempDir("require-esm-tla-cycle", {
+      "m0.mjs": `
+        import "./c.cjs";
+        import "./m3.mjs";
+        console.log(JSON.stringify(globalThis.log));
+      `,
+      "c.cjs": `
+        globalThis.log = [];
+        try {
+          require("./m2.mjs");
+          globalThis.log.push("c: require() returned");
+        } catch (e) {
+          globalThis.log.push("c: " + e.code);
+        }
+      `,
+      "m1.mjs": `import { v2 } from "./m2.mjs"; globalThis.log.push("m1 reads " + v2);`,
+      "m2.mjs": `import "./m3.mjs"; export const v2 = "v2";`,
+      "m3.mjs": `import "./m4.mjs";`,
+      "m4.mjs": `import "./m1.mjs"; await null;`,
+    });
+    expect(await run(String(dir), "m0.mjs")).toEqual(["c: ERR_REQUIRE_ASYNC_MODULE", "m1 reads v2"]);
+  });
+
   test.concurrent("with a message that names the requiring module and the one with the await", async () => {
     using dir = tempDir("require-esm-tla-message", {
       ...fixtures,
       "main.cjs": `
         globalThis.order = [];
-        try {
-          require("./parent.mjs");
-          console.log(JSON.stringify("returned"));
-        } catch (e) {
-          const message = e.message
-            .replaceAll(__filename, "<main.cjs>")
-            .replaceAll(require.resolve("./parent.mjs"), "<parent.mjs>")
-            .replaceAll(require.resolve("./dep-tla.mjs"), "<dep-tla.mjs>");
-          console.log(JSON.stringify(message.split("\\n")));
+        function messageOf(file) {
+          try {
+            require(file);
+            return "returned";
+          } catch (e) {
+            let message = e.message;
+            for (const name of ["main.cjs", "parent.mjs", "dep-tla.mjs", "tla-value.mjs"]) {
+              message = message.replaceAll(require.resolve("./" + name), "<" + name + ">");
+            }
+            return message.split("\\n");
+          }
         }
+        const direct = messageOf("./parent.mjs");
+        // A wrapped handler calls the built-in one with the module that is being loaded, not the one that requires it.
+        const builtin = require.extensions[".mjs"];
+        require.extensions[".mjs"] = (module, filename) => builtin(module, filename);
+        const throughHandler = messageOf("./tla-value.mjs");
+        console.log(JSON.stringify({ direct, throughHandler }));
       `,
     });
-    expect(await run(String(dir), "main.cjs")).toEqual([
-      "require() cannot be used on an ESM graph with top-level await. Use import() instead.",
-      "  From <main.cjs>",
-      "  Requiring <parent.mjs>",
-      "  The top-level await is in <dep-tla.mjs>",
-    ]);
+    const message = "require() cannot be used on an ESM graph with top-level await. Use import() instead.";
+    expect(await run(String(dir), "main.cjs")).toEqual({
+      direct: [message, "  From <main.cjs>", "  Requiring <parent.mjs>", "  The top-level await is in <dep-tla.mjs>"],
+      throughHandler: [message, "  From <main.cjs>", "  Requiring <tla-value.mjs>"],
+    });
   });
 });
 

@@ -4,8 +4,9 @@ use core::ffi::CStr;
 
 /// `ZSTD_ErrorCode`, without `ZSTD_error_no_error`. The values are part of `node:zlib`'s constants.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ErrorCode {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{}", self.message().to_str().unwrap_or_default())]
+pub enum Error {
     Generic = 1,
     PrefixUnknown = 10,
     VersionUnsupported = 12,
@@ -36,9 +37,9 @@ pub enum ErrorCode {
     NoForwardProgressInputEmpty = 82,
 }
 
-pub(crate) type Result<T = usize> = core::result::Result<T, ErrorCode>;
+pub type Result<T = usize, E = Error> = core::result::Result<T, E>;
 
-impl ErrorCode {
+impl Error {
     /// `ZSTD_getErrorString`.
     pub const fn message(self) -> &'static CStr {
         match self {
@@ -118,5 +119,47 @@ impl ErrorCode {
             Self::NoForwardProgressDestFull => c"ZSTD_error_noForwardProgress_destFull",
             Self::NoForwardProgressInputEmpty => c"ZSTD_error_noForwardProgress_inputEmpty",
         }
+    }
+}
+
+/// What the functions that allocate their output fail with. Users get to see the names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
+pub enum ZstdError {
+    /// The output, or the decoder state the frame's window size dictates, could not be allocated.
+    #[error("OutOfMemory")]
+    OutOfMemory,
+    #[error("InvalidZstdData")]
+    InvalidZstdData,
+    #[error("DecompressionFailed")]
+    DecompressionFailed,
+    #[error("ZstdDecompressionError")]
+    ZstdDecompressionError,
+    #[error("ShortRead")]
+    ShortRead,
+}
+
+impl ZstdError {
+    /// The error for a failed decompression call; `other` is the non-allocation failure.
+    pub(crate) fn for_decompression(code: Error, other: ZstdError) -> ZstdError {
+        if code == Error::MemoryAllocation {
+            ZstdError::OutOfMemory
+        } else {
+            other
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn errors_show_what_c_and_users_know_them_by() {
+        assert_eq!(
+            Error::ChecksumWrong.to_string(),
+            "Restored data doesn't match checksum"
+        );
+        assert_eq!(ZstdError::ShortRead.to_string(), "ShortRead");
+        assert_eq!(<&'static str>::from(ZstdError::ShortRead), "ShortRead");
     }
 }

@@ -4,7 +4,7 @@
 use super::huf::Code;
 use crate::common::bitstream::{BitDStream, DStreamStatus};
 use crate::common::{HUF_SYMBOLVALUE_MAX, HUF_TABLELOG_MAX};
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{BUG, SliceExt, highbit32, read_le16, read_le64};
 
 /// Tables of this log are decoded by the loops that keep four streams in registers.
@@ -118,7 +118,7 @@ impl FastArgs {
             return Ok(None);
         }
         if src.len() < 10 {
-            return Err(ErrorCode::CorruptionDetected);
+            return Err(Error::CorruptionDetected);
         }
         if table_log != HUF_DECODER_FAST_TABLELOG {
             return Ok(None);
@@ -129,7 +129,7 @@ impl FastArgs {
         }
         let [_, _, _, length4] = streams.length;
         if length4 > src.len() {
-            return Err(ErrorCode::CorruptionDetected);
+            return Err(Error::CorruptionDetected);
         }
         let [_, start2, start3, start4] = streams.start;
         let ip = [start2 - 8, start3 - 8, start4 - 8, src.len() - 8];
@@ -160,11 +160,11 @@ impl FastArgs {
         segment_end: usize,
     ) -> Result<BitDStream<'a>> {
         if self.op.at(stream)? > segment_end {
-            return Err(ErrorCode::CorruptionDetected);
+            return Err(Error::CorruptionDetected);
         }
         let ip = self.ip.at(stream)?;
         if ip + 8 < self.iend.at(stream)? {
-            return Err(ErrorCode::CorruptionDetected);
+            return Err(Error::CorruptionDetected);
         }
         BitDStream::resume(src, ip, self.bits.at(stream)?.trailing_zeros())
     }
@@ -246,7 +246,7 @@ fn build_dtable_x1(dtable: &mut ExactTable, stats: &Code) -> Result<()> {
     let target_table_log = max_table_log.min(HUF_DECODER_FAST_TABLELOG);
     let table_log = rescale_stats(weights, &mut rank_val, stats.table_log, target_table_log)?;
     if table_log > max_table_log {
-        return Err(ErrorCode::TableLogTooLarge);
+        return Err(Error::TableLogTooLarge);
     }
     dtable.table_type = TableType::X1;
     dtable.table_log = table_log;
@@ -326,7 +326,7 @@ fn decompress_1x1_using_dtable(dst: &mut [u8], src: &[u8], dtable: &ExactTable) 
     let mut bit_d = BitDStream::new(src)?;
     decode_stream_x1(dst, &mut bit_d, &dtable.x1, dtable.table_log);
     if !bit_d.is_at_end() {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     Ok(dst.len())
 }
@@ -334,10 +334,10 @@ fn decompress_1x1_using_dtable(dst: &mut [u8], src: &[u8], dtable: &ExactTable) 
 /// `HUF_decompress4X1_usingDTable_internal_body`
 fn decompress_4x1_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Result<usize> {
     if src.len() < 10 {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     if dst.len() < 6 {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     let dst_size = dst.len();
     let dt = &dtable.x1;
@@ -345,11 +345,11 @@ fn decompress_4x1_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Resul
     let streams = Streams::new(src)?;
     let [_, _, _, length4] = streams.length;
     if length4 > src.len() {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     let segment_size = dst_size.div_ceil(4);
     if 3 * segment_size > dst_size {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     let [mut bit_d1, mut bit_d2, mut bit_d3, mut bit_d4] = streams.open(src)?;
 
@@ -385,7 +385,7 @@ fn decompress_4x1_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Resul
     decode_stream_x1(out4.sub_mut(done..)?, &mut bit_d4, dt, dt_log);
 
     if !(bit_d1.is_at_end() & bit_d2.is_at_end() & bit_d3.is_at_end() & bit_d4.is_at_end()) {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     Ok(dst_size)
 }
@@ -611,7 +611,7 @@ fn build_dtable_x2(dtable: &mut ExactTable, stats: &Code) -> Result<()> {
     let table_log = stats.table_log;
 
     if table_log > max_table_log {
-        return Err(ErrorCode::TableLogTooLarge);
+        return Err(Error::TableLogTooLarge);
     }
     if table_log <= HUF_DECODER_FAST_TABLELOG && max_table_log > HUF_DECODER_FAST_TABLELOG {
         max_table_log = HUF_DECODER_FAST_TABLELOG;
@@ -764,7 +764,7 @@ fn decompress_1x2_using_dtable(dst: &mut [u8], src: &[u8], dtable: &ExactTable) 
     let mut bit_d = BitDStream::new(src)?;
     decode_stream_x2(dst, &mut bit_d, &dtable.x2, dtable.table_log)?;
     if !bit_d.is_at_end() {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     Ok(dst.len())
 }
@@ -772,10 +772,10 @@ fn decompress_1x2_using_dtable(dst: &mut [u8], src: &[u8], dtable: &ExactTable) 
 /// `HUF_decompress4X2_usingDTable_internal_body`
 fn decompress_4x2_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Result<usize> {
     if src.len() < 10 {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     if dst.len() < 6 {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     let oend = dst.len();
     let dt = &dtable.x2;
@@ -783,14 +783,14 @@ fn decompress_4x2_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Resul
     let streams = Streams::new(src)?;
     let [_, _, _, length4] = streams.length;
     if length4 > src.len() {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     let segment_size = oend.div_ceil(4);
     let op_start2 = segment_size;
     let op_start3 = 2 * segment_size;
     let op_start4 = 3 * segment_size;
     if op_start4 > oend {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     let [mut bit_d1, mut bit_d2, mut bit_d3, mut bit_d4] = streams.open(src)?;
     let (mut op1, mut op2, mut op3, mut op4) = (0, op_start2, op_start3, op_start4);
@@ -819,7 +819,7 @@ fn decompress_4x2_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Resul
     }
 
     if op1 > op_start2 || op2 > op_start3 || op3 > op_start4 {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
 
     decode_stream_x2(dst.sub_mut(op1..op_start2)?, &mut bit_d1, dt, dt_log)?;
@@ -828,7 +828,7 @@ fn decompress_4x2_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Resul
     decode_stream_x2(dst.sub_mut(op4..oend)?, &mut bit_d4, dt, dt_log)?;
 
     if !(bit_d1.is_at_end() & bit_d2.is_at_end() & bit_d3.is_at_end() & bit_d4.is_at_end()) {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     Ok(oend)
 }

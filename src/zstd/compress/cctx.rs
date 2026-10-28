@@ -34,7 +34,7 @@ use crate::common::{
     ZSTD_FRAMEHEADERSIZE_MAX, ZSTD_MAGIC_DICTIONARY, ZSTD_MAGICNUMBER, ZSTD_REP_NUM,
     ZSTD_WINDOWLOG_ABSOLUTEMIN, ZSTD_WORKSPACETOOLARGE_FACTOR, ZSTD_WORKSPACETOOLARGE_MAXDURATION,
 };
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{
     SliceExt, highbit32, read_le32, try_zeroed, write_le16, write_le24, write_le32, write_le64,
 };
@@ -394,7 +394,7 @@ fn dict_ncount_repeat(
 
 /// `ZSTD_loadCEntropy`: reads the tables of the dictionary `dict` into `bs`. Returns where its content starts.
 fn load_c_entropy(bs: &mut CompressedBlockState, dict: &[u8]) -> Result<usize> {
-    const CORRUPTED: ErrorCode = ErrorCode::DictionaryCorrupted;
+    const CORRUPTED: Error = Error::DictionaryCorrupted;
     let mut offcode_ncount = [0i16; MAX_OFF as usize + 1];
     let mut dict_ptr = 8usize;
     bs.entropy.huf.repeat_mode = HufRepeat::Check;
@@ -721,7 +721,7 @@ fn write_frame_header(
     let mut pos = 0usize;
 
     if dst.len() < ZSTD_FRAMEHEADERSIZE_MAX {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     }
     if params.format == Format::Zstd1 {
         write_le32(dst, 0, ZSTD_MAGICNUMBER)?;
@@ -774,7 +774,7 @@ fn write_frame_header(
 /// `ZSTD_writeLastEmptyBlock`
 pub(crate) fn write_last_empty_block(dst: &mut [u8]) -> Result<usize> {
     if dst.len() < ZSTD_BLOCKHEADERSIZE {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     }
     write_le24(dst, 0, 1 + ((BlockType::Raw as u32) << 1))?;
     Ok(ZSTD_BLOCKHEADERSIZE)
@@ -1342,7 +1342,7 @@ impl FrameCompressor {
         }
 
         if dst.len() < ZSTD_BLOCKHEADERSIZE {
-            return Err(ErrorCode::DstSizeTooSmall);
+            return Err(Error::DstSizeTooSmall);
         }
         let mut c_seqs_size = entropy_compress_seq_store(
             &mut self.seq_store,
@@ -1603,7 +1603,7 @@ impl FrameCompressor {
                 src,
                 last_block,
             ) {
-                Err(ErrorCode::DstSizeTooSmall) => {}
+                Err(Error::DstSizeTooSmall) => {}
                 c_size => {
                     let c_size = c_size?;
                     let max_c_size = src
@@ -1665,7 +1665,7 @@ impl FrameCompressor {
             let out = dst.sub_mut(op..)?;
 
             if out.len() < ZSTD_BLOCKHEADERSIZE + MIN_CBLOCK_SIZE + 1 {
-                return Err(ErrorCode::DstSizeTooSmall);
+                return Err(Error::DstSizeTooSmall);
             }
 
             let ms = &mut self.match_state;
@@ -1725,7 +1725,7 @@ impl FrameCompressor {
     ) -> Result<usize> {
         let mut fh_size = 0usize;
         if self.stage == CompressionStage::Created {
-            return Err(ErrorCode::StageWrong);
+            return Err(Error::StageWrong);
         }
 
         if self.stage == CompressionStage::Init {
@@ -1763,7 +1763,7 @@ impl FrameCompressor {
         if self.pledged_src_size_plus_one != 0
             && self.consumed_src_size + 1 > self.pledged_src_size_plus_one
         {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
         Ok(c_size + fh_size)
     }
@@ -1782,7 +1782,7 @@ impl FrameCompressor {
     fn write_epilogue(&mut self, dst: &mut [u8]) -> Result<usize> {
         let mut op = 0usize;
         if self.stage == CompressionStage::Created {
-            return Err(ErrorCode::StageWrong);
+            return Err(Error::StageWrong);
         }
 
         // An empty frame.
@@ -1794,7 +1794,7 @@ impl FrameCompressor {
         if self.stage != CompressionStage::Ending {
             // One last empty block, to mark the end of the frame.
             if dst.len() - op < 3 {
-                return Err(ErrorCode::DstSizeTooSmall);
+                return Err(Error::DstSizeTooSmall);
             }
             write_le24(dst, op, 1 + ((BlockType::Raw as u32) << 1))?;
             op += ZSTD_BLOCKHEADERSIZE;
@@ -1803,7 +1803,7 @@ impl FrameCompressor {
         if self.applied_params.f_params.checksum_flag {
             let checksum = self.xxh_state.digest() as u32;
             if dst.len() - op < 4 {
-                return Err(ErrorCode::DstSizeTooSmall);
+                return Err(Error::DstSizeTooSmall);
             }
             write_le32(dst, op, checksum)?;
             op += 4;
@@ -1825,7 +1825,7 @@ impl FrameCompressor {
         if self.pledged_src_size_plus_one != 0
             && self.pledged_src_size_plus_one != self.consumed_src_size + 1
         {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
         Ok(c_size + end_result)
     }

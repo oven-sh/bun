@@ -3,7 +3,7 @@
 use super::huf::{self, HUF_OPTIMAL_DEPTH_THRESHOLD, HufFlags, HufRepeat};
 use super::internal::{HufCTables, Strategy, min_gain};
 use crate::common::{HUF_SYMBOLVALUE_MAX, LIT_HUF_LOG, SymbolEncodingType};
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{SliceExt, write_le16, write_le24, write_le32};
 
 /// The header of a section of raw or run-length encoded literals. Returns its size.
@@ -23,7 +23,7 @@ fn write_short_header(dst: &mut [u8], ty: SymbolEncodingType, src_size: usize) -
 pub(crate) fn no_compress_literals(dst: &mut [u8], src: &[u8]) -> Result<usize> {
     let fl_size = 1 + usize::from(src.len() > 31) + usize::from(src.len() > 4095);
     if src.len() + fl_size > dst.len() {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     }
     write_short_header(dst, SymbolEncodingType::Basic, src.len())?;
     dst.write_at(fl_size, src)?;
@@ -72,7 +72,7 @@ pub(crate) fn compress_literals(
     }
 
     if dst.len() < lh_size + 1 {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     }
     let c_lit_size = {
         let mut repeat = prev_huf.repeat_mode;

@@ -17,7 +17,7 @@ use crate::common::{
     MIN_LITERALS_FOR_4_STREAMS, MIN_SEQUENCES_SIZE, MINMATCH, ML_FSE_LOG, OFF_FSE_LOG,
     REP_START_VALUE, SymbolEncodingType, WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
 };
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{BUG, SliceExt, read_le16, read_le24, read_le32};
 
 /// `blockProperties_t`
@@ -30,7 +30,7 @@ pub(crate) struct BlockProperties {
 /// `ZSTD_getcBlockSize`: reads a block header, and returns how many bytes of input the block takes after it.
 pub(crate) fn get_c_block_size(src: &[u8]) -> Result<(usize, BlockProperties)> {
     if src.len() < ZSTD_BLOCKHEADERSIZE {
-        return Err(ErrorCode::SrcSizeWrong);
+        return Err(Error::SrcSizeWrong);
     }
     let c_block_header = read_le24(src, 0)?;
     let c_size = c_block_header >> 3;
@@ -47,7 +47,7 @@ pub(crate) fn get_c_block_size(src: &[u8]) -> Result<(usize, BlockProperties)> {
     };
     match block_type {
         BlockType::Rle => Ok((1, properties)),
-        BlockType::Reserved => Err(ErrorCode::CorruptionDetected),
+        BlockType::Reserved => Err(Error::CorruptionDetected),
         _ => Ok((c_size as usize, properties)),
     }
 }
@@ -252,7 +252,7 @@ impl Scratch {
         if self.lit_buffer.len() < needed {
             self.lit_buffer
                 .try_reserve(needed - self.lit_buffer.len())
-                .map_err(|_| ErrorCode::MemoryAllocation)?;
+                .map_err(|_| Error::MemoryAllocation)?;
             self.lit_buffer.resize(needed, 0);
         }
         // Literals are copied by more than there are: this much can be read along with the last ones.
@@ -320,7 +320,7 @@ impl BlockDecoder {
         streaming: Streaming,
     ) -> Result<Literals> {
         if src.len() < MIN_CBLOCK_SIZE {
-            return Err(ErrorCode::CorruptionDetected);
+            return Err(Error::CorruptionDetected);
         }
         let first = src.at(0)?;
         let lit_enc_type = SymbolEncodingType::from_bits(first);
@@ -330,10 +330,10 @@ impl BlockDecoder {
         match lit_enc_type {
             SymbolEncodingType::Repeat | SymbolEncodingType::Compressed => {
                 if lit_enc_type == SymbolEncodingType::Repeat && !self.lit_entropy {
-                    return Err(ErrorCode::DictionaryCorrupted);
+                    return Err(Error::DictionaryCorrupted);
                 }
                 if src.len() < 5 {
-                    return Err(ErrorCode::CorruptionDetected);
+                    return Err(Error::CorruptionDetected);
                 }
                 let lhc = read_le32(src, 0)? as usize;
                 let (single_stream, lh_size, lit_size, lit_c_size) = match lhl_code {
@@ -347,16 +347,16 @@ impl BlockDecoder {
                     _ => (lhl_code == 0, 3, (lhc >> 4) & 0x3FF, (lhc >> 14) & 0x3FF),
                 };
                 if lit_size > block_size_max {
-                    return Err(ErrorCode::CorruptionDetected);
+                    return Err(Error::CorruptionDetected);
                 }
                 if !single_stream && lit_size < MIN_LITERALS_FOR_4_STREAMS {
-                    return Err(ErrorCode::LiteralsHeaderWrong);
+                    return Err(Error::LiteralsHeaderWrong);
                 }
                 if lit_c_size + lh_size > src.len() {
-                    return Err(ErrorCode::CorruptionDetected);
+                    return Err(Error::CorruptionDetected);
                 }
                 if expected_write_size < lit_size {
-                    return Err(ErrorCode::DstSizeTooSmall);
+                    return Err(Error::DstSizeTooSmall);
                 }
                 let location = lit_location(block_size_max, dst_capacity, lit_size, streaming);
                 let compressed = src.span(lh_size, lit_c_size)?;
@@ -399,7 +399,7 @@ impl BlockDecoder {
                     )
                 };
                 if huf_result.is_err() {
-                    return Err(ErrorCode::CorruptionDetected);
+                    return Err(Error::CorruptionDetected);
                 }
 
                 self.lit_entropy = true;
@@ -419,21 +419,21 @@ impl BlockDecoder {
                     1 => (2, usize::from(read_le16(src, 0)? >> 4)),
                     3 => {
                         if src.len() < 3 {
-                            return Err(ErrorCode::CorruptionDetected);
+                            return Err(Error::CorruptionDetected);
                         }
                         (3, (read_le24(src, 0)? >> 4) as usize)
                     }
                     _ => (1, usize::from(first >> 3)),
                 };
                 if lit_size > block_size_max {
-                    return Err(ErrorCode::CorruptionDetected);
+                    return Err(Error::CorruptionDetected);
                 }
                 if expected_write_size < lit_size {
-                    return Err(ErrorCode::DstSizeTooSmall);
+                    return Err(Error::DstSizeTooSmall);
                 }
                 if lh_size + lit_size + WILDCOPY_OVERLENGTH > src.len() {
                     if lit_size + lh_size > src.len() {
-                        return Err(ErrorCode::CorruptionDetected);
+                        return Err(Error::CorruptionDetected);
                     }
                     self.scratch()
                         .lit_buffer(lit_size)?
@@ -457,23 +457,23 @@ impl BlockDecoder {
                 let (lh_size, lit_size) = match lhl_code {
                     1 => {
                         if src.len() < 3 {
-                            return Err(ErrorCode::CorruptionDetected);
+                            return Err(Error::CorruptionDetected);
                         }
                         (2, usize::from(read_le16(src, 0)? >> 4))
                     }
                     3 => {
                         if src.len() < 4 {
-                            return Err(ErrorCode::CorruptionDetected);
+                            return Err(Error::CorruptionDetected);
                         }
                         (3, (read_le24(src, 0)? >> 4) as usize)
                     }
                     _ => (1, usize::from(first >> 3)),
                 };
                 if lit_size > block_size_max {
-                    return Err(ErrorCode::CorruptionDetected);
+                    return Err(Error::CorruptionDetected);
                 }
                 if expected_write_size < lit_size {
-                    return Err(ErrorCode::DstSizeTooSmall);
+                    return Err(Error::DstSizeTooSmall);
                 }
                 self.scratch().lit_buffer(lit_size)?.fill(src.at(lh_size)?);
                 Ok(Literals {
@@ -489,7 +489,7 @@ impl BlockDecoder {
     /// `ZSTD_decodeSeqHeaders`: returns how many sequences there are, and the size of the header.
     fn decode_seq_headers(&mut self, src: &[u8]) -> Result<(usize, usize)> {
         if src.len() < MIN_SEQUENCES_SIZE {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
         let mut ip = 0usize;
         let mut nb_seq = usize::from(src.at(ip)?);
@@ -497,13 +497,13 @@ impl BlockDecoder {
         if nb_seq > 0x7F {
             if nb_seq == 0xFF {
                 if ip + 2 > src.len() {
-                    return Err(ErrorCode::SrcSizeWrong);
+                    return Err(Error::SrcSizeWrong);
                 }
                 nb_seq = usize::from(read_le16(src, ip)?) + LONGNBSEQ;
                 ip += 2;
             } else {
                 if ip >= src.len() {
-                    return Err(ErrorCode::SrcSizeWrong);
+                    return Err(Error::SrcSizeWrong);
                 }
                 nb_seq = ((nb_seq - 0x80) << 8) + usize::from(src.at(ip)?);
                 ip += 1;
@@ -512,17 +512,17 @@ impl BlockDecoder {
 
         if nb_seq == 0 {
             if ip != src.len() {
-                return Err(ErrorCode::CorruptionDetected);
+                return Err(Error::CorruptionDetected);
             }
             return Ok((0, ip));
         }
 
         if ip + 1 > src.len() {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
         let modes = src.at(ip)?;
         if modes & 3 != 0 {
-            return Err(ErrorCode::CorruptionDetected);
+            return Err(Error::CorruptionDetected);
         }
         ip += 1;
 
@@ -543,7 +543,7 @@ impl BlockDecoder {
             workspace,
             fse_entropy,
         )
-        .map_err(|_| ErrorCode::CorruptionDetected)?;
+        .map_err(|_| Error::CorruptionDetected)?;
         ip += build_seq_table(
             &mut seq.of,
             &mut self.seq_sources.of,
@@ -555,7 +555,7 @@ impl BlockDecoder {
             workspace,
             fse_entropy,
         )
-        .map_err(|_| ErrorCode::CorruptionDetected)?;
+        .map_err(|_| Error::CorruptionDetected)?;
         ip += build_seq_table(
             &mut seq.ml,
             &mut self.seq_sources.ml,
@@ -567,7 +567,7 @@ impl BlockDecoder {
             workspace,
             fse_entropy,
         )
-        .map_err(|_| ErrorCode::CorruptionDetected)?;
+        .map_err(|_| Error::CorruptionDetected)?;
 
         Ok((nb_seq, ip))
     }
@@ -589,7 +589,7 @@ impl BlockDecoder {
             ext_dict,
         } = out;
         if src.len() > block_size_max {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
 
         let literals =
@@ -603,7 +603,7 @@ impl BlockDecoder {
         let sequences = sequences.sub(seq_h_size..)?;
 
         if capacity == 0 && nb_seq > 0 {
-            return Err(ErrorCode::DstSizeTooSmall);
+            return Err(Error::DstSizeTooSmall);
         }
 
         self.scratch();
@@ -726,10 +726,10 @@ fn build_seq_table<C: Cell, const N: usize>(
     match encoding_type {
         SymbolEncodingType::Rle => {
             let Some(&symbol) = src.first() else {
-                return Err(ErrorCode::SrcSizeWrong);
+                return Err(Error::SrcSizeWrong);
             };
             if u32::from(symbol) > max {
-                return Err(ErrorCode::CorruptionDetected);
+                return Err(Error::CorruptionDetected);
             }
             table.build_rle(codes.at(usize::from(symbol))?);
             *source = TableSource::Local;
@@ -741,15 +741,15 @@ fn build_seq_table<C: Cell, const N: usize>(
         }
         SymbolEncodingType::Repeat => {
             if !flag_repeat_table {
-                return Err(ErrorCode::CorruptionDetected);
+                return Err(Error::CorruptionDetected);
             }
             Ok(0)
         }
         SymbolEncodingType::Compressed => {
             let header = read_ncount(&mut workspace.counts, max, src)
-                .map_err(|_| ErrorCode::CorruptionDetected)?;
+                .map_err(|_| Error::CorruptionDetected)?;
             if header.table_log > max_log {
-                return Err(ErrorCode::CorruptionDetected);
+                return Err(Error::CorruptionDetected);
             }
             table.build(
                 header.max_symbol_value as usize + 1,
@@ -887,7 +887,7 @@ struct SeqState<'a> {
 
 impl<'a> SeqState<'a> {
     fn new(src: &'a [u8], tables: SeqTableRefs<'a>, rep: &[u32; ZSTD_REP_NUM]) -> Result<Self> {
-        let mut bit_d = BitDStream::new(src).map_err(|_| ErrorCode::CorruptionDetected)?;
+        let mut bit_d = BitDStream::new(src).map_err(|_| Error::CorruptionDetected)?;
         // `ZSTD_initFseState`
         let mut init = |table_log: u32| {
             let state = bit_d.read_bits(table_log) as usize;
@@ -1251,17 +1251,17 @@ impl<'a> Executor<'_, 'a> {
         let mut op = self.op;
 
         if lit_length + match_length > self.oend - op {
-            return Err(ErrorCode::DstSizeTooSmall);
+            return Err(Error::DstSizeTooSmall);
         }
         self.out
             .extend_to(op + lit_length + match_length, self.oend);
         if lit_length > self.lits_left() {
-            return Err(ErrorCode::CorruptionDetected);
+            return Err(Error::CorruptionDetected);
         }
         if self.split {
             let lit_ptr = self.lit_end_in_dst.wrapping_sub(self.lits_left());
             if op > lit_ptr && op < lit_ptr.wrapping_add(lit_length) {
-                return Err(ErrorCode::DstSizeTooSmall);
+                return Err(Error::DstSizeTooSmall);
             }
         }
 
@@ -1276,7 +1276,7 @@ impl<'a> Executor<'_, 'a> {
         let mut match_pos = op.wrapping_sub(offset);
         if offset > in_prefix {
             if offset > self.ext_dict.reach(in_prefix) {
-                return Err(ErrorCode::CorruptionDetected);
+                return Err(Error::CorruptionDetected);
             }
             let back = offset - in_prefix;
             if back >= match_length {
@@ -1419,7 +1419,7 @@ impl<'a> Executor<'_, 'a> {
         let leftover_lit = self.lits_left();
         if leftover_lit > 0 {
             if leftover_lit > self.oend - self.op {
-                return Err(ErrorCode::DstSizeTooSmall);
+                return Err(Error::DstSizeTooSmall);
             }
             self.out.extend_to(self.op + leftover_lit, self.oend);
             self.out
@@ -1719,7 +1719,7 @@ impl<'a> Executor<'_, 'a> {
             None => seq_state.bit_d.is_at_end(),
         };
         if !is_at_end {
-            return Err(ErrorCode::CorruptionDetected);
+            return Err(Error::CorruptionDetected);
         }
         for &sequence in &*ahead {
             self.exec_sequence_maybe_split(sequence)?;
@@ -1778,7 +1778,7 @@ impl<'a> Executor<'_, 'a> {
         let parts = parts.map(Option::unwrap_or_default);
         let size = parts.iter().map(|part| part.len()).sum::<usize>();
         if size > self.oend - self.op {
-            return Err(ErrorCode::DstSizeTooSmall);
+            return Err(Error::DstSizeTooSmall);
         }
         self.out.extend_to(self.op + size, self.op + size);
         for part in parts {

@@ -1,6 +1,6 @@
 //! `hist.c`: how many times each byte value occurs.
 
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{BUG, SliceExt};
 
 /// `HIST_add`: `count` has room for every value in `src`.
@@ -98,7 +98,7 @@ fn count_parallel(
 
     let max_symbol = counting1.iter().rposition(|&c| c != 0).ok_or(BUG)? as u32;
     if check && max_symbol > *max_symbol_value {
-        return Err(ErrorCode::MaxSymbolValueTooSmall);
+        return Err(Error::MaxSymbolValueTooSmall);
     }
     *max_symbol_value = max_symbol;
     count.write_at(0, counting1.sub(..count_size)?)?;
@@ -118,7 +118,7 @@ pub(crate) fn count_fast_wksp(
 }
 
 /// `HIST_count_wksp`: as [`count_fast_wksp`], but a value above `max_symbol_value` in `src` is
-/// [`ErrorCode::MaxSymbolValueTooSmall`].
+/// [`Error::MaxSymbolValueTooSmall`].
 pub(crate) fn count_wksp(
     count: &mut [u32],
     max_symbol_value: &mut u32,

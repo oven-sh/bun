@@ -7,7 +7,7 @@ use super::huf_exact::{self, TableType, select_decoder_x2};
 use crate::common::entropy::huf_read_stats_wksp;
 use crate::common::fse_decompress::Spread;
 use crate::common::{HUF_SYMBOLVALUE_MAX, HUF_TABLELOG_MAX};
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{BUG, SliceExt, read_le16};
 
 const NB_SYMBOLS: usize = HUF_SYMBOLVALUE_MAX as usize + 1;
@@ -868,7 +868,7 @@ pub(crate) fn decompress_1x1(
 ) -> Result<usize> {
     let h_size = dtable.read(src, TableType::X1, dst.len(), spread)?;
     if h_size >= src.len() {
-        return Err(ErrorCode::SrcSizeWrong);
+        return Err(Error::SrcSizeWrong);
     }
     decompress_1x_using_dtable(dst, src.sub(h_size..)?, dtable)
 }
@@ -893,10 +893,10 @@ pub(crate) fn decompress_4x_huf_only(
     spread: &mut Spread,
 ) -> Result<usize> {
     if dst.is_empty() {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     }
     if src.is_empty() {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     let table_type = if select_decoder_x2(dst.len(), src.len())? {
         TableType::X2
@@ -905,7 +905,7 @@ pub(crate) fn decompress_4x_huf_only(
     };
     let h_size = dtable.read(src, table_type, dst.len(), spread)?;
     if h_size >= src.len() {
-        return Err(ErrorCode::SrcSizeWrong);
+        return Err(Error::SrcSizeWrong);
     }
     decompress_4x_using_dtable(dst, src.sub(h_size..)?, dtable)
 }

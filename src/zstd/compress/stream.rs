@@ -10,7 +10,7 @@ use super::params::{
     get_c_params_from_cctx_params, get_params_internal, resolve_block_splitter_mode,
     resolve_enable_ldm, resolve_row_match_finder_mode,
 };
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{SliceExt, try_copy};
 use crate::{InBuffer, OutBuffer};
 
@@ -80,7 +80,7 @@ fn resize_buffer(buffer: &mut Vec<u8>, size: &mut usize, new_size: usize) -> Res
         *size = 0;
         buffer
             .try_reserve_exact(new_size)
-            .map_err(|_| ErrorCode::MemoryAllocation)?;
+            .map_err(|_| Error::MemoryAllocation)?;
         *size = new_size;
     }
     Ok(())
@@ -124,7 +124,7 @@ impl CCtx {
     /// `ZSTD_CCtx_setParameter`: `param` is one of [`super::params::c_param`].
     pub fn set_parameter(&mut self, param: i32, value: i32) -> Result<usize> {
         if self.stream_stage != StreamStage::Init {
-            return Err(ErrorCode::StageWrong);
+            return Err(Error::StageWrong);
         }
         self.requested_params.set_parameter(param, value)
     }
@@ -132,7 +132,7 @@ impl CCtx {
     /// `ZSTD_CCtx_setPledgedSrcSize`
     pub fn set_pledged_src_size(&mut self, pledged_src_size: u64) -> Result<()> {
         if self.stream_stage != StreamStage::Init {
-            return Err(ErrorCode::StageWrong);
+            return Err(Error::StageWrong);
         }
         self.frame.pledged_src_size_plus_one = pledged_src_size.wrapping_add(1);
         Ok(())
@@ -142,7 +142,7 @@ impl CCtx {
     /// with no dictionary.
     pub fn load_dictionary(&mut self, dict: &[u8]) -> Result<()> {
         if self.stream_stage != StreamStage::Init {
-            return Err(ErrorCode::StageWrong);
+            return Err(Error::StageWrong);
         }
         self.local_dict = None;
         self.cdict = None;
@@ -168,7 +168,7 @@ impl CCtx {
         }
         // Whatever is wrong with the dictionary, the C code only knows that it got no `ZSTD_CDict`.
         let cdict = CDict::new(Arc::clone(dict), &self.requested_params)
-            .map_err(|_| ErrorCode::MemoryAllocation)?;
+            .map_err(|_| Error::MemoryAllocation)?;
         self.cdict = Some(Arc::new(cdict));
         Ok(())
     }
@@ -212,7 +212,7 @@ impl CCtx {
             if self.mtctx.is_none() {
                 self.mtctx = Some(Box::new(MtCtx::new(params.nb_workers as u32)?));
             }
-            let mtctx = self.mtctx.as_mut().ok_or(ErrorCode::MemoryAllocation)?;
+            let mtctx = self.mtctx.as_mut().ok_or(Error::MemoryAllocation)?;
             mtctx.init_c_stream_internal(self.cdict.clone(), params, pledged_src_size)?;
             self.frame.dict_id = cdict.map_or(0, CDict::dict_id);
             self.frame.dict_content_size = cdict.map_or(0, |cdict| cdict.dict_content().len());
@@ -285,7 +285,7 @@ impl CCtx {
 
         loop {
             match self.stream_stage {
-                StreamStage::Init => return Err(ErrorCode::InitMissing),
+                StreamStage::Init => return Err(Error::InitMissing),
 
                 StreamStage::Load => {
                     if flush_mode == EndDirective::End
@@ -425,10 +425,10 @@ impl CCtx {
         end_op: EndDirective,
     ) -> Result<usize> {
         if output.pos > output.dst.len() {
-            return Err(ErrorCode::DstSizeTooSmall);
+            return Err(Error::DstSizeTooSmall);
         }
         if input.pos > input.src.len() {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
 
         if self.stream_stage == StreamStage::Init {
@@ -436,7 +436,7 @@ impl CCtx {
         }
 
         if self.frame.applied_params.nb_workers > 0 {
-            let mtctx = self.mtctx.as_mut().ok_or(ErrorCode::Generic)?;
+            let mtctx = self.mtctx.as_mut().ok_or(Error::Generic)?;
             loop {
                 let ipos = input.pos;
                 let opos = output.pos;
@@ -448,7 +448,7 @@ impl CCtx {
                 let consumed = self.frame.consumed_src_size + 1;
                 let is_complete = end_op == EndDirective::End && flush_min == Ok(0);
                 if pledged != 0 && (consumed > pledged || (is_complete && consumed != pledged)) {
-                    flush_min = flush_min.and(Err(ErrorCode::SrcSizeWrong));
+                    flush_min = flush_min.and(Err(Error::SrcSizeWrong));
                 }
                 if flush_min.is_err() || (end_op == EndDirective::End && flush_min == Ok(0)) {
                     // `reset_session`, but `mtctx` is borrowed.

@@ -11,7 +11,7 @@ use crate::common::{
     MAX_SEQ, ML_BITS, ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG, ML_FSE_LOG, OF_DEFAULT_NORM,
     OF_DEFAULT_NORM_LOG, OFF_FSE_LOG, SymbolEncodingType,
 };
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{SliceExt, highbit32};
 
 /// `-log2(x / 256)` in units of 1/256 of a bit, for `x` from 1 to 255. The entry for 0 is not used.
@@ -81,7 +81,7 @@ pub(crate) fn fse_bit_cost(ctable: &FseCTable, count: &[u32], max: u32) -> Resul
     const K_ACCURACY_LOG: u32 = 8;
     let mut cost: usize = 0;
     if ctable.max_symbol_value < max {
-        return Err(ErrorCode::Generic);
+        return Err(Error::Generic);
     }
     let bad_cost = (ctable.table_log + 1) << K_ACCURACY_LOG;
     for (s, &c) in count.sub(..=max as usize)?.iter().enumerate() {
@@ -90,7 +90,7 @@ pub(crate) fn fse_bit_cost(ctable: &FseCTable, count: &[u32], max: u32) -> Resul
         }
         let bit_cost = ctable.bit_cost(s as u32, K_ACCURACY_LOG);
         if bit_cost >= bad_cost {
-            return Err(ErrorCode::Generic);
+            return Err(Error::Generic);
         }
         cost += c as usize * bit_cost as usize;
     }
@@ -156,12 +156,12 @@ pub(crate) fn select_encoding_type(
         let basic_cost = cost_or_error(if is_default_allowed {
             cross_entropy_cost(default_norm, default_norm_log, count, max)
         } else {
-            Err(ErrorCode::Generic)
+            Err(Error::Generic)
         });
         let repeat_cost = cost_or_error(if *repeat_mode != FseRepeat::None {
             fse_bit_cost(prev_ctable, count, max)
         } else {
-            Err(ErrorCode::Generic)
+            Err(Error::Generic)
         });
         let ncount_cost = cost_or_error(ncount_cost(count, max, nb_seq, fse_log));
         let compressed_cost = (ncount_cost << 3).wrapping_add(entropy_cost(count, max, nb_seq)?);
@@ -296,7 +296,7 @@ pub(crate) fn build_ctable(
         SymbolEncodingType::Rle => {
             next_ctable.build_rle(max as u8)?;
             let Some(first) = dst.first_mut() else {
-                return Err(ErrorCode::DstSizeTooSmall);
+                return Err(Error::DstSizeTooSmall);
             };
             *first = max as u8;
             Ok(1)
@@ -816,5 +816,5 @@ pub(crate) fn encode_sequences(
         // The stream has to end before the last position that a container can be written to.
         .filter(|nb_bits| (nb_bits >> 3) + size_of::<u64>() < capacity)
         .map(|nb_bits| nb_bits.div_ceil(8))
-        .ok_or(ErrorCode::DstSizeTooSmall)
+        .ok_or(Error::DstSizeTooSmall)
 }

@@ -10,7 +10,7 @@ use crate::common::{
     BlockType, MINMATCH, REP_START_VALUE, SymbolEncodingType, WILDCOPY_OVERLENGTH,
     ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
 };
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{BUG, SliceExt, highbit32, read_le32, read_le64, try_zeroed, write_le24};
 
 pub(crate) const K_SEARCH_STRENGTH: u32 = 8;
@@ -374,7 +374,7 @@ impl SeqStore {
             // What it holds is not worth a copy.
             *vec = Vec::new();
             vec.try_reserve_exact(len)
-                .map_err(|_| ErrorCode::MemoryAllocation)
+                .map_err(|_| Error::MemoryAllocation)
         }
         self.reset();
         let block_size = block_size.min(self.max_nb_lit);
@@ -398,7 +398,7 @@ impl SeqStore {
         if self.codes.capacity() < len {
             self.codes = Vec::new();
             (self.codes.try_reserve_exact(self.sequences.capacity()))
-                .map_err(|_| ErrorCode::MemoryAllocation)?;
+                .map_err(|_| Error::MemoryAllocation)?;
         }
         if self.codes.len() < len {
             self.codes.resize(len, SeqCodes::default());
@@ -653,7 +653,7 @@ pub(crate) fn no_compress_block(dst: &mut [u8], src: &[u8], last_block: bool) ->
     let c_block_header24 =
         u32::from(last_block) + ((BlockType::Raw as u32) << 1) + ((src.len() as u32) << 3);
     if src.len() + ZSTD_BLOCKHEADERSIZE > dst.len() {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     }
     write_le24(dst, 0, c_block_header24)?;
     dst.write_at(ZSTD_BLOCKHEADERSIZE, src)?;
@@ -670,7 +670,7 @@ pub(crate) fn rle_compress_block(
     let c_block_header =
         u32::from(last_block) + ((BlockType::Rle as u32) << 1) + ((src_size as u32) << 3);
     if dst.len() < 4 {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     }
     write_le24(dst, 0, c_block_header)?;
     dst.put(3, byte)?;

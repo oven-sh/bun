@@ -5,7 +5,7 @@ mod constants {
     use core::ffi::{CStr, c_char};
 
     use bun_zstd::{
-        EndDirective, ErrorCode, Strategy, ZSTD_CLEVEL_DEFAULT, ZSTD_D_WINDOW_LOG_MAX, c_param,
+        EndDirective, Error, Strategy, ZSTD_CLEVEL_DEFAULT, ZSTD_D_WINDOW_LOG_MAX, c_param,
     };
 
     struct Constant {
@@ -17,7 +17,7 @@ mod constants {
         Constant { name, value }
     }
 
-    const fn error(code: ErrorCode) -> Constant {
+    const fn error(code: Error) -> Constant {
         named(code.name(), code as i32)
     }
 
@@ -59,33 +59,33 @@ mod constants {
         named(c"ZSTD_d_windowLogMax", ZSTD_D_WINDOW_LOG_MAX),
         named(c"ZSTD_CLEVEL_DEFAULT", ZSTD_CLEVEL_DEFAULT),
         named(c"ZSTD_error_no_error", 0),
-        error(ErrorCode::Generic),
-        error(ErrorCode::PrefixUnknown),
-        error(ErrorCode::VersionUnsupported),
-        error(ErrorCode::FrameParameterUnsupported),
-        error(ErrorCode::FrameParameterWindowTooLarge),
-        error(ErrorCode::CorruptionDetected),
-        error(ErrorCode::ChecksumWrong),
-        error(ErrorCode::LiteralsHeaderWrong),
-        error(ErrorCode::DictionaryCorrupted),
-        error(ErrorCode::DictionaryWrong),
-        error(ErrorCode::DictionaryCreationFailed),
-        error(ErrorCode::ParameterUnsupported),
-        error(ErrorCode::ParameterCombinationUnsupported),
-        error(ErrorCode::ParameterOutOfBound),
-        error(ErrorCode::TableLogTooLarge),
-        error(ErrorCode::MaxSymbolValueTooLarge),
-        error(ErrorCode::MaxSymbolValueTooSmall),
-        error(ErrorCode::StabilityConditionNotRespected),
-        error(ErrorCode::StageWrong),
-        error(ErrorCode::InitMissing),
-        error(ErrorCode::MemoryAllocation),
-        error(ErrorCode::WorkSpaceTooSmall),
-        error(ErrorCode::DstSizeTooSmall),
-        error(ErrorCode::SrcSizeWrong),
-        error(ErrorCode::DstBufferNull),
-        error(ErrorCode::NoForwardProgressDestFull),
-        error(ErrorCode::NoForwardProgressInputEmpty),
+        error(Error::Generic),
+        error(Error::PrefixUnknown),
+        error(Error::VersionUnsupported),
+        error(Error::FrameParameterUnsupported),
+        error(Error::FrameParameterWindowTooLarge),
+        error(Error::CorruptionDetected),
+        error(Error::ChecksumWrong),
+        error(Error::LiteralsHeaderWrong),
+        error(Error::DictionaryCorrupted),
+        error(Error::DictionaryWrong),
+        error(Error::DictionaryCreationFailed),
+        error(Error::ParameterUnsupported),
+        error(Error::ParameterCombinationUnsupported),
+        error(Error::ParameterOutOfBound),
+        error(Error::TableLogTooLarge),
+        error(Error::MaxSymbolValueTooLarge),
+        error(Error::MaxSymbolValueTooSmall),
+        error(Error::StabilityConditionNotRespected),
+        error(Error::StageWrong),
+        error(Error::InitMissing),
+        error(Error::MemoryAllocation),
+        error(Error::WorkSpaceTooSmall),
+        error(Error::DstSizeTooSmall),
+        error(Error::SrcSizeWrong),
+        error(Error::DstBufferNull),
+        error(Error::NoForwardProgressDestFull),
+        error(Error::NoForwardProgressInputEmpty),
     ];
 
     /// The name of the constant at `index`, whose value goes to `value`, or null past the last one.
@@ -364,7 +364,7 @@ mod _impl {
         output: *mut [u8],
         output_pos: usize,
         pledged_src_size: u64,
-        error: Option<bun_zstd::ErrorCode>,
+        error: Option<bun_zstd::Error>,
     }
 
     impl Default for Context {

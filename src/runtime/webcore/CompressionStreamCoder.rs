@@ -74,8 +74,8 @@ fn spare(out: &mut Vec<u8>, cap: usize) -> Result<&mut [core::mem::MaybeUninit<u
     Ok(&mut spare[..len])
 }
 
-fn zstd_error(code: zstd::ErrorCode, message: &'static str) -> CodecError {
-    if code == zstd::ErrorCode::MemoryAllocation {
+fn zstd_error(code: zstd::Error, message: &'static str) -> CodecError {
+    if code == zstd::Error::MemoryAllocation {
         CodecError::OutOfMemory
     } else {
         CodecError::Message(message)

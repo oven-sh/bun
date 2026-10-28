@@ -2,7 +2,7 @@
 
 use crate::common::bitstream::BitCStream;
 use crate::common::{FSE_MAX_TABLELOG, FSE_MIN_TABLELOG, MAX_SEQ, ML_FSE_LOG, fse_table_step};
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{BUG, SliceExt, highbit32, write_le16};
 
 pub(crate) const FSE_NCOUNTBOUND: usize = 512;
@@ -91,7 +91,7 @@ impl FseCTable {
     }
 
     /// `FSE_buildCTable_wksp`: `normalized_counter` adds up to `1 << table_log`, a count of -1 standing for 1.
-    /// [`ErrorCode::TableLogTooLarge`] if the table has no room for it.
+    /// [`Error::TableLogTooLarge`] if the table has no room for it.
     pub(crate) fn build(
         &mut self,
         normalized_counter: &[i16],
@@ -99,7 +99,7 @@ impl FseCTable {
         table_log: u32,
     ) -> Result<()> {
         if table_log > ML_FSE_LOG || max_symbol_value > MAX_SEQ {
-            return Err(ErrorCode::TableLogTooLarge);
+            return Err(Error::TableLogTooLarge);
         }
         let table_size = 1usize << table_log;
         let table_mask = table_size - 1;
@@ -338,7 +338,7 @@ fn write_ncount_generic(
     // The lowest 16 bits of the stream leave it.
     let mut write16 = |bit_stream: &mut u32, out: &mut usize| -> Result<()> {
         if !write_is_safe && *out + 2 > header.len() {
-            return Err(ErrorCode::DstSizeTooSmall);
+            return Err(Error::DstSizeTooSmall);
         }
         write_le16(header, *out, *bit_stream as u16)?;
         *out += 2;
@@ -394,7 +394,7 @@ fn write_ncount_generic(
             bit_count -= i32::from(count < max);
             previous_is_0 = count == 1;
             if remaining < 1 {
-                return Err(ErrorCode::Generic);
+                return Err(Error::Generic);
             }
             while remaining < threshold {
                 nb_bits -= 1;
@@ -408,7 +408,7 @@ fn write_ncount_generic(
     }
 
     if remaining != 1 {
-        return Err(ErrorCode::Generic);
+        return Err(Error::Generic);
     }
 
     let last = out;
@@ -424,10 +424,10 @@ pub(crate) fn write_ncount(
     table_log: u32,
 ) -> Result<usize> {
     if table_log > FSE_MAX_TABLELOG {
-        return Err(ErrorCode::TableLogTooLarge);
+        return Err(Error::TableLogTooLarge);
     }
     if table_log < FSE_MIN_TABLELOG {
-        return Err(ErrorCode::Generic);
+        return Err(Error::Generic);
     }
     let write_is_safe = buffer.len() >= ncount_write_bound(max_symbol_value, table_log);
     write_ncount_generic(
@@ -574,7 +574,7 @@ fn normalize_m2(
             let s_end = (end >> v_step_log) as u32;
             let weight = s_end.wrapping_sub(s_start);
             if weight < 1 {
-                return Err(ErrorCode::Generic);
+                return Err(Error::Generic);
             }
             *norm = weight as i16;
             tmp_total = end;
@@ -597,13 +597,13 @@ pub(crate) fn normalize_count(
         table_log = FSE_DEFAULT_TABLELOG;
     }
     if table_log < FSE_MIN_TABLELOG {
-        return Err(ErrorCode::Generic);
+        return Err(Error::Generic);
     }
     if table_log > FSE_MAX_TABLELOG {
-        return Err(ErrorCode::TableLogTooLarge);
+        return Err(Error::TableLogTooLarge);
     }
     if table_log < min_table_log(total, max_symbol_value) {
-        return Err(ErrorCode::Generic);
+        return Err(Error::Generic);
     }
 
     const RTB_TABLE: [u32; 8] = [0, 473195, 504333, 520860, 550000, 700000, 750000, 830000];

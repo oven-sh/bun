@@ -2,10 +2,10 @@
 
 use core::slice::SliceIndex;
 
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 
 /// An index or a length that the algorithm keeps in range was out of range. No input should be able to cause it.
-pub(crate) const BUG: ErrorCode = ErrorCode::Generic;
+pub(crate) const BUG: Error = Error::Generic;
 
 pub(crate) trait SliceExt<T> {
     fn at(&self, index: usize) -> Result<T>
@@ -161,16 +161,16 @@ pub(crate) const fn highbit32(value: u32) -> u32 {
     31 - (value | 1).leading_zeros()
 }
 
-/// `len` zeros, or [`ErrorCode::MemoryAllocation`]. An allocator that reuses memory has to clear all of it.
+/// `len` zeros, or [`Error::MemoryAllocation`]. An allocator that reuses memory has to clear all of it.
 pub(crate) fn try_zeroed<T: bun_pod::Zeroable>(len: usize) -> Result<Vec<T>> {
-    bun_pod::try_zeroed_vec(len).ok_or(ErrorCode::MemoryAllocation)
+    bun_pod::try_zeroed_vec(len).ok_or(Error::MemoryAllocation)
 }
 
-/// A copy of `bytes`, or [`ErrorCode::MemoryAllocation`].
+/// A copy of `bytes`, or [`Error::MemoryAllocation`].
 pub(crate) fn try_copy(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut vec = Vec::new();
     vec.try_reserve_exact(bytes.len())
-        .map_err(|_| ErrorCode::MemoryAllocation)?;
+        .map_err(|_| Error::MemoryAllocation)?;
     vec.extend_from_slice(bytes);
     Ok(vec)
 }

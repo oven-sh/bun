@@ -9,7 +9,7 @@ use super::params::{ZSTD_HASHLOG_MAX, ZSTD_HASHLOG_MIN, ZSTD_LDM_BUCKETSIZELOG_M
 use super::{compress_block, double_fast, fast};
 use crate::common::ZSTD_REP_NUM;
 use crate::common::xxhash::Xxh64;
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{BUG, SliceExt};
 
 const LDM_BUCKET_SIZE_LOG: u32 = 4;
@@ -467,7 +467,7 @@ fn generate_sequences_internal(
             let offset = new_entry.offset.wrapping_sub(best_entry.offset);
             let m_length = forward_match_length + backward_match_length;
             if raw_seq_store.size == raw_seq_store.capacity {
-                return Err(ErrorCode::DstSizeTooSmall);
+                return Err(Error::DstSizeTooSmall);
             }
             raw_seq_store.seq.put(
                 raw_seq_store.size,

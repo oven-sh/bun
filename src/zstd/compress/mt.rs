@@ -26,7 +26,7 @@ use super::params::{
 use super::stream::EndDirective;
 use crate::common::ZSTD_BLOCKSIZE_MAX;
 use crate::common::xxhash::Xxh64;
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{BUG, SliceExt, try_copy};
 use crate::{InBuffer, OutBuffer};
 
@@ -74,7 +74,7 @@ impl SerialState {
             self.ldm_state.loaded_dict_end = 0;
             self.round_buff.clear();
             (self.round_buff.try_reserve_exact(round_buff_capacity))
-                .map_err(|_| ErrorCode::MemoryAllocation)?;
+                .map_err(|_| Error::MemoryAllocation)?;
         } else {
             self.ldm_state = LdmState::new();
             self.round_buff = Vec::new();
@@ -95,7 +95,7 @@ impl SerialState {
             let written = self.round_buff.get_mut(round_pos..).ok_or(BUG)?;
             let (over, beyond) = src.split_at(written.len().min(src.len()));
             written.write_at(0, over)?;
-            (self.round_buff.try_reserve(beyond.len())).map_err(|_| ErrorCode::MemoryAllocation)?;
+            (self.round_buff.try_reserve(beyond.len())).map_err(|_| Error::MemoryAllocation)?;
             self.round_buff.extend_from_slice(beyond);
             (self.ldm_state.window).update(
                 BufId::InBuff.start() + round_pos,
@@ -128,7 +128,7 @@ enum Progress {
     /// Some more output, and how much of the input is consumed by now.
     Output { data: Vec<u8>, consumed: usize },
     /// The job stops here.
-    Failed(ErrorCode),
+    Failed(Error),
 }
 
 /// `ZSTDMT_jobDescription`, as far as the worker is concerned.
@@ -165,8 +165,7 @@ const CHUNK_SIZE: usize = 4 * ZSTD_BLOCKSIZE_MAX;
 /// Makes `seq` `len` long, in the allocation that it has if that is large enough.
 fn resize_in_place(seq: &mut Vec<RawSeq>, len: usize) -> Result<()> {
     seq.clear();
-    seq.try_reserve(len)
-        .map_err(|_| ErrorCode::MemoryAllocation)?;
+    seq.try_reserve(len).map_err(|_| Error::MemoryAllocation)?;
     seq.resize(len, RawSeq::default());
     Ok(())
 }
@@ -185,9 +184,9 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
         size: 0,
         capacity: job.max_nb_seq,
     };
-    let mut serial = job.serial_in.recv().map_err(|_| ErrorCode::Generic)?;
+    let mut serial = job.serial_in.recv().map_err(|_| Error::Generic)?;
     let generated = if cancelled.load(Ordering::SeqCst) {
-        Err(ErrorCode::Generic)
+        Err(Error::Generic)
     } else {
         resize_in_place(&mut raw_seq_store.seq, job.nb_seq_bound)
             .and_then(|()| serial.gen_sequences(&mut raw_seq_store, src, job.round_pos))
@@ -270,7 +269,7 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
     };
     for chunk_nb in 1..nb_chunks {
         if cancelled.load(Ordering::SeqCst) {
-            return Err(ErrorCode::Generic);
+            return Err(Error::Generic);
         }
         let chunk = Span {
             buf: BufId::User,
@@ -323,7 +322,7 @@ struct PendingJob {
     consumed: usize,
     src_size: usize,
     frame_checksum_needed: bool,
-    error: Option<ErrorCode>,
+    error: Option<Error>,
 }
 
 impl PendingJob {
@@ -370,7 +369,7 @@ impl PendingJob {
                     }
                 }
                 // The worker is gone.
-                None => self.take(Progress::Failed(ErrorCode::Generic)),
+                None => self.take(Progress::Failed(Error::Generic)),
             }
         }
     }
@@ -488,7 +487,7 @@ impl MtCtx {
                 .name("zstd".into())
                 .stack_size(2 << 20)
                 .spawn(move || worker_main(&queue_end, &cancelled))
-                .map_err(|_| ErrorCode::MemoryAllocation)?;
+                .map_err(|_| Error::MemoryAllocation)?;
             self.nb_workers += 1;
         }
         self.params.nb_workers = nb_workers as i32;
@@ -639,7 +638,7 @@ impl MtCtx {
 
         let (progress, progress_receiver) = channel();
         let (serial_out, serial_next) = channel();
-        let serial_in = self.serial.replace(serial_next).ok_or(ErrorCode::Generic)?;
+        let serial_in = self.serial.replace(serial_next).ok_or(Error::Generic)?;
         pending.progress = Some(progress_receiver);
         let mut ldm_params = params.ldm_params;
         if ldm_params.enable_ldm == ParamSwitch::Enable {
@@ -660,7 +659,7 @@ impl MtCtx {
             serial_out,
             progress,
         };
-        self.queue.send(job).map_err(|_| ErrorCode::Generic)?;
+        self.queue.send(job).map_err(|_| Error::Generic)?;
         self.jobs.push_back(pending);
         self.next_job_id += 1;
         Ok(())
@@ -763,7 +762,7 @@ impl MtCtx {
             .min(self.in_buff_prefix_size + self.target_section_size);
         self.in_buff
             .try_reserve_exact(capacity - self.in_buff.len())
-            .map_err(|_| ErrorCode::MemoryAllocation)
+            .map_err(|_| Error::MemoryAllocation)
     }
 
     /// `ZSTDMT_compressStream_generic`
@@ -777,7 +776,7 @@ impl MtCtx {
 
         if self.frame_ended && end_op == EndDirective::Continue {
             // The frame is complete and still to be flushed.
-            return Err(ErrorCode::StageWrong);
+            return Err(Error::StageWrong);
         }
 
         if input.src.len() > input.pos && (self.in_buff_ready || self.try_get_input_range()?) {

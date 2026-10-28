@@ -2004,7 +2004,7 @@ pub(crate) mod JSZstd {
     fn compress_to_box(input: &[u8], level: i32) -> Result<Box<[u8]>, Failure> {
         match bun_zstd::compress_alloc(input, level) {
             Ok(output) => Ok(output.into_boxed_slice()),
-            Err(bun_zstd::ErrorCode::MemoryAllocation) => Err(Failure::OutOfMemory),
+            Err(bun_zstd::Error::MemoryAllocation) => Err(Failure::OutOfMemory),
             Err(err) => Err(Failure::Compression(err.message().to_bytes())),
         }
     }

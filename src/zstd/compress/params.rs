@@ -13,7 +13,7 @@ use crate::common::{
     ZSTD_CONTENTSIZE_UNKNOWN, ZSTD_WINDOWLOG_ABSOLUTEMIN, ZSTD_WINDOWLOG_LIMIT_DEFAULT,
     ZSTD_WINDOWLOG_MAX, ZSTD_WORKSPACETOOLARGE_FACTOR, ZSTD_WORKSPACETOOLARGE_MAXDURATION,
 };
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::highbit32;
 
 pub const ZSTD_CLEVEL_DEFAULT: i32 = 3;
@@ -169,7 +169,7 @@ fn bounds(param: i32) -> Result<RangeInclusive<i32>> {
         c_param::LDM_HASH_RATE_LOG => ZSTD_LDM_HASHRATELOG_MIN..=ZSTD_LDM_HASHRATELOG_MAX,
         c_param::FORMAT => 0..=1,
         c_param::TARGET_C_BLOCK_SIZE => ZSTD_TARGETCBLOCKSIZE_MIN..=ZSTD_TARGETCBLOCKSIZE_MAX,
-        _ => return Err(ErrorCode::ParameterUnsupported),
+        _ => return Err(Error::ParameterUnsupported),
     })
 }
 
@@ -182,7 +182,7 @@ fn clamp_bounds(param: i32, value: i32) -> Result<i32> {
 /// `BOUNDCHECK`
 fn bound_check(param: i32, value: i32) -> Result<()> {
     if !bounds(param)?.contains(&value) {
-        return Err(ErrorCode::ParameterOutOfBound);
+        return Err(Error::ParameterOutOfBound);
     }
     Ok(())
 }
@@ -346,7 +346,7 @@ impl CCtxParams {
                 self.target_c_block_size = bound_check_unless_0(param, value)? as usize;
                 Ok(self.target_c_block_size)
             }
-            _ => Err(ErrorCode::ParameterUnsupported),
+            _ => Err(Error::ParameterUnsupported),
         }
     }
 }

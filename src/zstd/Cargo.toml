@@ -11,4 +11,5 @@ workspace = true
 
 [dependencies]
 strum.workspace = true
+thiserror.workspace = true
 bun_pod = { workspace = true, features = ["alloc"] }

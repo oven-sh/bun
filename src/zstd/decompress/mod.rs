@@ -23,7 +23,7 @@ use crate::common::{
     ZSTD_WINDOWLOG_LIMIT_DEFAULT, ZSTD_WINDOWLOG_MAX, ZSTD_WORKSPACETOOLARGE_FACTOR,
     ZSTD_WORKSPACETOOLARGE_MAXDURATION,
 };
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{SliceExt, read_le16, read_le32, read_le64, try_copy};
 use crate::{InBuffer, OutBuffer};
 
@@ -84,7 +84,7 @@ fn is_skippable_magic(magic: u32) -> bool {
 /// `ZSTD_frameHeaderSize_internal`
 fn frame_header_size(src: &[u8]) -> Result<usize> {
     if src.len() < FRAMEHEADERSIZE_PREFIX {
-        return Err(ErrorCode::SrcSizeWrong);
+        return Err(Error::SrcSizeWrong);
     }
     let fhd = src.at(FRAMEHEADERSIZE_PREFIX - 1)?;
     let dict_id = usize::from(fhd & 3);
@@ -111,7 +111,7 @@ fn get_frame_header(header: &mut FrameHeader, src: &[u8]) -> Result<HeaderStatus
                 hbuf = ZSTD_MAGIC_SKIPPABLE_START.to_le_bytes();
                 hbuf.write_at(0, known)?;
                 if !is_skippable_magic(u32::from_le_bytes(hbuf)) {
-                    return Err(ErrorCode::PrefixUnknown);
+                    return Err(Error::PrefixUnknown);
                 }
             }
         }
@@ -133,7 +133,7 @@ fn get_frame_header(header: &mut FrameHeader, src: &[u8]) -> Result<HeaderStatus
             };
             return Ok(HeaderStatus::Complete);
         }
-        return Err(ErrorCode::PrefixUnknown);
+        return Err(Error::PrefixUnknown);
     }
 
     let fhsize = frame_header_size(src)?;
@@ -151,7 +151,7 @@ fn get_frame_header(header: &mut FrameHeader, src: &[u8]) -> Result<HeaderStatus
     let mut dict_id = 0u32;
     let mut frame_content_size = ZSTD_CONTENTSIZE_UNKNOWN;
     if fhd_byte & 0x08 != 0 {
-        return Err(ErrorCode::FrameParameterUnsupported);
+        return Err(Error::FrameParameterUnsupported);
     }
 
     if !single_segment {
@@ -159,7 +159,7 @@ fn get_frame_header(header: &mut FrameHeader, src: &[u8]) -> Result<HeaderStatus
         pos += 1;
         let window_log = u32::from(wl_byte >> 3) + ZSTD_WINDOWLOG_ABSOLUTEMIN;
         if window_log > ZSTD_WINDOWLOG_MAX {
-            return Err(ErrorCode::FrameParameterWindowTooLarge);
+            return Err(Error::FrameParameterWindowTooLarge);
         }
         window_size = 1u64 << window_log;
         window_size += (window_size >> 3) * u64::from(wl_byte & 7);
@@ -221,14 +221,14 @@ pub fn get_frame_content_size(src: &[u8]) -> u64 {
 /// The size of the skippable frame whose header is at the start of `src`.
 fn skippable_frame_size(src: &[u8]) -> Result<usize> {
     if src.len() < ZSTD_SKIPPABLEHEADERSIZE {
-        return Err(ErrorCode::SrcSizeWrong);
+        return Err(Error::SrcSizeWrong);
     }
     let size_u32 = read_le32(src, ZSTD_FRAMEIDSIZE)?;
     if size_u32
         .checked_add(ZSTD_SKIPPABLEHEADERSIZE as u32)
         .is_none()
     {
-        return Err(ErrorCode::FrameParameterUnsupported);
+        return Err(Error::FrameParameterUnsupported);
     }
     Ok(ZSTD_SKIPPABLEHEADERSIZE + size_u32 as usize)
 }
@@ -237,7 +237,7 @@ fn skippable_frame_size(src: &[u8]) -> Result<usize> {
 fn read_skippable_frame_size(src: &[u8]) -> Result<usize> {
     let skippable_size = skippable_frame_size(src)?;
     if skippable_size > src.len() {
-        return Err(ErrorCode::SrcSizeWrong);
+        return Err(Error::SrcSizeWrong);
     }
     Ok(skippable_size)
 }
@@ -292,7 +292,7 @@ pub fn frame_extent(src: &[u8]) -> Result<FrameExtent> {
 fn find_frame_compressed_size(src: &[u8]) -> Result<usize> {
     match frame_extent(src)? {
         FrameExtent::Whole(size) => Ok(size),
-        FrameExtent::AtLeast(_) => Err(ErrorCode::SrcSizeWrong),
+        FrameExtent::AtLeast(_) => Err(Error::SrcSizeWrong),
     }
 }
 
@@ -329,7 +329,7 @@ pub(crate) fn find_decompressed_size(mut src: &[u8]) -> u64 {
 
 /// `ZSTD_loadDEntropy`: reads the tables at the start of a dictionary, and returns the last offsets that it sets.
 fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<[u32; ZSTD_REP_NUM]> {
-    const CORRUPTED: ErrorCode = ErrorCode::DictionaryCorrupted;
+    const CORRUPTED: Error = Error::DictionaryCorrupted;
     if dict.len() <= 8 {
         return Err(CORRUPTED);
     }
@@ -438,8 +438,7 @@ impl<'a> DDict<'a> {
         }
         ddict.dict_id = read_le32(dict, ZSTD_FRAMEIDSIZE)?;
         let mut entropy = Box::new(EntropyDTables::new());
-        ddict.rep =
-            load_d_entropy(&mut entropy, dict).map_err(|_| ErrorCode::DictionaryCorrupted)?;
+        ddict.rep = load_d_entropy(&mut entropy, dict).map_err(|_| Error::DictionaryCorrupted)?;
         ddict.entropy = Some(entropy);
         Ok(ddict)
     }
@@ -514,7 +513,7 @@ impl Buffer {
         let mut bytes = Vec::new();
         bytes
             .try_reserve_exact(size)
-            .map_err(|_| ErrorCode::MemoryAllocation)?;
+            .map_err(|_| Error::MemoryAllocation)?;
         Ok(Self { bytes, size })
     }
 
@@ -641,13 +640,13 @@ impl DCtx {
     /// `ZSTD_DCtx_loadDictionary`: `dict` is copied, and used for every frame from now on. None if it is empty.
     pub fn load_dictionary(&mut self, dict: &[u8]) -> Result<()> {
         if self.state.stream_stage != DStreamStage::Init {
-            return Err(ErrorCode::StageWrong);
+            return Err(Error::StageWrong);
         }
         self.ddict = None;
         if !dict.is_empty() {
             // The C function has nothing else to report a dictionary that it cannot make sense of as.
             let ddict = DDict::new(Cow::Owned(try_copy(dict)?), DictContentType::Auto)
-                .map_err(|_| ErrorCode::MemoryAllocation)?;
+                .map_err(|_| Error::MemoryAllocation)?;
             self.ddict = Some(Box::new(ddict));
         }
         Ok(())
@@ -656,16 +655,16 @@ impl DCtx {
     /// `ZSTD_DCtx_setParameter`
     pub fn set_parameter(&mut self, param: i32, mut value: i32) -> Result<()> {
         if self.state.stream_stage != DStreamStage::Init {
-            return Err(ErrorCode::StageWrong);
+            return Err(Error::StageWrong);
         }
         if param != ZSTD_D_WINDOW_LOG_MAX {
-            return Err(ErrorCode::ParameterUnsupported);
+            return Err(Error::ParameterUnsupported);
         }
         if value == 0 {
             value = ZSTD_WINDOWLOG_LIMIT_DEFAULT as i32;
         }
         if value < ZSTD_WINDOWLOG_ABSOLUTEMIN as i32 || value > ZSTD_WINDOWLOG_MAX as i32 {
-            return Err(ErrorCode::ParameterOutOfBound);
+            return Err(Error::ParameterOutOfBound);
         }
         self.state.max_window_size = 1usize << value;
         Ok(())
@@ -698,7 +697,7 @@ pub(crate) fn decompress(dst: &mut [u8], src: &[u8]) -> Result<usize> {
 /// `ZSTD_copyRawBlock`
 fn copy_raw_block(dst: &mut [u8], src: &[u8]) -> Result<usize> {
     let Some(dst) = dst.get_mut(..src.len()) else {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     };
     dst.copy_from_slice(src);
     Ok(src.len())
@@ -707,7 +706,7 @@ fn copy_raw_block(dst: &mut [u8], src: &[u8]) -> Result<usize> {
 /// `ZSTD_setRleBlock`
 fn set_rle_block(dst: &mut [u8], byte: u8, regen_size: usize) -> Result<usize> {
     let Some(dst) = dst.get_mut(..regen_size) else {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     };
     dst.fill(byte);
     Ok(regen_size)
@@ -774,10 +773,10 @@ impl DState {
     /// `ZSTD_decodeFrameHeader`: `src` is all of a frame header.
     fn decode_frame_header(&mut self, src: &[u8]) -> Result<()> {
         if let HeaderStatus::Needs(_) = get_frame_header(&mut self.f_params, src)? {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
         if self.f_params.dict_id != 0 && self.dict_id != self.f_params.dict_id {
-            return Err(ErrorCode::DictionaryWrong);
+            return Err(Error::DictionaryWrong);
         }
         self.validate_checksum = self.f_params.checksum_flag;
         if self.validate_checksum {
@@ -832,12 +831,12 @@ impl DState {
         let mut op = ostart;
 
         if src.len() < FRAMEHEADERSIZE_MIN + ZSTD_BLOCKHEADERSIZE {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
         {
             let frame_header_size = frame_header_size(src.sub(..FRAMEHEADERSIZE_PREFIX)?)?;
             if src.len() < frame_header_size + ZSTD_BLOCKHEADERSIZE {
-                return Err(ErrorCode::SrcSizeWrong);
+                return Err(Error::SrcSizeWrong);
             }
             self.decode_frame_header(src.sub(..frame_header_size)?)?;
             ip += frame_header_size;
@@ -847,7 +846,7 @@ impl DState {
             let (c_block_size, properties) = get_c_block_size(src.sub(ip..)?)?;
             ip += ZSTD_BLOCKHEADERSIZE;
             if c_block_size > src.len() - ip {
-                return Err(ErrorCode::SrcSizeWrong);
+                return Err(Error::SrcSizeWrong);
             }
             let block = src.span(ip, c_block_size)?;
 
@@ -864,7 +863,7 @@ impl DState {
                     )?;
                     // Only a streaming decoder checks that in 1.5.7, where such a block can overwrite its own literals.
                     if decoded_size > self.f_params.block_size_max {
-                        return Err(ErrorCode::CorruptionDetected);
+                        return Err(Error::CorruptionDetected);
                     }
                     decoded_size
                 }
@@ -874,7 +873,7 @@ impl DState {
                     block.at(0)?,
                     properties.orig_size as usize,
                 )?,
-                BlockType::Reserved => return Err(ErrorCode::CorruptionDetected),
+                BlockType::Reserved => return Err(Error::CorruptionDetected),
             };
             if self.validate_checksum {
                 self.xxh_state.update(dst.span(op, decoded_size)?);
@@ -889,14 +888,14 @@ impl DState {
         if self.f_params.frame_content_size != ZSTD_CONTENTSIZE_UNKNOWN
             && (op - ostart) as u64 != self.f_params.frame_content_size
         {
-            return Err(ErrorCode::CorruptionDetected);
+            return Err(Error::CorruptionDetected);
         }
         if self.f_params.checksum_flag {
             if src.len() - ip < 4 {
-                return Err(ErrorCode::ChecksumWrong);
+                return Err(Error::ChecksumWrong);
             }
             if read_le32(src, ip)? != self.xxh_state.digest() as u32 {
-                return Err(ErrorCode::ChecksumWrong);
+                return Err(Error::ChecksumWrong);
             }
             ip += 4;
         }
@@ -925,8 +924,8 @@ impl DState {
 
             match self.decompress_frame(dst, op, src, ddict) {
                 // More likely `src` is longer than its frames than damaged where a magic number is expected.
-                Err(ErrorCode::PrefixUnknown) if more_than_1_frame => {
-                    return Err(ErrorCode::SrcSizeWrong);
+                Err(Error::PrefixUnknown) if more_than_1_frame => {
+                    return Err(Error::SrcSizeWrong);
                 }
                 Err(err) => return Err(err),
                 Ok((written, read)) => {
@@ -938,7 +937,7 @@ impl DState {
         }
 
         if !src.is_empty() {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
         Ok(op - dst_start)
     }
@@ -966,7 +965,7 @@ impl DState {
         ddict: Option<&DDict<'_>>,
     ) -> Result<usize> {
         if src.len() != self.next_src_size_to_decompress_with_input_size(src.len()) {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
         let dst = self.out_start;
         self.check_continuity(dst, dst_capacity);
@@ -975,7 +974,7 @@ impl DState {
             DStage::DecodeBlockHeader => {
                 let (c_block_size, bp) = get_c_block_size(src)?;
                 if c_block_size > self.f_params.block_size_max {
-                    return Err(ErrorCode::CorruptionDetected);
+                    return Err(Error::CorruptionDetected);
                 }
                 self.expected = c_block_size;
                 self.b_type = bp.block_type;
@@ -1022,12 +1021,12 @@ impl DState {
                             .span_mut(dst, dst_capacity.min(self.rle_size))
                             .and_then(|dst| set_rle_block(dst, src.at(0)?, self.rle_size))
                     }
-                    BlockType::Reserved => Err(ErrorCode::CorruptionDetected),
+                    BlockType::Reserved => Err(Error::CorruptionDetected),
                 };
                 self.out_buff = out_buff;
                 let r_size = r_size?;
                 if r_size > self.f_params.block_size_max {
-                    return Err(ErrorCode::CorruptionDetected);
+                    return Err(Error::CorruptionDetected);
                 }
                 self.decoded_size += r_size as u64;
                 if self.validate_checksum {
@@ -1045,7 +1044,7 @@ impl DState {
                     if self.f_params.frame_content_size != ZSTD_CONTENTSIZE_UNKNOWN
                         && self.decoded_size != self.f_params.frame_content_size
                     {
-                        return Err(ErrorCode::CorruptionDetected);
+                        return Err(Error::CorruptionDetected);
                     }
                     self.end_of_blocks();
                 } else {
@@ -1057,7 +1056,7 @@ impl DState {
 
             DStage::CheckChecksum => {
                 if self.validate_checksum && read_le32(src, 0)? != self.xxh_state.digest() as u32 {
-                    return Err(ErrorCode::ChecksumWrong);
+                    return Err(Error::ChecksumWrong);
                 }
                 self.expected = 0;
                 self.stage = DStage::GetFrameHeaderSize;
@@ -1071,7 +1070,7 @@ impl DState {
             }
 
             // `ZSTD_decompressStream` reads frame headers itself, and is done when it gets back here.
-            DStage::GetFrameHeaderSize => Err(ErrorCode::Generic),
+            DStage::GetFrameHeaderSize => Err(Error::Generic),
         }
     }
 
@@ -1146,10 +1145,10 @@ impl DState {
         ddict: Option<&DDict<'_>>,
     ) -> Result<usize> {
         if input.pos > input.src.len() {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
         if output.pos > output.dst.len() {
-            return Err(ErrorCode::DstSizeTooSmall);
+            return Err(Error::DstSizeTooSmall);
         }
         let src = input.src;
         let istart = input.pos;
@@ -1233,7 +1232,7 @@ impl DState {
                     .window_size
                     .max(1 << ZSTD_WINDOWLOG_ABSOLUTEMIN);
                 if self.f_params.window_size > self.max_window_size as u64 {
-                    return Err(ErrorCode::FrameParameterWindowTooLarge);
+                    return Err(Error::FrameParameterWindowTooLarge);
                 }
 
                 self.resize_buffers()?;
@@ -1265,7 +1264,7 @@ impl DState {
                 let loaded_size = to_load.min(iend - ip);
                 if self.stage != DStage::SkipFrame {
                     if to_load > self.in_buff.size - self.in_pos {
-                        return Err(ErrorCode::CorruptionDetected);
+                        return Err(Error::CorruptionDetected);
                     }
                     self.in_buff.bytes.truncate(self.in_pos);
                     self.in_buff
@@ -1321,10 +1320,10 @@ impl DState {
             self.no_forward_progress += 1;
             if self.no_forward_progress >= ZSTD_NO_FORWARD_PROGRESS_MAX {
                 if op == oend {
-                    return Err(ErrorCode::NoForwardProgressDestFull);
+                    return Err(Error::NoForwardProgressDestFull);
                 }
                 if ip == iend {
-                    return Err(ErrorCode::NoForwardProgressInputEmpty);
+                    return Err(Error::NoForwardProgressInputEmpty);
                 }
             }
         } else {

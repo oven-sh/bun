@@ -27,7 +27,7 @@ pub use decompress::{
     DCtx, DDict, FrameExtent, ZSTD_D_WINDOW_LOG_MAX, frame_extent, get_frame_content_size,
 };
 use decompress::{decompress, find_decompressed_size};
-pub use error::ErrorCode;
+pub use error::{Error, Result, ZstdError};
 
 // Callers share contexts between threads behind their own `unsafe impl`s, which should have nothing to vouch for here.
 const _: () = {
@@ -79,7 +79,7 @@ impl<'a> VecOutput<'a> {
 
     /// Room for one call of a codec: `step` bytes, or more of them after much output, but never past `limit`.
     /// [`advance`](Self::advance) by what it wrote.
-    pub fn buffer(&mut self, step: usize, limit: usize) -> Result<OutBuffer<'_>, ErrorCode> {
+    pub fn buffer(&mut self, step: usize, limit: usize) -> Result<OutBuffer<'_>> {
         let room = self.vec.len() - self.filled;
         let budget = limit.saturating_sub(self.filled);
         if room < step.min(budget) {
@@ -87,7 +87,7 @@ impl<'a> VecOutput<'a> {
             let more = (self.filled - self.start).clamp(step, most).min(budget) - room;
             self.vec
                 .try_reserve(more)
-                .map_err(|_| ErrorCode::MemoryAllocation)?;
+                .map_err(|_| Error::MemoryAllocation)?;
             self.vec.resize(self.vec.len() + more, 0);
         }
         let end = self.vec.len().min(limit);
@@ -110,37 +110,9 @@ impl Drop for VecOutput<'_> {
 
 // -----------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum ZstdError {
-    /// The output, or the decoder state the frame's window size dictates, could not be allocated.
-    OutOfMemory,
-    InvalidZstdData,
-    DecompressionFailed,
-    ZstdDecompressionError,
-    ShortRead,
-}
-
-impl core::fmt::Display for ZstdError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(<&'static str>::from(self))
-    }
-}
-impl core::error::Error for ZstdError {}
-
-impl ZstdError {
-    /// The error for a failed decompression call; `other` is the non-allocation failure.
-    fn for_decompression(code: ErrorCode, other: ZstdError) -> ZstdError {
-        if code == ErrorCode::MemoryAllocation {
-            ZstdError::OutOfMemory
-        } else {
-            other
-        }
-    }
-}
-
 /// [`compress`] to the end of `out`, within its capacity: [`compress_bound`] more than its length is always enough.
 /// Returns how many bytes are added.
-pub fn compress_append(out: &mut Vec<u8>, src: &[u8], level: i32) -> Result<usize, ErrorCode> {
+pub fn compress_append(out: &mut Vec<u8>, src: &[u8], level: i32) -> Result {
     let start = out.len();
     let room = (out.capacity() - start).min(compress_bound(src.len()));
     out.resize(start + room, 0);
@@ -150,7 +122,7 @@ pub fn compress_append(out: &mut Vec<u8>, src: &[u8], level: i32) -> Result<usiz
 }
 
 /// [`compress`] to a new buffer.
-pub fn compress_alloc(src: &[u8], level: i32) -> Result<Vec<u8>, ErrorCode> {
+pub fn compress_alloc(src: &[u8], level: i32) -> Result<Vec<u8>> {
     let mut out = util::try_zeroed(compress_bound(src.len()))?;
     let size = compress(&mut out, src, level)?;
     out.truncate(size);

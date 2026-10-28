@@ -2238,6 +2238,7 @@ version = "0.0.0"
 dependencies = [
  "bun_pod",
  "strum",
+ "thiserror",
 ]
 
 [[package]]

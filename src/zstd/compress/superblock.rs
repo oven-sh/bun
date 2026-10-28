@@ -18,7 +18,7 @@ use crate::common::{
     MAX_LL, MAX_ML, MINMATCH, ML_BITS, ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG, OF_DEFAULT_NORM,
     OF_DEFAULT_NORM_LOG, SymbolEncodingType, ZSTD_BLOCKHEADERSIZE,
 };
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{SliceExt, write_le24, write_le32};
 
 const ZSTD_TARGETCBLOCKSIZE_MIN: usize = 1340;
@@ -131,7 +131,7 @@ fn compress_sub_block_sequences(
 ) -> Result<(usize, bool)> {
     let nb_seq = sequences.len();
     if dst.len() < 3 + 1 {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     }
     let mut op = write_nb_seq(dst, nb_seq)?;
     if nb_seq == 0 {
@@ -283,7 +283,7 @@ fn estimate_sub_block_size_symbol_type(
         SymbolEncodingType::Basic if max <= default_max => {
             cross_entropy_cost(default_norm, default_norm_log, count, max)
         }
-        SymbolEncodingType::Basic => Err(ErrorCode::Generic),
+        SymbolEncodingType::Basic => Err(Error::Generic),
         SymbolEncodingType::Rle => Ok(0),
         SymbolEncodingType::Compressed | SymbolEncodingType::Repeat => {
             fse_bit_cost(fse_c_table, count, max)
@@ -373,7 +373,7 @@ fn size_block_sequences(
     avg_seq_cost: usize,
     first_sub_block: bool,
 ) -> Result<usize> {
-    let (first, rest) = sp.split_first().ok_or(ErrorCode::Generic)?;
+    let (first, rest) = sp.split_first().ok_or(Error::Generic)?;
     // The first sub-block also has the tables.
     let header_size = usize::from(first_sub_block) * 120 * BYTESCALE;
     let mut budget = header_size;

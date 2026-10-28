@@ -5,7 +5,7 @@ use super::hist;
 use super::internal::Strategy;
 use crate::common::entropy::huf_read_stats;
 use crate::common::{HUF_SYMBOLVALUE_MAX, HUF_TABLELOG_MAX};
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{BUG, SliceExt, highbit32, write_le16};
 
 pub(crate) const HUF_BLOCKSIZE_MAX: usize = 128 * 1024;
@@ -188,7 +188,7 @@ pub(crate) fn write_ctable(
     let mut huff_weight = [0u8; HUF_SYMBOLVALUE_MAX as usize];
 
     if max_symbol_value > HUF_SYMBOLVALUE_MAX {
-        return Err(ErrorCode::MaxSymbolValueTooLarge);
+        return Err(Error::MaxSymbolValueTooLarge);
     }
     // The weight of the last symbol is not stored.
     let nb_weights = max_symbol_value as usize;
@@ -203,7 +203,7 @@ pub(crate) fn write_ctable(
 
     let max_dst_size = dst.len();
     let Some((first, rest)) = dst.split_first_mut() else {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     };
     let h_size = compress_weights(rest, weights)?;
     if h_size > 1 && h_size < nb_weights / 2 {
@@ -213,11 +213,11 @@ pub(crate) fn write_ctable(
 
     // Not compressed: 4 bits to a weight.
     if max_symbol_value > 256 - 128 {
-        return Err(ErrorCode::Generic);
+        return Err(Error::Generic);
     }
     let raw_size = nb_weights.div_ceil(2);
     if raw_size + 1 > max_dst_size {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     }
     *first = 128u32.wrapping_add(max_symbol_value.wrapping_sub(1)) as u8;
     // An odd number of weights is completed with a 0, which `huff_weight` still has there.
@@ -237,7 +237,7 @@ pub(crate) struct HufCTableStats {
     pub(crate) has_zero_weights: bool,
 }
 
-/// `HUF_readCTable`: [`ErrorCode::MaxSymbolValueTooSmall`] if the table has symbols above `max_symbol_value`.
+/// `HUF_readCTable`: [`Error::MaxSymbolValueTooSmall`] if the table has symbols above `max_symbol_value`.
 pub(crate) fn read_ctable(
     ctable: &mut HufCTable,
     max_symbol_value: u32,
@@ -251,10 +251,10 @@ pub(crate) fn read_ctable(
     let [zero_weights, ..] = rank_val;
 
     if table_log > HUF_TABLELOG_MAX {
-        return Err(ErrorCode::TableLogTooLarge);
+        return Err(Error::TableLogTooLarge);
     }
     if stats.nb_symbols > max_symbol_value.wrapping_add(1) {
-        return Err(ErrorCode::MaxSymbolValueTooSmall);
+        return Err(Error::MaxSymbolValueTooSmall);
     }
     let max_symbol_value = stats.nb_symbols - 1;
     ctable.write_header(table_log, max_symbol_value);
@@ -682,7 +682,7 @@ pub(crate) fn build_ctable(
         max_nb_bits = HUF_TABLELOG_DEFAULT;
     }
     if max_symbol_value > HUF_SYMBOLVALUE_MAX {
-        return Err(ErrorCode::MaxSymbolValueTooLarge);
+        return Err(Error::MaxSymbolValueTooLarge);
     }
     let mut huff_node = HuffNodes([NodeElt::default(); _]);
 
@@ -691,7 +691,7 @@ pub(crate) fn build_ctable(
     build_tree(huff_node.0.sub_mut(..present.len)?);
     max_nb_bits = set_max_height(&mut huff_node, non_null_rank as u32, max_nb_bits)?;
     if max_nb_bits > HUF_TABLELOG_MAX {
-        return Err(ErrorCode::Generic);
+        return Err(Error::Generic);
     }
     build_ctable_from_tree(
         ctable,
@@ -765,7 +765,7 @@ impl<'a> HufCStream<'a> {
     #[inline]
     fn new(dst: &'a mut [u8]) -> Result<Self> {
         if dst.len() <= size_of::<u64>() {
-            return Err(ErrorCode::DstSizeTooSmall);
+            return Err(Error::DstSizeTooSmall);
         }
         let end = dst.len() - size_of::<u64>();
         Ok(Self {
@@ -1039,13 +1039,13 @@ fn compress_internal(
         return Ok(0);
     }
     if src_size > HUF_BLOCKSIZE_MAX {
-        return Err(ErrorCode::SrcSizeWrong);
+        return Err(Error::SrcSizeWrong);
     }
     if huff_log > HUF_TABLELOG_MAX {
-        return Err(ErrorCode::TableLogTooLarge);
+        return Err(Error::TableLogTooLarge);
     }
     if max_symbol_value > HUF_SYMBOLVALUE_MAX {
-        return Err(ErrorCode::MaxSymbolValueTooLarge);
+        return Err(Error::MaxSymbolValueTooLarge);
     }
     if max_symbol_value == 0 {
         max_symbol_value = HUF_SYMBOLVALUE_MAX;

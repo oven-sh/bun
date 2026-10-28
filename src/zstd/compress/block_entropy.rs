@@ -18,7 +18,7 @@ use crate::common::{
     MINMATCH, ML_BITS, ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG, OF_DEFAULT_NORM, OF_DEFAULT_NORM_LOG,
     SymbolEncodingType, ZSTD_BLOCKHEADERSIZE,
 };
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{SliceExt, write_le16};
 
 /// `ZSTD_literalsCompressionIsDisabled`
@@ -219,7 +219,7 @@ fn entropy_compress_seq_store_internal(
     }
 
     if dst.len() - op < 3 + 1 {
-        return Err(ErrorCode::DstSizeTooSmall);
+        return Err(Error::DstSizeTooSmall);
     }
     op += write_nb_seq(dst.sub_mut(op..)?, nb_seq)?;
     if nb_seq == 0 {
@@ -285,7 +285,7 @@ pub(crate) fn entropy_compress_seq_store(
         cctx_params,
     ) {
         // There is room for the block as it is.
-        Err(ErrorCode::DstSizeTooSmall) if block_size <= dst.len() => return Ok(0),
+        Err(Error::DstSizeTooSmall) if block_size <= dst.len() => return Ok(0),
         c_size => c_size?,
     };
     let max_c_size = block_size.wrapping_sub(min_gain(block_size, cctx_params.c_params.strat()));

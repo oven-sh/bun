@@ -1,6 +1,6 @@
 //! `bitstream.h`: a bit stream is written forward and read backward.
 
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{SliceExt, highbit32, read_le64};
 
 const CONTAINER_BYTES: usize = size_of::<u64>();
@@ -21,7 +21,7 @@ impl<'a> BitCStream<'a> {
     #[inline]
     pub(crate) fn new(dst: &'a mut [u8]) -> Result<Self> {
         if dst.len() <= CONTAINER_BYTES {
-            return Err(ErrorCode::DstSizeTooSmall);
+            return Err(Error::DstSizeTooSmall);
         }
         let end = dst.len() - CONTAINER_BYTES;
         Ok(Self {
@@ -107,12 +107,12 @@ impl<'a> BitDStream<'a> {
     #[inline]
     pub(crate) fn new(src: &'a [u8]) -> Result<Self> {
         let Some(&last_byte) = src.last() else {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         };
         let padding = 8 - highbit32(u32::from(last_byte));
         if let Some(tail) = src.last_chunk::<CONTAINER_BYTES>() {
             if last_byte == 0 {
-                return Err(ErrorCode::Generic);
+                return Err(Error::Generic);
             }
             return Ok(Self {
                 src,
@@ -121,7 +121,7 @@ impl<'a> BitDStream<'a> {
             });
         }
         if last_byte == 0 {
-            return Err(ErrorCode::CorruptionDetected);
+            return Err(Error::CorruptionDetected);
         }
         let mut bytes = [0u8; CONTAINER_BYTES];
         bytes.write_at(0, src)?;

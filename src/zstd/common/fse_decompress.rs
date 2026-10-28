@@ -3,7 +3,7 @@
 use super::bitstream::BitDStream;
 use super::entropy::read_ncount;
 use super::{FSE_MAX_SYMBOL_VALUE, FSE_MAX_TABLELOG, fse_table_step};
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{SliceExt, write_le64};
 
 /// The largest table log of the weights of a Huffman table.
@@ -244,13 +244,13 @@ fn build_dtable(
     wksp_size: usize,
 ) -> Result<()> {
     if build_dtable_wksp_size(table_log, max_symbol_value) > wksp_size {
-        return Err(ErrorCode::MaxSymbolValueTooLarge);
+        return Err(Error::MaxSymbolValueTooLarge);
     }
     if max_symbol_value > FSE_MAX_SYMBOL_VALUE {
-        return Err(ErrorCode::MaxSymbolValueTooLarge);
+        return Err(Error::MaxSymbolValueTooLarge);
     }
     if table_log > FSE_MAX_TABLELOG {
-        return Err(ErrorCode::TableLogTooLarge);
+        return Err(Error::TableLogTooLarge);
     }
     dt.table_log = table_log;
     let mut states = spread.states(max_symbol_value as usize + 1, table_log)?;
@@ -354,7 +354,7 @@ fn decompress_using_dtable(dst: &mut [u8], src: &[u8], dt: &FseDTable) -> Result
         decoder.read_state(dt.table_log),
     ];
     if decoder.is_past_start() {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
 
     // All but the last symbol leave room for one more.
@@ -381,7 +381,7 @@ fn decompress_using_dtable(dst: &mut [u8], src: &[u8], dt: &FseDTable) -> Result
     }
     loop {
         if op + 2 > omax {
-            return Err(ErrorCode::DstSizeTooSmall);
+            return Err(Error::DstSizeTooSmall);
         }
         dst.put(op, decoder.decode_one())?;
         op += 1;
@@ -400,12 +400,12 @@ pub(crate) fn fse_decompress_weights(
 ) -> Result<usize> {
     let header = read_ncount(&mut spread.counts, FSE_MAX_SYMBOL_VALUE, src)?;
     if header.table_log > MAX_LOG {
-        return Err(ErrorCode::TableLogTooLarge);
+        return Err(Error::TableLogTooLarge);
     }
     let body = src.sub(header.size..)?;
 
     if decompress_wksp_size(header.table_log, header.max_symbol_value) > WKSP_SIZE {
-        return Err(ErrorCode::TableLogTooLarge);
+        return Err(Error::TableLogTooLarge);
     }
     let wksp_size = WKSP_SIZE - NCOUNT_SIZE - dtable_size_u32(header.table_log) * size_of::<u32>();
 

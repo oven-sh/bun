@@ -2,7 +2,7 @@
 
 use super::fse_decompress::{Spread, fse_decompress_weights};
 use super::{FSE_MIN_TABLELOG, FSE_TABLELOG_ABSOLUTE_MAX, HUF_TABLELOG_MAX};
-use crate::error::{ErrorCode, Result};
+use crate::error::{Error, Result};
 use crate::util::{BUG, SliceExt, highbit32, read_le32};
 
 /// What [`read_ncount`] found besides the counts.
@@ -124,7 +124,7 @@ fn read_any_ncount(
         buffer.write_at(0, header)?;
         let ncount = read_any_ncount(normalized_counter, max_symbol_value, &buffer)?;
         if ncount.size > header.len() {
-            return Err(ErrorCode::CorruptionDetected);
+            return Err(Error::CorruptionDetected);
         }
         return Ok(ncount);
     }
@@ -142,7 +142,7 @@ fn read_any_ncount(
     let mut bit_stream = read_le32(header, 0)?;
     let mut nb_bits = ((bit_stream & 0xF) + FSE_MIN_TABLELOG) as i32;
     if nb_bits > FSE_TABLELOG_ABSOLUTE_MAX as i32 {
-        return Err(ErrorCode::TableLogTooLarge);
+        return Err(Error::TableLogTooLarge);
     }
     bit_stream >>= 4;
     let mut bit_count: i32 = 4;
@@ -237,13 +237,13 @@ fn read_any_ncount(
         }
     }
     if remaining != 1 {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     if charnum > max_sv1 {
-        return Err(ErrorCode::MaxSymbolValueTooSmall);
+        return Err(Error::MaxSymbolValueTooSmall);
     }
     if bit_count > 32 {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     ip += ((bit_count + 7) >> 3) as isize;
     Ok(NCount {
@@ -287,7 +287,7 @@ pub(crate) fn huf_read_stats_wksp(
     spread: &mut Spread,
 ) -> Result<HufStats> {
     let Some((&first, rest)) = src.split_first() else {
-        return Err(ErrorCode::SrcSizeWrong);
+        return Err(Error::SrcSizeWrong);
     };
     let mut i_size = usize::from(first);
     let o_size;
@@ -297,10 +297,10 @@ pub(crate) fn huf_read_stats_wksp(
         o_size = i_size - 127;
         i_size = o_size.div_ceil(2);
         if i_size + 1 > src.len() {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
         if o_size >= huff_weight.len() {
-            return Err(ErrorCode::CorruptionDetected);
+            return Err(Error::CorruptionDetected);
         }
         let (pairs, _) = huff_weight.as_chunks_mut::<2>();
         for (pair, &byte) in pairs.iter_mut().zip(rest.sub(..i_size)?) {
@@ -308,7 +308,7 @@ pub(crate) fn huf_read_stats_wksp(
         }
     } else {
         if i_size + 1 > src.len() {
-            return Err(ErrorCode::SrcSizeWrong);
+            return Err(Error::SrcSizeWrong);
         }
         o_size = fse_decompress_weights(huff_weight.sub_mut(..255)?, rest.sub(..i_size)?, spread)?;
     }
@@ -335,7 +335,7 @@ pub(crate) fn huf_read_stats_wksp(
         return Err(BUG);
     };
     if all_bits & 0xF0F0_F0F0 != 0 || too_large.iter().any(|&rank| rank != 0) {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     *rank_stats = *valid;
     // Those that complete the last four.
@@ -346,27 +346,27 @@ pub(crate) fn huf_read_stats_wksp(
         .map(|(weight, &rank)| rank << (weight - 1))
         .sum::<u32>();
     if weight_total == 0 {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
 
     // The last symbol's weight is not stored: it completes the total to a power of 2.
     let table_log = highbit32(weight_total) + 1;
     if table_log > HUF_TABLELOG_MAX {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     let total = 1u32 << table_log;
     let rest = total - weight_total;
     let verif = 1u32 << highbit32(rest);
     let last_weight = highbit32(rest) + 1;
     if verif != rest {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
     huff_weight.put(o_size, last_weight as u8)?;
     *rank_stats.at_mut(last_weight as usize)? += 1;
 
     let [_, rank1, ..] = *rank_stats;
     if rank1 < 2 || rank1 & 1 != 0 {
-        return Err(ErrorCode::CorruptionDetected);
+        return Err(Error::CorruptionDetected);
     }
 
     Ok(HufStats {

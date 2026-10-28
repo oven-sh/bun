@@ -1617,20 +1617,13 @@ impl VirtualMachine {
         unsafe { self.transpiler.env.as_ref() }
     }
 
-    /// Safe accessor for the process-lifetime resolver `FileSystem` singleton
-    /// (`vm.transpiler.fs`). Allocated once during VM init and never freed;
-    /// callers previously open-coded `unsafe { &*vm.transpiler.fs }`.
+    /// The process-lifetime resolver `FileSystem` singleton.
     #[inline]
     pub fn fs(&self) -> &'static bun_resolver::fs::FileSystem {
-        // SAFETY: `transpiler.fs` is set during `Transpiler::init` to the
-        // process-lifetime `Fs::FileSystem` singleton; never null while a VM
-        // is installed.
-        unsafe { &*self.transpiler.fs }
+        bun_resolver::fs::FileSystem::get()
     }
 
-    /// Safe accessor for the process-lifetime cwd string
-    /// (`vm.transpiler.fs.top_level_dir`). The `FileSystem` singleton is
-    /// allocated once during VM init and never freed.
+    /// The process cwd string.
     #[inline]
     pub fn top_level_dir(&self) -> &'static [u8] {
         self.fs().top_level_dir()

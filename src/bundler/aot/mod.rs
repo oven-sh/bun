@@ -114,7 +114,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         module_prefix,
         typescript_libs,
         file_map,
-        working_directory: transpiler.fs().top_level_dir(),
+        working_directory: crate::bun_fs::FileSystem::get().top_level_dir(),
         node_path: transpiler.env().get(b"NODE_PATH"),
     };
     let Some(options) = options_from_bundler(&input, log) else {

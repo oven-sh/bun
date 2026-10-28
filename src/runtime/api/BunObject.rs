@@ -20,9 +20,8 @@ pub(crate) fn get_public_path_with_asset_prefix(
     let relative_path: &[u8] = if strings::has_prefix(to, dir) {
         strings::without_trailing_slash(&to[dir.len()..])
     } else {
-        // NOTE: spec is `VirtualMachine.get().transpiler.fs.relativePlatform(dir, to, platform)`;
-        // that wrapper is stateless and forwards to bun_paths — dispatch on runtime `platform`
-        // here to keep this fn callable without const-generic plumbing through `transpiler.fs`.
+        // `relative_platform` takes the platform as a type parameter, so dispatch on the
+        // runtime `platform` here.
         match platform {
             Platform::Posix => {
                 resolve_path::relative_platform::<resolve_path::platform::Posix, false>(dir, to)

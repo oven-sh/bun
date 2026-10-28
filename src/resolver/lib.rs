@@ -888,7 +888,7 @@ pub mod fs {
     }
 
     /// The active filesystem backend (always the real filesystem).
-    pub type Implementation = RealFS;
+    pub(crate) type Implementation = RealFS;
 
     // ── RealFS ───────────────────────────────────────────────────────────
 

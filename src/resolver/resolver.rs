@@ -468,7 +468,7 @@ pub struct Resolver<'a> {
     // aliased unique refs across threads (instant UB). Model as `*mut` /
     // `NonNull` (never-null but raw-aliasing) and deref through the `fs()` /
     // `log()` accessors below.
-    pub fs: *mut Fs::FileSystem,
+    pub(crate) fs: *mut Fs::FileSystem,
     pub log: NonNull<bun_ast::Log>,
     // allocator dropped — global mimalloc
     /// NOTE: saved/restored across nested resolves.

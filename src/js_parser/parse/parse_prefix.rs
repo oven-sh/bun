@@ -1006,7 +1006,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             p.skip_type_script_type(Level::Lowest)?;
             p.lexer.expect_greater_than::<false>()?;
-            return p.parse_prefix(level, errors, EFlags::TsCastOperand);
+            // A decorator keeps its flag. At its level no ":" is a return type.
+            let operand_flags = if flags == EFlags::TsDecorator {
+                flags
+            } else {
+                EFlags::TsCastOperand
+            };
+            return p.parse_prefix(level, errors, operand_flags);
         }
 
         p.lexer.unexpected()?;

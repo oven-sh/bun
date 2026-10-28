@@ -1238,6 +1238,21 @@ export const next = byId ? (n) => n : (n) => n + 1;
       exp("x = a ? <B[]>(b) => c : d", "x = a ? (b) => c : d;\n");
     });
 
+    it("a legacy decorator behind a <T> cast ends before the name of its member", () => {
+      const transpiler = new Bun.Transpiler({
+        loader: "ts",
+        tsconfig: { compilerOptions: { experimentalDecorators: true } },
+      });
+      const decorated = code =>
+        [...transpiler.transformSync(code).matchAll(/\(\[\n\s*(.*)\n\], C\.prototype, "(\w+)"/g)].map(match => [
+          match[1],
+          match[2],
+        ]);
+      expect(decorated("class C { @<any>new Foo ['k']() {} }")).toEqual([["new Foo", "k"]]);
+      expect(decorated("class C {\n  @<any>new Foo ['k']\n  m() {}\n}")).toEqual([["new Foo", "k"]]);
+      expect(decorated("class C { @<any>dec ['k']() {} }")).toEqual([["dec", "k"]]);
+    });
+
     describe("a rest item in parentheses that are not parameters", () => {
       // [loader, code, line, column]
       const cases = [

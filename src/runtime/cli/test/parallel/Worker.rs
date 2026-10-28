@@ -430,6 +430,7 @@ impl WorkerPipe {
 // flag); worker/coord backrefs are valid for the pipe's lifetime.
 bun_io::impl_buffered_reader_parent! {
     TestParallelWorkerPipe for WorkerPipe;
+    feature = TestCommand;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(&chunk, state);
     on_reader_done  = |this| (*this).on_reader_done();

@@ -1,0 +1,2 @@
+The stored output pins a refusal: the link of a built-in prototype that compiled code has looked past is fixed. Since an instance of a class below TypeError no longer escapes, and what a literal defines is there, the build of THIS program looks past TypeError.prototype no more, fixes no link, and the program prints what plain Bun prints (RUN: the same but for the words and paths of the uncaught error at its end).
+To restate: a read that really passes Error.prototype (a name nobody can place on an instance nobody knows), so that the refusal is shown again.

@@ -1,0 +1,3 @@
+node:path true
+node:dgram MODULE_NOT_FOUND Cannot load 'node:dgram': it isn't in this executable. Import it by name somewhere in your program to keep it.
+node:no-such-module ERR_UNKNOWN_BUILTIN_MODULE No such built-in module: node:no-such-module

@@ -1,0 +1,4 @@
+{
+  "env": { "BUN_JSC_crashIfInterpreterIsUsed": "1" },
+  "skipInShell": "it imports built-in modules, which the jsc shell does not have"
+}

@@ -1,0 +1,17 @@
+{
+  "commonjs.E.ts": {
+    "errors": "error: TS2678: Type 'E.B' is not comparable to type 'E.A'.\n"
+  },
+  "esm.E.ts": {
+    "errors": "error: TS2678: Type 'E.B' is not comparable to type 'E.A'.\n"
+  },
+  "esm.const_enum.ts": {
+    "errors": "error: TS100200: No matching export in \"node_modules/lie_e/index.js\" for import \"CE\"\n"
+  },
+  "esm.not_there.ts": {
+    "errors": "error: TS100200: No matching export in \"node_modules/lie_e/index.js\" for import \"not_there\"\n"
+  },
+  "esm.not_there_fn.ts": {
+    "errors": "error: TS100200: No matching export in \"node_modules/lie_e/index.js\" for import \"not_there_fn\"\n"
+  }
+}

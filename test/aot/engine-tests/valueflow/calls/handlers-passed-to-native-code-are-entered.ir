@@ -1,0 +1,82 @@
+# node:net   handlers = { data }; hooks = { done }; function listen(report) { Bun.listen({ socket: handlers }); report(hooks) }; exports = { listen, handlers, hooks, spare }
+# main       net = require("node:net"); listen = net.listen; listen(input); eval(input)
+# Evaluated text names the modules of the library, so native code holds what the module of the library exports, and both objects hang on that. Each of them also gets into such hands the ordinary way:
+# one as an operand of a native call, which calls the handlers that its entry lists, the other as an argument of a callee nobody knows. What arrives that way may be called, and so may what hangs on it.
+# The export that arrives only with the object that holds the exports stays unreached
+# RUN: valueflow-solve calls
+# CHECK: f2 v5 -> BunListen
+# CHECK-NEXT: f2 v7 -> unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+# UNREACHED: unreached f5
+# RUN(ESCAPED): valueflow-why escaped=f4 escaped=f5
+# ESCAPED: escaped=f4
+# ESCAPED-NEXT: n0 escaped
+# ESCAPED: escaped=f5
+# ESCAPED-NEXT: not held
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen EvaluatesText Eval f0:v6
+# UNSEEN: unseen-code yes
+# UNSEEN-NEXT: modules-by-name yes
+# UNSEEN-NEXT: held f5
+# UNSEEN-NOT: held
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="node:net" displayPath="node:net" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeNet body=f1
+entry module=m0
+layout L0 name="Exports" fields=[{key="listen" declared={type=anything} flags=[IsRequired]}, {key="handlers" declared={type=anything} flags=[IsRequired]}, {key="hooks" declared={type=anything} flags=[IsRequired]}, {key="spare" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Handlers" fields=[{key="data" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Hooks" fields=[{key="done" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Options" fields=[{key="socket" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="handlers" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="hooks" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:net"
+    v1 = PropGet v0 key="listen"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Call v1, -, v3
+    v5 = Builtin builtin=Eval
+    v6 = Call v5, -, v3
+    Return
+}
+function f1 name="net" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f4
+    v4 = NewObject -, v3 layout=L2 fields=[0]
+    PutModuleVariable v4 variable=g1
+    v6 = NewClosure function=f2
+    v7 = NewClosure function=f5
+    v8 = NewObject -, v6, v1, v4, v7 layout=L0 fields=[0, 1, 2, 3]
+    Return v8
+}
+function f2 name="listen" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = NewObject -, v1 layout=L3 fields=[0]
+    v3 = Builtin builtin=Bun
+    v4 = Builtin builtin=BunListen
+    v5 = Call v4, v3, v2
+    v6 = GetModuleVariable variable=g1
+    v7 = Call v0, -, v6
+    Return
+}
+function f3 name="data" module=m1 role=Library parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f4 name="done" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="spare" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    Return
+}

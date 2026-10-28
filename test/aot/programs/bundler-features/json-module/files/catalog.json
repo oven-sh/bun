@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "models": [
+    { "id": "one", "rank": 1, "providers": { "a": "one-a", "b": "" }, "streaming": { "a": true } },
+    { "id": "two", "rank": 2, "providers": { "a": "two-a" }, "streaming": { "a": false, "b": true }, "note": "second" },
+    { "id": "three", "rank": 3, "providers": {}, "limits": [1, 2, 3] },
+    { "id": "four", "rank": 4, "providers": { "b": "four-b", "c": "four-c" }, "streaming": { "a": true, "b": false }, "hidden": true },
+    { "id": "five", "rank": 5, "providers": { "a": "five-a", "b": "five-b", "c": "five-c" }, "note": "fifth", "hidden": false },
+    { "id": "six", "rank": 6, "providers": { "c": "six-c" }, "streaming": { "a": true }, "limits": [], "alias": "vi" },
+    { "id": "seven", "rank": 7, "providers": { "a": "seven-a", "d": "seven-d" }, "alias": "vii", "note": "seventh", "streaming": { "a": false } }
+  ]
+}

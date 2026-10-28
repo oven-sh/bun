@@ -699,7 +699,7 @@ pub mod fs {
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
         DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
-        FilenameStoreAppender, dir_entry,
+        dir_entry,
     };
 
     use bun_core::Generation;
@@ -995,7 +995,7 @@ pub mod fs {
         fn readdir<I: DirEntryIterator>(
             &mut self,
             store_fd: bool,
-            mut prev_map: Option<&mut dir_entry::EntryMap>,
+            prev_map: Option<&mut dir_entry::EntryMap>,
             dir_: &'static [u8],
             generation: Generation,
             handle: Fd,
@@ -1009,15 +1009,8 @@ pub mod fs {
                 dir.fd = handle;
             }
 
-            let mut filename_store = FilenameStoreAppender::new();
-            while let Some(entry_) = iter.next()? {
-                // debug("readdir entry {}", BStr::new(entry_.name.slice()));
-                dir.add_entry_with_store(
-                    prev_map.as_deref_mut(),
-                    &entry_,
-                    &mut filename_store,
-                    &iterator,
-                )?;
+            if let Some(err) = dir.read_names(prev_map, &mut iter, &iterator)? {
+                return Err(err.into());
             }
 
             // debug("readdir({}, {}) = {}", handle, dir_, dir.data.count());

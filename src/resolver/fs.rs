@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 
 use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
+use bun_collections::smallvec::SmallVec;
 use bun_core::Generation;
 use bun_core::MutableString;
 use bun_paths::MAX_PATH_BYTES;
@@ -44,16 +45,16 @@ bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FIL
 ///
 /// `<FilenameStore as Appender>::append` re-evaluates `filename_store_backing()`
 /// (a `bss_singleton!` accessor: `Once::call_once` + `AtomicPtr::load`) on every
-/// call. `add_entry` runs once per directory entry, so for the
+/// call. `make_entry` runs once per directory entry, so for the
 /// @material-ui/icons-style 11,000-entry directories that's 11,000+ redundant
 /// `Once` atomic checks per directory. Resolving once up front and carrying the
 /// raw pointer across the loop drops that to a single check per `readdir`.
-pub struct FilenameStoreAppender {
+struct FilenameStoreAppender {
     backing: *mut FilenameStoreBacking,
 }
 impl FilenameStoreAppender {
     #[inline]
-    pub(crate) fn new() -> Self {
+    fn new() -> Self {
         // One `Once` check, hoisted out of the per-entry loop.
         Self {
             backing: filename_store_backing(),
@@ -365,7 +366,7 @@ pub mod dir_entry {
     }
 }
 
-/// Per-entry hook invoked by `add_entry`/`readdir`.
+/// Per-entry hook invoked by `DirEntry::read_names`.
 pub trait DirEntryIterator {
     const IS_VOID: bool = false;
     fn next(&self, entry: &mut Entry, fd: Fd);
@@ -383,6 +384,16 @@ impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
         (**self).next(entry, fd)
     }
 }
+
+/// One name of a directory read: the `data` key, its hash, and the entry to store under it.
+struct ListedEntry {
+    hash: u64,
+    key: &'static [u8],
+    entry: *mut Entry,
+}
+
+/// A read of up to this many names collects them on the stack.
+const LISTED_ON_STACK: usize = 64;
 
 pub struct DirEntry {
     // `dir` is interned in
@@ -403,18 +414,52 @@ impl DirEntry {
         }
     }
 
-    // Compatibility wrapper for callers outside the `readdir` hot loop —
-    // resolves the `FilenameStore` singleton on demand. Hot-loop callers
-    // should hoist `FilenameStoreAppender::new()` once and call
-    // `add_entry_with_store` directly.
-
-    pub(crate) fn add_entry_with_store<I: DirEntryIterator>(
+    /// Lists a read into one table of the final size. Returns the error that stopped it, if any.
+    pub(crate) fn read_names<I: DirEntryIterator + ?Sized>(
         &mut self,
+        mut prev_map: Option<&mut dir_entry::EntryMap>,
+        names: &mut bun_sys::dir_iterator::WrappedIterator,
+        iterator: &I,
+    ) -> crate::CrateResult<Option<bun_sys::Error>> {
+        let mut filename_store = FilenameStoreAppender::new();
+        let mut listed = SmallVec::<[ListedEntry; LISTED_ON_STACK]>::new();
+        let stopped_by = loop {
+            let name = match names.next() {
+                Ok(Some(name)) => name,
+                Ok(None) => break None,
+                Err(err) => break Some(err),
+            };
+            let Some(entry) =
+                self.make_entry(prev_map.as_deref_mut(), &name, &mut filename_store)?
+            else {
+                continue;
+            };
+            if !I::IS_VOID {
+                // SAFETY: just produced from EntryStore append or prev_map lookup
+                iterator.next(unsafe { &mut *entry.entry }, self.fd);
+            }
+            listed.push(entry);
+        };
+        self.data.reserve(listed.len());
+        for entry in &listed {
+            self.data
+                .put_static_key_hashed(entry.hash, entry.key, entry.entry)?;
+        }
+        // Names that differ only in case share one key.
+        if self.data.len() < listed.len() {
+            self.data.shrink_to_fit();
+        }
+        Ok(stopped_by)
+    }
+
+    // Inlined: it is the body of the loop in `read_names`, once for each kind of iterator.
+    #[inline(always)]
+    fn make_entry(
+        &self,
         prev_map: Option<&mut dir_entry::EntryMap>,
         entry: &bun_sys::dir_iterator::IteratorResult,
         filename_store: &mut FilenameStoreAppender,
-        iterator: I,
-    ) -> crate::CrateResult<()> {
+    ) -> crate::CrateResult<Option<ListedEntry>> {
         use bun_sys::FileKind as DK;
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
         // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
@@ -437,7 +482,7 @@ impl DirEntry {
             | DK::UnixDomainSocket
             | DK::Whiteout
             | DK::Door
-            | DK::EventPort => return Ok(()),
+            | DK::EventPort => return Ok(None),
         };
 
         // Lowercase the entry basename once. The same bytes drive the
@@ -556,11 +601,8 @@ impl DirEntry {
             }
         };
 
-        // SAFETY: just produced from EntryStore append or prev_map lookup
-        let stored_ref = unsafe { &mut *stored };
-
         // PERF: the
-        // generic `put` here would heap-box a second key copy. `base_lowercase`
+        // generic `put` would heap-box a second key copy. `base_lowercase`
         // points either into the `Entry`'s inline `StringOrTinyString` buffer
         // (≤31B names) or into the process-static `FilenameStore`; the `Entry`
         // itself lives in the process-lifetime `EntryStore` BSSList, so in
@@ -572,14 +614,12 @@ impl DirEntry {
             unsafe { &*core::ptr::from_ref::<[u8]>((*stored).base_lowercase()) };
         // `(*stored).base_lowercase()` equals `name_lc` byte-for-byte (a fresh
         // entry interned `name_lc`; a recycled one matched it exactly above), so
-        // `name_hash` is its hash too — insert without re-hashing.
-        self.data.put_static_key_hashed(name_hash, key, stored)?;
-
-        if !I::IS_VOID {
-            iterator.next(stored_ref, self.fd);
-        }
-
-        Ok(())
+        // `name_hash` is its hash too — `read_names` inserts without re-hashing.
+        Ok(Some(ListedEntry {
+            hash: name_hash,
+            key,
+            entry: stored,
+        }))
     }
 
     /// Debug-only contract check: every `.data` probe must run under

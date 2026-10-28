@@ -481,19 +481,16 @@ impl FSEventsLoop {
 
     fn enqueue_task_concurrent(&self, task: Task) {
         let cf = CoreFoundation::get();
-        let concurrent = bun_core::heap::into_raw(Box::new(ConcurrentTask {
+        let mut concurrent = Box::new(ConcurrentTask {
             task: Task {
                 ctx: ptr::null_mut(),
                 callback: |_| {},
             },
             next: bun_threading::Link::new(),
             auto_delete: false,
-        }));
-        // SAFETY: concurrent is a valid freshly-boxed non-null pointer
-        unsafe {
-            ConcurrentTask::from(&mut *concurrent, task, true);
-            self.tasks.push(NonNull::new_unchecked(concurrent));
-        }
+        });
+        ConcurrentTask::from(&mut concurrent, task, true);
+        self.tasks.push(bun_core::heap::into_raw_nn(concurrent));
         let signal_source = self.signal_source.load(Ordering::Relaxed);
         let loop_ = self.loop_.load(Ordering::Acquire);
         // SAFETY: CF fn pointers loaded via dlsym; handles valid per above.

@@ -838,18 +838,13 @@ fn finish_arena_contents(
                 let converted = other.remove_and_convert_to_utf8_and_free(buf[..total].to_vec());
                 let dst = arena.alloc_slice_fill_copy::<u8>(converted.len() + 1, 0);
                 dst[..converted.len()].copy_from_slice(&converted);
-                // SAFETY: `dst` is a non-null arena slice of length ≥ 1.
-                let ptr = unsafe { core::ptr::NonNull::new_unchecked(dst.as_mut_ptr()) };
-                return (ptr, converted.len());
+                return (core::ptr::NonNull::from_mut(dst).cast(), converted.len());
             }
         }
     }
     debug_assert!(buf.len() > total);
     buf[total] = 0;
-    // SAFETY: `buf` is a non-null arena slice (len ≥ 1 on every path that
-    // reaches here; the `size == 0` / empty cases return earlier).
-    let ptr = unsafe { core::ptr::NonNull::new_unchecked(buf.as_mut_ptr()) };
-    (ptr, total)
+    (core::ptr::NonNull::from_mut(buf).cast(), total)
 }
 
 pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STREAM: bool>(

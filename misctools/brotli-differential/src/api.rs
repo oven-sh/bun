@@ -3,7 +3,7 @@ use crate::enc::{EncCase, Pair, run_op};
 use crate::ffi::CDecoder;
 use crate::r#gen;
 use crate::rng::Rng;
-use bun_brotli::{Decoder, DecoderParameter, Encoder, EncoderOperation, EncoderParameter, SpareCapacity};
+use bun_brotli::{Decoder, DecoderParameter, Encoder, EncoderOperation, EncoderParameter, PreparedDictionary, SpareCapacity};
 
 const VALUES: &[u32] = &[
     0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 15, 16, 17, 18, 23, 24, 25, 26, 29, 30, 31, 32, 33, 63, 64, 120, 121, 127, 128, 255, 256, 1 << 16, 1 << 20, 1 << 24,
@@ -396,6 +396,57 @@ fn decoder(text: &[u8]) -> Result<usize, String> {
     Ok(n)
 }
 
+/// Dictionaries of 2 GiB in all. Rust only: the reference decoder adds their sizes up in an `int` and does not look at the
+/// result. They are zeros that nothing touches, so they take next to no memory.
+fn huge_dictionaries() -> Result<usize, String> {
+    const MOST: usize = i32::MAX as usize;
+    let zeros = |n: usize| vec![0u8; n].into_boxed_slice();
+    if PreparedDictionary::new(zeros(MOST + 1)).is_some() {
+        return Err("encoder: a dictionary of 2 GiB was accepted".into());
+    }
+    // Distances into dictionaries count from their end, so the stream only depends on their last bytes: 16 zeros and this.
+    let mut rng = Rng(4);
+    let last: Vec<u8> = (0..1000).map(|_| rng.next() as u8).collect();
+    let data = [&last[500..900], b"!", &[0; 12], &last[..400], b"!", &last[980..]].concat();
+    let mut p = pair(&[(1, 9)], &[[&[0; 16], &last[..]].concat()])?;
+    finish(&mut p, &mut rng, &data, true)?;
+    assert!(p.out.len() < data.len() / 4);
+    let mut n = 1;
+    // The sizes of the dictionaries before the last one, whether each is accepted, and whether the last one is.
+    let cases: [(&[(usize, bool)], bool); 7] = [
+        (&[(MOST + 1, false), (16, true)], true),
+        (&[(1 << 30, true), (1 << 30, false)], true),
+        (&[(1 << 30, true), ((1 << 30) - 1001, true)], true),
+        (&[(1 << 30, true), ((1 << 30) - 1001, true), (1, true)], false),
+        (&[(MOST - 1000, true)], true),
+        (&[(MOST - 999, true)], false),
+        (&[(MOST, true), (1, false)], false),
+    ];
+    for (before, fits) in cases {
+        let at = |e: &str| format!("decoder: dictionaries of {before:?} and 1000 bytes: {e}");
+        let mut r = Decoder::new();
+        for &(size, accepted) in before {
+            if r.attach_dictionary(zeros(size)) != accepted {
+                return Err(at(&format!("{size} bytes {}", if accepted { "refused" } else { "accepted" })));
+            }
+        }
+        if r.attach_dictionary(last.clone().into()) != fits {
+            return Err(at(if fits { "the last one refused" } else { "the last one accepted" }));
+        }
+        if fits {
+            let mut out = vec![0u8; 1 << 16];
+            let mut room: &mut [u8] = &mut out;
+            let result = r.decompress_stream(&mut &p.out[..], &mut room) as i32;
+            let made = (1 << 16) - room.len();
+            if result != 1 || out[..made] != data[..] {
+                return Err(at(&format!("result {result}, error {:?}, {made} bytes", r.error_code())));
+            }
+        }
+        n += 1;
+    }
+    Ok(n)
+}
+
 /// The spare capacity of a `Vec` as the output of the encoder has to act like a slice of that size.
 fn spare_capacity(rng: &mut Rng, corpus: &r#gen::Corpus) -> Result<(), String> {
     let len = r#gen::length(rng, 1 << 18);
@@ -452,6 +503,7 @@ pub fn run(seed: u64, iters: u64, corpus: &r#gen::Corpus) {
     check("parameters", parameters(&text));
     check("metadata", metadata(&text));
     check("dictionaries", dictionaries(corpus));
+    check("huge dictionaries", huge_dictionaries());
     check("long call", long_call(corpus));
     for it in 0..iters {
         if let Err(e) = spare_capacity(&mut Rng(seed + it), corpus) {

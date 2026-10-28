@@ -1,0 +1,1 @@
+{ "build": ["--aot-threads=1"] }

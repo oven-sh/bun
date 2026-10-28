@@ -18,6 +18,19 @@ pub fn adopt_string(ptr: ExternString) -> bun_core::String {
     string
 }
 
+/// The characters of a JS string that the C++ host function's frame keeps alive until it returns.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct ExternStringView(bun_core::EncodedSlice<'static>);
+impl ExternStringView {
+    /// # Safety
+    /// The host function that passed this is the call `heap` belongs to.
+    #[inline(always)]
+    pub unsafe fn get<'a>(self, _: &JsHeap<'a>) -> bun_core::StringView<'a> {
+        bun_core::StringView::from_encoded(self.0)
+    }
+}
+
 /// What `std::optional<T>` lowers to.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -156,6 +169,8 @@ unsafe extern "C" {
     pub(super) fn Bun__Bindgen__createObject(
         global: *mut JSGlobalObject,
         first_member_name_index: u32,
+        dictionary_index: u32,
+        has_every_member: bool,
         values: *const JSValue,
         count: usize,
     ) -> JSValue;

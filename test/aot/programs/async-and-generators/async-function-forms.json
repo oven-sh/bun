@@ -1,0 +1,3 @@
+{
+  "skipInShell": "it calls Bun.gc, which the jsc shell does not have"
+}

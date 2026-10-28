@@ -1,16 +1,23 @@
 use core::cell::Cell;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::api::bun::process::Status as SpawnStatus;
-use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::api::bun_subprocess::Subprocess;
+use crate::generated_bindgen::file_sink::{
+    Bun__FileSink__onRejectStream, Bun__FileSink__onResolveStream,
+};
+use crate::webcore::jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsError, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
+use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -74,7 +81,7 @@ pub struct FileSink {
 
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
 // refcount derived via #[derive(CellRefCounted)] above. `*FileSink` crosses FFI
-// (JSSink wrapper, `@fieldParentPtr`, `asPromisePtr`), so this stays intrusive
+// (JSSink wrapper, `@fieldParentPtr`, `b.promisePtr`), so this stays intrusive
 // rather than `Rc<T>`.
 
 /// Count of live native FileSink instances. Incremented at allocation,
@@ -83,19 +90,9 @@ pub struct FileSink {
 /// `heapStats()` (which only counts JS wrapper objects).
 pub(crate) static LIVE_COUNT: AtomicI32 = AtomicI32::new(0);
 
-pub(crate) mod testing_apis {
-    use super::*;
-
-    pub(crate) fn file_sink_live_count(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(LIVE_COUNT.load(Ordering::Relaxed) as f64))
-    }
+pub(crate) fn live_count() -> i32 {
+    LIVE_COUNT.load(Ordering::Relaxed)
 }
-// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
-// (acronym splitter treats `AP|Is` as two words); alias so both resolve.
-pub(crate) use testing_apis as testing_ap_is;
 
 /// `bun_sys` does not yet export
 /// an isPollable helper, so re-derive it locally from `S_IFMT`. Windows always
@@ -213,13 +210,11 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     _global: *mut JSGlobalObject,
     jsvalue: JSValue,
 ) {
-    let Some(this_ptr) = JSSink::from_js(jsvalue) else {
+    let Some(this) = JSSink::sink_from_js(jsvalue) else {
         return;
     };
-    // SAFETY: `from_js` returned a live `*mut JSSink<FileSink>` (= ThisSink); the
-    // first field is `sink: FileSink`, so `&(*this_ptr).sink` recovers the
-    // wrapped `*FileSink`.
-    let this: &FileSink = unsafe { &(*this_ptr).sink };
+    // SAFETY: the object's live sink.
+    let this: &FileSink = unsafe { this.as_ref() };
 
     #[cfg(not(windows))]
     {
@@ -596,14 +591,7 @@ impl FileSink {
         let (Some(cell), Some(global)) = (pipe.cell(), self.js_global()) else {
             return;
         };
-        if let streams::SourceHandle::JSController(source) = *self.source.get() {
-            if source == cell {
-                self.source.set(streams::SourceHandle::None);
-            }
-        }
-        crate::dispatch::fold(::bun_jsc::call_check_slow(global, || {
-            streams::controller_abi::detach_ptr(cell)
-        }));
+        crate::dispatch::fold(ReadableSinkController::detach(cell, global));
     }
 
     fn has_stream_error(&self) -> bool {
@@ -999,10 +987,6 @@ impl FileSink {
         }
     }
 
-    pub fn flush(&self) -> sys::Result<()> {
-        sys::Result::Ok(())
-    }
-
     pub(crate) fn flush_from_js(
         &self,
         cx: &bun_jsc::JsThread<'_>,
@@ -1078,7 +1062,7 @@ impl FileSink {
         }
     }
 
-    /// `~JSReadableFileSinkController` with this sink still attached. `pipe` roots that cell until
+    /// A `ReadableSinkController` was collected with this sink still attached. `pipe` roots that cell until
     /// `release_pipe` detaches it, so it only dies attached in the heap's last sweep. Unlike the
     /// wrapper in [`finalize`](Self::finalize) it holds no ref: there is none to release for it.
     ///
@@ -1205,18 +1189,15 @@ impl FileSink {
         self.to_result(rc, accepted)
     }
 
-    pub(crate) fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
+    pub(crate) fn write_utf16(&self, text: &[u16]) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
-        let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
+        let rc = self.writer.with_mut(|w| w.write_utf16(text));
         if self.counting_stream_bytes() {
-            self.count_stream_bytes(
-                &rc,
-                bun_core::strings::element_length_utf16_into_utf8(data.slice16()),
-            );
+            self.count_stream_bytes(&rc, bun_core::strings::element_length_utf16_into_utf8(text));
         }
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
@@ -1267,7 +1248,7 @@ impl FileSink {
         // A backpressured `write()` may have left its promise in `self.pending`;
         // `writer.end()` only re-enters `on_close`, which never touches it, so
         // every synchronous arm that tears the writer down here must settle it
-        // (mirrors `on_auto_flush`). `js_close` can't hand the promise back, so
+        // (mirrors `on_auto_flush`). `close()` can't hand the promise back, so
         // the outcome is delivered via `run_pending` and the call returns `Ok`.
         let has_pending = self.pending.get().state == streams::PendingState::Pending;
 
@@ -1311,20 +1292,18 @@ impl FileSink {
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
         // Wrapper's +1; balanced by `finalize` → `deref()`.
         self.ref_();
-        JSSink::create_object(global_this, self, 0)
+        JSSink::create_object(global_this, self, None)
     }
 
-    pub(crate) fn to_js_with_destructor(
+    /// As [`to_js`](Self::to_js), for the stdin of `subprocess`, which is notified when the object closes or is collected.
+    pub(crate) fn to_js_for_subprocess(
         &mut self,
         global_this: &JSGlobalObject,
-        // `sink::DestructorPtr` is `TaggedPtrUnion<(Detached, Detached)>`
-        // which does not satisfy `bun_ptr::TypeList` yet (sibling Sink.rs); accept
-        // the encoded usize directly until that lands.
-        destructor: Option<usize>,
+        subprocess: NonNull<Subprocess<'static>>,
     ) -> JSValue {
         // Wrapper's +1; balanced by `finalize` → `deref()`.
         self.ref_();
-        JSSink::create_object(global_this, self, destructor.unwrap_or(0))
+        JSSink::create_object(global_this, self, Some(subprocess))
     }
 
     pub(crate) fn end_from_js(&self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
@@ -1446,21 +1425,10 @@ impl FileSink {
     }
 }
 
-// `Sink.JSSink(@This(), "FileSink")` — generic-fn-returning-type → monomorphized type alias.
 pub(crate) type JSSink = crate::webcore::sink::JSSink<FileSink>;
 
-crate::impl_js_sink_abi!(FileSink, "FileSink");
-
-// `JsSinkType` impl: routes the codegen `FileSink__*` thunks (via
-// `JSSink::<Self>::js_*`) into the inherent streaming methods. Mirrors
-// `Sink.JSSink(@This(), "FileSink")`.
 impl crate::webcore::sink::JsSinkType for FileSink {
     const NAME: &'static str = "FileSink";
-    const HAS_FLUSH_FROM_JS: bool = true;
-    const HAS_PROTECT_JS_WRAPPER: bool = true;
-    const HAS_UPDATE_REF: bool = true;
-    const HAS_GET_FD: bool = true;
-    const START_TAG: Option<streams::StartTag> = Some(streams::StartTag::FileSink);
 
     crate::impl_js_sink_forwarders!(start_takes_context);
 
@@ -1468,12 +1436,30 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         // SAFETY: same contract, forwarded.
         unsafe { Self::finalize(this) }
     }
+    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
+    }
+    fn pending_state_is_pending(&self) -> bool {
+        self.pending.get().state == streams::PendingState::Pending
+    }
+    fn protect_js_wrapper(&mut self, global: &JSGlobalObject, this_value: JSValue) {
+        Self::protect_js_wrapper(self, global, this_value)
+    }
+    fn update_ref(&mut self, value: bool) {
+        Self::update_ref(self, value)
+    }
+    fn get_fd(&self) -> Option<i32> {
+        Some(Self::get_fd(self))
+    }
+}
+
+impl crate::webcore::sink::ControlledSink for FileSink {
+    fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
+        AnyControlledSink::FileSink(this)
+    }
     unsafe fn controller_finalize(this: *mut Self) {
         // SAFETY: same contract, forwarded.
         unsafe { Self::controller_finalize(this) }
-    }
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
-        Self::end_from_js(self, cx)
     }
     /// The JS pump's source failed, or `controller.close(error)`: a piped stream rejects with `reason`.
     unsafe fn close_with_error(
@@ -1492,21 +1478,9 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         let _ = this.end(None);
         sys::Result::Ok(())
     }
-    fn source(&mut self) -> Option<&mut streams::SourceHandle> {
+    fn source(&mut self) -> &mut streams::SourceHandle {
         // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `source`.
-        Some(unsafe { self.source.get_mut() })
-    }
-    fn pending_state_is_pending(&self) -> bool {
-        self.pending.get().state == streams::PendingState::Pending
-    }
-    fn protect_js_wrapper(&mut self, global: &JSGlobalObject, this_value: JSValue) {
-        Self::protect_js_wrapper(self, global, this_value)
-    }
-    fn update_ref(&mut self, value: bool) {
-        Self::update_ref(self, value)
-    }
-    fn get_fd(&self) -> i32 {
-        Self::get_fd(self)
+        unsafe { self.source.get_mut() }
     }
 }
 
@@ -1737,40 +1711,35 @@ impl FileSink {
     fn detach_js_controller(&self, global_this: &JSGlobalObject) {
         if let streams::SourceHandle::JSController(cell) = *self.source.get() {
             self.source.set(streams::SourceHandle::None);
-            crate::dispatch::fold(::bun_jsc::call_check_slow(global_this, || {
-                streams::controller_abi::detach_ptr(cell)
-            }));
+            crate::dispatch::fold(ReadableSinkController::detach(cell, global_this));
         }
     }
 }
 
-fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_resolve_stream(cx: &mut JsScope<'_>, _: JsLocal<'_>, context: *mut FileSink) {
     bun_core::scoped_log!(FileSink, "onResolveStream");
-    let args = callframe.arguments();
-    let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
-    // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
-    let _guard = unsafe { RefPtr::from_raw(this) };
-    // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
+    // SAFETY: `context` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
+    let _guard = unsafe { RefPtr::from_raw(context) };
+    // SAFETY: `context` is the `*mut FileSink` stashed by `assign_to_stream`.
     unsafe {
-        (*this).pump_promise_ref.set(false);
-        (*this).handle_resolve_stream(global_this);
+        (*context).pump_promise_ref.set(false);
+        (*context).handle_resolve_stream(cx.global());
     }
-    Ok(JSValue::UNDEFINED)
 }
 
-fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_reject_stream(
+    cx: &mut JsScope<'_>,
+    err: JsLocal<'_>,
+    context: *mut FileSink,
+) -> JsResult<()> {
     bun_core::scoped_log!(FileSink, "onRejectStream");
-    let args = callframe.arguments();
-    let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
-    let err = args[0];
-    // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
-    let _guard = unsafe { RefPtr::from_raw(this) };
-    // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
+    // SAFETY: `context` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
+    let _guard = unsafe { RefPtr::from_raw(context) };
+    // SAFETY: `context` is the `*mut FileSink` stashed by `assign_to_stream`.
     unsafe {
-        (*this).pump_promise_ref.set(false);
-        (*this).handle_reject_stream(global_this, err)?;
+        (*context).pump_promise_ref.set(false);
+        (*context).handle_reject_stream(cx.global(), err.to_js())
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 impl FileSink {
@@ -1787,7 +1756,7 @@ impl FileSink {
         let done_promise = bun_jsc::JSPromise::create(global_this);
         let promise = done_promise.to_js();
         let controller =
-            JSSink::create_controller(global_this, core::ptr::NonNull::from(&mut *self));
+            ReadableSinkController::create(global_this, core::ptr::NonNull::from(&mut *self));
         self.pipe.set(streams::PipeCell::create(
             controller,
             stream.value,
@@ -1847,7 +1816,7 @@ impl FileSink {
         let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<FileSink>(self)) };
 
         let controller =
-            JSSink::create_controller(global_this, core::ptr::NonNull::from(&mut *self));
+            ReadableSinkController::create(global_this, core::ptr::NonNull::from(&mut *self));
         self.pipe.set(streams::PipeCell::create(
             controller,
             stream.value,
@@ -1900,7 +1869,7 @@ impl FileSink {
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         // No +1 for the controller: `release_pipe` detaches it before this sink is freed.
-        let promise_result = JSSink::assign_controller_to_stream(
+        let promise_result = ReadableSinkController::assign_controller_to_stream(
             global_this,
             stream.value,
             controller,
@@ -1936,8 +1905,8 @@ impl FileSink {
                 promise_result.then(
                     global_this,
                     std::ptr::from_mut::<FileSink>(self),
-                    on_resolve_stream_shim,
-                    on_reject_stream_shim,
+                    Bun__FileSink__onResolveStream,
+                    Bun__FileSink__onRejectStream,
                 );
             }
             bun_jsc::js_promise::Status::Fulfilled => {
@@ -1952,47 +1921,5 @@ impl FileSink {
         }
 
         Ok(promise_result)
-    }
-}
-
-// `#[bun_jsc::host_fn]` proc-macro is not yet ported, so emit the
-// JSC host-function ABI shim by hand and export under the C symbol names the
-// C++ side expects.
-//
-// IMPORTANT: these MUST be exported as *function* symbols (not as `static`
-// function-pointer variables). C++ declares them via
-// `BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream)` and compares the
-// resulting symbol address against the handler passed to `JSValue::then` in
-// `Zig::GlobalObject::promiseHandlerID`. A `pub static …: JSHostFn = shim`
-// exports the address of an 8-byte data slot, which never equals the shim's
-// code address → RELEASE_ASSERT_NOT_REACHED at runtime.
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__FileSink__onResolveStream")]
-    unsafe fn on_resolve_stream_shim(
-        g: *mut JSGlobalObject,
-        cf: *mut CallFrame,
-    ) -> JSValue {
-        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-        // safe `*mut → &` via `opaque_deref`. Kept as raw `JsHostFn` shape so
-        // the fn-item coerces to `.then()`'s `JsHostFn` pointer slot without a
-        // transmute.
-        match on_resolve_stream(bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(cf)) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
-    }
-}
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__FileSink__onRejectStream")]
-    unsafe fn on_reject_stream_shim(
-        g: *mut JSGlobalObject,
-        cf: *mut CallFrame,
-    ) -> JSValue {
-        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-        // safe `*mut → &` via `opaque_deref`.
-        match on_reject_stream(bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(cf)) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
     }
 }

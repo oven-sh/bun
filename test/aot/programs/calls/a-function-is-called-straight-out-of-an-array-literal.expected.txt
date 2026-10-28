@@ -1,0 +1,12 @@
+a constant index: the array of 2
+the first element: the array of 1
+an index that is computed: the array of 2
+an index in quotes: the array of 2
+an optional call: the array of 2
+an optional member: the array of 2
+in parentheses: the array of 2
+behind a comma: the global object
+a tag: the array of 2
+with arguments: the array of 3
+a store through this: on the array undefined
+inside a function: the array of 2

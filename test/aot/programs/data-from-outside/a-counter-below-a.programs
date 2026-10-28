@@ -1,0 +1,2793 @@
+////: for-2
+for (const text of [«1», «2»]) {
+  for (const [name, run] of cases) {
+    let said: string;
+    try { said = String(run(text)); } catch (error) { said = "threw " + (error as Error).constructor.name; }
+    console.log(name + ": " + said);
+  }
+}
+////: lines-9
+export function «1»(row: Row): Line {
+  return «2»(row);
+}
+//// a-counter-below-a-number-of-every-kind.ts
+// A counter that starts at an integer and steps by one, below a bound of type number: every kind of number is the bound once, and the loop uses its counter as an index, for its bits, in a sum and as a value.
+const letters = "abcdefghijklmnopqrstuvwxyz";
+const table: number[] = [];
+for (let i = 0; i < 40; i++) table.push(i * 7);
+
+function bits(n: number): number {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    sum = (sum + (i & 5)) | 0;
+    if (i > 50) break;
+  }
+  return sum;
+}
+function elements(n: number): string {
+  let sum = 0, missing = 0;
+  for (let i = 0; i < n; i++) {
+    const value = table[i];
+    if (value === undefined) missing++;
+    else sum += value;
+    if (missing > 3) break;
+  }
+  return sum + "/" + missing;
+}
+function characters(n: number): string {
+  let out = "";
+  for (let i = 0; i <= n; i++) {
+    out += letters[i % 26];
+    if (out.length > 30) break;
+  }
+  return out;
+}
+function down(n: number): number {
+  let sum = 0;
+  for (let i = 10; i > n; i--) {
+    sum = (sum ^ (i << 1)) | 0;
+    if (i < -40) break;
+  }
+  return sum;
+}
+function last(n: number): number {
+  let i = 0;
+  for (; i < n; i += 3) {
+    if ((i & 1023) === 1023 || i > 100) break;
+  }
+  return i;
+}
+function nearTheEndOfInt32(n: number): string {
+  let seen = "";
+  for (let i = 2147483640; i < n; i++) {
+    seen += (i | 0) + "," + (i % 7) + ";";
+    if (seen.length > 400) break;
+  }
+  return seen;
+}
+function changed(n: number): number {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    sum = (sum + (i & 3)) | 0;
+    if (i === 4) n = n / 2 + 0.25;
+  }
+  return sum;
+}
+
+const bounds = [0, -0, 1, 7, 7.5, 6.999999, -1, -7.5, 39, 40, 41, 0.1, NaN, Infinity, -Infinity, 2147483646, 2147483647, 2147483648, 2147483650.5, 4294967296, 9007199254740992, 1e300, Number.MIN_VALUE, Number(process.env.NO_SUCH_VARIABLE ?? "12")];
+for (const work of [bits, elements, characters, down, last, nearTheEndOfInt32, changed]) {
+  const answers: (string | number)[] = [];
+  for (const bound of bounds) answers.push(work === changed && !(bound < 100) ? "-" : work(bound));
+  console.log(work.name, answers.join(" "));
+}
+//// a-field-is-filled-from-a-table-asserted-to-another-type.ts
+interface Table { first: unknown }
+interface Other { [key: string]: boolean }
+interface Made { flag: boolean }
+function make(table: Table, key: string): Made { return { flag: (table as unknown as Other)[key] }; }
+const a = make({ first: JSON.parse(process.argv.length > 5 ? "1" : "true") }, "first");
+const b = make({ first: JSON.parse(process.argv.length > 5 ? "1" : "\"text\"") }, "first");
+console.log(a.flag, typeof a.flag, b.flag, typeof b.flag);
+export {};
+//// a-record-is-made-of-parsed-values-that-fail-their-types.ts
+interface Named { name: string; count: number; kind: "a" | "b" }
+function make(part: string, kind: "a" | "b"): Named { return { name: part + part, count: 1, kind }; }
+const good = make(JSON.parse(process.argv.length > 5 ? "1" : "\"x\""), JSON.parse("\"a\""));
+const bad = make(JSON.parse(process.argv.length > 5 ? "\"x\"" : "2"), JSON.parse("7"));
+console.log(good.name, typeof good.name, good.count, good.kind, Object.keys(good).join());
+console.log(bad.name, typeof bad.name, bad.count, bad.kind, Object.keys(bad).join());
+export {};
+//// a-sum-over-parsed-lengths-that-are-no-numbers-fills-a-number-field.ts
+interface Item { lines: string[] }
+interface Result { kept: Item[]; dropped: number }
+function trim(items: Item[], limit: number): Result {
+  const kept: Item[] = [];
+  let used = 0;
+  let dropped = 0;
+  for (const item of items) {
+    if (limit - used <= 0) { dropped += item.lines.length; continue; }
+    kept.push(item);
+    used += item.lines.length;
+  }
+  return { kept, dropped };
+}
+const r = trim(JSON.parse(process.argv.length > 5 ? "[]" : "[{\"lines\":[\"a\",\"b\"]},{\"lines\":{\"length\":\"x\"}}]"), 2);
+console.log(r.kept.length, r.dropped, typeof r.dropped);
+//// aliases-typed-by-dts/host.d.ts
+// What a package's declaration file says of the host's settings, for main.ts.
+export type Port = number;
+export type Level = "high";
+export type Mode = "fast" | "slow";
+export type Pair = [number, string];
+export interface Host { port: number; mode: Mode }
+//// aliases-typed-by-dts/main.ts
+// A location annotated with a type alias from a declaration file: the value belongs to the embedder, whatever the alias resolves to and however the program combines it.
+import type { Host, Level, Mode, Pair, Port } from "./host";
+const given: any = { port: "eighty", level: 3, mode: "turbo", pair: "not a pair" };
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).message.split(" (bun")[0]; } console.log(name + ": " + JSON.stringify(r)); };
+const kind = (v: unknown) => typeof v + " " + JSON.stringify(v);
+type Local = Port;
+type Field<T extends { port: unknown }> = T["port"];
+row("a primitive", () => { const port: Port = given.port; return kind(port); });
+row("through an alias of the program's own", () => { const port: Local = given.port; return kind(port); });
+row("a literal", () => { const level: Level = given.level; return kind(level); });
+row("a union of literals", () => { const mode: Mode = given.mode; return kind(mode); });
+row("a union with undefined", () => { const mode: Mode | undefined = given.mode; return kind(mode); });
+row("a tuple", () => { const pair: Pair = given.pair; return kind(pair); });
+row("parameters", () => ((port: Port, mode?: Mode) => [kind(port), kind(mode)])(given.port, given.mode));
+row("a result", () => { function read(): Port { return given.port; } return kind(read()); });
+row("an element", () => { const ports: Port[] = [given.port]; return kind(ports[0]); });
+row("an indexed access", () => { const port: Host["port"] = given.port; return kind(port); });
+row("an indexed access in an alias of the program's own", () => { const port: Field<Host> = given.port; return kind(port); });
+row("a key", () => { const key: keyof Host = given.mode; return kind(key); });
+row("a cast", () => kind(given.port as Port));
+row("a field of a class", () => { class Server { port: Port = given.port; } return kind(new Server().port); });
+row("members of an interface", () => { interface Settings { port: Port; mode: Mode | null } const settings: Settings = { port: given.port, mode: given.mode }; return [kind(settings.port), kind(settings.mode)]; });
+type Own = number;
+row("an alias of the program's own stays a fact", () => { const own: Own = 80; const list: Own[] = [own, 81]; return [kind(own), list[0] + list[1]]; });
+//// an-object-from-outside-is-stored-into-its-own-field-whose-name-a-literal-has.js
+// A value that nothing is known of is stored into its own field. Only one literal of the program has a field of that name, and what that literal holds there is no such object.
+function helper() { return 1; }
+const withInteger = { own: 5, n: 1 };
+const withText = { mine: "text", n: 2 };
+const withFunction = { self: helper, n: 3 };
+const withLiteral = { inner: { k: 4 }, n: 4 };
+function intoOwn(o) { o.own = o; return o; }
+function intoMine(o) { o.mine = o; return o; }
+function intoSelf(o) { o.self = o; return o; }
+function intoInner(o) { o.inner = o; return o; }
+function twice(o) { o.own = o; o.own = o; return o.own; }
+let circles = 0;
+for (let turn = 0; turn < 3000; turn++) {
+  const text = '{"n":' + turn + "}";
+  const a = intoOwn(JSON.parse(text)), b = intoMine(JSON.parse(text)), c = intoSelf(JSON.parse(text)), d = intoInner(JSON.parse(text)), e = twice(JSON.parse(text));
+  if (a.own === a && b.mine === b && c.self === c && d.inner === d && e.own === e && a.n === turn) circles++;
+}
+console.log(circles, withInteger.own + 1, withText.mine + "!", withFunction.self(), withLiteral.inner.k);
+//// annotated-variable-match-keeps-identity.ts
+// Objects that match the annotation enter the variable as they are: same identity, stores seen through every reference.
+interface Meta { sign: string[] | true; secrets?: string }
+function compose(app: any): string {
+  const meta: Meta = app.cookie;
+  const same = meta === app.cookie;
+  meta.secrets = "s";
+  if (meta.sign !== true) meta.sign.push("more");
+  return same + " " + JSON.stringify(app);
+}
+console.log(compose({ cookie: { sign: ["a"] } }));
+console.log(compose(JSON.parse('{"cookie":{"sign":["a"],"secrets":"t"}}')));
+console.log(compose(JSON.parse('{"cookie":{"sign":true}}')));
+//// annotated-variable-mismatch-argument-still-checked.ts
+// The same parsed object is held by an annotated variable and passed as an argument: any object passes both, and the member it does not have reads undefined.
+interface Meta { sign: string[] | true; secrets?: string }
+function isSigned(meta: Meta): boolean { return !!meta.sign; }
+function attempt(name: string, f: () => unknown): void { try { console.log(name, f()); } catch (e) { console.log(name, (e as Error).name); } }
+const own: Meta = { sign: true };
+const bag: unknown[] = [];
+function load(text: string): any { bag.push(JSON.parse(text)); return bag.pop(); }
+attempt("made by the program:", () => isSigned(own));
+attempt("variable, then argument:", () => { const raw: any = load('{"path":"/"}'); const meta: Meta = raw; return [!!meta.sign, isSigned(raw)].join(); });
+attempt("argument, then variable:", () => { const raw: any = load('{"path":"/"}'); const signed = isSigned(raw); const meta: Meta = raw; return [signed, !!meta.sign].join(); });
+attempt("argument alone:", () => isSigned(load('{"path":"/"}')));
+attempt("variable alone:", () => { const meta: Meta = load('{"path":"/"}'); return !!meta.sign; });
+//// annotated-variable-mismatch-assigned-later.ts
+// The annotated variable is declared without a value and assigned from `any` later.
+interface Meta { sign: string[] | true; secrets?: string }
+function compose(app: any): string {
+  let meta: Meta | undefined;
+  if (app.config) meta = app.config.cookie;
+  if (meta?.sign) { meta.sign = true; return "signed"; }
+  if (meta) meta.secrets = "none";
+  return "plain " + JSON.stringify(meta);
+}
+console.log(compose({ config: { cookie: { path: "/" } } }));
+console.log(compose({ config: { cookie: { sign: ["a"] } } }));
+console.log(compose({}));
+//// annotated-variable-mismatch-class-instance.ts
+// What enters the variable is an instance of a class, a function, an array or a Map, none of which has the required property.
+interface Meta { sign: string[] | true; secrets?: string }
+class Other { path = "/"; }
+function compose(value: any): string {
+  const meta: Meta = value;
+  if (meta.sign) return "signed";
+  meta.secrets = "none";
+  return "plain " + (value as any).secrets + " " + (meta === value);
+}
+console.log(compose(new Other()));
+console.log(compose(function named() {}));
+console.log(compose([1, 2]));
+console.log(compose(new Map()));
+//// annotated-variable-mismatch-conditional-initializer.ts
+// The initializer is a conditional expression; both of its branches are `any`.
+function merge(a: any, b: any): any { return { ...a, ...b }; }
+function compose(app: any, validator: any): string {
+  const meta: { secrets?: string | string[]; sign: string[] | true; properties: { [name: string]: Object } } = validator.cookie?.config
+    ? merge(validator.cookie.config, app.config.cookie as any)
+    : app.config.cookie;
+  if (meta?.sign) {
+    if (!meta.secrets) return "no secret";
+    if (typeof meta.sign === "string") meta.sign = [meta.sign];
+    return "signed " + JSON.stringify(meta);
+  }
+  return "plain " + JSON.stringify(meta);
+}
+console.log(compose({ config: { cookie: { path: "/" } } }, {}));
+console.log(compose({ config: { cookie: { path: "/" } } }, { cookie: { config: { httpOnly: true } } }));
+console.log(compose({ config: { cookie: { sign: ["a"], secrets: "s" } } }, { cookie: { config: { httpOnly: true } } }));
+console.log(compose({ config: {} }, {}));
+//// annotated-variable-mismatch-default-operators.ts
+// The initializer joins two `any` values with ??, || or &&.
+interface Meta { sign: string[] | true; secrets?: string }
+function first(app: any): string { const meta: Meta = app.own ?? app.shared; meta.secrets = "a"; return JSON.stringify(meta); }
+function second(app: any): string { const meta: Meta = app.own || app.shared; meta.secrets = "b"; return JSON.stringify(meta); }
+function third(app: any): string { const meta: Meta = app.own && app.shared; meta.secrets = "c"; return JSON.stringify(meta); }
+console.log(first({ shared: { path: "/" } }), first({ own: { path: "/own" } }), first({ own: { sign: true } }));
+console.log(second({ shared: { path: "/" } }), second({ own: { path: "/own" } }), second({ own: { sign: true } }));
+console.log(third({ own: 1, shared: { path: "/" } }), third({ own: 1, shared: { sign: ["x"] } }));
+//// annotated-variable-mismatch-destructured.ts
+// An annotated destructuring pattern takes its properties from an `any` value that does not match the annotation.
+interface Meta { sign: string[] | true; secrets?: string }
+function compose(app: any): string {
+  const { sign, secrets }: Meta = app.cookie;
+  return (sign ? "signed" : "plain") + " " + secrets;
+}
+console.log(compose({ cookie: { path: "/" } }));
+console.log(compose(JSON.parse('{"cookie":{"secrets":"s"}}')));
+console.log(compose({ cookie: { sign: ["a"], secrets: "t" } }));
+//// annotated-variable-mismatch-frozen.ts
+// The object that does not match is frozen: entering the variable does nothing to it, and a store throws what plain JavaScript throws.
+interface Meta { sign: string[] | true; secrets?: string }
+function compose(app: any): string {
+  const meta: Meta = app.cookie;
+  if (meta.sign) return "signed";
+  try { meta.sign = true; } catch (e) { return (e as Error).name + " " + Object.isFrozen(meta) + " " + JSON.stringify(meta); }
+  return "stored";
+}
+console.log(compose({ cookie: Object.freeze({ path: "/" }) }));
+console.log(compose({ cookie: Object.freeze(JSON.parse('{"path":"/"}')) }));
+console.log(compose({ cookie: Object.freeze({ sign: ["a"] }) }));
+//// annotated-variable-mismatch-getter.ts
+// The object that does not match has an accessor: it runs when the property is read or stored, not when the object enters the variable.
+interface Meta { sign: string[] | true; count: number }
+const log: string[] = [];
+function make(): any {
+  let held: unknown = undefined;
+  return { get sign() { log.push("get"); return held; }, set sign(value: unknown) { log.push("set"); held = value; }, path: "/" };
+}
+function compose(app: any): string {
+  const meta: Meta = app.cookie;
+  log.push("entered");
+  if (meta.sign) return "signed";
+  meta.sign = true;
+  return meta.sign ? "signed now" : "plain";
+}
+console.log(compose({ cookie: make() }), log.join(","));
+//// annotated-variable-mismatch-in-closure.ts
+// Closures capture the annotated variable, read it and store to it.
+function compose(app: any): () => string {
+  const meta: { secrets?: string | string[]; sign: string[] | true } = app.config.cookie;
+  let cached = "";
+  const encode = () => {
+    if (cached) return cached;
+    if (meta?.sign) {
+      if (typeof meta.sign === "string") meta.sign = [meta.sign];
+      cached = "signed " + JSON.stringify(meta.sign);
+    } else cached = "plain " + JSON.stringify(meta);
+    return cached;
+  };
+  return () => encode() + " " + encode();
+}
+console.log(compose({ config: { cookie: { path: "/" } } })());
+console.log(compose({ config: { cookie: { sign: ["a"] } } })());
+console.log(compose({ config: {} })());
+//// annotated-variable-mismatch-in-loop.ts
+// Matching and mismatching objects enter the same annotated variable in turn.
+interface Item { id: number; tags: string[] }
+function total(list: any[]): string {
+  let sum = 0, untagged = 0;
+  for (let i = 0; i < list.length; i++) {
+    const item: Item = list[i];
+    if (item.tags) { sum += item.tags.length; item.tags = []; } else { untagged++; item.tags = ["new"]; }
+  }
+  return sum + " " + untagged + " " + JSON.stringify(list);
+}
+const list: any[] = [];
+for (let i = 0; i < 12; i++) list.push(i % 3 === 0 ? { id: i, tags: ["t" + i] } : i % 3 === 1 ? { id: i } : { name: "n" + i });
+console.log(total(list));
+console.log(total(JSON.parse('[{"id":1,"tags":["a","b"]},{"id":2},{"tags":["c"]},{}]')));
+//// annotated-variable-mismatch-left-operand-of-default.ts
+// An object that comes through `any` into an annotated variable and does not fit the declared record type stays as it is, whichever operand of `??`, `||`, `&&`, `?:` or `,` it is,
+// and through `??=`, `||=` and `&&=` too. As plain Bun, line by line.
+interface Nested { cwd: string }
+interface Wanted { id: string; ctx: Nested }
+const parse = (text: string): any => JSON.parse(text);
+const lacking = '{"id":"y"}';
+const fitting = '{"id":"z","ctx":{"cwd":"/"}}';
+const kept: Wanted = { id: "k", ctx: { cwd: "/" } };
+const list: any[] = [parse(lacking)];
+const cases: [string, (text: string) => unknown][] = [
+  ["alone", text => { const v: Wanted = parse(text); return v.id; }],
+  ["?? right", text => { const v: Wanted = parse("null") ?? parse(text); return v.id; }],
+  ["?? left", text => { const v: Wanted = parse(text) ?? parse("null"); return v.id; }],
+  ["?? left, typed right", text => { const v: Wanted = parse(text) ?? kept; return v.id; }],
+  ["|| right", text => { const v: Wanted = parse("0") || parse(text); return v.id; }],
+  ["|| left", text => { const v: Wanted = parse(text) || parse("0"); return v.id; }],
+  ["|| left, typed right", text => { const v: Wanted = parse(text) || kept; return v.id; }],
+  ["&& right", text => { const v: Wanted = parse("1") && parse(text); return v.id; }],
+  ["?: then", text => { const v: Wanted = text.length > 0 ? parse(text) : parse("null"); return v.id; }],
+  ["?: else", text => { const v: Wanted = text.length === 0 ? parse("null") : parse(text); return v.id; }],
+  ["comma", text => { const v: Wanted = (parse("0"), parse(text)); return v.id; }],
+  ["nested ?? left", text => { const v: Wanted = (parse(text) ?? parse("null")) ?? parse("null"); return v.id; }],
+  ["?? in ||", text => { const v: Wanted = (parse("null") ?? parse(text)) || parse("0"); return v.id; }],
+  ["element || other", _ => { const v: Wanted = list[0]! || kept; return v.id; }],
+  ["assigned ?? left", text => { let v: Wanted = kept; v = parse(text) ?? parse("null"); return v.id; }],
+  ["assigned || left", text => { let v: Wanted = kept; v = parse(text) || parse("0"); return v.id; }],
+  ["??=", text => { let v: Wanted | undefined = parse("null") ?? undefined; v ??= parse(text); return v!.id; }],
+  ["||=", text => { let v: Wanted | undefined = parse("null") ?? undefined; v ||= parse(text); return v!.id; }],
+  ["&&=", text => { let v: Wanted | undefined = kept; v &&= parse(text); return v!.id; }],
+  ["the value of ??=", text => { let v: Wanted | undefined = parse("null") ?? undefined; const w: any = (v ??= parse(text)); return w.id + typeof w.ctx; }],
+  ["read of the missing member", text => { const v: Wanted = parse(text) ?? kept; return typeof v.ctx; }],
+  ["the same object", text => { const from = parse(text); const v: Wanted = from ?? kept; const back: any = v; return text === lacking ? back === from : back.id === from.id; }],
+];
+////= for-2	lacking	fitting
+//// annotated-variable-mismatch-module-variable.ts
+// The annotated variable is a variable of the module.
+interface Meta { sign: string[] | true; secrets?: string }
+const source: any = { cookie: { path: "/" } };
+const meta: Meta = source.cookie;
+export function describe(): string {
+  if (meta.sign) { meta.sign = true; return "signed"; }
+  meta.secrets = "none";
+  return "plain " + JSON.stringify(source);
+}
+console.log(describe());
+//// annotated-variable-mismatch-name-stored-elsewhere.ts
+// The variable is only read; an unrelated object literal elsewhere in the program has a property of the same name.
+function compose(app: any): string {
+  const meta: { secrets?: string; sign: string[] | true } = app.config.cookie;
+  if (meta?.sign) return "signed";
+  return "plain";
+}
+const unrelated = { sign: 1 };
+console.log(compose({ config: { cookie: { path: "/" } } }), unrelated.sign);
+//// annotated-variable-mismatch-nested.ts
+// The mismatch is one level down: the outer object matches, the object in its property is missing a required property.
+interface Cookie { sign: string[] | true; secrets?: string }
+interface Config { name: string; cookie: Cookie }
+function compose(app: any): string {
+  const config: Config = app.config;
+  const cookie = config.cookie;
+  if (cookie.sign) { cookie.sign = true; return config.name + " signed"; }
+  cookie.secrets = "set";
+  return config.name + " plain " + JSON.stringify(config);
+}
+console.log(compose({ config: { name: "a", cookie: { path: "/" } } }));
+console.log(compose(JSON.parse('{"config":{"name":"b","cookie":{"path":"/"}}}')));
+console.log(compose({ config: { name: "c", cookie: { sign: ["x"] } } }));
+//// annotated-variable-mismatch-parsed.ts
+// The result of JSON.parse goes straight into the annotated variable. Any object enters, an array too, and a member it does not have reads undefined. A member of another kind throws at its typed read.
+interface Meta { sign: string[] | true; secrets?: string }
+function read(text: string): string {
+  const meta: Meta = JSON.parse(text);
+  if (meta.sign) { meta.sign = true; return "signed " + JSON.stringify(meta); }
+  meta.secrets = "none";
+  return "plain " + JSON.stringify(meta);
+}
+console.log(read('{"path":"/"}'));
+console.log(read('{"sign":["a"]}'));
+try { console.log(read('{"sign":7,"secrets":[1]}')); } catch (e) { console.log("a number for sign:", (e as Error).constructor.name); }
+console.log(read('[1,2]'));
+//// annotated-variable-mismatch-passed-on.ts
+// The object that does not match goes on from the variable into typed functions, a typed property and an array.
+interface Meta { sign: string[] | true; secrets?: string }
+function isSigned(meta: Meta): boolean { return !!meta.sign; }
+function sign(meta: Meta): void { meta.sign = true; }
+class Holder { held: Meta; constructor(meta: Meta) { this.held = meta; } }
+function compose(app: any): string {
+  const meta: Meta = app.cookie;
+  const before = isSigned(meta);
+  const holder = new Holder(meta);
+  const all: Meta[] = [meta];
+  sign(holder.held);
+  return before + " " + isSigned(all[0]!) + " " + (holder.held === app.cookie) + " " + JSON.stringify(app);
+}
+console.log(compose({ cookie: { path: "/" } }));
+console.log(compose(JSON.parse('{"cookie":{"path":"/"}}')));
+console.log(compose({ cookie: { sign: ["a"] } }));
+//// annotated-variable-mismatch-store-runs.ts
+// The store runs on an object that does not match the annotation: other references to the object see it, and its other properties stay.
+interface Meta { secrets?: string; sign: string[] | true }
+function compose(app: any): string {
+  const meta: Meta = app.config.cookie;
+  meta.sign = ["a", "b"];
+  meta.secrets = "s";
+  return JSON.stringify(meta) + " " + (meta === app.config.cookie);
+}
+const app = { config: { cookie: { path: "/", sign: 5 } } };
+console.log(compose(app), JSON.stringify(app));
+console.log(compose(JSON.parse('{"config":{"cookie":{"path":"/","secrets":7}}}')));
+//// annotated-variable-mismatch-union-narrowed.ts
+// The annotation is a union of records; the object has the discriminant of one member and is missing that member's other property, which reads undefined. A discriminant that no member lists is read as it is: a literal type promises the kind, string, and its list is a prediction.
+type Shape = { kind: "circle"; radius: number; label?: string } | { kind: "square"; side: number; label?: string };
+const own: Shape[] = [{ kind: "circle", radius: 1 }, { kind: "square", side: 2 }];
+function describe(source: any): string {
+  const shape: Shape = source.shape;
+  if (shape.kind === "circle") { shape.label = "round"; return "circle " + typeof shape.radius + " " + JSON.stringify(source); }
+  if (shape.kind === "square") { shape.label = "flat"; return "square " + typeof shape.side + " " + JSON.stringify(source); }
+  return "neither " + JSON.stringify(source);
+}
+console.log(describe({ shape: { kind: "circle" } }));
+console.log(describe(JSON.parse('{"shape":{"kind":"square"}}')));
+try { console.log(describe(JSON.parse('{"shape":{"kind":"triangle"}}'))); } catch (e) { console.log("a kind that no member lists:", (e as Error).constructor.name); }
+console.log(describe({ shape: own[0] }), describe({ shape: own[1] }));
+//// annotated-variable-mismatch-union-narrowed-to-the-record.ts
+// An object that comes through `any` into a variable annotated with a union of a record and something else, and does not fit the record, stays as it is where the union is narrowed to the record too.
+// As plain Bun, line by line, for an object that lacks a member and for one that fits.
+interface Nested { cwd: string }
+interface Wanted { id: string; ctx: Nested }
+interface Other { name: string; ctx: Nested }
+const parse = (text: string): any => JSON.parse(text);
+const kept: Wanted = { id: "k", ctx: { cwd: "/" } };
+const other: Other = { name: "o", ctx: { cwd: "/" } };
+function idOf(wanted: Wanted): string { return wanted.id; }
+const cases: [string, (text: string) => unknown][] = [
+  ["| undefined, truthy", text => { const d: Wanted | undefined = parse(text); if (d) return d.id; return 0; }],
+  ["| undefined, !== undefined", text => { const d: Wanted | undefined = parse(text); if (d !== undefined) return d.id; return 0; }],
+  ["| null, != null", text => { const d: Wanted | null = parse(text); if (d != null) return d.id; return 0; }],
+  ["| undefined, ?.", text => { const d: Wanted | undefined = parse(text); return d?.id; }],
+  ["| string, typeof !== string", text => { const d: Wanted | string = parse(text); if (typeof d !== "string") return d.id; return 0; }],
+  ["| string, typeof === object", text => { const d: Wanted | string = parse(text); if (typeof d === "object") return d.id; return 0; }],
+  ["| string, else", text => { const d: Wanted | string = parse(text); if (typeof d === "string") return 0; else return d.id; }],
+  ["| string, ternary", text => { const d: Wanted | string = parse(text); return typeof d === "string" ? 0 : d.id; }],
+  ["| string, early return", text => { const d: Wanted | string = parse(text); if (typeof d === "string") return 0; return d.id; }],
+  ["| string, switch", text => { const d: Wanted | string = parse(text); switch (typeof d) { case "string": return 0; default: return d.id; } }],
+  ["| string, &&", text => { const d: Wanted | string = parse(text); return typeof d !== "string" && d.id; }],
+  ["| string, handed on", text => { const d: Wanted | string = parse(text); if (typeof d === "string") return 0; const e: Wanted = d; return e.id; }],
+  ["| string, assigned on", text => { const d: Wanted | string = parse(text); let e: Wanted = kept; if (typeof d !== "string") e = d; return e.id; }],
+  ["| string, passed", text => { const d: Wanted | string = parse(text); if (typeof d === "string") return 0; return idOf(d); }],
+  ["| string, returned", text => { const give = (): Wanted | number => { const d: Wanted | string = parse(text); if (typeof d === "string") return 0; return d; }; const got = give(); return typeof got === "number" ? got : got.id; }],
+  ["| string, in a literal", text => { const d: Wanted | string = parse(text); if (typeof d === "string") return 0; const o: { r: Wanted } = { r: d }; return o.r.id; }],
+  ["| string, the same object", text => { const from = parse(text); const d: Wanted | string = from; if (typeof d === "string") return 0; const e: Wanted = d; const back: any = e; return text.length < 12 ? back === from : back.id === from.id; }],
+  ["| string, in a closure", text => { const d: Wanted | string = parse(text); return (() => (typeof d === "string" ? 0 : d.id))(); }],
+  ["| string, in a loop", text => { let said = ""; for (let i = 0; i < 3; i++) { const d: Wanted | string = i === 1 ? "s" : parse(text); said += typeof d === "string" ? d : d.id; } return said; }],
+  ["| string, assigned later", text => { let d: Wanted | string = "s"; d = parse(text); if (typeof d === "string") return 0; return d.id; }],
+  ["| string, the missing member", text => { const d: Wanted | string = parse(text); if (typeof d === "string") return 0; return typeof d.ctx; }],
+  ["| string, a store", text => { const from = parse(text); const d: Wanted | string = from; if (typeof d === "string") return 0; d.id = "stored"; return d.id + " " + from.id; }],
+  ["| string, it is the string", _ => { const d: Wanted | string = parse('"text"'); if (typeof d === "string") return d; return d.id; }],
+  ["| number", text => { const d: Wanted | number = parse(text); if (typeof d !== "number") return d.id; return 0; }],
+  ["| boolean", text => { const d: Wanted | boolean = parse(text); if (typeof d !== "boolean") return d.id; return 0; }],
+  ["| string | number", text => { const d: Wanted | string | number = parse(text); if (typeof d === "object") return d.id; return 0; }],
+  ["| string[]", text => { const d: Wanted | string[] = parse(text); if (!Array.isArray(d)) return d.id; return 0; }],
+  ["| string[], it is the array", _ => { const d: Wanted | string[] = parse('["a"]'); if (Array.isArray(d)) return d.length; return d.id; }],
+  ["| function", text => { const d: Wanted | (() => void) = parse(text); if (typeof d !== "function") return d.id; return 0; }],
+  ["| Date", text => { const d: Wanted | Date = parse(text); if (!(d instanceof Date)) return d.id; return 0; }],
+  ["| Map", text => { const d: Wanted | Map<string, string> = parse(text); if (d instanceof Map) return 0; return d.id; }],
+  ["| Other, in", text => { const d: Wanted | Other = parse(text); if ("id" in d) return d.id; return 0; }],
+  ["| Other, not in", text => { const d: Wanted | Other = parse(text); if (!("name" in d)) return d.id; return 0; }],
+  ["| Other, it is one made here", _ => { const d: Wanted | Other = parse("0") || other; if ("name" in d) return d.name; return d.id; }],
+  ["| string, it is one made here", _ => { const d: Wanted | string = parse("0") || kept; if (typeof d === "string") return 0; return d.id + d.ctx.cwd; }],
+];
+////= for-2	'{"id":"y"}'	'{"id":"z","ctx":{"cwd":"/"}}'
+//// annotated-variable-mismatch-with-store.ts
+// An object that comes through `any` into an annotated variable and is missing a required property stays as it is: the store below never runs.
+function compose(app: any): string {
+  const meta: { secrets?: string; sign: string[] | true } = app.config.cookie;
+  if (meta?.sign) { meta.sign = true; return "signed"; }
+  return "plain";
+}
+console.log(compose({ config: { cookie: { path: "/" } } }));
+//// any-into-interfaces.ts
+// A native object typed `any` that satisfies an interface reaches it in many ways: array, map, set and promise methods, `yield`, a static field, a setter, `call` and `apply`, `Object.assign`, containers of `any`. Each case has its own interface, class and native object so that no case affects another. The output must match plain Bun.
+const url = "u";
+
+// push
+interface Like01 { clear(): void; size: number; on01: ((e: any) => void) | null }
+function state01(s: Like01): string { return typeof s.size; }
+class Fake01 implements Like01 { size = 1; on01: ((e: any) => void) | null = null; clear() {} }
+function make01(): any { const m = new (globalThis as any).Map(); m.on01 = null; return m; }
+const fake01 = new Fake01();
+{
+  const l: Like01[] = [fake01]; l.push(make01()); for (const s of l) console.log(state01(s));
+}
+
+// unshift
+interface Like02 { clear(): void; size: number; on02: ((e: any) => void) | null }
+function state02(s: Like02): string { return typeof s.size; }
+class Fake02 implements Like02 { size = 1; on02: ((e: any) => void) | null = null; clear() {} }
+function make02(): any { const m = new (globalThis as any).Map(); m.on02 = null; return m; }
+const fake02 = new Fake02();
+{
+  const l: Like02[] = [fake02]; l.unshift(make02()); for (const s of l) console.log(state02(s));
+}
+
+// index store
+interface Like03 { clear(): void; size: number; on03: ((e: any) => void) | null }
+function state03(s: Like03): string { return typeof s.size; }
+class Fake03 implements Like03 { size = 1; on03: ((e: any) => void) | null = null; clear() {} }
+function make03(): any { const m = new (globalThis as any).Map(); m.on03 = null; return m; }
+const fake03 = new Fake03();
+{
+  const l: Like03[] = [fake03]; l[1] = make03(); for (const s of l) console.log(state03(s));
+}
+
+// splice
+interface Like04 { clear(): void; size: number; on04: ((e: any) => void) | null }
+function state04(s: Like04): string { return typeof s.size; }
+class Fake04 implements Like04 { size = 1; on04: ((e: any) => void) | null = null; clear() {} }
+function make04(): any { const m = new (globalThis as any).Map(); m.on04 = null; return m; }
+const fake04 = new Fake04();
+{
+  const l: Like04[] = [fake04]; l.splice(0, 0, make04()); for (const s of l) console.log(state04(s));
+}
+
+// fill
+interface Like05 { clear(): void; size: number; on05: ((e: any) => void) | null }
+function state05(s: Like05): string { return typeof s.size; }
+class Fake05 implements Like05 { size = 1; on05: ((e: any) => void) | null = null; clear() {} }
+function make05(): any { const m = new (globalThis as any).Map(); m.on05 = null; return m; }
+const fake05 = new Fake05();
+{
+  const l: Like05[] = [fake05, fake05]; l.fill(make05(), 1); for (const s of l) console.log(state05(s));
+}
+
+// literal
+interface Like06 { clear(): void; size: number; on06: ((e: any) => void) | null }
+function state06(s: Like06): string { return typeof s.size; }
+class Fake06 implements Like06 { size = 1; on06: ((e: any) => void) | null = null; clear() {} }
+function make06(): any { const m = new (globalThis as any).Map(); m.on06 = null; return m; }
+const fake06 = new Fake06();
+{
+  const l: Like06[] = [fake06, make06()]; for (const s of l) console.log(state06(s));
+}
+
+// array of
+interface Like07 { clear(): void; size: number; on07: ((e: any) => void) | null }
+function state07(s: Like07): string { return typeof s.size; }
+class Fake07 implements Like07 { size = 1; on07: ((e: any) => void) | null = null; clear() {} }
+function make07(): any { const m = new (globalThis as any).Map(); m.on07 = null; return m; }
+const fake07 = new Fake07();
+{
+  const l = Array.of<Like07>(fake07, make07()); for (const s of l) console.log(state07(s));
+}
+
+// array from
+interface Like08 { clear(): void; size: number; on08: ((e: any) => void) | null }
+function state08(s: Like08): string { return typeof s.size; }
+class Fake08 implements Like08 { size = 1; on08: ((e: any) => void) | null = null; clear() {} }
+function make08(): any { const m = new (globalThis as any).Map(); m.on08 = null; return m; }
+const fake08 = new Fake08();
+{
+  const l = Array.from<Like08>([fake08, make08()]); for (const s of l) console.log(state08(s));
+}
+
+// map set
+interface Like10 { clear(): void; size: number; on10: ((e: any) => void) | null }
+function state10(s: Like10): string { return typeof s.size; }
+class Fake10 implements Like10 { size = 1; on10: ((e: any) => void) | null = null; clear() {} }
+function make10(): any { const m = new (globalThis as any).Map(); m.on10 = null; return m; }
+const fake10 = new Fake10();
+{
+  const m = new Map<string, Like10>(); m.set("f", fake10); m.set("a", make10()); for (const s of m.values()) console.log(state10(s)); console.log(state10(m.get("a")!));
+}
+
+// map ctor
+interface Like11 { clear(): void; size: number; on11: ((e: any) => void) | null }
+function state11(s: Like11): string { return typeof s.size; }
+class Fake11 implements Like11 { size = 1; on11: ((e: any) => void) | null = null; clear() {} }
+function make11(): any { const m = new (globalThis as any).Map(); m.on11 = null; return m; }
+const fake11 = new Fake11();
+{
+  const m = new Map<string, Like11>([["f", fake11], ["a", make11()]]); for (const s of m.values()) console.log(state11(s));
+}
+
+// set add
+interface Like12 { clear(): void; size: number; on12: ((e: any) => void) | null }
+function state12(s: Like12): string { return typeof s.size; }
+class Fake12 implements Like12 { size = 1; on12: ((e: any) => void) | null = null; clear() {} }
+function make12(): any { const m = new (globalThis as any).Map(); m.on12 = null; return m; }
+const fake12 = new Fake12();
+{
+  const m = new Set<Like12>(); m.add(fake12); m.add(make12()); for (const s of m) console.log(state12(s));
+}
+
+// weakmap
+interface Like13 { clear(): void; size: number; on13: ((e: any) => void) | null }
+function state13(s: Like13): string { return typeof s.size; }
+class Fake13 implements Like13 { size = 1; on13: ((e: any) => void) | null = null; clear() {} }
+function make13(): any { const m = new (globalThis as any).Map(); m.on13 = null; return m; }
+const fake13 = new Fake13();
+{
+  const k = {}; const m = new WeakMap<object, Like13>(); m.set(fake13, fake13); m.set(k, make13()); console.log(state13(m.get(k)!));
+}
+
+// promise resolve
+interface Like14 { clear(): void; size: number; on14: ((e: any) => void) | null }
+function state14(s: Like14): string { return typeof s.size; }
+class Fake14 implements Like14 { size = 1; on14: ((e: any) => void) | null = null; clear() {} }
+function make14(): any { const m = new (globalThis as any).Map(); m.on14 = null; return m; }
+const fake14 = new Fake14();
+{
+  const p = Promise.resolve<Like14>(make14()); console.log(state14(await p), state14(await Promise.resolve<Like14>(fake14)));
+}
+
+// promise ctor
+interface Like15 { clear(): void; size: number; on15: ((e: any) => void) | null }
+function state15(s: Like15): string { return typeof s.size; }
+class Fake15 implements Like15 { size = 1; on15: ((e: any) => void) | null = null; clear() {} }
+function make15(): any { const m = new (globalThis as any).Map(); m.on15 = null; return m; }
+const fake15 = new Fake15();
+{
+  const p = new Promise<Like15>(r => r(make15())); console.log(state15(await p), state15(await new Promise<Like15>(r => r(fake15))));
+}
+
+// generic identity
+interface Like16 { clear(): void; size: number; on16: ((e: any) => void) | null }
+function state16(s: Like16): string { return typeof s.size; }
+class Fake16 implements Like16 { size = 1; on16: ((e: any) => void) | null = null; clear() {} }
+function make16(): any { const m = new (globalThis as any).Map(); m.on16 = null; return m; }
+const fake16 = new Fake16();
+{
+  function id<T>(x: T): T { return x; } console.log(state16(id<Like16>(make16())), state16(id<Like16>(fake16)));
+}
+
+// literal field
+interface Like17 { clear(): void; size: number; on17: ((e: any) => void) | null }
+function state17(s: Like17): string { return typeof s.size; }
+class Fake17 implements Like17 { size = 1; on17: ((e: any) => void) | null = null; clear() {} }
+function make17(): any { const m = new (globalThis as any).Map(); m.on17 = null; return m; }
+const fake17 = new Fake17();
+{
+  type Box = { socket: Like17 }; const b: Box = { socket: make17() }, c: Box = { socket: fake17 }; console.log(state17(b.socket), state17(c.socket));
+}
+
+// object assign
+interface Like19 { clear(): void; size: number; on19: ((e: any) => void) | null }
+function state19(s: Like19): string { return typeof s.size; }
+class Fake19 implements Like19 { size = 1; on19: ((e: any) => void) | null = null; clear() {} }
+function make19(): any { const m = new (globalThis as any).Map(); m.on19 = null; return m; }
+const fake19 = new Fake19();
+{
+  type Box = { socket: Like19 }; const b: Box = { socket: fake19 }; Object.assign(b, { socket: make19() }); console.log(state19(b.socket));
+}
+
+// generator
+interface Like20 { clear(): void; size: number; on20: ((e: any) => void) | null }
+function state20(s: Like20): string { return typeof s.size; }
+class Fake20 implements Like20 { size = 1; on20: ((e: any) => void) | null = null; clear() {} }
+function make20(): any { const m = new (globalThis as any).Map(); m.on20 = null; return m; }
+const fake20 = new Fake20();
+{
+  function* g(): Generator<Like20> { yield fake20; yield make20(); } for (const s of g()) console.log(state20(s));
+}
+
+// tuple
+interface Like21 { clear(): void; size: number; on21: ((e: any) => void) | null }
+function state21(s: Like21): string { return typeof s.size; }
+class Fake21 implements Like21 { size = 1; on21: ((e: any) => void) | null = null; clear() {} }
+function make21(): any { const m = new (globalThis as any).Map(); m.on21 = null; return m; }
+const fake21 = new Fake21();
+{
+  const t: [string, Like21] = ["a", make21()], u: [string, Like21] = ["f", fake21]; console.log(state21(t[1]), state21(u[1]));
+}
+
+// record
+interface Like22 { clear(): void; size: number; on22: ((e: any) => void) | null }
+function state22(s: Like22): string { return typeof s.size; }
+class Fake22 implements Like22 { size = 1; on22: ((e: any) => void) | null = null; clear() {} }
+function make22(): any { const m = new (globalThis as any).Map(); m.on22 = null; return m; }
+const fake22 = new Fake22();
+{
+  const r: Record<string, Like22> = { f: fake22 }; r.a = make22(); for (const k in r) console.log(state22(r[k]));
+}
+
+// rest
+interface Like23 { clear(): void; size: number; on23: ((e: any) => void) | null }
+function state23(s: Like23): string { return typeof s.size; }
+class Fake23 implements Like23 { size = 1; on23: ((e: any) => void) | null = null; clear() {} }
+function make23(): any { const m = new (globalThis as any).Map(); m.on23 = null; return m; }
+const fake23 = new Fake23();
+{
+  function all(...l: Like23[]) { for (const s of l) console.log(state23(s)); } all(fake23, make23());
+}
+
+// spread call
+interface Like24 { clear(): void; size: number; on24: ((e: any) => void) | null }
+function state24(s: Like24): string { return typeof s.size; }
+class Fake24 implements Like24 { size = 1; on24: ((e: any) => void) | null = null; clear() {} }
+function make24(): any { const m = new (globalThis as any).Map(); m.on24 = null; return m; }
+const fake24 = new Fake24();
+{
+  function two(a: Like24, b: Like24) { console.log(state24(a), state24(b)); } const l: any[] = [fake24, make24()]; two(...(l as [Like24, Like24]));
+}
+
+// default
+interface Like25 { clear(): void; size: number; on25: ((e: any) => void) | null }
+function state25(s: Like25): string { return typeof s.size; }
+class Fake25 implements Like25 { size = 1; on25: ((e: any) => void) | null = null; clear() {} }
+function make25(): any { const m = new (globalThis as any).Map(); m.on25 = null; return m; }
+const fake25 = new Fake25();
+{
+  function d(s: Like25 = make25()) { console.log(state25(s)); } d(); d(fake25);
+}
+
+// call apply
+interface Like29 { clear(): void; size: number; on29: ((e: any) => void) | null }
+function state29(s: Like29): string { return typeof s.size; }
+class Fake29 implements Like29 { size = 1; on29: ((e: any) => void) | null = null; clear() {} }
+function make29(): any { const m = new (globalThis as any).Map(); m.on29 = null; return m; }
+const fake29 = new Fake29();
+{
+  console.log(state29.call(null, make29()), state29.apply(null, [make29()]), state29(fake29));
+}
+
+// map callback
+interface Like31 { clear(): void; size: number; on31: ((e: any) => void) | null }
+function state31(s: Like31): string { return typeof s.size; }
+class Fake31 implements Like31 { size = 1; on31: ((e: any) => void) | null = null; clear() {} }
+function make31(): any { const m = new (globalThis as any).Map(); m.on31 = null; return m; }
+const fake31 = new Fake31();
+{
+  const raw: any[] = [fake31, make31()]; console.log(raw.map((s: Like31) => state31(s)).join());
+}
+
+// array cast
+interface Like32 { clear(): void; size: number; on32: ((e: any) => void) | null }
+function state32(s: Like32): string { return typeof s.size; }
+class Fake32 implements Like32 { size = 1; on32: ((e: any) => void) | null = null; clear() {} }
+function make32(): any { const m = new (globalThis as any).Map(); m.on32 = null; return m; }
+const fake32 = new Fake32();
+{
+  const raw: any[] = [fake32, make32()]; const l = raw as Like32[]; for (const s of l) console.log(state32(s));
+}
+
+// then
+interface Like33 { clear(): void; size: number; on33: ((e: any) => void) | null }
+function state33(s: Like33): string { return typeof s.size; }
+class Fake33 implements Like33 { size = 1; on33: ((e: any) => void) | null = null; clear() {} }
+function make33(): any { const m = new (globalThis as any).Map(); m.on33 = null; return m; }
+const fake33 = new Fake33();
+{
+  const p: Promise<any> = Promise.resolve(make33()); await p.then((s: Like33) => console.log(state33(s), state33(fake33)));
+}
+
+// satisfies
+interface Like34 { clear(): void; size: number; on34: ((e: any) => void) | null }
+function state34(s: Like34): string { return typeof s.size; }
+class Fake34 implements Like34 { size = 1; on34: ((e: any) => void) | null = null; clear() {} }
+function make34(): any { const m = new (globalThis as any).Map(); m.on34 = null; return m; }
+const fake34 = new Fake34();
+{
+  const s = make34() satisfies Like34; console.log(state34(s), state34(fake34));
+}
+
+// ternary
+interface Like35 { clear(): void; size: number; on35: ((e: any) => void) | null }
+function state35(s: Like35): string { return typeof s.size; }
+class Fake35 implements Like35 { size = 1; on35: ((e: any) => void) | null = null; clear() {} }
+function make35(): any { const m = new (globalThis as any).Map(); m.on35 = null; return m; }
+const fake35 = new Fake35();
+{
+  const s: Like35 = url.length > 100 ? fake35 : make35(); console.log(state35(s), state35(fake35));
+}
+
+// nullish
+interface Like36 { clear(): void; size: number; on36: ((e: any) => void) | null }
+function state36(s: Like36): string { return typeof s.size; }
+class Fake36 implements Like36 { size = 1; on36: ((e: any) => void) | null = null; clear() {} }
+function make36(): any { const m = new (globalThis as any).Map(); m.on36 = null; return m; }
+const fake36 = new Fake36();
+{
+  let n: Like36 | undefined; const s: Like36 = n ?? make36(); console.log(state36(s), state36(fake36));
+}
+
+// static
+interface Like37 { clear(): void; size: number; on37: ((e: any) => void) | null }
+function state37(s: Like37): string { return typeof s.size; }
+class Fake37 implements Like37 { size = 1; on37: ((e: any) => void) | null = null; clear() {} }
+function make37(): any { const m = new (globalThis as any).Map(); m.on37 = null; return m; }
+const fake37 = new Fake37();
+{
+  class Reg { static current: Like37 = fake37; } Reg.current = make37(); console.log(state37(Reg.current));
+}
+
+// closure var
+interface Like38 { clear(): void; size: number; on38: ((e: any) => void) | null }
+function state38(s: Like38): string { return typeof s.size; }
+class Fake38 implements Like38 { size = 1; on38: ((e: any) => void) | null = null; clear() {} }
+function make38(): any { const m = new (globalThis as any).Map(); m.on38 = null; return m; }
+const fake38 = new Fake38();
+{
+  let cur: Like38 = fake38; function set(x: any) { cur = x; } set(make38()); console.log(state38(cur));
+}
+
+// setter
+interface Like39 { clear(): void; size: number; on39: ((e: any) => void) | null }
+function state39(s: Like39): string { return typeof s.size; }
+class Fake39 implements Like39 { size = 1; on39: ((e: any) => void) | null = null; clear() {} }
+function make39(): any { const m = new (globalThis as any).Map(); m.on39 = null; return m; }
+const fake39 = new Fake39();
+{
+  class H { #s: Like39 = fake39; set s(v: Like39) { this.#s = v; } get s() { return this.#s; } } const h = new H(); h.s = make39(); console.log(state39(h.s));
+}
+
+// method
+interface Like40 { clear(): void; size: number; on40: ((e: any) => void) | null }
+function state40(s: Like40): string { return typeof s.size; }
+class Fake40 implements Like40 { size = 1; on40: ((e: any) => void) | null = null; clear() {} }
+function make40(): any { const m = new (globalThis as any).Map(); m.on40 = null; return m; }
+const fake40 = new Fake40();
+{
+  class H { take(s: Like40) { return state40(s); } } const h = new H(); console.log(h.take(fake40), h.take(make40()));
+}
+
+// from entries
+interface Like42 { clear(): void; size: number; on42: ((e: any) => void) | null }
+function state42(s: Like42): string { return typeof s.size; }
+class Fake42 implements Like42 { size = 1; on42: ((e: any) => void) | null = null; clear() {} }
+function make42(): any { const m = new (globalThis as any).Map(); m.on42 = null; return m; }
+const fake42 = new Fake42();
+{
+  const r: { [k: string]: Like42 } = Object.fromEntries([["f", fake42], ["a", make42()]]); for (const k in r) console.log(state42(r[k]));
+}
+
+// array spread
+interface Like43 { clear(): void; size: number; on43: ((e: any) => void) | null }
+function state43(s: Like43): string { return typeof s.size; }
+class Fake43 implements Like43 { size = 1; on43: ((e: any) => void) | null = null; clear() {} }
+function make43(): any { const m = new (globalThis as any).Map(); m.on43 = null; return m; }
+const fake43 = new Fake43();
+{
+  const raw: any[] = [make43()]; const l: Like43[] = [fake43, ...raw]; for (const s of l) console.log(state43(s));
+}
+
+// at find
+interface Like45 { clear(): void; size: number; on45: ((e: any) => void) | null }
+function state45(s: Like45): string { return typeof s.size; }
+class Fake45 implements Like45 { size = 1; on45: ((e: any) => void) | null = null; clear() {} }
+function make45(): any { const m = new (globalThis as any).Map(); m.on45 = null; return m; }
+const fake45 = new Fake45();
+{
+  const l: Like45[] = [fake45]; l.push(make45()); console.log(state45(l.at(-1)!), state45(l.find(s => s !== fake45)!), state45(l[1]), state45(l.pop()!));
+}
+
+// foreach
+interface Like46 { clear(): void; size: number; on46: ((e: any) => void) | null }
+function state46(s: Like46): string { return typeof s.size; }
+class Fake46 implements Like46 { size = 1; on46: ((e: any) => void) | null = null; clear() {} }
+function make46(): any { const m = new (globalThis as any).Map(); m.on46 = null; return m; }
+const fake46 = new Fake46();
+{
+  const l: Like46[] = [fake46]; l.push(make46()); l.forEach(s => console.log(state46(s)));
+}
+//// argument-data-resolved-elsewhere/load.ts
+import type { Row } from "./types";
+////= load
+//// argument-data-resolved-elsewhere/main.ts
+// Data from outside is looked at as one type, and a function of another module hands it on as an argument of a second type with the same properties. It stays the same object, and handing it on tests only that it is an object. A property that holds another kind than its type declares is found at the first typed read of it, which throws a TypeError; null and a missing property pass. The module that is compiled first calls that function, so the compiler has looked into its body, and has resolved the call there, before it comes to check it.
+import { pass } from "./pass";
+import { viaPass, type Line } from "./types";
+import { load } from "./load";
+
+const row = load('{"id":1,"name":"parsed"}');
+const line = pass(row);
+console.log(row === (line as unknown), line.id, line.name);
+line.id = 2;
+console.log(row.id, line.id);
+
+const odd = pass(load('{"id":"seven","name":null,"more":true}'));
+try {
+  console.log(odd.id);
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(odd.name, Object.keys(odd).join());
+const short = viaPass(load('{"id":8}'));
+console.log(short.id, short.name, Object.keys(short).join());
+
+const own: Line = { id: 3, name: "made here" };
+console.log(own.id, own.name, JSON.stringify(own));
+//// argument-data-resolved-elsewhere/pass.ts
+import type { Line, Row } from "./types";
+function handOn(line: Line): Line {
+  return line;
+}
+////= lines-9	pass	handOn
+//// argument-data-resolved-elsewhere/types.ts
+import { pass } from "./pass";
+////= Row
+////= Line
+////= lines-9	viaPass	pass
+//// argument-data-used-in-typed-code/load.ts
+import type { Row } from "./types";
+////= load
+//// argument-data-used-in-typed-code/main.ts
+// Data from outside is looked at as one type, and a function of another module hands it on as an argument of a second type with the same properties. What is read out of it is used in typed code: joined to a string, put into a template, compared, stored in an array. Handing it on tests only that it is an object. A property that holds another kind than its type declares is found at the first typed read of it, which throws a TypeError; null and a missing property pass. The module that is compiled first calls that function, so the compiler has looked into its body, and has resolved the call there, before it comes to check it.
+import { pass } from "./pass";
+import { viaPass } from "./types";
+import { load } from "./load";
+
+const odd = pass(load('{"id":"seven","name":null,"more":true}'));
+////= lines
+const written = `name ${odd.name}`;
+console.log(written, odd.name === "n", [odd.name].length);
+
+const short = viaPass(load('{"id":8}'));
+const sum = "" + short.id + short.name;
+console.log(sum, typeof short.name);
+//// argument-data-used-in-typed-code/pass.ts
+import type { Line, Row } from "./types";
+function handOn(line: Line): Line {
+  return line;
+}
+////= lines-9	pass	handOn
+//// argument-data-used-in-typed-code/types.ts
+import { pass } from "./pass";
+////= Row
+////= Line
+////= lines-9	viaPass	pass
+//// arguments-via-bind-and-reflect-apply.ts
+// An object that satisfies a parameter's type is passed through `bind` or `Reflect.apply` instead of a direct call: a native object typed `any`, or a host object under its own type. Each case has its own interface and a program class for it, so no case affects another. The output must match plain Bun.
+
+// `bind` with an argument typed `any`
+interface StoreLike { clear(): void; size: number; onChange: ((e: any) => void) | null }
+class FakeStore implements StoreLike { size = 1; onChange: ((e: any) => void) | null = null; clear() {} }
+function storeSize(store: StoreLike): string { return typeof store.size; }
+function makeStore(): any { const map: any = new Map(); map.onChange = null; return map; }
+const boundStoreSize = storeSize.bind(null, makeStore());
+console.log(boundStoreSize(), storeSize(new FakeStore()));
+
+// `Reflect.apply` with an argument typed `any`
+interface CacheLike { clear(): void; size: number; onEvict: ((e: any) => void) | null }
+class FakeCache implements CacheLike { size = 1; onEvict: ((e: any) => void) | null = null; clear() {} }
+function cacheSize(cache: CacheLike): string { return typeof cache.size; }
+function makeCache(): any { const map: any = new Map(); map.onEvict = null; return map; }
+console.log(Reflect.apply(cacheSize, null, [makeCache()]), cacheSize(new FakeCache()));
+
+// `bind` with a host object under its own type
+interface LocationLike { href: string; host: string }
+class FakeLocation implements LocationLike { fakeOnly = 0; href = "fake:"; host = "fake"; }
+function showLocation(location: LocationLike) { return location.href + " " + location.host; }
+const boundShowLocation = showLocation.bind(null, new URL("http://h/p"));
+console.log(boundShowLocation(), showLocation(new FakeLocation()));
+
+// `Reflect.apply` with a host object under its own type
+interface ReplyLike { status: number; ok: boolean }
+class FakeReply implements ReplyLike { fakeOnly = 0; status = 1; ok = false; }
+function showReply(reply: ReplyLike) { return reply.status + " " + reply.ok; }
+console.log(Reflect.apply(showReply, null, [new Response("", { status: 201 })]), showReply(new FakeReply()));
+
+// the second bound argument, on a method
+interface ChunkLike { size: number; type: string }
+class FakeChunk implements ChunkLike { fakeOnly = 0; size = -1; type = "fake"; }
+class Uploader { prefix = "up"; send(label: string, chunk: ChunkLike) { return this.prefix + " " + label + " " + chunk.size + " " + typeof chunk.type; } }
+const uploader = new Uploader();
+function untypedChunk(): any { return new Blob(["abc"]); }
+const sendChunk = uploader.send.bind(uploader, "a", untypedChunk());
+console.log(sendChunk(), uploader.send("b", new FakeChunk()));
+//// assertion-in-inlined-try.ts
+// `s + 1` where `s` is declared a string and holds null or undefined is a number, as in plain Bun, also inside an inlined `try` block.
+const hide = (v: unknown): any => v;
+function attempt(label: string, f: () => unknown) {
+  try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
+}
+attempt("null as string, + 1", () => { const s: string = hide(null); return s + 1 })
+attempt("undefined as string, + 1", () => { const s: string = hide(undefined); return s + 1 })
+console.log("after");
+export {};
+//// assigned-to-union-uncast.ts
+// A value of a type that comes from JSON is assigned to a union of object types without a cast: as an argument, a result, a store and an element.
+declare const console: { log(...values: unknown[]): void };
+type Named = { name: string };
+type Shape = { name: string; size?: number } | { side: number };
+function text(s: Shape): string {
+  if ('side' in s) {
+    return 'side ' + s.side;
+  }
+  return 'name ' + s.name + ' ' + s.size + ' ' + Object.keys(s).join();
+}
+function same(s: Shape, o: unknown): boolean {
+  return s === o;
+}
+function pass(n: Named): Shape {
+  return n;
+}
+const parsed = JSON.parse('{"name":"n","more":1}') as Named;
+console.log(text(parsed), same(parsed, parsed));
+console.log(text(pass(parsed)), pass(parsed) === parsed);
+const list: Shape[] = [{ side: 2 }];
+list.push(parsed);
+console.log(list.map(text).join('; '), list[1] === parsed);
+const holder: { shape: Shape } = { shape: { side: 3 } };
+holder.shape = parsed;
+console.log(text(holder.shape), holder.shape === parsed);
+console.log(text({ name: 'own', size: 4 }), text({ side: 5 }));
+//// async-returns-mistyped-package-value/main.ts
+// The package's declaration file is wrong about what these functions return. An async function with an inferred return type passes the value through `await` unchanged.
+import { bytes, count, soon } from "./package.js";
+
+async function declared(name: string) {
+  await null;
+  return bytes(name);
+}
+const arrow = async (name: string) => bytes(name);
+async function withStatements(name: string) {
+  if (name === "a") return count(name);
+  return count(name + name);
+}
+async function ofPromise(name: string) {
+  return soon(name);
+}
+async function throughAnother(name: string) {
+  return await declared(name);
+}
+
+console.log("a declaration", String(await declared("a")));
+console.log("an arrow", String(await arrow("a")));
+console.log("with statements", String(await withStatements("a")), String(await withStatements("b")));
+console.log("of a promise", String(await ofPromise("a")));
+console.log("through another", String(await throughAnother("a")));
+const kept = declared("b");
+const value = await kept;
+console.log("kept", typeof value, String(value));
+const right = await declared("right:a");
+console.log("where the declaration is right", right.length, right instanceof Uint8Array);
+//// async-returns-mistyped-package-value/package.d.ts
+export function bytes(name: string): Uint8Array;
+export function count(name: string): number;
+export function soon(name: string): Promise<number>;
+//// async-returns-mistyped-package-value/package.js
+export function bytes(name) {
+  return name.startsWith("right:") ? new Uint8Array(name.length) : "text of " + name;
+}
+export function count(name) {
+  return "count of " + name;
+}
+export function soon(name) {
+  return Promise.resolve(["list of " + name]);
+}
+//// builtin-members-as-interfaces.ts
+// The same as host-members-as-interfaces.ts, with built-in classes only: a typed array, a map, a set, a regular expression, a promise. A built-in object is used through one of the program's interfaces, and each member is used through the interface's own member type. Each case has its own interfaces, and for each a program class with one extra member, so no built-in object matches those classes. The output must match plain Bun.
+
+// a property of a typed array
+interface RawBufferLike { byteLength: number }
+interface ByteViewLike { length: number; buffer: RawBufferLike }
+class FakeRawBuffer implements RawBufferLike { fakeOnly = 0; byteLength = -1; }
+class FakeByteView implements ByteViewLike { fakeOnly = 0; length = -1; buffer: RawBufferLike = new FakeRawBuffer(); }
+function showView(view: ByteViewLike) { return view.length + " " + view.buffer.byteLength; }
+const view: ByteViewLike = new Uint8Array(4);
+console.log(showView(view), showView(new FakeByteView()));
+
+// a method's return value
+interface WindowLike { length: number; byteOffset: number }
+interface WindowSourceLike { length: number; subarray(begin?: number, end?: number): WindowLike }
+class FakeWindow implements WindowLike { fakeOnly = 0; length = -1; byteOffset = -2; }
+class FakeWindowSource implements WindowSourceLike { fakeOnly = 0; length = -1; subarray(): WindowLike { return new FakeWindow(); } }
+function showWindow(source: WindowSourceLike) { const part = source.subarray(1, 3); return part.length + " " + part.byteOffset; }
+console.log(showWindow(new Uint8Array(4)), showWindow(new FakeWindowSource()));
+
+// what a map's `get` returns
+interface StampLike { getTime(): number }
+interface LookupLike { get(key: string): StampLike | undefined }
+class FakeStamp implements StampLike { fakeOnly = 0; getTime() { return -1; } }
+class FakeLookup implements LookupLike { fakeOnly = 0; get(key: string): StampLike | undefined { return key === "a" ? new FakeStamp() : undefined; } }
+function showLookup(lookup: LookupLike) { return lookup.get("a")?.getTime() + " " + lookup.get("b")?.getTime(); }
+const stamps = new Map<string, Date>([["a", new Date(5)]]);
+console.log(showLookup(stamps), showLookup(new FakeLookup()));
+
+// what `exec` returns
+interface FoundLike { index: number; input: string }
+interface MatcherLike { exec(text: string): FoundLike | null }
+class FakeFound implements FoundLike { fakeOnly = 0; index = -1; input = "fake"; }
+class FakeMatcher implements MatcherLike { fakeOnly = 0; exec(text: string): FoundLike | null { return text ? new FakeFound() : null; } }
+function showMatch(matcher: MatcherLike) { const found = matcher.exec("xab"); return found ? found.index + " " + found.input : "none"; }
+console.log(showMatch(/ab/), showMatch(new FakeMatcher()));
+
+// a callback's parameter
+interface MomentLike { getTime(): number }
+interface VisitableLike { forEach(visit: (item: MomentLike) => void): void }
+class FakeMoment implements MomentLike { fakeOnly = 0; getTime() { return -1; } }
+class FakeVisitable implements VisitableLike { fakeOnly = 0; forEach(visit: (item: MomentLike) => void) { visit(new FakeMoment()); } }
+function showVisits(visitable: VisitableLike) { let total = 0; visitable.forEach(item => { total += item.getTime(); }); return total; }
+console.log(showVisits(new Set([new Date(2), new Date(3)])), showVisits(new FakeVisitable()));
+
+// a promise's value
+interface InstantLike { getTime(): number }
+interface ClockLike { now(): Promise<InstantLike> }
+class FakeInstant implements InstantLike { fakeOnly = 0; getTime() { return -1; } }
+class FakeClock implements ClockLike { fakeOnly = 0; async now(): Promise<InstantLike> { return new FakeInstant(); } }
+async function showClock(clock: ClockLike) { return (await clock.now()).getTime(); }
+const clocks = new Map<string, () => Promise<Date>>([["now", async () => new Date(7)]]);
+const realClock: ClockLike = { now: clocks.get("now")! };
+console.log(await showClock(realClock), await showClock(new FakeClock()));
+//// builtin-objects-as-defaults.ts
+// A built-in object is the default value of a parameter, a pattern element or a parameter property whose type is one of the program's interfaces, and a member of it is used through the interface's own member type. Each case has its own interfaces, and for each a program class with one extra member, so no built-in object matches those classes. The output must match plain Bun.
+
+// a parameter's default value
+interface StorageLike { byteLength: number }
+interface PixelsLike { length: number; buffer: StorageLike }
+class FakeStorage implements StorageLike { fakeOnly = 0; byteLength = -1; }
+class FakePixels implements PixelsLike { fakeOnly = 0; length = -1; buffer: StorageLike = new FakeStorage(); }
+function makePixels(): Uint8Array { return new Uint8Array(4); }
+function showPixels(pixels: PixelsLike = makePixels()) { return pixels.length + ":" + pixels.buffer.byteLength; }
+console.log(showPixels(), showPixels(new FakePixels()));
+
+// a default in an object pattern
+interface MemoryLike { byteLength: number }
+interface SamplesLike { length: number; buffer: MemoryLike }
+class FakeMemory implements MemoryLike { fakeOnly = 0; byteLength = -1; }
+class FakeSamples implements SamplesLike { fakeOnly = 0; length = -1; buffer: MemoryLike = new FakeMemory(); }
+function makeSamples(): Float64Array { return new Float64Array(2); }
+function showSamples({ samples = makeSamples() }: { samples?: SamplesLike }) { return samples.length + ":" + samples.buffer.byteLength; }
+console.log(showSamples({}), showSamples({ samples: new FakeSamples() }));
+
+// a default in an array pattern
+interface BackingLike { byteLength: number }
+interface WordsLike { length: number; buffer: BackingLike }
+class FakeBacking implements BackingLike { fakeOnly = 0; byteLength = -1; }
+class FakeWords implements WordsLike { fakeOnly = 0; length = -1; buffer: BackingLike = new FakeBacking(); }
+function makeWords(): Uint16Array { return new Uint16Array(3); }
+function showWords([words = makeWords()]: WordsLike[]) { return words.length + ":" + words.buffer.byteLength; }
+console.log(showWords([]), showWords([new FakeWords()]));
+
+// a parameter property's default value
+interface RegionLike { byteLength: number }
+interface CellsLike { length: number; buffer: RegionLike }
+class FakeRegion implements RegionLike { fakeOnly = 0; byteLength = -1; }
+class FakeCells implements CellsLike { fakeOnly = 0; length = -1; buffer: RegionLike = new FakeRegion(); }
+function makeCells(): Int32Array { return new Int32Array(5); }
+class Grid { constructor(public cells: CellsLike = makeCells()) {} show() { return this.cells.length + ":" + this.cells.buffer.byteLength; } }
+console.log(new Grid().show(), new Grid(new FakeCells()).show());
+
+// a default value whose method returns a built-in object
+interface SpanLike { length: number; byteOffset: number }
+interface TapeLike { length: number; subarray(begin?: number, end?: number): SpanLike }
+class FakeSpan implements SpanLike { fakeOnly = 0; length = -1; byteOffset = -2; }
+class FakeTape implements TapeLike { fakeOnly = 0; length = -1; subarray(): SpanLike { return new FakeSpan(); } }
+function makeTape(): Uint8Array { return new Uint8Array(6); }
+function showTape(tape: TapeLike = makeTape()) { const span = tape.subarray(2, 5); return span.length + ":" + span.byteOffset; }
+console.log(showTape(), showTape(new FakeTape()));
+//// callback-returns-mistyped-package-value/main.ts
+// The package's declaration file is wrong about what these functions return. A callback's return type that TypeScript infers from such a call is not enforced.
+import { bytes, count, row } from "./package.js";
+
+function each<T, U>(list: T[], f: (item: T) => U): U[] {
+  const out: U[] = [];
+  for (const item of list) out.push(f(item));
+  return out;
+}
+function say(what: string, find: () => unknown) {
+  try {
+    console.log(what + ":", find());
+  } catch (error) {
+    console.log(what + ": THROWS", String(error));
+  }
+}
+
+const names = ["a", "b"];
+say("map", () => names.map(name => bytes(name)).join(" "));
+say("map, with statements", () =>
+  names
+    .map(name => {
+      if (name === "a") return bytes(name);
+      return bytes(name + name);
+    })
+    .join(" "),
+);
+say("map to a number", () => names.map(name => count(name)).join(" "));
+say("map to an object", () => JSON.stringify(names.map(name => row(name))));
+say("flatMap", () => JSON.stringify(names.flatMap(name => row(name))));
+say("Array.from", () => Array.from(names, name => bytes(name)).join(" "));
+say("sort", () => ["b", "a", "c"].sort((x, y) => count(x + y)).join(" "));
+say("find", () => names.find(name => count(name)));
+say("a generic function of the program", () => each(names, name => bytes(name)).join(" "));
+say("kept", () => {
+  const kept = names.map(name => bytes(name));
+  const seen: string[] = [];
+  for (const one of kept) seen.push(typeof one + String(one).length);
+  return seen.join();
+});
+say("where the declaration is right", () =>
+  names
+    .map(name => bytes("right:" + name))
+    .map(one => one.length + ":" + (one instanceof Uint8Array))
+    .join(" "),
+);
+console.log("then:", String(await Promise.resolve("a").then(name => bytes(name))));
+console.log("then, twice:", await Promise.resolve("a").then(name => bytes(name)).then(one => typeof one));
+//// callback-returns-mistyped-package-value/package.d.ts
+export function bytes(name: string): Uint8Array;
+export function count(name: string): number;
+export function row(name: string): { id: number; name: string };
+//// callback-returns-mistyped-package-value/package.js
+export function bytes(name) {
+  return name.startsWith("right:") ? new Uint8Array(name.length) : "text of " + name;
+}
+export function count(name) {
+  return name === "ba" || name === "ca" || name === "cb" ? "1" : "-1";
+}
+export function row(name) {
+  return name === "a" ? null : [name];
+}
+//// casts-propagate.ts
+// Parsed JSON goes through several casts and stays the same object.
+interface Base { id: string }
+interface Derived extends Base { extra: number; inner: { n: number } }
+const parsed = JSON.parse('{"id":"a"}') as Base
+const made = { id: "m", extra: 1, inner: { n: 2 } } as Base
+function asDerived(b: Base): Derived { return b as Derived }
+const d = asDerived(made)
+console.log("a downcast from a tainted type |", d.extra, d.inner.n, d === made, asDerived(parsed).extra)
+interface Other { id: string; tag?: string; more: { m: number } }
+const o = made as unknown as Other
+const keptO: Other = o
+console.log("through unknown |", keptO.tag, keptO.more, keptO.id)
+interface Listed { rows: { k: string }[]; count: number }
+const loose: any = JSON.parse('{"rows":[{"k":"x"}]}')
+const listed: Listed = loose
+function countOf(l: Listed): string { return l.rows.map(r => r.k).join() + l.count }
+console.log("a name that holds what was parsed, in an annotated variable |", countOf(listed), listed === loose)
+interface Own { ownNumber: number; ownText: string }
+const own: Own = { ownNumber: 1, ownText: "t" }
+const again = (own as any) as Own
+console.log("the program's own through any |", again.ownNumber, again === own)
+//// child-narrowed-by-parent.ts
+// A type guard on a parent node narrows the type of its child.
+const enum Kind { Plus, OrEquals, AndEquals, Binary }
+type BinaryOperator = Kind.Plus | Kind.OrEquals | Kind.AndEquals
+type LogicalAssignmentOperator = Kind.OrEquals | Kind.AndEquals
+interface Node { readonly kind: Kind }
+interface Token<K extends Kind> extends Node { readonly kind: K }
+interface BinaryExpression extends Node { readonly kind: Kind.Binary; readonly operatorToken: Token<BinaryOperator> }
+interface AssignmentExpression<T extends Token<BinaryOperator>> extends BinaryExpression { readonly operatorToken: T }
+function isLogicalAssignment(node: Node): node is AssignmentExpression<Token<LogicalAssignmentOperator>> { return node.kind === Kind.Binary && (node as BinaryExpression).operatorToken.kind !== Kind.Plus }
+function transform(expression: AssignmentExpression<Token<LogicalAssignmentOperator>>) { const operator = expression.operatorToken; return operator.kind }
+function createToken(kind: BinaryOperator): Token<BinaryOperator> { return { kind } }
+function createBinary(operatorToken: Token<BinaryOperator>): BinaryExpression { return { kind: Kind.Binary, operatorToken } }
+function attempt(label: string, f: () => unknown) { try { console.log(label + ":", String(f())) } catch (e) { console.log(label + ":", (e as Error).constructor.name, (e as Error).message.split("\n").join(" /")) } }
+for (const kind of [Kind.OrEquals, Kind.Plus, Kind.AndEquals] as BinaryOperator[]) attempt("kind " + kind, () => { const node: Node = createBinary(createToken(kind)); return isLogicalAssignment(node) ? transform(node) : "no" })
+export {};
+//// clone-as-fallback.ts
+type Point = { a: number; b: string };
+
+const show = (object: object) => {
+  const keys = Object.keys(object);
+  return keys.length + " keys: " + keys.slice(0, 4).join(",") + " ... " + keys.slice(-2).join(",");
+};
+
+function parseAndCopy(text: string) {
+  const parsed = JSON.parse(text) as Point;
+  const copy: Point = { ...parsed, b: "replaced" };
+  return [parsed.a, parsed.b, copy.a, copy.b, show(parsed), show(copy), copy === parsed].join(" | ");
+}
+
+const manyKeys: Record<string, number> = { a: 1 };
+for (let i = 0; i < 5000; i++) manyKeys["key" + i] = i;
+const texts = [
+  '{"a":1,"b":"plain"}',
+  '{"b":"reversed","a":2}',
+  '{"0":"zero","a":3,"b":"index key"}',
+  '{"a":4,"7":"seven","b":"index key between"}',
+  JSON.stringify({ ...manyKeys, b: "5,000 keys" }),
+];
+
+for (let round = 0; round < 3; round++) {
+  for (const text of texts) console.log(parseAndCopy(text));
+}
+//// compared-types-propagate-parsed-data.ts
+// What is parsed is held to one type. Values of that type are handed on where other types are expected, by arguments, returns, elements and spreads, and only the checker's comparison of the two types says so.
+interface Wire { id: number; name: string; extra?: { note: string } }
+interface Row { id: number; name: string }
+interface Labeled { name: string }
+interface Boxed<T> { value: T; history: T[] }
+class Table {
+  rows: Row[] = [];
+  keep(row: Row): Row { this.rows.push(row); return row; }
+}
+function parse(text: string): Wire { return JSON.parse(text) as Wire; }
+function box<T>(value: T): Boxed<T> { return { value, history: [value] }; }
+function label(it: Labeled): string { return it.name + ":" + Object.keys(it).join("+"); }
+function firstOf(boxed: Boxed<Row>): Labeled { return boxed.history[0]; }
+const table = new Table();
+const parsed = parse('{"id":1,"name":"a","extra":{"note":"n"},"more":true}');
+const kept = table.keep(parsed);
+table.keep({ id: 2, name: "b" });
+const boxed: Boxed<Row> = box(kept);
+boxed.history.push({ id: 3, name: "c" }, ...table.rows);
+const labeled: Labeled[] = [firstOf(boxed), ...boxed.history, { name: "made" }];
+const byName: Record<string, Labeled> = {};
+for (const it of labeled) byName[it.name] = it;
+kept.name = "renamed";
+console.log(labeled.map(label).join(" "), Object.keys(byName).join(), byName.a === parsed, (byName.a as Wire).extra?.note);
+console.log(JSON.stringify(table.rows), JSON.stringify(boxed.value), boxed.history.length, parsed.name);
+//// conversions-in-place-while-the-collector-marks.ts
+// Parsed objects that the collector can already reach are read through record types while it marks. The integers and the small
+// numbers in them are chosen so that the bytes of an object with a fixed layout, read as the properties of a plain object, are
+// pointers to nowhere, and so that the plain object's bytes, read as the references of a fixed layout, are too: a marker that reads
+// one of these objects by the wrong layout crashes at once. Everything the objects held is still there afterwards.
+type Row = { a: number; b: number; c: number; d: number; tiny: number; flag: boolean; name: string; tags: string[] };
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h: number; name: string; last: string };
+type Child = { a: number; b: number; label: string };
+type Parent = { a: number; b: number; left: Child; right: Child; title: string };
+
+const integer = 0x1238;
+const tiny = new Float64Array(new BigUint64Array([0x123800001238n]).buffer)[0];
+
+function typedRow(): Row {
+  return { a: 1, b: 2, c: 3, d: 4, tiny: 0.5, flag: true, name: "typed", tags: ["t"] };
+}
+function typedWide(): Wide {
+  return { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, name: "typed", last: "typed" };
+}
+function typedParent(): Parent {
+  return { a: 1, b: 2, left: { a: 1, b: 2, label: "l" }, right: { a: 1, b: 2, label: "r" }, title: "typed" };
+}
+function checkRow(row: Row, i: number): number {
+  return row.a === integer && row.b === integer && row.c === integer && row.d === integer + i && row.tiny === tiny && row.flag === (i % 2 === 0) && row.name === "name " + i && row.tags.length === 2 && row.tags[1] === "tag " + i ? 1 : 0;
+}
+function checkFraction(row: Row, i: number): number {
+  return row.a === integer + 0.5 && row.b === integer && row.c === integer && row.d === integer + i && row.tiny === tiny && row.name === "name " + i && row.tags[1] === "tag " + i ? 1 : 0;
+}
+function checkWide(wide: Wide, i: number): number {
+  return wide.a === integer && wide.b === integer && wide.c === integer && wide.d === integer && wide.e === integer && wide.f === integer && wide.g === integer && wide.h === integer + i && wide.name === "name " + i && wide.last === "last " + i ? 1 : 0;
+}
+function checkParent(parent: Parent, i: number): number {
+  return parent.a === integer && parent.b === integer + i && parent.left.a === integer && parent.left.b === integer && parent.left.label === "left " + i && parent.right.a === integer && parent.right.b === integer && parent.right.label === "right " + i && parent.title === "title " + i ? 1 : 0;
+}
+
+const kinds = 5;
+function parse(i: number): any {
+  const n = String(integer);
+  switch (i % kinds) {
+    case 0:
+      return JSON.parse(`{"a":${n},"b":${n},"c":${n},"d":${integer + i},"tiny":${tiny},"flag":${i % 2 === 0},"name":"name ${i}","tags":["x","tag ${i}"]}`);
+    case 1:
+      return JSON.parse(`{"a":${n},"b":${n},"c":${n},"d":${integer + i},"tiny":${tiny},"flag":${i % 2 === 0},"name":"name ${i}","tags":["x","tag ${i}"],"more":"more ${i}"}`);
+    case 2:
+      return JSON.parse(`{"a":${n}.5,"b":${n},"c":${n},"d":${integer + i},"tiny":${tiny},"flag":true,"name":"name ${i}","tags":["x","tag ${i}"]}`);
+    case 3:
+      return JSON.parse(`{"a":${n},"b":${n},"c":${n},"d":${n},"e":${n},"f":${n},"g":${n},"h":${integer + i},"name":"name ${i}","last":"last ${i}"}`);
+    default:
+      return JSON.parse(`{"a":${n},"b":${integer + i},"left":{"a":${n},"b":${n},"label":"left ${i}"},"right":{"a":${n},"b":${n},"label":"right ${i}"},"title":"title ${i}"}`);
+  }
+}
+function check(made: any, i: number): number {
+  switch (i % kinds) {
+    case 0:
+      return checkRow(made, i);
+    case 1:
+      return checkRow(made, i) && made.more === "more " + i ? 1 : 0;
+    case 2:
+      return checkFraction(made, i);
+    case 3:
+      return checkWide(made, i);
+    default:
+      return checkParent(made, i);
+  }
+}
+const keys = ["a,b,c,d,tiny,flag,name,tags", "a,b,c,d,tiny,flag,name,tags,more", "a,b,c,d,tiny,flag,name,tags", "a,b,c,d,e,f,g,h,name,last", "a,b,left,right,title"];
+
+const live: any[] = [];
+for (let i = 0; i < 60000; i++) live.push({ i, text: "live " + i, next: i ? live[i - 1] : null });
+
+const size = 4096;
+const total = 300000;
+const waiting: any[] = new Array(size).fill(null);
+const converted: any[] = new Array(size).fill(null);
+let good = checkRow({ ...typedRow(), a: integer, b: integer, c: integer, d: integer, tiny, name: "name 0", tags: ["x", "tag 0"] }, 0) + typedWide().a + typedParent().a;
+for (let i = 0; i < total + 2 * size; i++) {
+  const slot = i % size;
+  const old = converted[slot];
+  if (old !== null) {
+    good += check(old, i - 2 * size);
+    if (Object.keys(old).join() !== keys[(i - 2 * size) % kinds]) good = -1000000000;
+  }
+  const next = waiting[slot];
+  converted[slot] = next;
+  if (next !== null) good += check(next, i - size);
+  waiting[slot] = i < total ? parse(i) : null;
+}
+console.log(good, live.length);
+//// elements-typed-by-dts/host.d.ts
+// What a package's declaration file says of the host's headers, for main.ts.
+export interface Headers { [name: string]: string | string[] | undefined; "content-type"?: string }
+export interface Counts { [name: string]: number }
+//// elements-typed-by-dts/main.ts
+// An element read from a variable that is annotated with a type from a declaration file: the object belongs to the embedder, and so do its contents, whatever the index signature says. A cast that the program writes behind such a read is tested like any cast.
+import type { Counts, Headers } from "./host";
+const given: any = { ":status": 200, "x-list": ["a"], "content-type": 5, "x-s": "s" };
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).message.split(" (bun")[0]; } console.log(name + ": " + JSON.stringify(r)); };
+const kind = (v: unknown) => typeof v + " " + JSON.stringify(v);
+let held: Headers = {};
+function keep(headers: Headers) { held = headers; }
+keep(given);
+const key = [":status"][0];
+row("a written key", () => [kind(held[":status"]), kind(held["x-list"]), kind(held["x-s"]), kind(held["none"])]);
+row("a computed key", () => kind(held[key]));
+row("behind casts", () => [kind(held[":status"] as unknown as number), kind(held[key] as string)]);
+row("a declared name", () => [kind(held["content-type"]), kind(held["content-type"] as unknown as number)]);
+row("a parameter", () => ((headers: Headers) => kind(headers[":status"]))(given));
+row("one that the program made", () => { const own: Headers = { a: "b" }; own.c = "d"; return [kind(own["a"]), kind(own.c), own["a"]!.length, Object.keys(own)]; });
+row("numbers", () => { const counts: Counts = given; return [kind(counts["x-s"]), kind(counts[":status"]), (counts[":status"] as number) + 1]; });
+interface Mine { [name: string]: number }
+row("an index signature of the program's own stays a fact", () => { const mine: Mine = { a: 1 }; mine.b = 2; return [mine["a"] + mine["b"], kind(mine["none"])]; });
+//// extra-properties-many-objects-one-structure.ts
+// Many objects of one shape come out of JSON.parse with properties that their type does not declare: ahead of the declared ones, among
+// them and behind them. Each stays one object: the extra properties are read, written, removed and listed as in any object, and
+// the keys keep their order.
+interface Inner { r: number }
+interface Row { id: number; name: string; inner: Inner; done: boolean }
+const made: Row = { id: 0, name: "made", inner: { r: 0 }, done: true };
+function use(row: Row): string {
+  row.id += 1;
+  row.inner.r += 1;
+  return row.id + row.name + row.inner.r + row.done;
+}
+const shapes = [
+  (i: number) => '{"first":' + i + ',"id":' + i + ',"name":"a","inner":{"r":1},"done":false}',
+  (i: number) => '{"id":' + i + ',"middle":"m' + i + '","name":"b","inner":{"r":2},"done":true}',
+  (i: number) => '{"id":' + i + ',"name":"c","inner":{"r":3},"done":false,"last":[' + i + ']}',
+  (i: number) => '{"x":null,"id":' + i + ',"y":{"z":' + i + '},"name":"d","inner":{"r":4,"more":' + i + '},"done":true,"w":"w"}',
+];
+console.log(use(made));
+const kept: any[] = [];
+for (let i = 0; i < 4; i++) {
+  for (const shape of shapes) {
+    const raw: any = JSON.parse(shape(i));
+    kept.push(raw);
+    console.log(use(raw), Object.keys(raw).join(), JSON.stringify(raw));
+  }
+}
+for (const raw of kept) {
+  const row: Row = raw;
+  raw.added = row.id;
+  delete raw.middle;
+  delete raw.x;
+  if ("last" in raw) raw.last.push(row.name);
+  if ("first" in raw) raw.first *= 2;
+  console.log(row === raw, use(row), Object.keys(raw).join(), JSON.stringify(raw), Object.entries(raw).length);
+}
+//// fetch-reducer-schemas-over-parsed-data.ts
+// Programs that live on parsed data: a fetch wrapper, a reducer over parsed actions, settings with fallbacks, models built from JSON, a small schema library, groupBy and type guards. Every value matches its declared type. The program must behave as in plain Bun.
+interface Item { id: number; title: string; done: boolean; due?: string; labels: string[] }
+type Action = { type: 'add'; item: Item } | { type: 'remove'; id: number } | { type: 'toggle'; id: number } | { type: 'rename'; id: number; title: string }
+interface State { items: Item[]; count: number; last?: Action['type'] }
+interface Settings { theme: 'dark' | 'light'; size: number; recent: string[]; nested: { depth: number; on: boolean } }
+
+class FakeResponse { constructor(private body: string, public status: number) {} json(): Promise<any> { return Promise.resolve(JSON.parse(this.body)) } get ok(): boolean { return this.status < 400 } }
+const pages: Record<string, string> = {
+  '/items': '[{"id":1,"title":"one","done":false,"labels":["x"]},{"id":2,"title":"two","done":true,"due":"2026-01-02","labels":[]}]',
+  '/item/1': '{"id":1,"title":"one","done":false,"labels":["x"]}',
+  '/settings': '{"theme":"dark","size":12,"recent":["a","b"],"nested":{"depth":2,"on":true}}',
+}
+function fakeFetch(url: string): Promise<FakeResponse> { return Promise.resolve(new FakeResponse(pages[url] ?? 'null', url in pages ? 200 : 404)) }
+async function getJson<T>(url: string): Promise<T> { const response = await fakeFetch(url); return response.json() as Promise<T> }
+function getJsonThen<T>(url: string): Promise<T> { return fakeFetch(url).then(response => response.json()) }
+async function getOrNull<T>(url: string): Promise<T | null> { const response = await fakeFetch(url); if (!response.ok) return null; return await response.json() }
+
+function reduce(state: State, action: Action): State {
+  switch (action.type) {
+    case 'add': return { items: [...state.items, action.item], count: state.count + 1, last: action.type }
+    case 'remove': return { items: state.items.filter(item => item.id !== action.id), count: state.count - 1, last: action.type }
+    case 'toggle': return { ...state, items: state.items.map(item => item.id === action.id ? { ...item, done: !item.done } : item), last: action.type }
+    case 'rename': return { ...state, items: state.items.map(item => item.id === action.id ? { ...item, title: action.title } : item), last: 'rename' }
+  }
+}
+function show(item: Item): string { return `${item.id}/${item.title}/${item.done}/${item.due ?? '-'}/${item.labels.length}` }
+
+const store = new Map<string, string>([['settings', pages['/settings']!], ['count', '3']])
+function load<T>(key: string, fallback: T): T { const raw = store.get(key); return raw ? JSON.parse(raw) : fallback }
+const defaults: Settings = { theme: 'light', size: 10, recent: [], nested: { depth: 0, on: false } }
+
+class Model {
+  id = 0; title = ''; labels: string[] = []
+  static fromJSON(json: any): Model { return Object.assign(new Model(), json) }
+  get label(): string { return this.id + ':' + this.title + ':' + this.labels.join() }
+}
+class Wrapper { constructor(public item: Item, private seen = 0) {} touch(): number { return ++this.seen } get title(): string { return this.item.title.toUpperCase() } }
+
+type Schema<T> = { parse(value: unknown): T }
+const text = (): Schema<string> => ({ parse(value) { if (typeof value !== 'string') throw new Error('not a string'); return value } })
+const count = (): Schema<number> => ({ parse(value) { if (typeof value !== 'number') throw new Error('not a number'); return value } })
+function shape<S extends Record<string, Schema<unknown>>>(fields: S): Schema<{ [K in keyof S]: S[K] extends Schema<infer T> ? T : never }> {
+  return { parse(value) { const given = value as Record<string, unknown>; for (const key in fields) fields[key]!.parse(given[key]); return value as any } }
+}
+function list<T>(of: Schema<T>): Schema<T[]> { return { parse(value) { if (!Array.isArray(value)) throw new Error('not a list'); value.forEach(one => of.parse(one)); return value } } }
+const point = shape({ name: text(), x: count(), y: count() })
+function norm(p: { x: number; y: number }): number { return Math.abs(p.x) + Math.abs(p.y) }
+function groupBy<T, K extends string>(items: T[], key: (item: T) => K): Record<K, T[]> { const out = {} as Record<K, T[]>; for (const item of items) (out[key(item)] ??= []).push(item); return out }
+function hasTitle(value: unknown): value is { title: string } { return typeof value === 'object' && value !== null && 'title' in value && typeof (value as any).title === 'string' }
+
+async function main(): Promise<void> {
+  const items = await getJson<Item[]>('/items')
+  console.log(items.map(show).join(' '))
+  const one = await getJsonThen<Item>('/item/1')
+  const none = await getOrNull<Item>('/missing')
+  const two = await getOrNull<Item>('/item/1')
+  console.log(show(one), none, two && show(two), one === two)
+  let state: State = { items, count: items.length }
+  const lines = ['{"type":"add","item":{"id":3,"title":"three","done":false,"labels":["y","z"]}}', '{"type":"toggle","id":1}', '{"type":"rename","id":2,"title":"TWO"}', '{"type":"remove","id":3}', '{"type":"add","item":{"id":4,"title":"four","done":true,"labels":[]}}']
+  for (const line of lines) { const action: Action = JSON.parse(line); state = reduce(state, action); console.log(state.last, state.count, state.items.map(show).join(' ')) }
+  const settings = load('settings', defaults)
+  const missing = load('nothing', defaults)
+  const merged: Settings = { ...defaults, ...JSON.parse('{"size": 14, "nested": {"depth": 5, "on": true}}') }
+  console.log(settings.theme, settings.size, settings.recent.join(), settings.nested.depth, missing === defaults, merged.theme, merged.size, merged.nested.depth, load('count', 0) + 1)
+  const model = Model.fromJSON(JSON.parse(pages['/item/1']!))
+  console.log(model.label, model instanceof Model, Object.keys(model).join())
+  const wrapper = new Wrapper(one)
+  console.log(wrapper.title, wrapper.touch(), wrapper.touch(), wrapper.item === one)
+  const points = list(point).parse(JSON.parse('[{"name":"a","x":1,"y":-2},{"name":"b","x":3,"y":4}]'))
+  console.log(points.map(p => p.name + norm(p)).join(), norm(point.parse(JSON.parse('{"name":"c","x":5,"y":5}'))))
+  try { point.parse(JSON.parse('{"name":"d","x":"5","y":5}')) } catch (e) { const error = e as { message: string; code?: string }; console.log(error.message, error.code) }
+  const groups = groupBy(state.items, item => item.done ? 'done' : 'open')
+  console.log(Object.keys(groups).sort().map(key => key + ':' + groups[key as 'done' | 'open'].map(item => item.id).join('+')).join(' '))
+  const byId = new Map<string, Item>(Object.entries(JSON.parse('{"a": {"id":7,"title":"seven","done":false,"labels":[]}}')))
+  const [first, total]: [Item, number] = JSON.parse('[{"id":8,"title":"eight","done":true,"labels":["q"]}, 2]')
+  console.log(show(byId.get('a')!), show(first), total)
+  const unknowns: unknown[] = JSON.parse('[1, {"title": "t"}, null, {"other": 2}, "s"]')
+  console.log(unknowns.filter(hasTitle).map(value => value.title).join(), unknowns.length)
+  const patch: Partial<Item> = JSON.parse('{"title": "patched", "done": true}')
+  Object.assign(one, patch)
+  console.log(show(one), show({ ...first, ...patch }))
+}
+await main()
+//// forced-casts.ts
+// A double cast (`x as unknown as T`, `<T><any>x`) of an object to an object type passes: any object fits, it stays the same object, and a member it does not have reads undefined.
+interface Tool { name: string; run(): string; level: number }
+interface Part { level: number; o: number[] }
+const part: Part = { level: 3, o: [1] }
+const tool: Tool = part as unknown as Tool
+console.log("record:", tool.level, tool.name, typeof tool.run, (tool as unknown) === part)
+const again: Tool = <Tool><any>part
+console.log("angle brackets:", again.level, (again as unknown) === part)
+const given: Tool = Object.assign(part, { extra: 1 }) as unknown as Tool
+console.log("what hands back its argument:", given.level, (given as unknown) === part)
+class Service { n = 1; get() { return this.n } }
+const fake = { n: 2, get() { return 5 }, o: [1] }
+const held: Service = fake as unknown as Service
+console.log("a class:", held.get(), held.n, held instanceof Service)
+function build<D extends { level: number }>(def: D): D & Tool { const made = { level: def.level + 1, o: [2] }; return made as unknown as D & Tool }
+const built = build({ level: 1, more: "m" })
+console.log("out of generic code:", built.level, built.name, built.more)
+const list: Tool[] = [tool, again]
+console.log("in an array:", list.map(t => t.level).join())
+interface A { kind: 1; a: number; o: number[] } interface B { kind: 2; a: number; b?: number }
+const a: A = { kind: 1, a: 7, o: [1] }
+const b: B = a as unknown as B
+console.log("another discriminant, fields in common:", b.a, b.b, (b as unknown) === a)
+function fill<T extends object>(): T { const d: Record<string, unknown> = { only: 1 }; return d as T }
+interface First { only: number; o?: number[] }
+const first: First = fill<First>()
+function viaOverload<T extends object>(kind: "a"): T
+function viaOverload<T extends object>(kind: string, more: number): T
+function viaOverload<T extends object>(kind: string, more?: number): T { const d: Record<string, unknown> = { only: kind.length + (more ?? 0) }; return d as T }
+function under<T extends object>(flag: boolean, other: T): T { const d: Record<string, unknown> = { only: 2 }; return flag ? (d as T)! : other ?? (d as T) }
+const overloaded: First = viaOverload<First>("abc", 1), chosen: First = under<First>(true, first), kept2: First = under<First>(false, first)
+console.log("seen through:", overloaded.only, chosen.only, kept2.only, kept2 === first)
+//// forced-casts-native.ts
+// A double cast of a built-in object (a Map) to an interface type.
+interface Closed { only: number; o: number[] }
+const map: Closed = new Map<string, number>([["only", 1]]) as unknown as Closed
+console.log("types without a layout:", map.o, (map as unknown) instanceof Map, (map as unknown as Map<string, number>).get("only"))
+interface Open { only?: number; o?: number[] }
+const open: Open = new Map<string, number>([["only", 1]]) as unknown as Open
+console.log("nothing is required:", open.o, open.only, (open as unknown) instanceof Map)
+function fill<T extends object>(): T { const d: Record<string, unknown> = { only: 1 }; return d as T }
+interface First { only: number; o?: number[] }
+const first: First = fill<First>()
+interface Second { other: string; only: number }
+const second: Second = first as unknown as Second
+console.log("a stranger forced twice:", second.only, second.other, (second as unknown) === first)
+//// forced-members.ts
+// A `B` reaches a field of type `A` through a double cast and through `any`: any object passes an object type, and a member it does not have reads undefined.
+interface A { a: number; shared?: string; o: number[] }
+interface B { b: string; shared?: string; n: number }
+interface Holder { item: A }
+function attempt(label: string, f: () => unknown) { try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) } }
+const makeA = (): A => ({ a: 1, o: [1] })
+const makeB = (): B => ({ b: "b", shared: "s", n: 7 })
+attempt("the forced cast", () => (makeB() as unknown as A).shared)
+const h: Holder = { item: makeA() }
+attempt("stored through any", () => { (h as any).item = makeB(); return "stored" })
+attempt("typed, optional and in both", () => h.item.shared)
+attempt("typed, a reference it lacks", () => h.item.o)
+attempt("typed, a number it lacks", () => h.item.a)
+attempt("typed, a number it lacks, in arithmetic", () => h.item.a + 1)
+attempt("through any, what it lacks", () => (h.item as any).a)
+attempt("through any, its own", () => (h.item as any).b + (h.item as any).n)
+attempt("through any from the holder", () => (h as any).item.b)
+attempt("typed store of what it lacks", () => { h.item.a = 5; return (h.item as any).a + " " + Object.keys(h.item).join() })
+attempt("typed read after that", () => h.item.a + 1)
+attempt("its own fields after that", () => (h.item as any).b + (h.item as any).n)
+const other: Holder = { item: makeA() }
+attempt("an A beside it", () => other.item.a + " " + other.item.o.length + " " + other.item.shared)
+//// frozen-object-from-untyped-code/main.ts
+// A typed function in one module gets an object that untyped code has frozen, sealed or otherwise made unchangeable. React's development build does this to props.
+import { call } from "./untyped.js";
+import { double, label, total } from "./typed";
+const ways = ["plain", "freeze", "seal", "preventExtensions", "getter", "not writable", "null prototype", "one member more"];
+for (const way of ways) {
+  const results: unknown[] = [];
+  for (const run of [() => call(double, { n: 21 }, way), () => call(label, { thing: { id: "a" }, children: "b" }, way), () => call(total, { list: [1, 2, 3] }, way)]) {
+    try {
+      results.push(run());
+    } catch (error) {
+      results.push((error as Error).name);
+    }
+  }
+  console.log(way + ": " + results.join(", "));
+}
+//// frozen-object-from-untyped-code/typed.ts
+type Props = { n: number };
+export function double({ n }: Props) {
+  return n * 2;
+}
+type Thing = { id: string };
+type LabelProps = { thing: Thing; children: unknown };
+export function label(props: LabelProps) {
+  return props.thing.id + String(props.children) + Object.isFrozen(props);
+}
+type ListProps = { list: number[] };
+export function total({ list }: ListProps) {
+  return list.reduce((sum, value) => sum + value, 0);
+}
+//// frozen-object-from-untyped-code/untyped.d.ts
+export function call<P extends {}>(f: (props: P) => unknown, config: P, way: string): unknown;
+//// frozen-object-from-untyped-code/untyped.js
+export function call(f, config, way) {
+  const props = way === "null prototype" ? Object.create(null) : {};
+  for (const key in config) {
+    if (way === "getter") Object.defineProperty(props, key, { get: () => config[key], enumerable: true, configurable: true });
+    else if (way === "not writable") Object.defineProperty(props, key, { value: config[key], enumerable: true, configurable: true, writable: false });
+    else props[key] = config[key];
+  }
+  if (way === "one member more") props.more = 1;
+  if (way === "freeze" || way === "seal" || way === "preventExtensions") Object[way](props);
+  return f(props);
+}
+//// generic-function-returns-any-variable.ts
+// A generic function returns a variable of type `any`. It holds a function with two more members, which no layout can be given to.
+// The call types the result as a mapped type over its argument, and the program makes an object with the same members elsewhere.
+interface Counter {
+  readonly count: () => number
+  readonly label: string
+}
+function callable<Shape>(parts: Shape): { [K in keyof Shape]: Shape[K] } {
+  const made: any = Object.assign(function () {}, parts)
+  return made
+}
+const plain: Counter = { count: () => 1, label: 'plain' }
+const built = callable({ count: () => 2, label: 'built' })
+const counters: Counter[] = [plain, built]
+console.log(counters.map(counter => counter.label + counter.count()).join(), typeof built)
+//// generic-function-returns-any-with-many-keys.ts
+// A generic function builds its result with Object.fromEntries and returns it as `any`. Each call types the result as a mapped
+// type over its argument. The object has more properties than a plain object has room for in place.
+const registry = { k0: 0, k1: 1, k2: 2, k3: 3, k4: 4, k5: 5, k6: 6, k7: 7, k8: 8, k9: 9, k10: 10, k11: 11, k12: 12, k13: 13, k14: 14, k15: 15 } as const
+function builders<Types extends Record<string, any>>(options: Types): { [K in keyof Types]: () => Types[K] } {
+  return Object.fromEntries(Object.entries(options).map(([key, value]) => [key, () => value])) as any
+}
+const all = builders(registry)
+const copy = { ...all }
+console.log(Object.keys(all).length, all.k0(), all.k15(), Object.keys(copy).length, copy.k7())
+//// global-function-read-as-record.ts
+// `Buffer` is a function with static methods. It is read from `globalThis` through a cast to a type literal that lists two of
+// them, which is how a library asks for a global that may be missing. Elsewhere a generic function allocates objects with a
+// member of the same name, so the type literal is not without objects of its own.
+const buffer = (globalThis as {
+  readonly Buffer?: {
+    readonly from: (body: string, encoding: 'utf8') => Uint8Array
+    readonly byteLength: (body: string, encoding: 'utf8') => number
+  }
+}).Buffer
+const encodeText: (body: string) => Uint8Array = buffer !== undefined ? body => buffer.from(body, 'utf8') : body => new TextEncoder().encode(body)
+const byteLength = (body: string) => (buffer !== undefined ? buffer.byteLength(body, 'utf8') : -1)
+function span<From, To>(from: From, to: To): { readonly from: From; readonly to: To } {
+  return { from, to }
+}
+const numbers = span(1, 2)
+const words = span('a', 'b')
+console.log(encodeText('héllo').length, byteLength('héllo'), numbers.from + numbers.to, words.from + words.to)
+//// grown-literal-into-handler-called-as-a-value.ts
+// A plain object that is made with three properties, given two more, and handed to a typed handler that was stored as a value.
+interface Endpoint<Params, Query> {
+  readonly name: string;
+  readonly decodeParams: (text: string) => Params;
+  readonly decodeQuery: (text: string) => Query;
+}
+type RequestOf<E> = E extends Endpoint<infer Params, infer Query>
+  ? { readonly params: Params; readonly query: Query; readonly request: string; readonly endpoint: string; readonly group: string }
+  : never;
+type Handler<E> = (request: RequestOf<E>) => string;
+
+class Group<Endpoints extends Record<string, Endpoint<any, any>>> {
+  readonly handlers = new Map<string, { readonly endpoint: Endpoint<any, any>; readonly handler: Handler<any> }>();
+  constructor(readonly endpoints: Endpoints) {}
+  handle<Name extends keyof Endpoints & string>(name: Name, handler: Handler<Endpoints[Name]>): this {
+    this.handlers.set(name, { endpoint: this.endpoints[name]!, handler: handler as Handler<any> });
+    return this;
+  }
+  dispatch(name: string, params: string, query: string): string {
+    const { endpoint, handler } = this.handlers.get(name)!;
+    const request: any = { request: "GET /" + name, endpoint: endpoint.name, group: "users" };
+    request.params = endpoint.decodeParams(params);
+    request.query = endpoint.decodeQuery(query);
+    return handler(request);
+  }
+}
+
+const posts: Endpoint<{ readonly id: number }, { readonly page: number }> = {
+  name: "posts",
+  decodeParams: text => ({ id: Number(text) }),
+  decodeQuery: text => ({ page: Number(text) }),
+};
+const group = new Group({ posts }).handle(
+  "posts",
+  ({ params, query, request, endpoint, group }) => `${params.id} ${query.page} ${request} ${endpoint} ${group}`,
+);
+console.log(group.dispatch("posts", "42", "2"));
+console.log(group.dispatch("posts", "7", "3"));
+//// host-members-as-interfaces.ts
+// A member of a host object is often a host object too. When the outer object is used through one of the program's interfaces, each member is used through the interface's own member type: a property, a method's return value, a promise's value, an array's elements, a callback's parameter. Each case has its own interfaces, and for each a program class with one extra member, so no host object matches those classes. The output must match plain Bun.
+import { statSync } from "node:fs";
+
+// a property
+interface ParamsLike { get(name: string): string | null }
+interface UrlLike { href: string; searchParams: ParamsLike }
+class FakeParams implements ParamsLike { fakeOnly = 0; get(name: string): string | null { return "fake-" + name; } }
+class FakeUrl implements UrlLike { fakeOnly = 0; href = "fake:"; searchParams: ParamsLike = new FakeParams(); }
+function showUrl(url: UrlLike) { return url.href + " " + url.searchParams.get("a"); }
+const url: UrlLike = new URL("http://h/p?a=1");
+console.log(showUrl(url), showUrl(new FakeUrl()));
+
+// a method's return value
+interface BytesLike { length: number; byteLength: number }
+interface EncoderLike { encoding: string; encode(text?: string): BytesLike }
+class FakeBytes implements BytesLike { fakeOnly = 0; length = -1; byteLength = -2; }
+class FakeEncoder implements EncoderLike { fakeOnly = 0; encoding = "fake"; encode(): BytesLike { return new FakeBytes(); } }
+function showEncoder(encoder: EncoderLike) { const bytes = encoder.encode("abc"); return encoder.encoding + " " + bytes.length + " " + bytes.byteLength; }
+console.log(showEncoder(new TextEncoder()), showEncoder(new FakeEncoder()));
+
+// two properties
+interface ReadableLike { locked: boolean; cancel(reason?: unknown): Promise<void> }
+interface WritableLike { locked: boolean; abort(reason?: unknown): Promise<void> }
+interface TransformLike { readable: ReadableLike; writable: WritableLike }
+class FakeReadable implements ReadableLike { fakeOnly = 0; locked = true; async cancel() {} }
+class FakeWritable implements WritableLike { fakeOnly = 0; locked = true; async abort() {} }
+class FakeTransform implements TransformLike { fakeOnly = 0; readable: ReadableLike = new FakeReadable(); writable: WritableLike = new FakeWritable(); }
+function showTransform(transform: TransformLike) { return transform.readable.locked + " " + transform.writable.locked; }
+function makeTransform(): TransformLike { return new TransformStream(); }
+console.log(showTransform(makeTransform()), showTransform(new FakeTransform()));
+
+// a member that is a built-in class
+interface DateLike { getTime(): number }
+interface StatsLike { size: number; mtime: DateLike; isDirectory(): boolean }
+class FakeDate implements DateLike { fakeOnly = 0; getTime() { return -1; } }
+class FakeStats implements StatsLike { fakeOnly = 0; size = -1; mtime: DateLike = new FakeDate(); isDirectory() { return false; } }
+function showStats(stats: StatsLike) { return stats.isDirectory() + " " + (stats.mtime.getTime() > 0); }
+class StatsHolder { constructor(public stats: StatsLike) {} }
+console.log(showStats(new StatsHolder(statSync(".")).stats), showStats(new FakeStats()));
+
+// two levels down
+interface ReaderLike { releaseLock(): void }
+interface BodyLike { locked: boolean; getReader(): ReaderLike }
+interface ResponseLike { status: number; body: BodyLike | null }
+class FakeReader implements ReaderLike { fakeOnly = 0; releaseLock() {} }
+class FakeBody implements BodyLike { fakeOnly = 0; locked = false; getReader(): ReaderLike { return new FakeReader(); } }
+class FakeResponse implements ResponseLike { fakeOnly = 0; status = 1; body: BodyLike | null = new FakeBody(); }
+function showResponse(response: ResponseLike) {
+  const body = response.body;
+  if (!body) return "none";
+  const reader = body.getReader();
+  const locked = body.locked;
+  reader.releaseLock();
+  return response.status + " " + locked + " " + body.locked;
+}
+const responses: ResponseLike[] = [new Response("abc", { status: 201 }), new FakeResponse()];
+console.log(responses.map(showResponse).join());
+
+// a promise's value
+interface BlobLike { size: number; type: string }
+interface BlobSourceLike { blob(): Promise<BlobLike> }
+class FakeBlob implements BlobLike { fakeOnly = 0; size = -1; type = "fake"; }
+class FakeBlobSource implements BlobSourceLike { fakeOnly = 0; async blob(): Promise<BlobLike> { return new FakeBlob(); } }
+async function showBlob(source: BlobSourceLike) { const blob = await source.blob(); return blob.size + " " + typeof blob.type; }
+console.log(await showBlob(new Response("abcd")), await showBlob(new FakeBlobSource()));
+
+// an array's elements
+interface FileLike { name: string; size: number }
+interface FormLike { getAll(name: string): (string | FileLike)[] }
+class FakeFile implements FileLike { fakeOnly = 0; name = "fake"; size = -1; }
+class FakeForm implements FormLike { fakeOnly = 0; getAll(name: string): (string | FileLike)[] { return [name, new FakeFile()]; } }
+function showForm(form: FormLike) { return form.getAll("f").map(entry => (typeof entry === "string" ? entry : entry.name + entry.size)).join(); }
+const formData = new FormData();
+formData.append("f", "text");
+formData.append("f", new File(["abc"], "a.txt"));
+console.log(showForm(formData), showForm(new FakeForm()));
+
+// a callback's parameter
+interface EventLike { type: string }
+interface TargetLike { addEventListener(type: string, listener: (event: EventLike) => void): void; dispatchEvent(event: Event): boolean }
+class FakeEvent implements EventLike { fakeOnly = 0; type = "fake"; }
+class FakeTarget implements TargetLike {
+  fakeOnly = 0;
+  listener: ((event: EventLike) => void) | null = null;
+  addEventListener(type: string, listener: (event: EventLike) => void) { this.listener = listener; }
+  dispatchEvent(event: Event) { this.listener?.(new FakeEvent()); return true; }
+}
+function listen(target: TargetLike) {
+  let seen = "none";
+  target.addEventListener("ping", event => { seen = event.type; });
+  target.dispatchEvent(new Event("ping"));
+  return seen;
+}
+console.log(listen(new EventTarget()), listen(new FakeTarget()));
+
+// a method that returns the same interface
+interface SliceLike { size: number; slice(start?: number, end?: number): SliceLike }
+class FakeSlice implements SliceLike { fakeOnly = 0; size = -1; slice(): SliceLike { return this; } }
+function showSlice(whole: SliceLike) { return whole.slice(1, 5).slice(1).size; }
+console.log(showSlice(new Blob(["abcdef"])), showSlice(new FakeSlice()));
+
+// the outer object passes through a local typed as its own class
+interface HeaderBagLike { get(name: string): string | null; has(name: string): boolean }
+interface RequestLike { method: string; headers: HeaderBagLike }
+class FakeHeaderBag implements HeaderBagLike { fakeOnly = 0; get(name: string): string | null { return "fake-" + name; } has(name: string) { return false; } }
+class FakeRequest implements RequestLike { fakeOnly = 0; method = "FAKE"; headers: HeaderBagLike = new FakeHeaderBag(); }
+function showRequest(request: RequestLike) { return request.method + " " + request.headers.get("x-a") + " " + request.headers.has("x-b"); }
+const rawRequest: Request = new Request("http://h/", { headers: { "x-a": "1" } });
+const request: RequestLike = rawRequest;
+console.log(showRequest(request), showRequest(new FakeRequest()));
+
+// an optional member and a union with null
+interface OriginLike { dispatchEvent(event: Event): boolean }
+interface MessageLike { type: string; data: unknown; target: OriginLike | null; source?: unknown }
+class FakeOrigin implements OriginLike { fakeOnly = 0; dispatchEvent() { return false; } }
+class FakeMessage implements MessageLike { fakeOnly = 0; type = "fake"; data: unknown = 0; target: OriginLike | null = new FakeOrigin(); }
+function showMessage(message: MessageLike) { return message.type + " " + message.data + " " + (message.target === null ? "null" : typeof message.target.dispatchEvent); }
+const origin = new EventTarget();
+let received: MessageLike | null = null;
+origin.addEventListener("message", event => { received = event as MessageEvent; });
+origin.dispatchEvent(new MessageEvent("message", { data: 5 }));
+console.log(showMessage(received!), showMessage(new MessageEvent("message", { data: 6 })), showMessage(new FakeMessage()));
+
+// the outer object is pushed into an array of the interface
+interface PairsLike { has(name: string): boolean }
+interface AddressLike { host: string; searchParams: PairsLike }
+class FakePairs implements PairsLike { fakeOnly = 0; has(name: string) { return name === "fake"; } }
+class FakeAddress implements AddressLike { fakeOnly = 0; host = "fake"; searchParams: PairsLike = new FakePairs(); }
+function showAddress(address: AddressLike) { return address.host + " " + address.searchParams.has("a"); }
+const addresses: AddressLike[] = [new FakeAddress()];
+addresses.push(new URL("http://h/p?a=1"));
+console.log(addresses.map(showAddress).join());
+//// host-objects-between-structural-types.ts
+// A host object typed as its own class is assigned to a local with a structural type, then passed on to a second, identical structural type. Each case has its own host class, its own pair of types, and a program class with one extra member so that the host object never matches that class. The output must match plain Bun.
+
+// an annotated constant of the host's type
+type UrlA = { readonly href: string; readonly host: string };
+type UrlB = { readonly href: string; readonly host: string };
+class FakeUrl { fakeOnly = 0; href = "fake:"; host = "fake"; }
+function useUrl(x: UrlB) { return x.href + x.host; }
+const rawUrl: URL = new URL("http://h/p");
+const url: UrlA = rawUrl;
+console.log(useUrl(url), useUrl(new FakeUrl()));
+
+// the result of a function
+type HeadersA = { get(name: string): string | null; has(name: string): boolean; count?: number };
+type HeadersB = { get(name: string): string | null; has(name: string): boolean; count?: number };
+class FakeHeaders { fakeOnly = 0; count = 1; get(name: string): string | null { return "fake"; } has(name: string) { return false; } }
+function useHeaders(x: HeadersB) { return x.get("a") + String(x.has("b")) + x.count; }
+function makeHeaders(): Headers { return new Headers({ a: "1" }); }
+const headers: HeadersA = makeHeaders();
+console.log(useHeaders(headers), useHeaders(new FakeHeaders()));
+
+// a field
+type ResponseA = { readonly status: number; readonly ok: boolean };
+type ResponseB = { readonly status: number; readonly ok: boolean };
+class FakeResponse { fakeOnly = 0; status = 1; ok = false; }
+function useResponse(x: ResponseB) { return x.status + String(x.ok); }
+class Box { constructor(public raw: Response) {} }
+const response: ResponseA = new Box(new Response("", { status: 201 })).raw;
+console.log(useResponse(response), useResponse(new FakeResponse()));
+
+// an element
+type BlobA = { readonly size: number; readonly type: string };
+type BlobB = { readonly size: number; readonly type: string };
+class FakeBlob { fakeOnly = 0; size = -1; type = "fake"; }
+function useBlob(x: BlobB) { return x.size + x.type; }
+const blobs: Blob[] = [new Blob(["abc"], { type: "text/x" })];
+const blob: BlobA = blobs[0];
+console.log(useBlob(blob), useBlob(new FakeBlob()));
+
+// the class under another name
+type DecoderA = { readonly encoding: string; readonly fatal: boolean };
+type DecoderB = { readonly encoding: string; readonly fatal: boolean };
+class FakeDecoder { fakeOnly = 0; encoding = "fake"; fatal = true; }
+function useDecoder(x: DecoderB) { return x.encoding + x.fatal; }
+const Decoder = TextDecoder;
+const decoder: DecoderA = new Decoder();
+console.log(useDecoder(decoder), useDecoder(new FakeDecoder()));
+
+// a class of the program that extends a class of the host
+type TargetA = { dispatchEvent(event: Event): boolean; label: string };
+type TargetB = { dispatchEvent(event: Event): boolean; label: string };
+class FakeTarget { fakeOnly = 0; label = "fake"; dispatchEvent(event: Event) { return false; } }
+function useTarget(x: TargetB) { return x.label + x.dispatchEvent(new Event("e")); }
+class Mine extends EventTarget { label = "mine"; }
+const target: TargetA = new Mine();
+console.log(useTarget(target), useTarget(new FakeTarget()));
+
+// the class taken out of globalThis
+type EncoderA = { readonly encoding: string; tag?: string };
+type EncoderB = { readonly encoding: string; tag?: string };
+class FakeEncoder { fakeOnly = 0; encoding = "fake"; tag = "t"; }
+function useEncoder(x: EncoderB) { return x.encoding + x.tag; }
+const { TextEncoder: Encoder } = globalThis;
+const encoder: EncoderA = new Encoder();
+console.log(useEncoder(encoder), useEncoder(new FakeEncoder()));
+
+// the class read off globalThis by a string
+type RequestA = { readonly method: string; readonly url: string };
+type RequestB = { readonly method: string; readonly url: string };
+class FakeRequest { fakeOnly = 0; method = "FAKE"; url = "fake:"; }
+function useRequest(x: RequestB) { return x.method + x.url; }
+const request: RequestA = new globalThis["Request"]("http://h/r");
+console.log(useRequest(request), useRequest(new FakeRequest()));
+//// host-objects-cast-from-any.ts
+// A host object typed `any` or `unknown` is cast with `as`, or annotated, as one of the program's interfaces. Its members and what its methods return, directly or through a promise, are then used through the interface's own member types. Each case has its own interfaces, and for each a program class with one extra member, so no host object matches those classes. The output must match plain Bun.
+
+// a method's return value, cast from `any`
+interface BytesLike { length: number; byteLength: number }
+interface EncoderLike { encoding: string; encode(text?: string): BytesLike }
+class FakeBytes implements BytesLike { fakeOnly = 0; length = -1; byteLength = -2; }
+class FakeEncoder implements EncoderLike { fakeOnly = 0; encoding = "fake"; encode(): BytesLike { return new FakeBytes(); } }
+function showEncoder(encoder: EncoderLike) { const bytes = encoder.encode("abc"); return encoder.encoding + " " + bytes.length + " " + bytes.byteLength; }
+function untypedEncoder(): any { return new TextEncoder(); }
+console.log(showEncoder(untypedEncoder() as EncoderLike), showEncoder(new FakeEncoder()));
+
+// a method that returns the same interface, cast from `unknown`
+interface SliceLike { size: number; slice(start?: number, end?: number): SliceLike }
+class FakeSlice implements SliceLike { fakeOnly = 0; size = -1; slice(): SliceLike { return this; } }
+function showSlice(whole: SliceLike) { return whole.slice(1, 5).slice(1).size; }
+function unknownBlob(): unknown { return new Blob(["abcdef"]); }
+console.log(showSlice(unknownBlob() as SliceLike), showSlice(new FakeSlice()));
+
+// a promise's value, cast from `any`
+interface BufferLike { byteLength: number }
+interface BufferSourceLike { arrayBuffer(): Promise<BufferLike> }
+class FakeBuffer implements BufferLike { fakeOnly = 0; byteLength = -1; }
+class FakeBufferSource implements BufferSourceLike { fakeOnly = 0; async arrayBuffer(): Promise<BufferLike> { return new FakeBuffer(); } }
+async function showBuffer(source: BufferSourceLike) { return (await source.arrayBuffer()).byteLength; }
+function untypedResponse(): any { return new Response("abcd"); }
+console.log(await showBuffer(untypedResponse() as BufferSourceLike), await showBuffer(new FakeBufferSource()));
+
+// a property, cast from `any`
+interface QueryLike { get(name: string): string | null }
+interface LinkLike { href: string; searchParams: QueryLike }
+class FakeQuery implements QueryLike { fakeOnly = 0; get(name: string): string | null { return "fake-" + name; } }
+class FakeLink implements LinkLike { fakeOnly = 0; href = "fake:"; searchParams: QueryLike = new FakeQuery(); }
+function showLink(link: LinkLike) { return link.href + " " + link.searchParams.get("a"); }
+function untypedUrl(): any { return new URL("http://h/p?a=1"); }
+console.log(showLink(untypedUrl() as LinkLike), showLink(new FakeLink()));
+
+// a promise's value, annotated from `any`
+interface TextBlobLike { size: number }
+interface TextBlobSourceLike { blob(): Promise<TextBlobLike> }
+class FakeTextBlob implements TextBlobLike { fakeOnly = 0; size = -1; }
+class FakeTextBlobSource implements TextBlobSourceLike { fakeOnly = 0; async blob(): Promise<TextBlobLike> { return new FakeTextBlob(); } }
+async function showTextBlob(source: TextBlobSourceLike) { return (await source.blob()).size; }
+function untypedRequest(): any { return new Request("http://h/", { method: "POST", body: "abcde" }); }
+const annotatedSource: TextBlobSourceLike = untypedRequest();
+console.log(await showTextBlob(annotatedSource), await showTextBlob(new FakeTextBlobSource()));
+//// host-objects-constructed-via-globalthis.ts
+// A host object constructed with `new globalThis.X()` works with the program's own structural types exactly like one constructed with `new X()`: it is read by name and never rejected.
+type SocketLike = { readonly readyState: number; close(): void; send(data: string): void };
+class FakeSocket { readyState = 7; close() {} send(data: string) {} }
+class Transport {
+  constructor(private socket: SocketLike) {}
+  state() { return typeof this.socket.readyState; }
+  end() { this.socket.close(); }
+}
+
+interface ParamsLike { get(name: string): string | null }
+interface UrlLike { href: string; searchParams: ParamsLike }
+class FakeParams implements ParamsLike { get(name: string) { return "fake-" + name; } }
+class FakeUrl implements UrlLike { href = "fake:"; searchParams: ParamsLike = new FakeParams(); }
+function showUrl(url: UrlLike) { return url.href + " " + url.searchParams.get("a"); }
+
+interface HeadersLike { get(name: string): string | null; has(name: string): boolean }
+interface ResponseLike { status: number; ok: boolean; headers: HeadersLike }
+class FakeHeaders implements HeadersLike { get(name: string) { return name; } has(name: string) { return false; } }
+class FakeResponse implements ResponseLike { status = 1; ok = false; headers: HeadersLike = new FakeHeaders(); }
+function showResponse(response: ResponseLike) { return response.status + " " + response.ok + " " + response.headers.get("x-a") + " " + response.headers.has("x-b"); }
+
+interface SignalLike { aborted: boolean }
+interface ControllerLike { signal: SignalLike; abort(): void }
+class FakeSignal implements SignalLike { aborted = false; }
+class FakeController implements ControllerLike { signal: SignalLike = new FakeSignal(); abort() { this.signal.aborted = true; } }
+function abortAndShow(controller: ControllerLike) { const before = controller.signal.aborted; controller.abort(); return before + " " + controller.signal.aborted; }
+
+const socket: SocketLike = new globalThis.WebSocket("ws://127.0.0.1:9");
+const transports = [new Transport(socket), new Transport(new FakeSocket())];
+console.log(transports.map(transport => transport.state()).join());
+for (const transport of transports) transport.end();
+
+const url: UrlLike = new globalThis.URL("http://host/path?a=1");
+console.log(showUrl(url), "|", showUrl(new FakeUrl()), "|", showUrl(new globalThis.URL("http://host/?a=2")));
+
+const response: ResponseLike = new globalThis.Response("body", { status: 201, headers: { "x-a": "b" } });
+console.log(showResponse(response), "|", showResponse(new FakeResponse()));
+const responses: ResponseLike[] = [new FakeResponse(), new globalThis.Response(null, { status: 204 })];
+console.log(responses.map(showResponse).join(" | "));
+
+console.log(abortAndShow(new globalThis.AbortController()), "|", abortAndShow(new FakeController()));
+
+class Holder { held: UrlLike | null = null; }
+const holder = new Holder();
+holder.held = new globalThis.URL("http://held/?a=3");
+console.log(showUrl(holder.held));
+function made(): ResponseLike { return new globalThis.Response("", { status: 202 }); }
+console.log(showResponse(made()));
+//// host-objects-from-any-as-interfaces.ts
+// A host object typed `any` that satisfies one of the program's interfaces is accepted wherever the interface is used: an annotation, a parameter, a field, an element, a return value, `as`, a map. No host object is used under its own type here. Each interface also has a program class with one extra member, so no host object matches that class.
+import { statSync } from "node:fs";
+
+interface HeadersLike { get(name: string): string | null; has(name: string): boolean }
+class FakeHeaders implements HeadersLike { fakeOnly = 0; get(name: string): string | null { return "fake-" + name; } has(name: string) { return false; } }
+interface SocketLike { send(data: string): void; close(): void; readyState: number; onmessage: ((e: any) => void) | null }
+class FakeSocket implements SocketLike { fakeOnly = 0; readyState = 9; onmessage: ((e: any) => void) | null = null; send(data: string) {} close() {} }
+interface RequestLike { method: string; url: string; headers: HeadersLike }
+class FakeRequest implements RequestLike { fakeOnly = 0; method = "FAKE"; url = "fake:"; headers: HeadersLike = new FakeHeaders(); }
+interface ResponseLike { status: number; ok: boolean; headers: HeadersLike }
+class FakeResponse implements ResponseLike { fakeOnly = 0; status = 1; ok = false; headers: HeadersLike = new FakeHeaders(); }
+interface ParamsLike { get(name: string): string | null }
+class FakeParams implements ParamsLike { fakeOnly = 0; get(name: string): string | null { return "fake-" + name; } }
+interface UrlLike { href: string; searchParams: ParamsLike }
+class FakeUrl implements UrlLike { fakeOnly = 0; href = "fake:"; searchParams: ParamsLike = new FakeParams(); }
+interface BlobLike { size: number; type: string; slice(start?: number, end?: number): BlobLike }
+class FakeBlob implements BlobLike { fakeOnly = 0; size = -1; type = "fake"; slice(): BlobLike { return this; } }
+interface FileLike { name: string; size: number; lastModified: number }
+class FakeFile implements FileLike { fakeOnly = 0; name = "fake"; size = -1; lastModified = 0; }
+interface FormLike { get(name: string): unknown; has(name: string): boolean; append(name: string, value: string): void }
+class FakeForm implements FormLike { fakeOnly = 0; get(name: string): unknown { return "fake"; } has(name: string) { return false; } append(name: string, value: string) {} }
+interface ReadableLike { locked: boolean; cancel(reason?: unknown): Promise<void> }
+class FakeReadable implements ReadableLike { fakeOnly = 0; locked = true; async cancel() {} }
+interface WritableLike { locked: boolean; abort(reason?: unknown): Promise<void> }
+class FakeWritable implements WritableLike { fakeOnly = 0; locked = true; async abort() {} }
+interface TransformLike { readable: ReadableLike; writable: WritableLike }
+class FakeTransform implements TransformLike { fakeOnly = 0; readable: ReadableLike = new FakeReadable(); writable: WritableLike = new FakeWritable(); }
+interface SignalLike { aborted: boolean; reason: unknown }
+class FakeSignal implements SignalLike { fakeOnly = 0; aborted = false; reason: unknown = "fake"; }
+interface ControllerLike { signal: SignalLike; abort(reason?: unknown): void }
+class FakeController implements ControllerLike { fakeOnly = 0; signal: SignalLike = new FakeSignal(); abort() { this.signal.aborted = true; } }
+interface EncoderLike { encoding: string; encode(text?: string): BytesLike }
+interface BytesLike { length: number; byteLength: number }
+class FakeBytes implements BytesLike { fakeOnly = 0; length = -1; byteLength = -2; }
+class FakeEncoder implements EncoderLike { fakeOnly = 0; encoding = "fake"; encode(): BytesLike { return new FakeBytes(); } }
+interface DecoderLike { encoding: string; fatal: boolean; decode(): string }
+class FakeDecoder implements DecoderLike { fakeOnly = 0; encoding = "fake"; fatal = true; decode() { return "fake"; } }
+interface TargetLike { dispatchEvent(event: Event): boolean }
+class FakeTarget implements TargetLike { fakeOnly = 0; dispatchEvent() { return false; } }
+interface MessageLike { type: string; data: unknown; target: TargetLike | null }
+class FakeMessage implements MessageLike { fakeOnly = 0; type = "fake"; data: unknown = 0; target: TargetLike | null = new FakeTarget(); }
+interface TimerLike { ref(): TimerLike; unref(): TimerLike; hasRef(): boolean }
+class FakeTimer implements TimerLike { fakeOnly = 0; ref(): TimerLike { return this; } unref(): TimerLike { return this; } hasRef() { return false; } }
+interface StatsLike { size: number; mtime: DateLike; isDirectory(): boolean }
+interface DateLike { getTime(): number }
+class FakeDate implements DateLike { fakeOnly = 0; getTime() { return -1; } }
+class FakeStats implements StatsLike { fakeOnly = 0; size = -1; mtime: DateLike = new FakeDate(); isDirectory() { return false; } }
+
+function probeWebSocket(x: SocketLike): string { const s = typeof x.readyState + String(x.onmessage); x.close(); return s; }
+class HolderWebSocket { held: SocketLike; constructor(held: SocketLike) { this.held = held; } }
+function untypedWebSocket(): any { return new WebSocket("ws://127.0.0.1:9"); }
+function throughWebSocket(): SocketLike { return untypedWebSocket(); }
+{
+  const annotated: SocketLike = untypedWebSocket();
+  const list: SocketLike[] = [new FakeSocket(), untypedWebSocket()];
+  list.push(untypedWebSocket());
+  const map = new Map<string, SocketLike>();
+  map.set("k", untypedWebSocket());
+  console.log("WebSocket", probeWebSocket(annotated), probeWebSocket(untypedWebSocket()), probeWebSocket(new HolderWebSocket(untypedWebSocket()).held), list.map(probeWebSocket).join(), probeWebSocket(throughWebSocket()), probeWebSocket(untypedWebSocket() as SocketLike), probeWebSocket(map.get("k")!));
+}
+function probeRequest(x: RequestLike): string { return x.method + x.url + x.headers.get("x-a"); }
+class HolderRequest { held: RequestLike; constructor(held: RequestLike) { this.held = held; } }
+function untypedRequest(): any { return new Request("http://h/r", { method: "POST", headers: { "x-a": "r" } }); }
+function throughRequest(): RequestLike { return untypedRequest(); }
+{
+  const annotated: RequestLike = untypedRequest();
+  const list: RequestLike[] = [new FakeRequest(), untypedRequest()];
+  list.push(untypedRequest());
+  const map = new Map<string, RequestLike>();
+  map.set("k", untypedRequest());
+  console.log("Request", probeRequest(annotated), probeRequest(untypedRequest()), probeRequest(new HolderRequest(untypedRequest()).held), list.map(probeRequest).join(), probeRequest(throughRequest()), probeRequest(untypedRequest() as RequestLike), probeRequest(map.get("k")!));
+}
+function probeResponse(x: ResponseLike): string { return x.status + String(x.ok) + x.headers.get("x-a"); }
+class HolderResponse { held: ResponseLike; constructor(held: ResponseLike) { this.held = held; } }
+function untypedResponse(): any { return new Response("b", { status: 201, headers: { "x-a": "s" } }); }
+function throughResponse(): ResponseLike { return untypedResponse(); }
+{
+  const annotated: ResponseLike = untypedResponse();
+  const list: ResponseLike[] = [new FakeResponse(), untypedResponse()];
+  list.push(untypedResponse());
+  const map = new Map<string, ResponseLike>();
+  map.set("k", untypedResponse());
+  console.log("Response", probeResponse(annotated), probeResponse(untypedResponse()), probeResponse(new HolderResponse(untypedResponse()).held), list.map(probeResponse).join(), probeResponse(throughResponse()), probeResponse(untypedResponse() as ResponseLike), probeResponse(map.get("k")!));
+}
+function probeHeaders(x: HeadersLike): string { return x.get("x-a") + String(x.has("x-b")); }
+class HolderHeaders { held: HeadersLike; constructor(held: HeadersLike) { this.held = held; } }
+function untypedHeaders(): any { return new Headers({ "x-a": "h" }); }
+function throughHeaders(): HeadersLike { return untypedHeaders(); }
+{
+  const annotated: HeadersLike = untypedHeaders();
+  const list: HeadersLike[] = [new FakeHeaders(), untypedHeaders()];
+  list.push(untypedHeaders());
+  const map = new Map<string, HeadersLike>();
+  map.set("k", untypedHeaders());
+  console.log("Headers", probeHeaders(annotated), probeHeaders(untypedHeaders()), probeHeaders(new HolderHeaders(untypedHeaders()).held), list.map(probeHeaders).join(), probeHeaders(throughHeaders()), probeHeaders(untypedHeaders() as HeadersLike), probeHeaders(map.get("k")!));
+}
+function probeURL(x: UrlLike): string { return x.href + x.searchParams.get("a"); }
+class HolderURL { held: UrlLike; constructor(held: UrlLike) { this.held = held; } }
+function untypedURL(): any { return new URL("http://h/p?a=1"); }
+function throughURL(): UrlLike { return untypedURL(); }
+{
+  const annotated: UrlLike = untypedURL();
+  const list: UrlLike[] = [new FakeUrl(), untypedURL()];
+  list.push(untypedURL());
+  const map = new Map<string, UrlLike>();
+  map.set("k", untypedURL());
+  console.log("URL", probeURL(annotated), probeURL(untypedURL()), probeURL(new HolderURL(untypedURL()).held), list.map(probeURL).join(), probeURL(throughURL()), probeURL(untypedURL() as UrlLike), probeURL(map.get("k")!));
+}
+function probeURLSearchParams(x: ParamsLike): string { return String(x.get("a")); }
+class HolderURLSearchParams { held: ParamsLike; constructor(held: ParamsLike) { this.held = held; } }
+function untypedURLSearchParams(): any { return new URLSearchParams("a=2"); }
+function throughURLSearchParams(): ParamsLike { return untypedURLSearchParams(); }
+{
+  const annotated: ParamsLike = untypedURLSearchParams();
+  const list: ParamsLike[] = [new FakeParams(), untypedURLSearchParams()];
+  list.push(untypedURLSearchParams());
+  const map = new Map<string, ParamsLike>();
+  map.set("k", untypedURLSearchParams());
+  console.log("URLSearchParams", probeURLSearchParams(annotated), probeURLSearchParams(untypedURLSearchParams()), probeURLSearchParams(new HolderURLSearchParams(untypedURLSearchParams()).held), list.map(probeURLSearchParams).join(), probeURLSearchParams(throughURLSearchParams()), probeURLSearchParams(untypedURLSearchParams() as ParamsLike), probeURLSearchParams(map.get("k")!));
+}
+function probeBlob(x: BlobLike): string { return x.size + x.type + x.slice(1, 3).size; }
+class HolderBlob { held: BlobLike; constructor(held: BlobLike) { this.held = held; } }
+function untypedBlob(): any { return new Blob(["abcd"], { type: "text/x" }); }
+function throughBlob(): BlobLike { return untypedBlob(); }
+{
+  const annotated: BlobLike = untypedBlob();
+  const list: BlobLike[] = [new FakeBlob(), untypedBlob()];
+  list.push(untypedBlob());
+  const map = new Map<string, BlobLike>();
+  map.set("k", untypedBlob());
+  console.log("Blob", probeBlob(annotated), probeBlob(untypedBlob()), probeBlob(new HolderBlob(untypedBlob()).held), list.map(probeBlob).join(), probeBlob(throughBlob()), probeBlob(untypedBlob() as BlobLike), probeBlob(map.get("k")!));
+}
+function probeFile(x: FileLike): string { return x.name + x.size + x.lastModified; }
+class HolderFile { held: FileLike; constructor(held: FileLike) { this.held = held; } }
+function untypedFile(): any { return new File(["ab"], "f.txt", { lastModified: 5 }); }
+function throughFile(): FileLike { return untypedFile(); }
+{
+  const annotated: FileLike = untypedFile();
+  const list: FileLike[] = [new FakeFile(), untypedFile()];
+  list.push(untypedFile());
+  const map = new Map<string, FileLike>();
+  map.set("k", untypedFile());
+  console.log("File", probeFile(annotated), probeFile(untypedFile()), probeFile(new HolderFile(untypedFile()).held), list.map(probeFile).join(), probeFile(throughFile()), probeFile(untypedFile() as FileLike), probeFile(map.get("k")!));
+}
+function probeFormData(x: FormLike): string { x.append("k", "v"); return String(x.get("k")) + x.has("k"); }
+class HolderFormData { held: FormLike; constructor(held: FormLike) { this.held = held; } }
+function untypedFormData(): any { return new FormData(); }
+function throughFormData(): FormLike { return untypedFormData(); }
+{
+  const annotated: FormLike = untypedFormData();
+  const list: FormLike[] = [new FakeForm(), untypedFormData()];
+  list.push(untypedFormData());
+  const map = new Map<string, FormLike>();
+  map.set("k", untypedFormData());
+  console.log("FormData", probeFormData(annotated), probeFormData(untypedFormData()), probeFormData(new HolderFormData(untypedFormData()).held), list.map(probeFormData).join(), probeFormData(throughFormData()), probeFormData(untypedFormData() as FormLike), probeFormData(map.get("k")!));
+}
+function probeReadableStream(x: ReadableLike): string { return String(x.locked); }
+class HolderReadableStream { held: ReadableLike; constructor(held: ReadableLike) { this.held = held; } }
+function untypedReadableStream(): any { return new ReadableStream(); }
+function throughReadableStream(): ReadableLike { return untypedReadableStream(); }
+{
+  const annotated: ReadableLike = untypedReadableStream();
+  const list: ReadableLike[] = [new FakeReadable(), untypedReadableStream()];
+  list.push(untypedReadableStream());
+  const map = new Map<string, ReadableLike>();
+  map.set("k", untypedReadableStream());
+  console.log("ReadableStream", probeReadableStream(annotated), probeReadableStream(untypedReadableStream()), probeReadableStream(new HolderReadableStream(untypedReadableStream()).held), list.map(probeReadableStream).join(), probeReadableStream(throughReadableStream()), probeReadableStream(untypedReadableStream() as ReadableLike), probeReadableStream(map.get("k")!));
+}
+function probeWritableStream(x: WritableLike): string { return String(x.locked); }
+class HolderWritableStream { held: WritableLike; constructor(held: WritableLike) { this.held = held; } }
+function untypedWritableStream(): any { return new WritableStream(); }
+function throughWritableStream(): WritableLike { return untypedWritableStream(); }
+{
+  const annotated: WritableLike = untypedWritableStream();
+  const list: WritableLike[] = [new FakeWritable(), untypedWritableStream()];
+  list.push(untypedWritableStream());
+  const map = new Map<string, WritableLike>();
+  map.set("k", untypedWritableStream());
+  console.log("WritableStream", probeWritableStream(annotated), probeWritableStream(untypedWritableStream()), probeWritableStream(new HolderWritableStream(untypedWritableStream()).held), list.map(probeWritableStream).join(), probeWritableStream(throughWritableStream()), probeWritableStream(untypedWritableStream() as WritableLike), probeWritableStream(map.get("k")!));
+}
+function probeTransformStream(x: TransformLike): string { return String(x.readable.locked) + x.writable.locked; }
+class HolderTransformStream { held: TransformLike; constructor(held: TransformLike) { this.held = held; } }
+function untypedTransformStream(): any { return new TransformStream(); }
+function throughTransformStream(): TransformLike { return untypedTransformStream(); }
+{
+  const annotated: TransformLike = untypedTransformStream();
+  const list: TransformLike[] = [new FakeTransform(), untypedTransformStream()];
+  list.push(untypedTransformStream());
+  const map = new Map<string, TransformLike>();
+  map.set("k", untypedTransformStream());
+  console.log("TransformStream", probeTransformStream(annotated), probeTransformStream(untypedTransformStream()), probeTransformStream(new HolderTransformStream(untypedTransformStream()).held), list.map(probeTransformStream).join(), probeTransformStream(throughTransformStream()), probeTransformStream(untypedTransformStream() as TransformLike), probeTransformStream(map.get("k")!));
+}
+function probeAbortController(x: ControllerLike): string { const before = x.signal.aborted; x.abort("why"); return String(before) + x.signal.aborted + x.signal.reason; }
+class HolderAbortController { held: ControllerLike; constructor(held: ControllerLike) { this.held = held; } }
+function untypedAbortController(): any { return new AbortController(); }
+function throughAbortController(): ControllerLike { return untypedAbortController(); }
+{
+  const annotated: ControllerLike = untypedAbortController();
+  const list: ControllerLike[] = [new FakeController(), untypedAbortController()];
+  list.push(untypedAbortController());
+  const map = new Map<string, ControllerLike>();
+  map.set("k", untypedAbortController());
+  console.log("AbortController", probeAbortController(annotated), probeAbortController(untypedAbortController()), probeAbortController(new HolderAbortController(untypedAbortController()).held), list.map(probeAbortController).join(), probeAbortController(throughAbortController()), probeAbortController(untypedAbortController() as ControllerLike), probeAbortController(map.get("k")!));
+}
+function probeAbortSignal(x: SignalLike): string { return String(x.aborted) + x.reason; }
+class HolderAbortSignal { held: SignalLike; constructor(held: SignalLike) { this.held = held; } }
+function untypedAbortSignal(): any { return AbortSignal.abort("gone"); }
+function throughAbortSignal(): SignalLike { return untypedAbortSignal(); }
+{
+  const annotated: SignalLike = untypedAbortSignal();
+  const list: SignalLike[] = [new FakeSignal(), untypedAbortSignal()];
+  list.push(untypedAbortSignal());
+  const map = new Map<string, SignalLike>();
+  map.set("k", untypedAbortSignal());
+  console.log("AbortSignal", probeAbortSignal(annotated), probeAbortSignal(untypedAbortSignal()), probeAbortSignal(new HolderAbortSignal(untypedAbortSignal()).held), list.map(probeAbortSignal).join(), probeAbortSignal(throughAbortSignal()), probeAbortSignal(untypedAbortSignal() as SignalLike), probeAbortSignal(map.get("k")!));
+}
+function probeTextEncoder(x: EncoderLike): string { return x.encoding + x.encode("abc").length; }
+class HolderTextEncoder { held: EncoderLike; constructor(held: EncoderLike) { this.held = held; } }
+function untypedTextEncoder(): any { return new TextEncoder(); }
+function throughTextEncoder(): EncoderLike { return untypedTextEncoder(); }
+{
+  const annotated: EncoderLike = untypedTextEncoder();
+  const list: EncoderLike[] = [new FakeEncoder(), untypedTextEncoder()];
+  list.push(untypedTextEncoder());
+  const map = new Map<string, EncoderLike>();
+  map.set("k", untypedTextEncoder());
+  console.log("TextEncoder", probeTextEncoder(annotated), probeTextEncoder(untypedTextEncoder()), probeTextEncoder(new HolderTextEncoder(untypedTextEncoder()).held), list.map(probeTextEncoder).join(), probeTextEncoder(throughTextEncoder()), probeTextEncoder(untypedTextEncoder() as EncoderLike), probeTextEncoder(map.get("k")!));
+}
+function probeTextDecoder(x: DecoderLike): string { return x.encoding + x.fatal + x.decode(); }
+class HolderTextDecoder { held: DecoderLike; constructor(held: DecoderLike) { this.held = held; } }
+function untypedTextDecoder(): any { return new TextDecoder(); }
+function throughTextDecoder(): DecoderLike { return untypedTextDecoder(); }
+{
+  const annotated: DecoderLike = untypedTextDecoder();
+  const list: DecoderLike[] = [new FakeDecoder(), untypedTextDecoder()];
+  list.push(untypedTextDecoder());
+  const map = new Map<string, DecoderLike>();
+  map.set("k", untypedTextDecoder());
+  console.log("TextDecoder", probeTextDecoder(annotated), probeTextDecoder(untypedTextDecoder()), probeTextDecoder(new HolderTextDecoder(untypedTextDecoder()).held), list.map(probeTextDecoder).join(), probeTextDecoder(throughTextDecoder()), probeTextDecoder(untypedTextDecoder() as DecoderLike), probeTextDecoder(map.get("k")!));
+}
+function probeMessageEvent(x: MessageLike): string { return x.type + x.data + (x.target === null); }
+class HolderMessageEvent { held: MessageLike; constructor(held: MessageLike) { this.held = held; } }
+function untypedMessageEvent(): any { return new MessageEvent("message", { data: "d" }); }
+function throughMessageEvent(): MessageLike { return untypedMessageEvent(); }
+{
+  const annotated: MessageLike = untypedMessageEvent();
+  const list: MessageLike[] = [new FakeMessage(), untypedMessageEvent()];
+  list.push(untypedMessageEvent());
+  const map = new Map<string, MessageLike>();
+  map.set("k", untypedMessageEvent());
+  console.log("MessageEvent", probeMessageEvent(annotated), probeMessageEvent(untypedMessageEvent()), probeMessageEvent(new HolderMessageEvent(untypedMessageEvent()).held), list.map(probeMessageEvent).join(), probeMessageEvent(throughMessageEvent()), probeMessageEvent(untypedMessageEvent() as MessageLike), probeMessageEvent(map.get("k")!));
+}
+function probeEventTarget(x: TargetLike): string { return String(x.dispatchEvent(new Event("e"))); }
+class HolderEventTarget { held: TargetLike; constructor(held: TargetLike) { this.held = held; } }
+function untypedEventTarget(): any { return new EventTarget(); }
+function throughEventTarget(): TargetLike { return untypedEventTarget(); }
+{
+  const annotated: TargetLike = untypedEventTarget();
+  const list: TargetLike[] = [new FakeTarget(), untypedEventTarget()];
+  list.push(untypedEventTarget());
+  const map = new Map<string, TargetLike>();
+  map.set("k", untypedEventTarget());
+  console.log("EventTarget", probeEventTarget(annotated), probeEventTarget(untypedEventTarget()), probeEventTarget(new HolderEventTarget(untypedEventTarget()).held), list.map(probeEventTarget).join(), probeEventTarget(throughEventTarget()), probeEventTarget(untypedEventTarget() as TargetLike), probeEventTarget(map.get("k")!));
+}
+function probeBuffer(x: BytesLike): string { return String(x.length) + x.byteLength; }
+class HolderBuffer { held: BytesLike; constructor(held: BytesLike) { this.held = held; } }
+function untypedBuffer(): any { return Buffer.from("abcd"); }
+function throughBuffer(): BytesLike { return untypedBuffer(); }
+{
+  const annotated: BytesLike = untypedBuffer();
+  const list: BytesLike[] = [new FakeBytes(), untypedBuffer()];
+  list.push(untypedBuffer());
+  const map = new Map<string, BytesLike>();
+  map.set("k", untypedBuffer());
+  console.log("Buffer", probeBuffer(annotated), probeBuffer(untypedBuffer()), probeBuffer(new HolderBuffer(untypedBuffer()).held), list.map(probeBuffer).join(), probeBuffer(throughBuffer()), probeBuffer(untypedBuffer() as BytesLike), probeBuffer(map.get("k")!));
+}
+function probeBunfile(x: BlobLike): string { return typeof x.size + x.type; }
+class HolderBunfile { held: BlobLike; constructor(held: BlobLike) { this.held = held; } }
+function untypedBunfile(): any { return Bun.file("/nowhere/at-all.txt"); }
+function throughBunfile(): BlobLike { return untypedBunfile(); }
+{
+  const annotated: BlobLike = untypedBunfile();
+  const list: BlobLike[] = [new FakeBlob(), untypedBunfile()];
+  list.push(untypedBunfile());
+  const map = new Map<string, BlobLike>();
+  map.set("k", untypedBunfile());
+  console.log("Bun.file", probeBunfile(annotated), probeBunfile(untypedBunfile()), probeBunfile(new HolderBunfile(untypedBunfile()).held), list.map(probeBunfile).join(), probeBunfile(throughBunfile()), probeBunfile(untypedBunfile() as BlobLike), probeBunfile(map.get("k")!));
+}
+function probeTimer(x: TimerLike): string { return String(x.unref().hasRef()); }
+class HolderTimer { held: TimerLike; constructor(held: TimerLike) { this.held = held; } }
+function untypedTimer(): any { return setTimeout(() => {}, 0); }
+function throughTimer(): TimerLike { return untypedTimer(); }
+{
+  const annotated: TimerLike = untypedTimer();
+  const list: TimerLike[] = [new FakeTimer(), untypedTimer()];
+  list.push(untypedTimer());
+  const map = new Map<string, TimerLike>();
+  map.set("k", untypedTimer());
+  console.log("Timer", probeTimer(annotated), probeTimer(untypedTimer()), probeTimer(new HolderTimer(untypedTimer()).held), list.map(probeTimer).join(), probeTimer(throughTimer()), probeTimer(untypedTimer() as TimerLike), probeTimer(map.get("k")!));
+}
+function probeStats(x: StatsLike): string { return typeof x.size + typeof x.mtime.getTime() + x.isDirectory(); }
+class HolderStats { held: StatsLike; constructor(held: StatsLike) { this.held = held; } }
+function untypedStats(): any { return statSync("/"); }
+function throughStats(): StatsLike { return untypedStats(); }
+{
+  const annotated: StatsLike = untypedStats();
+  const list: StatsLike[] = [new FakeStats(), untypedStats()];
+  list.push(untypedStats());
+  const map = new Map<string, StatsLike>();
+  map.set("k", untypedStats());
+  console.log("Stats", probeStats(annotated), probeStats(untypedStats()), probeStats(new HolderStats(untypedStats()).held), list.map(probeStats).join(), probeStats(throughStats()), probeStats(untypedStats() as StatsLike), probeStats(map.get("k")!));
+}
+//// host-value-cast-converts-nothing.ts
+// A cast to a primitive type is tested whoever gave the value: what the host gives throws a TypeError where it is of another kind. Nothing is converted, and null and undefined pass.
+interface Headers { [name: string]: string | string[] | number | undefined; ":status"?: number }
+declare const hostHeaders: Headers;
+declare function hostGives(): string;
+declare function hostCalls(f: (headers: Headers, code: string) => void): void;
+declare const hostObject: { text: string; count: number; flag: boolean; maybe?: string };
+(globalThis as any).hostHeaders = { ":status": 415, "x-n": 7, "x-s": "s", "x-b": true, "x-null": null };
+(globalThis as any).hostGives = () => 415;
+(globalThis as any).hostCalls = (f: Function) => f({ ":status": 415, "x-n": 7 }, 9);
+(globalThis as any).hostObject = { text: 5, count: "6", flag: "yes", maybe: 0 };
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).message.split(" (bun")[0]; } console.log(name + ": " + JSON.stringify(r)); };
+const kind = (v: unknown) => typeof v + " " + String(v);
+const key = ["x-n"][0];
+row("an index read as string", () => [kind(hostHeaders["x-n"] as string), kind(hostHeaders[key] as string), kind(hostHeaders[":status"] as unknown as string)]);
+row("compared", () => { const status = hostHeaders["x-n"] as string; return [(status as unknown) === 7, status == "7", kind(status)]; });
+row("stored to a variable without a type", () => { let status = hostHeaders["x-s"] as string; status = hostHeaders["x-n"] as string; return kind(status); });
+row("a member read as another primitive", () => [kind(hostObject.text as string), kind(hostObject.count as number), kind(hostObject.flag as boolean), kind(hostObject.maybe as string)]);
+row("a member read as another primitive, through unknown", () => [kind(hostObject.text as unknown as number), kind(hostObject.count as unknown as string)]);
+row("a result", () => [kind(hostGives() as string), kind(hostGives() as unknown as number)]);
+row("a parameter of a host callback", () => { const seen: string[] = []; hostCalls((headers, code) => { seen.push(kind(headers["x-n"] as string), kind(headers[":status"] as number), kind(code as string)); }); return seen; });
+row("null and undefined", () => [kind(hostHeaders["x-null"] as string), kind(hostHeaders["none"] as string)]);
+row("as the type says", () => [kind(hostHeaders["x-s"] as string), (hostHeaders["x-s"] as string).length, (hostHeaders["x-s"] as string).toUpperCase()]);
+row("used as the type says though it is not", () => [String((hostHeaders["x-n"] as string).length), (hostHeaders["x-n"] as string) + "!"]);
+//// instantiation-of-union.ts
+// A generic union of object types, one instantiation of which comes from JSON.
+declare const console: { log(...values: unknown[]): void };
+type Either<A, B> = { early: A; late?: undefined } | { late: B; early?: undefined };
+function text<A, B>(e: Either<A, B>): string {
+  if (e.early !== undefined) {
+    const early = e.early;
+    return 'early ' + String(early);
+  }
+  return 'late ' + String(e.late);
+}
+function make<A, B>(a: A): Either<A, B> {
+  return { early: a };
+}
+function keys(e: Either<number, string>): string {
+  return Object.keys(e).join();
+}
+const parsed = JSON.parse('{"early":"s"}') as Either<string, number>;
+console.log(text(parsed));
+const other = JSON.parse('{"late":4,"more":true}') as Either<string, number>;
+console.log(text(other), Object.keys(other).join());
+const made: Either<number, string> = { late: 'x' };
+console.log(text(made), keys(made));
+console.log(text(make<boolean, string>(true)));
+const list: Either<string, number>[] = [parsed, { early: 'own' }, other];
+console.log(list.map(e => text(e)).join());
+// Nothing is copied on the way: the names that the type does not say are there, and the object is itself.
+function names<A, B>(e: Either<A, B>): string {
+  return Object.keys(e).join();
+}
+function held<A, B>(e: Either<A, B>): Either<A, B> {
+  return e;
+}
+let kept: Either<boolean, number> | undefined;
+function keep(e: Either<boolean, number>): void {
+  kept = e;
+}
+console.log(names(other), held(other) === other, names(held(other)));
+const third = JSON.parse('{"late":5,"more":1}') as Either<boolean, number>;
+keep(third);
+console.log(kept === third, kept && names(kept));
+//// js-caller-import-forms/caller.js
+import * as space from "./typedA.ts";
+import byDefault from "./typedB.ts";
+import { Taker } from "./typedC.ts";
+const row = async (name, run) => { try { console.log(name + ": " + await run()); } catch (error) { console.log(name + ": THROWS " + String(error).split(" (bun")[0]); } };
+const plain = () => ({ id: 1, name: "given" });
+export async function run(handed) {
+  await row("through a namespace", () => space.one(plain()));
+  await row("a default export", () => byDefault(plain()));
+  await row("a constructor", () => new Taker(plain()).show());
+  await row("a dynamic import", async () => (await import("./typedD.ts")).one(plain()));
+  await row("a function that typed code hands over", () => handed(plain()));
+}
+//// js-caller-import-forms/main.ts
+// A JavaScript file reaches the functions of typed files through a namespace, a default export, a constructor, import(), require() and as a value that typed code hands over, and calls them with plain objects that have all the members of the class that the parameter names.
+import { run } from "./caller.js";
+import { one } from "./typedE.ts";
+import old from "./old.cjs";
+await run(one);
+console.log("required: " + old());
+//// js-caller-import-forms/old.cjs
+const typed = require("./typedF.ts");
+module.exports = function () { try { return typed.one({ id: 1, name: "given" }); } catch (error) { return "THROWS " + String(error).split(" (bun")[0]; } };
+//// js-caller-import-forms/typedA.ts
+export class UserA { id: number = 0; name: string = "made"; }
+export function one(u: UserA): string { return u.name + u.id + " " + (u instanceof UserA); }
+export default function byDefault(u: UserA): string { return one(u); }
+export class Taker { kept: UserA; constructor(u: UserA) { this.kept = u; } show(): string { return one(this.kept); } }
+export function own(): string { return one(new UserA()); }
+//// js-caller-import-forms/typedB.ts
+export class UserB { id: number = 0; name: string = "made"; }
+export function one(u: UserB): string { return u.name + u.id + " " + (u instanceof UserB); }
+export default function byDefault(u: UserB): string { return one(u); }
+export class Taker { kept: UserB; constructor(u: UserB) { this.kept = u; } show(): string { return one(this.kept); } }
+export function own(): string { return one(new UserB()); }
+//// js-caller-import-forms/typedC.ts
+export class UserC { id: number = 0; name: string = "made"; }
+export function one(u: UserC): string { return u.name + u.id + " " + (u instanceof UserC); }
+export default function byDefault(u: UserC): string { return one(u); }
+export class Taker { kept: UserC; constructor(u: UserC) { this.kept = u; } show(): string { return one(this.kept); } }
+export function own(): string { return one(new UserC()); }
+//// js-caller-import-forms/typedD.ts
+export class UserD { id: number = 0; name: string = "made"; }
+export function one(u: UserD): string { return u.name + u.id + " " + (u instanceof UserD); }
+export default function byDefault(u: UserD): string { return one(u); }
+export class Taker { kept: UserD; constructor(u: UserD) { this.kept = u; } show(): string { return one(this.kept); } }
+export function own(): string { return one(new UserD()); }
+//// js-caller-import-forms/typedE.ts
+export class UserE { id: number = 0; name: string = "made"; }
+export function one(u: UserE): string { return u.name + u.id + " " + (u instanceof UserE); }
+export default function byDefault(u: UserE): string { return one(u); }
+export class Taker { kept: UserE; constructor(u: UserE) { this.kept = u; } show(): string { return one(this.kept); } }
+export function own(): string { return one(new UserE()); }
+//// js-caller-import-forms/typedF.ts
+export class UserF { id: number = 0; name: string = "made"; }
+export function one(u: UserF): string { return u.name + u.id + " " + (u instanceof UserF); }
+export default function byDefault(u: UserF): string { return one(u); }
+export class Taker { kept: UserF; constructor(u: UserF) { this.kept = u; } show(): string { return one(this.kept); } }
+export function own(): string { return one(new UserF()); }
+//// js-caller-plain-object-arguments/caller.js
+import { one, many, keyed, held, Service, arrow, own } from "./typed.ts";
+const row = (name, run) => { try { console.log(name + ": " + run()); } catch (error) { console.log(name + ": THROWS " + String(error).split(" (bun")[0]); } };
+const plain = () => ({ id: 1, name: "given" });
+export function run() {
+  row("one", () => one(plain()));
+  row("many", () => many([plain(), plain()]));
+  row("keyed", () => keyed(new Map([["k", plain()]])));
+  row("held", () => held({ inner: plain() }));
+  row("a method", () => new Service().take(plain()));
+  row("a method with an array", () => new Service().all([plain()]));
+  row("an arrow function", () => arrow(plain()));
+  row("by value", () => [plain()].map(one).join());
+  row("own", () => own());
+}
+//// js-caller-plain-object-arguments/main.ts
+// A JavaScript file of the program calls typed functions, methods and constructors with plain objects that have all the members of the class that the parameter names. The class itself is never handed to it.
+import { run } from "./caller.js";
+run();
+//// js-caller-plain-object-arguments/typed.ts
+export class User { id: number = 0; name: string = "made"; }
+function show(u: User): string { return u.name + u.id + " " + (u instanceof User) + " " + Object.keys(u).join(); }
+export function one(u: User): string { return show(u); }
+export function many(users: User[]): string { return users.map(show).join(" | "); }
+export function keyed(users: Map<string, User>): string { return show(users.get("k")!); }
+export function held(holder: { inner: User }): string { return show(holder.inner); }
+export class Service { last: User = new User(); take(u: User): string { this.last = u; return show(this.last); } all(users: User[]): string { return many(users); } }
+export const arrow = (u: User): string => show(u);
+export function own(): string { return show(new User()); }
+//// json-into-class-array-with-methods.ts
+// Parsed data has no methods. Held to an array of a class that has one, it does not fit the type, and the program finds out where plain Bun finds out: its fields are read, `instanceof` says false, and the call of the method is the TypeError, not the read of the element.
+class Shouting { field: string = "made"; shout(): string { return this.field.toUpperCase(); } }
+function row(name: string, run: () => unknown) { try { console.log(name + ": " + String(run())); } catch (error) { console.log(name + ": THROWS " + (error as Error).name); } }
+const list: Shouting[] = JSON.parse('[{"field":"given"}]');
+list.push(new Shouting());
+row("the element", () => typeof list[0]);
+row("its field", () => list[0].field);
+row("instanceof", () => list[0] instanceof Shouting);
+row("its method", () => list[0].shout());
+row("whether it has the method", () => "shout" in list[0]);
+row("the one that was made", () => list[1].shout() + " " + (list[1] instanceof Shouting));
+row("all fields", () => list.map(each => each.field).join());
+row("all methods", () => list.map(each => each.shout()).join());
+//// json-parse-cached-names-and-strings-in-texts-of-both-widths.ts
+// JSON.parse remembers short names and strings by the bytes of the source. A 16-bit text has one byte for each character, and the same byte for every character outside Latin-1:
+// what is remembered from one text may be found again in a text of the other width only where equal bytes are equal characters.
+function codes(value: unknown): string {
+    const text = JSON.stringify(value);
+    let shown = "";
+    for (let i = 0; i < text.length; i++) shown += text.charCodeAt(i) < 127 ? text[i] : "<" + text.charCodeAt(i).toString(16) + ">";
+    return shown;
+}
+function widened(text: string): string { return (text + "中").slice(0, -1); }
+const texts = [
+    '{"ÿ":"ÿÿ","a":"ÿb","list":[{"ÿ":1},{"ÿ":2}]}',
+    '{"中":"中文","a":"中b","list":[{"中":1},{"文":2}]}',
+    '{"þ":"þþ","a":"þb","list":[{"þ":1},{"ÿ":2}]}',
+    '{"name":"Ada","a":"plain","list":[{"name":"Ada"},{"name":"Ada"}]}',
+    '{"name":"Ada","a":"plain","list":[{"name":"Ada"},{"name":"中"}],"中":"Ada"}',
+    '{"café":"café","a":"café","list":[{"café":"café"}]}',
+    '{"cafй":"cafй","a":"cafй","list":[{"cafй":"cafй"}]}',
+];
+const lines: string[] = [];
+for (let round = 0; round < 3; round++) {
+    for (const text of texts) {
+        lines.push(codes(JSON.parse(text)));
+        lines.push(codes(JSON.parse(widened(text))));
+    }
+    for (const text of texts.slice().reverse()) lines.push(codes(JSON.parse(widened(text))) + codes(JSON.parse(text)));
+}
+console.log(lines.join("\n"));
+//// json-parse-closes-8-bit-texts-in-compiled-code.ts
+// Compiled code closes the text of a parse into a declared type itself where the value ends the text and the run time owns nothing for it. The run time is
+// asked to close a text that goes on behind the value, which it reads to the end, and a 16-bit text, whose original characters it holds.
+// Only the jsc shell with --aotCountsPath=<path> can count. Elsewhere the program checks the answers alone.
+declare const aotOperationCount: undefined | ((name: string) => number);
+const canCount = typeof aotOperationCount === "function";
+const closedByRunTime = () =>
+  typeof aotOperationCount === "function" ? aotOperationCount("operationAOTJSONSourceClose") : 0;
+
+interface Point {
+  x: number;
+  y: number;
+  label: string;
+}
+function parsePoint(text: string): Point {
+  return JSON.parse(text) as Point;
+}
+function sumOf(texts: string[], rounds: number): number {
+  let sum = 0;
+  for (let round = 0; round < rounds; round++) {
+    for (let index = 0; index < texts.length; index++) {
+      const point = parsePoint(texts[index]);
+      sum += point.x * 3 + point.y + point.label.length;
+    }
+  }
+  return sum;
+}
+
+const rounds = 200;
+const narrowTexts = ['{"x":1,"y":2,"label":"a"}', ' {"x":3,"y":4,"label":"bc"}', '{"x":5,"y":6,"label":"é"}'];
+const paddedTexts = ['{"x":1,"y":2,"label":"a"}\n', '{"x":3,"y":4,"label":"bc"} \t '];
+const wideTexts = ['{"x":1,"y":2,"label":"日"}', '{"x":3,"y":4,"label":"日本"}'];
+sumOf(narrowTexts, 1);
+sumOf(paddedTexts, 1);
+sumOf(wideTexts, 1);
+
+const before = closedByRunTime();
+console.log("8-bit texts: " + sumOf(narrowTexts, rounds) + ", closed by the run time: " + (closedByRunTime() - before));
+
+function reportClosedByRunTime(label: string, texts: string[]): void {
+  const before = closedByRunTime();
+  const sum = sumOf(texts, rounds);
+  const closes = closedByRunTime() - before;
+  console.log(label + ": " + sum + ", all closed by the run time: " + (!canCount || closes === rounds * texts.length));
+}
+reportClosedByRunTime("8-bit texts with white space at the end", paddedTexts);
+reportClosedByRunTime("16-bit texts", wideTexts);
+
+for (const text of ['{"x":1,"y":2,"label":"a"} x', '{"x":1,"y":2,"label":"a"}}', '{"x":1,"y":2,"label":"a"']) {
+  try {
+    console.log(JSON.stringify(parsePoint(text)));
+  } catch (error) {
+    console.log((error as Error).name);
+  }
+}
+console.log("after the failures: " + sumOf(narrowTexts, 2));
+//// json-parse-elements-that-differ-from-the-one-in-front.ts
+// The elements of an array are parsed with the names of the element in front at hand. Every way in which an element may differ from the one in front, in 8-bit and in 16-bit texts.
+const texts = [
+    '[{"a":1,"b":2},{"a":3,"b":4},{"a":5,"b":6}]',
+    '[{"a":1,"b":2},{"a":3},{"a":5,"b":6},{"a":7,"b":8,"c":9},{"a":1,"b":2}]',
+    '[{"a":1,"b":2},{"b":3,"a":4},{"a":5,"b":6},{"b":7,"a":8}]',
+    '[{"a":1,"b":2},{"a":3,"c":4},{"a":5,"b":6},{"a":7,"c":8},{"a":9,"c":10}]',
+    '[{"a":1,"b":2},{"ab":3,"b":4},{"a" :5,"b": 6},{ "a":7 , "b":8 },{"a":\n9,"b":\t10}]',
+    '[{"a":1,"a":2},{"a":3,"a":4},{"a":5}]',
+    '[{},{"a":1},{},{"a":2},{"a":3}]',
+    '[{"a":{"x":[{"p":1},{"p":2},{"q":3}]},"b":1},{"a":{"x":[{"p":4},{"q":5}]},"c":2},{"a":{"x":[]},"b":3}]',
+    '[{"aVeryLongNameOfAMemberIndeed":1,"b":2},{"aVeryLongNameOfAMemberIndeed":3,"b":4},{"aVeryLongNameOfAMemberIndeeX":5,"b":6}]',
+    '[{"fourteenBytes":1,"b":2},{"fourteenBytes":3,"b":4},{"fourteenBytez":5,"b":6},{"thirteenByte":7},{"thirteenByte":8}]',
+    '[{"a":1,"b":"x","c":true,"d":null,"e":1.5,"f":[1],"g":{"h":1}},{"a":-1,"b":"y","c":false,"d":null,"e":1e3,"f":[],"g":{}},{"a":0,"b":"","c":true,"d":0,"e":-0,"f":[[]],"g":{"h":2}}]',
+    '[{"0":1,"a":2},{"0":3,"a":4},{"a":5,"0":6}]',
+    '[{"__proto__":1,"a":2},{"__proto__":3,"a":4},{"a":5}]',
+    '[{"\\u0061":1,"b":2},{"a":3,"b":4},{"\\u0061":5,"b":6}]',
+    '[{"é":1,"b":2},{"é":3,"b":4},{"e":5,"b":6}]',
+    '[{"中":1,"b":2},{"中":3,"b":4},{"丮":5,"b":6}]',
+    '[[{"a":1}],[{"a":2},{"a":3}],{"a":4},{"a":5},1,{"a":6},"s",{"a":7}]',
+    '[' + Array.from({ length: 20 }, (_, i) => '{' + Array.from({ length: 15 }, (_, j) => `"k${j}":${i + j}`).join() + '}').join() + ']',
+    '[' + Array.from({ length: 6 }, (_, i) => '{' + Array.from({ length: 70 }, (_, j) => `"k${j}":${i + j}`).join() + '}').join() + ']',
+];
+const bad = ['[{"a":1,"b":2},{"a":3,"b":4]', '[{"a":1,"b":2},{"a":3,"b"}]', '[{"a":1},{"a":}]', '[{"a":1},{"a":1,}]', '[{"a":1},{"a" 1}]', '[{"a":1},{"a":01}]', '[{"a":1},{"a":1', '[{"a":1},{"a"'];
+const launder = new Function("value", process.argv[2] ?? "return value") as <V>(value: V) => V;
+const parse = launder(JSON.parse);
+const lines: string[] = [];
+for (let round = 0; round < 3; round++) {
+    for (const text of texts) {
+        const value = parse(text) as unknown[];
+        lines.push(JSON.stringify(value) + " " + value.map(element => element !== null && typeof element === "object" ? Object.keys(element).join("") : typeof element).join());
+        lines.push(JSON.stringify(new TextDecoder().decode(new TextEncoder().encode(text)) === text));
+    }
+    for (const text of bad) {
+        try { parse(text); lines.push("parsed"); } catch (error) { lines.push((error as Error).name); }
+    }
+}
+let hash = 0;
+for (const line of lines) for (let i = 0; i < line.length; i++) hash = (hash * 31 + line.charCodeAt(i)) | 0;
+console.log(lines.length, hash);
+console.log(lines.slice(0, 46).map(line => line.length > 300 ? line.slice(0, 150) + ".." + line.slice(-150) : line).join("\n"));
+//// json-parse-into-a-union-that-contains-itself-takes-linear-time.ts
+// JSON.parse(text) without a type argument, returned as a union of records that contains itself: the time grows with the length of the text, not by a factor for each level.
+type ByName = { below: ByName | null; a: number } | { below: ByName | null; b: number };
+type ByKind = { below: ByKind | null; k: number } | { below: ByKind | null; k: string };
+type ByTag = { below: ByTag | null; k: "one" } | { below: ByTag | null; k: "two" };
+type InLists = { below: InLists[]; k: number[] } | { below: InLists[]; k: string[] };
+type Forked = { left: Forked | null; right: Forked | null; k: 1 } | { left: Forked | null; right: Forked | null; k: 2 };
+
+const byName = (text: string): ByName => JSON.parse(text);
+const byKind = (text: string): ByKind => JSON.parse(text);
+const byTag = (text: string): ByTag => JSON.parse(text);
+const inLists = (text: string): InLists => JSON.parse(text);
+const forked = (text: string): Forked => JSON.parse(text);
+
+const nest = (open: string, middle: string, close: string, levels: number) => open.repeat(levels) + middle + close.repeat(levels);
+const kinds: [string, (text: string) => unknown, (levels: number) => string][] = [
+  ["other names", byName, levels => nest('{"below":', "null", ',"b":1}', levels)],
+  ["a number or a string", byKind, levels => nest('{"below":', "null", ',"k":"s"}', levels)],
+  ["text tags", byTag, levels => nest('{"below":', "null", ',"k":"two"}', levels)],
+  ["lists", inLists, levels => nest('{"below":[', "", '],"k":["s"]}', levels)],
+  ["two nested members", forked, levels => nest('{"left":null,"right":', "null", ',"k":2}', levels)],
+];
+
+for (const [label, parse, text] of kinds) {
+  for (const levels of [1, 20, 40, 200, 2000]) {
+    const given = text(levels);
+    const start = Date.now();
+    const isSame = JSON.stringify(parse(given)) === given;
+    console.log(label + ", " + levels + " levels: " + (isSame ? "what JSON.parse gives" : "ANOTHER VALUE") + (Date.now() - start > 1000 ? " TOO SLOWLY" : ""));
+  }
+}
+//// json-parse-into-small-and-large-declared-types.ts
+// JSON.parse(text) that goes to a declared type is read by a parser compiled for the type, of three members or of twenty. A text that the compiled parser does not take goes to the engine's parser.
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+interface Order {
+  customer: { id: number; name: string };
+  items: { sku: string; quantity: number }[];
+  coupon?: string;
+}
+interface Settings {
+  a01: number; a02: number; a03: number; a04: number; a05: number; a06: number; a07: number; a08: number; a09: number; a10: number;
+  b01: string; b02: string; b03: string; b04: string; b05: string; b06: string; b07: string; b08: string; b09: string; b10: string;
+}
+////= lines-5	order	Order
+////= lines-5	settings	Settings
+const names = ["operationAOTJSONSourceOpen", "operationAOTJSONSourceAbandon"];
+function measure(label: string, read: (text: string) => unknown, text: string, isTaken?: boolean) {
+  const before = names.map(name => (counted ? counted(name) : 0));
+  const value = read(text);
+  const [entered, givenUp] = names.map((name, at) => (counted ? counted(name) : 0) - before[at]!);
+  const isAsExpected = !counted || (entered === 1 && (isTaken === undefined || givenUp === (isTaken ? 0 : 1)));
+  const expected = JSON.parse(text, (_, held) => held);
+  const isRight = JSON.stringify(value) === JSON.stringify(expected);
+  console.log(label + ": " + (isAsExpected ? "as expected" : "compiled parsers entered " + entered + ", given up " + givenUp) + ", " + (isRight ? "right" : "WRONG"));
+}
+const anOrder: Order = { customer: { id: 1, name: "n" }, items: [{ sku: "a", quantity: 2 }, { sku: "b", quantity: 3 }], coupon: "c" };
+const someSettings: Settings = {
+  a01: 1, a02: 2, a03: 3, a04: 4, a05: 5, a06: 6, a07: 7, a08: 8, a09: 9, a10: 10,
+  b01: "1", b02: "2", b03: "3", b04: "4", b05: "5", b06: "6", b07: "7", b08: "8", b09: "9", b10: "10",
+};
+measure("a small type", order, JSON.stringify(anOrder), true);
+measure("a small type, again", order, JSON.stringify(anOrder), true);
+measure("a small type, indented, for the first time", order, JSON.stringify(anOrder, null, 2));
+measure("a small type, indented, for the second time", order, JSON.stringify(anOrder, null, 2));
+for (let turn = 0; turn < 14; turn++) order(JSON.stringify(anOrder, null, 2));
+measure("a small type, indented, for the seventeenth time", order, JSON.stringify(anOrder, null, 2));
+measure("a small type, indented, for the eighteenth time", order, JSON.stringify(anOrder, null, 2));
+measure("a large type", settings, JSON.stringify(someSettings), true);
+measure("a large type, again", settings, JSON.stringify(someSettings), true);
+measure("a large type, indented", settings, JSON.stringify(someSettings, null, 2));
+measure("a large type, its keys the other way round", settings, JSON.stringify(Object.fromEntries(Object.entries(someSettings).reverse())));
+measure("a large type, but an array comes", settings, "[1,2,3]", false);
+//// json-parse-kinds-seen-while-the-first-texts-go-by.ts
+// The parser that expects keys lets sixteen texts of a beginning go by. If there are two to eight kinds among them (a kind: the first two strings of a text), the beginning starts told apart: each kind has a root shape and a credit of its own, and a kind that is served badly is not carried by one that is served well. A first value that is new every time, or one of many, names no kind.
+function measure(label: string, count: number, make: (at: number) => string) {
+  let wrong = 0;
+  for (let at = 0; at < count; at++) {
+    const text = make(at);
+    const value: unknown = JSON.parse(text);
+    if (JSON.stringify(value) !== text) wrong++;
+  }
+  console.log(label + ": " + count + " texts, " + wrong + " wrong");
+}
+measure("two kinds in turn", 100, at => (at % 2 ? '{"sort":"red","r":' + at + ',"s":2}' : '{"sort":"blue","b":"x","at":' + at + "}"));
+measure("one kind", 100, at => '{"state":"on","n":' + at + "}");
+measure("a first value that is new every time", 100, at => '{"token":"t' + at + '","n":1}');
+measure("twenty first values in turn", 100, at => '{"group":"g' + (at % 20) + '","n":' + at + "}");
+measure("a rare kind comes first", 100, at => (at ? '{"event":"' + (at % 2 ? "open" : "shut") + '","at":' + at + "}" : '{"event":"hello","version":1}'));
+measure("three rare kinds come first", 100, at => (at > 3 ? '{"phase":"' + (at % 2 ? "rise" : "fall") + '","at":' + at + "}" : '{"phase":"' + ["one", "one", "two", "three"][at] + '","version":1}'));
+const prose = "word ".repeat(400);
+measure("a small kind and one of long strings", 600, at => (at % 8 ? '{"part":"small","n":' + at + "}" : '{"part":"large","body":"' + prose + at + '"}'));
+//// json-parse-learns-the-keys.ts
+// JSON.parse without a reviver goes by the keys it has seen at each place, once sixteen texts that begin with the same eight characters have gone by. Whatever comes then, keys in another order, absent, new, repeated or escaped, another kind of value, no JSON at all, the answer is that of the general parser.
+const order = '{"customer":{"id":1,"name":"n"},"items":[{"sku":"a","quantity":2},{"sku":"b","quantity":3}],"coupon":"c"}';
+function measure(label: string, text: string, parse: (text: string) => unknown = text => JSON.parse(text), isSeenBefore = true) {
+  if (isSeenBefore) {
+    for (let turn = 0; turn < 4; turn++) JSON.parse(order);
+    for (let turn = text.startsWith('{"customer"') ? 1 : 16; turn > 0; turn--) {
+      try {
+        JSON.parse(text);
+      } catch {}
+    }
+  }
+  let seen: string;
+  try {
+    seen = JSON.stringify(parse(text)) === JSON.stringify(JSON.parse(text, (_, held) => held)) ? "right" : "WRONG";
+  } catch (error) {
+    seen = (error as Error).name;
+  }
+  console.log(label + ": " + seen);
+}
+measure("a text that begins as none before", order, undefined, false);
+measure("the second that begins so", order, undefined, false);
+for (let turn = 0; turn < 13; turn++) JSON.parse(order);
+measure("the sixteenth", order, undefined, false);
+measure("the seventeenth", order, undefined, false);
+measure("the eighteenth", order, undefined, false);
+measure("indented", JSON.stringify(JSON.parse(order), null, 2));
+measure("another order of keys", '{"items":[{"quantity":2,"sku":"a"}],"coupon":"c","customer":{"name":"n","id":1}}');
+measure("a key is absent", '{"customer":{"id":1},"items":[]}');
+measure("a key more", '{"customer":{"id":1,"name":"n","vip":true},"items":[],"coupon":"c","note":"x"}');
+measure("another kind of object", '{"title":"t","body":"b","tags":["x","y"]}');
+measure("the first kind again", order);
+measure("another kind of value at a place", '{"customer":5,"items":{"sku":"a"},"coupon":[1,{"deep":true}]}');
+measure("a repeated key", '{"customer":{"id":1,"id":2},"items":[]}');
+measure("an escaped key", '{"customer":{"\\u0069d":1},"items":[]}');
+measure("a key that is an index", '{"customer":{"0":1},"items":[]}');
+measure("__proto__", '{"customer":{"__proto__":1},"items":[]}');
+measure("a list at the root", "[" + order + "," + order + "]");
+measure("a number", "5");
+measure("no JSON", '{"customer":');
+measure("an undefined reviver", order, text => JSON.parse(text, undefined));
+measure("a reviver", order, text => JSON.parse(text, (_, held) => held));
+let dictionary = "{";
+for (let i = 0; i < 60; i++) dictionary += (i ? "," : "") + '"key' + i + '":{"value":' + i + ',"name":"n","ok":true,"note":null,"more":[1,2,3],"last":"the last of six"}';
+measure("sixty keys", '{"table":' + dictionary + "}}");
+measure("sixty keys again", '{"table":' + dictionary + "}}");
+measure("sixty other keys", '{"table":' + dictionary.replaceAll("key", "other") + "}}");

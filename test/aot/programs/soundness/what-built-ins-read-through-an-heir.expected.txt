@@ -1,0 +1,47 @@
+NumberFormat: 50.0%
+toLocaleDateString: 1970
+toLocaleString: 1,235
+localeCompare: 0
+Request: POST
+Response: 201
+Headers: null
+TextDecoder: true
+readFileSync: threw Error
+defineProperty: {"k":1}
+defineProperties: {"k":2}
+Object.create descriptors: {"k":3}
+Reflect.defineProperty: 4
+Proxy handler: trapped
+Array.from array-like: a,b
+join.call: x,y
+apply list: 9
+Reflect.apply list: 3
+spread of inherited iterator: 1,2
+Map of inherited iterator: v
+String: text
+template: templated
+Number: 4
+toPrimitive: 12
+toJSON: 7
+stringify replacer list: {"a":1,"b":2}
+replace: replaced
+split: split
+instanceof: true
+concat: c
+Error cause: 5
+toStringTag: [object Tagged]
+species: false
+sort comparator result: 2,1
+Object.assign source getter: {}
+with unscopables: 0
+structuredClone options: 1
+Intl.Segmenter: 3
+padStart filler: 001
+new Date: 0
+Symbol description: described
+parseInt: 42
+Array length: 2
+key: 1
+thenable: 5
+await thenable: 6
+all: 8

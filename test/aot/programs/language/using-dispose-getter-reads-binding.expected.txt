@@ -1,0 +1,31 @@
+block throws ReferenceError
+block body block
+block disposed
+function throws ReferenceError
+function disposed
+function
+second, earlier binding reads first
+second, own binding throws ReferenceError
+second, later binding throws ReferenceError
+list body
+third disposed
+second disposed
+first disposed
+loop head throws ReferenceError
+loop body loop head
+loop head disposed
+for-of throws ReferenceError
+for-of body for-of
+for-of disposed
+getter throws throws ReferenceError
+caught RangeError
+async throws ReferenceError
+async body async
+async disposed
+async fallback, asyncDispose throws ReferenceError
+async fallback, dispose throws ReferenceError
+async fallback body async fallback
+async fallback disposed
+module throws ReferenceError
+end of module module
+module disposed

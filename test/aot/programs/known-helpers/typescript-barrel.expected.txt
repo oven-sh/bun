@@ -1,0 +1,24 @@
+alpha deep undefined true false
+__esModule: value=true writable=false enumerable=false configurable=false
+ALPHA: get=function() { return m[k]; } set=undefined enumerable=true configurable=false
+BETA: get=function() { return m[k]; } set=undefined enumerable=true configurable=false
+counter: get=function() { return m[k]; } set=undefined enumerable=true configurable=false
+gamma: get=function() { return m[k]; } set=undefined enumerable=true configurable=false
+bump: get=function() { return m[k]; } set=undefined enumerable=true configurable=false
+deep: get=function() { return m[k]; } set=undefined enumerable=true configurable=false
+ALPHA,BETA,counter,gamma,bump,deep
+alpha beta 3 0 deep undefined
+1 1
+changed
+true
+{"ALPHA":"changed","BETA":"beta","counter":1,"deep":"deep"} {"ALPHA":"changed","BETA":"beta","counter":1,"deep":"deep"}
+early+seen early,seen,sawOfA,late sawOfA,early,seen
+early early+seen undefined early+seen
+deeper deeper hidden by the first star
+store threw TypeError Attempted to assign to readonly property.
+delete threw TypeError Unable to delete property.
+redefine threw TypeError Attempting to change access mechanism for an unconfigurable property.
+define the same true
+undefined true ALPHA,counter,gamma,bump,default
+back ALPHA,counter,gamma,bump,default,BETA
+ALPHA,BETA,counter,gamma,bump,deep,added true false

@@ -1,0 +1,131 @@
+//// split-stores-into-what-the-species-of-the-pattern-answers.js
+// String.prototype.split asks the pattern for Symbol.split, which constructs the species and stores lastIndex into the answer.
+class A {
+  ga = { qb: 1 };
+}
+const inst = new A();
+inst.exec = () => null;
+const pattern = /,/;
+pattern.constructor = {
+  [Symbol.species]: function () {
+    return inst;
+  },
+};
+console.log("a,b".split(pattern).length + typeof inst.lastIndex);
+console.log(Object.keys(inst).join("+"), typeof inst.lastIndex);
+//// split-stores-into-what-the-species-of-the-pattern-assigns-to.js
+// The species function puts an object under lastIndex first; split then stores a number there.
+class A {
+  ga = { qb: 1 };
+}
+const inst = new A();
+inst.exec = () => null;
+const pattern = /,/;
+pattern.constructor = {
+  [Symbol.species]: function () {
+    return Object.assign(inst, { lastIndex: inst.ga });
+  },
+};
+console.log("a,b".split(pattern).length + typeof inst.lastIndex);
+console.log(Object.keys(inst).join("+"), typeof inst.lastIndex);
+//// split-stores-into-a-literal-that-the-species-of-the-pattern-answers.js
+const held = { a: 1, b: 2 };
+held.exec = () => null;
+const pattern = /,/;
+pattern.constructor = {
+  [Symbol.species]: function () {
+    return held;
+  },
+};
+console.log("a,b".split(pattern).length + typeof held.lastIndex);
+console.log(Object.keys(held).join("+"), held.lastIndex);
+//// match-all-stores-into-what-the-species-of-the-pattern-answers.js
+class A {
+  ga = { qb: 1 };
+}
+const inst = new A();
+inst.exec = () => null;
+const pattern = /,/g;
+pattern.constructor = {
+  [Symbol.species]: function () {
+    return inst;
+  },
+};
+console.log("a,b".matchAll(pattern)[Symbol.toStringTag] + typeof inst.lastIndex);
+console.log(Object.keys(inst).join("+"), typeof inst.lastIndex);
+//// split-runs-the-species-getter-of-a-class-below-regexp.js
+let made;
+class Mine extends RegExp {
+  static get [Symbol.species]() {
+    return Other;
+  }
+}
+class Other {
+  ga = 1;
+  constructor() {
+    made = this;
+  }
+  exec() {
+    return null;
+  }
+}
+const pattern = new Mine(",");
+console.log("a,b".split(pattern).length + typeof made.lastIndex);
+console.log(Object.keys(made).join("+"), made.lastIndex);
+//// split-in-a-timer-runs-the-species-getter-of-a-class-below-regexp.js
+let made;
+class Mine extends RegExp {
+  static get [Symbol.species]() {
+    return Other;
+  }
+}
+class Other {
+  ga = 1;
+  constructor() {
+    made = this;
+  }
+  exec() {
+    return null;
+  }
+}
+setTimeout(
+  given => {
+    console.log("a,b".split(given).length + typeof made.lastIndex);
+    console.log(Object.keys(made).join("+"), made.lastIndex);
+  },
+  0,
+  new Mine(","),
+);
+//// split-by-a-pattern-or-a-parsed-value-stores-into-what-the-species-answers.js
+class A {
+  ga = 1;
+}
+const inst = new A();
+inst.exec = () => null;
+const pattern = /,/;
+pattern.constructor = {
+  [Symbol.species]: function () {
+    return inst;
+  },
+};
+function pick(first) {
+  return first ? pattern : JSON.parse("{}");
+}
+console.log("a,b".split(pick(process.argv.length > 0)).length + typeof inst.lastIndex);
+console.log(Object.keys(inst).join("+"), inst.lastIndex);
+//// split-by-a-pattern-kept-in-a-parsed-holder-stores-into-what-the-species-answers.js
+class A {
+  ga = 1;
+}
+const inst = new A();
+inst.exec = () => null;
+const pattern = /,/;
+pattern.constructor = {
+  [Symbol.species]: function () {
+    return inst;
+  },
+};
+const holder = JSON.parse("{}");
+holder.kept = pattern;
+console.log("a,b".split(holder.kept).length + typeof inst.lastIndex);
+console.log(Object.keys(inst).join("+"), inst.lastIndex);

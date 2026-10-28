@@ -1,0 +1,1267 @@
+////: fill
+function fill(into: Outer[], rows: number, columns: number): void {
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const i = row * columns + column;
+      into.push({ inner: { count: i, l«1» }, tag: i });
+    }
+  }
+}
+////: fill-2
+function fill(into: Outer[], rows: number, columns: number): void {
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const i = row * columns + column;
+      into.push({ inner: { count: i, label: "label" + i, list: [i, i + 1«1» }, tag: i });
+    }
+  }
+}
+////: for
+for (let round = 0; round < 3; round++) {
+  const outers: Outer[] = [];
+  fill(outers, 10, 10);
+  let next = 0;
+  for (const [name, way] of ways) {
+    current = outers[next++];
+    console.log(round, name + ":", way(current));
+    sink.length = 0;
+  }
+  console.log(round, "swap:", swap(outers[next++], outers[next++]));
+  console.log(round, "give:", give(outers[next++], outers[next++]));
+  if (round === 1) fullGC();
+}
+////: give
+function give(x: Outer, y: Outer): string {
+  const c = x.inner, d = y.inner;
+  y.inner = x.inner;
+  c.count += 100;
+  d.count += 200;
+  return show(c) + " " + show(d) + " " + show(y.inner) + " " + (x.inner === y.inner);
+}
+////: lines
+{
+  const kept = new Array<ReturnType<typeof «1»>>(N);
+  alive.push(kept);
+  const before = collect();
+  for (let i = 0; i < N; i++) kept[i] = «1»(i);
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum += «2»(kept[i]);
+  report(«3», sum, before, typeof kept[sum % N]);
+}
+////: swap
+function swap(x: Outer, y: Outer): string {
+  const c = x.inner, d = y.inner;
+  const held = x.inner;
+  x.inner = y.inner;
+  y.inner = held;
+  c.count += 100;
+  d.count += 200;
+  return show(c) + " " + show(d) + " " + show(x.inner) + " " + show(y.inner) + " " + (x.inner === d) + (y.inner === c);
+}
+////: ways
+const ways: [string, Way][] = [
+  ["push", x => { const c = x.inner; const a = c.count; sink.push(x.inner); c.count += 100; return a + " " + show(c) + " " + show(x.inner); }],
+  ["spread", x => { const c = x.inner; const a = c.count; const copy = { ...x }; c.count += 100; return a + " " + show(c) + " " + show(copy.inner) + " " + (copy.inner === x.inner); }],
+  ["spread of it", x => { const c = x.inner; const copy = { ...x.inner }; c.count += 100; return show(c) + " " + show(copy) + " " + (copy === (x.inner as unknown)); }],
+  ["assign", x => { const c = x.inner; const copy = Object.assign({}, x); c.count += 100; return show(c) + " " + show(copy.inner) + " " + (copy.inner === x.inner); }],
+  ["assign into", x => { const c = x.inner; Object.assign(x, { tag: -1 }); c.count += 100; return show(c) + " " + x.tag; }],
+  ["values", x => { const c = x.inner; const values = Object.values(x); c.count += 100; return show(c) + " " + (values[0] === x.inner); }],
+  ["entries", x => { const c = x.inner; const entries = Object.entries(x); c.count += 100; return show(c) + " " + (entries[0][1] === x.inner); }],
+  ["keys", x => { const c = x.inner; const keys = Object.keys(x); c.count += 100; return show(c) + " " + keys.join(); }],
+  ["for in", x => { const c = x.inner; let found: unknown; for (const key in x) if (key === "inner") found = (x as any)[key]; c.count += 100; return show(c) + " " + (found === x.inner); }],
+  ["by key", x => { const c = x.inner; const key = sink.length >= 0 ? "inner" : "tag"; const found = (x as any)[key]; c.count += 100; return show(c) + " " + show(found); }],
+  ["stored by key", x => { const c = x.inner; const key = sink.length >= 0 ? "inner" : "tag"; (x as any)[key] = { count: -1, leaf: { id: -1 }, text: "other" }; c.count += 100; return show(c) + " " + show(x.inner); }],
+  ["json", x => { const c = x.inner; const text = JSON.stringify(x); c.count += 100; return show(c) + " " + text; }],
+  ["clone", x => { const c = x.inner; const clone = structuredClone(x); c.count += 100; return show(c) + " " + show(clone.inner); }],
+  ["getter", x => { const c = x.inner; const a = withGetter.trap; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["value of", x => { const c = x.inner; const a = (withValueOf as any) * 2; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["to string", x => { const c = x.inner; const a = `${withToString}`; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["to primitive", x => { const c = x.inner; const a = (withToPrimitive as any) + 1; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["proxy get", x => { const c = x.inner; const a = proxy.anything; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["proxy has", x => { const c = x.inner; const a = "anything" in proxy; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["iterator", x => { const c = x.inner; const [a] = iterable; c.count += 100; return a + " " + show(c) + " " + (sink[sink.length - 1] === c); }],
+  ["caught", x => { const c = x.inner; try { sink.push(x.inner); (null as any).nothing; } catch { c.count += 100; } return show(c) + " " + show(x.inner); }],
+  ["finally", x => { const c = x.inner; try { return show(c); } finally { sink.push(x.inner); c.count += 100; sink.push(show(c)); } }],
+  ["loop", x => { const c = x.inner; let sum = 0; for (let i = 0; i < 5; i++) { if (i === 2) sink.push(x.inner); c.count += 1; sum += c.count + c.leaf.id; } return sum + " " + show(x.inner); }],
+  ["other name", x => { const y = x; const c = x.inner; sink.push(y.inner); c.count += 100; return show(c) + " " + show(y.inner); }],
+  ["itself", x => { const c = x.inner; x.inner = x.inner; c.count += 100; return show(c) + " " + show(x.inner) + " " + (c === x.inner); }],
+  ["out of itself", x => { const c = x.inner; x.inner = { count: x.inner.count + 1, leaf: x.inner.leaf, text: x.inner.text + "!" }; c.count += 100; return show(c) + " " + show(x.inner) + " " + (c === x.inner); }],
+  ["null", x => { const c = x.inner; (x as any).inner = null; c.count += 100; return show(c) + " " + (x as any).inner; }],
+  ["deleted", x => { const c = x.inner; delete (x as any).inner; c.count += 100; return show(c) + " " + ("inner" in x); }],
+  ["frozen", x => { const c = x.inner; Object.freeze(x); c.count += 100; return show(c) + " " + show(x.inner) + " " + Object.isFrozen(x) + Object.isFrozen(x.inner); }],
+  ["it is frozen", x => { const c = x.inner; Object.freeze(x.inner); try { c.count += 100; } catch (error) { sink.push((error as Error).name); } return show(c) + " " + Object.isFrozen(c) + " " + sink[sink.length - 1]; }],
+  ["extra property", x => { const c = x.inner; (x.inner as any).extra = "extra"; c.count += 100; return show(c) + " " + (c as any).extra + " " + Object.keys(c).join(); }],
+  ["extra on the outer", x => { const c = x.inner; (x as any).extra = "extra"; c.count += 100; return show(c) + " " + show(x.inner) + " " + Object.keys(x).join(); }],
+  ["prototype", x => { const c = x.inner; Object.setPrototypeOf(x.inner, { inherited: "inherited" }); c.count += 100; return show(c) + " " + (c as any).inherited; }],
+  ["prototype of the outer", x => { const c = x.inner; Object.setPrototypeOf(x, { inherited: "inherited" }); c.count += 100; return show(c) + " " + show(x.inner) + " " + (x as any).inherited; }],
+  ["defined", x => { const c = x.inner; Object.defineProperty(x, "inner", { value: x.inner, writable: false, enumerable: false, configurable: true }); c.count += 100; return show(c) + " " + show(x.inner) + " " + Object.keys(x).join(); }],
+  ["accessor", x => { const c = x.inner; const kept = x.inner; Object.defineProperty(x, "inner", { get() { return kept; }, configurable: true }); c.count += 100; return show(c) + " " + show(x.inner); }],
+  ["descriptor", x => { const c = x.inner; const descriptor = Object.getOwnPropertyDescriptor(x, "inner")!; c.count += 100; return show(c) + " " + (descriptor.value === x.inner); }],
+  ["reflect", x => { const c = x.inner; const found = Reflect.get(x, "inner"); c.count += 100; return show(c) + " " + (found === x.inner); }],
+  ["collections", x => { const c = x.inner; const a = c.count; fullGC(); c.count += 100; edenGC(); return a + " " + show(c) + " " + show(x.inner); }],
+  ["collected after", x => { const c = x.inner; sink.push(x.inner); sink.pop(); fullGC(); c.count += 100; c.leaf = { id: -c.leaf.id }; edenGC(); return show(c) + " " + show(x.inner); }],
+];
+////: ways-2
+////= ways
+
+////= swap
+////= give
+
+////= for
+//// a-class-below-the-outer-layout.ts
+// The outer layout is a class, and another class extends it by way of a value: flow finds the base. Nobody holds the inner object, so its fields could become fields of the outer layout: the class below has the fields of its base at the same places.
+class Base { inner = { n: 1, m: 2 }; count = 3; sum() { return this.inner.n + this.inner.m + this.count; } bump() { this.inner.n += 10; } }
+function tagged(base: new () => Base) { return class extends base { tag = "tagged"; more = 4; all() { return this.sum() + this.more; } }; }
+const Made = tagged(Base);
+const made = new Made(), plain = new Base();
+made.bump(); plain.bump(); plain.bump();
+console.log(made.sum(), made.all(), made.tag, plain.sum(), made instanceof Base);
+const many: Base[] = [];
+for (let i = 0; i < 1000; i++) many.push(i & 1 ? new Made() : new Base());
+let sum = 0;
+for (const one of many) { one.bump(); sum += one.sum(); }
+console.log(sum);
+//// an-old-outer-object-gets-young-objects.ts
+// The outer objects have survived full collections. Then something young comes to lie in them, or behind their slot: stored through the inner object, laid in with a fresh inner object, or the inner object itself when it is made.
+// A collection of the young alone follows, and look-alikes overwrite whatever it has missed.
+import { edenGC, fullGC } from "bun:jsc";
+
+interface Leaf { v: number; w: number }
+interface Inner { r: Leaf; t: Leaf | null; n: number }
+interface Outer { a: Inner; id: number }
+const N = 24000;
+const kept: Outer[] = [];
+const trash: unknown[] = new Array(512);
+function make(i: number): Outer { return { a: { r: { v: i, w: -i }, t: null, n: i }, id: i }; }
+function churn(n: number): number {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const leaf: Leaf = { v: -1, w: -1 };
+    const inner: Inner = { r: leaf, t: null, n: -1 };
+    trash[i & 511] = i & 1 ? leaf : inner;
+    sum += inner.n;
+  }
+  return sum;
+}
+function collectTheYoung() { edenGC(); churn(120000); edenGC(); churn(120000); }
+function wrong(add: number): number {
+  let count = 0;
+  for (let i = 0; i < kept.length; i++) {
+    const x = kept[i];
+    if (x.a.r.v !== x.id + add || x.a.n !== x.id + add) count++;
+    if (x.a.t === null || x.a.t.v !== x.id + add) count++;
+  }
+  return count;
+}
+function storeThroughTheInnerObject(add: number) { for (let i = 0; i < kept.length; i++) { const x = kept[i]; x.a.t = { v: x.id + add, w: 0 }; x.a.r = { v: x.id + add, w: 1 }; x.a.n = x.id + add; } }
+function layFreshOnesIn(add: number) { for (let i = 0; i < kept.length; i++) { const x = kept[i]; x.a = { r: { v: x.id + add, w: 2 }, t: { v: x.id + add, w: 3 }, n: x.id + add }; } }
+// Object.keys wants the object, and lets go of it at once: from then on only the slot of the old outer object names it.
+function makeThem(): number { let count = 0; for (let i = 0; i < kept.length; i++) count += Object.keys(kept[i].a).length; return count; }
+
+for (let part = 0; part < 4; part++) for (let half = 0; half < 2; half++) for (let i = 0; i < N / 8; i++) kept.push(make(kept.length));
+fullGC(); fullGC();
+storeThroughTheInnerObject(1);
+collectTheYoung();
+console.log("stored through the inner object", wrong(1));
+fullGC(); fullGC();
+layFreshOnesIn(2);
+collectTheYoung();
+console.log("fresh ones laid in", wrong(2));
+fullGC(); fullGC();
+console.log("made", makeThem());
+collectTheYoung();
+console.log("made", wrong(2));
+fullGC(); fullGC();
+storeThroughTheInnerObject(3);
+collectTheYoung();
+console.log("stored through the object that was made", wrong(3));
+layFreshOnesIn(4);
+fullGC();
+console.log("laid in again", wrong(4), kept.length);
+//// an-outer-object-is-born-around-an-object-that-exists.ts
+// Most outer objects are born together with their inner object. Some are born around an object that exists already, in cells that held other pairs before.
+import { edenGC, fullGC } from "bun:jsc";
+
+type Inner = { count: number; label: string; list: number[]; other: object | null };
+type Outer = { inner: Inner; tag: number };
+
+////= fill-2	], other: { i }
+function around(inner: Inner, tag: number): Outer { return { inner, tag }; }
+
+// The same with an inner object of one field, in an outer object with many of its own.
+type Only = { ref: number[] };
+type Wide = { only: Only; a: number; b: string; c: number; d: string; e: number };
+function fillWide(into: Wide[], rows: number, columns: number): void {
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const i = row * columns + column;
+      into.push({ only: { ref: [i, i * 2] }, a: i, b: "b" + i, c: -i, d: "d" + i, e: i / 2 });
+    }
+  }
+}
+function aroundOnly(only: Only, i: number): Wide { return { only, a: i, b: "b" + i, c: -i, d: "d" + i, e: i / 2 }; }
+function showWide(wide: Wide): string { return `${wide.only.ref.join("+")} ${wide.a} ${wide.b} ${wide.c} ${wide.d} ${wide.e}`; }
+function show(outer: Outer): string { return `${outer.tag}:${outer.inner.count} ${outer.inner.label} ${outer.inner.list.join("+")} ${JSON.stringify(outer.inner.other)}`; }
+
+const given: Inner[] = [];
+function give(outer: Outer): void { given.push(outer.inner); }
+{
+  const first: Outer[] = [];
+  fill(first, 4, 4);
+  give(first[1]); give(first[5]); give(first[9]);
+}
+
+const givenOnly: Only[] = [];
+function giveOnly(wide: Wide): void { givenOnly.push(wide.only); }
+{
+  const first: Wide[] = [];
+  fillWide(first, 4, 4);
+  giveOnly(first[2]); giveOnly(first[6]);
+}
+
+const kept: Outer[] = [];
+const keptWide: Wide[] = [];
+let sum = 0;
+for (let round = 0; round < 30; round++) {
+  // Many pairs live and die, so that the free cells of their size are full of what they held.
+  let some: Outer[] | null = [];
+  fill(some, 16, 16);
+  sum += some[round].inner.list[1];
+  some = null;
+  let wide: Wide[] | null = [];
+  fillWide(wide, 16, 16);
+  sum += wide[round].only.ref[1];
+  wide = null;
+  if (round % 2) fullGC(); else edenGC();
+  for (let i = 0; i < 40; i++) kept.push(around(given[i % 3], round * 100 + i));
+  for (let i = 0; i < 40; i++) keptWide.push(aroundOnly(givenOnly[i % 2], round * 100 + i));
+  if (round % 3 === 0) fullGC(); else edenGC();
+  if (kept.length > 400) { kept.splice(0, 200); keptWide.splice(0, 200); }
+}
+fullGC();
+console.log(sum, kept.length, kept.every(outer => given.includes(outer.inner)));
+console.log(show(kept[0]), "|", show(kept[kept.length - 1]));
+console.log(keptWide.length, keptWide.every(wide => givenOnly.includes(wide.only)), showWide(keptWide[0]), "|", showWide(keptWide[keptWide.length - 1]));
+kept[0].inner = { count: -1, label: "new", list: [], other: null };
+edenGC();
+console.log(show(kept[0]), "|", show(kept[3]), "|", given.map(inner => inner.count).join());
+//// battery-with-given-leaves.ts
+// `const c = x.inner` and then something, seen or unseen, wants the object for itself before `c` is used again. Whatever it was, `c` names the one object.
+import { edenGC, fullGC } from "bun:jsc";
+
+type Leaf = { id: number };
+type Inner = { count: number; leaf: Leaf; text: string };
+type Outer = { inner: Inner; tag: number };
+
+const leaves: Leaf[] = [];
+for (let i = 0; i < 100; i++) leaves.push({ id: i });
+////= fill	eaf: leaves[i], text: "t" + i
+
+const sink: unknown[] = [];
+let current: Outer | null = null;
+function show(c: Inner): string { return c.count + "," + c.leaf.id + "," + c.text; }
+function takeCurrent(): number { sink.push(current!.inner); return 1; }
+
+const withGetter = { get trap(): number { return takeCurrent(); } };
+const withValueOf = { valueOf(): number { return takeCurrent(); } };
+const withToString = { toString(): string { takeCurrent(); return "s"; } };
+const withToPrimitive = { [Symbol.toPrimitive](): number { return takeCurrent(); } };
+const proxy = new Proxy({} as Record<string, number>, { get() { return takeCurrent(); }, has() { takeCurrent(); return true; } });
+const iterable = { *[Symbol.iterator]() { takeCurrent(); yield 1; } };
+
+type Way = (x: Outer) => string;
+////= ways-2
+//// births-that-are-not-one-literal-inside-another.ts
+// Births that are not one literal inside another: a shared inner object, stores between the births, a factory, a loop, either arm, two inner objects, nesting, an optional field.
+interface Inner { d: number; e: number }
+interface A { b: number; c: Inner }
+function shared(): number { const inner: Inner = { d: 1, e: 2 }; const x: A = { b: 1, c: inner }; const y: A = { b: 2, c: inner }; x.c.d = 5; return y.c.d; }
+console.log(shared());
+interface B { b: number; c: Inner }
+function storedBetween(flag: boolean): number { const inner: Inner = { d: 1, e: 2 }; if (flag) inner.d = 7; const x: B = { b: 1, c: inner }; inner.e = 9; return x.c.d + x.c.e; }
+console.log(storedBetween(true), storedBetween(false));
+interface C { b: number; c: Inner }
+function factory(i: number): Inner { return { d: i, e: i }; }
+function fromFactory(i: number): number { const x: C = { b: i, c: factory(i) }; x.c.d += 1; return x.c.d; }
+console.log(fromFactory(3));
+interface D { b: number; c: Inner }
+function inLoop(): number { const inner: Inner = { d: 0, e: 0 }; let last: D | null = null; for (let i = 0; i < 3; i++) { last = { b: i, c: inner }; last.c.d += 1; } return last!.c.d; }
+console.log(inLoop());
+interface E { b: number; c: Inner }
+function eitherArm(flag: boolean): number { const x: E = flag ? { b: 1, c: { d: 1, e: 1 } } : { b: 2, c: { d: 2, e: 2 } }; x.c.e += x.c.d; return x.c.e; }
+console.log(eitherArm(true), eitherArm(false));
+interface F { b: number; c: Inner; c2: Inner }
+function two(i: number): number { const x: F = { b: i, c: { d: i, e: 1 }, c2: { d: i * 10, e: 2 } }; x.c.d += x.c2.d; x.c2.e += x.c.e; return x.c.d * 100 + x.c2.e; }
+console.log(two(2));
+interface Leaf { v: number }
+interface Mid { leaf: Leaf; w: number }
+interface Top { mid: Mid; u: number }
+function nested(i: number): number { const x: Top = { mid: { leaf: { v: i }, w: i + 1 }, u: i + 2 }; x.mid.leaf.v += x.mid.w; return x.mid.leaf.v + x.u; }
+console.log(nested(1));
+interface Opt { d: number; e?: number }
+interface G { c: Opt }
+function optional(i: number): string { const x: G = { c: { d: i } }; const before = x.c.e; x.c.e = i; return before + ":" + x.c.e; }
+console.log(optional(4));
+//// both-objects-are-made-of-constants.ts
+// Every value in the two literals is a constant, so the compiler may keep either of them, or both, as data of the executable. Each evaluation still makes objects of its own.
+interface Inner { b: number; s: string }
+interface Outer { a: Inner; n: number }
+const lines: string[] = [];
+const say = (...parts: unknown[]) => lines.push(parts.map(String).join(" "));
+function make(): Outer { return { a: { b: 1, s: "one" }, n: 2 }; }
+function makeFrozen(): Readonly<{ a: Readonly<Inner>; n: number }> { return Object.freeze({ a: Object.freeze({ b: 1, s: "one" }), n: 2 }); }
+const TABLE = { first: { b: 1, s: "first" }, second: { b: 2, s: "second" } };
+const DEEP = { a: { a: { b: 3, s: "deep" }, n: 4 }, n: 5 };
+
+const list: Outer[] = [];
+for (let i = 0; i < 1000; i++) list.push(make());
+list[0].a.b = 5;
+list[1].a = { b: 7, s: "seven" };
+say(list[0].a.b, list[1].a.b, list[2].a.b, list[0].a === list[2].a, list[2].a === list[3].a, JSON.stringify(list[2]), JSON.stringify(list[0]));
+let sum = 0;
+for (const x of list) sum += x.a.b + x.a.s.length + x.n;
+say(sum);
+const held = list.map(x => x.a);
+held[4].b = 40;
+say(list[4].a.b, held[4] === list[4].a, new Set(held).size);
+
+const frozen = [makeFrozen(), makeFrozen()];
+say(frozen[0].a.b, frozen[0].a === frozen[1].a, Object.isFrozen(frozen[0].a), Object.isFrozen(frozen[0]));
+
+say(TABLE.first.b + TABLE.second.b, TABLE.first.s, Object.keys(TABLE).join(), JSON.stringify(TABLE));
+TABLE.first.b = 10;
+TABLE.second = { b: 20, s: "stored" };
+say(TABLE.first.b + TABLE.second.b, JSON.stringify(TABLE));
+say(DEEP.a.a.b, DEEP.a.n, JSON.stringify(DEEP));
+DEEP.a.a.b += 1;
+const inner = DEEP.a;
+DEEP.a = { a: { b: 30, s: "other" }, n: 40 };
+say(inner.a.b, DEEP.a.a.b, inner === DEEP.a);
+console.log(lines.join("\n"));
+//// look-alikes-arrive-by-native-roads.ts
+// A function reads `body.at.x`. Direct calls pass what `make` makes. Schedulers, promise reactions, event emitters, array callbacks, revivers, clones and Reflect pass on look-alikes: literals with an inner literal of their own, further names and other types.
+import { EventEmitter } from "node:events";
+
+interface Inner { x: number }
+interface Outer { at: Inner; mass: number }
+const seen: unknown[] = [];
+function weigh(body: Outer): void { seen.push(String(body.mass) + body.at.x); }
+function move(body: Outer): void { body.at.x += 1; seen.push(body.at.x); }
+function make(i: number): Outer { return { at: { x: i }, mass: i }; }
+const anything = (value: unknown) => value as any;
+
+weigh(make(1));
+move(make(2));
+
+process.nextTick(weigh, { mass: "tick", at: { x: "a" }, byNextTick: 1 });
+process.nextTick(move, { mass: "tick", at: { x: "b" }, byNextTickToo: 1 });
+setImmediate(weigh, anything({ mass: "immediate", at: { x: "c" }, bySetImmediate: 1 }));
+setTimeout(weigh, 0, anything({ mass: "timeout", at: { x: "d" }, bySetTimeout: 1 }));
+queueMicrotask(weigh.bind(null, anything({ mass: "microtask", at: { x: "e" }, byBind: 1 })));
+Promise.resolve(anything({ mass: "then", at: { x: "f" }, byThen: 1 })).then(weigh);
+Promise.reject(anything({ mass: "catch", at: { x: "g" }, byCatch: 1 })).catch(weigh);
+(async () => weigh(await anything({ mass: "await", at: { x: "h" }, byAwait: 1 })))();
+(async () => weigh(await anything({ then(resolve: (value: unknown) => void) { resolve({ mass: "thenable", at: { x: "i" }, byThenable: 1 }); } })))();
+
+const emitter = new EventEmitter();
+emitter.on("body", weigh);
+emitter.once("body", move);
+emitter.emit("body", { mass: "emit", at: { x: "j" }, byEmit: 1 });
+const target = new EventTarget();
+target.addEventListener("body", event => weigh(anything(event).detail));
+target.dispatchEvent(new CustomEvent("body", { detail: { mass: "event", at: { x: "k" }, byDispatch: 1 } }));
+
+anything([{ mass: "forEach", at: { x: "l" }, byForEach: 1 }]).forEach(weigh);
+anything([{ mass: "map", at: { x: "m" }, byMap: 1 }]).map(weigh);
+anything([{ mass: "filter", at: { x: "n" }, byFilter: 1 }]).filter(weigh);
+anything([{ mass: "find", at: { x: "o" }, byFind: 1 }]).find(weigh);
+anything([{ mass: "some", at: { x: "p" }, bySome: 1 }]).some(weigh);
+anything([{ mass: "sort", at: { x: "q" }, bySort: 1 }, { mass: "sort", at: { x: "r" }, bySortToo: 1 }]).sort((a: Outer, b: Outer) => (weigh(a), weigh(b), 0));
+anything([{ mass: "reduce", at: { x: "s" }, byReduce: 1 }]).reduce((_: unknown, body: Outer) => weigh(body), 0);
+Array.from(anything([{ mass: "from", at: { x: "t" }, byFrom: 1 }]), weigh);
+new Set([anything({ mass: "set", at: { x: "u" }, bySet: 1 })]).forEach(weigh);
+new Map([[1, anything({ mass: "map value", at: { x: "v" }, byMapValue: 1 })]]).forEach(weigh);
+
+JSON.parse('{"mass":"parse","at":{"x":"w"},"byParse":1}', function (key, value) { if (key === "") weigh(value); return value; });
+JSON.stringify({ mass: "stringify", at: { x: "y" }, byStringify: 1 }, function (key, value) { if (key === "") weigh(value); return value; });
+weigh(structuredClone(anything({ mass: "clone", at: { x: "z" }, byClone: 1 })));
+weigh(structuredClone(make(3)));
+move(structuredClone(make(4)));
+Reflect.apply(weigh, undefined, [{ mass: "apply", at: { x: "A" }, byReflect: 1 }]);
+weigh.call(undefined, anything({ mass: "call", at: { x: "B" }, byCall: 1 }));
+weigh.apply(undefined, [anything({ mass: "apply", at: { x: "C" }, byApply: 1 })]);
+weigh(anything(Object.assign({}, { mass: "assign", at: { x: "D" }, byAssign: 1 })));
+weigh(anything({ ...{ mass: "spread", at: { x: "E" }, bySpread: 1 } }));
+weigh(anything(Object.create({ mass: "inherited", at: { x: "F" }, byCreate: 1 })));
+weigh(anything(new Proxy({ mass: "proxy", at: { x: "G" }, byProxy: 1 }, {})));
+weigh(anything({ mass: "getter", get at() { return { x: "H" }; } }));
+
+// What `make` makes goes the same roads, to readers that go by name.
+const byName = (body: any) => { seen.push(Object.keys(body).join() + body["a" + "t"].x + JSON.stringify(body)); };
+process.nextTick(byName, make(5));
+setTimeout(byName, 0, make(6));
+Promise.resolve(make(7)).then(byName);
+emitter.on("named", byName);
+emitter.emit("named", make(8));
+[make(9)].forEach(byName);
+byName(structuredClone(make(10)));
+Reflect.apply(byName, undefined, [make(11)]);
+
+await new Promise(resolve => setTimeout(resolve, 20));
+console.log(seen.join("\n"));
+//// one-value-goes-into-both-objects-in-two-forms.ts
+type Inner = { whole: number; anything: unknown };
+type Outer = { id: number; boxed: unknown; inner: Inner };
+
+function make(x: number, label: string): Outer {
+  return { id: x, boxed: x, inner: { whole: x, anything: x } };
+}
+
+function layIn(outer: Outer, x: number) {
+  outer.inner = { whole: x, anything: x };
+  outer.boxed = x;
+}
+
+const all: Outer[] = [];
+for (let i = 0; i < 6; i++) all.push(make(i + 0.5, "n" + i));
+for (let i = 0; i < 6; i += 2) layIn(all[i], i * 3);
+for (const outer of all) console.log(outer.id, outer.boxed, outer.inner.whole, outer.inner.anything);
+//// only-an-address-inside-the-outer-object-is-left.ts
+// The outer object is named by nobody any more while fields of the object that lies in it are still read and stored, with allocations and collections in between.
+type Inner = { count: number; label: string; list: number[] };
+type Outer = { inner: Inner; tag: number };
+type Box = { it: Outer | null };
+
+function fill(into: Outer[], rows: number, columns: number): void {
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const i = row * columns + column;
+      into.push({ inner: { count: i, label: "label" + i, list: [i, i + 1] }, tag: i });
+    }
+  }
+}
+
+let junk: unknown = null;
+function readsOverAllocations(box: Box): number {
+  const x = box.it!;
+  box.it = null;
+  const c = x.inner;
+  let sum = 0;
+  for (let i = 0; i < 3000; i++) {
+    junk = { i, j: [i] };
+    sum += c.count + c.list[1] + c.label.length;
+  }
+  return sum;
+}
+function storesOverAllocations(box: Box): string {
+  const x = box.it!;
+  box.it = null;
+  const c = x.inner;
+  for (let i = 0; i < 3000; i++) {
+    junk = [i, { i }];
+    c.count += 1;
+    c.list = [i, c.count];
+    c.label = "l" + i;
+  }
+  return c.count + " " + c.list.join() + " " + c.label;
+}
+
+const held: Inner[] = [];
+function hold(outer: Outer): void { held.push(outer.inner); }
+
+const lines: string[] = [];
+for (let round = 0; round < 6; round++) {
+  const some: Outer[] = [];
+  fill(some, 6, 6);
+  const first: Box = { it: some[round] }, second: Box = { it: some[round + 10] };
+  hold(some[round + 20]);
+  some.length = 0;
+  lines.push(readsOverAllocations(first) + " " + storesOverAllocations(second));
+}
+console.log(lines.join(" | "), held.map(inner => inner.count + inner.label).join());
+//// only-the-address-of-the-room-is-left.ts
+// The outer object is taken out of the only place that names it and its inner object is read. Then the function allocates, and reads and stores through the inner object. Nothing but that name is left of the pair, and the collector has to keep the pair for it.
+// What it frees is overwritten: the function makes objects of the sizes that the outer object may have.
+class Leaf { v: number; constructor(v: number) { this.v = v; } }
+// A field that holds objects of two layouts has no room for either, so the leaves have cells of their own.
+class LeafWithName extends Leaf { name = "leaf"; }
+interface Inner { b: number; r: Leaf; n: number }
+interface Outer { a: Inner; id: number }
+interface Small { p0: number; p1: number }
+interface Middle { q0: number; q1: number; q2: number; q3: number }
+interface Large { r0: number; r1: number; r2: number; r3: number; r4: number; r5: number }
+let small: Small | null = null, middle: Middle | null = null, large: Large | null = null;
+function make(i: number): Outer { return { a: { b: i, r: i % 50 ? new Leaf(i) : new LeafWithName(i), n: -i }, id: i }; }
+function takeAndRead(all: (Outer | null)[], i: number): number {
+  const x = all[i]!;
+  all[i] = null;
+  const c = x.a;
+  const before = c.b;
+  for (let k = 0; k < 12; k++) {
+    small = { p0: -7, p1: -7 };
+    middle = { q0: -7, q1: -7, q2: -7, q3: -7 };
+    large = { r0: -7, r1: -7, r2: -7, r3: -7, r4: -7, r5: -7 };
+  }
+  c.n += 1;
+  for (let k = 0; k < 12; k++) {
+    small = { p0: -9, p1: -9 };
+    middle = { q0: -9, q1: -9, q2: -9, q3: -9 };
+    large = { r0: -9, r1: -9, r2: -9, r3: -9, r4: -9, r5: -9 };
+  }
+  return c.b === before && c.n === 1 - before && c.r.v === before ? 0 : 1;
+}
+let wrong = 0;
+const all: (Outer | null)[] = [];
+for (let round = 0; round < 40; round++) {
+  all.length = 0;
+  for (let part = 0; part < 10; part++) for (let i = 0; i < 500; i++) all.push(make(part * 500 + i));
+  for (let i = 0; i < all.length; i++) wrong += takeAndRead(all, i);
+}
+console.log(wrong, small!.p0 + middle!.q0 + large!.r0);
+//// outer-objects-that-nothing-is-laid-into.ts
+// Outer objects that are born with null, with undefined or with an object that has a cell, in cells that held other things before. The collector looks into the room whatever the slot says, so the room must not hold what was there.
+interface Leaf { v: number }
+interface Inner { r: Leaf | null; s: Leaf | null; t: Leaf | null; n: number }
+interface Outer { a: Inner | null | undefined; id: number }
+const shared: Inner = { r: { v: 1 }, s: null, t: null, n: 1 };
+const kept: Outer[] = [];
+let junk: unknown[] = [];
+function laid(i: number): Outer { return { a: { r: { v: i }, s: null, t: { v: -i }, n: i }, id: i }; }
+function nulled(i: number): Outer { return { a: null, id: i }; }
+function missing(i: number): Outer { return { a: undefined, id: i }; }
+function given(i: number): Outer { return { a: shared, id: i }; }
+// Numbers that are no references, in cells of every size that the outer object may have.
+function fillCells(n: number) {
+  const big = 0x7ffffff0, fraction = 1.5e300;
+  for (let i = 0; i < n; i++) {
+    junk.push({ a1: big, b1: big }, { a2: big, b2: big, c2: big, d2: big }, { a3: fraction, b3: fraction, c3: fraction, d3: fraction });
+    junk.push({ a4: big, b4: big, c4: big, d4: big, e4: big, f4: big, g4: big, h4: big }, { a5: fraction, b5: fraction, c5: fraction, d5: fraction, e5: fraction, f5: fraction });
+    junk.push({ a6: big, b6: big, c6: big, d6: big, e6: big, f6: big, g6: big, h6: big, i6: big, j6: big, k6: big, l6: big });
+  }
+}
+function read(x: Outer): number { return x.id + (x.a ? x.a.n + (x.a.r ? x.a.r.v : 0) + (x.a.t ? x.a.t.v : 0) : x.a === null ? 1 : 2); }
+function few(k: number) { for (let i = 0; i < 3000; i++) kept.push(nulled(k + i), missing(k + i), given(k + i)); }
+
+let sum = 0;
+for (let round = 0; round < 3; round++) {
+  fillCells(6000);
+  junk = [];
+  Bun.gc(true);
+  few(round);
+  for (let part = 0; part < 4; part++) for (let i = 0; i < 4000; i++) { const x = laid(i); if ((i & 7) === 0) kept.push(x); sum += read(x); }
+  Bun.gc(true);
+  Bun.gc(true);
+  for (const x of kept) sum += read(x);
+}
+console.log(sum, kept.length);
+//// pairs-change-while-the-collector-marks.ts
+// A large heap of pairs, so that marking takes long, and a program that never stops changing them: values stored into the inner objects, inner objects wanted for themselves, replaced by new ones and exchanged.
+import { edenGC, fullGC } from "bun:jsc";
+
+type Leaf = (number | Leaf | null)[];
+type Inner = { count: number; leaf: Leaf | null; text: string | null };
+type Outer = { inner: Inner; tag: number };
+
+////= fill	eaf: null, text: null
+
+let seed = 12345;
+function random(limit: number): number {
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+  return seed % limit;
+}
+
+const held: Inner[] = [];
+function hold(outer: Outer): void { held.push(outer.inner); }
+function exchange(x: Outer, y: Outer): void { const kept = x.inner; x.inner = y.inner; y.inner = kept; }
+
+function storeLeaf(outer: Outer, step: number): void {
+  const inner = outer.inner;
+  inner.leaf = [step, inner.leaf && step % 4 ? inner.leaf : null];
+  inner.count = step;
+}
+function storeText(outer: Outer, step: number): void {
+  outer.inner.text = "text" + step;
+}
+function renew(outer: Outer, step: number): void {
+  outer.inner = { count: -step, leaf: [-step, null], text: null };
+}
+function depth(leaf: Leaf | null): number { let n = 0; while (leaf && n < 1000) { n++; leaf = leaf[1] as Leaf | null; } return n; }
+
+const outers: Outer[] = [];
+fill(outers, 200, 200);
+const n = outers.length;
+let sum = 0;
+let step = 0;
+for (let round = 0; round < 600; round++) {
+  for (let turn = 0; turn < 500; turn++) {
+    step++;
+    const outer = outers[random(n)];
+    switch (random(12)) {
+    case 0: case 1: case 2: case 3: case 4: storeLeaf(outer, step); break;
+    case 5: case 6: case 7: storeText(outer, step); break;
+    case 8: case 9: renew(outer, step); break;
+    default: sum = (sum + outer.inner.count + depth(outer.inner.leaf) + (outer.inner.text ? outer.inner.text.length : 0)) | 0;
+    }
+  }
+  hold(outers[random(n)]);
+  exchange(outers[random(n)], outers[random(n)]);
+  if (held.length > 300) held.length = 100;
+  if (round % 150 === 149) edenGC();
+}
+fullGC();
+let check = 0, none = 0;
+for (const outer of outers) {
+  const inner = outer.inner;
+  check = (check * 31 + inner.count + depth(inner.leaf) * 7 + (inner.leaf ? (inner.leaf[0] as number) : 1) + (inner.text ? inner.text.length + Number(inner.text.slice(4)) : 3)) | 0;
+}
+for (const inner of held) check = (check * 31 + inner.count + depth(inner.leaf)) | 0;
+console.log(sum, check, none, held.length);
+//// pairs-of-other-shapes.ts
+// Three levels, two inner objects in one outer object, one pair made in several places, classes, inner objects of one and of eight fields, numbers and references mixed.
+import { edenGC, fullGC } from "bun:jsc";
+
+type C = { value: number; name: string };
+type B = { c: C; weight: number };
+type A = { b: B; tag: number };
+type Two = { left: C; right: C; between: string };
+type Eight = { wide: { a: number; b: string; c: number[]; d: number; e: string | null; f: object | null; g: number; h: boolean }; tag: number };
+type One = { only: { ref: number[] } };
+class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } norm(): number { return this.x * this.x + this.y * this.y; } }
+class Segment { from: Point; to: Point; name: string; constructor(i: number) { this.from = new Point(i, i + 1); this.to = new Point(i + 2, i + 3); this.name = "segment" + i; } length(): number { return this.to.norm() - this.from.norm(); } }
+
+const three: A[] = [], two: Two[] = [], eight: Eight[] = [], one: One[] = [], segments: Segment[] = [];
+function fill(rows: number, columns: number): void {
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const i = row * columns + column;
+      three.push({ b: { c: { value: i, name: "c" + i }, weight: i / 2 }, tag: i });
+      two.push({ left: { value: i, name: "left" + i }, right: { value: -i, name: "right" + i }, between: "between" + i });
+      eight.push({ wide: { a: i, b: "b" + i, c: [i], d: i + 0.5, e: i % 2 ? "e" + i : null, f: i % 3 ? [i, i] : null, g: -i, h: i % 2 === 0 }, tag: i });
+      one.push({ only: { ref: [i, i * 2] } });
+      segments.push(new Segment(i));
+    }
+  }
+}
+function elsewhere(i: number): Two { return { left: { value: i, name: "other left" + i }, right: { value: -i, name: "other right" + i }, between: "elsewhere" }; }
+function oneGiven(i: number, given: C): Two { return { left: given, right: { value: -i, name: "beside a given one" }, between: "given" }; }
+
+const kept: unknown[] = [];
+function keep(value: unknown): void { kept.push(value); }
+function collect(step: number): void { if (step % 2) edenGC(); else fullGC(); }
+
+let check = 0;
+function mix(value: number): void { check = (check * 31 + value) | 0; }
+function look(): void {
+  for (const a of three) mix(a.b.c.value + a.b.c.name.length + a.b.weight * 2 + a.tag);
+  for (const t of two) mix(t.left.value * 3 + t.right.value + t.left.name.length + t.right.name.length + t.between.length);
+  for (const e of eight) mix(e.wide.a + e.wide.b.length + e.wide.c[0] + e.wide.d * 2 + (e.wide.e ? e.wide.e.length : 7) + (e.wide.f ? 1 : 2) + e.wide.g + (e.wide.h ? 1 : 0));
+  for (const o of one) mix(o.only.ref[0] + o.only.ref[1]);
+  for (const s of segments) mix(s.length() + s.name.length);
+}
+
+for (let round = 0; round < 4; round++) {
+  fill(6, 6);
+  two.push(elsewhere(round), oneGiven(round, two[round].left), oneGiven(round, { value: round, name: "made for it" }));
+  collect(round);
+  look();
+  const i = round * 5;
+  keep(three[i].b); keep(three[i + 1].b.c); keep(two[i].left); keep(two[i + 1].right); keep(eight[i].wide); keep(one[i].only); keep(segments[i].from); keep(segments[i + 1].to);
+  three[i + 2].b.c.name = "stored" + round; three[i + 2].b = { c: { value: -1, name: "new" }, weight: 0 }; three[i + 3].b.c = { value: -2, name: "newer" };
+  two[i + 2].left = two[i + 3].right; two[i + 3].right = { value: 0, name: "fresh" };
+  eight[i + 2].wide.f = { round }; eight[i + 2].wide.e = "late" + round; eight[i + 2].wide.c = [round, round];
+  segments[i + 2].from = segments[i + 3].to; segments[i + 3].to.x = 100 + round;
+  collect(round + 1);
+  look();
+  three.splice(0, 3); two.splice(1, 3); eight.splice(2, 3); one.splice(3, 3); segments.splice(4, 3);
+  collect(round);
+  look();
+}
+console.log(check, kept.length, JSON.stringify(kept).length, JSON.stringify(kept.slice(0, 8)));
+//// several-outer-layouts-share-the-name.ts
+// One place reads, stores, tests or adds `a` on objects of several layouts, each of which is born with an inner literal of its own.
+interface Inner { b: number }
+interface Other { b: string; c: number }
+interface One { a: Inner; one: number }
+interface Two { a: Inner; two: string }
+interface Three { a?: Inner; three: boolean }
+interface Four { a: Other; four: number }
+const lines: string[] = [];
+const say = (...parts: unknown[]) => lines.push(parts.map(String).join(" "));
+function makeOne(i: number): One { return { a: { b: i }, one: i }; }
+function makeTwo(i: number): Two { return { a: { b: i * 2 }, two: "t" + i }; }
+function makeThree(i: number): Three { return i % 2 ? { a: { b: i * 3 }, three: true } : { three: false }; }
+function makeFour(i: number): Four { return { a: { b: "s" + i, c: i }, four: i }; }
+function read(x: One | Two): number { return x.a.b; }
+function readAny(x: One | Two | Four): number | string { return x.a.b; }
+function readMaybe(x: One | Three): number { return x.a ? x.a.b : -1; }
+function store(x: One | Two, i: number) { x.a = { b: i }; }
+function bump(x: One | Two | Three) { if (x.a) x.a.b += 1; }
+function add(x: Three, i: number) { x.a = { b: i }; }
+function hold(x: One | Two | Three | Four): Inner | Other | undefined { return x.a; }
+function has(x: One | Three): boolean { return "a" in x && x.a !== undefined; }
+
+const all: (One | Two)[] = [];
+for (let i = 0; i < 40; i++) all.push(i % 2 ? makeOne(i) : makeTwo(i));
+let sum = 0;
+for (const x of all) sum += read(x);
+say("read", sum);
+for (const x of all) bump(x);
+for (const x of all) sum += read(x);
+say("bumped", sum);
+for (let i = 0; i < all.length; i += 3) store(all[i], 1000 + i);
+for (const x of all) sum += read(x);
+say("stored", sum);
+const held = all.map(hold);
+say("held", held.every((c, i) => c === all[i].a), held.map(c => (c as Inner).b).join());
+for (const x of all) bump(x);
+say("bumped behind", held.map(c => (c as Inner).b).join());
+
+const threes: Three[] = [];
+for (let i = 0; i < 10; i++) threes.push(makeThree(i));
+say("maybe", threes.map(readMaybe).join(), threes.map(has).join(), threes.map(x => Object.keys(x).join("+")).join());
+for (const x of threes) bump(x);
+for (let i = 0; i < threes.length; i += 2) add(threes[i], 70 + i);
+say("added", threes.map(readMaybe).join(), threes.map(has).join(), threes.map(x => Object.keys(x).join("+")).join());
+for (let i = 0; i < threes.length; i += 3) delete threes[i].a;
+say("deleted", threes.map(readMaybe).join(), threes.map(has).join(), threes.map(x => JSON.stringify(x)).join());
+for (let i = 0; i < threes.length; i += 3) add(threes[i], 90 + i);
+say("added again", threes.map(readMaybe).join(), threes.map(x => JSON.stringify(x)).join());
+
+const mixed: (One | Two | Four)[] = [makeOne(1), makeTwo(2), makeFour(3), makeFour(4), makeOne(5)];
+say("mixed", mixed.map(readAny).join(), mixed.map(hold).map(c => JSON.stringify(c)).join());
+say("one", readMaybe(makeOne(7)), has(makeOne(8)), has(makeThree(2)), has(makeThree(3)));
+console.log(lines.join("\n"));
+//// several-places-make-the-same-pair.ts
+// Several functions make objects of one and the same pair of layouts, and each row does something else with the inner object. Some of the functions are called, some taken into their callers.
+
+const N = 20_000;
+const alive: unknown[] = [];
+function collect() { Bun.gc(true); return 0; }
+function report(name: string, sum: number, before: number, kind: string) {
+  console.log(name + ":", sum, kind, before + collect());
+}
+
+type P1 = { a: { b: number } };
+function make1(i: number): P1 { return { a: { b: i } }; }
+function use1(x: P1) { return x.a.b; }
+////= lines	make1	use1	"read through"
+
+type P2 = { a: { b: number } };
+function make2(i: number): P2 { return { a: { b: i } }; }
+function use2(x: P2) { const c = x.a; return c.b + c.b; }
+////= lines	make2	use2	"held by a local name"
+
+type C3 = { b: number };
+type P3 = { a: C3 };
+function make3(i: number): P3 { return { a: { b: i } }; }
+function read3(c: C3) { return c.b; }
+function use3(x: P3) { return read3(x.a); }
+////= lines	make3	use3	"passed to a function that reads"
+
+type C4 = { b: number };
+type P4 = { a: C4 };
+const others: C4[] = [];
+function make4(i: number): P4 { return { a: { b: i } }; }
+function use4(x: P4) { if ((x.a.b & 65535) === 0) others.push(x.a); return x.a.b; }
+////= lines	make4	use4	"kept now and then"
+
+class C5 { b: number; constructor(i: number) { this.b = i; } }
+class P5 { a: C5; constructor(i: number) { this.a = new C5(i); } }
+function make5(i: number) { return new P5(i); }
+function use5(x: P5) { return x.a.b; }
+////= lines	make5	use5	"made by constructors"
+
+type C6 = { b: number };
+type P6 = { a: C6; n: number };
+function make6(i: number): P6 { return { a: { b: 0 }, n: i }; }
+function use6(x: P6) { x.a = { b: x.n }; return x.n; }
+function read6(x: P6) { return x.a.b; }
+{
+  const kept = new Array<ReturnType<typeof make6>>(N);
+  alive.push(kept);
+  const before = collect();
+  for (let i = 0; i < N; i++) kept[i] = make6(i);
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum += use6(kept[i]);
+  for (let i = 0; i < N; i++) sum += read6(kept[i]);
+  report("stored again", sum, before, typeof kept[sum % N]);
+}
+console.log(alive.length, others.length, others.every((c, i) => c.b === i * 65536), JSON.stringify((alive[3] as P4[])[0]), (alive[3] as P4[])[0].a === others[0]);
+//// snapshots-and-censuses-over-pairs.ts
+// Whatever walks the whole heap walks over pairs: heap snapshots of both kinds, statistics by type, the sizes of single objects.
+import { edenGC, fullGC, heapStats, memoryUsage, estimateShallowMemoryUsageOf } from "bun:jsc";
+import { writeHeapSnapshot, getHeapSnapshot, getHeapStatistics } from "node:v8";
+
+type Inner = { count: number; label: string; list: number[] };
+type Outer = { inner: Inner; tag: number };
+function fill(into: Outer[], rows: number, columns: number): void {
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const i = row * columns + column;
+      into.push({ inner: { count: i, label: "label" + i, list: [i] }, tag: i });
+    }
+  }
+}
+const held: Inner[] = [];
+function hold(outer: Outer): void { held.push(outer.inner); }
+
+const outers: Outer[] = [];
+fill(outers, 40, 40);
+for (let i = 0; i < outers.length; i += 100) hold(outers[i]);
+fullGC();
+const stats = heapStats();
+console.log(typeof stats.objectCount, stats.objectCount > 1600, typeof stats.objectTypeCounts);
+const snapshot = Bun.generateHeapSnapshot();
+console.log(Array.isArray(snapshot.nodes), snapshot.nodes.length > 1000, Array.isArray(snapshot.edges));
+const text = Bun.generateHeapSnapshot("v8");
+console.log(typeof text, text.length > 10000, JSON.parse(text).snapshot.node_count > 1000);
+console.log(typeof getHeapStatistics().used_heap_size, typeof memoryUsage().current);
+console.log(estimateShallowMemoryUsageOf(outers[1]) > 0, estimateShallowMemoryUsageOf(outers[0].inner) > 0, estimateShallowMemoryUsageOf(outers[2].inner) > 0);
+edenGC();
+let sum = 0;
+for (const outer of outers) sum += outer.inner.count + outer.inner.label.length + outer.inner.list[0];
+for (const inner of held) sum += inner.count;
+console.log(sum, Bun.inspect(outers[3]), Bun.inspect(outers[100]));
+//// suspended-functions-and-closures-hold-only-the-inner-object.ts
+// Arrays of pairs, pairs that hold arrays, closures, suspended functions that hold nothing but the inner object, other threads.
+import { edenGC, fullGC } from "bun:jsc";
+
+type Inner = { count: number; label: string; list: number[] };
+type Outer = { inner: Inner; tag: number };
+
+////= fill-2	, i + 2]
+function churn(): number { const some: Outer[] = []; fill(some, 12, 12); return some[5].inner.list[1]; }
+function collect(step: number): void { churn(); if (step % 2) edenGC(); else fullGC(); churn(); }
+function show(inner: Inner): string { return `${inner.count} ${inner.label} ${inner.list.join("+")}`; }
+
+function inArrays(x: Outer, y: Outer) { const pairs = [x, y, x]; const inners = pairs.map(each => each.inner); collect(8); return inners.map(show).join(" | ") + " | " + (inners[0] === inners[2]) + (inners[0] === x.inner); }
+function sorted(some: Outer[]) { const copy = some.slice(0, 6).sort((a, b) => b.inner.count - a.inner.count); collect(9); return copy.map(each => each.inner.count).join(); }
+function destructured(x: Outer) { const { inner: { count, list: [first, ...others] }, tag } = x; collect(10); return `${count} ${first} ${others.join("+")} ${tag}`; }
+function closureOverInner(x: Outer | null) { const inner = x!.inner; const read = () => show(inner); x = null; collect(11); return read; }
+function closureOverOuter(x: Outer) { return () => show(x.inner); }
+
+function* yields(x: Outer | null): Generator<string, string, void> {
+  const inner = x!.inner;
+  x = null;
+  yield show(inner);
+  inner.count += 1;
+  yield show(inner);
+  return show(inner);
+}
+async function awaits(x: Outer | null): Promise<string> {
+  const inner = x!.inner;
+  x = null;
+  await null;
+  collect(12);
+  inner.count += 1;
+  await new Promise(resolve => setTimeout(resolve, 1));
+  collect(13);
+  return show(inner);
+}
+async function awaitsWithOuter(x: Outer): Promise<string> {
+  const before = x.inner.count;
+  await null;
+  collect(14);
+  x.inner.count += 1;
+  await null;
+  return before + " " + show(x.inner);
+}
+
+{
+  for (let round = 0; round < 3; round++) {
+    const o: Outer[] = [];
+    fill(o, 8, 8);
+    let next = 0;
+    console.log(round, "arrays:", inArrays(o[next++], o[next++]));
+    console.log(round, "sorted:", sorted(o));
+    console.log(round, "destructured:", destructured(o[next++]));
+    const overInner = closureOverInner(o[next]); o[next++] = o[0];
+    const overOuter = closureOverOuter(o[next]); o[next++] = o[0];
+    const generator = yields(o[next]); o[next++] = o[0];
+    const first = generator.next().value;
+    const waiting = awaits(o[next]); o[next++] = o[0];
+    const waitingWithOuter = awaitsWithOuter(o[next]); o[next++] = o[0];
+    collect(round);
+    collect(round + 1);
+    console.log(round, "closures:", overInner(), "|", overOuter());
+    console.log(round, "generator:", first, "|", generator.next().value, "|", generator.next().value);
+    console.log(round, "async:", await waiting, "|", await waitingWithOuter);
+  }
+}
+//// the-fields-of-the-inner-object-are-read-and-stored.ts
+// Nobody holds `c` as a value, so the fields of the inner object may lie in the outer object. They are read, stored and read through a local name.
+interface Inner { d: number; e: string; f: Inner2 | null }
+interface Inner2 { g: number }
+interface Outer { b: number; c: Inner; next: Outer | null }
+function make(n: number): Outer | null {
+  let head: Outer | null = null;
+  for (let i = 0; i < n; i++) head = { b: i, c: { d: i * 2, e: "s" + i, f: i % 2 ? { g: i } : null }, next: head };
+  return head;
+}
+let text = "";
+for (let p = make(5); p; p = p.next) { p.c.d += 0.5; p.c.e += "!"; const x = p.c; x.d *= 2; text += p.b + ":" + p.c.d + ":" + x.e + ":" + (p.c.f ? p.c.f.g : "-") + " "; }
+console.log(text);
+//// the-identity-of-the-inner-object.ts
+// Whatever can tell one object from another is tried on an inner object that was born in a literal inside a literal, or by `new` in a constructor.
+interface Inner { b: number; s: string }
+interface Outer { a: Inner; n: number }
+function make(i: number): Outer { return { a: { b: i, s: "s" + i }, n: i }; }
+const lines: string[] = [];
+const say = (...parts: unknown[]) => lines.push(parts.map(String).join(" "));
+
+{ const x = make(1); say("same", x.a === x.a, x.a == x.a, Object.is(x.a, x.a), x.a !== make(1).a); }
+{ let x: Outer | null = make(2); const alias = x.a; x = null; Bun.gc(true); alias.b += 1; say("outlives", alias.b, alias.s); }
+{ const x = make(3), y = make(4); x.a = y.a; x.a.b = 40; say("carried", y.a.b, x.a === y.a, x.n, y.n); y.a = { b: 5, s: "new" }; say("carried", x.a.b, y.a.b, x.a === y.a); }
+{ const x = make(5); const before = x.a; delete (x as any).a; say("deleted", "a" in x, x.a === undefined, before.b, Object.keys(x).join()); (x as any).a = before; say("put back", x.a === before, Object.keys(x).join()); }
+{ const x = make(6); say("keys", Object.keys(x).join(), Object.keys(x.a).join(), JSON.stringify(x), JSON.stringify(x.a)); }
+{ const x = make(7); const clone = structuredClone(x); clone.a.b = 70; say("clone", x.a.b, clone.a.b, clone.a === x.a); const inner = structuredClone(x.a); inner.b = 71; say("clone", x.a.b, inner.b); }
+{ const x = make(8); const outer = { ...x }; const inner = { ...x.a }; outer.a.b = 80; inner.b = 81; say("spread", x.a.b, outer.a === x.a, inner.b, inner === (x.a as unknown)); }
+{ const x = make(9); Object.freeze(x); x.a.b = 90; say("frozen outer", x.a.b, Object.isFrozen(x), Object.isFrozen(x.a)); let threw = false; try { "use strict"; (x as any).a = null; } catch { threw = true; } say("frozen outer", threw, x.a.b); }
+{ const x = make(10); Object.freeze(x.a); let threw = false; try { x.a.b = 100; } catch { threw = true; } say("frozen inner", threw, x.a.b, Object.isFrozen(x.a), Object.isFrozen(x)); x.n = 11; say("frozen inner", x.n); }
+{ const x = make(11); Object.setPrototypeOf(x, { get a() { return "from the prototype"; } }); say("getter above", x.a.b, Object.keys(x).join()); delete (x as any).a; say("getter above", (x as any).a, Object.keys(x).join()); }
+{ const x = make(12); const seen: string[] = []; const proxy = new Proxy(x, { get(target, key, receiver) { seen.push(String(key)); return Reflect.get(target, key, receiver); } }); proxy.a.b += 1; say("proxy", x.a.b, seen.join(), proxy.a === x.a); const inner = new Proxy(x.a, {}); inner.b += 1; say("proxy", x.a.b); }
+{ const x = make(13), y = make(14); const shared = x.a; y.a = shared; const third: Outer = { a: shared, n: 0 }; third.a.b = 130; say("two parents", x.a.b, y.a.b, third.a === x.a); }
+{ const x = make(15); const map = new WeakMap<object, string>(); map.set(x.a, "inner"); map.set(x, "outer"); const ref = new WeakRef(x.a); const set = new Set<object>([x.a]); Bun.gc(true); say("weak", map.get(x.a), map.get(x), ref.deref() === x.a, set.has(x.a), set.has(x)); }
+{ const x = make(16); function who(this: Inner) { this.b += 1; return this; } say("this", who.call(x.a) === x.a, x.a.b, who.apply(x.a).b, who.bind(x.a)().b); }
+{ const x = make(17); (x.a as any).extra = "added"; say("added", (x.a as any).extra, Object.keys(x.a).join(), Object.keys(x).join()); delete (x.a as any).s; say("removed", Object.keys(x.a).join(), x.a.s); }
+{ const x = make(18); (x.a as any).b = "a string"; say("other type", x.a.b, typeof x.a.b); (x as any).a = 7; say("other type", x.a, typeof x.a); (x as any).a = undefined; say("other type", x.a); }
+{ const x = make(19); const c = x.a; x.a = { b: 190, s: "next" }; say("alias across a store", c.b, c.s, x.a.b, c === x.a); c.b = 191; say("alias across a store", c.b, x.a.b); }
+{ const x = make(20); const replace = (o: Outer) => { o.a = { b: 200, s: "from a call" }; }; const c = x.a; replace(x); say("alias across a call", c.b, x.a.b); }
+{ const x = make(21); const { a } = x; const { b, s } = x.a; a.b = 210; say("destructured", b, s, x.a.b, a === x.a); }
+{ const x = make(22); say("typeof", typeof x.a, x.a instanceof Object, Object.getPrototypeOf(x.a) === Object.prototype, x.a.constructor === Object, String(x.a), x.a ? "truthy" : "falsy", x.a == null, x.a ?? "nullish"); }
+{ const x = make(23); Object.setPrototypeOf(x.a, { inherited: "yes" }); say("prototype", (x.a as any).inherited, x.a.b, Object.getPrototypeOf(x) === Object.prototype); }
+{ const x = make(24); const entries = Object.entries(x); say("entries", entries.length, entries[0][0], entries[0][1] === x.a, Object.values(x)[0] === x.a, Object.getOwnPropertyDescriptor(x, "a")!.value === x.a, Reflect.ownKeys(x).join(), Object.getOwnPropertyNames(x).join(), Object.getOwnPropertySymbols(x).length); }
+{ const x = make(25); const target = Object.assign({}, x); const into = Object.assign(make(26), x); say("assign", target.a === x.a, into.a === x.a, into.n); }
+{ const many: Outer[] = []; for (let i = 0; i < 2000; i++) many.push(make(i)); const kept = many.filter((_, i) => i % 500 === 0).map(o => o.a); Bun.gc(true); let sum = 0; for (const o of many) sum += o.a.b; kept[1].b = -1; say("many", sum, many[500].a.b, kept.length, kept[3] === many[1500].a); }
+
+class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } length() { return Math.hypot(this.x, this.y); } }
+class Segment { from: Point; to: Point; constructor(i: number) { this.from = new Point(i, i); this.to = new Point(i + 3, i + 4); } }
+{ const s = new Segment(0); say("class", s.to.length(), s.from === s.from, s.from !== s.to, s.to instanceof Point, s.to.constructor === Point, JSON.stringify(s), Object.keys(s).join()); const to = s.to; s.to = s.from; to.x = 9; say("class", s.to.x, to.x, s.to === s.from); }
+console.log(lines.join("\n"));
+//// the-inner-object-gets-its-cell-between-two-uses-of-a-name.ts
+// `const c = x.inner` and then something, seen or unseen, wants the object for itself before `c` is used again. Whatever it was, `c` names the one object.
+import { edenGC, fullGC } from "bun:jsc";
+
+type Leaf = { id: number };
+type Inner = { count: number; leaf: Leaf; text: string };
+type Outer = { inner: Inner; tag: number };
+
+////= fill	eaf: { id: i }, text: "t" + i
+
+const sink: unknown[] = [];
+let current: Outer | null = null;
+function show(c: Inner): string { return c.count + "," + c.leaf.id + "," + c.text; }
+function takeCurrent(): number { sink.push(current!.inner); return 1; }
+
+const withGetter = { get trap(): number { return takeCurrent(); } };
+const withValueOf = { valueOf(): number { return takeCurrent(); } };
+const withToString = { toString(): string { takeCurrent(); return "s"; } };
+const withToPrimitive = { [Symbol.toPrimitive](): number { return takeCurrent(); } };
+const proxy = new Proxy({} as Record<string, number>, { get() { return takeCurrent(); }, has() { takeCurrent(); return true; } });
+const iterable = { *[Symbol.iterator]() { takeCurrent(); yield 1; } };
+
+type Way = (x: Outer) => string;
+////= ways-2
+//// the-inner-object-is-held-as-a-value.ts
+// Each of these holds the inner object as a value somewhere: in an array, in a parameter, in a local name across a store to the field, in a closure's result.
+interface Inner { d: number; e: number }
+interface A { b: number; c: Inner }
+function makeA(i: number): A { return { b: i, c: { d: i, e: i + 1 } }; }
+const a1 = makeA(1), a2 = makeA(2);
+const kept: Inner[] = [a1.c];
+kept[0].d = 10;
+console.log(a1.c.d, a1.c === kept[0], a1.c === a2.c, a1.c === a1.c);
+interface B { b: number; c: Inner }
+function makeB(i: number): B { return { b: i, c: { d: i, e: i + 1 } }; }
+function takes(inner: Inner): number { inner.e += 5; return inner.d + inner.e; }
+const b1 = makeB(3);
+console.log(takes(b1.c), b1.c.e);
+interface C { b: number; c: Inner }
+function makeC(i: number): C { return { b: i, c: { d: i, e: i + 1 } }; }
+const c1 = makeC(4);
+const old = c1.c; c1.c = { d: 40, e: 41 }; old.d = 99;
+console.log(c1.c.d, old.d);
+interface D { b: number; c: Inner }
+function makeD(i: number): D { return { b: i, c: { d: i, e: i + 1 } }; }
+const d1 = makeD(5);
+const read = () => d1.c;
+read().d = 50;
+console.log(d1.c.d, typeof d1.c, d1.c ? "truthy" : "falsy", d1.c == null);
+//// the-inner-object-is-made-late.ts
+// An inner object that somebody holds now and then is born in the outer object and made when it is first wanted. What was stored before, between and after has to be seen through every name.
+interface Inner { b: number; s: string; o: { v: number } | null; e?: number }
+interface Outer { a: Inner; n: number }
+const kept: Inner[] = [];
+const lines: string[] = [];
+const say = (...parts: unknown[]) => lines.push(parts.map(String).join(" "));
+function make(i: number): Outer { return { a: { b: i, s: "s" + i, o: i % 2 ? { v: i } : null }, n: i }; }
+function keep(x: Outer) { kept.push(x.a); }
+function replace(x: Outer, i: number) { x.a = { b: i, s: "r" + i, o: null }; }
+function total(x: Outer) { return x.a.b + x.a.s.length + (x.a.o ? x.a.o.v : 0); }
+
+{ const x = make(1); x.a.b = 10; keep(x); x.a.b += 1; kept[0].b += 1; say("stored before and after", x.a.b, kept[0].b, kept[0] === x.a, total(x)); }
+{ const x = make(2); const c = x.a; keep(x); c.b = 20; say("a name from before", x.a.b, c === x.a, c === kept[1]); }
+{ const x = make(3); const c = x.a; const before = c.b; replace(x, 30); say("replaced behind a name", before, c.b, c.s, x.a.b, x.a.s, c === x.a); }
+{ const x = make(4); keep(x); replace(x, 40); x.a.b += 1; say("made, then replaced by a fresh one", kept[2].b, x.a.b, kept[2] === x.a); keep(x); say("made again", kept[3].b, kept[3] === x.a, kept[3] === kept[2]); }
+{ const x = make(5); x.a.b = 0.5; say("a fraction", x.a.b, total(x)); keep(x); say("a fraction", kept[4].b); x.a.b = 2 ** 40; say("a large number", x.a.b, kept[4].b); }
+{ const x = make(6); x.a.b = 1.25; x.a.b *= 2; const y = { ...x }; say("a fraction through a copy", y.a.b, y.a === x.a); }
+{ const x = make(7); say("optional", x.a.e, "e" in x.a, Object.keys(x.a).join()); x.a.e = 7; say("optional", x.a.e, "e" in x.a, Object.keys(x.a).join()); }
+{ const x = make(8); Object.freeze(x); x.a.b = 80; x.a.s = "still stored"; say("outer frozen", x.a.b, x.a.s); keep(x); say("outer frozen", kept[5].b, Object.isFrozen(kept[5])); }
+{ const x = make(9); let message = ""; try { (x as any).a(); } catch (error) { message = (error as Error).constructor.name; } say("called", message, x.a.b); }
+{ const x = make(11); const o = x.a.o!; Bun.gc(true); keep(x); Bun.gc(true); say("references", o === x.a.o, x.a.o!.v, x.a.s, kept[6].o === o); x.a.o = null; Bun.gc(true); say("references", kept[6].o, o.v); }
+{ const local = make(12); const inner = local.a; say("outer stays in the function", inner.b + local.n); kept.push(inner); }
+say("outer stayed in the function", kept[7].b, kept[7].s);
+{ const x = make(13); let seen = -1; try { const c = x.a; if (x.n === 13) throw c; seen = c.b; } catch (thrown) { seen = (thrown as Inner).b; say("thrown", thrown === x.a); } say("thrown", seen); }
+{ let x = make(14); let sum = 0; for (let i = 0; i < 5; i++) { const c = x.a; sum += c.b; if (i === 2) keep(x); c.b += 1; if (i === 3) x = make(100); } say("in a loop", sum, x.a.b, kept[8].b); }
+{ const pick = (flag: boolean, x: Outer, y: Outer) => (flag ? x.a : y.a); const x = make(15), y = make(16); pick(true, x, y).b = 150; pick(false, x, y).b = 160; say("either of two", x.a.b, y.a.b, pick(true, x, y) === x.a); }
+async function later(x: Outer) { const c = x.a; await null; c.b += 1; await null; return c.b + x.a.b; }
+function* steps(x: Outer) { const c = x.a; yield c.b; replace(x, 170); yield c.b; yield x.a.b; }
+say("generator", [...steps(make(17))].join());
+
+interface WithMethod { a: { b: number; twice(): number; arrow: () => number }; n: number }
+function makeWithMethod(i: number): WithMethod { return { a: { b: i, twice() { return this.b * 2; }, arrow: () => i }, n: i }; }
+{ const x = makeWithMethod(18); x.a.b += 1; say("methods", x.a.twice(), x.a.arrow(), x.a.twice === x.a.twice, typeof x.a.twice); const { twice } = x.a; say("methods", twice.call({ b: 5 })); }
+
+class Vector { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } plus(other: Vector) { return new Vector(this.x + other.x, this.y + other.y); } }
+class Body { position: Vector; velocity: Vector; constructor(i: number) { this.position = new Vector(i, i); this.velocity = new Vector(1, 2); } step() { this.position = this.position.plus(this.velocity); } }
+{ const bodies: Body[] = []; for (let i = 0; i < 1000; i++) bodies.push(new Body(i)); const first = bodies[0].position; for (let round = 0; round < 3; round++) for (const body of bodies) body.step(); Bun.gc(true); let sum = 0; for (const body of bodies) sum += body.position.x + body.position.y + body.velocity.y; say("bodies", sum, first.x, first === bodies[0].position, bodies[999].position instanceof Vector); }
+
+{ const many: Outer[] = []; for (let i = 0; i < 20000; i++) many.push(make(i)); for (let i = 0; i < many.length; i += 7) keep(many[i]); Bun.gc(true); let sum = 0; for (let i = 0; i < many.length; i++) { many[i].a.b += 1; sum += total(many[i]); } let held = 0; for (const inner of kept) held += inner.b; say("many", sum, held, kept.length); }
+later(make(19)).then(value => { say("async", value); console.log(lines.join("\n")); });
+//// the-outer-object-is-looked-at-as-a-whole.ts
+// The outer object is looked at as a whole: by JSON, its keys, a spread, for-in, a computed key, freeze, a descriptor, structuredClone, delete and console.log.
+interface Inner { d: number; e: number }
+interface A { b: number; c: Inner }
+function makeA(i: number): A { return { b: i, c: { d: i, e: i + 1 } }; }
+const a = makeA(1); a.c.d += 1;
+console.log(JSON.stringify(a));
+interface B { b: number; c: Inner }
+function makeB(i: number): B { return { b: i, c: { d: i, e: i + 1 } }; }
+const b = makeB(2); b.c.d += 1;
+console.log(Object.keys(b).join(), "c" in b, Object.prototype.hasOwnProperty.call(b, "c"));
+interface C { b: number; c: Inner }
+function makeC(i: number): C { return { b: i, c: { d: i, e: i + 1 } }; }
+const c = makeC(3); c.c.d += 1;
+const copy = { ...c }; copy.c.e = 77;
+console.log(c.c.e, copy.c === c.c);
+interface D { b: number; c: Inner }
+function makeD(i: number): D { return { b: i, c: { d: i, e: i + 1 } }; }
+const d = makeD(4); d.c.d += 1;
+let names = ""; for (const k in d) names += k; console.log(names);
+interface E { b: number; c: Inner }
+function makeE(i: number): E { return { b: i, c: { d: i, e: i + 1 } }; }
+const e = makeE(5); e.c.d += 1;
+const key: string = ["b", "c"][e.b - 4];
+console.log(JSON.stringify((e as any)[key]));
+interface F { b: number; c: Inner }
+function makeF(i: number): F { return { b: i, c: { d: i, e: i + 1 } }; }
+const f = Object.freeze(makeF(6)); f.c.d += 1;
+console.log(f.c.d, Object.isFrozen(f), Object.isFrozen(f.c));
+interface G { b: number; c: Inner }
+function makeG(i: number): G { return { b: i, c: { d: i, e: i + 1 } }; }
+const g = makeG(7); g.c.d += 1;
+console.log(Object.getOwnPropertyDescriptor(g, "c")!.writable, Object.entries(g).length, structuredClone(g).c.d);
+interface H { b: number; c: Inner }
+function makeH(i: number): H { return { b: i, c: { d: i, e: i + 1 } }; }
+const h = makeH(8); h.c.d += 1;
+delete (h as any).c;
+console.log(h.c === undefined);
+console.log(makeA(9));
+//// the-room-holds-the-only-reference.ts
+// Nothing but the inner object names what it holds, and the inner object lies in the outer one. The collector has to find it there. What it misses is overwritten: the program makes look-alikes by the hundred thousand behind each collection.
+class Leaf { v: number; w: number; constructor(v: number, w: number) { this.v = v; this.w = w; } }
+// A field that holds objects of two layouts has no room for either, so the leaves have cells of their own.
+class LeafWithName extends Leaf { name = "leaf"; }
+interface Inner { r: Leaf; s: string; t: Leaf | null; n: number }
+interface Outer { a: Inner; id: number }
+const N = 30000;
+const kept: Outer[] = [];
+const held: Inner[] = [];
+const trash: unknown[] = new Array(512);
+function make(i: number): Outer { return { a: { r: i % 100 ? new Leaf(i, -i) : new LeafWithName(i, -i), s: "s" + i, t: i & 1 ? (i % 99 ? new Leaf(-i, i) : new LeafWithName(-i, i)) : null, n: i }, id: i }; }
+function churn(n: number): number {
+  let length = 0;
+  for (let i = 0; i < n; i++) {
+    trash[i & 511] = i & 1023 ? new Leaf(-1, -1) : new LeafWithName(-1, -1);
+    length += ("x" + i).length;
+  }
+  return length;
+}
+function isWrong(x: Outer): number {
+  let count = 0;
+  if (x.a.r.v !== x.id || x.a.r.w !== -x.id || x.a.s !== "s" + x.id || x.a.n !== x.id) count++;
+  if (x.id & 1 ? x.a.t === null || x.a.t.v !== -x.id : x.a.t !== null) count++;
+  return count;
+}
+function wrong(): number {
+  let count = 0;
+  for (let i = 0; i < kept.length; i++) count += isWrong(kept[i]);
+  return count;
+}
+// Somebody holds an inner object, a few times, so the field stays.
+function hold(i: number) { held.push(kept[i].a); }
+
+for (let part = 0; part < 3; part++) for (let half = 0; half < 2; half++) for (let i = 0; i < N / 6; i++) kept.push(make(kept.length));
+const lines: string[] = [];
+for (let round = 0; round < 4; round++) {
+  Bun.gc(true);
+  const length = churn(150000);
+  lines.push(round + " " + wrong() + " " + length);
+}
+hold(0); hold(7); hold(14); hold(21);
+Bun.gc(true);
+churn(150000);
+console.log(lines.join("\n"));
+console.log(wrong(), held.map(inner => inner.r.v + inner.s).join(), held.every((inner, i) => inner === kept[i * 7].a));
+//// two-names-of-one-outer-object.ts
+// Two parameters name the same outer object. The inner object is read through both, held through one, and then read and stored through the other.
+interface Inner { b: number; s: string }
+interface Outer { a: Inner; n: number }
+interface Box { f: Inner | null; g: Inner | null }
+const lines: string[] = [];
+function make(i: number): Outer { return { a: { b: i, s: "s" + i }, n: i }; }
+function heldThroughTheFirst(x: Outer, y: Outer, box: Box): number { const c2 = y.a; const c1 = x.a; box.f = c2; return c1.b; }
+function heldThroughTheSecond(x: Outer, y: Outer, box: Box): number { const c1 = x.a; const c2 = y.a; box.f = c2; return c1.b; }
+function storedBehind(x: Outer, y: Outer, box: Box): number { const c2 = y.a; const c1 = x.a; box.f = c2; c1.b = 77; return box.f!.b; }
+function comparedBehind(x: Outer, y: Outer, box: Box): boolean { const c2 = y.a; const c1 = x.a; box.f = c2; box.g = c1; return box.f === box.g; }
+function inALoop(x: Outer, y: Outer, box: Box): number { let sum = 0; const c1 = x.a; for (let i = 0; i < 3; i++) { sum += c1.b; if (i === 1) box.f = y.a; c1.b += 1; } return sum * 1000 + box.f!.b; }
+const kept: Outer[] = [];
+for (let part = 0; part < 4; part++) for (let half = 0; half < 4; half++) for (let i = 0; i < 100; i++) kept.push(make(kept.length));
+const box: Box = { f: null, g: null };
+lines.push("held through the first " + heldThroughTheFirst(kept[5], kept[5], box) + " " + heldThroughTheFirst(kept[6], kept[7], box));
+lines.push("held through the second " + heldThroughTheSecond(kept[8], kept[8], box) + " " + heldThroughTheSecond(kept[9], kept[10], box));
+lines.push("stored behind " + storedBehind(kept[11], kept[11], box) + " " + kept[11].a.b + " " + storedBehind(kept[12], kept[13], box) + " " + kept[12].a.b);
+lines.push("compared behind " + comparedBehind(kept[14], kept[14], box) + " " + comparedBehind(kept[15], kept[16], box));
+lines.push("in a loop " + inALoop(kept[17], kept[17], box) + " " + inALoop(kept[18], kept[19], box));
+let sum = 0;
+for (let i = 0; i < kept.length; i++) sum += kept[i].a.b + kept[i].a.s.length;
+lines.push("sum " + sum);
+console.log(lines.join("\n"));
+//// weak-things-on-the-inner-and-on-the-outer-object.ts
+// Weak references, weak maps, weak sets and registries that name the inner object, or the outer one, of a pair.
+import { fullGC } from "bun:jsc";
+
+type Inner = { count: number; label: string };
+type Outer = { inner: Inner; tag: number };
+
+////= fill	abel: "label" + i
+function churn(): number { const some: Outer[] = []; fill(some, 20, 20); return some[7].inner.count; }
+
+const weakInner: WeakRef<Inner>[] = [];
+const weakOuter: WeakRef<Outer>[] = [];
+const byInner = new WeakMap<Inner, string>();
+const byOuter = new WeakMap<Outer, Inner>();
+const setOfInner = new WeakSet<Inner>();
+let cleanedInner = 0, cleanedOuter = 0;
+const registryOfInner = new FinalizationRegistry<number>(() => { cleanedInner++; });
+const registryOfOuter = new FinalizationRegistry<number>(() => { cleanedOuter++; });
+
+function watchInner(outer: Outer): void { weakInner.push(new WeakRef(outer.inner)); }
+function watchOuter(outer: Outer): void { weakOuter.push(new WeakRef(outer)); }
+function mapInner(outer: Outer): void { byInner.set(outer.inner, "mapped" + outer.tag); }
+function mapOuter(outer: Outer): void { byOuter.set(outer, outer.inner); }
+function addInner(outer: Outer): void { setOfInner.add(outer.inner); }
+function registerBoth(outer: Outer): void { registryOfInner.register(outer.inner, outer.tag); registryOfOuter.register(outer, outer.tag); }
+
+const kept: Outer[] = [];
+const keptInner: Inner[] = [];
+async function round(): Promise<void> {
+  const outers: Outer[] = [];
+  fill(outers, 10, 10);
+  for (let i = 0; i < 10; i++) { watchInner(outers[i]); watchOuter(outers[i]); }
+  for (let i = 10; i < 20; i++) { mapInner(outers[i]); mapOuter(outers[i]); addInner(outers[i]); }
+  for (let i = 20; i < 30; i++) registerBoth(outers[i]);
+  // Of each ten: the outer object of the first three is kept, of the next three only the inner one, the rest nothing.
+  for (const start of [0, 10, 20]) {
+    for (let i = 0; i < 3; i++) kept.push(outers[start + i]);
+    keptInner.push(outers[start + 3].inner, outers[start + 4].inner, outers[start + 5].inner);
+  }
+}
+await round();
+for (let i = 0; i < 4; i++) { await new Promise(resolve => setTimeout(resolve, 1)); churn(); fullGC(); }
+
+// While the outer object lives, so does the inner one, and it is the same one.
+console.log(weakInner.slice(0, 3).map((ref, i) => ref.deref() === kept[i].inner).join(), weakOuter.slice(0, 3).map((ref, i) => ref.deref() === kept[i]).join());
+console.log(weakInner.slice(3, 6).map((ref, i) => ref.deref() === keptInner[i]).join());
+console.log(kept.slice(3, 6).map(outer => byInner.get(outer.inner) + " " + (byOuter.get(outer) === outer.inner) + " " + setOfInner.has(outer.inner)).join(" | "));
+console.log(keptInner.slice(3, 6).map(inner => byInner.get(inner) + " " + setOfInner.has(inner) + " " + inner.count + inner.label).join(" | "));
+console.log(kept.map(outer => outer.inner.count + outer.inner.label).join(), keptInner.map(inner => inner.count + inner.label).join());
+console.log("no callback for what is kept:", cleanedInner <= 4, cleanedOuter <= 7);
+//// what-an-inner-object-in-its-room-held-is-let-go.ts
+// As what-the-inner-object-held-is-let-go.ts, with births that outweigh everything else, so that the inner object lies in a room of the outer one: whoever stores another value to the field or makes the object lets go of what the room held.
+class Leaf { v: number; constructor(v: number) { this.v = v; } }
+// A field that holds objects of two layouts has no room for either, so the leaves have cells of their own.
+class LeafWithName extends Leaf { name = "leaf"; }
+interface Inner { leaf: Leaf | null; n: number }
+interface Outer { a: Inner | null; id: number }
+const shared: Inner = { leaf: new LeafWithName(0), n: -1 };
+const N = 16000;
+function make(i: number): Outer { return { a: { leaf: new Leaf(i), n: i }, id: i }; }
+function makeAll(): Outer[] {
+  const kept: Outer[] = [];
+  for (let part = 0; part < 4; part++) for (let half = 0; half < 2; half++) for (let i = 0; i < N / 8; i++) kept.push(make(kept.length));
+  return kept;
+}
+function storeAnother(kept: Outer[]) { for (let i = 0; i < kept.length; i++) kept[i].a = shared; }
+function storeNull(kept: Outer[]) { for (let i = 0; i < kept.length; i++) kept[i].a = null; }
+function storeFresh(kept: Outer[]) { for (let i = 0; i < kept.length; i++) kept[i].a = { leaf: null, n: 0 }; }
+function storeOverTheReference(kept: Outer[]) { for (let i = 0; i < kept.length; i++) kept[i].a!.leaf = null; }
+function makeThenStoreOver(kept: Outer[]) { for (let i = 0; i < kept.length; i++) { const x = kept[i]; shared.n += Object.keys(x.a!).length - 2; x.a!.leaf = null; } }
+function makeThenStoreAnother(kept: Outer[]) { for (let i = 0; i < kept.length; i++) { const x = kept[i]; shared.n += Object.keys(x.a!).length - 2; x.a = null; } }
+function leavesOf(kept: Outer[]): WeakRef<Leaf>[] { const leaves: WeakRef<Leaf>[] = []; for (let i = 0; i < kept.length; i++) leaves.push(new WeakRef(kept[i].a!.leaf!)); return leaves; }
+function total(kept: Outer[]): number { let sum = 0; for (let i = 0; i < kept.length; i++) { const x = kept[i]; sum += x.id + (x.a ? x.a.n : 0); } return sum; }
+const pause = () => new Promise(resolve => setTimeout(resolve, 0));
+async function run(name: string, letGo: (kept: Outer[]) => void) {
+  const kept = makeAll();
+  const leaves = leavesOf(kept);
+  await pause();
+  Bun.gc(true);
+  const aliveBefore = leaves.filter(leaf => leaf.deref() !== undefined).length;
+  await pause();
+  letGo(kept);
+  await pause();
+  Bun.gc(true);
+  Bun.gc(true);
+  const aliveAfter = leaves.filter(leaf => leaf.deref() !== undefined).length;
+  console.log(name, aliveBefore === N, aliveAfter < N / 10, total(kept));
+}
+await run("another object is stored", storeAnother);
+await run("null is stored", storeNull);
+await run("a fresh object is stored", storeFresh);
+await run("the reference is stored over", storeOverTheReference);
+await run("made, then the reference is stored over", makeThenStoreOver);
+await run("made, then null is stored", makeThenStoreAnother);
+//// what-the-inner-object-held-is-let-go.ts
+// An inner object that lies in the outer one holds references. Whoever stores another value to the field, or deletes the field, lets go of them, though the outer object lives on.
+interface Leaf { v: number }
+interface Inner { leaf: Leaf | null; n: number }
+interface Outer { a: Inner | null; id: number }
+const shared: Inner = { leaf: null, n: -1 };
+const N = 20000;
+function make(i: number): Outer { return { a: { leaf: { v: i }, n: i }, id: i }; }
+async function run(name: string, letGo: (x: Outer) => void) {
+  const kept: Outer[] = [];
+  const leaves: WeakRef<Leaf>[] = [];
+  for (let i = 0; i < N; i++) kept.push(make(i));
+  for (const x of kept) leaves.push(new WeakRef(x.a!.leaf!));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  Bun.gc(true);
+  const aliveBefore = leaves.filter(leaf => leaf.deref() !== undefined).length;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  for (const x of kept) letGo(x);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  Bun.gc(true);
+  Bun.gc(true);
+  const aliveAfter = leaves.filter(leaf => leaf.deref() !== undefined).length;
+  let sum = 0;
+  for (const x of kept) sum += x.id + (x.a ? x.a.n : 0);
+  console.log(name, aliveBefore === N, aliveAfter < N / 10, sum);
+}
+await run("another object is stored", x => { x.a = shared; });
+await run("null is stored", x => { x.a = null; });
+await run("another object is stored by name", x => { (x as any)["a".slice(0)] = shared; });
+await run("the field is deleted", x => { delete (x as any).a; });
+await run("a fresh object is stored", x => { x.a = { leaf: null, n: 0 }; });
+await run("the reference is stored over", x => { x.a!.leaf = null; });
+await run("made, then the reference is stored over", x => { shared.n += Object.keys(x.a!).length - 2; x.a!.leaf = null; });
+await run("made, then another object is stored", x => { shared.n += Object.keys(x.a!).length - 2; x.a = shared; });

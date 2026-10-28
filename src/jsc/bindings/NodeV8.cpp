@@ -94,7 +94,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStopGCProfiler, (JSGlobalObject * globalObject,
     return JSValue::encode(result);
 }
 
-JSC::JSObject* createNodeV8Binding(JSC::JSGlobalObject* globalObject)
+JSC::JSValue createNodeV8Binding(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSObject* object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());

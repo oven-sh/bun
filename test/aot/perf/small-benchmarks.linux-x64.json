@@ -1,0 +1,282 @@
+{
+  "a-catch-that-only-throws-again-stands-below-a-catch-of-the-caller": {
+    "millionInstructions": 80,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 1999999,
+    "runtimeOperations": 1,
+    "callsNotExpected": 0
+  },
+  "a-class-below-a-function-that-nobody-has-constructed": {
+    "millionInstructions": 100,
+    "testsFailed": 2,
+    "alwaysFailing": 1,
+    "accessesByName": 25,
+    "runtimeOperations": 17,
+    "callsNotExpected": 6
+  },
+  "a-literal-with-getters-is-made-often": {
+    "millionInstructions": 92,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 30957,
+    "callsNotExpected": 0
+  },
+  "a-literal-with-getters-is-read-often": {
+    "millionInstructions": 106,
+    "testsFailed": 4,
+    "alwaysFailing": 1,
+    "accessesByName": 11,
+    "runtimeOperations": 16,
+    "callsNotExpected": 1
+  },
+  "a-long-array-is-searched-for-an-object": {
+    "millionInstructions": 71,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 39999,
+    "runtimeOperations": 1239,
+    "callsNotExpected": 0
+  },
+  "a-loop-in-a-function-that-is-called-once": {
+    "millionInstructions": 31,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 0,
+    "callsNotExpected": 0
+  },
+  "a-member-between-the-halves-of-an-accessor-stores-to-what-the-getter-returns": {
+    "millionInstructions": 66,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 100504,
+    "callsNotExpected": 0
+  },
+  "a-stream-wakes-its-suspended-consumers": {
+    "millionInstructions": 148,
+    "testsFailed": 80000,
+    "alwaysFailing": 2,
+    "accessesByName": 79999,
+    "runtimeOperations": 80745,
+    "callsNotExpected": 10
+  },
+  "an-async-function-returns-parsed-json": {
+    "millionInstructions": 86,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 180420,
+    "callsNotExpected": 0
+  },
+  "an-async-generator-is-stepped-by-hand": {
+    "millionInstructions": 65,
+    "testsFailed": 120000,
+    "alwaysFailing": 2,
+    "accessesByName": 0,
+    "runtimeOperations": 20,
+    "callsNotExpected": 7
+  },
+  "an-async-generator-is-stepped-by-hand-under-a-store": {
+    "millionInstructions": 22,
+    "testsFailed": 4,
+    "alwaysFailing": 2,
+    "accessesByName": 4,
+    "runtimeOperations": 2110,
+    "callsNotExpected": 5
+  },
+  "an-object-of-any-shape-is-copied-and-given-two-names": {
+    "millionInstructions": 83,
+    "testsFailed": 100000,
+    "alwaysFailing": 0,
+    "accessesByName": 499999,
+    "runtimeOperations": 1440,
+    "callsNotExpected": 0
+  },
+  "an-object-that-once-had-a-getter-is-spread": {
+    "millionInstructions": 426,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 60038,
+    "runtimeOperations": 40283,
+    "callsNotExpected": 0
+  },
+  "array-methods-on-an-array-that-is-handed-in": {
+    "millionInstructions": 169,
+    "testsFailed": 2,
+    "alwaysFailing": 1,
+    "accessesByName": 0,
+    "runtimeOperations": 21033,
+    "callsNotExpected": 0
+  },
+  "binary-trees": {
+    "millionInstructions": 2037,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 69419,
+    "callsNotExpected": 0
+  },
+  "direct-and-indirect-calls": {
+    "millionInstructions": 820,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 0,
+    "callsNotExpected": 0
+  },
+  "fannkuch": {
+    "millionInstructions": 1587,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 4,
+    "callsNotExpected": 0
+  },
+  "fibonacci": {
+    "millionInstructions": 27,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 0,
+    "callsNotExpected": 0
+  },
+  "fresh-objects-are-given-prototypes": {
+    "millionInstructions": 358,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 2400046,
+    "runtimeOperations": 11441,
+    "callsNotExpected": 0
+  },
+  "lexer": {
+    "millionInstructions": 45,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 2217,
+    "callsNotExpected": 0
+  },
+  "lists-are-delegated-to-in-async-generators": {
+    "millionInstructions": 83,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 61314,
+    "callsNotExpected": 0
+  },
+  "literals-are-spread-under-conditions": {
+    "millionInstructions": 72,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 699998,
+    "runtimeOperations": 3000,
+    "callsNotExpected": 0
+  },
+  "n-body": {
+    "millionInstructions": 3635,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 7,
+    "callsNotExpected": 2
+  },
+  "patterns-come-out-of-a-builder-whose-text-flow-does-not-know": {
+    "millionInstructions": 1,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 1,
+    "runtimeOperations": 50,
+    "callsNotExpected": 0
+  },
+  "promise-handlers-run-one-behind-the-other": {
+    "millionInstructions": 98,
+    "testsFailed": 40000,
+    "alwaysFailing": 2,
+    "accessesByName": 80038,
+    "runtimeOperations": 4574,
+    "callsNotExpected": 0
+  },
+  "spectral": {
+    "millionInstructions": 3523,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 5,
+    "callsNotExpected": 0
+  },
+  "string-build-loop": {
+    "millionInstructions": 10,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 82139,
+    "callsNotExpected": 0
+  },
+  "the-jobs-of-coroutines-follow-one-another": {
+    "millionInstructions": 111,
+    "testsFailed": 20,
+    "alwaysFailing": 3,
+    "accessesByName": 79,
+    "runtimeOperations": 876,
+    "callsNotExpected": 0
+  },
+  "tokens-maps-objects": {
+    "millionInstructions": 63,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 63344,
+    "callsNotExpected": 0
+  },
+  "tokens-maps-objects-2": {
+    "millionInstructions": 1987,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 2046185,
+    "callsNotExpected": 0
+  },
+  "tokens-maps-objects-3": {
+    "millionInstructions": 1982,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 2046188,
+    "callsNotExpected": 0
+  },
+  "two-small-functions": {
+    "millionInstructions": 1220,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 0,
+    "callsNotExpected": 0
+  },
+  "untyped-property-access": {
+    "millionInstructions": 818,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 19999998,
+    "runtimeOperations": 1024,
+    "callsNotExpected": 0
+  },
+  "lists-get-elements-under-conditions": {
+    "millionInstructions": 132,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 103000,
+    "callsNotExpected": 1
+  },
+  "lists-of-numbers-come-in-storage-for-any-value": {
+    "millionInstructions": 92,
+    "testsFailed": 719433,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 589,
+    "callsNotExpected": 0
+  }
+}

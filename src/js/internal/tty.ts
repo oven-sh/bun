@@ -1,4 +1,4 @@
-let OSRelease;
+let OSRelease: string[] | undefined;
 
 const COLORS_2 = 1;
 const COLORS_16 = 4;
@@ -59,7 +59,7 @@ const TERM_ENVS_REG_EXP = [
 ];
 
 let warned = false;
-function warnOnDeactivatedColors(env) {
+function warnOnDeactivatedColors(env: Record<string, string | undefined>) {
   if (warned) return;
   let name = "";
   if (env.NODE_DISABLE_COLORS !== undefined && env.NODE_DISABLE_COLORS !== "") name = "NODE_DISABLE_COLORS";
@@ -73,14 +73,14 @@ function warnOnDeactivatedColors(env) {
   if (name !== "") {
     // A log through a `Console` gets here, also in a program that has replaced `process`. Then the warning waits.
     const current = globalThis.process;
-    const emitWarning = current?.emitWarning;
+    const emitWarning: ((warning: string, type: string) => void) | undefined = current?.emitWarning;
     if (!$isCallable(emitWarning)) return;
     warned = true;
     emitWarning.$call(current, `The '${name}' env is ignored due to the 'FORCE_COLOR' env being set.`, "Warning");
   }
 }
 
-function getColorDepth(env: NodeJS.ProcessEnv) {
+function getColorDepth(env: Record<string, string | undefined>) {
   const FORCE_COLOR = env.FORCE_COLOR;
   // Use level 0-3 to support the same levels as `chalk` does. This is done for
   // consistency throughout the ecosystem.

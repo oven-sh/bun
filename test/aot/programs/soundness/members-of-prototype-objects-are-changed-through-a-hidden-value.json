@@ -1,0 +1,3 @@
+{
+  "skipInShell": "it asks for CustomEvent, which the jsc shell does not provide"
+}

@@ -50,6 +50,10 @@ pub fn run(seed: u64, total: u64, params: Vec<(i32, u32)>, corpus: &r#gen::Corpu
             if i % 6 == 0 { crate::ring::records(&mut rng, n) } else { r#gen::data(&mut rng, corpus, n) }
         })
         .collect();
+    // Where the position wraps the hasher starts over, so the only way to a copy from before that point is one of the last
+    // distances. Around every other GiB the input repeats at a distance that is most of the window, or of a block.
+    let lgwin = params.iter().rev().find(|&&(k, _)| k == 2).map_or(22, |&(_, v)| v.clamp(10, 30));
+    let periodic = r#gen::data(&mut rng, corpus, 250_000.min(3usize << lgwin >> 2));
     let case = EncCase { data: Vec::new(), params: params.clone(), dicts: Vec::new(), schedule: 0, misuse: false };
     let mut p = Pair::new(&case).unwrap();
     let mut cd = CDecoder::new();
@@ -81,7 +85,19 @@ pub fn run(seed: u64, total: u64, params: Vec<(i32, u32)>, corpus: &r#gen::Corpu
         let off = rng.below(block.len());
         let max = if close { rng.range(1, 5000) } else { block.len() };
         let n = (block.len() - off).min(max).min(left as usize);
-        let chunk = &block[off..off + n];
+        let changed;
+        let chunk = if close && (((din.n + 300_000) >> 30) + seed) % 2 == 0 {
+            let at = (din.n % periodic.len() as u64) as usize;
+            // With a byte that is different this time: a copy that never ends is not searched for.
+            let mut piece = periodic[at..(at + n).min(periodic.len())].to_vec();
+            let flip = rng.below(piece.len());
+            piece[flip] ^= 1;
+            changed = piece;
+            &changed[..]
+        } else {
+            &block[off..off + n]
+        };
+        let n = chunk.len();
         let op = if left == n as u64 { 2 } else if rng.chance(1, if close { 50 } else { 400 }) { 1 } else { 0 };
         din.add(chunk);
         let mut input = chunk;

@@ -252,6 +252,8 @@ pub fn run(args: &[String]) -> bool {
         Some("race") => shapes::run_race(num(2, 1), num(3, 200), num(4, 300_000) as usize, num(5, 0xFFF), &corpus()),
         Some("enc-dense") => shapes::run_dense(num(2, 1), num(3, 1000), num(4, 0x3E0)),
         Some("enc-rolling") => shapes::run_rolling(num(2, 1), num(3, 40), num(4, 0xF8)),
+        Some("enc-stitch") => shapes::run_stitch(num(2, 1), num(3, 3000), num(4, 0xC00)),
+        Some("enc-merge") => shapes::run_merge(num(2, 0xFFC)),
         Some("enc-states") => shapes::run_states(num(2, 1), num(3, 1000), num(4, 0xFFF)),
         Some("enc-select") => shapes::run_select(num(2, 1), num(3, 200_000) as usize, &corpus()),
         Some("enc-big") => big::run(num(2, 1), num(3, 6 << 30), args::params(args::rest(args, 4)), &corpus()),

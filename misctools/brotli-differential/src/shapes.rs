@@ -1064,3 +1064,171 @@ pub fn run_rolling(seed0: u64, iters: u64, qualities: u64) {
     }
     println!("ok: {iters} iterations, {total_in} -> {total_out}");
 }
+
+/// The hasher of qualities 10 and 11 adds the last 127 positions of a block when the next block is there, and goes no
+/// further back for them than the window reaches from the start of that block. Here a sequence from as far back as a copy
+/// can reach is only found by way of such positions: it starts with 4 equal bytes, and a longer run of that byte, which a
+/// flush cuts in two, leads up to its repetition.
+pub fn run_stitch(seed0: u64, iters: u64, qualities: u64) {
+    let qs = crate::args::qualities(qualities, 10..12);
+    let (mut total_in, mut total_out) = (0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let lgwin = rng.range(10, 14);
+        let most = (1usize << lgwin) - 16;
+        let c = rng.range(1, 254) as u8;
+        // Sorts before or after the run.
+        let mut tail: Vec<u8> = (0..40).map(|_| rng.next() as u8).collect();
+        tail[0] = if rng.chance(1, 2) { rng.below(usize::from(c)) } else { rng.range(usize::from(c) + 1, 255) } as u8;
+        // How much longer the run is the second time, and how far back the first one is from where the two are the same.
+        let longer = if rng.chance(1, 2) { rng.range(1, 4) } else { rng.range(1, 140) };
+        let distance = match rng.below(8) {
+            0..=2 => most,
+            3 => most - 1,
+            4 => most - 2,
+            5 => most + 1,
+            _ => most - rng.below(60),
+        };
+        let other = |rng: &mut Rng, n: usize| -> Vec<u8> { (0..n).map(|_| { let b = rng.next() as u8; if b == c { c ^ 1 } else { b } }).collect() };
+        let lead = rng.below(300);
+        let mut data = other(&mut rng, lead);
+        let first = data.len();
+        data.extend_from_slice(&[c; 4]);
+        data.extend_from_slice(&tail);
+        let filler = first + distance - longer - data.len();
+        data.extend(other(&mut rng, filler));
+        let run = data.len();
+        data.extend(std::iter::repeat_n(c, longer + 4));
+        data.extend_from_slice(&tail[..rng.range(4, 40)]);
+        // A position is only added once 127 more bytes are there.
+        let rest = rng.range(100, 300);
+        data.extend(other(&mut rng, rest));
+        // The flush is within the run, or near it.
+        let cut = if rng.chance(3, 4) { run + rng.range(1, longer) } else { run + longer + 4 - rng.below(140.min(run)) };
+        let mut steps = Vec::new();
+        if rng.chance(1, 3) {
+            steps.push(enc::Step { op: 1, n: rng.range(1, run - 150) });
+        }
+        steps.push(enc::Step { op: 1, n: cut - steps.first().map_or(0, |s: &enc::Step| s.n) });
+        let case = EncCase { data, params: vec![(1, q), (2, lgwin as u32)], dicts: Vec::new(), schedule: 0, misuse: false };
+        match enc::compare_steps(&case, &steps).and_then(|out| enc::round_trip(&out, &case.data, &[], false, 0).map(|()| out)) {
+            Ok(out) => {
+                total_in += case.data.len();
+                total_out += out.len();
+            }
+            Err(e) => panic!("seed {seed}: {e}\nparams {:?}, distance {distance} of {most}, run longer by {longer}, flush {} bytes into it", case.params, cut as isize - run as isize),
+        }
+    }
+    println!("ok: {iters} iterations, {total_in} -> {total_out}");
+}
+
+/// Whether the encoder writes anything when it has `data[..end]`, of which `data[..flushed]` was flushed, and a byte more.
+fn writes_meta_block(params: &[(i32, u32)], data: &[u8], flushed: usize, end: usize) -> bool {
+    let mut e = Encoder::new();
+    for &(k, v) in params {
+        assert!(e.set_parameter(EncoderParameter::from_raw(k as u32).unwrap(), v));
+    }
+    let mut buf = vec![0u8; 1 << 20];
+    let mut made = 0;
+    for (op, mut input) in [(EncoderOperation::Flush, &data[..flushed]), (EncoderOperation::Process, &data[flushed..end + 1])] {
+        made = 0;
+        loop {
+            let mut o: &mut [u8] = &mut buf;
+            e.compress_stream(op, &mut input, &mut o).unwrap();
+            made += (1 << 20) - o.len();
+            if input.is_empty() && !e.has_more_output() {
+                break;
+            }
+        }
+    }
+    made != 0
+}
+
+/// At the end of a block of input the encoder either writes a meta-block or goes on with the next block in the same one. It
+/// writes when there are as many literals, or commands, as an eighth of the largest meta-block, and at qualities 2 and 3
+/// when the two add up to 12,287. Here the numbers go past those limits in steps of one.
+pub fn run_merge(qualities: u64) {
+    const BLOCK: usize = 1 << 16;
+    let qs = crate::args::qualities(qualities, 2..12);
+    let mut rng = Rng(1);
+    let noise: Vec<u8> = (0..8 * BLOCK).map(|_| rng.next() as u8).collect();
+    let mut cases = 0usize;
+    let mut check = |what: &str, data: Vec<u8>, params: Vec<(i32, u32)>, steps: &[enc::Step]| {
+        let case = EncCase { data, params, dicts: Vec::new(), schedule: 0, misuse: false };
+        if let Err(e) = enc::compare_steps(&case, steps).and_then(|out| enc::round_trip(&out, &case.data, &[], false, 0)) {
+            panic!("seed 0: {what}, params {:?}: {e}", case.params);
+        }
+        cases += 1;
+    };
+    for &q in &qs {
+        // 40 literals and a copy of 8 bytes, over and over: after 64 literals in a row the encoder would no longer look at every
+        // position. Then one long copy to the end of the block, and another block.
+        for lgwin in [12u32, 16, 17, 22] {
+            let limit = if q < 4 { 0x2FFF } else { (2usize << lgwin.max(16)) / 8 };
+            // Qualities 2 and 3 have blocks of 16 KiB, and with a small window a lower limit for the literals alone.
+            if limit >= BLOCK / 2 || (q < 4 && lgwin < 16) {
+                continue;
+            }
+            let params = vec![(1, q), (2, lgwin)];
+            let build = |literals: usize| -> Vec<u8> {
+                let mut data = Vec::with_capacity(2 * BLOCK);
+                for unit in noise[..literals].chunks(40) {
+                    data.extend_from_slice(unit);
+                    if unit.len() == 40 {
+                        data.extend_from_within(data.len() - 30..data.len() - 22);
+                    }
+                }
+                data.resize(BLOCK, 0);
+                data.extend_from_slice(&noise[2 * BLOCK..2 * BLOCK + 3000]);
+                data.extend_from_slice(&[7; 5000]);
+                data
+            };
+            // At qualities 2 and 3 the commands count as well.
+            let about = if q < 4 { limit * 40 / 41 } else { limit };
+            assert!(!writes_meta_block(&params, &build(about - 50), 0, BLOCK), "seed 0: quality {q}: too many literals");
+            assert!(writes_meta_block(&params, &build(about + 20), 0, BLOCK), "seed 0: quality {q}: too few literals");
+            for literals in about - 50..about + 20 {
+                check(&format!("{literals} literals"), build(literals), params.clone(), &[]);
+            }
+        }
+        // Commands: copies of 4 or 5 bytes from the last 16,000 bytes (from further back they are too short to be worth it), and
+        // nothing between them. The last of the fifth block give way to a single long copy.
+        if !(5..=8).contains(&q) {
+            continue;
+        }
+        let params = vec![(1, q), (2, 18)];
+        for seed in 2..6 {
+            let mut rng = Rng(seed);
+            let mut whole = noise[..BLOCK].to_vec();
+            let mut starts = Vec::new();
+            while whole.len() < 8 * BLOCK {
+                if whole.len() < 6 * BLOCK {
+                    starts.push(whole.len());
+                }
+                let n = if rng.chance(1, 8) { 4 } else { 5 };
+                let from = whole.len() - 8 - rng.below(16_000);
+                whole.extend_from_within(from..from + n);
+            }
+            let build = |fewer: usize| -> Vec<u8> {
+                let mut data = whole.clone();
+                data[starts[starts.len() - 1 - fewer]..6 * BLOCK].fill(0);
+                data
+            };
+            let writes = |data: &[u8], blocks: usize| writes_meta_block(&params, data, BLOCK, (blocks + 1) * BLOCK);
+            let (mut low, mut high) = (0usize, 12_000usize);
+            assert!(!writes(&build(low), 4), "seed 0: quality {q}: too many commands in four blocks");
+            assert!(writes(&build(low), 5), "seed 0: quality {q}: too few commands in five blocks");
+            assert!(!writes(&build(high), 5), "seed 0: quality {q}: something else ends the meta-block");
+            while high - low > 1 {
+                let middle = (low + high) / 2;
+                if writes(&build(middle), 5) { low = middle } else { high = middle }
+            }
+            for fewer in low.saturating_sub(4)..high + 4 {
+                check(&format!("{fewer} copies fewer (the limit is between {low} and {high})"), build(fewer), params.clone(), &[enc::Step { op: 1, n: BLOCK }]);
+            }
+        }
+    }
+    println!("ok: {cases} cases");
+}

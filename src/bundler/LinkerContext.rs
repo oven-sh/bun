@@ -2571,7 +2571,10 @@ impl<'a> LinkerContext<'a> {
             } else {
                 Ref::NONE
             },
-            is_wrapper_async: flags.is_async_or_has_async_dependency && wrapper_ref.is_valid(),
+            // A `__commonJS` wrapper returns `module.exports`, never a promise.
+            is_wrapper_async: flags.wrap == WrapKind::Esm
+                && flags.is_async_or_has_async_dependency
+                && wrapper_ref.is_valid(),
             wrapper_ref,
 
             was_unwrapped_require: was_unwrapped_require

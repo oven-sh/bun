@@ -262,10 +262,18 @@ fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
 struct OutputDir {
     dir: bun_sys::Dir,
     failed_writes: usize,
+    /// The loop over the output files and the step after it can both reach the runtime chunk.
+    runtime_chunk_attempted: bool,
 }
 
 impl OutputDir {
     fn write(&mut self, file: &OutputFile) {
+        if file.bake_extra.bake_is_runtime {
+            if self.runtime_chunk_attempted {
+                return;
+            }
+            self.runtime_chunk_attempted = true;
+        }
         if let Err(err) = file.write_to_disk(self.dir.fd()) {
             bun_core::handle_error_return_trace(err);
             Output::err(
@@ -683,6 +691,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let mut output_dir = OutputDir {
         dir: bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?,
         failed_writes: 0,
+        runtime_chunk_attempted: false,
     };
 
     let mut maybe_runtime_file_index: Option<u32> = None;

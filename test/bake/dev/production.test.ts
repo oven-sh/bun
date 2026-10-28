@@ -901,6 +901,8 @@ export default function IndexPage() {
       "routes/index.ts": `import shared from "../shared.cjs";\nexport default () => "home " + shared.name;`,
       "shared.cjs": `module.exports = { name: "shared" };`,
     };
+    // Only the client graph imports it, so the chunk of the client entry point holds the runtime.
+    const appWithClientRuntime = { ...appWithRuntimeChunk, "routes/index.ts": app["routes/index.ts"] };
 
     /** Runs the build in `dir`. Returns the result to compare, and the stderr of the build for the failure message. */
     async function build(dir: string, ...flags: string[]) {
@@ -948,16 +950,34 @@ export default function IndexPage() {
       expect(result, stderr).toEqual(failed("[hash].css", "[hash].js"));
     });
 
+    // The loop over the output files and the step after it both reach a runtime chunk that is a client file.
+    test.concurrent("a runtime chunk in a client file is written once", async () => {
+      using dir = tempDir("bake-production-unwritable-output", {
+        ...appWithClientRuntime,
+        "dist/_bun": "not a directory",
+      });
+      const { result, stderr } = await build(String(dir));
+      expect(result, stderr).toEqual(failed("[hash].css", "[hash].js"));
+    });
+
     // --debug-no-minify names each output file after its source, so a regular file where a
     // directory goes blocks one output. Only canary and debug builds have the --debug flags.
     test.concurrent.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary")).each([
-      ["a client file", app, "dist/_bun/browser", [], "browser/client.[hash].js"],
-      ["the runtime chunk", appWithRuntimeChunk, "dist/_bun/framework", [], "framework/server.[hash].chunk.js"],
-      ["a server file", app, "dist/_bun/framework", ["--debug-dump-server-files"], "framework/server.[hash].js"],
-    ])("%s", async (_, files, blocked, flags, file) => {
+      ["a client file", app, "dist/_bun/browser", [], ["browser/client.[hash].js"]],
+      ["the runtime chunk", appWithRuntimeChunk, "dist/_bun/framework", [], ["framework/server.[hash].chunk.js"]],
+      ["a server file", app, "dist/_bun/framework", ["--debug-dump-server-files"], ["framework/server.[hash].js"]],
+      [
+        // The dump of the server files and the step after the loop both reach this runtime chunk.
+        "a runtime chunk in the dump of the server files is written once",
+        appWithRuntimeChunk,
+        "dist/_bun/framework",
+        ["--debug-dump-server-files"],
+        ["framework/server.[hash].chunk.js", "framework/server.[hash].js"],
+      ],
+    ])("%s", async (_, files, blocked, flags, failedWrites) => {
       using dir = tempDir("bake-production-unwritable-output", { ...files, [blocked]: "not a directory" });
       const { result, stderr } = await build(String(dir), "--debug-no-minify", ...flags);
-      expect(result, stderr).toEqual(failed(file));
+      expect(result, stderr).toEqual(failed(...failedWrites));
     });
   });
 });

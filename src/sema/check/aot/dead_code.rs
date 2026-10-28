@@ -2,7 +2,7 @@ use crate::bind::Decl;
 use crate::check::Checker;
 use crate::check::errors_aliases::Directives;
 use crate::check::sink::Reported;
-use crate::hir::{ExprId, Flags, FnId, StmtId, StmtKind};
+use crate::hir::{ExprId, ExprKind, Flags, FnId, StmtId, StmtKind, TypeNodeId, TypeNodeKind};
 use crate::node::{Node, NodeData};
 use crate::program::FileId;
 use crate::util::SharedSort;
@@ -65,6 +65,36 @@ impl Checker<'_, '_> {
         let ranges = &self.dead_code.sorted_ranges;
         let after = ranges.partition_point(|&(start, _)| start <= position);
         after != 0 && position < ranges[after - 1].1
+    }
+
+    /// `check_source_element` skips dead code, so nothing has resolved the types and the private members named there.
+    /// tsc checks that code, which marks them as used.
+    pub(in crate::check) fn resolve_names_in_dead_code(&mut self, file: FileId) {
+        let options = self.module_options(file);
+        if self.dead_code.sorted_ranges.is_empty()
+            || !(options.no_unused_locals || options.no_unused_parameters)
+        {
+            return;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for id in (0..hir.types.len() as u32).map(TypeNodeId) {
+            if matches!(
+                hir[id].kind,
+                TypeNodeKind::Ref { .. } | TypeNodeKind::Typeof { .. }
+            ) && !bound.is_unchecked_type(id.idx())
+                && self.is_in_dead_code(hir[id].pos)
+            {
+                self.type_from_node(file, id);
+            }
+        }
+        for id in (0..hir.exprs.len() as u32).map(ExprId) {
+            if matches!(hir[id].kind, ExprKind::Dot { .. } | ExprKind::Index { .. })
+                && !bound.is_unchecked(id.idx())
+                && self.is_in_dead_code(hir[id].pos)
+            {
+                self.type_of_expr(file, id);
+            }
+        }
     }
 
     fn collect_dead_code_ranges(&self, file: FileId, dead_code: &mut Vec<(u32, u32)>) {

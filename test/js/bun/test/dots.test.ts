@@ -137,3 +137,38 @@ test("a console group with no label does not break the line of dots", async () =
     exitCode: 0,
   });
 });
+
+test("a console call whose formatting throws does not break the line of dots", async () => {
+  using dir = tempDir("dots-failed-print", {
+    "failed-print.test.ts": `
+      import { test } from "bun:test";
+      const thrower = { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("hook"); } };
+      test("before", () => {});
+      test("log", () => {
+        try { console.log([1, thrower]); } catch {}
+      });
+      test("between", () => {});
+      test("error", () => {
+        try { console.error("first", thrower); } catch {}
+      });
+      test("after", () => {});
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--dots", "./failed-print.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+  }).toEqual({
+    stdout: "bun test <version> (<revision>)",
+    stderr: ".....\n\n5 pass\n0 fail\nRan 5 tests across 1 file.",
+    exitCode: 0,
+  });
+});

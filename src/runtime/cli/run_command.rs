@@ -1737,18 +1737,7 @@ impl Run<'_> {
                     }
                     result
                 };
-                // SAFETY: `vals[..1]` is the single stack `to_print`; null
-                // `ctype` routes to the VM's stdout/stderr default.
-                unsafe {
-                    bun_jsc::ConsoleObject::message_with_type_and_level(
-                        ::core::ptr::null_mut(),
-                        bun_jsc::ConsoleObject::MessageType::Log,
-                        bun_jsc::ConsoleObject::MessageLevel::Log,
-                        vm.global(),
-                        &raw const to_print,
-                        1,
-                    );
-                }
+                crate::hw_exports::print_entry_point_result(vm, to_print);
             }
 
             vm.on_before_exit();

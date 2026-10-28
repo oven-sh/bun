@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
@@ -248,4 +248,238 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new SharedArrayBuffer(0))).toBe("SharedArrayBuffer(0) []");
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
+});
+
+describe("a console message reaches its stream once, after its formatting returned", () => {
+  async function run(cmd: string[], env = bunEnv) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.replaceAll("\r\n", "\n"), stderr: stderr.replaceAll("\r\n", "\n"), exitCode };
+  }
+
+  const thrower = `{ [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("hook"); } }`;
+
+  // Three tests below are not concurrent. Their children do the most work, and
+  // on a debug build they reach the test timeout when they run beside the others.
+  it("a call whose formatting throws prints nothing, and a message from a hook comes first", async () => {
+    const { stdout, stderr, exitCode } = await run([join(import.meta.dir, "console-print-fails.fixture.js")]);
+    expect({ stdout: stdout.split("\n"), stderr: stderr.split("\n"), exitCode }).toEqual({
+      stdout: [
+        "-- log: threw hook",
+        "-- info: threw hook",
+        "-- debug: threw hook",
+        "-- warn: threw hook",
+        "-- error: threw hook",
+        "-- dir: threw hook",
+        "-- dirxml: threw hook",
+        "-- trace: threw hook",
+        "-- assert: threw hook",
+        "-- table: threw hook",
+        "-- group: threw hook",
+        "-- groupCollapsed: threw hook",
+        "-- Map value: threw hook",
+        "-- Set value: threw hook",
+        "-- class field: threw hook",
+        "-- %s toString: threw toString",
+        "-- %d valueOf: threw valueOf",
+        "-- %j toJSON: threw toJSON",
+        "-- %o: threw hook",
+        "-- second hook: threw hook",
+        "group",
+        "  -- in a group: threw hook",
+        "-- 4000 bytes, then a throw: threw hook",
+        "-- 4088 bytes, then a throw: threw hook",
+        "-- 4089 bytes, then a throw: threw hook",
+        "-- 5000 bytes, then a throw: threw hook",
+        "-- 100000 bytes, then a throw: threw hook",
+        "-- many lines, then a throw: threw hook",
+        "INNER",
+        "[ 1, x, 3 ]",
+        "-- hook logs: returned",
+        "INNER",
+        "a x b",
+        "-- hook logs, %s: returned",
+        "[ 1, x, 3 ]",
+        "-- hook logs on the other stream: returned",
+        "INNER",
+        "-- hook logs, other stream first: returned",
+        "ONE",
+        "TWO",
+        "[ 1, x, 3 ]",
+        "-- hook logs twice: returned",
+        "INNERMOST",
+        "[ 2, b ]",
+        "[ 1, a ]",
+        "-- two levels: returned",
+        "INNER",
+        "-- hook logs, then throws: threw after INNER",
+        "[ 1, y ]",
+        "-- hook catches its own failed log: returned",
+        "",
+        "[ 1, x ]",
+        "-- hook calls log(): returned",
+        "c: 1",
+        "[ 1, x ]",
+        "-- hook calls count(): returned",
+        "INNER",
+        "[ 1, x ]",
+        "-- hook writes to process.stdout: returned",
+        "INNER",
+        "-- hook logs after 5000 bytes, then throws: threw after INNER",
+        "done",
+        "",
+      ],
+      stderr: [
+        "-- log",
+        "-- info",
+        "-- debug",
+        "-- warn",
+        "-- error",
+        "-- dir",
+        "-- dirxml",
+        "-- trace",
+        "-- assert",
+        "-- table",
+        "-- group",
+        "-- groupCollapsed",
+        "-- Map value",
+        "-- Set value",
+        "-- class field",
+        "-- %s toString",
+        "-- %d valueOf",
+        "-- %j toJSON",
+        "-- %o",
+        "-- second hook",
+        "  -- in a group",
+        "-- 4000 bytes, then a throw",
+        "-- 4088 bytes, then a throw",
+        "-- 4089 bytes, then a throw",
+        "-- 5000 bytes, then a throw",
+        "-- 100000 bytes, then a throw",
+        "-- many lines, then a throw",
+        "-- hook logs",
+        "-- hook logs, %s",
+        "INNER",
+        "-- hook logs on the other stream",
+        "[ 1, x, 3 ]",
+        "-- hook logs, other stream first",
+        "-- hook logs twice",
+        "-- two levels",
+        "-- hook logs, then throws",
+        "-- hook catches its own failed log",
+        "-- hook calls log()",
+        "-- hook calls count()",
+        "-- hook writes to process.stdout",
+        "-- hook logs after 5000 bytes, then throws",
+        "",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a failed console.error leaves no color code behind", async () => {
+    const { stderr, exitCode } = await run(
+      ["-e", `console.error("NEXT"); try { console.error("first", ${thrower}); } catch {} console.error("NEXT");`],
+      { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+    );
+    // The line after the failed call is the line before it, byte for byte.
+    const line = stderr.slice(0, stderr.length / 2);
+    expect(line).toContain("NEXT");
+    expect({ stderr, exitCode }).toEqual({ stderr: line + line, exitCode: 0 });
+  });
+
+  it.concurrent("an uncaught error from a hook leaves no part of the message on stdout", async () => {
+    const { stdout, stderr, exitCode } = await run(["-e", `console.log("BEFORE"); console.log([1, ${thrower}]);`]);
+    expect(stderr).toContain("error: hook");
+    expect({ stdout, exitCode }).toEqual({ stdout: "BEFORE\n", exitCode: 1 });
+  });
+
+  it.concurrent("process.exit() in a hook writes no part of the message", async () => {
+    expect(
+      await run([
+        "-e",
+        `console.log([Buffer.alloc(5000, "x").toString(), { [Symbol.for("nodejs.util.inspect.custom")]() { process.exit(0); } }]);`,
+      ]),
+    ).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
+  it("in a Worker", async () => {
+    const worker = `try { console.log([1, ${thrower}]); } catch {} console.log("NEXT"); postMessage("done");`;
+    expect(
+      await run([
+        "-e",
+        `const worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(worker)}], { type: "text/javascript" })));
+         worker.onmessage = () => worker.terminate();`,
+      ]),
+    ).toEqual({ stdout: "NEXT\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent.each([
+    ["a value", `[1, ${thrower}]`],
+    ["a rejected promise", `Promise.reject([1, ${thrower}])`],
+  ])("bun --print of %s whose formatting throws reports the error", async (_, expression) => {
+    const { stdout, stderr, exitCode } = await run(["--print", expression]);
+    expect(stderr).toContain("error: hook");
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  });
+
+  // Runs in the child. It prints each message with console.log, then writes
+  // the text that stdout must show to stderr.
+  function largeMessages() {
+    // A pattern with a period of 251 bytes: a chunk that is lost, repeated or
+    // moved by the size of a buffer or of a block changes the text.
+    const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+    const pattern = Array.from({ length: 251 }, (_, i) => alphabet[(i * i + i) % 36]).join("");
+    const text = (length: number) => Buffer.alloc(length, pattern).toString();
+
+    // Messages with an object in them are held until they are complete.
+    const held: unknown[] = [];
+    // Small chunks around the end of the stream buffer (4096 bytes).
+    for (let keys = 330; keys <= 370; keys += 20) {
+      held.push(Object.fromEntries(Array.from({ length: keys }, (_, i) => ["key" + i, i])));
+    }
+    // One string around the end of the first block (64 KiB).
+    for (let length = 65536 - 1; length <= 65536 + 1; length++) {
+      held.push([text(length)]);
+    }
+    // Many chunks around the end of the first block.
+    for (let shift = 0; shift < 2; shift++) {
+      held.push(Array.from({ length: 95 }, (_, i) => text(790 + i + shift)));
+    }
+    // Several blocks, then a message that fits the stream buffer again.
+    held.push([text(150_000)], { small: 1 });
+
+    let expected = "";
+    for (const value of held) {
+      console.log(value);
+      // Bun.inspect formats into memory: console.log(x) === Bun.inspect(x) + "\n".
+      expected += Bun.inspect(value) + "\n";
+    }
+
+    // Messages of strings and numbers only are written as they are formatted.
+    const large = text(60_000);
+    console.log(large);
+    console.log("body:", large, 1, true, null, undefined);
+    console.log("%s and %d", large, 2);
+    console.log("after");
+    expected += `${large}\nbody: ${large} 1 true null undefined\n${large} and 2\nafter\n`;
+
+    process.stderr.write(expected);
+  }
+
+  it("a message larger than the buffer is written whole and in order", async () => {
+    const { stdout, stderr, exitCode } = await run(["-e", `(${largeMessages})();`]);
+    // A megabyte: report where the two differ, not the text.
+    let differsAt = -1;
+    if (stdout !== stderr) {
+      differsAt = 0;
+      while (stdout[differsAt] === stderr[differsAt]) differsAt++;
+    }
+    expect(stderr.length).toBeGreaterThan(600_000);
+    expect({ differsAt, length: stdout.length, exitCode }).toEqual({
+      differsAt: -1,
+      length: stderr.length,
+      exitCode: 0,
+    });
+  });
 });

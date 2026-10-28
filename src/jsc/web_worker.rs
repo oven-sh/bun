@@ -1472,7 +1472,6 @@ fn on_unhandled_rejection(
         jsc::console_object::FormatOptions {
             enable_colors: false,
             add_newline: false,
-            flush: false,
             max_depth: 32,
             ..Default::default()
         },

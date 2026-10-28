@@ -276,46 +276,28 @@ mod sql_hooks {
     };
 }
 
-// ─── entry-point promise reactions (used by `--print`) ───────────────────────
+// ─── the entry point's result (used by `--print`) ────────────────────────────
+
+/// Writes `value` as `console.log` does. A value whose formatting throws is an
+/// uncaught exception, as with `node -p`.
+pub(crate) fn print_entry_point_result(vm: &mut VirtualMachine, value: JSValue) {
+    let global = vm.global();
+    if let Err(err) = bun_jsc::ConsoleObject::log(global, value) {
+        let exception = global.take_exception(err);
+        let _ = vm.uncaught_exception(global, exception, false);
+    }
+}
 
 pub(crate) fn on_resolve_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
-    let global = cx.global();
-    let result = result.to_js();
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
-    // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
+    let vm = cx.global().bun_vm().as_mut();
+    print_entry_point_result(vm, result.to_js());
+    bun_core::Global::exit(u32::from(vm.exit_handler.exit_code));
 }
 
 pub(crate) fn on_reject_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
-    let global = cx.global();
-    let result = result.to_js();
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
-    // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
+    let vm = cx.global().bun_vm().as_mut();
+    print_entry_point_result(vm, result.to_js());
+    bun_core::Global::exit(u32::from(vm.exit_handler.exit_code));
 }
 
 // `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure` — exported from

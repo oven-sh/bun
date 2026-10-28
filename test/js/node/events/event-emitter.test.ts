@@ -1268,6 +1268,7 @@ test("emit() itself calls each of several listeners", () => {
 // two receivers that the native constructor makes is known. The node:events EventEmitter is the reference: every
 // expected value is what it gives, and what node v26.3.0 gives for the same calls.
 describe("native EventEmitter", () => {
+  type Wrapper = Function & { listener: Function; tag?: string };
   const nativeProto = Object.getPrototypeOf(process);
   const NativeEventEmitter = nativeProto.constructor;
   const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -1285,8 +1286,10 @@ describe("native EventEmitter", () => {
     ["a string", () => `native-emitter-${nextName++}`],
     ["a symbol", () => Symbol("native-emitter")],
   ];
+  const readStates = ["never read", "read before the emit", "read during the emit"] as const;
 
-  describe.each(receivers)("%s", (_receiver, makeTarget) => {
+  describe.each(receivers)("%s", (receiver, makeTarget) => {
+    const native = receiver !== "node:events EventEmitter";
     let target: any;
     const types: Array<string | symbol> = [];
     const track = <T extends string | symbol>(type: T) => {
@@ -1304,12 +1307,84 @@ describe("native EventEmitter", () => {
       const newType = () => track(makeType());
 
       describe.each(["once", "prependOnceListener"] as const)("%s()", method => {
-        test("an emit from inside an earlier listener runs the listener one time", () => {
+        test("rawListeners() returns a wrapper that has the handler in .listener", () => {
+          const type = newType();
+          const handler = () => {};
+          target[method](type, handler);
+
+          const wrapper: Wrapper = target.rawListeners(type)[0];
+          expect(typeof wrapper).toBe("function");
+          expect(wrapper).not.toBe(handler);
+          expect(Object.getOwnPropertyDescriptor(wrapper, "listener")).toEqual({
+            value: handler,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+          expect(Object.keys(wrapper)).toEqual(["listener"]);
+          expect(Object.getOwnPropertyNames(wrapper)).toEqual(["length", "name", "listener"]);
+          // The emitter stores the wrapper, so every read returns the same one.
+          expect(target.rawListeners(type)).toEqual([wrapper]);
+          expect(target.listeners(type)).toEqual([handler]);
+          expect(target.listenerCount(type)).toBe(1);
+        });
+
+        test(".listener() keeps the registration and the wrapper removes it", () => {
+          const type = newType();
+          const calls: unknown[][] = [];
+          function handler(this: unknown, ...args: unknown[]) {
+            calls.push([this === target, ...args]);
+            return "result";
+          }
+          target[method](type, handler);
+          const wrapper: Wrapper = target.rawListeners(type)[0];
+
+          wrapper.listener();
+          expect(target.listenerCount(type)).toBe(1);
+
+          // The wrapper calls the handler on the emitter, whatever the wrapper is called on.
+          expect(wrapper.call({}, 1, 2)).toBe("result");
+          expect(target.listenerCount(type)).toBe(0);
+          expect(target.rawListeners(type)).toEqual([]);
+
+          // A wrapper that fired does nothing.
+          expect(wrapper(3)).toBeUndefined();
+          expect(target.emit(type, 4)).toBe(false);
+          expect(calls).toEqual([[false], [true, 1, 2]]);
+        });
+
+        test.each(readStates)("an emit runs the listener one time (%s)", state => {
+          const type = newType();
+          const calls: unknown[][] = [];
+          function handler(this: unknown, ...args: unknown[]) {
+            calls.push([this === target, ...args]);
+          }
+          target[method](type, handler);
+          let wrapper: Wrapper | undefined;
+          const read = () => {
+            wrapper = target.rawListeners(type).at(-1);
+          };
+          if (state === "read before the emit") read();
+          if (state === "read during the emit") target.prependListener(type, read);
+
+          expect(target.emit(type, "a", "b")).toBe(true);
+          expect(calls).toEqual([[true, "a", "b"]]);
+          expect(target.listeners(type)).toEqual(state === "read during the emit" ? [read] : []);
+
+          // A wrapper that was read before the listener ran does nothing now.
+          wrapper?.("late");
+          target.emit(type, "again");
+          expect(calls).toEqual([[true, "a", "b"]]);
+        });
+
+        test.each(readStates)("an emit from inside an earlier listener runs the listener one time (%s)", state => {
           const type = newType();
           let calls = 0;
           let depth = 0;
           target[method](type, () => calls++);
+          if (state === "read before the emit") target.rawListeners(type);
           target.prependListener(type, () => {
+            if (state === "read during the emit") target.rawListeners(type);
             if (depth++ === 0) target.emit(type);
           });
 
@@ -1317,7 +1392,332 @@ describe("native EventEmitter", () => {
           expect(calls).toBe(1);
           expect(target.listenerCount(type)).toBe(1);
         });
+
+        test("a wrapper that an earlier listener calls during the emit runs the handler one time", () => {
+          const type = newType();
+          const order: string[] = [];
+          target[method](type, () => order.push("handler"));
+          target.prependListener(type, () => {
+            order.push("earlier");
+            target.rawListeners(type).at(-1)();
+          });
+
+          target.emit(type);
+          expect(order).toEqual(["earlier", "handler"]);
+          expect(target.listenerCount(type)).toBe(1);
+        });
+
+        test.each(readStates)("a listener that an earlier listener removes during the emit still runs (%s)", state => {
+          const type = newType();
+          const order: string[] = [];
+          const handler = () => order.push("handler");
+          target[method](type, handler);
+          if (state === "read before the emit") target.rawListeners(type);
+          target.prependListener(type, () => {
+            if (state === "read during the emit") target.rawListeners(type);
+            target.removeListener(type, handler);
+            order.push("earlier");
+          });
+
+          target.emit(type);
+          target.emit(type);
+          expect(order).toEqual(["earlier", "handler", "earlier"]);
+        });
+
+        test("removeListener() takes the wrapper or the handler", () => {
+          const handler = () => {};
+
+          const byWrapper = newType();
+          target[method](byWrapper, handler);
+          target[method](byWrapper, handler);
+          const [first, second]: Wrapper[] = target.rawListeners(byWrapper);
+          expect(first).not.toBe(second);
+          expect([first.listener, second.listener]).toEqual([handler, handler]);
+          target.removeListener(byWrapper, first);
+          expect(target.rawListeners(byWrapper)).toEqual([second]);
+
+          // The handler matches the last registration that wraps it.
+          const byHandler = newType();
+          target[method](byHandler, handler);
+          target[method](byHandler, handler);
+          const [kept]: Wrapper[] = target.rawListeners(byHandler);
+          target.removeListener(byHandler, handler);
+          expect(target.rawListeners(byHandler)).toEqual([kept]);
+        });
+
+        const removals: Array<[string, (type: string | symbol, wrapper: Wrapper) => void]> = [
+          ["removeListener(type, wrapper)", (type, wrapper) => target.removeListener(type, wrapper)],
+          ["removeAllListeners(type)", type => target.removeAllListeners(type)],
+        ];
+        // With no argument it also removes the listeners that the test runner has on `process`.
+        if (receiver !== "process") removals.push(["removeAllListeners()", () => target.removeAllListeners()]);
+
+        test.each(removals)(
+          "a wrapper that %s removed before it fired still calls the handler one time, on the emitter",
+          (_removal, remove) => {
+            const type = newType();
+            const calls: boolean[] = [];
+            target[method](type, function (this: unknown) {
+              calls.push(this === target);
+            });
+            const wrapper: Wrapper = target.rawListeners(type)[0];
+            remove(type, wrapper);
+            expect(target.listenerCount(type)).toBe(0);
+
+            wrapper();
+            wrapper();
+            expect(calls).toEqual([true]);
+          },
+        );
+
+        // removeAllListeners() with no argument leaves the native emitter with no object to call listeners on.
+        test.skipIf(receiver === "process").each(readStates)(
+          "a listener that removeAllListeners() removes during the emit still runs on the emitter (%s)",
+          state => {
+            const type = newType();
+            const calls: boolean[] = [];
+            target[method](type, function (this: unknown) {
+              calls.push(this === target);
+            });
+            if (state === "read before the emit") target.rawListeners(type);
+            target.prependListener(type, () => {
+              if (state === "read during the emit") target.rawListeners(type);
+              target.removeAllListeners();
+            });
+
+            target.emit(type);
+            expect(calls).toEqual([true]);
+          },
+        );
+
+        // jest-circus >= 30.5.0 saves, removes and restores the listeners of `process` in this way around each test.
+        test("a saved wrapper that on() registers again after removeAllListeners() fires one time", () => {
+          const type = newType();
+          let calls = 0;
+          const handler = () => calls++;
+          target[method](type, handler);
+          const saved: Wrapper[] = [...target.rawListeners(type)];
+          target.removeAllListeners(type);
+          for (const listener of saved) target.on(type, listener);
+          expect(target.rawListeners(type)).toEqual(saved);
+          expect(target.listeners(type)).toEqual([handler]);
+
+          expect(target.emit(type)).toBe(true);
+          expect(target.listenerCount(type)).toBe(0);
+          expect(target.emit(type)).toBe(false);
+          expect(calls).toBe(1);
+        });
+
+        test("a wrapper registered with on() for another event fires one time and stays there", () => {
+          const type = newType();
+          const other = newType();
+          let calls = 0;
+          const handler = () => calls++;
+          target[method](type, handler);
+          const wrapper: Wrapper = target.rawListeners(type)[0];
+
+          target.on(other, wrapper);
+          expect(target.rawListeners(other)).toEqual([wrapper]);
+          expect(target.listeners(other)).toEqual([handler]);
+
+          target.emit(other);
+          target.emit(other);
+          expect(calls).toBe(1);
+          // The wrapper removed its registration for `type`. node leaves the one for `other`.
+          expect(target.listenerCount(type)).toBe(0);
+          expect(target.rawListeners(other)).toEqual([wrapper]);
+
+          target.removeListener(other, handler);
+          expect(target.listenerCount(other)).toBe(0);
+        });
+
+        test("a wrapper registered with on() for its own event removes the last registration of it", () => {
+          const type = newType();
+          let calls = 0;
+          target[method](type, () => calls++);
+          const wrapper: Wrapper = target.rawListeners(type)[0];
+          target.on(type, wrapper);
+          expect(target.rawListeners(type)).toEqual([wrapper, wrapper]);
+
+          target.emit(type);
+          expect(calls).toBe(1);
+          expect(target.rawListeners(type)).toEqual([wrapper]);
+
+          // What is left is a wrapper that fired.
+          target.emit(type);
+          expect(calls).toBe(1);
+          expect(target.rawListeners(type)).toEqual([wrapper]);
+        });
+
+        // The wrapper removes by value: the last registration that is it, or that wraps it.
+        test("a wrapper that fires removes a later registration of it and keeps its own", () => {
+          const type = newType();
+          let calls = 0;
+          const between = () => {};
+          target[method](type, () => calls++);
+          const wrapper: Wrapper = target.rawListeners(type)[0];
+          target.on(type, between);
+          target.on(type, wrapper);
+
+          target.emit(type);
+          expect(calls).toBe(1);
+          expect(target.rawListeners(type)).toEqual([wrapper, between]);
+        });
+
+        test("a wrapper that fires removes a once() registration of it", () => {
+          const type = newType();
+          let calls = 0;
+          target[method](type, () => calls++);
+          const wrapper: Wrapper = target.rawListeners(type)[0];
+          target.once(type, wrapper);
+          const outer: Wrapper = target.rawListeners(type)[1];
+          expect(outer.listener).toBe(wrapper);
+
+          wrapper();
+          expect(calls).toBe(1);
+          expect(target.rawListeners(type)).toEqual([wrapper]);
+        });
+
+        test("the wrapper of a wrapper", () => {
+          const type = newType();
+          const other = newType();
+          let calls = 0;
+          const handler = () => calls++;
+          target[method](type, handler);
+          const inner: Wrapper = target.rawListeners(type)[0];
+
+          target[method](other, inner);
+          // Before and after the read, the registration is for `inner`, not for the handler inside it.
+          expect(target.listeners(other)).toEqual([inner]);
+          target.removeListener(other, handler);
+          expect(target.listenerCount(other)).toBe(1);
+          const outer: Wrapper = target.rawListeners(other)[0];
+          expect(outer).not.toBe(inner);
+          expect(outer.listener).toBe(inner);
+          expect(target.listeners(other)).toEqual([inner]);
+          target.removeListener(other, handler);
+          expect(target.listenerCount(other)).toBe(1);
+
+          target.emit(other);
+          target.emit(other);
+          target.emit(type);
+          expect(calls).toBe(1);
+          expect([target.listenerCount(type), target.listenerCount(other)]).toEqual([0, 0]);
+        });
+
+        test("'newListener' receives the handler for on() and the wrapper for once()", () => {
+          const type = newType();
+          const added = newType();
+          const handler = () => {};
+          target[method](type, handler);
+          const wrapper: Wrapper = target.rawListeners(type)[0];
+          expect(wrapper).not.toBe(handler);
+
+          const seen: unknown[] = [];
+          const onNewListener = (name: unknown, listener: unknown) => {
+            if (name === added) seen.push(listener);
+          };
+          target.on("newListener", onNewListener);
+          try {
+            for (const verb of ["on", "addListener", "prependListener", "once", "prependOnceListener"]) {
+              target[verb](added, wrapper);
+            }
+          } finally {
+            target.removeListener("newListener", onNewListener);
+          }
+          expect(seen).toEqual([handler, handler, handler, wrapper, wrapper]);
+        });
+
+        test("an error that the handler throws reaches the caller of the wrapper", () => {
+          const type = newType();
+          const error = new RangeError("thrown by the handler");
+          target[method](type, () => {
+            throw error;
+          });
+          const wrapper: Wrapper = target.rawListeners(type)[0];
+
+          let thrown: unknown;
+          try {
+            wrapper();
+          } catch (e) {
+            thrown = e;
+          }
+          expect(thrown).toBe(error);
+          expect(target.listenerCount(type)).toBe(0);
+          expect(wrapper()).toBeUndefined();
+        });
+
+        // node rejects a listener that is not a function. The native emitter accepts an object and never calls it.
+        test.skipIf(!native)("rawListeners() does not wrap an object that is not callable", () => {
+          const type = newType();
+          const notCallable = {};
+          target[method](type, notCallable);
+          expect(target.rawListeners(type)[0]).toBe(notCallable);
+        });
       });
+
+      test("on() listeners are returned as they are", () => {
+        const type = newType();
+        const handler = () => {};
+        target.on(type, handler);
+        target.prependListener(type, handler);
+        expect(target.rawListeners(type)).toEqual([handler, handler]);
+        expect(Object.hasOwn(handler, "listener")).toBe(false);
+      });
+
+      test("rawListeners() and listeners() keep the order of mixed registrations", () => {
+        const type = newType();
+        const a = () => {};
+        const b = () => {};
+        const c = () => {};
+        target.on(type, a);
+        target.once(type, b);
+        target.prependOnceListener(type, c);
+
+        const raw: Wrapper[] = target.rawListeners(type);
+        expect([raw[0].listener, raw[1], raw[2].listener]).toEqual([c, a, b]);
+        expect(target.listeners(type)).toEqual([c, a, b]);
+      });
+    });
+
+    // The emitter converts a name that is not a string or a symbol. The wrapper removes itself from the result.
+    test("an event name that is a number", () => {
+      const type = 1_000_000 + nextName++;
+      track(String(type));
+      let calls = 0;
+      target.once(type, () => calls++);
+      const wrapper: Wrapper = target.rawListeners(type)[0];
+      expect(target.rawListeners(String(type))).toEqual([wrapper]);
+
+      wrapper();
+      wrapper();
+      expect(calls).toBe(1);
+      expect(target.listenerCount(type)).toBe(0);
+    });
+
+    // These are the checks of the native emitter. node also rejects a listener that is undefined, null or an object.
+    test.skipIf(!native)("removeListener() rejects a listener that is a primitive", () => {
+      const type = track(`native-emitter-${nextName++}`);
+      target.on(type, () => {});
+      for (const listener of [undefined, null, {}, () => {}]) {
+        expect(target.removeListener(type, listener)).toBe(target);
+      }
+      for (const listener of [1, "listener", Symbol("listener"), true]) {
+        expect(() => target.removeListener(type, listener)).toThrow(
+          expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+        );
+      }
+      expect(target.listenerCount(type)).toBe(1);
+    });
+
+    test("the emitter keeps the wrapper that it stores", () => {
+      const type = track(`native-emitter-${nextName++}`);
+      target.once(type, () => {});
+      (() => {
+        target.rawListeners(type)[0].tag = "kept";
+      })();
+      Bun.gc(true);
+      expect(target.rawListeners(type)[0].tag).toBe("kept");
     });
 
     // The first listener removes the third one and the second listener collects. After the removal, only the emit in
@@ -1346,6 +1746,10 @@ describe("native EventEmitter", () => {
     const listeners: Array<[string, (emitter: any, listener: () => void) => void]> = [
       ["an on() listener", (emitter, listener) => emitter.on("x", listener)],
       ["a once() listener", (emitter, listener) => emitter.once("x", listener)],
+      [
+        "a once() listener that rawListeners() read",
+        (emitter, listener) => void emitter.once("x", listener).rawListeners("x"),
+      ],
     ];
 
     describe.each(removers)("%s", (_remover, remove) => {
@@ -1390,6 +1794,7 @@ describe("native EventEmitter", () => {
         emitter.on("other", listener);
         emitter.removeListener("other", listener);
         emitter.once("other", () => {});
+        emitter.rawListeners("other");
         emitter.removeAllListeners("other");
       },
     ],
@@ -1398,14 +1803,15 @@ describe("native EventEmitter", () => {
       emitter => {
         emitter.on("other", () => emitter.removeAllListeners("other"));
         emitter.once("other", () => {});
+        emitter.rawListeners("other");
         emitter.emit("other");
       },
     ],
   ])("listeners that are removed during a long emit do not stay until it returns (%s)", (_holder, round) => {
     const emitter = new NativeEventEmitter();
     const total = 200;
-    // Each round makes two listeners.
-    let kept = total * 2;
+    // Each round makes two listeners and one wrapper.
+    let kept = total * 3;
     emitter.on("long", () => {
       Bun.gc(true);
       const before = functions();
@@ -1445,6 +1851,250 @@ describe("native EventEmitter", () => {
     }
     expect(alive).toBeLessThan(total / 4);
     expect(target.listenerCount(type)).toBe(0);
+  });
+
+  // once() stores the function and a flag. Only a rawListeners() read makes wrappers, one for each once() listener.
+  test("only rawListeners() makes wrappers, and they are collected after they fire", () => {
+    const emitter = new NativeEventEmitter();
+    const count = () => {
+      Bun.gc(true);
+      return functions();
+    };
+    const total = 200;
+    const handler = () => {};
+
+    const before = count();
+    for (let i = 0; i < total; i++) emitter[i % 2 ? "once" : "prependOnceListener"]("cells", handler);
+    emitter.listeners("cells");
+    emitter.listenerCount("cells");
+    emitter.eventNames();
+    const unread = count() - before;
+    emitter.rawListeners("cells");
+    emitter.rawListeners("cells");
+    const read = count() - before;
+    emitter.emit("cells");
+    const fired = count() - before;
+
+    expect(unread).toBeLessThan(total / 4);
+    expect(read).toBeGreaterThan((total * 3) / 4);
+    expect(read).toBeLessThan((total * 5) / 4);
+    expect(fired).toBeLessThan(total / 4);
+  });
+
+  // The two objects share one emitter through the prototype chain.
+  describe.each<[string, () => any]>([
+    ["an object that inherits the native prototype", () => Object.create(nativeProto)],
+    ["node:events EventEmitter", () => new EventEmitter()],
+  ])("an object that inherits from %s", (receiver, makeShared) => {
+    test("the wrapper calls the handler on the object that called once(), not on the one that read it", () => {
+      const shared = makeShared();
+      shared.on("own", () => {});
+      const registrant = Object.create(shared);
+      let self: unknown;
+      registrant.once("x", function (this: unknown) {
+        self = this;
+      });
+
+      shared.rawListeners("x")[0].call({});
+      expect(self).toBe(registrant);
+    });
+
+    // The native emitter calls every listener on the object that added or removed a listener last. The wrapper must
+    // do the same and not keep the object that the emitter had at the read.
+    test.each(["an emit", "a direct call"])(
+      "the handler runs on the object that called once() when that object adds a listener after the read (%s)",
+      how => {
+        const shared = makeShared();
+        shared.on("own", () => {});
+        const registrant = Object.create(shared);
+        let self: unknown;
+        registrant.once("x", function (this: unknown) {
+          self = this;
+        });
+        shared.on("other", () => {});
+        const wrapper: Wrapper = shared.rawListeners("x")[0];
+        registrant.on("later", () => {});
+
+        if (how === "an emit") shared.emit("x");
+        else wrapper.call({});
+        expect(self).toBe(registrant);
+      },
+    );
+
+    // The native emitter holds the object that called once() weakly. Its emit then calls the listeners on undefined.
+    test.skipIf(receiver === "node:events EventEmitter")(
+      "a read does not change the `this` of the handler after the object that called once() is collected",
+      async () => {
+        const shared = makeShared();
+        shared.on("own", () => {});
+        const seen: Record<string, unknown> = {};
+        const registrant = (() => {
+          const registrant = Object.create(shared);
+          registrant.on("x", function (this: unknown) {
+            seen.on = this;
+          });
+          registrant.once("x", function (this: unknown) {
+            seen.unread = this;
+          });
+          registrant.once("y", function (this: unknown) {
+            seen.read = this;
+          });
+          return new WeakRef(registrant);
+        })();
+        for (let i = 0; i < 50; i++) {
+          await nextTurn();
+          Bun.gc(true);
+          // In its own turn, so that this deref() does not keep the object for the collection above.
+          await nextTurn();
+          if (registrant.deref() === undefined) break;
+        }
+        expect(registrant.deref()).toBeUndefined();
+
+        const wrapper: Wrapper = shared.rawListeners("y")[0];
+        expect(typeof wrapper.listener).toBe("function");
+        shared.emit("x");
+        shared.emit("y");
+        expect(seen).toEqual({ on: undefined, unread: undefined, read: undefined });
+      },
+    );
+  });
+
+  // A wrapper that fired has no use for the emitter. The emitters below must be collected while the test holds
+  // their wrappers.
+  test.concurrent("a wrapper that fired does not keep the emitter alive", async () => {
+    const src = `
+      const nativeProto = Object.getPrototypeOf(process);
+      const NativeEventEmitter = nativeProto.constructor;
+      const held = [];
+      const total = 8;
+      let collected = 0;
+      const registry = new FinalizationRegistry(() => collected++);
+      (function () {
+        for (let i = 0; i < total; i++) {
+          const emitter = i % 2 ? new NativeEventEmitter() : Object.create(nativeProto);
+          emitter.once("x", function () {});
+          held.push(emitter.rawListeners("x")[0]);
+          // Half of the wrappers fire from the emit and half from a direct call.
+          if (i % 4 < 2) emitter.emit("x");
+          else held[i]();
+          registry.register(emitter);
+        }
+      })();
+      let iters = 0;
+      setImmediate(function check() {
+        Bun.gc(true);
+        const wrappers = held.filter(wrapper => typeof wrapper.listener === "function").length;
+        if (collected === total) {
+          console.log("collected " + collected + "/" + total + " holding " + wrappers + " wrappers");
+          return;
+        }
+        if (++iters > 50) {
+          console.log("stuck " + collected + "/" + total + " holding " + wrappers + " wrappers");
+          process.exit(1);
+        }
+        setImmediate(check);
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "collected 8/8 holding 8 wrappers",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // jest-circus >= 30.5.0 does this around each test (injectGlobalErrorHandlers and restoreGlobalErrorHandlers). The
+  // second error finds no listener, so the process ends with it.
+  test.concurrent.each([
+    ["uncaughtException", `throw new Error("first");`, `throw new Error("second");`],
+    ["unhandledRejection", `Promise.reject(new Error("first"));`, `Promise.reject(new Error("second"));`],
+  ])(
+    "a once('%s') listener that is saved with rawListeners() and restored with on() runs one time",
+    async (event, first, second) => {
+      const src = `
+        const events = ["uncaughtException", "unhandledRejection", "rejectionHandled"];
+        const log = [];
+        process.once("${event}", error => log.push(error.message));
+
+        const replacement = () => {};
+        const saved = events.map(event => [...process.rawListeners(event)]);
+        for (const event of events) process.removeAllListeners(event);
+        for (const event of events) process.on(event, replacement);
+        for (const event of events) process.removeListener(event, replacement);
+        events.forEach((event, i) => {
+          for (const listener of saved[i]) process.on(event, listener);
+        });
+
+        process.on("exit", () => console.log(JSON.stringify({ log, listeners: process.listenerCount("${event}") })));
+        setImmediate(() => {
+          setImmediate(() => {
+            ${second}
+          });
+          ${first}
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("error: second");
+      expect({ stdout, exitCode }).toEqual({ stdout: '{"log":["first"],"listeners":0}\n', exitCode: 1 });
+    },
+  );
+
+  // The timeout of node:vm fires during the sleep, and the call of the wrapper is the first place that sees it. The
+  // call ends there, before the handler runs. A longer sleep is tried when the timeout fired too late for that.
+  test.concurrent("a wrapper call that a node:vm timeout ends leaves the listener registered", async () => {
+    const src = `
+      const vm = require("node:vm");
+      vm.runInThisContext("1");
+      let calls = 0;
+      let interrupted = false;
+      for (let timeout = 25; timeout <= 400 && !interrupted; timeout *= 2) {
+        calls = 0;
+        process.removeAllListeners("interrupted");
+        process.once("interrupted", () => calls++);
+        globalThis.wrapper = process.rawListeners("interrupted")[0];
+        globalThis.sleep = timeout * 8;
+        const start = performance.now();
+        let code;
+        try {
+          vm.runInThisContext("Bun.sleepSync(sleep); wrapper();", { timeout });
+        } catch (error) {
+          code = error.code;
+        }
+        interrupted =
+          code === "ERR_SCRIPT_EXECUTION_TIMEOUT" &&
+          performance.now() - start >= sleep &&
+          calls === 0 &&
+          process.listenerCount("interrupted") === 1;
+      }
+      process.emit("interrupted");
+      const afterEmit = [calls, process.listenerCount("interrupted")];
+      wrapper();
+      console.log(JSON.stringify({ interrupted, afterEmit, afterCall: [calls, process.listenerCount("interrupted")] }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '{"interrupted":true,"afterEmit":[1,0],"afterCall":[1,0]}\n',
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // The native 'exit' emit holds the once() listener in its copy of the listeners while the first listener emits.

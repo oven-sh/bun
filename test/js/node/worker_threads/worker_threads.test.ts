@@ -1225,6 +1225,62 @@ test("postMessageToThread survives a tampered Map prototype", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Bun calls the raw listeners on the destination thread. The second message finds no listener there: the first one
+// called the wrapper of the process.once() listener, which removed it.
+test("postMessageToThread runs a process.once('workerMessage') listener one time", async () => {
+  const src = `
+    const wt = require("worker_threads");
+    const sendTwice = async (wt, threadId) => {
+      const sends = [];
+      for (let i = 0; i < 2; i++) {
+        try {
+          await wt.postMessageToThread(threadId, i);
+          sends.push("delivered");
+        } catch (error) {
+          sends.push(error.code);
+        }
+      }
+      return sends;
+    };
+    const workerMain = sendTwice => {
+      const wt = require("worker_threads");
+      let calls = 0;
+      process.once("workerMessage", () => calls++);
+      // The thread ends with a wrapper that did not fire.
+      process.once("unused", () => {});
+      const unused = process.rawListeners("unused")[0];
+      wt.parentPort.on("message", async toWorker => {
+        const toMain = await sendTwice(wt, 0);
+        const listeners = process.listenerCount("workerMessage");
+        wt.parentPort.postMessage({ toWorker, toMain, inWorker: { calls, listeners, unused: typeof unused.listener } });
+      });
+      wt.parentPort.postMessage("ready");
+    };
+
+    let calls = 0;
+    process.once("workerMessage", () => calls++);
+    const w = new wt.Worker("(" + workerMain + ")(" + sendTwice + ")", { eval: true });
+    w.on("message", async message => {
+      if (message === "ready") return w.postMessage(await sendTwice(wt, w.threadId));
+      console.log(JSON.stringify({ ...message, inMain: { calls, listeners: process.listenerCount("workerMessage") } }));
+      w.terminate();
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected = {
+    toWorker: ["delivered", "ERR_WORKER_MESSAGING_FAILED"],
+    toMain: ["delivered", "ERR_WORKER_MESSAGING_FAILED"],
+    inWorker: { calls: 1, listeners: 0, unused: "function" },
+    inMain: { calls: 1, listeners: 0 },
+  };
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
+});
+
 // The listener registry must not route through user-overridable Map/Set/WeakMap:
 // not their methods, not the `size` getter, not their iterators. Spawned, because
 // it clobbers prototypes and would poison the whole runner.

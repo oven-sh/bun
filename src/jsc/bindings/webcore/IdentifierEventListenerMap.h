@@ -26,6 +26,8 @@ public:
     void markAsFired() { m_hasFired = true; }
 
 private:
+    friend class IdentifierEventListenerMap;
+
     SimpleRegisteredEventListener(Ref<EventListener>&& listener, bool once)
         : m_isOnce(once)
         , m_wasRemoved(false)
@@ -64,11 +66,13 @@ public:
     // Like node:events and unlike EventTarget, the same function can be registered any number of times.
     void add(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
     void prepend(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
-    // Removes the last registration of this callback, like node's removeListener.
-    bool remove(const JSC::Identifier& eventType, EventListener&);
+    // Removes the last registration of this function or of a once wrapper of it, like node's removeListener.
+    bool remove(const JSC::Identifier& eventType, JSC::JSObject& function);
     // Removes exactly this registration.
     bool remove(const JSC::Identifier& eventType, SimpleRegisteredEventListener&);
     bool removeAll(const JSC::Identifier& eventType);
+    // Stores the wrapper that rawListeners() returns for this once registration. From here on it is a plain registration of the wrapper, as in node.
+    void promoteOnceListener(SimpleRegisteredEventListener&, Ref<EventListener>&& wrapper);
     // Call this when an emit returns: it drops the removed registrations that no emit holds any more.
     void releaseListenersRemovedWhileFiring()
     {

@@ -3,6 +3,7 @@
 
 #include "Event.h"
 #include "EventTarget.h"
+#include "JSEventEmitterOnceWrapper.h"
 #include "JSEventListener.h"
 #include <wtf/MainThread.h>
 #include <wtf/StdLibExtras.h>
@@ -102,14 +103,18 @@ static bool removeLastMatching(EntriesVector& entries, const JSC::Identifier& ev
     return false;
 }
 
-bool IdentifierEventListenerMap::remove(const JSC::Identifier& eventType, EventListener& listener)
+bool IdentifierEventListenerMap::remove(const JSC::Identifier& eventType, JSC::JSObject& function)
 {
     Locker locker { m_lock };
 
     return removeLastMatching(
         m_entries, eventType,
         [&](SimpleRegisteredEventListener& registeredListener) {
-            return registeredListener.callback() == listener;
+            auto* registeredFunction = registeredListener.callback().jsFunction();
+            if (registeredFunction == &function)
+                return true;
+            // node's `list[i].listener === listener`, and its once(type, wrapper) wraps again: https://github.com/nodejs/node/blob/v26.3.0/lib/events.js#L707
+            return !registeredListener.isOnce() && JSEventEmitterOnceWrapper::unwrap(registeredFunction) == &function;
         },
         [&](SimpleRegisteredEventListener& registeredListener) {
             keepAliveIfHeldByEmit(registeredListener);
@@ -142,6 +147,15 @@ bool IdentifierEventListenerMap::removeAll(const JSC::Identifier& eventType)
     }
 
     return false;
+}
+
+void IdentifierEventListenerMap::promoteOnceListener(SimpleRegisteredEventListener& registration, Ref<EventListener>&& wrapper)
+{
+    Locker locker { m_lock };
+
+    ASSERT(registration.m_isOnce);
+    registration.m_callback = WTF::move(wrapper);
+    registration.m_isOnce = false;
 }
 
 SimpleEventListenerVector* IdentifierEventListenerMap::find(const JSC::Identifier& eventType)

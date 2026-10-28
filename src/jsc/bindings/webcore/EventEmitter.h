@@ -48,18 +48,17 @@ public:
 
     bool removeAllListeners();
     WEBCORE_EXPORT void addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
-    WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
     WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
 
     WEBCORE_EXPORT void addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
-    WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
+    // Removes the last registration of this function or of a once wrapper of it, like node's removeListener.
+    WEBCORE_EXPORT bool removeListener(const Identifier& eventType, JSC::JSObject& function);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
     WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&);
 
     WEBCORE_EXPORT Vector<Identifier> getEventNames();
-    WEBCORE_EXPORT Vector<JSObject*> getListeners(const Identifier& eventType);
     WEBCORE_EXPORT int listenerCount(const Identifier& eventType);
 
     bool hasEventListeners() const;
@@ -88,6 +87,8 @@ public:
             m_thisObject = JSC::Weak<JSC::JSObject>(thisObject.getObject());
         }
     }
+
+    JSC::JSObject* thisObject() const { return m_thisObject.get(); }
 
 private:
     EventEmitter(ScriptExecutionContext& context)

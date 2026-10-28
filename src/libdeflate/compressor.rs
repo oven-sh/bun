@@ -45,6 +45,8 @@ pub struct Compressor {
 }
 
 impl Compressor {
+    // Kept out of line, as are `compress` and `compress_to_vec`: src/trim/features/bun.def removes the three by name.
+    #[inline(never)]
     pub fn new(level: Level) -> Result<Self, AllocError> {
         Ok(Self {
             level,
@@ -114,6 +116,7 @@ impl Compressor {
     }
 
     /// Compresses `input` into the start of `output` and returns the size of the result.
+    #[inline(never)]
     pub fn compress(
         &mut self,
         input: &[u8],
@@ -149,6 +152,7 @@ impl Compressor {
     }
 
     /// Appends to `out`, which is unchanged after an error. Returns the number of bytes added.
+    #[inline(never)]
     pub fn compress_to_vec(
         &mut self,
         input: &[u8],

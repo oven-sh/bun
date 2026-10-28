@@ -99,9 +99,8 @@ feature ServeHttp2 "HTTP/2 and HTTP/3 in Bun.serve"
   cxx-function H2 (^|\s)uWS::H2\w*::
 
 feature LibdeflateCompressor "gzip and deflate compression with libdeflate"
-  c-function libdeflate_alloc_compressor libdeflate_alloc_compressor_ex libdeflate_free_compressor
-  c-function libdeflate_deflate_compress libdeflate_deflate_compress_bound libdeflate_gzip_compress libdeflate_gzip_compress_bound
-  c-function libdeflate_zlib_compress libdeflate_zlib_compress_bound
+  minimum 20000
+  cxx-function bun_libdeflate ^<bun_libdeflate::compressor::Compressor>::(new|compress|compress_to_vec)$
 
 feature BrotliEncoder "Brotli compression"
   c-function BrotliEncoderCreateInstance BrotliEncoderDestroyInstance BrotliEncoderSetParameter

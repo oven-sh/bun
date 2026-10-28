@@ -782,12 +782,39 @@ impl<'a> Streams<'a> {
             }
         }
 
+        /// `LOOKUPS` in each stream. Not a loop: one that is not unrolled checks `done` at every turn.
+        #[inline(always)]
+        fn round<const LOG: u32, const LOOKUPS: usize>(
+            table: &[Entry; TABLE_SIZE],
+            bits: [&mut u64; 4],
+            windows: &mut [&mut [u8; WINDOW]; 4],
+            done: &mut [usize; 4],
+        ) {
+            let [bits0, bits1, bits2, bits3] = bits;
+            let [window0, window1, window2, window3] = windows;
+            let [done0, done1, done2, done3] = done;
+            let mut lookups = || {
+                lookup::<LOG>(table, bits0, window0, done0);
+                lookup::<LOG>(table, bits1, window1, done1);
+                lookup::<LOG>(table, bits2, window2, done2);
+                lookup::<LOG>(table, bits3, window3, done3);
+            };
+            lookups();
+            lookups();
+            lookups();
+            lookups();
+            if LOOKUPS > 4 {
+                lookups();
+            }
+        }
+
         #[inline(always)]
         fn window(out: &mut [u8], op: u32) -> Option<&mut [u8; WINDOW]> {
             out.get_mut(op as usize..op as usize + WINDOW)?
                 .as_mut_array()
         }
 
+        const { assert!(LOOKUPS == 4 || LOOKUPS == 5) };
         let [s0, s1, s2, s3] = &mut self.0;
         let (mut bits0, mut bits1, mut bits2, mut bits3) = (s0.bits, s1.bits, s2.bits, s3.bits);
         let (mut ip0, mut ip1, mut ip2, mut ip3) = (s0.ip, s1.ip, s2.ip, s3.ip);
@@ -801,29 +828,31 @@ impl<'a> Streams<'a> {
             ) else {
                 break;
             };
-            let (mut done0, mut done1, mut done2, mut done3) = (0, 0, 0, 0);
-            for _ in 0..LOOKUPS {
-                lookup::<LOG>(table, &mut bits0, window0, &mut done0);
-                lookup::<LOG>(table, &mut bits1, window1, &mut done1);
-                lookup::<LOG>(table, &mut bits2, window2, &mut done2);
-                lookup::<LOG>(table, &mut bits3, window3, &mut done3);
-            }
+            let mut windows = [window0, window1, window2, window3];
+            let mut done = [0; 4];
+            round::<LOG, LOOKUPS>(
+                table,
+                [&mut bits0, &mut bits1, &mut bits2, &mut bits3],
+                &mut windows,
+                &mut done,
+            );
             let mut more = reload(s0.src, &mut ip0, &mut bits0)
                 && reload(s1.src, &mut ip1, &mut bits1)
                 && reload(s2.src, &mut ip2, &mut bits2)
                 && reload(s3.src, &mut ip3, &mut bits3);
             if more {
-                for _ in 0..LOOKUPS {
-                    lookup::<LOG>(table, &mut bits0, window0, &mut done0);
-                    lookup::<LOG>(table, &mut bits1, window1, &mut done1);
-                    lookup::<LOG>(table, &mut bits2, window2, &mut done2);
-                    lookup::<LOG>(table, &mut bits3, window3, &mut done3);
-                }
+                round::<LOG, LOOKUPS>(
+                    table,
+                    [&mut bits0, &mut bits1, &mut bits2, &mut bits3],
+                    &mut windows,
+                    &mut done,
+                );
                 more = reload(s0.src, &mut ip0, &mut bits0)
                     && reload(s1.src, &mut ip1, &mut bits1)
                     && reload(s2.src, &mut ip2, &mut bits2)
                     && reload(s3.src, &mut ip3, &mut bits3);
             }
+            let [done0, done1, done2, done3] = done;
             op0 += done0 as u32;
             op1 += done1 as u32;
             op2 += done2 as u32;

@@ -215,8 +215,16 @@ function findArchiveMembers(link: CoffLink, symbols: MapSymbol[]): Map<string, A
       neededLibraries.add(symbol.object.slice(0, colon).toLowerCase() + ".lib");
   }
   for (const folder of link.libraryFolders) {
-    if (!existsSync(folder)) continue;
-    for (const file of readdirSync(folder)) {
+    if (neededLibraries.size === 0) break;
+    let files: string[];
+    try {
+      files = readdirSync(folder);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM") continue;
+      throw error;
+    }
+    for (const file of files) {
       if (neededLibraries.delete(file.toLowerCase())) archives.add(join(folder, file));
     }
   }

@@ -54,7 +54,6 @@ export interface LinkOptions {
   objects?: string[];
   compileFlags?: Record<string, string[]>;
   linkFlags?: string[];
-  libraryPaths?: string[];
   archives?: Record<string, string[]>;
   inputs?: string[];
   minimums?: Record<FeatureName, number>;
@@ -81,17 +80,9 @@ function compile(folder: string, name: string, { machine = "x64", compileFlags =
   return run([tools.clang!, ...targetFlags(machine), ...flags, "-c", `${name}.${isCxx ? "cpp" : "c"}`, "-o", `${name}.obj`], folder);
 }
 
-function linkCommand(
-  { machine = "x64", linkFlags = [], libraryPaths, isFreestanding = false }: LinkOptions,
-  pathOf: (name: string) => string,
-) {
+function linkCommand({ machine = "x64", linkFlags = [], isFreestanding = false }: LinkOptions, pathOf: (name: string) => string) {
   const driverArguments = ["/nologo", "-fuse-ld=lld", "/clang:-B" + dirname(tools["lld-link"]!), "@" + pathOf("in.rsp"), "/Fe" + pathOf(output)];
-  const libraryFolderFlags =
-    libraryPaths !== undefined
-      ? libraryPaths.map(folder => "/libpath:" + folder)
-      : sysroot
-        ? ["/winsysroot:" + sysroot]
-        : libraryFolders(machine).map(folder => "/libpath:" + folder);
+  const libraryFolderFlags = sysroot ? ["/winsysroot:" + sysroot] : libraryFolders(machine).map(folder => "/libpath:" + folder);
   const libraryFlags = isFreestanding ? freestandingLinkFlags : [...libraryFolderFlags, ...runtimeLibraryFlags];
   const mapFlags = ["/lldmap:" + pathOf("program.lldmap"), "/map:" + pathOf("program.map")];
   return [tools["clang-cl"]!, ...driverArguments, "/link", "/machine:" + machine, ...libraryFlags, ...fixedLinkFlags, ...mapFlags, ...linkFlags];

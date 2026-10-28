@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { sectionInFile } from "../../../scripts/build/trim/coff-graph.ts";
@@ -32,12 +32,69 @@ import {
   Other,
   otherSource,
   reviewFiles,
+  run,
   skipNotice,
   spelledBuiltin,
   start,
 } from "./toy-program.ts";
 
 setDefaultTimeout(60_000);
+
+describe("native COFF implicit library search", () => {
+  const testLibrary = test.skipIf(!isWindows || process.arch !== "x64" || freestandingSkipReasons.x64 !== undefined);
+  const fixture = join(import.meta.dir, "link-coff-library.fixture.ts");
+  const child = (folder: string, mode: string, kind: string, tag: string, LIB: string) =>
+    run([process.execPath, fixture, mode, folder, kind, tag], folder, { LIB });
+
+  testLibrary(
+    "reads a private LIB archive using the actual link trace, independently of the reader environment",
+    async () => {
+      using dir = tempDir("trim-coff-private-lib", {});
+      const folder = String(dir);
+      const valid = join(folder, "valid-库 空格");
+      expect(await child(folder, "prepare", "lib", "normal", valid)).toMatchObject({ exitCode: 0 });
+      const linked = await child(folder, "link", "lib", "normal", valid);
+      expect(linked, linked.stderr).toMatchObject({ exitCode: 0 });
+      // LIB at read time must not override what the successful linker actually searched.
+      const read = await child(folder, "read", "lib", "normal", "");
+      expect(read, read.stderr).toMatchObject({ exitCode: 0 });
+      const missingTrace = await child(folder, "missing-trace", "lib", "normal", valid);
+      expect(missingTrace, missingTrace.stderr).toMatchObject({ exitCode: 0 });
+      const missing = await child(folder, "negative-link", "lib", "missing", "");
+      expect(missing, missing.stderr).toMatchObject({ exitCode: 0 });
+      expect(missing.stdout).toContain('"missingLibrary":true');
+    },
+  );
+
+  testLibrary("ignores unusable LIB search entries before and after the private archive directory", async () => {
+    using dir = tempDir("trim-coff-private-lib-paths", {});
+    const folder = String(dir);
+    const valid = join(folder, "valid-库 空格");
+    expect(await child(folder, "prepare", "lib", "normal", valid)).toMatchObject({ exitCode: 0 });
+    const LIB = [
+      join(folder, "missing-directory"),
+      join(folder, "not-a-directory"),
+      valid,
+      join(folder, "not-a-directory"),
+    ].join(";");
+    const result = await child(folder, "link", "lib", "normal", LIB);
+    expect(result, result.stderr).toMatchObject({ exitCode: 0 });
+  });
+
+  testLibrary("reads the actual Clang resource archive rather than a same-name LIB shadow", async () => {
+    using dir = tempDir("trim-coff-resource-lib", {});
+    const folder = String(dir);
+    const shadow = join(folder, "shadow");
+    expect(await child(folder, "prepare", "resource", "normal", shadow)).toMatchObject({ exitCode: 0 });
+    // Both modes actually link the resource member's probe -> left relocation.
+    // The valid LIB shadow has the same member name but probe -> right instead.
+    for (const tag of ["normal", "ignoreenv"]) {
+      const result = await child(folder, "link", "resource", tag, shadow);
+      expect(result, result.stderr).toMatchObject({ exitCode: 0 });
+      expect(result.stdout).toContain('"left"');
+    }
+  });
+});
 
 const machines: Machine[] = ["x64", "arm64"];
 for (const machine of machines) {

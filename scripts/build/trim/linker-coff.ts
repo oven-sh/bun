@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { isBitcode } from "./binary-reader.ts";
@@ -11,9 +11,31 @@ import type { Partition } from "./partition.ts";
 const trimTableSection = ".buntrim";
 const orderFlag = "/order:@";
 const symbolMapFlag = "/map:";
-const commonFlags = ["/lldsavetemps:prelink", "/opt:nolldtailmerge"];
+const commonFlags = ["/lldsavetemps:prelink", "/opt:nolldtailmerge", "/print-search-paths"];
 
 const isMovable = (output: string) => output === ".text" || output === ".rdata";
+
+function libraryFoldersOf(link: Link): string[] {
+  // link.ts preserves child output as a latin1 byte string; LLD writes paths in UTF-8.
+  const lines = Buffer.from(link.log, "latin1").toString("utf8").split(/\r?\n/);
+  const heading = "Library search paths:";
+  const start = lines.indexOf(heading);
+  if (start < 0 || lines.indexOf(heading, start + 1) >= 0 || lines[start + 1] !== "  (cwd)")
+    throw new BuildError("The COFF link has no unambiguous LLD library search paths; link with /print-search-paths");
+  const folders: string[] = [process.cwd()];
+  for (let index = start + 2; index < lines.length && lines[index]!.startsWith("  "); index++) {
+    const folder = lines[index]!.slice(2);
+    if (folder === "") throw new BuildError("An empty directory in LLD's library search paths cannot be read");
+    if (folder === "(cwd)") {
+      // Empty LIB components also print as (cwd). Do not confuse one with a literal directory of that name.
+      if (existsSync(folder))
+        throw new BuildError("A literal (cwd) directory makes LLD's library search paths ambiguous");
+      continue;
+    }
+    folders.push(folder);
+  }
+  return folders;
+}
 
 function orderOf(graph: SectionGraph, partition: Partition): SectionOrder {
   const groupOf = (node: number) => groupOfNode(graph, partition, isMovable, node);
@@ -46,25 +68,7 @@ export function coff(linker: Linker): LinkerFormat {
   const orderFile = join(work, "order.txt");
   const machine = getFlagValues("/machine:")[0];
   if (machine === undefined) throw new BuildError("the link command names no /machine");
-  const architecture = machine.toLowerCase();
   const alternateNames = getFlagValues("/alternatename:").map(definition => definition.split("=")[0]!);
-  const listFolder = (folder: string) =>
-    existsSync(folder)
-      ? readdirSync(folder)
-          .sort()
-          .map(name => join(folder, name))
-      : [];
-  const libraryFolders = [
-    ...getFlagValues("/libpath:"),
-    ...getFlagValues("/winsysroot:").flatMap(root => [
-      ...listFolder(join(root, "VC", "Tools", "MSVC")).map(version => join(version, "lib", architecture)),
-      ...listFolder(join(root, "Windows Kits", "10", "Lib")).flatMap(version => [
-        join(version, "ucrt", architecture),
-        join(version, "um", architecture),
-      ]),
-    ]),
-    ...(process.platform === "win32" ? (process.env.LIB ?? "").split(";").filter(Boolean) : []),
-  ];
   const inputDirectories = new Set([work, ...linker.inputs.map(path => dirname(path))]);
   const executableNames = { first: linker.firstLinkName + ".exe", second: basename(output) };
   const compiledObjects = (link: "first" | "second") => findCompiledObjects(inputDirectories, executableNames[link]);
@@ -102,7 +106,7 @@ export function coff(linker: Linker): LinkerFormat {
         chunkMap: link.map,
         symbolMap: symbolMapOf(link),
         inputs: [...linker.inputs, ...compiledObjects("first"), ...compiledObjects("second")],
-        libraryFolders,
+        libraryFolders: libraryFoldersOf(link),
         alternateNames,
       }),
     namedBytes: link => namedBytesOfPe(link.executable, symbolMapOf(link)),

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
+import { join } from "node:path";
+import { unsupported as aotUnsupported } from "../../../aot/supported";
 
 const profileDurationFixture = (mode: "idle" | "busy") => `
 import assert from 'node:assert/strict';
@@ -263,6 +265,45 @@ describe("node:inspector", () => {
   });
 
   describe("Profiler", () => {
+    test.skipIf(!!aotUnsupported).each(["idle", "busy"] as const)(
+      "compiled %s profiles retain the startup frame",
+      async mode => {
+        const source = profileDurationFixture(mode).replace(
+          "assert.equal(url(), undefined);",
+          `assert.ok(profile.nodes.some(n => n.callFrame.functionName === 'beginCapture' && n.callFrame.url.endsWith('/main.mjs') && n.callFrame.lineNumber >= 0));
+         assert.equal(url(), undefined);`,
+        );
+        using dir = tempDir("compiled-profile-startup", { "main.mjs": source });
+        const executable = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [buildOut, buildError, buildExit] = await Promise.all([
+          build.stdout.text(),
+          build.stderr.text(),
+          build.exited,
+        ]);
+        expect({ buildOut: buildExit ? buildOut : "", buildError: buildExit ? buildError : "", buildExit }).toEqual({
+          buildOut: "",
+          buildError: "",
+          buildExit: 0,
+        });
+        await using proc = Bun.spawn({
+          cmd: [executable],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+      },
+    );
+
     for (const mode of ["idle", "busy"] as const) {
       for (const worker of [false, true]) {
         test.concurrent(

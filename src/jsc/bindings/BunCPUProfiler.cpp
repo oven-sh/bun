@@ -350,31 +350,6 @@ static CPUProfileFrame captureProfileFrame(JSC::VM& vm, JSC::SamplingProfiler::S
     // Current-sample line (1-indexed) for positionTicks.
     int sampleLine = 0;
 
-    // Absolute file path → `file://` URL. Chrome DevTools
-    // expects `callFrame.url` to be a proper URL; leaving
-    // the raw path breaks source-view resolution. We run
-    // this AFTER the sourcemap callbacks below because the
-    // callback (see FormatStackTraceForJS.cpp) unconditionally
-    // rewrites its out-param back to the raw provider URL when
-    // no sourcemap is found, which would undo an earlier
-    // normalization. See #29240.
-    auto normalizeURL = [](WTF::String& u) {
-        if (u.isEmpty())
-            return;
-        bool isAbsolutePath = false;
-        if (u[0] == '/') {
-            isAbsolutePath = true;
-        } else if (u.length() >= 2 && u[1] == ':') {
-            char firstChar = u[0];
-            if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
-                isAbsolutePath = true;
-        } else if (u.length() >= 2 && u[0] == '\\' && u[1] == '\\') {
-            isAbsolutePath = true;
-        }
-        if (isAbsolutePath)
-            u = WTF::URL::fileURLWithFileSystemPath(u).string();
-    };
-
     if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
         auto sourceProviderAndID = frame.sourceProviderAndID();
         auto* provider = std::get<0>(sourceProviderAndID);

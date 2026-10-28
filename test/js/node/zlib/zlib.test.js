@@ -157,14 +157,15 @@ describe("zlib", () => {
     "libdeflate %s doesn't write past its output buffer while another thread writes to the shared input",
     async kind => {
       const fixture = `
-        import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
-
+        // The global Worker: node:worker_threads costs a debug build over a second to load in the two threads.
         const size = 4096;
-        if (isMainThread) {
+        if (Bun.isMainThread) {
           const input = new SharedArrayBuffer(size);
-          const worker = new Worker(new URL(import.meta.url), { workerData: input });
+          const worker = new Worker(import.meta.url);
           const ready = Promise.withResolvers();
-          worker.on("message", ready.resolve);
+          worker.onmessage = ready.resolve;
+          worker.onerror = ready.reject;
+          worker.postMessage(input);
           await ready.promise;
           worker.unref();
 
@@ -183,23 +184,25 @@ describe("zlib", () => {
           process.exit(0);
         } else {
           // Alternate between bytes that encode in a few bits and bytes that need more.
-          const view = new Uint8Array(workerData);
-          let seed = 88172645;
-          const next = () => ((seed ^= seed << 13), (seed ^= seed >>> 17), (seed ^= seed << 5), seed >>> 0);
-          const cheap = new Uint8Array(size);
-          const costly = new Uint8Array(size);
-          for (let i = 0; i < size; i++) {
-            cheap[i] = next() & 127;
-            costly[i] = 0xf0 + (next() & 15);
-          }
-          for (let i = 0; i < 16; i++) cheap[next() % size] = 0xf0 + i;
-          parentPort.postMessage("ready");
-          for (;;) {
-            view.set(cheap);
-            for (let i = next() % 50000; i > 0; i--);
-            view.set(costly);
-            for (let i = next() % 5000; i > 0; i--);
-          }
+          self.onmessage = ({ data }) => {
+            const view = new Uint8Array(data);
+            let seed = 88172645;
+            const next = () => ((seed ^= seed << 13), (seed ^= seed >>> 17), (seed ^= seed << 5), seed >>> 0);
+            const cheap = new Uint8Array(size);
+            const costly = new Uint8Array(size);
+            for (let i = 0; i < size; i++) {
+              cheap[i] = next() & 127;
+              costly[i] = 0xf0 + (next() & 15);
+            }
+            for (let i = 0; i < 16; i++) cheap[next() % size] = 0xf0 + i;
+            postMessage("ready");
+            for (;;) {
+              view.set(cheap);
+              for (let i = next() % 50000; i > 0; i--);
+              view.set(costly);
+              for (let i = next() % 5000; i > 0; i--);
+            }
+          };
         }
       `;
       using dir = tempDir("libdeflate-shared", { "fixture.mjs": fixture });
@@ -214,6 +217,7 @@ describe("zlib", () => {
       expect({ stdout, stderr }).toEqual({ stdout: "ok\n", stderr: "" });
       expect(exitCode).toBe(0);
     },
+    isDebug ? 60_000 : undefined,
   );
 
   describe("memLevel and strategy", () => {

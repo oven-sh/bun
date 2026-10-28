@@ -360,3 +360,23 @@ describe.concurrent.each([
     expect(exitCode).toBe(0);
   });
 });
+
+test.skipIf(isWindows)("bun <bin> finds node_modules/.bin when the environ has no PATH", async () => {
+  using dir = tempDir("run-bin-no-path", {
+    "package.json": JSON.stringify({ name: "t" }),
+    "node_modules/.bin/mytool": "#!/bin/sh\necho MYTOOL_RAN\n",
+  });
+  chmodSync(join(String(dir), "node_modules/.bin/mytool"), 0o755);
+  const { PATH, ...envWithoutPath } = bunEnv;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "mytool"],
+    env: envWithoutPath,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("MYTOOL_RAN\n");
+  expect(exitCode).toBe(0);
+});

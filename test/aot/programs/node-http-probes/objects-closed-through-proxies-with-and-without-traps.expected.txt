@@ -1,593 +1,593 @@
 == a server's socket, before the answer: nothing itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 66 keys, 66 found, 63 writable, 66 configurable
-as that open 66 keys, 66 found, 63 writable, 66 configurable
+itself open 61 keys, 61 found, 58 writable, 61 configurable
+as that open 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added true removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy, then used as that
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy of a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy with every trap, then used itself
-traps while closing: 68 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+traps while closing: 63 of them for a key that is not listed: 0
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy with every trap, then used as that
-traps while closing: 68 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+traps while closing: 63 of them for a key that is not listed: 0
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy with every trap of a Proxy with every trap, then used itself
-traps while closing: 337 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+traps while closing: 312 of them for a key that is not listed: 0
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 66 keys, 66 found, 63 writable, 66 configurable
+itself open 61 keys, 61 found, 58 writable, 61 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy of a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 66 keys, 66 found, 63 writable, 66 configurable
+itself open 61 keys, 61 found, 58 writable, 61 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy that traps defineProperty, then used itself
-traps while closing: 66 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+traps while closing: 61 of them for a key that is not listed: 0
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy that traps deleteProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy that traps get, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy that traps getOwnPropertyDescriptor, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy that traps getPrototypeOf, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy that traps has, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy that traps isExtensible, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy that traps ownKeys, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy that traps preventExtensions, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: seal a Proxy that traps set, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy, then used as that
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy of a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy with every trap, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy with every trap, then used as that
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy with every trap of a Proxy with every trap, then used itself
 traps while closing: 3 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 66 keys, 66 found, 63 writable, 66 configurable
+itself open 61 keys, 61 found, 58 writable, 61 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy of a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 66 keys, 66 found, 63 writable, 66 configurable
+itself open 61 keys, 61 found, 58 writable, 61 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy that traps defineProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy that traps deleteProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy that traps get, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy that traps getOwnPropertyDescriptor, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy that traps getPrototypeOf, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy that traps has, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy that traps isExtensible, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy that traps ownKeys, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy that traps preventExtensions, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, before the answer: preventExtensions a Proxy that traps set, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: nothing itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 66 keys, 66 found, 63 writable, 66 configurable
-as that open 66 keys, 66 found, 63 writable, 66 configurable
+itself open 61 keys, 61 found, 58 writable, 61 configurable
+as that open 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added true removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: freeze itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy, then used as that
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy of a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy with every trap, then used itself
-traps while closing: 134 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+traps while closing: 124 of them for a key that is not listed: 0
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy with every trap, then used as that
-traps while closing: 134 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+traps while closing: 124 of them for a key that is not listed: 0
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy with every trap of a Proxy with every trap, then used itself
-traps while closing: 601 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+traps while closing: 556 of them for a key that is not listed: 0
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 66 keys, 66 found, 63 writable, 66 configurable
+itself open 61 keys, 61 found, 58 writable, 61 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: freeze a Proxy of a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 66 keys, 66 found, 63 writable, 66 configurable
+itself open 61 keys, 61 found, 58 writable, 61 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: freeze a Proxy that traps defineProperty, then used itself
-traps while closing: 66 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+traps while closing: 61 of them for a key that is not listed: 0
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps deleteProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps get, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps getOwnPropertyDescriptor, then used itself
-traps while closing: 66 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+traps while closing: 61 of them for a key that is not listed: 0
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps getPrototypeOf, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps has, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps isExtensible, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps ownKeys, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps preventExtensions, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: freeze a Proxy that traps set, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
-as that closed sealed frozen 66 keys, 66 found, 0 writable, 0 configurable
+itself closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
+as that closed sealed frozen 61 keys, 61 found, 0 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- nobody caught TypeError in <anonymous> | nobody caught TypeError in onResponseFinishHandleSocket | response close  | request end  | request close  | answered 200 1 answer | socket error TypeError in _destroy | nobody caught TypeError in onConnectionClosed | nobody caught TypeError in error | the socket's close did not come
 == a server's socket, after the answer: seal itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy, then used as that
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy of a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy with every trap, then used itself
-traps while closing: 68 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+traps while closing: 63 of them for a key that is not listed: 0
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy with every trap, then used as that
-traps while closing: 68 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+traps while closing: 63 of them for a key that is not listed: 0
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy with every trap of a Proxy with every trap, then used itself
-traps while closing: 337 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+traps while closing: 312 of them for a key that is not listed: 0
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 66 keys, 66 found, 63 writable, 66 configurable
+itself open 61 keys, 61 found, 58 writable, 61 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy of a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 66 keys, 66 found, 63 writable, 66 configurable
+itself open 61 keys, 61 found, 58 writable, 61 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy that traps defineProperty, then used itself
-traps while closing: 66 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+traps while closing: 61 of them for a key that is not listed: 0
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy that traps deleteProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy that traps get, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy that traps getOwnPropertyDescriptor, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy that traps getPrototypeOf, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy that traps has, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy that traps isExtensible, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy that traps ownKeys, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy that traps preventExtensions, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: seal a Proxy that traps set, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed sealed 66 keys, 66 found, 63 writable, 0 configurable
-as that closed sealed 66 keys, 66 found, 63 writable, 0 configurable
+itself closed sealed 61 keys, 61 found, 58 writable, 0 configurable
+as that closed sealed 61 keys, 61 found, 58 writable, 0 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions itself, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy, then used as that
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy of a Proxy, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy with every trap, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy with every trap, then used as that
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy with every trap of a Proxy with every trap, then used itself
 traps while closing: 3 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 66 keys, 66 found, 63 writable, 66 configurable
+itself open 61 keys, 61 found, 58 writable, 61 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy of a revoked Proxy, then used itself
 closing threw TypeError
 traps while closing: 0 of them for a key that is not listed: 0
-itself open 66 keys, 66 found, 63 writable, 66 configurable
+itself open 61 keys, 61 found, 58 writable, 61 configurable
 asking threw TypeError
 changing threw TypeError
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy that traps defineProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy that traps deleteProperty, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy that traps get, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy that traps getOwnPropertyDescriptor, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy that traps getPrototypeOf, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy that traps has, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy that traps isExtensible, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy that traps ownKeys, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy that traps preventExtensions, then used itself
 traps while closing: 1 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's socket, after the answer: preventExtensions a Proxy that traps set, then used itself
 traps while closing: 0 of them for a key that is not listed: 0
-itself closed 66 keys, 66 found, 63 writable, 66 configurable
-as that closed 66 keys, 66 found, 63 writable, 66 configurable
+itself closed 61 keys, 61 found, 58 writable, 61 configurable
+as that closed 61 keys, 61 found, 58 writable, 61 configurable
 defined anew true added false removed true absent removed true absent found false
 -- response finish  | response close  | request end  | request close  | answered 200 1 answer | socket close
 == a server's request, before the answer: nothing itself, then used itself

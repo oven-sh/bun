@@ -417,8 +417,7 @@ pub(crate) fn cluster_raw_bind<'a>(
                     ));
                 }
             };
-            // SAFETY: sockaddr_un is plain C data; all-zero is a valid value.
-            let mut sun: libc::sockaddr_un = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut sun: libc::sockaddr_un = bun_core::ffi::zeroed();
             sun.sun_family = libc::AF_UNIX as libc::sa_family_t;
             if path_bytes.len() >= sun.sun_path.len() {
                 return Ok(BindResult::Errno(-(libc::ENAMETOOLONG)));
@@ -466,9 +465,10 @@ pub(crate) fn cluster_raw_bind<'a>(
             family: c_int,
             port: i32,
         ) -> (libc::sockaddr_storage, libc::socklen_t) {
-            // SAFETY: sockaddr_storage is plain C data; all-zero is a valid
+            let mut ss: libc::sockaddr_storage = bun_core::ffi::zeroed();
+            // SAFETY: `sockaddr_storage` is sized and aligned for every sockaddr type, and all-zero
+            // is a valid `sockaddr_in` / `sockaddr_in6`.
             unsafe {
-                let mut ss: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();
                 let ss_len: libc::socklen_t = if family == libc::AF_INET6 {
                     let sin6: &mut libc::sockaddr_in6 =
                         &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
@@ -561,8 +561,7 @@ pub(crate) fn cluster_raw_bind<'a>(
             }
         }
 
-        // SAFETY: sockaddr_storage is plain C data; all-zero is a valid value.
-        let mut ss: libc::sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut ss: libc::sockaddr_storage = bun_core::ffi::zeroed();
         let ss_len: libc::socklen_t;
         let fd: c_int;
         let bound_family: c_int;
@@ -599,8 +598,7 @@ pub(crate) fn cluster_raw_bind<'a>(
                 }
             };
             if !parsed {
-                // SAFETY: addrinfo is plain C data; all-zero is a valid hints value.
-                let mut hints: libc::addrinfo = unsafe { bun_core::ffi::zeroed_unchecked() };
+                let mut hints: libc::addrinfo = bun_core::ffi::zeroed();
                 hints.ai_family = family;
                 hints.ai_socktype = socktype;
                 let mut res: *mut libc::addrinfo = core::ptr::null_mut();
@@ -672,7 +670,7 @@ pub(crate) fn cluster_raw_bind<'a>(
         // SAFETY: getsockname FFI on the bound fd with a properly sized
         unsafe {
             let mut bound_port = port;
-            let mut out: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();
+            let mut out: libc::sockaddr_storage = bun_core::ffi::zeroed();
             let mut out_len = core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
             if libc::getsockname(fd, (&raw mut out).cast(), &raw mut out_len) == 0 {
                 bound_port = if bound_family == libc::AF_INET6 {
@@ -727,7 +725,7 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
         if ty == libc::SOCK_STREAM {
             // SAFETY: sockaddr_storage is plain data; getpeername only writes within `peer_len`.
             let connected = unsafe {
-                let mut peer: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();
+                let mut peer: libc::sockaddr_storage = bun_core::ffi::zeroed();
                 let mut peer_len =
                     core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
                 libc::getpeername(fd, (&raw mut peer).cast(), &raw mut peer_len) == 0

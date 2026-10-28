@@ -3457,9 +3457,7 @@ mod spawn_process_body {
                         }
                     }
 
-                    let mut poll_fds_buf: [libc::pollfd; 2] =
-                    // SAFETY: zeroed pollfd is valid
-                    unsafe { bun_core::ffi::zeroed_unchecked() };
+                    let mut poll_fds_buf: [libc::pollfd; 2] = bun_core::ffi::zeroed();
                     let mut poll_len: usize = 0;
                     for &fd in &out_fds_to_wait_for {
                         if fd == Fd::INVALID {

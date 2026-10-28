@@ -58,15 +58,14 @@ macro_rules! new_hasher {
         pub struct $name {
             hasher: $ctx,
         }
+        bun_core::impl_zeroable!($name);
 
         impl $name {
             pub const DIGEST: usize = $digest_size;
 
             pub fn init() -> Self {
                 boringssl::load();
-                // SAFETY: `$ctx` is a BoringSSL POD context struct for which the
-                // all-zero bit pattern is a valid (uninitialised) value.
-                let mut this: Self = unsafe { bun_core::ffi::zeroed_unchecked() };
+                let mut this: Self = bun_core::ffi::zeroed();
                 // SAFETY: `this.hasher` is a writable, properly sized `$ctx`;
                 // BoringSSL *_Init only writes to it and does not read prior contents.
                 let rc: c_int = unsafe { $init(&mut this.hasher) };

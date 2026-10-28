@@ -479,13 +479,13 @@ pub union Value {
     ///```
     pub(crate) map: ExternalStringList,
 }
+bun_core::impl_zeroable!(Value);
 
 impl Value {
     /// To avoid undefined memory between union values, we must zero initialize the union first.
     #[inline]
     pub(crate) fn init_none() -> Value {
-        // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
-        unsafe { bun_core::ffi::zeroed_unchecked() }
+        bun_core::ffi::zeroed()
     }
     #[inline]
     pub(crate) fn init_file(file: String) -> Value {

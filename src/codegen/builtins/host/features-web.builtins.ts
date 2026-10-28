@@ -108,6 +108,16 @@ export default b.declarations(
 
   extendAll(["Url"], "Bun.pathToFileURL", "URL", "URLSearchParams"),
   extendAll(["Events"], "CloseEvent", "CustomEvent", "ErrorEvent", "Event", "MessageEvent"),
+  // events.addAbortListener() hands the listener of a signal that is aborted already an Event that these two make and reset.
+  extendAll(
+    ["Events"],
+    ...nativeBindings(
+      "NewCppFunction",
+      "JSEventTargetNode.cpp",
+      "jsFunctionNodeEventsArmAbortEvent",
+      "jsFunctionNodeEventsFinishAbortEvent",
+    ),
+  ),
   extendAll(abortSignalFeatures, "AbortSignal", "AbortController"),
   extendAll(["Headers"], "Headers"),
   extendAll(["FormData", "Bodies"], "FormData"),

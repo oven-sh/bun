@@ -465,7 +465,14 @@ function addAbortListener(signal, listener) {
 
   let removeEventListener;
   if (signal.aborted) {
-    queueMicrotask(() => listener());
+    let disposed = false;
+    // The listener gets no event here: a page cannot make a trusted one, and the host may have no `Event`.
+    queueMicrotask(() => {
+      if (!disposed) listener();
+    });
+    removeEventListener = () => {
+      disposed = true;
+    };
   } else {
     signal.addEventListener("abort", listener, { __proto__: null, once: true });
     removeEventListener = () => {

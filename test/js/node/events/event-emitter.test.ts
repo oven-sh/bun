@@ -2,6 +2,7 @@ import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { createRequire } from "module";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -675,6 +676,26 @@ describe("EventEmitter.on", () => {
     expect({ result, calls }).toEqual({ result: [[0], [1], [2], [3]], calls: ["pause"] });
   });
 
+  test("return() cancels the abort listener of a signal that was aborted while on() added its listeners", async () => {
+    const controller = new AbortController();
+    const emitter = new EventEmitter();
+    // The signal passes the check at the top of on(). It is aborted before on() reaches addAbortListener().
+    emitter.on = function (this: EventEmitter, ...args: Parameters<EventEmitter["on"]>) {
+      controller.abort();
+      return EventEmitter.prototype.on.apply(this, args);
+    };
+
+    const iterator = EventEmitter.on(emitter, "x", { signal: controller.signal });
+    const returned = await iterator.return!();
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    expect([returned, await iterator.next(), emitter.listenerCount("x")]).toEqual([
+      { done: true, value: undefined },
+      { done: true, value: undefined },
+      0,
+    ]);
+  });
+
   test("readline.createInterface", async () => {
     const { createInterface } = require("node:readline");
     const { createReadStream } = require("node:fs");
@@ -1011,6 +1032,236 @@ describe("addAbortListener resists stopImmediatePropagation", () => {
     target.dispatchEvent(new Event("x"));
     expect(order).toEqual(["a", "b"]);
   });
+});
+
+describe("addAbortListener on a signal that is aborted already", () => {
+  // After one turn of the event loop every microtask that was queued before has run.
+  const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
+
+  const describeEvent = (event: Event, signal: object) => ({
+    type: event.type,
+    isTrusted: event.isTrusted,
+    target: event.target === signal,
+    currentTarget: event.currentTarget === signal,
+    eventPhase: event.eventPhase,
+  });
+
+  test("the listener gets a trusted abort event whose target is the signal", async () => {
+    const signal = AbortSignal.abort("why");
+    const otherListener = mock();
+    signal.addEventListener("abort", otherListener);
+    signal.onabort = otherListener;
+
+    let event!: Event;
+    let during: object | undefined;
+    EventEmitter.addAbortListener(signal, function (this: unknown, ...args: [Event]) {
+      event = args[0];
+      during = {
+        this: this,
+        arguments: args.length,
+        ...describeEvent(event, signal),
+        srcElement: event.srcElement === signal,
+        reason: (event.target as AbortSignal).reason,
+      };
+    });
+    await nextTurn();
+
+    expect(during).toEqual({
+      this: undefined,
+      arguments: 1,
+      type: "abort",
+      isTrusted: true,
+      target: true,
+      currentTarget: true,
+      eventPhase: Event.AT_TARGET,
+      srcElement: true,
+      reason: "why",
+    });
+    // As after a dispatch: the event keeps its target and has no current target.
+    expect(describeEvent(event, signal)).toEqual({
+      type: "abort",
+      isTrusted: true,
+      target: true,
+      currentTarget: false,
+      eventPhase: Event.NONE,
+    });
+    expect(Object.getPrototypeOf(event)).toBe(Event.prototype);
+    // Nothing is dispatched, so the listeners that are on the signal do not run.
+    expect(otherListener).not.toHaveBeenCalled();
+  });
+
+  // Any object that has `aborted` is taken for a signal: the AbortSignal of happy-dom, jsdom or abort-controller is
+  // no EventTarget of Bun's. A native Event can name only such a target, so own properties name this signal.
+  // Node.js v26.12.1 answers the signal for `srcElement` too, and its event has no own key.
+  test("the event names a signal that is no EventTarget", async () => {
+    const signal = { aborted: true };
+    const describeOwn = (event: Event) => ({
+      ...describeEvent(event, signal),
+      srcElement: event.srcElement,
+      keys: Object.keys(event),
+      targetIsWritable: Object.getOwnPropertyDescriptor(event, "target")?.writable,
+    });
+    let event!: Event;
+    let during: object | undefined;
+    EventEmitter.addAbortListener(signal as AbortSignal, received => {
+      event = received;
+      during = describeOwn(received);
+    });
+    await nextTurn();
+
+    const own = { srcElement: null, keys: ["isTrusted", "target", "currentTarget"], targetIsWritable: false };
+    expect({ during, after: describeOwn(event) }).toEqual({
+      during: {
+        type: "abort",
+        isTrusted: true,
+        target: true,
+        currentTarget: true,
+        eventPhase: Event.AT_TARGET,
+        ...own,
+      },
+      after: { type: "abort", isTrusted: true, target: true, currentTarget: false, eventPhase: Event.NONE, ...own },
+    });
+  });
+
+  test("dispose() before the microtask runs cancels the call", async () => {
+    const listener = mock();
+
+    EventEmitter.addAbortListener(AbortSignal.abort(), listener)[Symbol.dispose]();
+    {
+      using _ = EventEmitter.addAbortListener(AbortSignal.abort(), listener);
+    }
+    // A microtask that was queued earlier runs first.
+    let disposable: Disposable;
+    queueMicrotask(() => disposable[Symbol.dispose]());
+    disposable = EventEmitter.addAbortListener(AbortSignal.abort(), listener);
+
+    await nextTurn();
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  test("each registration has an event and a disposable of its own", async () => {
+    const signal = AbortSignal.abort();
+    const events: Event[] = [];
+    const listener = (event: Event) => void events.push(event);
+
+    EventEmitter.addAbortListener(signal, listener);
+    EventEmitter.addAbortListener(signal, listener)[Symbol.dispose]();
+    EventEmitter.addAbortListener(signal, listener);
+    await nextTurn();
+
+    expect(events.map(event => event?.type)).toEqual(["abort", "abort"]);
+    expect(events[0]).not.toBe(events[1]);
+  });
+
+  test("the event is being dispatched only while the listener runs", async () => {
+    const signal = AbortSignal.abort();
+    let event!: Event;
+    let inside: unknown;
+    EventEmitter.addAbortListener(signal, received => {
+      event = received;
+      try {
+        inside = signal.dispatchEvent(received);
+      } catch (error) {
+        inside = (error as { code?: string }).code;
+      }
+    });
+    await nextTurn();
+
+    const target = new EventTarget();
+    const heard: Event[] = [];
+    target.addEventListener("abort", received => void heard.push(received));
+    expect({ inside, afterwards: target.dispatchEvent(event), heard: heard[0] === event }).toEqual({
+      inside: "ERR_EVENT_RECURSION",
+      afterwards: true,
+      heard: true,
+    });
+  });
+
+  test("the listener runs in a microtask, in the async context of the call", async () => {
+    const storage = new AsyncLocalStorage<string>();
+    const order: string[] = [];
+
+    Promise.resolve().then(() => order.push("promise before"));
+    storage.run("store", () => {
+      EventEmitter.addAbortListener(AbortSignal.abort(), event => {
+        order.push(`listener ${event?.type} ${storage.getStore()}`);
+      });
+    });
+    order.push("sync");
+    Promise.resolve().then(() => order.push("promise after"));
+    await nextTurn();
+
+    expect(order).toEqual(["sync", "promise before", "listener abort store", "promise after"]);
+  });
+
+  test("the event of a listener that throws stays as it was during the call", async () => {
+    // Node.js resets nothing after a throw, and the listener that is queued next still runs.
+    const script = `
+      const { addAbortListener } = require("node:events");
+      const signal = AbortSignal.abort();
+      let event, next;
+      process.on("uncaughtException", error => {
+        setImmediate(() => {
+          console.log(JSON.stringify({
+            uncaught: error.message,
+            eventPhase: event?.eventPhase,
+            currentTarget: event?.currentTarget === signal,
+            next,
+          }));
+        });
+      });
+      addAbortListener(signal, received => {
+        event = received;
+        throw new Error("boom");
+      });
+      addAbortListener(signal, received => {
+        next = received?.type;
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ uncaught: "boom", eventPhase: 2, currentTarget: true, next: "abort" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // No Event keeps the wrapper of its target alive, and the reason of a signal lives on the wrapper. Only the event
+  // names this signal, so a collection while the listener waits takes the reason. Node.js v26.12.1 prints the error.
+  test.todo(
+    "the reason of a signal that only the event names is still there after the listener has waited",
+    async () => {
+      const script = `
+      const { addAbortListener } = require("node:events");
+      (function () {
+        addAbortListener(AbortSignal.abort(new Error("cancelled")), async event => {
+          await new Promise(resolve => setImmediate(resolve));
+          console.log(String(event.target.reason));
+        });
+      })();
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "Error: cancelled",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 test("getMaxListeners", () => {

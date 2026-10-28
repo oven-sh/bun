@@ -1,7 +1,7 @@
-import * as assert from 'node:assert';
-import * as events from 'node:events';
-import { describe, it } from 'node:test';
 import * as common from '../common/index.mjs';
+import * as events from 'node:events';
+import * as assert from 'node:assert';
+import { describe, it } from 'node:test';
 
 describe('events.addAbortListener', () => {
   it('should throw if signal not provided', () => {
@@ -31,6 +31,25 @@ describe('events.addAbortListener', () => {
   it('should execute the listener immediately for aborted runners', () => {
     const disposable = events.addAbortListener(AbortSignal.abort(), common.mustCall());
     assert.strictEqual(typeof disposable[Symbol.dispose], 'function');
+  });
+
+  it('should pass an abort event to the listener for aborted runners', async () => {
+    const signal = AbortSignal.abort();
+    const { promise, resolve } = Promise.withResolvers();
+    events.addAbortListener(signal, (e) => resolve([e, e?.currentTarget]));
+
+    const [event, currentTarget] = await promise;
+    assert.strictEqual(event.type, 'abort');
+    assert.strictEqual(event.target, signal);
+    assert.strictEqual(event.isTrusted, true);
+    assert.strictEqual(currentTarget, signal);
+  });
+
+  it('should not execute the listener for aborted runners when disposed', async () => {
+    const disposable = events.addAbortListener(AbortSignal.abort(), common.mustNotCall());
+    disposable[Symbol.dispose]();
+
+    await new Promise(setImmediate);
   });
 
   it('should execute the listener even when event propagation stopped', () => {

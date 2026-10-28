@@ -45,6 +45,14 @@ bun_core::declare_scope!(EventLoop, hidden);
 pub type Queue =
     bun_collections::LinearFifo<Task, bun_collections::linear_fifo::DynamicBuffer<Task>>;
 
+/// A native task of the immediates phase and its place in the batch: it runs after the first
+/// `after` entries of `immediate_tasks`, the `setImmediate()` callbacks queued before it.
+#[derive(Clone, Copy)]
+pub(crate) struct ImmediateCppTask {
+    after: usize,
+    task: *mut CppTask,
+}
+
 pub struct EventLoop {
     pub tasks: Queue,
     /// Set when teardown releases the queue: from then on `enqueue_task`
@@ -70,6 +78,15 @@ pub struct EventLoop {
     /// (link-time `__bun_run_immediate_task`) casts it back.
     pub immediate_tasks: Vec<*mut ()>,
     pub next_immediate_tasks: Vec<*mut ()>,
+    /// Native tasks of the immediates phase (see [`Self::enqueue_immediate_cpp_task`]), in a
+    /// list of their own so that the loop over `immediate_tasks` stays as it is when there
+    /// are none.
+    pub(crate) immediate_cpp_tasks: Vec<ImmediateCppTask>,
+    /// The buffer of the last batch of `immediate_cpp_tasks`, kept for the next one.
+    spare_immediate_cpp_tasks: Vec<ImmediateCppTask>,
+    /// The promise the innermost wait (`wait_for_promise`) blocks this thread on. A native task of
+    /// the immediates phase that settles it wakes the poll that follows in the same `auto_tick`.
+    awaited_promise: Option<jsc::AnyPromise>,
     /// Tasks that asked to run on the *next* loop iteration — after I/O and
     /// timers have had a turn — rather than in the current drain, which runs
     /// until the queue is empty (a task that re-posts itself there never lets
@@ -131,6 +148,9 @@ impl Default for EventLoop {
             global_is_going: false,
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
+            immediate_cpp_tasks: Vec::new(),
+            spare_immediate_cpp_tasks: Vec::new(),
+            awaited_promise: None,
             yield_tasks: Vec::new(),
             concurrent_tasks: ConcurrentQueue::default(),
             concurrent_plugin_requests: ConcurrentQueue::default(),
@@ -1010,6 +1030,7 @@ impl EventLoop {
 
     /// Cancel (never run) every queued ImmediateObject; each cancel drops the
     /// immediate's keep-alive on this loop, so the loop must still exist.
+    /// The native tasks of the phase are released like the tasks of the queue.
     fn release_pending_immediates(&mut self) {
         let pending = core::mem::take(&mut self.immediate_tasks);
         let next = core::mem::take(&mut self.next_immediate_tasks);
@@ -1019,6 +1040,10 @@ impl EventLoop {
                 // SAFETY: `task` came from `enqueue_immediate_task`; `vm` is the live per-thread VM.
                 unsafe { __bun_cancel_pending_immediate(task, vm) };
             }
+        }
+        for cpp_task in core::mem::take(&mut self.immediate_cpp_tasks) {
+            // SAFETY: JS thread, heap alive; the task just left the list.
+            unsafe { self.release_task_unrun(Task::init(cpp_task.task)) };
         }
     }
 
@@ -1034,7 +1059,9 @@ impl EventLoop {
             "queued tasks must be released (release_queued_tasks) before the loop is destroyed"
         );
         debug_assert!(
-            self.immediate_tasks.is_empty() && self.next_immediate_tasks.is_empty(),
+            self.immediate_tasks.is_empty()
+                && self.next_immediate_tasks.is_empty()
+                && self.immediate_cpp_tasks.is_empty(),
             "pending immediates must be released (release_queued_tasks) while the loop is alive"
         );
         self.tasks = Queue::init();
@@ -1051,6 +1078,30 @@ impl EventLoop {
     /// `*mut bun_runtime::timer::ImmediateObject` — see [`RunImmediateFn`].
     pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
         self.immediate_tasks.push(task);
+    }
+
+    /// Queue a native task for the immediates phase, where Node.js runs what its own code
+    /// hands to `setImmediate()`. It runs at its place among the `setImmediate()` callbacks:
+    /// after those queued before it, before those queued after it. Like them, a task queued
+    /// while the phase runs waits for the next loop iteration, so one that queues itself
+    /// again cannot keep the loop from polling.
+    pub fn enqueue_immediate_cpp_task(&mut self, task: *mut CppTask) {
+        if self.closed_for_tasks {
+            // SAFETY: as in `enqueue_task`.
+            unsafe { self.release_task_unrun(Task::init(task)) };
+            return;
+        }
+        self.immediate_cpp_tasks.push(ImmediateCppTask {
+            after: self.immediate_tasks.len(),
+            task,
+        });
+    }
+
+    /// The immediates phase of the next loop iteration has work: the poll before it must not
+    /// block.
+    #[inline]
+    pub fn has_pending_immediates(&self) -> bool {
+        !self.immediate_tasks.is_empty() || !self.immediate_cpp_tasks.is_empty()
     }
 
     /// See [`EventLoop::yield_tasks`].
@@ -1106,11 +1157,18 @@ impl EventLoop {
         unsafe { (*this).immediate_tasks = core::mem::take(&mut (*this).next_immediate_tasks) };
 
         let mut exception_thrown = false;
-        for task in to_run_now.iter() {
-            // SAFETY: ImmediateObject pointers are kept alive by the JS heap
-            // until `__bun_run_immediate_task` consumes them; `virtual_machine` is the
-            // live owning VM per caller contract.
-            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+        // SAFETY: as above.
+        if unsafe { (*this).immediate_cpp_tasks.is_empty() } {
+            for task in to_run_now.iter() {
+                // SAFETY: ImmediateObject pointers are kept alive by the JS heap
+                // until `__bun_run_immediate_task` consumes them; `virtual_machine` is the
+                // live owning VM per caller contract.
+                exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+            }
+        } else {
+            // SAFETY: `this` is the live `EventLoop`, `virtual_machine` per caller contract.
+            exception_thrown =
+                unsafe { Self::run_immediates_and_cpp_tasks(this, &to_run_now, virtual_machine) };
         }
         // Re-escape `this` after the re-entrant loop so nothing about `*this`
         // is carried across it.
@@ -1142,6 +1200,80 @@ impl EventLoop {
 
         // SAFETY: as above.
         unsafe { (*this).next_immediate_tasks = to_run_now };
+    }
+
+    /// The batch of [`Self::tick_immediate_tasks`] when it has native tasks: `immediates` with
+    /// each native task at its place among them. Returns whether the last entry left an
+    /// exception's microtask checkpoint to the caller.
+    ///
+    /// # Safety
+    /// As [`Self::tick_immediate_tasks`]. `this` is the live `EventLoop`, taken as a pointer
+    /// because the tasks reach it again.
+    #[cold]
+    #[inline(never)]
+    unsafe fn run_immediates_and_cpp_tasks(
+        this: *mut Self,
+        immediates: &[*mut ()],
+        virtual_machine: *mut VirtualMachine,
+    ) -> bool {
+        // Taken before anything runs: a task queued from here on is for the next batch.
+        // SAFETY: fn contract; the borrow ends with the statement.
+        let mut cpp_tasks = unsafe {
+            let spare = core::mem::take(&mut (*this).spare_immediate_cpp_tasks);
+            core::mem::replace(&mut (*this).immediate_cpp_tasks, spare)
+        };
+        let mut ran = 0;
+        for cpp_task in cpp_tasks.iter() {
+            debug_assert!(ran <= cpp_task.after && cpp_task.after <= immediates.len());
+            for task in &immediates[ran..cpp_task.after] {
+                // What it returns is for the last entry of a batch only, and the native task
+                // below ends with a microtask checkpoint of its own.
+                // SAFETY: as in `tick_immediate_tasks`.
+                let _ = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+            }
+            ran = cpp_task.after;
+            // SAFETY: fn contract; the task left the list above and runs once.
+            unsafe { Self::run_immediate_cpp_task(this, cpp_task.task) };
+        }
+        let mut exception_thrown = false;
+        for task in &immediates[ran..] {
+            // SAFETY: as in `tick_immediate_tasks`.
+            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+        }
+        cpp_tasks.clear();
+        // SAFETY: fn contract.
+        unsafe { (*this).spare_immediate_cpp_tasks = cpp_tasks };
+        exception_thrown
+    }
+
+    /// Run one native task of the immediates phase, with what the drain of the task queue gives
+    /// a task: the fold of its error and a microtask checkpoint.
+    ///
+    /// # Safety
+    /// `this` is the live `EventLoop`; `task` is a live `WebCore::EventLoopTask` that this call
+    /// consumes.
+    unsafe fn run_immediate_cpp_task(this: *mut Self, task: *mut CppTask) {
+        // SAFETY: fn contract; each borrow of `*this` ends before script can reach it again.
+        let global = unsafe { (*this).global_ref() };
+        // SAFETY: fn contract.
+        if let Err(err) = unsafe { (*task).run(global) } {
+            if crate::task::report_error_or_terminate(global, err).is_err() {
+                return;
+            }
+        }
+        // SAFETY: as above.
+        if unsafe { (*this).drain_microtasks() }.is_err() {
+            return;
+        }
+        // A wait that reads its promise only between turns would otherwise park in the poll
+        // that follows this phase, with the promise already settled.
+        // SAFETY: as above.
+        if let Some(promise) = unsafe { (*this).awaited_promise } {
+            if promise.status() != PromiseStatus::Pending {
+                // SAFETY: as above.
+                unsafe { (*this).wakeup() };
+            }
+        }
     }
 
     pub fn ensure_waker(&mut self) {
@@ -1216,19 +1348,34 @@ impl EventLoop {
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
         }
-        while promise.status() == PromiseStatus::Pending {
+        let outer = self.set_awaited_promise(Some(promise));
+        let result = loop {
+            if promise.status() != PromiseStatus::Pending {
+                break Ok(());
+            }
             if jsc_vm.execution_forbidden()
                 || !self.vm_ref().script_allowed()
                 || self.global_ref().has_pending_termination_exception()
             {
-                return Err(jsc::Stopped);
+                break Err(jsc::Stopped);
             }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
                 self.auto_tick();
             }
-        }
-        Ok(())
+        };
+        self.set_awaited_promise(outer);
+        result
+    }
+
+    /// A loop that blocks this thread until `promise` settles names it here for as long as it
+    /// waits, then puts back what this returned (the promise of the wait it is nested in). See
+    /// `awaited_promise`.
+    pub fn set_awaited_promise(
+        &mut self,
+        promise: Option<jsc::AnyPromise>,
+    ) -> Option<jsc::AnyPromise> {
+        core::mem::replace(&mut self.awaited_promise, promise)
     }
 
     pub fn wakeup(&self) {
@@ -1420,6 +1567,19 @@ impl EventLoop {
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
         self.tick();
+        self.tick_immediate_cpp_tasks();
+    }
+
+    /// For a driver that calls `tick()` and has no immediates phase of its own
+    /// (`tick_possibly_forever`, the REPL after a line): run the phase if native tasks wait in
+    /// it. Nothing else runs them there: unlike `setImmediate()` callbacks they do not keep the
+    /// loop alive after an unhandled error, and the REPL polls only while a line awaits.
+    pub fn tick_immediate_cpp_tasks(&mut self) {
+        if !self.immediate_cpp_tasks.is_empty() {
+            let vm = self.vm();
+            // SAFETY: `vm` is the live per-thread VM that owns this loop.
+            unsafe { self.tick_immediate_tasks(vm) };
+        }
     }
 
     /// Drive the loop while a worker's entry module graph is fetched and
@@ -1477,7 +1637,9 @@ pub(crate) fn get_active_tasks(
     crate::generated_bindgen::event_loop::ActiveTasks {
         active_tasks: vm_ref.active_tasks,
         tasks: event_loop.tasks.readable_length(),
-        immediate_tasks: event_loop.immediate_tasks.len() + event_loop.next_immediate_tasks.len(),
+        immediate_tasks: event_loop.immediate_tasks.len()
+            + event_loop.next_immediate_tasks.len()
+            + event_loop.immediate_cpp_tasks.len(),
         concurrent_tasks_empty: event_loop.concurrent_tasks.is_empty(),
         loop_active: vm_ref.platform_loop_opt().is_some_and(|h| h.is_active()),
         event_loop_alive: vm_ref.is_event_loop_alive(),

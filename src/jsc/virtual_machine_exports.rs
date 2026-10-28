@@ -111,6 +111,14 @@ pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_ta
         .enqueue_task_after_yield(Task::init(task));
 }
 
+/// `ScriptExecutionContext::postImmediateTask`: see
+/// [`EventLoop::enqueue_immediate_cpp_task`](crate::event_loop::EventLoop::enqueue_immediate_cpp_task).
+// HOST_EXPORT(Bun__VM__queueImmediateTask, c)
+pub fn vm_queue_immediate_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
+    crate::mark_binding!();
+    this.event_loop_mut().enqueue_immediate_cpp_task(task);
+}
+
 /// Off-thread counterpart of [`vm_queue_task`] (`postTaskConcurrently`: the
 /// debugger and signal threads, work no script initiated), so it lands on the
 /// regular loop: see [`crate::VmHandle::post_cpp_task`].

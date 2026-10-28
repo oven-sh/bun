@@ -1,6 +1,6 @@
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, tempDir, withoutAggressiveGC } from "harness";
 import net from "net";
 import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
 import { MessageChannel, receiveMessageOnPort, Worker } from "worker_threads";
@@ -451,6 +451,255 @@ test("PerformanceObserver delivers entries to a callback created in a node:vm co
     buffered: { ...delivered, names: ["buffered"] },
   });
   expect(exitCode).toBe(0);
+});
+
+// Node.js delivers the entries from one setImmediate() for each batch. The expected outputs are those of Node.js v26.3.0.
+describe.concurrent("PerformanceObserver delivers in the immediates phase", () => {
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // chain(start) resolves with whether its 1 ms timer fired before the chain had 20000 deliveries. Each delivery
+  // makes the entry that causes the next delivery.
+  const chain = `
+    const { performance, PerformanceObserver } = require("node:perf_hooks");
+    function chain(start) {
+      return new Promise(resolve => {
+        let deliveries = 0;
+        let timerFired = false;
+        setTimeout(() => (timerFired = true), 1);
+        start(function ended(...observers) {
+          if (!timerFired && ++deliveries < 20000) return false;
+          for (const observer of observers) observer.disconnect();
+          resolve(timerFired);
+          return true;
+        });
+      });
+    }
+    const aMark = ended => {
+      new PerformanceObserver((list, observer) => ended(observer) || performance.mark("again")).observe({ type: "mark" });
+      performance.mark("first");
+    };
+  `;
+
+  test("a callback that makes the next entry does not keep a timer from firing", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      ${chain}
+      const chains = {
+        "a mark": aMark,
+        "a mark after an await": ended => {
+          new PerformanceObserver(async (list, observer) => {
+            await null;
+            ended(observer) || performance.mark("again");
+          }).observe({ type: "mark" });
+          performance.mark("first");
+        },
+        "a mark from process.nextTick()": ended => {
+          new PerformanceObserver((list, observer) =>
+            process.nextTick(() => ended(observer) || performance.mark("again")),
+          ).observe({ type: "mark" });
+          performance.mark("first");
+        },
+        "a measure": ended => {
+          new PerformanceObserver((list, observer) => ended(observer) || performance.measure("again")).observe({ type: "measure" });
+          performance.measure("first");
+        },
+        "an entry for another observer, which makes one for it": ended => {
+          const marks = new PerformanceObserver(() => ended(marks, measures) || performance.measure("b"));
+          const measures = new PerformanceObserver(() => ended(marks, measures) || performance.mark("a"));
+          marks.observe({ type: "mark" });
+          measures.observe({ type: "measure" });
+          performance.mark("a");
+        },
+        "a mark, with the global class": ended => {
+          new globalThis.PerformanceObserver((list, observer) => ended(observer) || performance.mark("again")).observe({ type: "mark" });
+          performance.mark("first");
+        },
+      };
+      (async () => {
+        const timerFired = {};
+        for (const [name, start] of Object.entries(chains)) timerFired[name] = await chain(start);
+        console.log(JSON.stringify(timerFired));
+      })();
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "a mark": true,
+      "a mark after an await": true,
+      "a mark from process.nextTick()": true,
+      "a measure": true,
+      "an entry for another observer, which makes one for it": true,
+      "a mark, with the global class": true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a callback that makes the next entry does not keep a timer of a Worker from firing", async () => {
+    const worker = new Worker(
+      `${chain} chain(aMark).then(timerFired => require("node:worker_threads").parentPort.postMessage({ timerFired }));`,
+      { eval: true },
+    );
+    const exited = new Promise(resolve => worker.once("exit", resolve));
+    const message = new Promise(resolve => worker.once("message", resolve));
+    expect(await message).toEqual({ timerFired: true });
+    expect(await exited).toBe(0);
+  });
+
+  test("a delivery runs at its place among the setImmediate() callbacks", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { performance, PerformanceObserver } = require("node:perf_hooks");
+      const order = [];
+      const observer = new PerformanceObserver(list => order.push("observer: " + list.getEntries().map(entry => entry.name)));
+      observer.observe({ type: "mark" });
+
+      setImmediate(() => order.push("immediate 1"));
+      performance.mark("a");
+      setImmediate(() => {
+        order.push("immediate 2");
+        performance.mark("b");
+        setImmediate(() => {
+          order.push("immediate 3");
+          setTimeout(() => {
+            setImmediate(() => order.push("immediate 4"));
+            performance.mark("c");
+            setImmediate(() => {
+              order.push("immediate 5");
+              observer.disconnect();
+              console.log(JSON.stringify(order));
+            });
+          }, 1);
+        });
+      });
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      "immediate 1",
+      "observer: a",
+      "immediate 2",
+      "observer: b",
+      "immediate 3",
+      "immediate 4",
+      "observer: c",
+      "immediate 5",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("an entry that a callback makes is delivered on the next loop iteration", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { performance, PerformanceObserver } = require("node:perf_hooks");
+      const order = [];
+      let deliveries = 0;
+      const observer = new PerformanceObserver(() => {
+        order.push("delivery");
+        if (++deliveries < 4) performance.mark("again");
+      });
+      observer.observe({ type: "mark" });
+      setImmediate(function immediate() {
+        order.push("immediate");
+        if (deliveries < 4) return setImmediate(immediate);
+        observer.disconnect();
+        console.log(JSON.stringify(order));
+      });
+      performance.mark("first");
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      "immediate",
+      "delivery",
+      "immediate",
+      "delivery",
+      "immediate",
+      "delivery",
+      "immediate",
+      "delivery",
+      "immediate",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("an entry made by a callback that throws is not delivered", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { performance, PerformanceObserver } = require("node:perf_hooks");
+      let calls = 0;
+      new PerformanceObserver(() => {
+        console.log("call", ++calls);
+        if (calls < 5) performance.mark("again");
+        throw new Error("from the callback");
+      }).observe({ type: "mark" });
+      performance.mark("first");
+    `);
+    expect(stderr).toContain("from the callback");
+    expect(stdout).toBe("call 1\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a delivery is the last thing a process does", async () => {
+    expect(
+      await run(`
+        new PerformanceObserver(list => console.log("delivered", list.getEntries().length)).observe({ type: "mark" });
+        performance.mark("only");
+      `),
+    ).toEqual({ stdout: "delivered 1\n", stderr: "", exitCode: 0 });
+  });
+
+  test("a matcher that waits for a promise returns when a delivery has settled it", async () => {
+    using dir = tempDir("perf-observer-wait", {
+      "wait.test.ts": `
+        import { expect, test } from "bun:test";
+        import { createServer } from "node:net";
+
+        test("expect().resolves", async () => {
+          // An open handle lets the poll block.
+          const server = createServer();
+          await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+          // Only this timer ends a poll that blocks after the delivery.
+          let timerFired = false;
+          const timer = setTimeout(() => (timerFired = true), 2000);
+          const nextDelivery = () =>
+            new Promise(resolve => {
+              new PerformanceObserver((list, observer) => {
+                observer.disconnect();
+                resolve(list.getEntries()[0].name);
+              }).observe({ type: "mark" });
+            });
+          try {
+            // The callback settles the promise.
+            let delivered = nextDelivery();
+            performance.mark("a");
+            await expect(delivered).resolves.toBe("a");
+            // A reaction of the promise that the callback settles does.
+            delivered = nextDelivery().then(name => name.toUpperCase());
+            performance.mark("b");
+            await expect(delivered).resolves.toBe("B");
+          } finally {
+            clearTimeout(timer);
+            server.close();
+          }
+          expect(timerFired).toBe(false);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./wait.test.ts"],
+      cwd: String(dir),
+      // Without the GC timer, nothing but the timer of the test wakes a poll that blocks.
+      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("mark/measure toJSON and inspection include detail without perf_hooks being loaded", async () => {

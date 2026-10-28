@@ -186,6 +186,7 @@ JSGlobalObject* ScriptExecutionContext::jsGlobalObject()
 }
 
 extern "C" void Bun__VM__queueTaskAfterYield(void* bunVM, EventLoopTask*);
+extern "C" void Bun__VM__queueImmediateTask(void* bunVM, EventLoopTask*);
 extern "C" void Bun__VmHandle__queueTaskConcurrently(const ::BunVmHandleRef*, EventLoopTask*);
 
 // JS thread (this context's thread): MessagePort / BroadcastChannel / worker global scope
@@ -469,6 +470,12 @@ void ScriptExecutionContext::postTask(EventLoopTask* task)
 void ScriptExecutionContext::postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda)
 {
     Bun__VM__queueTaskAfterYield(m_bunVM, new EventLoopTask(WTF::move(lambda)));
+}
+// Same thread; runs in the immediates phase, at its place among the setImmediate() callbacks.
+// A task posted while that phase runs waits for the next loop iteration.
+void ScriptExecutionContext::postImmediateTask(Function<void(ScriptExecutionContext&)>&& lambda)
+{
+    Bun__VM__queueImmediateTask(m_bunVM, new EventLoopTask(WTF::move(lambda)));
 }
 
 // Native bindings

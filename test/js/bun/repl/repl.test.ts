@@ -822,6 +822,24 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test("calls a PerformanceObserver after the line that made the entry", async () => {
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          `new PerformanceObserver(list => console.log("observed", list.getEntries()[0].name)).observe({ type: "mark" })`,
+          `performance.mark("a").name`,
+          // A listening server lets the poll block. The line after it awaits a promise that a delivery settles.
+          `void require("node:net").createServer().listen(0)`,
+          `await new Promise(resolve => { new PerformanceObserver((list, observer) => { observer.disconnect(); resolve(list.getEntries()[0].name); }).observe({ type: "measure" }); performance.measure("b"); })`,
+          ".exit",
+        ],
+        // Without the GC timer, nothing wakes a poll that blocks after the delivery.
+        { env: { BUN_GC_TIMER_DISABLE: "1" } },
+      );
+      expect(outputs).toEqual(["undefined", `"a"\nobserved a`, "undefined", `"b"`]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("TypeScript support", () => {

@@ -296,7 +296,10 @@ void Performance::scheduleTaskIfNeeded()
         return;
 
     m_hasScheduledTimingBufferDeliveryTask = true;
-    context->postTask([protectedThis = Ref { *this }, this](ScriptExecutionContext& context) {
+    // Node.js delivers from one setImmediate() per batch, so an entry that a callback makes is
+    // delivered on the next loop iteration, after timers and I/O:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L117-L127
+    context->postImmediateTask([protectedThis = Ref { *this }, this](ScriptExecutionContext& context) {
         m_hasScheduledTimingBufferDeliveryTask = false;
         for (auto& observer : copyToVector(m_observers))
             observer->deliver();

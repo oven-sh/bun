@@ -1108,9 +1108,16 @@ impl<'a> Repl<'a> {
     fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: *mut jsc::JSPromise) -> bool {
         use core::sync::atomic::Ordering;
         SIGINT_DURING_WAIT.store(false, Ordering::Release);
-        while jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending {
+        let outer = vm
+            .as_mut()
+            .event_loop_mut()
+            .set_awaited_promise(Some(jsc::AnyPromise::Normal(promise)));
+        let interrupted = loop {
+            if jsc::JSPromise::opaque_mut(promise).status() != PromiseStatus::Pending {
+                break false;
+            }
             if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
-                return true;
+                break true;
             }
             vm.as_mut().event_loop_mut().tick();
             if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
@@ -1118,8 +1125,16 @@ impl<'a> Repl<'a> {
             {
                 vm.as_mut().event_loop_mut().auto_tick();
             }
-        }
-        false
+        };
+        vm.as_mut().event_loop_mut().set_awaited_promise(outer);
+        interrupted
+    }
+
+    /// After a line: the tasks it queued, then the native tasks of the immediates phase
+    /// (PerformanceObserver deliveries). The loop runs that phase only while a line awaits.
+    fn tick_after_line(vm: &VirtualMachine) {
+        vm.as_mut().tick();
+        vm.as_mut().event_loop_mut().tick_immediate_cpp_tasks();
     }
 
     /// Restore raw terminal mode after promise wait
@@ -1708,7 +1723,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.as_mut().tick();
+                        Self::tick_after_line(vm);
                         return;
                     }
                 };
@@ -1738,7 +1753,7 @@ impl<'a> Repl<'a> {
         }
 
         // Tick the event loop to handle any pending work
-        vm.as_mut().tick();
+        Self::tick_after_line(vm);
     }
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
@@ -1914,7 +1929,7 @@ impl<'a> Repl<'a> {
         }
 
         if let Some(vm) = self.vm {
-            vm.as_mut().tick();
+            Self::tick_after_line(vm);
         }
     }
 
@@ -1993,7 +2008,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.as_mut().tick();
+                        Self::tick_after_line(vm);
                         return;
                     }
                 };
@@ -2013,7 +2028,7 @@ impl<'a> Repl<'a> {
             self.set_last_error(exc);
             self.print_js_error(exc);
         }
-        vm.as_mut().tick();
+        Self::tick_after_line(vm);
     }
 
     /// Format a JS value as a string suitable for clipboard.

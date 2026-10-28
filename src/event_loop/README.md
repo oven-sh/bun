@@ -21,6 +21,8 @@ Two separate queues for `setImmediate()`:
 
 This prevents infinite loops when `setImmediate` is called within a `setImmediate` callback.
 
+Native code can run a task in the same phase (`ScriptExecutionContext::postImmediateTask`, `EventLoop::enqueue_immediate_cpp_task`). `immediate_cpp_tasks` holds these tasks, each with its place among the `setImmediate()` callbacks of the batch. `PerformanceObserver` delivers its entries this way, as Node.js does with a `setImmediate()`.
+
 ### 3. Concurrent Task Queue (`event_loop.rs:17`)
 
 Thread-safe queue for tasks enqueued from worker threads or async operations. These are moved to the main task queue before processing.

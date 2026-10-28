@@ -1820,6 +1820,8 @@ impl VirtualMachine {
         }
     }
 
+    /// The immediates here are the `setImmediate()` callbacks. A native task of the immediates
+    /// phase counts like a task of the queue: not after an unhandled error.
     pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
         let el = self.event_loop_shared();
         let active = self
@@ -1831,6 +1833,7 @@ impl VirtualMachine {
                 + self.active_tasks
                 + el.tasks.readable_length()
                 + el.yield_tasks.len()
+                + el.immediate_cpp_tasks.len()
                 + (el.has_concurrent_tasks() as usize)
                 + (el.has_pending_refs() as usize)
                 > 0)

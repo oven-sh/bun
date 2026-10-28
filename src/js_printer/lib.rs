@@ -1353,7 +1353,7 @@ pub struct Options<'a> {
     /// bare identifiers without a user binding shadowing them.
     pub has_run_symbol_renamer: bool,
 
-    pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback<'a>,
+    pub require_or_import_meta_for_source_callback: Option<RequireOrImportMetaCallback<'a>>,
 
     /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
     pub input_module_type: bundle_opts::ModuleType,
@@ -1388,15 +1388,10 @@ impl<'a> Options<'a> {
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta {
-        if self
-            .require_or_import_meta_for_source_callback
-            .ctx
-            .is_none()
-        {
-            return RequireOrImportMeta::default();
+        match &self.require_or_import_meta_for_source_callback {
+            Some(callback) => callback.call(id, was_unwrapped_require),
+            None => RequireOrImportMeta::default(),
         }
-        self.require_or_import_meta_for_source_callback
-            .call(id, was_unwrapped_require)
     }
 }
 
@@ -1428,7 +1423,7 @@ impl<'a> Default for Options<'a> {
             code_coverage: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
-            require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
+            require_or_import_meta_for_source_callback: None,
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
@@ -1479,22 +1474,9 @@ pub struct RequireOrImportMeta {
 /// A type-erased `&'a T`, and the `T` method to call on it.
 #[derive(Clone, Copy)]
 pub struct RequireOrImportMetaCallback<'a> {
-    pub(crate) ctx: Option<NonNull<()>>,
-    pub(crate) callback: fn(NonNull<()>, u32, bool) -> RequireOrImportMeta,
-    _ctx: core::marker::PhantomData<&'a ()>,
-}
-
-impl Default for RequireOrImportMetaCallback<'_> {
-    fn default() -> Self {
-        fn noop(_: NonNull<()>, _: u32, _: bool) -> RequireOrImportMeta {
-            RequireOrImportMeta::default()
-        }
-        Self {
-            ctx: None,
-            callback: noop,
-            _ctx: core::marker::PhantomData,
-        }
-    }
+    ctx: NonNull<()>,
+    callback: fn(NonNull<()>, u32, bool) -> RequireOrImportMeta,
+    _marker: core::marker::PhantomData<&'a ()>,
 }
 
 /// PORTING.md §Dispatch — manual vtable. The erased thunk is monomorphized
@@ -1508,8 +1490,8 @@ pub trait RequireOrImportMetaSource {
 }
 
 impl<'a> RequireOrImportMetaCallback<'a> {
-    pub(crate) fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
-        (self.callback)(self.ctx.unwrap(), id, was_unwrapped_require)
+    fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
+        (self.callback)(self.ctx, id, was_unwrapped_require)
     }
 
     pub fn init<T: RequireOrImportMetaSource>(ctx: &'a T) -> Self {
@@ -1518,15 +1500,15 @@ impl<'a> RequireOrImportMetaCallback<'a> {
             id: u32,
             was_unwrapped_require: bool,
         ) -> RequireOrImportMeta {
-            // SAFETY: `p` is the `&'a T` that `init` erased, and `call` needs a
-            // `RequireOrImportMetaCallback<'a>`, so `'a` has not ended.
+            // SAFETY: only `call` calls this, with the `&'a T` that `init` erased beside it, and
+            // `call` needs a `RequireOrImportMetaCallback<'a>`, so `'a` has not ended.
             unsafe { p.cast::<T>().as_ref() }
                 .require_or_import_meta_for_source(id, was_unwrapped_require)
         }
         Self {
-            ctx: Some(NonNull::from(ctx).cast::<()>()),
+            ctx: NonNull::from(ctx).cast::<()>(),
             callback: thunk::<T>,
-            _ctx: core::marker::PhantomData,
+            _marker: core::marker::PhantomData,
         }
     }
 }

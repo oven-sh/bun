@@ -109,7 +109,9 @@ const PROGRAM_IS_ON_STDIN: &[u8] = b"\x1e--bun-lint-program--\x1e";
 pub(crate) fn read_program_from_stdin(ctx: &mut ContextData) {
     let mut program = Vec::new();
     if *ctx.runtime_options.eval.script == *PROGRAM_IS_ON_STDIN
-        && File::stdin().read_to_end_into(&mut program).is_ok()
+        && File::borrow(&bun_sys::Fd::stdin())
+            .read_to_end_into(&mut program)
+            .is_ok()
     {
         ctx.runtime_options.eval.script = program.into_boxed_slice();
         ctx.runtime_options.eval.reads_configuration = true;

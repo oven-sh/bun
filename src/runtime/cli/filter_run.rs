@@ -688,7 +688,7 @@ impl<'a> State<'a> {
     }
 
     fn flush_draw_buf(&self) {
-        let _ = bun_sys::File::stdout().write_all(&self.draw_buf);
+        let _ = bun_sys::File::borrow(&bun_sys::Fd::stdout()).write_all(&self.draw_buf);
     }
 
     fn abort(&mut self) {

@@ -7623,8 +7623,8 @@ describe("fs.close on stdio descriptors", () => {
     // that when other processes run next to it.
     it.skipIf(isWindows).each([
       ["node:fs sync operations", 11],
-      ["node:fs callback and promise operations", 12],
-      ["the module loader and Bun APIs", 13],
+      ["node:fs callback and promise operations", 13],
+      ["the module loader and Bun APIs", 14],
       ["a stream and a writer, on the work pool", 2],
     ])("%s", async (family, operations) => {
       using dir = tempDir("fs-closed-stdio-slot", {});
@@ -7638,8 +7638,10 @@ describe("fs.close on stdio descriptors", () => {
       const written = join(String(dir), "result.json");
       const result = existsSync(written) ? readFileSync(written, "utf8") : "";
       const closedAgain = (fd: number) => ({ operations, leftOpen: {}, nextOpenSync: fd, secondCloseSync: "EBADF" });
-      // Without a result the fixture did not reach its end: show what it printed.
-      expect(result ? { ...JSON.parse(result), exitCode } : { stdout, stderr, exitCode }).toEqual({
+      // Without a result that is only JSON the fixture did not reach its end: show what it wrote and printed.
+      expect(
+        exitCode === 0 && result ? { ...JSON.parse(result), exitCode } : { result, stdout, stderr, exitCode },
+      ).toEqual({
         "fd 0": closedAgain(0),
         "fd 1": closedAgain(1),
         "fd 2": closedAgain(2),
@@ -7653,8 +7655,6 @@ describe("fs.close on stdio descriptors", () => {
       "redirect-fixture.cjs": `
         const fs = require("node:fs");
         fs.writeSync(2, "PRE.");
-        // JSC opens a descriptor when its first GC cycle ends, and keeps it.
-        Bun.gc(true);
         fs.closeSync(2);
         // The module loader opens this file and closes it again.
         require("./loaded-after-close.cjs");
@@ -7729,15 +7729,14 @@ describe("fs.close on stdio descriptors", () => {
       console.log(JSON.stringify({ threw, fd0, nextOpenSync: fs.openSync(process.execPath, "r") }));
       process.exit(0);
     `;
-    // What the runtime opens on first use and keeps must not get fd 0 (see fs-closed-stdio-slot-fixture.js).
+    // What the first use of a stream or of the work pool opens must not get fd 0 (see fs-closed-stdio-slot-fixture.js).
     const warmUp = `
       const fs = require("node:fs");
       let threw;
       for await (const _ of Bun.file(process.execPath).slice(0, 1).stream());
       for (let i = 0; i < 8; i++) await fs.promises.stat(".");
-      Bun.gc(true);
     `;
-    async function run(script: string) {
+    async function run(script: string, input?: string) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", warmUp + script + report],
         env: bunEnv,
@@ -7745,20 +7744,37 @@ describe("fs.close on stdio descriptors", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      proc.stdin.write("a\n");
-      await proc.stdin.flush();
+      // Only for a child that reads its stdin: the other children close fd 0 first, and the write would race that.
+      if (input !== undefined) {
+        proc.stdin.write(input);
+        await proc.stdin.flush();
+      }
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // Without a report the child did not reach its end: show what it printed.
       return stdout.startsWith("{") ? { ...JSON.parse(stdout), exitCode } : { stdout, stderr, exitCode };
     }
 
     it.concurrent("that the program reopened while the stream was open", async () => {
-      const result = await run(`
+      const result = await run(
+        `
         const reader = Bun.stdin.stream().getReader();
         await reader.read();
         fs.closeSync(0);
         const reopened = fs.openSync(process.execPath, "r");
         await reader.cancel();
+        if (reopened !== 0) throw new Error("the reopened descriptor is " + reopened);
+      `,
+        "a\n",
+      );
+      expect(result).toEqual({ fd0: "file", nextOpenSync: expect.any(Number), exitCode: 0 });
+      expect(result.nextOpenSync).toBeGreaterThan(2);
+    });
+
+    it.concurrent("that the program reopened, when the stream reads it to its end", async () => {
+      const result = await run(`
+        fs.closeSync(0);
+        const reopened = fs.openSync(${JSON.stringify(join(import.meta.dir, "fs-closed-stdio-slot-fixture.js"))}, "r");
+        for await (const _ of Bun.stdin.stream());
         if (reopened !== 0) throw new Error("the reopened descriptor is " + reopened);
       `);
       expect(result).toEqual({ fd0: "file", nextOpenSync: expect.any(Number), exitCode: 0 });
@@ -7794,6 +7810,36 @@ describe("fs.close on stdio descriptors", () => {
     });
   });
 
+  // The spawn options take fd 0, 1 and 2 for the stdio of this process: fd 0 cannot be the stdout of a
+  // child. A number that the program closed and opened again is its own file.
+  it.concurrent.skipIf(isWindows)("a child can write to an fd 0 that the program reopened", async () => {
+    using dir = tempDir("fs-close-stdio-spawn", {});
+    const log = join(String(dir), "log.txt");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          fs.closeSync(0);
+          const log = fs.openSync(${JSON.stringify(log)}, "w");
+          const child = Bun.spawnSync({ cmd: ["sh", "-c", "echo from the child"], stdio: ["ignore", log, "inherit"] });
+          console.log(JSON.stringify({ log, exitCode: child.exitCode }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, log: existsSync(log) ? readFileSync(log, "utf8") : "", exitCode }).toEqual({
+      stdout: JSON.stringify({ log: 0, exitCode: 0 }) + "\n",
+      stderr: "",
+      log: "from the child\n",
+      exitCode: 0,
+    });
+  });
+
   // The REPL reads its input from fd 0. Here the program closes fd 0 and opens a file there, so the
   // REPL reads its next line from that file. It must leave the file open.
   it.concurrent.skipIf(isWindows)("the REPL does not close an fd 0 that the program reopened", async () => {
@@ -7809,10 +7855,8 @@ describe("fs.close on stdio descriptors", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    // The first line is the warm-up that fs-closed-stdio-slot-fixture.js describes.
     proc.stdin.write(
-      `Bun.gc(true)\n` +
-        `require("node:fs").closeSync(0); console.log("reopened as", require("node:fs").openSync(${nextInput}))\n`,
+      `require("node:fs").closeSync(0); console.log("reopened as", require("node:fs").openSync(${nextInput}))\n`,
     );
     await proc.stdin.flush();
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

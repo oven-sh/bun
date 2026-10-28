@@ -69,15 +69,22 @@ const families = {
     "fs.promises.cp": () => fs.promises.cp(tree, fresh("cp"), { recursive: true }),
     "fs.promises.readdir recursive": () => fs.promises.readdir(tree, { recursive: true }),
     "fs.promises.rm recursive": () => fs.promises.rm(copyOfTree(), { recursive: true }),
+    "fs.promises.open": async () => {
+      const handle = await fs.promises.open(file);
+      await handle.read(Buffer.alloc(4), 0, 4, 0);
+      await handle.close();
+    },
   },
   "the module loader and Bun APIs": {
     "require() of a .cjs file": run => require(path.join(dir, run + ".cjs")),
     "require() of a .json file": run => require(path.join(dir, run + ".json")),
     "import() of a .mjs file": run => import(path.join(dir, run + ".mjs")),
-    "os.cpus": () => os.cpus(),
+    // The list reads /proc/cpuinfo and /proc/stat when a field of it is read.
+    "os.cpus": () => os.cpus()[0].model,
     "Bun.file().text": () => Bun.file(file).text(),
     "Bun.file().bytes": () => Bun.file(file).bytes(),
     "Bun.write(path, Blob)": () => Bun.write(fresh("write"), new Blob(["x"])),
+    "Bun.write(path, empty Blob)": () => Bun.write(fresh("write"), new Blob([])),
     "Bun.write(path, Response)": () => Bun.write(fresh("write"), new Response("x")),
     "Bun.write(path, Bun.file())": () => Bun.write(fresh("write"), Bun.file(file)),
     "Bun.Glob.scanSync": () => Array.from(new Bun.Glob("**/*.txt").scanSync(tree)),
@@ -115,56 +122,73 @@ function slotState() {
 }
 
 function freeSlot() {
-  if (slot !== -1 && slotState() !== "closed") fs.closeSync(slot);
+  if (slot === -1) return;
+  try {
+    fs.closeSync(slot);
+  } catch (e) {
+    if (e.code !== "EBADF") throw e;
+  }
+}
+
+// After each operation, so a fixture that stops early still reports what it saw.
+function report(result) {
+  const text = JSON.stringify(result);
+  fs.ftruncateSync(out, 0);
+  fs.writeSync(out, text, 0, text.length, 0);
 }
 
 (async () => {
-  // The runtime opens some descriptors on first use and keeps them, and one of those would take the
-  // closed number: a debug build reads builtin modules from disk, and JSC opens /proc/self/statm
-  // when its first GC cycle ends. So every operation runs once before a number is free.
+  // An operation can open a descriptor on first use that it does not close when it is done: a
+  // debug build reads builtin modules from disk, and the first use can start a thread or an event
+  // loop. So every operation runs once before a number is free.
   for (const operation of Object.values(families[family])) await operation(runs[0]);
-  globalThis.Bun?.gc(true);
 
-  // Nothing signals a close on the work pool, so the fixture polls for it. The deadline ends the
-  // polling when a descriptor is never closed, before the test times out.
-  const deadline = Date.now() + 3_000;
   const result = {};
   for (slot of [0, 1, 2]) {
-    const leftOpen = {};
-    let operations = 0;
+    const round = (result["fd " + slot] = { operations: 0, leftOpen: {} });
     for (const [name, operation] of Object.entries(families[family])) {
       // The previous operation can have left a descriptor here. Each operation starts with the slot free.
       freeSlot();
       try {
         await operation("fd " + slot);
       } catch (e) {
-        leftOpen[name] = "threw " + (e.code ?? e.message);
+        round.leftOpen[name] = "threw " + (e.code ?? e.message);
+        report(result);
         continue;
       }
       if (family === onWorkPool) {
+        // Nothing signals a close on the work pool, so the fixture polls for it. A descriptor that
+        // is still open at the deadline ends the fixture: its close can still be queued, and the
+        // next freeSlot() would close the number a second time.
+        const deadline = Date.now() + 3_000;
         while (slotState() !== "closed" && Date.now() < deadline) await new Promise(resolve => setImmediate(resolve));
       }
-      if (slotState() !== "closed") leftOpen[name] = slotState();
-      operations++;
+      const state = slotState();
+      if (state !== "closed") round.leftOpen[name] = state;
+      round.operations++;
+      report(result);
+      if (state !== "closed" && family === onWorkPool) process.exit(0);
     }
 
     // With the slot free again, the next descriptor that the program opens itself gets its number.
     freeSlot();
     fs.readFileSync(file);
-    const nextOpenSync = fs.openSync(file, "r");
-    fs.closeSync(nextOpenSync);
-    let secondCloseSync = "no error";
+    round.nextOpenSync = fs.openSync(file, "r");
+    fs.closeSync(round.nextOpenSync);
+    round.secondCloseSync = "no error";
     try {
       fs.closeSync(slot);
     } catch (e) {
-      secondCloseSync = e.code;
+      round.secondCloseSync = e.code;
     }
-    result["fd " + slot] = { operations, leftOpen, nextOpenSync, secondCloseSync };
+    report(result);
 
     // Takes the number, so the descriptors of the next round get the next number.
     fs.openSync(os.devNull, "r");
   }
-
-  fs.writeSync(out, JSON.stringify(result));
   process.exit(0);
-})();
+})().catch(e => {
+  // stderr can be the closed number, so the error goes into the result.
+  fs.writeSync(out, "\n" + (e?.stack ?? String(e)));
+  process.exit(1);
+});

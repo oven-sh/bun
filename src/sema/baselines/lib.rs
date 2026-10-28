@@ -34,7 +34,7 @@ macro_rules! error_line {
 }
 
 pub fn write_line(to: bun_core::Fd, line: std::fmt::Arguments<'_>) {
-    let _ = bun_sys::File::from_fd(to).write_all(format!("{line}\n").as_bytes());
+    let _ = bun_sys::File::borrow(&to).write_all(format!("{line}\n").as_bytes());
 }
 
 fn read_file(path: &str) -> Option<Vec<u8>> {

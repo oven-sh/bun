@@ -2190,7 +2190,7 @@ pub(crate) fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
 }
 
 /// Tolerates EBADF (already-closed) so cleanup paths that may double-close
-/// don't panic; skips stdin/stdout/stderr.
+/// don't panic; skips the startup stdin/stdout/stderr.
 pub(crate) fn closefd(fd: Fd) {
     use bun_sys::FdExt;
     let _ = fd.close_allowing_bad_file_descriptor(None);

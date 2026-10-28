@@ -1,9 +1,8 @@
 //! `bun.sys.File` — high-level file handle.
 //!
-//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and the
-//! process's own stdio, see [`FdExt::is_startup_stdio`], so
-//! `File::stdin()`/`stdout()`/`stderr()` and default-constructed handles
-//! are safe to drop). Use [`File::into_raw`] to hand the fd off,
+//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and the startup stdio, [`FdExt::is_startup_stdio`],
+//! so `File::stdin()`/`stdout()`/`stderr()` and default-constructed handles
+//! are safe to drop before user code runs). Use [`File::into_raw`] to hand the fd off,
 //! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
 //! All methods preserve OS errno via [`crate::Maybe`].
 
@@ -77,7 +76,7 @@ impl File {
         // SAFETY: `File` is `#[repr(transparent)]` over `Fd`.
         unsafe { &*(core::ptr::from_ref(fd).cast::<File>()) }
     }
-    /// `bun.sys.File.from(.stdin())` — wrap the cached stdin fd. Do not close.
+    /// `bun.sys.File.from(.stdin())` — wrap the cached stdin fd. Do not close. After user code ran, use `File::borrow(&Fd::stdin())`: Drop closes fd 0 once the program has closed it.
     #[inline]
     pub fn stdin() -> Self {
         Self {
@@ -470,7 +469,7 @@ pub(crate) mod tests {
         let _g = FD_TEST_LOCK.lock();
         // `File::stdin()` / `stdout()` wrap process-shared descriptors that
         // the caller does not own. Dropping the wrapper must not tear down the
-        // test harness's output.
+        // test harness's output. Holds while no test here closes fd 0-2 with `close_allowing_standard_io`.
         for _ in 0..16 {
             let _ = File::stdin();
             let _ = File::stdout();

@@ -119,7 +119,7 @@ fn call_exit_handler(
 pub struct Process {
     pub pid: PidT,
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) pidfd: PidFdType,
+    pub(crate) pidfd: Option<Fd>,
     pub status: Status,
     pub poller: Poller,
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Process>,
@@ -287,7 +287,7 @@ impl Process {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             pid: posix.pid,
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            pidfd: posix.pidfd.unwrap_or(Fd::INVALID.native()),
+            pidfd: posix.pidfd.map(Fd::from_native),
             js_poster: event_loop.js_poster(),
             event_loop,
             poller: Poller::Detached,
@@ -480,10 +480,16 @@ impl Process {
                 return Ok(());
             }
 
+            // No pidfd: the child was gone before `pidfd_open` ran (a process that ignores SIGCHLD).
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            let watchfd = self.pidfd;
+            let Some(watchfd) = self.pidfd else {
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::ESRCH,
+                    bun_sys::Tag::pidfd_open,
+                ));
+            };
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            let watchfd = self.pid;
+            let watchfd = Fd::from_native(self.pid);
 
             let poll: *mut FilePoll = if matches!(self.poller, Poller::Fd(_)) {
                 // already have a poll; take the existing pointer out
@@ -494,7 +500,7 @@ impl Process {
             } else {
                 FilePoll::init(
                     ctx,
-                    Fd::from_native(watchfd),
+                    watchfd,
                     bun_io::file_poll::FlagsSet::default(),
                     bun_io::Owner::new(
                         bun_io::posix_event_loop::poll_tag::PROCESS,
@@ -694,9 +700,8 @@ impl Process {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use bun_sys::FdExt as _;
-            if self.pidfd != Fd::INVALID.native() {
-                Fd::from_native(self.pidfd).close();
-                self.pidfd = Fd::INVALID.native();
+            if let Some(pidfd) = self.pidfd.take() {
+                pidfd.close();
             }
         }
     }

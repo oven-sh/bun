@@ -96,7 +96,7 @@ pub(crate) enum Lazy {
 
 pub(crate) struct OpenedFileBlob {
     pub(crate) fd: Fd,
-    /// `fd` is the caller's own stdin, stdout or stderr, not a descriptor opened here: the reader leaves it open.
+    /// `fd` is the descriptor that the caller named (its stdin, stdout or stderr), not one opened here: the reader leaves it open.
     #[cfg(not(windows))]
     pub(crate) borrowed: bool,
     pub(crate) pollable: bool,
@@ -146,7 +146,6 @@ impl Lazy {
                                 file.is_atty = Some(true);
                                 break 'brk Fd::from_native(rc);
                             }
-                            this.borrowed = true;
                         }
                         break 'brk *pl_fd;
                     }
@@ -207,7 +206,7 @@ impl Lazy {
             let stat: sys::Stat = match sys::fstat(fd) {
                 Ok(result) => result,
                 Err(err) => {
-                    if !this.borrowed {
+                    if !is_callers_fd(file, fd) {
                         fd.close();
                     }
                     return Err(err);
@@ -216,7 +215,7 @@ impl Lazy {
 
             let mode = stat.st_mode as _;
             if sys::S::ISDIR(mode) {
-                if !this.borrowed {
+                if !is_callers_fd(file, fd) {
                     aio::Closer::close(fd, ());
                 }
                 return Err(sys::Error::from_code(sys::Errno::EISDIR, sys::Tag::fstat));
@@ -254,9 +253,19 @@ impl Lazy {
         }
 
         this.fd = fd;
+        #[cfg(not(windows))]
+        {
+            this.borrowed = is_callers_fd(file, fd);
+        }
 
         Ok(this)
     }
+}
+
+/// Whether `fd` is the descriptor that `file` names, and not one that `open_file_blob` opened for the reader.
+#[cfg(not(windows))]
+fn is_callers_fd(file: &blob::store::File, fd: Fd) -> bool {
+    matches!(&file.pathlike, PathOrFileDescriptor::Fd(pl_fd) if *pl_fd == fd)
 }
 
 // BufferedReader vtable parent: wires the

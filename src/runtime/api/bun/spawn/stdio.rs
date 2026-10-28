@@ -229,7 +229,7 @@ impl Stdio {
                                         break 'brk SpawnOptionsStdio::Inherit;
                                     }
 
-                                    if let Some(tag) = store_fd.stdio_tag() {
+                                    if let Some(tag) = startup_stdio_tag(store_fd) {
                                         match tag {
                                             FdStdio::StdIn => {
                                                 if i == 1 || i == 2 {
@@ -458,7 +458,7 @@ impl Stdio {
                 )));
             }
 
-            if let Some(tag) = fd.stdio_tag() {
+            if let Some(tag) = startup_stdio_tag(fd) {
                 match tag {
                     FdStdio::StdIn => {
                         if i == 1 || i == 2 {
@@ -668,6 +668,12 @@ impl Drop for Stdio {
             _ => {}
         }
     }
+}
+
+/// Which stdio of this process `fd` is. `None` for a number that the program closed and opened again: that descriptor is its own.
+fn startup_stdio_tag(fd: Fd) -> Option<FdStdio> {
+    fd.stdio_tag()
+        .filter(|_| bun_sys::FdExt::is_startup_stdio(fd))
 }
 
 /// Allocate a zero-initialized uv.Pipe. Zero-init ensures `pipe.loop` is null

@@ -168,3 +168,25 @@ fs.writeSync(${slot === 1 ? 2 : 1}, JSON.stringify({ whileRunning, exitCode, aft
     });
   },
 );
+
+// A process that ignores SIGCHLD does not keep a child that has exited. pidfd_open then finds no
+// process, and the child has no pidfd to watch.
+test.skipIf(!isLinux)("a child that is gone before its pidfd is opened still reports its exit", async () => {
+  const fixture = `
+let exits = 0;
+const children = [];
+for (let i = 0; i < 100; i++) {
+  children.push(Bun.spawn({ cmd: ["true"], stdio: ["ignore", "ignore", "ignore"], onExit() { exits++; } }).exited);
+}
+await Promise.all(children);
+console.log(exits);
+`;
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", 'trap "" CHLD; exec "$@"', "sh", bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "100\n", stderr: "", exitCode: 0 });
+});

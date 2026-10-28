@@ -1,4 +1,4 @@
-// `bun test` hands every file `test`, `expect`, `describe` and the other names of the runner, unless the file loads "bun:test", "@jest/globals"
+// `bun test` hands every file `test`, `expect`, `describe` and the other names of the runner, also a file that loads "bun:test", "@jest/globals"
 // or "vitest" itself. `bun test --aot` reports what `bun test` reports, file by file.
 import { expect } from "bun:test";
 import { bunExe, tempDir } from "harness";
@@ -61,19 +61,19 @@ test("a file that is no test file has the names too", () => { check(1); });
 `,
   "imports-another-runner.test.js": `
 import { expect, test } from "vitest";
-test("a file that imports a runner gets nothing more", () => { expect(typeof describe).toBe("undefined"); });
+test("a file that imports a runner has the other names too", () => { expect(typeof describe).toBe("function"); });
 `,
   "imports-jest.test.js": `
 import { expect, test } from "@jest/globals";
-test("a file that imports a runner gets nothing more", () => { expect(typeof beforeAll).toBe("undefined"); });
+test("a file that imports a runner has the other names too", () => { expect(typeof beforeAll).toBe("function"); });
 `,
   "requires-the-runner.test.cjs": `
 const { expect, test } = require("bun:test");
-test("a file that requires the runner gets nothing more", () => { expect(typeof describe).toBe("undefined"); });
+test("a file that requires the runner has the other names too", () => { expect(typeof describe).toBe("function"); });
 `,
   "imports-the-runner-by-a-call.test.js": `
 const runner = await import("bun:test");
-runner.test("a file that imports the runner by a call gets nothing more", () => { runner.expect(typeof describe).toBe("undefined"); });
+runner.test("a file that imports the runner by a call has the other names too", () => { runner.expect(typeof describe).toBe("function"); });
 `,
 };
 

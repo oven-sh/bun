@@ -422,6 +422,7 @@ const lookedUpByNativeCode = [
   "_kill",
   "argv",
   "emit",
+  "env",
   "execArgv",
   "nextTick",
   "noDeprecation",

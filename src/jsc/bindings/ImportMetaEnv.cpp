@@ -120,7 +120,7 @@ JSObject* ImportMetaEnv::processEnv(JSGlobalObject* lexicalGlobalObject) const
 
     auto* globalObject = zigGlobalObject();
     JSObject* process = globalObject->processObject();
-    auto& name = WebCore::builtinNames(vm).envPublicName();
+    auto name = Identifier::fromString(vm, "env"_s);
     unsigned attributes = 0;
     JSValue env = process->getDirect(vm, name, attributes);
     // Still a lazy static property, or redefined as an accessor.

@@ -100,7 +100,7 @@ async function slowPathCalls(files: Record<string, string>, expectedOutput: (rou
 test("136 native getters read alternately stay cached", async () => {
   const calls = await slowPathCalls(
     files,
-    rounds => `136 getters of 18 kinds of native objects, read ${rounds} times: 134\n`,
+    rounds => `136 getters of 18 kinds of native objects, read ${rounds} times: 135\n`,
   );
   expect(calls[0]).toBeGreaterThan(0);
   expect(calls[1] - calls[0]).toBeLessThan(3000);

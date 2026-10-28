@@ -6,7 +6,6 @@ use bun_sema::hir::{
     ExprId, ExprKind, File, FileBuilder, IdList, Keyword, NameKind, PatKind, PatProp, PropKey,
     PropKind, StmtId, TypeNodeKind,
 };
-use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::{TransformRequest, TreeChange};
 use bun_sema::session::Arena;
@@ -17,21 +16,8 @@ use crate::load::react_compiler::module_items::{
 use crate::load::runtime_declarations::NAMES_OF_EVERY_TEST_FILE;
 
 const MODULE: &[u8] = b"bun:test";
-const MODULES_OF_TEST_RUNNERS: [&[u8]; 3] = [MODULE, b"@jest/globals", b"vitest"];
 // No program can write such a name, so it meets no declaration of the file: `declare const test: ..` stands beside it.
 const LOCAL_NAME_PREFIX: &[u8] = b"%test:";
-
-fn loads_test_runner(request: &TransformRequest<'_, '_>, atoms: &Interner<'_>) -> bool {
-    let mut sites = request.analysis.import_sites.iter();
-    sites.any(|site| match site.specifier {
-        ImportSpecifier::Constant(specifier) => {
-            MODULES_OF_TEST_RUNNERS.contains(&atoms.bytes(specifier))
-        }
-        ImportSpecifier::Pattern { .. } | ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => {
-            false
-        }
-    })
-}
 
 // `typeof a.b` holds `a` as an expression, and asks for its type alone.
 fn find_names_in_type_queries(hir: &File<'_>) -> Vec<ExprId> {
@@ -122,9 +108,6 @@ pub(crate) fn import_used_names<'s>(
     atoms: &Interner<'s>,
     request: &mut TransformRequest<'_, 's>,
 ) -> TreeChange {
-    if loads_test_runner(request, atoms) {
-        return TreeChange::Unchanged;
-    }
     let names = NAMES_OF_EVERY_TEST_FILE.map(|name| atoms.intern(name));
     let uses = find_uses(request, &names);
     if uses.is_empty() {
@@ -304,6 +287,41 @@ mod tests {
                 "'use strict'; exports.a = 1; jest.fn();",
                 "require %test:jest | 0 written | 0 typed",
             ),
+            (
+                "a.test.js",
+                "import { test } from 'bun:test'; test('a', () => {}); describe;",
+                "describe as %test:describe | 1 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "import { test } from 'vitest'; test('a', () => {}); describe;",
+                "describe as %test:describe | 1 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "import { test } from '@jest/globals'; test('a', () => {}); describe;",
+                "describe as %test:describe | 1 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "import 'bun:test'; describe;",
+                "describe as %test:describe | 0 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "export * from 'bun:test'; describe;",
+                "describe as %test:describe | 0 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "await import('bun:test'); describe;",
+                "describe as %test:describe | 0 written | 0 typed",
+            ),
+            (
+                "a.test.cjs",
+                "require('bun:test'); describe;",
+                "require %test:describe | 0 written | 0 typed",
+            ),
         ];
         for (name, text, expected) in rows {
             assert_eq!(describe(name, text), expected, "{text}");
@@ -311,32 +329,13 @@ mod tests {
     }
 
     #[test]
-    fn names_of_the_file_and_files_that_load_a_runner_stay_as_written() {
+    fn names_of_the_file_stay_as_written() {
         let rows = [
             ("js", "console.log(1);", 0),
             ("ts", "let e: typeof expect;", 0),
             ("js", "function test() {} test();", 1),
             ("js", "(expect => expect)(1);", 1),
             ("js", "x.test; ({ test: 1 });", 0),
-            (
-                "js",
-                "import { test } from 'bun:test'; test('a', () => {}); describe;",
-                2,
-            ),
-            (
-                "js",
-                "import { test } from 'vitest'; test('a', () => {}); describe;",
-                2,
-            ),
-            (
-                "js",
-                "import { test } from '@jest/globals'; test('a', () => {}); describe;",
-                2,
-            ),
-            ("js", "import 'bun:test'; describe;", 1),
-            ("js", "export * from 'bun:test'; describe;", 1),
-            ("js", "await import('bun:test'); describe;", 1),
-            ("cjs", "require('bun:test'); describe;", 1),
         ];
         for (extension, text, written) in rows {
             let described = describe(&format!("a.test.{extension}"), text);

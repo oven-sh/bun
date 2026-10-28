@@ -2,8 +2,8 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 const js = { capability: "js", throws: true } as const;
 
-/** `expect(received).toBeTrue()` */
-const matcher = { returns: b.any.returning("undefined"), passThis: true, ...js } as const;
+/** `expect(received).toBeTrue()`. Returns a promise after `.resolves`, `.rejects` or `expect.poll()`. */
+const matcher = { returns: b.any.returning("undefined", "Promise"), passThis: true, ...js } as const;
 /** `expect(received).toBe(expected)` */
 const matcherWithExpected = { ...matcher, args: { expected: b.any } } as const;
 /** `expect(mock).toHaveBeenCalledWith(...expected)` */
@@ -11,7 +11,7 @@ const matcherWithCallArguments = { ...matcher, args: { expected: b.any.variadic 
 const matcherWithNthCallArguments = { ...matcher, args: { nth: b.any, expected: b.any.variadic }, length: 0 } as const;
 const matcherWithNthExpected = { ...matcher, args: { nth: b.any, expected: b.any }, length: 1 } as const;
 /** These return `this`. */
-const chainable = { ...matcher, returns: b.any.returning("this") } as const;
+const chainable = { ...matcher, returns: b.any.returning("this", "undefined", "Promise") } as const;
 const chainableWithExpected = { ...chainable, args: { expected: b.any } } as const;
 
 export const ExpectAnything = b.class({ rustPath: "crate::test_runner::ExpectAnything" });
@@ -84,13 +84,13 @@ export const Expect = b.class({
   internalFields: ["capturedValue", "resultValue"],
   protoCaller: "call_matcher",
   proto: {
-    fail: { args: { message: b.any }, returns: b.any.returning("undefined"), ...js },
+    fail: { args: { message: b.any }, returns: matcher.returns, ...js },
     lastCalledWith: { ...matcherWithCallArguments, rustName: "to_have_been_last_called_with" },
     lastReturnedWith: { ...matcherWithExpected, rustName: "to_have_last_returned_with" },
     not: { getter: b.self, passThis: true },
     nthCalledWith: { ...matcherWithNthCallArguments, rustName: "to_have_been_nth_called_with" },
     nthReturnedWith: { ...matcherWithNthExpected, rustName: "to_have_nth_returned_with" },
-    pass: { args: { message: b.any }, returns: b.any.returning("undefined"), ...js },
+    pass: { args: { message: b.any }, returns: matcher.returns, ...js },
     rejects: { getter: b.self, capability: "heap", throws: true, passThis: true },
     resolves: { getter: b.self, capability: "heap", throws: true, passThis: true },
     toBe: matcherWithExpected,

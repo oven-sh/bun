@@ -691,7 +691,7 @@ describe("@types/bun integration test", () => {
       // Only compiled code calls it.
       "response.bind.ts: constructJSONFromText is not published",
       // As for `match` of FileSystemRouter.
-      "response.bind.ts: new Request().clone() has no keepalive, duplex",
+      "response.bind.ts: new Request().clone() has no duplex",
       // `undefined` once the socket is closed.
       "server.bind.ts: new ServerWebSocket().remoteAddress is string | undefined, not string",
       // `pendingDeclarations` in test/internal/source-lints/redis-client-types.test.ts.

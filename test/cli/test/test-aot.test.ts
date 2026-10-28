@@ -443,6 +443,26 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("a matcher after .resolves or .rejects waits for a pending promise", async () => {
+    const { stderr, exitCode } = await expectSameAsBunTest({
+      "a.test.ts": `
+        import { expect, test } from "bun:test";
+        const later = <T>(run: () => T) => Promise.resolve().then(run);
+        const fails = () => later(() => { throw new Error("late"); });
+        test("passes", async () => {
+          await expect(later(() => 1)).resolves.toBe(1);
+          await expect(fails()).rejects.toThrow("late");
+        });
+        test("resolves to another value", async () => { await expect(later(() => 1)).resolves.toBe(2); });
+        test("rejects with another message", async () => { await expect(fails()).rejects.toThrow("early"); });
+      `,
+    });
+    expect(stderr).toContain("(pass) passes");
+    expect(stderr).toContain("(fail) resolves to another value");
+    expect(stderr).toContain("(fail) rejects with another message");
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("a build error", async () => {
     using dir = tempDir("test-aot", { "bad.test.ts": `import "./does-not-exist";` });
     const { stderr, exitCode } = await runTests(String(dir), true, [], false);

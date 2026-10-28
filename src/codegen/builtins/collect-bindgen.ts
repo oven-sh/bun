@@ -805,9 +805,9 @@ function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinP
   // The host function answers undefined for a receiver that is no instance, and the thunk takes an instance.
   if (methods[0].invalidThis === "undefined")
     return collectFunction(member, path, b.any.parameter, () => null, type.name);
-  // The thunk of a function that `protoCaller` calls takes other arguments, so nothing but the host function enters it.
-  const thunkOf = (signature: Signature) =>
-    type.protoCaller === undefined ? methodSymbolName(type, signature as Method) : null;
+  // The thunk of a function that `protoCaller` calls takes other arguments, and its host function reads the callee, which a frame of values lacks.
+  if (type.protoCaller !== undefined) return collectFunction(member, path, type.parameterType, () => null, type.name);
+  const thunkOf = (signature: Signature) => methodSymbolName(type, signature as Method);
   return collectFunction(member, path, type.parameterType, thunkOf, type.name).map(declaration =>
     declaration.declares === "Member"
       ? { ...declaration, columns: { ...declaration.columns, directEntryOfMethod: directEntryOfMethod(type, member) } }

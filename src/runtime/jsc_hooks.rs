@@ -2224,19 +2224,30 @@ fn console_print_runtime_object_inner<const C: bool>(
         let _ = resolve_log.msg.write_format::<C>(&mut w);
         return Ok(true);
     }
-    {
-        use crate::test_runner::pretty_format::{JestPrettyFormat, WrappedWriter};
-        // `writer_` is `&mut dyn bun_io::Write`; wrap once more so the
-        // (sized) `&mut dyn bun_io::Write` satisfies `WrappedWriter<W>`'s
-        // `W: bun_io::Write` bound via the blanket `impl Write for &mut W`.
-        let mut sink: &mut dyn bun_io::Write = &mut *writer_;
-        let mut wrapped = WrappedWriter::new(&mut sink);
-        if JestPrettyFormat::print_asymmetric_matcher::<_, _, C>(formatter, &mut wrapped, value)? {
-            return Ok(true);
-        }
-    }
+    bun_removable_features::call_removable_or!(
+        Test,
+        ReturnDefault,
+        { Ok(false) },
+        console_print_asymmetric_matcher::<C>,
+        formatter,
+        writer_,
+        value
+    )
+}
 
-    Ok(false)
+#[inline(never)] // --trim cuts the test runner at the call.
+fn console_print_asymmetric_matcher<const C: bool>(
+    formatter: &mut bun_jsc::Formatter<'_>,
+    writer_: &mut dyn bun_io::Write,
+    value: JSValue,
+) -> JsResult<bool> {
+    use crate::test_runner::pretty_format::{JestPrettyFormat, WrappedWriter};
+    // `writer_` is `&mut dyn bun_io::Write`; wrap once more so the
+    // (sized) `&mut dyn bun_io::Write` satisfies `WrappedWriter<W>`'s
+    // `W: bun_io::Write` bound via the blanket `impl Write for &mut W`.
+    let mut sink: &mut dyn bun_io::Write = &mut *writer_;
+    let mut wrapped = WrappedWriter::new(&mut sink);
+    JestPrettyFormat::print_asymmetric_matcher::<_, _, C>(formatter, &mut wrapped, value)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -3563,15 +3574,26 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             if matches!(loader, L::Css) {
                 if bun_css::css_modules::is_module_path(path.text) {
+                    let exports = bun_removable_features::call_removable_or!(
+                        Bundler,
+                        Throw,
+                        {
+                            return Err(crate::removed_feature::throw_for_removed_feature(
+                                global_object,
+                                bun_removable_features::Feature::Bundler,
+                            )
+                            .into());
+                        },
+                        css_module_exports,
+                        jsc_vm,
+                        global_object,
+                        path.text,
+                        args.virtual_source,
+                        // SAFETY: `args.log` is the caller's live `Log`; nothing else borrows it in this arm.
+                        unsafe { &mut *args.log }
+                    )?;
                     return Ok(ResolvedSource {
-                        jsvalue_for_export: css_module_exports(
-                            jsc_vm,
-                            global_object,
-                            path.text,
-                            args.virtual_source,
-                            // SAFETY: `args.log` is the caller's live `Log`; nothing else borrows it in this arm.
-                            unsafe { &mut *args.log },
-                        )?,
+                        jsvalue_for_export: exports,
                         source_url: input_specifier.create_if_different(path.text),
                         tag: ResolvedSourceTag::ExportsObject,
                         ..Default::default()

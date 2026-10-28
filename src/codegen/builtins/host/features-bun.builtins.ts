@@ -172,6 +172,12 @@ export default b.declarations(
     "%ExpectTypeOf%",
     "%ScopeFunctions%",
     "%DoneCallback%",
+    "%ExpectDeferred%",
+    "%TestContext%",
+    "%AroundHook%",
+    "%TestFixtures%",
+    "%ActiveFixture%",
+    "%ViWait%",
   ),
 
   extendAll(["WebView", "ChildProcess", "X509", ...tlsSocketFeatures], "Bun.WebView"),

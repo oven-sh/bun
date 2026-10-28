@@ -16,7 +16,7 @@ import {
   statSync,
   writeSync,
 } from "fs";
-import { appendFile, exists, mkdir, rm, symlink, writeFile } from "fs/promises";
+import { appendFile, copyFile, exists, link, mkdir, rm, symlink, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
@@ -30,7 +30,7 @@ import {
   tempDir,
 } from "harness";
 import { constants as osConstants, type as osType, tmpdir } from "os";
-import { join, sep } from "path";
+import { basename, delimiter, isAbsolute, join, sep } from "path";
 import { TestRegistry } from "registry";
 import { pathToFileURL } from "url";
 
@@ -3299,6 +3299,391 @@ test.concurrent.skipIf(!isLinux)(
     expect(exitCode).toBe(0);
   },
 );
+
+// Scripts find `node-gyp` only through the directory that `bun install` adds to PATH. The script in
+// it runs $npm_config_node_gyp, which records its argument, $BUN_WHICH_IGNORE_CWD and $PATH here.
+describe.concurrent("the node-gyp directory on PATH", () => {
+  /** The name that `bun install` gives the directory, in 1.3 with zeros before both numbers. */
+  const isNodeGypDirectory = (entry: string) => /^\.[0-9a-f]{1,16}-[0-9A-F]{1,8}\.node-gyp$/.test(basename(entry));
+
+  async function setup(
+    linker: "hoisted" | "isolated",
+    env: Record<string, string | undefined>,
+    packages: Record<string, ScriptPackage> = {},
+  ) {
+    const ctx = await setupScriptPackages(linker, {
+      native: { scripts: { install: "node-gyp rebuild" } },
+      ...packages,
+    });
+    const ranFile = join(ctx.packageDir, "node-gyp-ran.txt");
+    // Holds the programs that a test puts on PATH. No other node-gyp is on this PATH.
+    const tools = join(ctx.packageDir, "tools");
+    const inherited = isWindows ? [tools] : [tools, "/usr/bin", "/bin"];
+    // The script of `bun install` runs $npm_config_node_gyp itself on POSIX, and with `node` on Windows.
+    const fakeNodeGyp = join(ctx.packageDir, isWindows ? "fake-node-gyp.js" : "fake-node-gyp");
+    await Promise.all([
+      mkdir(tools),
+      // On Windows that `node` is a link that `bun install` makes below %TEMP%.
+      mkdir(ctx.env.TEMP, { recursive: true }),
+      writeFile(
+        fakeNodeGyp,
+        isWindows
+          ? `const { argv, env } = process;\nrequire("fs").appendFileSync(env.NODE_GYP_RAN, [argv[2], env.BUN_WHICH_IGNORE_CWD, env.PATH].join("|") + "\\n");\n`
+          : '#!/bin/sh\necho "$1|$BUN_WHICH_IGNORE_CWD|$PATH" >> "$NODE_GYP_RAN"\n',
+        { mode: 0o755 },
+      ),
+    ]);
+    Object.assign(ctx.env, {
+      PATH: inherited.join(delimiter),
+      npm_config_node_gyp: fakeNodeGyp,
+      NODE_GYP_RAN: ranFile,
+      ...env,
+    });
+    /** The calls of node-gyp in order. */
+    function records() {
+      const lines = existsSync(ranFile) ? readFileSync(ranFile, "utf8").split(/\r?\n/).filter(Boolean) : [];
+      return lines.map(line => {
+        const [argument, ignoreCwd, path] = line.split("|");
+        return { argument, ignoreCwd, entries: path.split(delimiter) };
+      });
+    }
+    return {
+      ...ctx,
+      tools,
+      records,
+      /** What the PATH of each call holds for the directory of `bun install`. */
+      calls: () =>
+        records().map(({ argument, ignoreCwd, entries }) => ({
+          argument,
+          absolute: isAbsolute(ignoreCwd),
+          onPath: entries.includes(ignoreCwd),
+          directories: entries.filter(isNodeGypDirectory).length,
+          inherited: inherited.every(entry => entries.includes(entry)),
+        })),
+    };
+  }
+  const found = (argument: string) => ({ argument, absolute: true, onPath: true, directories: 1, inherited: true });
+  const withScripts = {
+    name: "root",
+    dependencies: { native: "1.0.0" },
+    trustedDependencies: ["native"],
+    scripts: { postinstall: "node-gyp configure" },
+  };
+
+  // The directory is below the temp directory, and a dependency's script runs in the dependency's
+  // own directory. A PATH entry that is relative to the project does not lead there.
+  test.each([
+    { name: "BUN_TMPDIR is relative", linker: "hoisted", env: { BUN_TMPDIR: "relative-tmp" } },
+    { name: "TMPDIR is relative", linker: "isolated", env: { BUN_TMPDIR: undefined, TMPDIR: "relative-tmp" } },
+    {
+      name: "BUN_TMPDIR starts with ./ and ends with a separator",
+      linker: "isolated",
+      env: { BUN_TMPDIR: `.${sep}relative-tmp${sep}` },
+    },
+    // `link/..` is the directory above the link's target, which is not the project. Windows
+    // resolves `..` before it looks at the link, so there the row would repeat the first one.
+    ...(isWindows
+      ? []
+      : [
+          {
+            name: "BUN_TMPDIR crosses a symbolic link before ..",
+            linker: "hoisted",
+            env: { BUN_TMPDIR: "link/../relative-tmp" },
+          },
+        ]),
+  ] as const)("a dependency's script finds node-gyp: $name", async ({ linker, env }) => {
+    using ctx = await setup(linker, env);
+    if (env.BUN_TMPDIR?.startsWith("link/")) {
+      await mkdir(join(ctx.packageDir, "elsewhere", "target"), { recursive: true });
+      await symlink(join("elsewhere", "target"), join(ctx.packageDir, "link"));
+    }
+    await writeFile(ctx.packageJson, JSON.stringify(withScripts));
+
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    expect(ctx.calls()).toEqual([found("rebuild"), found("configure")]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Only an entry that is not absolute gets a prefix, and an empty name would make one that starts
+  // with a separator. It does not get that far: an empty BUN_TMPDIR cannot be opened, so the
+  // directory goes into `<cache>/.tmp`. On Windows an empty name opens the project directory, and
+  // the entry is the path of the directory that was opened. That was not run, so this is POSIX only.
+  test.skipIf(isWindows)("an empty BUN_TMPDIR still puts the directory into the cache", async () => {
+    using ctx = await setup("hoisted", { BUN_TMPDIR: "" });
+    await writeFile(ctx.packageJson, JSON.stringify(withScripts));
+
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    expect(ctx.calls()).toEqual([found("rebuild"), found("configure")]);
+    expect(ctx.records()[0].ignoreCwd.startsWith(join(ctx.env.BUN_INSTALL_CACHE_DIR, ".tmp") + sep)).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  // PATH cannot hold a directory that has the delimiter in its path. There the entry stays
+  // relative, which still leads the root's own script to the directory.
+  test("a project path with the PATH delimiter keeps the relative entry", async () => {
+    using ctx = await setup("hoisted", { BUN_TMPDIR: "relative-tmp" });
+    const project = join(ctx.packageDir, `a${delimiter}b`);
+    await mkdir(project);
+    await writeFile(
+      join(project, "package.json"),
+      JSON.stringify({ name: "root", scripts: { postinstall: "node-gyp configure" } }),
+    );
+
+    const { err, exitCode } = await ctx.bun("install", "--cwd", project);
+    expect(err).not.toContain("error:");
+    expect(ctx.calls()).toEqual([{ ...found("configure"), absolute: false }]);
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun install` changes to the workspace root first, so the temp directory is relative to the root.
+  // A member's script runs in the member's directory.
+  test("a workspace member's script finds node-gyp, with the install started in the member's directory", async () => {
+    using ctx = await setup("hoisted", { BUN_TMPDIR: "relative-tmp" });
+    const member = join(ctx.packageDir, "packages", "member");
+    await mkdir(member, { recursive: true });
+    await Promise.all([
+      writeFile(ctx.packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"] })),
+      writeFile(
+        join(member, "package.json"),
+        JSON.stringify({ name: "member", version: "1.0.0", scripts: { postinstall: "node-gyp member" } }),
+      ),
+    ]);
+
+    const { err, exitCode } = await ctx.bun("install", "--cwd", member);
+    expect(err).not.toContain("error:");
+    expect(ctx.calls()).toEqual([found("member")]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The install that a script starts inherits a PATH with the outer install's directory, and adds
+  // its own. A `bun x` older than this test leaves out only the directory in BUN_WHICH_IGNORE_CWD,
+  // so through the other one the node-gyp script would run itself again without an end.
+  describe.each([
+    { name: "an absolute temp directory", env: {} },
+    { name: "a relative temp directory", env: { BUN_TMPDIR: "relative-tmp" } },
+  ])("with $name", ({ env }) => {
+    async function expectOneDirectory(postinstall: string, tool?: string) {
+      using ctx = await setup("hoisted", env);
+      await mkdir(join(ctx.packageDir, "nested"));
+      await Promise.all([
+        writeFile(ctx.packageJson, JSON.stringify({ name: "root", scripts: { postinstall } })),
+        writeFile(
+          join(ctx.packageDir, "nested", "package.json"),
+          JSON.stringify({ name: "nested", scripts: { postinstall: "node-gyp nested" } }),
+        ),
+        tool && writeFile(join(ctx.tools, "install-nested"), tool, { mode: 0o755 }),
+      ]);
+
+      const { err, exitCode } = await ctx.bun("install");
+      expect(err).not.toContain("error:");
+      expect(ctx.calls()).toEqual([found("nested")]);
+      expect(exitCode).toBe(0);
+    }
+
+    test("an install that a script starts has one node-gyp directory on PATH", async () => {
+      await expectOneDirectory(`cd nested && ${bunExe()} install`);
+    });
+
+    // `bun x` removes BUN_WHICH_IGNORE_CWD for the program it runs, and leaves PATH as it is.
+    // The program here is a shell script.
+    test.skipIf(isWindows)("so does an install that a script starts through `bun x`", async () => {
+      await expectOneDirectory(`${bunExe()} x install-nested`, `#!/bin/sh\ncd nested && exec ${bunExe()} install\n`);
+    });
+  });
+
+  // An install knows the directory of another install by its name and by nothing else. The
+  // directories here do not exist. The empty entry before the last one must stay.
+  test("an install leaves out the node-gyp directories that it inherits, and no other entry", async () => {
+    const directories = [
+      ".57c41e258af0c3a3-1.node-gyp",
+      ".18e12f1c7864b7ff-00000001.node-gyp",
+      ".ad9a9a091a00fbb-1F5.node-gyp",
+      ".0-0.node-gyp",
+      ".0123456789abcdef-01234567.node-gyp",
+      ".fedcba9876543210-89ABCDEF.node-gyp",
+      join("below", "a", "directory", ".57c41e258af0c3a3-2.node-gyp"),
+      `.57c41e258af0c3a3-3.node-gyp${sep}`,
+      `.57c41e258af0c3a3-4.node-gyp${sep}${sep}`,
+    ];
+    const others = [
+      ".DEADBEEF-1.node-gyp",
+      ".deadbeef-1f.node-gyp",
+      ".deadbeefg-1.node-gyp",
+      ".deadbeef-1G.node-gyp",
+      ".deadbeef-1@.node-gyp",
+      ".dead-BEEF-1.node-gyp",
+      ".dead beef-1.node-gyp",
+      ".-1.node-gyp",
+      ".deadbeef-.node-gyp",
+      ".00000000000000000-1.node-gyp",
+      ".deadbeef-000000001.node-gyp",
+      "deadbeef-1.node-gyp",
+      ".deadbeef.node-gyp",
+      ".deadbeef-1.node-gypx",
+      ".node-gyp",
+      "node-gyp",
+      "",
+    ];
+    using ctx = await setup("hoisted", {});
+    // A directory after each of the first entries, and one after the empty entry, at the end.
+    const planted = others.flatMap((other, i) => [other, directories[i] ?? []].flat());
+    ctx.env.PATH = [ctx.env.PATH, ...planted, directories[0]].join(delimiter);
+    await writeFile(ctx.packageJson, JSON.stringify({ name: "root", scripts: { postinstall: "node-gyp configure" } }));
+
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    const [{ entries, ignoreCwd }] = ctx.records();
+    expect(entries.slice(entries.indexOf(others[0]), entries.indexOf(ignoreCwd))).toEqual(others);
+    expect(exitCode).toBe(0);
+  });
+
+  // Without $npm_config_node_gyp the node-gyp script runs `bun x node-gyp`, which here must get
+  // node-gyp from the registry. This `bun` is on PATH in place of an older one, whose `bun x`
+  // takes the script for node-gyp: the script ran itself again, until PATH was too long for a new
+  // process. It records its arguments and runs nothing but `bun x tool`.
+  const registryNodeGyp: ScriptPackage = {
+    bin: { "node-gyp": "node-gyp.js" },
+    files: {
+      "node-gyp.js": `#!/usr/bin/env node\nrequire("fs").appendFileSync(process.env.NODE_GYP_RAN, process.argv[2] + "\\n");\n`,
+    },
+  };
+  async function setupRegistry(env: Record<string, string | undefined>, packages: Record<string, ScriptPackage> = {}) {
+    const ctx = await setup(
+      "hoisted",
+      { ...env, npm_config_node_gyp: undefined },
+      { "node-gyp": registryNodeGyp, ...packages },
+    );
+    const bunCalls = join(ctx.packageDir, "bun-calls.txt");
+    // `bun x` installs node-gyp outside of the project, where the project's bunfig.toml does not apply.
+    Object.assign(ctx.env, { BUN_CONFIG_REGISTRY: ctx.registry, BUN_CALLS: bunCalls });
+    const lines = (file: string) => (existsSync(file) ? readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean) : []);
+    return {
+      ...ctx,
+      bunOnPath: () =>
+        isWindows
+          ? writeFile(join(ctx.tools, "bun.cmd"), '@echo %*>>"%BUN_CALLS%"\r\n@exit /b 99\r\n')
+          : writeFile(
+              join(ctx.tools, "bun"),
+              `#!/bin/sh\necho "$*" >> "$BUN_CALLS"\n[ "$*" = "x tool" ] || exit 99\nexec ${bunExe()} "$@"\n`,
+              { mode: 0o755 },
+            ),
+      ran: () => ({ nodeGyp: lines(ctx.env.NODE_GYP_RAN), bunOnPath: lines(bunCalls) }),
+    };
+  }
+
+  // The script names the bun that wrote it. Its `bun x` leaves out the directories of all installs.
+  test("the node-gyp script does not run another bun that is first on PATH", async () => {
+    using ctx = await setupRegistry({});
+    ctx.env.PATH = ctx.tools;
+    await Promise.all([
+      ctx.bunOnPath(),
+      writeFile(
+        ctx.packageJson,
+        JSON.stringify({ name: "root", scripts: { postinstall: "node-gyp from-the-script" } }),
+      ),
+    ]);
+
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    expect(ctx.ran()).toEqual({ nodeGyp: ["from-the-script"], bunOnPath: [] });
+    expect(exitCode).toBe(0);
+  });
+
+  // The install makes no `bun` for PATH when PATH has a `node`. The one here is bun.
+  test.skipIf(isWindows)("the node-gyp script runs with no bun on PATH", async () => {
+    using ctx = await setupRegistry({});
+    ctx.env.PATH = ctx.tools;
+    await Promise.all([
+      symlink(bunExe(), join(ctx.tools, "node")),
+      writeFile(
+        ctx.packageJson,
+        JSON.stringify({ name: "root", scripts: { postinstall: "node-gyp from-the-script" } }),
+      ),
+    ]);
+
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    expect(ctx.ran()).toEqual({ nodeGyp: ["from-the-script"], bunOnPath: [] });
+    expect(exitCode).toBe(0);
+  });
+
+  // The script holds the path of the executable in the quotes of a shell. A symbolic link is
+  // not enough here: the executable knows the path of its own file.
+  test.skipIf(isWindows)("the node-gyp script runs a bun whose path has a space and a quote", async () => {
+    using ctx = await setupRegistry({});
+    ctx.env.PATH = ctx.tools;
+    const bun = join(ctx.packageDir, "it's here", basename(bunExe()));
+    await mkdir(join(ctx.packageDir, "it's here"));
+    await Promise.all([
+      link(bunExe(), bun).catch(() => copyFile(bunExe(), bun)),
+      ctx.bunOnPath(),
+      writeFile(
+        ctx.packageJson,
+        JSON.stringify({ name: "root", scripts: { postinstall: "node-gyp from-the-script" } }),
+      ),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bun, "install"],
+      cwd: ctx.packageDir,
+      env: ctx.env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(ctx.ran()).toEqual({ nodeGyp: ["from-the-script"], bunOnPath: [] });
+    expect(exitCode).toBe(0);
+  });
+
+  // BUN_WHICH_IGNORE_CWD does not keep `bun x` from the script: a `bun x` removes the variable
+  // for the tool that it runs, and so does a task runner with a strict environment. The tool
+  // runs the script with the directory of another install in front on PATH. The node-gyp in it
+  // ends the run if a `bun x` takes it. The tool is a shell script.
+  test.skipIf(isWindows).each([
+    { name: "a tool that `bun x` runs in the root's script", owner: "root", script: "bun x tool", env: {} },
+    {
+      name: "the same in a dependency's script, with a relative temp directory",
+      owner: "native",
+      script: "bun x tool",
+      env: { BUN_TMPDIR: "relative-tmp" },
+    },
+    {
+      name: "a tool that runs without BUN_WHICH_IGNORE_CWD",
+      owner: "root",
+      script: "BUN_WHICH_IGNORE_CWD= tool",
+      env: {},
+    },
+  ])("node-gyp comes from the registry for $name", async ({ owner, script, env }) => {
+    using ctx = await setupRegistry(env, { native: owner === "native" ? { scripts: { install: script } } : {} });
+    const otherInstall = join(ctx.packageDir, ".57c41e258af0c3a3-1.node-gyp");
+    ctx.env.OTHER_INSTALL = otherInstall;
+    await mkdir(otherInstall);
+    await Promise.all([
+      ctx.bunOnPath(),
+      writeFile(
+        ctx.packageJson,
+        JSON.stringify({ ...withScripts, scripts: owner === "root" ? { postinstall: script } : {} }),
+      ),
+      writeFile(join(otherInstall, "node-gyp"), '#!/bin/sh\necho other-install >> "$NODE_GYP_RAN"\nexit 99\n', {
+        mode: 0o755,
+      }),
+      writeFile(
+        join(ctx.tools, "tool"),
+        '#!/bin/sh\nnode_gyp=$(command -v node-gyp)\nPATH="$OTHER_INSTALL:$PATH" "$node_gyp" from-the-tool\n',
+        { mode: 0o755 },
+      ),
+    ]);
+
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    expect(ctx.ran()).toEqual({ nodeGyp: ["from-the-tool"], bunOnPath: script === "bun x tool" ? ["x tool"] : [] });
+    expect(exitCode).toBe(0);
+  });
+});
 
 // PR_SET_PDEATHSIG. The script holds the write end of `alive`, which ends when the script does, and
 // waits for a line in `gate`, which the test writes once bun is gone.

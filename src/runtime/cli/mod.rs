@@ -640,33 +640,13 @@ pub(crate) mod command {
 
     // ──────────────────────────────────────────────────────────────────────────
     // Canonical home: src/runtime/cli/mod.rs, inside `pub mod command { ... }`
-    // (crate path `bun_runtime::cli::command::{is_bun_x, is_node, which}`).
+    // (crate path `bun_runtime::cli::command::which`).
     //
     // The `is_node` branch of `which()` must clear
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
-    fn is_bun_x(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
-        }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"bunx")
-        }
-    }
-
-    fn is_node(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"node.exe") || strings::ends_with(argv0, b"node");
-        }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"node")
-        }
-    }
+    use bun_install::{is_bun_x, is_node};
 
     /// Cheap argv prescan for the dominant `bun <path>` / `bun .` shape.
     ///

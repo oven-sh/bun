@@ -229,6 +229,22 @@ pub mod fs {
             Ok(ZStr::from_buf_mut(buf, written))
         }
 
+        /// True if `name` is what [`Self::tmpname`] writes for `extname`, zero-padded or not.
+        pub fn is_tmpname(name: &[u8], extname: &[u8]) -> bool {
+            let Some((hex, id)) = name
+                .strip_prefix(b".")
+                .and_then(|rest| rest.strip_suffix(extname))
+                .and_then(|rest| rest.strip_suffix(b"."))
+                .and_then(|numbers| strings::split_once_char(numbers, b'-'))
+            else {
+                return false;
+            };
+            (1..=16).contains(&hex.len())
+                && hex.iter().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+                && (1..=8).contains(&id.len())
+                && id.iter().all(|c| matches!(c, b'0'..=b'9' | b'A'..=b'F'))
+        }
+
         #[inline]
         pub fn instance() -> &'static mut FileSystem {
             // SAFETY: caller guarantees init() was called, so INSTANCE is initialized.

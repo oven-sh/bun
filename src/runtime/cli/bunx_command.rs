@@ -1066,22 +1066,22 @@ impl BunxCommand {
         };
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
 
-        let path_for_bin_dirs: Vec<u8> = if ignore_cwd.is_empty() {
+        // The `node-gyp` script of a `bun install` runs `bun x node-gyp`, which must not find one.
+        let is_node_gyp = initial_bin_name == b"node-gyp";
+        let path_for_bin_dirs: Vec<u8> = if ignore_cwd.is_empty() && !is_node_gyp {
             path.clone()
         } else {
-            // Without the cwd passed through BUN_WHICH_IGNORE_CWD: a temp node-gyp script must not find itself.
+            let ignored = strings::without_trailing_slash(&ignore_cwd);
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            for (i, segment) in strings::tokenize(&path, &[DELIMITER]).enumerate() {
-                if !strings::eql_long(
-                    strings::without_trailing_slash(segment),
-                    strings::without_trailing_slash(&ignore_cwd),
-                    true,
-                ) {
-                    if i > 0 {
-                        new_path.push(DELIMITER);
-                    }
-                    new_path.extend_from_slice(segment);
+            for segment in strings::tokenize(&path, &[DELIMITER]).filter(|dir| {
+                strings::without_trailing_slash(dir) != ignored
+                    && !(is_node_gyp
+                        && bun_install::package_manager_real::is_node_gyp_script_dir(dir))
+            }) {
+                if !new_path.is_empty() {
+                    new_path.push(DELIMITER);
                 }
+                new_path.extend_from_slice(segment);
             }
             new_path
         };

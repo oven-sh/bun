@@ -1091,25 +1091,28 @@ describe("addAbortListener on a signal that is aborted already", () => {
   });
 
   // Any object that has `aborted` is taken for a signal: the AbortSignal of happy-dom, jsdom or abort-controller is
-  // no EventTarget of Bun's. A native Event can name only such a target, so own properties name this signal.
-  // Node.js v26.12.1 answers the signal for `srcElement` too, and its event has no own key.
+  // no EventTarget of Bun's. A native Event can name only such a target, so own properties name this signal. They
+  // are not enumerable: the event lists and serializes as any other event does, whatever the signal holds.
+  // Node.js v26.12.1 answers the signal for `srcElement` too.
   test("the event names a signal that is no EventTarget", async () => {
-    const signal = { aborted: true };
+    const signal: { aborted: boolean; self?: object } = { aborted: true };
+    signal.self = signal;
     const describeOwn = (event: Event) => ({
       ...describeEvent(event, signal),
       srcElement: event.srcElement,
       keys: Object.keys(event),
+      json: JSON.stringify(event),
       targetIsWritable: Object.getOwnPropertyDescriptor(event, "target")?.writable,
     });
     let event!: Event;
     let during: object | undefined;
-    EventEmitter.addAbortListener(signal as AbortSignal, received => {
+    EventEmitter.addAbortListener(signal as unknown as AbortSignal, received => {
       event = received;
       during = describeOwn(received);
     });
     await nextTurn();
 
-    const own = { srcElement: null, keys: ["isTrusted", "target", "currentTarget"], targetIsWritable: false };
+    const own = { srcElement: null, keys: ["isTrusted"], json: '{"isTrusted":true}', targetIsWritable: false };
     expect({ during, after: describeOwn(event) }).toEqual({
       during: {
         type: "abort",
@@ -1233,35 +1236,35 @@ describe("addAbortListener on a signal that is aborted already", () => {
     });
   });
 
-  // No Event keeps the wrapper of its target alive, and the reason of a signal lives on the wrapper. Only the event
-  // names this signal, so a collection while the listener waits takes the reason. Node.js v26.12.1 prints the error.
-  test.todo(
-    "the reason of a signal that only the event names is still there after the listener has waited",
-    async () => {
-      const script = `
+  // The reason of a signal lives on its wrapper. Only the event names this signal, and the listener waits for a turn
+  // of the event loop and a collection. The event must keep the signal as it was. The listener is a function and
+  // no arrow: without the event's hold on the signal, a release build loses the reason only for that form.
+  test("the event keeps a signal that nothing else names, with its reason", async () => {
+    const script = `
       const { addAbortListener } = require("node:events");
+      async function listener(event) {
+        await new Promise(resolve => setImmediate(resolve));
+        Bun.gc(true);
+        console.log(String(event.target.reason));
+      }
       (function () {
-        addAbortListener(AbortSignal.abort(new Error("cancelled")), async event => {
-          await new Promise(resolve => setImmediate(resolve));
-          console.log(String(event.target.reason));
-        });
+        addAbortListener(AbortSignal.abort(new Error("cancelled")), listener);
       })();
     `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: "Error: cancelled",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-  );
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "Error: cancelled",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 test("getMaxListeners", () => {

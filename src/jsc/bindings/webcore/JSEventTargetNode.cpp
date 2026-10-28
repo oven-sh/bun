@@ -8,6 +8,7 @@
 #include "JSEventTarget.h"
 #include "JSEvent.h"
 #include "EventNames.h"
+#include "WebCoreJSClientData.h"
 #include "JavaScriptCore/JSArray.h"
 #include "wtf/text/MakeString.h"
 #include "../ErrorCode.h"
@@ -71,13 +72,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsArmAbortEvent, (JSGlobalObject * le
     JSValue wrapper = toJSNewlyCreated(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject), WTF::move(event));
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    if (!target) {
+    JSObject* object = asObject(wrapper);
+    if (target) {
+        // An Event keeps its native target alive and not the wrapper of it, and the reason of a
+        // signal lives on the wrapper. A listener may hold nothing but the event, so the event
+        // holds the signal. This slot can go when JSEvent marks the wrapper of its target.
+        object->putDirect(vm, WebCore::builtinNames(vm).signalPrivateName(), signal, PropertyAttribute::DontEnum | 0);
+    } else {
         // validateAbortSignal() takes any object that has `aborted`: the AbortSignal of happy-dom,
         // jsdom or abort-controller is no EventTarget of ours. A native Event can name only an
-        // EventTarget, so own properties name any other signal.
-        JSObject* object = asObject(wrapper);
-        object->putDirect(vm, vm.propertyNames->target, signal, PropertyAttribute::ReadOnly | 0);
-        object->putDirect(vm, Identifier::fromString(vm, "currentTarget"_s), signal, PropertyAttribute::ReadOnly | 0);
+        // EventTarget, so own properties name any other signal. They are not enumerable: `target`
+        // is no own key of any other event, and JSON.stringify(event) must not walk the signal.
+        unsigned attributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum;
+        object->putDirect(vm, vm.propertyNames->target, signal, attributes);
+        object->putDirect(vm, Identifier::fromString(vm, "currentTarget"_s), signal, attributes);
     }
 
     return JSValue::encode(wrapper);
@@ -99,7 +107,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsFinishAbortEvent, (JSGlobalObject *
         // a delete would give every such event a Structure of its own.
         auto currentTarget = Identifier::fromString(vm, "currentTarget"_s);
         if (wrapper->getDirect(vm, currentTarget))
-            wrapper->putDirect(vm, currentTarget, jsNull(), PropertyAttribute::ReadOnly | 0);
+            wrapper->putDirect(vm, currentTarget, jsNull(), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
     }
 
     return JSValue::encode(jsUndefined());

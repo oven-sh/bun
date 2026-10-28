@@ -466,9 +466,20 @@ function addAbortListener(signal, listener) {
   let removeEventListener;
   if (signal.aborted) {
     let disposed = false;
-    // The listener gets no event here: a page cannot make a trusted one, and the host may have no `Event`.
     queueMicrotask(() => {
-      if (!disposed) listener();
+      if (disposed) return;
+      // The host of a bundle may have no `Event`. The listener then gets no argument, as before.
+      if (typeof Event !== "function") {
+        listener();
+        return;
+      }
+      // A page cannot make a trusted event, and only a dispatch sets the target of one. Own
+      // properties name the signal: `target` for good, `currentTarget` for the time of the call.
+      const event = new Event("abort");
+      Object.defineProperty(event, "target", { value: signal });
+      Object.defineProperty(event, "currentTarget", { value: signal, configurable: true });
+      listener(event);
+      delete event.currentTarget;
     });
     removeEventListener = () => {
       disposed = true;

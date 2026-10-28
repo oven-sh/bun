@@ -166,26 +166,38 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
-  // For a signal that is aborted already the polyfill has the cancel of node:events: dispose() before
-  // the microtask stops the call. It hands the listener no event and names no `Event`, which the host
-  // of a bundle may not have.
+  // For a signal that is aborted already the polyfill follows node:events: the listener gets an
+  // `abort` event that names the signal, and dispose() before the microtask stops the call. The host
+  // of a bundle may have no `Event`: the listener is then called with no argument, as it was before.
   itBundled("browser/NodeEventsAddAbortListenerAborted", {
     files: {
       "/entry.js": /* js */ `
         import { addAbortListener } from "node:events";
         const microtasksRan = () => new Promise(resolve => queueMicrotask(resolve));
-        delete globalThis.Event;
-        const signal = AbortSignal.abort();
-        const calls = [];
-        addAbortListener(signal, (...args) => calls.push("kept, " + args.length + " arguments"));
-        addAbortListener(signal, () => calls.push("disposed"))[Symbol.dispose]();
-        await microtasksRan();
-        console.log(JSON.stringify(calls));
+        const signal = AbortSignal.abort("why");
+        const lines = [];
+        {
+          let event;
+          addAbortListener(signal, received => {
+            event = received;
+            lines.push(JSON.stringify([received.type, received.target === signal, received.currentTarget === signal, received.target.reason]));
+          });
+          addAbortListener(signal, () => lines.push("disposed"))[Symbol.dispose]();
+          await microtasksRan();
+          lines.push(JSON.stringify([event.target === signal, event.currentTarget, Object.keys(event).includes("target")]));
+        }
+        {
+          delete globalThis.Event;
+          addAbortListener(signal, (...args) => lines.push(args.length + " arguments"));
+          addAbortListener(signal, () => lines.push("disposed"))[Symbol.dispose]();
+          await microtasksRan();
+        }
+        console.log(lines.join("\\n"));
       `,
     },
     target: "browser",
     run: {
-      stdout: '["kept, 0 arguments"]',
+      stdout: '["abort",true,true,"why"]\n[true,null,false]\n0 arguments',
     },
   });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {

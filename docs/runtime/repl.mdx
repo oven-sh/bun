@@ -106,6 +106,17 @@ For longer multi-line entries, use `.editor` to enter editor mode, which buffers
 
 ---
 
+## Completion
+
+In a color terminal, the REPL shows the rest of the best matching name after the cursor as you type. Press `Right`, `End`, or `Tab` to accept the suggestion. With no suggestion on screen, `Tab` completes the name or lists the candidates.
+
+The REPL reads properties to find these names. It avoids running your code for a completion: at a getter or a `Proxy` that your code or a package defines, it stops and suggests nothing.
+
+- To complete past a getter, evaluate the expression, then complete from `_`.
+- To complete on a `Proxy`, copy it into a plain object first, for example `copy = { ...proxy }`.
+
+---
+
 ## REPL commands
 
 Type `.help` at the prompt to see all available REPL commands.

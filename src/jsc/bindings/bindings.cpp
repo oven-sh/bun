@@ -7058,13 +7058,57 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     return JSC::JSValue::encode(result);
 }
 
+// On Windows process.env is a Proxy that Bun makes (windowsEnv in ProcessObjectInternals.ts); the traps of every other Proxy are the program's code.
+static bool isBunProxyForREPLCompletion(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+#if OS(WINDOWS)
+    return object == defaultGlobalObject(globalObject)->m_processEnvObject.get();
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(object);
+    return false;
+#endif
+}
+
+enum class REPLCompletionWalk : uint8_t {
+    Found,
+    End,
+    ProgramProxy,
+    Threw,
+};
+
+// Calls `visit` on `object` and then on each prototype until one returns true. Completion runs on every key the user types, so the walk stops in front of a Proxy of the program and calls none of its traps.
+template<typename Visit>
+static REPLCompletionWalk walkForREPLCompletion(JSC::JSGlobalObject* globalObject, JSC::TopExceptionScope& scope, JSC::JSObject* object, const Visit& visit)
+{
+    unsigned prototypeCount = 0;
+    for (JSC::JSObject* current = object;;) {
+        if (current->type() == JSC::ProxyObjectType && !isBunProxyForREPLCompletion(globalObject, current)) [[unlikely]]
+            return REPLCompletionWalk::ProgramProxy;
+
+        bool found = visit(current);
+        if (scope.exception()) [[unlikely]]
+            return REPLCompletionWalk::Threw;
+        if (found)
+            return REPLCompletionWalk::Found;
+
+        JSC::JSValue prototype = current->getPrototype(globalObject);
+        if (scope.exception()) [[unlikely]]
+            return REPLCompletionWalk::Threw;
+        if (!prototype.isObject() || ++prototypeCount > JSC::JSObject::maximumPrototypeChainDepth)
+            return REPLCompletionWalk::End;
+        current = JSC::asObject(prototype);
+    }
+}
+
 // REPL completion function - gets completions for a partial property access
 // Returns an array of completion strings, or undefined if no completions
 extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue targetValue,
     const unsigned char* prefixPtr,
-    size_t prefixLen)
+    size_t prefixLen,
+    bool* incomplete)
 {
     auto& vm = JSC::getVM(globalObject);
     // The Rust caller (repl.rs) has no exception scope, so nothing may escape.
@@ -7073,6 +7117,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
         scope.clearException();
         return JSC::JSValue::encode(v);
     };
+    *incomplete = false;
 
     JSC::JSValue target = JSC::JSValue::decode(targetValue);
     if (!target || target.isUndefined() || target.isNull()) {
@@ -7091,30 +7136,23 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
         : WTF::String();
 
     // Walk the prototype chain as JSObject::getPropertyNames does (the builder dedups,
-    // the depth cap stops misbehaving proxy chains), but skip own index names where that
+    // the walk caps the depth), but skip own index names where that
     // is safe: an index name is never an identifier completion (repl.rs filters them),
     // and collecting one Identifier per element of a large typed array blocks the REPL
     // for minutes (#40281: `buffer.` on a 1 GiB Buffer builds 2^30 names). Classes that
-    // override getOwnPropertyNames with their own keys logic (Proxy traps, module
+    // override getOwnPropertyNames with their own keys logic (module
     // namespaces, ...) keep the full hook; their key counts are not element counts.
-    JSC::JSObject* object = target.getObject();
     JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-    unsigned prototypeCount = 0;
-    for (JSC::JSObject* current = object;;) {
+    auto walk = walkForREPLCompletion(globalObject, scope, target.getObject(), [&](JSC::JSObject* current) {
         if (JSC::isTypedArrayType(current->type()) || !current->structure()->typeInfo().overridesGetOwnPropertyNames())
             current->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
         else
             current->methodTable()->getOwnPropertyNames(current, globalObject, propertyNames, DontEnumPropertiesMode::Include);
-        if (scope.exception()) [[unlikely]]
-            return clearAndEncode(JSC::jsUndefined());
-
-        JSC::JSValue prototype = current->getPrototype(globalObject);
-        if (scope.exception()) [[unlikely]]
-            return clearAndEncode(JSC::jsUndefined());
-        if (!prototype.isObject() || ++prototypeCount > JSC::JSObject::maximumPrototypeChainDepth)
-            break;
-        current = JSC::asObject(prototype);
-    }
+        return false;
+    });
+    if (walk == REPLCompletionWalk::Threw) [[unlikely]]
+        return clearAndEncode(JSC::jsUndefined());
+    *incomplete = walk == REPLCompletionWalk::ProgramProxy;
 
     JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
     if (scope.exception()) [[unlikely]]
@@ -7133,34 +7171,57 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     return JSC::JSValue::encode(completions);
 }
 
-// One `base.name` step of a completion chain: ordinary property semantics (primitives boxed, prototype chain, getters run), UTF-8 name; a miss or a throwing getter yields undefined.
+// One `base.name` step of a completion chain (primitives boxed, prototype chain, UTF-8 name). It does not call a getter or a Proxy trap that the program defined: it sets *refused there. A miss or a throw yields undefined.
 extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue baseValue,
     const unsigned char* namePtr,
-    size_t nameLen)
+    size_t nameLen,
+    bool* refused)
 {
     auto& vm = JSC::getVM(globalObject);
     // As in Bun__REPL__getCompletions: the Rust caller has no exception scope.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto missing = [&] {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    };
+    auto refuse = [&] {
+        *refused = true;
+        return missing();
+    };
+    *refused = false;
 
     JSC::JSValue base = JSC::JSValue::decode(baseValue);
     WTF::String name = WTF::String::fromUTF8(std::span { namePtr, nameLen });
     if (!base || base.isUndefinedOrNull() || name.isNull())
-        return JSC::JSValue::encode(JSC::jsUndefined());
+        return missing();
 
-    JSC::JSObject* object = base.toObject(globalObject);
-    if (scope.exception()) [[unlikely]] {
-        scope.clearException();
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
+    JSC::JSObject* receiver = base.toObject(globalObject);
+    if (scope.exception()) [[unlikely]]
+        return missing();
 
-    JSC::JSValue result = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, name));
-    if (scope.exception()) [[unlikely]] {
-        scope.clearException();
-        return JSC::JSValue::encode(JSC::jsUndefined());
+    JSC::Identifier propertyName = JSC::Identifier::fromString(vm, name);
+    JSC::JSValue result;
+    if (isBunProxyForREPLCompletion(globalObject, receiver)) [[unlikely]] {
+        result = receiver->getIfPropertyExists(globalObject, propertyName);
+    } else {
+        // Not a VMInquiry slot: that forbids the JS that Bun's own lazy properties run on their first read.
+        JSC::PropertySlot slot(receiver, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+        auto walk = walkForREPLCompletion(globalObject, scope, receiver, [&](JSC::JSObject* current) {
+            return current->methodTable()->getOwnPropertySlot(current, globalObject, propertyName, slot);
+        });
+        if (walk == REPLCompletionWalk::ProgramProxy)
+            return refuse();
+        if (walk != REPLCompletionWalk::Found)
+            return missing();
+        if (slot.isAccessor() && !Zig::isBunDefinedGetter(slot.getterSetter()->getter()))
+            return refuse();
+        result = slot.getValue(globalObject, propertyName);
     }
-    return JSC::JSValue::encode(result ? result : JSC::jsUndefined());
+    if (scope.exception() || !result) [[unlikely]]
+        return missing();
+    return JSC::JSValue::encode(result);
 }
 
 // Format a value for REPL output using util.inspect style

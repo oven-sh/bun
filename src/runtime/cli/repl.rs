@@ -52,6 +52,7 @@ unsafe extern "C" {
         targetValue: JSValue,
         prefixPtr: *const u8,
         prefixLen: usize,
+        incomplete: *mut bool,
     ) -> JSValue;
 
     fn Bun__REPL__getProperty(
@@ -59,7 +60,17 @@ unsafe extern "C" {
         baseValue: JSValue,
         namePtr: *const u8,
         nameLen: usize,
+        refused: *mut bool,
     ) -> JSValue;
+}
+
+/// Where the `a.b.c` in front of the word being completed leads.
+enum ChainTarget {
+    Object(JSValue),
+    /// A property does not exist, or its value is undefined or null.
+    Missing,
+    /// The next read would call a getter or a Proxy trap that the program defined.
+    Refused,
 }
 
 // ============================================================================
@@ -1452,13 +1463,13 @@ impl<'a> Repl<'a> {
     // Inline Suggestions (ghost text)
     // ========================================================================
 
-    /// Walks `a.b.c` via property gets, not the evaluator (so `_` is untouched).
-    fn resolve_object_expr(&self, expr: &[u8]) -> JSValue {
+    /// Walks `a.b.c` one property read at a time, not through the evaluator: `_` is untouched, and a getter or a Proxy of the program ends the walk uncalled.
+    fn resolve_object_expr(&self, expr: &[u8]) -> ChainTarget {
         let Some(global) = self.global else {
-            return JSValue::UNDEFINED;
+            return ChainTarget::Missing;
         };
         if expr.is_empty() {
-            return JSValue::UNDEFINED;
+            return ChainTarget::Missing;
         }
 
         let mut current = global.to_js_value();
@@ -1467,14 +1478,24 @@ impl<'a> Repl<'a> {
             if index == 0 && part == b"this" {
                 continue;
             }
-            if !identifier::is_identifier(part) || current.is_undefined_or_null() {
-                return JSValue::UNDEFINED;
+            if !identifier::is_identifier(part) {
+                return ChainTarget::Missing;
             }
+            let mut refused = false;
             // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `part` borrows
-            // from `expr`, which outlives the call.
-            current = unsafe { Bun__REPL__getProperty(global, current, part.as_ptr(), part.len()) };
+            // from `expr`, which outlives the call; `refused` is a live stack local.
+            let value = unsafe {
+                Bun__REPL__getProperty(global, current, part.as_ptr(), part.len(), &raw mut refused)
+            };
+            if refused {
+                return ChainTarget::Refused;
+            }
+            if value.is_undefined_or_null() {
+                return ChainTarget::Missing;
+            }
+            current = value;
         }
-        current
+        ChainTarget::Object(current)
     }
 
     fn update_suggestion(&mut self) {
@@ -1508,17 +1529,28 @@ impl<'a> Repl<'a> {
 
         let mut target = JSValue::UNDEFINED;
         if !ctx.object_expr.is_empty() {
-            target = self.resolve_object_expr(ctx.object_expr);
-            if target.is_undefined_or_null() {
-                return;
+            match self.resolve_object_expr(ctx.object_expr) {
+                ChainTarget::Object(object) => target = object,
+                ChainTarget::Missing | ChainTarget::Refused => return,
             }
         }
 
+        let mut incomplete = false;
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; the prefix ptr/len
-        // pair is valid for the duration of the call.
+        // pair is valid for the duration of the call; `incomplete` is a live stack local.
         let completions = unsafe {
-            Bun__REPL__getCompletions(global, target, ctx.prefix.as_ptr(), ctx.prefix.len())
+            Bun__REPL__getCompletions(
+                global,
+                target,
+                ctx.prefix.as_ptr(),
+                ctx.prefix.len(),
+                &raw mut incomplete,
+            )
         };
+        // The best name may be one of those that were not listed.
+        if incomplete {
+            return;
+        }
 
         let mut best_len: usize = usize::MAX;
 
@@ -2736,17 +2768,32 @@ impl<'a> Repl<'a> {
 
         let mut target = JSValue::UNDEFINED;
         if !ctx.object_expr.is_empty() {
-            target = self.resolve_object_expr(ctx.object_expr);
-            if target.is_undefined_or_null() {
-                self.insert_tab_spaces();
-                return;
+            match self.resolve_object_expr(ctx.object_expr) {
+                ChainTarget::Object(object) => target = object,
+                ChainTarget::Missing => {
+                    self.insert_tab_spaces();
+                    return;
+                }
+                // There may be names to complete, so the line stays as typed.
+                ChainTarget::Refused => {
+                    self.refresh_line();
+                    return;
+                }
             }
         }
 
+        let mut incomplete = false;
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `prefix` ptr/len
-        // are valid for the duration of the call.
-        let completions =
-            unsafe { Bun__REPL__getCompletions(global, target, prefix.as_ptr(), prefix.len()) };
+        // are valid for the duration of the call; `incomplete` is a live stack local.
+        let completions = unsafe {
+            Bun__REPL__getCompletions(
+                global,
+                target,
+                prefix.as_ptr(),
+                prefix.len(),
+                &raw mut incomplete,
+            )
+        };
 
         if completions.is_undefined() || !completions.is_array() {
             self.insert_tab_spaces();
@@ -2762,11 +2809,16 @@ impl<'a> Repl<'a> {
             }
         };
         if len == 0 {
-            self.insert_tab_spaces();
+            if incomplete {
+                self.refresh_line();
+            } else {
+                self.insert_tab_spaces();
+            }
             return;
         }
 
-        if len == 1 {
+        // One name out of an incomplete list is not the only candidate: it is listed, not inserted.
+        if len == 1 && !incomplete {
             // Single completion - insert it
             let item = match completions.get_index(global, 0) {
                 Ok(v) => v,

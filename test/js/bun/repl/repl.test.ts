@@ -331,6 +331,79 @@ async function withTerminalRepl(
   }
 }
 
+// What a program can put behind a property read, and a chain that reads it.
+// Completion resolves the chain in front of the cursor on every key and on
+// Tab. The user only typed that chain, so completion calls none of these.
+// `__ran(name)` counts a call.
+const programCode: [name: string, define: string, chain: string][] = [
+  ["own getter", `globalThis.__own = { get x() { __ran("own getter"); return { alpha: 1 }; } }`, "__own.x.al"],
+  [
+    "class getter",
+    `globalThis.__inst = new (class { get x() { __ran("class getter"); return { alpha: 1 }; } })()`,
+    "__inst.x.al",
+  ],
+  [
+    "getter on globalThis",
+    `Object.defineProperty(globalThis, "__glob", { get() { __ran("getter on globalThis"); return { alpha: 1 }; } })`,
+    "__glob.al",
+  ],
+  [
+    "bound function as getter",
+    `globalThis.__bound = Object.defineProperty({}, "x", { get: (() => { __ran("bound function as getter"); return { alpha: 1 }; }).bind(null) })`,
+    "__bound.x.al",
+  ],
+  [
+    // A function of another native class that has the name of a getter, as an N-API accessor has.
+    "FFI function as getter",
+    `globalThis.__ffiCallback = new (require("bun:ffi").JSCallback)(() => { __ran("FFI function as getter"); }, { args: [], returns: "void" }); ` +
+      `globalThis.__ffi = Object.defineProperty({}, "x", { get: require("bun:ffi").linkSymbols({ "get x": { ptr: __ffiCallback.ptr, args: [], returns: "void" } }).symbols["get x"] })`,
+    "__ffi.x.al",
+  ],
+  [
+    // The getter is a function of Bun's own that calls the program's function.
+    "util.deprecate() as getter",
+    `globalThis.__depr = Object.defineProperty({}, "x", { get: require("util").deprecate(() => { __ran("util.deprecate() as getter"); return { alpha: 1 }; }, "x") })`,
+    "__depr.x.al",
+  ],
+  [
+    "callable Proxy as getter",
+    `globalThis.__callable = Object.defineProperty({}, "x", { get: new Proxy(function () {}, { apply() { __ran("callable Proxy as getter"); return { alpha: 1 }; } }) })`,
+    "__callable.x.al",
+  ],
+  ["Proxy", `globalThis.__proxy = new Proxy({}, __traps("Proxy"))`, "__proxy.a.th"],
+  [
+    "Proxy in a property",
+    `globalThis.__holder = { p: new Proxy({}, __traps("Proxy in a property")) }`,
+    "__holder.p.ze",
+  ],
+  [
+    "property of a Proxy prototype",
+    `globalThis.__child = Object.create(new Proxy({}, __traps("property of a Proxy prototype")))`,
+    "__child.a.th",
+  ],
+  [
+    "names of a Proxy prototype",
+    `globalThis.__heir = Object.create(new Proxy({}, __traps("names of a Proxy prototype")))`,
+    "__heir.ze",
+  ],
+];
+
+/** For `.load`: defines each row of `programCode`, and `__report()`, which names the rows that ran. */
+const programCodeSource = [
+  `globalThis.__calls = {};`,
+  `globalThis.__ran = name => { __calls[name] = (__calls[name] ?? 0) + 1; };`,
+  `globalThis.__traps = name => ({`,
+  `  has() { __ran(name); return true; },`,
+  `  get() { __ran(name); return { alpha: 1 }; },`,
+  `  ownKeys() { __ran(name); return ["zeta"]; },`,
+  `  getPrototypeOf() { __ran(name); return null; },`,
+  `  getOwnPropertyDescriptor() { __ran(name); return { value: 1, configurable: true }; },`,
+  `});`,
+  ...programCode.map(([, define]) => `${define};`),
+  `globalThis.__report = () => "ranCode:" + Object.entries(__calls).map(([name, count]) => " " + name + " x" + count) + ":done";`,
+  `"rows" + "Ready"`,
+].join("\n");
+
 describe.concurrent("Bun REPL", () => {
   describe("basic evaluation", () => {
     test("prints the value of each evaluated line", async () => {
@@ -721,6 +794,72 @@ describe.concurrent("Bun REPL", () => {
         '"string"',
         '"object"',
       ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // A TAB byte on piped stdin is the Tab key, so these also run where there is no pty.
+  describe("tab completion", () => {
+    test("Tab runs no getter and no Proxy trap of the program", async () => {
+      using dir = tempDir("repl-program-code", { "define.js": programCodeSource });
+      const { outputs, stderr, exitCode } = await runRepl([
+        `.load ${path.join(String(dir), "define.js")}`,
+        // Each chain is in an arrow function that nothing calls, so only Tab can read it.
+        ...programCode.map(([, , chain]) => `() => ${chain}\t`),
+        "__report()",
+        ".exit",
+      ]);
+      expect(outputs.at(-1)).toBe('"ranCode::done"');
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Tab leaves the line as typed where completion stops, and inserts no name from a cut list", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "globalThis.calls = 0; globalThis.o = { get x() { calls++; return { alpha: 'fromGetter' }; } }; 0",
+        // Tab changes nothing in the next three lines, so the rest of each name
+        // completes it by hand. Two inserted spaces would be a syntax error.
+        "o.x.al\tpha",
+        "calls",
+        "globalThis.proxy = new Proxy({ zeta: 'fromProxy' }, {}); globalThis.heir = Object.create(proxy); 0",
+        "proxy.ze\tta",
+        "heir.ze\tta",
+        // `zebra` is the one name in front of the Proxy. The Proxy can have more,
+        // so Tab lists `zebra` and does not insert it.
+        "globalThis.cut = Object.assign(Object.create(proxy), { zebra: 'ownName' }); 0",
+        "cut.ze\tbra",
+        // A chain that leads nowhere has nothing to complete: Tab indents, as before.
+        "/o.nope.al\t/.source.length",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "0",
+        '"fromGetter"',
+        "1",
+        "0",
+        '"fromProxy"',
+        '"fromProxy"',
+        "0",
+        'zebra\n\n"ownName"',
+        "11",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Tab completes the names of process.env and chains through it", async () => {
+      // process.env is a Proxy of Bun's own on Windows, and TZ is a native accessor on it.
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          "process.env.ZZ_REPL_TAB_V\t",
+          "process.env.ZZ_REPL_TAB_VAR.toUpperC\t()",
+          "process.env.TZ.toLowerC\t()",
+          ".exit",
+        ],
+        { env: { ZZ_REPL_TAB_VAR: "tabMarker", TZ: "Etc/UTC" } },
+      );
+      expect(outputs).toEqual(['"tabMarker"', '"TABMARKER"', '"etc/utc"']);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -1475,6 +1614,113 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           await waitFor(/ReferenceError|not defined/);
         },
         { env: colorEnv },
+      );
+    });
+
+    // `.load` runs the definitions of these tests: typing them would complete each of their words.
+    test.each(programCode)("typing, accepting and Tab do not run: %s", async (_name, _define, chain) => {
+      using dir = tempDir("repl-program-code", { "define.js": programCodeSource });
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send(`.load ${path.join(String(dir), "define.js")}\n`);
+          await waitFor("rowsReady");
+          // Right and End accept a suggestion and Tab completes: each of them
+          // reads the chain again. Ctrl+U then clears the line.
+          send(`${chain}\x1b[C\x1b[F\t\t\x15`);
+          send("__report()\n");
+          const [, ran] = /ranCode:(.*):done/.exec(stripAnsi(await waitFor(/ranCode:.*:done/)))!;
+          expect(ran).toBe("");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("a getter that exits or never returns does not end the session while typing", async () => {
+      using dir = tempDir("repl-fatal-getters", {
+        "define.js": [
+          // `process.exit` is a function of Bun's own, but here the program made it a getter.
+          `globalThis.__exits = Object.defineProperty({}, "x", { get: process.exit });`,
+          `globalThis.__spins = { get x() { for (;;) {} } };`,
+          `"getters" + "Ready"`,
+        ].join("\n"),
+      });
+      await withTerminalRepl(
+        async ({ send, waitFor, proc }) => {
+          send(`.load ${path.join(String(dir), "define.js")}\n`);
+          await waitFor("gettersReady");
+          send("__exits.x.a\t\x15__spins.x.a\t\x15");
+          send('"still" + "Alive"\n');
+          expect(
+            await Promise.race([
+              waitFor("stillAlive").then(() => "alive"),
+              proc.exited.then(code => `exited with code ${code}`),
+            ]),
+          ).toBe("alive");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("no name is suggested from a list that a Proxy prototype cuts short", async () => {
+      using dir = tempDir("repl-cut-list", {
+        "define.js": [
+          `globalThis.__cut = Object.assign(Object.create(new Proxy({ zeta: 1 }, {})), { zebra: "own" + "Name" });`,
+          `"cut" + "Ready"`,
+        ].join("\n"),
+      });
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send(`.load ${path.join(String(dir), "define.js")}\n`);
+          await waitFor("cutReady");
+          // Right would accept a suggestion, and `bra` would then follow it.
+          send("__cut.ze\x1b[Cbra\n");
+          expect(/ownName|undefined/.exec(stripAnsi(await waitFor(/ownName|undefined/)))![0]).toBe("ownName");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("after the user evaluates a getter, `_` completes its value", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("globalThis.__seen = { get x() { return { alpha: 'seen' + 'Value' }; } }; __seen.x\n");
+          await waitFor("seenValue");
+          send("_.al");
+          await waitFor(`_.al${DIM}pha\x1b[0m`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    // What completion still reads: a chain, the rest of the name that is suggested
+    // after it, and what the program defines first.
+    test.each([
+      // A property that Bun builds on its first read.
+      ["process.argv.len", "gth", ""],
+      // Native accessors, on the object and on a prototype.
+      ["process.title.len", "gth", ""],
+      ["crypto.subtle.dig", "est", ""],
+      ["__url.searchParams.ge", "t", `globalThis.__url = new URL("http://localhost/?a=1")`],
+      // Getters of the engine.
+      ["__map.size.toF", "ixed", `globalThis.__map = new Map()`],
+      ["__bytes.buffer.byteL", "ength", `globalThis.__bytes = Buffer.alloc(2)`],
+      ["__plain.__proto__.hasOwnP", "roperty", `globalThis.__plain = {}`],
+      // Getters written in JS in Bun's own modules: `get promises() {}` and `get: function () {}`.
+      ["fs.promises.readF", "ile", ""],
+      ["__events.defaultMaxListeners.toF", "ixed", `globalThis.__events = require("node:events")`],
+      ["__bytes.parent.byteL", "ength", `globalThis.__bytes = Buffer.alloc(2)`],
+      // A module namespace object and process.env.
+      ["__os.cp", "us", `globalThis.__os = await import("node:os")`],
+      ["process.env.ZZ_REPL_GHO", "ST_VAR", ""],
+    ])("%s still completes", async (chain, ghost, define) => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send(`${define && define + "; "}"row" + "Ready"\n`);
+          await waitFor("rowReady");
+          send(chain);
+          await waitFor(`${chain}${DIM}${ghost}\x1b[0m`);
+        },
+        { env: { ...colorEnv, ZZ_REPL_GHOST_VAR: "1" } },
       );
     });
   });

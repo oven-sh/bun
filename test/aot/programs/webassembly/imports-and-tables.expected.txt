@@ -1,0 +1,20 @@
+logs 5,6,7
+useTwice 43 -1
+callFails TypeError: thrown by a function of JavaScript TypeError: thrown by a function of JavaScript
+deep TypeError: thrown by a function of JavaScript 144
+useInc 10
+usePeek: the memory of each 51 9
+useBack 1050
+useMixed 15.25
+indirect 0 a function of JavaScript 18
+indirect 1 a function of the other module 10
+indirect 2 its own 81
+indirect 3 another signature WebAssembly.RuntimeError: call_indirect to a signature that does not match
+indirect 4 of the other module, and reads memory 42
+indirect 5 nothing WebAssembly.RuntimeError: call_indirect to a signature that does not match
+indirect 6 nothing WebAssembly.RuntimeError: call_indirect to a signature that does not match
+indirect 7 nothing WebAssembly.RuntimeError: call_indirect to a signature that does not match
+indirect 8 outside WebAssembly.RuntimeError: Out of bounds call_indirect
+set from outside 19 10
+WebAssembly.RuntimeError: call_indirect to a signature that does not match
+its memory is its own again 9

@@ -1,0 +1,61 @@
+////: attempt
+function attempt(run) {
+  try {
+    return run();
+  } catch (error) {
+    return `${error.name}: ${error.message}`;
+  }
+}
+////: attempt-2
+function attempt(run) {
+  try {
+    return run();
+  } catch (error) {
+    return «1»;
+  }
+}
+////: framesOf
+function framesOf(stack: string | undefined): string {
+  return (stack ?? "")
+    .split("\n")
+    .slice(1, «1»)
+    .map(line => /^\s*at (\S+) \(/.exec(line)?.[1] ?? "-")
+    .join(" < ");
+}
+////: lines-17
+class «1» extends «2» {
+  get headers() {
+    return new Headers({ «3»: «4» });
+  }
+}
+////: say
+function say(label: string, work: () => unknown) {
+  let text: string;
+  try {
+    text = JSON.stringify(work()) ?? "undefined";
+  } catch (error) {
+    text = "throws " + (error as Error).constructor.name + ": " + (error as Error).message;
+  }
+  lines.push(label + ": " + text);
+}
+////: say-2
+function say(label: string, work: () => unknown) {
+  let text: string;
+  try {
+    text = String(work());
+  } catch (error) {
+    text = "throws " + (error as Error).constructor.name;
+  }
+  lines.push(label + ": " + text);
+}
+////: say-3
+async function say(label: string, work: () => unknown) {
+  let text: string;
+  try {
+    const value = await work();
+    text = value instanceof Response ? await describe(value) : JSON.stringify(value) ?? "undefined";
+  } catch (error) {
+    text = "throws " + (error as Error).constructor.name + ": " + (error as Error).message;
+  }
+  lines.push(label + ": " + text);
+}

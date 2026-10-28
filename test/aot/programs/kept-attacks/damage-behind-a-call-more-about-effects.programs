@@ -1,0 +1,117 @@
+////: for-23
+for (let round = 0; round < 300; round++) {
+  const strikes = round % 100 === 99;
+  if (strikes) factor = "strike" as any;
+  const line = hold«1»(round);
+  factor = 2;
+  if (strikes || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-more-about-effects/an-object-that-only-the-caller-holds-is-written-on-a-dirty-path.ts
+// The caller makes objects that nothing else ever refers to and lends them to a callee, which only borrows them: it keeps none and hands none to unknown code.
+// The stores of the callee stand behind a comparison that folds away on its typed path (`factor` is declared a number) and stays in the code that runs where `factor` holds a string.
+// That code has left the typed paths by then (the multiplication of a string is unknown code), so the stores lie on no clean path, and on its normal edge the call writes nothing through its arguments.
+// At the landing only the call itself can say what was done to the arguments: BecomeDirty has no operands, and whoever asks whether a writer reaches an object that has never escaped looks at the operands.
+//   `c`     is an argument.
+//   `inner` is held by a field of an argument.
+//   `list`  is an array: what the caller holds proven about it is the kind of its storage, which the callee changes from integers to doubles.
+// Build it without inlining too: inlined, there is no call.
+////= lines-18	Counter	n	number
+
+////= lines-7	Pair	first	Counter	second
+
+let factor: number = 2;
+
+function bump(c: Counter): number {
+  const f = factor;
+  const product = f * 3;
+  if ((f as any) === "strike") c.n = -1;
+  return product;
+}
+
+function bumpInside(p: Pair): number {
+  const f = factor;
+  const product = f * 3;
+  if ((f as any) === "strike") {
+    p.first.n = -2;
+    p.second = -3;
+  }
+  return product;
+}
+
+function widen(list: number[]): number {
+  const f = factor;
+  const product = f * 3;
+  if ((f as any) === "strike") list[1] = 0.5;
+  return product;
+}
+
+function holdsCounter(round: number): string {
+  const c = new Counter(round);
+  const before = c.n;
+  const got = bump(c);
+  return before + " " + got + " " + c.n;
+}
+
+function holdsPair(round: number): string {
+  const inner = new Counter(round);
+  const p = new Pair(inner, round + 1);
+  const before = inner.n + p.second;
+  const got = bumpInside(p);
+  return before + " " + got + " " + inner.n + " " + p.second + " " + p.first.n;
+}
+
+function holdsList(round: number): string {
+  const list = [round, 2, 3];
+  const before = list[0] + list[1];
+  const got = widen(list);
+  return before + " " + got + " " + list[0] + "," + list[1] + "," + list[2];
+}
+
+////= for-23	sCounter(round) + " | " + holdsPair(round) + " | " + holdsList
+//// damage-behind-a-call-more-about-effects/the-environment-of-the-caller-is-written-on-a-dirty-path.ts
+// The caller allocates the environment of its own variables and lends it to an inner function that it calls directly. Nothing else ever refers to that environment.
+// `factor` is declared a number. Where it holds one, the comparison with a string folds away, so the typed path of `read` holds no store to `hits`.
+// Where it holds a string the test of its type fails, the multiplication runs as unknown code with BecomeDirty in front of it, and the store to `hits` stands behind that: on no clean path.
+// So on its normal edge the call writes nothing through the environment, which is right. At the landing BecomeDirty writes every heap, but it has no operands, and a writer without operands
+// is taken to leave alone an allocation that nothing has retained (EliminateRedundantReads::isUnaffected, KillQuery::isConfined). What the caller stored in front of the call then counts as
+// still there on both edges, and the read behind the call goes away.
+// Build it without inlining too: inlined, there is no call.
+let factor: number = 2;
+
+function holder(round: number): string {
+  let hits = round;
+  let last = 0;
+  function read(): number {
+    const f = factor;
+    const product = f * 3;
+    if ((f as any) === "strike") {
+      hits = -1;
+      last = round;
+    }
+    return product;
+  }
+  const hitsBefore = hits;
+  const got = read();
+  return hitsBefore + " " + got + " " + hits + " " + last;
+}
+
+// The same with a function between the two: the environment is handed down twice, and both calls come back at their landings.
+function outer(round: number): string {
+  let hits = round;
+  function read(): number {
+    const f = factor;
+    const product = f * 3;
+    if ((f as any) === "strike") hits = -1;
+    return product;
+  }
+  function between(): number {
+    const before = hits;
+    const got = read();
+    return got + before - hits;
+  }
+  const hitsBefore = hits;
+  const got = between();
+  return hitsBefore + " " + got + " " + hits;
+}
+
+////= for-23	er(round) + " | " + outer

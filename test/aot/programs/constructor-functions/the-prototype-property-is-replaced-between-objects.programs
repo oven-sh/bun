@@ -1,0 +1,97 @@
+//// a-method-is-called-after-the-prototype-was-replaced-under-a-computed-key.js
+const key = ["proto", "type"].join("");
+function Q() {}
+Q.prototype.describe = function () { return "first"; };
+const second = { describe() { return "second"; } };
+const first = Q.prototype;
+function run() { const q = new Q(); Q[key] = second; const r = new Q(); Q[key] = first; return q.describe() + " " + r.describe(); }
+for (let i = 0; i < 3; i++) console.log(run());
+//// a-method-is-called-after-the-prototype-was-replaced-under-a-key-nobody-knows.js
+const key = process.argv.length > 100 ? "x" : ["proto", "type"].join("");
+function Q() {}
+Q.prototype.describe = function () { return "first"; };
+const second = { describe() { return "second"; } };
+const first = Q.prototype;
+function run() { const q = new Q(); Q[key] = second; const r = new Q(); Q[key] = first; return q.describe() + " " + r.describe(); }
+for (let i = 0; i < 3; i++) console.log(run());
+//// a-method-is-called-after-the-prototype-was-replaced-by-reflect-set.js
+const key = ["proto", "type"].join("");
+function Q() {}
+Q.prototype.describe = function () { return "first"; };
+const second = { describe() { return "second"; } };
+const first = Q.prototype;
+function run() { const q = new Q(); Reflect.set(Q, key, second); q.b = 1; const r = new Q(); Reflect.set(Q, key, first); r.b = 1; return q.describe() + " " + r.describe(); }
+for (let i = 0; i < 3; i++) console.log(run());
+//// a-method-is-called-after-the-prototype-was-replaced-by-object-assign.js
+function Q() {}
+Q.prototype.describe = function () { return "first"; };
+const second = { describe() { return "second"; } };
+const first = Q.prototype;
+function run() { const q = new Q(); Object.assign(Q, { prototype: second }); const r = new Q(); Object.assign(Q, { prototype: first }); return q.describe() + " " + r.describe(); }
+for (let i = 0; i < 3; i++) console.log(run());
+//// a-method-is-called-after-the-prototype-was-replaced-under-a-name-out-of-the-own-names.js
+function Q() {}
+Q.prototype.describe = function () { return "first"; };
+const second = { describe() { return "second"; } };
+const first = Q.prototype;
+const holder = { Q };
+function swap(to) { for (const name of Object.getOwnPropertyNames(holder.Q)) if (name.length === 9) holder.Q[name] = to; }
+function run() { const q = new Q(); swap(second); const r = new Q(); swap(first); return q.describe() + " " + r.describe(); }
+for (let i = 0; i < 3; i++) console.log(run());
+//// a-method-is-inherited-by-the-object-that-replaces-the-prototype.js
+function Q() {}
+Q.prototype.describe = function () { return "first"; };
+const second = Object.create({ describe() { return "second"; } });
+function run() { const q = new Q(); const a = q.describe(); Q.prototype = second; const r = new Q(); return a + " " + r.describe(); }
+for (let i = 0; i < 3; i++) console.log(run());
+//// a-method-is-inherited-by-the-object-that-replaces-the-prototype-for-a-while.js
+function Q() {}
+Q.prototype.describe = function () { return "first"; };
+const second = Object.create({ describe() { return "second"; } });
+const first = Q.prototype;
+function run() { const q = new Q(); Q.prototype = second; const r = new Q(); Q.prototype = first; return q.describe() + " " + r.describe(); }
+for (let i = 0; i < 3; i++) console.log(run());
+//// a-function-is-put-below-another-after-its-first-object.js
+function Base() {}
+Base.prototype.describe = function () { return "base"; };
+function Child() {}
+Child.prototype.describe = function () { return "child at first"; };
+function make() { return new Child().describe(); }
+console.log(make());
+Child.prototype = Object.create(Base.prototype);
+Child.prototype.constructor = Child;
+console.log(make());
+console.log(make());
+console.log(make());
+//// an-object-made-before-the-function-is-put-below-another-inherits-nothing.js
+function Base() {}
+Base.prototype.describe = function () { return "base"; };
+function Child() {}
+const early = new Child();
+Child.prototype = Object.create(Base.prototype);
+Child.prototype.constructor = Child;
+function make() { return new Child().describe(); }
+for (let i = 0; i < 3; i++) console.log(make(), typeof early.describe);
+//// a-literal-is-assigned-as-the-prototype-and-then-another-object.js
+function Q() {}
+Q.prototype = { describe() { return "one"; } };
+function make() { return new Q().describe(); }
+console.log(make());
+Q.prototype = Object.create({ describe() { return "two"; } });
+for (let i = 0; i < 3; i++) console.log(make());
+//// the-second-object-of-a-typed-constructor-function-has-the-prototype-of-its-moment.ts
+interface Shape { b?: number; describe(): string }
+function say(label: string, made: () => string) { console.log(label + ": " + made()); }
+function Q(this: Shape) {}
+const first: Shape = Q.prototype;
+first.describe = function () { return "first"; };
+const second: Shape = { describe() { return "second"; } };
+function run() {
+  const q = new (Q as unknown as new () => Shape)();
+  Q.prototype = second;
+  q.b = 1; const r = new (Q as unknown as new () => Shape)(); Q.prototype = first; r.b = 1;
+  return String(Object.getPrototypeOf(q) === first) + " " + String(Object.getPrototypeOf(r) === first);
+}
+say("one", () => run());
+say("other", () => "x");
+export {};

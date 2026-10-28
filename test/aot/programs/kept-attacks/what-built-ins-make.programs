@@ -1,0 +1,1513 @@
+//// what-built-ins-make/programs-c-all-bindings.ts
+// What the host answers for the native bindings of node:util, node:url, node:tls, node:net, node:http and node:tty is used as what it is.
+import util from "node:util";
+import url from "node:url";
+import tls from "node:tls";
+import net from "node:net";
+import http from "node:http";
+const mime = new util.MIMEType("text/plain; charset=utf-8");
+console.log(String(mime), mime.type, mime.subtype, mime.params.get("charset"), mime.params instanceof util.MIMEParams, typeof util.MIMEParams);
+try { new util.MIMEType("nope"); } catch (e) { console.log((e as any).code, (e as Error).name, (e as Error).message); }
+console.log(url.domainToASCII("español.com"), url.domainToUnicode("xn--espaol-zwa.com"), url.domainToASCII("xn--iñvalid.com"));
+console.log(typeof tls.createSecureContext({}), tls.createSecureContext({}).constructor.name);
+const list = new net.BlockList(); list.addAddress("1.2.3.4"); console.log(list.check("1.2.3.4"), list.check("1.2.3.5"), net.BlockList.isBlockList(list));
+const address = new net.SocketAddress({ address: "127.0.0.1", port: 80 }); console.log(address.address, address.port, address.family);
+const server = http.createServer({ maxHeaderSize: 4096, requireHostHeader: false }, (request, response) => response.end("ok " + request.url));
+server.maxHeadersCount = 10;
+server.listen(0, async () => {
+  const { port } = server.address() as net.AddressInfo;
+  console.log(await (await fetch(`http://127.0.0.1:${port}/x`)).text());
+  server.close(() => console.log("closed"));
+});
+import tty from "node:tty";
+console.log(tty.isatty(0), tty.isatty(1), tty.isatty(99), tty.isatty("x" as any), (tty.isatty as any)());
+console.log(typeof tty.ReadStream, typeof tty.WriteStream, process.stdout.isTTY, process.stdin.isTTY);
+try { new tty.WriteStream(-1); } catch (e) { console.log((e as any).code, (e as Error).name); }
+try { console.log(new tty.WriteStream(1).getWindowSize()); } catch (e) { console.log((e as any).code, (e as Error).message); }
+//// what-built-ins-make/programs-c-bindings.ts
+// What built ins make: programs c bindings. It prints what plain Bun prints.
+import util from "node:util";
+import url from "node:url";
+import tls from "node:tls";
+import net from "node:net";
+import http from "node:http";
+const mime = new util.MIMEType("text/plain; charset=utf-8");
+console.log(String(mime), mime.type, mime.subtype, mime.params.get("charset"), mime.params instanceof util.MIMEParams, typeof util.MIMEParams);
+try { new util.MIMEType("nope"); } catch (e) { console.log((e as any).code, (e as Error).name, (e as Error).message); }
+console.log(url.domainToASCII("español.com"), url.domainToUnicode("xn--espaol-zwa.com"), url.domainToASCII("xn--iñvalid.com"));
+console.log(typeof tls.createSecureContext({}), tls.createSecureContext({}).constructor.name);
+const list = new net.BlockList(); list.addAddress("1.2.3.4"); console.log(list.check("1.2.3.4"), list.check("1.2.3.5"), net.BlockList.isBlockList(list));
+const address = new net.SocketAddress({ address: "127.0.0.1", port: 80 }); console.log(address.address, address.port, address.family);
+const server = http.createServer({ maxHeaderSize: 4096, requireHostHeader: false }, (request, response) => response.end("ok " + request.url));
+server.maxHeadersCount = 10;
+server.listen(0, async () => {
+  const { port } = server.address() as net.AddressInfo;
+  console.log(await (await fetch(`http://127.0.0.1:${port}/x`)).text());
+  server.close(() => console.log("closed"));
+});
+//// what-built-ins-make/programs-c-bound-functions.js
+// Functions bound to zero to six operands, by a callee that the compiler knows and by one that it does not: up to three operands lie in the bound function itself, more lie in a list beside it.
+const say = (...values) => console.log(...values);
+function sum(...values) { return [this === undefined ? "undefined" : this.tag, values.length, values.join("+")].join(" "); }
+const receiver = { tag: "receiver" };
+const operands = [1, 2, 3, 4, 5, 6];
+const known = [sum.bind(), sum.bind(receiver), sum.bind(receiver, 1), sum.bind(receiver, 1, 2), sum.bind(receiver, 1, 2, 3), sum.bind(receiver, 1, 2, 3, 4), sum.bind(receiver, 1, 2, 3, 4, 5), sum.bind(receiver, 1, 2, 3, 4, 5, 6)];
+for (const bound of known) say(bound("x"), bound.name, bound.length, typeof bound, Object.getPrototypeOf(bound) === Function.prototype, "prototype" in bound);
+const unknown = globalThis[["Fun", "ction"].join("")].prototype[["bi", "nd"].join("")];
+for (let count = 0; count <= 6; count++) { const bound = unknown.call(sum, receiver, ...operands.slice(0, count)); say(bound("y", "z"), bound.name, bound.length); }
+function three(a, b, c) { return a + b + c; }
+say(three.bind(null, 1, 2, 3, 4).length, three.bind(null, 1).length, three.bind(null, 1, 2, 3, 4)(), three.bind(null).bind(null, 1).bind(null, 2, 3, 4, 5)(), three.bind(null).bind(null).name);
+class Point { constructor(x, y, z, w) { this.sum = x + y + z + w; } }
+say(new (Point.bind(null, 1, 2, 3, 4))().sum, new (Point.bind(null, 1))(2, 3, 4) instanceof Point, new (Point.bind(null, 1, 2, 3, 4))() instanceof Point.bind(null, 1, 2, 3, 4));
+const kept = { held: true }; const holder = sum.bind(kept, kept, kept, kept, kept); say(holder().length > 0);
+let total = 0; for (let i = 0; i < 20000; i++) total += three.bind(null, i, 1, 2, 3)() + three.bind(null, i)(1, 2); say(total);
+Object.defineProperty(three, "name", { value: "renamed" }); Object.defineProperty(three, "length", { value: 9 }); say(three.bind(null, 1, 2, 3, 4).name, three.bind(null, 1, 2, 3, 4).length);
+for (const wrong of [() => unknown.call({}, 1, 2, 3, 4, 5), () => unknown.call(undefined), () => Function.prototype.bind.call(1)]) try { say(wrong()); } catch (e) { say(e.name, e.message); }
+//// what-built-ins-make/programs-c-buffer-from.ts
+// Buffer.from of every sort of operand: each way through it ends in a Buffer or throws, and the functions of an operand that only it calls are in the program.
+const say = (...values: unknown[]) => console.log(...values);
+const show = (made: Buffer) => `${made instanceof Buffer} ${made.length} ${made.toString("hex")}`;
+say(show(Buffer.from("ab")), show(Buffer.from("6162", "hex")), show(Buffer.from([1, 2, 300])), show(Buffer.from(new Uint16Array([1, 258]))), show(Buffer.from(Buffer.from("x"))));
+const shared = new ArrayBuffer(4); const view = Buffer.from(shared, 1, 2); view[0] = 7; say(show(view), new Uint8Array(shared).join(), view.buffer === shared);
+say(show(Buffer.from({ valueOf() { say("valueOf ran"); return "from valueOf"; } } as any)), show(Buffer.from(new String("wrapped") as any)));
+const behind = new ArrayBuffer(2); const through = Buffer.from({ valueOf: () => behind } as any); through[1] = 9; say(new Uint8Array(behind).join(), through.buffer === behind);
+say(show(Buffer.from({ length: 2, 0: 5, 1: 6 } as any)), show(Buffer.from({ length: -1 } as any)), show(Buffer.from({ length: "2" } as any)), show(Buffer.from({ type: "Buffer", data: [1, 2] } as any)), show(Buffer.from({ type: "Buffer", data: [] } as any)));
+say(show(Buffer.from({ [Symbol.toPrimitive](hint: string) { say("toPrimitive ran with", hint); return "primitive"; } } as any)));
+say(show(Buffer.from({ get length() { say("the getter of length ran"); return 1; }, 0: 65 } as any)), show(JSON.parse(JSON.stringify(Buffer.from("json")), (key, value) => (value && value.type === "Buffer" ? Buffer.from(value) : value))));
+say(show(new (Buffer.from as any)("constructed")), Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString(), Buffer.from("hex").toString("hex"), Buffer.from("text").toString("base64"));
+for (const refused of [undefined, null, 1, true, Symbol("s"), {}, () => 1, { valueOf: () => 1 }, { [Symbol.toPrimitive]: () => 1 }])
+  try { say(show(Buffer.from(refused as any))); } catch (e) { say((e as any).code, (e as Error).name); }
+//// what-built-ins-make/programs-c-console-class.ts
+// console.Console is the class that a function of the library makes at the first read: an instance writes to the streams that it was given, and a method that only it calls is in the program.
+import { Console } from "node:console";
+import { Writable } from "node:stream";
+class Collected extends Writable {
+  text = "";
+  _write(chunk: Buffer, _encoding: string, done: () => void) { this.text += chunk.toString(); done(); }
+}
+const out = new Collected(), err = new Collected();
+const mine = new Console(out, err);
+mine.log("to %s", "out", { a: 1 }); mine.error("to err"); mine.warn([1, 2]); mine.info(new Map([[1, 2]]));
+mine.group("group"); mine.log("indented"); mine.groupEnd(); mine.table([{ a: 1 }]); mine.count(); mine.assert(false, "asserted");
+console.log(JSON.stringify(out.text), JSON.stringify(err.text));
+console.log(Console === console.Console, console.Console === console.Console, mine instanceof Console, typeof Console, Console.name, require("node:console") === console, console instanceof Console);
+const withOptions = new console.Console({ stdout: out, stderr: err, colorMode: false, inspectOptions: { depth: 0 } });
+out.text = ""; withOptions.log({ deep: { deeper: 1 } }); console.log(JSON.stringify(out.text));
+try { new Console({} as any); } catch (e) { console.log((e as any).code); }
+console.log((console as any)._stdout === process.stdout, (console as any)._stderr === process.stderr, typeof (console as any)._stdout.write, Object.getOwnPropertyDescriptor(console, "_stdout")!.enumerable, "value" in Object.getOwnPropertyDescriptor(console, "Console")!);
+//// what-built-ins-make/programs-c-decoder.ts
+// A StringDecoder: what its constructor, its three methods and its four getters answer, for whole and for split characters, for other receivers and refused operands.
+import { StringDecoder } from "node:string_decoder";
+const say = (...values: unknown[]) => console.log(...values);
+function caught(run: () => unknown): unknown {
+  try { return run(); } catch (e) { return `${(e as any).code ?? (e as Error).name}: ${(e as Error).message}`; }
+}
+interface WithState { lastNeed: number; lastTotal: number; lastChar: Buffer; encoding: string; }
+const decoder = new StringDecoder("utf8") as StringDecoder & WithState;
+const euro = Buffer.from("€");
+say(decoder.write(euro.subarray(0, 1)).length, decoder.lastNeed + 0, decoder.lastTotal + 0, decoder.lastChar.length, decoder.lastChar instanceof Buffer, decoder.lastChar === decoder.lastChar);
+say(decoder.write(euro.subarray(1)), decoder.end().length, decoder.encoding.toUpperCase(), decoder.write("already text" as any).toUpperCase());
+say(decoder.end(Buffer.from("tail")), (decoder as any).text(Buffer.from("offset"), 3), (decoder as any).text(Buffer.from("offset"), { valueOf() { say("the offset is converted"); return 1; } }));
+say((new StringDecoder() as StringDecoder & WithState).encoding, new StringDecoder("hex").write(Buffer.from([1, 255])), new StringDecoder("base64").end(Buffer.from("ab")), new StringDecoder("utf16le").write(new Uint8Array([97, 0])), new StringDecoder("latin1").write(new DataView(new ArrayBuffer(1))).length);
+say(caught(() => new StringDecoder("nope" as any)), caught(() => (new StringDecoder({ toString() { say("the encoding is converted"); return "ascii"; } } as any) as StringDecoder & WithState).encoding));
+say(caught(() => decoder.write({} as any)), caught(() => decoder.write(undefined as any)), caught(() => (decoder.write as any)()), caught(() => decoder.end(1 as any)), caught(() => (decoder as any).text(Buffer.alloc(1))));
+say(caught(() => StringDecoder.prototype.write.call({}, euro)), caught(() => (Object.getOwnPropertyDescriptor(StringDecoder.prototype, "lastNeed")!.get as any).call(1)));
+class Louder extends StringDecoder { write(buffer: Buffer) { return super.write(buffer).toUpperCase(); } }
+say(new Louder().write(Buffer.from("louder")), new Louder() instanceof StringDecoder, Object.getPrototypeOf(new Louder()) === Louder.prototype);
+function Borrowing(this: any, encoding: string) { (StringDecoder as any).call(this, encoding); }
+Borrowing.prototype = Object.create(StringDecoder.prototype);
+const borrowed = new (Borrowing as any)("utf8");
+say(borrowed.write(euro), borrowed.encoding, borrowed instanceof StringDecoder, Object.keys(borrowed).join());
+say(typeof (StringDecoder as any)("hex").write, StringDecoder.prototype.constructor === StringDecoder, Object.getOwnPropertyNames(StringDecoder.prototype).sort().join());
+//// what-built-ins-make/programs-c-descriptors.ts
+// What comes out of a property descriptor is used here and nowhere else: a method that is called only on it has to be in the program, and has to be the right one.
+const say = (...values: unknown[]) => console.log(...values);
+class OnlyThroughValue { method() { return "value: the method ran"; } }
+class OnlyThroughGetter { method() { return "get: the method ran"; } }
+class OnlyThroughSetter { seen = "nothing"; take(text: string) { this.seen = text; } }
+class OnlyThroughTrap { method() { return "trap: the method ran"; } }
+class OnlyThroughReflect { method() { return "Reflect: the method ran"; } }
+class OnlyThroughComputedKey { method() { return "computed key: the method ran"; } }
+class OnlyThroughSymbol { method() { return "symbol: the method ran"; } }
+class OnlyThroughIndex { method() { return "index: the method ran"; } }
+class OnlyThroughCopy { method() { return "copied by the descriptor: the method ran"; } }
+class OnlyThroughStore { method() { return "stored into the descriptor: the method ran"; } }
+
+const holder = { kept: new OnlyThroughValue() };
+say(Object.getOwnPropertyDescriptor(holder, "kept")!.value.method());
+
+const withGetter = { get made() { return new OnlyThroughGetter(); } };
+const described = Object.getOwnPropertyDescriptor(withGetter, "made")!;
+say(described.get!.call(withGetter).method(), described.value, described.set, "value" in described, "writable" in described, Object.keys(described).join());
+
+const sink = new OnlyThroughSetter();
+const withSetter = { set taken(text: string) { sink.take(text); } };
+Object.getOwnPropertyDescriptor(withSetter, "taken")!.set!.call(withSetter, "set: the setter ran");
+say(sink.seen);
+
+class WithAccessor { #hidden = new OnlyThroughGetter(); get hidden() { return this.#hidden; } static fixed() { return "static: the method ran"; } }
+say(Object.getOwnPropertyDescriptor(WithAccessor.prototype, "hidden")!.get!.call(new WithAccessor()).method());
+say(Object.getOwnPropertyDescriptor(WithAccessor, "fixed")!.value(), Object.getOwnPropertyDescriptor(new WithAccessor(), "hidden"));
+
+const proxy = new Proxy({}, { getOwnPropertyDescriptor() { return { value: new OnlyThroughTrap(), configurable: true }; } });
+say(Object.getOwnPropertyDescriptor(proxy, "anything")!.value.method(), (Reflect.getOwnPropertyDescriptor(proxy, "other")!.value as OnlyThroughTrap).method());
+
+say(Reflect.getOwnPropertyDescriptor({ kept: new OnlyThroughReflect() }, "kept")!.value!.method());
+
+const name = ["ke", "pt"].join("");
+say(Object.getOwnPropertyDescriptor({ kept: new OnlyThroughComputedKey(), other: 1 }, name)!.value.method());
+const symbol = Symbol("key");
+say(Object.getOwnPropertyDescriptor({ [symbol]: new OnlyThroughSymbol() }, symbol)!.value.method());
+say(Object.getOwnPropertyDescriptor([new OnlyThroughIndex()], 0)!.value.method(), Object.getOwnPropertyDescriptor([1, 2, 3], "length")!.value + 1, Object.getOwnPropertyDescriptor("text", 1)!.value.toUpperCase());
+
+// The function behind an accessor of the engine, and a method of the engine.
+const size = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+say(size.call(new Map([[1, 2]])), typeof size, size.name, Reflect.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")!.get!.call(new ArrayBuffer(8)));
+say(Object.getOwnPropertyDescriptor(Array.prototype, "map")!.value.call([1, 2], (x: number) => x * 2), Object.getOwnPropertyDescriptor(Math, "PI")!.value > 3);
+const proto = Object.getOwnPropertyDescriptor(Object.prototype, "__proto__")!;
+say(proto.get!.call(holder) === Object.prototype, typeof proto.set);
+
+// The descriptor is an ordinary object of the program's from then on.
+const copied = Object.getOwnPropertyDescriptor({ kept: new OnlyThroughCopy() }, "kept")!;
+const target: { copy?: OnlyThroughCopy } = {};
+Object.defineProperty(target, "copy", copied);
+say(target.copy!.method());
+const changed = Object.getOwnPropertyDescriptor({ kept: 1 as unknown }, "kept")!;
+changed.value = new OnlyThroughStore();
+say((changed.value as OnlyThroughStore).method(), Object.getPrototypeOf(changed) === Object.prototype);
+say(Object.getOwnPropertyDescriptor(holder, "absent"), Object.getOwnPropertyDescriptor(Object.create(holder), "kept"));
+//// what-built-ins-make/programs-c-environment.ts
+// process.env, Bun.env and import.meta.env are one object. It holds strings alone: whatever is stored or defined is made a string, by code that only the object calls.
+const say = (...values: unknown[]) => console.log(...values);
+if (process.env.IS_THE_CHILD) { say(process.env.CONVERTED, process.env.NUMBER); process.exit(0); }
+const env = process.env as Record<string, any>;
+say(process.env === Bun.env, process.env === import.meta.env, typeof env.PATH, env.NOBODY_HAS_SET_THIS, typeof env.toString, env.constructor === Object, "PATH" in env, "NOBODY_HAS_SET_THIS" in env);
+env.TEXT = "text"; env.NUMBER = 1.5; env.FLAG = true; say(env.TEXT, env.NUMBER, typeof env.NUMBER, env.FLAG, typeof env.FLAG, Bun.env.TEXT, import.meta.env.TEXT);
+env.CONVERTED = { toString() { say("toString ran"); return "from toString"; } }; say(env.CONVERTED, typeof env.CONVERTED);
+env.PRIMITIVE = { [Symbol.toPrimitive](hint: string) { say("toPrimitive ran with", hint); return 7; } }; say(env.PRIMITIVE, typeof env.PRIMITIVE);
+env.VALUE = { toString: undefined, valueOf() { say("valueOf ran"); return "from valueOf"; } }; say(env.VALUE);
+env.NOTHING = undefined; env.NULL = null; env.LIST = [1, [2, 3]]; env.BIG = 10n; say(env.NOTHING, typeof env.NOTHING, env.NULL, typeof env.NULL, env.LIST, env.BIG);
+env[7] = { toString: () => "under an index" }; say(env[7], env["7"], typeof env[7]);
+const key = ["COM", "PUTED"].join(""); env[key] = { toString: () => "under a computed key" }; say(env.COMPUTED, env[key].length);
+Object.defineProperty(env, "DEFINED", { value: { toString: () => "defined" }, writable: true, enumerable: true, configurable: true }); say(env.DEFINED, typeof env.DEFINED);
+Object.assign(env, { ASSIGNED: { toString: () => "assigned" } }); say(env.ASSIGNED, typeof env.ASSIGNED);
+say(Reflect.set(env, "REFLECTED", { toString: () => "reflected" }), env.REFLECTED, typeof env.REFLECTED);
+for (const refused of [() => { env.SYMBOL = Symbol("s"); }, () => { env[Symbol("key") as any] = "x"; }, () => { env.THROWS = { toString() { throw new RangeError("from toString"); } }; }, () => Object.defineProperty(env, "ACCESSOR", { get: () => 1 }), () => Object.defineProperty(env, "HIDDEN", { value: "x" })])
+  try { refused(); say("no error"); } catch (e) { say((e as Error).name, (e as any).code); }
+say(delete env.TEXT, env.TEXT, "TEXT" in env, Object.keys(env).includes("NUMBER"), Object.entries(env).every(([name, value]) => typeof name === "string" && typeof value === "string"));
+const copy = { ...env }; say(copy.NUMBER, typeof copy.CONVERTED, JSON.parse(JSON.stringify(env)).LIST);
+let strings = 0; for (const name in env) if (typeof env[name] === "string") strings++; say(strings === Object.keys(env).length);
+env.TZ = "America/New_York"; say(env.TZ, new Date(0).getHours()); env.TZ = { toString: () => "UTC" }; say(env.TZ, new Date(0).getHours());
+const heir = Object.create(env); const kept = { toString() { say("never run"); return ""; } }; heir.OWN = kept; say(heir.OWN === kept, env.OWN, heir.NUMBER);
+say(Bun.spawnSync({ cmd: /[$~]bun/i.test(process.argv[1]!) ? [process.execPath] : [process.execPath, process.argv[1]!], env: { ...env, IS_THE_CHILD: "1" } }).stdout.toString().trim());
+Object.setPrototypeOf(env, { INHERITED: () => "a function above the environment" }); say(env.INHERITED(), typeof env.toString, env.NUMBER); Object.setPrototypeOf(env, Object.prototype);
+const replaced = { HOME: () => "a function of the program" }; (process as any).env = replaced; say((process.env as any).HOME(), process.env === (replaced as any), Bun.env === (replaced as any));
+//// what-built-ins-make/programs-c-environment-warns.ts
+// With pending deprecations on, the first value stored into process.env that is no string, number or boolean is warned about: the listeners of the program hear of it.
+process.on("warning", warning => console.log("listener ran:", warning.name, (warning as any).code, warning.message.slice(0, 40)));
+process.env.A = "text"; process.env.B = 1 as any; process.env.C = true as any;
+console.log("nothing was warned about so far");
+process.env.D = undefined; process.env.E = null as any;
+console.log(process.env.D, process.env.E);
+//// what-built-ins-make/programs-c-errors.ts
+// What built ins make: programs c errors. It prints what plain Bun prints.
+import fs from "node:fs";
+import util from "node:util";
+function show(label: string, e: any) {
+  console.log(label, e.name, e.code, e.message, String(e), e.toString(), Object.prototype.hasOwnProperty.call(e, "code"),
+    e instanceof TypeError, e instanceof RangeError, e instanceof Error, Object.keys(e).join(), typeof e.stack, Object.getPrototypeOf(e) === TypeError.prototype);
+}
+function attempt(label: string, run: () => unknown) {
+  try { console.log(label, "answered", run()); } catch (e) { show(label, e); }
+}
+attempt("tick", () => process.nextTick(1 as any));
+attempt("tick-object", () => process.nextTick({ toString() { return "never called"; } } as any));
+attempt("read", () => fs.readFileSync(1.5 as any));
+attempt("open", () => fs.openSync({} as any, "r"));
+attempt("encoding", () => fs.readFileSync(import.meta.path, "nope" as any));
+attempt("promisify", () => util.promisify(5 as any));
+attempt("inherits", () => util.inherits(1 as any, 2 as any));
+attempt("format", () => util.styleText("nope" as any, "x"));
+attempt("url", () => new URL("nope"));
+attempt("kill", () => process.kill(1.5 as any));
+attempt("chdir", () => process.chdir(5 as any));
+attempt("abort", () => { const c = new AbortController(); c.abort(); c.signal.throwIfAborted(); });
+attempt("aborted", () => util.aborted(1 as any, {}));
+class Odd { get [Symbol.toStringTag]() { return "Odd!"; } [util.inspect.custom]() { return "custom text"; } }
+attempt("odd", () => process.nextTick(new Odd() as any));
+attempt("odd-read", () => fs.readFileSync(new Odd() as any));
+// The printer of warnings writes through process.stderr once the program has replaced its `write`, and drops what that answers.
+const basename = process.argv0.split(/[\\/]/).pop()!;
+process.stderr.write = ((text: string) => {
+  console.log("written", JSON.stringify(text.replace(String(process.pid), "PID").replace(/`\S+ --trace-warnings/, "`EXE --trace-warnings")));
+  return { odd: "answer" };
+}) as any;
+process.on("warning", w => console.log("warning seen", w.name, w.message, (w as any).code));
+process.emitWarning("first", "CustomWarning", "C1");
+process.emitWarning(new Error("second"));
+void basename;
+//// what-built-ins-make/programs-c-errors-2.ts
+// An error that a module of the library makes with a code: its kind, name, code, message and text, for refused values of every sort; and a warning written through a replaced process.stderr.write.
+import fs from "node:fs";
+import util from "node:util";
+function show(label: string, e: any) {
+  console.log(label, e.name, e.code, e.message, String(e), e.toString(), Object.prototype.hasOwnProperty.call(e, "code"),
+    e instanceof TypeError, e instanceof RangeError, e instanceof Error, Object.keys(e).join(), typeof e.stack, Object.getPrototypeOf(e) === TypeError.prototype);
+}
+function attempt(label: string, run: () => unknown) {
+  try { console.log(label, "answered", run()); } catch (e) { show(label, e); }
+}
+attempt("tick", () => process.nextTick(1 as any));
+attempt("tick-object", () => process.nextTick({ toString() { return "never called"; } } as any));
+attempt("read", () => fs.readFileSync(1.5 as any));
+attempt("open", () => fs.openSync({} as any, "r"));
+attempt("encoding", () => fs.readFileSync(import.meta.path, "nope" as any));
+attempt("promisify", () => util.promisify(5 as any));
+attempt("inherits", () => util.inherits(1 as any, 2 as any));
+attempt("format", () => util.styleText("nope" as any, "x"));
+attempt("url", () => new URL("nope"));
+attempt("kill", () => process.kill(1.5 as any));
+attempt("chdir", () => process.chdir(5 as any));
+attempt("abort", () => { const c = new AbortController(); c.abort(); c.signal.throwIfAborted(); });
+attempt("aborted", () => util.aborted(1 as any, {}));
+class Odd { get [Symbol.toStringTag]() { return "Odd!"; } [util.inspect.custom]() { return "custom text"; } }
+attempt("odd", () => process.nextTick(new Odd() as any));
+attempt("odd-read", () => fs.readFileSync(new Odd() as any));
+// The printer of warnings writes through process.stderr once the program has replaced its `write`, and drops what that answers.
+const basename = process.argv0.split(/[\\/]/).pop()!;
+process.stderr.write = ((text: string) => {
+  console.log("written", JSON.stringify(text.replace(String(process.pid), "PID").replace(/`\S+ --trace-warnings/, "`EXE --trace-warnings")));
+  return { odd: "answer" };
+}) as any;
+process.on("warning", w => console.log("warning seen", w.name, w.message, (w as any).code));
+process.emitWarning("first", "CustomWarning", "C1");
+process.emitWarning(new Error("second"));
+void basename;
+//// what-built-ins-make/programs-c-events-and-temporal.ts
+// What `new Event(..)` takes and answers, and the three methods of Temporal's classes and of Intl.Locale that a conversion or JSON.stringify may find on a value.
+const say = (...values: unknown[]) => console.log(...values);
+const plain = new Event("ping");
+say(plain.type, plain.bubbles, plain.cancelable, plain.composed, plain.defaultPrevented, plain.eventPhase, plain instanceof Event, Object.getPrototypeOf(plain) === Event.prototype, plain.isTrusted);
+const asked = new Event({ toString() { say("toString of the type ran"); return "made"; } } as any, { get bubbles() { say("the getter of bubbles ran"); return 1 as any; }, cancelable: true });
+say(asked.type, asked.bubbles, asked.cancelable); asked.preventDefault(); say(asked.defaultPrevented, asked.stopPropagation(), asked.stopImmediatePropagation());
+say(new Event(1 as any).type, new Event(null as any).type, new Event("a", null as any).bubbles, new Event("a", Object.create({ composed: true })).composed);
+class Loud extends Event { volume = 11; } const loud = new Loud("loud"); say(loud.volume, loud.type, loud instanceof Event, Object.getPrototypeOf(loud) === Loud.prototype);
+const target = new EventTarget(); target.addEventListener("loud", event => say("listener ran", event === loud, (event as Loud).volume, event.eventPhase, event.target === target)); say(target.dispatchEvent(loud));
+for (const wrong of [() => (Event as any)("a"), () => new (Event as any)(), () => new Event(Symbol("s") as any), () => new Event("a", 1 as any), () => new Event({ toString() { throw new RangeError("from toString"); } } as any), () => Object.getOwnPropertyDescriptor(Event.prototype, "type")!.get!.call({}), () => Event.prototype.preventDefault.call({})])
+  try { say(typeof wrong()); } catch (e) { say((e as Error).name, (e as any).code); }
+say(new Intl.Locale("en-US").toString(), String(new Intl.Locale("de")), `${new Intl.Locale("fr-CA")}`);
+try { Intl.Locale.prototype.toString.call({}); } catch (e) { say((e as Error).name); }
+const T = (globalThis as any).Temporal;
+if (T) {
+  const values = [new T.Duration(1), new T.Instant(0n), new T.PlainDate(2020, 1, 2), new T.PlainDateTime(2020, 1, 2, 3), new T.PlainMonthDay(1, 2), new T.PlainTime(1, 2), new T.PlainYearMonth(2020, 1), new T.ZonedDateTime(0n, "UTC")];
+  for (const value of values) {
+    say(value.toString(), value.toJSON(), JSON.stringify({ value }), `${value}`);
+    try { say(value.valueOf()); } catch (e) { say((e as Error).name); }
+    try { say(value > 1); } catch (e) { say((e as Error).name); }
+    try { value.toJSON.call({}); } catch (e) { say((e as Error).name); }
+  }
+  say(new T.PlainTime(1, 2, 3).toString({ get smallestUnit() { say("the getter of smallestUnit ran"); return "minute"; } }));
+} else say("this build has no Temporal");
+//// what-built-ins-make/programs-c-formatter-to-json.ts
+// console.log prints some objects of the host by what their toJSON answers. It calls what it finds under the name, on the object and with no operand; a function that only it calls is in the program.
+const say = (...values: unknown[]) => console.log(...values);
+const headers = new Headers({ a: "1" }); say(headers);
+(headers as any).toJSON = function (this: Headers, ...operands: unknown[]) { say("toJSON of the program ran", operands.length, this === headers); return { replaced: true, inner: { toJSON() { say("never run"); return 1; } } }; };
+say(headers); say(Bun.inspect(headers).length > 0);
+const params = new URLSearchParams("x=1&y=2"); say(params);
+(params as any).toJSON = () => ["from", "an", "arrow"]; say(params);
+const form = new FormData(); form.append("k", "v"); say(form);
+Object.defineProperty(form, "toJSON", { value: function () { return { size: arguments.length }; } }); say(form);
+say(JSON.parse('{"a":[1,{"b":null}],"toJSON":1}'), JSON.parse("[1,2]"), JSON.parse('"text"'), { toJSON() { say("never run either"); return 1; } });
+try { (headers as any).toJSON = () => { throw new RangeError("from toJSON"); }; say(headers); } catch (e) { say((e as Error).name); }
+//// what-built-ins-make/programs-c-frozen-functions.js
+// Functions that are frozen: what they answer afterwards, whether anything was read off them before or not. A function gets its `prototype` object at the first read, also where that read comes after the freeze.
+"use strict";
+const say = (...values) => console.log(...values);
+const describe = (object, key) => { const d = Object.getOwnPropertyDescriptor(object, key); return d === undefined ? "none" : [typeof d.value, d.writable, d.enumerable, d.configurable, typeof d.get].join(); };
+const attempt = run => { try { return run(); } catch (e) { return e.name; } };
+function report(label, f) {
+  say(label, Object.isFrozen(f), Object.isSealed(f), Object.isExtensible(f), Reflect.ownKeys(f).map(String).join());
+  for (const key of ["length", "name", "prototype", "extra", "tag"]) say(" ", key, describe(f, key));
+  say("  stores", attempt(() => { f.extra = 2; return "stored"; }), attempt(() => { f.other = 1; return "stored"; }), attempt(() => { f.name = "x"; return "stored"; }), attempt(() => { f.prototype = {}; return "stored"; }), attempt(() => { f[0] = 1; return "stored"; }));
+  say("  deletes", attempt(() => delete f.extra), attempt(() => delete f.name), attempt(() => delete f.missing), attempt(() => Object.defineProperty(f, "name", { value: "y" }) === f), attempt(() => Object.setPrototypeOf(f, null) === f), attempt(() => Object.setPrototypeOf(f, Object.getPrototypeOf(f)) === f));
+}
+function plain(a, b) { return a + b; }
+report("never touched", Object.freeze(plain));
+say(plain(1, 2), plain.name, plain.length, typeof plain.prototype, plain.prototype === plain.prototype, plain.prototype.constructor === plain, new plain(1, 2) instanceof plain, Object.getPrototypeOf(new plain()) === plain.prototype, Object.isFrozen(plain), Object.isFrozen(plain.prototype));
+function touched() {}
+const before = touched.prototype; touched.extra = 1; touched[Symbol.for("tag")] = 2;
+report("touched", Object.freeze(touched));
+say(touched.prototype === before, touched.extra, touched[Symbol.for("tag")], describe(touched, Symbol.for("tag")));
+const arrow = Object.freeze(() => 1); report("arrow", arrow); say(arrow(), "prototype" in arrow);
+const method = Object.freeze({ m() { return this; } }.m); report("method", method);
+const asyncFunction = Object.freeze(async function later() {}); report("async", asyncFunction);
+const generator = Object.freeze(function* steps() { yield 1; }); report("generator", generator); say(typeof generator.prototype, [...generator()].join(), Object.getPrototypeOf(generator()) === generator.prototype);
+class Base { static tag = 1; static make() { return new this(); } } report("class", Object.freeze(Base)); say(Base.make() instanceof Base, Base.tag, attempt(() => { Base.tag = 2; return "stored"; }));
+class Derived extends Base {} say(new Derived() instanceof Base, Derived.make() instanceof Derived, Derived.tag);
+const bound = Object.freeze(plain.bind(null, 1)); report("bound", bound); say(bound(2));
+const withAccessor = function () {}; Object.defineProperty(withAccessor, "tag", { get() { return 7; }, configurable: true }); report("accessor", Object.freeze(withAccessor)); say(withAccessor.tag);
+const indexed = function () {}; indexed[0] = "zero"; indexed[5] = "five"; Object.freeze(indexed); say(Object.isFrozen(indexed), describe(indexed, 0), describe(indexed, "5"), attempt(() => { indexed[0] = 1; return "stored"; }), attempt(() => { indexed[1] = 1; return "stored"; }), Reflect.ownKeys(indexed).join());
+const renamed = function original() {}; Object.defineProperty(renamed, "name", { value: "renamed" }); Object.freeze(renamed); say(renamed.name, describe(renamed, "name"), renamed.bind().name);
+say(Object.freeze(plain) === plain, Object.isFrozen(Object.freeze(Object.freeze(function () {}))));
+const made = []; for (let i = 0; i < 2000; i++) { const f = function (x) { return x + i; }; f.index = i; made.push(Object.freeze(f)); }
+say(made.every((f, i) => Object.isFrozen(f) && f.index === i && f(1) === i + 1), made[7].prototype.constructor === made[7], made[8].prototype !== made[7].prototype, attempt(() => { made[9].index = 0; return "stored"; }));
+const sealed = Object.seal(function s() {}); say(Object.isSealed(sealed), Object.isFrozen(sealed), describe(sealed, "prototype"), describe(sealed, "name"));
+const closedToMore = Object.preventExtensions(function p() {}); say(Object.isExtensible(closedToMore), Object.isFrozen(closedToMore), describe(closedToMore, "prototype"));
+const sloppy = new Function("f", "f.extra = 5; f.other = 6; delete f.name; return [f.extra, f.other, f.name].join()"); say(sloppy(touched), sloppy(plain));
+//// what-built-ins-make/programs-c-iterators-of-segments-and-attributes.ts
+// What built ins make: programs c iterators of segments and attributes. It prints what plain Bun prints.
+// @ts-nocheck
+// What Intl's segments and HTMLRewriter's attributes answer under Symbol.iterator and next: a new iterator at each call of the first, the receiver itself for the second; each refuses a receiver of another sort.
+const say = (...values) => console.log(...values);
+const segments = new Intl.Segmenter("en", { granularity: "word" }).segment("one two");
+const make = segments[Symbol.iterator];
+const first = segments[Symbol.iterator](), second = segments[Symbol.iterator]();
+say(first !== second, typeof first.next, Object.getPrototypeOf(Object.getPrototypeOf(first)) === Iterator.prototype, first[Symbol.iterator]() === first);
+say([...segments].map(part => part.segment).join("|"), first.next().value.segment, second.next().value.segment, first.next().value.segment);
+for (const wrong of [[1, 2], {}, undefined, null, 1, "text", new Map()])
+  try { make.call(wrong); say("no error"); } catch (e) { say(e.name, e.message); }
+const list = [1, 2, 3];
+say(new Map(list.map(n => [n, n * 2])).get(2), [...list].length, list[Symbol.iterator]().next().value);
+let kept;
+const rewritten = new HTMLRewriter()
+  .on("a", {
+    element(element) {
+      const attributes = element.attributes;
+      kept = attributes;
+      say(attributes[Symbol.iterator]() === attributes, typeof attributes.next);
+      const seen = [];
+      for (const [name, value] of attributes) seen.push(name + "=" + value);
+      say(seen.join());
+      const last = attributes.next();
+      say(last.done, last.value, Object.keys(last).join());
+      const prototype = Object.getPrototypeOf(attributes);
+      for (const wrong of [[1], {}, undefined]) {
+        try { prototype[Symbol.iterator].call(wrong); say("no error"); } catch (e) { say(e.name); }
+        try { prototype.next.call(wrong); say("no error"); } catch (e) { say(e.name); }
+      }
+    },
+  })
+  .transform(new Response('<a href="x" id="y">t</a>'));
+say(await rewritten.text());
+say(kept.next().done);
+//// what-built-ins-make/programs-c-kept-operands.ts
+// The error codes whose error keeps an operand as it is: the object that goes in is the object that comes out.
+import { EventEmitter } from "node:events";
+import tls from "node:tls";
+import url from "node:url";
+process.noDeprecation = true;
+const say = (...values: unknown[]) => console.log(...values);
+function caught(run: () => unknown): any {
+  try { return { answered: run() }; } catch (e) { return e; }
+}
+const certificate = { subject: { CN: "other.example" }, marker: { kept: true } };
+const mismatch = tls.checkServerIdentity("host.example", certificate as any) as any;
+say(mismatch.code, mismatch.name, mismatch instanceof Error, mismatch.host, typeof mismatch.reason, mismatch.cert === certificate, mismatch.cert.marker.kept, String(mismatch).split("\n")[0]);
+const unhandled = caught(() => new EventEmitter().emit("error", { not: "an error" }));
+say(unhandled.code, unhandled.name, unhandled.message, unhandled.context.not);
+const thrown = new RangeError("mine");
+say(caught(() => new EventEmitter().emit("error", thrown)) === thrown);
+const invalid = caught(() => url.parse("http://[a b]/"));
+say(invalid.code, invalid.name, invalid.input, Object.keys(invalid).join());
+const ciphers = caught(() => tls.createSecureContext({ ciphers: "nope" }));
+say(ciphers.code, ciphers.reason, ciphers.library, ciphers.message);
+for (const error of [mismatch, unhandled, invalid]) {
+  const hidden = Object.getPrototypeOf(error);
+  say(Object.hasOwn(error, "code"), Object.hasOwn(hidden, "code"), Object.hasOwn(hidden, "name"), typeof hidden.toString, hidden.toString === Error.prototype.toString, Object.getPrototypeOf(hidden).constructor.name);
+}
+//// what-built-ins-make/programs-c-legacy-reflection.js
+// Function.prototype.arguments and caller: a TypeError for a strict function (every function of a module is one), an arrow, a method, a class and a built-in.
+// Array.prototype[Symbol.unscopables]: an object without a prototype that holds true.
+const say = (...values) => console.log(...values);
+const tried = run => { try { return run(); } catch (e) { return e.name; } };
+function plain() { return [tried(() => plain.arguments), tried(() => plain.caller)]; }
+function outer() { return plain(1, 2); }
+say(outer().join(), tried(() => plain.arguments), tried(() => plain.caller));
+function strict() { "use strict"; return 1; }
+for (const f of [strict, () => 1, { m() {} }.m, class {}, Math.max, function* () {}, async function () {}, plain.bind(null)])
+  say(tried(() => f.arguments), tried(() => f.caller), tried(() => { f.arguments = 1; return "stored"; }));
+const get = name => Object.getOwnPropertyDescriptor(Function.prototype, name).get;
+say(typeof get("arguments"), typeof get("caller"), tried(() => get("arguments").call({})), tried(() => get("caller").call(undefined)), tried(() => get("arguments").call(plain)), "value" in Object.getOwnPropertyDescriptor(Function.prototype, "caller"));
+const unscopables = Array.prototype[Symbol.unscopables];
+say(Object.getPrototypeOf(unscopables), unscopables.flat, unscopables.push, unscopables.toString, Object.values(unscopables).every(value => value === true), Object.keys(unscopables).length > 5, unscopables === Array.prototype[Symbol.unscopables]);
+unscopables.mine = () => "a function of the program"; say(unscopables.mine(), delete unscopables.mine);
+//// what-built-ins-make/programs-c-maps-from-pairs.js
+// new Map(pairs) for lists of every size and sort: keys that are strings (also the same text twice, made in two ways), keys of other sorts, values of every sort, and pairs that are no ordinary arrays.
+const say = (...values) => console.log(...values);
+const show = map => [...map].map(([key, value]) => String(typeof key === "symbol" ? "symbol" : key) + "=" + (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value))).join();
+for (const size of [0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 63, 64, 65, 254, 255, 256, 600, 3000]) {
+  const pairs = [];
+  for (let i = 0; i < size; i++) pairs.push(["key" + i, i % 3 ? "value" + i : i]);
+  for (const pair of pairs) pair[0].charCodeAt(0);
+  const map = new Map(pairs);
+  let right = map.size === size;
+  for (let i = 0; i < size; i++) right &&= map.get("key" + i) === (i % 3 ? "value" + i : i) && map.has("k" + "ey" + i);
+  say(size, right, map.has("key" + size), [...map.keys()].slice(0, 3).join(), [...map.values()].slice(-2).join());
+  map.set("more", 1); map.delete("key0"); say(map.size, map.get("more"), map.has("key0"), [...map.keys()].at(-1));
+}
+const twice = "a" + String.fromCharCode(98);
+twice.charCodeAt(0);
+say(show(new Map([["ab", 1], ["c", 2], [twice, 3], ["c", 4], ["d", 5]])), new Map([["ab", 1], [twice, 3]]).size);
+const many = []; for (let i = 0; i < 400; i++) many.push([String(i % 37), i]); for (const pair of many) pair[0].charCodeAt(0);
+say(show(new Map(many)).length, new Map(many).size, new Map(many).get("36"), [...new Map(many).keys()].slice(0, 4).join());
+say(show(new Map([["a", undefined], ["b", null], ["c", true], ["d", false], ["e", 0], ["f", -0], ["g", 1.5], ["h", NaN], ["i", 10n], ["j", "text"], ["k", { x: 1 }], ["l", [1]], ["m", 2 ** 40]])));
+say(Object.is(new Map([["f", -0]]).get("f"), -0), typeof new Map([["s", Symbol.iterator]]).get("s"), new Map([["f", say]]).get("f") === say);
+say(show(new Map([["a", 1], [1, 2], ["b", 3]])), show(new Map([[{}, 1], ["a", 2]])), show(new Map([[-0, 1], [0, 2], [NaN, 3], [NaN, 4]])), show(new Map([[undefined, 1], [null, 2], [true, 3]])), show(new Map([[Symbol.iterator, 1], ["a", 2]])));
+say(show(new Map([["x" + "y".repeat(3), 1], ["left".concat("right"), 2], ["substring-of-more".slice(0, 9), 3], ["substring", 4]])));
+say(show(new Map([["a", 1, "ignored"], ["b", 2, 3, 4]])), show(new Map([["a"], ["b", 2]])), show(new Map([[], ["b", 2]])));
+const holey = [["a", 1], , ["b", 2]]; try { say(show(new Map(holey))); } catch (e) { say(e.name); }
+const pairWithHole = ["a", 1]; delete pairWithHole[1]; say(show(new Map([pairWithHole, ["b", 2]])));
+for (const wrong of [[1], ["ab"], [null], [undefined], [["a", 1], 2]]) try { say(show(new Map(wrong))); } catch (e) { say(e.name); }
+class Pair extends Array {} const derived = Pair.from(["a", 1]); say(show(new Map([derived, ["b", 2]])));
+const withGetter = ["a", 1]; Object.defineProperty(withGetter, 1, { get() { say("getter runs"); return 9; } }); say(show(new Map([["z", 0], withGetter])));
+say(show(new Map([{ 0: "a", 1: 1 }, ["b", 2]])), show(new Map([["a", 1]].values())), show(new Map(new Map([["a", 1], ["b", 2]]))), show(new Map(Object.entries({ x: 1, y: "two", 3: [3] }))));
+class Counting extends Map { set(key, value) { return super.set(key, value + 1); } } say(show(new Counting([["a", 1], ["b", 2]])));
+const kept = [["a", { n: 1 }]]; const holding = new Map(kept); kept[0][1].n = 2; kept[0][1] = "changed"; kept.push(["b", 1]); say(show(holding));
+let total = 0; for (let round = 0; round < 300; round++) { const list = []; for (let i = 0; i < 40; i++) list.push(["k" + ((i * 7 + round) % 23), { round, i }]); for (const pair of list) pair[0].charCodeAt(0); const map = new Map(list); total += map.size + map.get("k" + (round % 23)).i; } say(total);
+//// what-built-ins-make/programs-c-objects-from-entries.ts
+// Object.fromEntries and Object.groupBy answer ordinary objects that hold what they were handed: functions and objects of the program come out as what they are.
+const say = (...values: unknown[]) => console.log(...values);
+class Body { constructor(public mass: number) {} weight() { return this.mass * 2; } }
+const made = Object.fromEntries([["run", () => "a function of the program"], ["body", new Body(2)], ["n", 1]] as [string, any][]);
+say(made.run(), made.body.weight(), made.body instanceof Body, made.n, made.nothing, Object.keys(made).join(), Object.getPrototypeOf(made) === Object.prototype, typeof made.toString);
+say(made); say(JSON.stringify(Object.fromEntries(new Map([["a", 1], ["b", 2]]))), Object.fromEntries(new URLSearchParams("x=1&y=2")).y);
+const own = Object.fromEntries([["__proto__", { inherited: true }]]); say(Object.getPrototypeOf(own) === Object.prototype, Object.keys(own).join(), (own as any).inherited);
+const symbol = Symbol("key"); say(Object.fromEntries([[symbol, "under a symbol"], [{ toString() { say("the key is converted"); return "converted"; } } as any, 1]])[symbol as any], Object.fromEntries([[1, "index"]])[1]);
+function* entries() { say("the generator ran"); yield ["g", () => "from a generator"] as const; } say(Object.fromEntries(entries()).g());
+made.later = () => "stored later"; say(made.later(), delete made.n, made.n);
+const groups = Object.groupBy([new Body(1), new Body(2), new Body(3)], (body, index) => { say("callback", body.mass, index); return body.mass % 2 ? "odd" : "even"; });
+say(Object.getPrototypeOf(groups), Object.keys(groups).join(), groups.odd!.length, groups.odd![1].weight(), groups.even![0] instanceof Body, (groups as any).none, Array.isArray(groups.even));
+say(groups); groups.odd!.push(new Body(5)); say(groups.odd!.map(body => body.weight()).join());
+say(Object.keys(Object.groupBy("abca", letter => letter)).join(), Object.groupBy([1], () => ({ toString() { say("the group's key is converted"); return "k"; } }) as any).k);
+for (const wrong of [() => Object.fromEntries(undefined as any), () => Object.fromEntries([1] as any), () => Object.fromEntries(1 as any), () => Object.groupBy(null as any, () => 1), () => Object.groupBy([1], 1 as any), () => Object.groupBy([1], () => { throw new RangeError("from the callback"); }), () => Object.fromEntries({ [Symbol.iterator]() { throw new EvalError("from the iterator"); } } as any)])
+  try { say(wrong()); } catch (e) { say((e as Error).name); }
+//// what-built-ins-make/programs-c-process-objects.ts
+// process.versions, process.release and process.features are ordinary objects that native code fills: strings, and booleans among the features. What a program stores among the features stays what it is.
+const say = (...values: unknown[]) => console.log(...values);
+say(typeof process.versions.bun, typeof process.versions.node, process.versions.v8.length > 0, (process.versions as any).nobody, process.versions === process.versions, Object.values(process.versions).every(version => typeof version === "string"));
+say(process.release.name.toUpperCase(), typeof process.release.sourceUrl, typeof process.release.headersUrl, (process.release as any).lts, Object.keys(process.release).join());
+const features = process.features as unknown as Record<string, unknown>;
+say(features.tls, features.ipv6, typeof features.typescript, features.nobody, Object.values(features).every(feature => typeof feature === "boolean" || typeof feature === "string"));
+say(typeof process.versions.toString, process.versions.hasOwnProperty("bun"), Object.getPrototypeOf(process.release) === Object.prototype, JSON.stringify(process.release).length > 10);
+const kept = { toString() { say("never run"); return ""; }, call: () => "a function of the program" };
+(process.features as any).kept = kept; say((process.features as any).kept === kept, (process.features as any).kept.call());
+(process.features as any).mine = () => "called"; say((process.features as any).mine());
+(process.features as any).tls = 7; say(process.features.tls, delete (process.features as any).ipv6, process.features.ipv6);
+(process as any).features = { other: () => "replaced" }; say((process.features as any).other());
+//// what-built-ins-make/programs-c-promises.ts
+// What built ins make: programs c promises. It prints what plain Bun prints.
+const log = (...values: unknown[]) => console.log(...values);
+const one = Promise.resolve(1);
+log(await one, await Promise.resolve(), await Promise.resolve("text"), await Promise.resolve(null), await Promise.resolve(10n), typeof (await Promise.resolve(Symbol.iterator)));
+one.then(v => log("then", v), e => log("never", e));
+Promise.resolve(2).catch(e => log("never", e)).finally(() => log("finally"));
+const same = Promise.resolve(one);
+log(same === one);
+const thenable = { then(resolve: (v: number) => void) { resolve(7); } };
+log(await Promise.resolve(thenable));
+const failing = { then(_: unknown, reject: (e: unknown) => void) { reject(new RangeError("from then")); } };
+try { await Promise.resolve(failing); } catch (e) { log((e as Error).name, (e as Error).message); }
+const throwing = { get then() { throw new TypeError("getter"); } };
+await Promise.resolve(throwing).then(() => log("never"), e => log("rejected", e.message));
+class Mine<T> extends Promise<T> {}
+log(Mine.resolve(3) instanceof Mine, await Mine.resolve(3), Promise.resolve(Mine.resolve(4)) instanceof Mine);
+log(Bun.peek(one), Bun.peek.status(one), Bun.peek.status(new Promise(() => {})), Bun.peek(5 as any));
+const rejected = Promise.reject(new Error("no")); rejected.catch(() => {});
+log(Bun.peek.status(rejected), (Bun.peek(rejected) as unknown as Error).message);
+
+const table = new WebAssembly.Table({ element: "anyfunc", initial: 3 });
+log(table.length, typeof table.length);
+const memory = new WebAssembly.Memory({ initial: 1 });
+log(memory.buffer.byteLength, memory.buffer === memory.buffer, memory.buffer instanceof ArrayBuffer);
+const kept = { a: 1 };
+const holder = new WebAssembly.Global({ value: "externref", mutable: true }, kept);
+log(holder.value === kept, holder.valueOf() === kept);
+holder.value = log; log(holder.value === log);
+const number = new WebAssembly.Global({ value: "i32", mutable: true }, 5);
+number.value = 6.7; log(number.value, new WebAssembly.Global({ value: "i64" }, 5n).value);
+for (const read of [() => (WebAssembly.Table.prototype as any).length, () => (WebAssembly.Global.prototype as any).value, () => (WebAssembly.Memory.prototype as any).buffer, () => (WebAssembly.Instance.prototype as any).exports]) {
+  try { log("answered", read()); } catch (e) { log((e as Error).name, (e as Error).message); }
+}
+const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 2, 127, 127, 1, 127, 3, 2, 1, 0, 7, 7, 1, 3, 97, 100, 100, 0, 0, 10, 9, 1, 7, 0, 32, 0, 32, 1, 106, 11]);
+const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes));
+log(Object.keys(instance.exports), (instance.exports.add as (a: number, b: number) => number)(2, 3), Object.getPrototypeOf(instance.exports));
+const { instance: other } = await WebAssembly.instantiate(bytes);
+log((other.exports.add as (a: number, b: number) => number)(4, 5));
+//// what-built-ins-make/programs-c-required-operands.ts
+// A construction or a call that lacks an operand it requires, or gets one that it refuses, throws also where nobody uses what it would have answered.
+const say = (...values: unknown[]) => console.log(...values);
+const G = globalThis as any;
+const tried = (name: string, run: () => unknown) => { try { run(); say(name, "no error"); } catch (e) { say(name, (e as Error).name, (e as any).code); } };
+tried("new Event()", () => { new G.Event(); });
+tried("typeof new Event()", () => typeof new G.Event());
+tried("new Event(symbol)", () => { new G.Event(Symbol("s")); });
+tried("new Event('a', 1)", () => { new G.Event("a", 1); });
+tried("new Event('a')", () => { new G.Event("a"); });
+tried("Event('a')", () => { G.Event("a"); });
+tried("new CustomEvent()", () => { new G.CustomEvent(); });
+tried("new MessageEvent()", () => { new G.MessageEvent(); });
+tried("new CloseEvent()", () => { new G.CloseEvent(); });
+tried("new ErrorEvent()", () => { new G.ErrorEvent(); });
+tried("new EventTarget()", () => { new G.EventTarget(); });
+tried("EventTarget()", () => { G.EventTarget(); });
+tried("new AbortController()", () => { new G.AbortController(); });
+tried("AbortController()", () => { G.AbortController(); });
+tried("new AbortSignal()", () => { new G.AbortSignal(); });
+tried("AbortSignal.timeout()", () => { G.AbortSignal.timeout(); });
+tried("AbortSignal.timeout(-1)", () => { G.AbortSignal.timeout(-1); });
+tried("AbortSignal.any()", () => { G.AbortSignal.any(); });
+tried("AbortSignal.any([1])", () => { G.AbortSignal.any([1]); });
+tried("new WritableStream()", () => { new G.WritableStream(); });
+tried("new WritableStream(1)", () => { new G.WritableStream(1); });
+tried("new WritableStream(null)", () => { new G.WritableStream(null); });
+tried("WritableStream()", () => { G.WritableStream(); });
+tried("new TransformStream()", () => { new G.TransformStream(); });
+tried("new TransformStream(1)", () => { new G.TransformStream(1); });
+tried("new TransformStream(undefined, 1)", () => { new G.TransformStream(undefined, 1); });
+tried("new TextEncoderStream()", () => { new G.TextEncoderStream(); });
+tried("TextEncoderStream()", () => { G.TextEncoderStream(); });
+tried("new URL()", () => { new G.URL(); });
+tried("new URL('x')", () => { new G.URL("x"); });
+tried("new Request()", () => { new G.Request(); });
+tried("new Response()", () => { new G.Response(); });
+tried("new Headers(1)", () => { new G.Headers(1); });
+tried("new WebSocket()", () => { new G.WebSocket(); });
+tried("new BroadcastChannel()", () => { new G.BroadcastChannel(); });
+tried("new Blob(1)", () => { new G.Blob(1); });
+tried("new WebAssembly.Global()", () => { new G.WebAssembly.Global(); });
+tried("new WebAssembly.Global({})", () => { new G.WebAssembly.Global({}); });
+tried("new RegExp('(')", () => { new RegExp("("); });
+tried("new (require string_decoder).StringDecoder('nope')", () => { new (require("node:string_decoder").StringDecoder)("nope"); });
+tried("Buffer.from()", () => { G.Buffer.from(); });
+tried("Buffer.from(1)", () => { G.Buffer.from(1); });
+tried("new Buffer.from(1)", () => { new G.Buffer.from(1); });
+tried("Buffer.concat()", () => { G.Buffer.concat(); });
+tried("Temporal valueOf", () => { if (G.Temporal) new G.Temporal.Duration(1).valueOf(); else throw new TypeError("no Temporal"); });
+tried("Temporal toJSON on {}", () => { if (G.Temporal) G.Temporal.Duration.prototype.toJSON.call({}); else throw new TypeError("no Temporal"); });
+tried("Intl.Locale toString on {}", () => { Intl.Locale.prototype.toString.call({}); });
+tried("Event.prototype.type on {}", () => { Object.getOwnPropertyDescriptor(G.Event.prototype, "type")!.get!.call({}); });
+tried("preventDefault on {}", () => { G.Event.prototype.preventDefault.call({}); });
+tried("AbortSignal aborted on {}", () => { Object.getOwnPropertyDescriptor(G.AbortSignal.prototype, "aborted")!.get!.call({}); });
+tried("throwIfAborted on {}", () => { G.AbortSignal.prototype.throwIfAborted.call({}); });
+tried("throwIfAborted of an aborted signal", () => { G.AbortSignal.abort().throwIfAborted(); });
+tried("WritableStream locked on {}", () => { Object.getOwnPropertyDescriptor(G.WritableStream.prototype, "locked")!.get!.call({}); });
+tried("TransformStream readable on {}", () => { Object.getOwnPropertyDescriptor(G.TransformStream.prototype, "readable")!.get!.call({}); });
+tried("AbortController signal on {}", () => { Object.getOwnPropertyDescriptor(G.AbortController.prototype, "signal")!.get!.call({}); });
+tried("URL searchParams on {}", () => { Object.getOwnPropertyDescriptor(G.URL.prototype, "searchParams")!.get!.call({}); });
+tried("Request headers on {}", () => { Object.getOwnPropertyDescriptor(G.Request.prototype, "headers")!.get!.call({}); });
+//// what-built-ins-make/programs-c-required-operands-2.ts
+// A construction or a call that lacks an operand it requires, or gets one that it refuses, throws also where nobody uses what it would have answered.
+const say = (...values: unknown[]) => console.log(...values);
+const G = { Event, CustomEvent, MessageEvent, CloseEvent, ErrorEvent, EventTarget, AbortController, AbortSignal, WritableStream, TransformStream, TextEncoderStream, URL, Request, Response, Headers, WebSocket, BroadcastChannel, Blob, WebAssembly, Buffer, Temporal: (globalThis as any).Temporal } as any;
+const tried = (name: string, run: () => unknown) => { try { run(); say(name, "no error"); } catch (e) { say(name, (e as Error).name, (e as any).code); } };
+tried("new Event()", () => { new G.Event(); });
+tried("typeof new Event()", () => typeof new G.Event());
+tried("new Event(symbol)", () => { new G.Event(Symbol("s")); });
+tried("new Event('a', 1)", () => { new G.Event("a", 1); });
+tried("new Event('a')", () => { new G.Event("a"); });
+tried("Event('a')", () => { G.Event("a"); });
+tried("new CustomEvent()", () => { new G.CustomEvent(); });
+tried("new MessageEvent()", () => { new G.MessageEvent(); });
+tried("new CloseEvent()", () => { new G.CloseEvent(); });
+tried("new ErrorEvent()", () => { new G.ErrorEvent(); });
+tried("new EventTarget()", () => { new G.EventTarget(); });
+tried("EventTarget()", () => { G.EventTarget(); });
+tried("new AbortController()", () => { new G.AbortController(); });
+tried("AbortController()", () => { G.AbortController(); });
+tried("new AbortSignal()", () => { new G.AbortSignal(); });
+tried("AbortSignal.timeout()", () => { G.AbortSignal.timeout(); });
+tried("AbortSignal.timeout(-1)", () => { G.AbortSignal.timeout(-1); });
+tried("AbortSignal.any()", () => { G.AbortSignal.any(); });
+tried("AbortSignal.any([1])", () => { G.AbortSignal.any([1]); });
+tried("new WritableStream()", () => { new G.WritableStream(); });
+tried("new WritableStream(1)", () => { new G.WritableStream(1); });
+tried("new WritableStream(null)", () => { new G.WritableStream(null); });
+tried("WritableStream()", () => { G.WritableStream(); });
+tried("new TransformStream()", () => { new G.TransformStream(); });
+tried("new TransformStream(1)", () => { new G.TransformStream(1); });
+tried("new TransformStream(undefined, 1)", () => { new G.TransformStream(undefined, 1); });
+tried("new TextEncoderStream()", () => { new G.TextEncoderStream(); });
+tried("TextEncoderStream()", () => { G.TextEncoderStream(); });
+tried("new URL()", () => { new G.URL(); });
+tried("new URL('x')", () => { new G.URL("x"); });
+tried("new Request()", () => { new G.Request(); });
+tried("new Response()", () => { new G.Response(); });
+tried("new Headers(1)", () => { new G.Headers(1); });
+tried("new WebSocket()", () => { new G.WebSocket(); });
+tried("new BroadcastChannel()", () => { new G.BroadcastChannel(); });
+tried("new Blob(1)", () => { new G.Blob(1); });
+tried("new WebAssembly.Global()", () => { new G.WebAssembly.Global(); });
+tried("new WebAssembly.Global({})", () => { new G.WebAssembly.Global({}); });
+tried("new RegExp('(')", () => { new RegExp("("); });
+tried("new (require string_decoder).StringDecoder('nope')", () => { new (require("node:string_decoder").StringDecoder)("nope"); });
+tried("Buffer.from()", () => { G.Buffer.from(); });
+tried("Buffer.from(1)", () => { G.Buffer.from(1); });
+tried("new Buffer.from(1)", () => { new G.Buffer.from(1); });
+tried("Buffer.concat()", () => { G.Buffer.concat(); });
+tried("Temporal valueOf", () => { if (G.Temporal) new G.Temporal.Duration(1).valueOf(); else throw new TypeError("no Temporal"); });
+tried("Temporal toJSON on {}", () => { if (G.Temporal) G.Temporal.Duration.prototype.toJSON.call({}); else throw new TypeError("no Temporal"); });
+tried("Intl.Locale toString on {}", () => { Intl.Locale.prototype.toString.call({}); });
+tried("Event.prototype.type on {}", () => { Object.getOwnPropertyDescriptor(G.Event.prototype, "type")!.get!.call({}); });
+tried("preventDefault on {}", () => { G.Event.prototype.preventDefault.call({}); });
+tried("AbortSignal aborted on {}", () => { Object.getOwnPropertyDescriptor(G.AbortSignal.prototype, "aborted")!.get!.call({}); });
+tried("throwIfAborted on {}", () => { G.AbortSignal.prototype.throwIfAborted.call({}); });
+tried("throwIfAborted of an aborted signal", () => { G.AbortSignal.abort().throwIfAborted(); });
+tried("WritableStream locked on {}", () => { Object.getOwnPropertyDescriptor(G.WritableStream.prototype, "locked")!.get!.call({}); });
+tried("TransformStream readable on {}", () => { Object.getOwnPropertyDescriptor(G.TransformStream.prototype, "readable")!.get!.call({}); });
+tried("AbortController signal on {}", () => { Object.getOwnPropertyDescriptor(G.AbortController.prototype, "signal")!.get!.call({}); });
+tried("URL searchParams on {}", () => { Object.getOwnPropertyDescriptor(G.URL.prototype, "searchParams")!.get!.call({}); });
+tried("Request headers on {}", () => { Object.getOwnPropertyDescriptor(G.Request.prototype, "headers")!.get!.call({}); });
+//// what-built-ins-make/programs-c-required-operands-3.ts
+// A construction or a call that lacks an operand it requires, or gets one that it refuses, throws also where nobody uses what it would have answered.
+const say = (...values: unknown[]) => console.log(...values);
+// @ts-nocheck is not used: each name is written as a program writes it, and the casts keep the checker quiet.
+const tried = (name: string, run: () => unknown) => { try { run(); say(name, "no error"); } catch (e) { say(name, (e as Error).name, (e as any).code); } };
+tried("new Event()", () => { new (Event as any)(); });
+tried("typeof new Event()", () => typeof new (Event as any)());
+tried("new Event(symbol)", () => { new (Event as any)(Symbol("s")); });
+tried("new Event('a', 1)", () => { new (Event as any)("a", 1); });
+tried("new Event('a')", () => { new (Event as any)("a"); });
+tried("Event('a')", () => { (Event as any)("a"); });
+tried("new CustomEvent()", () => { new (CustomEvent as any)(); });
+tried("new MessageEvent()", () => { new (MessageEvent as any)(); });
+tried("new CloseEvent()", () => { new (CloseEvent as any)(); });
+tried("new ErrorEvent()", () => { new (ErrorEvent as any)(); });
+tried("new EventTarget()", () => { new (EventTarget as any)(); });
+tried("EventTarget()", () => { (EventTarget as any)(); });
+tried("new AbortController()", () => { new (AbortController as any)(); });
+tried("AbortController()", () => { (AbortController as any)(); });
+tried("new AbortSignal()", () => { new (AbortSignal as any)(); });
+tried("AbortSignal.timeout()", () => { (AbortSignal as any).timeout(); });
+tried("AbortSignal.timeout(-1)", () => { (AbortSignal as any).timeout(-1); });
+tried("AbortSignal.any()", () => { (AbortSignal as any).any(); });
+tried("AbortSignal.any([1])", () => { (AbortSignal as any).any([1]); });
+tried("new WritableStream()", () => { new (WritableStream as any)(); });
+tried("new WritableStream(1)", () => { new (WritableStream as any)(1); });
+tried("new WritableStream(null)", () => { new (WritableStream as any)(null); });
+tried("WritableStream()", () => { (WritableStream as any)(); });
+tried("new TransformStream()", () => { new (TransformStream as any)(); });
+tried("new TransformStream(1)", () => { new (TransformStream as any)(1); });
+tried("new TransformStream(undefined, 1)", () => { new (TransformStream as any)(undefined, 1); });
+tried("new TextEncoderStream()", () => { new (TextEncoderStream as any)(); });
+tried("TextEncoderStream()", () => { (TextEncoderStream as any)(); });
+tried("new URL()", () => { new (URL as any)(); });
+tried("new URL('x')", () => { new (URL as any)("x"); });
+tried("new Request()", () => { new (Request as any)(); });
+tried("new Response()", () => { new (Response as any)(); });
+tried("new Headers(1)", () => { new (Headers as any)(1); });
+tried("new WebSocket()", () => { new (WebSocket as any)(); });
+tried("new BroadcastChannel()", () => { new (BroadcastChannel as any)(); });
+tried("new Blob(1)", () => { new (Blob as any)(1); });
+tried("new WebAssembly.Global()", () => { new (WebAssembly.Global as any)(); });
+tried("new WebAssembly.Global({})", () => { new (WebAssembly.Global as any)({}); });
+tried("new RegExp('(')", () => { new RegExp("("); });
+tried("new (require string_decoder).StringDecoder('nope')", () => { new (require("node:string_decoder").StringDecoder)("nope"); });
+tried("Buffer.from()", () => { (Buffer as any).from(); });
+tried("Buffer.from(1)", () => { (Buffer as any).from(1); });
+tried("new Buffer.from(1)", () => { new (Buffer.from as any)(1); });
+tried("Buffer.concat()", () => { (Buffer as any).concat(); });
+tried("Temporal valueOf", () => { if ((globalThis as any).Temporal) new (globalThis as any).Temporal.Duration(1).valueOf(); else throw new TypeError("no Temporal"); });
+tried("Temporal toJSON on {}", () => { if ((globalThis as any).Temporal) (globalThis as any).Temporal.Duration.prototype.toJSON.call({}); else throw new TypeError("no Temporal"); });
+tried("Intl.Locale toString on {}", () => { Intl.Locale.prototype.toString.call({}); });
+tried("Event.prototype.type on {}", () => { Object.getOwnPropertyDescriptor((Event as any).prototype, "type")!.get!.call({}); });
+tried("preventDefault on {}", () => { (Event as any).prototype.preventDefault.call({}); });
+tried("AbortSignal aborted on {}", () => { Object.getOwnPropertyDescriptor((AbortSignal as any).prototype, "aborted")!.get!.call({}); });
+tried("throwIfAborted on {}", () => { (AbortSignal as any).prototype.throwIfAborted.call({}); });
+tried("throwIfAborted of an aborted signal", () => { (AbortSignal as any).abort().throwIfAborted(); });
+tried("WritableStream locked on {}", () => { Object.getOwnPropertyDescriptor((WritableStream as any).prototype, "locked")!.get!.call({}); });
+tried("TransformStream readable on {}", () => { Object.getOwnPropertyDescriptor((TransformStream as any).prototype, "readable")!.get!.call({}); });
+tried("AbortController signal on {}", () => { Object.getOwnPropertyDescriptor((AbortController as any).prototype, "signal")!.get!.call({}); });
+tried("URL searchParams on {}", () => { Object.getOwnPropertyDescriptor((URL as any).prototype, "searchParams")!.get!.call({}); });
+tried("Request headers on {}", () => { Object.getOwnPropertyDescriptor((Request as any).prototype, "headers")!.get!.call({}); });
+//// what-built-ins-make/programs-c-resolved.ts
+// Promise.resolve of every sort of operand: primitives, the same promise, thenables that fulfill, reject and throw, a subclass; and what Bun.peek reads out of a promise.
+const log = (...values: unknown[]) => console.log(...values);
+const one = Promise.resolve(1);
+log(await one, await Promise.resolve(), await Promise.resolve("text"), await Promise.resolve(null), await Promise.resolve(10n), typeof (await Promise.resolve(Symbol.iterator)));
+one.then(v => log("then", v), e => log("never", e));
+Promise.resolve(2).catch(e => log("never", e)).finally(() => log("finally"));
+const same = Promise.resolve(one);
+log(same === one);
+const thenable = { then(resolve: (v: number) => void) { resolve(7); } };
+log(await Promise.resolve(thenable));
+const failing = { then(_: unknown, reject: (e: unknown) => void) { reject(new RangeError("from then")); } };
+try { await Promise.resolve(failing); } catch (e) { log((e as Error).name, (e as Error).message); }
+const throwing = { get then() { throw new TypeError("getter"); } };
+await Promise.resolve(throwing).then(() => log("never"), e => log("rejected", e.message));
+class Mine<T> extends Promise<T> {}
+log(Mine.resolve(3) instanceof Mine, await Mine.resolve(3), Promise.resolve(Mine.resolve(4)) instanceof Mine);
+log(Bun.peek(one), Bun.peek.status(one), Bun.peek.status(new Promise(() => {})), Bun.peek(5 as any));
+const rejected = Promise.reject(new Error("no")); rejected.catch(() => {});
+log(Bun.peek.status(rejected), (Bun.peek(rejected) as unknown as Error).message);
+//// what-built-ins-make/programs-c-set-methods-refuse.js
+// The seven methods of Set.prototype that take another set throw a TypeError for an operand that is no object or is not passed, also where nobody uses the answer; the receiver is tested first.
+const say = (...values) => console.log(...values);
+const names = ["union", "intersection", "difference", "symmetricDifference", "isSubsetOf", "isSupersetOf", "isDisjointFrom"];
+const set = new Set([1, 2]);
+for (const name of names)
+  for (const other of [undefined, null, 1, "text", true, 1n, Symbol("s")])
+    try { set[name](other); say(name, typeof other, "no error"); } catch (e) { say(name, typeof other, e.name, e.message); }
+for (const run of [() => { set.union(); }, () => { set.intersection(); }, () => { set.difference(); }, () => { set.symmetricDifference(); }, () => { set.isSubsetOf(); }, () => { set.isSupersetOf(); }, () => { set.isDisjointFrom(); }])
+  try { run(); say("no error"); } catch (e) { say(e.name); }
+try { Set.prototype.union.call({}, 1); } catch (e) { say(e.name, e.message); }
+say([...set.union(new Set([3]))].join(), set.isSubsetOf(new Set([1, 2, 3])), [...set.intersection({ size: 1, has: value => value === 2, keys: () => [2].values() })].join());
+// What node's primordials do: every method without declared operands is called on a new collection.
+for (const unsafe of [Map, Set]) {
+  const found = [];
+  for (const key of Reflect.ownKeys(unsafe.prototype)) {
+    if (key === "constructor") continue;
+    const desc = Reflect.getOwnPropertyDescriptor(unsafe.prototype, key);
+    if (typeof desc.value === "function" && desc.value.length === 0 && Symbol.iterator in (desc.value.call(new unsafe()) ?? {})) found.push(String(key));
+  }
+  say(unsafe.name, found.join());
+}
+//// what-built-ins-make/programs-c-spawn-sync.ts
+// What Bun.spawnSync answers, each member used as what it is: for output that is collected, ignored, inherited or sent to a descriptor, for a signal, a timeout and a limit.
+import { openSync, closeSync, readFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+const say = (...values: unknown[]) => console.log(...values);
+const printed = Bun.spawnSync(["echo", "printed"]);
+say(printed.stdout.toString().trim(), printed.stdout.length, printed.stdout instanceof Buffer, (printed.stdout.constructor as typeof Buffer).from("abc").length, (printed.stdout.constructor as typeof Buffer).isBuffer(printed.stdout));
+say(printed.stderr.length, printed.exitCode + 1, printed.success, printed.signalCode, "signalCode" in printed, typeof printed.pid, printed.pid > 0, Object.keys(printed).join());
+say(typeof printed.resourceUsage!.maxRSS, typeof printed.resourceUsage!.cpuTime.user, Object.getPrototypeOf(printed) === Object.prototype, JSON.stringify(printed.stdout.toJSON().data.slice(0, 2)));
+const ignored = Bun.spawnSync({ cmd: ["echo", "ignored"], stdout: "ignore", stderr: "inherit" });
+say(ignored.stdout, ignored.stderr, ignored.exitCode);
+const path = `${tmpdir()}/spawn-sync-output-${process.pid}.txt`;
+const descriptor = openSync(path, "w");
+const sent = Bun.spawnSync(["echo", "to a descriptor"], { stdout: descriptor });
+closeSync(descriptor);
+say(typeof sent.stdout, (sent.stdout as unknown as number) === descriptor, readFileSync(path, "utf8").trim());
+unlinkSync(path);
+const failed = Bun.spawnSync(["sh", "-c", "echo oops >&2; exit 3"]);
+say(failed.exitCode, failed.success, failed.stderr.toString().trim(), failed.stdout.length);
+const killed = Bun.spawnSync(["sh", "-c", "kill -TERM $$"]);
+say(killed.exitCode, killed.signalCode, killed.success);
+const late = Bun.spawnSync(["sleep", "5"], { timeout: 50 });
+say(late.exitedDueToTimeout, late.signalCode, late.exitCode, "exitedDueToMaxBuffer" in late);
+const limited = Bun.spawnSync(["sh", "-c", "yes | head -c 100000"], { maxBuffer: 10 });
+say(limited.exitedDueToMaxBuffer, "exitedDueToTimeout" in limited, typeof limited.stdout);
+try { Bun.spawnSync(["/does/not/exist"]); } catch (e) { say((e as any).code, (e as Error).name); }
+//// what-built-ins-make/programs-c-standard-blobs.ts
+// Bun.stdin, Bun.stdout and Bun.stderr are blobs that the realm makes once and keeps.
+const say = (...values: unknown[]) => console.log(...values);
+say(Bun.stdout === Bun.stdout, Bun.stdout === (Bun.stderr as unknown), Bun.stdout instanceof Blob, Bun.stdin instanceof Blob, Object.getPrototypeOf(Bun.stderr) === Blob.prototype, typeof Bun.stdout.size, typeof Bun.stdout.type);
+(Bun.stdout as any).marker = () => "a function put on the kept blob"; say((Bun.stdout as any).marker(), Object.keys(Bun.stdout).join());
+const writer = Bun.stdout.writer(); say(typeof writer.write("written through a writer\n"), typeof writer.flush());
+Bun.write(Bun.stdout, "written by Bun.write\n").then(bytes => {
+  say(bytes, typeof Bun.stdin.stream, typeof Bun.stdin.text, (Bun.stderr as any).name, (Bun.stdout as any).nothing);
+  (Bun as any).stdout = { replaced: () => "replaced" }; say((Bun.stdout as any).replaced?.() ?? "Bun.stdout cannot be replaced");
+});
+//// what-built-ins-make/programs-c-string-decoder.ts
+// A StringDecoder: what its constructor, its three methods and its four getters answer, for whole and for split characters, for other receivers and refused operands.
+import { StringDecoder } from "node:string_decoder";
+const say = (...values: unknown[]) => console.log(...values);
+function caught(run: () => unknown): unknown {
+  try { return run(); } catch (e) { return `${(e as any).code ?? (e as Error).name}: ${(e as Error).message}`; }
+}
+interface WithState { lastNeed: number; lastTotal: number; lastChar: Buffer; encoding: string; }
+const decoder = new StringDecoder("utf8") as StringDecoder & WithState;
+const euro = Buffer.from("€");
+say(decoder.write(euro.subarray(0, 1)).length, decoder.lastNeed + 0, decoder.lastTotal + 0, decoder.lastChar.length, decoder.lastChar instanceof Buffer, decoder.lastChar === decoder.lastChar);
+say(decoder.write(euro.subarray(1)), decoder.end().length, decoder.encoding.toUpperCase(), decoder.write("already text" as any).toUpperCase());
+say(decoder.end(Buffer.from("tail")), (decoder as any).text(Buffer.from("offset"), 3), (decoder as any).text(Buffer.from("offset"), { valueOf() { say("the offset is converted"); return 1; } }));
+say((new StringDecoder() as StringDecoder & WithState).encoding, new StringDecoder("hex").write(Buffer.from([1, 255])), new StringDecoder("base64").end(Buffer.from("ab")), new StringDecoder("utf16le").write(new Uint8Array([97, 0])), new StringDecoder("latin1").write(new DataView(new ArrayBuffer(1))).length);
+say(caught(() => new StringDecoder("nope" as any)), caught(() => (new StringDecoder({ toString() { say("the encoding is converted"); return "ascii"; } } as any) as StringDecoder & WithState).encoding));
+say(caught(() => decoder.write({} as any)), caught(() => decoder.write(undefined as any)), caught(() => (decoder.write as any)()), caught(() => decoder.end(1 as any)), caught(() => (decoder as any).text(Buffer.alloc(1))));
+say(caught(() => StringDecoder.prototype.write.call({}, euro)), caught(() => (Object.getOwnPropertyDescriptor(StringDecoder.prototype, "lastNeed")!.get as any).call(1)));
+class Louder extends StringDecoder { write(buffer: Buffer) { return super.write(buffer).toUpperCase(); } }
+say(new Louder().write(Buffer.from("louder")), new Louder() instanceof StringDecoder, Object.getPrototypeOf(new Louder()) === Louder.prototype);
+// undefined and null are refused before an operand is looked at or converted.
+const neverConverted = { valueOf() { say("never run"); return 0; } };
+for (const nothing of [undefined, null])
+  say(caught(() => StringDecoder.prototype.write.call(nothing as any, 1 as any)), caught(() => StringDecoder.prototype.end.call(nothing as any, 1 as any)), caught(() => (StringDecoder.prototype as any).text.call(nothing, euro, neverConverted)), caught(() => (Object.getOwnPropertyDescriptor(StringDecoder.prototype, "encoding")!.get as any).call(nothing)), caught(() => Buffer.prototype.toJSON.call(nothing as any)));
+function Borrowing(this: any, encoding: string) { (StringDecoder as any).call(this, encoding); }
+Borrowing.prototype = Object.create(StringDecoder.prototype);
+const borrowed = new (Borrowing as any)("utf8");
+say(borrowed.write(euro), borrowed.encoding, borrowed instanceof StringDecoder, Object.keys(borrowed).join());
+say(typeof (StringDecoder as any)("hex").write, StringDecoder.prototype.constructor === StringDecoder, Object.getOwnPropertyNames(StringDecoder.prototype).sort().join());
+//// what-built-ins-make/programs-c-tty.ts
+// What built ins make: programs c tty. It prints what plain Bun prints.
+import tty from "node:tty";
+console.log(tty.isatty(0), tty.isatty(1), tty.isatty(99), tty.isatty("x" as any), (tty.isatty as any)());
+console.log(typeof tty.ReadStream, typeof tty.WriteStream, process.stdout.isTTY, process.stdin.isTTY);
+try { new tty.WriteStream(-1); } catch (e) { console.log((e as any).code, (e as Error).name); }
+try { console.log(new tty.WriteStream(1).getWindowSize()); } catch (e) { console.log((e as any).code, (e as Error).message); }
+//// what-built-ins-make/programs-c-types-validate.ts
+// What built ins make: programs c types validate. It prints what plain Bun prints.
+import { types } from "node:util";
+import { isUtf8 } from "node:buffer";
+class Mine { a = 1; }
+const mine = new Mine();
+console.log(types.isDate(mine), types.isPromise(mine), types.isProxy(mine), types.isMap(new Map()), types.isTypedArray(mine), mine.a);
+console.log(isUtf8(new Uint8Array([97])), AbortSignal.any([new AbortController().signal]).aborted, typeof AbortSignal.timeout(1000).aborted);
+process.exit(0);
+//// what-built-ins-make/programs-c-validate-more.ts
+// Objects of the program that a native function only looks at or converts: a validated build has to find the row of each.
+class Delay { valueOf() { return 1000; } }
+class Keyed extends Map<number, number> {}
+class Listed extends Set<number> {}
+const say = (...values: unknown[]) => console.log(...values);
+say(typeof AbortSignal.timeout(new Delay() as unknown as number).aborted, (Keyed as any)[Symbol.species] === Keyed, (Listed as any)[Symbol.species] === Listed);
+const registry = new FinalizationRegistry((held: Delay) => say(held));
+registry.register(new Delay(), new Delay()); say(registry.unregister(new Delay()));
+const holder = { get made() { return new Delay(); }, kept: new Delay() };
+say((holder as any).__lookupGetter__("made").call(holder) instanceof Delay, (holder as any).__lookupSetter__("made"), (holder as any).__lookupGetter__("kept"));
+say(Object.getOwnPropertyDescriptor(holder, "kept")!.value instanceof Delay, Error.stackTraceLimit + 0 > 0, new TypeError("x").name.length, TypeError.prototype.message.length);
+say(new WebAssembly.Global({ value: "externref", mutable: true }, holder).value === holder, navigator.hardwareConcurrency > 0, navigator.userAgent.length > 0, navigator.platform.length > 0);
+say(Bun.enableANSIColors === true || Bun.enableANSIColors === false, Bun.dns.ADDRCONFIG + Bun.dns.ALL + Bun.dns.V4MAPPED > 0, typeof (Bun.dns as any).resolve, require("node:module").builtinModules.includes("fs"));
+process.exit(0);
+//// what-built-ins-make/programs-c-web-objects.ts
+// What the constructors of EventTarget and AbortController answer, and the objects that a URL, a Request and a Response keep: each used as what it is, with functions that only they call.
+const say = (...values: unknown[]) => console.log(...values);
+const target = new EventTarget();
+target.addEventListener("ping", event => say("listener ran", event.type, event.target === target, event instanceof Event));
+say(target.dispatchEvent(new Event("ping")), target instanceof EventTarget, Object.getPrototypeOf(target) === EventTarget.prototype);
+class Louder extends EventTarget { shout() { return this.dispatchEvent(new Event("shout")); } }
+const louder = new Louder(); louder.addEventListener("shout", { handleEvent(event: Event) { say("handleEvent ran", event.type); } }); say(louder.shout(), louder instanceof Louder);
+const controller = new AbortController();
+say(controller.signal === controller.signal, controller.signal instanceof AbortSignal, controller.signal.aborted, controller instanceof AbortController);
+controller.signal.addEventListener("abort", () => say("abort listener ran", controller.signal.aborted, (controller.signal.reason as { why: string }).why));
+controller.signal.throwIfAborted();
+const reason = { why: "the reason is kept" };
+say(controller.abort(reason), controller.signal.reason === reason);
+try { controller.signal.throwIfAborted(); } catch (thrown) { say(thrown === reason); }
+const plain = new AbortController(); plain.abort(); say((plain.signal.reason as Error).name, plain.signal.aborted);
+const url = new URL("http://a/?x=1&y=2");
+say(url.searchParams === url.searchParams, url.searchParams.get("x"), url.searchParams instanceof URLSearchParams);
+url.searchParams.set("x", "3"); say(url.href, [...url.searchParams.keys()].join());
+(url.searchParams as any).marker = () => "a function put on the kept object"; say((url.searchParams as any).marker());
+const handed = new Headers({ a: "1" });
+const request = new Request("http://a/", { headers: handed });
+say(request.headers === request.headers, request.headers === handed, request.headers.get("a"), request.headers instanceof Headers);
+request.headers.set("a", "2"); say(handed.get("a"), request.headers.get("a"));
+const response = new Response("body", { headers: handed, status: 201 });
+say(response.headers === response.headers, response.headers === handed, response.headers.get("a"), new Response().headers.get("a"), Response.json({}).headers.get("content-type"));
+(response.headers as any).marker = () => "and on the headers"; say((response.headers as any).marker());
+for (const wrong of [() => (EventTarget as any)(), () => (AbortController as any)(), () => Object.getOwnPropertyDescriptor(AbortController.prototype, "signal")!.get!.call({}), () => AbortController.prototype.abort.call({})])
+  try { say(wrong()); } catch (e) { say((e as Error).name); }
+//// what-built-ins-make/programs-c-web-streams.ts
+// What the constructors of WritableStream, TransformStream and TextEncoderStream answer, with and without operands; the functions of a sink and of a transformer are called by nobody but native code.
+const say = (...values: unknown[]) => console.log(...values);
+const empty = new WritableStream();
+say(empty.locked, empty instanceof WritableStream, Object.getPrototypeOf(empty) === WritableStream.prototype);
+const written: string[] = [];
+const sink = new WritableStream<string>({
+  start(controller) { written.push("start " + typeof controller.error); },
+  write(chunk) { written.push("write " + chunk); },
+  close() { written.push("close"); },
+}, { highWaterMark: { valueOf() { written.push("the mark is converted"); return 2; } } as unknown as number, size(chunk) { written.push("size " + chunk); return 1; } });
+const writer = sink.getWriter();
+say(sink.locked); await writer.write("a"); await writer.write("b"); await writer.close(); say(written.join(", "));
+const plain = new TransformStream();
+say(plain.readable === plain.readable, plain.writable === plain.writable, plain.readable instanceof ReadableStream, plain.writable instanceof WritableStream, plain.readable.locked, plain.writable.locked);
+const upper = new TransformStream<string, string>({ transform(chunk, controller) { controller.enqueue(chunk.toUpperCase()); }, flush(controller) { controller.enqueue("flushed"); } });
+const upperWriter = upper.writable.getWriter(); upperWriter.write("shout"); upperWriter.close();
+const chunks: string[] = []; for await (const chunk of upper.readable) chunks.push(chunk); say(chunks.join());
+const encoder = new TextEncoderStream();
+say(encoder.encoding.toUpperCase(), encoder.readable === encoder.readable, encoder.writable instanceof WritableStream);
+const encoderWriter = encoder.writable.getWriter(); encoderWriter.write("é"); encoderWriter.close();
+for await (const bytes of encoder.readable) say(bytes instanceof Uint8Array, [...bytes].join());
+class Counting extends WritableStream<number> { count = 0; }
+say(new Counting().count, new Counting() instanceof WritableStream, Object.getPrototypeOf(new Counting()) === Counting.prototype);
+for (const wrong of [() => (WritableStream as any)(), () => (TransformStream as any)(), () => (TextEncoderStream as any)(), () => new WritableStream(1 as any), () => new TransformStream("x" as any), () => new WritableStream({ type: "bytes" } as any), () => new WritableStream({ start() { throw new RangeError("from start"); } }), () => Object.getOwnPropertyDescriptor(WritableStream.prototype, "locked")!.get!.call({})])
+  try { say(typeof wrong()); } catch (e) { say((e as Error).name, (e as Error).message.slice(0, 40)); }
+//// what-built-ins-make/programs-c-webassembly.ts
+// Every kind of value that the getters of the WebAssembly classes answer, each used as what it is.
+const say = (...values: unknown[]) => console.log(...values);
+function caught(run: () => unknown): unknown {
+  try { return run(); } catch (e) { return `${(e as Error).name}: ${(e as Error).message}`; }
+}
+const table = new WebAssembly.Table({ element: "anyfunc", initial: 3 });
+say(table.length + 1, typeof table.length);
+say(caught(() => { const wide = new WebAssembly.Table({ element: "anyfunc", initial: 2n, address: "i64" } as any); return [typeof wide.length, String(wide.length)]; }));
+const memory = new WebAssembly.Memory({ initial: 1 });
+say(memory.buffer.byteLength, memory.buffer === memory.buffer, memory.buffer instanceof ArrayBuffer, new Uint8Array(memory.buffer)[0]);
+const before = memory.buffer; memory.grow(1); say(before === memory.buffer, before.byteLength, memory.buffer.byteLength);
+const shared = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
+say(shared.buffer instanceof SharedArrayBuffer, shared.buffer.byteLength, Object.isFrozen(shared.buffer));
+const tag = new WebAssembly.Tag({ parameters: ["i32"] });
+say(new WebAssembly.Exception(tag, [1]).stack, typeof new WebAssembly.Exception(tag, [1], { traceStack: true }).stack);
+const kept = { a: 1 };
+const holder = new WebAssembly.Global({ value: "externref", mutable: true }, kept);
+say(holder.value === kept, holder.valueOf() === kept, (holder.value as typeof kept).a);
+holder.value = say; (holder.value as typeof say)("called through the global");
+holder.value = "text"; say((holder.value as string).length);
+const number = new WebAssembly.Global({ value: "i32", mutable: true }, 5);
+number.value = 6.7; say(number.value + 1, new WebAssembly.Global({ value: "i64" }, 5n).value + 1n, new WebAssembly.Global({ value: "f64" }, 1.5).valueOf());
+say(new WebAssembly.Global({ value: "anyfunc", mutable: true }, null as any).value);
+for (const read of [() => (WebAssembly.Table.prototype as any).length, () => (WebAssembly.Global.prototype as any).value, () => (WebAssembly.Memory.prototype as any).buffer, () => (WebAssembly.Instance.prototype as any).exports, () => (WebAssembly.Exception.prototype as any).stack, () => WebAssembly.Global.prototype.valueOf.call({})])
+  say(caught(read));
+const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 2, 127, 127, 1, 127, 3, 2, 1, 0, 7, 7, 1, 3, 97, 100, 100, 0, 0, 10, 9, 1, 7, 0, 32, 0, 32, 1, 106, 11]);
+const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes));
+say(Object.keys(instance.exports), (instance.exports.add as (a: number, b: number) => number)(2, 3), Object.getPrototypeOf(instance.exports), instance.exports === instance.exports);
+const { instance: other } = await WebAssembly.instantiate(bytes);
+say((other.exports.add as (a: number, b: number) => number)(4, 5));
+const functionHolder = new WebAssembly.Global({ value: "anyfunc", mutable: true }, instance.exports.add as any);
+say((functionHolder.value as (a: number, b: number) => number)(6, 7));
+//// what-built-ins-make/programs-e-bun-env.ts
+// What built ins make: programs e bun env. It prints what plain Bun prints.
+// @ts-nocheck
+console.log(typeof Bun.env.HOME);
+console.log("hello");
+//// what-built-ins-make/programs-e-clone.ts
+// What built ins make: programs e clone. It prints what plain Bun prints.
+// @ts-nocheck
+console.log(structuredClone({ a: 1 }));
+console.log("hello");
+//// what-built-ins-make/programs-e-from-entries.ts
+// What built ins make: programs e from entries. It prints what plain Bun prints.
+// @ts-nocheck
+console.log(Object.fromEntries([["a", 1]]));
+console.log("hello");
+//// what-built-ins-make/programs-e-group-by.ts
+// What built ins make: programs e group by. It prints what plain Bun prints.
+// @ts-nocheck
+console.log(Object.groupBy([1, 2], n => (n % 2 ? "odd" : "even")));
+console.log("hello");
+//// what-built-ins-make/programs-e-log-argv.ts
+// What built ins make: programs e log argv. It prints what plain Bun prints.
+// @ts-nocheck
+console.log(process.argv[2]);
+console.log("hello");
+//// what-built-ins-make/programs-e-log-env.ts
+// What built ins make: programs e log env. It prints what plain Bun prints.
+// @ts-nocheck
+console.log(process.env.HOME);
+console.log("hello");
+//// what-built-ins-make/programs-e-log-parse.ts
+// What built ins make: programs e log parse. It prints what plain Bun prints.
+// @ts-nocheck
+console.log(JSON.parse(process.argv[2] ?? "1"));
+console.log("hello");
+//// what-built-ins-make/programs-e-log-plain-literal.ts
+// What built ins make: programs e log plain literal. It prints what plain Bun prints.
+// @ts-nocheck
+console.log({ a: [1, { b: null }] });
+console.log("hello");
+//// what-built-ins-make/programs-e-log-versions.ts
+// What built ins make: programs e log versions. It prints what plain Bun prints.
+// @ts-nocheck
+console.log(process.versions.bun.length > 0);
+console.log("hello");
+//// what-built-ins-make/programs-e-map-group-by.ts
+// What built ins make: programs e map group by. It prints what plain Bun prints.
+// @ts-nocheck
+console.log(Map.groupBy([1, 2], n => n % 2).size);
+console.log("hello");
+//// what-built-ins-make/programs-e-parse-only.ts
+// What built ins make: programs e parse only. It prints what plain Bun prints.
+// @ts-nocheck
+const v = JSON.parse(process.argv[2] ?? "1"); process.exitCode = v ? 0 : 0;
+console.log("hello");
+//// what-built-ins-make/programs-e-read-env.ts
+// What built ins make: programs e read env. It prints what plain Bun prints.
+// @ts-nocheck
+const home = process.env.HOME; process.exitCode = home === undefined ? 1 : 0;
+console.log("hello");
+//// what-built-ins-make/programs-e-spread-env.ts
+// What built ins make: programs e spread env. It prints what plain Bun prints.
+// @ts-nocheck
+console.log(Object.keys({ ...process.env }).length > 0);
+console.log("hello");
+//// what-built-ins-make/programs-e-store-env.ts
+// What built ins make: programs e store env. It prints what plain Bun prints.
+// @ts-nocheck
+process.env.A = "b"; console.log(process.env.A);
+console.log("hello");
+//// what-built-ins-make/programs-e-throw-own.ts
+// What built ins make: programs e throw own. It prints what plain Bun prints.
+// @ts-nocheck
+try { throw new Error("x") } catch (e) { console.log(e.code) }
+console.log("hello");
+//// what-built-ins-make/programs-i-builder.ts
+// One builder that many callers hand a literal of their own: defaults are spread, the descriptors of the definition are copied (definitions carry getters), a literal of methods is assigned on top.
+type Definition = { name: string; cost: number; readonly label: string; run(x: number): number };
+type Built = Definition & { enabled(): boolean; title(): string; describe(): string; twice(x: number): number };
+const DEFAULTS = { enabled: () => true, cost: 1 };
+function build(def: Definition): Built {
+  const facing = {
+    describe: () => def.name + ":" + def.cost,
+    twice: (x: number) => def.run(def.run(x)),
+  };
+  const built: Built = Object.assign(
+    Object.defineProperties({ ...DEFAULTS, title: () => def.name }, Object.getOwnPropertyDescriptors(def)),
+    facing,
+  ) as unknown as Built;
+  return built;
+}
+const double = build({ name: "double", cost: 2, get label() { return this.name.toUpperCase(); }, run: x => x * 2 });
+const square = build({ name: "square", cost: 3, get label() { return "[" + this.name + "]"; }, run: x => x * x });
+const negate = build({ name: "negate", cost: 4, get label() { return this.name; }, run: x => -x });
+const tools = [double, square, negate];
+let total = 0;
+for (let i = 0; i < 2000000; i++) {
+  const tool = tools[i % 3];
+  if (tool.enabled()) total += tool.run(i & 7) + tool.twice(i & 3) + tool.cost + tool.title().length;
+}
+console.log(total, tools.map(tool => tool.label + " " + tool.describe() + " " + Object.keys(tool).join()).join(" | "));
+//// what-built-ins-make/programs-i-builder-generic.ts
+// A builder as libraries write it: generic over the definition it is handed; each caller hands a literal of its own shape.
+type Base = { name: string; run(x: number): number; cost?: number; readonly label?: string; extra?: unknown };
+type Defaults = { enabled(): boolean; cost: number; title(): string };
+type Built<D extends Base> = Omit<D, keyof Defaults> & Defaults & { describe(): string };
+const DEFAULTS = { enabled: () => true, cost: 1 };
+export function build<D extends Base>(def: D): Built<D> {
+  const facing = { describe: () => def.name + ":" + (def.cost ?? 0) };
+  const built: Built<Base> = Object.assign(
+    Object.defineProperties({ ...DEFAULTS, title: () => def.name }, Object.getOwnPropertyDescriptors(def)),
+    facing,
+  ) as unknown as Built<Base>;
+  return built as unknown as Built<D>;
+}
+const a = build({ name: "a", run: x => x * 2 });
+const b = build({ name: "b", cost: 3, get label() { return "[" + this.name + "]"; }, run: x => x * x });
+const c = build({ name: "c", extra: [1, 2], run: x => -x, more: 1 });
+const d = build({ name: "d", run(x) { return x + 1; }, other: "o", another: { deep: true } });
+const e = build(Object.assign({ name: "e", run: (x: number) => x }, JSON.parse('{"parsed":1}')));
+console.log([a, b, c, d, e].map(tool => tool.name + " " + tool.describe() + " " + tool.run(3) + " " + Object.keys(tool).join()).join(" | "), b.label);
+//// what-built-ins-make/programs-i-builder-with-a-check.ts
+// A builder that reads a member of the definition, of a declared type that nobody has proven, in front of the copy of the descriptors: the code behind the test of that type exists twice.
+type Definition = { name: string; cost: number; allowed?: (x: number) => boolean; readonly label: string; run(x: number): number };
+type Built = Definition & { enabled(): boolean; title(): string; admits(x: number): boolean };
+const DEFAULTS = { enabled: () => true, cost: 1 };
+function build(def: Definition): Built {
+  const allowed = def.allowed;
+  const facing = { admits: (x: number) => (allowed ? allowed(x) : true) };
+  const built: Built = Object.assign(
+    Object.defineProperties({ ...DEFAULTS, title: () => def.name }, Object.getOwnPropertyDescriptors(def)),
+    facing,
+  ) as unknown as Built;
+  return built;
+}
+const parsed = JSON.parse('{"name":"parsed","cost":5,"allowed":7,"label":"plain"}');
+parsed.run = (x: number) => x + 1;
+const tools = [
+  build({ name: "double", cost: 2, get label() { return this.name.toUpperCase(); }, run: x => x * 2 }),
+  build({ name: "square", cost: 3, allowed: x => x > 1, get label() { return "[" + this.name + "]"; }, run: x => x * x }),
+  build(parsed),
+];
+for (const tool of tools) {
+  let admits: unknown;
+  try { admits = tool.admits(2); } catch (e) { admits = (e as Error).name; }
+  console.log(tool.name, tool.cost, tool.label, tool.run(3), tool.title(), tool.enabled(), admits, Object.keys(tool).join(), typeof Object.getOwnPropertyDescriptor(tool, "label")!.get);
+}
+//// what-built-ins-make/programs-i-removable-rows.ts
+// A typed read in front of the two calls is tested, and what follows the test is copied for the values that fail it. The copies join between
+// Object.getOwnPropertyDescriptors and Object.defineProperties, and each has described the source for itself.
+type Definition = { name: string; make?: (input: unknown) => unknown; [key: string]: unknown };
+const DEFAULTS = { isEnabled: () => true, aliases: [] as string[], label: () => "" };
+
+export function build<D extends Definition>(def: D) {
+  const make = def.make;
+  const created = (input: unknown) => ({ made: typeof make === "function" ? make(input) : make, by: def.name });
+  const facing = {
+    run(input: unknown) {
+      return created(input);
+    },
+  };
+  return Object.assign(Object.defineProperties({ ...DEFAULTS, shownName: () => def.name }, Object.getOwnPropertyDescriptors(def)), facing);
+}
+
+const log: string[] = [];
+const definitions: any[] = [
+  { name: "a", make: (x: unknown) => [x], get schema() { log.push("schema read"); return 1; } },
+  { name: "b" },
+  { name: "c", make: 7 },
+  { name: "d", make: "text", other: 2 },
+  new Proxy({ name: "e", make: 1n }, {
+    ownKeys(target) { log.push("ownKeys"); return Reflect.ownKeys(target); },
+    getOwnPropertyDescriptor(target, key) { log.push("describe " + String(key)); return Reflect.getOwnPropertyDescriptor(target, key); },
+    get(target, key, receiver) { log.push("get " + String(key)); return Reflect.get(target, key, receiver); },
+  }),
+];
+for (const definition of definitions) {
+  const built: any = build(definition);
+  console.log(Object.keys(built).join(), JSON.stringify(built.run(3), (key, value) => typeof value === "bigint" ? String(value) : value), built.shownName(), log.splice(0).join("|"));
+}
+for (const odd of [undefined, null]) {
+  try {
+    build(odd as any);
+  } catch (error) {
+    console.log((error as Error).name);
+  }
+}
+//// what-built-ins-make/programs-l-abort.js
+// What built ins make: programs l abort. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  new AbortController().abort();
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-array-from.js
+// What built ins make: programs l array from. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  Array.from([1]);
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-at.ts
+// What built ins make: programs l at. It prints what plain Bun prints.
+// @ts-nocheck
+if (process.argv.length > 99) {
+  [1].at(0);
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-buffer-concat.js
+// What built ins make: programs l buffer concat. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  Buffer.concat([]);
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-buffer-from.js
+// What built ins make: programs l buffer from. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  Buffer.from("a");
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-buffer-hex.js
+// What built ins make: programs l buffer hex. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  Buffer.alloc(1).toString("hex");
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-buffer-parent.ts
+// What built ins make: programs l buffer parent. It prints what plain Bun prints.
+// @ts-nocheck
+if (process.argv.length > 99) {
+  Buffer.alloc(1).parent;
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-console-write.ts
+// What built ins make: programs l console write. It prints what plain Bun prints.
+// @ts-nocheck
+if (process.argv.length > 99) {
+  console.write("a");
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-dispatch.js
+// What built ins make: programs l dispatch. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  new EventTarget().dispatchEvent(new Event("a"));
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-encoder.js
+// What built ins make: programs l encoder. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  new TextEncoderStream();
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-event-target.js
+// What built ins make: programs l event target. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  new EventTarget().addEventListener("a", () => {});
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-find.ts
+// What built ins make: programs l find. It prints what plain Bun prints.
+// @ts-nocheck
+if (process.argv.length > 99) {
+  [1].find(x => x);
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-find-last.ts
+// What built ins make: programs l find last. It prints what plain Bun prints.
+// @ts-nocheck
+if (process.argv.length > 99) {
+  [1].findLast(x => x);
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-from-async.ts
+// What built ins make: programs l from async. It prints what plain Bun prints.
+// @ts-nocheck
+if (process.argv.length > 99) {
+  Array.fromAsync([1]);
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-glob.ts
+// What built ins make: programs l glob. It prints what plain Bun prints.
+// @ts-nocheck
+if (process.argv.length > 99) {
+  new Bun.Glob("*").scanSync(".");
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-iterator-from.ts
+// What built ins make: programs l iterator from. It prints what plain Bun prints.
+// @ts-nocheck
+if (process.argv.length > 99) {
+  Iterator.from({ next() { return { done: true }; } }).next();
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-promise.js
+// What built ins make: programs l promise. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  new Promise(r => r(1));
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-promise-try.ts
+// What built ins make: programs l promise try. It prints what plain Bun prints.
+// @ts-nocheck
+if (process.argv.length > 99) {
+  Promise.try(() => 1);
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-reduce.ts
+// What built ins make: programs l reduce. It prints what plain Bun prints.
+// @ts-nocheck
+if (process.argv.length > 99) {
+  [1].reduce((a, b) => a + b);
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-reduce-right.ts
+// What built ins make: programs l reduce right. It prints what plain Bun prints.
+// @ts-nocheck
+if (process.argv.length > 99) {
+  [1].reduceRight((a, b) => a + b, 0);
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-reflect-get.ts
+// What built ins make: programs l reflect get. It prints what plain Bun prints.
+// @ts-nocheck
+if (process.argv.length > 99) {
+  Reflect.get({ a: 1 }, "a");
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-request-headers.js
+// What built ins make: programs l request headers. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  new Request("http://a/").headers.get("a");
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-response-headers.js
+// What built ins make: programs l response headers. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  new Response("a").headers.get("a");
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-response-json.js
+// What built ins make: programs l response json. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  Response.json({ a: 1 });
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-search-params.js
+// What built ins make: programs l search params. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  new URL("http://a/").searchParams.get("a");
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-sort.js
+// What built ins make: programs l sort. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  [2, 1].sort();
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-stringify.js
+// What built ins make: programs l stringify. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  JSON.stringify({ a: 1 });
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-transform.js
+// What built ins make: programs l transform. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  new TransformStream();
+}
+console.log("hello");
+//// what-built-ins-make/programs-l-writable.js
+// What built ins make: programs l writable. It prints what plain Bun prints.
+if (process.argv.length > 99) {
+  new WritableStream();
+}
+console.log("hello");
+//// what-built-ins-make/programs-m-d-constant.ts
+// What built ins make: programs m d constant. It prints what plain Bun prints.
+// @ts-nocheck
+const d = Reflect.getOwnPropertyDescriptor(Map.prototype, "get"); d.value.call(new Map(), 1);
+console.log("hello");
+//// what-built-ins-make/programs-m-set-no-operand.ts
+// What built ins make: programs m set no operand. It prints what plain Bun prints.
+// @ts-nocheck
+try { new Set().union(); } catch {}
+console.log("hello");
+//// what-built-ins-make/programs-p-bind-four.ts
+// What built ins make: programs p bind four. It prints what plain Bun prints.
+// @ts-nocheck
+// Instructions a bind of four operands (more than a bound function holds in itself): "bind" against "none".
+const binds = process.argv[2] === "bind";
+const count = 200000;
+function target(a, b, c, d) { return a + b + c + d; }
+let kept = 0;
+for (let i = 0; i < count; i++) {
+  const f = binds ? target.bind(null, i, 1, 2, 3) : target;
+  kept += f.length;
+}
+console.log(kept);
+//// what-built-ins-make/programs-p-define-properties.ts
+// What built ins make: programs p define properties. It prints what plain Bun prints.
+// @ts-nocheck
+// Instructions a property of Object.getOwnPropertyDescriptors(b) and of Object.defineProperties(target, descriptors), by the sort of target.
+const what = process.argv[2];
+const size = 40, rounds = 5000 * Number(process.env.TIMES ?? 1);
+const make = () => { const o = {}; for (let i = 0; i < size; i++) o["name" + i] = i % 2 ? i : () => i; return o; };
+const a = { first: 1, second: "two", third: () => 3 };
+const b = make();
+const literal = { p0: 0, p1: 1, p2: 2, p3: 3, p4: 4, p5: 5, p6: 6, p7: 7, p8: 8, p9: 9, p10: 0, p11: 1, p12: 2, p13: 3, p14: 4, p15: 5, p16: 6, p17: 7, p18: 8, p19: 9, p20: 0, p21: 1, p22: 2, p23: 3, p24: 4, p25: 5, p26: 6, p27: 7, p28: 8, p29: 9, p30: 0, p31: 1, p32: 2, p33: 3, p34: 4, p35: 5, p36: 6, p37: 7, p38: 8, p39: 9 };
+const fixed = Object.getOwnPropertyDescriptors(b);
+let kept = 0;
+for (let round = 0; round < rounds; round++) {
+  if (what === "descriptors") kept += Object.getOwnPropertyDescriptors(b).name1.value;
+  else if (what === "descriptors-of-literal") kept += Object.getOwnPropertyDescriptors(literal).p1.value;
+  else if (what === "define-on-empty") kept += Object.defineProperties({}, fixed).name1;
+  else if (what === "define-on-spread") kept += Object.defineProperties({ ...a, k: () => round }, fixed).name1;
+  else if (what === "idiom-on-spread") kept += Object.defineProperties({ ...a, k: () => round }, Object.getOwnPropertyDescriptors(b)).name1;
+  else if (what === "idiom-on-empty") kept += Object.defineProperties({}, Object.getOwnPropertyDescriptors(b)).name1;
+  else if (what === "idiom-then-assign") kept += Object.assign(Object.defineProperties({ ...a, k: () => round }, Object.getOwnPropertyDescriptors(b)), a).name1;
+  else if (what === "idiom-of-literal") kept += Object.defineProperties({ ...a, k: () => round }, Object.getOwnPropertyDescriptors(literal)).p1;
+  else if (what === "spread-alone") kept += { ...a, k: () => round }.first;
+  else if (what === "define-on-literal") kept += Object.defineProperties({ first: 1, k: () => round }, fixed).name1;
+  else if (what === "assign-on-empty") kept += Object.assign({}, b).name1;
+  else if (what === "spread-of-b") kept += { ...b }.name1;
+  else kept += 1;
+}
+console.log(kept);
+//// what-built-ins-make/programs-p-freeze-closures.ts
+// What built ins make: programs p freeze closures. It prints what plain Bun prints.
+// @ts-nocheck
+// Instructions a freeze of a closure: run with "freeze" and with "none", the difference divided by the count.
+const freezes = process.argv[2] === "freeze";
+const count = 200000;
+let kept = 0;
+for (let i = 0; i < count; i++) {
+  const f = function (x) { return x + i; };
+  f.index = i;
+  f.label = "l";
+  if (freezes) Object.freeze(f);
+  kept += f.index & 1;
+}
+console.log(kept);
+//// what-built-ins-make/programs-p-map-from-pairs.ts
+// What built ins make: programs p map from pairs. It prints what plain Bun prints.
+// @ts-nocheck
+// Instructions an entry of new Map(pairs) | new Set(strings) | a loop of map.set | a loop of set.add, keys that are strings.
+const what = process.argv[2];
+const size = 500, rounds = 400;
+const source = {};
+for (let i = 0; i < size; i++) source["key" + i] = "value" + i;
+const pairs = Object.entries(source);
+const keys = Object.keys(source);
+const cut = keys.map(key => (key + "-tail").slice(0, key.length));
+let kept = 0;
+for (let round = 0; round < rounds; round++) {
+  if (what === "map") kept += new Map(pairs).size;
+  else if (what === "set") kept += new Set(keys).size;
+  else if (what === "cut") kept += new Set(keys.map(key => (key + "-tail").slice(0, key.length))).size;
+  else if (what === "cut-none") kept += keys.map(key => (key + "-tail").slice(0, key.length)).length;
+  else if (what === "map-set") { const map = new Map(); for (let i = 0; i < size; i++) map.set(keys[i], i); kept += map.size; }
+  else if (what === "set-add") { const set = new Set(); for (let i = 0; i < size; i++) set.add(keys[i]); kept += set.size; }
+  else kept += pairs.length;
+}
+console.log(kept);
+//// what-built-ins-make/programs-p-map-variants.ts
+// What built ins make: programs p map variants. It prints what plain Bun prints.
+// @ts-nocheck
+// Instructions an entry of new Map(pairs) by the size of the list and the sort of the values.
+const [what, sizeText] = process.argv.slice(2);
+const size = Number(sizeText), rounds = (200000 / size) * Number(process.env.TIMES ?? 1);
+const pairs = [];
+for (let i = 0; i < size; i++) pairs.push(["key" + i, what === "objects" ? { i } : what === "numbers" ? i + 0.5 : what === "small" ? i : String("value" + i)]);
+for (const pair of pairs) pair[0].charCodeAt(0), typeof pair[1] === "string" && pair[1].charCodeAt(0);
+const probe = new Map(pairs);
+let kept = 0;
+for (let round = 0; round < rounds; round++) kept += what === "none" ? pairs.length : new Map(pairs).size;
+console.log(kept, probe.size);
+//// what-built-ins-make/programs-p-set-variants.ts
+// What built ins make: programs p set variants. It prints what plain Bun prints.
+// @ts-nocheck
+// Instructions an element of new Set(list) by the sort of the elements.
+const [what, sizeText] = process.argv.slice(2);
+const size = Number(sizeText), rounds = (200000 / size) * Number(process.env.TIMES ?? 1);
+const list = [];
+for (let i = 0; i < size; i++) list.push(what === "objects" ? { i } : what === "numbers" ? i + 0.5 : what === "small" ? i : String("value" + i));
+for (const element of list) typeof element === "string" && element.charCodeAt(0);
+if (what === "mixed") list[size - 1] = { last: true };
+if (what === "repeated") for (let i = 0; i < size; i++) list[i] = list[i % 20];
+let kept = 0;
+for (let round = 0; round < rounds; round++) kept += what === "none" ? list.length : new Set(list).size;
+console.log(kept);
+//// what-built-ins-make/programs-w-function-to-string.ts
+// What built ins make: programs w function to string. It prints what plain Bun prints.
+// @ts-nocheck
+const other = function other() {};
+const key = ["to", "String"].join("");
+const object = globalThis[["Fun", "ction"].join("")].prototype;
+try { object[key] = other; console.log(object.toString === other ? "REPLACED" : "ignored"); } catch (e) { console.log("refused", e.message); }
+//// what-built-ins-make/programs-w-function-to-string-defined.ts
+// What built ins make: programs w function to string defined. It prints what plain Bun prints.
+// @ts-nocheck
+const other = function other() {};
+const key = ["to", "String"].join("");
+for (const holder of ["Function", "Date", "Error"]) {
+  const object = globalThis[holder].prototype;
+  try { Object.defineProperty(object, key, { value: other, configurable: true, writable: true }); console.log(holder, object.toString === other ? "REPLACED" : "ignored"); } catch (e) { console.log(holder, "refused", e.message); }
+}
+//// what-built-ins-make/programs-w-function-to-string-known.ts
+// What built ins make: programs w function to string known. It prints what plain Bun prints.
+// @ts-nocheck
+const other = function other() {};
+try { Function.prototype.toString = other; console.log(Function.prototype.toString === other ? "REPLACED" : "ignored"); } catch (e) { console.log("refused", e.message); }
+//// what-built-ins-make/programs-w-link-glob.ts
+// What built ins make: programs w link glob. It prints what plain Bun prints.
+// @ts-nocheck
+const holder = new Bun.Glob("*");
+const prototype = Object.getPrototypeOf(holder);
+const behind = Object.getPrototypeOf(prototype);
+try { Object.setPrototypeOf(prototype, Object.create(behind, { extra: { value: "from behind", configurable: true } })); console.log(holder.extra); } catch (e) { console.log(e.name, e.message.slice(0, 70)); }
+//// what-built-ins-make/programs-w-link-hasher.ts
+// What built ins make: programs w link hasher. It prints what plain Bun prints.
+// @ts-nocheck
+const holder = new Bun.CryptoHasher("sha1");
+const prototype = Object.getPrototypeOf(holder);
+const behind = Object.getPrototypeOf(prototype);
+try { Object.setPrototypeOf(prototype, Object.create(behind, { extra: { value: "from behind", configurable: true } })); console.log(holder.extra); } catch (e) { console.log(e.name, e.message.slice(0, 70)); }
+//// what-built-ins-make/programs-w-link-textdecoder.ts
+// What built ins make: programs w link textdecoder. It prints what plain Bun prints.
+// @ts-nocheck
+const holder = new TextDecoder();
+const prototype = Object.getPrototypeOf(holder);
+const behind = Object.getPrototypeOf(prototype);
+try { Object.setPrototypeOf(prototype, Object.create(behind, { extra: { value: "from behind", configurable: true } })); console.log(holder.extra); } catch (e) { console.log(e.name, e.message.slice(0, 70)); }
+//// what-built-ins-make/programs-w-sa-1.ts
+// What built ins make: programs w sa. It prints what plain Bun prints.
+// @ts-nocheck
+import { SocketAddress } from "node:net";
+const attempt = run => { try { return run(); } catch (e) { return e.name; } };
+console.log(attempt(() => new SocketAddress({ get address() { throw new RangeError("from the getter"); } })), attempt(() => SocketAddress({})));
+//// what-built-ins-make/programs-w-sa-2.ts
+// What built ins make: programs w sa. It prints what plain Bun prints.
+// @ts-nocheck
+import { SocketAddress } from "node:net";
+const attempt = run => { try { return run(); } catch (e) { return e.name; } };
+console.log(attempt(() => SocketAddress({})));
+//// what-built-ins-make/programs-w-sa-3.ts
+// What built ins make: programs w sa. It prints what plain Bun prints.
+// @ts-nocheck
+import { SocketAddress } from "node:net";
+try { SocketAddress({}); } catch (e) { console.log(e.name); }
+//// what-built-ins-make/programs-w-socket-address-getter.ts
+// What built ins make: programs w socket address getter. It prints what plain Bun prints.
+// @ts-nocheck
+import { SocketAddress } from "node:net";
+try { new SocketAddress({ get address() { throw new RangeError("from the getter"); } }); } catch (e) { console.log(e.name); }
+//// what-built-ins-make/programs-w-socket-address-plain.ts
+// What built ins make: programs w socket address plain. It prints what plain Bun prints.
+// @ts-nocheck
+import { SocketAddress } from "node:net";
+console.log(new SocketAddress({ address: "127.0.0.1", port: 80 }).port);
+//// what-built-ins-make/programs-x-frame-address-across-suspension.ts
+// Bun.stdin, Bun.stdout and Bun.stderr are blobs that the realm makes once and keeps.
+const say = (...values: unknown[]) => console.log(...values);
+say(Bun.stdout === Bun.stdout, Bun.stdout === (Bun.stderr as unknown), Bun.stdout instanceof Blob, Bun.stdin instanceof Blob, Object.getPrototypeOf(Bun.stderr) === Blob.prototype, typeof Bun.stdout.size, typeof Bun.stdout.type);
+(Bun.stdout as any).marker = () => "a function put on the kept blob"; say((Bun.stdout as any).marker(), Object.keys(Bun.stdout).join());
+const writer = Bun.stdout.writer(); say(typeof writer.write("written through a writer\n"), typeof writer.flush());
+await Bun.write(Bun.stdout, "written by Bun.write\n");
+say(typeof Bun.stdin.stream, typeof Bun.stdin.text, (Bun.stderr as any).name, (Bun.stdout as any).nothing);
+(Bun as any).stdout = { replaced: () => "replaced" }; say((Bun.stdout as any).replaced?.() ?? "Bun.stdout cannot be replaced");

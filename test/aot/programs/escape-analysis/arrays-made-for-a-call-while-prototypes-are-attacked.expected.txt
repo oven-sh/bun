@@ -1,0 +1,20 @@
+0: {0}s0undefinedundefined2 TypeError{0}s0 {0}s0undefinedundefined2 {0}s0 2
+0: TypeError{0}r0 {0}r0undefined2
+1: {1}s1undefinedundefined2 TypeError{1}s1 {1}s1undefinedundefined2 {1}s1 2
+1: TypeError{1}r1 {1}r1undefined2
+2: {2}s2undefinedundefined2 TypeError{2}s2 {2}s2undefinedundefined2 {2}s2 2
+2: TypeError{2}r2 {2}r2undefined2
+3: {3}s3undefinedundefined2 TypeError{3}s3 {3}s3undefinedundefined2 {3}s3 2
+3: TypeError{3}r3 {3}r3undefined2
+4: {4}s4undefinedundefined2 TypeError{4}s4 {4}s4undefinedundefined2 {4}s4 2
+4: TypeError{4}r4 {4}r4undefined2
+5: {5}s5undefinedundefined2 TypeError{5}s5 {5}s5undefinedundefined2 {5}s5 2
+5: TypeError{5}r5 {5}r5undefined2
+6: {6}s6undefinedundefined2 TypeError{6}s6 {6}s6undefinedundefined2 {6}s6 2
+6: TypeError{6}r6 {6}r6undefined2
+7: {7}s7undefinedundefined2 TypeError{7}s7 {7}s7undefinedundefined2 {7}s7 2
+7: TypeError{7}r7 {7}r7undefined2
+8: {8}s8undefinedundefined2 TypeError{8}s8 {8}s8undefinedundefined2 {8}s8 2
+8: TypeError{8}r8 {8}r8undefined2
+9: {9}s9undefinedundefined2 TypeError{9}s9 {9}s9undefinedundefined2 {9}s9 2
+9: TypeError{9}r9 {9}r9undefined2

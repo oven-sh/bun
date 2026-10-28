@@ -1,0 +1,50 @@
+////: attempt
+function attempt(label: string, f: () => unknown) {
+  try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
+}
+////: attempt-2
+function attempt(label: string, f: () => unknown) {
+  try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).constructor.name); }
+}
+////: lines
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true
+  }
+}
+////: lines-13
+function «1»(label: string, action: () => unknown): void {
+    try { console.log(label, «2»(action())); } catch (error) { console.log(label, (error as Error).constructor.name); }
+}
+////: lines-2
+{
+  "extends": «1»,
+  "compilerOptions": {
+    «2»: «3»
+  }
+}
+////: lines-8
+interface «1» {
+  «2»: «3»;
+  «4»: «5»;
+}
+////: lines-9
+function «1»(«2»: «3»): «4» {
+  return «5» + «6»;
+}
+////: load
+async function load(name: string, importing: () => Promise<{ made: unknown }>): Promise<void> {
+  let loaded = false;
+  try {
+    const module = await importing();
+    loaded = true;
+    console.log(name + ":", «1»);
+  } catch (error) {
+    console.log(name + ":", (error as Error).name, loaded ? "when it was read" : "while it was loaded");
+  }
+}
+////: say
+function say(label: string, make: () => unknown): void {
+  try { console.log(label, String(make())); } catch (error) { console.log(label, "THROWS", (error as Error).constructor.name); }
+}

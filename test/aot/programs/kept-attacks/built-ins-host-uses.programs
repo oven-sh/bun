@@ -1,0 +1,21 @@
+//// built-ins-host-uses/programs-customers.ts
+// Built ins host uses: programs customers. It prints what plain Bun prints.
+import { inspect } from "node:util";
+class Point {
+  constructor(public x: number, public y: number) {}
+  [inspect.custom](depth: number, options: { stylize(text: string, style: string): string; depth: number; colors: boolean }, print: typeof inspect) {
+    return `Point<${options.stylize(String(this.x), "number")}, ${print(this.y)}> depth=${typeof depth} colors=${options.colors}`;
+  }
+}
+console.log(new Point(1, 2));
+console.log({ nested: { deep: { deeper: { params: new URLSearchParams("a=1") } } } });
+console.log(new URLSearchParams("a=1&b=2"));
+process.nextTick((a: number, b: string) => console.log("tick", a, b), 7, "seven");
+process.stdout.write("out\n");
+process.stderr.write("err\n");
+process.on("warning", warning => console.log("warning seen:", warning.name, warning.message));
+process.emitWarning("careful", "CustomWarning");
+console.log(typeof process.listeners("warning")[0]);
+console.log(require("node:module").wrapper.length);
+console.log(Bun.peek(Promise.resolve(5)), Bun.peek.status(Promise.resolve(5)));
+queueMicrotask(() => console.log("microtask"));

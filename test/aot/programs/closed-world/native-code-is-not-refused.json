@@ -1,0 +1,1 @@
+{"skipInShell": "it uses CustomEvent and Buffer, which the jsc shell does not have", "skipInVariant": { "trimmed-runtime": "it reaches Bun.FFI under a name that is decoded at run time, and the source never names it: --trim removes it, and the call throws" }}

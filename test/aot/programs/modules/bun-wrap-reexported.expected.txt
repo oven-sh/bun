@@ -1,0 +1,6 @@
+by name: true true
+by star: true true own the own name wins false
+keys: true true true
+an import of a missing name: SyntaxError
+an export of a missing name: SyntaxError
+an import of the default: SyntaxError

@@ -2074,4 +2074,193 @@ describe("bugs that zstd has had", () => {
       expect(zlib.zstdDecompressSync(frame, { dictionary }).equals(input)).toBe(true);
     });
   });
+
+  // Each input is one of many from its seed that gives other bytes once the check that it is for is taken out.
+  describe("the optimal parser", () => {
+    /** xorshift32 */
+    class Input {
+      bytes: number[] = [];
+      #x: number;
+      constructor(seed: number) {
+        this.#x = Math.imul(seed, 2654435761) >>> 0;
+      }
+      next() {
+        this.#x ^= this.#x << 13;
+        this.#x ^= this.#x >>> 17;
+        this.#x ^= this.#x << 5;
+        return (this.#x >>>= 0);
+      }
+      range(from: number, to: number) {
+        return from + (this.next() % (to - from + 1));
+      }
+      pick(values: number[]) {
+        return values[this.next() % values.length];
+      }
+      some(length: number) {
+        return Array.from({ length }, () => this.next() & 255);
+      }
+      noise(length: number) {
+        return this.add(this.some(length));
+      }
+      copy(offset: number, length: number) {
+        for (let i = 0; i < length; i++) this.bytes.push(this.bytes[this.bytes.length - offset]);
+        return this;
+      }
+      add(bytes: number[]) {
+        for (const byte of bytes) this.bytes.push(byte);
+        return this;
+      }
+      /** Many of these make one literal cheaper than none. */
+      shortMatchAndLiteral() {
+        return this.copy(this.range(50, Math.min(2000, this.bytes.length)), this.range(5, 14)).noise(1);
+      }
+    }
+    const digest = (frame: Buffer) => `${frame.length} ${Bun.hash.xxHash32(frame).toString(16)}`;
+
+    // The first block ends with a match in the dictionary, a little further back than the window is large. For the
+    // second block the dictionary is given up, and the same distance leads to the right bytes again.
+    it.each([
+      [26, false, "1520 a9ba4dd5"],
+      [10, false, "2316 30a8306d"],
+      [26, true, "9125 e0ee4a07"],
+    ])(
+      "a repeat offset beyond the window is not used once the dictionary is given up: %i, %p",
+      async (seed, known, expected) => {
+        const input = new Input(seed);
+        const windowLog = input.range(10, 12);
+        const window = 1 << windowLog;
+        const offset = window + input.range(1, 200);
+        const dictionarySize = input.range(offset + 50, 4 * window);
+        input.noise(dictionarySize);
+        const first = input.next() % 2 < 1 ? input.range(window >> 2, window - 50) : window;
+        const [length, after] = [input.range(8, 40), input.range(0, 5)];
+        input
+          .noise(first - length - after)
+          .copy(offset, length)
+          .noise(after);
+        for (let i = input.range(1, 6); i > 0; i--) input.noise(input.range(1, 250)).copy(offset, input.range(4, 40));
+        // From 8 KB on the tables of the dictionary are copied, and it is the older segment. Else it is attached.
+        const more = known ? 8300 + input.range(0, 2999) : input.range(1, 3000);
+        while (input.bytes.length - dictionarySize < first + more) {
+          if (input.next() % 3 < 1) input.copy(offset, input.range(4, 40));
+          else input.noise(input.range(1, 400));
+        }
+        const dictionary = Buffer.from(input.bytes).subarray(0, dictionarySize);
+        const source = Buffer.from(input.bytes).subarray(dictionarySize);
+        const params = {
+          [c.ZSTD_c_strategy]: input.range(c.ZSTD_btopt, c.ZSTD_btultra2),
+          [c.ZSTD_c_windowLog]: windowLog,
+          [c.ZSTD_c_minMatch]: input.range(3, 5),
+          [c.ZSTD_c_searchLog]: input.range(2, 6),
+        };
+        const stream = zlib.createZstdCompress({
+          params,
+          dictionary,
+          pledgedSrcSize: known ? source.length : undefined,
+        });
+        stream.write(source.subarray(0, first));
+        stream.flush();
+        const frame = (await through(stream, [source.subarray(first)])) as Buffer;
+        expect(digest(frame)).toBe(expected);
+        expect(zlib.zstdDecompressSync(frame, { dictionary }).equals(source)).toBe(true);
+      },
+    );
+
+    // facebook/zstd b0e8580dc. The input ends with `q 6 x 1`. `q 5 x 2` is a little before, so that the repeat offset
+    // gives `x` and not what follows, and `x 1` is far before.
+    it("does not look at the byte after the block for a literal that replaces the end of a match", () => {
+      const input = new Input(68);
+      const x = input.some(input.range(8, 40));
+      input
+        .noise(200)
+        .add(x)
+        .add([1])
+        .noise(input.pick([300, 5000, 40000]));
+      for (let i = input.range(30, 600); i > 0; i--) input.shortMatchAndLiteral();
+      const q = input.some(input.range(6, 20));
+      for (let i = input.range(0, 29); i > 0; i--) {
+        const [a, b] = [input.some(input.range(6, 20)), input.some(input.range(6, 20))];
+        for (const w of [3, 4])
+          input
+            .add(a)
+            .add([w])
+            .add(b)
+            .add([w + 10]);
+      }
+      input.add(q).add([5]).add(x).add([2]);
+      for (let i = input.range(0, 2); i > 0; i--) input.shortMatchAndLiteral();
+      input.add(q).add([6]).add(x).add([1]);
+      const params = {
+        [c.ZSTD_c_strategy]: input.range(c.ZSTD_btopt, c.ZSTD_btultra2),
+        [c.ZSTD_c_windowLog]: input.range(19, 21),
+        [c.ZSTD_c_searchLog]: input.range(3, 7),
+        [c.ZSTD_c_minMatch]: input.range(3, 5),
+        [c.ZSTD_c_targetLength]: input.pick([48, 64, 200, 999]),
+      };
+      expect(digest(roundTrip(Buffer.from(input.bytes), params))).toBe("41368 2e959c78");
+    });
+
+    // facebook/zstd 22574d848. Matches for `text` are short and overlap, as both copies of it are spoilt every so often,
+    // at other places. Its last byte is only in a third, short copy.
+    it("has room for a series that goes on to the last position a match can lead to, and a literal", () => {
+      const input = new Input(255);
+      const size = input.pick([4095, 4095, 4095, 4095, 4094, 4096, 4093, 4097]);
+      const text = input.some(size);
+      const step = input.range(40, 300);
+      const spoilt = (first: number) =>
+        text.map((byte, i) => (i === size - 1 || (i >= first && (i - first) % step === 0) ? byte ^ 0x55 : byte));
+      const end = text.slice(size - input.range(5, 40));
+      input.noise(100);
+      const far = input.next() % 2 < 1;
+      if (far) input.add(end).noise(input.pick([10, 1000, 20000]));
+      input
+        .add(spoilt(step >> 1))
+        .noise(20)
+        .add(spoilt(step - 1))
+        .noise(20);
+      for (let i = input.range(100, 900); i > 0; i--) input.shortMatchAndLiteral();
+      if (!far) input.add(end);
+      input.noise(input.range(12, 60)).add(text).noise(input.range(20, 400));
+      const params = {
+        [c.ZSTD_c_strategy]: input.range(c.ZSTD_btopt, c.ZSTD_btultra2),
+        [c.ZSTD_c_windowLog]: 20,
+        [c.ZSTD_c_searchLog]: input.range(3, 7),
+        [c.ZSTD_c_minMatch]: input.range(3, 5),
+        [c.ZSTD_c_targetLength]: input.pick([4095, 4096, 131072]),
+      };
+      expect(digest(roundTrip(Buffer.from(input.bytes), params))).toBe("5917 9ffc7ec4");
+    });
+
+    // facebook/zstd 4d8a2132d. No 4 bytes come twice before the last 9, which are a copy from far away that the small
+    // tables have lost by the position after its first, and half of the block is one byte, so that literals are cheap.
+    it("has a price for 128 KB of literals", () => {
+      const input = new Input(4);
+      const size = 128 << 10;
+      const last = [0, 0, 0, input.range(1, 254), 0, 0, 0, input.range(1, 254)];
+      last.push(input.next() % 3 < 1 ? 0 : input.range(1, 254));
+      const from = 4 * input.range(1, (size - 70000) >> 2);
+      const pairs = Array.from({ length: 254 * 254 }, (_, i) => [1 + Math.floor(i / 254), 1 + (i % 254)]);
+      for (let i = pairs.length - 1; i > 0; i--) {
+        const j = input.next() % (i + 1);
+        [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
+      }
+      for (const pair of pairs) {
+        if (input.bytes.length === from) input.add(last);
+        if (input.add([0, 0]).add(pair).bytes.length >= size) break;
+      }
+      input.bytes.length = size - last.length;
+      input.bytes[input.bytes.length - 1] ||= 7;
+      input.add(last);
+      const params = {
+        [c.ZSTD_c_strategy]: input.range(c.ZSTD_btopt, c.ZSTD_btultra2),
+        [c.ZSTD_c_minMatch]: input.range(4, 6),
+        [c.ZSTD_c_windowLog]: 18,
+        [c.ZSTD_c_targetLength]: input.pick([48, 64, 256, 999]),
+        [c.ZSTD_c_hashLog]: input.range(14, 19),
+        [c.ZSTD_c_chainLog]: input.range(6, 8),
+        [c.ZSTD_c_searchLog]: 1,
+      };
+      expect(digest(roundTrip(Buffer.from(input.bytes), params))).toBe("81886 6893fa8c");
+    });
+  });
 });

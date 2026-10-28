@@ -704,51 +704,82 @@ describe("zlib.brotli", () => {
     expect(zlib.brotliDecompressSync(compressed, options).equals(input)).toBe(true);
   });
 
-  // node:zlib has no constant for it.
-  const BROTLI_PARAM_STREAM_OFFSET = 9;
-
-  // The encoder makes a block of 5 bytes of the first 2 bytes of such a stream, by itself.
-  it.each([4, 1])(
-    "takes more input when the first block of a stream that starts at an offset found room for %i bytes",
-    async room => {
-      const c = zlib.constants;
-      const params = { [c.BROTLI_PARAM_QUALITY]: 5 };
-      const [first, second] = [Buffer.alloc(1000, "a"), Buffer.alloc(70_000, "b")];
-      const head = zlib.brotliCompressSync(first, { params, finishFlush: c.BROTLI_OPERATION_FLUSH });
-      const stream = zlib.createBrotliCompress({
-        chunkSize: 64,
-        params: { ...params, [BROTLI_PARAM_STREAM_OFFSET]: first.length },
-      });
-      // Each empty block of metadata takes 1 of the 64 bytes.
-      for (let i = room; i < 64; i++) stream.flush(c.BROTLI_OPERATION_EMIT_METADATA);
-      stream.end(second);
-      const chunks = await stream.toArray();
-      expect(chunks.slice(0, 65 - room).map(chunk => chunk.length)).toEqual([...Array(64 - room).fill(1), room]);
-      const whole = Buffer.concat([head, ...chunks]);
-      expect(zlib.brotliDecompressSync(whole).equals(Buffer.concat([first, second]))).toBe(true);
-    },
-  );
-
-  it("continues a copy from the dictionary in a stream that starts at an offset", () => {
+  // BROTLI_PARAM_STREAM_OFFSET, which node:zlib has no constant for.
+  describe("parameter 9", () => {
     const c = zlib.constants;
-    const dictionary = pbkdf2Sync("dictionary", "", 1, 75_000, "sha256");
-    const params = { [c.BROTLI_PARAM_QUALITY]: 5, [c.BROTLI_PARAM_LGWIN]: 22 };
-    const first = pbkdf2Sync("first", "", 1, 1000, "sha256");
-    // A copy from the dictionary that goes on past the 64 KiB that the encoder takes at a time. After those comes what
-    // the dictionary has `first.length` earlier.
-    const [from, block] = [5000, 65536 + 2];
-    const second = Buffer.concat([
-      dictionary.subarray(from, from + block),
-      dictionary.subarray(from + block - first.length, from + block - first.length + 3000),
-    ]);
-    const stream = Buffer.concat([
-      zlib.brotliCompressSync(first, { params, dictionary, finishFlush: c.BROTLI_OPERATION_FLUSH }),
-      zlib.brotliCompressSync(second, {
-        params: { ...params, [BROTLI_PARAM_STREAM_OFFSET]: first.length },
-        dictionary,
-      }),
-    ]);
-    expect(zlib.brotliDecompressSync(stream, { dictionary }).equals(Buffer.concat([first, second]))).toBe(true);
+    const params = { [c.BROTLI_PARAM_QUALITY]: 5 };
+
+    it.each(["createBrotliCompress", "createBrotliDecompress"])("%s refuses it, as in Node.js", create => {
+      expect(() => zlib[create]({ params: { 9: 0 } })).toThrow(
+        expect.objectContaining({ code: "ERR_BROTLI_INVALID_PARAM", message: "9 is not a valid Brotli parameter" }),
+      );
+    });
+
+    const Handle = zlib.createBrotliCompress()._handle.constructor;
+
+    /**
+     * The handle takes it, as in Node.js. Each write is an operation, its input and the room for its output.
+     * Returns the output of each.
+     */
+    function compressAt(streamOffset, dictionary, writes) {
+      const paramsArray = new Uint32Array(10).fill(-1);
+      for (const [key, value] of Object.entries({ ...params, 9: streamOffset })) paramsArray[key] = value;
+      const writeState = new Uint32Array(2);
+      const errors = [];
+      const handle = new Handle(c.BROTLI_ENCODE);
+      try {
+        handle.onerror = (message, errno, code) => errors.push(code);
+        handle.init(paramsArray, writeState, () => {}, dictionary);
+        return writes.map(([operation, input, room]) => {
+          const out = Buffer.alloc(room);
+          handle.writeSync(operation, input, 0, input.length, out, 0, room);
+          expect({ errors, availIn: writeState[1] }).toEqual({ errors: [], availIn: 0 });
+          return out.subarray(0, room - writeState[0]);
+        });
+      } finally {
+        handle.close();
+      }
+    }
+
+    // The encoder makes a block of 5 bytes of the first 2 bytes of such a stream, by itself.
+    describe.each([4, 1, 0])("when the first block found room for %i bytes", room => {
+      it.each([
+        ["more input", c.BROTLI_OPERATION_PROCESS, 100],
+        ["more than a block of input", c.BROTLI_OPERATION_PROCESS, 70_000],
+        ["metadata", c.BROTLI_OPERATION_EMIT_METADATA, 0],
+      ])("takes %s", (_, operation, size) => {
+        const [first, second] = [Buffer.alloc(1000, "a"), Buffer.alloc(80_000, "b")];
+        const next =
+          operation === c.BROTLI_OPERATION_EMIT_METADATA ? Buffer.from("metadata") : second.subarray(10, size);
+        const chunks = compressAt(first.length, undefined, [
+          [c.BROTLI_OPERATION_PROCESS, second.subarray(0, 10), room],
+          [operation, next, 1000],
+          [c.BROTLI_OPERATION_FINISH, second.subarray(Math.max(10, size)), 1000],
+        ]);
+        expect(chunks[0].length).toBe(room);
+        const head = zlib.brotliCompressSync(first, { params, finishFlush: c.BROTLI_OPERATION_FLUSH });
+        expect(zlib.brotliDecompressSync(Buffer.concat([head, ...chunks])).equals(Buffer.concat([first, second]))).toBe(
+          true,
+        );
+      });
+    });
+
+    it("continues a copy from the dictionary", () => {
+      const dictionary = pbkdf2Sync("dictionary", "", 1, 75_000, "sha256");
+      const first = pbkdf2Sync("first", "", 1, 1000, "sha256");
+      // A copy from the dictionary that goes on past the 64 KiB that the encoder takes at a time. After those comes what
+      // the dictionary has `first.length` earlier.
+      const [from, block] = [5000, 65536 + 2];
+      const second = Buffer.concat([
+        dictionary.subarray(from, from + block),
+        dictionary.subarray(from + block - first.length, from + block - first.length + 3000),
+      ]);
+      const stream = Buffer.concat([
+        zlib.brotliCompressSync(first, { params, dictionary, finishFlush: c.BROTLI_OPERATION_FLUSH }),
+        ...compressAt(first.length, dictionary, [[c.BROTLI_OPERATION_FINISH, second, 1000]]),
+      ]);
+      expect(zlib.brotliDecompressSync(stream, { dictionary }).equals(Buffer.concat([first, second]))).toBe(true);
+    });
   });
 
   // The thread pool reads the caller's buffer, which JS can still write to.

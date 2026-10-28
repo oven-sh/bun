@@ -854,7 +854,9 @@ function createConvenienceMethod(ctor: ZlibFunction | ZlibClass, sync: boolean, 
   }
 }
 
-const kMaxBrotliParam = 9;
+const kMaxBrotliParam = MathMax(
+  ...ObjectKeys(constants).map(key => (key.startsWith("BROTLI_PARAM_") ? constants[key] : 0)),
+);
 
 const brotliInitParamsArray = new Uint32Array(kMaxBrotliParam + 1);
 

@@ -1,0 +1,141 @@
+//// damage-behind-a-call-more-about-state/a-captured-value-is-not-what-its-type-says.ts
+// The check of a captured value is no entry check any more: it stays in the typed body, so a caller that has proven its arguments enters the typed body with a capture that nobody has tested.
+// Here the capture is a string, an object with valueOf, undefined, and a damaged object where a number or a Point is declared. The closure is called directly, by value, as a callback and by itself.
+////= Point
+
+let log = "";
+function makeAdder(step: number): (n: number) => number {
+  return (n: number): number => n + step;
+}
+
+function makeReader(p: Point): (scale: number) => number {
+  return (scale: number): number => p.x * scale + p.y;
+}
+
+function makeCounter(step: number): (n: number, depth: number) => number {
+  const count = (n: number, depth: number): number => (depth === 0 ? n + step : count(n, depth - 1) + step);
+  return count;
+}
+
+function callByValue(f: (n: number) => number, n: number): string {
+  return "" + f(n);
+}
+
+function holder(step: number, p: Point, n: number): string {
+  const add = makeAdder(step);
+  const readPoint = makeReader(p);
+  const count = makeCounter(step);
+  const direct = add(n) + "," + add(n + 1);
+  const mapped = [n, n + 1].map(add).join("/");
+  return direct + " " + callByValue(add, n) + " " + mapped + " " + readPoint(2) + " " + callByValue(readPoint, 3) + " " + count(n, 2);
+}
+
+const steps: any[] = [
+  1,
+  "s",
+  {
+    valueOf() {
+      log += "v";
+      return 10;
+    },
+  },
+  undefined,
+  2.5,
+];
+
+for (let round = 0; round < 500; round++) {
+  const kind = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const p = new Point(round, 1);
+  if (kind === 1) (p as any).x = "text";
+  else if (kind === 2) delete (p as any).y;
+  else if (kind === 3) Object.defineProperty(p, "x", { get: () => 7, configurable: true });
+  log = "";
+  const line = holder(steps[kind % steps.length], kind === 4 ? ({ x: "other", y: 2 } as any) : p, round);
+  if (kind !== 0 || round === 0) console.log(round + ": " + line + " " + log);
+}
+//// damage-behind-a-call-more-about-state/an-object-of-the-holders-own-is-lent-damaged-and-passed-on.ts
+// `holder` makes an object that nothing else refers to, reads it, lends it to `touch`, asks again in its own body and then passes it on to `read`, whose typed body takes the state of its parameter on trust.
+// `touch` keeps nothing, so the object stays the holder's own. BecomeDirty at the head of a landing names no object, and whoever reasons object by object lets what is proven about an object
+// that only this function can reach outlive a writer that is not handed the object (KillQuery::isConfined). The call kept the proof on its normal edge, so nothing ended it on the landing edge:
+// the test behind the call went, the entry check of `read` folded with it, and both read the slots of a damaged object. KillQuery::mayEndProofAtLanding asks the call.
+// `touch` calls itself so that it is not taken in. Build it without inlining too.
+class Point {
+  x: number;
+  y: number;
+  label?: string;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  sum(): number {
+    return this.x + this.y;
+  }
+}
+
+////= Box
+
+const stranger = {
+  sum(): number {
+    return -1;
+  },
+};
+
+let mode = 0;
+function touch(p: Point, depth: number): number {
+  if (depth > 0) return touch(p, depth - 1) + 1;
+  if (mode === 1) (p as any).x = "text";
+  else if (mode === 2) delete (p as any).y;
+  else if (mode === 3) Object.defineProperty(p, "x", { get: () => 41, configurable: true });
+  else if (mode === 4) Object.setPrototypeOf(p, stranger);
+  else if (mode === 5) (p as any).y = undefined;
+  else if (mode === 6) Object.defineProperty(p, "label", { get: () => "got", configurable: true });
+  else if (mode === 7) Object.freeze(p);
+  return mode;
+}
+
+function touchInner(b: Box, depth: number): number {
+  if (depth > 0) return touchInner(b, depth - 1) + 1;
+  return touch(b.inner, 0);
+}
+
+function read(p: Point): string {
+  return p.x + "," + p.y + "," + p.label + "," + p.sum();
+}
+
+function holder(n: number): string {
+  const p = new Point(n, 1);
+  const before = p.x + p.y + p.sum() + "" + p.label;
+  const got = touch(p, 2);
+  return before + " " + got + " " + p.x + "," + p.y + "," + p.label + "," + p.sum() + " " + read(p);
+}
+
+function holderOfBox(n: number): string {
+  const p = new Point(n, 2);
+  const b = new Box(p);
+  const before = p.x + p.y + p.sum() + "" + p.label;
+  const got = touchInner(b, 2);
+  return before + " " + got + " " + p.x + "," + p.y + "," + p.label + "," + p.sum() + " " + read(p);
+}
+
+function store(p: Point, n: number): string {
+  try {
+    p.x = n;
+    return "stored";
+  } catch {
+    return "refused";
+  }
+}
+
+function holderThatStores(n: number): string {
+  const p = new Point(n, 3);
+  p.x = n + 1;
+  const got = touch(p, 2);
+  const first = store(p, n + 2);
+  return got + " " + first + " " + p.x;
+}
+
+for (let round = 0; round < 800; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const line = holder(round) + " | " + holderOfBox(round) + " | " + holderThatStores(round);
+  if (mode !== 0 || round === 0) console.log(round + ": " + line);
+}

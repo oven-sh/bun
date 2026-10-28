@@ -1,0 +1,79 @@
+//// built-ins-env-accessor/accessor-built-by-a-loop.ts
+// An object of getters is built by a loop over a table of names: each getter reads the environment under its name and parses what it finds.
+declare const process: { argv: string[]; env: Record<string, string | undefined> };
+declare const console: { log(...values: any[]): void };
+type Parser = (text: string | undefined) => unknown;
+const asBoolean: Parser = text => text === "1" || text === "true";
+const asText: Parser = text => text;
+const asNumber: Parser = text => (text === undefined ? undefined : Number(text));
+const shape: Record<string, Parser> = {};
+for (let i = 0; i < 300; i++) shape["APP_OPTION_" + i] = i % 3 === 0 ? asBoolean : i % 3 === 1 ? asText : asNumber;
+shape.APP_USE_FIRST = asBoolean; shape.APP_USE_SECOND = asBoolean; shape.APP_USE_THIRD = asBoolean; shape.APP_MANAGED = asBoolean; shape.APP_NAME = asText;
+type Env = { readonly APP_USE_FIRST: boolean; readonly APP_USE_SECOND: boolean; readonly APP_USE_THIRD: boolean; readonly APP_MANAGED: boolean; readonly APP_NAME: string | undefined } & Record<string, unknown>;
+function buildAccessor(table: Record<string, Parser>): object {
+  const accessor = {};
+  for (const key of Object.keys(table)) {
+    const parse = table[key]!;
+    Object.defineProperty(accessor, key, { enumerable: true, get: () => parse(process.env[key]) });
+  }
+  return accessor;
+}
+export const env = buildAccessor(shape) as Env;
+const SWITCHES = ["APP_USE_FIRST", "APP_USE_SECOND", "APP_USE_THIRD"] as const;
+function selectedBySwitch(): boolean { return SWITCHES.some(name => env[name]); }
+export function provider(): string { return env.APP_USE_FIRST ? "first" : env.APP_USE_SECOND ? "second" : env.APP_USE_THIRD ? "third" : "own"; }
+export function isRequired(): boolean { return !env.APP_MANAGED && !selectedBySwitch(); }
+{ (globalThis as any).kept = [provider, isRequired, buildAccessor]; }
+process.env.APP_NAME = "model";
+const rounds = Number(process.argv[2] ?? 1000);
+let sum = 0;
+for (let i = 0; i < rounds; i++) sum += provider().length + (isRequired() ? 1 : 0);
+console.log(sum, env.APP_NAME, env.APP_OPTION_2);
+//// built-ins-env-accessor/env-getters.ts
+// env-getters.ts <form> <rounds>: an object of getters that a loop defines over process.env, read by name and by key; and the pieces of such a read by themselves.
+const keys = ["HOME", "PATH", "USER", "SHELL", "LANG", "TERM", "MODEL_NOT_SET_A", "MODEL_NOT_SET_B"] as const;
+type Env = { readonly [K in (typeof keys)[number]]: string | undefined };
+const env = {} as Env;
+for (const key of keys) Object.defineProperty(env, key, { get() { return process.env[key]; }, enumerable: true, configurable: true });
+
+function byName(): number {
+    return (env.HOME ? 1 : 0) + (env.PATH ? 1 : 0) + (env.USER ? 1 : 0) + (env.SHELL ? 1 : 0) + (env.LANG ? 1 : 0) + (env.TERM ? 1 : 0) + (env.MODEL_NOT_SET_A ? 1 : 0) + (env.MODEL_NOT_SET_B ? 1 : 0);
+}
+function byKey(): number {
+    let n = 0;
+    for (const key of keys) if (env[key]) n++;
+    return n;
+}
+function direct(): number {
+    return (process.env.HOME ? 1 : 0) + (process.env.PATH ? 1 : 0) + (process.env.USER ? 1 : 0) + (process.env.SHELL ? 1 : 0) + (process.env.LANG ? 1 : 0) + (process.env.TERM ? 1 : 0) + (process.env.MODEL_NOT_SET_A ? 1 : 0) + (process.env.MODEL_NOT_SET_B ? 1 : 0);
+}
+function directByKey(): number {
+    let n = 0;
+    for (const key of keys) if (process.env[key]) n++;
+    return n;
+}
+const held = process.env;
+function heldByKey(): number {
+    let n = 0;
+    for (const key of keys) if (held[key]) n++;
+    return n;
+}
+const plain: Record<string, string | undefined> = { ...process.env };
+const overPlain = {} as Env;
+for (const key of keys) Object.defineProperty(overPlain, key, { get() { return plain[key]; }, enumerable: true, configurable: true });
+function gettersOverPlainObject(): number {
+    return (overPlain.HOME ? 1 : 0) + (overPlain.PATH ? 1 : 0) + (overPlain.USER ? 1 : 0) + (overPlain.SHELL ? 1 : 0) + (overPlain.LANG ? 1 : 0) + (overPlain.TERM ? 1 : 0) + (overPlain.MODEL_NOT_SET_A ? 1 : 0) + (overPlain.MODEL_NOT_SET_B ? 1 : 0);
+}
+const constant = {} as Env;
+for (const key of keys) Object.defineProperty(constant, key, { get() { return key; }, enumerable: true, configurable: true });
+function gettersThatAnswerTheirKey(): number {
+    return (constant.HOME ? 1 : 0) + (constant.PATH ? 1 : 0) + (constant.USER ? 1 : 0) + (constant.SHELL ? 1 : 0) + (constant.LANG ? 1 : 0) + (constant.TERM ? 1 : 0) + (constant.MODEL_NOT_SET_A ? 1 : 0) + (constant.MODEL_NOT_SET_B ? 1 : 0);
+}
+function nothing(): number { return 6; }
+const forms: Record<string, () => number> = { byName, byKey, direct, directByKey, heldByKey, gettersOverPlainObject, gettersThatAnswerTheirKey, nothing };
+const [form, roundsText] = process.argv.slice(2);
+const run = forms[form];
+const rounds = Number(roundsText) | 0;
+let sum = 0;
+for (let r = 0; r < rounds; r++) sum += run();
+console.log(form, sum > 0);

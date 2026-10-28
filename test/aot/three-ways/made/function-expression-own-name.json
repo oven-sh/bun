@@ -1,0 +1,7 @@
+{
+ "a05_shadowed_by_its_own_parameter": "as bun run",
+ "a18_stored_to_in_sloppy_code": "as bun run",
+ "a20_two_nested_both_show": "as bun run",
+ "a32_as_an_argument_of_an_iife": "as bun run",
+ "a37_callee_called": "as bun run"
+}

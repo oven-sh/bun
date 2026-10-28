@@ -1,0 +1,21 @@
+an assignment: TypeError a,b true true
+an assignment through a variable: TypeError a,b true true
+a computed key: TypeError a,b true true
+a value nobody can follow: TypeError a,b true true
+a value nobody can follow and a computed key: TypeError a,b true true
+Object.defineProperty: TypeError a,b true true
+Object.defineProperty with a getter: TypeError a,b true true
+Object.defineProperties: TypeError a,b true true
+Reflect.defineProperty: TypeError a,b true true
+Reflect.set: TypeError a,b true true
+Reflect.set under a computed key: TypeError a,b true true
+Object.assign: TypeError a,b true true
+Object.assign with a computed key: TypeError a,b true true
+delete: TypeError a,b true true
+Reflect.deleteProperty: TypeError a,b true true
+__defineGetter__: TypeError a,b true true
+a helper that takes object, key and value: TypeError a,b true true
+text evaluated at run time: TypeError a,b true true
+an indirect eval: TypeError a,b true true
+first true
+1

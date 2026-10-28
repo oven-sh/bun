@@ -20,6 +20,7 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSFunction.h>
@@ -496,6 +497,10 @@ using WebCore::JSStreamsRuntime;
 // readableStreamFromAsyncIterator both accept one and start it eagerly.
 bool isNonHostAsyncGeneratorFunction(JSObject* object)
 {
+#if ENABLE(AOT)
+    if (JSC::AOT::declaredAs(object) == JSC::AOT::DeclaredAs::AsyncGeneratorFunction)
+        return true;
+#endif
     auto* function = dynamicDowncast<JSFunction>(object);
     return function && !function->isHostFunction() && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator();
 }

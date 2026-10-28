@@ -1,0 +1,10 @@
+error: TS100031: The return value of 'indexInList' is declared 'int32', but 'list.indexOf(1)' might not be an int32: it can be anything from -1 to 9007199254740991. Write 'list.indexOf(1) | 0'.
+error: TS100031: The return value of 'newLength' is declared 'int32', but 'list.push(1)' might not be an int32: it can be anything from 0 to 9007199254740991. Write 'list.push(1) | 0'.
+error: TS100031: The return value of 'unsignedElement' is declared 'int32', but 'list[0]' might not be an int32: it can be anything from 0 to 4294967295. Write 'list[0] | 0'.
+error: TS100031: The return value of 'lengthOfFloats' is declared 'int32', but 'list.length' might not be an int32: it can be anything from 0 to 4294967296. Write 'list.length | 0'.
+error: TS100031: The return value of 'bytes' is declared 'int32', but 'buffer.byteLength' might not be an int32: it can be anything from 0 to 4294967296. Write 'buffer.byteLength | 0'.
+error: TS100031: The return value of 'day' is declared 'int32', but 'date.getDay()' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'date.getDay() | 0'.
+error: TS100031: The return value of 'parameters' is declared 'int32', but 'callback.length' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'callback.length | 0'.
+error: TS100031: The return value of 'howMany' is declared 'int32', but 'rest.length' might not be an int32: it can be anything from 0 to 4294967295. Write 'rest.length | 0'.
+error: TS100031: The return value of 'converted' is declared 'int32', but 'Number(flag)' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'Number(flag) | 0'.
+error: TS100031: The return value of 'eitherOne' is declared 'int32', but 'a || n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write '(a || n) | 0'.

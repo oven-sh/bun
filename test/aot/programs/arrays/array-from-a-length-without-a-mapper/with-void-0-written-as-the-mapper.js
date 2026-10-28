@@ -1,0 +1,1 @@
+const u = Array.from({ length: 2 }, void 0); u.push(5); u[0] = "s"; console.log(u.join(), u.length); function f(m) { const a = Array.from({ length: 2 }, m); return a[0] === undefined ? "undefined" : a[0].x; } console.log(f(undefined), f(() => ({ x: 1 })));

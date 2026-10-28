@@ -258,31 +258,50 @@ describe("chunks before the image", () => {
     expect((await decode(file((8 << 20) + 1))).profile?.length).toBe((8 << 20) + 1);
   });
 
-  test("compressed text that inflates to more than the limit costs the image, though none of it is kept", async () => {
+  describe("compressed text", () => {
     // libspng's buffer only ever doubled, and its terminator took a byte of the 8 MiB.
     const big = zlib.deflateSync(Buffer.alloc((4 << 20) + 1));
     const small = zlib.deflateSync(Buffer.alloc(4 << 20));
-    for (const before of ["zTXt key\0\0", "iTXt key\0\x01\0en\0word\0"]) {
-      const text = (stream: Buffer) =>
-        png(
-          rgbaHeader,
-          chunk(before.slice(0, 4), Buffer.concat([Buffer.from(before.slice(5)), stream])),
-          rgbaData,
-          iend,
-        );
-      expect((await decode(text(big))).pixels).toEqual(["01020304"]);
-      expect((await decode(text(small), { maxPixels: 64 })).pixels).toEqual(["01020304"]);
-      await expect(decode(text(big), { maxPixels: 64 })).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
-    }
-    // Not compressed, or not well formed up to the stream: not inflated.
-    for (const before of ["tEXt key\0", "iTXt key\0\0\0en\0word\0", "iTXt key\0\x01\x01en\0word\0", "zTXt key\0\x01"]) {
-      const file = png(
-        rgbaHeader,
-        chunk(before.slice(0, 4), Buffer.concat([Buffer.from(before.slice(5)), big])),
-        rgbaData,
-      );
-      expect((await decode(file, { maxPixels: 64 })).pixels).toEqual(["01020304"]);
-    }
+    const withText = (type: string, before: string, stream: Buffer) =>
+      png(rgbaHeader, chunk(type, Buffer.concat([Buffer.from(before, "latin1"), stream])), rgbaData, iend);
+    /** Whether the text was inflated shows in nothing else. */
+    const isTooMuch = (file: Buffer) =>
+      expect(decode(file, { maxPixels: 64 })).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
+
+    test("that inflates to more than the limit costs the image, though none of it is kept", async () => {
+      for (const [type, before] of [
+        ["zTXt", "key\0\0"],
+        ["iTXt", "key\0\x01\0en\0word\0"],
+      ]) {
+        expect((await decode(withText(type, before, big))).pixels).toEqual(["01020304"]);
+        expect((await decode(withText(type, before, small), { maxPixels: 64 })).pixels).toEqual(["01020304"]);
+        await isTooMuch(withText(type, before, big));
+      }
+      // Not compressed, or not well formed up to the stream: not inflated.
+      for (const [type, before] of [
+        ["tEXt", "key\0"],
+        ["iTXt", "key\0\0\0en\0word\0"],
+        ["iTXt", "key\0\x01\x01en\0word\0"],
+        ["zTXt", "key\0\x01"],
+      ]) {
+        expect((await decode(withText(type, before, big), { maxPixels: 64 })).pixels).toEqual(["01020304"]);
+      }
+    });
+
+    // A keyword has 79 bytes at most, and all that is in front of the stream 256.
+    test.each([
+      ["keyword of a zTXt", "zTXt", (keyword: string) => `${keyword}\0\0`, 79 + 2],
+      ["keyword of an iTXt", "iTXt", (keyword: string) => `${keyword}\0\x01\0\0\0`, 79 + 5],
+      ["language tag", "iTXt", (language: string) => `key\0\x01\0${language}\0\0`, 256],
+      ["translated keyword", "iTXt", (translated: string) => `key\0\x01\0\0${translated}\0`, 256],
+    ] as const)("is not inflated behind a %s that is too long", async (_, type, fields, most) => {
+      const file = (length: number) =>
+        withText(type, fields(Buffer.alloc(length - fields("").length, "x").toString()), big);
+      expect((await decode(file(most))).pixels).toEqual(["01020304"]);
+      await isTooMuch(file(most));
+      expect((await decode(file(most + 1), { maxPixels: 64 })).pixels).toEqual(["01020304"]);
+      expect((await decode(file(most + 2), { maxPixels: 64 })).pixels).toEqual(["01020304"]);
+    });
   });
 });
 

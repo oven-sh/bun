@@ -1,0 +1,30 @@
+# A part of a view of another class than Uint8Array that goes into encodeInto is made: the call chooses no overload, so the native function gets the view itself and throws
+# FORM: Prepared
+# RUN: pass ResolveBuiltins SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="aPartOfFloatsIsMade" parameters=[{type=TextEncoder}, {type=string}, {type=Float64Array<number, pristine[Names]>}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Float64Array<number, pristine[Names]>, v3: int[0, 100], v4: int[0, 100]):
+    v5 = TypedArrayRange v2, v3, v4 valueType=Float64Array<number, pristine[Names]>
+    v6 = Builtin builtin=TextEncoderPrototypeEncodeInto
+    v7 = Call v6, v0, v1, v5
+    v8 = PropGet v7 key="written"
+    Return v8
+}
+# CHECK-LABEL: function f0 name="aPartOfFloatsIsMade"
+# CHECK: TypedArrayRange v2, v3, v4
+# CHECK-NOT: _inRanges
+# CHECK: overload=TextEncoderPrototypeEncodeInto/{{*}} builtinCallForm=AnyReceiver
+# CHECK-NOT: _inRanges
+
+function f1 name="aPartOfBytesIsNotMade" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array<int[0, 255], pristine[Names]>}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array<int[0, 255], pristine[Names]>, v3: int[0, 100], v4: int[0, 100]):
+    v5 = TypedArrayRange v2, v3, v4 valueType=Uint8Array<int[0, 255], pristine[Names]>
+    v6 = Builtin builtin=TextEncoderPrototypeEncodeInto
+    v7 = Call v6, v0, v1, v5
+    v8 = PropGet v7 key="written"
+    Return v8
+}
+# CHECK-LABEL: function f1 name="aPartOfBytesIsNotMade"
+# CHECK-NOT: TypedArrayRange
+# CHECK: overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0 builtinCallForm=Fields

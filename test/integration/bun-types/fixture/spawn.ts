@@ -90,6 +90,10 @@ function depromise<T>(_promise: Promise<T>): T {
   const enc = new TextEncoder();
   proc.stdin.write(enc.encode(" world!"));
   enc.encodeInto(" world!", {} as any as Uint8Array);
+  // @ts-expect-error - encodeInto throws ERR_INVALID_ARG_TYPE unless the destination is a Uint8Array
+  enc.encodeInto(" world!", new Uint32Array(124));
+  // @ts-expect-error - encodeInto throws ERR_INVALID_ARG_TYPE unless the destination is a Uint8Array
+  enc.encodeInto(" world!", {} as any as DataView);
 
   // send buffered data
   await proc.stdin.flush();

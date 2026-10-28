@@ -1,4 +1,4 @@
-// encoder.encodeInto(text, view) where the program only reads `read` and `written`: the native function gets the characters and the bytes, and no object is made. Views in every state, texts of every kind, and programs that keep the object.
+// encoder.encodeInto(text, view) where the program only reads `read` and `written`: the native function gets the characters and the bytes, and no object is made. A Uint8Array in every state, views of every other class, for which the call throws, texts of every kind, and programs that keep the object.
 const lines = [];
 const bytesOf = view => { try { return Array.from(new Uint8Array(view.buffer, view.byteOffset, view.byteLength)).join(); } catch (error) { return "unreadable " + error.name; } };
 const attempt = f => { try { return f(); } catch (error) { return "throws " + error.name; } };

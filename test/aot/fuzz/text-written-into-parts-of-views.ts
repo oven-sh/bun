@@ -1,13 +1,13 @@
 // Text is encoded into views and into parts of views, while the buffers behind them are transferred, resized and collected.
 //
-//   views      Uint8Array, Int8Array, Uint8ClampedArray, Uint16Array, Float64Array, Buffer, a subclass, DataView; small, large, empty;
+//   views      Uint8Array, Buffer, a subclass; Int8Array, Uint8ClampedArray, Uint16Array and Float64Array, for which the call throws; small, large, empty;
 //              at an offset; over a resizable buffer (fixed length or length-tracking); over a shared buffer
 //   parts      view.subarray(begin), view.subarray(begin, end), a part of a part, the whole view on one way and a part on the other
 //   bounds     inside, at the ends, beyond, negative, fractions, NaN, infinities, -0, undefined, an object with valueOf that changes the buffer
 //   texts      ASCII of 0 to 70 characters, Latin-1, two, three and four byte characters, lone surrogates, ropes, pieces of longer strings
 //   in between a transfer, a resize, a collection, a store through the view, or nothing
 //   the result only `read` and `written` are read, or it is destructured, kept, spread or compared
-//   handlers   every call stands in a try block but one, which cannot throw: a plain Uint8Array, an element of it read on both sides of the call
+//   handlers   every call stands in a try block, since a view of another class than Uint8Array throws, but one, which cannot throw: a plain Uint8Array, an element of it read on both sides of the call
 //   printed    per step: read, written, the length of the view and a hash of its bytes
 import type { Random } from "./random";
 

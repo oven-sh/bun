@@ -1197,7 +1197,7 @@ The row already says so, in `uses`. **The row's uses decide: a function that onl
 
 ```ts src/codegen/builtins/host/web-values.builtins.ts
 {
-  args: { source: b.string, destination: arrayBufferView },
+  args: { source: b.string, destination: b.instance("Uint8Array") },
   returns: b.ordinaryObjectOf("ReadAndWrittenCounts").fresh,
   capability: "heap",
   uses: { this: b.inspected, source: [b.readAsCharacters], destination: [b.readsContents(), b.writesContents()] },
@@ -1219,6 +1219,8 @@ The row already says so, in `uses`. **The row's uses decide: a function that onl
 An operand that's kept, returned, called, or read after the call has returned can't be `Bytes`. That covers anything that returns a promise, takes a callback, or keeps a key or a dictionary. Such a function keeps getting the cell, and the bytes are never copied to make a span possible.
 
 `b.typedEntry` writes the C++ function that compiled code enters. It has the calling convention of an operation, picks the C function by the width of the characters, and returns the fields. Nobody writes a second entry by hand.
+
+That entry gets no cell and can't throw. So the type of a `Bytes` operand is the only test in front of it, and it names exactly the classes that the host function takes. A view of another class than `Uint8Array` chooses no overload, goes to the host function as it is, and `encodeInto` throws its `TypeError` there.
 
 A rope is resolved before any address is taken. A view that has lost its memory is an empty span. The view and the string stay operands of the call, so the collector sees them.
 

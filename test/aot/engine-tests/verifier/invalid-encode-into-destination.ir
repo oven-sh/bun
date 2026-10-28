@@ -1,0 +1,31 @@
+# the overload of encodeInto that hands the bytes of its destination to native code takes a Uint8Array: a view of another class as that operand is no call of it
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidBuiltinCall 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodBytes" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array):
+    v3 = CallBuiltin v0, v1, v2 overload=TextEncoderPrototypeEncodeInto/0
+    Return v3
+}
+function f1 name="goodBuffer" parameters=[{type=TextEncoder}, {type=string}, {type=Buffer}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Buffer):
+    v3 = CallBuiltin v0, v1, v2 overload=TextEncoderPrototypeEncodeInto/0
+    Return v3
+}
+function f2 name="badFloats" parameters=[{type=TextEncoder}, {type=string}, {type=Float64Array}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Float64Array):
+    v3 = CallBuiltin v0, v1, v2 overload=TextEncoderPrototypeEncodeInto/0
+    Return v3
+}
+function f3 name="badDataView" parameters=[{type=TextEncoder}, {type=string}, {type=DataView}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: DataView):
+    v3 = CallBuiltin v0, v1, v2 overload=TextEncoderPrototypeEncodeInto/0
+    Return v3
+}
+function f4 name="badFloatsInRanges" parameters=[{type=string}, {type=Float64Array}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: string, v1: Float64Array, v2: int[0, 100], v3: int[0, 100]):
+    v4 = CallBuiltin -, v0, v1, v2, v3 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0
+    Return v4
+}

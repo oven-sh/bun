@@ -1,0 +1,71 @@
+# encoder.encodeInto(text, destination) has an overload only for a Uint8Array: a Buffer is one, and a view of any other class chooses no overload, so the call is made with the operands as they come and the native function throws
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bytes" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8Array}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8Array):
+    v3 = Builtin builtin=TextEncoderPrototypeEncodeInto
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}
+# CHECK-LABEL: function f0 name="bytes"
+# CHECK-NOT: AnyReceiver
+# CHECK: CallBuiltin v0, v1, v2 overload=TextEncoderPrototypeEncodeInto/0
+# CHECK-NOT: AnyReceiver
+
+function f1 name="aBuffer" parameters=[{type=TextEncoder}, {type=string}, {type=Buffer}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Buffer):
+    v3 = Builtin builtin=TextEncoderPrototypeEncodeInto
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}
+# CHECK-LABEL: function f1 name="aBuffer"
+# CHECK-NOT: AnyReceiver
+# CHECK: CallBuiltin v0, v1, v2 overload=TextEncoderPrototypeEncodeInto/0
+# CHECK-NOT: AnyReceiver
+
+function f2 name="floats" parameters=[{type=TextEncoder}, {type=string}, {type=Float64Array}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Float64Array):
+    v3 = Builtin builtin=TextEncoderPrototypeEncodeInto
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}
+# CHECK-LABEL: function f2 name="floats"
+# CHECK: CallBuiltin v0, v1, v2 overload=TextEncoderPrototypeEncodeInto/{{*}} builtinCallForm=AnyReceiver
+
+function f3 name="clampedBytes" parameters=[{type=TextEncoder}, {type=string}, {type=Uint8ClampedArray}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: Uint8ClampedArray):
+    v3 = Builtin builtin=TextEncoderPrototypeEncodeInto
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}
+# CHECK-LABEL: function f3 name="clampedBytes"
+# CHECK: CallBuiltin v0, v1, v2 overload=TextEncoderPrototypeEncodeInto/{{*}} builtinCallForm=AnyReceiver
+
+function f4 name="aDataView" parameters=[{type=TextEncoder}, {type=string}, {type=DataView}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: DataView):
+    v3 = Builtin builtin=TextEncoderPrototypeEncodeInto
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}
+# CHECK-LABEL: function f4 name="aDataView"
+# CHECK: CallBuiltin v0, v1, v2 overload=TextEncoderPrototypeEncodeInto/{{*}} builtinCallForm=AnyReceiver
+
+function f5 name="aViewOfSomeClass" parameters=[{type=TextEncoder}, {type=string}, {type=TypedArray}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: TypedArray):
+    v3 = Builtin builtin=TextEncoderPrototypeEncodeInto
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}
+# CHECK-LABEL: function f5 name="aViewOfSomeClass"
+# CHECK: CallBuiltin v0, v1, v2 overload=TextEncoderPrototypeEncodeInto/{{*}} builtinCallForm=AnyReceiver
+
+function f6 name="noView" parameters=[{type=TextEncoder}, {type=string}, {type=ArrayBuffer}] results=[{type=anything}] {
+  b0(v0: TextEncoder, v1: string, v2: ArrayBuffer):
+    v3 = Builtin builtin=TextEncoderPrototypeEncodeInto
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}
+# CHECK-LABEL: function f6 name="noView"
+# CHECK: CallBuiltin v0, v1, v2 overload=TextEncoderPrototypeEncodeInto/{{*}} builtinCallForm=AnyReceiver

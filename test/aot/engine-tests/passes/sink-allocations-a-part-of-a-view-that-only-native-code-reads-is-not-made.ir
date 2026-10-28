@@ -133,23 +133,3 @@ function f7 name="theCountsOfTheRareWayAreAnObject" parameters=[{type=TextEncode
 # CHECK: v8: object = CallBuiltin -, v7, v2, v3, v4 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0
 # CHECK: frequency=Rare
 # CHECK: TypedArrayRange v2, v3, v4
-
-function f8 name="boundsOfWiderElementsAreChosenBeforeTheyAreMultiplied" parameters=[{type=TextEncoder}, {type=string}, {type=Float64Array<number, pristine[Names]>}, {type=int[0, 100]}, {type=int[0, 100]}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: TextEncoder, v1: string, v2: Float64Array<number, pristine[Names]>, v3: int[0, 100], v4: int[0, 100], v5: boolean):
-    Branch v5 -> taken b1(), notTaken b2(v2)
-  b1():
-    v6 = TypedArrayRange v2, v3, v4 valueType=Float64Array<number, pristine[Names]>
-    Jump -> next b2(v6)
-  b2(v7: Float64Array<number, pristine[Names]>):
-    v8 = CallBuiltin v0, v1, v7 overload=TextEncoderPrototypeEncodeInto/0
-    v9 = PropGet v8 key="written"
-    Return v9
-}
-# CHECK-LABEL: function f8 name="boundsOfWiderElementsAreChosenBeforeTheyAreMultiplied"
-# CHECK: b2(
-# CHECK-NOT: Mul
-# CHECK: [[isRange]]: boolean = ToBoolean
-# CHECK-NOT: Mul
-# CHECK: Branch [[isRange]]
-# CHECK: Mul
-# CHECK: overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0 builtinCallForm=Fields

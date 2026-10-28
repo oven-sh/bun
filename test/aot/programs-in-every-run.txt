@@ -1786,7 +1786,8 @@ host-classes/each-way-of-asking-finds-the-own-name-of-an-event
 host-classes/empty-bodies-parsed-into-declared-types
 host-classes/encode-into-a-part-of-a-part-after-the-view-becomes-a-buffer
 host-classes/encode-into-a-part-of-a-part-of-a-view-or-a-buffer
-host-classes/encode-into-writes-into-views-of-every-kind
+host-classes/encode-into-a-view-of-another-class-than-uint8array-throws
+host-classes/encode-into-is-handed-views-of-every-kind
 host-classes/every-member-of-a-file
 host-classes/frames-of-host-functions-in-stack-traces
 host-classes/function-subclasses-of-locked-classes

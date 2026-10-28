@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { gc as gcTrace, withoutAggressiveGC } from "harness";
+import util from "node:util";
 import { isStringOneByteRepresentation } from "node:v8";
+import { runInNewContext } from "node:vm";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -14,51 +16,97 @@ const getByteLength = str => {
   return s;
 };
 
-describe("encodeInto rejects non-Uint8Array destinations", () => {
-  // WebIDL: encodeInto(USVString source, [AllowShared] Uint8Array destination)
+describe("encodeInto takes only a Uint8Array as the destination", () => {
+  // Encoding Standard: encodeInto(USVString source, [AllowShared] Uint8Array destination).
   const encoder = new TextEncoder();
-  const buf = new ArrayBuffer(8);
+  const invalidDestination = [TypeError, "ERR_INVALID_ARG_TYPE"];
+  const below = (object, Class) => Object.setPrototypeOf(object, Class.prototype);
+  const backings = [ArrayBuffer, SharedArrayBuffer];
+  const otherViews = [
+    DataView,
+    Int8Array,
+    Int16Array,
+    Int32Array,
+    Uint16Array,
+    Uint32Array,
+    Uint8ClampedArray,
+    BigInt64Array,
+    BigUint64Array,
+    Float16Array,
+    Float32Array,
+    Float64Array,
+  ];
+
+  // WPT encoding/encodeInto.any.js, "Invalid encodeInto() destination": every other view, over both kinds of buffer.
+  describe.each(backings.map(Backing => [Backing.name, Backing]))("views over %s", (_, Backing) => {
+    it.each(otherViews.map(View => [View.name, View]))("%s throws and nothing is written", (_, View) => {
+      expect(() => encoder.encodeInto("", new View(new Backing(0)))).toThrowWithCode(...invalidDestination);
+      const backing = new Backing(16);
+      expect(() => encoder.encodeInto("hi", new View(backing))).toThrowWithCode(...invalidDestination);
+      expect(Array.from(new Uint8Array(backing))).toEqual(new Array(16).fill(0));
+    });
+  });
 
   it.each([
-    ["Int8Array", new Int8Array(buf)],
-    ["Int16Array", new Int16Array(buf)],
-    ["Int32Array", new Int32Array(buf)],
-    ["Uint16Array", new Uint16Array(buf)],
-    ["Uint32Array", new Uint32Array(buf)],
-    ["Uint8ClampedArray", new Uint8ClampedArray(buf)],
-    ["BigInt64Array", new BigInt64Array(buf)],
-    ["BigUint64Array", new BigUint64Array(buf)],
-    ["Float16Array", new Float16Array(buf)],
-    ["Float32Array", new Float32Array(buf)],
-    ["Float64Array", new Float64Array(buf)],
-    ["DataView", new DataView(buf)],
-    ["ArrayBuffer", buf],
-    ["SharedArrayBuffer", new SharedArrayBuffer(8)],
-    ["Array", [0, 0, 0, 0]],
-    ["plain object", {}],
-    ["null", null],
-  ])("throws TypeError for %s", (name, dest) => {
-    expect(() => encoder.encodeInto("hi", dest)).toThrow(TypeError);
-    expect(() => encoder.encodeInto("hi", dest)).toThrow("must be an instance of Uint8Array");
+    ["an ArrayBuffer", () => new ArrayBuffer(8)],
+    ["a SharedArrayBuffer", () => new SharedArrayBuffer(8)],
+    ["an Array", () => [0, 0, 0, 0]],
+    ["an object with the members of a view", () => ({ buffer: new ArrayBuffer(8), byteOffset: 0, byteLength: 8 })],
+    ["an object below Uint8Array.prototype", () => Object.create(Uint8Array.prototype)],
+    ["a Proxy of a Uint8Array", () => new Proxy(new Uint8Array(8), {})],
+    ["a Float64Array below Uint8Array.prototype", () => below(new Float64Array(2), Uint8Array)],
+    ["null", () => null],
+    ["undefined", () => undefined],
+  ])("%s throws", (_, make) => {
+    expect(() => encoder.encodeInto("hi", make())).toThrowWithCode(...invalidDestination);
   });
 
-  it("does not write into a rejected destination's backing buffer", () => {
-    const backing = new ArrayBuffer(8);
-    const f64 = new Float64Array(backing);
-    expect(() => encoder.encodeInto("hi", f64)).toThrow(TypeError);
-    expect(Array.from(new Uint8Array(backing))).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+  it("the error names the argument and what it received, as in Node", () => {
+    expect(() => encoder.encodeInto("hi", new Float64Array(2))).toThrow(
+      'The "dest" argument must be an instance of Uint8Array. Received an instance of Float64Array',
+    );
+    // https://github.com/oven-sh/bun/issues/36373: the TextEncoder of node:util is the same class.
+    expect(() => new util.TextEncoder().encodeInto("abc", new Int8Array(10))).toThrow(
+      'The "dest" argument must be an instance of Uint8Array. Received an instance of Int8Array',
+    );
   });
 
-  it("accepts Uint8Array and Buffer", () => {
-    expect(encoder.encodeInto("hi", new Uint8Array(8))).toEqual({ read: 2, written: 2 });
-    expect(encoder.encodeInto("hi", Buffer.alloc(8))).toEqual({ read: 2, written: 2 });
+  it("the receiver, the number of arguments and the source are tested before the destination", () => {
+    const { encodeInto } = TextEncoder.prototype;
+    const order = [];
+    const source = {
+      toString() {
+        order.push("source");
+        return "hi";
+      },
+    };
+    const failing = {
+      toString() {
+        throw new RangeError("from the source");
+      },
+    };
+    const floats = new Float64Array(2);
+    expect(() => encodeInto.call({}, source, floats)).toThrowWithCode(TypeError, "ERR_INVALID_THIS");
+    expect(() => encoder.encodeInto(source)).toThrowWithCode(TypeError, "ERR_MISSING_ARGS");
+    expect(order).toEqual([]);
+    expect(() => encoder.encodeInto(failing, floats)).toThrow(RangeError);
+    expect(() => encoder.encodeInto(source, floats)).toThrowWithCode(...invalidDestination);
+    expect(order).toEqual(["source"]);
   });
 
-  it("accepts Uint8Array backed by SharedArrayBuffer", () => {
-    const dest = new Uint8Array(new SharedArrayBuffer(8));
-    expect(encoder.encodeInto("hi", dest)).toEqual({ read: 2, written: 2 });
-    expect(dest[0]).toBe(0x68);
-    expect(dest[1]).toBe(0x69);
+  it.each([
+    ["a Uint8Array", () => new Uint8Array(8)],
+    ["a Buffer", () => Buffer.alloc(8)],
+    ["an instance of a subclass of Uint8Array", () => new (class extends Uint8Array {})(8)],
+    ["a Uint8Array of another realm", () => new (runInNewContext("Uint8Array"))(8)],
+    ["a Uint8Array below Float64Array.prototype", () => below(new Uint8Array(8), Float64Array)],
+    ["a Uint8Array over a SharedArrayBuffer", () => new Uint8Array(new SharedArrayBuffer(8))],
+    // Node takes it too. WebIDL does not: the destination is not [AllowResizable].
+    ["a Uint8Array over a resizable ArrayBuffer", () => new Uint8Array(new ArrayBuffer(8, { maxByteLength: 16 }))],
+  ])("%s is written into", (_, make) => {
+    const destination = make();
+    expect(encoder.encodeInto("hi", destination)).toEqual({ read: 2, written: 2 });
+    expect(Array.from(new Uint8Array(destination.buffer, destination.byteOffset, 3))).toEqual([0x68, 0x69, 0]);
   });
 });
 

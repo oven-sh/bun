@@ -26,6 +26,7 @@ const stringOrNull = b.union(b.string, b.strictNull);
 const newArrayOfStrings = b.instance("Array").holding({ element: b.string }).fresh;
 const arrayBufferView = b.union(b.instance("TypedArray"), b.instance("DataView"));
 const byteSource = b.union(arrayBufferView, b.instance("ArrayBuffer"), b.instance("SharedArrayBuffer"));
+const uint8Array = b.instance("Uint8Array");
 
 const membersOf = (holder: b.BuiltinPath, fields: Fields) =>
   Object.entries(fields).flatMap(([name, field]) => b.method(`${holder}.${name}`, field));
@@ -479,11 +480,11 @@ export default b.declarations(
         throws: true,
         uses: { this: b.inspected },
       }),
-      // Any view is taken as the destination, and its kind is tested after the source is converted.
+      // Only a Uint8Array is taken as the destination, the class that JSTextEncoder.cpp casts to, tested after the source is converted: the typed entry tests nothing.
       encodeInto: [
         {
           ...encodedInto,
-          args: { source: b.string, destination: arrayBufferView },
+          args: { source: b.string, destination: uint8Array },
           capability: "heap",
           uses: { this: b.inspected, source: characters, destination: changesState },
           directEntry: b.typedEntry({
@@ -496,14 +497,14 @@ export default b.declarations(
         {
           ...encodedInto,
           ...operandCodeOnly,
-          args: { source: b.string.loose, destination: arrayBufferView },
+          args: { source: b.string.loose, destination: uint8Array },
           throws: true,
           uses: { this: b.inspected, source: convertedToCharacters, destination: changesState },
         },
         {
           ...encodedInto,
           ...operandCodeOnly,
-          args: { source: b.any.optional, destination: arrayBufferView.optional },
+          args: { source: b.any.optional, destination: uint8Array.optional },
           throws: true,
           uses: { this: b.inspected, source: convertedToCharacters, destination: changesState },
         },

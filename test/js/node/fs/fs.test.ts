@@ -509,30 +509,11 @@ describe("FileHandle", () => {
   // open() returns the lowest free descriptor, which is 0 once stdin is closed.
   // Not on Windows: fs.closeSync(0) does nothing there (libuv keeps fds 0 to 2 open), so open() never returns 0.
   // Not concurrent: a debug build needs about two seconds for this fixture when it runs alone.
-  it.skipIf(isWindows)("FileHandle whose descriptor is 0 reads, serves a stream and closes", async () => {
+  it.skipIf(isWindows)("descriptor 0 works in a FileHandle and in a stream, and is closed with them", async () => {
     using dir = tempDir("filehandle-fd-0", { "data.txt": "a\nb\n" });
     const fixture = /* js */ `
       const fs = require("node:fs");
-      const uses = {
-        async read(handle) {
-          return (await handle.read(Buffer.alloc(4), 0, 4, 0)).bytesRead;
-        },
-        // A stream takes a ref on its FileHandle. close() settles when the stream has given the ref back.
-        async createReadStream(handle) {
-          let bytes = 0;
-          for await (const chunk of handle.createReadStream()) bytes += chunk.length;
-          return bytes;
-        },
-        async createWriteStream(handle) {
-          const { promise, resolve, reject } = Promise.withResolvers();
-          const stream = handle.createWriteStream({ start: 0 });
-          // "close" comes when the stream has closed the handle. The callback of end() comes before that.
-          stream.on("error", reject).on("close", resolve).end("c");
-          await promise;
-          return stream.bytesWritten;
-        },
-      };
-      async function openUseClose(use) {
+      const throughHandle = use => async () => {
         const handle = await fs.promises.open("data.txt", "r+");
         const result = { fd: handle.fd };
         try {
@@ -541,21 +522,49 @@ describe("FileHandle", () => {
           result.result = e.code;
         }
         await handle.close();
+        return result;
+      };
+      const operations = {
+        "handle.read": throughHandle(async handle => (await handle.read(Buffer.alloc(4), 0, 4, 0)).bytesRead),
+        // A stream takes a ref on its FileHandle. close() settles when the stream has given the ref back.
+        "handle.createReadStream": throughHandle(async handle => {
+          let bytes = 0;
+          for await (const chunk of handle.createReadStream()) bytes += chunk.length;
+          return bytes;
+        }),
+        "handle.createWriteStream": throughHandle(async handle => {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const stream = handle.createWriteStream({ start: 0 });
+          // "close" comes when the stream has closed the handle. The callback of end() comes before that.
+          stream.on("error", reject).on("close", resolve).end("c");
+          await promise;
+          return stream.bytesWritten;
+        }),
+        // A stream that opens the path itself owns the descriptor that it gets.
+        "fs.createReadStream": async () => {
+          const result = { fd: null, result: 0 };
+          const stream = fs.createReadStream("data.txt").on("open", fd => (result.fd = fd));
+          for await (const chunk of stream) result.result += chunk.length;
+          return result;
+        },
+      };
+      async function run(operation) {
+        const result = await operation();
         try {
           fs.fstatSync(0);
-          result.fd0AfterClose = "open";
+          result.fd0Afterwards = "open";
         } catch (e) {
-          result.fd0AfterClose = e.code;
+          result.fd0Afterwards = e.code;
         }
         return result;
       }
-      // A debug build reads builtin modules from disk on first use. Run each use once first, so that
-      // no such file is opened while fd 0 is free.
-      for (const use of Object.values(uses)) await openUseClose(use);
+      // A debug build reads builtin modules from disk on first use. Run each operation once first, so
+      // that no such file is opened while fd 0 is free.
+      for (const operation of Object.values(operations)) await run(operation);
 
       fs.closeSync(0);
       const results = {};
-      for (const [name, use] of Object.entries(uses)) results[name] = await openUseClose(use);
+      for (const [name, operation] of Object.entries(operations)) results[name] = await run(operation);
       console.log(JSON.stringify(results));
     `;
     await using proc = Bun.spawn({
@@ -566,12 +575,13 @@ describe("FileHandle", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({
-        read: { fd: 0, result: 4, fd0AfterClose: "EBADF" },
-        createReadStream: { fd: 0, result: 4, fd0AfterClose: "EBADF" },
-        createWriteStream: { fd: 0, result: 1, fd0AfterClose: "EBADF" },
-      }),
+    expect({ results: stdout.startsWith("{") ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+      results: {
+        "handle.read": { fd: 0, result: 4, fd0Afterwards: "EBADF" },
+        "handle.createReadStream": { fd: 0, result: 4, fd0Afterwards: "EBADF" },
+        "handle.createWriteStream": { fd: 0, result: 1, fd0Afterwards: "EBADF" },
+        "fs.createReadStream": { fd: 0, result: 4, fd0Afterwards: "EBADF" },
+      },
       stderr: "",
       exitCode: 0,
     });

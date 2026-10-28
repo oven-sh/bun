@@ -75,7 +75,7 @@ declare global {
       open(): void;
       close(callback?: ErrorCallback): void;
       [kFs]: StreamFs;
-      [kHandle]?: FileHandle;
+      [kFdIsCallers]?: true;
       [kIsPerformingIO]: boolean;
       /** true: the path must be opened; a sink: a FileSink. */
       [kWriteStreamFastPath]?: undefined | true | FileSink;
@@ -104,8 +104,8 @@ const kIoDone = Symbol("kIoDone");
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
-// The FileHandle that a stream reads or writes through.
-const kHandle = Symbol("kHandle");
+// Set when options.fd was a number: the descriptor belongs to the caller.
+const kFdIsCallers = Symbol("kFdIsCallers");
 
 const {
   read: fileHandlePrototypeRead,
@@ -247,12 +247,12 @@ function ReadStream(
     }
     this.fd = fd as number;
     this[kFs] = customFs || fs;
+    this[kFdIsCallers] = true;
   } else if (typeof fd === "object" && fd instanceof FileHandle) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
     this[kFs] = fileHandleStreamFs(fd);
-    this[kHandle] = fd;
     this.fd = fd[kFd];
     fd[kRef]();
     fd.on("close", this.close.bind(this));
@@ -438,8 +438,8 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
   }
 
   const fd = stream.fd;
-  // A raw fd 0 stays open, as in node (process.stdin over a file). A FileHandle always gets its ref back.
-  if (fd == null || (fd === 0 && !stream[kHandle])) {
+  // The caller's own fd 0 stays open, as in node (process.stdin over a file). Any other descriptor is closed.
+  if (fd == null || (fd === 0 && stream[kFdIsCallers])) {
     cb(err);
   } else if (stream.flush) {
     stream[kFs].fsync!(fd, flushErr => {
@@ -499,12 +499,12 @@ function WriteStream(
     }
     this.fd = fd as number;
     this[kFs] = customFs || fs;
+    this[kFdIsCallers] = true;
   } else if (typeof fd === "object" && fd instanceof FileHandle) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
     this[kFs] = customFs = fileHandleStreamFs(fd);
-    this[kHandle] = fd;
     fd[kRef]();
     fd.on("close", this.close.bind(this));
     this.fd = fd = fd[kFd];
